@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Windows build and packaging script for Rust projects.
-  Similar pattern to Kataglyphis-BeschleunigerBallett's Build-Windows.ps1
+  Similar pattern to BeschleunigerBallett's Build-Windows.ps1
 
 .DESCRIPTION
   - Uses ContainerHub's WindowsBuild.Common.psm1 for structured logging.

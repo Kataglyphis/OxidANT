@@ -10,7 +10,7 @@
 //! Why this direction (WGSL as the source of truth): WGSL is the stricter
 //! language (uniformity analysis, no implicit conversions), so what
 //! validates here also compiles for Vulkan — the reverse is not true. See
-//! docs/shader-sharing.md in Kataglyphis-BeschleunigerBallett.
+//! docs/shader-sharing.md in BeschleunigerBallett.
 
 use std::path::{Path, PathBuf};
 
