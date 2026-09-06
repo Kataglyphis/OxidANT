@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Erlaube Docker den Zugriff auf das lokale X11-Display (für GUI)
 xhost +local:root || true
@@ -10,7 +10,7 @@ echo "Starte Docker Container mit Webcam-Unterstützung..."
 docker run --rm -it \
     --ipc=host \
     --device /dev/video0:/dev/video0 \
-    -e DISPLAY=$DISPLAY \
+    -e DISPLAY="${DISPLAY:?DISPLAY is not set - this script needs an X display}" \
     -e QT_X11_NO_MITSHM=1 \
     -e GTK_A11Y=none \
     -e LIBGL_ALWAYS_SOFTWARE=1 \
@@ -21,7 +21,7 @@ docker run --rm -it \
     -w /workspace \
     ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
     bash -lc '
-    set -e
+    set -euo pipefail
     git config --global --add safe.directory /workspace || true
     # Fix für Bibliotheken aus /opt, da diese priorisiert geladen werden müssen
     export GDK_BACKEND=x11
@@ -29,10 +29,10 @@ docker run --rm -it \
     # Füge alle Library-Pfade aus /opt hinzu (z.B. OpenCV, FFmpeg, GStreamer)
     for libdir in $(find /opt ! -name "android*" -type d \( -name "lib" -o -name "lib64" -o -name "x86_64-linux-gnu" \)); do
         if [ -d "$libdir" ]; then
-            export LD_LIBRARY_PATH="$libdir:$LD_LIBRARY_PATH"
+            export LD_LIBRARY_PATH="$libdir:${LD_LIBRARY_PATH:-}"
         fi
     done
-    export LD_LIBRARY_PATH="/opt/gstreamer/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+    export LD_LIBRARY_PATH="/opt/gstreamer/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 
     # Only what the image genuinely does NOT ship. This list used to name 24
     # packages; 22 of them are already installed by ContainerHub'"'"'s
