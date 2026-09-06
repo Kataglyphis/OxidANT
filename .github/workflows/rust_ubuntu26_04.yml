@@ -49,7 +49,7 @@ jobs:
   # workflow_dispatch, to exercise it.
   select-lanes:
     name: Select lanes
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       matrix: ${{ steps.pick.outputs.matrix }}
     steps:
@@ -62,8 +62,8 @@ jobs:
           HEAD_MSG: ${{ github.event.head_commit.message }}
           EVENT: ${{ github.event_name }}
         run: |
-          amd64='{"name":"amd64","runner":"ubuntu-24.04","platform":"linux/amd64","arch":"x64","artifact_suffix":"ubuntu-24.04-x64","docs":true}'
-          arm64='{"name":"arm64","runner":"ubuntu-24.04-arm","platform":"linux/arm64","arch":"arm64","artifact_suffix":"ubuntu-24.04-arm64","docs":false}'
+          amd64='{"name":"amd64","runner":"ubuntu-26.04","platform":"linux/amd64","arch":"x64","artifact_suffix":"ubuntu-26.04-x64","docs":true}'
+          arm64='{"name":"arm64","runner":"ubuntu-26.04-arm","platform":"linux/arm64","arch":"arm64","artifact_suffix":"ubuntu-26.04-arm64","docs":false}'
 
           include="${amd64}"
           if [ "${EVENT}" = "workflow_dispatch" ] || printf '%s' "${HEAD_MSG}" | grep -qF '[build-arm]'; then
@@ -302,7 +302,7 @@ jobs:
     name: Feature check (${{ matrix.features }})
     needs: select-lanes
     if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message || '', '[build-features]') }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:

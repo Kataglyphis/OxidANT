@@ -193,7 +193,7 @@ Two workflows, both building inside ContainerHub images rather than on the runne
 
 | Lane | Workflow | Runs when | Image |
 | --- | --- | --- | --- |
-| Linux x86_64 | `rust_ubuntu24_04.yml` | every push/PR to `main`/`develop` | `ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross` |
+| Linux x86_64 | `rust_ubuntu26_04.yml` | every push/PR to `main`/`develop` | `ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross` |
 | Linux arm64 | same | opt-in: `[build-arm]` in the HEAD commit message, or `workflow_dispatch` | same |
 | Windows | `rust_windows2025.yml` | opt-in: `[build-win]` in the HEAD commit message, or `workflow_dispatch` | `…:winamd64` |
 
@@ -288,7 +288,7 @@ Verified 2026-08-07 by running `Build-Windows.ps1 -SkipTests` in `:winamd64`:
 
 ## Known gaps
 
-- **No CI lane builds any optional feature.** The Linux lane builds default features; the Windows lane builds `gui_windows,onnxruntime_directml` and is itself opt-in. So `crates/media` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `rust_ubuntu24_04.yml` closes this, but only once the build image ships the three package groups in the table above.
+- **No CI lane builds any optional feature.** The Linux lane builds default features; the Windows lane builds `gui_windows,onnxruntime_directml` and is itself opt-in. So `crates/media` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `rust_ubuntu26_04.yml` closes this, but only once the build image ships the three package groups in the table above.
 
 - **No CI lane has a GPU, so the golden tests never actually run.** `GpuContext::headless_or_skip()` returns `None` and every one of the ~40 headless render tests reports as passed having drawn nothing. This is not theoretical: running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**:
 
