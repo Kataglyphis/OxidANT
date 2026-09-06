@@ -42,7 +42,7 @@ function Resolve-Configurations([object[]]$Matrix, [string[]]$RequestedConfigura
   return $resolved
 }
 
-$runScript = Join-Path $PSScriptRoot 'Run-AppProfiles.ps1'
+$runScript = Join-Path $PSScriptRoot 'Invoke-AppProfiles.ps1'
 if (-not (Test-Path $runScript)) {
   throw "Required script not found: $runScript"
 }

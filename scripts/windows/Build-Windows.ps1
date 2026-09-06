@@ -16,7 +16,7 @@ param(
   # declared and nothing ever read it, so `-Configurations gui_windows` was
   # accepted and silently ignored. The feature-matrix concept lives in
   # Invoke-WindowsConfigMatrix.ps1, which implements it properly and drives
-  # Run-AppProfiles.ps1 per configuration. Use that script instead of
+  # Invoke-AppProfiles.ps1 per configuration. Use that script instead of
   # reintroducing the parameter here.
   [switch]$SkipMsix,
   [switch]$SkipMsi,
@@ -158,7 +158,7 @@ try {
     } | Out-Null
 
     # NEVER `rustup component add` here. The image's rustup is offline - its
-    # dist server is a file:// mirror that setup-rust-toolchain.ps1 deletes
+    # dist server is a file:// mirror that Install-RustToolchain.ps1 deletes
     # after installing - so the call can only ever fail, and the previous
     # skip-on-failure made both gates decorative: each finished in ~0.1s and
     # reported success, so neither had run even once (measured 2026-08-07).
@@ -350,7 +350,7 @@ try {
   # NOT cargo-wix. 0.3.9 is its newest release and it shells out to WiX v3's
   # candle.exe + light.exe, neither of which exists here: ContainerHub installs
   # WiX 4.0.6 as a dotnet tool (a single wix.exe) in
-  # windows/scripts/setup-scoop-tools.ps1 and points WIX=C:\WiX at it in
+  # windows/scripts/Install-ScoopTools.ps1 and points WIX=C:\WiX at it in
   # windows/Dockerfile.base. Every MSI run therefore died with
   # "The compiler application ('candle') does not exist at the 'C:\WiX' path",
   # which went unnoticed while this step still ran as optional. Calling wix.exe
@@ -367,7 +367,7 @@ try {
         $wixExe = (Get-Command 'wix.exe' -ErrorAction SilentlyContinue).Source
       }
       if (-not $wixExe) {
-        throw "WiX v4 (wix.exe) not found. Looked under `$env:WIX ('$env:WIX') and on PATH. The container image installs it via ContainerHub's windows/scripts/setup-scoop-tools.ps1."
+        throw "WiX v4 (wix.exe) not found. Looked under `$env:WIX ('$env:WIX') and on PATH. The container image installs it via ContainerHub's windows/scripts/Install-ScoopTools.ps1."
       }
       Write-BuildLog -Context $context -Message "Using WiX: $wixExe"
 

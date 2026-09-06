@@ -1,12 +1,12 @@
 # Runs INSIDE the Windows container: full `cargo test` (debug profile) for the
 # workspace -- unit tests, integration tests (tests/integration.rs), and the
 # proptest fuzz suite (tests/fuzz_test.rs), plus doc tests.
-# Same wcifs-safe layout as rust-build-all.ps1: writes only to C:\ct / C:\ch,
+# Same wcifs-safe layout as Build-RustAll.ps1: writes only to C:\ct / C:\ch,
 # everything logged to the mounted C:\host-scratch.
 #requires -Version 7.0
 
 $ProgressPreference = 'SilentlyContinue'
-# See rust-build-all.ps1: the driver stages this module into the scratch mount
+# See Build-RustAll.ps1: the driver stages this module into the scratch mount
 # because third_party is excluded from the sources copied into the container.
 Import-Module 'C:\host-scratch\WindowsContainerLog.Common.psm1' -Force
 Start-ContainerLog -Path 'C:\host-scratch\in-container-test.log'

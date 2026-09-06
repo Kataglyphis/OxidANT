@@ -117,7 +117,7 @@ Default features are empty — GUI and ONNX code only compiles with explicit `--
 
 The **bin** was renamed, not the lib, and that direction was deliberate: the C++ Vulkan engine imports the lib through Corrosion/cxxbridge (the generated `oxidant_bridge` target in the parent repo's CMake), so `[lib] name` decides DLL/LIB filenames that another repository depends on.
 
-What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Ubuntu workflow and `BINARY` in the Windows one, the `-Binary` default in `Run-AppProfiles.ps1`, and `--bin` in `scripts/linux/run-person-detection.sh`.
+What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Ubuntu workflow and `BINARY` in the Windows one, the `-Binary` default in `Invoke-AppProfiles.ps1`, and `--bin` in `scripts/linux/run-person-detection.sh`.
 
 **`[lib] name` did change later, on 2026-09-05**, when the repository became OxidANT: `[package] name` and `[lib] name` are both `oxidant` now, so the artefacts are `oxidant.dll` / `liboxidant.so` / `liboxidant.a`. That is exactly the outside-this-repo break the paragraph above warns about, and it was only safe because every consumer was updated in the same commit — Inference-Engine's Cargokit wiring, podspecs, `Get-WindowsBuildConfig.ps1` and the committed `frb_generated.dart` loader stem, plus BeschleunigerBallett's Corrosion import. Renaming it again means finding those consumers again; they are not discoverable from inside this repository.
 
@@ -125,7 +125,7 @@ The two `BINARY` variables still mean different things. In the **Windows** workf
 
 ## Build & test in the Stevedore Windows container
 
-Driver: `scripts\windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`rust-build-all.ps1`, `rust-test-all.ps1`) in `ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
+Driver: `scripts\windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`Build-RustAll.ps1`, `Test-RustAll.ps1`) in `ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
 
 Mounting the repo — not a copy of it — is the default, ReFS Dev Drive or not.
 It also means `third_party/` is present inside the container, so anything
@@ -179,11 +179,11 @@ What is specific to *this* repo, because cargo is what makes it bite:
 **2026-08-07, winamd64, rustc 1.97.1** — `Invoke-StevedoreBuild.ps1 -MemoryGb 32`:
 
 - Builds: debug 1m35s, profile 1m32s, release 1m12s — all three green. Release binary verified on the host: `stats --path README.md` → `Lines: 476, Words: 1905, Bytes: 20104`.
-- Tests: the 8 that predate `crates/webgpu_renderer` still pass (3 integration, 1 proptest, 4 telemetry). **`kataglyphis_webgpu_renderer` is excluded from the container run** — `scripts/windows/container/rust-test-all.ps1` passes `--exclude kataglyphis_webgpu_renderer` and logs that it did. Its test binaries exit `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`, because linking wgpu with the `gles` backend makes the executable import `opengl32.dll`, which Server Core does not ship. The loader resolves that import, so no runtime flag helps; without the exclusion the whole `cargo test --workspace` crashed and reported nothing. `gles` stays on purpose (OpenGL fallback for hosts without Vulkan/DX12) — run `cargo test -p kataglyphis_webgpu_renderer --locked` on a desktop Windows machine instead.
+- Tests: the 8 that predate `crates/webgpu_renderer` still pass (3 integration, 1 proptest, 4 telemetry). **`kataglyphis_webgpu_renderer` is excluded from the container run** — `scripts/windows/container/Test-RustAll.ps1` passes `--exclude kataglyphis_webgpu_renderer` and logs that it did. Its test binaries exit `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`, because linking wgpu with the `gles` backend makes the executable import `opengl32.dll`, which Server Core does not ship. The loader resolves that import, so no runtime flag helps; without the exclusion the whole `cargo test --workspace` crashed and reported nothing. `gles` stays on purpose (OpenGL fallback for hosts without Vulkan/DX12) — run `cargo test -p kataglyphis_webgpu_renderer --locked` on a desktop Windows machine instead.
 
   Not a regression from the wgpu 30 upgrade. The old "8 passed / 0 failed" baseline was recorded on 2026-07-17, and the renderer crate landed on 2026-07-18 — the container test lane has therefore *never* run with that crate present. The image is Server Core with no GPU stack; a wgpu-linked binary needs graphics DLLs it does not ship.
 
-  `Invoke-StevedoreBuild.ps1 -Test` used to fail as a whole because of this. It no longer does — the exclusion lives in `rust-test-all.ps1`, so the container lane is green and reports 8 passed. Drop the `--exclude` once the image carries the missing DLLs.
+  `Invoke-StevedoreBuild.ps1 -Test` used to fail as a whole because of this. It no longer does — the exclusion lives in `Test-RustAll.ps1`, so the container lane is green and reports 8 passed. Drop the `--exclude` once the image carries the missing DLLs.
 
 **2026-07-17** (superseded, kept because it is what the 8-test figure refers to): builds debug 1m11s / profile 1m31s / release 1m08s; tests 8 passed / 0 failed, 1 doc-test ignored — measured before `crates/webgpu_renderer` existed.
 
