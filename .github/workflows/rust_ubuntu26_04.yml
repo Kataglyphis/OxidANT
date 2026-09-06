@@ -1,4 +1,4 @@
-name: Rust workflow on Ubuntu-24.04 (x86_64, ARM opt-in)
+name: Rust workflow on Ubuntu-26.04 (x86_64, ARM opt-in)
 
 on:
   push:

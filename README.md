@@ -14,7 +14,7 @@
   </a>
 </div>
 
-[![Rust workflow on Ubuntu-24.04](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_ubuntu26_04.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_ubuntu26_04.yml)
+[![Rust workflow on Ubuntu-26.04](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_ubuntu26_04.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_ubuntu26_04.yml)
 [![Rust workflow on Windows 2025](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_windows2025.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_windows2025.yml)
 [![CodeQL](https://github.com/Kataglyphis/OxidANT/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/github-code-scanning/codeql)
 
