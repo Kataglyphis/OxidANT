@@ -93,7 +93,7 @@ This repo owns only `AGENTS.md`, `README.md`, `BACKLOG.md` and `crates/webgpu_re
 
 `docs/renderer-bounds-invariant.md`, `docs/gpu-golden-testing.md`, `docs/model-loading.md`, `docs/shader-sharing.md`, `docs/webgpu-gltf-rust-plan.md`, `docs/webgpu-srgb-audit.md`
 
-They live in the **parent** repository, `Kataglyphis-BeschleunigerBallett/docs/` — the comments say "repo root" and mean the superproject's root, one level above this submodule. Worth knowing twice over: `bounds.rs` calls `renderer-bounds-invariant.md` the checklist for not repeating eight identical bugs, and if this template is ever used standalone those six references dangle with nothing to point at. From `crates/webgpu_renderer/` the correct relative prefix is `../../../../docs/` (four levels: crate → crates → repo → ExternalLib → superproject); `../../../` lands in `ExternalLib/` and was wrong in that README until 2026-08-07.
+They live in the **parent** repository, `BeschleunigerBallett/docs/` — the comments say "repo root" and mean the superproject's root, one level above this submodule. Worth knowing twice over: `bounds.rs` calls `renderer-bounds-invariant.md` the checklist for not repeating eight identical bugs, and if this template is ever used standalone those six references dangle with nothing to point at. From `crates/webgpu_renderer/` the correct relative prefix is `../../../../docs/` (four levels: crate → crates → repo → ExternalLib → superproject); `../../../` lands in `ExternalLib/` and was wrong in that README until 2026-08-07.
 
 ## Build & test (host)
 

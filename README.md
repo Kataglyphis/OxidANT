@@ -370,8 +370,8 @@ MSIX installieren (mit Testzertifikat):
 3. Paket installieren.
 
 ```pwsh
-$certPath = "C:\\GitHub\\Inference-Engine\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT.testcert.pfx"
-$msixPath = "C:\\GitHub\\Inference-Engine\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT_0.1.0.0_x64.msix"
+$certPath = "C:\\GitHub\\OmniAccelerANT\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT.testcert.pfx"
+$msixPath = "C:\\GitHub\\OmniAccelerANT\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT_0.1.0.0_x64.msix"
 $pwd = ConvertTo-SecureString "<TEST_CERT_PASSWORD>" -AsPlainText -Force
 
 Import-PfxCertificate -FilePath $certPath -Password $pwd -CertStoreLocation "Cert:\\LocalMachine\\Root"
@@ -426,7 +426,7 @@ MSIX Update / Reinstall:
 - Dann erneut installieren:
 
 ```pwsh
-Add-AppxPackage -Path "C:\\GitHub\\Inference-Engine\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT_<NEW_VERSION>_x64.msix"
+Add-AppxPackage -Path "C:\\GitHub\\OmniAccelerANT\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT_<NEW_VERSION>_x64.msix"
 ```
 
 MSIX deinstallieren:

@@ -1,5 +1,5 @@
 //! WebGPU renderer with glTF loading (see docs/webgpu-gltf-rust-plan.md in
-//! Kataglyphis-BeschleunigerBallett for the roadmap this implements).
+//! BeschleunigerBallett for the roadmap this implements).
 //!
 //! Milestones implemented so far:
 //! 1. Context + surface lifecycle with correct resize/outdated handling.
