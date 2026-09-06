@@ -49,7 +49,7 @@ fn all_shaders_export_to_spirv() {
 /// every `.wgsl` file in `src/shaders/` actually appears in it, which is
 /// exactly how `depth_resolve` (and `gpu_cull`/`histogram`) went unchecked.
 /// `histogram.wgsl` is deliberately hand-written rather than Slang-generated
-/// (see `compile-slang-shaders.ps1:105-109`), so it belongs in this export
+/// (see `Build-SlangShaders.ps1:105-109`), so it belongs in this export
 /// gate but is exempt from any Slang-source staleness gate.
 #[test]
 fn every_shader_file_is_covered() {
@@ -113,7 +113,7 @@ fn generated_wgsl_has_no_hand_edits() {
     assert!(
         hand_edits.is_empty(),
         "generated WGSL must not be hand-edited - put the change in the .slang source, or in \
-         the post-emit patch table in compile-slang-shaders.ps1/.sh: {hand_edits:#?}"
+         the post-emit patch table in Build-SlangShaders.ps1 / compile-slang-shaders.sh: {hand_edits:#?}"
     );
 }
 

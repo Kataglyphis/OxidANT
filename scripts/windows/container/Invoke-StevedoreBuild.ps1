@@ -92,7 +92,7 @@ Write-Host "Using docker: $Docker"
 # submodule's docs/windows-builds.md, bindFlt rejects copySync/renameSync with
 # errno 3, so create-then-rename through the mount fails - which is why every
 # build write already goes to container-local C:\ct and C:\ch. The only thing
-# crossing the mount is the artifact copy at the end of rust-build-all.ps1, and
+# crossing the mount is the artifact copy at the end of Build-RustAll.ps1, and
 # plain copies do work.
 #
 # If a host DOES refuse it, `docker run --mount type=bind,source=<repo>,...`
@@ -115,7 +115,7 @@ if ($StageSources) {
     Write-Host "Mounting repository directly -> $ws"
 }
 
-Copy-Item (Join-Path $PSScriptRoot 'rust-build-all.ps1'), (Join-Path $PSScriptRoot 'rust-test-all.ps1') -Destination $scratch -Force
+Copy-Item (Join-Path $PSScriptRoot 'Build-RustAll.ps1'), (Join-Path $PSScriptRoot 'Test-RustAll.ps1') -Destination $scratch -Force
 
 # The in-container scripts import their logging from here. Keep staging it into
 # the scratch mount rather than reading it off the workspace mount: that keeps
@@ -159,7 +159,7 @@ function Invoke-ContainerScript {
 }
 
 if (-not $TestOnly) {
-    Invoke-ContainerScript -Script 'rust-build-all.ps1' -Label 'build'
+    Invoke-ContainerScript -Script 'Build-RustAll.ps1' -Label 'build'
     # With the repository mounted directly, the container already wrote into
     # target\container - copying it onto itself would be a /MIR of a directory
     # over itself, which robocopy refuses. Only the staged path needs this.
@@ -176,7 +176,7 @@ if (-not $TestOnly) {
     Write-Host "Artifacts: $repoRoot\target\container\{debug,profile,release} (+ root mirrors)" -ForegroundColor Green
 }
 if ($Test -or $TestOnly) {
-    Invoke-ContainerScript -Script 'rust-test-all.ps1' -Label 'test'
+    Invoke-ContainerScript -Script 'Test-RustAll.ps1' -Label 'test'
 }
 Write-Host "`nDone. Logs: $scratch\in-container-*.log"
 
