@@ -1,3 +1,5 @@
+#requires -Version 7.0
+
 <#
 .SYNOPSIS
     Builds (and optionally tests) this Rust workspace inside the Kataglyphis
