@@ -26,7 +26,11 @@
       copies through the mount (done by the in-container scripts).
     - The docker CLI intermittently drops its pipe mid-run while the container
       keeps working, so the container is named (not --rm) and this script waits
-      on the actual container state, not the client exit code.
+      on the actual container state, not the client exit code -- via
+      ContainerHub's Wait-ContainerExit (WindowsContainerBuild.Reuse.psm1; the
+      submodule's docs/windows-container-build-performance.md, section
+      "Reusable implementation", documents it, and this repo's AGENTS.md and
+      README container sections narrate the wait).
 
 .PARAMETER Test
     Also run the full test suite (cargo test --workspace --locked: unit +
@@ -39,8 +43,6 @@
     pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreBuild.ps1 -Test
 #>
 param(
-#requires -Version 7.0
-
     [string]$Docker = '',
     [string]$Image = 'ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64',
     # Scratch root for the in-container scripts and their logs. Small, and on a
@@ -130,31 +132,50 @@ Copy-Item $containerLogModule -Destination $scratch -Force
 function Invoke-ContainerScript {
     param([Parameter(Mandatory)][string]$Script, [Parameter(Mandatory)][string]$Label)
     # Remove-BuildContainerSafe, not a bare `docker rm -f`: on this host the
-    # wcifs teardown can still hold the container after rm returns, and the
-    # helper detects that and says so instead of letting the next `docker run`
-    # fail on a name clash.
-    [void](Remove-BuildContainerSafe -DockerExe $Docker -Name $ContainerName)
+    # wcifs teardown can still hold the container after rm returns. A held name
+    # would fail this `docker run` (exit 125) and hand Wait-ContainerExit the
+    # OLD container's exit code, so on $false do what upstream's bind-mount
+    # path does: fall back to a unique name.
+    $runName = $ContainerName
+    if (-not (Remove-BuildContainerSafe -DockerExe $Docker -Name $runName)) {
+        $runName = "$runName-$([Guid]::NewGuid().ToString('N').Substring(0, 6))"
+        Write-Warning "[$Label] falling back to '$runName' so this run cannot inherit the held container's exit code."
+    }
     # --isolation process is required for the full host CPU count (Hyper-V
     # isolation exposes 2). Centralised so this lane cannot drift from the
     # others that need the same flag.
     $isolationArgs = Get-ContainerIsolationArgs -Isolation 'process' -MemoryGb $MemoryGb
     Write-Host "`n==> [$Label] docker run $($isolationArgs -join ' ') --memory ${MemoryGb}g $Image" -ForegroundColor Cyan
-    & $Docker run --name $ContainerName @isolationArgs --memory "${MemoryGb}g" `
-        --mount "type=bind,source=$ws,target=C:\ws-mnt" `
-        --mount "type=bind,source=$scratch,target=C:\host-scratch" `
-        $Image pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\host-scratch\$Script"
-    $clientExit = $LASTEXITCODE
-    # The docker CLI pipe can drop while the container keeps running -- trust
-    # the container state, not the client exit code.
-    while ($true) {
-        $state = & $Docker inspect -f '{{.State.Status}}' $ContainerName 2>$null
-        if ($LASTEXITCODE -ne 0 -or -not $state -or $state -ne 'running') { break }
-        Write-Host "[$Label] docker client detached (exit $clientExit) but container still running -- waiting..." -ForegroundColor Yellow
-        Start-Sleep -Seconds 15
+    $keep = $false
+    try {
+        & $Docker run --name $runName @isolationArgs --memory "${MemoryGb}g" `
+            --mount "type=bind,source=$ws,target=C:\ws-mnt" `
+            --mount "type=bind,source=$scratch,target=C:\host-scratch" `
+            $Image pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\host-scratch\$Script"
+        $clientExit = $LASTEXITCODE
+        # The docker CLI pipe can drop while the container keeps running. The
+        # wait loop that lived here (no timeout, fail-open state test, 2>$null
+        # over the classification signal) went upstream as Wait-ContainerExit;
+        # trust its answer, not the client exit code. 60 min bound: all three
+        # profiles build in ~5 min on the 32-CPU baseline host (AGENTS.md,
+        # "Verified baselines" -- which records build times only; the test
+        # phase has no recorded number but is the same order) -- >10x headroom
+        # for a much weaker host, yet a wedged run still frees the lane within
+        # the hour.
+        $exitCode = Wait-ContainerExit -DockerExe $Docker -Name $runName -Label $Label -TimeoutMinutes 60
+        if ($clientExit -ne $exitCode) {
+            Write-Warning "[$Label] docker client exited $clientExit but the container's real exit code is $exitCode (dropped client pipe). Trusting the container."
+        }
+        if ($exitCode -ne 0) { throw "[$Label] container run failed (exit $exitCode) -- see $scratch logs" }
+    } catch {
+        # Wait-ContainerExit's failure messages point the operator at `docker
+        # logs`; removing the container here would destroy that evidence.
+        $keep = $true
+        Write-Warning "[$Label] keeping container '$runName' for inspection: docker logs $runName (remove: docker rm -f $runName)"
+        throw
+    } finally {
+        if (-not $keep) { [void](Remove-BuildContainerSafe -DockerExe $Docker -Name $runName) }
     }
-    $exitCode = & $Docker inspect -f '{{.State.ExitCode}}' $ContainerName 2>$null
-    [void](Remove-BuildContainerSafe -DockerExe $Docker -Name $ContainerName)
-    if ("$exitCode" -ne '0') { throw "[$Label] container run failed (exit $exitCode) -- see $scratch logs" }
     Write-Host "[$Label] OK" -ForegroundColor Green
 }
 

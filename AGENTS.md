@@ -157,12 +157,22 @@ What is specific to *this* repo, because cargo is what makes it bite:
   *Dev Drive filter setup* in the performance doc above; `-StageSources` is the
   workaround, not the cure.
 - **Mount target must not already exist in the image** — hence `C:\ws-mnt`.
-- **Get container flags from the modules, never inline**: `Resolve-DockerExe`,
-  `Get-ContainerIsolationArgs`, `Remove-BuildContainerSafe`. The last one matters
-  most: a bare `docker rm -f` can return while teardown still holds the name, and
-  the next run fails on the clash.
+- **Get container plumbing from the modules, never inline**: `Resolve-DockerExe`,
+  `Get-ContainerIsolationArgs`, `Remove-BuildContainerSafe`, `Wait-ContainerExit`.
+  `Remove-BuildContainerSafe` returns whether the name is actually free — a bare
+  `docker rm -f` can return while teardown still holds it — and on `$false` the
+  driver switches to a unique name rather than let the next run inherit the held
+  container's stale exit code. `Wait-ContainerExit` replaced the driver's
+  hand-rolled wait loop (which had no timeout, tested state fail-open, and read
+  `docker inspect` through `2>$null`); the driver bounds it at `-TimeoutMinutes
+  60`, >10× the per-phase baselines below. The wait's own history and contract:
+  the submodule's `docs/windows-container-build-performance.md`, § *Reusable
+  implementation*.
 - **Run containers named and without `--rm`** so logs and state survive a dropped
-  client, and tee important output to the mounted scratch dir.
+  client, and tee important output to the mounted scratch dir. Both are
+  load-bearing for `Wait-ContainerExit`: `--rm` deletes the exit code with the
+  container. A failed run's container is now kept for `docker logs`; the next run
+  (or `docker rm -f`) clears it.
 - **Everything here is `pwsh` (PowerShell 7+).** Every script under
   `scripts/windows/` carries `#requires -Version 7.0`, so any surviving "Windows
   PowerShell 5.1" comment is wrong — those scripts would not start under it. Keep
@@ -178,7 +188,7 @@ What is specific to *this* repo, because cargo is what makes it bite:
 
 **2026-08-07, winamd64, rustc 1.97.1** — `Invoke-StevedoreBuild.ps1 -MemoryGb 32`:
 
-- Builds: debug 1m35s, profile 1m32s, release 1m12s — all three green. Release binary verified on the host: `stats --path README.md` → `Lines: 476, Words: 1905, Bytes: 20104`.
+- Builds: debug 1m35s, profile 1m32s, release 1m12s — all three green. Release binary verified on the host: `stats --path README.md` → `Lines: 476, Words: 1905, Bytes: 20104`. (Those figures describe the README **as it stood that day**; the file has since grown — `wc -lwc README.md` measured 537/2512/24364 on 2026-09-06 — so a re-run printing bigger numbers is the tool working on a bigger file, not a regression. Compare a re-run against the README of the same date, not against this line.)
 - Tests: the 8 that predate `crates/webgpu_renderer` still pass (3 integration, 1 proptest, 4 telemetry). **`kataglyphis_webgpu_renderer` is excluded from the container run** — `scripts/windows/container/Test-RustAll.ps1` passes `--exclude kataglyphis_webgpu_renderer` and logs that it did. Its test binaries exit `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`, because linking wgpu with the `gles` backend makes the executable import `opengl32.dll`, which Server Core does not ship. The loader resolves that import, so no runtime flag helps; without the exclusion the whole `cargo test --workspace` crashed and reported nothing. `gles` stays on purpose (OpenGL fallback for hosts without Vulkan/DX12) — run `cargo test -p kataglyphis_webgpu_renderer --locked` on a desktop Windows machine instead.
 
   Not a regression from the wgpu 30 upgrade. The old "8 passed / 0 failed" baseline was recorded on 2026-07-17, and the renderer crate landed on 2026-07-18 — the container test lane has therefore *never* run with that crate present. The image is Server Core with no GPU stack; a wgpu-linked binary needs graphics DLLs it does not ship.

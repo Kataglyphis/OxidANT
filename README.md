@@ -288,7 +288,7 @@ Host caveats the driver handles automatically. **ContainerHub is the authority o
 
 - `--isolation process` for the full host CPU count (Hyper-V isolation caps at 2), via `Get-ContainerIsolationArgs`.
 - All cargo writes stay container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`); only a plain artifact copy crosses the mount, because `bindFlt` rejects create-then-rename.
-- A dropped docker CLI pipe does **not** mean the build died — the driver waits on the actual container state, and tears containers down with `Remove-BuildContainerSafe`.
+- A dropped docker CLI pipe does **not** mean the build died — the driver waits on the actual container state with upstream's `Wait-ContainerExit` (bounded at 60 min per phase), and tears containers down with `Remove-BuildContainerSafe`. A failed run's container is kept so `docker logs` still works.
 
 | Topic | Read |
 | --- | --- |
