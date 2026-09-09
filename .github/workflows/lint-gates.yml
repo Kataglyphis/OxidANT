@@ -1,0 +1,67 @@
+name: Lint gates - shell, workflows, secrets
+
+# THIS LANE RUNS THE SAME COMMAND A HUMAN RUNS LOCALLY, and that identity is the
+# whole point of the file:
+#
+#   bash scripts/linux/run-lint-gates.sh
+#
+# ContainerHub's linux/scripts/run-lint-gates.sh owns the gates (shellcheck,
+# actionlint + verify_ci_image_refs.py, gitleaks, and ruff), their pinned
+# bootstraps -- the first three also SHA256-verified, while ruff is version-pinned
+# and fetched via uvx -- the git-ls-files scope construction, the empty-scope
+# guards, the run-them-all-then-fail-once accumulator and the secret gate's
+# self-test. This repo's wrapper only passes the consumer root, which upstream
+# refuses to infer - its own half lives inside third_party/ContainerHub, so a
+# self-derived root would grade ContainerHub's tree and report green over the
+# wrong repository.
+#
+# BEFORE THIS FILE OxidANT RAN NO LINT GATE OF ANY KIND. 4 tracked *.sh and 2
+# workflows went ungraded, and nothing ever scanned the tree for committed
+# credentials - while rust_ubuntu26_04.yml publishes the docs over FTP with
+# secrets.SERVER / secrets.USERNAME / secrets.PW.
+#
+# Cheap and first-to-finish: no image pull, no cargo build. It also covers a
+# class the two Rust lanes cannot - valid YAML is not valid Actions, and bash
+# only reports a quoting or undefined-function bug when the line finally runs,
+# which for the packaging scripts is 40 minutes in.
+#
+# ENFORCING, with no continue-on-error: a finding is either a real leak - rotate
+# the credential and purge it - or a false positive that earns ONE narrow,
+# justified allowlist entry in a .gitleaks.toml, never a softening of this step.
+#
+# NO CONTAINER IMAGE IS NAMED HERE, and that is correct: the gate binaries are
+# bootstrapped from ContainerHub's own versions.env at pinned, SHA-verified
+# versions, so the gate does not depend on what a base image happens to ship.
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-gates:
+    name: shell + workflow + secret lint
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+
+    steps:
+      # submodules: true, NOT recursive. third_party/ContainerHub is where every
+      # gate, every pin and every SHA in this lane comes from, and it is a
+      # top-level submodule - but its own chain (DocumANTation -> md2pdfLib ->
+      # latex/*) is minutes of clone that nothing here reads, and nothing below
+      # grades it either: both scopes drop third_party/.
+      # fetch-depth 1 is enough - the scopes come from `git ls-files`, not
+      # from history.
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Lint gates
+        run: bash scripts/linux/run-lint-gates.sh

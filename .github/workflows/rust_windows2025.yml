@@ -61,9 +61,15 @@ jobs:
           short-path-target: /d/ws
           required-free-gb: '70'
 
+      # working-directory is the short-path clone, not github.workspace: with a
+      # short-path-target set, prepare-windows-container-host deliberately takes
+      # NO submodules in the runner checkout, so third_party/ContainerHub is an
+      # empty directory there and this step died on its own submodule guard. The
+      # `workspace` output exists for exactly this.
       - name: Compute version
         id: compute-version
         shell: bash
+        working-directory: ${{ steps.prep.outputs.workspace }}
         run: scripts/compute-version.sh
 
       # The four container steps below used to be hand-written `docker run`
