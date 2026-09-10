@@ -19,12 +19,22 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# NO CONTAINER_IMAGE HERE, DELIBERATELY. This workflow opened with a
+# `CONTAINER_IMAGE:` holding the full image reference and handed it to all
+# twelve container steps below. It called itself the "single source of truth"
+# for the build image and was the opposite: a COPY of a value ContainerHub
+# already owns (versions.env's IMAGE_REGISTRY_PREFIX + CI_IMAGE_LINUX_TAG), so
+# a fleet-wide tag bump landed everywhere except here. The ref is not repeated
+# in this comment either - a literal in a comment rots the same way, and
+# verify_ci_image_refs.py check D reads comments too.
+#
+# Both container actions declare that composed ref as their `image:` input
+# DEFAULT, so OMITTING the input is how a lane says "the family image"; check A
+# of that same gate fails ContainerHub's own build if a default and versions.env
+# ever disagree. This is exactly the route the actions' input docs prescribe
+# ("SINGLE SOURCE OF TRUTH: omit this input").
 env:
   CARGO_TERM_COLOR: always
-  # Single source of truth for the build image. `:latest-cross`, never
-  # `:latest` - the submodule's AGENTS.md records that `:latest` went
-  # unrebuilt from 2026-04-16 while the cross lane was refreshed.
-  CONTAINER_IMAGE: ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross
   # The image ships CARGO_HOME=/usr/local/cargo owned by root while the
   # container runs as uid 1001. Every cargo step that WRITES (registry cache,
   # `cargo install`, tarpaulin, rustdoc) dies with "Permission denied" unless
@@ -37,8 +47,8 @@ jobs:
   # The ARM lane is opt-in per commit, matching the convention the ContainerHub
   # ecosystem already uses for its expensive lanes (see that submodule's
   # `docs/ci-build-triggers.md`). Two reasons it cannot simply always run:
-  #   - `:latest-cross` currently resolves to an amd64-only manifest list, so
-  #     an arm64 runner's pull dies with "no matching manifest for
+  #   - the family Linux image currently resolves to an amd64-only manifest
+  #     list, so an arm64 runner's pull dies with "no matching manifest for
   #     linux/arm64/v8" before a single build step executes. Repairing the
   #     manifest is a ContainerHub-side job (`build-runtime-manifest.sh
   #     --repair --push-manifest`); until then the lane cannot be green, and a
@@ -101,7 +111,6 @@ jobs:
       - name: Prepare the CI host
         uses: Kataglyphis/ContainerHub/.github/actions/prepare-linux-ci-host@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GHCR_PAT }}
 
@@ -113,7 +122,6 @@ jobs:
       - name: Debug build
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
@@ -123,7 +131,6 @@ jobs:
       - name: Security checks (cargo audit + cargo deny)
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
@@ -153,7 +160,6 @@ jobs:
       - name: Check formatting and clippy
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
@@ -164,7 +170,6 @@ jobs:
       - name: Run unit, integration, and doc tests
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
@@ -174,7 +179,6 @@ jobs:
       - name: Run coverage
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
@@ -184,7 +188,6 @@ jobs:
       - name: Run benchmarks
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
@@ -194,7 +197,6 @@ jobs:
       - name: 🛠️ Build release binary
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
@@ -208,7 +210,6 @@ jobs:
       - name: 📦 Create archive (tar)
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           extra-args: >-
             --privileged --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
             -e BINARY="${{ env.BINARY }}"
@@ -249,7 +250,6 @@ jobs:
         if: matrix.docs
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
@@ -316,7 +316,6 @@ jobs:
       - name: Prepare the CI host
         uses: Kataglyphis/ContainerHub/.github/actions/prepare-linux-ci-host@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GHCR_PAT }}
           fetch-depth: '1'
@@ -324,7 +323,6 @@ jobs:
       - name: cargo check --features ${{ matrix.features }}
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
-          image: ${{ env.CONTAINER_IMAGE }}
           extra-args: ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;

@@ -21,9 +21,19 @@ jobs:
     defaults:
       run:
         shell: pwsh
+    # NO WINDOWS_CONTAINER_IMAGE HERE, DELIBERATELY. It held the full image
+    # reference and fed all five container steps below - a COPY of a value
+    # ContainerHub already owns (versions.env's IMAGE_REGISTRY_PREFIX +
+    # CI_IMAGE_WINDOWS_TAG), so a fleet-wide tag bump landed everywhere except
+    # here. Not repeated in this comment either: a literal in a comment rots the
+    # same way, and verify_ci_image_refs.py check D reads comments too.
+    #
+    # Both Windows container actions carry that composed ref as their `image:`
+    # input DEFAULT, so omitting the input is how this lane says "the family
+    # Windows image" - the route their input docs prescribe ("SINGLE SOURCE OF
+    # TRUTH: omit this input").
     env:
       BINARY: kataglyphis_cli
-      WINDOWS_CONTAINER_IMAGE: ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64
       WINDOWS_DOCKER_CPUS: '4'
       WINDOWS_DOCKER_MEMORY: 16g
       WINDOWS_PACKAGE_FEATURES: gui_windows,onnxruntime_directml
@@ -55,7 +65,6 @@ jobs:
         id: prep
         uses: Kataglyphis/ContainerHub/.github/actions/prepare-windows-container-host@main
         with:
-          image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           registry-password: ${{ secrets.GHCR_PAT }}
           fetch-depth: 0
           short-path-target: /d/ws
@@ -84,7 +93,6 @@ jobs:
       - name: Run debug unit, integration, and fuzz tests
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
         with:
-          image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
           file: C:\ws\scripts\windows\Invoke-DebugTests.ps1
@@ -97,7 +105,6 @@ jobs:
       - name: Build and run all Windows app configs
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
         with:
-          image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
           file: C:\ws\scripts\windows\Invoke-WindowsConfigMatrix.ps1
@@ -112,7 +119,6 @@ jobs:
       - name: Build, lint, and package MSIX/MSI
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
         with:
-          image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
           file: C:\ws\scripts\windows\Build-Windows.ps1
@@ -154,7 +160,6 @@ jobs:
       - name: Create archive
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
         with:
-          image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
           file: C:\ws\third_party\ContainerHub\windows\scripts\rust\New-Archive.ps1
