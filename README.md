@@ -42,6 +42,8 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 - [Run](#run)
 - [Docs](#docs)
 - [Updates](#updates)
+  - [Dependency upgrades: Renovate as a local CLI](#dependency-upgrades-renovate-as-a-local-cli)
+  - [Installed cargo binaries](#installed-cargo-binaries)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
@@ -101,6 +103,10 @@ cargo upgrade --dry-run --verbose
 # --pinned 
 cargo upgrade --incompatible
 ```
+
+To see what is actually behind first — crates *and* the `third_party/ContainerHub`
+gitlink, decided by Renovate rather than by a version bound — see
+[Dependency upgrades](#dependency-upgrades-renovate-as-a-local-cli).
 
 ### Useful tools
 
@@ -259,7 +265,7 @@ cargo run --features gui_windows -- gui --backend primary
 
 ### Windows: build & test in the Stevedore container
 
-The workspace builds and tests inside the [Kataglyphis ContainerHub](https://github.com/Kataglyphis/ContainerHub) Windows developer image (`ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`) using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`.
+The workspace builds and tests inside the [Kataglyphis ContainerHub](https://github.com/Kataglyphis/ContainerHub) Windows developer image using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`. The image reference is not written down anywhere in this repository — including here — because ContainerHub's `linux/scripts/01-core/versions.env` owns it; the driver asks `Get-CiImageReference -Windows` for it and `-Image` overrides for a one-off. To see the current value: `pwsh -c "Import-Module third_party/ContainerHub/windows/scripts/modules/WindowsContainerImage.Common.psm1; Get-CiImageReference -Windows"`.
 
 > **ContainerHub is the ground truth for container and PowerShell functionality.** The scripts here are thin drivers: `docker.exe` discovery, isolation flags, container teardown, SDK-tool lookup, MSIX manifest expansion, config access and build-step logging all come from its modules under `windows/scripts/modules/`. Before adding a helper to `scripts/windows/`, check whether ContainerHub already has it — several that were written locally turned out to exist there in a better form. Everything is `pwsh` (PowerShell 7+); nothing here runs under Windows PowerShell 5.1.
 
@@ -299,14 +305,15 @@ Host caveats the driver handles automatically. **ContainerHub is the authority o
 
 ### Linux containers locally (Rancher Desktop)
 
-The Linux image is **always** `ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross`, in CI and locally. Rancher Desktop defaults to the **containerd** engine, so use `nerdctl`, not `docker` — and from Git Bash disable path mangling or the mount argument is destroyed. Full instructions: [`docs/rancher-desktop-linux-containers.md`](third_party/ContainerHub/docs/rancher-desktop-linux-containers.md).
+The Linux image is **always** the family CI one, in CI and locally — the same reference the workflows inherit, printed by `bash third_party/ContainerHub/linux/scripts/ci-image-ref.sh` and owned by that submodule's `versions.env`. The command below asks for it rather than repeating it, so it cannot go stale on a tag bump. Rancher Desktop defaults to the **containerd** engine, so use `nerdctl`, not `docker` — and from Git Bash disable path mangling or the mount argument is destroyed. Full instructions: [`docs/rancher-desktop-linux-containers.md`](third_party/ContainerHub/docs/rancher-desktop-linux-containers.md).
 
 ```pwsh
 $env:MSYS_NO_PATHCONV=1; $env:MSYS2_ARG_CONV_EXCL='*'
+$image = bash third_party/ContainerHub/linux/scripts/ci-image-ref.sh
 rdctl shell nerdctl --namespace default run --rm --user root `
   -v kata-cargo-cache:/cargo-cache `
   -v /mnt/d/path/to/repo:/workspace -w /workspace `
-  ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross `
+  $image `
   bash -lc 'export CARGO_HOME=/cargo-cache; bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh'
 ```
 
@@ -449,6 +456,28 @@ cargo run --features gui_unix -- gui
 cargo doc --open
 ```
 ## Updates
+
+### Dependency upgrades: Renovate as a local CLI
+
+What is behind — the submodule gitlink and the workspace crates — is answered by
+Renovate run locally, not by a bot. Run it from WSL; it bootstraps a pinned,
+checksum-verified Node and Renovate on first use.
+
+```bash
+bash scripts/linux/renovate-local.sh                    # report (default: git-submodules)
+bash scripts/linux/renovate-local.sh --managers cargo   # the workspace crates
+bash scripts/linux/renovate-local.sh --apply --dry-run  # the plan
+bash scripts/linux/renovate-local.sh --apply            # move the gitlink
+```
+
+The Renovate GitHub App is installed on no repo in this family and will not be,
+so this wrapper is the only thing that ever reads `.github/renovate.json`. It is
+not a gate: no workflow runs it and it blocks no commit. `--apply` moves
+**gitlinks only** — the crates stay a `cargo upgrade` job — and it stages and
+commits nothing. Details in the script header and in
+[`third_party/ContainerHub/docs/dependency-updates.md`](third_party/ContainerHub/docs/dependency-updates.md).
+
+### Installed cargo binaries
 
 How to update all installed packages:
 

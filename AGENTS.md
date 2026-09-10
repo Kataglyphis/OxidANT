@@ -35,6 +35,7 @@ The entries this repo reaches for most:
 | How do I run Linux containers on Windows? | `docs/rancher-desktop-linux-containers.md` |
 | Which image, which tag, which engine? | `docs/adopting-in-a-new-project.md` |
 | Why did my lane not run? | `docs/ci-build-triggers.md` |
+| How do I upgrade a dependency, and what will `--apply` refuse to move? | `docs/dependency-updates.md` |
 
 When something in this file contradicts one of those, **the submodule wins**.
 That has happened twice, both times because a procedure was retyped here instead
@@ -125,7 +126,18 @@ The two `BINARY` variables still mean different things. In the **Windows** workf
 
 ## Build & test in the Stevedore Windows container
 
-Driver: `scripts\windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`Build-RustAll.ps1`, `Test-RustAll.ps1`) in `ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
+Driver: `scripts\windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`Build-RustAll.ps1`, `Test-RustAll.ps1`) in the family Windows CI image, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
+
+**No image reference is written in this repository, and that includes this
+file.** The driver's `-Image` parameter defaults to empty and is filled in by
+ContainerHub's `Get-CiImageReference -Windows`, which composes
+`IMAGE_REGISTRY_PREFIX` + `CI_IMAGE_WINDOWS_TAG` from the submodule's
+`linux/scripts/01-core/versions.env` — the fleet's single owner of both CI
+refs, so a tag bump lands in one file in one repo and arrives here with no
+edit. Pass `-Image` to override for a one-off. Prose is not exempt: a
+reference typed into a table or a README goes stale exactly like one typed into
+code, and `verify_ci_image_refs.py` check D fails a build on a copy in any
+tracked `*.sh` / `*.ps1` / `*.psm1` or workflow YAML.
 
 Mounting the repo — not a copy of it — is the default, ReFS Dev Drive or not.
 It also means `third_party/` is present inside the container, so anything
@@ -203,9 +215,18 @@ Two workflows, both building inside ContainerHub images rather than on the runne
 
 | Lane | Workflow | Runs when | Image |
 | --- | --- | --- | --- |
-| Linux x86_64 | `rust_ubuntu26_04.yml` | every push/PR to `main`/`develop` | `ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross` |
+| Linux x86_64 | `rust_ubuntu26_04.yml` | every push/PR to `main`/`develop` | family Linux CI image, inherited |
 | Linux arm64 | same | opt-in: `[build-arm]` in the HEAD commit message, or `workflow_dispatch` | same |
-| Windows | `rust_windows2025.yml` | opt-in: `[build-win]` in the HEAD commit message, or `workflow_dispatch` | `…:winamd64` |
+| Windows | `rust_windows2025.yml` | opt-in: `[build-win]` in the HEAD commit message, or `workflow_dispatch` | family Windows CI image, inherited |
+
+"Inherited" is literal: **neither workflow names an image.** Both used to open
+with a `CONTAINER_IMAGE:` env entry holding the full reference and hand it to
+every container step; that was a copy of ContainerHub's `versions.env` value
+that a fleet-wide tag bump would leave behind. Every step now omits the `image:`
+input and takes the container actions' default, which
+`verify_ci_image_refs.py` grades against `versions.env` on ContainerHub's own
+build (check A) — and check D fails this repo's lint gate if the reference is
+re-typed into a workflow, a script, or a comment.
 
 **A green tick without the opt-in marker says nothing about that lane** — the workflow reports `skipped`, which the badge renders the same as passing.
 
@@ -223,6 +244,42 @@ bash third_party/ContainerHub/linux/scripts/lint-workflows.sh .
 ```
 
 The trailing `.` is load-bearing: without it the script lints ContainerHub's own workflows instead of this repo's, and reports green either way.
+
+## Dependency upgrades
+
+Renovate, run as a **local CLI**. Both lanes above build inside images the
+`third_party/ContainerHub` pin decides, so that gitlink drifting is a silent
+change to every gate — and nothing watched it before this wrapper existed.
+
+```bash
+bash scripts/linux/renovate-local.sh                    # report (default: git-submodules)
+bash scripts/linux/renovate-local.sh --managers cargo   # the workspace crates
+bash scripts/linux/renovate-local.sh --apply --dry-run  # the plan
+bash scripts/linux/renovate-local.sh --apply            # move the gitlink
+```
+
+Run it from **WSL** — the wrapper bootstraps a pinned Node and there is none on
+the Windows side. Nothing runs it for you: **the Renovate GitHub App is
+installed on no repo in this family and will not be**, so this CLI is the only
+thing that ever reads `.github/renovate.json`. No workflow calls it and it
+blocks no commit.
+
+`--apply` moves **gitlinks only**, and only for submodules that declare a
+`branch =`. Here that is the one entry in `.gitmodules` — measured on
+2026-09-09, the default report was a single row, `third_party/ContainerHub
+fb7d673dd383 → 6ad5d8802e78`, in about four seconds. Cargo is **report-only**:
+`--managers cargo` returned 21 rows the same day, and exactly one of them
+(`flutter_rust_bridge =2.12.0 → =2.13.0`) is a manifest edit. The rest print the
+same string twice (`wgpu 30 30`) because the declared range already covers the
+new release — a `cargo update`, not a `Cargo.toml` change. Editing manifests is
+still `cargo upgrade` and Dependabot's PRs; `.github/dependabot.yml` stays.
+
+Managers that reach `api.github.com` answer short without a token and say so.
+The variable that fixes that under `--platform=local` is `GITHUB_COM_TOKEN`, not
+`RENOVATE_TOKEN`: `GITHUB_COM_TOKEN="$(gh auth token)" bash scripts/linux/renovate-local.sh --managers cargo`.
+
+The script header covers the rest; the family rationale is
+[`third_party/ContainerHub/docs/dependency-updates.md`](third_party/ContainerHub/docs/dependency-updates.md).
 
 ## Verifying locally on a Windows box (no MSVC required)
 

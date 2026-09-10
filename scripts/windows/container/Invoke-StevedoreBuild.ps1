@@ -44,7 +44,14 @@
 #>
 param(
     [string]$Docker = '',
-    [string]$Image = 'ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64',
+    # Empty by default, and the family Windows image is NOT spelled out here.
+    # It used to be, which made this file one more copy of a value ContainerHub
+    # already owns (versions.env's IMAGE_REGISTRY_PREFIX + CI_IMAGE_WINDOWS_TAG)
+    # and left it behind on every fleet-wide tag bump. The submodule's
+    # Get-CiImageReference composes it; a param default cannot call it because
+    # defaults are evaluated before the Import-Module below runs, so the
+    # resolution happens right after that import instead.
+    [string]$Image = '',
     # Scratch root for the in-container scripts and their logs. Small, and on a
     # non-Dev-Drive volume because it is written to constantly.
     [string]$StagingDir = (Join-Path $env:LOCALAPPDATA 'Temp\kataglyphis-rust-container'),
@@ -75,6 +82,20 @@ if (-not (Test-Path $reuseModule)) {
     throw "Required module not found: $reuseModule (run: git submodule update --init --recursive)"
 }
 Import-Module $reuseModule -Force
+
+# The image reference has exactly one owner in the fleet, ContainerHub's
+# versions.env, and exactly one PowerShell way to ask for it. Get-CiImageReference
+# lives in a DIFFERENT module than Resolve-DockerExe above (Reuse.psm1 does not
+# re-export it), hence the second import. It THROWS on a missing key rather than
+# returning an empty string - an empty image reference reaches `docker run` as
+# "run the next argument as an image" and fails a long way from the cause.
+$imageModule = Join-Path $containerHubModules 'WindowsContainerImage.Common.psm1'
+if (-not (Test-Path $imageModule)) {
+    throw "Required module not found: $imageModule (run: git submodule update --init --recursive)"
+}
+Import-Module $imageModule -Force
+if ([string]::IsNullOrWhiteSpace($Image)) { $Image = Get-CiImageReference -Windows }
+Write-Host "Using image: $Image"
 
 # Resolve-DockerExe checks the same candidates this script used to hard-code
 # ($env:DOCKER_EXE, both Stevedore locations, then PATH) and throws with an
