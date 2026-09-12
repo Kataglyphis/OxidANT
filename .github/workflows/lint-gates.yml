@@ -5,14 +5,14 @@ name: Lint gates - shell, workflows, secrets
 #
 #   bash scripts/linux/run-lint-gates.sh
 #
-# ContainerHub's linux/scripts/run-lint-gates.sh owns the gates (shellcheck,
+# ANTfrastructure's linux/scripts/run-lint-gates.sh owns the gates (shellcheck,
 # actionlint + verify_ci_image_refs.py, gitleaks, and ruff), their pinned
 # bootstraps -- the first three also SHA256-verified, while ruff is version-pinned
 # and fetched via uvx -- the git-ls-files scope construction, the empty-scope
 # guards, the run-them-all-then-fail-once accumulator and the secret gate's
 # self-test. This repo's wrapper only passes the consumer root, which upstream
-# refuses to infer - its own half lives inside third_party/ContainerHub, so a
-# self-derived root would grade ContainerHub's tree and report green over the
+# refuses to infer - its own half lives inside third_party/ANTfrastructure, so a
+# self-derived root would grade ANTfrastructure's tree and report green over the
 # wrong repository.
 #
 # BEFORE THIS FILE OxidANT RAN NO LINT GATE OF ANY KIND. 4 tracked *.sh and 2
@@ -30,7 +30,7 @@ name: Lint gates - shell, workflows, secrets
 # justified allowlist entry in a .gitleaks.toml, never a softening of this step.
 #
 # NO CONTAINER IMAGE IS NAMED HERE, and that is correct: the gate binaries are
-# bootstrapped from ContainerHub's own versions.env at pinned, SHA-verified
+# bootstrapped from ANTfrastructure's own versions.env at pinned, SHA-verified
 # versions, so the gate does not depend on what a base image happens to ship.
 
 on:
@@ -50,7 +50,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      # submodules: true, NOT recursive. third_party/ContainerHub is where every
+      # submodules: true, NOT recursive. third_party/ANTfrastructure is where every
       # gate, every pin and every SHA in this lane comes from, and it is a
       # top-level submodule - but its own chain (DocumANTation -> md2pdfLib ->
       # latex/*) is minutes of clone that nothing here reads, and nothing below
