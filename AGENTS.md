@@ -13,16 +13,16 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands; `stats --path <file>`). It was renamed from `oxidant` on 2026-08-07 — see the pdb note below.
 - `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
-- `third_party/ContainerHub` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
+- `third_party/ANTfrastructure` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
 
-## ContainerHub is the ground truth
+## ANTfrastructure is the ground truth
 
 Anything to do with containers, Dockerfiles, CI plumbing or PowerShell belongs to the submodule. **Search it before writing a helper.**
 
 **Do not re-derive host knowledge here — read it there.** Everything about
 Stevedore, Rancher Desktop, wcifs/bindFlt and the container hosts is already
 written down, in more depth than this file should carry. Start at
-[`third_party/ContainerHub/docs/INDEX.md`](third_party/ContainerHub/docs/INDEX.md)
+[`third_party/ANTfrastructure/docs/INDEX.md`](third_party/ANTfrastructure/docs/INDEX.md)
 — it maps topic → owning document, so one hop survives upstream reorganisation.
 
 The entries this repo reaches for most:
@@ -52,30 +52,30 @@ Read `docs/rancher-desktop-linux-containers.md` first. The essentials as they ap
 Two consumer-specific traps, both hit on 2026-08-07:
 
 - **A CRLF checkout breaks it before anything runs.** The scripts are executed by bash inside the container; a `\r` makes it fail with `set: pipefail\r: invalid option name`, which names neither the file nor line endings. `.gitattributes` now pins `*.sh` to LF in both repos, but git does not rewrite an existing checkout: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`
-- **The image's Rust may be older than its own pin.** See "Known gaps" — `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ContainerHub; check `rustc --version` in the container if a build fails on an MSRV floor. Everything below was written locally first and later found to already exist there — usually in a better form, twice with a bug the local copy did not have:
+- **The image's Rust may be older than its own pin.** See "Known gaps" — `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ANTfrastructure; check `rustc --version` in the container if a build fails on an MSRV floor. Everything below was written locally first and later found to already exist there — usually in a better form, twice with a bug the local copy did not have:
 
-All paths below are relative to `third_party/ContainerHub/`.
+All paths below are relative to `third_party/ANTfrastructure/`.
 
 | Need | Use | Defined in | Not |
 | --- | --- | --- | --- |
-| `docker.exe` discovery (Stevedore) | `Resolve-DockerExe` | [`windows/scripts/modules/WindowsContainerBuild.Reuse.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsContainerBuild.Reuse.psm1) | a hand-rolled candidate list |
+| `docker.exe` discovery (Stevedore) | `Resolve-DockerExe` | [`windows/scripts/modules/WindowsContainerBuild.Reuse.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsContainerBuild.Reuse.psm1) | a hand-rolled candidate list |
 | `--isolation process` and friends | `Get-ContainerIsolationArgs` | same file | inline flags |
 | Container teardown | `Remove-BuildContainerSafe` | same file | `docker rm -f` (misses the wcifs teardown lock) |
 | Bind-mount probe, artifact delivery | `Test-ContainerBindMount`, `Test-BuildArtifactsDelivered` | same file | assuming a green build delivered something |
-| SDK tools (makeappx, signtool) | `Resolve-WindowsSdkToolPath` | [`windows/scripts/modules/WindowsMsix.Common.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsMsix.Common.psm1) | `Get-ChildItem -Recurse` over the Kits tree |
+| SDK tools (makeappx, signtool) | `Resolve-WindowsSdkToolPath` | [`windows/scripts/modules/WindowsMsix.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsMsix.Common.psm1) | `Get-ChildItem -Recurse` over the Kits tree |
 | MSIX manifest tokens | `Expand-XmlTemplateTokens` | same file | `-replace` — see below |
 | XML escaping, placeholder PNGs | `ConvertTo-XmlEscapedText`, `New-TransparentPng` | same file | local redefinitions |
-| Config access | `Get-OrDefault`, `Get-ConfigValue` | [`windows/scripts/modules/WindowsConfig.Common.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsConfig.Common.psm1) | copies |
-| Build logging and steps | `New-BuildContext`, `Invoke-BuildStep`, `Invoke-BuildExternal`, `Write-BuildLog*` | [`windows/scripts/modules/WindowsBuild.Common.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsBuild.Common.psm1) | ad-hoc `Write-Host` wrappers |
-| Tool guards, version normalising (pwsh) | `Assert-Command`, `ConvertTo-NormalizedVersion` | [`windows/scripts/modules/WindowsScripts.Shared.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsScripts.Shared.psm1) | a second implementation |
-| Logging inside a container | `Start-ContainerLog`, `Write-ContainerLog`, `Invoke-ContainerLoggedCommand` | [`windows/scripts/modules/WindowsContainerLog.Common.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsContainerLog.Common.psm1) | a `Say`/`Run-Logged` pair per script |
-| CI version stamping (bash) | `version_util.sh --github-env` / `--resolve-ci` / `--normalize` | [`linux/scripts/02-toolchain/rust/version_util.sh`](third_party/ContainerHub/linux/scripts/02-toolchain/rust/version_util.sh) | re-reading VERSION.txt yourself |
-| In-container cargo steps | `cargo_debug.sh`, `cargo_release.sh`, `cargo_test.sh`, `cargo_coverage.sh`, … | [`linux/scripts/02-toolchain/rust/`](third_party/ContainerHub/linux/scripts/02-toolchain/rust) | inline cargo invocations |
-| Linux packaging (tar/deb/AppImage/Flatpak) | `package_archive.sh` | [`linux/scripts/06-packaging/package_archive.sh`](third_party/ContainerHub/linux/scripts/06-packaging/package_archive.sh) | bespoke packaging |
-| CI job plumbing | `prepare-linux-ci-host`, `run-in-linux-container`, `run-in-windows-container`, `clone-into-short-path`, `cleanup-disk-space`, `assert-docker-disk-space` | [`.github/actions/`](third_party/ContainerHub/.github/actions) | hand-written `docker run` blocks |
-| Linting workflows locally | `lint-workflows.sh <root>` (pinned, SHA-verified actionlint) | [`linux/scripts/lint-workflows.sh`](third_party/ContainerHub/linux/scripts/lint-workflows.sh) | bootstrapping your own |
-| Agentic loop | config + runner templates | [`shared/agentic-loop/templates/`](third_party/ContainerHub/shared/agentic-loop/templates) | writing one from scratch |
-| Bash helpers (logging, retry, SHA'd downloads, parallelism) | `logging.sh`, `downloads.sh`, `parallelism.sh`, … | [`linux/scripts/01-core/`](third_party/ContainerHub/linux/scripts/01-core) | new implementations |
+| Config access | `Get-OrDefault`, `Get-ConfigValue` | [`windows/scripts/modules/WindowsConfig.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsConfig.Common.psm1) | copies |
+| Build logging and steps | `New-BuildContext`, `Invoke-BuildStep`, `Invoke-BuildExternal`, `Write-BuildLog*` | [`windows/scripts/modules/WindowsBuild.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsBuild.Common.psm1) | ad-hoc `Write-Host` wrappers |
+| Tool guards, version normalising (pwsh) | `Assert-Command`, `ConvertTo-NormalizedVersion` | [`windows/scripts/modules/WindowsScripts.Shared.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsScripts.Shared.psm1) | a second implementation |
+| Logging inside a container | `Start-ContainerLog`, `Write-ContainerLog`, `Invoke-ContainerLoggedCommand` | [`windows/scripts/modules/WindowsContainerLog.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsContainerLog.Common.psm1) | a `Say`/`Run-Logged` pair per script |
+| CI version stamping (bash) | `version_util.sh --github-env` / `--resolve-ci` / `--normalize` | [`linux/scripts/02-toolchain/rust/version_util.sh`](third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/version_util.sh) | re-reading VERSION.txt yourself |
+| In-container cargo steps | `cargo_debug.sh`, `cargo_release.sh`, `cargo_test.sh`, `cargo_coverage.sh`, … | [`linux/scripts/02-toolchain/rust/`](third_party/ANTfrastructure/linux/scripts/02-toolchain/rust) | inline cargo invocations |
+| Linux packaging (tar/deb/AppImage/Flatpak) | `package_archive.sh` | [`linux/scripts/06-packaging/package_archive.sh`](third_party/ANTfrastructure/linux/scripts/06-packaging/package_archive.sh) | bespoke packaging |
+| CI job plumbing | `prepare-linux-ci-host`, `run-in-linux-container`, `run-in-windows-container`, `clone-into-short-path`, `cleanup-disk-space`, `assert-docker-disk-space` | [`.github/actions/`](third_party/ANTfrastructure/.github/actions) | hand-written `docker run` blocks |
+| Linting workflows locally | `lint-workflows.sh <root>` (pinned, SHA-verified actionlint) | [`linux/scripts/lint-workflows.sh`](third_party/ANTfrastructure/linux/scripts/lint-workflows.sh) | bootstrapping your own |
+| Agentic loop | config + runner templates | [`shared/agentic-loop/templates/`](third_party/ANTfrastructure/shared/agentic-loop/templates) | writing one from scratch |
+| Bash helpers (logging, retry, SHA'd downloads, parallelism) | `logging.sh`, `downloads.sh`, `parallelism.sh`, … | [`linux/scripts/01-core/`](third_party/ANTfrastructure/linux/scripts/01-core) | new implementations |
 
 **One caveat about `cargo_fmt_clippy.sh`**: it is the one script in that rust directory this repo must *not* call — its first line is `rustup component add rustfmt`, and neither image can satisfy that offline. Call `cargo fmt` / `cargo clippy` directly. See the CI section.
 
@@ -130,7 +130,7 @@ Driver: `scripts\windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to al
 
 **No image reference is written in this repository, and that includes this
 file.** The driver's `-Image` parameter defaults to empty and is filled in by
-ContainerHub's `Get-CiImageReference -Windows`, which composes
+ANTfrastructure's `Get-CiImageReference -Windows`, which composes
 `IMAGE_REGISTRY_PREFIX` + `CI_IMAGE_WINDOWS_TAG` from the submodule's
 `linux/scripts/01-core/versions.env` — the fleet's single owner of both CI
 refs, so a tag bump lands in one file in one repo and arrives here with no
@@ -141,7 +141,7 @@ tracked `*.sh` / `*.ps1` / `*.psm1` or workflow YAML.
 
 Mounting the repo — not a copy of it — is the default, ReFS Dev Drive or not.
 It also means `third_party/` is present inside the container, so anything
-importing ContainerHub modules (e.g. `Build-Windows.ps1`) works without special
+importing ANTfrastructure modules (e.g. `Build-Windows.ps1`) works without special
 staging.
 
 **The host-side mechanics are upstream's, not this repo's.** Why writes through
@@ -149,9 +149,9 @@ a bind mount fail while reads succeed, how to allow the Dev Drive filters, what
 `--isolation process` does to the CPU count, the wcifs teardown lock, the
 transient hcsshim client-pipe drops, and why the Windows lane is Stevedore's
 `docker.exe` rather than nerdctl: all in
-[`docs/windows-builds.md`](third_party/ContainerHub/docs/windows-builds.md)
+[`docs/windows-builds.md`](third_party/ANTfrastructure/docs/windows-builds.md)
 and
-[`docs/windows-container-build-performance.md`](third_party/ContainerHub/docs/windows-container-build-performance.md).
+[`docs/windows-container-build-performance.md`](third_party/ANTfrastructure/docs/windows-container-build-performance.md).
 Read those before changing the driver. **Do not copy their commands back into
 this file** — the last copy of the `fsutil devdrv` line that lived here was
 malformed and stayed that way through several edits.
@@ -211,7 +211,7 @@ What is specific to *this* repo, because cargo is what makes it bite:
 
 ## Continuous integration
 
-Two workflows, both building inside ContainerHub images rather than on the runner:
+Two workflows, both building inside ANTfrastructure images rather than on the runner:
 
 | Lane | Workflow | Runs when | Image |
 | --- | --- | --- | --- |
@@ -221,10 +221,10 @@ Two workflows, both building inside ContainerHub images rather than on the runne
 
 "Inherited" is literal: **neither workflow names an image.** Both used to open
 with a `CONTAINER_IMAGE:` env entry holding the full reference and hand it to
-every container step; that was a copy of ContainerHub's `versions.env` value
+every container step; that was a copy of ANTfrastructure's `versions.env` value
 that a fleet-wide tag bump would leave behind. Every step now omits the `image:`
 input and takes the container actions' default, which
-`verify_ci_image_refs.py` grades against `versions.env` on ContainerHub's own
+`verify_ci_image_refs.py` grades against `versions.env` on ANTfrastructure's own
 build (check A) — and check D fails this repo's lint gate if the reference is
 re-typed into a workflow, a script, or a comment.
 
@@ -232,23 +232,23 @@ re-typed into a workflow, a script, or a comment.
 
 Facts that cost real debugging time:
 
-- **The ARM lane cannot currently go green.** `:latest-cross` resolves to an amd64-only manifest list, so the pull dies with `no matching manifest for linux/arm64/v8` before any build step. Repair is a ContainerHub-side job (`build-runtime-manifest.sh --repair --push-manifest`); until then, leave `[build-arm]` off.
-- **Never call ContainerHub's `cargo_fmt_clippy.sh` from a workflow.** Its first line is `rustup component add rustfmt`, and the runtime image deliberately ships **no rustup** (rustfmt/clippy are baked in at image-build time) — so it exits 127 before cargo ever runs. Invoke `cargo fmt`/`cargo clippy` directly. This was masked by `continue-on-error: true` for months and let an entire crate reach `main` unformatted and with 12 clippy errors.
+- **The ARM lane cannot currently go green.** `:latest-cross` resolves to an amd64-only manifest list, so the pull dies with `no matching manifest for linux/arm64/v8` before any build step. Repair is a ANTfrastructure-side job (`build-runtime-manifest.sh --repair --push-manifest`); until then, leave `[build-arm]` off.
+- **Never call ANTfrastructure's `cargo_fmt_clippy.sh` from a workflow.** Its first line is `rustup component add rustfmt`, and the runtime image deliberately ships **no rustup** (rustfmt/clippy are baked in at image-build time) — so it exits 127 before cargo ever runs. Invoke `cargo fmt`/`cargo clippy` directly. This was masked by `continue-on-error: true` for months and let an entire crate reach `main` unformatted and with 12 clippy errors.
 - **The container runs as uid 1001, not root.** `apt-get` fails with `Permission denied`, so a workflow step cannot install system packages — whatever the image lacks, it lacks. And `CARGO_HOME=/usr/local/cargo` is root-owned, so every writing cargo step needs `-e CARGO_HOME=/tmp/cargo-home`.
 - **The lint gate runs default features on purpose.** `--all-features` would need GTK4 headers and the ORT libs, which the image has not got and uid 1001 cannot install.
 
 Lint the workflows locally with the submodule's pinned, SHA-verified actionlint (works from Git Bash on Windows):
 
 ```bash
-bash third_party/ContainerHub/linux/scripts/lint-workflows.sh .
+bash third_party/ANTfrastructure/linux/scripts/lint-workflows.sh .
 ```
 
-The trailing `.` is load-bearing: without it the script lints ContainerHub's own workflows instead of this repo's, and reports green either way.
+The trailing `.` is load-bearing: without it the script lints ANTfrastructure's own workflows instead of this repo's, and reports green either way.
 
 ## Dependency upgrades
 
 Renovate, run as a **local CLI**. Both lanes above build inside images the
-`third_party/ContainerHub` pin decides, so that gitlink drifting is a silent
+`third_party/ANTfrastructure` pin decides, so that gitlink drifting is a silent
 change to every gate — and nothing watched it before this wrapper existed.
 
 ```bash
@@ -266,7 +266,7 @@ blocks no commit.
 
 `--apply` moves **gitlinks only**, and only for submodules that declare a
 `branch =`. Here that is the one entry in `.gitmodules` — measured on
-2026-09-09, the default report was a single row, `third_party/ContainerHub
+2026-09-09, the default report was a single row, `third_party/ANTfrastructure
 fb7d673dd383 → 6ad5d8802e78`, in about four seconds. Cargo is **report-only**:
 `--managers cargo` returned 21 rows the same day, and exactly one of them
 (`flutter_rust_bridge =2.12.0 → =2.13.0`) is a manifest edit. The rest print the
@@ -279,7 +279,7 @@ The variable that fixes that under `--platform=local` is `GITHUB_COM_TOKEN`, not
 `RENOVATE_TOKEN`: `GITHUB_COM_TOKEN="$(gh auth token)" bash scripts/linux/renovate-local.sh --managers cargo`.
 
 The script header covers the rest; the family rationale is
-[`third_party/ContainerHub/docs/dependency-updates.md`](third_party/ContainerHub/docs/dependency-updates.md).
+[`third_party/ANTfrastructure/docs/dependency-updates.md`](third_party/ANTfrastructure/docs/dependency-updates.md).
 
 ## Verifying locally on a Windows box (no MSVC required)
 
@@ -317,7 +317,7 @@ Default features are empty, so `cargo build` needs nothing. Each optional featur
 | `gstreamer` (crates/media) | GStreamer dev files | **Yes** — source-built into `/opt/gstreamer`, on `PKG_CONFIG_PATH`. Do *not* install the distro `libgstreamer*-dev`: the image purges those on purpose. |
 | `gui_linux` | GStreamer + wgpu (pure Rust) | **Yes** — despite the name it does not use GTK; it is the wgpu path. |
 | `gui_unix` | `libgtk-4-dev` | **No, by design.** The foreign-arch GTK dev chain pulls target-side Python and breaks cross builds on `python3-minimal`'s postinst. This feature cannot be built against `latest-cross`. |
-| `onnxruntime`, `burn_demos` | `libssl-dev` (via `openssl-sys`) | **Yes** — via ContainerHub's `package-lists.sh`. |
+| `onnxruntime`, `burn_demos` | `libssl-dev` (via `openssl-sys`) | **Yes** — via ANTfrastructure's `package-lists.sh`. |
 
 On a plain Ubuntu box (e.g. the WSL recipe above) you *do* need the distro packages, because nothing there provides the source-built stack. That difference is exactly why "install the -dev package" is the wrong instinct when the image is involved.
 
@@ -341,13 +341,13 @@ Verified 2026-08-07 by running `Build-Windows.ps1 -SkipTests` in `:winamd64`:
 - **MSIX works.** `Kataglyphis.RustProjectTemplate_2.3.4.0_x64.msix`, 51.69 MB, manifest with every token substituted. `makeappx.exe` resolves via `Resolve-WindowsSdkToolPath` to `Windows Kits\10\bin\10.0.26100.0\x64\`. The identity became `Kataglyphis.OxidANT` on 2026-09-05, so a build today writes `Kataglyphis.OxidANT_<VERSION>_x64.msix`; the old filename stands here because it is what that run actually produced. Windows treats the two identities as different apps, so an installation predating that date is not upgraded — it has to be uninstalled first, see the MSIX section of the README.
 - **MSI works, but only since the WiX v4 migration** (2026-08-07). It had never produced a file. Two independent faults, both masked by the step being optional:
   1. `cargo wix -p kataglyphis_cli` looks for WXS files inside the package it was pointed at (`crates/cli/wix/`); this repo keeps its single WiX source at the workspace root. `Msi.WxsFile` had been sitting unread in the config the whole time.
-  2. Even with the path fixed, **cargo-wix cannot drive this image.** 0.3.9 is its newest release and it shells out to WiX v3's `candle.exe`/`light.exe`. ContainerHub installs **WiX 4.0.6** as a dotnet tool — a single `wix.exe`, no candle — so it failed with *"The compiler application ('candle') does not exist at the 'C:\WiX' path"*.
+  2. Even with the path fixed, **cargo-wix cannot drive this image.** 0.3.9 is its newest release and it shells out to WiX v3's `candle.exe`/`light.exe`. ANTfrastructure installs **WiX 4.0.6** as a dotnet tool — a single `wix.exe`, no candle — so it failed with *"The compiler application ('candle') does not exist at the 'C:\WiX' path"*.
 
   `Build-Windows.ps1` now calls `wix.exe build` directly (resolved from `$env:WIX`, then PATH) and `wix/main.wxs` is **WiX v4 schema**: `<Package>` instead of `<Product>` + inner `<Package>`, `<SummaryInformation>`, `<StandardDirectory>` instead of the `TARGETDIR` nesting, `Bitness='always64'` for `Win64='yes'`, `AllowAbsent` for `Absent`, and `<ui:WixUI>` for `<UIRef>`. `WixUI_FeatureTree` needs `-ext WixToolset.UI.wixext`, which the image already ships (4.0.4). Paths that move with the build — the binary follows `CARGO_TARGET_DIR` — go in as `-d Version= / ExeSource= / LicenseRtf=` preprocessor variables, so the WXS never assumes a `target\release` beside the workspace root.
 
   **If you touch this: cargo-wix is not an option again unless it gains WiX 4 support.** Check its releases before reintroducing it.
 
-**Packaging and security steps are now `Invoke-BuildStep -Critical`, not `Invoke-BuildOptional`.** That matters because ContainerHub's `Invoke-BuildOptional` is `try { & $Script } catch { Write-BuildLogWarning }` and **never registers the step with the build context** — so it cannot appear in the summary at all. The pre-fix run reported **"7 steps, 7 succeeded, 0 failed (100% success rate)"** while MSI *and* the license check had failed. If you see a suspiciously perfect summary, that percentage covers only the `Invoke-BuildStep` steps; read the WARNING lines.
+**Packaging and security steps are now `Invoke-BuildStep -Critical`, not `Invoke-BuildOptional`.** That matters because ANTfrastructure's `Invoke-BuildOptional` is `try { & $Script } catch { Write-BuildLogWarning }` and **never registers the step with the build context** — so it cannot appear in the summary at all. The pre-fix run reported **"7 steps, 7 succeeded, 0 failed (100% success rate)"** while MSI *and* the license check had failed. If you see a suspiciously perfect summary, that percentage covers only the `Invoke-BuildStep` steps; read the WARNING lines.
 
 `cargo-deny licenses` also failed on that run (advisories, bans and sources passed) and was equally invisible. Fixed by allowing `BSL-1.0` in `deny.toml` — xxhash-rust via cubecl-common → burn; it was the only rejection.
 
@@ -419,5 +419,5 @@ Re-check when zune-jpeg publishes past 0.5.15.
 
 ## Conventions
 
-- Version pins/single sources of truth follow the ContainerHub ecosystem; don't duplicate what the submodule documents — link to it.
+- Version pins/single sources of truth follow the ANTfrastructure ecosystem; don't duplicate what the submodule documents — link to it.
 - Never commit build outputs: `/target`, root `/debug`, `/profile`, `/release` are gitignored.

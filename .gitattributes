@@ -4,7 +4,7 @@
 .github/workflows/*.yml text eol=lf
 
 # Shell scripts must stay LF in the working tree on EVERY platform, mirroring
-# the rule ContainerHub already carries. They are run by bash inside Linux
+# the rule ANTfrastructure already carries. They are run by bash inside Linux
 # containers, and on a Windows host this repo is bind-mounted into one - the
 # documented Rancher Desktop workflow. Without this, core.autocrlf=true gives
 # them CRLF and bash dies on the trailing \r with errors that name the wrong

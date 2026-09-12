@@ -4,8 +4,8 @@
   Similar pattern to BeschleunigerBallett's Build-Windows.ps1
 
 .DESCRIPTION
-  - Uses ContainerHub's WindowsBuild.Common.psm1 for structured logging.
-  - Runs cargo build, test, lint via the ContainerHub Rust build script.
+  - Uses ANTfrastructure's WindowsBuild.Common.psm1 for structured logging.
+  - Runs cargo build, test, lint via the ANTfrastructure Rust build script.
   - Packages MSIX using local config and template.
 #>
 
@@ -29,22 +29,22 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 # Get-OrDefault and Get-ConfigValue used to be defined here, byte-identical to
-# ContainerHub's WindowsConfig.Common.psm1. They now come from that module -
+# ANTfrastructure's WindowsConfig.Common.psm1. They now come from that module -
 # see the import block below.
 
-# Assert-Command comes from ContainerHub's WindowsScripts.Shared.psm1, and SDK
+# Assert-Command comes from ANTfrastructure's WindowsScripts.Shared.psm1, and SDK
 # tool lookup from WindowsMsix.Common's Resolve-WindowsSdkToolPath (both
 # imported below). The Resolve-Executable that used to sit here recursed the
 # whole Windows Kits tree; the module version consults VsDevCmd's
 # WindowsSdkVerBinPath / WindowsSDKVersion first and scans newest-first.
 
-# Normalize-Version now comes from ContainerHub's WindowsScripts.Shared.psm1 as
+# Normalize-Version now comes from ANTfrastructure's WindowsScripts.Shared.psm1 as
 # ConvertTo-NormalizedVersion ("Normalize" is not an approved PowerShell verb,
 # and an unapproved one in a shared module warns on every import). It sits
 # beside the bash twin (version_util.sh --normalize) it has to agree with.
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-# One bootstrap resolves every module ContainerHub-first, with
+# One bootstrap resolves every module ANTfrastructure-first, with
 # scripts/windows/modules/ as the project-specific fallback. It replaces four
 # near-identical hard-coded import blocks; a module that moves upstream is now
 # picked up without editing this script, and a missing submodule reports the
@@ -163,7 +163,7 @@ try {
     # skip-on-failure made both gates decorative: each finished in ~0.1s and
     # reported success, so neither had run even once (measured 2026-08-07).
     # Call the components directly and let a failure BE a failure. If they are
-    # missing the image is wrong, not the code; ContainerHub now installs them
+    # missing the image is wrong, not the code; ANTfrastructure now installs them
     # with `-c rustfmt -c clippy` and asserts them at image-build time.
     Invoke-BuildStep -Context $context -StepName 'Format Check' -Critical -Script {
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('fmt', '--all', '--', '--check') | Out-Null
@@ -273,7 +273,7 @@ try {
 
       $logoPath = Join-Path $workspacePath 'images\logo.png'
       if (-not (Test-Path $logoPath)) {
-        $logoPath = Join-Path $workspacePath 'third_party\ContainerHub\images\logo.png'
+        $logoPath = Join-Path $workspacePath 'third_party\ANTfrastructure\images\logo.png'
       }
       if (Test-Path $logoPath) {
         Write-BuildLog -Context $context -Message "Copying logos from $logoPath"
@@ -348,7 +348,7 @@ try {
   # MSI packaging with WiX Toolset v4, driving wix.exe directly.
   #
   # NOT cargo-wix. 0.3.9 is its newest release and it shells out to WiX v3's
-  # candle.exe + light.exe, neither of which exists here: ContainerHub installs
+  # candle.exe + light.exe, neither of which exists here: ANTfrastructure installs
   # WiX 4.0.6 as a dotnet tool (a single wix.exe) in
   # windows/scripts/Install-ScoopTools.ps1 and points WIX=C:\WiX at it in
   # windows/Dockerfile.base. Every MSI run therefore died with
@@ -367,7 +367,7 @@ try {
         $wixExe = (Get-Command 'wix.exe' -ErrorAction SilentlyContinue).Source
       }
       if (-not $wixExe) {
-        throw "WiX v4 (wix.exe) not found. Looked under `$env:WIX ('$env:WIX') and on PATH. The container image installs it via ContainerHub's windows/scripts/Install-ScoopTools.ps1."
+        throw "WiX v4 (wix.exe) not found. Looked under `$env:WIX ('$env:WIX') and on PATH. The container image installs it via ANTfrastructure's windows/scripts/Install-ScoopTools.ps1."
       }
       Write-BuildLog -Context $context -Message "Using WiX: $wixExe"
 

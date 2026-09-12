@@ -22,7 +22,7 @@ concurrency:
 # NO CONTAINER_IMAGE HERE, DELIBERATELY. This workflow opened with a
 # `CONTAINER_IMAGE:` holding the full image reference and handed it to all
 # twelve container steps below. It called itself the "single source of truth"
-# for the build image and was the opposite: a COPY of a value ContainerHub
+# for the build image and was the opposite: a COPY of a value ANTfrastructure
 # already owns (versions.env's IMAGE_REGISTRY_PREFIX + CI_IMAGE_LINUX_TAG), so
 # a fleet-wide tag bump landed everywhere except here. The ref is not repeated
 # in this comment either - a literal in a comment rots the same way, and
@@ -30,7 +30,7 @@ concurrency:
 #
 # Both container actions declare that composed ref as their `image:` input
 # DEFAULT, so OMITTING the input is how a lane says "the family image"; check A
-# of that same gate fails ContainerHub's own build if a default and versions.env
+# of that same gate fails ANTfrastructure's own build if a default and versions.env
 # ever disagree. This is exactly the route the actions' input docs prescribe
 # ("SINGLE SOURCE OF TRUTH: omit this input").
 env:
@@ -38,19 +38,19 @@ env:
   # The image ships CARGO_HOME=/usr/local/cargo owned by root while the
   # container runs as uid 1001. Every cargo step that WRITES (registry cache,
   # `cargo install`, tarpaulin, rustdoc) dies with "Permission denied" unless
-  # CARGO_HOME points somewhere the uid owns. ContainerHub's cargo scripts
+  # CARGO_HOME points somewhere the uid owns. ANTfrastructure's cargo scripts
   # carry a guard for this, but setting it here covers the direct cargo
   # invocations below too - one place instead of six.
   CONTAINER_ENV: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always
 
 jobs:
-  # The ARM lane is opt-in per commit, matching the convention the ContainerHub
+  # The ARM lane is opt-in per commit, matching the convention the ANTfrastructure
   # ecosystem already uses for its expensive lanes (see that submodule's
   # `docs/ci-build-triggers.md`). Two reasons it cannot simply always run:
   #   - the family Linux image currently resolves to an amd64-only manifest
   #     list, so an arm64 runner's pull dies with "no matching manifest for
   #     linux/arm64/v8" before a single build step executes. Repairing the
-  #     manifest is a ContainerHub-side job (`build-runtime-manifest.sh
+  #     manifest is a ANTfrastructure-side job (`build-runtime-manifest.sh
   #     --repair --push-manifest`); until then the lane cannot be green, and a
   #     permanently-red lane trains everyone to ignore the badge.
   #   - Even once repaired, a second full 45-minute cross build on every push
@@ -109,7 +109,7 @@ jobs:
       # pull - four steps that used to be ~35 hand-maintained lines here, and
       # drifted from the sibling Windows lane. Now one shared action.
       - name: Prepare the CI host
-        uses: Kataglyphis/ContainerHub/.github/actions/prepare-linux-ci-host@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@main
         with:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GHCR_PAT }}
@@ -120,26 +120,26 @@ jobs:
         run: bash scripts/compute-version.sh
 
       - name: Debug build
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_debug.sh'
+            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_debug.sh'
 
       - name: Security checks (cargo audit + cargo deny)
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_security_checks.sh'
+            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_security_checks.sh'
 
       # This step used to be `continue-on-error: true` and had NEVER once run
       # to completion. It died with exit 127 on every single build:
-      #   - it called ContainerHub's `cargo_fmt_clippy.sh`, whose first line is
+      #   - it called ANTfrastructure's `cargo_fmt_clippy.sh`, whose first line is
       #     `rustup component add rustfmt` - but the runtime image deliberately
       #     ships no rustup (see that repo's install-rust.sh: rustfmt and
       #     clippy are baked in at image-build time and the runtime stage has
@@ -158,7 +158,7 @@ jobs:
       # container has and neither of which uid 1001 can apt-install. A lint
       # gate that cannot run is worse than a narrower one that does.
       - name: Check formatting and clippy
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
@@ -168,47 +168,47 @@ jobs:
             cargo clippy --workspace --all-targets --locked -- -D warnings'
 
       - name: Run unit, integration, and doc tests
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_test.sh'
+            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_test.sh'
 
       - name: Run coverage
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_coverage.sh'
+            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_coverage.sh'
 
       - name: Run benchmarks
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_bench.sh'
+            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_bench.sh'
 
       - name: 🛠️ Build release binary
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh'
+            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_release.sh'
 
       # --privileged is here so AppImage creation can reach FUSE. --device
       # /dev/fuse would be the narrower grant, but the AppImage tooling also
       # wants the mount capability; extract-and-run avoids FUSE entirely and
       # is the better long-term fix.
       - name: 📦 Create archive (tar)
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: >-
             --privileged --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -221,7 +221,7 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash third_party/ContainerHub/linux/scripts/06-packaging/package_archive.sh
+            bash third_party/ANTfrastructure/linux/scripts/06-packaging/package_archive.sh
             --binary "${BINARY}"
             --binary-file "${BINARY_FILE}"
             --binary-path "target/release/${BINARY_FILE}"
@@ -248,13 +248,13 @@ jobs:
 
       - name: Create docs
         if: matrix.docs
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_build_doc.sh'
+            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_build_doc.sh'
 
       - name: Fix permissions on generated docs
         if: matrix.docs
@@ -286,11 +286,11 @@ jobs:
   # Rust 1.97.1), so a failure here is an image problem, not a broken feature.
   # The image supplies what they need: GStreamer is source-built into
   # /opt/gstreamer and already on PKG_CONFIG_PATH, and libssl-dev arrives via
-  # ContainerHub's package-lists.sh. Do NOT "fix" a failure by apt-installing
+  # ANTfrastructure's package-lists.sh. Do NOT "fix" a failure by apt-installing
   # libgstreamer*-dev — the image purges the distro packages deliberately.
   #
   # `gui_unix` is deliberately ABSENT: it is the only feature needing
-  # libgtk-4-dev, which ContainerHub excludes on purpose because the
+  # libgtk-4-dev, which ANTfrastructure excludes on purpose because the
   # foreign-arch GTK dev chain pulls target-side Python and breaks cross builds
   # on python3-minimal's postinst. `gui_linux`, despite the name, is the wgpu
   # path and needs no GTK.
@@ -314,14 +314,14 @@ jobs:
           - burn_demos
     steps:
       - name: Prepare the CI host
-        uses: Kataglyphis/ContainerHub/.github/actions/prepare-linux-ci-host@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@main
         with:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GHCR_PAT }}
           fetch-depth: '1'
 
       - name: cargo check --features ${{ matrix.features }}
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: ${{ env.CONTAINER_ENV }}
           script: >-

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run-lint-gates.sh - this repository's shell + workflow + secret lint gates.
 #
-# THIN WRAPPER over ContainerHub linux/scripts/run-lint-gates.sh, which owns the
+# THIN WRAPPER over ANTfrastructure linux/scripts/run-lint-gates.sh, which owns the
 # gates themselves, their pinned and SHA-verified bootstraps, the git-ls-files
 # scope construction, the empty-list vacuity guards, the run-them-all-then-fail-
 # once accumulator and the secret gate's self-test (an empty tree must scan
@@ -23,8 +23,8 @@
 #   bash scripts/linux/run-lint-gates.sh   # the whole repo
 #
 # The consumer root is passed EXPLICITLY and is never inferred upstream: the
-# hub half of this gate lives inside third_party/ContainerHub, so a root derived
-# from its own location would grade ContainerHub's tree and report green over
+# hub half of this gate lives inside third_party/ANTfrastructure, so a root derived
+# from its own location would grade ANTfrastructure's tree and report green over
 # the wrong repository.
 #
 # Extra arguments are forwarded. The only one upstream takes is
@@ -33,7 +33,7 @@
 #
 #   bash scripts/linux/run-lint-gates.sh --exclude third_party --exclude logs
 #
-# That default is what this repo wants unqualified: third_party/ContainerHub is
+# That default is what this repo wants unqualified: third_party/ANTfrastructure is
 # a submodule, graded in its own repository at its own ratchet. Everything else
 # here - including resources/ and logs/ - is OxidANT's own and stays in scope.
 #
@@ -42,7 +42,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/containerhub.sh
-source "${SCRIPT_DIR}/lib/containerhub.sh"
+# shellcheck source=lib/antfrastructure.sh
+source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
-containerhub_exec linux/scripts/run-lint-gates.sh "${KATAGLYPHIS_REPO_ROOT}" "$@"
+antfrastructure_exec linux/scripts/run-lint-gates.sh "${KATAGLYPHIS_REPO_ROOT}" "$@"

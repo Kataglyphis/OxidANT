@@ -23,7 +23,7 @@ jobs:
         shell: pwsh
     # NO WINDOWS_CONTAINER_IMAGE HERE, DELIBERATELY. It held the full image
     # reference and fed all five container steps below - a COPY of a value
-    # ContainerHub already owns (versions.env's IMAGE_REGISTRY_PREFIX +
+    # ANTfrastructure already owns (versions.env's IMAGE_REGISTRY_PREFIX +
     # CI_IMAGE_WINDOWS_TAG), so a fleet-wide tag bump landed everywhere except
     # here. Not repeated in this comment either: a literal in a comment rots the
     # same way, and verify_ci_image_refs.py check D reads comments too.
@@ -49,11 +49,11 @@ jobs:
     steps:
       # Der komplette Prolog - long paths, Checkout ohne Submodule,
       # Kurzpfad-Klon, data-root auf D:, Disk-Cleanup, Registry-Login, Pull,
-      # Disk-Report - kommt aus ContainerHub. Er war hier ~50 Zeilen und in drei
+      # Disk-Report - kommt aus ANTfrastructure. Er war hier ~50 Zeilen und in drei
       # Schwester-Repos identisch.
       #
       # Der Kurzpfad-Klon bleibt Pflicht: die Kette OxidANT ->
-      # ContainerHub -> DocumANTation -> md2pdfLib -> latex/{smile,awesome-beamer}
+      # ANTfrastructure -> DocumANTation -> md2pdfLib -> latex/{smile,awesome-beamer}
       # reisst .git/modules/.../pack-*.keep ueber 260 Zeichen, und ein rekursiver
       # Checkout stirbt mit "Filename too long" bzw. "'$GIT_DIR' too big".
       #
@@ -63,7 +63,7 @@ jobs:
       # dann landet.
       - name: Prepare Windows container host
         id: prep
-        uses: Kataglyphis/ContainerHub/.github/actions/prepare-windows-container-host@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-windows-container-host@main
         with:
           registry-password: ${{ secrets.GHCR_PAT }}
           fetch-depth: 0
@@ -72,7 +72,7 @@ jobs:
 
       # working-directory is the short-path clone, not github.workspace: with a
       # short-path-target set, prepare-windows-container-host deliberately takes
-      # NO submodules in the runner checkout, so third_party/ContainerHub is an
+      # NO submodules in the runner checkout, so third_party/ANTfrastructure is an
       # empty directory there and this step died on its own submodule guard. The
       # `workspace` output exists for exactly this.
       - name: Compute version
@@ -83,7 +83,7 @@ jobs:
 
       # The four container steps below used to be hand-written `docker run`
       # blocks repeating --memory/--cpus/--mount/-w twelve times between them.
-      # ContainerHub's action carries those defaults (D:\ws -> C:\ws, 16g) and,
+      # ANTfrastructure's action carries those defaults (D:\ws -> C:\ws, 16g) and,
       # unlike the hand-rolled version, delivers the command and its arguments
       # through environment variables rather than interpolating them into a
       # shell line - so a value containing a quote or a `$` cannot escape into
@@ -91,7 +91,7 @@ jobs:
       # "a script plus an argument vector": under -File every file-args line is
       # one literal argv element, with no PowerShell parsing of its value.
       - name: Run debug unit, integration, and fuzz tests
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
         with:
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
@@ -103,7 +103,7 @@ jobs:
             CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
 
       - name: Build and run all Windows app configs
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
         with:
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
@@ -117,7 +117,7 @@ jobs:
       # VERSION deliberately carries MSIX_VERSION (the four-component form)
       # here, as it did before: this step is the one that stamps the package.
       - name: Build, lint, and package MSIX/MSI
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
         with:
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
@@ -158,11 +158,11 @@ jobs:
           echo "version=$ver" >> $env:GITHUB_OUTPUT
 
       - name: Create archive
-        uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
         with:
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
-          file: C:\ws\third_party\ContainerHub\windows\scripts\rust\New-Archive.ps1
+          file: C:\ws\third_party\ANTfrastructure\windows\scripts\rust\New-Archive.ps1
           extra-args: |
             --env
             BINARY=${{ env.BINARY }}

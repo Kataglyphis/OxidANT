@@ -1,0 +1,14 @@
+# What this repo takes from ANTfrastructure. One row per asset: the id from
+# third_party/ANTfrastructure/shared/config/shared-assets.manifest, and a path only
+# when the copy does not sit at that registry row's default.
+#
+# Checked by:
+#   bash third_party/ANTfrastructure/shared/config/sync-shared-config.sh --repo-root . --check
+#
+# None of the five shared configs is taken: this is a Rust crate, with no
+# CMakeLists.txt and no C++ for the clang tools, cmake-format or gcovr to read.
+# Only the two bootstrap templates are shared here - the two files that cannot
+# be consumed by reference, because each one is what FINDS ANTfrastructure.
+
+antfrastructure-sh
+resolve-build-module

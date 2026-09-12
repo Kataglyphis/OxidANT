@@ -5,7 +5,7 @@
 
   <h1>OxidANT</h1>
  
-  <h4>Collecting Rust best practices. Part of the <a href="https://github.com/Kataglyphis/ContainerHub">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
+  <h4>Collecting Rust best practices. Part of the <a href="https://github.com/Kataglyphis/ANTfrastructure">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
 </div>
 
 <div align="center">
@@ -60,7 +60,7 @@ skinning, animations, LOD, hot shader reload, and headless golden tests.
 See `crates/webgpu_renderer/README.md` for demos and the SPIR-V/GLSL
 shader-export pipeline shared with the C++ Vulkan engine.
 
-This template is a foundational part of the **Kataglyphis Ecosystem**, providing robust Rust best practices. It works synergistically with other projects like [Kataglyphis ContainerHub](https://github.com/Kataglyphis/ContainerHub) to provide seamless code sharing, rapid development, and consistent identity across our web and systems engineering stack.
+This template is a foundational part of the **Kataglyphis Ecosystem**, providing robust Rust best practices. It works synergistically with other projects like [Kataglyphis ANTfrastructure](https://github.com/Kataglyphis/ANTfrastructure) to provide seamless code sharing, rapid development, and consistent identity across our web and systems engineering stack.
 
 ### Key Features
 
@@ -104,7 +104,7 @@ cargo upgrade --dry-run --verbose
 cargo upgrade --incompatible
 ```
 
-To see what is actually behind first — crates *and* the `third_party/ContainerHub`
+To see what is actually behind first — crates *and* the `third_party/ANTfrastructure`
 gitlink, decided by Renovate rather than by a version bound — see
 [Dependency upgrades](#dependency-upgrades-renovate-as-a-local-cli).
 
@@ -265,9 +265,9 @@ cargo run --features gui_windows -- gui --backend primary
 
 ### Windows: build & test in the Stevedore container
 
-The workspace builds and tests inside the [Kataglyphis ContainerHub](https://github.com/Kataglyphis/ContainerHub) Windows developer image using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`. The image reference is not written down anywhere in this repository — including here — because ContainerHub's `linux/scripts/01-core/versions.env` owns it; the driver asks `Get-CiImageReference -Windows` for it and `-Image` overrides for a one-off. To see the current value: `pwsh -c "Import-Module third_party/ContainerHub/windows/scripts/modules/WindowsContainerImage.Common.psm1; Get-CiImageReference -Windows"`.
+The workspace builds and tests inside the [Kataglyphis ANTfrastructure](https://github.com/Kataglyphis/ANTfrastructure) Windows developer image using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`. The image reference is not written down anywhere in this repository — including here — because ANTfrastructure's `linux/scripts/01-core/versions.env` owns it; the driver asks `Get-CiImageReference -Windows` for it and `-Image` overrides for a one-off. To see the current value: `pwsh -c "Import-Module third_party/ANTfrastructure/windows/scripts/modules/WindowsContainerImage.Common.psm1; Get-CiImageReference -Windows"`.
 
-> **ContainerHub is the ground truth for container and PowerShell functionality.** The scripts here are thin drivers: `docker.exe` discovery, isolation flags, container teardown, SDK-tool lookup, MSIX manifest expansion, config access and build-step logging all come from its modules under `windows/scripts/modules/`. Before adding a helper to `scripts/windows/`, check whether ContainerHub already has it — several that were written locally turned out to exist there in a better form. Everything is `pwsh` (PowerShell 7+); nothing here runs under Windows PowerShell 5.1.
+> **ANTfrastructure is the ground truth for container and PowerShell functionality.** The scripts here are thin drivers: `docker.exe` discovery, isolation flags, container teardown, SDK-tool lookup, MSIX manifest expansion, config access and build-step logging all come from its modules under `windows/scripts/modules/`. Before adding a helper to `scripts/windows/`, check whether ANTfrastructure already has it — several that were written locally turned out to exist there in a better form. Everything is `pwsh` (PowerShell 7+); nothing here runs under Windows PowerShell 5.1.
 
 The driver **bind-mounts this repository directly into the container** (as `C:\ws-mnt`) — no copy, so artifacts land straight in your tree and `third_party/` is available inside. It builds all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
 
@@ -282,7 +282,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreB
 pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreBuild.ps1 -StageSources
 ```
 
-> **Dev Drive (ReFS) is not a blocker — reading through a bind mount works.** What does not work is create-then-rename through it (`bindFlt` rejects `copySync`/`renameSync` with errno 3), which is precisely what cargo does. The driver keeps every build write container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`), so only a plain artifact copy crosses the mount. If a host really does refuse it, `docker run` fails at once with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*; fix it permanently with one elevated `fsutil devdrv setFiltersAllowed /volume D: "bindFlt,wcifs"` and a remount, or use `-StageSources` meanwhile. Note the two parts people get wrong: `/volume` is required, and the filter list is ONE quoted argument -- see third_party/ContainerHub/docs/windows-container-build-performance.md for the owning explanation. `fsutil devdrv query` needs elevation itself, so a failing query tells you nothing — just try the mount.
+> **Dev Drive (ReFS) is not a blocker — reading through a bind mount works.** What does not work is create-then-rename through it (`bindFlt` rejects `copySync`/`renameSync` with errno 3), which is precisely what cargo does. The driver keeps every build write container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`), so only a plain artifact copy crosses the mount. If a host really does refuse it, `docker run` fails at once with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*; fix it permanently with one elevated `fsutil devdrv setFiltersAllowed /volume D: "bindFlt,wcifs"` and a remount, or use `-StageSources` meanwhile. Note the two parts people get wrong: `/volume` is required, and the filter list is ONE quoted argument -- see third_party/ANTfrastructure/docs/windows-container-build-performance.md for the owning explanation. `fsutil devdrv query` needs elevation itself, so a failing query tells you nothing — just try the mount.
 
 Artifacts land in `target\container\{debug,profile,release}` and are mirrored to the (gitignored) repo-root `debug\`, `profile\`, `release\` folders; each contains the CLI exe, cdylib (`.dll` + import lib), staticlib (`.lib`) and pdb. Latest verified run (2026-08-07, rustc 1.97.1): all three profiles built (debug 1m35s, profile 1m32s, release 1m12s), written straight into the repo through the mount, and the binaries run on the host, e.g.:
 
@@ -290,7 +290,7 @@ Artifacts land in `target\container\{debug,profile,release}` and are mirrored to
 .\release\kataglyphis_cli.exe stats --path .\README.md
 ```
 
-Host caveats the driver handles automatically. **ContainerHub is the authority on all of this** — these are pointers, not a second copy:
+Host caveats the driver handles automatically. **ANTfrastructure is the authority on all of this** — these are pointers, not a second copy:
 
 - `--isolation process` for the full host CPU count (Hyper-V isolation caps at 2), via `Get-ContainerIsolationArgs`.
 - All cargo writes stay container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`); only a plain artifact copy crosses the mount, because `bindFlt` rejects create-then-rename.
@@ -298,23 +298,23 @@ Host caveats the driver handles automatically. **ContainerHub is the authority o
 
 | Topic | Read |
 | --- | --- |
-| Setting up a Windows host for Stevedore (services, `docker-users`, CNI nat conf) | [`docs/windows-host-setup.md`](third_party/ContainerHub/docs/windows-host-setup.md) |
-| Windows container internals: wcifs/bindFlt, process isolation, layer-commit bug | [`docs/windows-builds.md`](third_party/ContainerHub/docs/windows-builds.md) |
-| Running Linux containers on Windows (Rancher Desktop) | [`docs/rancher-desktop-linux-containers.md`](third_party/ContainerHub/docs/rancher-desktop-linux-containers.md) |
-| Wiring a new project to all of it | [`docs/adopting-in-a-new-project.md`](third_party/ContainerHub/docs/adopting-in-a-new-project.md) |
+| Setting up a Windows host for Stevedore (services, `docker-users`, CNI nat conf) | [`docs/windows-host-setup.md`](third_party/ANTfrastructure/docs/windows-host-setup.md) |
+| Windows container internals: wcifs/bindFlt, process isolation, layer-commit bug | [`docs/windows-builds.md`](third_party/ANTfrastructure/docs/windows-builds.md) |
+| Running Linux containers on Windows (Rancher Desktop) | [`docs/rancher-desktop-linux-containers.md`](third_party/ANTfrastructure/docs/rancher-desktop-linux-containers.md) |
+| Wiring a new project to all of it | [`docs/adopting-in-a-new-project.md`](third_party/ANTfrastructure/docs/adopting-in-a-new-project.md) |
 
 ### Linux containers locally (Rancher Desktop)
 
-The Linux image is **always** the family CI one, in CI and locally — the same reference the workflows inherit, printed by `bash third_party/ContainerHub/linux/scripts/ci-image-ref.sh` and owned by that submodule's `versions.env`. The command below asks for it rather than repeating it, so it cannot go stale on a tag bump. Rancher Desktop defaults to the **containerd** engine, so use `nerdctl`, not `docker` — and from Git Bash disable path mangling or the mount argument is destroyed. Full instructions: [`docs/rancher-desktop-linux-containers.md`](third_party/ContainerHub/docs/rancher-desktop-linux-containers.md).
+The Linux image is **always** the family CI one, in CI and locally — the same reference the workflows inherit, printed by `bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh` and owned by that submodule's `versions.env`. The command below asks for it rather than repeating it, so it cannot go stale on a tag bump. Rancher Desktop defaults to the **containerd** engine, so use `nerdctl`, not `docker` — and from Git Bash disable path mangling or the mount argument is destroyed. Full instructions: [`docs/rancher-desktop-linux-containers.md`](third_party/ANTfrastructure/docs/rancher-desktop-linux-containers.md).
 
 ```pwsh
 $env:MSYS_NO_PATHCONV=1; $env:MSYS2_ARG_CONV_EXCL='*'
-$image = bash third_party/ContainerHub/linux/scripts/ci-image-ref.sh
+$image = bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh
 rdctl shell nerdctl --namespace default run --rm --user root `
   -v kata-cargo-cache:/cargo-cache `
   -v /mnt/d/path/to/repo:/workspace -w /workspace `
   $image `
-  bash -lc 'export CARGO_HOME=/cargo-cache; bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh'
+  bash -lc 'export CARGO_HOME=/cargo-cache; bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_release.sh'
 ```
 
 Two things that will bite on a Windows checkout, both verified 2026-08-07:
@@ -325,7 +325,7 @@ Two things that will bite on a Windows checkout, both verified 2026-08-07:
 ### Windows MSIX packaging
 
 Voraussetzungen:
-- Windows SDK (inkl. `makeappx` und `signtool`) — der Pfad wird über ContainerHubs `Resolve-WindowsSdkToolPath` gefunden (respektiert `WindowsSdkVerBinPath`/`WindowsSDKVersion` aus VsDevCmd)
+- Windows SDK (inkl. `makeappx` und `signtool`) — der Pfad wird über ANTfrastructures `Resolve-WindowsSdkToolPath` gefunden (respektiert `WindowsSdkVerBinPath`/`WindowsSDKVersion` aus VsDevCmd)
 - **PowerShell 7+ (`pwsh`)** — 5.1 reicht nicht; alle Skripte tragen `#requires -Version 7.0`
 
 **Der normale Weg ist `Build-Windows.ps1`.** Es packt MSIX selbst (ab Zeile 209)
@@ -339,13 +339,13 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
 Abschaltbar mit `-SkipMsix`. **Dieser Weg signiert nicht** — er liefert ein
 unsigniertes Paket.
 
-Zum Signieren gibt es nur ContainerHubs eigenständiges Skript. Es hat **sechs
+Zum Signieren gibt es nur ANTfrastructures eigenständiges Skript. Es hat **sechs
 Pflichtparameter ohne Defaults**, und sein Default für `-ManifestTemplatePath`
 (`packaging\msix\AppxManifest.template.xml`) existiert in diesem Repo nicht —
 das Template liegt unter `scripts/windows/`:
 
 ```pwsh
-pwsh -ExecutionPolicy Bypass -File .\third_party\ContainerHub\windows\scripts\rust\New-MsixPackage.ps1 `
+pwsh -ExecutionPolicy Bypass -File .\third_party\ANTfrastructure\windows\scripts\rust\New-MsixPackage.ps1 `
   -Workspace . `
   -Binary kataglyphis_cli `
   -PackageName Kataglyphis.OxidANT `
@@ -365,7 +365,7 @@ Output:
 - Paket: `dist\msix\Kataglyphis.OxidANT_<VERSION>_x64.msix`
 - Staging-Inhalt: `dist\msix\staging\`
 
-Weitere optionale Parameter des ContainerHub-Skripts: `-Features` (Default `""`),
+Weitere optionale Parameter des ANTfrastructure-Skripts: `-Features` (Default `""`),
 `-Version` (Default `0.1.0.0`, Format `Major.Minor.Build[.Revision]`),
 `-CargoTargetDir` (Default `target-msix`), `-SkipBuild` (packt einen vorhandenen
 Release-Build erneut).
@@ -475,7 +475,7 @@ so this wrapper is the only thing that ever reads `.github/renovate.json`. It is
 not a gate: no workflow runs it and it blocks no commit. `--apply` moves
 **gitlinks only** — the crates stay a `cargo upgrade` job — and it stages and
 commits nothing. Details in the script header and in
-[`third_party/ContainerHub/docs/dependency-updates.md`](third_party/ContainerHub/docs/dependency-updates.md).
+[`third_party/ANTfrastructure/docs/dependency-updates.md`](third_party/ANTfrastructure/docs/dependency-updates.md).
 
 ### Installed cargo binaries
 

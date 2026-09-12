@@ -3,7 +3,7 @@
 <#
 .SYNOPSIS
     Builds (and optionally tests) this Rust workspace inside the Kataglyphis
-    ContainerHub Windows developer image via Stevedore's docker.exe.
+    ANTfrastructure Windows developer image via Stevedore's docker.exe.
 
 .DESCRIPTION
     Runs cargo for all three profiles -- dev (debug), profile (release +
@@ -12,7 +12,7 @@
     repo root (<repo>\debug, \profile, \release; gitignored).
 
     Host quirks this script works around (verified 2026-07-17, see
-    third_party\ContainerHub\docs\windows-builds.md):
+    third_party\ANTfrastructure\docs\windows-builds.md):
     - Dev Drive (ReFS) sources cannot be bind-mounted unless bindFlt/wcifs are
       allowed on the volume ("Der Dateisystem-Minifilter kann nicht an das
       Entwicklervolume angefügt werden"). The sources are therefore staged to a
@@ -27,7 +27,7 @@
     - The docker CLI intermittently drops its pipe mid-run while the container
       keeps working, so the container is named (not --rm) and this script waits
       on the actual container state, not the client exit code -- via
-      ContainerHub's Wait-ContainerExit (WindowsContainerBuild.Reuse.psm1; the
+      ANTfrastructure's Wait-ContainerExit (WindowsContainerBuild.Reuse.psm1; the
       submodule's docs/windows-container-build-performance.md, section
       "Reusable implementation", documents it, and this repo's AGENTS.md and
       README container sections narrate the wait).
@@ -45,7 +45,7 @@
 param(
     [string]$Docker = '',
     # Empty by default, and the family Windows image is NOT spelled out here.
-    # It used to be, which made this file one more copy of a value ContainerHub
+    # It used to be, which made this file one more copy of a value ANTfrastructure
     # already owns (versions.env's IMAGE_REGISTRY_PREFIX + CI_IMAGE_WINDOWS_TAG)
     # and left it behind on every fleet-wide tag bump. The submodule's
     # Get-CiImageReference composes it; a param default cannot call it because
@@ -68,28 +68,28 @@ param(
 
 # NB: EAP stays 'Continue' -- native-command stderr handling has shifted across
 # PowerShell versions, so this script turns
-# terminating errors under 'Stop' (documented ContainerHub trap). Exit codes
+# terminating errors under 'Stop' (documented ANTfrastructure trap). Exit codes
 # are checked explicitly instead.
 $ProgressPreference = 'SilentlyContinue'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 
-# Container plumbing comes from ContainerHub, which is the ground truth for it:
+# Container plumbing comes from ANTfrastructure, which is the ground truth for it:
 # Stevedore's docker.exe lookup, the isolation flags, and the wcifs-tolerant
 # container removal were all reimplemented here before.
-$containerHubModules = Join-Path $repoRoot 'third_party\ContainerHub\windows\scripts\modules'
-$reuseModule = Join-Path $containerHubModules 'WindowsContainerBuild.Reuse.psm1'
+$antfrastructureModules = Join-Path $repoRoot 'third_party\ANTfrastructure\windows\scripts\modules'
+$reuseModule = Join-Path $antfrastructureModules 'WindowsContainerBuild.Reuse.psm1'
 if (-not (Test-Path $reuseModule)) {
     throw "Required module not found: $reuseModule (run: git submodule update --init --recursive)"
 }
 Import-Module $reuseModule -Force
 
-# The image reference has exactly one owner in the fleet, ContainerHub's
+# The image reference has exactly one owner in the fleet, ANTfrastructure's
 # versions.env, and exactly one PowerShell way to ask for it. Get-CiImageReference
 # lives in a DIFFERENT module than Resolve-DockerExe above (Reuse.psm1 does not
 # re-export it), hence the second import. It THROWS on a missing key rather than
 # returning an empty string - an empty image reference reaches `docker run` as
 # "run the next argument as an image" and fails a long way from the cause.
-$imageModule = Join-Path $containerHubModules 'WindowsContainerImage.Common.psm1'
+$imageModule = Join-Path $antfrastructureModules 'WindowsContainerImage.Common.psm1'
 if (-not (Test-Path $imageModule)) {
     throw "Required module not found: $imageModule (run: git submodule update --init --recursive)"
 }
@@ -144,7 +144,7 @@ Copy-Item (Join-Path $PSScriptRoot 'Build-RustAll.ps1'), (Join-Path $PSScriptRoo
 # the scratch mount rather than reading it off the workspace mount: that keeps
 # the two in-container scripts working identically under -StageSources, whose
 # robocopy still has no reason to carry the whole submodule.
-$containerLogModule = Join-Path $containerHubModules 'WindowsContainerLog.Common.psm1'
+$containerLogModule = Join-Path $antfrastructureModules 'WindowsContainerLog.Common.psm1'
 if (-not (Test-Path $containerLogModule)) {
     throw "Required module not found: $containerLogModule"
 }

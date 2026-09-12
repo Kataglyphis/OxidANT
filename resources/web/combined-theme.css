@@ -76,7 +76,7 @@ html[data-theme="dark"] .bd-sidebar-primary .nav-link.active {
   border-left: 3px solid var(--brand-accent) !important;
 }
 /* Kataglyphis Ecosystem - Rustdoc Mapping */
-/* This maps the CSS variables from ContainerHub onto rustdoc's internal variables */
+/* This maps the CSS variables from ANTfrastructure onto rustdoc's internal variables */
 
 :root, :root[data-theme="light"] {
   --main-background-color: var(--surface-soft, #f7fbf9);
@@ -202,7 +202,7 @@ html[data-theme="dark"] .bd-sidebar-primary .nav-link.active {
   border-left: 3px solid var(--brand-accent) !important;
 }
 /* Kataglyphis Ecosystem - Rustdoc Mapping */
-/* This maps the CSS variables from ContainerHub onto rustdoc's internal variables */
+/* This maps the CSS variables from ANTfrastructure onto rustdoc's internal variables */
 
 :root, :root[data-theme="light"] {
   --main-background-color: var(--surface-soft, #f7fbf9);

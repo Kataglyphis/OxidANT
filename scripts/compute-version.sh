@@ -4,7 +4,7 @@ set -euo pipefail
 # compute-version.sh — thin wrapper.
 #
 # The logic (VERSION.txt -> REF_NAME -> RUN_NUMBER, plus the four-component
-# MSIX form, plus the GITHUB_ENV/GITHUB_OUTPUT writes) lives in ContainerHub:
+# MSIX form, plus the GITHUB_ENV/GITHUB_OUTPUT writes) lives in ANTfrastructure:
 # every consumer with a CI lane needs exactly this, and it was reimplemented
 # here before. Expects REF_NAME and RUN_NUMBER in the environment; writes
 # VERSION and MSIX_VERSION for subsequent steps.
@@ -16,14 +16,14 @@ set -euo pipefail
 # as "no version here", falling back to REF_NAME/RUN_NUMBER without a word in
 # the log, so the wrong version ships instead of the lane failing.
 #
-# lib/containerhub.sh resolves the submodule from ${BASH_SOURCE[0]} and exports
+# lib/antfrastructure.sh resolves the submodule from ${BASH_SOURCE[0]} and exports
 # KATAGLYPHIS_REPO_ROOT, which anchors VERSION.txt to the same tree. Both work
 # from any working directory now, and a missing submodule is named along with
 # the command that fixes it.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=linux/lib/containerhub.sh
-source "${SCRIPT_DIR}/linux/lib/containerhub.sh"
+# shellcheck source=linux/lib/antfrastructure.sh
+source "${SCRIPT_DIR}/linux/lib/antfrastructure.sh"
 
-containerhub_exec linux/scripts/02-toolchain/rust/version_util.sh \
+antfrastructure_exec linux/scripts/02-toolchain/rust/version_util.sh \
     --github-env "${KATAGLYPHIS_REPO_ROOT}/VERSION.txt"

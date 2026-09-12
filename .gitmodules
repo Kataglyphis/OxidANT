@@ -1,4 +1,4 @@
-[submodule "third_party/ContainerHub"]
-	path = third_party/ContainerHub
-	url = git@github.com:Kataglyphis/ContainerHub.git
+[submodule "third_party/ANTfrastructure"]
+	path = third_party/ANTfrastructure
+	url = git@github.com:Kataglyphis/ANTfrastructure.git
 	branch = main

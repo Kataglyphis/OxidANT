@@ -5,15 +5,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/containerhub.sh
-source "${SCRIPT_DIR}/lib/containerhub.sh"
+# shellcheck source=lib/antfrastructure.sh
+source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 # The tag is NOT spelled here, and until now it was: this script carried the
 # full reference inline with no override of any kind, so a fleet-wide tag bump
 # left it behind silently and a local experiment meant editing the file. It is
 # not repeated in this comment either - a literal in a comment rots exactly the
 # same way, and verify_ci_image_refs.py check D now reads *.sh and *.ps1 as well
-# as <root>/.github/**.yml, comments included. ContainerHub's
+# as <root>/.github/**.yml, comments included. ANTfrastructure's
 # linux/scripts/ci-image-ref.sh composes
 # ${IMAGE_REGISTRY_PREFIX}:${CI_IMAGE_LINUX_TAG} from the hub's
 # linux/scripts/01-core/versions.env, the fleet's one owner of both CI refs.
@@ -25,14 +25,14 @@ source "${SCRIPT_DIR}/lib/containerhub.sh"
 # non-zero rather than yielding an empty string - under `set -e` that aborts
 # here instead of reaching `docker run` as "run the next argument as an image".
 #
-# containerhub_path is resolved on its own line rather than nested inside that
+# antfrastructure_path is resolved on its own line rather than nested inside that
 # substitution. Nested, a missing submodule printed the helper's three-line
 # diagnostic and then ran `bash ""`, adding a bare "bash: : No such file or
 # directory" of its own before exiting 127. Assigned first, `set -e` stops on
-# the real message - the same shape containerhub_source and containerhub_exec
+# the real message - the same shape antfrastructure_source and antfrastructure_exec
 # already use.
 if [ -z "${IMAGE:-}" ]; then
-    _ci_image_ref_sh="$(containerhub_path linux/scripts/ci-image-ref.sh)"
+    _ci_image_ref_sh="$(antfrastructure_path linux/scripts/ci-image-ref.sh)"
     IMAGE="$(bash "${_ci_image_ref_sh}")"
 fi
 
@@ -70,11 +70,11 @@ docker run --rm -it \
     export LD_LIBRARY_PATH="/opt/gstreamer/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 
     # Only what the image genuinely does NOT ship. This list used to name 24
-    # packages; 22 of them are already installed by ContainerHub'"'"'s
+    # packages; 22 of them are already installed by ANTfrastructure'"'"'s
     # linux/scripts/03-media/runtime/install-deps.sh, so it was a stale copy of
     # that list which would drift every time the image changed.
     #
-    # libgtk-4-dev is the real gap, and a deliberate one: ContainerHub excludes
+    # libgtk-4-dev is the real gap, and a deliberate one: ANTfrastructure excludes
     # it because the foreign-arch GTK dev chain pulls target-side Python and
     # breaks cross builds on python3-minimal'"'"'s postinst. Installing it here,
     # at runtime, in a throwaway container, is the right place for it - not in

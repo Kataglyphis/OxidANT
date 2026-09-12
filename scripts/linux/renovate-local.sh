@@ -8,7 +8,7 @@
 #   bash scripts/linux/renovate-local.sh --apply            # move the gitlink
 #   bash scripts/linux/renovate-local.sh --print-bin        # resolved renovate.js
 #
-# THIN WRAPPER over ContainerHub linux/scripts/renovate-local.sh, exactly as
+# THIN WRAPPER over ANTfrastructure linux/scripts/renovate-local.sh, exactly as
 # run-lint-gates.sh next to it wraps the shared gate runner. Upstream owns all
 # of it: the on-demand, checksum-verified bootstrap of RENOVATE_NODE_VERSION and
 # RENOVATE_VERSION (both pinned in the hub's linux/scripts/01-core/versions.env,
@@ -19,7 +19,7 @@
 #
 # THE CONSUMER ROOT IS PASSED EXPLICITLY, the same rule run-lint-gates.sh
 # follows: upstream defaults its target to $PWD, so a run from crates/ or from
-# inside third_party/ContainerHub would grade the wrong tree and answer with a
+# inside third_party/ANTfrastructure would grade the wrong tree and answer with a
 # cheerful "up to date". That also means you must not pass a root of your own -
 # a second one is "more than one repo root given" upstream. Every other flag is
 # forwarded untouched.
@@ -28,11 +28,11 @@
 # it DETECTS and never edits a file, so a report run leaving Cargo.toml
 # byte-identical is the tool working. The write half is git, and it moves
 # GITLINKS only - explicit paths, only for submodules that declare a `branch =`.
-# Here that is the single entry in .gitmodules, third_party/ContainerHub
+# Here that is the single entry in .gitmodules, third_party/ANTfrastructure
 # (branch = main): the pin both CI lanes run their gates from, and the one whose
 # drift silently changes them. Nothing is staged or committed.
 #
-# First run, 2026-09-09 from WSL: one row for third_party/ContainerHub, in about
+# First run, 2026-09-09 from WSL: one row for third_party/ANTfrastructure, in about
 # four seconds. The shas are deliberately NOT written down here: the report is
 # rendered from Renovate's cache, so the pair it prints is whatever that cache
 # held, not necessarily the branch tip -- a number frozen in this header would
@@ -86,28 +86,28 @@
 # front when it cannot. The report half only reads and is safe from anywhere.
 #
 # Rationale, the version pins and the full-fidelity `--platform=github` variant:
-# third_party/ContainerHub/docs/dependency-updates.md - read its token paragraph
+# third_party/ANTfrastructure/docs/dependency-updates.md - read its token paragraph
 # against the GITHUB_COM_TOKEN measurement above.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/containerhub.sh
-source "${SCRIPT_DIR}/lib/containerhub.sh"
+# shellcheck source=lib/antfrastructure.sh
+source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
-# Named separately from containerhub_path's generic "not found / it moved
+# Named separately from antfrastructure_path's generic "not found / it moved
 # upstream" message: while the family adopts this tool the expected failure is a
 # gitlink pinned BEFORE the driver existed upstream, and being sent to
 # docs/INDEX.md to look for a file that is simply not in this pin wastes the
 # trip. The sibling wrappers in OmniAccelerANT and jotrockenmitlocken say the
 # same thing for the same reason.
 HUB_RENOVATE_RELATIVE="linux/scripts/renovate-local.sh"
-if [ ! -f "${CONTAINERHUB_DIR}/${HUB_RENOVATE_RELATIVE}" ]; then
-  echo "Error: ${CONTAINERHUB_DIR}/${HUB_RENOVATE_RELATIVE} is missing." >&2
-  echo "       Either ContainerHub is not checked out (git submodule update" >&2
-  echo "       --init --recursive third_party/ContainerHub), or the pinned" >&2
-  echo "       ContainerHub predates the shared Renovate CLI - bump the" >&2
-  echo "       third_party/ContainerHub gitlink." >&2
+if [ ! -f "${ANTFRASTRUCTURE_DIR}/${HUB_RENOVATE_RELATIVE}" ]; then
+  echo "Error: ${ANTFRASTRUCTURE_DIR}/${HUB_RENOVATE_RELATIVE} is missing." >&2
+  echo "       Either ANTfrastructure is not checked out (git submodule update" >&2
+  echo "       --init --recursive third_party/ANTfrastructure), or the pinned" >&2
+  echo "       ANTfrastructure predates the shared Renovate CLI - bump the" >&2
+  echo "       third_party/ANTfrastructure gitlink." >&2
   exit 1
 fi
 
-containerhub_exec "${HUB_RENOVATE_RELATIVE}" "${KATAGLYPHIS_REPO_ROOT}" "$@"
+antfrastructure_exec "${HUB_RENOVATE_RELATIVE}" "${KATAGLYPHIS_REPO_ROOT}" "$@"
