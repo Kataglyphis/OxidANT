@@ -72,7 +72,7 @@ struct Args {
     key: Option<String>,
 
     /// Producer name shown to consumers.
-    #[arg(long, default_value = "cat-cam")]
+    #[arg(long, default_value = "Trouble Tabbls Cat Cam")]
     name: String,
 
     /// Detection score threshold.
