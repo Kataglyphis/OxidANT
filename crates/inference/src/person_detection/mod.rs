@@ -191,12 +191,26 @@ impl PersonDetector {
         }
     }
 
+    /// Person-only convenience wrapper (COCO class 0) over [`Self::infer_rgba`].
     pub fn infer_persons_rgba(
         &mut self,
         rgba: &[u8],
         width: u32,
         height: u32,
         score_threshold: f32,
+    ) -> Result<Vec<Detection>> {
+        self.infer_rgba(rgba, width, height, score_threshold, Some(&[0]))
+    }
+
+    /// Run detection and keep only the given COCO class ids.
+    /// `None` keeps every class the model emits (e.g. 15 = cat, 16 = dog).
+    pub fn infer_rgba(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        score_threshold: f32,
+        class_filter: Option<&[i64]>,
     ) -> Result<Vec<Detection>> {
         let mapping = match self.preprocess {
             PreprocessMode::Letterbox => rgba_to_nchw_f32_letterboxed(
@@ -233,7 +247,9 @@ impl PersonDetector {
             self.swap_xy,
         )?;
 
-        detections.retain(|d| d.class_id == 0);
+        if let Some(ids) = class_filter {
+            detections.retain(|d| ids.contains(&d.class_id));
+        }
         Ok(detections)
     }
 

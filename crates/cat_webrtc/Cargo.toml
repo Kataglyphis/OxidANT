@@ -1,0 +1,24 @@
+[package]
+name = "kataglyphis_cat_webrtc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Demo producer: an image/webcam source is looped through the YOLO ONNX model
+# (cat = COCO class 15), the boxes are burned into the RGBA frames and the
+# result is published as a WebRTC stream through gst-plugins-rs' webrtcsink.
+# Signalling is the GStreamer protocol the repo's web client speaks
+# (gst-webrtc-signalling-server, ws://host:8443).
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+kataglyphis_core = { path = "../core" }
+kataglyphis_inference = { path = "../inference", features = ["onnxruntime_dynamic"] }
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+
+[lints]
+workspace = true
