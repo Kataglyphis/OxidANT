@@ -1,10 +1,11 @@
 //! Cat detector → WebRTC producer.
 //!
 //! Loops a still image (or a `videotestsrc` pattern) through `jpegdec` into an
-//! appsink, runs YOLO ONNX inference for COCO class 15 (cat) with
-//! `kataglyphis_inference`, paints the boxes into the RGBA frame and pushes the
-//! annotated frame into `webrtcsink`, which publishes it over the GStreamer
-//! signalling protocol the repo's web client consumes.
+//! appsink — or captures from `v4l2src` / `libcamerasrc` — runs YOLO ONNX
+//! inference for COCO class 15 (cat) with `kataglyphis_inference` on a worker
+//! thread, paints the latest boxes into the RGBA frames and pushes them into
+//! `webrtcsink`, which publishes them over the GStreamer signalling protocol
+//! the repo's web client consumes.
 //!
 //! Run from any checkout (defaults resolve relative to this crate at compile
 //! time, so the container's `/workspace` and a Raspberry Pi's home directory
@@ -13,6 +14,8 @@
 //! ```text
 //! ORT_DYLIB_PATH=/usr/local/lib/onnxruntime-cpu/lib/libonnxruntime.so \
 //!   kataglyphis_cat_webrtc --v4l2 /dev/video0
+//! ORT_DYLIB_PATH=/usr/local/lib/onnxruntime-cpu/lib/libonnxruntime.so \
+//!   kataglyphis_cat_webrtc --libcamera      # Raspberry Pi CSI camera
 //! ```
 
 use std::thread;
@@ -53,6 +56,11 @@ struct Args {
     /// V4L2 capture device, e.g. `/dev/video0` (Linux; overrides image/test).
     #[arg(long)]
     v4l2: Option<String>,
+
+    /// Use the system libcamera source (`libcamerasrc`). Required for the
+    /// Raspberry Pi CSI camera, whose V4L2 nodes carry raw Bayer only.
+    #[arg(long)]
+    libcamera: bool,
 
     /// ONNX model (default: OxidANT's yolov10m, end-to-end [1,N,6] output).
     #[arg(long, default_value = DEFAULT_MODEL)]
@@ -108,6 +116,7 @@ fn main() -> anyhow::Result<()> {
             image: args.image.clone(),
             test: args.test,
             v4l2: args.v4l2.clone(),
+            libcamera: args.libcamera,
             model: args.model.clone(),
             score: args.score,
             width: args.width,
@@ -219,6 +228,7 @@ struct WorkerArgs {
     image: String,
     test: bool,
     v4l2: Option<String>,
+    libcamera: bool,
     model: String,
     score: f32,
     width: u32,
@@ -232,7 +242,11 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
         .with_context(|| format!("load ONNX model {}", args.model))?;
 
     let pipeline = gstreamer::Pipeline::new();
-    let source: gstreamer::Element = if let Some(device) = &args.v4l2 {
+    let source: gstreamer::Element = if args.libcamera {
+        gstreamer::ElementFactory::make("libcamerasrc")
+            .build()
+            .context("libcamerasrc (is the GStreamer libcamera plugin available?)")?
+    } else if let Some(device) = &args.v4l2 {
         gstreamer::ElementFactory::make("v4l2src")
             .property("device", device.as_str())
             .build()
@@ -255,7 +269,7 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
             .with_context(|| format!("multifilesrc for {}", args.image))?
     };
 
-    let decoder = if args.test || args.v4l2.is_some() {
+    let decoder = if args.test || args.v4l2.is_some() || args.libcamera {
         None
     } else {
         Some(
@@ -292,6 +306,25 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
         .map_err(|_| anyhow!("element 'appsink' is not an AppSink"))?;
 
     let mut elements: Vec<gstreamer::Element> = vec![source.clone()];
+    if args.libcamera {
+        // Ask libcamera for the stream size up front: the sensor's default
+        // mode is far larger than the inference input, and the ISP's scaler
+        // is much cheaper than doing it later in videoscale. The format must
+        // be a processed one (`RGB`), otherwise the element hands back raw
+        // Bayer and `videoconvert` cannot negotiate.
+        let caps = gstreamer::Caps::builder("video/x-raw")
+            .field("format", "RGB")
+            .field("width", args.width as i32)
+            .field("height", args.height as i32)
+            .field("framerate", gstreamer::Fraction::new(args.fps as i32, 1))
+            .build();
+        elements.push(
+            gstreamer::ElementFactory::make("capsfilter")
+                .property("caps", &caps)
+                .build()
+                .context("libcamera capsfilter")?,
+        );
+    }
     if args.v4l2.is_some() {
         // Force a raw format out of v4l2src: the C920 happily negotiates MJPG,
         // which videoconvert cannot decode. A bare video/x-raw capsfilter makes
@@ -323,7 +356,55 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
         Some(vec![COCO_CAT])
     };
 
-    let mut frames: u64 = 0;
+    // Inference is seconds per frame on a Raspberry Pi while capture runs at
+    // camera rate. Running it inline would throttle the WebRTC stream to the
+    // model's rate, so frames go to an inference thread and the render loop
+    // keeps drawing the latest boxes: the stream stays smooth and the boxes
+    // lag by one inference.
+    let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
+    let boxes = std::sync::Arc::new(std::sync::Mutex::new(
+        Vec::<kataglyphis_core::Detection>::new(),
+    ));
+    let infer_boxes = boxes.clone();
+    let (infer_width, infer_height, infer_score) = (args.width, args.height, args.score);
+    let infer_thread = {
+        thread::Builder::new()
+            .name("cat-infer".into())
+            .spawn(move || {
+                let mut runs: u64 = 0;
+                while let Ok(rgba) = frame_rx.recv() {
+                    match detector.infer_rgba(
+                        &rgba,
+                        infer_width,
+                        infer_height,
+                        infer_score,
+                        wanted.as_deref(),
+                    ) {
+                        Ok(detections) => {
+                            runs += 1;
+                            if let Some(first) = detections.first() {
+                                log::info!(
+                                    "inference {runs}: {} detection(s), first class={} score={:.2} box=({:.0},{:.0})-({:.0},{:.0})",
+                                    detections.len(),
+                                    first.class_id,
+                                    first.score,
+                                    first.x1,
+                                    first.y1,
+                                    first.x2,
+                                    first.y2,
+                                );
+                            }
+                            if let Ok(mut current) = infer_boxes.lock() {
+                                *current = detections;
+                            }
+                        }
+                        Err(err) => log::warn!("inference failed: {err:#}"),
+                    }
+                }
+            })
+            .context("spawn inference thread")?
+    };
+
     loop {
         let sample = match sink.pull_sample() {
             Ok(sample) => sample,
@@ -332,7 +413,6 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
                 break;
             }
         };
-        frames += 1;
         let Some(buffer) = sample.buffer() else {
             continue;
         };
@@ -341,34 +421,23 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
         };
         let rgba = map.as_slice();
 
-        let detections = detector
-            .infer_rgba(rgba, args.width, args.height, args.score, wanted.as_deref())
-            .context("inference")?;
-
         let mut annotated = rgba.to_vec();
-        for detection in &detections {
-            draw_rect(
-                &mut annotated,
-                args.width,
-                args.height,
-                [detection.x1, detection.y1, detection.x2, detection.y2],
-                [0, 255, 0, 255],
-                4,
-            );
+        if let Ok(current) = boxes.lock() {
+            for detection in current.iter() {
+                draw_rect(
+                    &mut annotated,
+                    args.width,
+                    args.height,
+                    [detection.x1, detection.y1, detection.x2, detection.y2],
+                    [0, 255, 0, 255],
+                    4,
+                );
+            }
         }
 
-        if let Some(first) = detections.first() {
-            log::info!(
-                "frame {frames}: {} detection(s), first class={} score={:.2} box=({:.0},{:.0})-({:.0},{:.0})",
-                detections.len(),
-                first.class_id,
-                first.score,
-                first.x1,
-                first.y1,
-                first.x2,
-                first.y2,
-            );
-        }
+        // Queue the freshest frame only while the inference thread is idle: a
+        // frame of lag is the point, a backlog is not.
+        let _ = frame_tx.try_send(rgba.to_vec());
 
         let buffer = gstreamer::Buffer::from_slice(annotated);
         appsrc
@@ -376,6 +445,8 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
             .map_err(|err| anyhow!("appsrc push: {err:?}"))?;
     }
 
+    drop(frame_tx);
+    let _ = infer_thread.join();
     let _ = pipeline.set_state(gstreamer::State::Null);
     Ok(())
 }
