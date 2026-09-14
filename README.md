@@ -5,7 +5,7 @@
 
   <h1>OxidANT</h1>
  
-  <h4>Collecting Rust best practices. Part of the <a href="https://github.com/Kataglyphis/ANTfrastructure">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
+  <h4>The Kataglyphis family's Rust crates (core, telemetry, inference, media, gui, cli, webgpu_renderer, cat_webrtc) and the Rust best practices they follow. Part of the <a href="https://github.com/Kataglyphis/ANTfrastructure">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
 </div>
 
 <div align="center">
@@ -273,13 +273,13 @@ The driver **bind-mounts this repository directly into the container** (as `C:\w
 
 ```pwsh
 # build debug + profile + release in the container
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreBuild.ps1
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1
 
 # build AND run cargo test --workspace (unit + integration + proptest fuzz + doc)
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreBuild.ps1 -Test
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1 -Test
 
 # only if your host refuses the mount (see below)
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreBuild.ps1 -StageSources
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1 -StageSources
 ```
 
 > **Dev Drive (ReFS) is not a blocker — reading through a bind mount works.** What does not work is create-then-rename through it (`bindFlt` rejects `copySync`/`renameSync` with errno 3), which is precisely what cargo does. The driver keeps every build write container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`), so only a plain artifact copy crosses the mount. If a host really does refuse it, `docker run` fails at once with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*; fix it permanently with one elevated `fsutil devdrv setFiltersAllowed /volume D: "bindFlt,wcifs"` and a remount, or use `-StageSources` meanwhile. Note the two parts people get wrong: `/volume` is required, and the filter list is ONE quoted argument -- see third_party/ANTfrastructure/docs/windows-container-build-performance.md for the owning explanation. `fsutil devdrv query` needs elevation itself, so a failing query tells you nothing — just try the mount.
@@ -520,12 +520,14 @@ Contributions are what make the open source community such an amazing place to b
 <!-- LICENSE -->
 ## License
 
+Distributed under the MIT License. See [LICENSE](LICENSE).
+
 <!-- CONTACT -->
 ## Contact
 
 Jonas Heinle - [@Cataglyphis_](https://twitter.com/Cataglyphis_) - jonasheinle@googlemail.com
 
-Project Link: [https://github.com/Kataglyphis/...](https://github.com/Kataglyphis/...)
+Project Link: [https://github.com/Kataglyphis/OxidANT](https://github.com/Kataglyphis/OxidANT)
 
 
 <!-- ACKNOWLEDGEMENTS -->
