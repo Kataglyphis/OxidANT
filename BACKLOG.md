@@ -35,7 +35,7 @@ protocol exists and the backlog is empty" — it was neither.
 
 ## Not adopted yet
 
-The loop itself — config, runner wrappers, `scripts/AgenticLoop/` — is not set
+The loop itself — config, runner wrappers, `scripts/agentic-loop/` — is not set
 up. Copy-and-edit templates live in ANTfrastructure's
 `shared/agentic-loop/templates/`; a consumer supplies this file, a config JSON,
 thin runner wrappers, and optionally per-engine system prompts.

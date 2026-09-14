@@ -40,7 +40,7 @@
     Restrict to one phase (default: build; add -Test for both).
 
 .EXAMPLE
-    pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreBuild.ps1 -Test
+    pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1 -Test
 #>
 param(
     [string]$Docker = '',
