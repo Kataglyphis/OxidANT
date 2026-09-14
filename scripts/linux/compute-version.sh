@@ -22,8 +22,8 @@ set -euo pipefail
 # the command that fixes it.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=linux/lib/antfrastructure.sh
-source "${SCRIPT_DIR}/linux/lib/antfrastructure.sh"
+# shellcheck source=lib/antfrastructure.sh
+source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 antfrastructure_exec linux/scripts/02-toolchain/rust/version_util.sh \
     --github-env "${KATAGLYPHIS_REPO_ROOT}/VERSION.txt"

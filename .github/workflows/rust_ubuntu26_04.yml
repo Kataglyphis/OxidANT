@@ -46,15 +46,10 @@ env:
 jobs:
   # The ARM lane is opt-in per commit, matching the convention the ANTfrastructure
   # ecosystem already uses for its expensive lanes (see that submodule's
-  # `docs/ci-build-triggers.md`). Two reasons it cannot simply always run:
-  #   - the family Linux image currently resolves to an amd64-only manifest
-  #     list, so an arm64 runner's pull dies with "no matching manifest for
-  #     linux/arm64/v8" before a single build step executes. Repairing the
-  #     manifest is a ANTfrastructure-side job (`build-runtime-manifest.sh
-  #     --repair --push-manifest`); until then the lane cannot be green, and a
-  #     permanently-red lane trains everyone to ignore the badge.
-  #   - Even once repaired, a second full 45-minute cross build on every push
-  #     to a template repo is not worth its runner minutes.
+  # `docs/ci-build-triggers.md`). arm64 is opt-in via [build-arm] for runner
+  # minutes: a second full 45-minute cross build on every push to a template
+  # repo is not worth them. (`:latest-cross` has been a multi-arch index since
+  # 2026-09-04, so the lane can go green when asked to.)
   # Put `[build-arm]` in the pushed HEAD commit message, or use the manual
   # workflow_dispatch, to exercise it.
   select-lanes:
@@ -97,7 +92,7 @@ jobs:
       ARCH: ${{ matrix.arch }}
       BINARY: oxidant
       BINARY_FILE: kataglyphis_cli
-      # VERSION is computed by scripts/compute-version.sh into GITHUB_ENV.
+      # VERSION is computed by scripts/linux/compute-version.sh into GITHUB_ENV.
       REF_NAME: ${{ github.ref_name }}
       RUN_NUMBER: ${{ github.run_number }}
       # package_archive.sh only writes a tarball; PACKAGE_TYPES merely gates whether
@@ -117,7 +112,7 @@ jobs:
       - name: Compute version
         id: compute-version
         shell: bash
-        run: bash scripts/compute-version.sh
+        run: bash scripts/linux/compute-version.sh
 
       - name: Debug build
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
@@ -139,11 +134,12 @@ jobs:
 
       # This step used to be `continue-on-error: true` and had NEVER once run
       # to completion. It died with exit 127 on every single build:
-      #   - it called ANTfrastructure's `cargo_fmt_clippy.sh`, whose first line is
-      #     `rustup component add rustfmt` - but the runtime image deliberately
-      #     ships no rustup (see that repo's install-rust.sh: rustfmt and
-      #     clippy are baked in at image-build time and the runtime stage has
-      #     no rustup on PATH), so the script exits 127 before cargo runs;
+      #   - it called ANTfrastructure's `cargo_fmt_clippy.sh`, which then opened
+      #     with `rustup component add rustfmt` on an image that ships no
+      #     rustup, so it exited 127 before cargo ran. The driver probes first
+      #     now (its header: PROBE, DO NOT ADD); this step still calls cargo
+      #     directly only because the driver hard-codes --all-features, which
+      #     this image cannot build (GTK4/ORT, see below);
       #   - the `apt-get install libgtk-4-dev ...` prologue failed too
       #     ("/var/lib/apt/lists/partial is missing - Permission denied"): the
       #     container is uid 1001, apt needs root. It was never installing
@@ -256,10 +252,8 @@ jobs:
             git config --global --add safe.directory /workspace || true;
             bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_build_doc.sh'
 
-      - name: Fix permissions on generated docs
-        if: matrix.docs
-        run: sudo chown -R "$USER:$USER" ./target/doc
-
+      # The family's FTP action owns the readability fixup (the `sudo chown -R`
+      # step that used to precede this) and pins the upstream action by SHA.
       - name: 📂 Sync files to domain
         # Only publish docs from the default branch. Every push to develop used
         # to overwrite the live documentation with in-progress state.
@@ -267,9 +261,11 @@ jobs:
         # Best-effort publish: a transient FTP control-socket timeout
         # (observed 2026-07-22) must NOT red-light a lane whose build, test
         # and package all passed. The step still shows as failed with a
-        # warning annotation - it just no longer fails the job.
+        # warning annotation - it just no longer fails the job. Note the
+        # action's own policy is the opposite ("a failed publish fails the
+        # job", see its action.yml); this tolerance is the owner's call.
         continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        uses: Kataglyphis/ANTfrastructure/.github/actions/deploy-over-ftp@main
         with:
           server: ${{ secrets.SERVER }}
           username: ${{ secrets.USERNAME }}
