@@ -79,7 +79,7 @@ jobs:
         id: compute-version
         shell: bash
         working-directory: ${{ steps.prep.outputs.workspace }}
-        run: scripts/compute-version.sh
+        run: scripts/linux/compute-version.sh
 
       # The four container steps below used to be hand-written `docker run`
       # blocks repeating --memory/--cpus/--mount/-w twelve times between them.
