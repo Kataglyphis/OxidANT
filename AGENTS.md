@@ -11,9 +11,19 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/inference` — ONNX backends, feature-gated (`onnx_tract`, `onnxruntime`, `onnxruntime_directml`, `onnxruntime_cuda`)
 - `crates/gui` — feature-gated GUI (`gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix`)
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
+- `crates/media` — GStreamer capture, feature-gated (`gstreamer`)
+- `crates/cat_webrtc` — cat-cam WebRTC producer (`kataglyphis_cat_webrtc`); consumer: OmniAccelerANT's Stream page
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands; `stats --path <file>`). It was renamed from `oxidant` on 2026-08-07 — see the pdb note below.
+- `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{onnx,simple,webcam}.rs`, `src/webcam_engine.rs`) plus the `burn-demos` bin
 - `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
 - `third_party/ANTfrastructure` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
+
+## Consumers
+
+Repositories that build this one as a submodule; a rename or a `[lib] name` change has to be carried into each of them:
+
+- [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) — the root package through flutter_rust_bridge (Cargokit, podspecs, the committed `frb_generated.dart` loader stem) and `crates/cat_webrtc` for its Stream page
+- [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) — `crates/webgpu_renderer` and `crates/gui` through Corrosion (the `oxidant_bridge` CMake target)
 
 ## ANTfrastructure is the ground truth
 
@@ -77,7 +87,7 @@ All paths below are relative to `third_party/ANTfrastructure/`.
 | Agentic loop | config + runner templates | [`shared/agentic-loop/templates/`](third_party/ANTfrastructure/shared/agentic-loop/templates) | writing one from scratch |
 | Bash helpers (logging, retry, SHA'd downloads, parallelism) | `logging.sh`, `downloads.sh`, `parallelism.sh`, … | [`linux/scripts/01-core/`](third_party/ANTfrastructure/linux/scripts/01-core) | new implementations |
 
-**One caveat about `cargo_fmt_clippy.sh`**: it is the one script in that rust directory this repo must *not* call — its first line is `rustup component add rustfmt`, and neither image can satisfy that offline. Call `cargo fmt` / `cargo clippy` directly. See the CI section.
+**One caveat about `cargo_fmt_clippy.sh`**: this repo still calls `cargo fmt` / `cargo clippy` directly, only because the driver hard-codes `--all-features`, which this image cannot build (GTK4/ORT). The old blocker — a leading `rustup component add rustfmt` — is gone; the driver probes first now (its header: PROBE, DO NOT ADD). See the CI section.
 
 **Never expand a manifest template with `-replace`.** PowerShell treats the replacement side as a substitution template, so a value containing `$&` re-inserts the whole matched token. A description of ``Renderer $& x`` produced `Desc="Renderer __MSIX_DESCRIPTION__amp; x"` — the literal token, shipped into the manifest. `Expand-XmlTemplateTokens` uses an ordinal `[string].Replace` and escapes each value itself.
 
@@ -94,7 +104,7 @@ This repo owns only `AGENTS.md`, `README.md`, `BACKLOG.md` and `crates/webgpu_re
 
 `docs/renderer-bounds-invariant.md`, `docs/gpu-golden-testing.md`, `docs/model-loading.md`, `docs/shader-sharing.md`, `docs/webgpu-gltf-rust-plan.md`, `docs/webgpu-srgb-audit.md`
 
-They live in the **parent** repository, `BeschleunigerBallett/docs/` — the comments say "repo root" and mean the superproject's root, one level above this submodule. Worth knowing twice over: `bounds.rs` calls `renderer-bounds-invariant.md` the checklist for not repeating eight identical bugs, and if this template is ever used standalone those six references dangle with nothing to point at. From `crates/webgpu_renderer/` the correct relative prefix is `../../../../docs/` (four levels: crate → crates → repo → third_party → superproject); `../../../` lands in `third_party/` and was wrong in that README until 2026-08-07.
+They live in **`BeschleunigerBallett/docs/`** — the comments say "repo root" and mean that superproject's root, one level above this repo when it is checked out there as a submodule. Worth knowing twice over: `bounds.rs` calls `renderer-bounds-invariant.md` the checklist for not repeating eight identical bugs, and this repo is also consumed standalone and from OmniAccelerANT (see [Consumers](#consumers)), where a relative path has nothing to point at. That is why `crates/webgpu_renderer/README.md` links them by absolute URL, `https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/<name>.md`, rather than by the `../../../../docs/` prefix it carried until 2026-09-14.
 
 ## Build & test (host)
 
@@ -105,7 +115,7 @@ cargo build --workspace --locked --release            # fat LTO, codegen-units 1
 cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
 ```
 
-Run the lint gate before pushing — CI runs exactly these two commands and both are hard failures:
+Run the lint gates before pushing. CI's formatting-and-clippy step runs exactly these two commands, both hard failures; the shell/workflow/secret gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
 
 ```bash
 cargo fmt --all -- --check
@@ -120,13 +130,13 @@ The **bin** was renamed, not the lib, and that direction was deliberate: the C++
 
 What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Ubuntu workflow and `BINARY` in the Windows one, the `-Binary` default in `Invoke-AppProfiles.ps1`, and `--bin` in `scripts/linux/run-person-detection.sh`.
 
-**`[lib] name` did change later, on 2026-09-05**, when the repository became OxidANT: `[package] name` and `[lib] name` are both `oxidant` now, so the artefacts are `oxidant.dll` / `liboxidant.so` / `liboxidant.a`. That is exactly the outside-this-repo break the paragraph above warns about, and it was only safe because every consumer was updated in the same commit — OmniAccelerANT's Cargokit wiring, podspecs, `Get-WindowsBuildConfig.ps1` and the committed `frb_generated.dart` loader stem, plus BeschleunigerBallett's Corrosion import. Renaming it again means finding those consumers again; they are not discoverable from inside this repository.
+**`[lib] name` did change later, on 2026-09-05**, when the repository became OxidANT: `[package] name` and `[lib] name` are both `oxidant` now, so the artefacts are `oxidant.dll` / `liboxidant.so` / `liboxidant.a`. That is exactly the outside-this-repo break the paragraph above warns about, and it was only safe because every consumer was updated in the same commit — OmniAccelerANT's Cargokit wiring, podspecs, `Get-WindowsBuildConfig.ps1` and the committed `frb_generated.dart` loader stem, plus BeschleunigerBallett's Corrosion import. Renaming it again means finding those consumers again — they are listed under [Consumers](#consumers).
 
 The two `BINARY` variables still mean different things. In the **Windows** workflow it is the executable (`kataglyphis_cli`). In the **Ubuntu** workflow it is `oxidant`, and it names *both* the tarball and the file inside it: `package_archive.sh` copies `target/release/$BINARY_FILE` to `$ArchiveDir/$Binary`. So `BINARY_FILE` is the cargo artefact, `BINARY` is what a user ends up invoking.
 
 ## Build & test in the Stevedore Windows container
 
-Driver: `scripts\windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`Build-RustAll.ps1`, `Test-RustAll.ps1`) in the family Windows CI image, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
+Driver: `scripts\windows\container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`Build-RustAll.ps1`, `Test-RustAll.ps1`) in the family Windows CI image, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
 
 **No image reference is written in this repository, and that includes this
 file.** The driver's `-Image` parameter defaults to empty and is filled in by
@@ -211,15 +221,17 @@ What is specific to *this* repo, because cargo is what makes it bite:
 
 ## Continuous integration
 
-Two workflows, both building inside ANTfrastructure images rather than on the runner:
+Four workflows. The two build lanes run inside ANTfrastructure images rather than on the runner; the two gate lanes pull no image at all:
 
 | Lane | Workflow | Runs when | Image |
 | --- | --- | --- | --- |
+| Lint gates | `lint-gates.yml` | every push/PR to `main`/`develop` | none — `bash scripts/linux/run-lint-gates.sh` on the runner, gate binaries bootstrapped by the submodule |
+| Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — ANTfrastructure's `Submodule.Pins.Tests.ps1` on `windows-2025` |
 | Linux x86_64 | `rust_ubuntu26_04.yml` | every push/PR to `main`/`develop` | family Linux CI image, inherited |
 | Linux arm64 | same | opt-in: `[build-arm]` in the HEAD commit message, or `workflow_dispatch` | same |
 | Windows | `rust_windows2025.yml` | opt-in: `[build-win]` in the HEAD commit message, or `workflow_dispatch` | family Windows CI image, inherited |
 
-"Inherited" is literal: **neither workflow names an image.** Both used to open
+"Inherited" is literal: **neither build workflow names an image.** Both used to open
 with a `CONTAINER_IMAGE:` env entry holding the full reference and hand it to
 every container step; that was a copy of ANTfrastructure's `versions.env` value
 that a fleet-wide tag bump would leave behind. Every step now omits the `image:`
@@ -232,8 +244,8 @@ re-typed into a workflow, a script, or a comment.
 
 Facts that cost real debugging time:
 
-- **The ARM lane cannot currently go green.** `:latest-cross` resolves to an amd64-only manifest list, so the pull dies with `no matching manifest for linux/arm64/v8` before any build step. Repair is a ANTfrastructure-side job (`build-runtime-manifest.sh --repair --push-manifest`); until then, leave `[build-arm]` off.
-- **Never call ANTfrastructure's `cargo_fmt_clippy.sh` from a workflow.** Its first line is `rustup component add rustfmt`, and the runtime image deliberately ships **no rustup** (rustfmt/clippy are baked in at image-build time) — so it exits 127 before cargo ever runs. Invoke `cargo fmt`/`cargo clippy` directly. This was masked by `continue-on-error: true` for months and let an entire crate reach `main` unformatted and with 12 clippy errors.
+- **The ARM lane is opt-in via `[build-arm]` for runner minutes**, not because it cannot pass: `:latest-cross` has been a multi-arch index since 2026-09-04.
+- **`cargo fmt`/`cargo clippy` are invoked directly, not through ANTfrastructure's `cargo_fmt_clippy.sh`** — only because the driver hard-codes `--all-features`, which this image cannot build (GTK4/ORT, see the last bullet). Its old first line, `rustup component add rustfmt`, exited 127 on an image without rustup; the driver probes first now (header: PROBE, DO NOT ADD). That exit 127 was masked by `continue-on-error: true` for months and let an entire crate reach `main` unformatted and with 12 clippy errors — the step gates now.
 - **The container runs as uid 1001, not root.** `apt-get` fails with `Permission denied`, so a workflow step cannot install system packages — whatever the image lacks, it lacks. And `CARGO_HOME=/usr/local/cargo` is root-owned, so every writing cargo step needs `-e CARGO_HOME=/tmp/cargo-home`.
 - **The lint gate runs default features on purpose.** `--all-features` would need GTK4 headers and the ORT libs, which the image has not got and uid 1001 cannot install.
 
