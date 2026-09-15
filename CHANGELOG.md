@@ -129,6 +129,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
   had `/opt/gcc-16.2.0` frozen into it.
 
 ### Fixed
+- **The `TEXTURE_2D_SHAPE_OK` regression guard now matches the code rustfmt
+  actually produces.** `texture_desc_single_definition` demanded the marker
+  comment on the *same line* as the `wgpu::TextureDescriptor {` it exempts, but
+  that line runs past `max_width` at all three non-goal sites, so rustfmt 1.9.0
+  (toolchain 1.98.1) moves the comment down into the literal's body and puts it
+  back there on every `cargo fmt`. The two gates contradicted each other: no
+  source text could satisfy both. The guard now accepts the marker on the
+  literal's own line *or* as the first line of its body. Every assertion is
+  unchanged - an unmarked literal still fails, the marked count is still exactly
+  3, and `render/texture.rs` still holds exactly 1 definition. Latent since
+  2026-08-07, when the graphics-stack upgrade reflowed the three comments; it
+  surfaced only now, because until the security gate above went green the lane
+  failed at `cargo audit` and never reached `cargo test`.
 - **The security gate is green again**, entirely by upgrading rather than by
   ignoring: `h2` 0.4.15 → 0.4.19 (RUSTSEC-2026-0258), `chacha20` 0.10.1 → 0.10.2
   (yanked), `stable-vec` 0.4.2 → 0.4.3 (unsound) and `rustls` 0.23.43 → 0.23.45
