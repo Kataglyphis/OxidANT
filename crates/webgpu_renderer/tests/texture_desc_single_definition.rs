@@ -2,8 +2,10 @@
 //! `wgpu::TextureDescriptor` one definition": every `wgpu::TextureDescriptor {`
 //! literal outside `render::texture::create_2d_texture` is either a copy that
 //! escaped the conversion, or a genuinely different shape (cube texture,
-//! depth array) marked with a trailing `// TEXTURE_2D_SHAPE_OK: <reason>`
-//! comment on the same line.
+//! depth array) marked with a `// TEXTURE_2D_SHAPE_OK: <reason>` comment on
+//! the literal's own line or as the first line of its body -- rustfmt moves a
+//! trailing comment that overflows `max_width` down into the body, so both
+//! placements name the same literal and both count as marked.
 //!
 //! Pure CPU, no adapter: this only inspects source text, so it runs
 //! everywhere, including environments with no adapter.
@@ -42,11 +44,16 @@ fn texture_descriptor_literals_are_the_single_definition_or_marked_non_goals() {
     let mut definition_count = 0usize;
 
     for (path, contents, is_texture_module) in SOURCES.iter().copied() {
-        for (i, line) in contents.lines().enumerate() {
+        let lines: Vec<&str> = contents.lines().collect();
+        for (i, line) in lines.iter().copied().enumerate() {
             if !line.contains(NEEDLE) {
                 continue;
             }
-            if line.contains(MARKER) {
+            let marked_here = line.contains(MARKER);
+            let marked_below = lines
+                .get(i + 1)
+                .is_some_and(|next| next.trim_start().starts_with(MARKER));
+            if marked_here || marked_below {
                 marked_count += 1;
                 continue;
             }
