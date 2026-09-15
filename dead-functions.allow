@@ -1,0 +1,18 @@
+# Frozen 2026-09-15, the first run with --ratchets on. Shell functions the
+# scanner sees no caller for inside this repository. Two-way: a frozen function
+# that gains a caller in this tree, or is deleted, goes STALE and fails - so
+# delete the row in the same change.
+#
+# Format: <file>\t<function>.
+# third_party/ANTfrastructure/docs/code-quality-tooling.md#dead-shell-functions-dead-functions
+
+# The bootstrap's public API. scripts/linux/lib/antfrastructure.sh is a VENDORED
+# COPY of ANTfrastructure's shared/linux/templates/antfrastructure.sh, declared
+# in .antfrastructure-shared.manifest and compared byte-for-byte by the
+# shared-config drift gate; deleting a function out of it would fail that gate
+# on the next run. The template publishes three entry points -
+# antfrastructure_path, antfrastructure_source and antfrastructure_exec - and
+# this repo happens to call only two of them today: every wrapper here delegates
+# to a driver (exec) rather than sourcing a library into its own shell. The
+# third is not dead code, it is an interface the hub owns.
+scripts/linux/lib/antfrastructure.sh	antfrastructure_source

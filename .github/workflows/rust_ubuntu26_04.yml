@@ -50,7 +50,7 @@ env:
 jobs:
   # The ARM lane is opt-in per commit, matching the convention the ANTfrastructure
   # ecosystem already uses for its expensive lanes (see that submodule's
-  # `docs/ci-build-triggers.md`). arm64 is opt-in via [build-arm] for runner
+  # `third_party/ANTfrastructure/docs/ci-build-triggers.md`). arm64 is opt-in via [build-arm] for runner
   # minutes: a second full 45-minute cross build on every push to a template
   # repo is not worth them. (`:latest-cross` has been a multi-arch index since
   # 2026-09-04, so the lane can go green when asked to.)

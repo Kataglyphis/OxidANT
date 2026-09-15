@@ -1,0 +1,32 @@
+# Frozen 2026-09-15, the first run with --ratchets on. Comment blocks over the
+# 10-line limit that predate the gate; the rule from here is two lines at the
+# point of use, with anything longer moving into a doc and leaving a pointer.
+# Two-way: shrink a block or delete it and its line here goes STALE, which
+# fails - so remove the line in the same change.
+#
+# Format: <file>	<first comment line, 60 chars>.
+# third_party/ANTfrastructure/docs/code-quality-tooling.md#comment-size-comment-size
+#
+# WHAT THESE ARE. Nine of the ten are script HEADERS, and in this repo a header
+# is the only place a decision is written down: why the lint wrapper passes the
+# consumer root explicitly, why the renovate wrapper is a local CLI, why every
+# build write in the container goes to a container-local path. The audit that
+# produced them asked for exactly that. They are frozen rather than shortened
+# because moving one needs a docs/ page to move it INTO, and this repo has no
+# docs/ tree yet - that is its own change, not a line in a ratchet commit.
+#
+# THE TWO MID-FILE BLOCKS are different and both are real candidates to shrink:
+# ci-container-steps.sh:70 (the CARGO_CLIPPY_ARGS rationale) and
+# run-producer-pi.sh:169 (the hub loader paths) each explain one decision that
+# now has an upstream home.
+
+scripts/linux/cat-stream/run-producer-pi.sh	#!/usr/bin/env bash
+scripts/linux/cat-stream/run-producer-pi.sh	# The loader paths are ANTfrastructure's and are NOT retyped
+scripts/linux/ci-container-steps.sh	#!/usr/bin/env bash
+scripts/linux/ci-container-steps.sh	# CARGO_CLIPPY_ARGS is why this case can delegate at all. Th
+scripts/linux/compute-version.sh	# compute-version.sh — thin wrapper.
+scripts/linux/lib/antfrastructure.sh	# Replace this process with a ANTfrastructure driver, forwar
+scripts/linux/renovate-local.sh	#!/usr/bin/env bash
+scripts/linux/run-lint-gates.sh	#!/usr/bin/env bash
+scripts/linux/start-docker-person-detection.sh	# The tag is NOT spelled here, and until now it was: this sc
+scripts/linux/start-docker-person-detection.sh	# Only what the image genuinely does NOT ship. This list use

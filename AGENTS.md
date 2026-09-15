@@ -139,19 +139,20 @@ binaries the lint lane bootstraps, the packaging and docs drivers, the Windows m
 A drifted gitlink does not degrade one job — it silently changes every gate, and
 `git submodule status` marks it with a `+` that is easy to miss in a wall of CI output.
 
-Guarded by ANTfrastructure's own repo-agnostic Pester suite, run from
-[`.github/workflows/submodule-pins.yml`](.github/workflows/submodule-pins.yml) after any
-pin bump: `third_party/ANTfrastructure/shared/windows/tests/Submodule.Pins.Tests.ps1`, Pester pinned to
-`3.4.0`, on `windows-2025`. It asserts for **every** configured submodule that it is
-checked out, sits at its recorded commit, and is pinned to a commit still reachable from
-its remote — so a second submodule is covered the day it lands, without editing the
-lane.
+Guarded by ANTfrastructure's own repo-agnostic Pester suite, run after any pin bump from
+[`.github/workflows/submodule-pins.yml`](.github/workflows/submodule-pins.yml) — which
+since 2026-09-15 is one `uses:` line onto the hub's reusable
+`submodule-pins.yml`, keeping only the `on:` filters that say when the lane runs. The
+suite is `third_party/ANTfrastructure/shared/windows/tests/Submodule.Pins.Tests.ps1`; it
+asserts for **every** configured submodule that it is checked out, sits at its recorded
+commit, and is pinned to a commit still reachable from its remote — so a second submodule
+is covered the day it lands, without editing the lane.
 
-It is a **standalone workflow, not a job inside `lint-gates.yml`**, and deliberately so:
-Pester 3.4.0 is a Windows PowerShell-era module never released for PowerShell Core on
-Linux, so it needs a `windows-2025` runner, while the lint lane is a single
-`ubuntu-26.04` step. OrchestrANT, the family's reference consumer of this suite, keeps it
-standalone for the same reason.
+The Pester pin (`3.4.0`) and the `windows-2025` runner are the hub's choices now, not
+this repo's, and their forty lines of rationale live upstream once
+(`third_party/ANTfrastructure/docs/windows-builds.md`). It is still a **separate
+workflow from `lint-gates.yml`**, for the reason it always was: Pester 3.4.0 is a
+Windows PowerShell-era module never released for PowerShell Core on Linux.
 
 Version couplings with the hub, checked: the toolchain (`RUST_VERSION`) and the two
 cargo-tool pins (`CARGO_AUDIT_VERSION`, `CARGO_DENY_VERSION`) are read from
@@ -409,12 +410,12 @@ malformed and stayed that way through several edits.
 
 ### Continuous integration
 
-Four workflows. The two build lanes run inside ANTfrastructure images rather than on the runner; the two gate lanes pull no image at all:
+Four workflows. The two build lanes run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and both of them are now one `uses:` onto a reusable ANTfrastructure workflow rather than a copied job:
 
 | Lane | Workflow | Runs when | Image |
 | --- | --- | --- | --- |
-| Lint gates | `lint-gates.yml` | every push/PR to `main`/`develop` | none — `bash scripts/linux/run-lint-gates.sh` on the runner, gate binaries bootstrapped by the submodule |
-| Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — ANTfrastructure's `Submodule.Pins.Tests.ps1` on `windows-2025` |
+| Lint gates | `lint-gates.yml` | every push/PR to `main`/`develop` | none — the hub's reusable `lint-gates.yml` with `ratchets: true`; the same aggregator `bash scripts/linux/run-lint-gates.sh` runs locally |
+| Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — the hub's reusable `submodule-pins.yml` (`Submodule.Pins.Tests.ps1`, Pester 3.4.0, `windows-2025`) |
 | Linux x86_64 | `rust_ubuntu26_04.yml` | every push/PR to `main`/`develop` | family Linux CI image, inherited |
 | Linux arm64 | same | opt-in: `[build-arm]` in the HEAD commit message, or `workflow_dispatch` | same |
 | Windows | `rust_windows2025.yml` | opt-in: `[build-win]` in the HEAD commit message, or `workflow_dispatch` | family Windows CI image, inherited |
@@ -427,6 +428,8 @@ input and takes the container actions' default, which
 `verify_ci_image_refs.py` grades against `versions.env` on ANTfrastructure's own
 build (check A) — and check D fails this repo's lint gate if the reference is
 re-typed into a workflow, a script, or a comment.
+
+**The lint lane runs with `--ratchets` on** since 2026-09-15. On top of the six always-on gates that adds the docs cross-reference gate plus eight measurement gates (code size, complexity, dead functions, comment size, stdout returns, masked declarations, trailing conditionals, and a shellcheck *warning* ratchet), each graded against a freeze file at the repo root. Three of them carry rows — `comment-size.allow`, `code-complexity.allow`, `dead-functions.allow` — seeded from the first run; the rest are absent, which the gates read as a zero baseline. **The contract is two-way**: a new offender fails, and so does an entry that is no longer over the limit, so fixing one of these means deleting or updating its row in the same change. The docs gate has no freeze file at all and never will — a `docs/…md` pointer in code either resolves from the repo root (or, when it starts `../`, from the file) or it is a finding.
 
 **A green tick without the opt-in marker says nothing about that lane** — the workflow reports `skipped`, which the badge renders the same as passing.
 

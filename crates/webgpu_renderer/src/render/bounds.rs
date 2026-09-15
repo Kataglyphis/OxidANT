@@ -3,9 +3,9 @@
 //! > **World bounds must cover every pose the geometry can actually reach —
 //! > not the pose it was authored in.**
 //!
-//! See this crate's `docs/renderer-bounds-invariant.md` for the full rule, why
-//! it keeps recurring, and every consumer that reads bounds. The path is
-//! crate-relative and correct in every checkout: the document moved here from
+//! See this crate's `../../docs/renderer-bounds-invariant.md` for the full
+//! rule, why it keeps recurring, and every consumer that reads bounds. The path
+//! is relative to this file and correct in every checkout: it moved here from
 //! BeschleunigerBallett under decision D6, so it travels with the code.
 
 use glam::{Mat4, Vec3};
@@ -110,7 +110,7 @@ pub(crate) fn aabb_contains_point(min: Vec3, max: Vec3, p: Vec3) -> bool {
 
 /// Bounds covering every instance of `pre`.
 ///
-/// See this crate's `docs/renderer-bounds-invariant.md`
+/// See this crate's `../../docs/renderer-bounds-invariant.md`
 /// for the rule these helpers exist to uphold, the full list of consumers
 /// that read bounds, and why each over-cover argument is a proof rather than
 /// a fudge factor. Eight bugs in this renderer were the same bug; that

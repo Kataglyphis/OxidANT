@@ -1,0 +1,12 @@
+# Functions currently over the complexity limits, frozen at their present
+# numbers. Frozen 2026-09-15, the first run with --ratchets on.
+#
+# Format: <path> | <function> | <metric: cc|nesting> | <count> | <reason>
+#
+# cc = cyclomatic complexity (limit 15); nesting = block depth relative to the
+# function body (limit 5). Four-way contract: a new offender, growth, an
+# unrecorded shrink and a stale freeze all fail, so a real simplification means
+# updating or deleting the row in the same change.
+# third_party/ANTfrastructure/docs/code-quality-tooling.md#shell-complexity-code-complexity
+
+scripts/linux/cat-stream/run-producer-pi.sh | collect_hostlibs | cc | 22 | reviewed 2026-09-15, the day the script arrived here from OmniAccelerANT under decision D12. It stages the GStreamer/libcamera host libraries a Pi 5 producer needs into one directory, and every path is one probe: the loader directory itself, then per-library "already staged / found on the host / found under an arch triplet / absent, warn and continue". The branches are a hardware inventory, not control flow that can be factored - splitting it would move the same list one call deeper and lose the single place a reader checks what the Pi is expected to carry. Revisit if the hub ever grows a loader-path accessor, which is the open half of D12
