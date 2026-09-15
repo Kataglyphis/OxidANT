@@ -110,4 +110,45 @@ tests/rustdoc-gui/src/**.lock
 flake.lock
 /default.nix
 
+
+## Large binaries - see AGENTS.md, "Large tracked files"
+# Two large files are tracked on purpose and are named there. Decision D4 is
+# that they are DOCUMENTED, not rewritten: no filter-repo, no BFG, no git-lfs,
+# so anything big committed here is permanent for everyone who ever clones the
+# repo. These rules exist so nothing of the same shape joins them by accident.
+# Both exceptions are negations rather than a narrower pattern, so the rule
+# still bites if either file is ever moved or renamed.
+*.onnx
+!resources/models/yolov10m.onnx
+*.gif
+!images/Rust.gif
+# other model-weight formats - none tracked, none wanted
+*.pt
+*.pth
+*.safetensors
+*.tflite
+*.gguf
+# video
+*.mp4
+*.mkv
+*.mov
+*.webm
+# build/packaging output and signing material (dist/ is ignored already, but
+# these get copied around by hand)
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+*.msi
+*.pfx
+*.cer
+*.zip
+*.7z
+*.tgz
+*.tar
+*.tar.gz
+*.tar.zst
+# NOT ignored on purpose: *.bin (glTF buffers), *.gltf, *.glb, *.ktx2, *.png -
+# the renderer's test assets are exactly those and they are small.
+
 # Before adding 
