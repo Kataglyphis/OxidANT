@@ -27,9 +27,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **`AGENTS.md` was rebuilt on ANTfrastructure's six-section template.**
 
 ### Fixed
-- `chacha20` 0.10.1 (yanked) → 0.10.2 and `stable-vec` 0.4.2 (unsound) → 0.4.3,
-  so `cargo_security_checks.sh` passes without adding either RUSTSEC id to an
-  ignore list. `h2` 0.4.15 → 0.4.19 (RUSTSEC-2026-0258) landed earlier.
+- **The security gate is green again**, entirely by upgrading rather than by
+  ignoring: `h2` 0.4.15 → 0.4.19 (RUSTSEC-2026-0258), `chacha20` 0.10.1 → 0.10.2
+  (yanked), `stable-vec` 0.4.2 → 0.4.3 (unsound) and `rustls` 0.23.43 → 0.23.45
+  with `rustls-webpki` 0.103.13 → 0.103.15 (RUSTSEC-2026-0285). No RUSTSEC id
+  was added to either ignore list; two stale ones were removed from both
+  (quick-xml RUSTSEC-2026-0194 / -0195, fixed by quick-xml 0.41.0).
 - Formatting and clippy against the pinned toolchain 1.98.1: two rustfmt hunks,
   and clippy 1.98's new `chunks_exact_to_as_chunks` allowed once at the
   workspace level with a reason (see `BACKLOG.md`).

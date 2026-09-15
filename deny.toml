@@ -9,20 +9,23 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
-# Transitive deps from burn (0.21.0) — no safe upgrade available.
-# All four crates below are still in Cargo.lock after the 0.21 bump, so these
-# stay. Re-check after the next burn upgrade: cargo-deny does not tell you when
-# an ignore has become unnecessary, it just stops matching.
+# Unmaintained transitive deps from burn (0.21.0) - no upgrade available.
+# Re-check after the next burn upgrade. cargo-deny DOES say when an ignore has
+# gone stale (`warning[advisory-not-detected]`), so treat that warning as a
+# deletion request rather than noise - it is what removed the two quick-xml
+# entries that used to sit here.
+#
+# THIS LIST AND .cargo/audit.toml MUST MATCH. cargo-audit reads only its own
+# file, cargo-deny only this one, and both run in the same gating CI step, so
+# an id added to one is still reported by the other.
 ignore = [
   "RUSTSEC-2025-0141", # bincode: unmaintained (via burn-core)
   "RUSTSEC-2024-0436", # paste: unmaintained (via burn-ndarray, cubecl-core)
   "RUSTSEC-2026-0192", # ttf-parser: unmaintained (transitive font-parsing dep); informational, not a vulnerability
-  # quick-xml 0.39.4 (latest; no fixed release yet) via wayland-scanner, a
-  # BUILD-TIME Wayland-protocol code generator. Its XML input is the trusted
-  # protocol spec shipped with the toolchain, never attacker-controlled
-  # runtime data, so these two DoS advisories are not reachable here.
-  "RUSTSEC-2026-0194", # quick-xml: quadratic run time on crafted XML (build-time only)
-  "RUSTSEC-2026-0195", # quick-xml: unbounded namespace declarations (build-time only)
+  # The two quick-xml entries (RUSTSEC-2026-0194 / -0195) are gone: quick-xml
+  # moved to 0.41.0 in Cargo.lock, which carries the fix, and cargo-deny then
+  # warned `advisory-not-detected` on both. Take the upgrade and delete the
+  # ignore - an ignore that no longer matches is a claim nobody re-checks.
 ]
 
 [licenses]
