@@ -2,8 +2,10 @@
 //! `common/sky_model.slang`) against the Rust copy in `render::ibl` that
 //! `EnvironmentImage::sky` panoramises into the IBL fallback environment.
 //!
-//! The two feed each other's ambient (see `docs/shader-sharing.md`'s "Give
-//! the analytic sky one definition" entry): a drift here would not crash
+//! The two feed each other's ambient (see the "Give the analytic sky one
+//! definition" entry in
+//! <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md>):
+//! a drift here would not crash
 //! anything, it would just make the sky the camera sees disagree with the
 //! sky baked into the reflections around it.
 //!

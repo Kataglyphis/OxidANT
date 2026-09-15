@@ -100,11 +100,37 @@ Nothing here needs Windows PowerShell 5.1 semantics: every script carries `#requ
 
 ## Where the documentation actually lives
 
-This repo owns only `AGENTS.md`, `README.md`, `BACKLOG.md` and `crates/webgpu_renderer/README.md`. There is **no `docs/` directory here**, which matters because the renderer source refers to six design documents as if there were:
+This repo owns `AGENTS.md`, `README.md`, `BACKLOG.md`, `CHANGELOG.md` and
+`crates/webgpu_renderer/README.md`. There is **no `docs/` directory here yet**, and the
+renderer's six design documents live in **`BeschleunigerBallett/docs/`**.
 
-`docs/renderer-bounds-invariant.md`, `docs/gpu-golden-testing.md`, `docs/model-loading.md`, `docs/shader-sharing.md`, `docs/webgpu-gltf-rust-plan.md`, `docs/webgpu-srgb-audit.md`
+**Every reference to them is an absolute URL**
+(`https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/<name>.md`), in
+the sources as well as in `crates/webgpu_renderer/README.md`. Bare `docs/<name>.md`
+and the `../../../../docs/` prefix are both gone, and neither may come back while the
+documents are external: the comments that used them said "repo root" and meant *that
+superproject's* root, which is true only when this repo is checked out under
+BeschleunigerBallett. It is also consumed standalone and from OmniAccelerANT (see
+[Consumers](#consumers)), where a relative `docs/` path points at nothing. `bounds.rs`
+calls `renderer-bounds-invariant.md` the checklist for not repeating eight identical
+bugs, so a dead link there costs more than tidiness.
 
-They live in **`BeschleunigerBallett/docs/`** — the comments say "repo root" and mean that superproject's root, one level above this repo when it is checked out there as a submodule. Worth knowing twice over: `bounds.rs` calls `renderer-bounds-invariant.md` the checklist for not repeating eight identical bugs, and this repo is also consumed standalone and from OmniAccelerANT (see [Consumers](#consumers)), where a relative path has nothing to point at. That is why `crates/webgpu_renderer/README.md` links them by absolute URL, `https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/<name>.md`, rather than by the `../../../../docs/` prefix it carried until 2026-09-14.
+| Document | Owner after the move |
+| --- | --- |
+| `renderer-bounds-invariant.md` | **here**, `crates/webgpu_renderer/docs/` |
+| `webgpu-renderer-roadmap.md` | **here**, `crates/webgpu_renderer/docs/` |
+| `webgpu-gltf-rust-plan.md` | **here**, `crates/webgpu_renderer/docs/` |
+| `gpu-golden-testing.md` | stays in BeschleunigerBallett |
+| `model-loading.md` | stays in BeschleunigerBallett |
+| `shader-sharing.md` | stays in BeschleunigerBallett |
+| `webgpu-srgb-audit.md` | stays in BeschleunigerBallett |
+
+The three marked **here** are scheduled to move under decision D6 — this repo owns the
+renderer, code and documentation, and BeschleunigerBallett keeps a pointer rather than a
+copy. **That move has not happened yet**, and it is a cross-repository change: do not
+half-do it by rewriting a link here before the file exists here. When it lands, the
+three become `docs/<name>.md` relative to the crate and the other four keep their
+absolute URLs — which is the whole reason this table exists.
 
 ## Build & test (host)
 

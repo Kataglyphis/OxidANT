@@ -989,7 +989,8 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
 /// Copies the texture named by `uri` (as written in the .mtl) to sit beside
 /// `gltf_path`, so the converted document is self-contained.
 fn copy_texture_beside_gltf(uri: &str, obj_path: &Path, gltf_path: &Path) {
-    // docs/model-loading.md: resolve relative to the directory containing the
+    // https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/model-loading.md
+    // says: resolve relative to the directory containing the
     // .mtl (== the .obj's directory - the mtllib loop in `convert_file`
     // always resolves there) first, and retry under a textures/ subdirectory
     // of that same directory second, because every shipped asset in this
