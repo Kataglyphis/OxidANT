@@ -52,7 +52,29 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **The docs publish and `cancel-in-progress` follow the repository's actual
   default branch** rather than a typed `refs/heads/main`.
 - **`AGENTS.md` was rebuilt on ANTfrastructure's six-section template.**
-- **`third_party/ANTfrastructure` is pinned at `19286e9f`**, and three local
+- **`third_party/ANTfrastructure` moved to `49be50f0`**, and nothing local was
+  deleted for it — deliberately, row by row. The shared-config templates are
+  byte-identical across the bump, which
+  `sync-shared-config.sh --repo-root . --check` confirms rather than the commit
+  range being taken on trust ("Shared config in sync", both rows OK).
+  `lint-powershell`/`lint-path` on the hub's reusable `python-ci-windows.yml`
+  reproduce this repo's `powershell-lint` job exactly — same runner, same
+  pinned PSScriptAnalyzer 1.25.0, same unconditional `-FailOnAnalyzer`, and
+  `lint-path` defaults to the `scripts` this job passes — but they are inputs
+  to the family's **Python** lane, whose build job has no `if:` and would run a
+  Python package build and demand a `GHCR_PAT` alongside the two-minute lint;
+  the job stays, with that recorded where it lives.
+  `WindowsMediaRuntime.Common` stages a GStreamer/ONNX DLL closure and replaces
+  nothing here (the `onnxruntime_*` names in `scripts/windows/` are cargo
+  features, not a staging step). `fix_bind_mount_ownership` is a `chown` of a
+  container-written tree, not the `git safe.directory` guard
+  `ci-container-steps.sh` keeps, so that `BACKLOG.md` row stays blocked.
+  `cmake-build.sh --configure-arg` and the bandit argument fix have no caller
+  here — no CMakeLists.txt, no bandit. The flatpak pair does not reach
+  `package_archive.sh`, which is unchanged, so the tarball-only row stays open.
+  All eight "Waiting on ANTfrastructure" rows were re-checked against the new
+  pin and say so.
+- **`third_party/ANTfrastructure` was pinned at `19286e9f`**, and three local
   forks went with the bump. `scripts/linux/ci-container-steps.sh`'s `fmt-clippy`
   case delegates to `cargo_fmt_clippy.sh` now that the driver takes
   `CARGO_CLIPPY_ARGS` instead of hard-coding `--all-features`; the ~100-line

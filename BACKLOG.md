@@ -45,6 +45,16 @@ protocol exists and the backlog is empty" — it was neither.
       never read. `PACKAGE_TYPES` now says `tar`, which is honest but narrow.
       Restoring deb/AppImage/Flatpak means changing ANTfrastructure, not this repo
       -- the packaging/flatpak/ files here are ready and unused.
+      Re-checked against hub 49be50f0, which DID add a flatpak pair
+      (`app_packaging_ensure_flatpak_runtime`,
+      `app_packaging_package_cmake_install_flatpak`): it does not close this.
+      Both live in `lib/app-packaging.sh` and neither is reachable from
+      `06-packaging/package_archive.sh`, which is byte-identical across the
+      bump -- still `PACKAGE_TYPES=tar`, still accepting `--flatpak-manifest`
+      and never reading it. The new entry point also stages from
+      `cmake --install <build_dir>` and asserts an executable at
+      `<prefix>/bin/<project_name>`; this repo has no CMakeLists.txt and builds
+      with cargo, so it would need a cargo-install-tree twin, not a caller.
 
 ## Waiting on ANTfrastructure
 
@@ -57,41 +67,59 @@ is written so that finishing it upstream is a deletion here, not a rewrite.
       knob defaulting to `/workspace`, and `cargo_release/bench/build_doc/`
       `coverage/security_checks.sh` should source it the way `cargo_debug.sh`
       does. Then drop the guard from `ci-container-steps.sh`. Re-checked against
-      hub 19286e9f: still absent, still blocked.
+      hub 49be50f0: `_cargo_wrapper.sh` still has no safe.directory line at all
+      and `CARGO_SAFE_DIRECTORY` appears nowhere in the hub -- still blocked.
+      That bump's `01-core/fix_bind_mount_ownership` is NOT this: it chowns a
+      tree a container wrote back to the mount's uid:gid, which is a filesystem
+      ownership problem. This one is git refusing a checkout for dubious
+      ownership, which `git config --global --add safe.directory` fixes and
+      `chown` does not. Nothing here is replaced by it.
 - [b] `Get-ANTfrastructurePin` (hub `windows/scripts/rust/Build-Windows.ps1`)
       belongs in `WindowsScripts.Shared.psm1`, so this repo's
       `Resolve-CargoToolPin` in `scripts/windows/Build-Windows.ps1` can be
       deleted and both sides share one implementation. Re-checked against hub
-      19286e9f: the function is still only in that one script, still blocked.
+      49be50f0: the function is still only in that one script, still blocked.
 - [b] The MSI Packaging step of `scripts/windows/Build-Windows.ps1` should
       become a hub `windows/scripts/rust/New-MsiPackage.ps1` (or a
       `WindowsMsix.Common` function) taking `-WxsFile -LicenseFile
       -ProductName -Manufacturer -ExeSource -Version -OutFile`. The MSIX half
       of this landed upstream on 2026-09-15 as `Invoke-MsixPackage`, and this
       repo's ~100-line copy went with it; the MSI half has no hub function yet.
+      Re-checked against hub 49be50f0: `windows/scripts/rust/` is still
+      Build-Windows.ps1, New-Archive.ps1 and New-MsixPackage.ps1, with no
+      `New-MsiPackage` anywhere in the tree -- still blocked.
 - [b] Decide the fate of the hub's `windows/scripts/rust/Build-Windows.ps1`:
       it has zero consumers, does `rustup component add` against an offline
       rustup and builds `--all-features`. Either make it callable
       (`-Features`/`-AllFeatures`, `-Package`/`-Bin`, opt-in benchmarks, no
       rustup calls, no scoop block) or delete it and record OxidANT as the
-      owner of the Windows Rust build.
+      owner of the Windows Rust build. Re-checked against hub 49be50f0:
+      unchanged, and still the sole home of `Get-ANTfrastructurePin` above, so
+      the two rows are decided together.
 - [b] `docs/adopting-in-a-new-project.md` section 8 should list
       `scripts/windows/container/` as "scripts that run inside the Windows
       image" - the casing convention this repo now follows everywhere.
-      Re-checked against hub 19286e9f: § 8 still does not name it.
+      Re-checked against hub 49be50f0: the file is untouched by that bump and
+      § 8 still does not name it.
 - [b] The MSIX certificate trust dance (importing into `LocalMachine\Root`
       *and* `LocalMachine\TrustedPeople`, `0x800B0109`, `Get-AppxLog`) is
       still written out in this repo's README. It belongs in the hub's
       `windows/scripts/certificates/README.md`, which today covers only
-      `TrustedPeople`. Re-checked against hub 19286e9f: unchanged.
+      `TrustedPeople`. Re-checked against hub 49be50f0: unchanged.
 - [b] The module inventory in AGENTS.md section 2 carries rows with no upstream
       owner (`WindowsMsix.Common`, `WindowsConfig.Common`, `WindowsBuild.Common`,
       `WindowsScripts.Shared`, the rust drivers, `package_archive.sh`, the
       composite actions, `lint-workflows.sh`, the agentic-loop templates, the
       01-core helpers). Once they are described in the hub's
       `docs/adopting-in-a-new-project.md` sections 2/8 or `docs/INDEX.md`, that
-      table becomes a link. Re-checked against hub 19286e9f: only
-      `WindowsMsix.Common` is named there (§ 7), so the table stays.
+      table becomes a link. Re-checked against hub 49be50f0: neither
+      `docs/adopting-in-a-new-project.md` nor `docs/INDEX.md` changed in that
+      bump, so only `WindowsMsix.Common` is still named (§ 7) and the table
+      stays. The bump's new `WindowsMediaRuntime.Common` adds no row: it stages
+      a GStreamer/ONNX DLL closure next to a built exe, and nothing in
+      `scripts/windows/` here copies runtime dependencies -- the onnxruntime
+      names in Build-Windows.ps1 and Invoke-WindowsConfigMatrix.ps1 are cargo
+      FEATURE names, not a staging step.
 
 ## Not adopted yet
 
