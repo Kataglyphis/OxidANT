@@ -25,15 +25,6 @@ protocol exists and the backlog is empty" — it was neither.
       `KATAGLYPHIS_REQUIRE_GPU=1`) so the ~40 headless golden tests stop
       silently skipping and reporting as passed.
 
-- [b] Bring the renderer design docs here (decision D6). Copy
-      renderer-bounds-invariant.md, webgpu-renderer-roadmap.md and
-      webgpu-gltf-rust-plan.md out of BeschleunigerBallett/docs/ into
-      crates/webgpu_renderer/docs/, delete them there, leave a pointer, and
-      turn this repo's three absolute URLs into crate-relative docs/<name>.md.
-      Blocked here: it is a cross-repository move and the other half is
-      BeschleunigerBallett's. The table in AGENTS.md says which four stay
-      external.
-
 - [b] Ship the .slang sources with crates/webgpu_renderer, or add a
       slang -> wgsl step, so "there is no .slang file in this repo" stops
       being true. src/shaders/*.wgsl are checked-in GENERATED artifacts whose
@@ -103,11 +94,6 @@ is written so that finishing it upstream is a deletion here, not a rewrite.
       01-core helpers). Once they are described in the hub's
       `docs/adopting-in-a-new-project.md` sections 2/8 or `docs/INDEX.md`, that
       table becomes a link.
-- [b] `run-producer-pi.sh` moves here from OmniAccelerANT (decision D12): it
-      drives `crates/cat_webrtc`, and it hardcodes `/workspace/third_party/`
-      `OxidANT` as the build directory, which is only true from that
-      superproject. OmniAccelerANT keeps a pointer, not a copy. Blocked here:
-      it is a cross-repository move and the other half is OmniAccelerANT's.
 
 ## Not adopted yet
 

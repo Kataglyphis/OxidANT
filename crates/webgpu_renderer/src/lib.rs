@@ -1,8 +1,8 @@
-//! WebGPU renderer with glTF loading. The roadmap it implements is
-//! BeschleunigerBallett's design doc, linked absolutely because this crate
-//! is also built standalone and from OmniAccelerANT, where a relative
-//! `docs/` path has nothing to point at:
-//! <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/webgpu-gltf-rust-plan.md>
+//! WebGPU renderer with glTF loading. The plan it implements is this crate's
+//! own `docs/webgpu-gltf-rust-plan.md`. The path is crate-relative and
+//! resolves in every checkout - standalone, from OmniAccelerANT and from
+//! BeschleunigerBallett - because the document moved out of
+//! BeschleunigerBallett and next to the code under decision D6.
 //!
 //! Milestones implemented so far:
 //! 1. Context + surface lifecycle with correct resize/outdated handling.

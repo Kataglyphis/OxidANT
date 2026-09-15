@@ -13,6 +13,23 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added
+- **The renderer's three design documents, in `crates/webgpu_renderer/docs/`**:
+  `renderer-bounds-invariant.md`, `webgpu-renderer-roadmap.md` and
+  `webgpu-gltf-rust-plan.md`. They moved out of `BeschleunigerBallett/docs/`
+  under decision D6 — this repo owns the WebGPU renderer, code *and*
+  documentation — and BeschleunigerBallett keeps a pointer file at each old
+  path rather than a copy. The four pages that describe *both* renderers
+  (`gpu-golden-testing.md`, `model-loading.md`, `shader-sharing.md`,
+  `webgpu-srgb-audit.md`) stayed there and are still referenced absolutely.
+  The four references to the moved pages — `crates/webgpu_renderer/README.md`,
+  `src/lib.rs` and twice in `src/render/bounds.rs` — are crate-relative
+  `docs/<name>.md` again, which resolves in all three checkout layouts.
+- **`scripts/linux/cat-stream/run-producer-pi.sh`**, the Raspberry Pi 5 runner
+  for `crates/cat_webrtc`, moved here from OmniAccelerANT under decision D12:
+  it belongs with the crate it builds and starts. OmniAccelerANT keeps a
+  pointer and still owns the web half, `serve.sh`.
+
 ### Changed
 - **`crates/cat_webrtc` no longer bakes in a path into a sibling submodule
   checkout.** `--image` has no compile-time default; it falls back to
@@ -25,6 +42,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **The docs publish and `cancel-in-progress` follow the repository's actual
   default branch** rather than a typed `refs/heads/main`.
 - **`AGENTS.md` was rebuilt on ANTfrastructure's six-section template.**
+- **The Pi runner asks ANTfrastructure for both things it used to retype.**
+  The CI image reference comes from `linux/scripts/ci-image-ref.sh` (a literal
+  in a tracked `*.sh` is what the CI-image-ref lint gate refuses), and the
+  loader path is composed by the image's own `media-env.sh` plus
+  `path-helpers.sh`'s `_path_prepend_unique` instead of a hand-typed list that
+  had `/opt/gcc-16.2.0` frozen into it.
 
 ### Fixed
 - **The security gate is green again**, entirely by upgrading rather than by
