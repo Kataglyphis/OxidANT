@@ -14,6 +14,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- **Three gates this repo did not have.** `--ratchets` on the lint lane (the
+  docs cross-reference gate plus eight measurement gates, frozen at
+  `<repo>/<gate>.allow`); a PowerShell lint job running ANTfrastructure's
+  `Invoke-Lint.ps1 -Path scripts -FailOnAnalyzer`; and
+  `scripts/windows/tests/Repo.GeneratedArtifacts.Tests.ps1`, which asserts that
+  nothing generated is tracked. Seeded freeze files: `comment-size.allow`,
+  `code-complexity.allow`, `dead-functions.allow`.
 - **The renderer's three design documents, in `crates/webgpu_renderer/docs/`**:
   `renderer-bounds-invariant.md`, `webgpu-renderer-roadmap.md` and
   `webgpu-gltf-rust-plan.md`. They moved out of `BeschleunigerBallett/docs/`
@@ -23,8 +30,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   (`gpu-golden-testing.md`, `model-loading.md`, `shader-sharing.md`,
   `webgpu-srgb-audit.md`) stayed there and are still referenced absolutely.
   The four references to the moved pages — `crates/webgpu_renderer/README.md`,
-  `src/lib.rs` and twice in `src/render/bounds.rs` — are crate-relative
-  `docs/<name>.md` again, which resolves in all three checkout layouts.
+  `src/lib.rs` and twice in `src/render/bounds.rs` — point at the moved pages
+  again. Three of them are written `../docs/<name>.md` / `../../docs/<name>.md`,
+  relative to the file rather than to the crate: a bare `docs/<name>.md` in code
+  is resolved from the REPO ROOT by the docs cross-reference gate, which is what
+  it means to a reader too.
 - **`scripts/linux/cat-stream/run-producer-pi.sh`**, the Raspberry Pi 5 runner
   for `crates/cat_webrtc`, moved here from OmniAccelerANT under decision D12:
   it belongs with the crate it builds and starts. OmniAccelerANT keeps a
@@ -42,6 +52,23 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **The docs publish and `cancel-in-progress` follow the repository's actual
   default branch** rather than a typed `refs/heads/main`.
 - **`AGENTS.md` was rebuilt on ANTfrastructure's six-section template.**
+- **`third_party/ANTfrastructure` is pinned at `19286e9f`**, and three local
+  forks went with the bump. `scripts/linux/ci-container-steps.sh`'s `fmt-clippy`
+  case delegates to `cargo_fmt_clippy.sh` now that the driver takes
+  `CARGO_CLIPPY_ARGS` instead of hard-coding `--all-features`; the ~100-line
+  MSIX orchestration in `scripts/windows/Build-Windows.ps1` is one
+  `Invoke-MsixPackage` call; and both of that script's inline version parses are
+  one `Get-PackageVersion`. The vendored `scripts/linux/lib/antfrastructure.sh`
+  was re-synced to the rewritten template.
+- **Both gate lanes are one `uses:` onto a reusable ANTfrastructure workflow**
+  rather than a copied job — `lint-gates.yml` and `submodule-pins.yml`.
+- **`.gitmodules` uses an `https://` url**, not `git@github.com:`: an SSH pin is
+  inherited by a recursive checkout from OmniAccelerANT, where no key exists.
+- **`BACKLOG.md` no longer claims the ARM lane cannot go green.**
+  `:latest-cross` is a multi-arch OCI index carrying amd64, arm64 and riscv64 —
+  verified 2026-09-15 with `nerdctl manifest inspect`, and AGENTS.md has said so
+  since the index landed on 2026-09-04. The lane stays opt-in via `[build-arm]`,
+  which is a runner-minutes decision and not a blocker.
 - **The Pi runner asks ANTfrastructure for both things it used to retype.**
   The CI image reference comes from `linux/scripts/ci-image-ref.sh` (a literal
   in a tracked `*.sh` is what the CI-image-ref lint gate refuses), and the

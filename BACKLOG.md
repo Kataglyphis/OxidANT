@@ -18,9 +18,6 @@ protocol exists and the backlog is empty" — it was neither.
       987 differing pixels against a threshold of 40; confirmed pre-existing and
       deterministic. Blocked here: `src/shaders/*.wgsl` are generated artifacts
       and the `forward.slang` source lives in the C++ engine repo.
-- [b] The ARM lane cannot go green — `:latest-cross` resolves to an amd64-only
-      manifest list. Blocked on ANTfrastructure
-      (`build-runtime-manifest.sh --repair --push-manifest`).
 - [ ] Give CI a GPU adapter (software is enough: `mesa-vulkan-drivers` plus
       `KATAGLYPHIS_REQUIRE_GPU=1`) so the ~40 headless golden tests stop
       silently skipping and reporting as passed.
@@ -59,11 +56,13 @@ is written so that finishing it upstream is a deletion here, not a rewrite.
       `lib/cmake-build.sh:140-144` already has, behind a `CARGO_SAFE_DIRECTORY`
       knob defaulting to `/workspace`, and `cargo_release/bench/build_doc/`
       `coverage/security_checks.sh` should source it the way `cargo_debug.sh`
-      does. Then drop the guard from `ci-container-steps.sh`.
+      does. Then drop the guard from `ci-container-steps.sh`. Re-checked against
+      hub 19286e9f: still absent, still blocked.
 - [b] `Get-ANTfrastructurePin` (hub `windows/scripts/rust/Build-Windows.ps1`)
       belongs in `WindowsScripts.Shared.psm1`, so this repo's
       `Resolve-CargoToolPin` in `scripts/windows/Build-Windows.ps1` can be
-      deleted and both sides share one implementation.
+      deleted and both sides share one implementation. Re-checked against hub
+      19286e9f: the function is still only in that one script, still blocked.
 - [b] The MSI Packaging step of `scripts/windows/Build-Windows.ps1` should
       become a hub `windows/scripts/rust/New-MsiPackage.ps1` (or a
       `WindowsMsix.Common` function) taking `-WxsFile -LicenseFile
@@ -79,18 +78,20 @@ is written so that finishing it upstream is a deletion here, not a rewrite.
 - [b] `docs/adopting-in-a-new-project.md` section 8 should list
       `scripts/windows/container/` as "scripts that run inside the Windows
       image" - the casing convention this repo now follows everywhere.
+      Re-checked against hub 19286e9f: § 8 still does not name it.
 - [b] The MSIX certificate trust dance (importing into `LocalMachine\Root`
       *and* `LocalMachine\TrustedPeople`, `0x800B0109`, `Get-AppxLog`) is
       still written out in this repo's README. It belongs in the hub's
       `windows/scripts/certificates/README.md`, which today covers only
-      `TrustedPeople`.
+      `TrustedPeople`. Re-checked against hub 19286e9f: unchanged.
 - [b] The module inventory in AGENTS.md section 2 carries rows with no upstream
       owner (`WindowsMsix.Common`, `WindowsConfig.Common`, `WindowsBuild.Common`,
       `WindowsScripts.Shared`, the rust drivers, `package_archive.sh`, the
       composite actions, `lint-workflows.sh`, the agentic-loop templates, the
       01-core helpers). Once they are described in the hub's
       `docs/adopting-in-a-new-project.md` sections 2/8 or `docs/INDEX.md`, that
-      table becomes a link.
+      table becomes a link. Re-checked against hub 19286e9f: only
+      `WindowsMsix.Common` is named there (§ 7), so the table stays.
 
 ## Not adopted yet
 
