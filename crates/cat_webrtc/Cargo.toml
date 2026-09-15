@@ -7,8 +7,13 @@ license.workspace = true
 # Demo producer: an image/webcam source is looped through the YOLO ONNX model
 # (cat = COCO class 15), the boxes are burned into the RGBA frames and the
 # result is published as a WebRTC stream through gst-plugins-rs' webrtcsink.
-# Signalling is the GStreamer protocol the repo's web client speaks
-# (gst-webrtc-signalling-server, ws://host:8443).
+# Signalling is the GStreamer protocol OmniAccelerANT's Stream page
+# (lib/Pages/StreamPage) speaks - there is no web client in THIS repository,
+# the consumer is a different one (gst-webrtc-signalling-server,
+# ws://host:8443).
+#
+# The still-image source is configurable (--image / $KATAGLYPHIS_CAT_IMAGE)
+# and has no default: the picture is not tracked here. See src/main.rs.
 
 [dependencies]
 anyhow = { workspace = true }
