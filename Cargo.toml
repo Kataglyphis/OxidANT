@@ -115,6 +115,24 @@ wmi = { workspace = true }
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(onnx)', 'cfg(gui_wgpu_backend)'] }
 
+[workspace.lints.clippy]
+# NEW IN CLIPPY 1.98, and the reason rust_ubuntu26_04.yml's "Check formatting
+# and clippy" step went red the moment the hub pin moved to fa9ecdb6
+# (versions.env RUST_VERSION 1.97.1 -> 1.98.1). It fires 22 times, all inside
+# crates/webgpu_renderer, on `chunks_exact(N)` with a literal N.
+#
+# It is a style lint, not a correctness one: `as_chunks::<N>().0` iterates the
+# same elements and drops the same remainder, it just yields `&[T; N]` instead
+# of `&[T]`. Migrating means changing the element type at 22 call sites in the
+# glTF loader, the HDR decoder and four render passes - a renderer refactor
+# that has no business riding along in a documentation-and-CI audit, and
+# `cargo clippy --fix` does not converge on it (it rewrote the test files and
+# left every src site). Allowed HERE, once, rather than sprinkled as
+# #[allow] attributes, so removing it is one line. Tracked in BACKLOG.md.
+#
+# Everything else stays at -D warnings.
+chunks_exact_to_as_chunks = "allow"
+
 [lints]
 workspace = true
 
