@@ -28,9 +28,9 @@
       keeps working, so the container is named (not --rm) and this script waits
       on the actual container state, not the client exit code -- via
       ANTfrastructure's Wait-ContainerExit (WindowsContainerBuild.Reuse.psm1; the
-      submodule's docs/windows-container-build-performance.md, section
-      "Reusable implementation", documents it, and this repo's AGENTS.md and
-      README container sections narrate the wait).
+      third_party/ANTfrastructure/docs/windows-container-build-performance.md,
+      section "Reusable implementation", documents it, and this repo's AGENTS.md
+      and README container sections narrate the wait).
 
 .PARAMETER Test
     Also run the full test suite (cargo test --workspace --locked: unit +
@@ -111,8 +111,9 @@ Write-Host "Using docker: $Docker"
 # the build runs. The older behaviour (robocopy the sources to
 # %LOCALAPPDATA%\Temp and mount the copy) is still available via -StageSources.
 #
-# The distinction that matters is READ vs WRITE, not the filesystem. Per the
-# submodule's docs/windows-builds.md, bindFlt rejects copySync/renameSync with
+# The distinction that matters is READ vs WRITE, not the filesystem. Per
+# third_party/ANTfrastructure/docs/windows-builds.md, bindFlt rejects
+# copySync/renameSync with
 # errno 3, so create-then-rename through the mount fails - which is why every
 # build write already goes to container-local C:\ct and C:\ch. The only thing
 # crossing the mount is the artifact copy at the end of Build-RustAll.ps1, and

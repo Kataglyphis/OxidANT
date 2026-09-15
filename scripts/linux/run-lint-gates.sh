@@ -19,19 +19,26 @@
 # credentials, while rust_ubuntu26_04.yml publishes the docs over FTP with
 # secrets.SERVER / secrets.USERNAME / secrets.PW.
 #
-# CI and a human run the SAME entry point, so the gate that blocks a merge can
-# be reproduced on a dev box without pushing:
+# CI and a human run the SAME gate with the SAME flags, so the gate that blocks
+# a merge can be reproduced on a dev box without pushing:
 #
 #   bash scripts/linux/run-lint-gates.sh   # the whole repo
+#
+# CI reaches the aggregator through ANTfrastructure's reusable lint-gates.yml
+# rather than through this file (the wrappers sit at different paths across the
+# family, and one consumer has no submodule at all), so the two are equivalent
+# by construction rather than by call: same aggregator, same explicit root,
+# same --exclude third_party, same --ratchets.
 #
 # The consumer root is passed EXPLICITLY and is never inferred upstream: the
 # hub half of this gate lives inside third_party/ANTfrastructure, so a root derived
 # from its own location would grade ANTfrastructure's tree and report green over
 # the wrong repository.
 #
-# Extra arguments are forwarded. The only one upstream takes is
-# --exclude <top-level-dir>, and it REPLACES the third_party default rather than
-# adding to it, so a narrower sweep has to name third_party again:
+# Extra arguments are forwarded. Upstream takes --ratchets (already passed
+# below) and --exclude <top-level-dir>, and --exclude REPLACES the third_party
+# default rather than adding to it, so a narrower sweep has to name third_party
+# again:
 #
 #   bash scripts/linux/run-lint-gates.sh --exclude third_party --exclude logs
 #
@@ -47,4 +54,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/antfrastructure.sh
 source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
-antfrastructure_exec linux/scripts/run-lint-gates.sh "${KATAGLYPHIS_REPO_ROOT}" "$@"
+# --ratchets is ON, matching .github/workflows/lint-gates.yml's `ratchets: true`.
+# It adds the eight --root measurement gates plus the docs cross-reference gate,
+# frozen at <repo>/<gate>.allow. Three of those freeze files carry rows -
+# comment-size.allow, code-complexity.allow, dead-functions.allow - and were
+# seeded from the first run on 2026-09-15; the others are absent, which the
+# gates read as a zero baseline. The flag is repeatable upstream, so passing
+# --ratchets again on the command line is harmless.
+antfrastructure_exec linux/scripts/run-lint-gates.sh "${KATAGLYPHIS_REPO_ROOT}" --ratchets "$@"

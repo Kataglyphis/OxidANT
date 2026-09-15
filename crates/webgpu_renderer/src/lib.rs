@@ -1,5 +1,5 @@
 //! WebGPU renderer with glTF loading. The plan it implements is this crate's
-//! own `docs/webgpu-gltf-rust-plan.md`. The path is crate-relative and
+//! own `../docs/webgpu-gltf-rust-plan.md`. The path is relative to this file and
 //! resolves in every checkout - standalone, from OmniAccelerANT and from
 //! BeschleunigerBallett - because the document moved out of
 //! BeschleunigerBallett and next to the code under decision D6.
