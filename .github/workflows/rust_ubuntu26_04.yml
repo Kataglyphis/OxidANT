@@ -14,10 +14,14 @@ permissions:
   contents: read
 
 # A 45-minute lane that has already been superseded by a newer push is wasted
-# runner time. Queued runs on main still finish - releases are cut from there.
+# runner time. Queued runs on the DEFAULT branch still finish - releases are
+# cut from there. The branch is asked for rather than typed: this repo spent
+# months with `main` abandoned and `develop` carrying every commit, so a
+# literal 'refs/heads/main' here protected a branch nobody pushed to and
+# cancelled the one everybody did.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 # NO CONTAINER_IMAGE HERE, DELIBERATELY. This workflow opened with a
 # `CONTAINER_IMAGE:` holding the full image reference and handed it to all
@@ -114,90 +118,68 @@ jobs:
         shell: bash
         run: bash scripts/linux/compute-version.sh
 
+      # EVERY CONTAINER STEP BELOW IS ONE NAMED STEP OF ONE SCRIPT,
+      # scripts/linux/ci-container-steps.sh. Each of them used to inline its
+      # own `bash -lc 'set -e; git config --global --add safe.directory ...;
+      # bash third_party/.../cargo_<x>.sh'` - the same prologue eight times,
+      # eight places to edit, and nothing a human could run without retyping
+      # a container command out of YAML. The script IS the reproduction:
+      #   bash scripts/linux/ci-container-steps.sh <step>
+      # inside the family Linux image. It still delegates to ANTfrastructure's
+      # cargo_*.sh drivers; only `fmt-clippy` does not, for the reason
+      # written at that case in the script.
       - name: Debug build
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
-          script: >-
-            bash -lc 'set -e;
-            git config --global --add safe.directory /workspace || true;
-            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_debug.sh'
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh debug'
 
+      # GATING, and the gate that was red on 2026-09-14. It reads two ignore
+      # lists that must agree: .cargo/audit.toml and deny.toml's
+      # [advisories].ignore. While this step fails, the docs publish at the
+      # end of this job never runs.
       - name: Security checks (cargo audit + cargo deny)
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
-          script: >-
-            bash -lc 'set -e;
-            git config --global --add safe.directory /workspace || true;
-            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_security_checks.sh'
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh security'
 
-      # This step used to be `continue-on-error: true` and had NEVER once run
-      # to completion. It died with exit 127 on every single build:
-      #   - it called ANTfrastructure's `cargo_fmt_clippy.sh`, which then opened
-      #     with `rustup component add rustfmt` on an image that ships no
-      #     rustup, so it exited 127 before cargo ran. The driver probes first
-      #     now (its header: PROBE, DO NOT ADD); this step still calls cargo
-      #     directly only because the driver hard-codes --all-features, which
-      #     this image cannot build (GTK4/ORT, see below);
-      #   - the `apt-get install libgtk-4-dev ...` prologue failed too
-      #     ("/var/lib/apt/lists/partial is missing - Permission denied"): the
-      #     container is uid 1001, apt needs root. It was never installing
-      #     anything, so the deps it was meant to provide were never there.
-      # `continue-on-error` turned both into a green tick, and an entire crate
-      # (crates/webgpu_renderer) reached main unformatted and with 12 clippy
-      # errors as a result. So: call cargo directly (the components are already
-      # in the image), and let the step GATE.
-      #
-      # Default features on purpose, not --all-features: gui_linux needs GTK4
-      # headers and onnxruntime needs the ORT libs, neither of which this
-      # container has and neither of which uid 1001 can apt-install. A lint
-      # gate that cannot run is worse than a narrower one that does.
+      # GATING, with no continue-on-error. It was `continue-on-error: true`
+      # for months and exited 127 every time - the driver it called opened
+      # with `rustup component add rustfmt` on an image that ships no rustup -
+      # so an entire crate (crates/webgpu_renderer) reached the default branch
+      # unformatted and with 12 clippy errors. Why this one step still calls
+      # cargo directly instead of the driver: see the `fmt-clippy` case in
+      # scripts/linux/ci-container-steps.sh.
       - name: Check formatting and clippy
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
-          script: >-
-            bash -lc 'set -e;
-            git config --global --add safe.directory /workspace || true;
-            cargo fmt --all -- --check;
-            cargo clippy --workspace --all-targets --locked -- -D warnings'
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh fmt-clippy'
 
       - name: Run unit, integration, and doc tests
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
-          script: >-
-            bash -lc 'set -e;
-            git config --global --add safe.directory /workspace || true;
-            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_test.sh'
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh test'
 
       - name: Run coverage
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
-          script: >-
-            bash -lc 'set -e;
-            git config --global --add safe.directory /workspace || true;
-            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_coverage.sh'
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh coverage'
 
       - name: Run benchmarks
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
-          script: >-
-            bash -lc 'set -e;
-            git config --global --add safe.directory /workspace || true;
-            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_bench.sh'
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh bench'
 
       - name: 🛠️ Build release binary
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
-          script: >-
-            bash -lc 'set -e;
-            git config --global --add safe.directory /workspace || true;
-            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_release.sh'
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh release'
 
       # --privileged is here so AppImage creation can reach FUSE. --device
       # /dev/fuse would be the narrower grant, but the AppImage tooling also
@@ -247,17 +229,21 @@ jobs:
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
-          script: >-
-            bash -lc 'set -e;
-            git config --global --add safe.directory /workspace || true;
-            bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_build_doc.sh'
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh docs'
 
       # The family's FTP action owns the readability fixup (the `sudo chown -R`
       # step that used to precede this) and pins the upstream action by SHA.
       - name: 📂 Sync files to domain
         # Only publish docs from the default branch. Every push to develop used
         # to overwrite the live documentation with in-progress state.
-        if: matrix.docs && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        #
+        # ASKED FOR, NOT TYPED. This said `refs/heads/main` while main was an
+        # abandoned branch three 'fix' commits deep and develop carried every
+        # commit and was the default - so the comment above was false and the
+        # docs at rust.jonasheinle.de were never republished at all. Reading
+        # the repository's own default_branch keeps the comment true through
+        # the main/develop reconciliation and through whatever comes after it.
+        if: matrix.docs && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
         # Best-effort publish: a transient FTP control-socket timeout
         # (observed 2026-07-22) must NOT red-light a lane whose build, test
         # and package all passed. The step still shows as failed with a
