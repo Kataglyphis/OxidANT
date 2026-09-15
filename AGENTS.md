@@ -1,8 +1,24 @@
 # AGENTS.md
 
-Guidance for AI agents (and humans) working in this repository.
+Guidance for AI agents (and humans) working in OxidANT.
 
-## Project layout
+Laid out on ANTfrastructure's six-section template
+([`third_party/ANTfrastructure/shared/templates/AGENTS.md.template`](third_party/ANTfrastructure/shared/templates/AGENTS.md.template)), the same shape as
+OrchestrANT, AccelerANTgine and ANThology. The rule that decides where a paragraph goes:
+*would this still be true in a different project?* If yes, ANTfrastructure owns it and
+§ 2 links to it. If no, it is written out in § 4.
+
+**Dated history is not here.** Measured baselines and the post-mortems of the
+2026-08-07 packaging, graphics-stack and tract migrations live in
+[`CHANGELOG.md`](CHANGELOG.md). This file is what to do now; that file is what
+happened when.
+
+## 1. What this project is
+
+The Kataglyphis family's **Rust workspace**: the crates two other repositories build as
+a submodule, plus the gates, packaging and practices they inherit with them. Started as
+a project template, and the scaffolding is still here — but the crates have real
+consumers, which is what makes renames expensive (see [Consumers](#consumers)).
 
 Cargo workspace (`Cargo.toml` at the root is both the workspace and the root package `oxidant` — a lib with `cdylib`/`staticlib`/`rlib` crate types plus the feature-gated `burn-demos` bin):
 
@@ -18,14 +34,23 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
 - `third_party/ANTfrastructure` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
 
-## Consumers
+### Consumers
 
-Repositories that build this one as a submodule; a rename or a `[lib] name` change has to be carried into each of them:
+Repositories that build this one as a submodule; a rename or a `[lib] name` change has
+to be carried into each of them **in the same change**:
 
-- [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) — the root package through flutter_rust_bridge (Cargokit, podspecs, the committed `frb_generated.dart` loader stem) and `crates/cat_webrtc` for its Stream page
-- [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) — `crates/webgpu_renderer` and `crates/gui` through Corrosion (the `oxidant_bridge` CMake target)
+- [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) — the root package
+  through flutter_rust_bridge (Cargokit, podspecs, the committed `frb_generated.dart`
+  loader stem) and `crates/cat_webrtc` for its Stream page
+- [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) —
+  `crates/webgpu_renderer` and `crates/gui` through Corrosion. The import is
+  `Src/CMakeLists.txt:74-80`: `corrosion_import_crate(MANIFEST_PATH
+  ../third_party/OxidANT/Cargo.toml CRATE_TYPES staticlib CRATES oxidant)`, guarded by
+  `if(RUST_FEATURES)`. It names the package `oxidant` and takes the **staticlib**, so
+  `[package] name`, `[lib] name` and the `crate-type` list are all part of that
+  repository's build.
 
-## ANTfrastructure is the ground truth
+## 2. What ANTfrastructure owns — links only
 
 Anything to do with containers, Dockerfiles, CI plumbing or PowerShell belongs to the submodule. **Search it before writing a helper.**
 
@@ -55,16 +80,22 @@ command that was missing `/volume` and split its filter list on a space — so i
 could never have worked. Both are why § *Build & test in the Stevedore Windows
 container* now links rather than restates.
 
-## Linux containers locally (Rancher Desktop)
+### Linux containers locally (Rancher Desktop)
 
-Read `docs/rancher-desktop-linux-containers.md` first. The essentials as they apply here: the image is **always** `:latest-cross`, Rancher defaults to the **containerd** engine so it is `nerdctl --namespace default` rather than `docker`, and from Git Bash `MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` is mandatory or the mount argument is mangled. Point `CARGO_HOME` at a writable path (the image's is root-owned); a named volume keeps the registry warm between runs.
+One sentence and a link, because the procedure is upstream's:
+[`third_party/ANTfrastructure/docs/rancher-desktop-linux-containers.md`](third_party/ANTfrastructure/docs/rancher-desktop-linux-containers.md)
+— the image is **always** `:latest-cross`, Rancher defaults to **containerd** so it is
+`nerdctl --namespace default` rather than `docker`, and from Git Bash
+`MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` is mandatory or the mount argument is
+mangled.
 
-Two consumer-specific traps, both hit on 2026-08-07:
+Two consumer-specific traps are *this* repo's, so they are written out in § 4.
 
-- **A CRLF checkout breaks it before anything runs.** The scripts are executed by bash inside the container; a `\r` makes it fail with `set: pipefail\r: invalid option name`, which names neither the file nor line endings. `.gitattributes` now pins `*.sh` to LF in both repos, but git does not rewrite an existing checkout: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`
-- **The image's Rust may be older than its own pin.** See "Known gaps" — `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ANTfrastructure; check `rustc --version` in the container if a build fails on an MSRV floor. Everything below was written locally first and later found to already exist there — usually in a better form, twice with a bug the local copy did not have:
+### Reach for these before writing a helper
 
-All paths below are relative to `third_party/ANTfrastructure/`.
+Every row below was written locally first and later found to already exist upstream —
+usually in a better form, twice with a bug the local copy did not have. All paths are
+relative to `third_party/ANTfrastructure/`.
 
 | Need | Use | Defined in | Not |
 | --- | --- | --- | --- |
@@ -87,10 +118,6 @@ All paths below are relative to `third_party/ANTfrastructure/`.
 | Agentic loop | config + runner templates | [`shared/agentic-loop/templates/`](third_party/ANTfrastructure/shared/agentic-loop/templates) | writing one from scratch |
 | Bash helpers (logging, retry, SHA'd downloads, parallelism) | `logging.sh`, `downloads.sh`, `parallelism.sh`, … | [`linux/scripts/01-core/`](third_party/ANTfrastructure/linux/scripts/01-core) | new implementations |
 
-**One caveat about `cargo_fmt_clippy.sh`**: this repo still calls `cargo fmt` / `cargo clippy` directly, only because the driver hard-codes `--all-features`, which this image cannot build (GTK4/ORT). The old blocker — a leading `rustup component add rustfmt` — is gone; the driver probes first now (its header: PROBE, DO NOT ADD). See the CI section.
-
-**Never expand a manifest template with `-replace`.** PowerShell treats the replacement side as a substitution template, so a value containing `$&` re-inserts the whole matched token. A description of ``Renderer $& x`` produced `Desc="Renderer __MSIX_DESCRIPTION__amp; x"` — the literal token, shipped into the manifest. `Expand-XmlTemplateTokens` uses an ordinal `[string].Replace` and escapes each value itself.
-
 Two caveats:
 
 - **Nested module imports are module-private.** `WindowsBuild.Common` importing `WindowsScripts.Shared` does not re-export it to you; import each module you call into directly, or you get a "command not found" the first time that code path runs.
@@ -98,57 +125,50 @@ Two caveats:
 
 Nothing here needs Windows PowerShell 5.1 semantics: every script carries `#requires -Version 7.0` and CI invokes `pwsh`.
 
-## Where the documentation actually lives
+## 3. Critical invariant: submodule pins
 
-This repo owns `AGENTS.md`, `README.md`, `BACKLOG.md`, `CHANGELOG.md` and
-`crates/webgpu_renderer/README.md`. There is **no `docs/` directory here yet**, and the
-renderer's six design documents live in **`BeschleunigerBallett/docs/`**.
+Builds are only supported against the **recorded submodule gitlink** — the commit CI
+builds green. `git submodule update --checkout --recursive` restores it. If a drifted
+submodule is what you actually want, move the gitlink **and** fix the fallout in the
+same change; do not fork upstream behaviour locally.
 
-**Every reference to them is an absolute URL**
-(`https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/<name>.md`), in
-the sources as well as in `crates/webgpu_renderer/README.md`. Bare `docs/<name>.md`
-and the `../../../../docs/` prefix are both gone, and neither may come back while the
-documents are external: the comments that used them said "repo root" and meant *that
-superproject's* root, which is true only when this repo is checked out under
-BeschleunigerBallett. It is also consumed standalone and from OmniAccelerANT (see
-[Consumers](#consumers)), where a relative `docs/` path points at nothing. `bounds.rs`
-calls `renderer-bounds-invariant.md` the checklist for not repeating eight identical
-bugs, so a dead link there costs more than tidiness.
+There is one submodule, `third_party/ANTfrastructure`, and every gate in this repo comes
+out of it: the images both build lanes run in, the shellcheck/actionlint/gitleaks
+binaries the lint lane bootstraps, the packaging and docs drivers, the Windows modules.
+A drifted gitlink does not degrade one job — it silently changes every gate, and
+`git submodule status` marks it with a `+` that is easy to miss in a wall of CI output.
 
-| Document | Owner after the move |
-| --- | --- |
-| `renderer-bounds-invariant.md` | **here**, `crates/webgpu_renderer/docs/` |
-| `webgpu-renderer-roadmap.md` | **here**, `crates/webgpu_renderer/docs/` |
-| `webgpu-gltf-rust-plan.md` | **here**, `crates/webgpu_renderer/docs/` |
-| `gpu-golden-testing.md` | stays in BeschleunigerBallett |
-| `model-loading.md` | stays in BeschleunigerBallett |
-| `shader-sharing.md` | stays in BeschleunigerBallett |
-| `webgpu-srgb-audit.md` | stays in BeschleunigerBallett |
+Guarded by ANTfrastructure's own repo-agnostic Pester suite, run from
+[`.github/workflows/submodule-pins.yml`](.github/workflows/submodule-pins.yml) after any
+pin bump: `third_party/ANTfrastructure/shared/windows/tests/Submodule.Pins.Tests.ps1`, Pester pinned to
+`3.4.0`, on `windows-2025`. It asserts for **every** configured submodule that it is
+checked out, sits at its recorded commit, and is pinned to a commit still reachable from
+its remote — so a second submodule is covered the day it lands, without editing the
+lane.
 
-The three marked **here** are scheduled to move under decision D6 — this repo owns the
-renderer, code and documentation, and BeschleunigerBallett keeps a pointer rather than a
-copy. **That move has not happened yet**, and it is a cross-repository change: do not
-half-do it by rewriting a link here before the file exists here. When it lands, the
-three become `docs/<name>.md` relative to the crate and the other four keep their
-absolute URLs — which is the whole reason this table exists.
+It is a **standalone workflow, not a job inside `lint-gates.yml`**, and deliberately so:
+Pester 3.4.0 is a Windows PowerShell-era module never released for PowerShell Core on
+Linux, so it needs a `windows-2025` runner, while the lint lane is a single
+`ubuntu-26.04` step. OrchestrANT, the family's reference consumer of this suite, keeps it
+standalone for the same reason.
 
-## Build & test (host)
+Version couplings with the hub, checked: the toolchain (`RUST_VERSION`) and the two
+cargo-tool pins (`CARGO_AUDIT_VERSION`, `CARGO_DENY_VERSION`) are read from
+`third_party/ANTfrastructure/linux/scripts/01-core/versions.env` at run time rather than copied, and no CI image
+reference is written down here at all — `verify_ci_image_refs.py` check D fails the lint
+gate if one is.
 
-```bash
-cargo build --workspace --locked                      # dev/debug
-cargo build --workspace --locked --profile profile    # custom: release + debuginfo
-cargo build --workspace --locked --release            # fat LTO, codegen-units 1, panic=abort, stripped
-cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
-```
+## 4. Pitfalls specific to this project
 
-Run the lint gates before pushing. CI's formatting-and-clippy step runs exactly these two commands, both hard failures; the shell/workflow/secret gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
+Everything here is false or meaningless in another repo — that is why it is written out
+rather than linked.
 
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-```
+### The two traps a Windows checkout hits before anything runs
 
-Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest in `tests/fuzz_test.rs`; there is no cargo-fuzz/libFuzzer target.
+- **A CRLF checkout breaks it before anything runs.** The scripts are executed by bash inside the container; a `\r` makes it fail with `set: pipefail\r: invalid option name`, which names neither the file nor line endings. `.gitattributes` now pins `*.sh` to LF in both repos, but git does not rewrite an existing checkout: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`
+- **The image's Rust may be older than its own pin.** See "Known gaps" — `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ANTfrastructure; check `rustc --version` in the container if a build fails on an MSRV floor.
+
+### The bin was renamed, not the lib — do not undo it
 
 **The pdb collision is fixed — do not undo it by renaming the bin back.** Cargo used to warn that the root **lib** and the CLI **bin**, both named `oxidant`, wrote the same `oxidant.pdb` (it comes from the lib's `cdylib` crate type, not the rlib), and that this *"may become a hard error in the future"* — [rust-lang/cargo#6313](https://github.com/rust-lang/cargo/issues/6313).
 
@@ -160,39 +180,9 @@ What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/
 
 The two `BINARY` variables still mean different things. In the **Windows** workflow it is the executable (`kataglyphis_cli`). In the **Ubuntu** workflow it is `oxidant`, and it names *both* the tarball and the file inside it: `package_archive.sh` copies `target/release/$BINARY_FILE` to `$ArchiveDir/$Binary`. So `BINARY_FILE` is the cargo artefact, `BINARY` is what a user ends up invoking.
 
-## Build & test in the Stevedore Windows container
+### Inside the Stevedore Windows container
 
-Driver: `scripts\windows\container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`Build-RustAll.ps1`, `Test-RustAll.ps1`) in the family Windows CI image, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
-
-**No image reference is written in this repository, and that includes this
-file.** The driver's `-Image` parameter defaults to empty and is filled in by
-ANTfrastructure's `Get-CiImageReference -Windows`, which composes
-`IMAGE_REGISTRY_PREFIX` + `CI_IMAGE_WINDOWS_TAG` from the submodule's
-`linux/scripts/01-core/versions.env` — the fleet's single owner of both CI
-refs, so a tag bump lands in one file in one repo and arrives here with no
-edit. Pass `-Image` to override for a one-off. Prose is not exempt: a
-reference typed into a table or a README goes stale exactly like one typed into
-code, and `verify_ci_image_refs.py` check D fails a build on a copy in any
-tracked `*.sh` / `*.ps1` / `*.psm1` or workflow YAML.
-
-Mounting the repo — not a copy of it — is the default, ReFS Dev Drive or not.
-It also means `third_party/` is present inside the container, so anything
-importing ANTfrastructure modules (e.g. `Build-Windows.ps1`) works without special
-staging.
-
-**The host-side mechanics are upstream's, not this repo's.** Why writes through
-a bind mount fail while reads succeed, how to allow the Dev Drive filters, what
-`--isolation process` does to the CPU count, the wcifs teardown lock, the
-transient hcsshim client-pipe drops, and why the Windows lane is Stevedore's
-`docker.exe` rather than nerdctl: all in
-[`docs/windows-builds.md`](third_party/ANTfrastructure/docs/windows-builds.md)
-and
-[`docs/windows-container-build-performance.md`](third_party/ANTfrastructure/docs/windows-container-build-performance.md).
-Read those before changing the driver. **Do not copy their commands back into
-this file** — the last copy of the `fsutil devdrv` line that lived here was
-malformed and stayed that way through several edits.
-
-What is specific to *this* repo, because cargo is what makes it bite:
+Because cargo is what makes it bite:
 
 - **Every build write stays container-local** — `CARGO_TARGET_DIR=C:\ct`,
   `CARGO_HOME=C:\ch`. Cargo's create-then-rename is exactly the pattern a bind
@@ -232,20 +222,159 @@ What is specific to *this* repo, because cargo is what makes it bite:
   `Invoke-StevedoreBuild.ps1`; neither could be exercised from the Linux
   verification box.
 
-## Verified baselines (container, 32 CPUs)
+### `cargo_fmt_clippy.sh`
 
-**2026-08-07, winamd64, rustc 1.97.1** — `Invoke-StevedoreBuild.ps1 -MemoryGb 32`:
+**One caveat about `cargo_fmt_clippy.sh`**: this repo still calls `cargo fmt` / `cargo clippy` directly, only because the driver hard-codes `--all-features`, which this image cannot build (GTK4/ORT). The old blocker — a leading `rustup component add rustfmt` — is gone; the driver probes first now (its header: PROBE, DO NOT ADD). See the CI section.
 
-- Builds: debug 1m35s, profile 1m32s, release 1m12s — all three green. Release binary verified on the host: `stats --path README.md` → `Lines: 476, Words: 1905, Bytes: 20104`. (Those figures describe the README **as it stood that day**; the file has since grown — `wc -lwc README.md` measured 537/2512/24364 on 2026-09-06 — so a re-run printing bigger numbers is the tool working on a bigger file, not a regression. Compare a re-run against the README of the same date, not against this line.)
-- Tests: the 8 that predate `crates/webgpu_renderer` still pass (3 integration, 1 proptest, 4 telemetry). **`kataglyphis_webgpu_renderer` is excluded from the container run** — `scripts/windows/container/Test-RustAll.ps1` passes `--exclude kataglyphis_webgpu_renderer` and logs that it did. Its test binaries exit `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`, because linking wgpu with the `gles` backend makes the executable import `opengl32.dll`, which Server Core does not ship. The loader resolves that import, so no runtime flag helps; without the exclusion the whole `cargo test --workspace` crashed and reported nothing. `gles` stays on purpose (OpenGL fallback for hosts without Vulkan/DX12) — run `cargo test -p kataglyphis_webgpu_renderer --locked` on a desktop Windows machine instead.
+### Never expand a manifest template with `-replace`
 
-  Not a regression from the wgpu 30 upgrade. The old "8 passed / 0 failed" baseline was recorded on 2026-07-17, and the renderer crate landed on 2026-07-18 — the container test lane has therefore *never* run with that crate present. The image is Server Core with no GPU stack; a wgpu-linked binary needs graphics DLLs it does not ship.
+PowerShell treats the replacement side as a substitution template, so a value containing `$&` re-inserts the whole matched token. A description of ``Renderer $& x`` produced `Desc="Renderer __MSIX_DESCRIPTION__amp; x"` — the literal token, shipped into the manifest. `Expand-XmlTemplateTokens` uses an ordinal `[string].Replace` and escapes each value itself.
 
-  `Invoke-StevedoreBuild.ps1 -Test` used to fail as a whole because of this. It no longer does — the exclusion lives in `Test-RustAll.ps1`, so the container lane is green and reports 8 passed. Drop the `--exclude` once the image carries the missing DLLs.
+### Feature combinations and their system dependencies
 
-**2026-07-17** (superseded, kept because it is what the 8-test figure refers to): builds debug 1m11s / profile 1m31s / release 1m08s; tests 8 passed / 0 failed, 1 doc-test ignored — measured before `crates/webgpu_renderer` existed.
+Default features are empty, so `cargo build` needs nothing. Each optional feature pulls system libraries that must already exist — **the CI container runs as uid 1001 and cannot `apt-get install` them**:
 
-## Continuous integration
+| Feature | Needs | In the CI image? |
+| --- | --- | --- |
+| `gstreamer` (crates/media) | GStreamer dev files | **Yes** — source-built into `/opt/gstreamer`, on `PKG_CONFIG_PATH`. Do *not* install the distro `libgstreamer*-dev`: the image purges those on purpose. |
+| `gui_linux` | GStreamer + wgpu (pure Rust) | **Yes** — despite the name it does not use GTK; it is the wgpu path. |
+| `gui_unix` | `libgtk-4-dev` | **No, by design.** The foreign-arch GTK dev chain pulls target-side Python and breaks cross builds on `python3-minimal`'s postinst. This feature cannot be built against `latest-cross`. |
+| `onnxruntime`, `burn_demos` | `libssl-dev` (via `openssl-sys`) | **Yes** — via ANTfrastructure's `package-lists.sh`. |
+
+On a plain Ubuntu box (e.g. the WSL recipe above) you *do* need the distro packages, because nothing there provides the source-built stack. That difference is exactly why "install the -dev package" is the wrong instinct when the image is involved.
+
+**Every feature path lints clean** — measured 2026-08-07 on Ubuntu 24.04 with rustc 1.97.1, `cargo clippy --all-targets --locked --features <set> -- -D warnings`:
+
+| Feature set | Result |
+| --- | --- |
+| default (what CI lints) | clean |
+| `gstreamer,gui_linux,onnxruntime,onnx_tract` | clean |
+| `gui_unix` | clean |
+| `burn_demos` | clean |
+
+Worth stating plainly because none of the non-default rows has *ever* been linted in CI: the Linux lane lints default features (which are empty) and the Windows lane's fmt/clippy silently skip. `crates/media`, `crates/gui` and the ONNX paths are unguarded, not neglected — the `feature-matrix` job exists to keep it that way.
+
+Note the feature names belong to the **root package**. `cargo clippy --workspace --features gstreamer` fails with *"package `kataglyphis_gui` does not have feature `gstreamer`"* because `--workspace` applies the list to every member; drop `--workspace` to scope it to the root.
+
+### Do not let `cargo update` take zune-core to 0.5.2
+
+`zune-core` is held at **0.5.1** in `Cargo.lock` on purpose. 0.5.2 breaks `zune-jpeg` 0.5.15:
+
+```
+error: macro expansion ends with an incomplete expression: expected expression
+  --> zune-jpeg-0.5.15/src/mcu_prog.rs:463:17
+error: could not compile `zune-jpeg` (lib) due to 1 previous error
+```
+
+zune-jpeg consumes a macro from zune-core, and 0.5.2 changed it. **There is no forward fix**: 0.5.15 is zune-jpeg's newest release and 0.5.2 is zune-core's, so the two are incompatible at their respective tips. Both arrive transitively (via `image`, into the renderer), so nothing in a `Cargo.toml` pins them — only the lockfile does.
+
+A bare `cargo update` reintroduces it silently, and it only shows up in a **release** build of the full workspace; `cargo test` and `cargo check -p ...` stay green because they never reach that crate. If you run `cargo update`, put it back:
+
+```bash
+cargo update -p zune-core --precise 0.5.1
+```
+
+Re-check when zune-jpeg publishes past 0.5.15.
+
+### Known gaps
+
+- **No CI lane builds any optional feature.** The Linux lane builds default features; the Windows lane builds `gui_windows,onnxruntime_directml` and is itself opt-in. So `crates/media` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `rust_ubuntu26_04.yml` closes this, but only once the build image ships the three package groups in the table above.
+
+- **No CI lane has a GPU, so the golden tests never actually run.** `GpuContext::headless_or_skip()` returns `None` and every one of the ~40 headless render tests reports as passed having drawn nothing. This is not theoretical: running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**:
+
+  ```
+  a_non_uniform_instance_scale_shades_like_the_same_node_scale
+  crates/webgpu_renderer/tests/skinned_bounds.rs
+  node-scale and instance-scale must shade the same, 987 pixels differ  (threshold: 40)
+  ```
+
+  Confirmed pre-existing by re-running it against a pristine export of `a618287`: byte-identical 987. Everything else in the suite (~340 tests) passes. The failing path is the instanced normal transform — the generated `src/shaders/forward.wgsl` applies `instance_cofactor_0` to `worldNormal_0`, and the two shading paths disagree where they must agree.
+
+  **Fix it upstream, not here.** The `.wgsl` files in `src/shaders/` are checked-in *generated artifacts*; there is no `.slang` file in this repo, and the code comments reference the C++ engine's `forward.slang` by line number (e.g. `cascades.rs` → `forward.slang:151`). Hand-editing the generated WGSL would desynchronise it from its source.
+
+  Until a CI runner has an adapter, a software one makes these tests real: install `mesa-vulkan-drivers` and set `KATAGLYPHIS_REQUIRE_GPU=1` so a missing adapter fails loudly instead of skipping silently.
+
+### Verifying locally on a Windows box (no MSVC required)
+
+This repo's dev machines commonly lack the MSVC "C++ build tools" workload. Without it **nothing links**, and Git Bash makes the failure baffling: `/usr/bin/link.exe` is coreutils' `link`, which shadows the MSVC linker on PATH and dies with `link: missing operand after '\377\376'` (it is being handed rustc's UTF-16 response file). That is an environment fault, never a code fault.
+
+The fastest real fix is to verify in WSL against the CI's own target platform:
+
+```bash
+# once, as root inside the distro
+apt-get install -y build-essential pkg-config curl git libssl-dev \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgtk-4-dev
+# optional: a software Vulkan adapter so the headless golden tests actually run
+apt-get install -y mesa-vulkan-drivers vulkan-tools
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/ri.sh
+# The toolchain is the fleet's, read from the submodule rather than typed here - it
+# was pinned to a literal 1.97.1 until versions.env moved to 1.98.1 underneath it.
+RUST_VERSION="$(. third_party/ANTfrastructure/linux/scripts/01-core/versions.env; echo "$RUST_VERSION")"
+sh /tmp/ri.sh -y --profile minimal --default-toolchain "$RUST_VERSION" -c rustfmt -c clippy
+```
+
+Then, from the repo root, with `CARGO_TARGET_DIR` pointed at a **Linux-native** path (never the 9p-mounted Windows tree, which is glacial and already holds MSVC artifacts):
+
+```bash
+export CARGO_TARGET_DIR=/root/kt
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked
+```
+
+`KATAGLYPHIS_REQUIRE_GPU` is the important one: without it `GpuContext::headless_or_skip()` silently returns `None` and the whole golden-test suite "passes" having rendered nothing. Set it and a missing adapter becomes a panic, so green *proves* the tests ran.
+
+## 5. Build, run, test
+
+```bash
+cargo build --workspace --locked                      # dev/debug
+cargo build --workspace --locked --profile profile    # custom: release + debuginfo
+cargo build --workspace --locked --release            # fat LTO, codegen-units 1, panic=abort, stripped
+cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
+```
+
+Run the lint gates before pushing. CI's formatting-and-clippy step runs exactly these two commands, both hard failures; the shell/workflow/secret gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```
+
+Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest in `tests/fuzz_test.rs`; there is no cargo-fuzz/libFuzzer target.
+
+### Build & test in the Stevedore Windows container
+
+Driver: `scripts\windows\container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`Build-RustAll.ps1`, `Test-RustAll.ps1`) in the family Windows CI image, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
+
+**No image reference is written in this repository, and that includes this
+file.** The driver's `-Image` parameter defaults to empty and is filled in by
+ANTfrastructure's `Get-CiImageReference -Windows`, which composes
+`IMAGE_REGISTRY_PREFIX` + `CI_IMAGE_WINDOWS_TAG` from the submodule's
+`linux/scripts/01-core/versions.env` — the fleet's single owner of both CI
+refs, so a tag bump lands in one file in one repo and arrives here with no
+edit. Pass `-Image` to override for a one-off. Prose is not exempt: a
+reference typed into a table or a README goes stale exactly like one typed into
+code, and `verify_ci_image_refs.py` check D fails a build on a copy in any
+tracked `*.sh` / `*.ps1` / `*.psm1` or workflow YAML.
+
+Mounting the repo — not a copy of it — is the default, ReFS Dev Drive or not.
+It also means `third_party/` is present inside the container, so anything
+importing ANTfrastructure modules (e.g. `Build-Windows.ps1`) works without special
+staging.
+
+**The host-side mechanics are upstream's, not this repo's.** Why writes through
+a bind mount fail while reads succeed, how to allow the Dev Drive filters, what
+`--isolation process` does to the CPU count, the wcifs teardown lock, the
+transient hcsshim client-pipe drops, and why the Windows lane is Stevedore's
+`docker.exe` rather than nerdctl: all in
+[`docs/windows-builds.md`](third_party/ANTfrastructure/docs/windows-builds.md)
+and
+[`docs/windows-container-build-performance.md`](third_party/ANTfrastructure/docs/windows-container-build-performance.md).
+Read those before changing the driver. **Do not copy their commands back into
+this file** — the last copy of the `fsutil devdrv` line that lived here was
+malformed and stayed that way through several edits.
+
+### Continuous integration
 
 Four workflows. The two build lanes run inside ANTfrastructure images rather than on the runner; the two gate lanes pull no image at all:
 
@@ -287,7 +416,7 @@ bash third_party/ANTfrastructure/linux/scripts/lint-workflows.sh .
 
 The trailing `.` is load-bearing: without it the script lints ANTfrastructure's own workflows instead of this repo's, and reports green either way.
 
-## Dependency upgrades
+### Dependency upgrades
 
 Renovate, run as a **local CLI**. Both lanes above build inside images the
 `third_party/ANTfrastructure` pin decides, so that gitlink drifting is a silent
@@ -323,143 +452,47 @@ The variable that fixes that under `--platform=local` is `GITHUB_COM_TOKEN`, not
 The script header covers the rest; the family rationale is
 [`third_party/ANTfrastructure/docs/dependency-updates.md`](third_party/ANTfrastructure/docs/dependency-updates.md).
 
-## Verifying locally on a Windows box (no MSVC required)
+## 6. Docs owned by this repo
 
-This repo's dev machines commonly lack the MSVC "C++ build tools" workload. Without it **nothing links**, and Git Bash makes the failure baffling: `/usr/bin/link.exe` is coreutils' `link`, which shadows the MSVC linker on PATH and dies with `link: missing operand after '\377\376'` (it is being handed rustc's UTF-16 response file). That is an environment fault, never a code fault.
+`AGENTS.md` (this file), `README.md`, `BACKLOG.md`, `CHANGELOG.md` and
+`crates/webgpu_renderer/README.md`. Rustdoc is published from the default branch to
+<https://rust.jonasheinle.de> by the Linux lane's last step. Update the docs in the same
+change as the behaviour they describe.
 
-The fastest real fix is to verify in WSL against the CI's own target platform:
+### Where the renderer's design documents actually live
 
-```bash
-# once, as root inside the distro
-apt-get install -y build-essential pkg-config curl git libssl-dev \
-    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgtk-4-dev
-# optional: a software Vulkan adapter so the headless golden tests actually run
-apt-get install -y mesa-vulkan-drivers vulkan-tools
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/ri.sh
-sh /tmp/ri.sh -y --profile minimal --default-toolchain 1.97.1 -c rustfmt -c clippy
-```
+There is **no `docs/` directory here yet**, and the renderer's six design documents
+live in **`BeschleunigerBallett/docs/`**.
 
-Then, from the repo root, with `CARGO_TARGET_DIR` pointed at a **Linux-native** path (never the 9p-mounted Windows tree, which is glacial and already holds MSVC artifacts):
+**Every reference to them is an absolute URL**
+(`https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/<name>.md`), in
+the sources as well as in `crates/webgpu_renderer/README.md`. Bare `docs/<name>.md`
+and the `../../../../docs/` prefix are both gone, and neither may come back while the
+documents are external: the comments that used them said "repo root" and meant *that
+superproject's* root, which is true only when this repo is checked out under
+BeschleunigerBallett. It is also consumed standalone and from OmniAccelerANT (see
+[Consumers](#consumers)), where a relative `docs/` path points at nothing. `bounds.rs`
+calls `renderer-bounds-invariant.md` the checklist for not repeating eight identical
+bugs, so a dead link there costs more than tidiness.
 
-```bash
-export CARGO_TARGET_DIR=/root/kt
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked
-```
-
-`KATAGLYPHIS_REQUIRE_GPU` is the important one: without it `GpuContext::headless_or_skip()` silently returns `None` and the whole golden-test suite "passes" having rendered nothing. Set it and a missing adapter becomes a panic, so green *proves* the tests ran.
-
-## Feature combinations and their system dependencies
-
-Default features are empty, so `cargo build` needs nothing. Each optional feature pulls system libraries that must already exist — **the CI container runs as uid 1001 and cannot `apt-get install` them**:
-
-| Feature | Needs | In the CI image? |
-| --- | --- | --- |
-| `gstreamer` (crates/media) | GStreamer dev files | **Yes** — source-built into `/opt/gstreamer`, on `PKG_CONFIG_PATH`. Do *not* install the distro `libgstreamer*-dev`: the image purges those on purpose. |
-| `gui_linux` | GStreamer + wgpu (pure Rust) | **Yes** — despite the name it does not use GTK; it is the wgpu path. |
-| `gui_unix` | `libgtk-4-dev` | **No, by design.** The foreign-arch GTK dev chain pulls target-side Python and breaks cross builds on `python3-minimal`'s postinst. This feature cannot be built against `latest-cross`. |
-| `onnxruntime`, `burn_demos` | `libssl-dev` (via `openssl-sys`) | **Yes** — via ANTfrastructure's `package-lists.sh`. |
-
-On a plain Ubuntu box (e.g. the WSL recipe above) you *do* need the distro packages, because nothing there provides the source-built stack. That difference is exactly why "install the -dev package" is the wrong instinct when the image is involved.
-
-**Every feature path lints clean** — measured 2026-08-07 on Ubuntu 24.04 with rustc 1.97.1, `cargo clippy --all-targets --locked --features <set> -- -D warnings`:
-
-| Feature set | Result |
+| Document | Owner after the move |
 | --- | --- |
-| default (what CI lints) | clean |
-| `gstreamer,gui_linux,onnxruntime,onnx_tract` | clean |
-| `gui_unix` | clean |
-| `burn_demos` | clean |
+| `renderer-bounds-invariant.md` | **here**, `crates/webgpu_renderer/docs/` |
+| `webgpu-renderer-roadmap.md` | **here**, `crates/webgpu_renderer/docs/` |
+| `webgpu-gltf-rust-plan.md` | **here**, `crates/webgpu_renderer/docs/` |
+| `gpu-golden-testing.md` | stays in BeschleunigerBallett |
+| `model-loading.md` | stays in BeschleunigerBallett |
+| `shader-sharing.md` | stays in BeschleunigerBallett |
+| `webgpu-srgb-audit.md` | stays in BeschleunigerBallett |
 
-Worth stating plainly because none of the non-default rows has *ever* been linted in CI: the Linux lane lints default features (which are empty) and the Windows lane's fmt/clippy silently skip. `crates/media`, `crates/gui` and the ONNX paths are unguarded, not neglected — the `feature-matrix` job exists to keep it that way.
+The three marked **here** are scheduled to move under decision D6 — this repo owns the
+renderer, code and documentation, and BeschleunigerBallett keeps a pointer rather than a
+copy. **That move has not happened yet**, and it is a cross-repository change: do not
+half-do it by rewriting a link here before the file exists here. When it lands, the
+three become `docs/<name>.md` relative to the crate and the other four keep their
+absolute URLs — which is the whole reason this table exists.
 
-Note the feature names belong to the **root package**. `cargo clippy --workspace --features gstreamer` fails with *"package `kataglyphis_gui` does not have feature `gstreamer`"* because `--workspace` applies the list to every member; drop `--workspace` to scope it to the root.
-
-## Packaging: what actually happens when you run it
-
-Verified 2026-08-07 by running `Build-Windows.ps1 -SkipTests` in `:winamd64`:
-
-- **MSIX works.** `Kataglyphis.RustProjectTemplate_2.3.4.0_x64.msix`, 51.69 MB, manifest with every token substituted. `makeappx.exe` resolves via `Resolve-WindowsSdkToolPath` to `Windows Kits\10\bin\10.0.26100.0\x64\`. The identity became `Kataglyphis.OxidANT` on 2026-09-05, so a build today writes `Kataglyphis.OxidANT_<VERSION>_x64.msix`; the old filename stands here because it is what that run actually produced. Windows treats the two identities as different apps, so an installation predating that date is not upgraded — it has to be uninstalled first, see the MSIX section of the README.
-- **MSI works, but only since the WiX v4 migration** (2026-08-07). It had never produced a file. Two independent faults, both masked by the step being optional:
-  1. `cargo wix -p kataglyphis_cli` looks for WXS files inside the package it was pointed at (`crates/cli/wix/`); this repo keeps its single WiX source at the workspace root. `Msi.WxsFile` had been sitting unread in the config the whole time.
-  2. Even with the path fixed, **cargo-wix cannot drive this image.** 0.3.9 is its newest release and it shells out to WiX v3's `candle.exe`/`light.exe`. ANTfrastructure installs **WiX 4.0.6** as a dotnet tool — a single `wix.exe`, no candle — so it failed with *"The compiler application ('candle') does not exist at the 'C:\WiX' path"*.
-
-  `Build-Windows.ps1` now calls `wix.exe build` directly (resolved from `$env:WIX`, then PATH) and `wix/main.wxs` is **WiX v4 schema**: `<Package>` instead of `<Product>` + inner `<Package>`, `<SummaryInformation>`, `<StandardDirectory>` instead of the `TARGETDIR` nesting, `Bitness='always64'` for `Win64='yes'`, `AllowAbsent` for `Absent`, and `<ui:WixUI>` for `<UIRef>`. `WixUI_FeatureTree` needs `-ext WixToolset.UI.wixext`, which the image already ships (4.0.4). Paths that move with the build — the binary follows `CARGO_TARGET_DIR` — go in as `-d Version= / ExeSource= / LicenseRtf=` preprocessor variables, so the WXS never assumes a `target\release` beside the workspace root.
-
-  **If you touch this: cargo-wix is not an option again unless it gains WiX 4 support.** Check its releases before reintroducing it.
-
-**Packaging and security steps are now `Invoke-BuildStep -Critical`, not `Invoke-BuildOptional`.** That matters because ANTfrastructure's `Invoke-BuildOptional` is `try { & $Script } catch { Write-BuildLogWarning }` and **never registers the step with the build context** — so it cannot appear in the summary at all. The pre-fix run reported **"7 steps, 7 succeeded, 0 failed (100% success rate)"** while MSI *and* the license check had failed. If you see a suspiciously perfect summary, that percentage covers only the `Invoke-BuildStep` steps; read the WARNING lines.
-
-`cargo-deny licenses` also failed on that run (advisories, bans and sources passed) and was equally invisible. Fixed by allowing `BSL-1.0` in `deny.toml` — xxhash-rust via cubecl-common → burn; it was the only rejection.
-
-`CARGO_TARGET_DIR` may be absolute — the in-container scripts set `C:\ct`. `Build-Windows.ps1` now handles that (`IsPathRooted`); before, `Join-Path` produced `C:\...\workspace\C:\ct\msix-staging` and MSIX died on "The filename, directory name, or volume label syntax is incorrect".
-
-## Known gaps
-
-- **No CI lane builds any optional feature.** The Linux lane builds default features; the Windows lane builds `gui_windows,onnxruntime_directml` and is itself opt-in. So `crates/media` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `rust_ubuntu26_04.yml` closes this, but only once the build image ships the three package groups in the table above.
-
-- **No CI lane has a GPU, so the golden tests never actually run.** `GpuContext::headless_or_skip()` returns `None` and every one of the ~40 headless render tests reports as passed having drawn nothing. This is not theoretical: running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**:
-
-  ```
-  a_non_uniform_instance_scale_shades_like_the_same_node_scale
-  crates/webgpu_renderer/tests/skinned_bounds.rs
-  node-scale and instance-scale must shade the same, 987 pixels differ  (threshold: 40)
-  ```
-
-  Confirmed pre-existing by re-running it against a pristine export of `a618287`: byte-identical 987. Everything else in the suite (~340 tests) passes. The failing path is the instanced normal transform — the generated `src/shaders/forward.wgsl` applies `instance_cofactor_0` to `worldNormal_0`, and the two shading paths disagree where they must agree.
-
-  **Fix it upstream, not here.** The `.wgsl` files in `src/shaders/` are checked-in *generated artifacts*; there is no `.slang` file in this repo, and the code comments reference the C++ engine's `forward.slang` by line number (e.g. `cascades.rs` → `forward.slang:151`). Hand-editing the generated WGSL would desynchronise it from its source.
-
-  Until a CI runner has an adapter, a software one makes these tests real: install `mesa-vulkan-drivers` and set `KATAGLYPHIS_REQUIRE_GPU=1` so a missing adapter fails loudly instead of skipping silently.
-
-## The 2026-08-07 graphics-stack upgrade
-
-`wgpu` 29→30, `naga` 29→30, `egui`/`egui-wgpu`/`egui-winit` 0.35→0.36, `glam` 0.30→0.33 and `pollster` 0.4→1.0 moved as one coupled set (`egui-wgpu` 0.35 pins `wgpu ^29`, 0.36 pins `^30`, so none of them could move alone). What changed, so the next person does not have to rediscover it:
-
-- **`VertexState::buffers` is `&[Option<VertexBufferLayout>]`** — a slot can now be left unbound without shifting the ones after it.
-- **`BufferSlice::get_mapped_range` returns `Result`.** Seven call sites. Only `render_to_pixels_with_format` returns `Result` and propagates; the other six are in functions whose caller has already awaited the map, so they `expect` with a message naming that invariant.
-- **Presentation moved from `SurfaceTexture::present(self)` to `Queue::present(&self, texture)`.** Three sites, two of which the default Linux build never compiles (one is `cfg(wasm32)`, one is behind a GUI feature) — check them by hand or with the `feature-matrix` job.
-- **`RequestAdapterOptions::apply_limit_buckets`** (new, no default): rounds reported adapter limits to coarse presets so a host exposing wgpu to *untrusted* content cannot fingerprint the machine. This renderer is the trusted application, so it is `false` — real limits, as wgpu 29 had.
-- **`SurfaceConfiguration::color_space`** (new, no default): set to `SurfaceColorSpace::Auto`, the type's own default and the only value guaranteed supported for every format in `SurfaceCapabilities::formats`. Anything else (an HDR space) needs a capability check first.
-- **glam 0.33 moved the camera constructors off `Mat4`** and split them by clip-space convention: `opengl` (NDC Z −1..1), `directx` (Z 0..1, Y up), `vulkan` (Z 0..1, Y down). **`directx` is the one that matches** — it reproduces the old `Mat4::perspective_rh`/`orthographic_rh`/`perspective_infinite_rh` bit for bit. That was verified by compiling both against glam 0.33.3 and comparing the matrices, not inferred from the names: the `vulkan` module is Y-**down**, and picking it would have flipped the image with no compile error. The old methods are deprecated but still present, so `-D warnings` is what forces the migration.
-
-Guard this with the golden tests, not with the compiler: a clip-space or Y-axis mistake compiles perfectly and only shows up in pixels. See the GPU note above for how to make them actually run.
-
-The upgrade was verified rendering-neutral: 333 tests pass, the only failure is the pre-existing instance-normal bug, and it still reports **exactly 987 differing pixels** — the same figure as before the upgrade. That number is the useful signal here; a changed clip-space or flipped Y would have moved it.
-
-## The 2026-08-07 tract 0.22 → 0.23 migration
-
-Dependabot offered this as `build(deps): bump tract-onnx from 0.22.3 to 0.23.4`. It is **not** a drop-in bump — it breaks in four separate ways, none of which the PR title suggests, and only `crates/inference/src/person_detection/{mod,tract_backend}.rs` are affected (the `onnx_tract` feature is off by default, so nothing else notices).
-
-- **`SimplePlan` is gone from the prelude.** It was renamed to `RunnableModel`; the alias to use is `TypedRunnableModel`, and it is **fully applied** — `pub type TypedRunnableModel = SimplePlan<TypedFact, Box<dyn TypedOp>>`. Passing it a generic argument (the old third `TypedModel` parameter) fails with *"type alias takes 0 generic arguments but 1 generic argument was supplied"*.
-- **`run` takes `self: &Arc<Self>`.** A `Box<TractPlan>` does not resolve the method at all — the error is a bare *"no method named `run`"*, which reads like a missing trait import and is not.
-- **`into_runnable()` already returns an `Arc`.** So the Arc is neither ours to add nor to strip; `load_tract_model` returns `Arc<TractPlan>` and the `Backend::Tract` variant stores it directly.
-- **`Tensor::as_slice` was removed.** The safe replacement is `to_plain_array_view::<f32>()`, which errors unless the storage is plain *and* the datum type matches — the same two conditions the old call checked. rustc's *"there is a method `slice` with a similar name"* suggestion points somewhere else entirely; do not follow it.
-
-The lockfile also gains `tract-extra`, `tract-pulse`, `tract-pulse-opl`, `tract-transformers` and `typeid`. `cargo deny check licenses` passes with them (verified, exit 0) — no new `deny.toml` allowances were needed.
-
-## Do not let `cargo update` take zune-core to 0.5.2
-
-`zune-core` is held at **0.5.1** in `Cargo.lock` on purpose. 0.5.2 breaks `zune-jpeg` 0.5.15:
-
-```
-error: macro expansion ends with an incomplete expression: expected expression
-  --> zune-jpeg-0.5.15/src/mcu_prog.rs:463:17
-error: could not compile `zune-jpeg` (lib) due to 1 previous error
-```
-
-zune-jpeg consumes a macro from zune-core, and 0.5.2 changed it. **There is no forward fix**: 0.5.15 is zune-jpeg's newest release and 0.5.2 is zune-core's, so the two are incompatible at their respective tips. Both arrive transitively (via `image`, into the renderer), so nothing in a `Cargo.toml` pins them — only the lockfile does.
-
-A bare `cargo update` reintroduces it silently, and it only shows up in a **release** build of the full workspace; `cargo test` and `cargo check -p ...` stay green because they never reach that crate. If you run `cargo update`, put it back:
-
-```bash
-cargo update -p zune-core --precise 0.5.1
-```
-
-Re-check when zune-jpeg publishes past 0.5.15.
-
-## Large tracked files
+### Large tracked files
 
 Two files dominate the size of a clone. Both are tracked deliberately; neither is in
 git-lfs, and **the history is not being rewritten** (decision D4 — no `filter-repo`,
@@ -484,7 +517,7 @@ necessary, add it to the table above in the same commit that force-adds it.
 `.gitignore`'s own `logs/**/*` rule already covered; they are untracked now and the
 files stay on disk. `Build-Windows.config.psd1` still writes there.
 
-## Conventions
+### Conventions
 
 - Version pins/single sources of truth follow the ANTfrastructure ecosystem; don't duplicate what the submodule documents — link to it.
 - Never commit build outputs: `/target`, root `/debug`, `/profile`, `/release` are gitignored, and so is `logs/`.
