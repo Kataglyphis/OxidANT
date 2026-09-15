@@ -125,9 +125,9 @@ jobs:
       # eight places to edit, and nothing a human could run without retyping
       # a container command out of YAML. The script IS the reproduction:
       #   bash scripts/linux/ci-container-steps.sh <step>
-      # inside the family Linux image. It still delegates to ANTfrastructure's
-      # cargo_*.sh drivers; only `fmt-clippy` does not, for the reason
-      # written at that case in the script.
+      # inside the family Linux image. Every step delegates to ANTfrastructure's
+      # cargo_*.sh drivers - including `fmt-clippy`, which hand-rolled its two
+      # cargo calls until the driver grew a CARGO_CLIPPY_ARGS knob.
       - name: Debug build
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
@@ -148,9 +148,11 @@ jobs:
       # for months and exited 127 every time - the driver it called opened
       # with `rustup component add rustfmt` on an image that ships no rustup -
       # so an entire crate (crates/webgpu_renderer) reached the default branch
-      # unformatted and with 12 clippy errors. Why this one step still calls
-      # cargo directly instead of the driver: see the `fmt-clippy` case in
-      # scripts/linux/ci-container-steps.sh.
+      # unformatted and with 12 clippy errors. It runs ANTfrastructure's
+      # cargo_fmt_clippy.sh now, with CARGO_CLIPPY_ARGS='--workspace --locked'
+      # set in the `fmt-clippy` case of scripts/linux/ci-container-steps.sh:
+      # --all-features is what this image cannot build, and it is a knob rather
+      # than a hard-coded scope since the pinned hub.
       - name: Check formatting and clippy
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:

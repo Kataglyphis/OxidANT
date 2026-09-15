@@ -15,10 +15,11 @@
 #
 # inside the family Linux image, and the workflow runs exactly that.
 #
-# THE DRIVERS ARE ANTfrastructure'S, NOT COPIES. Everything below delegates to
+# THE DRIVERS ARE ANTfrastructure'S, NOT COPIES. Every step below delegates to
 # linux/scripts/02-toolchain/rust/cargo_*.sh through the wrapper in lib/, which
 # is the repo-wide rule (see AGENTS.md, "ANTfrastructure is the ground truth").
-# The one exception is `fmt-clippy`, and the reason is written at that case.
+# There is no longer an exception: `fmt-clippy` hand-rolled the two cargo calls
+# until the driver grew CARGO_CLIPPY_ARGS, and it delegates like the rest now.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,7 +34,7 @@ usage: ci-container-steps.sh <step>
 
   debug       cargo_debug.sh            - dev profile build
   security    cargo_security_checks.sh  - cargo audit + cargo deny (GATING)
-  fmt-clippy  cargo fmt --check + cargo clippy -D warnings (GATING)
+  fmt-clippy  cargo_fmt_clippy.sh         - fmt --check + clippy -D warnings (GATING)
   test        cargo_test.sh             - unit + integration + proptest + doc
   coverage    cargo_coverage.sh         - tarpaulin
   bench       cargo_bench.sh
@@ -66,30 +67,24 @@ case "$step" in
     release)   antfrastructure_exec "${RUST_DRIVERS}/cargo_release.sh" "$@" ;;
     docs)      antfrastructure_exec "${RUST_DRIVERS}/cargo_build_doc.sh" "$@" ;;
 
+    # CARGO_CLIPPY_ARGS is why this case can delegate at all. The driver used
+    # to hard-code `cargo clippy --all-targets --all-features`, and this image
+    # cannot build --all-features: gui_unix needs GTK4 headers, the onnxruntime
+    # features need vendor SDKs, and uid 1001 cannot apt-get install either. So
+    # the two calls were written out here instead. Since the pinned hub the
+    # scope is a knob, and these are the values the hand-rolled pair used:
+    # `cargo clippy --all-targets --workspace --locked -- -D warnings`.
+    #
+    # Overridable from the environment for a one-off (CARGO_CLIPPY_ARGS=''
+    # means clippy's own defaults), and exported rather than prefixed because
+    # antfrastructure_exec ends in `exec`.
+    #
+    # `"$@"` now reaches `cargo fmt` only. The driver stopped forwarding one
+    # argument list to two tools that read it differently - a --features meant
+    # for fmt used to become a scope change for clippy.
     fmt-clippy)
-        # THE ONE STEP THAT DOES NOT USE THE DRIVER, and not for the reason the
-        # workflow used to give. `cargo_fmt_clippy.sh` opened with
-        # `rustup component add rustfmt` and exited 127 on an image that ships
-        # no rustup; that is FIXED - its header now reads "PROBE, DO NOT ADD"
-        # and it probes `cargo fmt --version` first. What still blocks adoption
-        # is its line 40: `cargo clippy --all-targets --all-features`, with
-        # --all-features hard-coded and no knob. This image cannot build
-        # --all-features (gui_unix needs GTK4 headers, the onnxruntime features
-        # need vendor SDKs, and uid 1001 cannot apt-get install either), so the
-        # driver can only fail here.
-        #
-        # SWITCH TO IT the moment the driver takes a CARGO_CLIPPY_ARGS knob:
-        # delete this case body and add `fmt-clippy)` to the list above. Until
-        # then these are the two exact commands AGENTS.md and README.md tell a
-        # human to run, so a green local run means a green lane.
-        #
-        # Default features on purpose - see above. A lint gate that cannot run
-        # is worse than a narrower one that does: this step was
-        # `continue-on-error: true` for months, exited 127 every time, and let
-        # a whole crate reach the default branch unformatted and with 12 clippy
-        # errors.
-        cargo fmt --all -- --check
-        exec cargo clippy --workspace --all-targets --locked "$@" -- -D warnings
+        export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked}"
+        antfrastructure_exec "${RUST_DRIVERS}/cargo_fmt_clippy.sh" "$@"
         ;;
 
     -h|--help|help) usage; exit 0 ;;
