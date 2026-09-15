@@ -58,6 +58,57 @@ protocol exists and the backlog is empty" — it was neither.
       Restoring deb/AppImage/Flatpak means changing ANTfrastructure, not this repo
       -- the packaging/flatpak/ files here are ready and unused.
 
+## Waiting on ANTfrastructure
+
+Each of these is half-done here on purpose: the other half is a change to the
+submodule, which is a different repository with other consumers. The local side
+is written so that finishing it upstream is a deletion here, not a rewrite.
+
+- [b] `cargo_fmt_clippy.sh` needs a `CARGO_CLIPPY_ARGS` knob instead of a
+      hard-coded `--all-features` (its line 40), and should stop forwarding
+      `"$@"` to `cargo fmt` (its line 35). Then delete the `fmt-clippy` case
+      body in `scripts/linux/ci-container-steps.sh` and add `fmt-clippy)` to
+      the list that delegates.
+- [b] `_cargo_wrapper.sh` needs the safe.directory guard that
+      `lib/cmake-build.sh:140-144` already has, behind a `CARGO_SAFE_DIRECTORY`
+      knob defaulting to `/workspace`, and `cargo_release/bench/build_doc/`
+      `coverage/security_checks.sh` should source it the way `cargo_debug.sh`
+      does. Then drop the guard from `ci-container-steps.sh`.
+- [b] `Get-ANTfrastructurePin` (hub `windows/scripts/rust/Build-Windows.ps1`)
+      belongs in `WindowsScripts.Shared.psm1`, so this repo's
+      `Resolve-CargoToolPin` in `scripts/windows/Build-Windows.ps1` can be
+      deleted and both sides share one implementation.
+- [b] The MSI Packaging step of `scripts/windows/Build-Windows.ps1` should
+      become a hub `windows/scripts/rust/New-MsiPackage.ps1` (or a
+      `WindowsMsix.Common` function) taking `-WxsFile -LicenseFile
+      -ProductName -Manufacturer -ExeSource -Version -OutFile`.
+- [b] Decide the fate of the hub's `windows/scripts/rust/Build-Windows.ps1`:
+      it has zero consumers, does `rustup component add` against an offline
+      rustup and builds `--all-features`. Either make it callable
+      (`-Features`/`-AllFeatures`, `-Package`/`-Bin`, opt-in benchmarks, no
+      rustup calls, no scoop block) or delete it and record OxidANT as the
+      owner of the Windows Rust build.
+- [b] `docs/adopting-in-a-new-project.md` section 8 should list
+      `scripts/windows/container/` as "scripts that run inside the Windows
+      image" - the casing convention this repo now follows everywhere.
+- [b] The MSIX certificate trust dance (importing into `LocalMachine\Root`
+      *and* `LocalMachine\TrustedPeople`, `0x800B0109`, `Get-AppxLog`) is
+      still written out in this repo's README. It belongs in the hub's
+      `windows/scripts/certificates/README.md`, which today covers only
+      `TrustedPeople`.
+- [b] The module inventory in AGENTS.md section 2 carries rows with no upstream
+      owner (`WindowsMsix.Common`, `WindowsConfig.Common`, `WindowsBuild.Common`,
+      `WindowsScripts.Shared`, the rust drivers, `package_archive.sh`, the
+      composite actions, `lint-workflows.sh`, the agentic-loop templates, the
+      01-core helpers). Once they are described in the hub's
+      `docs/adopting-in-a-new-project.md` sections 2/8 or `docs/INDEX.md`, that
+      table becomes a link.
+- [b] `run-producer-pi.sh` moves here from OmniAccelerANT (decision D12): it
+      drives `crates/cat_webrtc`, and it hardcodes `/workspace/third_party/`
+      `OxidANT` as the build directory, which is only true from that
+      superproject. OmniAccelerANT keeps a pointer, not a copy. Blocked here:
+      it is a cross-repository move and the other half is OmniAccelerANT's.
+
 ## Not adopted yet
 
 The loop itself — config, runner wrappers, `scripts/agentic-loop/` — is not set
