@@ -62,6 +62,11 @@ struct Args {
     #[arg(long)]
     libcamera: bool,
 
+    /// Stream frames without loading the ONNX model or running detection.
+    /// For bring-up and for hosts too weak to run inference.
+    #[arg(long)]
+    no_inference: bool,
+
     /// ONNX model (default: OxidANT's yolov10m, end-to-end [1,N,6] output).
     #[arg(long, default_value = DEFAULT_MODEL)]
     model: String,
@@ -117,6 +122,7 @@ fn main() -> anyhow::Result<()> {
             test: args.test,
             v4l2: args.v4l2.clone(),
             libcamera: args.libcamera,
+            no_inference: args.no_inference,
             model: args.model.clone(),
             score: args.score,
             width: args.width,
@@ -229,6 +235,7 @@ struct WorkerArgs {
     test: bool,
     v4l2: Option<String>,
     libcamera: bool,
+    no_inference: bool,
     model: String,
     score: f32,
     width: u32,
@@ -238,8 +245,15 @@ struct WorkerArgs {
 }
 
 fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::Result<()> {
-    let mut detector = PersonDetector::new(&args.model)
-        .with_context(|| format!("load ONNX model {}", args.model))?;
+    let mut detector = if args.no_inference {
+        log::info!("inference disabled (--no-inference): publishing frames unannotated");
+        None
+    } else {
+        Some(
+            PersonDetector::new(&args.model)
+                .with_context(|| format!("load ONNX model {}", args.model))?,
+        )
+    };
 
     let pipeline = gstreamer::Pipeline::new();
     let source: gstreamer::Element = if args.libcamera {
@@ -367,42 +381,45 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
     ));
     let infer_boxes = boxes.clone();
     let (infer_width, infer_height, infer_score) = (args.width, args.height, args.score);
-    let infer_thread = {
-        thread::Builder::new()
-            .name("cat-infer".into())
-            .spawn(move || {
-                let mut runs: u64 = 0;
-                while let Ok(rgba) = frame_rx.recv() {
-                    match detector.infer_rgba(
-                        &rgba,
-                        infer_width,
-                        infer_height,
-                        infer_score,
-                        wanted.as_deref(),
-                    ) {
-                        Ok(detections) => {
-                            runs += 1;
-                            if let Some(first) = detections.first() {
-                                log::info!(
-                                    "inference {runs}: {} detection(s), first class={} score={:.2} box=({:.0},{:.0})-({:.0},{:.0})",
-                                    detections.len(),
-                                    first.class_id,
-                                    first.score,
-                                    first.x1,
-                                    first.y1,
-                                    first.x2,
-                                    first.y2,
-                                );
+    let infer_thread = match detector.take() {
+        Some(mut detector) => Some(
+            thread::Builder::new()
+                .name("cat-infer".into())
+                .spawn(move || {
+                    let mut runs: u64 = 0;
+                    while let Ok(rgba) = frame_rx.recv() {
+                        match detector.infer_rgba(
+                            &rgba,
+                            infer_width,
+                            infer_height,
+                            infer_score,
+                            wanted.as_deref(),
+                        ) {
+                            Ok(detections) => {
+                                runs += 1;
+                                if let Some(first) = detections.first() {
+                                    log::info!(
+                                        "inference {runs}: {} detection(s), first class={} score={:.2} box=({:.0},{:.0})-({:.0},{:.0})",
+                                        detections.len(),
+                                        first.class_id,
+                                        first.score,
+                                        first.x1,
+                                        first.y1,
+                                        first.x2,
+                                        first.y2,
+                                    );
+                                }
+                                if let Ok(mut current) = infer_boxes.lock() {
+                                    *current = detections;
+                                }
                             }
-                            if let Ok(mut current) = infer_boxes.lock() {
-                                *current = detections;
-                            }
+                            Err(err) => log::warn!("inference failed: {err:#}"),
                         }
-                        Err(err) => log::warn!("inference failed: {err:#}"),
                     }
-                }
-            })
-            .context("spawn inference thread")?
+                })
+                .context("spawn inference thread")?,
+        ),
+        None => None,
     };
 
     loop {
@@ -437,7 +454,9 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
 
         // Queue the freshest frame only while the inference thread is idle: a
         // frame of lag is the point, a backlog is not.
-        let _ = frame_tx.try_send(rgba.to_vec());
+        if infer_thread.is_some() {
+            let _ = frame_tx.try_send(rgba.to_vec());
+        }
 
         let buffer = gstreamer::Buffer::from_slice(annotated);
         appsrc
@@ -446,7 +465,9 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
     }
 
     drop(frame_tx);
-    let _ = infer_thread.join();
+    if let Some(infer_thread) = infer_thread {
+        let _ = infer_thread.join();
+    }
     let _ = pipeline.set_state(gstreamer::State::Null);
     Ok(())
 }
