@@ -5,17 +5,20 @@
 //! inference for COCO class 15 (cat) with `kataglyphis_inference` on a worker
 //! thread, paints the latest boxes into the RGBA frames and pushes them into
 //! `webrtcsink`, which publishes them over the GStreamer signalling protocol
-//! the repo's web client consumes.
+//! OmniAccelerANT's Stream page (`lib/Pages/StreamPage`) consumes.
 //!
-//! Run from any checkout (defaults resolve relative to this crate at compile
-//! time, so the container's `/workspace` and a Raspberry Pi's home directory
-//! both work):
+//! **No path outside this repository is baked in.** A live source needs
+//! nothing but a flag; the still-image mode takes its picture from
+//! `--image` or `$KATAGLYPHIS_CAT_IMAGE`, because that picture is not
+//! tracked here and its checkout layout differs between a workstation, the
+//! CI container and a Raspberry Pi:
 //!
 //! ```text
 //! ORT_DYLIB_PATH=/usr/local/lib/onnxruntime-cpu/lib/libonnxruntime.so \
 //!   kataglyphis_cat_webrtc --v4l2 /dev/video0
 //! ORT_DYLIB_PATH=/usr/local/lib/onnxruntime-cpu/lib/libonnxruntime.so \
 //!   kataglyphis_cat_webrtc --libcamera      # Raspberry Pi CSI camera
+//! KATAGLYPHIS_CAT_IMAGE=/srv/assets/Thundy.jpg kataglyphis_cat_webrtc
 //! ```
 
 use std::thread;
@@ -28,13 +31,23 @@ use kataglyphis_inference::person_detection::PersonDetector;
 /// COCO class id of "cat" in the 80-class YOLO models shipped in this tree.
 const COCO_CAT: i64 = 15;
 
-/// Default still image, resolved from the crate directory at compile time so
-/// the binary works in the family Linux image (repo at `/workspace`) and in a
-/// native checkout (e.g. a Raspberry Pi) without a container path baked in.
-const DEFAULT_IMAGE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../../ANThology/assets/images/cats/Thundy.jpg"
-);
+/// Environment variable naming the still image looped as the demo source.
+///
+/// It replaced a compile-time default that concatenated `CARGO_MANIFEST_DIR`
+/// with `/../../../ANThology/assets/images/cats/Thundy.jpg` - a path that
+/// reached out of this repository, past its superproject, and into a SIBLING
+/// submodule checkout. That resolved only while OxidANT sat at exactly one
+/// place inside exactly one superproject: a standalone clone, a different
+/// superproject or a Raspberry Pi got a path to nothing, and the failure
+/// surfaced as a `multifilesrc` error logged from a worker thread rather
+/// than as a bad argument. The location is configurable now, and nothing
+/// this crate cannot see is assumed.
+const IMAGE_ENV: &str = "KATAGLYPHIS_CAT_IMAGE";
+
+/// Where that picture lives in a full family checkout, quoted in the error
+/// below so "which image?" is answered without leaving the terminal. A
+/// hint, deliberately NOT a fallback: no code path resolves it.
+const DEFAULT_IMAGE_HINT: &str = "<family checkout root>/ANThology/assets/images/cats/Thundy.jpg";
 
 /// Default ONNX model (OxidANT's yolov10m, end-to-end `[1,N,6]` output).
 const DEFAULT_MODEL: &str = concat!(
@@ -45,9 +58,11 @@ const DEFAULT_MODEL: &str = concat!(
 #[derive(Parser, Debug)]
 #[command(name = "cat-webrtc", about = "Cat detection over WebRTC (GStreamer)")]
 struct Args {
-    /// Image to loop as the live source (`--test` overrides this).
-    #[arg(long, default_value = DEFAULT_IMAGE)]
-    image: String,
+    /// Still image to loop as the live source; `--test`, `--v4l2` and
+    /// `--libcamera` override it. Falls back to `$KATAGLYPHIS_CAT_IMAGE`,
+    /// and with neither set one of the live-source flags is required.
+    #[arg(long)]
+    image: Option<String>,
 
     /// Use `videotestsrc pattern=ball` instead of the image.
     #[arg(long)]
@@ -105,9 +120,28 @@ struct Args {
     all_classes: bool,
 }
 
+/// `--image`, else `$KATAGLYPHIS_CAT_IMAGE`, else nothing. A blank
+/// environment value counts as unset: exporting the variable empty to
+/// "clear" it otherwise built a `multifilesrc` for the empty path.
+fn resolve_image(flag: Option<String>) -> Option<String> {
+    flag.or_else(|| std::env::var(IMAGE_ENV).ok())
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn missing_source_error() -> anyhow::Error {
+    anyhow!(
+        "no video source. Pass one of --test, --v4l2 <DEVICE> or --libcamera, or point the still-image mode at a file with --image <FILE> or ${IMAGE_ENV}. That picture is not tracked in this repository; in a full family checkout it is {DEFAULT_IMAGE_HINT}."
+    )
+}
+
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     let args = Args::parse();
+
+    let image = resolve_image(args.image.clone());
+    if image.is_none() && !args.test && args.v4l2.is_none() && !args.libcamera {
+        return Err(missing_source_error());
+    }
 
     gstreamer::init().context("gstreamer::init")?;
 
@@ -118,7 +152,7 @@ fn main() -> anyhow::Result<()> {
 
     let worker = {
         let mut worker_args = WorkerArgs {
-            image: args.image.clone(),
+            image: image.clone(),
             test: args.test,
             v4l2: args.v4l2.clone(),
             libcamera: args.libcamera,
@@ -231,7 +265,7 @@ fn build_output_pipeline(
 }
 
 struct WorkerArgs {
-    image: String,
+    image: Option<String>,
     test: bool,
     v4l2: Option<String>,
     libcamera: bool,
@@ -272,15 +306,19 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
             .build()
             .context("videotestsrc")?
     } else {
+        // main() rejects this combination before the pipeline is built. The
+        // check is repeated rather than unwrapped so a second caller of
+        // run_worker cannot reintroduce a panic here.
+        let image = args.image.as_deref().ok_or_else(missing_source_error)?;
         let caps = gstreamer::Caps::builder("image/jpeg")
             .field("framerate", gstreamer::Fraction::new(args.fps as i32, 1))
             .build();
         gstreamer::ElementFactory::make("multifilesrc")
-            .property("location", args.image.as_str())
+            .property("location", image)
             .property("loop", true)
             .property("caps", &caps)
             .build()
-            .with_context(|| format!("multifilesrc for {}", args.image))?
+            .with_context(|| format!("multifilesrc for {image}"))?
     };
 
     let decoder = if args.test || args.v4l2.is_some() || args.libcamera {
