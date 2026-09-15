@@ -25,6 +25,15 @@ protocol exists and the backlog is empty" — it was neither.
       `KATAGLYPHIS_REQUIRE_GPU=1`) so the ~40 headless golden tests stop
       silently skipping and reporting as passed.
 
+- [ ] Migrate crates/webgpu_renderer off `chunks_exact(N)` with a literal N.
+      clippy 1.98 added `chunks_exact_to_as_chunks` and it fires 22 times there
+      (glTF loader, OBJ converter, HDR decoder, gpu_timing, histogram, ibl,
+      occlusion, lod, qem). It is allowed once in the root Cargo.toml's
+      `[workspace.lints.clippy]` with a reason; the migration changes the
+      iterated element type from `&[T]` to `&[T; N]` at every site, so it wants
+      its own change and its own review. `cargo clippy --fix` does not do it:
+      it rewrites the tests and leaves every src site.
+
 - [ ] The Ubuntu lane can only produce a tarball. ANTfrastructure's
       `package_archive.sh` writes the tar and stops; its `create_deb()` was
       deleted on 2026-08-08 as unreachable, and `--flatpak-manifest`,
