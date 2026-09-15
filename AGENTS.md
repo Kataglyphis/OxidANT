@@ -133,6 +133,14 @@ builds green. `git submodule update --checkout --recursive` restores it. If a dr
 submodule is what you actually want, move the gitlink **and** fix the fallout in the
 same change; do not fork upstream behaviour locally.
 
+**The `.gitmodules` url is `https://`, never `git@github.com:`.** An SSH url works only
+for someone with a key loaded, and it fails in the two places that matter most: a hosted
+runner, which has none, and a recursive checkout from a superproject — OmniAccelerANT
+builds this repo as a submodule, so its clone walks into this `.gitmodules` and inherits
+whatever it says. `actions/checkout` installs a `url.<https>.insteadOf` rewrite that
+papers over an SSH pin, but a bare `git submodule update` does not, and that is what died
+with `Permission denied (publickey)`.
+
 There is one submodule, `third_party/ANTfrastructure`, and every gate in this repo comes
 out of it: the images both build lanes run in, the shellcheck/actionlint/gitleaks
 binaries the lint lane bootstraps, the packaging and docs drivers, the Windows modules.

@@ -142,7 +142,7 @@ pinning a number here, which is how the last one went stale. Nothing else is
 needed for a default-feature build.
 
 ```bash
-git clone --recurse-submodules git@github.com:Kataglyphis/OxidANT.git
+git clone --recurse-submodules https://github.com/Kataglyphis/OxidANT.git
 cd OxidANT
 cargo build --workspace --locked
 ```
