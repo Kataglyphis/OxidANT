@@ -4,9 +4,17 @@
   Similar pattern to BeschleunigerBallett's Build-Windows.ps1
 
 .DESCRIPTION
-  - Uses ANTfrastructure's WindowsBuild.Common.psm1 for structured logging.
-  - Runs cargo build, test, lint via the ANTfrastructure Rust build script.
-  - Packages MSIX using local config and template.
+  - Uses ANTfrastructure's WindowsBuild.Common.psm1 for structured logging,
+    WindowsConfig.Common for config access, WindowsMsix.Common for SDK-tool
+    lookup and manifest expansion, and WindowsScripts.Shared for guards and
+    version parsing.
+  - Runs cargo build, test and lint by calling cargo DIRECTLY. It does NOT go
+    through ANTfrastructure's windows/scripts/rust/Build-Windows.ps1: that script
+    has no consumer, does `rustup component add` against this image's offline
+    rustup, and builds --all-features, which needs vendor SDKs the image has
+    not got. The line that used to claim otherwise was wrong from the day it
+    was written.
+  - Packages MSIX using local config and template, then MSI with WiX v4.
 #>
 
 param(
@@ -112,11 +120,13 @@ try {
   $workspacePath = $isolatedWorkspace
   Set-Location -Path $workspacePath
 
-  $scoopShims = "C:\Users\ContainerAdministrator\scoop\shims"
-  if (-not ($env:PATH -split ";" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ieq $scoopShims })) {
-    Write-BuildLog -Context $context -Message "Prepending scoop shims to PATH: $scoopShims"
-    $env:PATH = "$scoopShims;$env:PATH"
-  }
+  # The scoop-shims PATH prepend that used to sit here is gone. It pointed at
+  # C:\Users\ContainerAdministrator\scoop\shims, which does not exist in the
+  # family Windows image: ANTfrastructure's windows/Dockerfile.base installs the
+  # toolchain proper and puts it on PATH itself, and scoop is a HOST-side
+  # concern (windows/scripts/host/Install-ScoopTools.ps1). The block therefore
+  # prepended a non-existent directory on every single run and hid the fact
+  # that nothing here needs it.
 
   Invoke-BuildStep -Context $context -StepName 'Verify Toolchain' -Critical -Script {
     Assert-Command -Name 'cargo' -InstallHint 'Install Rust toolchain via rustup'
@@ -141,11 +151,39 @@ try {
 
   if (-not $SkipBuild) {
     Invoke-BuildStep -Context $context -StepName 'Security Checks (audit & deny)' -Script {
-    try {
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', 'cargo-audit', 'cargo-deny') | Out-Null
-    } catch {
-      Write-BuildLogWarning -Context $context -Message "Failed to install cargo-audit/cargo-deny: $_"
-    }
+      # PINNED, and a failure to resolve the pin is fatal. `cargo install
+      # --locked cargo-audit cargo-deny` with no --version resolves to
+      # whatever crates.io serves that minute, so a new advisory-db schema or
+      # a new default cargo-deny lint turns this step red with no commit
+      # behind it and nothing to bisect. The try/catch that used to wrap the
+      # install is gone with it: a swallowed install failure left the two
+      # gates below running whatever happened to be on PATH, or nothing.
+      #
+      # The versions come from the image (baked in as environment variables),
+      # else from the submodule's versions.env - the fleet's single owner of
+      # both pins - parsed with ANTfrastructure's own ConvertFrom-VersionsEnv
+      # rather than a fourth hand-rolled .env reader. Unresolvable throws.
+      $versionsEnv = Join-Path $repoRoot 'third_party/ANTfrastructure/linux/scripts/01-core/versions.env'
+      $pins = if (Test-Path $versionsEnv) { ConvertFrom-VersionsEnv -Path $versionsEnv } else { [ordered]@{} }
+
+      function Resolve-CargoToolPin {
+        param([Parameter(Mandatory)][string]$Name)
+        $fromEnv = [Environment]::GetEnvironmentVariable($Name)
+        if (-not [string]::IsNullOrWhiteSpace($fromEnv)) { return $fromEnv }
+        if ($pins.Contains($Name) -and -not [string]::IsNullOrWhiteSpace($pins[$Name])) {
+          return $pins[$Name]
+        }
+        throw ("$Name is not set and could not be read from $versionsEnv. It pins a " +
+               'cargo tool whose verdict decides this step; installing it unpinned ' +
+               'would let crates.io choose the version instead.')
+      }
+
+      $cargoAuditVersion = Resolve-CargoToolPin -Name 'CARGO_AUDIT_VERSION'
+      $cargoDenyVersion = Resolve-CargoToolPin -Name 'CARGO_DENY_VERSION'
+      Write-BuildLog -Context $context -Message "cargo-audit $cargoAuditVersion, cargo-deny $cargoDenyVersion"
+
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoAuditVersion, 'cargo-audit') | Out-Null
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoDenyVersion, 'cargo-deny') | Out-Null
 
     # No try/catch around these two. Swallowing them into a warning is how
     # `licenses FAILED` shipped unnoticed: cargo-deny rejected xxhash-rust's
@@ -350,7 +388,7 @@ try {
   # NOT cargo-wix. 0.3.9 is its newest release and it shells out to WiX v3's
   # candle.exe + light.exe, neither of which exists here: ANTfrastructure installs
   # WiX 4.0.6 as a dotnet tool (a single wix.exe) in
-  # windows/scripts/Install-ScoopTools.ps1 and points WIX=C:\WiX at it in
+  # windows/scripts/host/Install-ScoopTools.ps1 and points WIX=C:\WiX at it in
   # windows/Dockerfile.base. Every MSI run therefore died with
   # "The compiler application ('candle') does not exist at the 'C:\WiX' path",
   # which went unnoticed while this step still ran as optional. Calling wix.exe
@@ -367,7 +405,7 @@ try {
         $wixExe = (Get-Command 'wix.exe' -ErrorAction SilentlyContinue).Source
       }
       if (-not $wixExe) {
-        throw "WiX v4 (wix.exe) not found. Looked under `$env:WIX ('$env:WIX') and on PATH. The container image installs it via ANTfrastructure's windows/scripts/Install-ScoopTools.ps1."
+        throw "WiX v4 (wix.exe) not found. Looked under `$env:WIX ('$env:WIX') and on PATH. The container image installs it via ANTfrastructure's windows/scripts/host/Install-ScoopTools.ps1."
       }
       Write-BuildLog -Context $context -Message "Using WiX: $wixExe"
 
