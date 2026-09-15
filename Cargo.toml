@@ -16,7 +16,16 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Kataglyphis/OxidANT"
-rust-version = "1.92.0"
+# THE FLOOR OF THE RESOLVED GRAPH, not a wish. It read 1.92.0 and was false:
+# sysinfo 0.39.6 and every egui 0.36 crate declare 1.95, and kstring 2.0.4
+# declares 1.96.0, so `cargo +1.92 check --locked` cannot have worked. The
+# abandoned main branch "fixed" the same contradiction the other way in 4438964
+# (resolver 3 + sysinfo 0.38) because the image shipped rustc 1.93.1 at the time;
+# that is not the trade today - versions.env pins RUST_VERSION 1.98.1 and the
+# image ships it, so the honest move is to declare what the lockfile actually
+# needs rather than downgrade a dependency to meet a number nobody verified.
+# Recompute after a lockfile bump: the max `rust_version` in `cargo metadata`.
+rust-version = "1.96.0"
 
 [workspace.dependencies]
 log = "0.4"
