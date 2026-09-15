@@ -55,11 +55,6 @@ Each of these is half-done here on purpose: the other half is a change to the
 submodule, which is a different repository with other consumers. The local side
 is written so that finishing it upstream is a deletion here, not a rewrite.
 
-- [b] `cargo_fmt_clippy.sh` needs a `CARGO_CLIPPY_ARGS` knob instead of a
-      hard-coded `--all-features` (its line 40), and should stop forwarding
-      `"$@"` to `cargo fmt` (its line 35). Then delete the `fmt-clippy` case
-      body in `scripts/linux/ci-container-steps.sh` and add `fmt-clippy)` to
-      the list that delegates.
 - [b] `_cargo_wrapper.sh` needs the safe.directory guard that
       `lib/cmake-build.sh:140-144` already has, behind a `CARGO_SAFE_DIRECTORY`
       knob defaulting to `/workspace`, and `cargo_release/bench/build_doc/`
@@ -72,7 +67,9 @@ is written so that finishing it upstream is a deletion here, not a rewrite.
 - [b] The MSI Packaging step of `scripts/windows/Build-Windows.ps1` should
       become a hub `windows/scripts/rust/New-MsiPackage.ps1` (or a
       `WindowsMsix.Common` function) taking `-WxsFile -LicenseFile
-      -ProductName -Manufacturer -ExeSource -Version -OutFile`.
+      -ProductName -Manufacturer -ExeSource -Version -OutFile`. The MSIX half
+      of this landed upstream on 2026-09-15 as `Invoke-MsixPackage`, and this
+      repo's ~100-line copy went with it; the MSI half has no hub function yet.
 - [b] Decide the fate of the hub's `windows/scripts/rust/Build-Windows.ps1`:
       it has zero consumers, does `rustup component add` against an offline
       rustup and builds `--all-features`. Either make it callable

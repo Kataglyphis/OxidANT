@@ -5,9 +5,9 @@
 
 .DESCRIPTION
   - Uses ANTfrastructure's WindowsBuild.Common.psm1 for structured logging,
-    WindowsConfig.Common for config access, WindowsMsix.Common for SDK-tool
-    lookup and manifest expansion, and WindowsScripts.Shared for guards and
-    version parsing.
+    WindowsConfig.Common for config access, WindowsMsix.Common for the version
+    parse and the whole MSIX pack (Get-PackageVersion, Invoke-MsixPackage),
+    and WindowsScripts.Shared for guards.
   - Runs cargo build, test and lint by calling cargo DIRECTLY. It does NOT go
     through ANTfrastructure's windows/scripts/rust/Build-Windows.ps1: that script
     has no consumer, does `rustup component add` against this image's offline
@@ -40,16 +40,17 @@ Set-StrictMode -Version Latest
 # ANTfrastructure's WindowsConfig.Common.psm1. They now come from that module -
 # see the import block below.
 
-# Assert-Command comes from ANTfrastructure's WindowsScripts.Shared.psm1, and SDK
-# tool lookup from WindowsMsix.Common's Resolve-WindowsSdkToolPath (both
-# imported below). The Resolve-Executable that used to sit here recursed the
-# whole Windows Kits tree; the module version consults VsDevCmd's
+# Assert-Command comes from ANTfrastructure's WindowsScripts.Shared.psm1. SDK
+# tool lookup is no longer called from here at all: Invoke-MsixPackage resolves
+# makeappx itself, and the Resolve-Executable that used to sit here recursed the
+# whole Windows Kits tree, where the module consults VsDevCmd's
 # WindowsSdkVerBinPath / WindowsSDKVersion first and scans newest-first.
 
-# Normalize-Version now comes from ANTfrastructure's WindowsScripts.Shared.psm1 as
-# ConvertTo-NormalizedVersion ("Normalize" is not an approved PowerShell verb,
-# and an unapproved one in a shared module warns on every import). It sits
-# beside the bash twin (version_util.sh --normalize) it has to agree with.
+# The version file is parsed by WindowsMsix.Common's Get-PackageVersion, once
+# per packaging step, and no longer by a local Normalize-Version or by the two
+# divergent inline parses that followed it. It handles the 'v' prefix, a
+# missing component and the component count each packager needs (4 for an
+# AppxManifest, 3 for an MSI ProductVersion).
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 # One bootstrap resolves every module ANTfrastructure-first, with
@@ -66,10 +67,10 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 . (Join-Path $PSScriptRoot 'Resolve-BuildModule.ps1')
 
 Import-BuildModule @(
-  'WindowsScripts.Shared'   # Assert-Command, ConvertTo-NormalizedVersion, Resolve-WorkspacePath
+  'WindowsScripts.Shared'   # Assert-Command, Resolve-WorkspacePath
   'WindowsBuild.Common'     # build context/log/step primitives, Sync-BuildArtifacts
   'WindowsConfig.Common'    # Get-OrDefault, Get-ConfigValue
-  'WindowsMsix.Common'      # Resolve-WindowsSdkToolPath, ConvertTo-XmlSafeText, New-TransparentImage
+  'WindowsMsix.Common'      # Get-PackageVersion, Invoke-MsixPackage
 )
 
 $defaultConfigPath = Join-Path $PSScriptRoot 'Build-Windows.config.psd1'
@@ -246,32 +247,17 @@ try {
   # asked for and it breaks, that is a failure and the summary must say so.
   if (-not $SkipMsix) {
     Invoke-BuildStep -Context $context -StepName 'MSIX Packaging' -Critical -Script {
-      # Resolve-WindowsSdkToolPath, not a local recursive scan of the Kits
-      # tree: it takes VsDevCmd's WindowsSdkVerBinPath / WindowsSDKVersion
-      # first and only falls back to scanning, newest version first. The 8.3
-      # short path the old local helper returned is not needed - the path goes
-      # to Invoke-BuildExternal as a -File argument, never spliced into a
-      # command line, so spaces are already safe.
-      $makeappxPath = Resolve-WindowsSdkToolPath `
-        -ToolName 'makeappx.exe' `
-        -OverridePath (Get-ConfigValue -Config $config -Path 'Msix.MakeAppxPath')
-      if (-not $makeappxPath) {
-        throw 'makeappx.exe not found. Install Windows SDK or add it to PATH.'
-      }
-
-      $resolvedVersion = $msixVersion
-      $versionFile = Join-Path $workspacePath 'version.txt'
-      if (Test-Path $versionFile) {
-        $resolvedVersion = (Get-Content -Path $versionFile).Trim()
-        if ($resolvedVersion -notmatch '\.' ) {
-          $resolvedVersion = "$resolvedVersion.0.0"
-        }
-      }
-      if ($resolvedVersion -match '^v') {
-        $resolvedVersion = $resolvedVersion.Substring(1)
-      }
-      $resolvedVersion = ConvertTo-NormalizedVersion $resolvedVersion
-
+      # Invoke-MsixPackage (WindowsMsix.Common) owns everything from "the
+      # staging directory holds what goes in the package" onwards: makeappx
+      # lookup, the four logo assets, the token expansion, the pack, and the
+      # assertion that a file really appeared. Three consumers had each written
+      # that orchestration out; this repo's copy was ~100 lines and is gone.
+      #
+      # STAGING STAYS HERE, which is the split the module documents: what goes
+      # into the package is this project's business (a cargo release exe, the
+      # DLLs beside it, resources/), and it is the only part the three
+      # consumers did differently.
+      #
       # CARGO_TARGET_DIR is a standard cargo variable and is commonly ABSOLUTE
       # (the in-container scripts here set C:\ct). PowerShell's Join-Path does
       # not collapse that the way Path.Combine would - `Join-Path 'C:\a' 'C:\b'`
@@ -286,99 +272,77 @@ try {
       }
       $releaseDir = Join-Path $cargoTargetFullPath 'release'
 
+      # Get-PackageVersion, not a local parse. This script used to read the
+      # version file TWICE - here and in the MSI step below - with two
+      # different fallbacks and two different component rules, which is the
+      # exact divergence that function was written to end. 4 components here
+      # because an AppxManifest rejects 3.
+      $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 4
+
       $msixStaging = Join-Path $cargoTargetFullPath 'msix-staging'
-      $assetsDir = Join-Path $msixStaging 'Assets'
       if (Test-Path $msixStaging) {
         Remove-Item $msixStaging -Recurse -Force
       }
-      New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
 
       $exePath = Join-Path $releaseDir "$binary.exe"
       if (-not (Test-Path $exePath)) {
         throw "Expected executable not found: $exePath"
       }
 
-      Write-BuildLog -Context $context -Message "Copying binary and DLLs..."
-      Copy-Item $exePath -Destination $msixStaging -Force
-      Get-ChildItem -Path $releaseDir -Filter '*.dll' -File -ErrorAction SilentlyContinue |
-        ForEach-Object { Copy-Item $_.FullName -Destination $msixStaging -Force }
-
+      # -ExtraFiles, not -ResourcesDir: the module's -ResourcesDir flattens the
+      # directory's CONTENTS into the package root, and this app looks for
+      # resources\ beside the exe. Copying the directory itself keeps that.
+      $extraFiles = @(
+        Get-ChildItem -Path $releaseDir -Filter '*.dll' -File -ErrorAction SilentlyContinue |
+          ForEach-Object { $_.FullName }
+      )
       $resourcesSource = Join-Path $workspacePath 'resources'
-      if (Test-Path $resourcesSource) {
-        Write-BuildLog -Context $context -Message "Copying resources from $resourcesSource"
-        Copy-Item $resourcesSource -Destination (Join-Path $msixStaging 'resources') -Recurse -Force
-      }
+      if (Test-Path $resourcesSource) { $extraFiles += $resourcesSource }
 
       $logoPath = Join-Path $workspacePath 'images\logo.png'
       if (-not (Test-Path $logoPath)) {
         $logoPath = Join-Path $workspacePath 'third_party\ANTfrastructure\images\logo.png'
       }
-      if (Test-Path $logoPath) {
-        Write-BuildLog -Context $context -Message "Copying logos from $logoPath"
-        Copy-Item $logoPath -Destination (Join-Path $assetsDir 'StoreLogo.png') -Force
-        Copy-Item $logoPath -Destination (Join-Path $assetsDir 'Square44x44Logo.png') -Force
-        Copy-Item $logoPath -Destination (Join-Path $assetsDir 'Square150x150Logo.png') -Force
-        Copy-Item $logoPath -Destination (Join-Path $assetsDir 'Wide310x150Logo.png') -Force
-      } else {
-        # New-TransparentPng comes from WindowsMsix.Common; it used to be
-        # redefined inline right here, inside the else branch.
+      if (-not (Test-Path $logoPath)) {
         Write-BuildLogWarning -Context $context -Message "Logo file not found, generating transparent placeholders"
-        New-TransparentPng -Path (Join-Path $assetsDir 'StoreLogo.png') -Width 50 -Height 50
-        New-TransparentPng -Path (Join-Path $assetsDir 'Square44x44Logo.png') -Width 44 -Height 44
-        New-TransparentPng -Path (Join-Path $assetsDir 'Square150x150Logo.png') -Width 150 -Height 150
-        New-TransparentPng -Path (Join-Path $assetsDir 'Wide310x150Logo.png') -Width 310 -Height 150
+        $logoPath = ''
       }
 
       $manifestTemplateRel = Get-ConfigValue -Config $config -Path 'Msix.ManifestTemplate'
       $manifestTemplatePath = if ([System.IO.Path]::IsPathRooted($manifestTemplateRel)) { $manifestTemplateRel } else { Join-Path $workspacePath $manifestTemplateRel }
-      if (-not (Test-Path $manifestTemplatePath)) {
-        throw "MSIX manifest template not found: $manifestTemplatePath"
-      }
-
-      $exeRelPath = "$binary.exe"
-      $templateContent = Get-Content -Path $manifestTemplatePath -Raw -Encoding UTF8
-
-      # Expand-XmlTemplateTokens (WindowsMsix.Common) instead of a chain of
-      # `-replace`. That is a BUG FIX, not just deduplication: `-replace`
-      # treats its replacement as a substitution TEMPLATE, so a value
-      # containing '$&' or '$1' - a description or display name is free text -
-      # would be silently rewritten into the manifest. The module uses an
-      # ordinal [string].Replace and escapes each value for XML itself.
-      $manifestXml = Expand-XmlTemplateTokens -Template $templateContent -TokenMap @{
-        '__MSIX_NAME__'                   = $msixName
-        '__MSIX_PUBLISHER__'              = $msixPublisher
-        '__MSIX_VERSION__'                = $resolvedVersion
-        '__MSIX_MIN_VERSION__'            = $msixMinVersion
-        '__MSIX_DISPLAY_NAME__'           = $msixDisplayName
-        '__MSIX_PUBLISHER_DISPLAY_NAME__' = $msixPublisherDisplayName
-        '__MSIX_DESCRIPTION__'            = $msixDescription
-        '__EXE_REL_PATH__'                = $exeRelPath
-      }
-      $manifestXml = Expand-XmlTemplateTokens -Template $manifestXml -TokenMap @{
-        '__STORE_LOGO_REL__' = 'Assets/StoreLogo.png'
-        '__LOGO44_REL__'     = 'Assets/Square44x44Logo.png'
-        '__LOGO150_REL__'    = 'Assets/Square150x150Logo.png'
-      }
-
-      Set-Content -Path (Join-Path $msixStaging 'AppxManifest.xml') -Value $manifestXml -Encoding UTF8
 
       $distDir = Join-Path $workspacePath 'dist\msix'
-      New-Item -ItemType Directory -Path $distDir -Force | Out-Null
-
       $packageFile = Join-Path $distDir "$msixName`_$resolvedVersion`_x64.msix"
-      if (Test-Path $packageFile) {
-        Remove-Item $packageFile -Force
-      }
 
       Write-BuildLog -Context $context -Message "Creating MSIX package: $packageFile"
-      Invoke-BuildExternal -Context $context -File $makeappxPath -Parameters @('pack', '/d', $msixStaging, '/p', $packageFile, '/o') | Out-Null
 
-      # Do not announce a package that is not there. A green tool exit is not
-      # proof of delivery - the same rule Test-BuildArtifactsDelivered exists
-      # for on the container side.
-      if (-not (Test-Path $packageFile)) {
-        throw "makeappx reported success but produced no file at $packageFile"
-      }
+      # ONE TokenMap, where this script used to expand the template twice. The
+      # module escapes each value for XML and replaces ordinally, which is the
+      # bug fix that matters: `-replace` treats its replacement as a
+      # substitution TEMPLATE, so a display name or description containing
+      # `$&` or `$1` was silently rewritten into the manifest.
+      Invoke-MsixPackage -Context $context `
+        -StagingDir $msixStaging `
+        -ExePath $exePath `
+        -ExtraFiles $extraFiles `
+        -LogoPath $logoPath `
+        -ManifestTemplatePath $manifestTemplatePath `
+        -MakeAppxPath (Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msix.MakeAppxPath') '') `
+        -OutputPath $packageFile `
+        -TokenMap @{
+          '__MSIX_NAME__'                   = $msixName
+          '__MSIX_PUBLISHER__'              = $msixPublisher
+          '__MSIX_VERSION__'                = $resolvedVersion
+          '__MSIX_MIN_VERSION__'            = $msixMinVersion
+          '__MSIX_DISPLAY_NAME__'           = $msixDisplayName
+          '__MSIX_PUBLISHER_DISPLAY_NAME__' = $msixPublisherDisplayName
+          '__MSIX_DESCRIPTION__'            = $msixDescription
+          '__EXE_REL_PATH__'                = "$binary.exe"
+          '__STORE_LOGO_REL__'              = 'Assets/StoreLogo.png'
+          '__LOGO44_REL__'                  = 'Assets/Square44x44Logo.png'
+          '__LOGO150_REL__'                 = 'Assets/Square150x150Logo.png'
+        } | Out-Null
+
       Write-BuildLogSuccess -Context $context -Message "MSIX package created: $packageFile"
     }
   }
@@ -409,19 +373,13 @@ try {
       }
       Write-BuildLog -Context $context -Message "Using WiX: $wixExe"
 
-      $resolvedVersion = $msixVersion
-      $versionFile = Join-Path $workspacePath 'version.txt'
-      if (Test-Path $versionFile) {
-        $resolvedVersion = (Get-Content -Path $versionFile).Trim()
-      }
-      if ($resolvedVersion -match '^v') {
-        $resolvedVersion = $resolvedVersion.Substring(1)
-      }
-      # MSI ProductVersion is limited to major.minor.build
-      $versionParts = $resolvedVersion.Split('.')
-      if ($versionParts.Count -gt 3) {
-        $resolvedVersion = "$($versionParts[0]).$($versionParts[1]).$($versionParts[2])"
-      }
+      # The SAME parse the MSIX step above uses, from the same module, with the
+      # component count as the only difference: MSI ProductVersion is
+      # major.minor.build, an AppxManifest wants four. Until this call the file
+      # was read twice in one script, with two fallbacks and two rules for a
+      # 'v' prefix and a missing component - the divergence Get-PackageVersion
+      # exists to end.
+      $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 3
 
       $msiOutputName = Get-OrDefault $env:MSI_OUTPUT_NAME (Get-ConfigValue -Config $config -Path 'Msi.OutputName')
       if ([string]::IsNullOrWhiteSpace($msiOutputName)) {

@@ -103,15 +103,16 @@ relative to `third_party/ANTfrastructure/`.
 | `--isolation process` and friends | `Get-ContainerIsolationArgs` | same file | inline flags |
 | Container teardown | `Remove-BuildContainerSafe` | same file | `docker rm -f` (misses the wcifs teardown lock) |
 | Bind-mount probe, artifact delivery | `Test-ContainerBindMount`, `Test-BuildArtifactsDelivered` | same file | assuming a green build delivered something |
-| SDK tools (makeappx, signtool) | `Resolve-WindowsSdkToolPath` | [`windows/scripts/modules/WindowsMsix.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsMsix.Common.psm1) | `Get-ChildItem -Recurse` over the Kits tree |
-| MSIX manifest tokens | `Expand-XmlTemplateTokens` | same file | `-replace` — see below |
-| XML escaping, placeholder PNGs | `ConvertTo-XmlEscapedText`, `New-TransparentPng` | same file | local redefinitions |
+| Stage, manifest, pack, sign one MSIX | `Invoke-MsixPackage` | [`windows/scripts/modules/WindowsMsix.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsMsix.Common.psm1) | the ~100-line makeappx/assets/tokens/pack sequence this repo carried until 2026-09-15 |
+| The version to stamp a package with | `Get-PackageVersion` | same file | reading `VERSION.txt` inline, once per packaging step, with a different fallback each time |
+| SDK tools (makeappx, signtool) | `Resolve-WindowsSdkToolPath` | same file | `Get-ChildItem -Recurse` over the Kits tree |
+| MSIX manifest tokens, XML escaping, placeholder PNGs | `Expand-XmlTemplateTokens`, `ConvertTo-XmlEscapedText`, `New-TransparentPng` | same file | `-replace` — see below — and local redefinitions |
 | Config access | `Get-OrDefault`, `Get-ConfigValue` | [`windows/scripts/modules/WindowsConfig.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsConfig.Common.psm1) | copies |
 | Build logging and steps | `New-BuildContext`, `Invoke-BuildStep`, `Invoke-BuildExternal`, `Write-BuildLog*` | [`windows/scripts/modules/WindowsBuild.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsBuild.Common.psm1) | ad-hoc `Write-Host` wrappers |
-| Tool guards, version normalising (pwsh) | `Assert-Command`, `ConvertTo-NormalizedVersion` | [`windows/scripts/modules/WindowsScripts.Shared.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsScripts.Shared.psm1) | a second implementation |
+| Tool guards, workspace paths (pwsh) | `Assert-Command`, `Resolve-WorkspacePath` | [`windows/scripts/modules/WindowsScripts.Shared.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsScripts.Shared.psm1) | a second implementation |
 | Logging inside a container | `Start-ContainerLog`, `Write-ContainerLog`, `Invoke-ContainerLoggedCommand` | [`windows/scripts/modules/WindowsContainerLog.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsContainerLog.Common.psm1) | a `Say`/`Run-Logged` pair per script |
 | CI version stamping (bash) | `version_util.sh --github-env` / `--resolve-ci` / `--normalize` | [`linux/scripts/02-toolchain/rust/version_util.sh`](third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/version_util.sh) | re-reading VERSION.txt yourself |
-| In-container cargo steps | `cargo_debug.sh`, `cargo_release.sh`, `cargo_test.sh`, `cargo_coverage.sh`, … | [`linux/scripts/02-toolchain/rust/`](third_party/ANTfrastructure/linux/scripts/02-toolchain/rust) | inline cargo invocations |
+| In-container cargo steps | `cargo_debug.sh`, `cargo_release.sh`, `cargo_test.sh`, `cargo_coverage.sh`, `cargo_fmt_clippy.sh` (`CARGO_CLIPPY_ARGS`), … | [`linux/scripts/02-toolchain/rust/`](third_party/ANTfrastructure/linux/scripts/02-toolchain/rust) | inline cargo invocations |
 | Linux packaging (tar/deb/AppImage/Flatpak) | `package_archive.sh` | [`linux/scripts/06-packaging/package_archive.sh`](third_party/ANTfrastructure/linux/scripts/06-packaging/package_archive.sh) | bespoke packaging |
 | CI job plumbing | `prepare-linux-ci-host`, `run-in-linux-container`, `run-in-windows-container`, `clone-into-short-path`, `cleanup-disk-space`, `assert-docker-disk-space` | [`.github/actions/`](third_party/ANTfrastructure/.github/actions) | hand-written `docker run` blocks |
 | Linting workflows locally | `lint-workflows.sh <root>` (pinned, SHA-verified actionlint) | [`linux/scripts/lint-workflows.sh`](third_party/ANTfrastructure/linux/scripts/lint-workflows.sh) | bootstrapping your own |
@@ -224,7 +225,7 @@ Because cargo is what makes it bite:
 
 ### `cargo_fmt_clippy.sh`
 
-**One caveat about `cargo_fmt_clippy.sh`**: this repo still calls `cargo fmt` / `cargo clippy` directly, only because the driver hard-codes `--all-features`, which this image cannot build (GTK4/ORT). The old blocker — a leading `rustup component add rustfmt` — is gone; the driver probes first now (its header: PROBE, DO NOT ADD). See the CI section.
+**The lint step runs the driver now, with a narrower clippy scope.** Both of the reasons this repo hand-rolled `cargo fmt` / `cargo clippy` are gone: the leading `rustup component add rustfmt` (the driver probes first — its header says PROBE, DO NOT ADD), and the hard-coded `--all-features`, which is a `CARGO_CLIPPY_ARGS` knob since the pinned hub. `scripts/linux/ci-container-steps.sh` sets it to `--workspace --locked` — the scope the hand-rolled pair used — because this image cannot build `--all-features` (GTK4/ORT, and uid 1001 cannot install either). Note the other half of that change: positional arguments now reach `cargo fmt` **only**, not both tools. See the CI section.
 
 ### Never expand a manifest template with `-replace`
 
@@ -333,11 +334,11 @@ cargo build --workspace --locked --release            # fat LTO, codegen-units 1
 cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
 ```
 
-Run the lint gates before pushing. CI's formatting-and-clippy step runs exactly these two commands, both hard failures; the shell/workflow/secret gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
+Run the lint gates before pushing. CI's formatting-and-clippy step is ANTfrastructure's `cargo_fmt_clippy.sh` with `CARGO_CLIPPY_ARGS='--workspace --locked'`, which is the same pair of hard failures written below — reproduce the step itself with `bash scripts/linux/ci-container-steps.sh fmt-clippy` inside the image. The shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy --all-targets --workspace --locked -- -D warnings
 ```
 
 Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest in `tests/fuzz_test.rs`; there is no cargo-fuzz/libFuzzer target.
@@ -433,7 +434,7 @@ Facts that cost real debugging time:
 
 - **The ARM lane is opt-in via `[build-arm]` for runner minutes**, not because it cannot pass: `:latest-cross` has been a multi-arch index since 2026-09-04.
 - **Every container step of the Linux lane is one named step of one script**, `scripts/linux/ci-container-steps.sh` (`debug`, `security`, `fmt-clippy`, `test`, `coverage`, `bench`, `release`, `docs`). Each step used to inline its own `bash -lc 'set -e; git config --global --add safe.directory /workspace; bash third_party/.../cargo_<x>.sh'` — the same prologue eight times. Reproduce any step by hand with `bash scripts/linux/ci-container-steps.sh <step>` inside the image; the workflow runs exactly that line.
-- **`cargo fmt`/`cargo clippy` are invoked directly, not through ANTfrastructure's `cargo_fmt_clippy.sh`** — the `fmt-clippy` case is the one case in that script that does not delegate. Only because the driver hard-codes `--all-features` at its line 40, which this image cannot build (GTK4/ORT, see the last bullet). Its old first line, `rustup component add rustfmt`, exited 127 on an image without rustup; the driver probes first now (header: PROBE, DO NOT ADD). That exit 127 was masked by `continue-on-error: true` for months and let an entire crate reach the default branch unformatted and with 12 clippy errors — the step gates now. **Switch to the driver the moment it takes a `CARGO_CLIPPY_ARGS` knob**: delete the case body and add `fmt-clippy)` to the delegating list.
+- **`cargo fmt`/`cargo clippy` run through ANTfrastructure's `cargo_fmt_clippy.sh`** like every other step — `fmt-clippy` was the one case that did not delegate, and stopped being one on 2026-09-15. Two things had to change upstream first, and both did: the driver's old first line `rustup component add rustfmt` exited 127 on an image without rustup (it probes first now — header: PROBE, DO NOT ADD), and `--all-features` was hard-coded at its line 40, which this image cannot build (GTK4/ORT, see the last bullet). The scope is `CARGO_CLIPPY_ARGS`, set to `--workspace --locked` in `scripts/linux/ci-container-steps.sh`. That exit 127 was masked by `continue-on-error: true` for months and let an entire crate reach the default branch unformatted and with 12 clippy errors — the step gates now.
 - **The docs publish follows the repository's own default branch**, not a typed `refs/heads/main`. It asks for `format('refs/heads/{0}', github.event.repository.default_branch)`, and so does `cancel-in-progress`. The literal was wrong for as long as `main` was abandoned and `develop` carried every commit: the comment said "only publish from the default branch" while the condition matched a branch nobody pushed to, so <https://rust.jonasheinle.de> was never republished at all. A red **Security checks** step has the same effect for a different reason — the publish is the last step of that job.
 - **The container runs as uid 1001, not root.** `apt-get` fails with `Permission denied`, so a workflow step cannot install system packages — whatever the image lacks, it lacks. And `CARGO_HOME=/usr/local/cargo` is root-owned, so every writing cargo step needs `-e CARGO_HOME=/tmp/cargo-home`.
 - **The lint gate runs default features on purpose.** `--all-features` would need GTK4 headers and the ORT libs, which the image has not got and uid 1001 cannot install.

@@ -348,10 +348,12 @@ Two things that will bite on a Windows checkout, both verified 2026-08-07:
 
 ### Windows MSIX packaging
 
-Needs the Windows SDK (`makeappx`, `signtool`) — located through
-ANTfrastructure's `Resolve-WindowsSdkToolPath`, which honours VsDevCmd's
-`WindowsSdkVerBinPath` / `WindowsSDKVersion` — and **PowerShell 7+ (`pwsh`)**:
-every script here carries `#requires -Version 7.0` and will not start under 5.1.
+Needs the Windows SDK (`makeappx`, `signtool`) — located by ANTfrastructure's
+`Resolve-WindowsSdkToolPath`, which honours VsDevCmd's `WindowsSdkVerBinPath` /
+`WindowsSDKVersion` — and **PowerShell 7+ (`pwsh`)**: every script here carries
+`#requires -Version 7.0` and will not start under 5.1. The pack itself is
+ANTfrastructure's `Invoke-MsixPackage`; this repo supplies only the staging
+directory (the release exe, the DLLs beside it, `resources/`) and the token map.
 
 **The normal route is `Build-Windows.ps1`.** It packages MSIX itself, as its
 **MSIX Packaging** step, taking every value from the `Msix` block of
