@@ -25,6 +25,22 @@ protocol exists and the backlog is empty" — it was neither.
       `KATAGLYPHIS_REQUIRE_GPU=1`) so the ~40 headless golden tests stop
       silently skipping and reporting as passed.
 
+- [b] Bring the renderer design docs here (decision D6). Copy
+      renderer-bounds-invariant.md, webgpu-renderer-roadmap.md and
+      webgpu-gltf-rust-plan.md out of BeschleunigerBallett/docs/ into
+      crates/webgpu_renderer/docs/, delete them there, leave a pointer, and
+      turn this repo's three absolute URLs into crate-relative docs/<name>.md.
+      Blocked here: it is a cross-repository move and the other half is
+      BeschleunigerBallett's. The table in AGENTS.md says which four stay
+      external.
+
+- [b] Ship the .slang sources with crates/webgpu_renderer, or add a
+      slang -> wgsl step, so "there is no .slang file in this repo" stops
+      being true. src/shaders/*.wgsl are checked-in GENERATED artifacts whose
+      source is the C++ engine's forward.slang; hand-editing the WGSL
+      desynchronises it, which is why the instanced-normal bug above cannot be
+      fixed here. Blocked on deciding who compiles tex_quad.slang.
+
 - [ ] Migrate crates/webgpu_renderer off `chunks_exact(N)` with a literal N.
       clippy 1.98 added `chunks_exact_to_as_chunks` and it fires 22 times there
       (glTF loader, OBJ converter, HDR decoder, gpu_timing, histogram, ibl,

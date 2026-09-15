@@ -4,7 +4,8 @@
 //! analytic fallback), and both `light_dir_ambient.w` (the ambient slider)
 //! and `ibl_params.enabled_maxmip_intensity.z` (environment intensity) were
 //! computed and never read. See `Resources/ShadersSlang/forward/forward.slang`
-//! and `docs/shader-sharing.md` for how this shader feeds this renderer.
+//! and <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md>
+//! for how this shader feeds this renderer.
 
 use kataglyphis_webgpu_renderer::{
     load_gltf, EquirectImage, ForwardRenderer, GpuContext, OrbitCamera,

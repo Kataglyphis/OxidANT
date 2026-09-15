@@ -165,7 +165,8 @@ impl GpuContext {
     /// `KATAGLYPHIS_REQUIRE_GPU` is set, in which case failure panics instead
     /// of silently skipping. A skipped GPU test and a passing GPU test read
     /// identically in a CI log, so the host verification loop sets this
-    /// variable to tell the two apart; see `docs/gpu-golden-testing.md`.
+    /// variable to tell the two apart; see
+    /// <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/gpu-golden-testing.md>.
     #[doc(hidden)]
     pub fn headless_or_skip() -> Option<Self> {
         match Self::new_headless() {

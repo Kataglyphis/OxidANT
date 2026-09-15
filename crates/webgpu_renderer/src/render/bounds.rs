@@ -3,8 +3,11 @@
 //! > **World bounds must cover every pose the geometry can actually reach —
 //! > not the pose it was authored in.**
 //!
-//! See `docs/renderer-bounds-invariant.md` (repo root) for the full rule, why
-//! it keeps recurring, and every consumer that reads bounds.
+//! See
+//! <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/renderer-bounds-invariant.md>
+//! for the full rule, why it keeps recurring, and every consumer that reads
+//! bounds. It is an absolute URL, not `docs/...`: that path resolved only
+//! when this crate was checked out under BeschleunigerBallett.
 
 use glam::{Mat4, Vec3};
 
@@ -108,10 +111,12 @@ pub(crate) fn aabb_contains_point(min: Vec3, max: Vec3, p: Vec3) -> bool {
 
 /// Bounds covering every instance of `pre`.
 ///
-/// See `docs/renderer-bounds-invariant.md` for the rule these helpers exist to
-/// uphold, the full list of consumers that read bounds, and why each over-cover
-/// argument is a proof rather than a fudge factor. Eight bugs in this renderer
-/// were the same bug; that document is the checklist for not writing a ninth.
+/// See
+/// <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/renderer-bounds-invariant.md>
+/// for the rule these helpers exist to uphold, the full list of consumers
+/// that read bounds, and why each over-cover argument is a proof rather than
+/// a fudge factor. Eight bugs in this renderer were the same bug; that
+/// document is the checklist for not writing a ninth.
 ///
 /// The shader builds its world position as `instance_matrix * skin_matrix * v`,
 /// so instance transforms apply ON TOP of the posed box. With bounds left at the

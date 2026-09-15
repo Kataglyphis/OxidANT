@@ -939,7 +939,8 @@ fn resize_handles_zero_dimensions() {
 /// tonemap output. WebGPU canvases do not: the browser hands back something
 /// like `Bgra8Unorm`, and writing linear values there displays them
 /// uncorrected - the "slightly dark web demo" that
-/// docs/webgpu-srgb-audit.md carried as the single known deviation.
+/// <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/webgpu-srgb-audit.md>
+/// carried as the single known deviation.
 ///
 /// With the shader-side encode in place, both targets must end up holding
 /// approximately the SAME sRGB-encoded bytes. Without it the non-sRGB buffer

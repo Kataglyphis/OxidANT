@@ -1,5 +1,8 @@
-//! WebGPU renderer with glTF loading (see docs/webgpu-gltf-rust-plan.md in
-//! BeschleunigerBallett for the roadmap this implements).
+//! WebGPU renderer with glTF loading. The roadmap it implements is
+//! BeschleunigerBallett's design doc, linked absolutely because this crate
+//! is also built standalone and from OmniAccelerANT, where a relative
+//! `docs/` path has nothing to point at:
+//! <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/webgpu-gltf-rust-plan.md>
 //!
 //! Milestones implemented so far:
 //! 1. Context + surface lifecycle with correct resize/outdated handling.

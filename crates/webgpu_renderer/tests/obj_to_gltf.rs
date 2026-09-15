@@ -570,8 +570,10 @@ fn a_textures_subdirectory_layout_is_resolved() {
     // Every shipped engine OBJ (crytek-sponza, Pillum, Sulo/WolfStahl,
     // VikingRoom) puts its textures in a `textures/` subdirectory next to the
     // .mtl and references them by bare filename - `map_Kd` does not name the
-    // subdirectory. docs/model-loading.md's second candidate is the rule that
-    // makes that layout resolve instead of converting to an untextured glTF.
+    // subdirectory. The second candidate in
+    // https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/model-loading.md
+    // is the rule that makes that layout resolve instead of converting to an
+    // untextured glTF.
     let dir = temp_dir("textures_subdir");
     let texture_dir = dir.join("textures");
     std::fs::create_dir_all(&texture_dir).expect("textures dir");
