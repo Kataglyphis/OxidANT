@@ -28,7 +28,7 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/gui` — feature-gated GUI (`gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix`)
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/media` — GStreamer capture, feature-gated (`gstreamer`)
-- `crates/cat_webrtc` — cat-cam WebRTC producer (`kataglyphis_cat_webrtc`); consumer: OmniAccelerANT's Stream page
+- `crates/cat_webrtc` — cat-cam WebRTC producer (`kataglyphis_cat_webrtc`); consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/cat-stream/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands; `stats --path <file>`). It was renamed from `oxidant` on 2026-08-07 — see the pdb note below.
 - `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{onnx,simple,webcam}.rs`, `src/webcam_engine.rs`) plus the `burn-demos` bin
 - `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
@@ -342,6 +342,38 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest in `tests/fuzz_test.rs`; there is no cargo-fuzz/libFuzzer target.
 
+### The cat producer on a Raspberry Pi 5
+
+`scripts/linux/cat-stream/run-producer-pi.sh` builds and runs
+`crates/cat_webrtc` from the family CI image against a Pi 5 CSI camera. It moved
+here from OmniAccelerANT on 2026-09-15 under decision D12, because the crate it
+drives is this repo's; OmniAccelerANT keeps a pointer and still owns the web half
+(`scripts/linux/cat-stream/serve.sh` over there).
+
+```bash
+scripts/linux/cat-stream/run-producer-pi.sh --build       # first run: cargo build in the image
+scripts/linux/cat-stream/run-producer-pi.sh               # start the producer
+scripts/linux/cat-stream/run-producer-pi.sh --libs-only   # refresh build/cat-stream/hostlibs
+```
+
+Two things it deliberately does **not** spell out, because ANTfrastructure owns
+both and a copy here goes stale:
+
+- **the image reference** — it asks
+  `third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh`, which reads the
+  fleet's `versions.env`. A literal `ghcr.io/…:latest-cross` in a tracked `*.sh`
+  is what the lint lane's CI-image-ref gate fails on.
+- **`LD_LIBRARY_PATH`** — the container prologue sources the image's own
+  `/opt/scripts/03-media/final/media-env.sh` (the same file the Dockerfiles
+  source) and prepends only `/hostlibs` through
+  `/opt/scripts/core/path-helpers.sh`'s `_path_prepend_unique`. The retyped list
+  it replaced had `/opt/gcc-16.2.0` hard-coded, so a GCC bump upstream would have
+  silently dropped the C++ runtime out of the search path.
+
+Only `/hostlibs` (the host's Raspberry Pi OS libcamera closure, which must win
+over the image's older upstream copy) and the host multiarch directory are this
+script's own contribution to the loader path.
+
 ### Build & test in the Stevedore Windows container
 
 Driver: `scripts\windows\container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`Build-RustAll.ps1`, `Test-RustAll.ps1`) in the family Windows CI image, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
@@ -454,28 +486,20 @@ The script header covers the rest; the family rationale is
 
 ## 6. Docs owned by this repo
 
-`AGENTS.md` (this file), `README.md`, `BACKLOG.md`, `CHANGELOG.md` and
-`crates/webgpu_renderer/README.md`. Rustdoc is published from the default branch to
+`AGENTS.md` (this file), `README.md`, `BACKLOG.md`, `CHANGELOG.md`,
+`crates/webgpu_renderer/README.md` and the renderer's design documents in
+`crates/webgpu_renderer/docs/`. Rustdoc is published from the default branch to
 <https://rust.jonasheinle.de> by the Linux lane's last step. Update the docs in the same
 change as the behaviour they describe.
 
-### Where the renderer's design documents actually live
+### Where the renderer's design documents live
 
-There is **no `docs/` directory here yet**, and the renderer's six design documents
-live in **`BeschleunigerBallett/docs/`**.
+**The move happened on 2026-09-15** (decision D6): this repo owns the renderer, code
+and documentation. Three pages left `BeschleunigerBallett/docs/` for
+`crates/webgpu_renderer/docs/`; BeschleunigerBallett kept a pointer file at each old
+path, not a copy. Four pages describe both renderers and stayed there.
 
-**Every reference to them is an absolute URL**
-(`https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/<name>.md`), in
-the sources as well as in `crates/webgpu_renderer/README.md`. Bare `docs/<name>.md`
-and the `../../../../docs/` prefix are both gone, and neither may come back while the
-documents are external: the comments that used them said "repo root" and meant *that
-superproject's* root, which is true only when this repo is checked out under
-BeschleunigerBallett. It is also consumed standalone and from OmniAccelerANT (see
-[Consumers](#consumers)), where a relative `docs/` path points at nothing. `bounds.rs`
-calls `renderer-bounds-invariant.md` the checklist for not repeating eight identical
-bugs, so a dead link there costs more than tidiness.
-
-| Document | Owner after the move |
+| Document | Owner |
 | --- | --- |
 | `renderer-bounds-invariant.md` | **here**, `crates/webgpu_renderer/docs/` |
 | `webgpu-renderer-roadmap.md` | **here**, `crates/webgpu_renderer/docs/` |
@@ -485,12 +509,18 @@ bugs, so a dead link there costs more than tidiness.
 | `shader-sharing.md` | stays in BeschleunigerBallett |
 | `webgpu-srgb-audit.md` | stays in BeschleunigerBallett |
 
-The three marked **here** are scheduled to move under decision D6 — this repo owns the
-renderer, code and documentation, and BeschleunigerBallett keeps a pointer rather than a
-copy. **That move has not happened yet**, and it is a cross-repository change: do not
-half-do it by rewriting a link here before the file exists here. When it lands, the
-three become `docs/<name>.md` relative to the crate and the other four keep their
-absolute URLs — which is the whole reason this table exists.
+**The two halves are referenced differently, and the difference is the point.** The
+three that live here are `docs/<name>.md` *relative to the crate* — in
+`crates/webgpu_renderer/README.md`, in `src/lib.rs` and twice in
+`src/render/bounds.rs`. That path now resolves in every checkout, which is what the
+move bought: this repo is built standalone, from OmniAccelerANT and from
+BeschleunigerBallett (see [Consumers](#consumers)), and before the move a relative
+`docs/` prefix meant *the superproject's* root and pointed at nothing in two of the
+three. The four that stayed are still absolute URLs
+(`https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/<name>.md`)
+for that same reason, and must stay absolute. `bounds.rs` calls
+`renderer-bounds-invariant.md` the checklist for not repeating eight identical bugs,
+so a dead link there costs more than tidiness.
 
 ### Large tracked files
 
