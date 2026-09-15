@@ -1,7 +1,9 @@
 name: Lint gates - shell, workflows, secrets, config
 
-# ONE LINE OF WIRING. This lane is ANTfrastructure's reusable `lint-gates.yml`,
-# called rather than copied. This repo carried its own 60-line copy of that job until
+# THREE GATE JOBS, ONE FILE, AND TWO OF THEM ARE ONE LINE OF WIRING.
+#
+# The Linux job is ANTfrastructure's reusable `lint-gates.yml`, called rather
+# than copied. This repo carried its own 60-line copy of that job until
 # 2026-09-15, as six sibling consumers did, and every copy's header said to
 # replace it with a `uses:` the day the hub grew a reusable lane. The hub has
 # one now, so this is that day. What the hub half owns is unchanged: the gates
@@ -27,10 +29,11 @@ name: Lint gates - shell, workflows, secrets, config
 # credentials - while rust_ubuntu26_04.yml publishes the docs over FTP with
 # secrets.SERVER / secrets.USERNAME / secrets.PW.
 #
-# Cheap and first-to-finish: no image pull, no cargo build. It also covers a
-# class the two Rust lanes cannot - valid YAML is not valid Actions, and bash
-# only reports a quoting or undefined-function bug when the line finally runs,
-# which for the packaging scripts is 40 minutes in.
+# Cheap and first-to-finish: no image pull, no cargo build. All three jobs also
+# cover a class the two Rust lanes cannot - valid YAML is not valid Actions,
+# bash only reports a quoting or undefined-function bug when the line finally
+# runs, and a PowerShell syntax error in the packaging scripts otherwise
+# surfaces 40 minutes into a Windows container build.
 
 on:
   push:
@@ -61,3 +64,85 @@ jobs:
       submodules: 'true'
       exclude: third_party
       ratchets: true
+
+  # PowerShell lint: ANTfrastructure's Invoke-Lint.ps1 pointed at THIS repo's
+  # PowerShell tree. Two passes - a mandatory parse + AST-trap gate, and
+  # PSScriptAnalyzer.
+  #
+  # A SEPARATE JOB ON A WINDOWS RUNNER, not a step folded into the reusable lane
+  # above: the script is Windows-native (it resolves its own settings file with
+  # a backslash path and excludes `\archive\` by a backslash regex), and
+  # PSScriptAnalyzer is a Windows-image module. Two runners in one workflow is
+  # the shape, not an accident.
+  powershell-lint:
+    name: PowerShell lint (ANTfrastructure gate)
+    runs-on: windows-2025
+    # Install-Module is the step that can hang.
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      # Top-level only: the only submodule these steps read is ANTfrastructure,
+      # which carries both the gate script and its ruleset.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      # Pinned, like the hub pins it for its own lane, so a runner-image module
+      # refresh cannot silently change what this gate reports.
+      - name: Install PSScriptAnalyzer
+        run: Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Force -Scope CurrentUser
+
+      # -Path is the parameter ANTfrastructure added for exactly this case: a
+      # consumer points the gate at ITS tree while the PSScriptAnalyzerSettings
+      # file stays resolved against the SCRIPT's own location, so the hub's
+      # ruleset is consumed BY REFERENCE and nothing is copied in here.
+      # `scripts` is walked recursively, so scripts\windows\,
+      # scripts\windows\container\ and scripts\windows\tests\ are all covered.
+      #
+      # -FailOnAnalyzer IS passed here, unlike in the sibling consumer this job
+      # is modelled on. The analyzer is advisory by default because that repo
+      # had untriaged findings; this tree has none - measured 2026-09-15, "PSSA:
+      # 0 error(s), 0 warning(s) [PSScriptAnalyzer 1.25.0]" over all 9 files -
+      # and a ratchet is only worth setting at the number you actually have. If
+      # a finding appears, fix it or narrow the hub's ruleset; do not reach for
+      # continue-on-error, which would hide the mandatory parse pass too.
+      - name: Lint PowerShell (parse gate + PSScriptAnalyzer)
+        run: >-
+          pwsh -NoProfile -File third_party/ANTfrastructure/windows/scripts/Invoke-Lint.ps1
+          -Path scripts -FailOnAnalyzer
+
+  # Generated artifacts must not reach the index. .gitignore only stops a file
+  # from being ADDED; it does nothing once a path is tracked, so nothing else
+  # here can see the drift. `git rm --cached` has already been run over this
+  # tree twice for exactly that - build logs under logs\windows\, and the
+  # flatpak repo before them.
+  #
+  # The checks are ANTfrastructure's (WindowsRepoHygiene.Common); only this
+  # repo's root and its list of generated-output pathspecs are local, because
+  # what counts as generated is a property of this build.
+  #
+  # Windows runner and Pester 3.4.0 for the same reason submodule-pins.yml uses
+  # them: the suite is written in the dash-less 3.4 assertion dialect, and 3.4
+  # is a Windows PowerShell-era module. run-pester-suite refuses a vacuous pass
+  # (TotalCount == 0 -> exit 1), so this cannot go green over an empty path.
+  generated-artifacts:
+    name: No generated artifact is tracked
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The suite imports WindowsRepoHygiene.Common out of the submodule
+          # through scripts/windows/Resolve-BuildModule.ps1.
+          submodules: true
+
+      - name: Repo generated-artifact hygiene
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-pester-suite@main
+        with:
+          path: scripts/windows/tests
+          version: '3.4.0'
