@@ -1,6 +1,8 @@
 name: Lint gates - shell, workflows, secrets, config
 
-# THREE GATE JOBS, ONE FILE, AND TWO OF THEM ARE ONE LINE OF WIRING.
+# THREE GATE JOBS, ONE FILE, AND NONE OF THEM IS A COPIED JOB ANY MORE.
+# Two call a reusable ANTfrastructure workflow (`lint-gates.yml` and, since
+# 2026-09-15, `python-ci-windows.yml`); the third calls a composite action.
 #
 # The Linux job is ANTfrastructure's reusable `lint-gates.yml`, called rather
 # than copied. This repo carried its own 60-line copy of that job until
@@ -69,77 +71,60 @@ jobs:
   # PowerShell tree. Two passes - a mandatory parse + AST-trap gate, and
   # PSScriptAnalyzer.
   #
-  # A SEPARATE JOB ON A WINDOWS RUNNER, not a step folded into the reusable lane
-  # above: the script is Windows-native (it resolves its own settings file with
-  # a backslash path and excludes `\archive\` by a backslash regex), and
-  # PSScriptAnalyzer is a Windows-image module. Two runners in one workflow is
-  # the shape, not an accident.
+  # ONE `uses:` SINCE 2026-09-15, and this is the retirement the hand-written
+  # job that stood here named as its own condition: "when a reusable lane
+  # carries this gate without a Python build attached". That job was kept at
+  # hub 49be50f0 for one reason, and it was never the gate - `lint-powershell`
+  # and `lint-path` reproduced this job exactly, but they are inputs to
+  # `python-ci-windows.yml`, the family's PYTHON lane, whose
+  # `build-test-python-package-on-windows` job carried no `if:`. Turning the
+  # lint on also bought a winamd64 image pull, a run of `Build-Windows.ps1` as
+  # a Python package build, a `./dist/` upload and a REQUIRED `GHCR_PAT`. This
+  # repo is a Rust crate with no Python package; its Windows container build is
+  # rust_windows2025.yml.
   #
-  # KEPT DELIBERATELY at hub 49be50f0, which added `lint-powershell` and
-  # `lint-path` to ANTfrastructure's reusable `python-ci-windows.yml` and names
-  # THIS job as what they replace. The job those inputs add is this job, line
-  # for line: windows-2025, `timeout-minutes: 20`, checkout at the same pinned
-  # v7.0.1 SHA with `submodules: true` and `fetch-depth: 1`, PSScriptAnalyzer
-  # `-RequiredVersion 1.25.0`, and `Invoke-Lint.ps1 -Path <lint-path>
-  # -FailOnAnalyzer` - where `-FailOnAnalyzer` is unconditional upstream, the
-  # same call this repo makes for the same measured reason, and `lint-path`
-  # even defaults to the `scripts` this job passes. The gate is not the
-  # problem.
+  # Hub 604294e2 removes that coupling: `build-python-package` (boolean,
+  # default true, so every caller written before it is unaffected) gates the
+  # build job, `GHCR_PAT` is `required: false` - a required secret is refused
+  # at call time and would have kept the lint unreachable for exactly the
+  # callers it was added for - and the build job asserts the token itself,
+  # naming `build-python-package: false` as the alternative. The two jobs are
+  # independent, neither `needs:` the other, so `false` takes the lint alone.
   #
-  # THE WORKFLOW AROUND IT IS. `python-ci-windows.yml` is the reusable lane for
-  # the family's PYTHON consumers. Its `build-test-python-package-on-windows`
-  # job carries no `if:`, so a caller cannot take the lint job alone: turning
-  # `lint-powershell` on also pulls the winamd64 image and runs
-  # `C:\workspace\scripts\windows\Build-Windows.ps1` as a Python package
-  # build uploading `./dist/`, and the lane requires a `GHCR_PAT` secret to do
-  # it. This repo is a Rust crate; its Windows container build is
-  # rust_windows2025.yml and it has no Python package. Trading a two-minute
-  # lint for a second container build is not the trade the input is offering.
+  # MEASURED BEFORE THE LOCAL JOB WAS DELETED, not assumed. Upstream's
+  # `lint-powershell` job is the deleted one line for line: `runs-on` defaults
+  # to windows-2025, `timeout-minutes: 20`, `actions/checkout` at the same
+  # pinned 3d3c42e5 (v7.0.1) with `submodules: true` and `fetch-depth: 1`,
+  # `Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Force -Scope
+  # CurrentUser`, and `Invoke-Lint.ps1 -Path <lint-path> -FailOnAnalyzer`.
+  # `-FailOnAnalyzer` is unconditional upstream and is deliberately not an
+  # input, which is what this tree wants: 0 errors, 0 warnings over all 9 files
+  # (measured 2026-09-15), so the ratchet is set at the number this repo has.
+  # `shell: pwsh` arrives from the lane's workflow-level `defaults` instead of
+  # the job-level block that stood here. The only difference is ADDITIVE:
+  # upstream first tests for the gate script and throws a message naming the
+  # submodule, where the copy here would have reported a bare `pwsh -File
+  # <absent>` path error. Nothing was held back.
   #
-  # The hub exposes the gate nowhere else: `windows-scripts.yml` is the hub's
-  # own lane and has no `workflow_call`. When a reusable lane carries this gate
-  # without a Python build attached, this job becomes a `uses:` and this
-  # comment goes with it.
+  # Still a separate Windows runner from the `lint-gates` job above, because
+  # the script is Windows-native and PSScriptAnalyzer is a Windows-image
+  # module. Two runners in one workflow is the shape, not an accident.
   powershell-lint:
-    name: PowerShell lint (ANTfrastructure gate)
-    runs-on: windows-2025
-    # Install-Module is the step that can hang.
-    timeout-minutes: 20
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      # Top-level only: the only submodule these steps read is ANTfrastructure,
-      # which carries both the gate script and its ruleset.
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: true
-          fetch-depth: 1
-
-      # Pinned, like the hub pins it for its own lane, so a runner-image module
-      # refresh cannot silently change what this gate reports.
-      - name: Install PSScriptAnalyzer
-        run: Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Force -Scope CurrentUser
-
-      # -Path is the parameter ANTfrastructure added for exactly this case: a
-      # consumer points the gate at ITS tree while the PSScriptAnalyzerSettings
-      # file stays resolved against the SCRIPT's own location, so the hub's
-      # ruleset is consumed BY REFERENCE and nothing is copied in here.
+    uses: Kataglyphis/ANTfrastructure/.github/workflows/python-ci-windows.yml@main
+    # No `secrets:` block on purpose: `GHCR_PAT` is optional upstream since
+    # 604294e2 and this call pulls no image, so there is no token to forward.
+    with:
+      # The whole reason this can be a `uses:` at all.
+      build-python-package: false
+      lint-powershell: true
       # `scripts` is walked recursively, so scripts\windows\,
       # scripts\windows\container\ and scripts\windows\tests\ are all covered.
-      #
-      # -FailOnAnalyzer IS passed here, unlike in the sibling consumer this job
-      # is modelled on. The analyzer is advisory by default because that repo
-      # had untriaged findings; this tree has none - measured 2026-09-15, "PSSA:
-      # 0 error(s), 0 warning(s) [PSScriptAnalyzer 1.25.0]" over all 9 files -
-      # and a ratchet is only worth setting at the number you actually have. If
-      # a finding appears, fix it or narrow the hub's ruleset; do not reach for
-      # continue-on-error, which would hide the mandatory parse pass too.
-      - name: Lint PowerShell (parse gate + PSScriptAnalyzer)
-        run: >-
-          pwsh -NoProfile -File third_party/ANTfrastructure/windows/scripts/Invoke-Lint.ps1
-          -Path scripts -FailOnAnalyzer
+      # It is upstream's default as well; passed explicitly so a change to that
+      # default cannot silently re-point this repo's gate. The hub's
+      # PSScriptAnalyzerSettings.psd1 stays resolved against the gate SCRIPT's
+      # own location - the ruleset is consumed BY REFERENCE and nothing is
+      # copied in here.
+      lint-path: scripts
 
   # Generated artifacts must not reach the index. .gitignore only stops a file
   # from being ADDED; it does nothing once a path is tracked, so nothing else
