@@ -74,6 +74,32 @@ jobs:
   # a backslash path and excludes `\archive\` by a backslash regex), and
   # PSScriptAnalyzer is a Windows-image module. Two runners in one workflow is
   # the shape, not an accident.
+  #
+  # KEPT DELIBERATELY at hub 49be50f0, which added `lint-powershell` and
+  # `lint-path` to ANTfrastructure's reusable `python-ci-windows.yml` and names
+  # THIS job as what they replace. The job those inputs add is this job, line
+  # for line: windows-2025, `timeout-minutes: 20`, checkout at the same pinned
+  # v7.0.1 SHA with `submodules: true` and `fetch-depth: 1`, PSScriptAnalyzer
+  # `-RequiredVersion 1.25.0`, and `Invoke-Lint.ps1 -Path <lint-path>
+  # -FailOnAnalyzer` - where `-FailOnAnalyzer` is unconditional upstream, the
+  # same call this repo makes for the same measured reason, and `lint-path`
+  # even defaults to the `scripts` this job passes. The gate is not the
+  # problem.
+  #
+  # THE WORKFLOW AROUND IT IS. `python-ci-windows.yml` is the reusable lane for
+  # the family's PYTHON consumers. Its `build-test-python-package-on-windows`
+  # job carries no `if:`, so a caller cannot take the lint job alone: turning
+  # `lint-powershell` on also pulls the winamd64 image and runs
+  # `C:\workspace\scripts\windows\Build-Windows.ps1` as a Python package
+  # build uploading `./dist/`, and the lane requires a `GHCR_PAT` secret to do
+  # it. This repo is a Rust crate; its Windows container build is
+  # rust_windows2025.yml and it has no Python package. Trading a two-minute
+  # lint for a second container build is not the trade the input is offering.
+  #
+  # The hub exposes the gate nowhere else: `windows-scripts.yml` is the hub's
+  # own lane and has no `workflow_call`. When a reusable lane carries this gate
+  # without a Python build attached, this job becomes a `uses:` and this
+  # comment goes with it.
   powershell-lint:
     name: PowerShell lint (ANTfrastructure gate)
     runs-on: windows-2025
