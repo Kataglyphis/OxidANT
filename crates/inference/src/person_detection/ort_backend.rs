@@ -24,7 +24,7 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Sessio
 
     #[cfg(feature = "onnxruntime_cuda")]
     {
-        use ort::execution_providers::{CUDA, ExecutionProvider};
+        use ort::execution_providers::{ExecutionProvider, CUDA};
         let device = config::ort_device();
 
         info!("ORT device request: {device}");

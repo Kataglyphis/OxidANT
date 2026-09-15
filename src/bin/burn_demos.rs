@@ -98,9 +98,9 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::TensorDemo => oxidant::burn_demos::simple::tensor_demo::<
-            oxidant::burn_demos::InferenceBackend,
-        >(),
+        Command::TensorDemo => {
+            oxidant::burn_demos::simple::tensor_demo::<oxidant::burn_demos::InferenceBackend>()
+        }
 
         Command::LinearRegression {
             epochs,
