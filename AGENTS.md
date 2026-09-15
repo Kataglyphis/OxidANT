@@ -418,12 +418,12 @@ malformed and stayed that way through several edits.
 
 ### Continuous integration
 
-Four workflows, six jobs. The two build lanes run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and the two that have a reusable ANTfrastructure workflow behind them are one `uses:` rather than a copied job:
+Four workflows, six jobs. The two build lanes run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and **none of the three gate jobs is a copied job any more** — all three are one `uses:` onto ANTfrastructure, two onto a reusable workflow and one onto a composite action:
 
 | Lane | Workflow | Runs when | Image |
 | --- | --- | --- | --- |
 | Lint gates | `lint-gates.yml` (job `lint-gates`) | every push/PR to `main`/`develop` | none — the hub's reusable `lint-gates.yml` with `ratchets: true`; the same aggregator `bash scripts/linux/run-lint-gates.sh` runs locally |
-| PowerShell lint | `lint-gates.yml` (job `powershell-lint`) | same | none — ANTfrastructure's `Invoke-Lint.ps1 -Path scripts -FailOnAnalyzer` on `windows-2025` |
+| PowerShell lint | `lint-gates.yml` (job `powershell-lint`) | same | none — the hub's reusable `python-ci-windows.yml` with `build-python-package: false`, `lint-powershell: true`, `lint-path: scripts`, and no `secrets:` block; `Invoke-Lint.ps1 -Path scripts -FailOnAnalyzer` on `windows-2025` |
 | Generated artifacts | `lint-gates.yml` (job `generated-artifacts`) | same | none — `scripts/windows/tests/` under Pester 3.4.0 on `windows-2025` |
 | Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — the hub's reusable `submodule-pins.yml` (`Submodule.Pins.Tests.ps1`, Pester 3.4.0, `windows-2025`) |
 | Linux x86_64 | `rust_ubuntu26_04.yml` | every push/PR to `main`/`develop` | family Linux CI image, inherited |
@@ -439,7 +439,7 @@ input and takes the container actions' default, which
 build (check A) — and check D fails this repo's lint gate if the reference is
 re-typed into a workflow, a script, or a comment.
 
-**PowerShell is graded too, and with the analyzer enforcing.** `Invoke-Lint.ps1` makes two passes — a parse + AST-trap gate that is always fatal, and PSScriptAnalyzer. The sibling consumer this job is modelled on leaves the analyzer advisory because it has untriaged findings; this tree has none (measured 2026-09-15: 0 errors, 0 warnings over all 9 files), so `-FailOnAnalyzer` is passed and the ratchet is set at the number this repo actually has. `-Path scripts` is walked recursively, and the hub's `PSScriptAnalyzerSettings.psd1` is resolved against the *script's* own location — the ruleset is consumed by reference and nothing is copied in here.
+**PowerShell is graded too, and with the analyzer enforcing.** The job is a `uses:` since 2026-09-15: hub `604294e2` gave `python-ci-windows.yml` a `build-python-package` input (boolean, default true) gating its container build and made `GHCR_PAT` optional, so a Rust crate can take the family's PowerShell lint without buying a Python package build. `Invoke-Lint.ps1` makes two passes — a parse + AST-trap gate that is always fatal, and PSScriptAnalyzer. The sibling consumer this job is modelled on leaves the analyzer advisory because it has untriaged findings; this tree has none (measured 2026-09-15: 0 errors, 0 warnings over all 9 files), so `-FailOnAnalyzer` is passed and the ratchet is set at the number this repo actually has. `-Path scripts` is walked recursively, and the hub's `PSScriptAnalyzerSettings.psd1` is resolved against the *script's* own location — the ruleset is consumed by reference and nothing is copied in here.
 
 **Nothing generated may be tracked.** `scripts/windows/tests/Repo.GeneratedArtifacts.Tests.ps1` runs ANTfrastructure's `Get-TrackedIgnoredFile` and `Get-TrackedGeneratedArtifact` over this root; only the root and the list of generated-output pathspecs are local. A `.gitignore` rule stops a file from being *added* and does nothing once a path is in the index, which is why `git rm --cached` has already been needed twice here (build logs under `logs\windows\`, and the flatpak repo). Note the pathspec form: `'**/__pycache__/*'` matches, `'**/__pycache__/'` matches **nothing** and would grade zero paths while reporting clean.
 

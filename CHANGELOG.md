@@ -52,6 +52,36 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **The docs publish and `cancel-in-progress` follow the repository's actual
   default branch** rather than a typed `refs/heads/main`.
 - **`AGENTS.md` was rebuilt on ANTfrastructure's six-section template.**
+- **`third_party/ANTfrastructure` moved to `604294e2`, and the `powershell-lint`
+  job became a `uses:`** — the retirement the job's own comment specified one
+  pin earlier ("when a reusable lane carries this gate without a Python build
+  attached"). Hub `604294e2` added `build-python-package` to the reusable
+  `python-ci-windows.yml` (boolean, `default: true`, so every caller written
+  before it is byte-for-byte unaffected), gated
+  `build-test-python-package-on-windows` on it, made `GHCR_PAT`
+  `required: false` — a required secret is refused at call time and would have
+  kept the lint unreachable for exactly the callers it was added for — and made
+  the build job assert the token itself, naming `build-python-package: false`
+  as the alternative. The call here passes `build-python-package: false`,
+  `lint-powershell: true`, `lint-path: scripts` and **no `secrets:` block**;
+  nothing was held back from the deleted job. It was compared field by field
+  first, not assumed: same `windows-2025` (the lane's `runs-on` default), same
+  `timeout-minutes: 20`, the same pinned `actions/checkout@3d3c42e5` (v7.0.1)
+  with `submodules: true` and `fetch-depth: 1`, the same
+  `Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Force -Scope CurrentUser`,
+  and the same `Invoke-Lint.ps1 -Path <lint-path> -FailOnAnalyzer` — where
+  `-FailOnAnalyzer` is unconditional upstream and is deliberately not an input,
+  which is what this tree measures (`PSSA: 0 error(s), 0 warning(s)
+  [PSScriptAnalyzer 1.25.0]` over all 9 files). `shell: pwsh` arrives from the
+  lane's workflow-level `defaults` instead of the deleted job-level block. The
+  one difference is **additive**: upstream tests for the gate script first and
+  throws a message naming the submodule, where the copy here would have
+  reported a bare `pwsh -File <absent>` path error. This supersedes the
+  "the job stays" decision recorded in the `49be50f0` row below. The
+  shared-config templates did not move across this bump either, which
+  `sync-shared-config.sh --repo-root . --check` confirms rather than the commit
+  range being taken on trust ("Shared config in sync", both rows OK). All three
+  gate jobs in `lint-gates.yml` are now one `uses:` onto ANTfrastructure.
 - **`third_party/ANTfrastructure` moved to `49be50f0`**, and nothing local was
   deleted for it — deliberately, row by row. The shared-config templates are
   byte-identical across the bump, which

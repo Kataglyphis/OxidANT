@@ -55,12 +55,29 @@ protocol exists and the backlog is empty" — it was neither.
       `cmake --install <build_dir>` and asserts an executable at
       `<prefix>/bin/<project_name>`; this repo has no CMakeLists.txt and builds
       with cargo, so it would need a cargo-install-tree twin, not a caller.
+      Re-checked again at hub `604294e2`, the one bump that touches
+      `lib/app-packaging.sh` (it makes `ostree` a required flatpak tool and says
+      so when it is missing): `06-packaging/package_archive.sh` is still
+      byte-identical and still never reads `--flatpak-manifest`, so the row is
+      unmoved.
 
 ## Waiting on ANTfrastructure
 
 Each of these is half-done here on purpose: the other half is a change to the
 submodule, which is a different repository with other consumers. The local side
 is written so that finishing it upstream is a deletion here, not a rewrite.
+
+Every row below still says "re-checked against hub 49be50f0" because that
+re-check still holds at `604294e2`. The bump between the two pins touches nine
+files -- `.github/workflows/python-ci-windows.yml`, `CHANGELOG.md`,
+`docs/code-quality-tooling.md`, `docs/python-ci.md`, `docs/scripts/mutations.json`,
+`docs/shared-script-libraries.md`, `linux/scripts/lib/app-packaging.sh` and two
+`linux/scripts/tests/` suites -- and none of them is `_cargo_wrapper.sh`,
+`WindowsScripts.Shared.psm1`, anything under `windows/scripts/rust/`,
+`docs/adopting-in-a-new-project.md`, `docs/INDEX.md` or the certificates README.
+What it DID close was not a row here but a comment: the `powershell-lint` job in
+`lint-gates.yml` is a `uses:` now, which is the one thing `49be50f0` offered and
+this repo declined.
 
 - [b] `_cargo_wrapper.sh` needs the safe.directory guard that
       `lib/cmake-build.sh:140-144` already has, behind a `CARGO_SAFE_DIRECTORY`
