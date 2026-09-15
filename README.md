@@ -32,81 +32,100 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 ## Table of Contents
 
 - [About The Project](#about-the-project)
-  - [Key Features](#key-features)
+  - [The crates](#the-crates)
   - [Dependencies](#dependencies)
   - [Useful tools](#useful-tools)
 - [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
 - [Tests](#tests)
 - [Run](#run)
+- [Analysis](#analysis)
+- [Cameras](#cameras)
 - [Docs](#docs)
 - [Updates](#updates)
   - [Dependency upgrades: Renovate as a local CLI](#dependency-upgrades-renovate-as-a-local-cli)
   - [Installed cargo binaries](#installed-cargo-binaries)
-- [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
 - [Contact](#contact)
-- [Acknowledgements](#acknowledgements)
 - [Literature](#literature)
 
 ## About The Project
 
-The workspace also contains **`crates/webgpu_renderer`** — a WebGPU (wgpu)
-glTF renderer that runs natively (Vulkan/DX12/Metal) and in the browser
-(wasm32 + WebGPU): PBR with IBL, cascaded shadow maps, SSAO, bloom, GPU
-skinning, animations, LOD, hot shader reload, and headless golden tests.
-See `crates/webgpu_renderer/README.md` for demos and the SPIR-V/GLSL
-shader-export pipeline shared with the C++ Vulkan engine.
+OxidANT is the Kataglyphis family's **Rust workspace**: the crates two other
+repositories build as a submodule, plus the Rust practices, gates and packaging
+they all inherit. It started as a project template and that scaffolding is still
+here — CI lanes, MSIX/MSI packaging, Renovate, lint gates, a feature matrix — but
+the crates are real code with real consumers rather than placeholders.
 
-This template is a foundational part of the **Kataglyphis Ecosystem**, providing robust Rust best practices. It works synergistically with other projects like [Kataglyphis ANTfrastructure](https://github.com/Kataglyphis/ANTfrastructure) to provide seamless code sharing, rapid development, and consistent identity across our web and systems engineering stack.
+The largest of them is **`crates/webgpu_renderer`**, a WebGPU (wgpu) glTF renderer
+that runs natively (Vulkan/DX12/Metal) and in the browser (wasm32 + WebGPU): PBR
+with IBL, cascaded shadow maps, SSAO, bloom, GPU skinning, animations, LOD, hot
+shader reload, and headless golden tests. See
+[`crates/webgpu_renderer/README.md`](crates/webgpu_renderer/README.md) for the
+demos and the SPIR-V/GLSL shader-export pipeline it shares with the C++ Vulkan
+engine in BeschleunigerBallett.
 
-### Key Features
+Containers, PowerShell and CI plumbing are **not** duplicated here. They belong to
+[Kataglyphis ANTfrastructure](https://github.com/Kataglyphis/ANTfrastructure), the
+submodule under `third_party/` that every repository in the family shares — see
+[AGENTS.md](AGENTS.md) before writing a helper.
 
-- Features are to be adjusted to your own project needs.
+### The crates
 
-<div align="center">
+One Cargo workspace. The root `Cargo.toml` is both the workspace and the root
+package `oxidant` — a `cdylib`/`staticlib`/`rlib` library whose consumers are
+other repositories, so its `[lib] name` is not free to change.
 
+| Crate | Package | What it is |
+| --- | --- | --- |
+| `crates/core` | `kataglyphis_core` | Config, detection types, logging |
+| `crates/telemetry` | `kataglyphis_telemetry` | CPU/GPU/RAM resource monitoring |
+| `crates/inference` | `kataglyphis_inference` | ONNX backends, feature-gated: `onnx_tract`, `onnxruntime`, `onnxruntime_directml`, `onnxruntime_cuda` |
+| `crates/media` | `kataglyphis_media` | GStreamer capture, feature-gated (`gstreamer`) |
+| `crates/gui` | `kataglyphis_gui` | Feature-gated GUI: `gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix` |
+| `crates/webgpu_renderer` | `kataglyphis_webgpu_renderer` | wgpu glTF renderer, native and wasm32/WebGPU: PBR+IBL, cascaded shadows, SSAO, bloom, skinning, animations, LOD, headless golden tests |
+| `crates/cat_webrtc` | `kataglyphis_cat_webrtc` | Cat-detection WebRTC producer; consumed by OmniAccelerANT's Stream page |
+| `crates/cli` | `kataglyphis_cli` | The CLI binary (`read` / `stats` / `gui`) |
+| `src/` | `oxidant` | The root package: the flutter_rust_bridge surface for OmniAccelerANT, plus the feature-gated `burn-demos` bin |
 
-|            Category           |           Feature                             |  Implement Status  |
-|-------------------------------|-----------------------------------------------|:------------------:|
-|  **Packaging agnostic**   | Binary only deployment                            |         ✔️         |
-|                               | Lore ipsum                                   |         ✔️         |
-|  **Lore ipsum agnostic**   |                                               |                    |
-|                               | LORE IPSUM                            |         ✔️         |
-|                               |
-|                               | Advanced unit testing                         |         🔶         |
-|                               | Advanced performance testing                  |         🔶         |
-|                               | Advanced fuzz testing                         |         🔶         |
+**Default features are empty.** GUI, ONNX, GStreamer and the burn demos only
+compile with an explicit `--features` (see [Run](#run)), and each one needs system
+libraries — [AGENTS.md](AGENTS.md) has the feature/dependency table.
 
-</div>
-
-**Legend:**
-- ✔️ - completed  
-- 🔶 - in progress  
-- ❌ - not started
+Two repositories build this one as a submodule, so a rename has to be carried into
+both: [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) (the root
+package through flutter_rust_bridge, and `crates/cat_webrtc`) and
+[BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett)
+(`crates/webgpu_renderer` and `crates/gui` through Corrosion).
 
 ### Dependencies
-This enumeration also includes submodules.
-<!-- * [Vulkan 1.3](https://www.vulkan.org/) -->
 
-If you just want the newest versions allowed by your current constraints (updates Cargo.lock only):
+Crate versions live in `Cargo.toml`/`Cargo.lock`; the `third_party/ANTfrastructure`
+gitlink is a dependency too, and the one that silently changes every gate.
 
-Update all:
+For the newest versions your current constraints already allow (`Cargo.lock` only,
+no manifest edit):
+
 ```bash
-# update packages
 cargo update
-# update versions in Cargo.toml
+```
+
+To move the manifests as well:
+
+```bash
 cargo install cargo-edit
 cargo upgrade --dry-run --verbose
-# --pinned 
 cargo upgrade --incompatible
 ```
 
-To see what is actually behind first — crates *and* the `third_party/ANTfrastructure`
-gitlink, decided by Renovate rather than by a version bound — see
+To see what is behind *before* moving anything — crates **and** the gitlink,
+which is decided by Renovate rather than by a version bound — see
 [Dependency upgrades](#dependency-upgrades-renovate-as-a-local-cli).
+
+One lockfile entry is pinned by hand and a bare `cargo update` will undo it:
+`zune-core` is held at 0.5.1 because 0.5.2 breaks `zune-jpeg` 0.5.15, and it only
+shows up in a release build. [AGENTS.md](AGENTS.md) has the detail and the
+one-line fix.
 
 ### Useful tools
 
@@ -116,15 +135,20 @@ gitlink, decided by Renovate rather than by a version bound — see
 <!-- GETTING STARTED -->
 ## Getting Started
 
-### Prerequisites
+You need a Rust toolchain and the submodule. The toolchain version the CI images
+and every gate use is `RUST_VERSION` in
+[`third_party/ANTfrastructure/linux/scripts/01-core/versions.env`](third_party/ANTfrastructure/linux/scripts/01-core/versions.env) — read it there rather than
+pinning a number here, which is how the last one went stale. Nothing else is
+needed for a default-feature build.
 
-### Installation
+```bash
+git clone --recurse-submodules git@github.com:Kataglyphis/OxidANT.git
+cd OxidANT
+cargo build --workspace --locked
+```
 
-1. Clone the repo
-   ```bash
-   git clone --recurse-submodules git@github.com:Kataglyphis/OxidANT.git
-   ```
- 
+An existing clone without the submodule: `git submodule update --init --recursive`.
+
 ## Tests
 
 Run the complete suite (unit + integration + proptest fuzz + doc tests) at the debug profile:
@@ -196,21 +220,21 @@ cargo run --bin kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui -
 
 Optional environment variables:
 
-- `KATAGLYPHIS_ONNX_MODEL` – Pfad zum ONNX-Modell (Default: models/yolov10m.onnx)
-- `KATAGLYPHIS_ONNX_BACKEND` – `tract` oder `ort` (Default: automatisch)
-- `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (Default: `cpu`)
-- `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (Default: `stretch`)
-- `KATAGLYPHIS_SWAP_XY` – setze `1`, falls die Modell-Ausgabe X/Y vertauscht (Default: `0`)
-- `KATAGLYPHIS_SCORE_THRESHOLD` – Score-Schwelle für Erkennung (Default: `0.5`)
-- `KATAGLYPHIS_INFER_EVERY_MS` – Inferenz-Intervall in ms (Default: `100`, `0` = jedes Frame)
+- `KATAGLYPHIS_ONNX_MODEL` – path to the ONNX model (default: `models/yolov10m.onnx`)
+- `KATAGLYPHIS_ONNX_BACKEND` – `tract` or `ort` (default: automatic)
+- `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (default: `cpu`)
+- `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (default: `stretch`)
+- `KATAGLYPHIS_SWAP_XY` – set to `1` if the model output swaps X and Y (default: `0`)
+- `KATAGLYPHIS_SCORE_THRESHOLD` – detection score threshold (default: `0.5`)
+- `KATAGLYPHIS_INFER_EVERY_MS` – inference interval in ms (default: `100`, `0` = every frame)
 
-CUDA Hinweise:
-- Benötigt NVIDIA-Treiber + CUDA/cuDNN Runtime auf dem System.
-- Wenn CUDA-Init fehlschlägt, kann `KATAGLYPHIS_ORT_DEVICE=auto` genutzt werden (fällt auf CPU zurück).
+CUDA notes:
 
-Overlay:
-- Zeigt FPS, Inferenz-Latenz, CPU/RSS und eine CPU-Historie.
-- Inferenz kann im Overlay ein-/ausgeschaltet werden.
+- Needs the NVIDIA driver plus the CUDA/cuDNN runtime on the machine.
+- If CUDA initialisation fails, `KATAGLYPHIS_ORT_DEVICE=auto` falls back to CPU.
+
+The overlay shows FPS, inference latency, CPU/RSS and a CPU history, and inference
+can be toggled from it.
 
 ## Analysis
 ```bash
@@ -223,21 +247,21 @@ cargo +nightly check --manifest-path Cargo.toml --target wasm32-unknown-unknown 
 cargo run --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-interval-ms 1000 --resource-log-gpu=true gui
 ```
 
-Optional: zusätzlich in Datei schreiben
+Optional, also write it to a file:
 
 ```bash
 cargo run --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-file .\resource.log gui
 ```
 
-### Burn / PyTorch-Replacement Demos
+### Burn / PyTorch-replacement demos
 
-Diese Demos sind als separates Binary integriert und per Feature gated.
+A separate binary, behind the `burn_demos` feature.
 
 ```bash
 cargo run --features burn_demos --bin burn-demos -- --help
 ```
 
-Beispiele:
+Examples:
 
 ```bash
 cargo run --features burn_demos --bin burn-demos -- tensor-demo
@@ -324,25 +348,25 @@ Two things that will bite on a Windows checkout, both verified 2026-08-07:
 
 ### Windows MSIX packaging
 
-Voraussetzungen:
-- Windows SDK (inkl. `makeappx` und `signtool`) — der Pfad wird über ANTfrastructures `Resolve-WindowsSdkToolPath` gefunden (respektiert `WindowsSdkVerBinPath`/`WindowsSDKVersion` aus VsDevCmd)
-- **PowerShell 7+ (`pwsh`)** — 5.1 reicht nicht; alle Skripte tragen `#requires -Version 7.0`
+Needs the Windows SDK (`makeappx`, `signtool`) — located through
+ANTfrastructure's `Resolve-WindowsSdkToolPath`, which honours VsDevCmd's
+`WindowsSdkVerBinPath` / `WindowsSDKVersion` — and **PowerShell 7+ (`pwsh`)**:
+every script here carries `#requires -Version 7.0` and will not start under 5.1.
 
-**Der normale Weg ist `Build-Windows.ps1`.** Es packt MSIX selbst (ab Zeile 209)
-und zieht jeden Wert aus dem `Msix`-Block von `scripts/windows/Build-Windows.config.psd1`,
-überschreibbar per Umgebungsvariable (`MSIX_PACKAGE_NAME`, `MSIX_DISPLAY_NAME`, …):
+**The normal route is `Build-Windows.ps1`.** It packages MSIX itself, as its
+**MSIX Packaging** step, taking every value from the `Msix` block of
+`scripts/windows/Build-Windows.config.psd1` and letting an environment variable
+override each one (`MSIX_PACKAGE_NAME`, `MSIX_DISPLAY_NAME`, …). `-SkipMsix`
+turns it off.
 
 ```pwsh
 pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
 ```
 
-Abschaltbar mit `-SkipMsix`. **Dieser Weg signiert nicht** — er liefert ein
-unsigniertes Paket.
-
-Zum Signieren gibt es nur ANTfrastructures eigenständiges Skript. Es hat **sechs
-Pflichtparameter ohne Defaults**, und sein Default für `-ManifestTemplatePath`
-(`packaging\msix\AppxManifest.template.xml`) existiert in diesem Repo nicht —
-das Template liegt unter `scripts/windows/`:
+**That route does not sign** — it produces an unsigned package. Signing is
+ANTfrastructure's standalone script. Its `-ManifestTemplatePath` default is
+`packaging\msix\AppxManifest.template.xml`, which is where this repo keeps the
+template, so it no longer has to be passed:
 
 ```pwsh
 pwsh -ExecutionPolicy Bypass -File .\third_party\ANTfrastructure\windows\scripts\rust\New-MsixPackage.ps1 `
@@ -352,95 +376,81 @@ pwsh -ExecutionPolicy Bypass -File .\third_party\ANTfrastructure\windows\scripts
   -Publisher 'CN=Kataglyphis' `
   -PublisherDisplayName Kataglyphis `
   -DisplayName OxidANT `
-  -ManifestTemplatePath scripts\windows\AppxManifest.xml.template `
   -CreateTestCertificate `
   -CertificatePassword "<TEST_CERT_PASSWORD>"
 ```
 
-Für eine vorhandene PFX statt `-CreateTestCertificate` das Paar
-`-CertificatePath .\certs\my-signing-cert.pfx -CertificatePassword "<PASSWORD>"`
-setzen. `-Publisher` muss zum Zertifikat passen.
+Use `-CertificatePath .\certs\my-signing-cert.pfx -CertificatePassword "<PASSWORD>"`
+instead of `-CreateTestCertificate` for an existing PFX; `-Publisher` must match the
+certificate. The script's own comment-based help lists its remaining parameters —
+they are not retyped here, because a retyped parameter list goes stale in exactly
+the way this section already did.
 
 Output:
-- Paket: `dist\msix\Kataglyphis.OxidANT_<VERSION>_x64.msix`
-- Staging-Inhalt: `dist\msix\staging\`
 
-Weitere optionale Parameter des ANTfrastructure-Skripts: `-Features` (Default `""`),
-`-Version` (Default `0.1.0.0`, Format `Major.Minor.Build[.Revision]`),
-`-CargoTargetDir` (Default `target-msix`), `-SkipBuild` (packt einen vorhandenen
-Release-Build erneut).
+- package: `dist\msix\Kataglyphis.OxidANT_<VERSION>_x64.msix`
+- staging content: `dist\msix\staging\`
 
-MSIX installieren (mit Testzertifikat):
-
-1. PowerShell **als Administrator** öffnen.
-2. Zertifikat in vertrauenswürdige Stores importieren.
-3. Paket installieren.
+Installing a test-signed package needs an **elevated** PowerShell, because the
+certificate has to be trusted machine-wide first:
 
 ```pwsh
-$certPath = "C:\\GitHub\\OmniAccelerANT\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT.testcert.pfx"
-$msixPath = "C:\\GitHub\\OmniAccelerANT\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT_0.1.0.0_x64.msix"
-$pwd = ConvertTo-SecureString "<TEST_CERT_PASSWORD>" -AsPlainText -Force
+$certPath = 'dist\msix\Kataglyphis.OxidANT.testcert.pfx'
+$msixPath = 'dist\msix\Kataglyphis.OxidANT_0.1.0.0_x64.msix'
+$pfxPw    = ConvertTo-SecureString '<TEST_CERT_PASSWORD>' -AsPlainText -Force
 
-Import-PfxCertificate -FilePath $certPath -Password $pwd -CertStoreLocation "Cert:\\LocalMachine\\Root"
-Import-PfxCertificate -FilePath $certPath -Password $pwd -CertStoreLocation "Cert:\\LocalMachine\\TrustedPeople"
+Import-PfxCertificate -FilePath $certPath -Password $pfxPw -CertStoreLocation 'Cert:\LocalMachine\Root'
+Import-PfxCertificate -FilePath $certPath -Password $pfxPw -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople'
 
 Add-AppxPackage -Path $msixPath
 ```
 
-### Windows MSI packaging
+Both paths are repo-relative on purpose: the absolute `C:\GitHub\OmniAccelerANT\third_party\OxidANT\...` they used to carry was one
+developer's checkout and was wrong for everyone else.
 
-Läuft als Schritt von `Build-Windows.ps1` (abschaltbar mit `-SkipMsi`, oder
-`Msi.Enabled = $false` in `scripts/windows/Build-Windows.config.psd1`).
-
-Output: `dist\msi\kataglyphis_cli-<VERSION>-x64.msi`
-
-Gebaut wird mit **WiX Toolset v4** (`wix.exe build`), nicht mit `cargo-wix`:
-cargo-wix steuert auch in seiner neuesten Version (0.3.9) nur WiX v3 über
-`candle.exe`/`light.exe`, während das Container-Image WiX 4.0.6 als einzelnes
-`wix.exe` mitbringt. `wix/main.wxs` liegt entsprechend im v4-Schema vor und
-bekommt Version, Binary- und Lizenzpfad als Präprozessor-Variablen übergeben.
-Der Dialog-Satz `WixUI_FeatureTree` stammt aus `WixToolset.UI.wixext`, das im
-Image bereits installiert ist.
-
-Installationsprüfung:
+Check, launch, update, remove:
 
 ```pwsh
-Get-AppxPackage -Name "Kataglyphis.OxidANT" | Select-Object Name, PackageFullName, Status
+Get-AppxPackage -Name Kataglyphis.OxidANT | Select-Object Name, PackageFullName, Status
+
+$pkg = Get-AppxPackage -Name Kataglyphis.OxidANT
+Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
+
+# update: build and sign with a higher -Version, then install it the same way
+Add-AppxPackage -Path dist\msix\Kataglyphis.OxidANT_<NEW_VERSION>_x64.msix
+
+Get-AppxPackage -Name Kataglyphis.OxidANT | Remove-AppxPackage
 ```
 
 Troubleshooting:
-- `0x800B0109`: Zertifikatskette ist nicht vertrauenswürdig. Zertifikat wie oben in `LocalMachine\\Root` und `LocalMachine\\TrustedPeople` importieren (Admin erforderlich).
-- `Import-PfxCertificate: Zugriff verweigert`: PowerShell nicht als Administrator gestartet.
-- Details zum letzten Deploy-Fehler anzeigen:
 
-```pwsh
-Get-AppxLog -ActivityID <ACTIVITY_ID>
-```
+- `0x800B0109` — the certificate chain is not trusted. Import the certificate into
+  both `LocalMachine\Root` and `LocalMachine\TrustedPeople` as above (needs admin).
+- `Import-PfxCertificate: Access denied` — the shell is not elevated.
+- `Get-AppxLog -ActivityID <ACTIVITY_ID>` prints the detail behind the last deploy
+  failure.
 
-App nach Installation starten:
+The certificate half of this belongs upstream and is partly there already:
+[`third_party/ANTfrastructure/windows/scripts/certificates/README.md`](third_party/ANTfrastructure/windows/scripts/certificates/README.md).
 
-- Über das Startmenü nach `OxidANT` suchen und starten.
-- Oder per PowerShell:
+**The package identity changed on 2026-09-05** from
+`Kataglyphis.RustProjectTemplate` to `Kataglyphis.OxidANT`. Windows treats the two
+as different applications, so an installation predating that date is not upgraded —
+uninstall it first.
 
-```pwsh
-$pkg = Get-AppxPackage -Name "Kataglyphis.OxidANT"
-Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
-```
+### Windows MSI packaging
 
-MSIX Update / Reinstall:
+Runs as the **MSI Packaging** step of `Build-Windows.ps1` (disable with `-SkipMsi`,
+or `Msi.Enabled = $false` in `scripts/windows/Build-Windows.config.psd1`).
 
-- Neue Version mit höherer `-Version` bauen und signieren.
-- Dann erneut installieren:
+Output: `dist\msi\kataglyphis_cli-<VERSION>-x64.msi`
 
-```pwsh
-Add-AppxPackage -Path "C:\\GitHub\\OmniAccelerANT\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT_<NEW_VERSION>_x64.msix"
-```
-
-MSIX deinstallieren:
-
-```pwsh
-Get-AppxPackage -Name "Kataglyphis.OxidANT" | Remove-AppxPackage
-```
+Built with **WiX Toolset v4** (`wix.exe build`), not `cargo-wix`: cargo-wix drives
+WiX v3's `candle.exe`/`light.exe` even in its newest release (0.3.9), while the
+container image ships WiX 4.0.6 as a single `wix.exe`. `wix/main.wxs` is therefore
+in the v4 schema and gets version, binary path and licence path as preprocessor
+variables. The `WixUI_FeatureTree` dialog set comes from `WixToolset.UI.wixext`,
+already installed in the image.
 
 ### Linux
 ```bash
@@ -492,18 +502,12 @@ How to update all installed packages:
 
 ## Cameras
 
-```bash
-sudo v4l2-ctl --list-formats-ext -d /dev/video0
-gst-launch-1.0 v4l2src device=/dev/video0 ! videoconvert ! autovideosink
-gst-launch-1.0 videotestsrc ! video/x-raw,width=640,height=480,framerate=30/1 ! autovideosink
-```
-
-
-## Roadmap
-Upcoming :)
-<!-- See the [open issues](https://github.com/othneildrew/Best-README-Template/issues) for a list of proposed features (and known issues). -->
-
-
+Raw `gst-launch-1.0` pipelines — listing a device's formats, bisecting a capture
+problem below the application, Raspberry Pi CSI and V4L2 sources, MJPEG, hardware
+encoders that under-declare their caps — are ANTfrastructure's, in
+[`third_party/ANTfrastructure/docs/runtime-services.md`](third_party/ANTfrastructure/docs/runtime-services.md),
+§ *Raw `gst-launch-1.0` pipelines (debugging below the app)*. They were copied
+here as three bare commands with no explanation of when to reach for them.
 
 <!-- CONTRIBUTING -->
 ## Contributing
@@ -529,13 +533,6 @@ Jonas Heinle - [@Cataglyphis_](https://twitter.com/Cataglyphis_) - jonasheinle@g
 
 Project Link: [https://github.com/Kataglyphis/OxidANT](https://github.com/Kataglyphis/OxidANT)
 
-
-<!-- ACKNOWLEDGEMENTS -->
-## Acknowledgements
-
-<!-- Thanks for free 3D Models: 
-* [Morgan McGuire, Computer Graphics Archive, July 2017 (https://casual-effects.com/data)](http://casual-effects.com/data/)
-* [Viking room](https://sketchfab.com/3d-models/viking-room-a49f1b8e4f5c4ecf9e1fe7d81915ad38) -->
 
 ## Literature 
 

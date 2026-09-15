@@ -459,7 +459,32 @@ cargo update -p zune-core --precise 0.5.1
 
 Re-check when zune-jpeg publishes past 0.5.15.
 
+## Large tracked files
+
+Two files dominate the size of a clone. Both are tracked deliberately; neither is in
+git-lfs, and **the history is not being rewritten** (decision D4 — no `filter-repo`,
+no `filter-branch`, no BFG). A rewrite would change every commit id in a repository
+that two other repositories pin by sha, for a saving nobody has asked for.
+
+| File | Size | Why it is tracked |
+| --- | --- | --- |
+| `resources/models/yolov10m.onnx` | ~59 MiB | The YOLOv10m weights. `crates/inference`'s default model and `crates/cat_webrtc`'s `--model` default; the burn demos' `onnx-yolov10` run uses it too. Fetching it at build time would put a network call in front of every build and every offline container run. |
+| `images/Rust.gif` | ~7 MiB | The README hero image, rendered by GitHub. |
+
+Everything else tracked is small: the renderer's glTF/GLB/KTX2 test assets are a few
+hundred kilobytes each, and they stay that way on purpose.
+
+**Nothing new joins them.** `.gitignore` carries a *Large binaries* block that
+excludes model weights, video, packaging artefacts, archives and signing material,
+with a negation for each of the two files above rather than a narrow pattern — so the
+rule still bites if one of them is moved or renamed. If a third large file really is
+necessary, add it to the table above in the same commit that force-adds it.
+
+`logs/windows/` used to hold 15 committed Windows build logs (~2.4 MiB) that
+`.gitignore`'s own `logs/**/*` rule already covered; they are untracked now and the
+files stay on disk. `Build-Windows.config.psd1` still writes there.
+
 ## Conventions
 
 - Version pins/single sources of truth follow the ANTfrastructure ecosystem; don't duplicate what the submodule documents — link to it.
-- Never commit build outputs: `/target`, root `/debug`, `/profile`, `/release` are gitignored.
+- Never commit build outputs: `/target`, root `/debug`, `/profile`, `/release` are gitignored, and so is `logs/`.
