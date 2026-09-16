@@ -29,14 +29,32 @@ pub fn resolve_model_path(explicit: Option<&str>) -> String {
     }
     kataglyphis_core::config::onnx_model_override()
         .clone()
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("resources")
-                .join("models")
-                .join("yolov10m.onnx")
-                .to_string_lossy()
-                .to_string()
-        })
+        .unwrap_or_else(default_model_path)
+}
+
+/// The compile-time fallback model path: `<workspace>/resources/models/yolov10m.onnx`.
+///
+/// Resolved from the WORKSPACE root, not this crate's directory. It used to be
+/// `env!("CARGO_MANIFEST_DIR")/resources/models/...`, which for this crate is
+/// `crates/inference/resources/models/` — a directory that has never existed in
+/// the tree. Every caller that neither passes an explicit path nor sets
+/// `KATAGLYPHIS_ONNX_MODEL` therefore failed with a file-not-found, including
+/// the Flutter UI, which sends an empty string when its model box is blank.
+///
+/// This is a development convenience, not a deployment mechanism: a binary
+/// shipped away from the checkout has no workspace, so packaged builds must set
+/// `KATAGLYPHIS_ONNX_MODEL` or pass the path explicitly.
+fn default_model_path() -> String {
+    // crates/inference -> crates -> workspace root. `ancestors().nth(2)` rather
+    // than two `parent()` unwraps so a moved crate degrades to the manifest dir
+    // instead of panicking.
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest.ancestors().nth(2).unwrap_or(manifest);
+    root.join("resources")
+        .join("models")
+        .join("yolov10m.onnx")
+        .to_string_lossy()
+        .to_string()
 }
 
 enum Backend {
