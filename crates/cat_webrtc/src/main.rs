@@ -82,6 +82,11 @@ struct Args {
     #[arg(long)]
     no_inference: bool,
 
+    /// Rotate the stream by this many degrees: 0, 90, 180 or 270. Use 180
+    /// for a camera that is mounted upside down.
+    #[arg(long, default_value_t = 0)]
+    rotate: u32,
+
     /// ONNX model (default: OxidANT's yolov10m, end-to-end [1,N,6] output).
     #[arg(long, default_value = DEFAULT_MODEL)]
     model: String,
@@ -157,6 +162,7 @@ fn main() -> anyhow::Result<()> {
             v4l2: args.v4l2.clone(),
             libcamera: args.libcamera,
             no_inference: args.no_inference,
+            rotate: args.rotate,
             model: args.model.clone(),
             score: args.score,
             width: args.width,
@@ -270,6 +276,7 @@ struct WorkerArgs {
     v4l2: Option<String>,
     libcamera: bool,
     no_inference: bool,
+    rotate: u32,
     model: String,
     score: f32,
     width: u32,
@@ -334,6 +341,23 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
         .name("cap-convert")
         .build()
         .context("videoconvert")?;
+    let flip = match args.rotate {
+        0 => None,
+        90 | 180 | 270 => {
+            let method = match args.rotate {
+                90 => "clockwise",
+                180 => "rotate-180",
+                _ => "counterclockwise",
+            };
+            Some(
+                gstreamer::ElementFactory::make("videoflip")
+                    .property_from_str("method", method)
+                    .build()
+                    .with_context(|| format!("videoflip for --rotate {}", args.rotate))?,
+            )
+        }
+        other => return Err(anyhow!("--rotate must be 0, 90, 180 or 270 (got {other})")),
+    };
     let scale = gstreamer::ElementFactory::make("videoscale")
         .build()
         .context("videoscale")?;
@@ -389,6 +413,7 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
     }
     elements.extend(decoder.clone());
     elements.push(convert.clone());
+    elements.extend(flip.clone());
     elements.push(scale.clone());
     elements.push(capsfilter.clone());
     elements.push(sink.clone().upcast());
