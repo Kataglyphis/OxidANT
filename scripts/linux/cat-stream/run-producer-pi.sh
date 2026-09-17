@@ -51,6 +51,7 @@ model=""
 width=640
 height=480
 fps=30
+rotate=""
 do_build=false
 libs_only=false
 
@@ -58,9 +59,11 @@ usage() {
   cat <<'EOF'
 usage: run-producer-pi.sh [--build] [--libs-only] [--port N] [--model FILE]
                           [--width N] [--height N] [--fps N] [--name NAME]
+                          [--rotate DEG]
 
   --build      build the producer in the container first (long cargo build)
   --libs-only  refresh build/cat-stream/hostlibs and exit
+  --rotate     rotate the stream 90/180/270 (a camera mounted upside down)
 
 Runs the cat producer from the family CI container against the Pi's CSI
 camera; OmniAccelerANT's scripts/linux/cat-stream/serve.sh is the web/HTTPS
@@ -77,6 +80,7 @@ while [ $# -gt 0 ]; do
     --width) width="${2:?--width needs a value}"; shift 2 ;;
     --height) height="${2:?--height needs a value}"; shift 2 ;;
     --fps) fps="${2:?--fps needs a value}"; shift 2 ;;
+    --rotate) rotate="${2:?--rotate needs a value}"; shift 2 ;;
     --name) name="${2:?--name needs a value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
@@ -236,6 +240,10 @@ nerdctl_args=(
 
 if [ -n "${model}" ]; then
   nerdctl_args+=(--model "${model}")
+fi
+
+if [ -n "${rotate}" ]; then
+  nerdctl_args+=(--rotate "${rotate}")
 fi
 
 producer_present() {
