@@ -84,7 +84,7 @@ container* now links rather than restates.
 
 One sentence and a link, because the procedure is upstream's:
 [`third_party/ANTfrastructure/docs/rancher-desktop-linux-containers.md`](third_party/ANTfrastructure/docs/rancher-desktop-linux-containers.md)
-— the image is **always** `:latest-cross`, Rancher defaults to **containerd** so it is
+— the image is **always** `:latest` (formerly `:latest-cross`, a deprecated alias until 2026-10-31), Rancher defaults to **containerd** so it is
 `nerdctl --namespace default` rather than `docker`, and from Git Bash
 `MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` is mandatory or the mount argument is
 mangled.
@@ -248,7 +248,7 @@ Default features are empty, so `cargo build` needs nothing. Each optional featur
 | --- | --- | --- |
 | `gstreamer` (crates/media) | GStreamer dev files | **Yes** — source-built into `/opt/gstreamer`, on `PKG_CONFIG_PATH`. Do *not* install the distro `libgstreamer*-dev`: the image purges those on purpose. |
 | `gui_linux` | GStreamer + wgpu (pure Rust) | **Yes** — despite the name it does not use GTK; it is the wgpu path. |
-| `gui_unix` | `libgtk-4-dev` | **No, by design.** The foreign-arch GTK dev chain pulls target-side Python and breaks cross builds on `python3-minimal`'s postinst. This feature cannot be built against `latest-cross`. |
+| `gui_unix` | `libgtk-4-dev` | **No, by design.** The foreign-arch GTK dev chain pulls target-side Python and breaks cross builds on `python3-minimal`'s postinst. This feature cannot be built against `:latest`. |
 | `onnxruntime`, `burn_demos` | `libssl-dev` (via `openssl-sys`) | **Yes** — via ANTfrastructure's `package-lists.sh`. |
 
 On a plain Ubuntu box (e.g. the WSL recipe above) you *do* need the distro packages, because nothing there provides the source-built stack. That difference is exactly why "install the -dev package" is the wrong instinct when the image is involved.
@@ -371,7 +371,7 @@ both and a copy here goes stale:
 
 - **the image reference** — it asks
   `third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh`, which reads the
-  fleet's `versions.env`. A literal `ghcr.io/…:latest-cross` in a tracked `*.sh`
+  fleet's `versions.env`. A literal `ghcr.io/…:latest` in a tracked `*.sh`
   is what the lint lane's CI-image-ref gate fails on.
 - **`LD_LIBRARY_PATH`** — the container prologue sources the image's own
   `/opt/scripts/03-media/final/media-env.sh` (the same file the Dockerfiles
@@ -449,7 +449,7 @@ re-typed into a workflow, a script, or a comment.
 
 Facts that cost real debugging time:
 
-- **The ARM lane is opt-in via `[build-arm]` for runner minutes**, not because it cannot pass: `:latest-cross` has been a multi-arch index since 2026-09-04.
+- **The ARM lane is opt-in via `[build-arm]` for runner minutes**, not because it cannot pass: `:latest` (then `:latest-cross`) has been a multi-arch index since 2026-09-04.
 - **Every container step of the Linux lane is one named step of one script**, `scripts/linux/ci-container-steps.sh` (`debug`, `security`, `fmt-clippy`, `test`, `coverage`, `bench`, `release`, `docs`). Each step used to inline its own `bash -lc 'set -e; git config --global --add safe.directory /workspace; bash third_party/.../cargo_<x>.sh'` — the same prologue eight times. Reproduce any step by hand with `bash scripts/linux/ci-container-steps.sh <step>` inside the image; the workflow runs exactly that line.
 - **`cargo fmt`/`cargo clippy` run through ANTfrastructure's `cargo_fmt_clippy.sh`** like every other step — `fmt-clippy` was the one case that did not delegate, and stopped being one on 2026-09-15. Two things had to change upstream first, and both did: the driver's old first line `rustup component add rustfmt` exited 127 on an image without rustup (it probes first now — header: PROBE, DO NOT ADD), and `--all-features` was hard-coded at its line 40, which this image cannot build (GTK4/ORT, see the last bullet). The scope is `CARGO_CLIPPY_ARGS`, set to `--workspace --locked` in `scripts/linux/ci-container-steps.sh`. That exit 127 was masked by `continue-on-error: true` for months and let an entire crate reach the default branch unformatted and with 12 clippy errors — the step gates now.
 - **The docs publish follows the repository's own default branch**, not a typed `refs/heads/main`. It asks for `format('refs/heads/{0}', github.event.repository.default_branch)`, and so does `cancel-in-progress`. The literal was wrong for as long as `main` was abandoned and `develop` carried every commit: the comment said "only publish from the default branch" while the condition matched a branch nobody pushed to, so <https://rust.jonasheinle.de> was never republished at all. A red **Security checks** step has the same effect for a different reason — the publish is the last step of that job.

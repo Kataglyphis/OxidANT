@@ -52,7 +52,7 @@ jobs:
   # ecosystem already uses for its expensive lanes (see that submodule's
   # `third_party/ANTfrastructure/docs/ci-build-triggers.md`). arm64 is opt-in via [build-arm] for runner
   # minutes: a second full 45-minute cross build on every push to a template
-  # repo is not worth them. (`:latest-cross` has been a multi-arch index since
+  # repo is not worth them. (`:latest`, then `:latest-cross`, has been a multi-arch index since
   # 2026-09-04, so the lane can go green when asked to.)
   # Put `[build-arm]` in the pushed HEAD commit message, or use the manual
   # workflow_dispatch, to exercise it.
