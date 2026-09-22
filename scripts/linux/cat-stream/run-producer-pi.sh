@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the cat-detection producer (kataglyphis_cat_webrtc) from the
-# :latest-cross container against a Raspberry Pi's CSI camera.
+# :latest container against a Raspberry Pi's CSI camera.
 #
 # Why this is not a plain `nerdctl run`: the Pi 5 kernel (6.18) renamed the
 # rp1-cfe media entities to underscores (`rp1-cfe-fe_image0`) and moved to the
