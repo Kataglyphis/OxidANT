@@ -84,7 +84,7 @@ container* now links rather than restates.
 
 One sentence and a link, because the procedure is upstream's:
 [`third_party/ANTfrastructure/docs/rancher-desktop-linux-containers.md`](third_party/ANTfrastructure/docs/rancher-desktop-linux-containers.md)
-— the image is **always** `:latest` (formerly `:latest-cross`, a deprecated alias until 2026-10-31), Rancher defaults to **containerd** so it is
+— the image is **always** `:latest` (the old `:latest-cross` name is retired), Rancher defaults to **containerd** so it is
 `nerdctl --namespace default` rather than `docker`, and from Git Bash
 `MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` is mandatory or the mount argument is
 mangled.
