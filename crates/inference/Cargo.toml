@@ -7,13 +7,17 @@ license.workspace = true
 [features]
 default = []
 onnx_tract = ["dep:tract-onnx", "onnx"]
-onnxruntime = ["dep:ort", "ort/std", "ort/ndarray", "ort/download-binaries", "ort/tls-native", "onnx"]
-# Runtime-loaded onnxruntime.dll (ORT_DYLIB_PATH). Additive on top of
-# `onnxruntime`: load-dynamic implies ort-sys/disable-linking, which wins over
-# download-binaries in ort-sys' build script (no download, no link). api-24 is
-# REQUIRED with load-dynamic — without an api-N level ort rc.12 fails to
-# compile (OrtApi fields are cfg-gated in ort-sys).
-onnxruntime_dynamic = ["onnxruntime", "ort/load-dynamic", "ort/api-24"]
+# Always load-dynamic, and only the family's chain-built ORT (owner rule
+# 2026-09-23): `download-binaries` fetched pyke's prebuilt ORT and must never
+# come back - scripts/linux/check-ort-chain-only.sh fails the lane if it does.
+# load-dynamic implies ort-sys/disable-linking (no download, no link);
+# src/ort_runtime.rs picks the dylib. api-24 is required with load-dynamic.
+onnxruntime =["dep:ort", "ort/std", "ort/ndarray", "ort/load-dynamic", "ort/api-24", "onnx"]
+# Kept as an alias: OmniAccelerANT's KATAGLYPHIS_RUST_FEATURES and
+# crates/cat_webrtc still name it. It adds nothing over `onnxruntime` now.
+onnxruntime_dynamic = ["onnxruntime"]
+# The EP features only register the provider; the loaded chain dylib must
+# carry it (the Windows chain is built with DirectML).
 onnxruntime_directml = ["onnxruntime", "ort/directml"]
 onnxruntime_cuda = ["onnxruntime", "ort/cuda"]
 onnx = [] # Internal marker feature

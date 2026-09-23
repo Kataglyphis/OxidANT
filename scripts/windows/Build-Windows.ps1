@@ -71,7 +71,11 @@ Import-BuildModule @(
   'WindowsBuild.Common'     # build context/log/step primitives, Sync-BuildArtifacts
   'WindowsConfig.Common'    # Get-OrDefault, Get-ConfigValue
   'WindowsMsix.Common'      # Get-PackageVersion, Invoke-MsixPackage
+  'WindowsOrtPayload.Common' # project-local: stage the chain ONNX Runtime, build + prove payloads
 )
+# G6, the hub's ORT census, proves every payload; a hub pin older than its ORT
+# single-source commit lacks the module, and Get-OrtCensusRequirement says so.
+try { Import-BuildModule @('WindowsOrtProvenance.Common') } catch { throw (Get-OrtCensusRequirement -Cause $_.Exception.Message) }
 
 $defaultConfigPath = Join-Path $PSScriptRoot 'Build-Windows.config.psd1'
 $configPath = Get-OrDefault $env:BUILD_WINDOWS_CONFIG $defaultConfigPath
@@ -208,9 +212,9 @@ try {
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('fmt', '--all', '--', '--check') | Out-Null
     } | Out-Null
 
-    # Default features on purpose. --all-features pulls onnxruntime_cuda and
-    # onnxruntime_directml, which need vendor SDKs this image has not got; the
-    # feature-matrix CI job lints the combinations that are actually buildable.
+    # Never --all-features: it pulls gui_unix (GTK4), which this image has not
+    # got. The ONNX Runtime features need nothing at build time since they became
+    # load-dynamic; the feature-matrix CI job lints the buildable combinations.
     Invoke-BuildStep -Context $context -StepName 'Linting (cargo clippy)' -Critical -Script {
       $clippyParams = @('clippy', '--all-targets')
       if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
@@ -236,6 +240,24 @@ try {
         $buildParams += @('--features', $cargoFeatures)
       }
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $buildParams | Out-Null
+    } | Out-Null
+
+    # Owner rule 2026-09-23: the exe runtime-loads ONNX Runtime (ort load-dynamic),
+    # so every package carries the image's chain-built copy beside it - never another.
+    # Staged beside the exe in target\release so it runs there too; each package then
+    # ships a payload that G6 proves (New-OrtProvenPayload), here first to fail early.
+    Invoke-BuildStep -Context $context -StepName 'Stage Chain ONNX Runtime' -Critical -Script {
+      $targetRoot = if ([System.IO.Path]::IsPathRooted($cargoTargetDir)) { $cargoTargetDir } else { Join-Path $workspacePath $cargoTargetDir }
+      $releaseDir = Join-Path $targetRoot 'release'
+      $exePath = Join-Path $releaseDir "$binary.exe"
+      if (-not (Test-PayloadLoadsOrt -ExePath $exePath)) {
+        Get-OrtFamilyFile -Directory $releaseDir | Remove-Item -Force
+        Write-BuildLog -Context $context -Message "Neither $binary.exe nor a DLL beside it loads ONNX Runtime; nothing staged."
+        return
+      }
+      Copy-ChainOrtBeside -OnnxRoot "$env:ONNX_ROOT" -Destination $releaseDir
+      $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $targetRoot 'ort-payload\stage')
+      Write-BuildLog -Context $context -Message "Chain ONNX Runtime staged from $env:ONNX_ROOT\bin and proved by G6: $(@($payload.OrtDlls | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
     } | Out-Null
   }
 
@@ -288,14 +310,14 @@ try {
       if (-not (Test-Path $exePath)) {
         throw "Expected executable not found: $exePath"
       }
+      # The package ships the payload G6 just proved; -SkipBuild skips the staging
+      # step, so this is where a packaged-only run still proves its ORT.
+      $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $cargoTargetFullPath 'ort-payload\msix')
 
       # -ExtraFiles, not -ResourcesDir: the module's -ResourcesDir flattens the
       # directory's CONTENTS into the package root, and this app looks for
       # resources\ beside the exe. Copying the directory itself keeps that.
-      $extraFiles = @(
-        Get-ChildItem -Path $releaseDir -Filter '*.dll' -File -ErrorAction SilentlyContinue |
-          ForEach-Object { $_.FullName }
-      )
+      $extraFiles = @($payload.Dlls)
       $resourcesSource = Join-Path $workspacePath 'resources'
       if (Test-Path $resourcesSource) { $extraFiles += $resourcesSource }
 
@@ -323,7 +345,7 @@ try {
       # `$&` or `$1` was silently rewritten into the manifest.
       Invoke-MsixPackage -Context $context `
         -StagingDir $msixStaging `
-        -ExePath $exePath `
+        -ExePath $payload.Exe `
         -ExtraFiles $extraFiles `
         -LogoPath $logoPath `
         -ManifestTemplatePath $manifestTemplatePath `
@@ -414,6 +436,8 @@ try {
       if (-not (Test-Path $msiExePath)) {
         throw "Expected executable not found: $msiExePath"
       }
+      # The MSI installs the payload G6 just proved, exe included.
+      $msiPayload = New-OrtProvenPayload -ExePath $msiExePath -Destination (Join-Path $msiCargoTargetFullPath 'ort-payload\msi')
 
       $licenseRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.LicenseFile') 'wix/License.rtf'
       $licenseRtf = if ([System.IO.Path]::IsPathRooted($licenseRel)) { $licenseRel } else { Join-Path $workspacePath $licenseRel }
@@ -442,13 +466,32 @@ try {
         '-arch', 'x64',
         '-ext', 'WixToolset.UI.wixext',
         '-d', "Version=$resolvedVersion",
-        '-d', "ExeSource=$msiExePath",
+        '-d', "ExeSource=$($msiPayload.Exe)",
         '-d', "LicenseRtf=$licenseRtf",
         '-d', "ProductName=$msiProductName",
         '-d', "Manufacturer=$msiManufacturer",
         '-out', $msiFile,
         $wxsPath
       )
+
+      # The chain ORT staged beside the exe travels in the MSI too: one generated
+      # component per DLL, named by main.wxs's OrtRuntime ComponentGroupRef.
+      if ($msiPayload.LoadsOrt) {
+        $ortDlls = @($msiPayload.OrtDlls)
+        $components = for ($i = 0; $i -lt $ortDlls.Count; $i++) {
+          $src = [System.Security.SecurityElement]::Escape($ortDlls[$i])
+          "      <Component Id='ortRuntime$i' Bitness='always64'><File Id='ortRuntimeFile$i' Source='$src' KeyPath='yes'/></Component>"
+        }
+        $fragmentPath = Join-Path $msiDistDir 'ort-runtime.wxs'
+        @(
+          "<Wix xmlns='http://wixtoolset.org/schemas/v4/wxs'><Fragment>"
+          "    <ComponentGroup Id='OrtRuntime' Directory='APPLICATIONFOLDER'>"
+          $components
+          '    </ComponentGroup>'
+          '</Fragment></Wix>'
+        ) | Set-Content -LiteralPath $fragmentPath -Encoding utf8
+        $wixParams += @('-d', 'OrtRuntime=1', $fragmentPath)
+      }
       Invoke-BuildExternal -Context $context -File $wixExe -Parameters $wixParams | Out-Null
 
       if (-not (Test-Path $msiFile)) {

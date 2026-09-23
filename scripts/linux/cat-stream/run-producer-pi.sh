@@ -202,7 +202,7 @@ if ! _path_contains "${LD_LIBRARY_PATH:-}" "${HOST_MULTIARCH_DIR}"; then
   export LD_LIBRARY_PATH
 fi
 _path_prepend_unique LD_LIBRARY_PATH /hostlibs
-: "${ORT_DYLIB_PATH:=${OPENCV_PREFIX}/lib/libonnxruntime.so}"
+: "${ORT_DYLIB_PATH:=${ORT_LIB_LOCATION:-/usr/local/lib/onnxruntime-cpu/lib}/libonnxruntime.so}"
 export ORT_DYLIB_PATH
 exec "$@"
 PROLOGUE

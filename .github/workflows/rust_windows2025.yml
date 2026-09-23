@@ -157,12 +157,14 @@ jobs:
           echo "archive_name=$archive" >> $env:GITHUB_OUTPUT
           echo "version=$ver" >> $env:GITHUB_OUTPUT
 
+      # This repo's script, not the hub's New-Archive.ps1: the exe runtime-loads
+      # ONNX Runtime, and the zip must carry the chain-built copy staged beside it.
       - name: Create archive
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
         with:
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
-          file: C:\ws\third_party\ANTfrastructure\windows\scripts\rust\New-Archive.ps1
+          file: C:\ws\scripts\windows\New-ReleaseArchive.ps1
           extra-args: |
             --env
             BINARY=${{ env.BINARY }}
