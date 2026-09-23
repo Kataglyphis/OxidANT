@@ -87,8 +87,6 @@ impl WebcamEngine {
         config: EngineConfig,
         on_event: Box<dyn Fn(EngineEvent) + Send + 'static>,
     ) -> Result<Self> {
-        resolve_ort_dylib();
-
         let model_path = crate::person_detection::resolve_model_path(Some(&config.model_path));
         let mut detector = PersonDetector::new(&model_path)?;
 
@@ -189,26 +187,5 @@ impl WebcamEngine {
 impl Drop for WebcamEngine {
     fn drop(&mut self) {
         self.stop();
-    }
-}
-
-/// With ort's `load-dynamic`, the DLL location must be known before the first
-/// ort call. Resolution: explicit env → next to the exe → dev-image prefix.
-/// A no-op (unused env var) for statically linked ort builds.
-fn resolve_ort_dylib() {
-    if std::env::var_os("ORT_DYLIB_PATH").is_some() {
-        return;
-    }
-    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("onnxruntime.dll"));
-        }
-    }
-    #[cfg(windows)]
-    candidates.push(r"C:\runtime\lib\onnxruntime-source\bin\onnxruntime.dll".into());
-    if let Some(path) = candidates.into_iter().find(|p| p.is_file()) {
-        log::info!("ORT_DYLIB_PATH not set, using {}", path.display());
-        std::env::set_var("ORT_DYLIB_PATH", &path);
     }
 }

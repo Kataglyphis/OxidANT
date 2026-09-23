@@ -40,6 +40,7 @@ usage: ci-container-steps.sh <step>
   bench       cargo_bench.sh
   release     cargo_release.sh          - fat LTO release build
   docs        cargo_build_doc.sh        - rustdoc into target/doc
+  ort-chain-only  check-ort-chain-only.sh - no downloaded ONNX Runtime (GATING)
 
 Run inside the family Linux CI image, from the repository root.
 USAGE
@@ -66,11 +67,13 @@ case "$step" in
     bench)     antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" "$@" ;;
     release)   antfrastructure_exec "${RUST_DRIVERS}/cargo_release.sh" "$@" ;;
     docs)      antfrastructure_exec "${RUST_DRIVERS}/cargo_build_doc.sh" "$@" ;;
+    # This repo's own gate, not a hub driver: the owner rule is chain-built ORT only.
+    ort-chain-only) exec bash "${SCRIPT_DIR}/check-ort-chain-only.sh" "$@" ;;
 
     # CARGO_CLIPPY_ARGS is why this case can delegate at all. The driver used
     # to hard-code `cargo clippy --all-targets --all-features`, and this image
-    # cannot build --all-features: gui_unix needs GTK4 headers, the onnxruntime
-    # features need vendor SDKs, and uid 1001 cannot apt-get install either. So
+    # cannot build --all-features: gui_unix needs GTK4 headers, which the image
+    # lacks on purpose, and uid 1001 cannot apt-get install them either. So
     # the two calls were written out here instead. Since the pinned hub the
     # scope is a knob, and these are the values the hand-rolled pair used:
     # `cargo clippy --all-targets --workspace --locked -- -D warnings`.

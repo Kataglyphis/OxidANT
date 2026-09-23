@@ -200,6 +200,16 @@ Build + Run (CPU via tract):
 cargo run --bin kataglyphis_cli --features gui_windows,onnx_tract -- gui --backend dx12
 ```
 
+Every `onnxruntime*` feature loads ONNX Runtime at run time and downloads
+nothing at build time. The only ORT it may load is the family's chain build
+(owner rule 2026-09-23): inside the Windows image that is
+`$env:ONNX_ROOT\bin\onnxruntime.dll`, found automatically; anywhere else, stage
+that file (plus `DirectML.dll` and `onnxruntime_providers_shared.dll`) next to
+the exe or point `ORT_DYLIB_PATH` at it. There is no fallback to the
+`onnxruntime.dll` Windows ships in System32, and any file that is not the chain
+build (a pip wheel's, a GitHub release's) is refused at load time. The release
+zip, MSIX and MSI carry the chain copy already.
+
 Build + Run (ONNX Runtime + DirectML):
 
 ```bash
@@ -230,7 +240,9 @@ Optional environment variables:
 
 CUDA notes:
 
-- Needs the NVIDIA driver plus the CUDA/cuDNN runtime on the machine.
+- Needs the NVIDIA driver plus the CUDA/cuDNN runtime on the machine, and a
+  chain-built ONNX Runtime with the CUDA provider beside `onnxruntime.dll`.
+  Nothing is copied from a download cache any more.
 - If CUDA initialisation fails, `KATAGLYPHIS_ORT_DEVICE=auto` falls back to CPU.
 
 The overlay shows FPS, inference latency, CPU/RSS and a CPU history, and inference

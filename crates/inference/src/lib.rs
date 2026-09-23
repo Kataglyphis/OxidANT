@@ -2,6 +2,8 @@
 
 #[cfg(feature = "onnxruntime")]
 pub mod ort_ext;
+#[cfg(feature = "onnxruntime")]
+pub mod ort_runtime;
 
 #[cfg(feature = "onnx")]
 pub mod person_detection;

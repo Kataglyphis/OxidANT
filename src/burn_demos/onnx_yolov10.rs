@@ -20,6 +20,7 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     lr: f64,
     train_device: &TrainB::Device,
 ) -> anyhow::Result<()> {
+    kataglyphis_inference::ort_runtime::ensure_ort_loaded()?;
     // `mut` is load-bearing on BOTH paths since ort rc.13: `commit_from_file`
     // takes `&mut self` there (it took `self` through rc.12). Assigning into
     // the same binding rather than shadowing it keeps the DirectML path free

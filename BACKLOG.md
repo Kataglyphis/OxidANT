@@ -133,10 +133,13 @@ this repo declined.
       `docs/adopting-in-a-new-project.md` nor `docs/INDEX.md` changed in that
       bump, so only `WindowsMsix.Common` is still named (§ 7) and the table
       stays. The bump's new `WindowsMediaRuntime.Common` adds no row: it stages
-      a GStreamer/ONNX DLL closure next to a built exe, and nothing in
-      `scripts/windows/` here copies runtime dependencies -- the onnxruntime
-      names in Build-Windows.ps1 and Invoke-WindowsConfigMatrix.ps1 are cargo
-      FEATURE names, not a staging step.
+      a GStreamer/ONNX DLL closure next to a built exe. Since 2026-09-23
+      `scripts/windows/` here stages exactly one runtime dependency itself:
+      the chain-built ONNX Runtime (Build-Windows.ps1's *Stage Chain ONNX
+      Runtime*, via the project-local `WindowsOrtPayload.Common`), because it
+      ships a payload per package rather than a whole media closure. The proof
+      is the hub's ORT census (G6, `Test-OrtProvenanceTree`), which needs the
+      hub pin at its ORT single-source commit of 2026-09-23 or later.
 
 ## Not adopted yet
 

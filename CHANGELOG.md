@@ -41,6 +41,38 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **ONNX Runtime is the family's chain build only, loaded at run time
+  (owner rule 2026-09-23).** `ort/download-binaries` is gone from every
+  feature: `onnxruntime`, `onnxruntime_directml`, `onnxruntime_cuda`,
+  `burn_demos` and `crates/gui`'s `onnxruntime` statically linked pyke's
+  prebuilt ORT 1.28.0 from cdn.pyke.io, including the shipped
+  `kataglyphis_cli` release. Every ORT feature is `load-dynamic` now
+  (`onnxruntime_dynamic` stays as an alias); `Cargo.lock` lost ureq 3, the
+  TLS stack and `openssl-sys` with it, nothing was upgraded.
+  `crates/inference/src/ort_runtime.rs` picks the dylib — `ORT_DYLIB_PATH`,
+  the exe's directory, then the image's chain prefix — and refuses the bare-name
+  load that reached Windows ML's `System32\onnxruntime.dll`. It hands `ort` an
+  absolute path only (a relative `ORT_DYLIB_PATH` went to the OS search
+  verbatim), and refuses any file that does not embed the chain's ORT source
+  path (`C:\temp\onnx-src\onnxruntime\core\`, `/opt/onnxruntime/onnxruntime/core/`),
+  so a PyPI, GitHub-release or Windows ML copy named by `ORT_DYLIB_PATH` no
+  longer loads just because it clears ort's API-24 floor. The CUDA path no
+  longer copies provider DLLs out of pyke's download cache. The Windows release
+  zip (`scripts/windows/New-ReleaseArchive.ps1`), MSIX and MSI carry the chain
+  `onnxruntime.dll` (+ `DirectML.dll`, `onnxruntime_providers_shared.dll`)
+  staged from `$env:ONNX_ROOT\bin`. Each package ships a payload that
+  ANTfrastructure's ORT census (G6, `Test-OrtProvenanceTree`) proves byte for
+  byte against the image's chain ORT, with every importer resolving to it
+  (`scripts/windows/modules/WindowsOrtPayload.Common.psm1`); a hub pin before its
+  ORT single-source commit of 2026-09-23 stops the build naming it. Whether a
+  payload loads ORT is decided over the exe and every DLL it ships, so an
+  ORT-consuming DLL beside a plain exe gets the chain ORT and its G6 proof too,
+  instead of shipping with nothing beside it for System32's copy. The Linux lane gates
+  it with `scripts/linux/check-ort-chain-only.sh` (lock + resolved feature
+  graph, all targets, and every `ort` declaration in the graph must carry
+  `load-dynamic` — the workspace dependency declares it, so no feature subset
+  can link ORT). `run-producer-pi.sh` defaults `ORT_DYLIB_PATH` to
+  `/usr/local/lib/onnxruntime-cpu/lib`, not `/opt/opencv5`'s copy.
 - **`crates/cat_webrtc` no longer bakes in a path into a sibling submodule
   checkout.** `--image` has no compile-time default; it falls back to
   `$KATAGLYPHIS_CAT_IMAGE`, and with no image and no live-source flag the binary

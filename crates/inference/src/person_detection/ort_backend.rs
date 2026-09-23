@@ -1,11 +1,6 @@
 #[allow(unused_imports)]
 use anyhow::bail;
 use anyhow::Result;
-// Every `.context(..)` call sits in the CUDA-on-Windows module below, so an
-// unconditional import is dead on every other target - and `-D warnings`
-// turns that into a build failure the moment a lane lints this feature.
-#[cfg(all(feature = "onnxruntime_cuda", windows))]
-use anyhow::Context;
 use log::info;
 
 use super::model_utils::validate_model_path;
@@ -19,6 +14,7 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Sessio
     use ort::session::Session;
 
     let canonical_path = validate_model_path(model_path)?;
+    crate::ort_runtime::ensure_ort_loaded()?;
 
     let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
 
@@ -30,9 +26,6 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Sessio
         info!("ORT device request: {device}");
 
         if device == "cuda" || device == "auto" {
-            #[cfg(all(feature = "onnxruntime_cuda", windows))]
-            ensure_ort_cuda_provider_dylibs_next_to_exe()?;
-
             let cuda = CUDA::default();
             match cuda.is_available() {
                 Ok(true) => {}
@@ -104,114 +97,3 @@ fn extract_ort_input_dims(session: &ort::session::Session) -> (u32, u32) {
     }
     (w as u32, h as u32)
 }
-
-#[cfg(all(feature = "onnxruntime_cuda", windows))]
-mod cuda_dylib {
-    use super::*;
-
-    const REQUIRED_DLLS: &[&str] = &[
-        "onnxruntime_providers_shared.dll",
-        "onnxruntime_providers_cuda.dll",
-    ];
-
-    fn ort_cache_dir() -> Result<std::path::PathBuf> {
-        if let Some(p) = std::env::var_os("ORT_CACHE_DIR") {
-            return Ok(std::path::PathBuf::from(p));
-        }
-        let local_appdata = std::env::var_os("LOCALAPPDATA")
-            .map(std::path::PathBuf::from)
-            .context("LOCALAPPDATA is not set")?;
-        Ok(local_appdata.join("ort.pyke.io"))
-    }
-
-    fn exe_directory() -> Result<std::path::PathBuf> {
-        std::env::current_exe()
-            .context("current_exe failed")?
-            .parent()
-            .map(|p| p.to_path_buf())
-            .context("current_exe has no parent directory")
-    }
-
-    fn find_latest_file(
-        root: &std::path::Path,
-        file_name: &std::ffi::OsStr,
-    ) -> Result<std::path::PathBuf> {
-        use std::time::SystemTime;
-
-        let mut stack = vec![root.to_path_buf()];
-        let mut best: Option<(SystemTime, std::path::PathBuf)> = None;
-
-        while let Some(dir) = stack.pop() {
-            let entries = std::fs::read_dir(&dir)
-                .with_context(|| format!("Failed to read dir '{}'", dir.display()))?;
-
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_dir() {
-                    stack.push(path);
-                } else if path.file_name() == Some(file_name) {
-                    let meta = entry.metadata()?;
-                    let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                    if best.as_ref().is_none_or(|(t, _)| mtime > *t) {
-                        best = Some((mtime, path));
-                    }
-                }
-            }
-        }
-
-        best.map(|(_, p)| p).with_context(|| {
-            format!(
-                "Could not locate '{}' under '{}'",
-                file_name.to_string_lossy(),
-                root.display()
-            )
-        })
-    }
-
-    fn copy_dlls_from_cache(exe_dir: &std::path::Path, src_dir: &std::path::Path) -> Result<()> {
-        for name in REQUIRED_DLLS {
-            let dst = exe_dir.join(name);
-            if dst.is_file() {
-                continue;
-            }
-
-            let src = src_dir.join(name);
-            if !src.is_file() {
-                bail!("Required ORT CUDA DLL not found: '{}'", src.display());
-            }
-
-            std::fs::copy(&src, &dst).with_context(|| {
-                format!("Failed to copy '{}' -> '{}'", src.display(), dst.display())
-            })?;
-            info!("Copied '{}' -> '{}'", src.display(), dst.display());
-        }
-        Ok(())
-    }
-
-    pub(crate) fn ensure_ort_cuda_provider_dylibs_next_to_exe() -> Result<()> {
-        let exe_dir = exe_directory()?;
-
-        if REQUIRED_DLLS
-            .iter()
-            .all(|name| exe_dir.join(name).is_file())
-        {
-            return Ok(());
-        }
-
-        let dfbin_dir = ort_cache_dir()?.join("dfbin");
-        let shared_path = find_latest_file(
-            &dfbin_dir,
-            std::ffi::OsStr::new("onnxruntime_providers_shared.dll"),
-        )?;
-        let src_dir = shared_path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .context("providers_shared.dll has no parent directory")?;
-
-        copy_dlls_from_cache(&exe_dir, &src_dir)
-    }
-}
-
-#[cfg(all(feature = "onnxruntime_cuda", windows))]
-pub(crate) use cuda_dylib::ensure_ort_cuda_provider_dylibs_next_to_exe;
