@@ -1,0 +1,55 @@
+# .github/workflows/linux-arm64.yml
+#
+# The Linux arm64 lane: WHEN it runs and WHICH runner, nothing else. Every step
+# lives in reusable-linux.yml, shared with linux-x64.yml, so the two
+# architectures run the same debug build, security, fmt/clippy, test, coverage,
+# bench, release and tarball steps. It does not build or publish the docs; the
+# site is one site and linux-x64.yml owns it.
+#
+# ALWAYS RUNS since 2026-09-24 (owner request). Until then it was the opt-in
+# arm64 row of rust_ubuntu26_04.yml, enabled only by `[build-arm]` in the HEAD
+# commit message or by workflow_dispatch, so a green badge said nothing about
+# arm64. No job-level `if:` stands here now and none may be added back.
+#
+# NATIVE, NOT EMULATED. ubuntu-26.04-arm is a GitHub-hosted arm64 runner, and
+# `:latest` has been a multi-arch OCI index since 2026-09-04, so the container
+# steps run the arm64 image on arm64 hardware. The label is a preview label that
+# the pinned actionlint predates - .github/actionlint.yaml declares it.
+name: Linux arm64 · build + test
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+# Nothing here writes through GITHUB_TOKEN; the GHCR pull uses its own secret.
+permissions:
+  contents: read
+
+# One group per workflow, as in linux-x64.yml: `github.workflow` is this file's
+# display name, so arm64 and x64 never cancel each other, and a superseded run
+# is cancelled everywhere except on the default branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+jobs:
+  # No timeout-minutes: a job that calls a reusable workflow may not carry one.
+  # The callee's `build` job owns it.
+  build:
+    name: Linux arm64
+    uses: ./.github/workflows/reusable-linux.yml
+    permissions:
+      contents: read
+    with:
+      runner: ubuntu-26.04-arm
+      platform: linux/arm64
+      arch: arm64
+      artifact-suffix: ubuntu-26.04-arm64
+      docs: false
+    # Only the registry token: docs is false, so the FTP secrets would be
+    # handed to a step that never runs.
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}

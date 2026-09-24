@@ -127,7 +127,7 @@ wmi = { workspace = true }
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(onnx)', 'cfg(gui_wgpu_backend)'] }
 
 [workspace.lints.clippy]
-# NEW IN CLIPPY 1.98, and the reason rust_ubuntu26_04.yml's "Check formatting
+# NEW IN CLIPPY 1.98, and the reason the Linux lane's "Check formatting
 # and clippy" step went red the moment the hub pin moved to fa9ecdb6
 # (versions.env RUST_VERSION 1.97.1 -> 1.98.1). It fires 22 times, all inside
 # crates/webgpu_renderer, on `chunks_exact(N)` with a literal N.

@@ -2,12 +2,13 @@
 # pinned actionlint 1.7.12 - the latest release - predates; this only ADDS labels.
 #
 # Without this file the new workflow-lint gate fails on every `runs-on:
-# ubuntu-26.04` line - rust_ubuntu26_04.yml:52 and :305, plus the lint lane
-# itself - with "label \"ubuntu-26.04\" is unknown", before it can report a
-# single real finding. Both labels are in use here: the arm64 matrix leg runs on
-# ubuntu-26.04-arm. Same file, same reason, as BeschleunigerBallett's,
-# OrchestrANT's, OmniAccelerANT's and ANTfrastructure's; actionlint discovers it by
-# path relative to the tree it lints, so it cannot be read out of the submodule.
+# ubuntu-26.04` line - linux-x64.yml's feature check, plus the lint lane itself
+# - with "label \"ubuntu-26.04\" is unknown", before it can report a single real
+# finding. Both labels are in use here: linux-x64.yml hands ubuntu-26.04 and
+# linux-arm64.yml hands ubuntu-26.04-arm to reusable-linux.yml. Same file, same
+# reason, as BeschleunigerBallett's, OrchestrANT's, OmniAccelerANT's and
+# ANTfrastructure's; actionlint discovers it by path relative to the tree it
+# lints, so it cannot be read out of the submodule.
 self-hosted-runner:
   labels:
     - ubuntu-26.04

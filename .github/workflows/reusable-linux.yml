@@ -1,27 +1,69 @@
-name: Rust workflow on Ubuntu-26.04 (x86_64, ARM opt-in)
+# .github/workflows/reusable-linux.yml
+#
+# THE LINUX LANE, WRITTEN ONCE FOR BOTH ARCHITECTURES. linux-x64.yml and
+# linux-arm64.yml are thin callers: each says WHEN it runs and WHICH runner,
+# container platform and artifact suffix it wants, and this file says HOW. Every
+# step is shared, so an arch-specific copy of any of them would be a second
+# place to edit and a second chance to drift.
+#
+# Until 2026-09-24 this was one workflow, rust_ubuntu26_04.yml, whose arm64 row
+# only ran with `[build-arm]` in the HEAD commit message. The owner asked for
+# every platform lane on every push and PR, and the family naming convention
+# is one kebab-case file per platform + arch, so the matrix became two callers
+# of this file. Neither caller carries an `if:`; that is what "always runs"
+# rests on.
+#
+# NO `concurrency:` HERE, DELIBERATELY. Inside a called workflow
+# `github.workflow` is the CALLER's name, so a group here would repeat the
+# caller's own and GitHub cancels the run as a concurrency deadlock. Each caller
+# owns its group, one per workflow.
+name: Linux · reusable build
 
 on:
-  push:
-    branches: [ "main", "develop" ]
-  pull_request:
-    branches: [ "main", "develop" ]
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      runner:
+        description: >-
+          GitHub-hosted runner label - ubuntu-26.04 or ubuntu-26.04-arm. Both
+          architectures build natively; nothing here runs under QEMU.
+        type: string
+        required: true
+      platform:
+        description: Container --platform, linux/amd64 or linux/arm64.
+        type: string
+        required: true
+      arch:
+        description: package_archive.sh --arch (x64 or arm64), and the job name.
+        type: string
+        required: true
+      artifact-suffix:
+        description: Middle of the uploaded artifact's name, e.g. ubuntu-26.04-x64.
+        type: string
+        required: true
+      docs:
+        description: >-
+          Build rustdoc and, on a push to the default branch, publish it. Exactly
+          one caller sets this: the site is one site, not one per architecture.
+        type: boolean
+        default: false
+    # All four optional, because a fork PR has none of them:
+    # prepare-linux-ci-host skips the registry login on an empty password (the
+    # image is public) and the FTP publish never runs on a pull_request.
+    secrets:
+      GHCR_PAT:
+        required: false
+      SERVER:
+        required: false
+      USERNAME:
+        required: false
+      PW:
+        required: false
 
 # Nothing in this workflow writes to the repository. The GHCR pull and the
 # docs publish authenticate with their own secrets, never with GITHUB_TOKEN,
 # so the default (often write) token permissions are pure attack surface.
 permissions:
   contents: read
-
-# A 45-minute lane that has already been superseded by a newer push is wasted
-# runner time. Queued runs on the DEFAULT branch still finish - releases are
-# cut from there. The branch is asked for rather than typed: this repo spent
-# months with `main` abandoned and `develop` carrying every commit, so a
-# literal 'refs/heads/main' here protected a branch nobody pushed to and
-# cancelled the one everybody did.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 # NO CONTAINER_IMAGE HERE, DELIBERATELY. This workflow opened with a
 # `CONTAINER_IMAGE:` holding the full image reference and handed it to all
@@ -48,52 +90,18 @@ env:
   CONTAINER_ENV: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always
 
 jobs:
-  # The ARM lane is opt-in per commit, matching the convention the ANTfrastructure
-  # ecosystem already uses for its expensive lanes (see that submodule's
-  # `third_party/ANTfrastructure/docs/ci-build-triggers.md`). arm64 is opt-in via [build-arm] for runner
-  # minutes: a second full 45-minute cross build on every push to a template
-  # repo is not worth them. (`:latest`, then `:latest-cross`, has been a multi-arch index since
-  # 2026-09-04, so the lane can go green when asked to.)
-  # Put `[build-arm]` in the pushed HEAD commit message, or use the manual
-  # workflow_dispatch, to exercise it.
-  select-lanes:
-    name: Select lanes
-    runs-on: ubuntu-26.04
-    outputs:
-      matrix: ${{ steps.pick.outputs.matrix }}
-    steps:
-      - id: pick
-        shell: bash
-        # The commit message arrives via env, NOT via `${{ }}` inside the
-        # script body: interpolating attacker-controllable text straight into
-        # a run block is the classic GitHub Actions script-injection hole.
-        env:
-          HEAD_MSG: ${{ github.event.head_commit.message }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          amd64='{"name":"amd64","runner":"ubuntu-26.04","platform":"linux/amd64","arch":"x64","artifact_suffix":"ubuntu-26.04-x64","docs":true}'
-          arm64='{"name":"arm64","runner":"ubuntu-26.04-arm","platform":"linux/arm64","arch":"arm64","artifact_suffix":"ubuntu-26.04-arm64","docs":false}'
-
-          include="${amd64}"
-          if [ "${EVENT}" = "workflow_dispatch" ] || printf '%s' "${HEAD_MSG}" | grep -qF '[build-arm]'; then
-            include="${amd64},${arm64}"
-            echo "ARM lane enabled."
-          else
-            echo "ARM lane skipped - add [build-arm] to the commit message to enable it."
-          fi
-
-          echo "matrix={\"include\":[${include}]}" >> "$GITHUB_OUTPUT"
-
-  linux-pipeline:
-    name: Build, test, package, and docs (${{ matrix.name }})
-    needs: select-lanes
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.select-lanes.outputs.matrix) }}
+  build:
+    name: Build, test, package (${{ inputs.arch }})
+    runs-on: ${{ inputs.runner }}
+    # About 35 minutes on x64 (the 2026-09-22 and 2026-09-23 runs); arm64 runs
+    # the same steps natively. Room for twice that plus a cold image pull, and
+    # far short of the six-hour account default a hung step would burn.
+    timeout-minutes: 90
+    permissions:
+      contents: read
     env:
-      PLATFORM: ${{ matrix.platform }}
-      ARCH: ${{ matrix.arch }}
+      PLATFORM: ${{ inputs.platform }}
+      ARCH: ${{ inputs.arch }}
       BINARY: oxidant
       BINARY_FILE: kataglyphis_cli
       # VERSION is computed by scripts/linux/compute-version.sh into GITHUB_ENV.
@@ -224,11 +232,21 @@ jobs:
             --archive-out-file "dist/archive_path.txt"
             --no-github-output'
 
+      # Named by VERSION, not by github.ref_name. On a pull_request the ref name
+      # is `<number>/merge`, and upload-artifact refuses a `/` in a name - so
+      # every PR run of this lane went red at this step with the build, tests
+      # and package all green (run 35752031200, 2026-09-22). VERSION comes from
+      # VERSION.txt and is what the Windows lane and the tarball already use.
+      #
+      # `error`, not the `warn` default: `always()` means this also runs after a
+      # failed build, and a lane that produced nothing must not upload nothing
+      # and look delivered.
       - name: Upload all artifacts
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: ${{ env.BINARY }}-${{ github.ref_name }}-${{ matrix.artifact_suffix }}-all
+          name: ${{ env.BINARY }}-${{ env.VERSION }}-${{ inputs.artifact-suffix }}-all
+          if-no-files-found: error
           path: |
             tarpaulin-report.html
             tarpaulin-report.xml
@@ -236,7 +254,7 @@ jobs:
             dist/**
 
       - name: Create docs
-        if: matrix.docs
+        if: inputs.docs
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -254,7 +272,9 @@ jobs:
         # docs at rust.jonasheinle.de were never republished at all. Reading
         # the repository's own default_branch keeps the comment true through
         # the main/develop reconciliation and through whatever comes after it.
-        if: matrix.docs && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
+        # Inside a called workflow `github` is the CALLER's context, so this
+        # still reads the push that started linux-x64.yml.
+        if: inputs.docs && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
         # Best-effort publish: a transient FTP control-socket timeout
         # (observed 2026-07-22) must NOT red-light a lane whose build, test
         # and package all passed. The step still shows as failed with a
@@ -268,56 +288,3 @@ jobs:
           username: ${{ secrets.USERNAME }}
           password: ${{ secrets.PW }}
           local-dir: "./target/doc/"
-
-  # Every optional feature is currently built by NOTHING: the lane above uses
-  # default features (which are empty) and the Windows lane is opt-in. That is
-  # how a GStreamer major-version skew between crates/gui and crates/media
-  # survived unnoticed until 2026-08-07 - two -sys layers binding one system
-  # libgstreamer, and no build anywhere that would link them together.
-  #
-  # Every combination below was verified green on 2026-08-07 (Ubuntu 24.04,
-  # Rust 1.97.1), so a failure here is an image problem, not a broken feature.
-  # The image supplies what they need: GStreamer is source-built into
-  # /opt/gstreamer and already on PKG_CONFIG_PATH, and libssl-dev arrives via
-  # ANTfrastructure's package-lists.sh. Do NOT "fix" a failure by apt-installing
-  # libgstreamer*-dev — the image purges the distro packages deliberately.
-  #
-  # `gui_unix` is deliberately ABSENT: it is the only feature needing
-  # libgtk-4-dev, which ANTfrastructure excludes on purpose because the
-  # foreign-arch GTK dev chain pulls target-side Python and breaks cross builds
-  # on python3-minimal's postinst. `gui_linux`, despite the name, is the wgpu
-  # path and needs no GTK.
-  #
-  # Opt-in because it is a second full container pull per combination, not
-  # because it is expected to fail. Enable with `[build-features]` in the
-  # commit message, or workflow_dispatch.
-  feature-matrix:
-    name: Feature check (${{ matrix.features }})
-    needs: select-lanes
-    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message || '', '[build-features]') }}
-    runs-on: ubuntu-26.04
-    strategy:
-      fail-fast: false
-      matrix:
-        features:
-          - gstreamer
-          - gui_linux
-          - gui_linux,gstreamer
-          - onnxruntime
-          - burn_demos
-    steps:
-      - name: Prepare the CI host
-        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@main
-        with:
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GHCR_PAT }}
-          fetch-depth: '1'
-
-      - name: cargo check --features ${{ matrix.features }}
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
-        with:
-          extra-args: ${{ env.CONTAINER_ENV }}
-          script: >-
-            bash -lc 'set -e;
-            git config --global --add safe.directory /workspace || true;
-            cargo check --locked --features ${{ matrix.features }}'

@@ -184,11 +184,11 @@ rather than linked.
 
 The **bin** was renamed, not the lib, and that direction was deliberate: the C++ Vulkan engine imports the lib through Corrosion/cxxbridge (the generated `oxidant_bridge` target in the parent repo's CMake), so `[lib] name` decides DLL/LIB filenames that another repository depends on.
 
-What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Ubuntu workflow and `BINARY` in the Windows one, the `-Binary` default in `Invoke-AppProfiles.ps1`, and `--bin` in `scripts/linux/run-person-detection.sh`.
+What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Linux lane (`reusable-linux.yml` today) and `BINARY` in the Windows one (`windows-x64.yml`), the `-Binary` default in `Invoke-AppProfiles.ps1`, and `--bin` in `scripts/linux/run-person-detection.sh`.
 
 **`[lib] name` did change later, on 2026-09-05**, when the repository became OxidANT: `[package] name` and `[lib] name` are both `oxidant` now, so the artefacts are `oxidant.dll` / `liboxidant.so` / `liboxidant.a`. That is exactly the outside-this-repo break the paragraph above warns about, and it was only safe because every consumer was updated in the same commit — OmniAccelerANT's Cargokit wiring, podspecs, `Get-WindowsBuildConfig.ps1` and the committed `frb_generated.dart` loader stem, plus BeschleunigerBallett's Corrosion import. Renaming it again means finding those consumers again — they are listed under [Consumers](#consumers).
 
-The two `BINARY` variables still mean different things. In the **Windows** workflow it is the executable (`kataglyphis_cli`). In the **Ubuntu** workflow it is `oxidant`, and it names *both* the tarball and the file inside it: `package_archive.sh` copies `target/release/$BINARY_FILE` to `$ArchiveDir/$Binary`. So `BINARY_FILE` is the cargo artefact, `BINARY` is what a user ends up invoking.
+The two `BINARY` variables still mean different things. In the **Windows** workflow (`windows-x64.yml`) it is the executable (`kataglyphis_cli`). In the **Linux** one (`reusable-linux.yml`, which both Linux lanes call) it is `oxidant`, and it names *both* the tarball and the file inside it: `package_archive.sh` copies `target/release/$BINARY_FILE` to `$ArchiveDir/$Binary`. So `BINARY_FILE` is the cargo artefact, `BINARY` is what a user ends up invoking.
 
 ### Inside the Stevedore Windows container
 
@@ -288,7 +288,7 @@ Re-check when zune-jpeg publishes past 0.5.15.
 
 ### Known gaps
 
-- **No CI lane builds any optional feature.** The Linux lane builds default features; the Windows lane builds `gui_windows,onnxruntime_directml` and is itself opt-in. So `crates/media` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `rust_ubuntu26_04.yml` closes this, but only once the build image ships the three package groups in the table above.
+- **No always-on CI lane builds any optional feature.** Both Linux lanes build default features; the Windows lane builds `gui_windows,onnxruntime_directml` only (on every push since 2026-09-24). So `crates/media` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `linux-x64.yml` closes this, but it is still opt-in (`[build-features]`), and only once the build image ships the three package groups in the table above.
 
 - **No CI lane has a GPU, so the golden tests never actually run.** `GpuContext::headless_or_skip()` returns `None` and every one of the ~40 headless render tests reports as passed having drawn nothing. This is not theoretical: running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**:
 
@@ -418,19 +418,41 @@ malformed and stayed that way through several edits.
 
 ### Continuous integration
 
-Four workflows, six jobs. The two build lanes run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and **none of the three gate jobs is a copied job any more** — all three are one `uses:` onto ANTfrastructure, two onto a reusable workflow and one onto a composite action:
+Six workflow files: five triggered, one reusable. The three build lanes — one file per platform + arch — run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and **none of the three gate jobs is a copied job any more** — all three are one `uses:` onto ANTfrastructure, two onto a reusable workflow and one onto a composite action:
 
-| Lane | Workflow | Runs when | Image |
+| Lane (display name) | Workflow | Runs when | Image and runner |
 | --- | --- | --- | --- |
 | Lint gates | `lint-gates.yml` (job `lint-gates`) | every push/PR to `main`/`develop` | none — the hub's reusable `lint-gates.yml` with `ratchets: true`; the same aggregator `bash scripts/linux/run-lint-gates.sh` runs locally |
-| PowerShell lint | `lint-gates.yml` (job `powershell-lint`) | same | none — the hub's reusable `python-ci-windows.yml` with `build-python-package: false`, `lint-powershell: true`, `lint-path: scripts`, and no `secrets:` block; `Invoke-Lint.ps1 -Path scripts -FailOnAnalyzer` on `windows-2025` |
-| Generated artifacts | `lint-gates.yml` (job `generated-artifacts`) | same | none — `scripts/windows/tests/` under Pester 3.4.0 on `windows-2025` |
+| Lint gates | `lint-gates.yml` (job `powershell-lint`) | same | none — the hub's reusable `python-ci-windows.yml` with `build-python-package: false`, `lint-powershell: true`, `lint-path: scripts`, and no `secrets:` block; `Invoke-Lint.ps1 -Path scripts -FailOnAnalyzer` on `windows-2025` |
+| Lint gates | `lint-gates.yml` (job `generated-artifacts`) | same | none — `scripts/windows/tests/` under Pester 3.4.0 on `windows-2025` |
 | Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — the hub's reusable `submodule-pins.yml` (`Submodule.Pins.Tests.ps1`, Pester 3.4.0, `windows-2025`) |
-| Linux x86_64 | `rust_ubuntu26_04.yml` | every push/PR to `main`/`develop` | family Linux CI image, inherited |
-| Linux arm64 | same | opt-in: `[build-arm]` in the HEAD commit message, or `workflow_dispatch` | same |
-| Windows | `rust_windows2025.yml` | opt-in: `[build-win]` in the HEAD commit message, or `workflow_dispatch` | family Windows CI image, inherited |
+| Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push/PR to `main`/`develop`, and `workflow_dispatch` | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
+| Linux arm64 · build + test | `linux-arm64.yml` → `reusable-linux.yml` | same | same image (a multi-arch index); native `ubuntu-26.04-arm`, no QEMU |
+| Windows x64 · build + test | `windows-x64.yml` | same | family Windows CI image, inherited; `windows-2025` |
+| Linux x64 · build + test | `linux-x64.yml` (job `feature-matrix`) | opt-in: `[build-features]` in the HEAD commit message, or `workflow_dispatch` | family Linux CI image; `ubuntu-26.04` |
 
-"Inherited" is literal: **neither build workflow names an image.** Both used to open
+**Every platform lane runs on every push and PR, since 2026-09-24** (owner request).
+None of the three build jobs carries an `if:`, and none may be added back. Until that
+date the arm64 row needed `[build-arm]` and the Windows lane `[build-win]` in the HEAD
+commit message, so both reported `skipped` on almost every push — which a badge
+renders the same as a pass. ANTfrastructure's `docs/ci-build-triggers.md` still
+describes those markers for the family; nothing here reads them any more. The feature
+check is the one opt-in job left, and a skipped job inside a green Linux x64 run does
+not skip that workflow.
+
+**The names follow the family convention of the same date:** kebab-case files, one per
+platform + arch, display names `<Platform> <Arch> · <what>` (U+00B7 middle dot).
+Steps both architectures share live once, in `reusable-linux.yml` ("Linux · reusable
+build", `workflow_call`); `linux-x64.yml` and `linux-arm64.yml` only say when they run
+and which runner, container platform and artifact suffix they want. The gate lanes
+kept their files and took plain names, "Lint gates" and "Submodule pins".
+Concurrency is per workflow: each triggered build workflow groups on
+`${{ github.workflow }}-${{ github.ref }}` and cancels a superseded run except on the
+default branch. `reusable-linux.yml` declares no group, because inside a called
+workflow `github.workflow` is the caller's name, and GitHub cancels a callee whose
+group repeats its caller's as a deadlock.
+
+"Inherited" is literal: **no build workflow names an image.** Both of the old ones used to open
 with a `CONTAINER_IMAGE:` env entry holding the full reference and hand it to
 every container step; that was a copy of ANTfrastructure's `versions.env` value
 that a fleet-wide tag bump would leave behind. Every step now omits the `image:`
@@ -445,18 +467,17 @@ re-typed into a workflow, a script, or a comment.
 
 **The lint lane runs with `--ratchets` on** since 2026-09-15. On top of the six always-on gates that adds the docs cross-reference gate plus eight measurement gates (code size, complexity, dead functions, comment size, stdout returns, masked declarations, trailing conditionals, and a shellcheck *warning* ratchet), each graded against a freeze file at the repo root. Three of them carry rows — `comment-size.allow`, `code-complexity.allow`, `dead-functions.allow` — seeded from the first run; the rest are absent, which the gates read as a zero baseline. **The contract is two-way**: a new offender fails, and so does an entry that is no longer over the limit, so fixing one of these means deleting or updating its row in the same change. The docs gate has no freeze file at all and never will — a `docs/…md` pointer in code either resolves from the repo root (or, when it starts `../`, from the file) or it is a finding.
 
-**A green tick without the opt-in marker says nothing about that lane** — the workflow reports `skipped`, which the badge renders the same as passing.
-
 Facts that cost real debugging time:
 
-- **The ARM lane is opt-in via `[build-arm]` for runner minutes**, not because it cannot pass: `:latest` (then `:latest-cross`) has been a multi-arch index since 2026-09-04.
-- **Every container step of the Linux lane is one named step of one script**, `scripts/linux/ci-container-steps.sh` (`debug`, `security`, `fmt-clippy`, `test`, `coverage`, `bench`, `release`, `docs`). Each step used to inline its own `bash -lc 'set -e; git config --global --add safe.directory /workspace; bash third_party/.../cargo_<x>.sh'` — the same prologue eight times. Reproduce any step by hand with `bash scripts/linux/ci-container-steps.sh <step>` inside the image; the workflow runs exactly that line.
+- **The arm64 lane runs natively on `ubuntu-26.04-arm`, on every push since 2026-09-24.** It was opt-in via `[build-arm]` for runner minutes before that, never because it could not pass: `:latest` (then `:latest-cross`) has been a multi-arch index since 2026-09-04.
+- **Linux artifacts are named by `VERSION`, not by `github.ref_name`.** On a pull request the ref name is `<number>/merge`, `upload-artifact` refuses a `/` in a name, and every PR run of the Linux lane went red at *Upload all artifacts* with the build, tests and package green (run 35752031200, 2026-09-22). Fixed on 2026-09-24, when the lane started running on every PR on both architectures.
+- **Every container step of both Linux lanes is one named step of one script**, `scripts/linux/ci-container-steps.sh` (`debug`, `security`, `fmt-clippy`, `test`, `coverage`, `bench`, `release`, `docs`). Each step used to inline its own `bash -lc 'set -e; git config --global --add safe.directory /workspace; bash third_party/.../cargo_<x>.sh'` — the same prologue eight times. Reproduce any step by hand with `bash scripts/linux/ci-container-steps.sh <step>` inside the image; `reusable-linux.yml` runs exactly that line.
 - **`cargo fmt`/`cargo clippy` run through ANTfrastructure's `cargo_fmt_clippy.sh`** like every other step — `fmt-clippy` was the one case that did not delegate, and stopped being one on 2026-09-15. Two things had to change upstream first, and both did: the driver's old first line `rustup component add rustfmt` exited 127 on an image without rustup (it probes first now — header: PROBE, DO NOT ADD), and `--all-features` was hard-coded at its line 40, which this image cannot build (GTK4/ORT, see the last bullet). The scope is `CARGO_CLIPPY_ARGS`, set to `--workspace --locked` in `scripts/linux/ci-container-steps.sh`. That exit 127 was masked by `continue-on-error: true` for months and let an entire crate reach the default branch unformatted and with 12 clippy errors — the step gates now.
 - **The docs publish follows the repository's own default branch**, not a typed `refs/heads/main`. It asks for `format('refs/heads/{0}', github.event.repository.default_branch)`, and so does `cancel-in-progress`. The literal was wrong for as long as `main` was abandoned and `develop` carried every commit: the comment said "only publish from the default branch" while the condition matched a branch nobody pushed to, so <https://rust.jonasheinle.de> was never republished at all. A red **Security checks** step has the same effect for a different reason — the publish is the last step of that job.
 - **The container runs as uid 1001, not root.** `apt-get` fails with `Permission denied`, so a workflow step cannot install system packages — whatever the image lacks, it lacks. And `CARGO_HOME=/usr/local/cargo` is root-owned, so every writing cargo step needs `-e CARGO_HOME=/tmp/cargo-home`.
 - **The lint gate runs default features on purpose.** `--all-features` would need GTK4 headers (`gui_unix`), which the image has not got and uid 1001 cannot install.
 - **The Windows lane pins its cargo tools.** `scripts/windows/Build-Windows.ps1` installs cargo-audit and cargo-deny with `--version`, read from `$env:CARGO_AUDIT_VERSION` / `$env:CARGO_DENY_VERSION` (baked into the image) and falling back to the submodule's `versions.env` through `ConvertFrom-VersionsEnv`; unresolvable **throws**. Unpinned, `cargo install` takes whatever crates.io serves that minute, so a new advisory-db schema turns the lane red with no commit to bisect. There is no try/catch around the install any more either — a swallowed failure left both gates running whatever was on PATH.
-- **`cargo_security_checks.sh` is a gating step, not an advisory one.** The *Security checks (cargo audit + cargo deny)* step in `rust_ubuntu26_04.yml` runs ANTfrastructure's `linux/scripts/02-toolchain/rust/cargo_security_checks.sh`, and a finding fails the lane — which also means the docs publish at the end of the lane never runs while it is red. It reads **two** ignore lists and they must stay byte-identical in content: `.cargo/audit.toml` (cargo-audit) and `deny.toml` `[advisories].ignore` (cargo-deny). An id added to one and not the other buys nothing — the other tool still reports it. Prefer an upgrade over an ignore: `chacha20` 0.10.1 (yanked) and `stable-vec` 0.4.2 (unsound) both had one, so neither is on either list.
+- **`cargo_security_checks.sh` is a gating step, not an advisory one.** The *Security checks (cargo audit + cargo deny)* step in `reusable-linux.yml` (so in both Linux lanes) runs ANTfrastructure's `linux/scripts/02-toolchain/rust/cargo_security_checks.sh`, and a finding fails the lane — which also means the docs publish at the end of the x64 lane never runs while it is red. It reads **two** ignore lists and they must stay byte-identical in content: `.cargo/audit.toml` (cargo-audit) and `deny.toml` `[advisories].ignore` (cargo-deny). An id added to one and not the other buys nothing — the other tool still reports it. Prefer an upgrade over an ignore: `chacha20` 0.10.1 (yanked) and `stable-vec` 0.4.2 (unsound) both had one, so neither is on either list.
 
 Lint the workflows locally with the submodule's pinned, SHA-verified actionlint (works from Git Bash on Windows):
 

@@ -19,7 +19,7 @@
 # nothing here has to name ANTfrastructure for it to be covered and a second
 # submodule added later is covered the day it lands. The path input defaults to
 # this repo's own vendored location, which is why it is not passed.
-name: Submodule Pins
+name: Submodule pins
 
 on:
   push:

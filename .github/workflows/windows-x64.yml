@@ -1,10 +1,37 @@
-name: Rust workflow on Windows 2025
+# .github/workflows/windows-x64.yml
+#
+# The Windows x64 lane: debug tests, the app config matrix, the lint + MSIX/MSI
+# packaging build and the release zip, all inside the family Windows image.
+#
+# ALWAYS RUNS since 2026-09-24 (owner request). Until then this was
+# rust_windows2025.yml, whose only job carried
+#   if: workflow_dispatch || contains(head_commit.message, '[build-win]')
+# so almost every run reported `skipped` - which a badge renders like a pass.
+# No job-level `if:` stands here now and none may be added back. Family naming,
+# same date: kebab-case files, one per platform + arch, display name
+# '<Platform> <Arch> · <what>'.
+name: Windows x64 · build + test
+
 on:
   push:
     branches: [ "main", "develop" ]
   pull_request:
     branches: [ "main", "develop" ]
   workflow_dispatch:
+
+# Nothing here writes through GITHUB_TOKEN: the registry login uses GHCR_PAT and
+# the artifacts go through upload-artifact's own token. Declared at the top
+# level so no job can be added without it.
+permissions:
+  contents: read
+
+# One group per workflow (`github.workflow` is this file's display name). This
+# lane is two hours long, so a run superseded by a newer push to a feature
+# branch or PR is cancelled; runs on the default branch always finish. The
+# branch is asked for rather than typed, for the reason linux-x64.yml gives.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,10 +41,16 @@ defaults:
     shell: pwsh
 
 jobs:
-  windows-pipeline:
-    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message || '', '[build-win]') }}
-    name: Build, test, and package (windows-2025)
+  build:
+    name: Build, test, package (x64)
     runs-on: windows-2025
+    # The last green runs took 122 min (2026-07-22) and 155 min (2026-04-17);
+    # the red ones of 2026-08-07 stopped after 59-77. Four hours leaves room
+    # for a cold image pull and still stops a hung container step long before
+    # the six-hour account default.
+    timeout-minutes: 240
+    permissions:
+      contents: read
     defaults:
       run:
         shell: pwsh
@@ -177,22 +210,27 @@ jobs:
             --env
             CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
 
+      # All three uploads set `if-no-files-found: error`. The default is `warn`,
+      # and each path is a single file or a glob over one directory: a release
+      # step that produced no zip, MSIX or MSI would upload nothing and leave
+      # the lane green.
       - name: Upload build artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-windows-2025-x64
           path: ${{ steps.prep.outputs.workspace }}/dist/${{ steps.vars.outputs.archive_name }}
+          if-no-files-found: error
 
       - name: Upload MSIX artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.MSIX_PACKAGE_NAME }}-${{ steps.vars.outputs.version }}-x64-msix
           path: ${{ steps.prep.outputs.workspace }}/dist/msix/*.msix
+          if-no-files-found: error
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-x64-msi
           path: ${{ steps.prep.outputs.workspace }}/dist/msi/*.msi
-
-
+          if-no-files-found: error
