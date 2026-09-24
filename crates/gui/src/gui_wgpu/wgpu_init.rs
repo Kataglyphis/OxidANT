@@ -205,6 +205,10 @@ pub(crate) async fn init_wgpu(
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: surface_format,
+        // wgpu 30 made the swap-chain colour space explicit; `Auto` is its
+        // default and keeps wgpu 29's behaviour — see the same field in
+        // webgpu_renderer's `context.rs` for why no other value is safe here.
+        color_space: wgpu::SurfaceColorSpace::Auto,
         width: size.width.max(1),
         height: size.height.max(1),
         present_mode: wgpu::PresentMode::Fifo,

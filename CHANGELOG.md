@@ -179,6 +179,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
   had `/opt/gcc-16.2.0` frozen into it.
 
 ### Fixed
+- **The `gui_windows` build compiles again (2026-09-24).** The wgpu 30 upgrade set
+  the new `SurfaceConfiguration::color_space` in the renderer but missed the second
+  literal in `crates/gui/src/gui_wgpu/wgpu_init.rs`. That module compiles only under
+  `gui_windows`, so no Linux build had ever seen it. The Windows lane stopped there
+  with `E0063` (run 36044802271). It now uses `SurfaceColorSpace::Auto` like the
+  renderer. Checked in the Linux image with `cargo check --locked`: the root crate
+  with `gui_windows`, plus all four GUI rows of the Windows config matrix built as
+  `kataglyphis_cli`. Without the fix the same check reproduces the `E0063`. The
+  opt-in `feature-matrix` job gains a `gui_windows` row for that reason, and the
+  "`gui_linux` is the wgpu path" claim is corrected in the job's comment and in
+  AGENTS.md: that feature pulls the wgpu dependencies but compiles no GUI module.
 - **The WebGPU renderer compiles for wasm32 again (2026-09-24).** No published
   `egui-winit` builds for `wasm32-unknown-unknown`: on wasm32, egui's `DroppedFile`
   requires `bytes_async`, and `egui-winit`'s `NativeFile` implements only `bytes`
