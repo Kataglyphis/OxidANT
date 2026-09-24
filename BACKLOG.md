@@ -13,6 +13,11 @@ protocol exists and the backlog is empty" — it was neither.
 
 ## Open
 
+- [b] Drop the vendored `third_party/egui-winit-0.36.2` and its
+      `[patch.crates-io]` entry once egui 0.37 (or any release carrying
+      emilk/egui#8516) is on crates.io, then move the egui family to it.
+      Blocked on that release. Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.
+
 - [b] Instanced normals shade differently from the equivalent node transform.
       `a_non_uniform_instance_scale_shades_like_the_same_node_scale` fails with
       987 differing pixels against a threshold of 40; confirmed pre-existing and
