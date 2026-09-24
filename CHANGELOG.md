@@ -179,6 +179,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
   had `/opt/gcc-16.2.0` frozen into it.
 
 ### Fixed
+- **The host run of the renderer's lib tests finds their fixtures (2026-09-24).** The
+  first host run (36038436509) started the binary and ran 163 tests: 159 passed and
+  4 failed, every one on a path. The tests embed `env!("CARGO_MANIFEST_DIR")` at compile
+  time, which in the container is `C:\ws\crates\webgpu_renderer`. The runner's checkout
+  is `D:\ws`, so `tests\assets\*.gltf` and the crate's `src` tree were not found.
+  `Invoke-HostTests.ps1 -ContainerRoot 'C:\ws'` now links that path to the workspace
+  with a directory junction (no admin needed). It refuses an existing `C:\ws` that is
+  not a junction to this tree. Tested in a throwaway tree: create and read through the
+  junction, accept a matching one, refuse a real directory.
 - **The Windows lane runs the WebGPU renderer's lib tests on the runner host
   (2026-09-24).** Its first always-on run (36019995362) built everything and
   then failed `Invoke-DebugTests.ps1`'s renderer step: the lib test binary
