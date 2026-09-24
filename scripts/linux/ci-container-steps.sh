@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ci-container-steps.sh - the in-container half of .github/workflows/rust_ubuntu26_04.yml.
+# ci-container-steps.sh - the in-container half of .github/workflows/reusable-linux.yml,
+# which linux-x64.yml and linux-arm64.yml both call.
 #
 # ONE NAME PER CI STEP, so the workflow says WHICH step runs and this file says
 # HOW. Before it, every step in that workflow carried its own copy of

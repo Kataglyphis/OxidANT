@@ -1,5 +1,10 @@
-name: Lint gates - shell, workflows, secrets, config
+name: Lint gates
 
+# Shell, workflows, secrets, config, PowerShell and tracked-artifact hygiene.
+# The display name is the bare "Lint gates" since 2026-09-24: the family's
+# workflow names are '<Platform> <Arch> · <what>' for the build lanes, and the
+# platform-less gate lanes keep a short plain name.
+#
 # THREE GATE JOBS, ONE FILE, AND NONE OF THEM IS A COPIED JOB ANY MORE.
 # Two call a reusable ANTfrastructure workflow (`lint-gates.yml` and, since
 # 2026-09-15, `python-ci-windows.yml`); the third calls a composite action.
@@ -28,11 +33,12 @@ name: Lint gates - shell, workflows, secrets, config
 #
 # BEFORE ANY OF THIS OxidANT RAN NO LINT GATE AT ALL. Tracked *.sh and the
 # workflows went ungraded, and nothing ever scanned the tree for committed
-# credentials - while rust_ubuntu26_04.yml publishes the docs over FTP with
-# secrets.SERVER / secrets.USERNAME / secrets.PW.
+# credentials - while the Linux x64 lane (linux-x64.yml, through
+# reusable-linux.yml) publishes the docs over FTP with secrets.SERVER /
+# secrets.USERNAME / secrets.PW.
 #
 # Cheap and first-to-finish: no image pull, no cargo build. All three jobs also
-# cover a class the two Rust lanes cannot - valid YAML is not valid Actions,
+# cover a class the three Rust lanes cannot - valid YAML is not valid Actions,
 # bash only reports a quoting or undefined-function bug when the line finally
 # runs, and a PowerShell syntax error in the packaging scripts otherwise
 # surfaces 40 minutes into a Windows container build.
@@ -81,7 +87,7 @@ jobs:
   # lint on also bought a winamd64 image pull, a run of `Build-Windows.ps1` as
   # a Python package build, a `./dist/` upload and a REQUIRED `GHCR_PAT`. This
   # repo is a Rust crate with no Python package; its Windows container build is
-  # rust_windows2025.yml.
+  # windows-x64.yml.
   #
   # Hub 604294e2 removes that coupling: `build-python-package` (boolean,
   # default true, so every caller written before it is unaffected) gates the

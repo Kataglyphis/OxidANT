@@ -38,7 +38,19 @@ protocol exists and the backlog is empty" — it was neither.
       its own change and its own review. `cargo clippy --fix` does not do it:
       it rewrites the tests and leaves every src site.
 
-- [ ] The Ubuntu lane can only produce a tarball. ANTfrastructure's
+- [ ] Get `windows-x64.yml` green. It runs on every push and PR since
+      2026-09-24, but it had not executed in CI since 2026-08-07, when all
+      four runs (commits 23f13aec and f0801be0) failed in *Run debug unit,
+      integration, and fuzz tests* after 59-77 minutes. The last green run is 2026-07-22
+      (122 minutes). Until a first always-on run says otherwise, expect this
+      lane red; the fix belongs in `scripts/windows/`, not in an `if:` that
+      turns the lane back into a `skipped` badge.
+- [ ] Decide whether the Linux x64 feature check (`feature-matrix` in
+      `linux-x64.yml`) should also run on every push. It is the one job still
+      behind a marker (`[build-features]`), five extra image pulls per run;
+      the 2026-09-24 always-on request named the x64, arm64 and Windows lanes
+      only.
+- [ ] The Linux lanes can only produce a tarball. ANTfrastructure's
       `package_archive.sh` writes the tar and stops; its `create_deb()` was
       deleted on 2026-08-08 as unreachable, and `--flatpak-manifest`,
       `--desktop-file` and `--appdata-file` are checked for existence and then
@@ -79,6 +91,20 @@ What it DID close was not a row here but a comment: the `powershell-lint` job in
 `lint-gates.yml` is a `uses:` now, which is the one thing `49be50f0` offered and
 this repo declined.
 
+- [b] Hub text still names this repo's retired workflow files. On
+      2026-09-24 `rust_ubuntu26_04.yml` became `linux-x64.yml` +
+      `linux-arm64.yml` over `reusable-linux.yml`, and `rust_windows2025.yml`
+      became `windows-x64.yml`. Upstream mentions of the old names:
+      `linux/scripts/workflow-conventions.allow` (the three OxidANT CENSUS
+      rows - every count is 0 now, so they can be deleted; the consumer run
+      prints `RATCHET ... can be lowered` until then), `docs/ftp-deploys.md`,
+      `docs/shared-script-libraries.md`, `linux/scripts/shellcheck-warnings.allow`
+      (the package_archive.sh row), `.github/consumers.json` (the
+      windows/scripts/rust row's `why`),
+      `linux/scripts/02-toolchain/rust/cargo_fmt_clippy.sh`,
+      `windows/scripts/rust/New-Archive.ps1` and `CHANGELOG.md`.
+      `docs/ci-build-triggers.md` still teaches `[build-win]`/`[build-arm]`,
+      which this repo no longer reads. A hub change, not one to make here.
 - [b] `_cargo_wrapper.sh` needs the safe.directory guard that
       `lib/cmake-build.sh:140-144` already has, behind a `CARGO_SAFE_DIRECTORY`
       knob defaulting to `/workspace`, and `cargo_release/bench/build_doc/`

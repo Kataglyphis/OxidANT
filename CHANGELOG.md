@@ -41,6 +41,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **Every platform lane runs on every push and PR, under the family's new
+  workflow names (owner request, 2026-09-24).** `rust_ubuntu26_04.yml` became
+  `linux-x64.yml` ("Linux x64 · build + test") and `linux-arm64.yml` ("Linux
+  arm64 · build + test"), two thin callers of one `reusable-linux.yml` ("Linux ·
+  reusable build", `workflow_call`) that holds every step both architectures
+  share; the x64 caller keeps the docs publish and the opt-in feature check.
+  `rust_windows2025.yml` became `windows-x64.yml` ("Windows x64 · build +
+  test"). The arm64 row no longer needs `[build-arm]` and the Windows lane no
+  longer needs `[build-win]` - no build job carries an `if:` - so neither
+  reports `skipped` behind a badge that looks like a pass. `workflow_dispatch`
+  stays on all three. `lint-gates.yml` is displayed as "Lint gates" and
+  `submodule-pins.yml` as "Submodule pins". Each triggered build workflow has
+  its own concurrency group (the Windows lane had none); every build job
+  carries `timeout-minutes` and a `permissions:` block, and every artifact
+  upload `if-no-files-found: error`, which takes this repo's hub
+  workflow-conventions census from 9 findings to 0. README badges, AGENTS.md,
+  BACKLOG.md, `.github/actionlint.yaml` and the script headers that named the
+  old files follow.
 - **ONNX Runtime is the family's chain build only, loaded at run time
   (owner rule 2026-09-23).** `ort/download-binaries` is gone from every
   feature: `onnxruntime`, `onnxruntime_directml`, `onnxruntime_cuda`,
@@ -161,6 +179,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   had `/opt/gcc-16.2.0` frozen into it.
 
 ### Fixed
+- **A pull request no longer reds the Linux lane at its artifact upload
+  (2026-09-24).** The artifact was named after `github.ref_name`, which on a PR
+  is `<number>/merge`, and `upload-artifact` refuses a `/` in a name - run
+  35752031200 (2026-09-22) built, tested and packaged green and then failed
+  there. It is named after `VERSION` now, as the Windows lane's artifacts and
+  the tarball already were. Found while making the lane run on every PR on
+  both architectures.
 - **The `TEXTURE_2D_SHAPE_OK` regression guard now matches the code rustfmt
   actually produces.** `texture_desc_single_definition` demanded the marker
   comment on the *same line* as the `wgpu::TextureDescriptor {` it exempts, but

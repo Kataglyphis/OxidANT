@@ -14,13 +14,14 @@
   </a>
 </div>
 
-[![Rust workflow on Ubuntu-26.04](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_ubuntu26_04.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_ubuntu26_04.yml)
-[![Rust workflow on Windows 2025](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_windows2025.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_windows2025.yml)
+[![Linux x64 · build + test](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-x64.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-x64.yml)
+[![Linux arm64 · build + test](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-arm64.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-arm64.yml)
+[![Windows x64 · build + test](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-x64.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-x64.yml)
 [![CodeQL](https://github.com/Kataglyphis/OxidANT/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/github-code-scanning/codeql)
 
 For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 
-> **CI lanes are partly opt-in.** Linux x86_64 runs on every push. The Windows and Linux ARM lanes only run when the pushed HEAD commit message contains `[build-win]` / `[build-arm]` (or you trigger the workflow manually) — otherwise they report `skipped`, which the badges render just like a pass. See [AGENTS.md](AGENTS.md#continuous-integration).
+> **Every platform lane runs on every push and PR** to `main`/`develop` — Linux x64, Linux arm64 and Windows x64, one workflow each, so each badge above reports a real run. No commit-message marker is needed. The one opt-in job left is the Linux x64 feature check (`[build-features]` in the HEAD commit message, or a manual run). See [AGENTS.md](AGENTS.md#continuous-integration).
 
 <!-- [![Linux build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml)
 [![Windows build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml)

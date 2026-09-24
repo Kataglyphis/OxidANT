@@ -10,14 +10,16 @@
 #
 # THIS CLOSES A GAP, IT DOES NOT REPLACE ANYTHING. Before this file OxidANT ran
 # no gate over its SHELL, WORKFLOWS or SECRETS. It was not ungated entirely:
-# rust_ubuntu26_04.yml's "Check formatting and clippy" step already enforces
+# the Linux lane's "Check formatting and clippy" step already enforces
 # `cargo fmt --all -- --check` and `cargo clippy`, which is the Rust half and stays
 # where it is (it runs through scripts/linux/ci-container-steps.sh fmt-clippy). Named
 # by step rather than by line number, because the line numbers moved twice already.
 # 4 tracked *.sh and 2 workflows went ungraded, and -
 # the part that matters most - nothing ever scanned the tree for committed
-# credentials, while rust_ubuntu26_04.yml publishes the docs over FTP with
-# secrets.SERVER / secrets.USERNAME / secrets.PW.
+# credentials, while the Linux lane publishes the docs over FTP with
+# secrets.SERVER / secrets.USERNAME / secrets.PW. That lane is
+# .github/workflows/reusable-linux.yml since 2026-09-24, called by linux-x64.yml
+# (which publishes) and linux-arm64.yml.
 #
 # CI and a human run the SAME gate with the SAME flags, so the gate that blocks
 # a merge can be reproduced on a dev box without pushing:
