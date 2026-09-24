@@ -179,6 +179,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
   had `/opt/gcc-16.2.0` frozen into it.
 
 ### Fixed
+- **The WebGPU renderer compiles for wasm32 again (2026-09-24).** No published
+  `egui-winit` builds for `wasm32-unknown-unknown`: on wasm32, egui's `DroppedFile`
+  requires `bytes_async`, and `egui-winit`'s `NativeFile` implements only `bytes`
+  (emilk/egui#8436). The renderer's wasm demo drives its overlay through
+  `egui_winit::State`, so BeschleunigerBallett's wasm size-budget gate, which builds
+  it for wasm32, failed (run 36020443791). Upstream fixed it in #8516, merged to
+  egui's main on 09-07 but not in 0.36.2. `third_party/egui-winit-0.36.2` is the
+  published crate (sha256 checked against the crates.io index) with #8516's `lib.rs`
+  change applied unchanged. The root `Cargo.toml` routes `egui-winit` to it through
+  `[patch.crates-io]`, and the egui family moves to 0.36.2 (the patched crate needs
+  it). Checked in the Linux image: `cargo check --locked` for wasm32 and native, and
+  the gate's own `cargo build --release` for wasm32 (10,241,933 bytes before
+  wasm-opt, budget 12 MiB after). Temporary: `PATCHED.md` and a blocked BACKLOG
+  item say when and how to remove it.
 - **The host run of the renderer's lib tests finds their fixtures (2026-09-24).** The
   first host run (36038436509) started the binary and ran 163 tests: 159 passed and
   4 failed, every one on a path. The tests embed `env!("CARGO_MANIFEST_DIR")` at compile

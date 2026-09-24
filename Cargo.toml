@@ -27,6 +27,13 @@ repository = "https://github.com/Kataglyphis/OxidANT"
 # Recompute after a lockfile bump: the max `rust_version` in `cargo metadata`.
 rust-version = "1.96.0"
 
+# TEMPORARY, remove when egui 0.37 is released: egui-winit 0.36.2 plus upstream PR
+# emilk/egui#8516 (merged 2026-09-07 on main, not in 0.36.2). No published
+# egui-winit compiles for wasm32 (egui#8436), and the renderer's wasm demo uses it.
+# Provenance and the removal steps: third_party/egui-winit-0.36.2/PATCHED.md.
+[patch.crates-io]
+egui-winit = { path = "third_party/egui-winit-0.36.2" }
+
 [workspace.dependencies]
 log = "0.4"
 env_logger = "0.11.10"
