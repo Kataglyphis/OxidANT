@@ -185,6 +185,12 @@ Latest verified run (2026-08-07, Stevedore Windows container): the 8 tests that 
 cargo test -p kataglyphis_webgpu_renderer --locked
 ```
 
+CI does exactly that since 2026-09-24. In `windows-x64.yml` the container step
+(`Invoke-DebugTests.ps1`) **builds** the renderer's lib tests and records the
+executable in `target\host-tests\`. The next step, `Invoke-HostTests.ps1`, **runs**
+it on the runner, which is a desktop Windows Server with `opengl32.dll`. It fails if
+the list or the binary is missing, so it can never report green over nothing.
+
 Not a regression either way — the old "8 passed" figure was recorded a day before that crate existed. See [AGENTS.md](AGENTS.md) for the full analysis.
 
 <!-- ROADMAP -->

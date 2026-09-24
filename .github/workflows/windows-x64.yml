@@ -135,6 +135,14 @@ jobs:
             --env
             CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
 
+      # The step above BUILDS the WebGPU renderer's lib tests. They cannot start
+      # on servercore: wgpu's gles backend imports opengl32.dll at load time,
+      # which it does not ship. This desktop Windows Server host runs them from
+      # the same bind-mounted tree (C:\ws in the container is this workspace).
+      - name: Run WebGPU renderer lib tests on the host
+        working-directory: ${{ steps.prep.outputs.workspace }}
+        run: ./scripts/windows/Invoke-HostTests.ps1
+
       - name: Build and run all Windows app configs
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
         with:

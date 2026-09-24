@@ -179,6 +179,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
   had `/opt/gcc-16.2.0` frozen into it.
 
 ### Fixed
+- **The Windows lane runs the WebGPU renderer's lib tests on the runner host
+  (2026-09-24).** Its first always-on run (36019995362) built everything and
+  then failed `Invoke-DebugTests.ps1`'s renderer step: the lib test binary
+  exited `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`, like every
+  renderer test binary. wgpu's `gles` backend imports `opengl32.dll` at load
+  time, and servercore does not ship it (README, *Tests*). The container now
+  only builds that binary (`cargo test --no-run --message-format=json`) and
+  records its path in `target\host-tests\`. A new host step,
+  `Invoke-HostTests.ps1`, runs it from the same bind-mounted tree. It refuses
+  a missing list, an empty list and a missing binary. Tested against cargo's
+  message shapes under strict mode, and against those failure cases.
 - **A pull request no longer reds the Linux lane at its artifact upload
   (2026-09-24).** The artifact was named after `github.ref_name`, which on a PR
   is `<number>/merge`, and `upload-artifact` refuses a `/` in a name - run
