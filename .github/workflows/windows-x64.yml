@@ -141,7 +141,9 @@ jobs:
       # the same bind-mounted tree (C:\ws in the container is this workspace).
       - name: Run WebGPU renderer lib tests on the host
         working-directory: ${{ steps.prep.outputs.workspace }}
-        run: ./scripts/windows/Invoke-HostTests.ps1
+        # C:\ws is run-in-windows-container's mount target, the path the tests were compiled
+        # under; the script links it to this workspace so their fixture paths resolve.
+        run: ./scripts/windows/Invoke-HostTests.ps1 -ContainerRoot 'C:\ws'
 
       - name: Build and run all Windows app configs
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
