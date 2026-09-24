@@ -247,7 +247,8 @@ Default features are empty, so `cargo build` needs nothing. Each optional featur
 | Feature | Needs | In the CI image? |
 | --- | --- | --- |
 | `gstreamer` (crates/media) | GStreamer dev files | **Yes** — source-built into `/opt/gstreamer`, on `PKG_CONFIG_PATH`. Do *not* install the distro `libgstreamer*-dev`: the image purges those on purpose. |
-| `gui_linux` | GStreamer + wgpu (pure Rust) | **Yes** — despite the name it does not use GTK; it is the wgpu path. |
+| `gui_linux` | GStreamer + wgpu (pure Rust) | **Yes** — no GTK. It pulls the wgpu dependencies but compiles no GUI module of its own: the wgpu GUI (`crates/gui/src/gui_wgpu`) sits behind `gui_windows`. |
+| `gui_windows` | The same as `gui_linux` | **Yes** — despite the name it checks on Linux, and it is the only feature that compiles the wgpu GUI there, which is why the `feature-matrix` job carries it. |
 | `gui_unix` | `libgtk-4-dev` | **No, by design.** The foreign-arch GTK dev chain pulls target-side Python and breaks cross builds on `python3-minimal`'s postinst. This feature cannot be built against `:latest`. |
 | `onnxruntime`, `burn_demos` | Nothing at build time: every ORT feature is `load-dynamic`, and `download-binaries` (pyke's prebuilt ORT, plus `openssl-sys` for its TLS) is banned by the owner rule of 2026-09-23 — `scripts/linux/check-ort-chain-only.sh` gates it in CI. At run time, the image's chain-built ORT, which `crates/inference/src/ort_runtime.rs` finds (`ORT_DYLIB_PATH`, the exe's directory, then the image prefix — never a bare-name load) and refuses unless the file embeds the chain's ORT source path | **Yes** — `/usr/local/lib/onnxruntime-cpu/lib` (Linux), `$env:ONNX_ROOT\bin` (Windows). |
 

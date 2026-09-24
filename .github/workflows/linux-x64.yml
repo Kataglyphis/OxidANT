@@ -73,8 +73,11 @@ jobs:
   # `gui_unix` is deliberately ABSENT: it is the only feature needing
   # libgtk-4-dev, which ANTfrastructure excludes on purpose because the
   # foreign-arch GTK dev chain pulls target-side Python and breaks cross builds
-  # on python3-minimal's postinst. `gui_linux`, despite the name, is the wgpu
-  # path and needs no GTK.
+  # on python3-minimal's postinst. `gui_linux` needs no GTK, but it only pulls
+  # the wgpu dependencies: the wgpu GUI module (`crates/gui/src/gui_wgpu`)
+  # compiles under `gui_windows` alone, which checks fine on Linux - so that row
+  # is the one that compiles it here (2026-09-24: a wgpu 30 field it lacked
+  # reached the Windows lane with no Linux build ever seeing the code).
   #
   # Opt-in because it is a second full container pull per combination, not
   # because it is expected to fail. Enable with `[build-features]` in the
@@ -100,6 +103,7 @@ jobs:
           - gstreamer
           - gui_linux
           - gui_linux,gstreamer
+          - gui_windows
           - onnxruntime
           - burn_demos
     steps:
