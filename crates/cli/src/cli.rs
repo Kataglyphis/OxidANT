@@ -63,4 +63,7 @@ pub enum Commands {
         #[arg(long, default_value = "")]
         backend: String,
     },
+    /// Load the chain-built ONNX Runtime and print where it was found; fails when none loads.
+    #[cfg(any(feature = "onnxruntime_directml", feature = "onnxruntime_cuda"))]
+    OnnxRuntime,
 }

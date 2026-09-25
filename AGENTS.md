@@ -429,7 +429,7 @@ Seven workflow files: six triggered, one reusable. The four build lanes — one 
 | Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — the hub's reusable `submodule-pins.yml` (`Submodule.Pins.Tests.ps1`, Pester 3.4.0, `windows-2025`) |
 | Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push/PR to `main`/`develop`, and `workflow_dispatch` | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
 | Linux arm64 · build + test | `linux-arm64.yml` → `reusable-linux.yml` | same | same image (a multi-arch index); native `ubuntu-26.04-arm`, no QEMU |
-| Windows x64 · build + test | `windows-x64.yml` | same | family Windows CI image, inherited; `windows-2025` |
+| Windows x64 · build + test | `windows-x64.yml` → the hub's reusable `container-ci-windows.yml` (since 2026-09-25) | same | family Windows CI image, inherited; `windows-2025`, whose host runs the renderer tests and the packaged exe |
 | Windows arm64 · cross build + run | `windows-arm64-cross.yml` → the hub's reusable `container-ci-windows.yml` | same | the family image's arm64 bundle, inherited from the action's `image-arm64` default; `windows-2025` builds, `windows-11-arm` runs the product |
 | Linux x64 · build + test | `linux-x64.yml` (job `feature-matrix`) | opt-in: `[build-features]` in the HEAD commit message, or `workflow_dispatch` | family Linux CI image; `ubuntu-26.04` |
 
@@ -454,29 +454,50 @@ default branch. `reusable-linux.yml` declares no group, because inside a called
 workflow `github.workflow` is the caller's name, and GitHub cancels a callee whose
 group repeats its caller's as a deadlock.
 
-**The Windows arm64 lane cross-builds, then runs** (owner decision 2026-09-25).
-`windows-arm64-cross.yml` is a thin caller of the hub's reusable
-`container-ci-windows.yml`: `Build-Windows.ps1 -TargetArch arm64` in the family
-image's arm64 bundle on `windows-2025`, the hub's arch gate over
-`dist/windows-arm64`, then `kataglyphis_cli.exe --help` and `stats` natively on
-`windows-11-arm`. No arm64 Windows container image exists, so that job is the only
-place an arm64 binary of this repo executes. On a cross build the script:
+**Both Windows lanes are thin callers of the hub's `container-ci-windows.yml`** (owner
+decisions 2026-09-25). Its container half is `scripts/windows/Invoke-WindowsLane.ps1`,
+which a local container run executes too:
+
+- **x64** (`windows-x64.yml`): `Invoke-DebugTests.ps1`, `Invoke-WindowsConfigMatrix.ps1`,
+  then `Build-Windows.ps1 -SkipTests`. The lane's `host-command` then runs, on the runner
+  host, the WebGPU renderer tests (`Invoke-HostTests.ps1`) and
+  `dist/windows-x64/bundle/kataglyphis_cli.exe onnx-runtime`.
+- **arm64** (`windows-arm64-cross.yml`): `Build-Windows.ps1` alone, in the family image's
+  arm64 bundle. The hub's arch gate then grades `dist/windows-arm64`, and `windows-11-arm`
+  runs `kataglyphis_cli.exe --help`, `stats` and `onnx-runtime` natively. No arm64 Windows
+  container image exists, so that job is the only place an arm64 binary of this repo
+  executes.
+
+Both lanes resolve the version from `VERSION.txt` (the lane's `version-file`). Both take
+the package features and MSIX metadata from `Build-Windows.config.psd1`
+(`gui_windows,onnxruntime_directml`). Both upload `dist/windows-<x64|arm64>` whole: the
+portable bundle, the MSIX and the MSI.
+
+**Every package carries its DLL closure, on both arches.** `Build-Windows.ps1` stages
+beside the exe everything the exe and its DLLs import, transitively, with the hub's
+`Copy-PeImportClosure`. The hub's `Get-ProductDllSearchPath` gives the search order: the
+chain ONNX Runtime, then `C:\runtime\bin`, then the target's VC++ runtime. The bundle,
+MSIX and MSI all ship the result.
+
+**The exe loads the chain ONNX Runtime.** The CLI's `onnxruntime_*` features reach the
+GUI's inference too (`kataglyphis_gui?/onnxruntime`). Before 2026-09-25 nothing in the
+exe called ORT, and the packages shipped none. The `onnx-runtime` subcommand
+(`ort_runtime::ensure_ort_loaded`) loads it and prints where it came from, which is what
+both lanes run.
+
+On a cross build the script also:
 
 - builds with `--target aarch64-pc-windows-msvc` and `PKG_CONFIG_ALLOW_CROSS=1`
   (gstreamer-sys asks pkg-config; the bundle's `.pc` files are arm64);
 - runs clippy for aarch64, and leaves audit/deny, fmt and the tests to the x64
-  lane, which grades the same commit;
-- stages the DLL closure a clean device lacks (the arm64 VC++ runtime,
-  GStreamer's libraries) beside the exe with the hub's `Copy-PeImportClosure`,
-  so the portable bundle, `*_arm64.msix` and `*-arm64.msi` all carry it.
+  lane, which grades the same commit.
 
 Every arch-dependent path and name comes from `Get-CargoTargetLayout`
 (`scripts/windows/modules/WindowsCargoTarget.Common.psm1`, pinned by
-`scripts/windows/tests/CargoTarget.Tests.ps1`). The host layout is unchanged, so
-`windows-x64.yml` uploads from the same paths as before. Locally it is the x64
-lane's container run with the arm64 bundle's reference
+`scripts/windows/tests/CargoTarget.Tests.ps1`). Locally, arm64 is the x64 lane's
+container run with the arm64 bundle's reference
 (`bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh --windows-arm64`)
-and `-TargetArch arm64`.
+and `Invoke-WindowsLane.ps1 -TargetArch arm64`.
 
 "Inherited" is literal: **no build workflow names an image.** Both of the old ones used to open
 with a `CONTAINER_IMAGE:` env entry holding the full reference and hand it to

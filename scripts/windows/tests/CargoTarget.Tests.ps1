@@ -1,26 +1,27 @@
 #requires -Version 7.0
 
 # WindowsCargoTarget.Common: every arch-dependent path and name Build-Windows.ps1 reads. The host (amd64)
-# must keep today's layout byte for byte, since the x64 lane uploads from it; arm64 is the cross build.
+# keeps cargo's plain target\release; arm64 is the cross build. Both write dist\windows-<x64|arm64>.
 # NOTE: written for Pester 3.4.0 - no BeforeAll outside Describe, dash-less Should.
 
 Describe 'WindowsCargoTarget.Common' {
 
     . (Join-Path $PSScriptRoot '..\Resolve-BuildModule.ps1')
     Import-BuildModule 'WindowsTargetArch.Common'
+    Import-BuildModule 'WindowsCrossBundle.Common'
     Import-BuildModule 'WindowsCargoTarget.Common'
 
     $target = 'C:\ct'
     $ws = 'C:\ws'
 
-    It 'keeps the host layout: no --target, target\release, x64 packages under dist' {
+    It 'keeps the host build in target\release, and names its packages x64 under dist\windows-x64' {
         $l = Get-CargoTargetLayout -Arch 'amd64' -TargetRoot $target -WorkspacePath $ws
         $l.IsCross | Should Be $false
         @($l.CargoArgs).Count | Should Be 0
         $l.ArchTargetDir | Should Be 'C:\ct'
         $l.ReleaseDir | Should Be 'C:\ct\release'
         $l.PackageArch | Should Be 'x64'
-        $l.DistDir | Should Be 'C:\ws\dist'
+        $l.DistDir | Should Be 'C:\ws\dist\windows-x64'
     }
 
     It 'builds arm64 by triple and keeps its packages apart' {

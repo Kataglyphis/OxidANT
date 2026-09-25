@@ -32,30 +32,26 @@ jobs:
     uses: Kataglyphis/ANTfrastructure/.github/workflows/container-ci-windows.yml@develop
     with:
       target-arch: arm64
-      build-script: scripts/windows/Build-Windows.ps1
+      build-script: scripts/windows/Invoke-WindowsLane.ps1
       build-args: |
         -TargetArch
         arm64
-      # The x64 lane's packaging environment, minus the version it computes: the
-      # packages here take VERSION.txt's.
+      # The package features and MSIX metadata are Build-Windows.config.psd1's, as
+      # for x64; the version is the one both lanes resolve from VERSION.txt.
       container-env: |
-        BINARY=kataglyphis_cli
         CARGO_TERM_COLOR=always
-        CARGO_FEATURES=gui_windows,onnxruntime_directml
-        MSIX_PACKAGE_NAME=Kataglyphis.OxidANT
-        MSIX_PUBLISHER=CN=Kataglyphis
-        MSIX_PUBLISHER_DISPLAY_NAME=Kataglyphis
-        MSIX_DISPLAY_NAME=OxidANT
-        MSIX_DESCRIPTION=Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.
+      version-file: VERSION.txt
       artifact-name: kataglyphis_cli-windows-arm64
       artifact-dir: dist/windows-arm64
-      # The exe and the VC++ runtime at the least (12 binaries on 2026-09-25).
-      arch-gate-min-inspected: 2
+      # The exe, the VC++ runtime and the chain ONNX Runtime at the least.
+      arch-gate-min-inspected: 3
       # Loading at all proves the bundle's import closure on a real device;
-      # `stats` then runs real code. The GUI needs a desktop the runner has not got.
+      # `stats` then runs real code, and `onnx-runtime` loads the bundle's chain
+      # ONNX Runtime. The GUI needs a desktop the runner has not got. The hub
+      # fails the lane on any line's non-zero exit.
       run-command: |
         ./bundle/kataglyphis_cli.exe --help
-        if ($LASTEXITCODE) { exit $LASTEXITCODE }
         ./bundle/kataglyphis_cli.exe stats --path ./bundle/resources/web/redirect/index.html
+        ./bundle/kataglyphis_cli.exe onnx-runtime
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}

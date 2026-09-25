@@ -1,15 +1,16 @@
 # .github/workflows/windows-x64.yml
 #
-# The Windows x64 lane: debug tests, the app config matrix, the lint + MSIX/MSI
-# packaging build and the release zip, all inside the family Windows image.
+# The Windows x64 lane: debug tests, the app config matrix, the lint + package
+# build, then on the runner host the WebGPU renderer tests and a run of the
+# packaged exe. A thin caller of ANTfrastructure's container-ci-windows.yml since
+# 2026-09-25 (the family's hub reusable lanes); the container half is
+# scripts/windows/Invoke-WindowsLane.ps1, which a local container run executes
+# too. The products land in dist/windows-x64 and upload as one artifact, like
+# the arm64 lane's.
 #
-# ALWAYS RUNS since 2026-09-24 (owner request). Until then this was
-# rust_windows2025.yml, whose only job carried
-#   if: workflow_dispatch || contains(head_commit.message, '[build-win]')
-# so almost every run reported `skipped` - which a badge renders like a pass.
-# No job-level `if:` stands here now and none may be added back. Family naming,
-# same date: kebab-case files, one per platform + arch, display name
-# '<Platform> <Arch> · <what>'.
+# ALWAYS RUNS since 2026-09-24 (owner request): no job-level `if:`, and none may
+# be added back. Family naming, same date: kebab-case files, one per platform +
+# arch, display name '<Platform> <Arch> · <what>'.
 name: Windows x64 · build + test
 
 on:
@@ -19,228 +20,38 @@ on:
     branches: [ "main", "develop" ]
   workflow_dispatch:
 
-# Nothing here writes through GITHUB_TOKEN: the registry login uses GHCR_PAT and
-# the artifacts go through upload-artifact's own token. Declared at the top
-# level so no job can be added without it.
 permissions:
   contents: read
 
-# One group per workflow (`github.workflow` is this file's display name). This
-# lane is two hours long, so a run superseded by a newer push to a feature
-# branch or PR is cancelled; runs on the default branch always finish. The
-# branch is asked for rather than typed, for the reason linux-x64.yml gives.
+# This lane is two hours long, so a run superseded by a newer push to a feature
+# branch or PR is cancelled; runs on the default branch always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
-env:
-  CARGO_TERM_COLOR: always
-
-defaults:
-  run:
-    shell: pwsh
-
 jobs:
   build:
     name: Build, test, package (x64)
-    runs-on: windows-2025
-    # The last green runs took 122 min (2026-07-22) and 155 min (2026-04-17);
-    # the red ones of 2026-08-07 stopped after 59-77. Four hours leaves room
-    # for a cold image pull and still stops a hung container step long before
-    # the six-hour account default.
-    timeout-minutes: 240
-    permissions:
-      contents: read
-    defaults:
-      run:
-        shell: pwsh
-    # NO WINDOWS_CONTAINER_IMAGE HERE, DELIBERATELY. It held the full image
-    # reference and fed all five container steps below - a COPY of a value
-    # ANTfrastructure already owns (versions.env's IMAGE_REGISTRY_PREFIX +
-    # CI_IMAGE_WINDOWS_TAG), so a fleet-wide tag bump landed everywhere except
-    # here. Not repeated in this comment either: a literal in a comment rots the
-    # same way, and verify_ci_image_refs.py check D reads comments too.
-    #
-    # Both Windows container actions carry that composed ref as their `image:`
-    # input DEFAULT, so omitting the input is how this lane says "the family
-    # Windows image" - the route their input docs prescribe ("SINGLE SOURCE OF
-    # TRUTH: omit this input").
-    env:
-      BINARY: kataglyphis_cli
-      WINDOWS_DOCKER_CPUS: '4'
-      WINDOWS_DOCKER_MEMORY: 16g
-      WINDOWS_PACKAGE_FEATURES: gui_windows,onnxruntime_directml
-      # Provide inputs for version computation script
-      REF_NAME: ${{ github.ref_name }}
-      RUN_NUMBER: ${{ github.run_number }}
-      MSIX_PACKAGE_NAME: Kataglyphis.OxidANT
-      MSIX_PUBLISHER: CN=Kataglyphis
-      MSIX_PUBLISHER_DISPLAY_NAME: Kataglyphis
-      MSIX_DISPLAY_NAME: OxidANT
-      MSIX_DESCRIPTION: Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.
-
-    steps:
-      # Der komplette Prolog - long paths, Checkout ohne Submodule,
-      # Kurzpfad-Klon, data-root auf D:, Disk-Cleanup, Registry-Login, Pull,
-      # Disk-Report - kommt aus ANTfrastructure. Er war hier ~50 Zeilen und in drei
-      # Schwester-Repos identisch.
-      #
-      # Der Kurzpfad-Klon bleibt Pflicht: die Kette OxidANT ->
-      # ANTfrastructure -> DocumANTation -> md2pdfLib -> latex/{smile,awesome-beamer}
-      # reisst .git/modules/.../pack-*.keep ueber 260 Zeichen, und ein rekursiver
-      # Checkout stirbt mit "Filename too long" bzw. "'$GIT_DIR' too big".
-      #
-      # required-free-gb ersetzt den separaten assert-docker-disk-space-Schritt:
-      # die Action prueft die ZIELplatte, bevor sie die data-root dorthin
-      # verschiebt - also frueher, und auf genau dem Laufwerk, auf dem das Image
-      # dann landet.
-      - name: Prepare Windows container host
-        id: prep
-        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-windows-container-host@develop
-        with:
-          registry-password: ${{ secrets.GHCR_PAT }}
-          fetch-depth: 0
-          short-path-target: /d/ws
-          required-free-gb: '70'
-
-      # working-directory is the short-path clone, not github.workspace: with a
-      # short-path-target set, prepare-windows-container-host deliberately takes
-      # NO submodules in the runner checkout, so third_party/ANTfrastructure is an
-      # empty directory there and this step died on its own submodule guard. The
-      # `workspace` output exists for exactly this.
-      - name: Compute version
-        id: compute-version
-        shell: bash
-        working-directory: ${{ steps.prep.outputs.workspace }}
-        run: scripts/linux/compute-version.sh
-
-      # The four container steps below used to be hand-written `docker run`
-      # blocks repeating --memory/--cpus/--mount/-w twelve times between them.
-      # ANTfrastructure's action carries those defaults (D:\ws -> C:\ws, 16g) and,
-      # unlike the hand-rolled version, delivers the command and its arguments
-      # through environment variables rather than interpolating them into a
-      # shell line - so a value containing a quote or a `$` cannot escape into
-      # the host's PowerShell. `file:` + `file-args:` is the documented form for
-      # "a script plus an argument vector": under -File every file-args line is
-      # one literal argv element, with no PowerShell parsing of its value.
-      - name: Run debug unit, integration, and fuzz tests
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@develop
-        with:
-          cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
-          memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
-          file: C:\ws\scripts\windows\Invoke-DebugTests.ps1
-          extra-args: |
-            --env
-            CARGO_TERM_COLOR=${{ env.CARGO_TERM_COLOR }}
-            --env
-            CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
-
-      # The step above BUILDS the WebGPU renderer's lib tests. They cannot start
-      # on servercore: wgpu's gles backend imports opengl32.dll at load time,
-      # which it does not ship. This desktop Windows Server host runs them from
-      # the same bind-mounted tree (C:\ws in the container is this workspace).
-      - name: Run WebGPU renderer lib tests on the host
-        working-directory: ${{ steps.prep.outputs.workspace }}
-        # C:\ws is run-in-windows-container's mount target, the path the tests were compiled
-        # under; the script links it to this workspace so their fixture paths resolve.
-        run: ./scripts/windows/Invoke-HostTests.ps1 -ContainerRoot 'C:\ws'
-
-      - name: Build and run all Windows app configs
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@develop
-        with:
-          cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
-          memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
-          file: C:\ws\scripts\windows\Invoke-WindowsConfigMatrix.ps1
-          extra-args: |
-            --env
-            CARGO_TERM_COLOR=${{ env.CARGO_TERM_COLOR }}
-            --env
-            CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
-
-      # VERSION deliberately carries MSIX_VERSION (the four-component form)
-      # here, as it did before: this step is the one that stamps the package.
-      - name: Build, lint, and package MSIX/MSI
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@develop
-        with:
-          cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
-          memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
-          file: C:\ws\scripts\windows\Build-Windows.ps1
-          file-args: |
-            -SkipTests
-          extra-args: |
-            --env
-            BINARY=${{ env.BINARY }}
-            --env
-            VERSION=${{ env.MSIX_VERSION }}
-            --env
-            CARGO_TERM_COLOR=${{ env.CARGO_TERM_COLOR }}
-            --env
-            CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
-            --env
-            CARGO_FEATURES=${{ env.WINDOWS_PACKAGE_FEATURES }}
-            --env
-            MSIX_PACKAGE_NAME=${{ env.MSIX_PACKAGE_NAME }}
-            --env
-            MSIX_PUBLISHER=${{ env.MSIX_PUBLISHER }}
-            --env
-            MSIX_PUBLISHER_DISPLAY_NAME=${{ env.MSIX_PUBLISHER_DISPLAY_NAME }}
-            --env
-            MSIX_DISPLAY_NAME=${{ env.MSIX_DISPLAY_NAME }}
-            --env
-            MSIX_DESCRIPTION=${{ env.MSIX_DESCRIPTION }}
-            --env
-            MSIX_VERSION=${{ env.MSIX_VERSION }}
-
-      - name: Prepare archive variables
-        id: vars
-        run: |
-          # Use version computed by shared script
-          $ver = "$env:VERSION"
-          $archive = "$env:BINARY-$ver-windows-2025-x64.zip"
-          echo "archive_name=$archive" >> $env:GITHUB_OUTPUT
-          echo "version=$ver" >> $env:GITHUB_OUTPUT
-
-      # This repo's script, not the hub's New-Archive.ps1: the exe runtime-loads
-      # ONNX Runtime, and the zip must carry the chain-built copy staged beside it.
-      - name: Create archive
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@develop
-        with:
-          cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
-          memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
-          file: C:\ws\scripts\windows\New-ReleaseArchive.ps1
-          extra-args: |
-            --env
-            BINARY=${{ env.BINARY }}
-            --env
-            VERSION=${{ steps.vars.outputs.version }}
-            --env
-            PLATFORM=windows-2025
-            --env
-            ARCH=x64
-            --env
-            CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
-
-      # All three uploads set `if-no-files-found: error`. The default is `warn`,
-      # and each path is a single file or a glob over one directory: a release
-      # step that produced no zip, MSIX or MSI would upload nothing and leave
-      # the lane green.
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-windows-2025-x64
-          path: ${{ steps.prep.outputs.workspace }}/dist/${{ steps.vars.outputs.archive_name }}
-          if-no-files-found: error
-
-      - name: Upload MSIX artifact
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: ${{ env.MSIX_PACKAGE_NAME }}-${{ steps.vars.outputs.version }}-x64-msix
-          path: ${{ steps.prep.outputs.workspace }}/dist/msix/*.msix
-          if-no-files-found: error
-
-      - name: Upload MSI artifact
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-x64-msi
-          path: ${{ steps.prep.outputs.workspace }}/dist/msi/*.msi
-          if-no-files-found: error
+    uses: Kataglyphis/ANTfrastructure/.github/workflows/container-ci-windows.yml@develop
+    with:
+      target-arch: amd64
+      build-script: scripts/windows/Invoke-WindowsLane.ps1
+      build-args: |
+        -TargetArch
+        amd64
+      container-env: |
+        CARGO_TERM_COLOR=always
+      version-file: VERSION.txt
+      # The renderer's lib tests cannot start on Server Core: wgpu's gles backend
+      # imports opengl32.dll, which it does not ship. The host has it, so the host
+      # runs them, and runs the packaged exe to prove the chain ONNX Runtime loads.
+      host-command: |
+        ./scripts/windows/Invoke-HostTests.ps1 -ContainerRoot 'C:\ws'
+        ./dist/windows-x64/bundle/kataglyphis_cli.exe onnx-runtime
+      artifact-name: kataglyphis_cli-windows-x64
+      artifact-dir: dist/windows-x64
+      # The last green runs took 122 and 155 min; four hours still stops a hung
+      # container step long before the six-hour default.
+      timeout-minutes: 240
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}

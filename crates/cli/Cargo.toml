@@ -26,9 +26,12 @@ tokio = { version = "1", default-features = false, features = ["macros", "rt", "
 default = []
 gui_windows = ["kataglyphis_gui/gui_windows", "oxidant/gui_windows"]
 gui_unix = ["kataglyphis_gui/gui_unix", "oxidant/gui_unix"]
-onnx_tract = ["oxidant/onnx_tract"]
-onnxruntime_directml = ["oxidant/onnxruntime_directml"]
-onnxruntime_cuda = ["oxidant/onnxruntime_cuda"]
+# Each inference backend reaches the GUI as well: its person-detection overlay compiles only
+# under kataglyphis_gui's own backend feature, so without it the exe never called ONNX
+# Runtime and the Windows packages shipped none (measured 2026-09-25).
+onnx_tract = ["oxidant/onnx_tract", "kataglyphis_gui?/onnx_tract"]
+onnxruntime_directml = ["oxidant/onnxruntime", "oxidant/onnxruntime_directml", "kataglyphis_gui?/onnxruntime"]
+onnxruntime_cuda = ["oxidant/onnxruntime", "oxidant/onnxruntime_cuda", "kataglyphis_gui?/onnxruntime"]
 burn_demos = ["oxidant/burn_demos"]
 
 [[bin]]

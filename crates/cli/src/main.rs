@@ -66,6 +66,11 @@ async fn main() -> Result<()> {
                 let _ = backend;
             }
         }
+        #[cfg(any(feature = "onnxruntime_directml", feature = "onnxruntime_cuda"))]
+        Commands::OnnxRuntime => {
+            let path = oxidant::ort_runtime::ensure_ort_loaded()?;
+            println!("ONNX Runtime: {}", path.display());
+        }
     }
     Ok(())
 }

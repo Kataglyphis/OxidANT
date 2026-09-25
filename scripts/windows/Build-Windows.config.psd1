@@ -4,7 +4,9 @@
     LogDir = 'logs/windows'
 
     CargoTargetDir = 'target'
-    CargoFeatures = @()
+    # The features the Windows packages ship, on x64 and arm64 alike; CARGO_FEATURES
+    # overrides them for a one-off build.
+    CargoFeatures = @('gui_windows', 'onnxruntime_directml')
   }
 
   Msix = @{
