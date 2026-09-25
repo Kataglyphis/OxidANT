@@ -82,13 +82,14 @@ Import-BuildModule @(
   'WindowsConfig.Common'    # Get-OrDefault, Get-ConfigValue
   'WindowsMsix.Common'      # Get-PackageVersion, Invoke-MsixPackage
   'WindowsMsix.Signing'     # Invoke-MsixSign, which Invoke-MsixPackage -Sign calls
-  'WindowsOrtPayload.Common' # project-local: stage the chain ONNX Runtime, build + prove payloads
   'WindowsTargetArch.Common' # the arch facts: accepted spellings, cross or not, the Rust triple
   'WindowsCargoTarget.Common' # project-local: where each arch's build lands, what packages call it
 )
-# G6, the hub's ORT census, proves every payload; a hub pin older than its ORT
-# single-source commit lacks the module, and Get-OrtCensusRequirement says so.
-try { Import-BuildModule @('WindowsOrtProvenance.Common') } catch { throw (Get-OrtCensusRequirement -Cause $_.Exception.Message) }
+# The chain ONNX Runtime staged beside the exe and every payload proved by G6: the hub's
+# WindowsOrtPayload.Common, this repo's own module until 2026-09-25. An older pin lacks it.
+try { Import-BuildModule @('WindowsOrtPayload.Common') } catch {
+  throw "This build needs ANTfrastructure's WindowsOrtPayload.Common (hub commit ad08bc30 of 2026-09-25, third_party/ANTfrastructure/docs/onnxruntime-single-source.md § The shared Windows glue); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
+}
 # The package arch, the DLL closure and where it comes from; a hub pin older than
 # 2026-09-25's x64 closure lacks Get-ProductDllSearchPath and says so here.
 try {
@@ -309,7 +310,7 @@ try {
         Write-BuildLog -Context $context -Message "Neither $binary.exe nor a DLL beside it loads ONNX Runtime; nothing staged."
         return
       }
-      Copy-ChainOrtBeside -OnnxRoot "$env:ONNX_ROOT" -Destination $releaseDir
+      $null = Copy-ChainOrtBeside -OnnxRoot "$env:ONNX_ROOT" -Destination $releaseDir
       $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\stage')
       Write-BuildLog -Context $context -Message "Chain ONNX Runtime staged from $env:ONNX_ROOT\bin and proved by G6: $(@($payload.OrtDlls | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
     } | Out-Null

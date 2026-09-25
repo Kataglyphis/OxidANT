@@ -205,8 +205,9 @@ Each row now also says what a re-check at `57ca2b14`, the pin on 2026-09-25, fou
       stays. The bump's new `WindowsMediaRuntime.Common` adds no row: it stages
       a GStreamer/ONNX DLL closure next to a built exe. Since 2026-09-23
       `scripts/windows/` here stages the chain-built ONNX Runtime itself
-      (Build-Windows.ps1's *Stage Chain ONNX Runtime*, via the project-local
-      `WindowsOrtPayload.Common`), and since 2026-09-25 the rest of the DLL
+      (Build-Windows.ps1's *Stage Chain ONNX Runtime*, via
+      `WindowsOrtPayload.Common`, this repo's own module until 2026-09-25 and the
+      hub's since, at `ad08bc30`), and since 2026-09-25 the rest of the DLL
       closure too, with the hub's `Copy-PeImportClosure` over
       `Get-ProductDllSearchPath` (`WindowsCrossBundle.Common`, not
       `WindowsMediaRuntime.Common`) in its *Stage DLL Closure* step. The proof
@@ -217,6 +218,9 @@ Each row now also says what a re-check at `57ca2b14`, the pin on 2026-09-25, fou
       `WindowsScripts.Shared` and `WindowsBuild.Common`, and `docs/INDEX.md`
       points at the module, library, template and action directories, but
       nothing upstream lists the functions the table names, so it stays.
+      Re-checked at `ad08bc30`: § 7 now also names `WindowsOrtPayload.Common`
+      and `WindowsCrossBundle.Common`'s closure, and the functions the table
+      names are still listed nowhere upstream.
 
 ## Not adopted yet
 
