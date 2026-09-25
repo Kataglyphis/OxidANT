@@ -114,6 +114,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **The chain ORT staging and every payload's proof are the hub's
+  `WindowsOrtPayload.Common`** (hub `ad08bc30`, 2026-09-25), which grew out of this
+  repo's own module of that name. The local copy and its Pester suite are gone;
+  the cases live on in the hub's `OrtPayload.Common.Tests.ps1`. The hub's copy
+  refuses an ONNX_ROOT that is not the chain install for the target arch before
+  it copies anything, where the local one only checked for `bin\onnxruntime.dll`.
+  `Build-Windows.ps1` names the hub commit it needs when the pin is older.
 - **Build-Windows' clippy lints the CLI and the GUI crates as well as the root
   package**, with the CLI's features qualified (`kataglyphis_cli/...`). Linting the
   root package alone had left the Windows-only GUI code, which only the CLI's
