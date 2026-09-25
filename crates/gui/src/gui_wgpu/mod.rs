@@ -20,6 +20,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use pipeline::{build_pipeline, Frame};
+pub use pipeline::{media_check, MediaReport};
 use renderer::WgpuState;
 
 const REDRAW_INTERVAL_MS: u64 = 16;
@@ -72,7 +73,9 @@ pub fn run_with_backend(backend: &GpuBackend) -> anyhow::Result<()> {
 }
 
 fn run_inner(backends: wgpu::Backends, backend_label: &str) -> anyhow::Result<()> {
-    gst::init().context("Failed to initialize GStreamer")?;
+    // Not a bare gst::init(): this one first points GST_PLUGIN_PATH at the plugins a
+    // package carries beside the exe, which a host's GST_PLUGIN_SYSTEM_PATH would hide.
+    kataglyphis_media::ensure_gst_initialized().context("Failed to initialize GStreamer")?;
 
     let (frame_tx, frame_rx) = sync_channel::<Frame>(2);
     let pipeline = build_pipeline(frame_tx).context("Failed to build GStreamer pipeline")?;

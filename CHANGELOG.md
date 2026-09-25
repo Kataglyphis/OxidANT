@@ -14,6 +14,29 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- **Every Windows package carries the GUI's GStreamer plugins and its model, and
+  both lanes prove it (2026-09-25).**
+  - The camera pipeline creates its elements by name, so their plugins were in no
+    import table: the bundle, MSIX and MSI shipped GStreamer's DLLs but not one
+    plugin, and the GUI could not start on a machine without the image's
+    `C:\runtime`. *Stage GStreamer Plugins* now copies `Build.GStreamerPlugins`
+    (`Build-Windows.config.psd1`) into `lib\gstreamer-1.0` beside an exe that links
+    GStreamer, and a plugin the image lacks fails the build. The plugins seed the
+    DLL closure, so what they import lands beside the exe.
+  - The GUI initialises GStreamer through `kataglyphis_media::ensure_gst_initialized`,
+    as the webcam engine does, which points `GST_PLUGIN_PATH` at the plugins beside
+    the exe; `kataglyphis_media::bundled_plugin_dir` names that directory for both.
+  - `kataglyphis_cli media-check` (with `gui_windows`) builds the pipeline without
+    starting it and prints the plugin behind each element. It fails on a missing
+    element, and when an exe that carries plugins takes one from anywhere else.
+    The x64 host step and the arm64 run job both run it on the packaged exe.
+  - `resolve_model_path` takes `resources\models\yolov10m.onnx` beside the exe
+    before the compile-time checkout path, so a packaged app finds its model with
+    no `KATAGLYPHIS_ONNX_MODEL`. The MSI now installs `resources\` too.
+  - The MSI installs the bundle's whole tree: its generated group
+    (`msi-payload-files.wxs`, was `msi-payload-dlls.wxs`) holds one component per
+    file, placed with WiX v4's `Subdirectory`. `New-OrtProvenPayload -IncludeDirectory`
+    copies `lib\` into each payload before G6 proves it.
 - **The Windows exe loads the chain ONNX Runtime, and every package carries its
   DLL closure on both arches (owner decisions 2026-09-25).**
   - The CLI's `onnxruntime_directml`/`onnxruntime_cuda` (and `onnx_tract`) features
@@ -91,6 +114,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **Build-Windows' clippy lints the CLI and the GUI crates as well as the root
+  package**, with the CLI's features qualified (`kataglyphis_cli/...`). Linting the
+  root package alone had left the Windows-only GUI code, which only the CLI's
+  features switch on, unlinted until it reached the release build (2026-09-25).
 - **Every platform lane runs on every push and PR, under the family's new
   workflow names (owner request, 2026-09-24).** `rust_ubuntu26_04.yml` became
   `linux-x64.yml` ("Linux x64 · build + test") and `linux-arm64.yml` ("Linux

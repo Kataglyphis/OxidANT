@@ -44,10 +44,12 @@ jobs:
       version-file: VERSION.txt
       # The renderer's lib tests cannot start on Server Core: wgpu's gles backend
       # imports opengl32.dll, which it does not ship. The host has it, so the host
-      # runs them, and runs the packaged exe to prove the chain ONNX Runtime loads.
+      # runs them, and runs the packaged exe to prove the chain ONNX Runtime loads
+      # and the GUI's camera pipeline builds from the plugins the bundle carries.
       host-command: |
         ./scripts/windows/Invoke-HostTests.ps1 -ContainerRoot 'C:\ws'
         ./dist/windows-x64/bundle/kataglyphis_cli.exe onnx-runtime
+        ./dist/windows-x64/bundle/kataglyphis_cli.exe media-check
       artifact-name: kataglyphis_cli-windows-x64
       artifact-dir: dist/windows-x64
       # The last green runs took 122 and 155 min; four hours still stops a hung

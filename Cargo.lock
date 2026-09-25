@@ -4489,6 +4489,7 @@ dependencies = [
  "gtk4",
  "kataglyphis_core",
  "kataglyphis_inference",
+ "kataglyphis_media",
  "kataglyphis_telemetry",
  "log",
  "pollster",

@@ -121,6 +121,19 @@ Describe 'WindowsOrtPayload.Common' {
         }
     }
 
+    It 'ships an -IncludeDirectory tree whole, and G6 grades it with the rest (mutation)' {
+        $c = New-Case 'plugins'
+        New-FakeDll (Join-Path $c.Release 'lib\gstreamer-1.0\gstapp.dll') 'plugin'
+        Invoke-WithOnnxRoot $c.Root {
+            Copy-ChainOrtBeside -OnnxRoot $c.Root -Destination $c.Release
+            $payload = New-OrtProvenPayload -ExePath $c.Exe -Destination $c.Payload -IncludeDirectory 'lib', 'absent'
+            Test-Path (Join-Path $c.Payload 'lib\gstreamer-1.0\gstapp.dll') | Should Be $true
+            ($payload.Included -join ',') | Should Be (Join-Path $c.Payload 'lib')
+            New-FakeDll (Join-Path $c.Release 'lib\gstreamer-1.0\onnxruntime.dll') $foreignSrc
+            Get-ThrowText { New-OrtProvenPayload -ExePath $c.Exe -Destination $c.Payload -IncludeDirectory 'lib' } | Should Match 'FOREIGN .*gstreamer-1\.0'
+        }
+    }
+
     It 'refuses to stage without a chain ONNX_ROOT' {
         $c = New-Case 'noroot'
         Get-ThrowText { Copy-ChainOrtBeside -OnnxRoot '' -Destination $c.Release } | Should Match 'ONNX_ROOT is unset'

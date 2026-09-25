@@ -65,15 +65,22 @@ function Test-ExeLoadsOrt {
 function Test-PayloadLoadsOrt {
     <#
     .SYNOPSIS
-        True when the exe, or any non-ORT DLL beside it that a payload ships, is a G6 ORT consumer
-        (Test-ExeLoadsOrt): a consumer DLL beside a plain exe still loads ORT, System32's if none ships.
+        True when the exe, or any non-ORT DLL a payload ships (beside it, or under an -IncludeDirectory
+        tree), is a G6 ORT consumer (Test-ExeLoadsOrt): a consumer DLL beside a plain exe still loads
+        ORT, System32's if none ships.
     #>
     [CmdletBinding()]
     [OutputType([bool])]
-    param([Parameter(Mandatory)][string] $ExePath)
+    param(
+        [Parameter(Mandatory)][string] $ExePath,
+        [string[]] $IncludeDirectory = @()
+    )
 
     if (Test-ExeLoadsOrt -Path $ExePath) { return $true }
-    $dlls = @(Get-ChildItem -LiteralPath (Split-Path $ExePath -Parent) -Filter '*.dll' -File | Where-Object { -not (Test-OrtFamilyName -Name $_.Name) })
+    $exeDir = Split-Path $ExePath -Parent
+    $dlls = @(Get-ChildItem -LiteralPath $exeDir -Filter '*.dll' -File) +
+        @($IncludeDirectory | ForEach-Object { Get-ChildItem -LiteralPath (Join-Path $exeDir $_) -Filter '*.dll' -File -Recurse -ErrorAction SilentlyContinue })
+    $dlls = @($dlls | Where-Object { -not (Test-OrtFamilyName -Name $_.Name) })
     return @($dlls | Where-Object { Test-ExeLoadsOrt -Path $_.FullName }).Count -gt 0
 }
 
@@ -127,23 +134,36 @@ function New-OrtProvenPayload {
         Copies the exe and the DLLs beside it into a fresh Destination and proves that payload: when the
         exe or a shipped DLL loads ONNX Runtime (Test-PayloadLoadsOrt), G6 over it must pass; otherwise it
         carries no ORT at all. Packages ship from Destination, so the bytes proved are the bytes shipped.
+    .PARAMETER IncludeDirectory
+        Subdirectories beside the exe that ship whole with it (lib, for its GStreamer plugins). Copied
+        before the proof, so G6 grades them with everything else; a missing one is skipped.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string] $ExePath,
-        [Parameter(Mandatory)][string] $Destination
+        [Parameter(Mandatory)][string] $Destination,
+        [string[]] $IncludeDirectory = @()
     )
 
     Assert-OrtCensusCommand
     if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) { throw "Expected executable not found: $ExePath" }
     if (-not $PSCmdlet.ShouldProcess($Destination, 'build and prove the release payload')) { return }
-    $loadsOrt = Test-PayloadLoadsOrt -ExePath $ExePath
+    $loadsOrt = Test-PayloadLoadsOrt -ExePath $ExePath -IncludeDirectory $IncludeDirectory
     if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
     Copy-Item -LiteralPath $ExePath -Destination $Destination
-    Get-ChildItem -LiteralPath (Split-Path $ExePath -Parent) -Filter '*.dll' -File |
+    $exeDir = Split-Path $ExePath -Parent
+    Get-ChildItem -LiteralPath $exeDir -Filter '*.dll' -File |
         Where-Object { $loadsOrt -or -not (Test-OrtFamilyName -Name $_.Name) } |
         ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $Destination }
+    $included = [string[]]@(foreach ($name in @($IncludeDirectory | Select-Object -Unique)) {
+            $source = Join-Path $exeDir $name
+            if (-not (Test-Path -LiteralPath $source -PathType Container)) { continue }
+            $target = Join-Path $Destination $name
+            New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
+            Copy-Item -LiteralPath $source -Destination $target -Recurse
+            $target
+        })
 
     $findings = [System.Collections.Generic.List[string]]::new()
     if ($loadsOrt) {
@@ -164,6 +184,7 @@ function New-OrtProvenPayload {
         Directory = $Destination
         Exe       = $exe
         Dlls      = [string[]]@(Get-ChildItem -LiteralPath $Destination -Filter '*.dll' -File | ForEach-Object FullName)
+        Included  = $included
         OrtDlls   = [string[]]@(Get-OrtFamilyFile -Directory $Destination | ForEach-Object FullName)
         LoadsOrt  = $loadsOrt
     }
