@@ -21,6 +21,11 @@ use kataglyphis_core::config::{self, PreprocessMode};
 use kataglyphis_core::detection::Detection;
 use preprocess::{rgba_to_nchw_f32_letterboxed, rgba_to_nchw_f32_stretched};
 
+/// The model's file name, in the checkout's `resources/models/` and in every package's.
+const MODEL_FILE: &str = "yolov10m.onnx";
+
+/// The model to load: `explicit` when it is not blank, else `KATAGLYPHIS_ONNX_MODEL`,
+/// else the model beside the running exe, else the checkout's.
 pub fn resolve_model_path(explicit: Option<&str>) -> String {
     if let Some(p) = explicit {
         if !p.trim().is_empty() {
@@ -29,7 +34,28 @@ pub fn resolve_model_path(explicit: Option<&str>) -> String {
     }
     kataglyphis_core::config::onnx_model_override()
         .clone()
+        .or_else(bundled_model_path)
         .unwrap_or_else(default_model_path)
+}
+
+/// `<exe dir>/resources/models/yolov10m.onnx`, when that file exists. Every Windows
+/// package puts `resources\` beside the exe (the portable bundle, the MSIX and the
+/// MSI), so a packaged app finds its model with nothing set. A dev build's exe has
+/// no `resources\` beside it and falls through to [`default_model_path`].
+fn bundled_model_path() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    existing_model_under(exe.parent()?)
+}
+
+/// [`model_under`] `root`, when it is a file.
+fn existing_model_under(root: &std::path::Path) -> Option<String> {
+    let path = model_under(root);
+    path.is_file().then(|| path.to_string_lossy().into_owned())
+}
+
+/// `<root>/resources/models/yolov10m.onnx`: the checkout's layout, and every package's.
+fn model_under(root: &std::path::Path) -> std::path::PathBuf {
+    root.join("resources").join("models").join(MODEL_FILE)
 }
 
 /// The compile-time fallback model path: `<workspace>/resources/models/yolov10m.onnx`.
@@ -42,19 +68,16 @@ pub fn resolve_model_path(explicit: Option<&str>) -> String {
 /// the Flutter UI, which sends an empty string when its model box is blank.
 ///
 /// This is a development convenience, not a deployment mechanism: a binary
-/// shipped away from the checkout has no workspace, so packaged builds must set
-/// `KATAGLYPHIS_ONNX_MODEL` or pass the path explicitly.
+/// shipped away from the checkout has no workspace. A packaged build finds the
+/// model beside its exe ([`bundled_model_path`]); anything else sets
+/// `KATAGLYPHIS_ONNX_MODEL` or passes the path explicitly.
 fn default_model_path() -> String {
     // crates/inference -> crates -> workspace root. `ancestors().nth(2)` rather
     // than two `parent()` unwraps so a moved crate degrades to the manifest dir
     // instead of panicking.
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = manifest.ancestors().nth(2).unwrap_or(manifest);
-    root.join("resources")
-        .join("models")
-        .join("yolov10m.onnx")
-        .to_string_lossy()
-        .to_string()
+    model_under(root).to_string_lossy().to_string()
 }
 
 enum Backend {
@@ -326,5 +349,34 @@ impl PersonDetector {
                 Ok((shape, data))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_explicit_path_wins_and_a_blank_one_does_not() {
+        assert_eq!(resolve_model_path(Some("models/x.onnx")), "models/x.onnx");
+        assert_ne!(resolve_model_path(Some("  ")), "  ");
+    }
+
+    #[test]
+    fn the_model_beside_an_exe_counts_only_when_it_exists() {
+        let root = std::env::temp_dir().join(format!("oxidant-model-{}", std::process::id()));
+        assert_eq!(existing_model_under(&root), None);
+        let model = model_under(&root);
+        std::fs::create_dir_all(model.parent().expect("models dir")).expect("create models dir");
+        std::fs::write(&model, b"onnx").expect("write model");
+        let found = existing_model_under(&root);
+        std::fs::remove_dir_all(&root).expect("remove temp root");
+        assert_eq!(found, Some(model.to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn the_checkout_fallback_is_the_workspace_model() {
+        let path = default_model_path();
+        assert!(std::path::Path::new(&path).ends_with("resources/models/yolov10m.onnx"));
     }
 }

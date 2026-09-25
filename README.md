@@ -89,7 +89,7 @@ other repositories, so its `[lib] name` is not free to change.
 | `crates/gui` | `kataglyphis_gui` | Feature-gated GUI: `gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix` |
 | `crates/webgpu_renderer` | `kataglyphis_webgpu_renderer` | wgpu glTF renderer, native and wasm32/WebGPU: PBR+IBL, cascaded shadows, SSAO, bloom, skinning, animations, LOD, headless golden tests |
 | `crates/cat_webrtc` | `kataglyphis_cat_webrtc` | Cat-detection WebRTC producer; consumed by OmniAccelerANT's Stream page |
-| `crates/cli` | `kataglyphis_cli` | The CLI binary (`read` / `stats` / `gui`, plus `onnx-runtime` with an `onnxruntime_*` feature) |
+| `crates/cli` | `kataglyphis_cli` | The CLI binary (`read` / `stats` / `gui`, plus `onnx-runtime` with an `onnxruntime_*` feature and `media-check` with `gui_windows`) |
 | `src/` | `oxidant` | The root package: the flutter_rust_bridge surface for OmniAccelerANT, plus the feature-gated `burn-demos` bin |
 
 **Default features are empty.** GUI, ONNX, GStreamer and the burn demos only
@@ -238,6 +238,20 @@ exe:
 cargo run -p kataglyphis_cli --features onnxruntime_directml -- onnx-runtime
 ```
 
+The GUI creates its camera pipeline's GStreamer elements by name (`mfvideosrc`,
+falling back to `autovideosrc`, then `videoconvert`, `capsfilter`, `appsink`), so
+their plugins are in no import table. Every Windows package therefore carries them
+in `lib\gstreamer-1.0`, and the DLLs they import beside the exe; the list is
+`Build.GStreamerPlugins` in `scripts/windows/Build-Windows.config.psd1`.
+The `media-check` subcommand (with `gui_windows`) builds that pipeline without
+starting it, so with no camera and no window, and prints the plugin file behind each
+element; an exe that carries plugins must take every element from them. Both Windows
+lanes run it on the packaged exe:
+
+```bash
+cargo run -p kataglyphis_cli --features gui_windows -- media-check
+```
+
 Build + Run (ONNX Runtime + DirectML):
 
 ```bash
@@ -258,10 +272,10 @@ cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --ba
 
 Optional environment variables:
 
-- `KATAGLYPHIS_ONNX_MODEL` – path to the ONNX model (default: the checkout's
-  `resources/models/yolov10m.onnx`, a path fixed at compile time. The portable
-  bundle and the MSIX ship the model under `resources\models\` (the MSI does not),
-  but a packaged exe still has to be pointed at it with this variable)
+- `KATAGLYPHIS_ONNX_MODEL` – path to the ONNX model. Unset, the app takes
+  `resources\models\yolov10m.onnx` beside its exe, where the portable bundle, the
+  MSIX and the MSI all put it, and otherwise the checkout's
+  `resources/models/yolov10m.onnx`, a path fixed at compile time
 - `KATAGLYPHIS_ONNX_BACKEND` – `tract` or `ort` (default: automatic)
 - `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (default: `cpu`)
 - `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (default: `stretch`)
@@ -487,6 +501,12 @@ Runs as the **MSI Packaging** step of `Build-Windows.ps1` (disable with `-SkipMs
 or `Msi.Enabled = $false` in `scripts/windows/Build-Windows.config.psd1`).
 
 Output: `dist\windows-<x64|arm64>\msi\kataglyphis_cli-<VERSION>-<x64|arm64>.msi`
+
+It installs the portable bundle's tree: the exe with every DLL of its closure
+beside it (the chain ONNX Runtime and the VC++ runtime included), the GStreamer
+plugins in `lib\gstreamer-1.0` and `resources\` with the model. `wix/main.wxs`
+holds the exe, the licence and the shortcut; the rest is a component group the
+build generates, one component per file.
 
 Built with **WiX Toolset v4** (`wix.exe build`), not `cargo-wix`: cargo-wix drives
 WiX v3's `candle.exe`/`light.exe` even in its newest release (0.3.9), while the

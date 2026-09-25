@@ -15,4 +15,4 @@ pub use capture::{CameraSource, CaptureConfig, CaptureSession, FrameSlot, VideoF
 #[cfg(feature = "gstreamer")]
 pub use devices::{list_cameras, CameraInfo};
 #[cfg(feature = "gstreamer")]
-pub use runtime::ensure_gst_initialized;
+pub use runtime::{bundled_plugin_dir, ensure_gst_initialized};

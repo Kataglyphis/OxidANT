@@ -13,6 +13,8 @@ gui_wgpu = ["gui_windows"]
 gui_windows = ["gui", "_gui_wgpu_deps"]
 _gui_wgpu_deps = [
     "dep:gstreamer-app",
+    "dep:kataglyphis_media",
+    "kataglyphis_media/gstreamer",
     "dep:winit",
     "dep:wgpu",
     "dep:pollster",
@@ -30,6 +32,9 @@ anyhow = { workspace = true }
 log = { workspace = true }
 kataglyphis_core = { path = "../core" }
 kataglyphis_inference = { path = "../inference", optional = true }
+# GStreamer's init, which points GST_PLUGIN_PATH at the plugins a package carries
+# beside the exe; the same entry point the webcam engine uses.
+kataglyphis_media = { path = "../media", optional = true }
 kataglyphis_telemetry = { path = "../telemetry" }
 tokio = { version = "1", features = ["sync", "time"] }
 chrono = { workspace = true }

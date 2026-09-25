@@ -66,4 +66,8 @@ pub enum Commands {
     /// Load the chain-built ONNX Runtime and print where it was found; fails when none loads.
     #[cfg(any(feature = "onnxruntime_directml", feature = "onnxruntime_cuda"))]
     OnnxRuntime,
+    /// Build the GUI's camera pipeline without starting it and print the plugin file behind
+    /// each element; fails when one is missing. Needs no camera and no window.
+    #[cfg(feature = "gui_windows")]
+    MediaCheck,
 }

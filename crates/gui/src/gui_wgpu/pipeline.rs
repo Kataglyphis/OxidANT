@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -154,4 +155,79 @@ pub(crate) fn build_pipeline(
     );
 
     Ok(pipeline)
+}
+
+/// What [`media_check`] found: the GStreamer version, the plugin directory the exe
+/// carries (if any), and each camera-pipeline element with the plugin file behind it.
+pub struct MediaReport {
+    pub version: String,
+    pub bundled_plugins: Option<PathBuf>,
+    pub elements: Vec<(String, Option<PathBuf>)>,
+}
+
+impl std::fmt::Display for MediaReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.version)?;
+        match &self.bundled_plugins {
+            Some(dir) => writeln!(f, "plugins beside the exe: {}", dir.display())?,
+            None => writeln!(
+                f,
+                "plugins beside the exe: none, GStreamer's own search path"
+            )?,
+        }
+        for (factory, file) in &self.elements {
+            match file {
+                Some(file) => writeln!(f, "{factory}: {}", file.display())?,
+                None => writeln!(f, "{factory}: built into GStreamer")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Builds the camera pipeline without starting it, so with no camera and no window,
+/// and names the plugin file behind each element: proof that this exe finds every
+/// element the GUI creates by name. An exe that carries its own plugins must take
+/// every element from them, or a gap in the package would hide behind a host's
+/// GStreamer installation.
+pub fn media_check() -> Result<MediaReport> {
+    kataglyphis_media::ensure_gst_initialized()?;
+    let (frame_tx, _frame_rx) = std::sync::mpsc::sync_channel::<Frame>(1);
+    let pipeline = build_pipeline(frame_tx).context("Failed to build the camera pipeline")?;
+    let bundled_plugins = kataglyphis_media::bundled_plugin_dir();
+    // A bin prepends each child it adds, so reversed the list reads source first.
+    let mut children = pipeline.children();
+    children.reverse();
+    let mut elements = Vec::new();
+    for element in children {
+        let factory = element
+            .factory()
+            .with_context(|| format!("Pipeline element {} has no factory", element.name()))?;
+        let file = factory.plugin().and_then(|plugin| plugin.filename());
+        if let (Some(dir), Some(file)) = (&bundled_plugins, &file) {
+            if !lies_under(file, dir) {
+                anyhow::bail!(
+                    "{} loads from {}, outside the plugins beside this exe ({}): the package lacks it, or GST_PLUGIN_PATH names another installation",
+                    factory.name(),
+                    file.display(),
+                    dir.display()
+                );
+            }
+        }
+        elements.push((factory.name().to_string(), file));
+    }
+    Ok(MediaReport {
+        version: gst::version_string().to_string(),
+        bundled_plugins,
+        elements,
+    })
+}
+
+/// True when `file` lies in `dir` or below it, compared canonically where both
+/// resolve (case, `\\?\` prefixes and junctions alike).
+fn lies_under(file: &Path, dir: &Path) -> bool {
+    match (std::fs::canonicalize(file), std::fs::canonicalize(dir)) {
+        (Ok(file), Ok(dir)) => file.starts_with(dir),
+        _ => file.starts_with(dir),
+    }
 }

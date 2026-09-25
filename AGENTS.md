@@ -29,7 +29,7 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/media` — GStreamer capture, feature-gated (`gstreamer`)
 - `crates/cat_webrtc` — cat-cam WebRTC producer (`kataglyphis_cat_webrtc`); consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/cat-stream/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
-- `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands, plus `onnx-runtime` when built with `onnxruntime_directml` or `onnxruntime_cuda`; `stats --path <file>`). It was renamed on 2026-08-07 from `kataglyphis_rustprojecttemplate`, the root package's name until 2026-09-05 — see the pdb note below. It is not the root package's bin, so `cargo run` needs `-p kataglyphis_cli`.
+- `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands, plus `onnx-runtime` when built with `onnxruntime_directml` or `onnxruntime_cuda` and `media-check` when built with `gui_windows`; `stats --path <file>`). It was renamed on 2026-08-07 from `kataglyphis_rustprojecttemplate`, the root package's name until 2026-09-05 — see the pdb note below. It is not the root package's bin, so `cargo run` needs `-p kataglyphis_cli`.
 - `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{onnx,simple,webcam}.rs`, `src/webcam_engine.rs`), the cxx bridge BeschleunigerBallett links (`src/native_only.rs`, compiled by `build.rs` with `cxx-build` on every non-wasm target) and the `burn-demos` bin
 - `tests/` — the root package's proptest fuzz tests (`fuzz_test.rs`), and the CLI's integration tests (`tests/integration/integration.rs`, compiled as `kataglyphis_cli`'s `integration` test through `crates/cli/tests/integration.rs`)
 - `third_party/ANTfrastructure` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
@@ -270,7 +270,7 @@ On a plain Ubuntu box (e.g. the WSL recipe below) you *do* need the distro packa
 | `gui_unix` | clean |
 | `burn_demos` | clean |
 
-Worth stating plainly what CI lints of those rows. The Linux lanes lint default features only (which are empty). Since the Windows lanes went always-on (x64 2026-09-24, arm64 2026-09-25), `Build-Windows.ps1` runs `cargo clippy --all-targets --features gui_windows,onnxruntime_directml -- -D warnings` on the root package: that covers the members this set compiles (the wgpu GUI, the ORT backend), but not `crates/cli` or the GUI's inference overlay, which only the CLI's features switch on. The x64 lane's config matrix also *builds*, without linting, the CLI with `gui_windows` alone and with each inference backend. `crates/media`, `gui_linux` and the burn demos are unguarded, not neglected — the `feature-matrix` job exists to close that.
+Worth stating plainly what CI lints of those rows. The Linux lanes lint default features only (which are empty). Since the Windows lanes went always-on (x64 2026-09-24, arm64 2026-09-25), `Build-Windows.ps1` runs `cargo clippy --all-targets -- -D warnings` over the root package, `kataglyphis_cli` and `kataglyphis_gui` with the CLI's features qualified (`kataglyphis_cli/gui_windows,kataglyphis_cli/onnxruntime_directml`), the set the release exe is built with. Until 2026-09-25 it linted the root package alone, so `crates/cli` and the GUI's inference overlay, which only the CLI's features switch on, reached the release build unlinted. The x64 lane's config matrix also *builds*, without linting, the CLI with `gui_windows` alone and with each inference backend. `crates/media`, `gui_linux` and the burn demos are unguarded, not neglected — the `feature-matrix` job exists to close that.
 
 Note the feature names belong to the **root package**. `cargo clippy --workspace --features gstreamer` fails with *"package `kataglyphis_gui` does not have feature `gstreamer`"* because `--workspace` applies the list to every member; drop `--workspace` to scope it to the root.
 
@@ -475,11 +475,11 @@ which a local container run executes too:
 
 - **x64** (`windows-x64.yml`): `Invoke-DebugTests.ps1`, `Invoke-WindowsConfigMatrix.ps1`,
   then `Build-Windows.ps1 -SkipTests`. The lane's `host-command` then runs, on the runner
-  host, the WebGPU renderer tests (`Invoke-HostTests.ps1`) and
-  `dist/windows-x64/bundle/kataglyphis_cli.exe onnx-runtime`.
+  host, the WebGPU renderer tests (`Invoke-HostTests.ps1`) and the packaged exe's
+  `onnx-runtime` and `media-check` (`dist/windows-x64/bundle/kataglyphis_cli.exe`).
 - **arm64** (`windows-arm64-cross.yml`): `Build-Windows.ps1` alone, in the family image's
   arm64 bundle. The hub's arch gate then grades `dist/windows-arm64`, and `windows-11-arm`
-  runs `kataglyphis_cli.exe --help`, `stats` and `onnx-runtime` natively. No arm64 Windows
+  runs `kataglyphis_cli.exe --help`, `stats`, `onnx-runtime` and `media-check` natively. No arm64 Windows
   container image exists, so that job is the only place an arm64 binary of this repo
   executes.
 
@@ -499,6 +499,24 @@ GUI's inference too (`kataglyphis_gui?/onnxruntime`). Before 2026-09-25 nothing 
 exe called ORT, and the packages shipped none. The `onnx-runtime` subcommand
 (`ort_runtime::ensure_ort_loaded`) loads it and prints where it came from, which is what
 both lanes run.
+
+**Every package carries the GUI's GStreamer plugins and its model.** The camera pipeline
+(`crates/gui/src/gui_wgpu/pipeline.rs`) creates its elements by name, so their plugins are
+in no import table and the closure cannot find them. `Build-Windows.ps1`'s *Stage
+GStreamer Plugins* step copies `Build.GStreamerPlugins` (`Build-Windows.config.psd1`) from
+the image's `C:\runtime\lib\gstreamer-1.0` into `lib\gstreamer-1.0` beside any exe that
+imports `gstreamer-1.0-0.dll`; a plugin the image lacks fails the step. The plugins seed the
+closure, so what they import lands beside the exe, where Windows looks for a plugin's
+imports. At run time GStreamer finds that directory by itself while its own DLL sits beside
+the exe, and `kataglyphis_media::ensure_gst_initialized`, which the GUI calls instead of a
+bare `gst::init`, points `GST_PLUGIN_PATH` at it as well. The `media-check` subcommand
+builds the pipeline without starting it (no camera, no window) and fails when an element
+is missing, or when an exe that carries plugins takes one from anywhere else. Where Media
+Foundation is absent (Server Core has none) it builds the `autovideosrc` fallback. The model
+travels in `resources\`, and `resolve_model_path` takes `resources\models\yolov10m.onnx`
+beside the exe before the compile-time checkout path, so a packaged app needs no
+`KATAGLYPHIS_ONNX_MODEL`. The MSI installs the same tree as the bundle: a generated
+component per file (`msi-payload-files.wxs`), placed with WiX v4's `Subdirectory`.
 
 On a cross build the script also:
 

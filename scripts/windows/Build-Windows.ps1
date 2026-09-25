@@ -115,6 +115,8 @@ $logDir = Get-OrDefault $env:BUILD_LOG_DIR (Get-ConfigValue -Config $config -Pat
 
 $cargoTargetDir = Get-OrDefault $env:CARGO_TARGET_DIR (Get-ConfigValue -Config $config -Path 'Build.CargoTargetDir')
 $cargoFeatures = Get-OrDefault $env:CARGO_FEATURES ((Get-ConfigValue -Config $config -Path 'Build.CargoFeatures') -join ',')
+$gstPluginDir = Get-OrDefault $env:GSTREAMER_PLUGIN_DIR (Get-ConfigValue -Config $config -Path 'Build.GStreamerPluginDir')
+$gstPlugins = @(Get-ConfigValue -Config $config -Path 'Build.GStreamerPlugins')
 
 $binary = Get-OrDefault $env:BINARY (Get-ConfigValue -Config $config -Path 'Msix.Binary')
 
@@ -262,10 +264,16 @@ try {
     # Never --all-features: it pulls gui_unix (GTK4), which this image has not
     # got. The ONNX Runtime features need nothing at build time since they became
     # load-dynamic; the feature-matrix CI job lints the buildable combinations.
+    #
+    # The root package, and the two the release exe is built from: kataglyphis_cli and
+    # kataglyphis_gui, whose gui_windows code compiles in no other lane, so a warning
+    # there reached the release build unlinted until 2026-09-25. The features are the
+    # CLI's, as in the release build, qualified so the CLI's feature map carries them
+    # to the other two.
     Invoke-BuildStep -Context $context -StepName 'Linting (cargo clippy)' -Critical -Script {
-      $clippyParams = @('clippy', '--all-targets') + $layout.CargoArgs
+      $clippyParams = @('clippy', '--all-targets', '--package', 'oxidant', '--package', 'kataglyphis_cli', '--package', 'kataglyphis_gui') + $layout.CargoArgs
       if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
-        $clippyParams += @('--features', $cargoFeatures)
+        $clippyParams += @('--features', ((@($cargoFeatures -split ',') | ForEach-Object { "kataglyphis_cli/$($_.Trim())" }) -join ','))
       }
       $clippyParams += @('--', '-D', 'warnings')
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $clippyParams | Out-Null
@@ -306,15 +314,40 @@ try {
       Write-BuildLog -Context $context -Message "Chain ONNX Runtime staged from $env:ONNX_ROOT\bin and proved by G6: $(@($payload.OrtDlls | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
     } | Out-Null
 
+    # The GUI creates its GStreamer elements by name, so their plugins are in no import
+    # table and the closure below would never find them: an exe that links GStreamer
+    # gets the config's plugins in lib\gstreamer-1.0 beside it. GStreamer looks there
+    # unasked while its own DLL sits beside the exe, and kataglyphis_media points
+    # GST_PLUGIN_PATH at it. A plugin the image lacks fails the build, never shrinks the
+    # set. What the plugins import joins the closure below, beside the exe, which is
+    # where Windows looks for a plugin's imports.
+    Invoke-BuildStep -Context $context -StepName 'Stage GStreamer Plugins' -Critical -Script {
+      $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
+      $pluginTarget = Join-Path $layout.ReleaseDir 'lib\gstreamer-1.0'
+      if (Test-Path -LiteralPath $pluginTarget) { Remove-Item -LiteralPath $pluginTarget -Recurse -Force }
+      if (@(Get-PeImportNames -Path $exePath) -notcontains 'gstreamer-1.0-0.dll') {
+        Write-BuildLog -Context $context -Message "$binary.exe does not link GStreamer; no plugins staged."
+        return
+      }
+      $missing = @($gstPlugins | Where-Object { -not (Test-Path -LiteralPath (Join-Path $gstPluginDir "$_.dll") -PathType Leaf) })
+      if ($missing.Count -gt 0) {
+        throw "GStreamer plugins missing from $gstPluginDir`: $($missing -join ', ') (Build.GStreamerPlugins in Build-Windows.config.psd1)."
+      }
+      New-Item -ItemType Directory -Force -Path $pluginTarget | Out-Null
+      foreach ($name in $gstPlugins) { Copy-Item -LiteralPath (Join-Path $gstPluginDir "$name.dll") -Destination $pluginTarget }
+      Write-BuildLog -Context $context -Message "GStreamer plugins staged in $pluginTarget from $gstPluginDir`: $($gstPlugins -join ', ')"
+    } | Out-Null
+
     # A clean machine has none of the image's C:\runtime, and an arm64 device, or a
     # fresh x64 PC, no VC++ redist either. Everything the exe and the DLLs beside it
     # import, transitively, is staged beside the exe too, so every package below
-    # ships it (owner decision 2026-09-25: x64 exactly like arm64). ORT enters as a
-    # seed: the exe loads it by name, so it is in no import table. The search order
-    # is the hub's (Get-ProductDllSearchPath), the chain ORT first.
+    # ships it (owner decision 2026-09-25: x64 exactly like arm64). ORT and the
+    # GStreamer plugins enter as seeds: loaded by name, they are in no import table.
+    # The search order is the hub's (Get-ProductDllSearchPath), the chain ORT first.
     Invoke-BuildStep -Context $context -StepName 'Stage DLL Closure' -Critical -Script {
       $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
-      $seeds = @($exePath) + @(Get-ChildItem -LiteralPath $layout.ReleaseDir -Filter '*.dll' -File | ForEach-Object FullName)
+      $seeds = @($exePath) + @(Get-ChildItem -LiteralPath $layout.ReleaseDir -Filter '*.dll' -File | ForEach-Object FullName) +
+        @(Get-ChildItem -LiteralPath (Join-Path $layout.ReleaseDir 'lib\gstreamer-1.0') -Filter '*.dll' -File -ErrorAction SilentlyContinue | ForEach-Object FullName)
       $search = @(Get-ProductDllSearchPath -Arch $layout.Arch)
       $copied = @(Copy-PeImportClosure -Path $seeds -SearchDirectory $search -Destination $layout.ReleaseDir -Arch $layout.Arch)
       Write-BuildLog -Context $context -Message "DLL closure staged beside $binary.exe from $($search -join ', '): $(@($copied | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
@@ -323,11 +356,12 @@ try {
 
   # The product both Windows lanes upload in dist\windows-<arch>, and the tree the
   # arm64 lane's arch gate walks and its windows-11-arm job runs: the exe with
-  # every DLL beside it, proved by G6 like each package, plus resources\, which the
-  # app looks for beside the exe.
+  # every DLL beside it and its GStreamer plugins in lib\, proved by G6 like each
+  # package, plus resources\ (the model among them), which the app looks for beside
+  # the exe.
   Invoke-BuildStep -Context $context -StepName 'Portable Bundle' -Critical -Script {
     $bundleDir = Join-Path $layout.DistDir 'bundle'
-    $bundle = New-OrtProvenPayload -ExePath (Join-Path $layout.ReleaseDir "$binary.exe") -Destination $bundleDir
+    $bundle = New-OrtProvenPayload -ExePath (Join-Path $layout.ReleaseDir "$binary.exe") -Destination $bundleDir -IncludeDirectory 'lib'
     $resourcesSource = Join-Path $workspacePath 'resources'
     if (Test-Path $resourcesSource) { Copy-Item -LiteralPath $resourcesSource -Destination $bundleDir -Recurse -Force }
     Write-BuildLogSuccess -Context $context -Message "Portable bundle: $bundleDir ($(@($bundle.Dlls).Count) DLLs beside $binary.exe)"
@@ -371,12 +405,13 @@ try {
       }
       # The package ships the payload G6 just proved; -SkipBuild skips the staging
       # step, so this is where a packaged-only run still proves its ORT.
-      $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msix')
+      $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msix') -IncludeDirectory 'lib'
 
       # -ExtraFiles, not -ResourcesDir: the module's -ResourcesDir flattens the
       # directory's CONTENTS into the package root, and this app looks for
-      # resources\ beside the exe. Copying the directory itself keeps that.
-      $extraFiles = @($payload.Dlls)
+      # resources\ (and lib\gstreamer-1.0) beside the exe. Copying the directory
+      # itself keeps that.
+      $extraFiles = @($payload.Dlls) + @($payload.Included)
       $resourcesSource = Join-Path $workspacePath 'resources'
       if (Test-Path $resourcesSource) { $extraFiles += $resourcesSource }
 
@@ -491,7 +526,7 @@ try {
         throw "Expected executable not found: $msiExePath"
       }
       # The MSI installs the payload G6 just proved, exe included.
-      $msiPayload = New-OrtProvenPayload -ExePath $msiExePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msi')
+      $msiPayload = New-OrtProvenPayload -ExePath $msiExePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msi') -IncludeDirectory 'lib'
 
       $licenseRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.LicenseFile') 'wix/License.rtf'
       $licenseRtf = if ([System.IO.Path]::IsPathRooted($licenseRel)) { $licenseRel } else { Join-Path $workspacePath $licenseRel }
@@ -528,25 +563,38 @@ try {
         $wxsPath
       )
 
-      # The DLLs installed beside the exe, one generated component each, named by
-      # main.wxs's PayloadDlls ComponentGroupRef: every DLL of the payload, the chain
-      # ORT and the staged closure alike, on both arches. The fragment is an
-      # intermediate, so it stays out of dist.
-      $payloadDlls = @($msiPayload.Dlls)
-      if ($payloadDlls.Count -gt 0) {
-        $components = for ($i = 0; $i -lt $payloadDlls.Count; $i++) {
-          $src = [System.Security.SecurityElement]::Escape($payloadDlls[$i])
-          "      <Component Id='payloadDll$i' Bitness='always64'><File Id='payloadDllFile$i' Source='$src' KeyPath='yes'/></Component>"
+      # Every other file the app needs, installed where the bundle has it, one
+      # generated component each, named by main.wxs's PayloadFiles ComponentGroupRef:
+      # the payload's DLLs beside the exe (the chain ORT and the staged closure alike),
+      # its lib\gstreamer-1.0 plugins, and resources\, where the app finds its model.
+      # A component's Subdirectory places it under APPLICATIONFOLDER. The fragment is
+      # an intermediate, so it stays out of dist.
+      $payloadFiles = [System.Collections.Generic.List[object]]::new()
+      foreach ($dll in @($msiPayload.Dlls)) { $payloadFiles.Add([pscustomobject]@{ Source = $dll; Subdirectory = '' }) }
+      $trees = @($msiPayload.Included | ForEach-Object { [pscustomobject]@{ Base = $msiPayload.Directory; Dir = $_ } })
+      $resourcesSource = Join-Path $workspacePath 'resources'
+      if (Test-Path -LiteralPath $resourcesSource) { $trees += [pscustomobject]@{ Base = $workspacePath; Dir = $resourcesSource } }
+      foreach ($tree in $trees) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $tree.Dir -File -Recurse)) {
+          $payloadFiles.Add([pscustomobject]@{ Source = $file.FullName; Subdirectory = [System.IO.Path]::GetRelativePath($tree.Base, $file.DirectoryName) })
         }
-        $fragmentPath = Join-Path $layout.ArchTargetDir 'msi-payload-dlls.wxs'
+      }
+      if ($payloadFiles.Count -gt 0) {
+        $components = for ($i = 0; $i -lt $payloadFiles.Count; $i++) {
+          $src = [System.Security.SecurityElement]::Escape($payloadFiles[$i].Source)
+          $sub = if ($payloadFiles[$i].Subdirectory) { " Subdirectory='$([System.Security.SecurityElement]::Escape($payloadFiles[$i].Subdirectory))'" } else { '' }
+          "      <Component Id='payload$i' Bitness='always64'$sub><File Id='payloadFile$i' Source='$src' KeyPath='yes'/></Component>"
+        }
+        $fragmentPath = Join-Path $layout.ArchTargetDir 'msi-payload-files.wxs'
         @(
           "<Wix xmlns='http://wixtoolset.org/schemas/v4/wxs'><Fragment>"
-          "    <ComponentGroup Id='PayloadDlls' Directory='APPLICATIONFOLDER'>"
+          "    <ComponentGroup Id='PayloadFiles' Directory='APPLICATIONFOLDER'>"
           $components
           '    </ComponentGroup>'
           '</Fragment></Wix>'
         ) | Set-Content -LiteralPath $fragmentPath -Encoding utf8
-        $wixParams += @('-d', 'PayloadDlls=1', $fragmentPath)
+        $wixParams += @('-d', 'PayloadFiles=1', $fragmentPath)
+        Write-BuildLog -Context $context -Message "MSI payload: $($payloadFiles.Count) files with $binary.exe, $(@($payloadFiles | Where-Object Subdirectory).Count) of them in subdirectories"
       }
       Invoke-BuildExternal -Context $context -File $wixExe -Parameters $wixParams | Out-Null
 

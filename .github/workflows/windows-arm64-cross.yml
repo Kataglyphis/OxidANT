@@ -46,12 +46,14 @@ jobs:
       # The exe, the VC++ runtime and the chain ONNX Runtime at the least.
       arch-gate-min-inspected: 3
       # Loading at all proves the bundle's import closure on a real device;
-      # `stats` then runs real code, and `onnx-runtime` loads the bundle's chain
-      # ONNX Runtime. The GUI needs a desktop the runner has not got. The hub
-      # fails the lane on any line's non-zero exit.
+      # `stats` then runs real code, `onnx-runtime` loads the bundle's chain
+      # ONNX Runtime, and `media-check` builds the GUI's camera pipeline from the
+      # bundle's GStreamer plugins. The GUI itself needs a desktop the runner has
+      # not got. The hub fails the lane on any line's non-zero exit.
       run-command: |
         ./bundle/kataglyphis_cli.exe --help
         ./bundle/kataglyphis_cli.exe stats --path ./bundle/resources/web/redirect/index.html
         ./bundle/kataglyphis_cli.exe onnx-runtime
+        ./bundle/kataglyphis_cli.exe media-check
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}

@@ -71,6 +71,10 @@ async fn main() -> Result<()> {
             let path = oxidant::ort_runtime::ensure_ort_loaded()?;
             println!("ONNX Runtime: {}", path.display());
         }
+        #[cfg(feature = "gui_windows")]
+        Commands::MediaCheck => {
+            print!("{}", kataglyphis_gui::gui_wgpu::media_check()?);
+        }
     }
     Ok(())
 }

@@ -29,17 +29,24 @@ pub fn ensure_gst_initialized() -> anyhow::Result<()> {
 /// Plugin dir search order: next to the executable (packaged app layouts),
 /// then the container/dev-image install prefix.
 fn find_plugin_dir() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("gstreamer-1.0"));
-            candidates.push(dir.join("lib").join("gstreamer-1.0"));
-        }
-    }
     #[cfg(windows)]
-    candidates.push(PathBuf::from(r"C:\runtime\lib\gstreamer-1.0"));
+    let image = PathBuf::from(r"C:\runtime\lib\gstreamer-1.0");
     #[cfg(not(windows))]
-    candidates.push(PathBuf::from("/usr/lib/gstreamer-1.0"));
+    let image = PathBuf::from("/usr/lib/gstreamer-1.0");
 
-    candidates.into_iter().find(|p| p.is_dir())
+    bundled_plugin_dir().or_else(|| image.is_dir().then_some(image))
+}
+
+/// The plugin directory a packaged app carries beside its executable, when there is
+/// one: `gstreamer-1.0` (OmniAccelerANT's runner) or `lib/gstreamer-1.0` (OxidANT's
+/// Windows packages, where GStreamer also looks unasked while its DLL sits beside the exe).
+pub fn bundled_plugin_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    [
+        dir.join("gstreamer-1.0"),
+        dir.join("lib").join("gstreamer-1.0"),
+    ]
+    .into_iter()
+    .find(|p| p.is_dir())
 }
