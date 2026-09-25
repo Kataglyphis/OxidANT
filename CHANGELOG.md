@@ -179,6 +179,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   had `/opt/gcc-16.2.0` frozen into it.
 
 ### Fixed
+- **The ORT payload suite follows the hub's stricter G6 fingerprint (2026-09-25).**
+  Since hub e72a9a37, the census counts a source path as an ORT fingerprint only when it
+  is a whole `__FILE__` string ending in NUL. The hub bump to 20bb0026, made for the
+  Windows sccache fix, brought that rule here. `OrtPayload.Tests.ps1`'s fake chain and
+  stale DLLs wrote the path followed by a space, so the stale case read as `UNPROVEN`,
+  not `STALE`, and the lint lane's Pester step failed (run 36101778073). The fixtures
+  now end the path in NUL, as OmniAccelerANT's `OrtRunner.Tests.ps1` does: 10 of 10 pass.
 - **The `gui_windows` build compiles again (2026-09-24).** The wgpu 30 upgrade set
   the new `SurfaceConfiguration::color_space` in the renderer but missed the second
   literal in `crates/gui/src/gui_wgpu/wgpu_init.rs`. That module compiles only under

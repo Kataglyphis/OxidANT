@@ -12,6 +12,8 @@ Describe 'WindowsOrtPayload.Common' {
     Import-BuildModule 'WindowsOrtPayload.Common'
     Import-BuildModule 'WindowsOrtProvenance.Common'
 
+    # A fake __FILE__ path ends in NUL, as a compiler writes it: G6 takes only a whole NUL-terminated
+    # ORT source path as a fingerprint (hub fix of 2026-09-24), so "$chainSrc text" would be none.
     $chainSrc = 'C:\temp\onnx-src\onnxruntime\core\session\inference_session.cc'
     $foreignSrc = 'C:\__w\1\s\onnxruntime\core\session\inference_session.cc'
 
@@ -29,7 +31,7 @@ Describe 'WindowsOrtPayload.Common' {
     function New-Case([string] $Name, [switch] $PlainExe) {
         $case = Join-Path $TestDrive $Name
         $bin = Join-Path $case 'onnx\bin'
-        New-FakeDll (Join-Path $bin 'onnxruntime.dll') "$chainSrc OrtGetApiBase"
+        New-FakeDll (Join-Path $bin 'onnxruntime.dll') "$chainSrc`0OrtGetApiBase"
         New-FakeDll (Join-Path $bin 'onnxruntime_providers_shared.dll') 'provider bridge'
         New-FakeDll (Join-Path $bin 'DirectML.dll') 'directml'
         New-FakeDll (Join-Path $case 'release\app.exe') $(if ($PlainExe) { 'main' } else { 'OrtGetApiBase' })
@@ -70,7 +72,7 @@ Describe 'WindowsOrtPayload.Common' {
             Copy-ChainOrtBeside -OnnxRoot $c.Root -Destination $c.Release
             New-FakeDll (Join-Path $c.Release 'onnxruntime.dll') $foreignSrc
             Get-ThrowText { New-OrtProvenPayload -ExePath $c.Exe -Destination $c.Payload } | Should Match 'FOREIGN'
-            New-FakeDll (Join-Path $c.Release 'onnxruntime.dll') "$chainSrc FileVersion 1.27.0"
+            New-FakeDll (Join-Path $c.Release 'onnxruntime.dll') "$chainSrc`0FileVersion 1.27.0"
             Get-ThrowText { New-OrtProvenPayload -ExePath $c.Exe -Destination $c.Payload } | Should Match 'STALE'
             Remove-Item -LiteralPath (Join-Path $c.Release 'onnxruntime.dll')
             $missing = Get-ThrowText { New-OrtProvenPayload -ExePath $c.Exe -Destination $c.Payload }
