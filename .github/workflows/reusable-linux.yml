@@ -116,7 +116,7 @@ jobs:
       # pull - four steps that used to be ~35 hand-maintained lines here, and
       # drifted from the sibling Windows lane. Now one shared action.
       - name: Prepare the CI host
-        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
         with:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GHCR_PAT }}
@@ -140,13 +140,13 @@ jobs:
       # build only. Fails if any feature set could download ORT (pyke's CDN) or
       # take a pkg-config one - lock and resolved feature graph, all targets.
       - name: ONNX Runtime chain-only check
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh ort-chain-only'
 
       - name: Debug build
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh debug'
@@ -156,7 +156,7 @@ jobs:
       # [advisories].ignore. While this step fails, the docs publish at the
       # end of this job never runs.
       - name: Security checks (cargo audit + cargo deny)
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh security'
@@ -171,31 +171,31 @@ jobs:
       # --all-features is what this image cannot build, and it is a knob rather
       # than a hard-coded scope since the pinned hub.
       - name: Check formatting and clippy
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh fmt-clippy'
 
       - name: Run unit, integration, and doc tests
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh test'
 
       - name: Run coverage
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh coverage'
 
       - name: Run benchmarks
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh bench'
 
       - name: 🛠️ Build release binary
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh release'
@@ -205,7 +205,7 @@ jobs:
       # wants the mount capability; extract-and-run avoids FUSE entirely and
       # is the better long-term fix.
       - name: 📦 Create archive (tar)
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: >-
             --privileged --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -255,7 +255,7 @@ jobs:
 
       - name: Create docs
         if: inputs.docs
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh docs'
@@ -282,7 +282,7 @@ jobs:
         # action's own policy is the opposite ("a failed publish fails the
         # job", see its action.yml); this tolerance is the owner's call.
         continue-on-error: true
-        uses: Kataglyphis/ANTfrastructure/.github/actions/deploy-over-ftp@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/deploy-over-ftp@develop
         with:
           server: ${{ secrets.SERVER }}
           username: ${{ secrets.USERNAME }}

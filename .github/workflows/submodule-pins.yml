@@ -44,4 +44,4 @@ concurrency:
 
 jobs:
   pins:
-    uses: Kataglyphis/ANTfrastructure/.github/workflows/submodule-pins.yml@main
+    uses: Kataglyphis/ANTfrastructure/.github/workflows/submodule-pins.yml@develop

@@ -96,7 +96,7 @@ jobs:
       # dann landet.
       - name: Prepare Windows container host
         id: prep
-        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-windows-container-host@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-windows-container-host@develop
         with:
           registry-password: ${{ secrets.GHCR_PAT }}
           fetch-depth: 0
@@ -124,7 +124,7 @@ jobs:
       # "a script plus an argument vector": under -File every file-args line is
       # one literal argv element, with no PowerShell parsing of its value.
       - name: Run debug unit, integration, and fuzz tests
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@develop
         with:
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
@@ -146,7 +146,7 @@ jobs:
         run: ./scripts/windows/Invoke-HostTests.ps1 -ContainerRoot 'C:\ws'
 
       - name: Build and run all Windows app configs
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@develop
         with:
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
@@ -160,7 +160,7 @@ jobs:
       # VERSION deliberately carries MSIX_VERSION (the four-component form)
       # here, as it did before: this step is the one that stamps the package.
       - name: Build, lint, and package MSIX/MSI
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@develop
         with:
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
@@ -203,7 +203,7 @@ jobs:
       # This repo's script, not the hub's New-Archive.ps1: the exe runtime-loads
       # ONNX Runtime, and the zip must carry the chain-built copy staged beside it.
       - name: Create archive
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@develop
         with:
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}

@@ -67,7 +67,7 @@ jobs:
     # freeze files that have rows - comment-size, code-complexity,
     # dead-functions - were seeded from the first run and are committed; the
     # rest are empty by being absent, which the gates read as a zero baseline.
-    uses: Kataglyphis/ANTfrastructure/.github/workflows/lint-gates.yml@main
+    uses: Kataglyphis/ANTfrastructure/.github/workflows/lint-gates.yml@develop
     with:
       submodules: 'true'
       exclude: third_party
@@ -116,7 +116,7 @@ jobs:
   # the script is Windows-native and PSScriptAnalyzer is a Windows-image
   # module. Two runners in one workflow is the shape, not an accident.
   powershell-lint:
-    uses: Kataglyphis/ANTfrastructure/.github/workflows/python-ci-windows.yml@main
+    uses: Kataglyphis/ANTfrastructure/.github/workflows/python-ci-windows.yml@develop
     # No `secrets:` block on purpose: `GHCR_PAT` is optional upstream since
     # 604294e2 and this call pulls no image, so there is no token to forward.
     with:
@@ -159,7 +159,7 @@ jobs:
           submodules: true
 
       - name: Repo generated-artifact hygiene
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-pester-suite@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-pester-suite@develop
         with:
           path: scripts/windows/tests
           version: '3.4.0'
