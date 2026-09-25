@@ -17,6 +17,7 @@ protocol exists and the backlog is empty" — it was neither.
       `[patch.crates-io]` entry once egui 0.37 (or any release carrying
       emilk/egui#8516) is on crates.io, then move the egui family to it.
       Blocked on that release. Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.
+      Re-checked 2026-09-25: crates.io's newest `egui-winit` is still 0.36.2.
 
 - [b] Instanced normals shade differently from the equivalent node transform.
       `a_non_uniform_instance_scale_shades_like_the_same_node_scale` fails with
@@ -50,11 +51,19 @@ protocol exists and the backlog is empty" — it was neither.
       (122 minutes). Until a first always-on run says otherwise, expect this
       lane red; the fix belongs in `scripts/windows/`, not in an `if:` that
       turns the lane back into a `skipped` badge.
+      Status 2026-09-25: green on every push since run 36101777411 (hub
+      20bb0026), four in a row through 36162262349, the first run as a thin
+      caller of the hub's `container-ci-windows.yml`: 12 of 12 Build-Windows
+      steps, the config matrix, 163 renderer lib tests on the host and
+      `onnx-runtime` loading the bundle's chain ORT. Looks done; left open
+      for the owner to close.
 - [ ] Decide whether the Linux x64 feature check (`feature-matrix` in
       `linux-x64.yml`) should also run on every push. It is the one job still
-      behind a marker (`[build-features]`), five extra image pulls per run;
-      the 2026-09-24 always-on request named the x64, arm64 and Windows lanes
-      only.
+      behind a marker (`[build-features]`), six extra image pulls per run (one
+      per matrix row since the `gui_windows` row joined on 2026-09-24); the
+      2026-09-24 always-on request named the x64, arm64 and Windows lanes
+      only. As of 2026-09-25 it has never run: no commit message carries the
+      marker and the repository has no `workflow_dispatch` run.
 - [ ] The Linux lanes can only produce a tarball. ANTfrastructure's
       `package_archive.sh` writes the tar and stops; its `create_deb()` was
       deleted on 2026-08-08 as unreachable, and `--flatpak-manifest`,
@@ -76,7 +85,9 @@ protocol exists and the backlog is empty" — it was neither.
       `lib/app-packaging.sh` (it makes `ostree` a required flatpak tool and says
       so when it is missing): `06-packaging/package_archive.sh` is still
       byte-identical and still never reads `--flatpak-manifest`, so the row is
-      unmoved.
+      unmoved. Re-checked at hub `57ca2b14` (the pin on 2026-09-25):
+      `package_archive.sh` last changed in f2c8a78a, its 2026-08-11 restore,
+      and is still tar-only.
 
 ## Waiting on ANTfrastructure
 
@@ -96,6 +107,8 @@ What it DID close was not a row here but a comment: the `powershell-lint` job in
 `lint-gates.yml` is a `uses:` now, which is the one thing `49be50f0` offered and
 this repo declined.
 
+Each row now also says what a re-check at `57ca2b14`, the pin on 2026-09-25, found.
+
 - [b] Hub text still names this repo's retired workflow files. On
       2026-09-24 `rust_ubuntu26_04.yml` became `linux-x64.yml` +
       `linux-arm64.yml` over `reusable-linux.yml`, and `rust_windows2025.yml`
@@ -110,6 +123,19 @@ this repo declined.
       `windows/scripts/rust/New-Archive.ps1` and `CHANGELOG.md`.
       `docs/ci-build-triggers.md` still teaches `[build-win]`/`[build-arm]`,
       which this repo no longer reads. A hub change, not one to make here.
+      Re-checked at `57ca2b14`: the OxidANT CENSUS rows are gone from
+      `workflow-conventions.allow` (hub 0e3a3412), and `docs/ftp-deploys.md`,
+      `docs/shared-script-libraries.md`, `shellcheck-warnings.allow`,
+      `consumers.json` and `New-Archive.ps1`'s header now give the new name
+      beside the old; `docs/adopting-in-a-new-project.md` carries the rename
+      table. Still stale: `cargo_fmt_clippy.sh`'s pointer to
+      `rust_ubuntu26_04.yml:134-139`, and `docs/ci-build-triggers.md`, which
+      lists `windows-x64.yml` and `linux-arm64.yml` as skipped without their
+      markers. New since:
+      `.github/consumers.json` (the OxidANT entry's `note` and the
+      windows/scripts/rust row's `why`) still says this repo's Windows lane
+      reaches `New-Archive.ps1` by hub path. It stopped on 2026-09-23 (f018bec),
+      and no family repo calls that script now.
 - [b] `_cargo_wrapper.sh` needs the safe.directory guard that
       `lib/cmake-build.sh:140-144` already has, behind a `CARGO_SAFE_DIRECTORY`
       knob defaulting to `/workspace`, and `cargo_release/bench/build_doc/`
@@ -121,12 +147,15 @@ this repo declined.
       tree a container wrote back to the mount's uid:gid, which is a filesystem
       ownership problem. This one is git refusing a checkout for dubious
       ownership, which `git config --global --add safe.directory` fixes and
-      `chown` does not. Nothing here is replaced by it.
+      `chown` does not. Nothing here is replaced by it. Re-checked at
+      `57ca2b14`: still no safe.directory line in `_cargo_wrapper.sh`, and no
+      `CARGO_SAFE_DIRECTORY` anywhere in the hub.
 - [b] `Get-ANTfrastructurePin` (hub `windows/scripts/rust/Build-Windows.ps1`)
       belongs in `WindowsScripts.Shared.psm1`, so this repo's
       `Resolve-CargoToolPin` in `scripts/windows/Build-Windows.ps1` can be
       deleted and both sides share one implementation. Re-checked against hub
       49be50f0: the function is still only in that one script, still blocked.
+      Re-checked at `57ca2b14`: unchanged.
 - [b] The MSI Packaging step of `scripts/windows/Build-Windows.ps1` should
       become a hub `windows/scripts/rust/New-MsiPackage.ps1` (or a
       `WindowsMsix.Common` function) taking `-WxsFile -LicenseFile
@@ -136,6 +165,12 @@ this repo declined.
       Re-checked against hub 49be50f0: `windows/scripts/rust/` is still
       Build-Windows.ps1, New-Archive.ps1 and New-MsixPackage.ps1, with no
       `New-MsiPackage` anywhere in the tree -- still blocked.
+      Re-checked at `57ca2b14`: no MSI function anywhere in the hub. Since
+      2026-09-25 the step also passes the arch (`wix build -arch`) and a
+      generated `PayloadDlls` fragment, so the function would need `-Arch` and
+      the DLL list as well. The CMake repos build their MSIs through CPack's
+      WiX generator (the hub's `cmake/CPackCommon.cmake`), so this repo would
+      be its only caller.
 - [b] Decide the fate of the hub's `windows/scripts/rust/Build-Windows.ps1`:
       it has zero consumers, does `rustup component add` against an offline
       rustup and builds `--all-features`. Either make it callable
@@ -143,17 +178,21 @@ this repo declined.
       rustup calls, no scoop block) or delete it and record OxidANT as the
       owner of the Windows Rust build. Re-checked against hub 49be50f0:
       unchanged, and still the sole home of `Get-ANTfrastructurePin` above, so
-      the two rows are decided together.
+      the two rows are decided together. Re-checked at `57ca2b14`: still
+      `rustup component add`, `--all-features` and the scoop block.
 - [b] `docs/adopting-in-a-new-project.md` section 8 should list
       `scripts/windows/container/` as "scripts that run inside the Windows
       image" - the casing convention this repo now follows everywhere.
       Re-checked against hub 49be50f0: the file is untouched by that bump and
+      § 8 still does not name it. Re-checked at `57ca2b14`: the file changed,
       § 8 still does not name it.
 - [b] The MSIX certificate trust dance (importing into `LocalMachine\Root`
       *and* `LocalMachine\TrustedPeople`, `0x800B0109`, `Get-AppxLog`) is
       still written out in this repo's README. It belongs in the hub's
       `windows/scripts/certificates/README.md`, which today covers only
-      `TrustedPeople`. Re-checked against hub 49be50f0: unchanged.
+      `TrustedPeople`. Re-checked against hub 49be50f0: unchanged. Re-checked at
+      `57ca2b14`: unchanged, and README's MSIX section still carries the dance
+      after its 2026-09-25 rewrite.
 - [b] The module inventory in AGENTS.md section 2 carries rows with no upstream
       owner (`WindowsMsix.Common`, `WindowsConfig.Common`, `WindowsBuild.Common`,
       `WindowsScripts.Shared`, the rust drivers, `package_archive.sh`, the
@@ -165,12 +204,19 @@ this repo declined.
       bump, so only `WindowsMsix.Common` is still named (§ 7) and the table
       stays. The bump's new `WindowsMediaRuntime.Common` adds no row: it stages
       a GStreamer/ONNX DLL closure next to a built exe. Since 2026-09-23
-      `scripts/windows/` here stages exactly one runtime dependency itself:
-      the chain-built ONNX Runtime (Build-Windows.ps1's *Stage Chain ONNX
-      Runtime*, via the project-local `WindowsOrtPayload.Common`), because it
-      ships a payload per package rather than a whole media closure. The proof
+      `scripts/windows/` here stages the chain-built ONNX Runtime itself
+      (Build-Windows.ps1's *Stage Chain ONNX Runtime*, via the project-local
+      `WindowsOrtPayload.Common`), and since 2026-09-25 the rest of the DLL
+      closure too, with the hub's `Copy-PeImportClosure` over
+      `Get-ProductDllSearchPath` (`WindowsCrossBundle.Common`, not
+      `WindowsMediaRuntime.Common`) in its *Stage DLL Closure* step. The proof
       is the hub's ORT census (G6, `Test-OrtProvenanceTree`), which needs the
       hub pin at its ORT single-source commit of 2026-09-23 or later.
+      Re-checked at `57ca2b14`: § 7 names `WindowsMsix.Common` (with
+      `WindowsMsix.Signing` and `WindowsWebDav.Common`), § 8's sample imports
+      `WindowsScripts.Shared` and `WindowsBuild.Common`, and `docs/INDEX.md`
+      points at the module, library, template and action directories, but
+      nothing upstream lists the functions the table names, so it stays.
 
 ## Not adopted yet
 

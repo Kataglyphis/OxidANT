@@ -11,7 +11,7 @@ status lives in [webgpu-renderer-roadmap.md](webgpu-renderer-roadmap.md).*
 Status: **milestones 1–5 implemented** (2026-07-18) as
 `crates/webgpu_renderer`
 (`kataglyphis_webgpu_renderer`): wgpu context (wgpu 27 then; the crate is on
-wgpu 29 now) with headless + windowed
+wgpu 30 now) with headless + windowed
 paths, resize/Outdated/Lost-safe surface lifecycle (attachment sizes derive
 from the *acquired* frame texture, never the window), glTF loader
 (positions/normals/UVs/indices, node transforms, base-color materials, flat
@@ -140,9 +140,10 @@ asset, and attribute.**
   asset. A million-triangle photogrammetry mesh will also want milestone 3+
   (mipmapped textures) and possibly meshoptimizer-style decimation first.
 
-## Integration back into this repo
+## Integration back into BeschleunigerBallett
 
+Written when this plan lived in BeschleunigerBallett, the C++ engine's repository.
 Not required initially — the crate lives and builds in the Rust workspace. If
-desired later: a `RUST_WEBGPU` CMake option could build the viewer via
+desired later: a `RUST_WEBGPU` CMake option there could build the viewer via
 corrosion like the existing `oxidant` bridge, but the
 faster path is `cargo run --example viewer` during development.

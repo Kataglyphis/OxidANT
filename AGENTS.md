@@ -23,16 +23,17 @@ consumers, which is what makes renames expensive (see [Consumers](#consumers)).
 Cargo workspace (`Cargo.toml` at the root is both the workspace and the root package `oxidant` — a lib with `cdylib`/`staticlib`/`rlib` crate types plus the feature-gated `burn-demos` bin):
 
 - `crates/core` — core config/detection/logging (`kataglyphis_core`)
-- `crates/telemetry` — resource monitoring (`kataglyphis_telemetry`; has the unit tests)
-- `crates/inference` — ONNX backends, feature-gated (`onnx_tract`, `onnxruntime`, `onnxruntime_directml`, `onnxruntime_cuda`)
+- `crates/telemetry` — resource monitoring (`kataglyphis_telemetry`)
+- `crates/inference` — ONNX backends, feature-gated (`onnx_tract`, `onnxruntime`, `onnxruntime_directml`, `onnxruntime_cuda`), plus `ort_runtime`, which picks and verifies the chain-built ONNX Runtime
 - `crates/gui` — feature-gated GUI (`gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix`)
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/media` — GStreamer capture, feature-gated (`gstreamer`)
 - `crates/cat_webrtc` — cat-cam WebRTC producer (`kataglyphis_cat_webrtc`); consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/cat-stream/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
-- `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands; `stats --path <file>`). It was renamed from `oxidant` on 2026-08-07 — see the pdb note below.
-- `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{onnx,simple,webcam}.rs`, `src/webcam_engine.rs`) plus the `burn-demos` bin
-- `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
+- `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands, plus `onnx-runtime` when built with `onnxruntime_directml` or `onnxruntime_cuda`; `stats --path <file>`). It was renamed on 2026-08-07 from `kataglyphis_rustprojecttemplate`, the root package's name until 2026-09-05 — see the pdb note below. It is not the root package's bin, so `cargo run` needs `-p kataglyphis_cli`.
+- `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{onnx,simple,webcam}.rs`, `src/webcam_engine.rs`), the cxx bridge BeschleunigerBallett links (`src/native_only.rs`, compiled by `build.rs` with `cxx-build` on every non-wasm target) and the `burn-demos` bin
+- `tests/` — the root package's proptest fuzz tests (`fuzz_test.rs`), and the CLI's integration tests (`tests/integration/integration.rs`, compiled as `kataglyphis_cli`'s `integration` test through `crates/cli/tests/integration.rs`)
 - `third_party/ANTfrastructure` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
+- `third_party/egui-winit-0.36.2` — a vendored `egui-winit` with upstream emilk/egui#8516 applied, routed in by the root `Cargo.toml`'s `[patch.crates-io]` so the renderer's wasm32 demo compiles. Temporary; `PATCHED.md` there says how to remove it once egui 0.37 is out.
 
 ### Consumers
 
@@ -43,12 +44,15 @@ to be carried into each of them **in the same change**:
   through flutter_rust_bridge (Cargokit, podspecs, the committed `frb_generated.dart`
   loader stem) and `crates/cat_webrtc` for its Stream page
 - [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) —
-  `crates/webgpu_renderer` and `crates/gui` through Corrosion. The import is
-  `Src/CMakeLists.txt:74-80`: `corrosion_import_crate(MANIFEST_PATH
+  the root package through Corrosion, and `crates/webgpu_renderer` through plain
+  cargo (its wasm32 demo for the docs site, its test suite and the wasm size budget:
+  `scripts/linux/{docs-build-web,run-cargo-tests,wasm-size-budget}.sh` there). The
+  import is `Src/CMakeLists.txt:74-80`: `corrosion_import_crate(MANIFEST_PATH
   ../third_party/OxidANT/Cargo.toml CRATE_TYPES staticlib CRATES oxidant)`, guarded by
-  `if(RUST_FEATURES)`. It names the package `oxidant` and takes the **staticlib**, so
-  `[package] name`, `[lib] name` and the `crate-type` list are all part of that
-  repository's build.
+  `if(RUST_FEATURES)` (an ON/OFF option, so no cargo feature is enabled), followed by
+  `corrosion_add_cxxbridge(oxidant_bridge ...)` over `src/native_only.rs`. It names the
+  package `oxidant` and takes the **staticlib**, so `[package] name`, `[lib] name` and
+  the `crate-type` list are all part of that repository's build.
 
 ## 2. What ANTfrastructure owns — links only
 
@@ -142,10 +146,13 @@ papers over an SSH pin, but a bare `git submodule update` does not, and that is 
 with `Permission denied (publickey)`.
 
 There is one submodule, `third_party/ANTfrastructure`, and every gate in this repo comes
-out of it: the images both build lanes run in, the shellcheck/actionlint/gitleaks
-binaries the lint lane bootstraps, the packaging and docs drivers, the Windows modules.
+out of it: the shellcheck/actionlint/gitleaks binaries the lint lane bootstraps, the
+cargo, packaging and docs drivers, the Windows modules and the ORT census (G6).
 A drifted gitlink does not degrade one job — it silently changes every gate, and
 `git submodule status` marks it with a `+` that is easy to miss in a wall of CI output.
+The images are the exception: the lanes take them from the hub's actions and reusable
+workflows at `@develop`, which read `versions.env` at that ref, not at the pin
+(6122a28, 2026-09-25).
 
 Guarded by ANTfrastructure's own repo-agnostic Pester suite, run after any pin bump from
 [`.github/workflows/submodule-pins.yml`](.github/workflows/submodule-pins.yml) — which
@@ -176,19 +183,19 @@ rather than linked.
 ### The two traps a Windows checkout hits before anything runs
 
 - **A CRLF checkout breaks it before anything runs.** The scripts are executed by bash inside the container; a `\r` makes it fail with `set: pipefail\r: invalid option name`, which names neither the file nor line endings. `.gitattributes` now pins `*.sh` to LF in both repos, but git does not rewrite an existing checkout: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`
-- **The image's Rust may be older than its own pin.** See "Known gaps" — `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ANTfrastructure; check `rustc --version` in the container if a build fails on an MSRV floor.
+- **The image's Rust may be older than its own pin.** `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ANTfrastructure; check `rustc --version` in the container if a build fails on an MSRV floor.
 
 ### The bin was renamed, not the lib — do not undo it
 
-**The pdb collision is fixed — do not undo it by renaming the bin back.** Cargo used to warn that the root **lib** and the CLI **bin**, both named `oxidant`, wrote the same `oxidant.pdb` (it comes from the lib's `cdylib` crate type, not the rlib), and that this *"may become a hard error in the future"* — [rust-lang/cargo#6313](https://github.com/rust-lang/cargo/issues/6313).
+**The pdb collision is fixed — do not undo it by renaming the bin back.** Cargo used to warn that the root **lib** and the CLI **bin**, both then named `kataglyphis_rustprojecttemplate`, wrote the same `kataglyphis_rustprojecttemplate.pdb` (it comes from the lib's `cdylib` crate type, not the rlib), and that this *"may become a hard error in the future"* — [rust-lang/cargo#6313](https://github.com/rust-lang/cargo/issues/6313). Naming the bin `oxidant` today would bring the same collision back, with `oxidant.pdb`.
 
 The **bin** was renamed, not the lib, and that direction was deliberate: the C++ Vulkan engine imports the lib through Corrosion/cxxbridge (the generated `oxidant_bridge` target in the parent repo's CMake), so `[lib] name` decides DLL/LIB filenames that another repository depends on.
 
-What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Linux lane (`reusable-linux.yml` today) and `BINARY` in the Windows one (`windows-x64.yml`), the `-Binary` default in `Invoke-AppProfiles.ps1`, and `--bin` in `scripts/linux/run-person-detection.sh`.
+What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Linux lane (`reusable-linux.yml` today) and `BINARY` in the Windows one (then `rust_windows2025.yml`), the `-Binary` default in `Invoke-AppProfiles.ps1`, and `--bin` in `scripts/linux/run-person-detection.sh`. Since 2026-09-25 the Windows lanes set no `BINARY`; the exe name sits in their `artifact-name`, `host-command` and `run-command` (`windows-x64.yml`, `windows-arm64-cross.yml`).
 
 **`[lib] name` did change later, on 2026-09-05**, when the repository became OxidANT: `[package] name` and `[lib] name` are both `oxidant` now, so the artefacts are `oxidant.dll` / `liboxidant.so` / `liboxidant.a`. That is exactly the outside-this-repo break the paragraph above warns about, and it was only safe because every consumer was updated in the same commit — OmniAccelerANT's Cargokit wiring, podspecs, `Get-WindowsBuildConfig.ps1` and the committed `frb_generated.dart` loader stem, plus BeschleunigerBallett's Corrosion import. Renaming it again means finding those consumers again — they are listed under [Consumers](#consumers).
 
-The two `BINARY` variables still mean different things. In the **Windows** workflow (`windows-x64.yml`) it is the executable (`kataglyphis_cli`). In the **Linux** one (`reusable-linux.yml`, which both Linux lanes call) it is `oxidant`, and it names *both* the tarball and the file inside it: `package_archive.sh` copies `target/release/$BINARY_FILE` to `$ArchiveDir/$Binary`. So `BINARY_FILE` is the cargo artefact, `BINARY` is what a user ends up invoking.
+`BINARY` still means different things on the two platforms. On **Windows** it is an optional environment override of `Msix.Binary`, the executable `Build-Windows.ps1` builds and packages (`kataglyphis_cli`). In the **Linux** workflow (`reusable-linux.yml`, which both Linux lanes call) it is `oxidant`, and it names *both* the tarball and the file inside it: `package_archive.sh` copies `target/release/$BINARY_FILE` to `$ArchiveDir/$Binary`. So `BINARY_FILE` is the cargo artefact, `BINARY` is what a user ends up invoking.
 
 ### Inside the Stevedore Windows container
 
@@ -202,8 +209,8 @@ Because cargo is what makes it bite:
   a host whose Dev Drive filters were never allowed (symptom: `docker run` exits
   immediately with *"Der Dateisystem-Minifilter kann nicht an das
   Entwicklervolume angefügt werden"*). The permanent fix is a host setting — see
-  *Dev Drive filter setup* in the performance doc above; `-StageSources` is the
-  workaround, not the cure.
+  § *Transport B — bind mount (Dev Drive needs setup)* in the performance doc above;
+  `-StageSources` is the workaround, not the cure.
 - **Mount target must not already exist in the image** — hence `C:\ws-mnt`.
 - **Get container plumbing from the modules, never inline**: `Resolve-DockerExe`,
   `Get-ContainerIsolationArgs`, `Remove-BuildContainerSafe`, `Wait-ContainerExit`.
@@ -213,7 +220,7 @@ Because cargo is what makes it bite:
   container's stale exit code. `Wait-ContainerExit` replaced the driver's
   hand-rolled wait loop (which had no timeout, tested state fail-open, and read
   `docker inspect` through `2>$null`); the driver bounds it at `-TimeoutMinutes
-  60`, >10× the per-phase baselines below. The wait's own history and contract:
+  60`, >10× the per-phase baselines of 2026-08-07 in `CHANGELOG.md`. The wait's own history and contract:
   the submodule's `docs/windows-container-build-performance.md`, § *Reusable
   implementation*.
 - **Run containers named and without `--rm`** so logs and state survive a dropped
@@ -242,17 +249,17 @@ PowerShell treats the replacement side as a substitution template, so a value co
 
 ### Feature combinations and their system dependencies
 
-Default features are empty, so `cargo build` needs nothing. Each optional feature pulls system libraries that must already exist — **the CI container runs as uid 1001 and cannot `apt-get install` them**:
+Default features are empty, so `cargo build` needs no system library — only a C++ compiler, because the root package's `build.rs` compiles the cxx bridge (`src/native_only.rs`) on every non-wasm target. Each optional feature pulls system libraries that must already exist — **the CI container runs as uid 1001 and cannot `apt-get install` them**:
 
 | Feature | Needs | In the CI image? |
 | --- | --- | --- |
 | `gstreamer` (crates/media) | GStreamer dev files | **Yes** — source-built into `/opt/gstreamer`, on `PKG_CONFIG_PATH`. Do *not* install the distro `libgstreamer*-dev`: the image purges those on purpose. |
 | `gui_linux` | GStreamer + wgpu (pure Rust) | **Yes** — no GTK. It pulls the wgpu dependencies but compiles no GUI module of its own: the wgpu GUI (`crates/gui/src/gui_wgpu`) sits behind `gui_windows`. |
-| `gui_windows` | The same as `gui_linux` | **Yes** — despite the name it checks on Linux, and it is the only feature that compiles the wgpu GUI there, which is why the `feature-matrix` job carries it. |
+| `gui_windows` | The same as `gui_linux` | **Yes** — despite the name it checks on Linux, and it is the feature that compiles the wgpu GUI there (`gui_wgpu` enables it too: in `crates/gui` it is an alias of `gui_windows`), which is why the `feature-matrix` job carries it. |
 | `gui_unix` | `libgtk-4-dev` | **No, by design.** The foreign-arch GTK dev chain pulls target-side Python and breaks cross builds on `python3-minimal`'s postinst. This feature cannot be built against `:latest`. |
 | `onnxruntime`, `burn_demos` | Nothing at build time: every ORT feature is `load-dynamic`, and `download-binaries` (pyke's prebuilt ORT, plus `openssl-sys` for its TLS) is banned by the owner rule of 2026-09-23 — `scripts/linux/check-ort-chain-only.sh` gates it in CI. At run time, the image's chain-built ORT, which `crates/inference/src/ort_runtime.rs` finds (`ORT_DYLIB_PATH`, the exe's directory, then the image prefix — never a bare-name load) and refuses unless the file embeds the chain's ORT source path | **Yes** — `/usr/local/lib/onnxruntime-cpu/lib` (Linux), `$env:ONNX_ROOT\bin` (Windows). |
 
-On a plain Ubuntu box (e.g. the WSL recipe above) you *do* need the distro packages, because nothing there provides the source-built stack. That difference is exactly why "install the -dev package" is the wrong instinct when the image is involved.
+On a plain Ubuntu box (e.g. the WSL recipe below) you *do* need the distro packages, because nothing there provides the source-built stack. That difference is exactly why "install the -dev package" is the wrong instinct when the image is involved.
 
 **Every feature path lints clean** — measured 2026-08-07 on Ubuntu 24.04 with rustc 1.97.1, `cargo clippy --all-targets --locked --features <set> -- -D warnings`:
 
@@ -263,13 +270,13 @@ On a plain Ubuntu box (e.g. the WSL recipe above) you *do* need the distro packa
 | `gui_unix` | clean |
 | `burn_demos` | clean |
 
-Worth stating plainly because none of the non-default rows has *ever* been linted in CI: the Linux lane lints default features (which are empty) and the Windows lane's fmt/clippy silently skip. `crates/media`, `crates/gui` and the ONNX paths are unguarded, not neglected — the `feature-matrix` job exists to keep it that way.
+Worth stating plainly what CI lints of those rows. The Linux lanes lint default features only (which are empty). Since the Windows lanes went always-on (x64 2026-09-24, arm64 2026-09-25), `Build-Windows.ps1` runs `cargo clippy --all-targets --features gui_windows,onnxruntime_directml -- -D warnings` on the root package: that covers the members this set compiles (the wgpu GUI, the ORT backend), but not `crates/cli` or the GUI's inference overlay, which only the CLI's features switch on. The x64 lane's config matrix also *builds*, without linting, the CLI with `gui_windows` alone and with each inference backend. `crates/media`, `gui_linux` and the burn demos are unguarded, not neglected — the `feature-matrix` job exists to close that.
 
 Note the feature names belong to the **root package**. `cargo clippy --workspace --features gstreamer` fails with *"package `kataglyphis_gui` does not have feature `gstreamer`"* because `--workspace` applies the list to every member; drop `--workspace` to scope it to the root.
 
 ### Do not let `cargo update` take zune-core to 0.5.2
 
-`zune-core` is held at **0.5.1** in `Cargo.lock` on purpose. 0.5.2 breaks `zune-jpeg` 0.5.15:
+`zune-core` is held at **0.5.1** in `Cargo.lock` on purpose. 0.5.2 broke `zune-jpeg` 0.5.15:
 
 ```
 error: macro expansion ends with an incomplete expression: expected expression
@@ -277,9 +284,9 @@ error: macro expansion ends with an incomplete expression: expected expression
 error: could not compile `zune-jpeg` (lib) due to 1 previous error
 ```
 
-zune-jpeg consumes a macro from zune-core, and 0.5.2 changed it. **There is no forward fix**: 0.5.15 is zune-jpeg's newest release and 0.5.2 is zune-core's, so the two are incompatible at their respective tips. Both arrive transitively (via `image`, into the renderer), so nothing in a `Cargo.toml` pins them — only the lockfile does.
+zune-jpeg consumes a macro from zune-core, and 0.5.2 changed it. **There was no forward fix** when this was written (2026-08-07): 0.5.15 was zune-jpeg's newest release and 0.5.2 zune-core's, so the two were incompatible at their respective tips. Both arrive transitively (via `image`, into the renderer), so nothing in a `Cargo.toml` pins them — only the lockfile does.
 
-A bare `cargo update` reintroduces it silently, and it only shows up in a **release** build of the full workspace; `cargo test` and `cargo check -p ...` stay green because they never reach that crate. If you run `cargo update`, put it back:
+A bare `cargo update` used to reintroduce it silently (see the re-check below), and it only showed up in a **release** build of the full workspace; `cargo test` and `cargo check -p ...` stay green because they never reach that crate. If you run `cargo update`, put it back:
 
 ```bash
 cargo update -p zune-core --precise 0.5.1
@@ -287,9 +294,17 @@ cargo update -p zune-core --precise 0.5.1
 
 Re-check when zune-jpeg publishes past 0.5.15.
 
+**Re-checked 2026-09-25: the upstream half is fixed.** zune-core 0.5.2 is yanked on
+crates.io, so `cargo update` no longer resolves it, and 0.5.3 (published 2026-08-07,
+the same day) is the newest release. A scratch crate pinning `zune-jpeg = "=0.5.15"`
+and `zune-core = "=0.5.3"` passes `cargo check` and `cargo build --release`. So the
+hold at 0.5.1 can move with `cargo update -p zune-core --precise 0.5.3`, once a
+full-workspace release build confirms it. zune-jpeg's newest release is still 0.5.15
+(0.5.16-rc2 is a pre-release).
+
 ### Known gaps
 
-- **No always-on CI lane builds any optional feature.** Both Linux lanes build default features; the Windows lane builds `gui_windows,onnxruntime_directml` only (on every push since 2026-09-24). So `crates/media` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `linux-x64.yml` closes this, but it is still opt-in (`[build-features]`), and only once the build image ships the three package groups in the table above.
+- **No always-on Linux lane builds any optional feature.** Both Linux lanes build default features. The Windows lanes build `gui_windows,onnxruntime_directml` (x64 since 2026-09-24, arm64 since 2026-09-25), and the x64 lane's config matrix adds `gui_windows` with `onnx_tract` and with `onnxruntime_cuda`. So `crates/media`, `gui_linux` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `linux-x64.yml` closes this, and the image already carries what its rows need (the table above), but it is still opt-in (`[build-features]` or a manual run) and has never run: as of 2026-09-25 no commit message carries the marker and the repository has no `workflow_dispatch` run.
 
 - **No CI lane has a GPU, so the golden tests never actually run.** `GpuContext::headless_or_skip()` returns `None` and every one of the ~40 headless render tests reports as passed having drawn nothing. This is not theoretical: running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**:
 
@@ -387,7 +402,7 @@ script's own contribution to the loader path.
 
 ### Build & test in the Stevedore Windows container
 
-Driver: `scripts\windows\container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`Build-RustAll.ps1`, `Test-RustAll.ps1`) in the family Windows CI image, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
+Driver: `scripts\windows\container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`Build-RustAll.ps1`, `Test-RustAll.ps1`) in the family Windows CI image, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`. It does not run the CI lane: that is `scripts/windows/Invoke-WindowsLane.ps1` (see [Continuous integration](#continuous-integration)), which no local driver here wraps yet.
 
 **No image reference is written in this repository, and that includes this
 file.** The driver's `-Image` parameter defaults to empty and is filled in by
@@ -425,7 +440,7 @@ Seven workflow files: six triggered, one reusable. The four build lanes — one 
 | --- | --- | --- | --- |
 | Lint gates | `lint-gates.yml` (job `lint-gates`) | every push/PR to `main`/`develop` | none — the hub's reusable `lint-gates.yml` with `ratchets: true`; the same aggregator `bash scripts/linux/run-lint-gates.sh` runs locally |
 | Lint gates | `lint-gates.yml` (job `powershell-lint`) | same | none — the hub's reusable `python-ci-windows.yml` with `build-python-package: false`, `lint-powershell: true`, `lint-path: scripts`, and no `secrets:` block; `Invoke-Lint.ps1 -Path scripts -FailOnAnalyzer` on `windows-2025` |
-| Lint gates | `lint-gates.yml` (job `generated-artifacts`) | same | none — `scripts/windows/tests/` under Pester 3.4.0 on `windows-2025` |
+| Lint gates | `lint-gates.yml` (job `generated-artifacts`) | same | none — every suite in `scripts/windows/tests/` (the generated-artifacts check, `CargoTarget` and `OrtPayload`) under Pester 3.4.0 on `windows-2025` |
 | Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — the hub's reusable `submodule-pins.yml` (`Submodule.Pins.Tests.ps1`, Pester 3.4.0, `windows-2025`) |
 | Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push/PR to `main`/`develop`, and `workflow_dispatch` | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
 | Linux arm64 · build + test | `linux-arm64.yml` → `reusable-linux.yml` | same | same image (a multi-arch index); native `ubuntu-26.04-arm`, no QEMU |
@@ -518,12 +533,12 @@ Facts that cost real debugging time:
 
 - **The arm64 lane runs natively on `ubuntu-26.04-arm`, on every push since 2026-09-24.** It was opt-in via `[build-arm]` for runner minutes before that, never because it could not pass: `:latest` (then `:latest-cross`) has been a multi-arch index since 2026-09-04.
 - **Linux artifacts are named by `VERSION`, not by `github.ref_name`.** On a pull request the ref name is `<number>/merge`, `upload-artifact` refuses a `/` in a name, and every PR run of the Linux lane went red at *Upload all artifacts* with the build, tests and package green (run 35752031200, 2026-09-22). Fixed on 2026-09-24, when the lane started running on every PR on both architectures.
-- **Every container step of both Linux lanes is one named step of one script**, `scripts/linux/ci-container-steps.sh` (`debug`, `security`, `fmt-clippy`, `test`, `coverage`, `bench`, `release`, `docs`). Each step used to inline its own `bash -lc 'set -e; git config --global --add safe.directory /workspace; bash third_party/.../cargo_<x>.sh'` — the same prologue eight times. Reproduce any step by hand with `bash scripts/linux/ci-container-steps.sh <step>` inside the image; `reusable-linux.yml` runs exactly that line.
+- **Every cargo step of both Linux lanes is one named step of one script**, `scripts/linux/ci-container-steps.sh` (`ort-chain-only`, `debug`, `security`, `fmt-clippy`, `test`, `coverage`, `bench`, `release`, `docs`). Each step used to inline its own `bash -lc 'set -e; git config --global --add safe.directory /workspace; bash third_party/.../cargo_<x>.sh'` — the same prologue eight times. Reproduce any step by hand with `bash scripts/linux/ci-container-steps.sh <step>` inside the image; `reusable-linux.yml` runs exactly that line. The one container step outside it is the tarball, which calls ANTfrastructure's `package_archive.sh` directly.
 - **`cargo fmt`/`cargo clippy` run through ANTfrastructure's `cargo_fmt_clippy.sh`** like every other step — `fmt-clippy` was the one case that did not delegate, and stopped being one on 2026-09-15. Two things had to change upstream first, and both did: the driver's old first line `rustup component add rustfmt` exited 127 on an image without rustup (it probes first now — header: PROBE, DO NOT ADD), and `--all-features` was hard-coded at its line 40, which this image cannot build (GTK4/ORT, see the last bullet). The scope is `CARGO_CLIPPY_ARGS`, set to `--workspace --locked` in `scripts/linux/ci-container-steps.sh`. That exit 127 was masked by `continue-on-error: true` for months and let an entire crate reach the default branch unformatted and with 12 clippy errors — the step gates now.
 - **The docs publish follows the repository's own default branch**, not a typed `refs/heads/main`. It asks for `format('refs/heads/{0}', github.event.repository.default_branch)`, and so does `cancel-in-progress`. The literal was wrong for as long as `main` was abandoned and `develop` carried every commit: the comment said "only publish from the default branch" while the condition matched a branch nobody pushed to, so <https://rust.jonasheinle.de> was never republished at all. A red **Security checks** step has the same effect for a different reason — the publish is the last step of that job.
 - **The container runs as uid 1001, not root.** `apt-get` fails with `Permission denied`, so a workflow step cannot install system packages — whatever the image lacks, it lacks. And `CARGO_HOME=/usr/local/cargo` is root-owned, so every writing cargo step needs `-e CARGO_HOME=/tmp/cargo-home`.
 - **The lint gate runs default features on purpose.** `--all-features` would need GTK4 headers (`gui_unix`), which the image has not got and uid 1001 cannot install.
-- **The Windows lane pins its cargo tools.** `scripts/windows/Build-Windows.ps1` installs cargo-audit and cargo-deny with `--version`, read from `$env:CARGO_AUDIT_VERSION` / `$env:CARGO_DENY_VERSION` (baked into the image) and falling back to the submodule's `versions.env` through `ConvertFrom-VersionsEnv`; unresolvable **throws**. Unpinned, `cargo install` takes whatever crates.io serves that minute, so a new advisory-db schema turns the lane red with no commit to bisect. There is no try/catch around the install any more either — a swallowed failure left both gates running whatever was on PATH.
+- **The Windows x64 lane pins its cargo tools** (the arm64 cross build runs no audit/deny). `scripts/windows/Build-Windows.ps1` installs cargo-audit and cargo-deny with `--version`, read from `$env:CARGO_AUDIT_VERSION` / `$env:CARGO_DENY_VERSION` (baked into the image) and falling back to the submodule's `versions.env` through `ConvertFrom-VersionsEnv`; unresolvable **throws**. Unpinned, `cargo install` takes whatever crates.io serves that minute, so a new advisory-db schema turns the lane red with no commit to bisect. There is no try/catch around the install any more either — a swallowed failure left both gates running whatever was on PATH.
 - **`cargo_security_checks.sh` is a gating step, not an advisory one.** The *Security checks (cargo audit + cargo deny)* step in `reusable-linux.yml` (so in both Linux lanes) runs ANTfrastructure's `linux/scripts/02-toolchain/rust/cargo_security_checks.sh`, and a finding fails the lane — which also means the docs publish at the end of the x64 lane never runs while it is red. It reads **two** ignore lists and they must stay byte-identical in content: `.cargo/audit.toml` (cargo-audit) and `deny.toml` `[advisories].ignore` (cargo-deny). An id added to one and not the other buys nothing — the other tool still reports it. Prefer an upgrade over an ignore: `chacha20` 0.10.1 (yanked) and `stable-vec` 0.4.2 (unsound) both had one, so neither is on either list.
 
 Lint the workflows locally with the submodule's pinned, SHA-verified actionlint (works from Git Bash on Windows):
@@ -536,9 +551,9 @@ The trailing `.` is load-bearing: without it the script lints ANTfrastructure's 
 
 ### Dependency upgrades
 
-Renovate, run as a **local CLI**. Both lanes above build inside images the
-`third_party/ANTfrastructure` pin decides, so that gitlink drifting is a silent
-change to every gate — and nothing watched it before this wrapper existed.
+Renovate, run as a **local CLI**. Every lane above runs its gates, drivers and
+modules out of the `third_party/ANTfrastructure` pin (§ 3), so that gitlink drifting
+is a silent change to every gate — and nothing watched it before this wrapper existed.
 
 ```bash
 bash scripts/linux/renovate-local.sh                    # report (default: git-submodules)
@@ -573,10 +588,11 @@ The script header covers the rest; the family rationale is
 ## 6. Docs owned by this repo
 
 `AGENTS.md` (this file), `README.md`, `BACKLOG.md`, `CHANGELOG.md`,
-`crates/webgpu_renderer/README.md` and the renderer's design documents in
-`crates/webgpu_renderer/docs/`. Rustdoc is published from the default branch to
-<https://rust.jonasheinle.de> by the Linux lane's last step. Update the docs in the same
-change as the behaviour they describe.
+`crates/webgpu_renderer/README.md`, the renderer's design documents in
+`crates/webgpu_renderer/docs/`, and `third_party/egui-winit-0.36.2/PATCHED.md` (the
+vendored crate's provenance and removal steps). Rustdoc is published from the default
+branch to <https://rust.jonasheinle.de> by the Linux x64 lane's last step. Update the
+docs in the same change as the behaviour they describe.
 
 ### Where the renderer's design documents live
 
@@ -596,11 +612,13 @@ path, not a copy. Four pages describe both renderers and stayed there.
 | `webgpu-srgb-audit.md` | stays in BeschleunigerBallett |
 
 **The two halves are referenced differently, and the difference is the point.** The
-three that live here are `docs/<name>.md` *relative to the crate* — in
-`crates/webgpu_renderer/README.md`, in `src/lib.rs` and twice in
-`src/render/bounds.rs`. That path now resolves in every checkout, which is what the
-move bought: this repo is built standalone, from OmniAccelerANT and from
-BeschleunigerBallett (see [Consumers](#consumers)), and before the move a relative
+three that live here are referenced by relative path — `docs/<name>.md` from
+`crates/webgpu_renderer/README.md`, and relative to the file in code: `../docs/…` in
+`src/lib.rs` and `../../docs/…` twice in `src/render/bounds.rs` (the docs
+cross-reference gate resolves a bare `docs/…` in code from the repo root). Those paths
+now resolve in every checkout, which is what the move bought: this repo is built
+standalone, from OmniAccelerANT and from BeschleunigerBallett (see
+[Consumers](#consumers)), and before the move a relative
 `docs/` prefix meant *the superproject's* root and pointed at nothing in two of the
 three. The four that stayed are still absolute URLs
 (`https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/<name>.md`)

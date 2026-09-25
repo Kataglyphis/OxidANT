@@ -41,11 +41,11 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 - [Tests](#tests)
 - [Run](#run)
 - [Analysis](#analysis)
-- [Cameras](#cameras)
 - [Docs](#docs)
 - [Updates](#updates)
   - [Dependency upgrades: Renovate as a local CLI](#dependency-upgrades-renovate-as-a-local-cli)
   - [Installed cargo binaries](#installed-cargo-binaries)
+- [Cameras](#cameras)
 - [Contributing](#contributing)
 - [License](#license)
 - [Contact](#contact)
@@ -64,8 +64,10 @@ that runs natively (Vulkan/DX12/Metal) and in the browser (wasm32 + WebGPU): PBR
 with IBL, cascaded shadow maps, SSAO, bloom, GPU skinning, animations, LOD, hot
 shader reload, and headless golden tests. See
 [`crates/webgpu_renderer/README.md`](crates/webgpu_renderer/README.md) for the
-demos and the SPIR-V/GLSL shader-export pipeline it shares with the C++ Vulkan
-engine in BeschleunigerBallett.
+demos, and for how it shares its shaders with the C++ Vulkan engine in
+BeschleunigerBallett: one Slang source compiles to the engine's SPIR-V and to the
+WGSL checked in under `crates/webgpu_renderer/src/shaders/` (`histogram.wgsl` alone
+is hand-written).
 
 Containers, PowerShell and CI plumbing are **not** duplicated here. They belong to
 [Kataglyphis ANTfrastructure](https://github.com/Kataglyphis/ANTfrastructure), the
@@ -87,7 +89,7 @@ other repositories, so its `[lib] name` is not free to change.
 | `crates/gui` | `kataglyphis_gui` | Feature-gated GUI: `gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix` |
 | `crates/webgpu_renderer` | `kataglyphis_webgpu_renderer` | wgpu glTF renderer, native and wasm32/WebGPU: PBR+IBL, cascaded shadows, SSAO, bloom, skinning, animations, LOD, headless golden tests |
 | `crates/cat_webrtc` | `kataglyphis_cat_webrtc` | Cat-detection WebRTC producer; consumed by OmniAccelerANT's Stream page |
-| `crates/cli` | `kataglyphis_cli` | The CLI binary (`read` / `stats` / `gui`) |
+| `crates/cli` | `kataglyphis_cli` | The CLI binary (`read` / `stats` / `gui`, plus `onnx-runtime` with an `onnxruntime_*` feature) |
 | `src/` | `oxidant` | The root package: the flutter_rust_bridge surface for OmniAccelerANT, plus the feature-gated `burn-demos` bin |
 
 **Default features are empty.** GUI, ONNX, GStreamer and the burn demos only
@@ -97,8 +99,9 @@ libraries — [AGENTS.md](AGENTS.md) has the feature/dependency table.
 Two repositories build this one as a submodule, so a rename has to be carried into
 both: [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) (the root
 package through flutter_rust_bridge, and `crates/cat_webrtc`) and
-[BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett)
-(`crates/webgpu_renderer` and `crates/gui` through Corrosion).
+[BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) (the
+root package as a staticlib through Corrosion, and `crates/webgpu_renderer` through
+cargo for its wasm demo and its tests).
 
 ### Dependencies
 
@@ -124,10 +127,10 @@ To see what is behind *before* moving anything — crates **and** the gitlink,
 which is decided by Renovate rather than by a version bound — see
 [Dependency upgrades](#dependency-upgrades-renovate-as-a-local-cli).
 
-One lockfile entry is pinned by hand and a bare `cargo update` will undo it:
-`zune-core` is held at 0.5.1 because 0.5.2 breaks `zune-jpeg` 0.5.15, and it only
-shows up in a release build. [AGENTS.md](AGENTS.md) has the detail and the
-one-line fix.
+One lockfile entry is pinned by hand: `zune-core` is held at 0.5.1 because 0.5.2
+broke `zune-jpeg` 0.5.15 in release builds. 0.5.2 has since been yanked, and 0.5.3
+compiles with zune-jpeg 0.5.15 (checked 2026-09-25), so a bare `cargo update` now
+resolves a working version. [AGENTS.md](AGENTS.md) has the detail.
 
 ### Useful tools
 
@@ -137,11 +140,13 @@ one-line fix.
 <!-- GETTING STARTED -->
 ## Getting Started
 
-You need a Rust toolchain and the submodule. The toolchain version the CI images
-and every gate use is `RUST_VERSION` in
+You need a Rust toolchain, a C++ compiler and the submodule. The toolchain version
+the CI images and every gate use is `RUST_VERSION` in
 [`third_party/ANTfrastructure/linux/scripts/01-core/versions.env`](third_party/ANTfrastructure/linux/scripts/01-core/versions.env) — read it there rather than
-pinning a number here, which is how the last one went stale. Nothing else is
-needed for a default-feature build.
+pinning a number here, which is how the last one went stale. The C++ compiler is for
+the root package's `build.rs`, which compiles the cxx bridge in `src/native_only.rs`
+(on Windows, the Visual Studio C++ build tools, which the MSVC Rust toolchain needs
+to link anyway). Nothing else is needed for a default-feature build.
 
 ```bash
 git clone --recurse-submodules https://github.com/Kataglyphis/OxidANT.git
@@ -174,8 +179,8 @@ KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked
 
 The suites live in:
 
-- Unit tests inside the workspace crates (currently `kataglyphis_telemetry`).
-- Integration tests: `tests/integration.rs`.
+- Unit tests inside the workspace crates (`kataglyphis_telemetry`, `kataglyphis_inference`, and the renderer's own suite).
+- Integration tests: `tests/integration/integration.rs`, which run the CLI and are compiled as `kataglyphis_cli`'s `integration` test (`crates/cli/tests/integration.rs`).
 - Fuzz (property-based) tests: `tests/fuzz_test.rs` via [proptest](https://proptest-rs.github.io/proptest/) (256 random inputs per case by default). There is no separate `cargo-fuzz`/libFuzzer setup.
 
 Latest verified run (2026-08-07, Stevedore Windows container): the 8 tests that predate `crates/webgpu_renderer` pass — 3 integration, 1 proptest fuzz case, 4 telemetry unit.
@@ -197,8 +202,12 @@ Not a regression either way — the old "8 passed" figure was recorded a day bef
 
 <!-- ROADMAP -->
 ## Run
+
+The CLI is its own package, not the root one (whose only bin is `burn-demos`), so
+`cargo run` needs `-p kataglyphis_cli`:
+
 ```bash
-cargo run -- read --path ../README.md
+cargo run -p kataglyphis_cli -- read --path README.md
 ```
 
 ### Windows: GStreamer + ONNX Overlay (WGPU)
@@ -206,7 +215,7 @@ cargo run -- read --path ../README.md
 Build + Run (CPU via tract):
 
 ```bash
-cargo run --bin kataglyphis_cli --features gui_windows,onnx_tract -- gui --backend dx12
+cargo run -p kataglyphis_cli --features gui_windows,onnx_tract -- gui --backend dx12
 ```
 
 Every `onnxruntime*` feature loads ONNX Runtime at run time and downloads
@@ -216,13 +225,23 @@ nothing at build time. The only ORT it may load is the family's chain build
 that file (plus `DirectML.dll` and `onnxruntime_providers_shared.dll`) next to
 the exe or point `ORT_DYLIB_PATH` at it. There is no fallback to the
 `onnxruntime.dll` Windows ships in System32, and any file that is not the chain
-build (a pip wheel's, a GitHub release's) is refused at load time. The release
-zip, MSIX and MSI carry the chain copy already.
+build (a pip wheel's, a GitHub release's) is refused at load time. The portable
+bundle (`dist\windows-<x64|arm64>\bundle`), MSIX and MSI carry the chain copy
+already.
+
+To check which ONNX Runtime an exe gets without starting the GUI, build it with an
+`onnxruntime_*` feature and run its `onnx-runtime` subcommand; it prints the path it
+loaded, or fails when no chain ORT loads. Both Windows lanes run it on the packaged
+exe:
+
+```bash
+cargo run -p kataglyphis_cli --features onnxruntime_directml -- onnx-runtime
+```
 
 Build + Run (ONNX Runtime + DirectML):
 
 ```bash
-cargo run --bin kataglyphis_cli --features gui_windows,onnxruntime_directml -- gui --backend dx12
+cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- gui --backend dx12
 ```
 
 Build + Run (ONNX Runtime + CUDA, NVIDIA):
@@ -230,29 +249,35 @@ Build + Run (ONNX Runtime + CUDA, NVIDIA):
 ```bash
 # PowerShell
 $env:KATAGLYPHIS_ORT_DEVICE="cuda"
-cargo run --bin kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --backend dx12
+cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --backend dx12
 
 # CMD
 set KATAGLYPHIS_ORT_DEVICE=cuda
-cargo run --bin kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --backend dx12
+cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --backend dx12
 ```
 
 Optional environment variables:
 
-- `KATAGLYPHIS_ONNX_MODEL` – path to the ONNX model (default: `models/yolov10m.onnx`)
+- `KATAGLYPHIS_ONNX_MODEL` – path to the ONNX model (default: the checkout's
+  `resources/models/yolov10m.onnx`, a path fixed at compile time. The portable
+  bundle and the MSIX ship the model under `resources\models\` (the MSI does not),
+  but a packaged exe still has to be pointed at it with this variable)
 - `KATAGLYPHIS_ONNX_BACKEND` – `tract` or `ort` (default: automatic)
 - `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (default: `cpu`)
 - `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (default: `stretch`)
 - `KATAGLYPHIS_SWAP_XY` – set to `1` if the model output swaps X and Y (default: `0`)
 - `KATAGLYPHIS_SCORE_THRESHOLD` – detection score threshold (default: `0.5`)
-- `KATAGLYPHIS_INFER_EVERY_MS` – inference interval in ms (default: `100`, `0` = every frame)
+- `KATAGLYPHIS_INFER_EVERY_MS` – minimum interval between inference requests in ms (default: `0`: the next frame goes out as soon as the previous result is back)
 
 CUDA notes:
 
 - Needs the NVIDIA driver plus the CUDA/cuDNN runtime on the machine, and a
   chain-built ONNX Runtime with the CUDA provider beside `onnxruntime.dll`.
   Nothing is copied from a download cache any more.
-- If CUDA initialisation fails, `KATAGLYPHIS_ORT_DEVICE=auto` falls back to CPU.
+- If registering the CUDA provider fails, `KATAGLYPHIS_ORT_DEVICE=auto` falls back
+  to ONNX Runtime on the CPU. An ONNX Runtime built without the CUDA provider is
+  not covered by that: `auto` then gives up on ORT and uses tract if the build has
+  `onnx_tract`, and fails otherwise.
 
 The overlay shows FPS, inference latency, CPU/RSS and a CPU history, and inference
 can be toggled from it.
@@ -265,13 +290,13 @@ cargo +nightly check --manifest-path Cargo.toml --target wasm32-unknown-unknown 
 ### Resource usage logging (CPU/GPU/RAM)
 
 ```bash
-cargo run --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-interval-ms 1000 --resource-log-gpu=true gui
+cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-interval-ms 1000 --resource-log-gpu=true gui
 ```
 
 Optional, also write it to a file:
 
 ```bash
-cargo run --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-file .\resource.log gui
+cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-file .\resource.log gui
 ```
 
 ### Burn / PyTorch-replacement demos
@@ -293,19 +318,19 @@ cargo run --features burn_demos --bin burn-demos -- xor --epochs 2000 --lr 0.05
 
 cargo run --features burn_demos --bin burn-demos -- two-moons --epochs 200 --steps-per-epoch 50 --lr 0.01 --batch-size 256
 
-# ONNX Runtime YOLOv10m Demo (Default model: models/yolov10m.onnx)
+# ONNX Runtime YOLOv10m Demo (Default model: resources/models/yolov10m.onnx)
 cargo run --features burn_demos --bin burn-demos -- onnx-yolov10 --runs 1 --print-topk 3
 ```
 
 ### Windows
 ```bash
-cargo run --features gui_windows -- gui --backend dx12
+cargo run -p kataglyphis_cli --features gui_windows -- gui --backend dx12
 
 # Vulkan backend
-cargo run --features gui_windows -- gui --backend vulkan
+cargo run -p kataglyphis_cli --features gui_windows -- gui --backend vulkan
 
-# Auto-select (wgpu PRIMARY)
-cargo run --features gui_windows -- gui --backend primary
+# Auto-select (wgpu PRIMARY; also the default)
+cargo run -p kataglyphis_cli --features gui_windows -- gui --backend auto
 ```
 
 ### Windows: build & test in the Stevedore container
@@ -472,11 +497,12 @@ already installed in the image.
 
 ### Linux
 ```bash
-# WGPU (recommended)
-cargo run --features gui_wgpu -- gui --backend vulkan
+# WGPU (recommended). The CLI's wgpu GUI feature is gui_windows on every OS;
+# it has no gui_wgpu feature.
+cargo run -p kataglyphis_cli --features gui_windows -- gui --backend vulkan
 
 # GTK demo
-cargo run --features gui_unix -- gui
+cargo run -p kataglyphis_cli --features gui_unix -- gui
 ```
 
 ## Docs
