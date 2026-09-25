@@ -81,6 +81,7 @@ Import-BuildModule @(
   'WindowsBuild.Common'     # build context/log/step primitives, Sync-BuildArtifacts
   'WindowsConfig.Common'    # Get-OrDefault, Get-ConfigValue
   'WindowsMsix.Common'      # Get-PackageVersion, Invoke-MsixPackage
+  'WindowsMsix.Signing'     # Invoke-MsixSign, which Invoke-MsixPackage -Sign calls
   'WindowsOrtPayload.Common' # project-local: stage the chain ONNX Runtime, build + prove payloads
   'WindowsTargetArch.Common' # the arch facts: accepted spellings, cross or not, the Rust triple
   'WindowsCargoTarget.Common' # project-local: where each arch's build lands, what packages call it
@@ -422,7 +423,8 @@ try {
           '__STORE_LOGO_REL__'              = 'Assets/StoreLogo.png'
           '__LOGO44_REL__'                  = 'Assets/Square44x44Logo.png'
           '__LOGO150_REL__'                 = 'Assets/Square150x150Logo.png'
-        } | Out-Null
+        } `
+        -Sign -SigningRoot $workspacePath | Out-Null
 
       Write-BuildLogSuccess -Context $context -Message "MSIX package created: $packageFile"
     }

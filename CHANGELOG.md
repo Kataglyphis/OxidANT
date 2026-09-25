@@ -229,12 +229,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
   had `/opt/gcc-16.2.0` frozen into it.
 
 ### Fixed
-- **The README's MSIX signing route works again (2026-09-25).** It ran ANTfrastructure's
-  standalone `New-MsixPackage.ps1` over `packaging/msix/AppxManifest.template.xml`, but that
-  script fills `__PACKAGE_NAME__`-style tokens and the template carries the `__MSIX_*__`
-  tokens `Build-Windows.ps1` fills, so the manifest came out unfilled. The README now signs
-  the package `Build-Windows.ps1` writes, with `signtool` and a test certificate from the
-  hub's `GenerateCertificateMSIX.ps1`. Its MSIX and MSI paths follow `dist\windows-<arch>`.
+- **MSIX signing works, and `Build-Windows.ps1` does it (2026-09-25).** The README's
+  route ran ANTfrastructure's standalone `New-MsixPackage.ps1` over
+  `packaging/msix/AppxManifest.template.xml`, but that script fills `__PACKAGE_NAME__`-style
+  tokens and the template carries the `__MSIX_*__` tokens `Build-Windows.ps1` fills, so the
+  manifest came out unfilled. `Build-Windows.ps1`'s MSIX step now passes the hub's
+  `-Sign -SigningRoot`: a `*.pfx` at the repository root and `MSIX_PFX_PASSWORD` sign and
+  verify the package, and without one it stays unsigned, as in CI. The README makes a
+  test certificate with the hub's `GenerateCertificateMSIX.ps1`, and its MSIX and MSI
+  paths follow `dist\windows-<arch>`. Needs the hub commit where `-Sign` takes
+  `-SigningRoot`.
 - **The ORT payload suite follows the hub's stricter G6 fingerprint (2026-09-25).**
   Since hub e72a9a37, the census counts a source path as an ORT fingerprint only when it
   is a whole `__FILE__` string ending in NUL. The hub bump to 20bb0026, made for the
