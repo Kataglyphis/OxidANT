@@ -393,8 +393,9 @@ which is on `PATH` in a VS Developer PowerShell. ANTfrastructure's
 manifest's publisher, `CN=Kataglyphis` (the `Msix` block's `Publisher`):
 
 ```pwsh
-$pfx  = 'dist\windows-x64\msix\Kataglyphis.OxidANT.testcert.pfx'
+$pfx  = 'certs\Kataglyphis.OxidANT.testcert.pfx'   # *.pfx is gitignored; a rebuild never touches certs\
 $msix = 'dist\windows-x64\msix\Kataglyphis.OxidANT_<VERSION>_x64.msix'
+New-Item -ItemType Directory -Force -Path certs | Out-Null
 pwsh -File .\third_party\ANTfrastructure\windows\scripts\certificates\GenerateCertificateMSIX.ps1 `
   -Password '<TEST_CERT_PASSWORD>' -Publisher 'CN=Kataglyphis' -PfxPath $pfx
 signtool sign /fd SHA256 /f $pfx /p '<TEST_CERT_PASSWORD>' $msix
@@ -411,7 +412,7 @@ Installing a test-signed package needs an **elevated** PowerShell, because the
 certificate has to be trusted machine-wide first:
 
 ```pwsh
-$certPath = 'dist\windows-x64\msix\Kataglyphis.OxidANT.testcert.pfx'
+$certPath = 'certs\Kataglyphis.OxidANT.testcert.pfx'
 $msixPath = 'dist\windows-x64\msix\Kataglyphis.OxidANT_2.3.4.0_x64.msix'
 $pfxPw    = ConvertTo-SecureString '<TEST_CERT_PASSWORD>' -AsPlainText -Force
 
