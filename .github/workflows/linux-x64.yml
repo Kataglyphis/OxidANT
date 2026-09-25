@@ -108,14 +108,14 @@ jobs:
           - burn_demos
     steps:
       - name: Prepare the CI host
-        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
         with:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GHCR_PAT }}
           fetch-depth: '1'
 
       - name: cargo check --features ${{ matrix.features }}
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: ${{ env.CONTAINER_ENV }}
           script: >-
