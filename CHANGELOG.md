@@ -14,6 +14,34 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- **The Windows exe loads the chain ONNX Runtime, and every package carries its
+  DLL closure on both arches (owner decisions 2026-09-25).**
+  - The CLI's `onnxruntime_directml`/`onnxruntime_cuda` (and `onnx_tract`) features
+    now reach the GUI's inference (`kataglyphis_gui?/...`) and the root crate's
+    `onnxruntime`. Until now nothing in the exe called ORT, so Build-Windows staged
+    none and no package shipped one (the x64 log said so on every run).
+  - `kataglyphis_cli onnx-runtime` loads the chain ORT through
+    `ort_runtime::ensure_ort_loaded` and prints its path. The arm64 run job and the
+    x64 host step both run it.
+  - The GUI's person-detection overlay had never been compiled: `clippy -D warnings`
+    found five unused imports and an `if let Some` over a field that is no `Option`
+    (`poll_inference`). Both are fixed, and `kataglyphis_telemetry`'s two inference
+    counters are `pub`, because the GUI's inference thread calls them. Checked for
+    `onnxruntime_directml`, `onnx_tract` and `onnxruntime_cuda`.
+  - `Build-Windows.ps1` stages the DLL closure on x64 too, with the hub's
+    `Get-ProductDllSearchPath` (the chain ORT, then `C:\runtime\bin`, then the
+    target's VC++ runtime). Both arches write `dist\windows-<x64|arm64>`: the
+    portable bundle (exe, `resources\`, closure), the MSIX, and the MSI, whose
+    generated group now holds every payload DLL.
+  - The package features live in `Build-Windows.config.psd1`
+    (`gui_windows,onnxruntime_directml`), not in two workflows' env.
+- **The Windows x64 lane is a thin caller of the hub's `container-ci-windows.yml`**
+  (the family's next sharing step). `scripts/windows/Invoke-WindowsLane.ps1` runs
+  the debug tests, the config matrix and `Build-Windows.ps1` in the container. The
+  lane's `host-command` runs the renderer tests and the packaged exe on the host.
+  The version comes from `version-file: VERSION.txt`, and `dist/windows-x64`
+  uploads as one artifact, as the arm64 lane's does. `New-ReleaseArchive.ps1` is
+  gone: the bundle is what the zip held, now with its closure and `resources\`.
 - **A Windows arm64 lane that cross-builds and then runs the product (owner
   decision 2026-09-25).** `windows-arm64-cross.yml` ("Windows arm64 · cross
   build + run") is a thin caller of ANTfrastructure's reusable

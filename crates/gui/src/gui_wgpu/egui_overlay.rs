@@ -1,6 +1,3 @@
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-use std::time::Duration;
-
 use egui::Context as EguiContext;
 use egui_wgpu::ScreenDescriptor;
 use winit::window::Window;

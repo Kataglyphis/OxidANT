@@ -20,6 +20,8 @@ pub(crate) use kataglyphis_telemetry::gpu_wmi;
 
 #[cfg(feature = "onnxruntime")]
 pub use kataglyphis_inference::ort_ext;
+#[cfg(feature = "onnxruntime")]
+pub use kataglyphis_inference::ort_runtime;
 
 #[cfg(feature = "burn_demos")]
 pub mod burn_demos;

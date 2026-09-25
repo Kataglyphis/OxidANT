@@ -5,19 +5,9 @@ use std::time::Duration;
 use winit::window::Window;
 
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-use egui::Context as EguiContext;
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-use egui_wgpu::ScreenDescriptor;
-
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-use kataglyphis_core::detection::Detection;
-
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use super::inference::InferenceState;
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use super::inference_bridge::spawn_inference_thread;
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-use super::pipeline::Frame;
 use super::wgpu_init::{create_quad_buffers, create_render_pipeline, init_wgpu};
 
 struct FrameTexture {
@@ -136,9 +126,7 @@ impl WgpuState {
 
     pub fn poll_inference(&mut self) {
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        if let Some(inf) = &mut self.inference {
-            inf.poll();
-        }
+        self.inference.poll();
     }
 
     pub(crate) fn upload_frame(&mut self, frame: &crate::gui_wgpu::Frame) {

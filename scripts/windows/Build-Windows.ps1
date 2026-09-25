@@ -15,11 +15,13 @@
     not got. The line that used to claim otherwise was wrong from the day it
     was written.
   - Packages MSIX using local config and template, then MSI with WiX v4.
+  - Every target writes dist\windows-<x64|arm64>: the portable bundle (the exe,
+    resources\ and every DLL it needs on a clean machine, the VC++ runtime and the
+    chain ONNX Runtime included), the MSIX and the MSI, each carrying that same
+    DLL closure. The lane scripts upload the directory whole.
   - -TargetArch arm64 is the cross build of windows-arm64-cross.yml, run in the
-    family image's arm64 bundle. It builds with --target, leaves the
-    arch-independent source gates (audit/deny, fmt, tests) to the x64 lane, stages
-    the DLL closure a clean arm64 device lacks beside the exe, and writes the
-    portable bundle plus the arm64 MSIX and MSI to dist\windows-arm64.
+    family image's arm64 bundle. It builds with --target and leaves the
+    arch-independent source gates (audit/deny, fmt, tests) to the x64 lane.
 #>
 
 param(
@@ -86,6 +88,14 @@ Import-BuildModule @(
 # G6, the hub's ORT census, proves every payload; a hub pin older than its ORT
 # single-source commit lacks the module, and Get-OrtCensusRequirement says so.
 try { Import-BuildModule @('WindowsOrtProvenance.Common') } catch { throw (Get-OrtCensusRequirement -Cause $_.Exception.Message) }
+# The package arch, the DLL closure and where it comes from; a hub pin older than
+# 2026-09-25's x64 closure lacks Get-ProductDllSearchPath and says so here.
+try {
+  Import-BuildModule @('WindowsCrossBundle.Common')
+  $null = Get-Command -Name 'Get-ProductDllSearchPath' -ErrorAction Stop
+} catch {
+  throw "This build needs ANTfrastructure's WindowsCrossBundle.Common with Get-ProductDllSearchPath (hub commit of 2026-09-25, third_party/ANTfrastructure/docs/windows-cross-builds.md); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
+}
 
 $defaultConfigPath = Join-Path $PSScriptRoot 'Build-Windows.config.psd1'
 $configPath = Get-OrDefault $env:BUILD_WINDOWS_CONFIG $defaultConfigPath
@@ -149,10 +159,6 @@ try {
     # asks it, under gui_windows). The arm64 bundle's PKG_CONFIG_PATH holds the
     # arm64 .pc files, so what it finds is the target's.
     $env:PKG_CONFIG_ALLOW_CROSS = '1'
-    # The DLL-closure helper arrived with the cross lanes; an older hub pin says so here.
-    try { Import-BuildModule @('WindowsCrossBundle.Common') } catch {
-      throw "-TargetArch $($layout.Arch) needs ANTfrastructure's WindowsCrossBundle.Common (hub commit of 2026-09-25, third_party/ANTfrastructure/docs/windows-cross-builds.md); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
-    }
   }
 
   # The scoop-shims PATH prepend that used to sit here is gone. It pointed at
@@ -299,34 +305,32 @@ try {
       Write-BuildLog -Context $context -Message "Chain ONNX Runtime staged from $env:ONNX_ROOT\bin and proved by G6: $(@($payload.OrtDlls | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
     } | Out-Null
 
-    # A clean arm64 device has no VC++ redist and none of the image's C:\runtime.
-    # Everything the exe and the DLLs beside it import, transitively, is staged
-    # beside the exe too, so every package below ships it. ORT enters as a seed:
-    # the exe loads it by name, so it is in no import table. ONNX_ROOT\bin comes
-    # first, so an ORT-family import resolves to the chain's copy.
-    if ($layout.IsCross) {
-      Invoke-BuildStep -Context $context -StepName 'Stage DLL Closure' -Critical -Script {
-        $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
-        $seeds = @($exePath) + @(Get-ChildItem -LiteralPath $layout.ReleaseDir -Filter '*.dll' -File | ForEach-Object FullName)
-        $search = @(if ($env:ONNX_ROOT) { Join-Path $env:ONNX_ROOT 'bin' }) + @('C:\runtime\bin')
-        $copied = @(Copy-PeImportClosure -Path $seeds -SearchDirectory $search -Destination $layout.ReleaseDir -Arch $layout.Arch)
-        Write-BuildLog -Context $context -Message "DLL closure staged beside $binary.exe from $($search -join ', '): $(@($copied | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
-      } | Out-Null
-    }
-  }
-
-  # The product the arm64 run job executes on windows-11-arm, and the tree the
-  # lane's arch gate walks: the exe with every DLL beside it, proved by G6 like
-  # each package, plus resources\, which the app looks for beside the exe.
-  if ($layout.IsCross) {
-    Invoke-BuildStep -Context $context -StepName 'Portable Bundle' -Critical -Script {
-      $bundleDir = Join-Path $layout.DistDir 'bundle'
-      $bundle = New-OrtProvenPayload -ExePath (Join-Path $layout.ReleaseDir "$binary.exe") -Destination $bundleDir
-      $resourcesSource = Join-Path $workspacePath 'resources'
-      if (Test-Path $resourcesSource) { Copy-Item -LiteralPath $resourcesSource -Destination $bundleDir -Recurse -Force }
-      Write-BuildLogSuccess -Context $context -Message "Portable bundle: $bundleDir ($(@($bundle.Dlls).Count) DLLs beside $binary.exe)"
+    # A clean machine has none of the image's C:\runtime, and an arm64 device, or a
+    # fresh x64 PC, no VC++ redist either. Everything the exe and the DLLs beside it
+    # import, transitively, is staged beside the exe too, so every package below
+    # ships it (owner decision 2026-09-25: x64 exactly like arm64). ORT enters as a
+    # seed: the exe loads it by name, so it is in no import table. The search order
+    # is the hub's (Get-ProductDllSearchPath), the chain ORT first.
+    Invoke-BuildStep -Context $context -StepName 'Stage DLL Closure' -Critical -Script {
+      $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
+      $seeds = @($exePath) + @(Get-ChildItem -LiteralPath $layout.ReleaseDir -Filter '*.dll' -File | ForEach-Object FullName)
+      $search = @(Get-ProductDllSearchPath -Arch $layout.Arch)
+      $copied = @(Copy-PeImportClosure -Path $seeds -SearchDirectory $search -Destination $layout.ReleaseDir -Arch $layout.Arch)
+      Write-BuildLog -Context $context -Message "DLL closure staged beside $binary.exe from $($search -join ', '): $(@($copied | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
     } | Out-Null
   }
+
+  # The product both Windows lanes upload in dist\windows-<arch>, and the tree the
+  # arm64 lane's arch gate walks and its windows-11-arm job runs: the exe with
+  # every DLL beside it, proved by G6 like each package, plus resources\, which the
+  # app looks for beside the exe.
+  Invoke-BuildStep -Context $context -StepName 'Portable Bundle' -Critical -Script {
+    $bundleDir = Join-Path $layout.DistDir 'bundle'
+    $bundle = New-OrtProvenPayload -ExePath (Join-Path $layout.ReleaseDir "$binary.exe") -Destination $bundleDir
+    $resourcesSource = Join-Path $workspacePath 'resources'
+    if (Test-Path $resourcesSource) { Copy-Item -LiteralPath $resourcesSource -Destination $bundleDir -Recurse -Force }
+    Write-BuildLogSuccess -Context $context -Message "Portable bundle: $bundleDir ($(@($bundle.Dlls).Count) DLLs beside $binary.exe)"
+  } | Out-Null
 
   # Invoke-BuildStep, NOT Invoke-BuildOptional. The latter is
   # `try { & $Script } catch { Write-BuildLogWarning }` and never registers the
@@ -523,11 +527,10 @@ try {
       )
 
       # The DLLs installed beside the exe, one generated component each, named by
-      # main.wxs's PayloadDlls ComponentGroupRef. On the host that is the chain
-      # ORT staged beside the exe (the machine has the VC++ redist); on a cross
-      # build it is every DLL of the payload, whose device has none of them. The
-      # fragment is an intermediate, so it stays out of dist.
-      $payloadDlls = @(if ($layout.IsCross) { $msiPayload.Dlls } elseif ($msiPayload.LoadsOrt) { $msiPayload.OrtDlls })
+      # main.wxs's PayloadDlls ComponentGroupRef: every DLL of the payload, the chain
+      # ORT and the staged closure alike, on both arches. The fragment is an
+      # intermediate, so it stays out of dist.
+      $payloadDlls = @($msiPayload.Dlls)
       if ($payloadDlls.Count -gt 0) {
         $components = for ($i = 0; $i -lt $payloadDlls.Count; $i++) {
           $src = [System.Security.SecurityElement]::Escape($payloadDlls[$i])
