@@ -70,13 +70,13 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | --- | --- | --- |
 | ✅ Skybox pass | M | Done 2026-07-18: procedural gradient + analytic sun following the light sliders (HDR equirect/cubemap upgrade later with IBL) |
 | ✅ Image-based lighting | L | Analytic v1 done 2026-07-18 (hemisphere irradiance + roughness-blended sky reflection + Karis split-sum approx from the analytic sky). HDR-cubemap IBL for arbitrary env maps done (audited 2026-07-21): real split-sum in `render/ibl.rs` (irradiance-convolved cubemap + roughness-prefiltered specular cubemap + BRDF LUT), fed by `asset/hdr.rs` decoding Radiance `.hdr`/RGBE; the analytic path is now the fallback when no env is bound |
-| ✅ `KHR_lights_punctual` | M | Done 2026-07-18: point/spot/directional, KHR range window + spot cones, up to 4 lights (shadowless; punctual shadows are the next row) |
+| ✅ `KHR_lights_punctual` | M | Done 2026-07-18: point/spot/directional, KHR range window + spot cones, up to 4 lights (shadowless; punctual shadows are the next row). Raised to 256 on 2026-07-28 (`render::lights::MAX_PUNCTUAL_LIGHTS`, a storage buffer), binned per screen tile — see the Forward+ row |
 | Point/spot shadows | L | Shadow atlas or cube shadows; after punctual lights |
 | ✅ Cascaded shadow maps | L | Done 2026-07-18: 3 cascades in a depth array, view-distance selection, per-cascade fitting |
 | ✅ Bloom | M | Done 2026-07-18: half-res brightpass + 9-tap separable Gaussian, strength slider in the overlay |
 | ✅ SSAO | M | Done 2026-07-18: depth-only reconstruction, half-res + 3x3 blur, tonemap composite, overlay slider |
 | ✅ Exposure control | S/M | Manual EV done 2026-07-18 (exp2(EV) before ACES + overlay slider). Histogram auto-exposure done 2026-07-20: histogram compute pass → GPU reduction to an adapted EV → tonemap reads it from a buffer, no per-frame readback on the frame path; off by default (`ForwardRenderer::auto_exposure`), manual EV survives as an override through the same buffer. `src/shaders/histogram.wgsl` stays hand-written (Slang WGSL emitter limitation — see BeschleunigerBallett's [`shader-build-pipeline.md`](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-build-pipeline.md)), so it is exempt from the generated-shader gates; its constants and workgroup sizes are instead pinned against `render::auto_exposure` by `tests/histogram_constants.rs` (pure CPU, no GPU adapter needed) |
-| Clustered / Forward+ lighting | XL | Only when light counts demand it |
+| 🟡 Clustered / Forward+ lighting | XL | Tiled (Forward+) half done 2026-07-28: the CPU bins each punctual light into the 16×16-pixel screen tiles its range covers (`render/tile_grid.rs`, range-aware since 2026-08-01, at most 32 lights per tile), and the forward pass iterates only its tile's lights. Clustered (depth-sliced) binning still open |
 
 ## Phase D — Performance & scale (Colosseum-ready)
 
@@ -88,8 +88,8 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | ✅ LOD pipeline | L | v1 done 2026-07-18: vertex-clustering simplifier + distance-based selection (`scene::lod`). Quadric-error (meshoptimizer-grade) decimation done 2026-07-20 (`scene::qem`, selectable via `Simplifier::Quadric`) — preserves silhouettes/creases that clustering rounds off. On the render path since 2026-07-20 (per-primitive per-frame selection on camera distance; off by default; shadow casters stay full-detail) |
 | Async asset loading | M | Background thread native / fetch + progress on web; loading UI |
 | Indirect draws | M | `draw_indexed_indirect` batching once culling is GPU-side |
-| ✅ GPU occlusion culling | XL | Done 2026-07-21: temporal hardware occlusion queries (NOT a Hi-Z pyramid — WebGPU core lacks portable depth-mip sampling). Per-primitive world-AABB query pass → `resolve_query_set` → async readback → next-frame skip of zero-sample primitives; one-frame latency accepted. `render/occlusion.rs`, `TimedPass::OcclusionCull`, overlay checkbox, off by default. GPU *frustum* culling (compute-based) still open |
-| ✅ wasm size budget | S | Done 2026-07-31: `scripts/linux/wasm-size-budget.sh` builds wasm32-unknown-unknown release, runs `wasm-opt -Oz`, fails above a 12 MiB budget; wired into `Linux.yml`'s "Enforce wasm demo size budget" step ahead of the docs deploy. Measured post-opt size at the time: ~8.3 MiB — the previously-quoted ~3.7 MB figure was stale/never enforced |
+| ✅ GPU occlusion culling | XL | Done 2026-07-21: temporal hardware occlusion queries (NOT a Hi-Z pyramid — WebGPU core lacks portable depth-mip sampling). Per-primitive world-AABB query pass → `resolve_query_set` → async readback → next-frame skip of zero-sample primitives; one-frame latency accepted. `render/occlusion.rs`, `TimedPass::OcclusionCull`, overlay checkbox, off by default. A compute-shader variant followed on 2026-07-28 (`render/gpu_occlusion.rs`, `gpu_cull.wgsl`): each primitive's AABB against the resolved depth buffer, conservative since 2026-08-01, same non-blocking readback; opt-in through `ForwardRenderer::gpu_culling_enabled`, and it replaces the queries when on. It also drops boxes that fall entirely off screen, but GPU *frustum* culling as its own pass is still open |
+| ✅ wasm size budget | S | Done 2026-07-31: BeschleunigerBallett's `scripts/linux/wasm-size-budget.sh` builds wasm32-unknown-unknown release, runs `wasm-opt -Oz`, fails above a 12 MiB budget; wired into its "Enforce wasm demo size budget" step ahead of the docs deploy (`Linux.yml` then, `reusable-linux.yml` since 2026-09-24). Measured post-opt size at the time: ~8.3 MiB — the previously-quoted ~3.7 MB figure was stale/never enforced |
 | ✅ Timestamp-query profiling | M | Done 2026-07-20: per-pass wgpu timestamp queries, averaged ms via `gpu_timings_ms()` (`render/gpu_timing.rs`), + `dump_gpu_timings` example feeding the cross-renderer timing table |
 
 ## Phase E — Web platform & demo polish
@@ -99,7 +99,7 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | ✅ Web deploy (via Sphinx docs site) | S | Done 2026-07-18: demo ships inside BeschleunigerBallett's Sphinx site (`docs/source/_webgpu_demo` + `html_extra_path`, page `webgpu_demo.md`), deployed by the existing docs FTP pipeline. **CI auto-rebuild done 2026-07-23** (`4088fe0a`): BeschleunigerBallett's `scripts/linux/docs-build-web.sh` recompiles the crate to wasm32 + wasm-bindgen and refreshes `_webgpu_demo` before Sphinx on every deploy (pinned wasm-bindgen, best-effort with the committed snapshot as fallback), so the live demo always tracks the current renderer instead of a hand-built snapshot that goes stale |
 | ✅ Responsive canvas | S | Done 2026-07-18: CSS-driven layout, backing store follows clientSize × devicePixelRatio per frame |
 | ✅ Touch controls | M | Done 2026-07-20: one finger orbits, two-finger pinch-zoom; ratio-based (DPI-independent), pinch baseline resets on finger-count change |
-| Model picker UI | S | Query param + dropdown of bundled scenes |
+| 🟡 Model picker UI | S | Dropdown done 2026-07-23: the web demo's `<select>` switches between five embedded scenes (`select_demo_scene`, the same swap path drag-and-drop uses). The query parameter is still open |
 | ✅ WebGPU-unsupported fallback page | S | Done 2026-07-18: `navigator.gpu` check with requirements + native command |
 | `webgl` backend feature flag | M | wgpu's GL backend for older browsers, feature-gated with reduced effects |
 | Demo scene: Colosseum | M | License-checked photogrammetry scan (CC-BY: attribute in `LICENSES-ASSETS.md`), LFS or download step — never committed raw; needs Phase D compression to be pleasant |
@@ -114,19 +114,19 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | ✅ Screenshot capture | S | Done 2026-07-18: viewer S key → 1080p PNG via offscreen readback (turntable video later) |
 | Golden-image CI on Linux | M | lavapipe/llvmpipe software Vulkan on the Ubuntu runner so the GPU tests stop skipping in CI |
 | Error telemetry | S | Route `log` + panic reports through `kataglyphis_telemetry` |
-| ✅ cargo-deny verification | S | Run 2026-07-18: **licenses ok**. Advisories flag 3 pre-existing transitive issues (all predate the renderer, from commits `6daaac6`/`4969ab6`): `quick-xml 0.39.4` (2 CVEs, Linux/Wayland only, pinned by `wayland-scanner` ← `smithay-client-toolkit` ← `winit`) and unmaintained `ttf-parser` (via egui fonts). Not fixable locally — they need upstream winit/egui bumps. Left un-ignored deliberately so they stay visible |
+| ✅ cargo-deny verification | S | Run 2026-07-18: **licenses ok**. Advisories flag 3 pre-existing transitive issues (all predate the renderer, from commits `6daaac6`/`4969ab6`): `quick-xml 0.39.4` (2 CVEs, Linux/Wayland only, pinned by `wayland-scanner` ← `smithay-client-toolkit` ← `winit`) and unmaintained `ttf-parser` (via egui fonts). Not fixable locally — they need upstream winit/egui bumps. Left un-ignored deliberately so they stay visible. Superseded since: `ttf-parser`'s RUSTSEC-2026-0192 has been on both ignore lists (`deny.toml`, `.cargo/audit.toml`) since 2026-07-21, and `quick-xml` 0.41.0 fixed both CVEs |
 | ✅ API docs + examples | M | Done 2026-07-18: crate README, `headless_render` example, warning-free `cargo doc --no-deps` |
-| ✅ wgpu 29 / egui 0.35 major-version migration | L | Done 2026-07-21: wgpu 27→29, egui 0.33→0.35, naga 26→29 (`immediate_size`, `multiview_mask`, `bind_group_layouts: &[Option<&_>]`, `Option` depth fields, `MipmapFilterMode`, error-scope guards, egui `begin_pass`/`end_pass`, `CurrentSurfaceTexture` enum). Fully CI-green on `develop` (now the repo's default+integration branch) |
+| ✅ wgpu 29 / egui 0.35 major-version migration | L | Done 2026-07-21: wgpu 27→29, egui 0.33→0.35, naga 26→29 (`immediate_size`, `multiview_mask`, `bind_group_layouts: &[Option<&_>]`, `Option` depth fields, `MipmapFilterMode`, error-scope guards, egui `begin_pass`/`end_pass`, `CurrentSurfaceTexture` enum). Fully CI-green on `develop` (now the repo's default+integration branch). The crate has been on wgpu 30 / egui 0.36 since 2026-08-07 (`CHANGELOG.md`, *The graphics-stack upgrade*) |
 
-## Phase G — Ecosystem integration (BeschleunigerBallett ↔ template)
+## Phase G — Ecosystem integration (BeschleunigerBallett ↔ OxidANT)
 
 | Feature | Effort | Notes |
 | --- | --- | --- |
 | ✅ Shared shader pipeline | M | Shipped via [Slang](https://shader-slang.com/): one `.slang` source compiles to SPIR-V (Vulkan/C++) and WGSL (WebGPU/Rust); see BeschleunigerBallett's [`shader-sharing.md`](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md). The earlier naga-based `export_shaders` WGSL→SPIR-V/GLSL450 route is retired (see that doc's Historical note) but the example still exists in the crate |
-| Shared asset pipeline | M | OBJ→glTF conversion for the C++ engine's `Resources/Models` so both renderers eat the same scenes |
-| Side-by-side comparison harness | M | Same scene, same camera: Vulkan C++ vs WebGPU Rust screenshots diffed — a regression net for BOTH renderers |
+| ✅ Shared asset pipeline | M | Done 2026-07-20: OBJ→glTF conversion for the C++ engine's `Resources/Models` so both renderers eat the same scenes — `asset/obj_to_gltf.rs` and the `obj2gltf` example, which BeschleunigerBallett's comparison scripts run over its Dinosaurs scene |
+| 🟡 Side-by-side comparison harness | M | Same scene, same camera: Vulkan C++ vs WebGPU Rust screenshots diffed — a regression net for BOTH renderers. Structural, not exact, and in BeschleunigerBallett: `scripts/windows/Compare-RendererTimings.ps1` (a per-pass timing table, 2026-07-20, fed by the `dump_gpu_timings` example) and `scripts/windows/Compare-RendererPixels.ps1` (luminance and histogram metrics of the same frame from both renderers, 2026-07-28). A pixel diff is still open |
 | Compute playground | L | Particles / GPU skinning via compute passes; the Rust sibling of the Kompute experiments |
-| Flutter embedding | XL | The template already ships flutter_rust_bridge — render into a Flutter texture; speculative |
+| Flutter embedding | XL | This repository already ships flutter_rust_bridge (for OmniAccelerANT) — render into a Flutter texture; speculative |
 | WebXR | XL | Browser VR/AR once wgpu's WebXR story matures; parking-lot item |
 
 ---
