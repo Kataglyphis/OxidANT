@@ -14,6 +14,28 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- **A Windows arm64 lane that cross-builds and then runs the product (owner
+  decision 2026-09-25).** `windows-arm64-cross.yml` ("Windows arm64 · cross
+  build + run") is a thin caller of ANTfrastructure's reusable
+  `container-ci-windows.yml`: `Build-Windows.ps1 -TargetArch arm64` in the
+  family image's arm64 bundle, the hub's arch gate over `dist/windows-arm64`
+  (every binary arm64, every import resolvable on a clean device), and
+  `kataglyphis_cli.exe --help` + `stats` on GitHub's `windows-11-arm`.
+  `Build-Windows.ps1` takes `-TargetArch amd64|arm64` (default: the image's
+  `WINDOWS_TARGET_ARCH`). A cross build builds with `--target`, runs clippy for
+  aarch64, leaves audit/deny, fmt and the tests to the x64 lane, stages the DLL
+  closure beside the exe (hub `Copy-PeImportClosure`), and writes the portable
+  bundle, `*_arm64.msix` and `*-arm64.msi`. `WindowsCargoTarget.Common` holds
+  every arch-dependent path and name, pinned by `CargoTarget.Tests.ps1`; the
+  x64 paths are unchanged. The AppxManifest takes its `ProcessorArchitecture`
+  from `__MSIX_ARCH__`, and the MSI's generated DLL group is `PayloadDlls`
+  (was `OrtRuntime`): the chain ORT on x64, every payload DLL on arm64. Its
+  fragment moved out of `dist\msi` into the target directory, and the MSI's
+  `InstallerVersion` is 500, which an ARM64 package requires (WIX1143).
+  Verified in the arm64 bundle: 10/10 steps, 12 arm64 binaries in the bundle
+  (the exe, the VC++ runtime, GStreamer/GLib), the arch gate clean with no
+  unresolved import. The hub pin moves from 20bb0026 to 948f7031, which
+  carries the reusable lane and `Copy-PeImportClosure`.
 - **Three gates this repo did not have.** `--ratchets` on the lint lane (the
   docs cross-reference gate plus eight measurement gates, frozen at
   `<repo>/<gate>.allow`); a PowerShell lint job running ANTfrastructure's
