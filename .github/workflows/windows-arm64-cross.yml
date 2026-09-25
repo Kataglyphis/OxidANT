@@ -1,0 +1,61 @@
+# .github/workflows/windows-arm64-cross.yml
+#
+# The Windows arm64 lane (owner decision 2026-09-25): Build-Windows.ps1
+# -TargetArch arm64 cross-builds in the family image's arm64 bundle on an amd64
+# runner, and GitHub's windows-11-arm then RUNS the product. A thin caller of
+# ANTfrastructure's container-ci-windows.yml, which owns the image, the arch gate,
+# the upload and the run job; what is left here is what only this repo knows.
+# What a cross build skips: AGENTS.md § Continuous integration.
+#
+# ALWAYS RUNS, like every lane here: no job-level `if:`.
+name: Windows arm64 · cross build + run
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Same rule as windows-x64.yml: a superseded run on a feature branch or PR is
+# cancelled, runs on the default branch always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+jobs:
+  cross:
+    name: Cross build (arm64)
+    uses: Kataglyphis/ANTfrastructure/.github/workflows/container-ci-windows.yml@develop
+    with:
+      target-arch: arm64
+      build-script: scripts/windows/Build-Windows.ps1
+      build-args: |
+        -TargetArch
+        arm64
+      # The x64 lane's packaging environment, minus the version it computes: the
+      # packages here take VERSION.txt's.
+      container-env: |
+        BINARY=kataglyphis_cli
+        CARGO_TERM_COLOR=always
+        CARGO_FEATURES=gui_windows,onnxruntime_directml
+        MSIX_PACKAGE_NAME=Kataglyphis.OxidANT
+        MSIX_PUBLISHER=CN=Kataglyphis
+        MSIX_PUBLISHER_DISPLAY_NAME=Kataglyphis
+        MSIX_DISPLAY_NAME=OxidANT
+        MSIX_DESCRIPTION=Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.
+      artifact-name: kataglyphis_cli-windows-arm64
+      artifact-dir: dist/windows-arm64
+      # The exe and the VC++ runtime at the least (12 binaries on 2026-09-25).
+      arch-gate-min-inspected: 2
+      # Loading at all proves the bundle's import closure on a real device;
+      # `stats` then runs real code. The GUI needs a desktop the runner has not got.
+      run-command: |
+        ./bundle/kataglyphis_cli.exe --help
+        if ($LASTEXITCODE) { exit $LASTEXITCODE }
+        ./bundle/kataglyphis_cli.exe stats --path ./bundle/resources/web/redirect/index.html
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}

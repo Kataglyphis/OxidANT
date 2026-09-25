@@ -15,6 +15,11 @@
     not got. The line that used to claim otherwise was wrong from the day it
     was written.
   - Packages MSIX using local config and template, then MSI with WiX v4.
+  - -TargetArch arm64 is the cross build of windows-arm64-cross.yml, run in the
+    family image's arm64 bundle. It builds with --target, leaves the
+    arch-independent source gates (audit/deny, fmt, tests) to the x64 lane, stages
+    the DLL closure a clean arm64 device lacks beside the exe, and writes the
+    portable bundle plus the arm64 MSIX and MSI to dist\windows-arm64.
 #>
 
 param(
@@ -30,7 +35,10 @@ param(
   [switch]$SkipMsi,
   [switch]$SkipBuild,
   [switch]$SkipTests,
-  [switch]$Clean
+  [switch]$Clean,
+  # amd64 (alias x64) or arm64. Empty: the image's WINDOWS_TARGET_ARCH, else amd64,
+  # resolved by the hub's Get-WindowsTargetArch, which throws on anything else.
+  [string]$TargetArch = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,6 +80,8 @@ Import-BuildModule @(
   'WindowsConfig.Common'    # Get-OrDefault, Get-ConfigValue
   'WindowsMsix.Common'      # Get-PackageVersion, Invoke-MsixPackage
   'WindowsOrtPayload.Common' # project-local: stage the chain ONNX Runtime, build + prove payloads
+  'WindowsTargetArch.Common' # the arch facts: accepted spellings, cross or not, the Rust triple
+  'WindowsCargoTarget.Common' # project-local: where each arch's build lands, what packages call it
 )
 # G6, the hub's ORT census, proves every payload; a hub pin older than its ORT
 # single-source commit lacks the module, and Get-OrtCensusRequirement says so.
@@ -125,6 +135,26 @@ try {
   $workspacePath = $isolatedWorkspace
   Set-Location -Path $workspacePath
 
+  # CARGO_TARGET_DIR is a standard cargo variable and is commonly ABSOLUTE (the
+  # in-container scripts here set C:\ct). PowerShell's Join-Path does not
+  # collapse that the way Path.Combine would - `Join-Path 'C:\a' 'C:\b'` yields
+  # 'C:\a\C:\b' - and MSIX packaging then died on "The filename, directory name,
+  # or volume label syntax is incorrect". Resolved once here; it was computed in
+  # three steps before.
+  $targetRoot = if ([System.IO.Path]::IsPathRooted($cargoTargetDir)) { $cargoTargetDir } else { Join-Path $workspacePath $cargoTargetDir }
+  $layout = Get-CargoTargetLayout -Arch $TargetArch -TargetRoot $targetRoot -WorkspacePath $workspacePath
+  Write-BuildLog -Context $context -Message "Target: $($layout.Arch)$(if ($layout.IsCross) { " (cross: $($layout.CargoArgs -join ' '))" }), release dir $($layout.ReleaseDir)"
+  if ($layout.IsCross) {
+    # The pkg-config crate refuses a cross build unless told to (gstreamer-sys
+    # asks it, under gui_windows). The arm64 bundle's PKG_CONFIG_PATH holds the
+    # arm64 .pc files, so what it finds is the target's.
+    $env:PKG_CONFIG_ALLOW_CROSS = '1'
+    # The DLL-closure helper arrived with the cross lanes; an older hub pin says so here.
+    try { Import-BuildModule @('WindowsCrossBundle.Common') } catch {
+      throw "-TargetArch $($layout.Arch) needs ANTfrastructure's WindowsCrossBundle.Common (hub commit of 2026-09-25, third_party/ANTfrastructure/docs/windows-cross-builds.md); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
+    }
+  }
+
   # The scoop-shims PATH prepend that used to sit here is gone. It pointed at
   # C:\Users\ContainerAdministrator\scoop\shims, which does not exist in the
   # family Windows image: ANTfrastructure's windows/Dockerfile.base installs the
@@ -155,68 +185,78 @@ try {
   }
 
   if (-not $SkipBuild) {
-    Invoke-BuildStep -Context $context -StepName 'Security Checks (audit & deny)' -Script {
-      # PINNED, and a failure to resolve the pin is fatal. `cargo install
-      # --locked cargo-audit cargo-deny` with no --version resolves to
-      # whatever crates.io serves that minute, so a new advisory-db schema or
-      # a new default cargo-deny lint turns this step red with no commit
-      # behind it and nothing to bisect. The try/catch that used to wrap the
-      # install is gone with it: a swallowed install failure left the two
-      # gates below running whatever happened to be on PATH, or nothing.
-      #
-      # The versions come from the image (baked in as environment variables),
-      # else from the submodule's versions.env - the fleet's single owner of
-      # both pins - parsed with ANTfrastructure's own ConvertFrom-VersionsEnv
-      # rather than a fourth hand-rolled .env reader. Unresolvable throws.
-      $versionsEnv = Join-Path $repoRoot 'third_party/ANTfrastructure/linux/scripts/01-core/versions.env'
-      $pins = if (Test-Path $versionsEnv) { ConvertFrom-VersionsEnv -Path $versionsEnv } else { [ordered]@{} }
+    # A cross build leaves the source gates that do not depend on the target to
+    # the x64 lane, which grades the same commit: audit/deny and fmt read the
+    # source, and an arm64 test binary cannot run on this x64 host. Clippy below
+    # does run, for the target: it type-checks every cfg(target_arch) path and
+    # compiles the test code for aarch64.
+    if ($layout.IsCross) {
+      Write-BuildLog -Context $context -Message "Cross build: security checks, format check and unit tests are the x64 lane's."
+    }
+    if (-not $layout.IsCross) {
+      Invoke-BuildStep -Context $context -StepName 'Security Checks (audit & deny)' -Script {
+        # PINNED, and a failure to resolve the pin is fatal. `cargo install
+        # --locked cargo-audit cargo-deny` with no --version resolves to
+        # whatever crates.io serves that minute, so a new advisory-db schema or
+        # a new default cargo-deny lint turns this step red with no commit
+        # behind it and nothing to bisect. The try/catch that used to wrap the
+        # install is gone with it: a swallowed install failure left the two
+        # gates below running whatever happened to be on PATH, or nothing.
+        #
+        # The versions come from the image (baked in as environment variables),
+        # else from the submodule's versions.env - the fleet's single owner of
+        # both pins - parsed with ANTfrastructure's own ConvertFrom-VersionsEnv
+        # rather than a fourth hand-rolled .env reader. Unresolvable throws.
+        $versionsEnv = Join-Path $repoRoot 'third_party/ANTfrastructure/linux/scripts/01-core/versions.env'
+        $pins = if (Test-Path $versionsEnv) { ConvertFrom-VersionsEnv -Path $versionsEnv } else { [ordered]@{} }
 
-      function Resolve-CargoToolPin {
-        param([Parameter(Mandatory)][string]$Name)
-        $fromEnv = [Environment]::GetEnvironmentVariable($Name)
-        if (-not [string]::IsNullOrWhiteSpace($fromEnv)) { return $fromEnv }
-        if ($pins.Contains($Name) -and -not [string]::IsNullOrWhiteSpace($pins[$Name])) {
-          return $pins[$Name]
+        function Resolve-CargoToolPin {
+          param([Parameter(Mandatory)][string]$Name)
+          $fromEnv = [Environment]::GetEnvironmentVariable($Name)
+          if (-not [string]::IsNullOrWhiteSpace($fromEnv)) { return $fromEnv }
+          if ($pins.Contains($Name) -and -not [string]::IsNullOrWhiteSpace($pins[$Name])) {
+            return $pins[$Name]
+          }
+          throw ("$Name is not set and could not be read from $versionsEnv. It pins a " +
+                 'cargo tool whose verdict decides this step; installing it unpinned ' +
+                 'would let crates.io choose the version instead.')
         }
-        throw ("$Name is not set and could not be read from $versionsEnv. It pins a " +
-               'cargo tool whose verdict decides this step; installing it unpinned ' +
-               'would let crates.io choose the version instead.')
-      }
 
-      $cargoAuditVersion = Resolve-CargoToolPin -Name 'CARGO_AUDIT_VERSION'
-      $cargoDenyVersion = Resolve-CargoToolPin -Name 'CARGO_DENY_VERSION'
-      Write-BuildLog -Context $context -Message "cargo-audit $cargoAuditVersion, cargo-deny $cargoDenyVersion"
+        $cargoAuditVersion = Resolve-CargoToolPin -Name 'CARGO_AUDIT_VERSION'
+        $cargoDenyVersion = Resolve-CargoToolPin -Name 'CARGO_DENY_VERSION'
+        Write-BuildLog -Context $context -Message "cargo-audit $cargoAuditVersion, cargo-deny $cargoDenyVersion"
 
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoAuditVersion, 'cargo-audit') | Out-Null
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoDenyVersion, 'cargo-deny') | Out-Null
+        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoAuditVersion, 'cargo-audit') | Out-Null
+        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoDenyVersion, 'cargo-deny') | Out-Null
 
-    # No try/catch around these two. Swallowing them into a warning is how
-    # `licenses FAILED` shipped unnoticed: cargo-deny rejected xxhash-rust's
-    # BSL-1.0 on every single build and the step still reported success. A
-    # security gate that cannot fail is not a gate. Findings belong in
-    # deny.toml (allow the licence, or ignore the advisory with a reason) -
-    # not in a catch block here.
-    Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('audit') | Out-Null
-    Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('deny', 'check', 'advisories', 'licenses', 'bans', 'sources') | Out-Null
-    } | Out-Null
+      # No try/catch around these two. Swallowing them into a warning is how
+      # `licenses FAILED` shipped unnoticed: cargo-deny rejected xxhash-rust's
+      # BSL-1.0 on every single build and the step still reported success. A
+      # security gate that cannot fail is not a gate. Findings belong in
+      # deny.toml (allow the licence, or ignore the advisory with a reason) -
+      # not in a catch block here.
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('audit') | Out-Null
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('deny', 'check', 'advisories', 'licenses', 'bans', 'sources') | Out-Null
+      } | Out-Null
 
-    # NEVER `rustup component add` here. The image's rustup is offline - its
-    # dist server is a file:// mirror that Install-RustToolchain.ps1 deletes
-    # after installing - so the call can only ever fail, and the previous
-    # skip-on-failure made both gates decorative: each finished in ~0.1s and
-    # reported success, so neither had run even once (measured 2026-08-07).
-    # Call the components directly and let a failure BE a failure. If they are
-    # missing the image is wrong, not the code; ANTfrastructure now installs them
-    # with `-c rustfmt -c clippy` and asserts them at image-build time.
-    Invoke-BuildStep -Context $context -StepName 'Format Check' -Critical -Script {
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('fmt', '--all', '--', '--check') | Out-Null
-    } | Out-Null
+      # NEVER `rustup component add` here. The image's rustup is offline - its
+      # dist server is a file:// mirror that Install-RustToolchain.ps1 deletes
+      # after installing - so the call can only ever fail, and the previous
+      # skip-on-failure made both gates decorative: each finished in ~0.1s and
+      # reported success, so neither had run even once (measured 2026-08-07).
+      # Call the components directly and let a failure BE a failure. If they are
+      # missing the image is wrong, not the code; ANTfrastructure now installs them
+      # with `-c rustfmt -c clippy` and asserts them at image-build time.
+      Invoke-BuildStep -Context $context -StepName 'Format Check' -Critical -Script {
+        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('fmt', '--all', '--', '--check') | Out-Null
+      } | Out-Null
+    }
 
     # Never --all-features: it pulls gui_unix (GTK4), which this image has not
     # got. The ONNX Runtime features need nothing at build time since they became
     # load-dynamic; the feature-matrix CI job lints the buildable combinations.
     Invoke-BuildStep -Context $context -StepName 'Linting (cargo clippy)' -Critical -Script {
-      $clippyParams = @('clippy', '--all-targets')
+      $clippyParams = @('clippy', '--all-targets') + $layout.CargoArgs
       if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
         $clippyParams += @('--features', $cargoFeatures)
       }
@@ -224,7 +264,7 @@ try {
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $clippyParams | Out-Null
     } | Out-Null
 
-    if (-not $SkipTests) {
+    if (-not $SkipTests -and -not $layout.IsCross) {
       Invoke-BuildStep -Context $context -StepName 'Unit Tests' -Critical -Script {
         $testParams = @('test', '--all', '--verbose')
         if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
@@ -235,7 +275,7 @@ try {
     }
 
     Invoke-BuildStep -Context $context -StepName 'Release Build' -Critical -Script {
-      $buildParams = @('build', '--release', '--package', 'kataglyphis_cli', '--bin', $binary)
+      $buildParams = @('build', '--release', '--package', 'kataglyphis_cli', '--bin', $binary) + $layout.CargoArgs
       if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
         $buildParams += @('--features', $cargoFeatures)
       }
@@ -247,8 +287,7 @@ try {
     # Staged beside the exe in target\release so it runs there too; each package then
     # ships a payload that G6 proves (New-OrtProvenPayload), here first to fail early.
     Invoke-BuildStep -Context $context -StepName 'Stage Chain ONNX Runtime' -Critical -Script {
-      $targetRoot = if ([System.IO.Path]::IsPathRooted($cargoTargetDir)) { $cargoTargetDir } else { Join-Path $workspacePath $cargoTargetDir }
-      $releaseDir = Join-Path $targetRoot 'release'
+      $releaseDir = $layout.ReleaseDir
       $exePath = Join-Path $releaseDir "$binary.exe"
       if (-not (Test-PayloadLoadsOrt -ExePath $exePath)) {
         Get-OrtFamilyFile -Directory $releaseDir | Remove-Item -Force
@@ -256,8 +295,36 @@ try {
         return
       }
       Copy-ChainOrtBeside -OnnxRoot "$env:ONNX_ROOT" -Destination $releaseDir
-      $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $targetRoot 'ort-payload\stage')
+      $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\stage')
       Write-BuildLog -Context $context -Message "Chain ONNX Runtime staged from $env:ONNX_ROOT\bin and proved by G6: $(@($payload.OrtDlls | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
+    } | Out-Null
+
+    # A clean arm64 device has no VC++ redist and none of the image's C:\runtime.
+    # Everything the exe and the DLLs beside it import, transitively, is staged
+    # beside the exe too, so every package below ships it. ORT enters as a seed:
+    # the exe loads it by name, so it is in no import table. ONNX_ROOT\bin comes
+    # first, so an ORT-family import resolves to the chain's copy.
+    if ($layout.IsCross) {
+      Invoke-BuildStep -Context $context -StepName 'Stage DLL Closure' -Critical -Script {
+        $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
+        $seeds = @($exePath) + @(Get-ChildItem -LiteralPath $layout.ReleaseDir -Filter '*.dll' -File | ForEach-Object FullName)
+        $search = @(if ($env:ONNX_ROOT) { Join-Path $env:ONNX_ROOT 'bin' }) + @('C:\runtime\bin')
+        $copied = @(Copy-PeImportClosure -Path $seeds -SearchDirectory $search -Destination $layout.ReleaseDir -Arch $layout.Arch)
+        Write-BuildLog -Context $context -Message "DLL closure staged beside $binary.exe from $($search -join ', '): $(@($copied | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
+      } | Out-Null
+    }
+  }
+
+  # The product the arm64 run job executes on windows-11-arm, and the tree the
+  # lane's arch gate walks: the exe with every DLL beside it, proved by G6 like
+  # each package, plus resources\, which the app looks for beside the exe.
+  if ($layout.IsCross) {
+    Invoke-BuildStep -Context $context -StepName 'Portable Bundle' -Critical -Script {
+      $bundleDir = Join-Path $layout.DistDir 'bundle'
+      $bundle = New-OrtProvenPayload -ExePath (Join-Path $layout.ReleaseDir "$binary.exe") -Destination $bundleDir
+      $resourcesSource = Join-Path $workspacePath 'resources'
+      if (Test-Path $resourcesSource) { Copy-Item -LiteralPath $resourcesSource -Destination $bundleDir -Recurse -Force }
+      Write-BuildLogSuccess -Context $context -Message "Portable bundle: $bundleDir ($(@($bundle.Dlls).Count) DLLs beside $binary.exe)"
     } | Out-Null
   }
 
@@ -278,21 +345,8 @@ try {
       # STAGING STAYS HERE, which is the split the module documents: what goes
       # into the package is this project's business (a cargo release exe, the
       # DLLs beside it, resources/), and it is the only part the three
-      # consumers did differently.
-      #
-      # CARGO_TARGET_DIR is a standard cargo variable and is commonly ABSOLUTE
-      # (the in-container scripts here set C:\ct). PowerShell's Join-Path does
-      # not collapse that the way Path.Combine would - `Join-Path 'C:\a' 'C:\b'`
-      # yields 'C:\a\C:\b' - and MSIX packaging then died on
-      # "The filename, directory name, or volume label syntax is incorrect".
-      # Same IsPathRooted idiom this script already uses for the manifest
-      # template path.
-      $cargoTargetFullPath = if ([System.IO.Path]::IsPathRooted($cargoTargetDir)) {
-        $cargoTargetDir
-      } else {
-        Join-Path $workspacePath $cargoTargetDir
-      }
-      $releaseDir = Join-Path $cargoTargetFullPath 'release'
+      # consumers did differently. Every path is the target arch's ($layout).
+      $releaseDir = $layout.ReleaseDir
 
       # Get-PackageVersion, not a local parse. This script used to read the
       # version file TWICE - here and in the MSI step below - with two
@@ -301,7 +355,7 @@ try {
       # because an AppxManifest rejects 3.
       $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 4
 
-      $msixStaging = Join-Path $cargoTargetFullPath 'msix-staging'
+      $msixStaging = Join-Path $layout.ArchTargetDir 'msix-staging'
       if (Test-Path $msixStaging) {
         Remove-Item $msixStaging -Recurse -Force
       }
@@ -312,7 +366,7 @@ try {
       }
       # The package ships the payload G6 just proved; -SkipBuild skips the staging
       # step, so this is where a packaged-only run still proves its ORT.
-      $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $cargoTargetFullPath 'ort-payload\msix')
+      $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msix')
 
       # -ExtraFiles, not -ResourcesDir: the module's -ResourcesDir flattens the
       # directory's CONTENTS into the package root, and this app looks for
@@ -333,8 +387,8 @@ try {
       $manifestTemplateRel = Get-ConfigValue -Config $config -Path 'Msix.ManifestTemplate'
       $manifestTemplatePath = if ([System.IO.Path]::IsPathRooted($manifestTemplateRel)) { $manifestTemplateRel } else { Join-Path $workspacePath $manifestTemplateRel }
 
-      $distDir = Join-Path $workspacePath 'dist\msix'
-      $packageFile = Join-Path $distDir "$msixName`_$resolvedVersion`_x64.msix"
+      $distDir = Join-Path $layout.DistDir 'msix'
+      $packageFile = Join-Path $distDir "$msixName`_$resolvedVersion`_$($layout.PackageArch).msix"
 
       Write-BuildLog -Context $context -Message "Creating MSIX package: $packageFile"
 
@@ -355,6 +409,7 @@ try {
           '__MSIX_NAME__'                   = $msixName
           '__MSIX_PUBLISHER__'              = $msixPublisher
           '__MSIX_VERSION__'                = $resolvedVersion
+          '__MSIX_ARCH__'                   = $layout.PackageArch
           '__MSIX_MIN_VERSION__'            = $msixMinVersion
           '__MSIX_DISPLAY_NAME__'           = $msixDisplayName
           '__MSIX_PUBLISHER_DISPLAY_NAME__' = $msixPublisherDisplayName
@@ -408,10 +463,10 @@ try {
         $msiOutputName = $binary
       }
 
-      $msiDistDir = Join-Path $workspacePath 'dist\msi'
+      $msiDistDir = Join-Path $layout.DistDir 'msi'
       New-Item -ItemType Directory -Path $msiDistDir -Force | Out-Null
 
-      $msiFile = Join-Path $msiDistDir "$msiOutputName-$resolvedVersion-x64.msi"
+      $msiFile = Join-Path $msiDistDir "$msiOutputName-$resolvedVersion-$($layout.PackageArch).msi"
 
       Write-BuildLog -Context $context -Message "Creating MSI package: $msiFile"
 
@@ -425,19 +480,12 @@ try {
         throw "WiX source not found: $wxsPath (Msi.WxsFile = '$wxsRel')."
       }
 
-      # Same IsPathRooted guard as the MSIX step: CARGO_TARGET_DIR is usually
-      # absolute in the container (C:\ct), and Join-Path would mangle it.
-      $msiCargoTargetFullPath = if ([System.IO.Path]::IsPathRooted($cargoTargetDir)) {
-        $cargoTargetDir
-      } else {
-        Join-Path $workspacePath $cargoTargetDir
-      }
-      $msiExePath = Join-Path (Join-Path $msiCargoTargetFullPath 'release') "$binary.exe"
+      $msiExePath = Join-Path $layout.ReleaseDir "$binary.exe"
       if (-not (Test-Path $msiExePath)) {
         throw "Expected executable not found: $msiExePath"
       }
       # The MSI installs the payload G6 just proved, exe included.
-      $msiPayload = New-OrtProvenPayload -ExePath $msiExePath -Destination (Join-Path $msiCargoTargetFullPath 'ort-payload\msi')
+      $msiPayload = New-OrtProvenPayload -ExePath $msiExePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msi')
 
       $licenseRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.LicenseFile') 'wix/License.rtf'
       $licenseRtf = if ([System.IO.Path]::IsPathRooted($licenseRel)) { $licenseRel } else { Join-Path $workspacePath $licenseRel }
@@ -463,7 +511,7 @@ try {
       # duplicates a string the config already owns.
       $wixParams = @(
         'build',
-        '-arch', 'x64',
+        '-arch', $layout.PackageArch,
         '-ext', 'WixToolset.UI.wixext',
         '-d', "Version=$resolvedVersion",
         '-d', "ExeSource=$($msiPayload.Exe)",
@@ -474,23 +522,26 @@ try {
         $wxsPath
       )
 
-      # The chain ORT staged beside the exe travels in the MSI too: one generated
-      # component per DLL, named by main.wxs's OrtRuntime ComponentGroupRef.
-      if ($msiPayload.LoadsOrt) {
-        $ortDlls = @($msiPayload.OrtDlls)
-        $components = for ($i = 0; $i -lt $ortDlls.Count; $i++) {
-          $src = [System.Security.SecurityElement]::Escape($ortDlls[$i])
-          "      <Component Id='ortRuntime$i' Bitness='always64'><File Id='ortRuntimeFile$i' Source='$src' KeyPath='yes'/></Component>"
+      # The DLLs installed beside the exe, one generated component each, named by
+      # main.wxs's PayloadDlls ComponentGroupRef. On the host that is the chain
+      # ORT staged beside the exe (the machine has the VC++ redist); on a cross
+      # build it is every DLL of the payload, whose device has none of them. The
+      # fragment is an intermediate, so it stays out of dist.
+      $payloadDlls = @(if ($layout.IsCross) { $msiPayload.Dlls } elseif ($msiPayload.LoadsOrt) { $msiPayload.OrtDlls })
+      if ($payloadDlls.Count -gt 0) {
+        $components = for ($i = 0; $i -lt $payloadDlls.Count; $i++) {
+          $src = [System.Security.SecurityElement]::Escape($payloadDlls[$i])
+          "      <Component Id='payloadDll$i' Bitness='always64'><File Id='payloadDllFile$i' Source='$src' KeyPath='yes'/></Component>"
         }
-        $fragmentPath = Join-Path $msiDistDir 'ort-runtime.wxs'
+        $fragmentPath = Join-Path $layout.ArchTargetDir 'msi-payload-dlls.wxs'
         @(
           "<Wix xmlns='http://wixtoolset.org/schemas/v4/wxs'><Fragment>"
-          "    <ComponentGroup Id='OrtRuntime' Directory='APPLICATIONFOLDER'>"
+          "    <ComponentGroup Id='PayloadDlls' Directory='APPLICATIONFOLDER'>"
           $components
           '    </ComponentGroup>'
           '</Fragment></Wix>'
         ) | Set-Content -LiteralPath $fragmentPath -Encoding utf8
-        $wixParams += @('-d', 'OrtRuntime=1', $fragmentPath)
+        $wixParams += @('-d', 'PayloadDlls=1', $fragmentPath)
       }
       Invoke-BuildExternal -Context $context -File $wixExe -Parameters $wixParams | Out-Null
 

@@ -419,7 +419,7 @@ malformed and stayed that way through several edits.
 
 ### Continuous integration
 
-Six workflow files: five triggered, one reusable. The three build lanes — one file per platform + arch — run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and **none of the three gate jobs is a copied job any more** — all three are one `uses:` onto ANTfrastructure, two onto a reusable workflow and one onto a composite action:
+Seven workflow files: six triggered, one reusable. The four build lanes — one file per platform + arch — run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and **none of the three gate jobs is a copied job any more** — all three are one `uses:` onto ANTfrastructure, two onto a reusable workflow and one onto a composite action:
 
 | Lane (display name) | Workflow | Runs when | Image and runner |
 | --- | --- | --- | --- |
@@ -430,10 +430,11 @@ Six workflow files: five triggered, one reusable. The three build lanes — one 
 | Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push/PR to `main`/`develop`, and `workflow_dispatch` | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
 | Linux arm64 · build + test | `linux-arm64.yml` → `reusable-linux.yml` | same | same image (a multi-arch index); native `ubuntu-26.04-arm`, no QEMU |
 | Windows x64 · build + test | `windows-x64.yml` | same | family Windows CI image, inherited; `windows-2025` |
+| Windows arm64 · cross build + run | `windows-arm64-cross.yml` → the hub's reusable `container-ci-windows.yml` | same | the family image's arm64 bundle, inherited from the action's `image-arm64` default; `windows-2025` builds, `windows-11-arm` runs the product |
 | Linux x64 · build + test | `linux-x64.yml` (job `feature-matrix`) | opt-in: `[build-features]` in the HEAD commit message, or `workflow_dispatch` | family Linux CI image; `ubuntu-26.04` |
 
 **Every platform lane runs on every push and PR, since 2026-09-24** (owner request).
-None of the three build jobs carries an `if:`, and none may be added back. Until that
+None of the four build lanes carries an `if:`, and none may be added back. Until that
 date the arm64 row needed `[build-arm]` and the Windows lane `[build-win]` in the HEAD
 commit message, so both reported `skipped` on almost every push — which a badge
 renders the same as a pass. ANTfrastructure's `docs/ci-build-triggers.md` still
@@ -452,6 +453,30 @@ Concurrency is per workflow: each triggered build workflow groups on
 default branch. `reusable-linux.yml` declares no group, because inside a called
 workflow `github.workflow` is the caller's name, and GitHub cancels a callee whose
 group repeats its caller's as a deadlock.
+
+**The Windows arm64 lane cross-builds, then runs** (owner decision 2026-09-25).
+`windows-arm64-cross.yml` is a thin caller of the hub's reusable
+`container-ci-windows.yml`: `Build-Windows.ps1 -TargetArch arm64` in the family
+image's arm64 bundle on `windows-2025`, the hub's arch gate over
+`dist/windows-arm64`, then `kataglyphis_cli.exe --help` and `stats` natively on
+`windows-11-arm`. No arm64 Windows container image exists, so that job is the only
+place an arm64 binary of this repo executes. On a cross build the script:
+
+- builds with `--target aarch64-pc-windows-msvc` and `PKG_CONFIG_ALLOW_CROSS=1`
+  (gstreamer-sys asks pkg-config; the bundle's `.pc` files are arm64);
+- runs clippy for aarch64, and leaves audit/deny, fmt and the tests to the x64
+  lane, which grades the same commit;
+- stages the DLL closure a clean device lacks (the arm64 VC++ runtime,
+  GStreamer's libraries) beside the exe with the hub's `Copy-PeImportClosure`,
+  so the portable bundle, `*_arm64.msix` and `*-arm64.msi` all carry it.
+
+Every arch-dependent path and name comes from `Get-CargoTargetLayout`
+(`scripts/windows/modules/WindowsCargoTarget.Common.psm1`, pinned by
+`scripts/windows/tests/CargoTarget.Tests.ps1`). The host layout is unchanged, so
+`windows-x64.yml` uploads from the same paths as before. Locally it is the x64
+lane's container run with the arm64 bundle's reference
+(`bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh --windows-arm64`)
+and `-TargetArch arm64`.
 
 "Inherited" is literal: **no build workflow names an image.** Both of the old ones used to open
 with a `CONTAINER_IMAGE:` env entry holding the full reference and hand it to
