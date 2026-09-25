@@ -55,7 +55,7 @@ Describe 'Repo generated artifacts' {
         $generated = @(
             'target/'                   # cargo build output
             'target-msix/'              # the MSIX staging target dir
-            'dist/'                     # dist\msix and dist\msi packaging output
+            'dist/'                     # dist\windows-<arch>: bundle, msix and msi packaging output
             'logs/'                     # Build-Windows.ps1 / container build logs
             'debug/'                    # container-built binaries copied to the repo root
             'profile/'                  # ... by scripts/windows/container/
