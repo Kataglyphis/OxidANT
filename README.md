@@ -380,46 +380,39 @@ directory (the release exe, the DLLs beside it, `resources/`) and the token map.
 **MSIX Packaging** step, taking every value from the `Msix` block of
 `scripts/windows/Build-Windows.config.psd1` and letting an environment variable
 override each one (`MSIX_PACKAGE_NAME`, `MSIX_DISPLAY_NAME`, …). `-SkipMsix`
-turns it off.
+turns it off. The package lands in `dist\windows-<x64|arm64>\msix\`, beside the
+portable bundle and the MSI, and carries the exe's whole DLL closure.
 
 ```pwsh
 pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
 ```
 
-**That route does not sign** — it produces an unsigned package. Signing is
-ANTfrastructure's standalone script. Its `-ManifestTemplatePath` default is
-`packaging\msix\AppxManifest.template.xml`, which is where this repo keeps the
-template, so it no longer has to be passed:
+**That route does not sign.** Sign its package with the Windows SDK's `signtool`,
+which is on `PATH` in a VS Developer PowerShell. ANTfrastructure's
+`GenerateCertificateMSIX.ps1` makes a test certificate. Its `-Publisher` must be the
+manifest's publisher, `CN=Kataglyphis` (the `Msix` block's `Publisher`):
 
 ```pwsh
-pwsh -ExecutionPolicy Bypass -File .\third_party\ANTfrastructure\windows\scripts\rust\New-MsixPackage.ps1 `
-  -Workspace . `
-  -Binary kataglyphis_cli `
-  -PackageName Kataglyphis.OxidANT `
-  -Publisher 'CN=Kataglyphis' `
-  -PublisherDisplayName Kataglyphis `
-  -DisplayName OxidANT `
-  -CreateTestCertificate `
-  -CertificatePassword "<TEST_CERT_PASSWORD>"
+$pfx  = 'dist\windows-x64\msix\Kataglyphis.OxidANT.testcert.pfx'
+$msix = 'dist\windows-x64\msix\Kataglyphis.OxidANT_<VERSION>_x64.msix'
+pwsh -File .\third_party\ANTfrastructure\windows\scripts\certificates\GenerateCertificateMSIX.ps1 `
+  -Password '<TEST_CERT_PASSWORD>' -Publisher 'CN=Kataglyphis' -PfxPath $pfx
+signtool sign /fd SHA256 /f $pfx /p '<TEST_CERT_PASSWORD>' $msix
 ```
 
-Use `-CertificatePath .\certs\my-signing-cert.pfx -CertificatePassword "<PASSWORD>"`
-instead of `-CreateTestCertificate` for an existing PFX; `-Publisher` must match the
-certificate. The script's own comment-based help lists its remaining parameters —
-they are not retyped here, because a retyped parameter list goes stale in exactly
-the way this section already did.
-
-Output:
-
-- package: `dist\msix\Kataglyphis.OxidANT_<VERSION>_x64.msix`
-- staging content: `dist\msix\staging\`
+An existing PFX signs the same way, and its subject must match the publisher too.
+`<VERSION>` is `VERSION.txt`'s, padded to four parts (`2.3.4` becomes `2.3.4.0`).
+ANTfrastructure's standalone `New-MsixPackage.ps1`, which this section used to show,
+cannot package this repo: it fills `__PACKAGE_NAME__`-style tokens, while
+`packaging/msix/AppxManifest.template.xml` carries the `__MSIX_*__` tokens that
+`Build-Windows.ps1` fills.
 
 Installing a test-signed package needs an **elevated** PowerShell, because the
 certificate has to be trusted machine-wide first:
 
 ```pwsh
-$certPath = 'dist\msix\Kataglyphis.OxidANT.testcert.pfx'
-$msixPath = 'dist\msix\Kataglyphis.OxidANT_0.1.0.0_x64.msix'
+$certPath = 'dist\windows-x64\msix\Kataglyphis.OxidANT.testcert.pfx'
+$msixPath = 'dist\windows-x64\msix\Kataglyphis.OxidANT_2.3.4.0_x64.msix'
 $pfxPw    = ConvertTo-SecureString '<TEST_CERT_PASSWORD>' -AsPlainText -Force
 
 Import-PfxCertificate -FilePath $certPath -Password $pfxPw -CertStoreLocation 'Cert:\LocalMachine\Root'
@@ -439,8 +432,8 @@ Get-AppxPackage -Name Kataglyphis.OxidANT | Select-Object Name, PackageFullName,
 $pkg = Get-AppxPackage -Name Kataglyphis.OxidANT
 Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
 
-# update: build and sign with a higher -Version, then install it the same way
-Add-AppxPackage -Path dist\msix\Kataglyphis.OxidANT_<NEW_VERSION>_x64.msix
+# update: raise VERSION.txt, rebuild and sign, then install it the same way
+Add-AppxPackage -Path dist\windows-x64\msix\Kataglyphis.OxidANT_<NEW_VERSION>_x64.msix
 
 Get-AppxPackage -Name Kataglyphis.OxidANT | Remove-AppxPackage
 ```
@@ -466,7 +459,7 @@ uninstall it first.
 Runs as the **MSI Packaging** step of `Build-Windows.ps1` (disable with `-SkipMsi`,
 or `Msi.Enabled = $false` in `scripts/windows/Build-Windows.config.psd1`).
 
-Output: `dist\msi\kataglyphis_cli-<VERSION>-x64.msi`
+Output: `dist\windows-<x64|arm64>\msi\kataglyphis_cli-<VERSION>-<x64|arm64>.msi`
 
 Built with **WiX Toolset v4** (`wix.exe build`), not `cargo-wix`: cargo-wix drives
 WiX v3's `candle.exe`/`light.exe` even in its newest release (0.3.9), while the
