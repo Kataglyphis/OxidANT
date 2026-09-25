@@ -387,22 +387,23 @@ portable bundle and the MSI, and carries the exe's whole DLL closure.
 pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
 ```
 
-**That route does not sign.** Sign its package with the Windows SDK's `signtool`,
-which is on `PATH` in a VS Developer PowerShell. ANTfrastructure's
-`GenerateCertificateMSIX.ps1` makes a test certificate. Its `-Publisher` must be the
-manifest's publisher, `CN=Kataglyphis` (the `Msix` block's `Publisher`):
+**The same route signs.** Its MSIX step signs with the first `*.pfx` at the
+repository root (`*.pfx` is gitignored) and `MSIX_PFX_PASSWORD`, then verifies the
+signature. With no `.pfx` there it warns and the package stays unsigned, which is
+what CI builds. ANTfrastructure's `GenerateCertificateMSIX.ps1` makes a test
+certificate. Its `-Publisher` must be the manifest's publisher, `CN=Kataglyphis` (the
+`Msix` block's `Publisher`):
 
 ```pwsh
-$pfx  = 'certs\Kataglyphis.OxidANT.testcert.pfx'   # *.pfx is gitignored; a rebuild never touches certs\
-$msix = 'dist\windows-x64\msix\Kataglyphis.OxidANT_<VERSION>_x64.msix'
-New-Item -ItemType Directory -Force -Path certs | Out-Null
 pwsh -File .\third_party\ANTfrastructure\windows\scripts\certificates\GenerateCertificateMSIX.ps1 `
-  -Password '<TEST_CERT_PASSWORD>' -Publisher 'CN=Kataglyphis' -PfxPath $pfx
-signtool sign /fd SHA256 /f $pfx /p '<TEST_CERT_PASSWORD>' $msix
+  -Password '<TEST_CERT_PASSWORD>' -Publisher 'CN=Kataglyphis' -PfxPath .\Kataglyphis.OxidANT.testcert.pfx
+$env:MSIX_PFX_PASSWORD = '<TEST_CERT_PASSWORD>'
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
 ```
 
-An existing PFX signs the same way, and its subject must match the publisher too.
-`<VERSION>` is `VERSION.txt`'s, padded to four parts (`2.3.4` becomes `2.3.4.0`).
+An existing PFX works the same way, and its subject must match the publisher too.
+The package is `dist\windows-<arch>\msix\Kataglyphis.OxidANT_<VERSION>_<arch>.msix`,
+with `VERSION.txt`'s version padded to four parts (`2.3.4` becomes `2.3.4.0`).
 ANTfrastructure's standalone `New-MsixPackage.ps1`, which this section used to show,
 cannot package this repo: it fills `__PACKAGE_NAME__`-style tokens, while
 `packaging/msix/AppxManifest.template.xml` carries the `__MSIX_*__` tokens that
@@ -412,7 +413,7 @@ Installing a test-signed package needs an **elevated** PowerShell, because the
 certificate has to be trusted machine-wide first:
 
 ```pwsh
-$certPath = 'certs\Kataglyphis.OxidANT.testcert.pfx'
+$certPath = 'Kataglyphis.OxidANT.testcert.pfx'
 $msixPath = 'dist\windows-x64\msix\Kataglyphis.OxidANT_2.3.4.0_x64.msix'
 $pfxPw    = ConvertTo-SecureString '<TEST_CERT_PASSWORD>' -AsPlainText -Force
 
