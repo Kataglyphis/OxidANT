@@ -14,6 +14,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- **The Linux lanes render the WebGPU golden tests, on lavapipe (2026-09-29).** The
+  `test` step of `scripts/linux/ci-container-steps.sh` exports
+  `KATAGLYPHIS_REQUIRE_GPU=1`, so a missing adapter panics instead of skipping. The
+  family image has a software Vulkan device since ANTfrastructure CON19; proven
+  locally on the amd64 child (`vulkaninfo`: deviceType CPU, `llvmpipe`), the step
+  green with no `SKIP: no GPU` line. The one test that fails on it,
+  `a_non_uniform_instance_scale_shades_like_the_same_node_scale` (the known
+  instanced-normal bug, 987 px, blocked upstream), is `#[ignore]`d with its reason.
 - **Every Windows package carries the GUI's GStreamer plugins and its model, and
   both lanes prove it (2026-09-25).**
   - The camera pipeline creates its elements by name, so their plugins were in no
@@ -114,6 +122,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **`run-producer-pi.sh` runs through the image's entrypoint (2026-09-29).** All three
+  `nerdctl run`s drop `--entrypoint bash`; `/hostlibs` is handed in as the caller's
+  `LD_LIBRARY_PATH`, which ANTfrastructure CON23's entrypoint keeps ahead of the
+  image's libcamera, behind GCC's runtime. The prologue appends the image's other
+  media paths and refuses an image older than CON23. Proven under QEMU only; a board
+  run is open in BACKLOG.md.
 - **The chain ORT staging and every payload's proof are the hub's
   `WindowsOrtPayload.Common`** (hub `ad08bc30`, 2026-09-25), which grew out of this
   repo's own module of that name. The local copy and its Pester suite are gone;

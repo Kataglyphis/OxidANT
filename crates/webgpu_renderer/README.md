@@ -70,7 +70,10 @@ Viewer controls: drag to orbit, wheel to zoom, **S** screenshot,
 GPU tests render headlessly and assert *structural* pixel properties
 (colour dominance, coverage ratios, energy deltas) rather than exact
 images, so they survive driver differences. They skip themselves when no
-adapter is present and still report as passed. The Linux CI lanes, which run
-them, have no adapter, so a green CI run has not drawn them (the Windows x64
-lane runs only the lib tests, on its runner host). Set `KATAGLYPHIS_REQUIRE_GPU=1`
-to turn a missing adapter into a failure.
+adapter is present and still report as passed, unless `KATAGLYPHIS_REQUIRE_GPU=1`
+turns a missing adapter into a failure. The Linux CI lanes set it (the `test`
+step of `scripts/linux/ci-container-steps.sh`) and render on the family image's
+software Vulkan device (lavapipe), so a green Linux run has drawn them. The
+Windows x64 lane runs only the lib tests, on its runner host, without it.
+`a_non_uniform_instance_scale_shades_like_the_same_node_scale` is `#[ignore]`d:
+a known shading bug (BACKLOG.md) fails it on every adapter.

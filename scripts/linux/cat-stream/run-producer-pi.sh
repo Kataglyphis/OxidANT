@@ -172,16 +172,29 @@ done
 
 # The loader paths are ANTfrastructure's and are NOT retyped here. A copy of
 # them freezes at today's prefixes - it spelled out /opt/gcc-16.2.0 twice, so a
-# GCC bump upstream silently dropped the C++ runtime out of the search path -
-# and the image already carries the answer: media-env.sh is the same file the
-# Dockerfiles source, and path-helpers.sh is the same prepend-once helper every
-# other *-env.sh in the image uses.
+# GCC bump upstream silently dropped the C++ runtime out of the search path.
 #
-# Only the two directories THIS script is responsible for are added:
-#   /hostlibs   the closure collected above, first so the host libcamera wins
-#               over the image's older upstream copy
-#   ${host_multiarch_dir}  last, so the host's bind-mounted libcamera IPA
-#               directory resolves without shadowing the image's own libraries
+# The container runs through the image's NORMAL entrypoint, and /hostlibs is
+# handed in as the caller's LD_LIBRARY_PATH. That works since hub CON23
+# (:latest of 2026-09-29): libcamera-env.sh APPENDS the image's /opt/libcamera
+# after whatever the caller set, and the entrypoint puts ${GCC_PREFIX}'s runtime
+# ahead of it, so the host libcamera closure wins over the image's older copy
+# and a host libstdc++ cannot shadow GCC's (`GLIBCXX_3.4.36 not found`). Before
+# CON23 the entrypoint PREPENDED /opt/libcamera over the caller's value, which
+# is why this runner used to bypass it with `--entrypoint bash`. Proven under
+# QEMU only (arm64 child, empty /hostlibs); a board run is still owed - BACKLOG.
+#
+# The prologue below is still needed, for three reasons that have nothing to do
+# with the entrypoint:
+#   - a caller's LD_LIBRARY_PATH REPLACES the image's ENV value, and the
+#     entrypoint restores only GStreamer, libcamera and GCC. The rest of the
+#     image's media paths (/usr/local/lib, OpenCV, FFmpeg) come from
+#     media-env.sh - the same file the Dockerfiles source - and are APPENDED,
+#     so they stay behind /hostlibs;
+#   - ${HOST_MULTIARCH_DIR} goes last, so the host's bind-mounted libcamera IPA
+#     directory resolves without shadowing the image's own libraries;
+#   - it refuses an image older than CON23, where /opt/libcamera would sit
+#     ahead of /hostlibs and the Pi 5's camera would fail with no hint why.
 #
 # Quoted heredoc on purpose: every expansion below belongs to the CONTAINER's
 # shell, not this one.
@@ -194,14 +207,28 @@ for _hub_env in /opt/scripts/03-media/final/media-env.sh /opt/scripts/core/path-
     printf 'This runner needs the family CI image, not a bare distro image.\n' >&2
     exit 1
   fi
-  # shellcheck source=/dev/null
-  . "${_hub_env}"
 done
-if ! _path_contains "${LD_LIBRARY_PATH:-}" "${HOST_MULTIARCH_DIR}"; then
-  LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${HOST_MULTIARCH_DIR}"
-  export LD_LIBRARY_PATH
-fi
-_path_prepend_unique LD_LIBRARY_PATH /hostlibs
+# shellcheck source=/dev/null
+. /opt/scripts/core/path-helpers.sh
+_image_ld="$(LD_LIBRARY_PATH='' bash -c '. /opt/scripts/03-media/final/media-env.sh; printf "%s" "${LD_LIBRARY_PATH}"')"
+IFS=: read -r -a _image_dirs <<<"${_image_ld}"
+for _dir in "${_image_dirs[@]}" "${HOST_MULTIARCH_DIR}"; do
+  [ -n "${_dir}" ] || continue
+  if ! _path_contains "${LD_LIBRARY_PATH:-}" "${_dir}"; then
+    LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${_dir}"
+  fi
+done
+export LD_LIBRARY_PATH
+IFS=: read -r -a _ld_dirs <<<"${LD_LIBRARY_PATH}"
+for _dir in "${_ld_dirs[@]}"; do
+  [ "${_dir}" = /hostlibs ] && break
+  case "${_dir}" in
+    "${LIBCAMERA_PREFIX:-/opt/libcamera}"|"${LIBCAMERA_PREFIX:-/opt/libcamera}"/*)
+      printf 'the image puts %s ahead of /hostlibs - it predates ANTfrastructure CON23; pull :latest\n' "${_dir}" >&2
+      exit 1
+      ;;
+  esac
+done
 : "${ORT_DYLIB_PATH:=${ORT_LIB_LOCATION:-/usr/local/lib/onnxruntime-cpu/lib}/libonnxruntime.so}"
 export ORT_DYLIB_PATH
 exec "$@"
@@ -225,11 +252,11 @@ nerdctl_args=(
   -v /usr/share/libpisp:/usr/share/libpisp:ro
   -v "${repo_root}":/workspace
   -v "${target_volume}":/cargo-target
+  -e LD_LIBRARY_PATH=/hostlibs
   -e "HOST_MULTIARCH_DIR=${host_multiarch_dir}"
   -e RUST_LOG="${RUST_LOG:-info}"
-  --entrypoint bash
   "${image}"
-  -c "${container_prologue}" cat-producer "${producer}"
+  bash -c "${container_prologue}" cat-producer "${producer}"
   --libcamera
   --listen-port "${port}"
   --name "${name}"
@@ -247,8 +274,8 @@ if [ -n "${rotate}" ]; then
 fi
 
 producer_present() {
-  nerdctl run --rm --user 0:0 --entrypoint bash -v "${target_volume}":/cargo-target "${image}" \
-    -c "test -x ${producer}" >/dev/null 2>&1
+  nerdctl run --rm --user 0:0 -v "${target_volume}":/cargo-target "${image}" \
+    bash -c "test -x ${producer}" >/dev/null 2>&1
 }
 
 if [ "${do_build}" = true ] || ! producer_present; then
@@ -262,8 +289,8 @@ if [ "${do_build}" = true ] || ! producer_present; then
     -v "${target_volume}":/cargo-target \
     -v "${cargo_volume}":/cargo-home \
     -e CARGO_TARGET_DIR=/cargo-target -e CARGO_HOME=/cargo-home \
-    --entrypoint bash "${image}" \
-    -lc 'cd /workspace && cargo build --release --locked -p kataglyphis_cat_webrtc'
+    "${image}" \
+    bash -lc 'cd /workspace && cargo build --release --locked -p kataglyphis_cat_webrtc'
 fi
 
 # A producer from an interrupted run still holds the name; replace it rather

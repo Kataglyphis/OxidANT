@@ -171,7 +171,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-The `crates/webgpu_renderer` headless golden tests need a GPU adapter and **silently skip without one**. Set `KATAGLYPHIS_REQUIRE_GPU=1` to turn a missing adapter into a failure, so a green run actually means they rendered:
+The `crates/webgpu_renderer` headless golden tests need a GPU adapter and **silently skip without one**. Set `KATAGLYPHIS_REQUIRE_GPU=1` to turn a missing adapter into a failure, so a green run actually means they rendered. The Linux CI lanes set it and render on the image's software Vulkan device (lavapipe):
 
 ```bash
 KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked
