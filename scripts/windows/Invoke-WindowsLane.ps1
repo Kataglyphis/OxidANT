@@ -33,8 +33,44 @@ function Invoke-LaneStep {
   if ($LASTEXITCODE -ne 0) { throw "$Script failed with exit code $LASTEXITCODE" }
 }
 
-if (-not (Test-WindowsCrossTarget -Arch $arch)) {
-  Invoke-LaneStep -Script 'Invoke-DebugTests.ps1'
-  Invoke-LaneStep -Script 'Invoke-WindowsConfigMatrix.ps1'
+# robocopy /MOVE; exit codes below 8 are success.
+function Move-CacheTree {
+  param([Parameter(Mandatory)][string]$From, [Parameter(Mandatory)][string]$To, [string[]]$ExcludeDirs = @())
+  if (-not (Test-Path -LiteralPath $From)) { return }
+  $copyArgs = @($From, $To, '/E', '/MOVE', '/MT:16', '/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+  if ($ExcludeDirs) { $copyArgs += @('/XD') + $ExcludeDirs }
+  & robocopy @copyArgs | Out-Host
+  if ($LASTEXITCODE -ge 8) { throw "robocopy $From -> $To failed with exit code $LASTEXITCODE" }
+  $global:LASTEXITCODE = 0
 }
-Invoke-LaneStep -Script 'Build-Windows.ps1' -Arguments @('-SkipTests', '-TargetArch', $arch)
+
+# The CI compiler cache (container-ci-windows.yml's compiler-cache-key) arrives as
+# CI_COMPILER_CACHE in the workspace. sccache cannot write to that mount, so the cache moves to
+# the container-local dirs Initialize-BuildCacheEnvironment uses, and every step compiles
+# through it, not only Build-Windows.ps1. It moves back even after a failed step.
+$ciCache = $env:CI_COMPILER_CACHE
+if ($ciCache) {
+  $fastDir = if ($env:KATAGLYPHIS_FAST_BUILD_DIR) { $env:KATAGLYPHIS_FAST_BUILD_DIR } else { 'C:\kataglyphis_fast_build' }
+  $cacheRoot = Join-Path $fastDir '.cache'
+  foreach ($sub in 'sccache', 'cargo') { Move-CacheTree -From (Join-Path $ciCache $sub) -To (Join-Path $cacheRoot $sub) }
+  $env:SCCACHE_DIR = Join-Path $cacheRoot 'sccache'
+  $env:CARGO_HOME = Join-Path $cacheRoot 'cargo'
+  $env:RUSTC_WRAPPER = (Get-Command sccache -ErrorAction Stop).Source
+  if ($env:SCCACHE_ERROR_LOG) { New-Item -ItemType Directory -Force -Path (Split-Path $env:SCCACHE_ERROR_LOG) | Out-Null }
+}
+
+try {
+  if (-not (Test-WindowsCrossTarget -Arch $arch)) {
+    Invoke-LaneStep -Script 'Invoke-DebugTests.ps1'
+    Invoke-LaneStep -Script 'Invoke-WindowsConfigMatrix.ps1'
+  }
+  Invoke-LaneStep -Script 'Build-Windows.ps1' -Arguments @('-SkipTests', '-TargetArch', $arch)
+} finally {
+  if ($ciCache) {
+    & sccache --show-stats | Out-Host
+    & sccache --stop-server 2>&1 | Out-Null
+    $cargoHome = Join-Path $cacheRoot 'cargo'
+    Move-CacheTree -From (Join-Path $cacheRoot 'sccache') -To (Join-Path $ciCache 'sccache')
+    Move-CacheTree -From $cargoHome -To (Join-Path $ciCache 'cargo') -ExcludeDirs @((Join-Path $cargoHome 'registry\src'), (Join-Path $cargoHome 'git\checkouts'))
+  }
+}
