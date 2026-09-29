@@ -157,3 +157,6 @@ flake.lock
 # the renderer's test assets are exactly those and they are small.
 
 # Before adding 
+
+# HailoRT writes its log into the working directory whenever the image loads it
+hailort.log
