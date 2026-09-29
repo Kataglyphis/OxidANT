@@ -131,7 +131,7 @@ jobs:
       # CARGO_HOME (the registry, and the cargo-audit/-deny/-tarpaulin installs
       # that took about 8 min a run) and an sccache for rustc outlive the
       # per-step containers. The guarded launcher compiles directly if sccache
-      # itself fails. Only pushes save.
+      # itself fails. Only pushes to develop save.
       - name: Restore the cargo and compiler cache
         id: cc
         uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-restore@develop
