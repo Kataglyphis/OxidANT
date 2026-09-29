@@ -41,6 +41,10 @@ jobs:
         amd64
       container-env: |
         CARGO_TERM_COLOR=always
+        SCCACHE_CACHE_SIZE=3G
+      # CARGO_HOME (the cargo-audit/-deny installs) and a rustc sccache across runs;
+      # Invoke-WindowsLane.ps1 moves them in and out of the container-local dirs.
+      compiler-cache-key: x64-windows
       version-file: VERSION.txt
       # The renderer's lib tests cannot start on Server Core: wgpu's gles backend
       # imports opengl32.dll, which it does not ship. The host has it, so the host
