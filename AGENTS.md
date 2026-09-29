@@ -306,7 +306,7 @@ full-workspace release build confirms it. zune-jpeg's newest release is still 0.
 
 - **No always-on Linux lane builds any optional feature.** Both Linux lanes build default features. The Windows lanes build `gui_windows,onnxruntime_directml` (x64 since 2026-09-24, arm64 since 2026-09-25), and the x64 lane's config matrix adds `gui_windows` with `onnx_tract` and with `onnxruntime_cuda`. So `crates/media`, `gui_linux` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `linux-x64.yml` closes this, and the image already carries what its rows need (the table above), but it is still opt-in (`[build-features]` or a manual run) and has never run: as of 2026-09-25 no commit message carries the marker and the repository has no `workflow_dispatch` run.
 
-- **No CI lane has a GPU, so the golden tests never actually run.** `GpuContext::headless_or_skip()` returns `None` and every one of the ~40 headless render tests reports as passed having drawn nothing. This is not theoretical: running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**:
+- **The Linux lanes render the golden tests on a software Vulkan device, and must** (since 2026-09-29). The family image carries lavapipe (`vulkaninfo --summary`: deviceType CPU, `llvmpipe`) on amd64 and arm64 since ANTfrastructure CON19, and the `test` step of `scripts/linux/ci-container-steps.sh` exports `KATAGLYPHIS_REQUIRE_GPU=1`, so `GpuContext::headless_or_skip()` panics instead of returning `None` and a green run means the ~40 headless render tests drew something. Before that no CI lane had an adapter and every one of them reported as passed having drawn nothing. The Windows x64 lane's host renderer tests (`Invoke-HostTests.ps1`) do not set it. Running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**, which the image's lavapipe reproduces byte-for-byte (987 pixels, 2026-09-29):
 
   ```
   a_non_uniform_instance_scale_shades_like_the_same_node_scale
@@ -318,7 +318,7 @@ full-workspace release build confirms it. zune-jpeg's newest release is still 0.
 
   **Fix it upstream, not here.** The `.wgsl` files in `src/shaders/` are checked-in *generated artifacts*; there is no `.slang` file in this repo, and the code comments reference the C++ engine's `forward.slang` by line number (e.g. `cascades.rs` → `forward.slang:151`). Hand-editing the generated WGSL would desynchronise it from its source.
 
-  Until a CI runner has an adapter, a software one makes these tests real: install `mesa-vulkan-drivers` and set `KATAGLYPHIS_REQUIRE_GPU=1` so a missing adapter fails loudly instead of skipping silently.
+  **That one test is `#[ignore]`d, with the reason in the attribute**, and it is the only scope cut on `KATAGLYPHIS_REQUIRE_GPU`: it fails on every adapter, software or not, so letting it red the lane would only have pushed the flag back out. `cargo test -p kataglyphis_webgpu_renderer --test skinned_bounds -- --ignored` still runs it; remove the attribute with the fix.
 
 ### Verifying locally on a Windows box (no MSVC required)
 
@@ -389,16 +389,32 @@ both and a copy here goes stale:
   `third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh`, which reads the
   fleet's `versions.env`. A literal `ghcr.io/…:latest` in a tracked `*.sh`
   is what the lint lane's CI-image-ref gate fails on.
-- **`LD_LIBRARY_PATH`** — the container prologue sources the image's own
-  `/opt/scripts/03-media/final/media-env.sh` (the same file the Dockerfiles
-  source) and prepends only `/hostlibs` through
-  `/opt/scripts/core/path-helpers.sh`'s `_path_prepend_unique`. The retyped list
-  it replaced had `/opt/gcc-16.2.0` hard-coded, so a GCC bump upstream would have
-  silently dropped the C++ runtime out of the search path.
+- **`LD_LIBRARY_PATH`** — the runner hands in only `/hostlibs`, and the rest
+  comes from the image: its normal entrypoint restores GStreamer, appends
+  `/opt/libcamera` and puts `${GCC_PREFIX}`'s runtime first, and the container
+  prologue appends what a caller-set value dropped (`/usr/local/lib`, OpenCV,
+  FFmpeg) from the image's own `/opt/scripts/03-media/final/media-env.sh`, the
+  same file the Dockerfiles source. The retyped list this replaced had
+  `/opt/gcc-16.2.0` hard-coded, so a GCC bump upstream would have silently
+  dropped the C++ runtime out of the search path.
 
 Only `/hostlibs` (the host's Raspberry Pi OS libcamera closure, which must win
-over the image's older upstream copy) and the host multiarch directory are this
-script's own contribution to the loader path.
+over the image's older upstream copy) and the host multiarch directory, appended
+last, are this script's own contribution to the loader path.
+
+**It runs through the image's entrypoint, not around it** (2026-09-29). Before
+ANTfrastructure CON23 the entrypoint's `libcamera-env.sh` *prepended*
+`/opt/libcamera` over the caller's `LD_LIBRARY_PATH`, so this runner started
+`bash` with `--entrypoint` to keep `/hostlibs` ahead. Since `:latest` of
+2026-09-29 the image's libcamera goes *after* the caller's entries and GCC's
+runtime before them, so the bypass is gone from all three `nerdctl run`s. The
+prologue refuses an older image that still puts `/opt/libcamera` ahead of
+`/hostlibs`, with `pull :latest` in the message. **Proven under QEMU only**:
+the arm64 child, the runner's recorded `nerdctl run` with an empty stand-in
+`/hostlibs`, gives GCC → GStreamer → `/hostlibs` → `/opt/libcamera` → media
+paths → host multiarch, `libgstlibcamera.so` resolves `libcamera.so.0.7` from a
+stubbed `/hostlibs`, and `gst-inspect-1.0 libcamerasrc` and `webrtcsink` load.
+No camera and no producer build ran; a Pi 5 board run is still owed (BACKLOG).
 
 ### Build & test in the Stevedore Windows container
 

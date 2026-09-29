@@ -63,7 +63,15 @@ shift
 case "$step" in
     debug)     antfrastructure_exec "${RUST_DRIVERS}/cargo_debug.sh" "$@" ;;
     security)  antfrastructure_exec "${RUST_DRIVERS}/cargo_security_checks.sh" "$@" ;;
-    test)      antfrastructure_exec "${RUST_DRIVERS}/cargo_test.sh" "$@" ;;
+    # KATAGLYPHIS_REQUIRE_GPU turns GpuContext::headless_or_skip()'s silent SKIP
+    # into a panic, so the webgpu_renderer golden tests must RENDER to pass. The
+    # image has a software Vulkan device since hub CON19 (lavapipe, deviceType
+    # CPU, on amd64 and arm64 alike), so no runner needs a GPU for this. Exported
+    # with `-` so an explicit empty value from the caller still opts out.
+    test)
+        export KATAGLYPHIS_REQUIRE_GPU="${KATAGLYPHIS_REQUIRE_GPU-1}"
+        antfrastructure_exec "${RUST_DRIVERS}/cargo_test.sh" "$@"
+        ;;
     coverage)  antfrastructure_exec "${RUST_DRIVERS}/cargo_coverage.sh" "$@" ;;
     bench)     antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" "$@" ;;
     release)   antfrastructure_exec "${RUST_DRIVERS}/cargo_release.sh" "$@" ;;
