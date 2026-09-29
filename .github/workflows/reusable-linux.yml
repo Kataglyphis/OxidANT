@@ -126,6 +126,18 @@ jobs:
         shell: bash
         run: bash scripts/linux/compute-version.sh
 
+      # CARGO_HOME (the registry, and the cargo-audit/-deny/-tarpaulin installs
+      # that took about 8 min a run) and an sccache for rustc outlive the
+      # per-step containers. The guarded launcher compiles directly if sccache
+      # itself fails. Only pushes save.
+      - name: Restore the cargo and compiler cache
+        id: cc
+        uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-restore@develop
+        with:
+          key: ${{ inputs.arch }}-cargo
+          mounts: 'cargo-home:/tmp/cargo-home sccache:/var/cache/sccache'
+          env: 'SCCACHE_CACHE_SIZE=1500M RUSTC_WRAPPER=/workspace/third_party/ANTfrastructure/linux/scripts/01-core/sccache-launcher.sh'
+
       # EVERY CONTAINER STEP BELOW IS ONE NAMED STEP OF ONE SCRIPT,
       # scripts/linux/ci-container-steps.sh. Each of them used to inline its
       # own `bash -lc 'set -e; git config --global --add safe.directory ...;
@@ -142,13 +154,13 @@ jobs:
       - name: ONNX Runtime chain-only check
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh ort-chain-only'
 
       - name: Debug build
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh debug'
 
       # GATING, and the gate that was red on 2026-09-14. It reads two ignore
@@ -158,7 +170,7 @@ jobs:
       - name: Security checks (cargo audit + cargo deny)
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh security'
 
       # GATING, with no continue-on-error. It was `continue-on-error: true`
@@ -173,31 +185,31 @@ jobs:
       - name: Check formatting and clippy
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh fmt-clippy'
 
       - name: Run unit, integration, and doc tests
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh test'
 
       - name: Run coverage
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh coverage'
 
       - name: Run benchmarks
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh bench'
 
       - name: 🛠️ Build release binary
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh release'
 
       # --privileged is here so AppImage creation can reach FUSE. --device
@@ -208,7 +220,7 @@ jobs:
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: >-
-            --privileged --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+            --privileged --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
             -e BINARY="${{ env.BINARY }}"
             -e BINARY_FILE="${{ env.BINARY_FILE }}"
             -e VERSION="${{ env.VERSION }}"
@@ -257,8 +269,22 @@ jobs:
         if: inputs.docs
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh docs'
+
+      # registry/src and the git checkouts are re-extracted from registry/cache
+      # in seconds, so they stay out of the saved archive.
+      - name: Trim the cargo home
+        if: always() && steps.cc.outputs.path != ''
+        env:
+          CACHE_PATH: ${{ steps.cc.outputs.path }}
+        run: rm -rf "${CACHE_PATH}/cargo-home/registry/src" "${CACHE_PATH}/cargo-home/git/checkouts"
+
+      - name: Save the cargo and compiler cache
+        if: always() && steps.cc.outputs.path != ''
+        uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-save@develop
+        with:
+          key: ${{ inputs.arch }}-cargo
 
       # The family's FTP action owns the readability fixup (the `sudo chown -R`
       # step that used to precede this) and pins the upstream action by SHA.
