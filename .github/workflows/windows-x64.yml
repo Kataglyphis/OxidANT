@@ -39,9 +39,14 @@ jobs:
       build-args: |
         -TargetArch
         amd64
+      # 2500M, not 3G: the prune job below deletes the older x64-windows entry only after the
+      # save, so two of them share the 10 GB cache quota for a moment with both cargo caches.
+      # At 3G that was 10.4 GB, and GitHub would have evicted the x64 cargo cache. A cold build
+      # stores about 2 GiB; the hit rate stayed 90.84 % whether the entry was 2.3, 2.8 or 3.1 GB
+      # (2026-09-29), so the extra was the 120 misses each run adds and never reads again.
       container-env: |
         CARGO_TERM_COLOR=always
-        SCCACHE_CACHE_SIZE=3G
+        SCCACHE_CACHE_SIZE=2500M
       # CARGO_HOME (the cargo-audit/-deny installs) and a rustc sccache across runs;
       # Invoke-WindowsLane.ps1 moves them in and out of the container-local dirs.
       compiler-cache-key: x64-windows
@@ -64,7 +69,7 @@ jobs:
 
   # container-ci-windows.yml saves the x64-windows cache but cannot delete: its job grants
   # contents: read only. This deletes the entries older runs left, so the key keeps one
-  # (about 2.8 GB) inside the repository's 10 GB cache quota. It deletes nothing when the
+  # (about 3.0 GB) inside the repository's 10 GB cache quota. It deletes nothing when the
   # build never saved (require-saved), so a failed host keeps the older entry.
   prune-compiler-cache:
     name: Prune the compiler cache
