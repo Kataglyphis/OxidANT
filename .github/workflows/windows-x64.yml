@@ -61,3 +61,21 @@ jobs:
       timeout-minutes: 240
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
+
+  # container-ci-windows.yml saves the x64-windows cache but cannot delete: its job grants
+  # contents: read only. This deletes the entries older runs left, so the key keeps one
+  # (about 2.8 GB) inside the repository's 10 GB cache quota. It deletes nothing when the
+  # build never saved (require-saved), so a failed host keeps the older entry.
+  prune-compiler-cache:
+    name: Prune the compiler cache
+    needs: build
+    if: ${{ always() && github.event_name == 'push' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Delete the x64-windows entries of older runs
+        uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-prune@develop
+        with:
+          key: x64-windows
