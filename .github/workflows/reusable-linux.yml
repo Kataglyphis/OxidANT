@@ -99,6 +99,8 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
+      # compiler-cache-save deletes this key's older cache entries.
+      actions: write
     env:
       PLATFORM: ${{ inputs.platform }}
       ARCH: ${{ inputs.arch }}

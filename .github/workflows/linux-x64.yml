@@ -45,6 +45,8 @@ jobs:
     uses: ./.github/workflows/reusable-linux.yml
     permissions:
       contents: read
+      # reusable-linux.yml's compiler-cache-save deletes its key's older entries.
+      actions: write
     with:
       runner: ubuntu-26.04
       platform: linux/amd64
