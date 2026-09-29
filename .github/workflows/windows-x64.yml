@@ -69,7 +69,10 @@ jobs:
   prune-compiler-cache:
     name: Prune the compiler cache
     needs: build
-    if: ${{ always() && github.event_name == 'push' }}
+    # The save's own condition: pushes to the default branch only.
+    if: >-
+      ${{ always() && github.event_name == 'push'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
