@@ -1,9 +1,4 @@
-//! Per-pass GPU timestamp queries against a real adapter.
-//!
-//! The pure arithmetic (tick conversion, rolling average) and the
-//! feature-absent path are unit-tested inside `render::gpu_timing`; this file
-//! covers the thing only a GPU can answer - that every named pass actually
-//! stamps its queries during a real frame and reports a sane duration.
+//! Per-pass GPU timestamp queries against a real adapter; the arithmetic is unit-tested in-crate.
 
 use kataglyphis_webgpu_renderer::render::gpu_timing::{GpuTiming, TimedPass};
 use kataglyphis_webgpu_renderer::{
@@ -32,12 +27,8 @@ fn every_pass_reports_a_finite_non_negative_duration() {
         "the adapter reports TIMESTAMP_QUERY, so enabling must succeed"
     );
     renderer.upload_scene(&gpu, &load_gltf(cube_path()).expect("cube.gltf must load"));
-    // The occlusion-cull pass only records when culling is on, so enable it -
-    // otherwise TimedPass::OcclusionCull never reports and the all-passes
-    // assertion below is off by one.
+    // Occlusion cull and the histogram only record when enabled, and every pass must report.
     renderer.occlusion_queries_enabled = true;
-    // Same story for the histogram build: it's skipped whenever auto-exposure
-    // is off (the default), so TimedPass::Histogram would never report.
     renderer.auto_exposure = true;
     let camera = OrbitCamera::default();
     let mut tonemap = TonemapPass::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
@@ -57,14 +48,10 @@ fn every_pass_reports_a_finite_non_negative_duration() {
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    // Results arrive some frames after the frame they measure - the readback is
-    // mapped asynchronously and never waited on. 64 frames both clears that
-    // latency and fills the 32-frame averaging window, so what gets asserted is
-    // an averaged number rather than a single sample that happened to land.
+    // Enough frames to clear the async readback latency and fill the averaging window.
     for _ in 0..64 {
         renderer.render_tonemapped(&gpu, &mut tonemap, &view, width, height, &camera);
-        // The frame path only polls without waiting, so a headless test that
-        // never presents has to give the map callbacks somewhere to run.
+        // The frame path never waits, so a headless test must let the map callbacks run.
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
     }
 
@@ -78,8 +65,7 @@ fn every_pass_reports_a_finite_non_negative_duration() {
         assert_eq!(*name, expected.name(), "passes must report in record order");
         assert!(ms.is_finite(), "{name} reported a non-finite duration");
         assert!(*ms >= 0.0, "{name} reported a negative duration {ms}");
-        // One pass over a 256x256 cube taking longer than a second means the
-        // tick scaling is wrong, not that the GPU is slow.
+        // Over a second for a 256x256 cube means wrong tick scaling, not a slow GPU.
         assert!(*ms < 1000.0, "{name} reported an implausible {ms} ms");
         eprintln!("{name}: {ms:.4} ms");
     }
@@ -91,8 +77,7 @@ fn timings_stay_empty_until_enabled() {
         return;
     };
     let renderer = ForwardRenderer::new(&gpu, 64, 64);
-    // Default-off is the contract: an untimed renderer records exactly the
-    // passes it always did, and reports nothing rather than zeroes.
+    // Default-off contract: an untimed renderer reports nothing, not zeroes.
     assert!(!renderer.gpu_timing_available());
     assert!(renderer.gpu_timings_ms().is_empty());
 }

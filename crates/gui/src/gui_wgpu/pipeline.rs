@@ -19,10 +19,6 @@ pub(crate) struct Frame {
 }
 
 /// Convert a (possibly stride-padded) RGBA buffer into a tightly-packed one.
-///
-/// When the source buffer is already tightly packed (`src.len() == width * height * 4`),
-/// the data is copied directly into an `Arc<[u8]>` — one allocation instead of two
-/// (`Vec` + `Arc`).  When stride-stripping is needed, a temporary `Vec` is used.
 pub(crate) fn rgba_tightly_packed(src: &[u8], width: u32, height: u32) -> Option<Arc<[u8]>> {
     if width == 0 || height == 0 {
         return None;
@@ -36,15 +32,13 @@ pub(crate) fn rgba_tightly_packed(src: &[u8], width: u32, height: u32) -> Option
         return Some(Arc::from(src));
     }
 
-    // Many GStreamer buffers are padded per row (stride). We conservatively try to
-    // interpret the buffer as a single RGBA plane with a constant stride.
+    // GStreamer often pads rows; assume a single RGBA plane with a constant stride.
     if src.len() < expected_len {
         return None;
     }
 
     let h = height as usize;
-    // The largest valid stride is `src.len() / h` (integer division rounds
-    // down), so `stride * h <= src.len()` is guaranteed — no loop needed.
+    // Integer division guarantees `stride * h <= src.len()`.
     let stride = src.len() / h;
     if stride < row_bytes {
         return None;
@@ -157,8 +151,7 @@ pub(crate) fn build_pipeline(
     Ok(pipeline)
 }
 
-/// What [`media_check`] found: the GStreamer version, the plugin directory the exe
-/// carries (if any), and each camera-pipeline element with the plugin file behind it.
+/// What [`media_check`] found: GStreamer version, bundled plugin dir, each element's plugin.
 pub struct MediaReport {
     pub version: String,
     pub bundled_plugins: Option<PathBuf>,
@@ -185,11 +178,8 @@ impl std::fmt::Display for MediaReport {
     }
 }
 
-/// Builds the camera pipeline without starting it, so with no camera and no window,
-/// and names the plugin file behind each element: proof that this exe finds every
-/// element the GUI creates by name. An exe that carries its own plugins must take
-/// every element from them, or a gap in the package would hide behind a host's
-/// GStreamer installation.
+/// Builds the camera pipeline without starting it and names the plugin file behind each element.
+/// Fails when a bundled exe takes an element from elsewhere, so a package gap cannot hide.
 pub fn media_check() -> Result<MediaReport> {
     kataglyphis_media::ensure_gst_initialized()?;
     let (frame_tx, _frame_rx) = std::sync::mpsc::sync_channel::<Frame>(1);
@@ -223,8 +213,7 @@ pub fn media_check() -> Result<MediaReport> {
     })
 }
 
-/// True when `file` lies in `dir` or below it, compared canonically where both
-/// resolve (case, `\\?\` prefixes and junctions alike).
+/// True when `file` lies in `dir` or below it, compared canonically where both resolve.
 fn lies_under(file: &Path, dir: &Path) -> bool {
     match (std::fs::canonicalize(file), std::fs::canonicalize(dir)) {
         (Ok(file), Ok(dir)) => file.starts_with(dir),

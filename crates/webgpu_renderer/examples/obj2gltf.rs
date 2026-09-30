@@ -1,10 +1,5 @@
 //! Converts a Wavefront OBJ (with materials and textures) to glTF.
-//!
 //! Usage: `cargo run --example obj2gltf -- <in.obj> <out.gltf>`
-//!
-//! This is the CLI face of `asset::obj_to_gltf::convert_file`, which the
-//! comparison harness uses to push the C++ engine's OBJ scenes through the
-//! glTF-only Rust renderer - the "same scene in both renderers" bridge.
 
 use std::path::Path;
 

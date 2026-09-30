@@ -1,10 +1,5 @@
 //! Instance/adapter/device/queue management plus surface configuration.
-//!
-//! Surface lifecycle rules (the part most renderers get wrong):
-//! - `SurfaceError::Outdated`/`Lost` never abort a frame loop — reconfigure
-//!   the surface with the current size and try again next frame.
-//! - A suboptimal-but-successful acquire still produces a frame; the surface
-//!   is reconfigured *after* presenting, never mid-frame.
+//! `Outdated`/`Lost` reconfigure and retry next frame; a suboptimal acquire reconfigures only after presenting.
 
 use std::sync::Arc;
 
@@ -16,9 +11,7 @@ pub struct GpuContext {
     pub queue: wgpu::Queue,
     /// TEXTURE_COMPRESSION_BC was available and enabled on this device.
     pub supports_bc: bool,
-    /// TIMESTAMP_QUERY was available and enabled on this device. Browsers gate
-    /// it behind a flag and most do not expose it, so per-pass GPU timings are
-    /// a desktop-only diagnostic in practice.
+    /// TIMESTAMP_QUERY was available and enabled; browsers rarely expose it, so GPU timings are desktop-only.
     pub supports_timestamps: bool,
     /// Present target; `None` for headless (render-to-texture) contexts.
     pub surface: Option<wgpu::Surface<'static>>,
@@ -50,11 +43,7 @@ impl GpuContext {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
-                // wgpu 30. Bucketing rounds the adapter's reported limits to
-                // coarse presets so untrusted content (a browser exposing
-                // wgpu) cannot fingerprint the machine by them. This renderer
-                // is the trusted application, and rounding down real limits
-                // would only cost capability - so off, matching wgpu 29.
+                // Bucketing is anti-fingerprinting for untrusted content; a trusted app wants the real limits.
                 apply_limit_buckets: false,
             })
             .await
@@ -79,11 +68,7 @@ impl GpuContext {
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
-            // wgpu 30 made the swap-chain colour space explicit. `Auto` is the
-            // type's own default and the only value guaranteed supported for
-            // every format in `SurfaceCapabilities::formats`, so it reproduces
-            // wgpu 29, where the presentation engine made this choice for us.
-            // Anything else (an HDR space) would need a capability check first.
+            // `Auto` is the only colour space guaranteed for every format; an HDR space needs a capability check.
             color_space: wgpu::SurfaceColorSpace::Auto,
             width: size.width.max(1),
             height: size.height.max(1),
@@ -122,23 +107,13 @@ impl GpuContext {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
-                // See the windowed path above: trusted application, real limits.
+                // Trusted application: real limits, as in the windowed path.
                 apply_limit_buckets: false,
             })
             .await
             .context("No GPU adapter found (headless)")?;
 
-        // Refuse the OpenGL backend for headless work. This renderer's shaders
-        // target WebGPU/Vulkan-class backends - the SSAO pass does a
-        // `textureLoad` from a depth texture, which naga cannot translate to
-        // GLSL ("not supported in GLSL"), so `create_render_pipeline` aborts
-        // before a single test runs. CI's image ships only llvmpipe (GL
-        // software) with no lavapipe (Vulkan software), so wgpu falls back to GL
-        // and every GPU test dies at pipeline creation. Treating GL as "no
-        // usable adapter" lets those tests skip through their
-        // `let Ok(gpu) = new_headless() else { skip }` guards, exactly as when
-        // no adapter exists at all. A real Vulkan/DX/Metal adapter - including
-        // lavapipe if it is ever added to the image - still runs them.
+        // GL counts as no adapter: naga cannot translate SSAO's depth `textureLoad` to GLSL, so pipelines abort.
         let info = adapter.get_info();
         if info.backend == wgpu::Backend::Gl {
             anyhow::bail!(
@@ -160,13 +135,8 @@ impl GpuContext {
         })
     }
 
-    /// Test-facing wrapper around [`Self::new_headless`]: `Some` on success,
-    /// `None` (after printing the SKIP line) on failure — unless
-    /// `KATAGLYPHIS_REQUIRE_GPU` is set, in which case failure panics instead
-    /// of silently skipping. A skipped GPU test and a passing GPU test read
-    /// identically in a CI log, so the host verification loop sets this
-    /// variable to tell the two apart; see
-    /// <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/gpu-golden-testing.md>.
+    /// [`Self::new_headless`] for tests: `None` after a SKIP line, or a panic if `KATAGLYPHIS_REQUIRE_GPU` is set.
+    /// See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/gpu-golden-testing.md>.
     #[doc(hidden)]
     pub fn headless_or_skip() -> Option<Self> {
         match Self::new_headless() {
@@ -185,8 +155,7 @@ impl GpuContext {
         self.surface_config.as_ref().map(|c| c.format)
     }
 
-    /// Reconfigures the surface for a new size. Zero dimensions (minimized
-    /// windows) are ignored — the surface keeps its last valid size.
+    /// Reconfigures the surface for a new size; zero sizes (minimized windows) are ignored.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
@@ -211,12 +180,7 @@ impl GpuContext {
 async fn request_device(
     adapter: &wgpu::Adapter,
 ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, bool)> {
-    // Optional features are requested only where the adapter reports them:
-    // naming one the adapter lacks fails the whole device request, which would
-    // take the renderer down on every browser rather than degrading.
-    //
-    // Block-compressed textures where the adapter offers them (desktop);
-    // browsers/mobile usually do not, and the loader falls back.
+    // Request only features the adapter reports: naming a missing one fails the whole device request.
     let supports_bc = adapter
         .features()
         .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
@@ -229,20 +193,11 @@ async fn request_device(
         required_features |= wgpu::Features::TIMESTAMP_QUERY;
     }
 
-    // forward.wgsl binds 5 distinct groups (material, IBL, frame, punctual
-    // lights, tiled light grid), one past wgpu::Limits::default()'s
-    // max_bind_groups of 4 - create_shader_module rejects the module outright
-    // ("uses a group index 4 that exceeds the max_bind_groups limit of 4")
-    // before any pipeline is built. Native desktop adapters report far more
-    // (8+); request what the adapter actually offers there. The WebGPU spec
-    // caps browsers at 4 regardless of what is requested, so wasm32 keeps the
-    // spec default and stays exactly as constrained as before.
+    // forward.wgsl binds 5 groups, past the default max_bind_groups of 4; browsers cap it at 4 regardless.
     let mut required_limits = wgpu::Limits::default();
     #[cfg(not(target_arch = "wasm32"))]
     {
-        // Request exactly what the adapter reports so this can never itself
-        // cause request_device to fail (a value above the adapter's own
-        // maximum is rejected).
+        // The adapter's own maximum, since anything above it fails request_device.
         required_limits.max_bind_groups = adapter.limits().max_bind_groups;
     }
 

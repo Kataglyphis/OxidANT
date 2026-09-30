@@ -1,5 +1,4 @@
-//! Half-resolution depth-only SSAO with a 3x3 blur. The blurred AO factor
-//! is multiplied into the HDR image by the tonemap pass.
+//! Half-resolution depth-only SSAO with a 3x3 blur; the tonemap pass multiplies it into HDR.
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
@@ -131,8 +130,7 @@ impl SsaoPass {
                 ],
             })
         };
-        // The ssao pass ignores binding 2; feed it the blurred texture (any
-        // non-target texture) to satisfy the layout.
+        // The ssao pass ignores binding 2; any non-target texture satisfies the layout.
         self.bg_ssao = Some(bind(&blurred, "ssao_bg"));
         self.bg_blur = Some(bind(&raw, "ssao_blur_bg"));
         self.raw = Some(raw);

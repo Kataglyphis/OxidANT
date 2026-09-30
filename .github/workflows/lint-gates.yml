@@ -1,47 +1,6 @@
 name: Lint gates
 
-# Shell, workflows, secrets, config, PowerShell and tracked-artifact hygiene.
-# The display name is the bare "Lint gates" since 2026-09-24: the family's
-# workflow names are '<Platform> <Arch> · <what>' for the build lanes, and the
-# platform-less gate lanes keep a short plain name.
-#
-# THREE GATE JOBS, ONE FILE, AND NONE OF THEM IS A COPIED JOB ANY MORE.
-# Two call a reusable ANTfrastructure workflow (`lint-gates.yml` and, since
-# 2026-09-15, `python-ci-windows.yml`); the third calls a composite action.
-#
-# The Linux job is ANTfrastructure's reusable `lint-gates.yml`, called rather
-# than copied. This repo carried its own 60-line copy of that job until
-# 2026-09-15, as six sibling consumers did, and every copy's header said to
-# replace it with a `uses:` the day the hub grew a reusable lane. The hub has
-# one now, so this is that day. What the hub half owns is unchanged: the gates
-# themselves (shellcheck, actionlint + verify_ci_image_refs.py, gitleaks, ruff,
-# the shared-config drift check and the consumer pin check), their pinned and
-# SHA256-verified bootstraps, the git-ls-files scope construction, the
-# empty-scope vacuity guards, the run-them-all-then-fail-once accumulator and
-# the secret gate's self-test.
-#
-# A HUMAN STILL RUNS THE SAME COMMAND, which is the point of keeping the thin
-# wrapper beside it:
-#
-#   bash scripts/linux/run-lint-gates.sh
-#
-# Both drive the hub aggregator with the same explicit consumer root and the
-# same flags, including --ratchets. The root is passed explicitly and is never
-# inferred upstream: the aggregator sits inside third_party/ANTfrastructure, so
-# a self-derived root would grade ANTfrastructure's tree and report green over
-# the wrong repository.
-#
-# BEFORE ANY OF THIS OxidANT RAN NO LINT GATE AT ALL. Tracked *.sh and the
-# workflows went ungraded, and nothing ever scanned the tree for committed
-# credentials - while the Linux x64 lane (linux-x64.yml, through
-# reusable-linux.yml) publishes the docs over FTP with secrets.SERVER /
-# secrets.USERNAME / secrets.PW.
-#
-# Cheap and first-to-finish: no image pull, no cargo build. All three jobs also
-# cover a class the three Rust lanes cannot - valid YAML is not valid Actions,
-# bash only reports a quoting or undefined-function bug when the line finally
-# runs, and a PowerShell syntax error in the packaging scripts otherwise
-# surfaces 40 minutes into a Windows container build.
+# Shell, workflows, secrets, config, PowerShell and tracked-artifact hygiene; bash scripts/linux/run-lint-gates.sh is the local twin.
 
 on:
   push:
@@ -55,97 +14,25 @@ permissions:
 
 jobs:
   lint-gates:
-    # submodules: 'true', NOT the input's 'recursive' default.
-    # third_party/ANTfrastructure is where every gate, every pin and every SHA
-    # in this lane comes from, and it is a top-level submodule - but its own
-    # chain (DocumANTation -> md2pdfLib -> latex/*) is minutes of clone that
-    # nothing here reads, and nothing grades it either: every scope drops
-    # third_party/.
-    #
-    # ratchets: true since 2026-09-15. The eight --root measurement gates plus
-    # the docs gate run over this tree, frozen at <repo>/<gate>.allow. The three
-    # freeze files that have rows - comment-size, code-complexity,
-    # dead-functions - were seeded from the first run and are committed; the
-    # rest are empty by being absent, which the gates read as a zero baseline.
+    # submodules 'true', not 'recursive': the hub's own submodule chain is minutes of clone no gate reads.
     uses: Kataglyphis/ANTfrastructure/.github/workflows/lint-gates.yml@develop
     with:
       submodules: 'true'
       exclude: third_party
       ratchets: true
 
-  # PowerShell lint: ANTfrastructure's Invoke-Lint.ps1 pointed at THIS repo's
-  # PowerShell tree. Two passes - a mandatory parse + AST-trap gate, and
-  # PSScriptAnalyzer.
-  #
-  # ONE `uses:` SINCE 2026-09-15, and this is the retirement the hand-written
-  # job that stood here named as its own condition: "when a reusable lane
-  # carries this gate without a Python build attached". That job was kept at
-  # hub 49be50f0 for one reason, and it was never the gate - `lint-powershell`
-  # and `lint-path` reproduced this job exactly, but they are inputs to
-  # `python-ci-windows.yml`, the family's PYTHON lane, whose
-  # `build-test-python-package-on-windows` job carried no `if:`. Turning the
-  # lint on also bought a winamd64 image pull, a run of `Build-Windows.ps1` as
-  # a Python package build, a `./dist/` upload and a REQUIRED `GHCR_PAT`. This
-  # repo is a Rust crate with no Python package; its Windows container build is
-  # windows-x64.yml.
-  #
-  # Hub 604294e2 removes that coupling: `build-python-package` (boolean,
-  # default true, so every caller written before it is unaffected) gates the
-  # build job, `GHCR_PAT` is `required: false` - a required secret is refused
-  # at call time and would have kept the lint unreachable for exactly the
-  # callers it was added for - and the build job asserts the token itself,
-  # naming `build-python-package: false` as the alternative. The two jobs are
-  # independent, neither `needs:` the other, so `false` takes the lint alone.
-  #
-  # MEASURED BEFORE THE LOCAL JOB WAS DELETED, not assumed. Upstream's
-  # `lint-powershell` job is the deleted one line for line: `runs-on` defaults
-  # to windows-2025, `timeout-minutes: 20`, `actions/checkout` at the same
-  # pinned 3d3c42e5 (v7.0.1) with `submodules: true` and `fetch-depth: 1`,
-  # `Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Force -Scope
-  # CurrentUser`, and `Invoke-Lint.ps1 -Path <lint-path> -FailOnAnalyzer`.
-  # `-FailOnAnalyzer` is unconditional upstream and is deliberately not an
-  # input, which is what this tree wants: 0 errors, 0 warnings over all 9 files
-  # (measured 2026-09-15), so the ratchet is set at the number this repo has.
-  # `shell: pwsh` arrives from the lane's workflow-level `defaults` instead of
-  # the job-level block that stood here. The only difference is ADDITIVE:
-  # upstream first tests for the gate script and throws a message naming the
-  # submodule, where the copy here would have reported a bare `pwsh -File
-  # <absent>` path error. Nothing was held back.
-  #
-  # Still a separate Windows runner from the `lint-gates` job above, because
-  # the script is Windows-native and PSScriptAnalyzer is a Windows-image
-  # module. Two runners in one workflow is the shape, not an accident.
+  # PowerShell lint: parse + AST traps, then PSScriptAnalyzer, over this repo's scripts tree.
   powershell-lint:
     uses: Kataglyphis/ANTfrastructure/.github/workflows/python-ci-windows.yml@develop
-    # No `secrets:` block on purpose: `GHCR_PAT` is optional upstream since
-    # 604294e2 and this call pulls no image, so there is no token to forward.
+    # No `secrets:`: GHCR_PAT is optional upstream and this call pulls no image.
     with:
-      # The whole reason this can be a `uses:` at all.
+      # This repo has no Python package; false runs the lint job alone.
       build-python-package: false
       lint-powershell: true
-      # `scripts` is walked recursively, so scripts\windows\,
-      # scripts\windows\container\ and scripts\windows\tests\ are all covered.
-      # It is upstream's default as well; passed explicitly so a change to that
-      # default cannot silently re-point this repo's gate. The hub's
-      # PSScriptAnalyzerSettings.psd1 stays resolved against the gate SCRIPT's
-      # own location - the ruleset is consumed BY REFERENCE and nothing is
-      # copied in here.
+      # Upstream's default too; explicit so a change to that default cannot re-point this gate.
       lint-path: scripts
 
-  # Generated artifacts must not reach the index. .gitignore only stops a file
-  # from being ADDED; it does nothing once a path is tracked, so nothing else
-  # here can see the drift. `git rm --cached` has already been run over this
-  # tree twice for exactly that - build logs under logs\windows\, and the
-  # flatpak repo before them.
-  #
-  # The checks are ANTfrastructure's (WindowsRepoHygiene.Common); only this
-  # repo's root and its list of generated-output pathspecs are local, because
-  # what counts as generated is a property of this build.
-  #
-  # Windows runner and Pester 3.4.0 for the same reason submodule-pins.yml uses
-  # them: the suite is written in the dash-less 3.4 assertion dialect, and 3.4
-  # is a Windows PowerShell-era module. run-pester-suite refuses a vacuous pass
-  # (TotalCount == 0 -> exit 1), so this cannot go green over an empty path.
+  # .gitignore does nothing once a path is tracked, so only this gate sees generated output reaching the index.
   generated-artifacts:
     name: No generated artifact is tracked
     runs-on: windows-2025
@@ -154,12 +41,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The suite imports WindowsRepoHygiene.Common out of the submodule
-          # through scripts/windows/Resolve-BuildModule.ps1.
+          # The suite imports WindowsRepoHygiene.Common from the submodule.
           submodules: true
 
       - name: Repo generated-artifact hygiene
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-pester-suite@develop
         with:
           path: scripts/windows/tests
+          # The suite is written in Pester 3.4's dash-less assertion dialect.
           version: '3.4.0'

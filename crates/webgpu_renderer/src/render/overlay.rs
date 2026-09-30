@@ -1,5 +1,4 @@
-//! egui overlay drawn on top of the tonemapped output (stats + light and
-//! tonemap controls). Works native and on wasm32.
+//! egui overlay (stats, light and tonemap controls) over the tonemapped output, native and wasm32.
 
 use winit::window::Window;
 
@@ -28,14 +27,12 @@ impl Overlay {
         }
     }
 
-    /// Feeds a window event; returns true when egui consumed it (pointer over
-    /// a panel etc.) so camera controls should skip it.
+    /// Feeds a window event; true when egui consumed it, so camera controls should skip it.
     pub fn on_event(&mut self, window: &Window, event: &winit::event::WindowEvent) -> bool {
         self.state.on_window_event(window, event).consumed
     }
 
-    /// Runs the UI closure and paints on `view` (expects the scene already
-    /// rendered there; loads, never clears).
+    /// Runs the UI closure and paints over the scene already in `view` (loads, never clears).
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -54,8 +51,7 @@ impl Overlay {
         };
 
         let raw_input = self.state.take_egui_input(window);
-        // egui 0.35 replaced Context::run with begin_pass/end_pass; the closure
-        // still takes &Context, so drive it explicitly between the two.
+        // egui 0.35 replaced Context::run with begin_pass/end_pass.
         self.ctx.begin_pass(raw_input);
         run_ui(&self.ctx);
         let output = self.ctx.end_pass();
@@ -64,9 +60,7 @@ impl Overlay {
 
         let clipped = self.ctx.tessellate(output.shapes, screen.pixels_per_point);
 
-        // egui 0.36 lets one texture id carry SEVERAL deltas in a frame (the
-        // value is a SmallVec now, not a single ImageDelta), so apply them in
-        // order - taking only the first would drop partial-region updates.
+        // egui 0.36 can carry several deltas per texture; applying only the first drops updates.
         for (id, image_deltas) in &output.textures_delta.set {
             for image_delta in image_deltas {
                 self.renderer
@@ -114,9 +108,7 @@ pub struct OverlayControls {
     pub ssao: f32,
     pub exposure_ev: f32,
     pub occlusion_culling: bool,
-    /// Last frame's (drawn, considered) opaque-primitive counts, shown next to
-    /// the occlusion toggle so the cull is observable. Set by the caller each
-    /// frame; `None` hides the readout.
+    /// Last frame's (drawn, considered) opaque-primitive counts, set by the caller; `None` hides it.
     pub occlusion_stats: Option<(u32, u32)>,
 }
 

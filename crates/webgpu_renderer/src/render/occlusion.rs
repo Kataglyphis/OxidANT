@@ -1,34 +1,5 @@
-//! GPU occlusion culling, DETECTION half (increment 1).
-//!
-//! After the forward pass fills the depth buffer, this pass draws each opaque
-//! primitive's world-space AABB as a box - depth-test LessEqual, depth-write
-//! OFF, no color attachments - wrapped in a hardware occlusion query. The query
-//! counts the box fragments that pass the depth test, so a primitive fully
-//! behind other geometry reads back 0 samples and a visible one reads > 0.
-//!
-//! Three deliberate choices, all mirroring [`crate::render::gpu_timing`]:
-//!
-//! 1. **Hardware occlusion queries, not a Hi-Z depth pyramid.** `QueryType::
-//!    Occlusion` is WebGPU-core and works on the web backend; a mip-reduced
-//!    depth pyramid is not portable there. The query is the only occlusion
-//!    primitive that ships everywhere this renderer runs.
-//!
-//! 2. **Reading results must not stall the frame.** Occlusion counts land in a
-//!    ring of `SLOT_COUNT` slots, each mapped asynchronously after submit and
-//!    consumed whenever it happens to be ready - one or more frames later. A
-//!    slot still in flight is skipped for that frame rather than waited on, so
-//!    the frame path never blocks. Detection lagging the frame it measured is
-//!    fine: increment 2 (skipping draws) reads last-known visibility, exactly
-//!    as a GPU-driven culling pipeline does.
-//!
-//! 3. **Depth is never written.** The occlusion pipeline sets
-//!    `depth_write_enabled: false`; the pass loads and stores the forward
-//!    depth unchanged, so the SSAO pass still reconstructs positions from the
-//!    depth the forward pass wrote.
-//!
-//! Detection only this increment: nothing here changes what the forward pass
-//! draws. The visibility it produces is exposed for tests and for a later
-//! increment to consume.
+//! Occlusion detection: each primitive's AABB drawn in a hardware occlusion query over forward depth.
+//! Queries, not Hi-Z, because WebGPU core has them; results drain from a non-blocking ring.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -40,26 +11,16 @@ use crate::render::buffer_desc;
 use crate::render::forward::DEPTH_FORMAT;
 use crate::render::pipeline_desc;
 
-/// Frames of occlusion storage in flight. Same reasoning as `gpu_timing`'s
-/// ring: two would cover `desired_maximum_frame_latency: 2`, and one spare
-/// means a frame whose poll came up empty still finds a free slot instead of
-/// dropping the sample.
+/// Frames in flight: two for `desired_maximum_frame_latency: 2`, plus a spare for an empty poll.
 const SLOT_COUNT: usize = 3;
 
 /// Bytes per occlusion query result (a `u64` sample count).
 const QUERY_BYTES: u64 = 8;
 
-/// Relative expansion `aabb_contains` applies to a box's half-extent, matching
-/// `occlusion_bbox.wgsl`'s `0.5 * 0.02` margin term so the CPU containment
-/// test agrees with the proxy box the GPU actually rasterises.
+/// Relative half-extent margin, matching `occlusion_bbox.wgsl`'s `0.5 * 0.02` term.
 pub(crate) const CONTAINMENT_MARGIN: f32 = 0.02;
 
-/// True when `p` lies inside `[min, max]` expanded by `margin` (a fraction of
-/// each axis's half-extent) plus a fixed 1 cm floor - the same expansion
-/// `occlusion_bbox.wgsl` applies to the proxy box it rasterises, so this test
-/// agrees with what the GPU actually measures rather than a slightly
-/// different volume. The fixed floor matters for a degenerate (zero-extent)
-/// box, where a purely relative margin would vanish to zero.
+/// `p` inside `[min, max]` grown by `margin` plus 1 cm, the same box `occlusion_bbox.wgsl` rasterises.
 pub(crate) fn aabb_contains(min: Vec3, max: Vec3, p: Vec3, margin: f32) -> bool {
     let expand = (max - min) * 0.5 * margin + Vec3::splat(0.01);
     p.cmpge(min - expand).all() && p.cmple(max + expand).all()
@@ -70,9 +31,7 @@ const MAP_PENDING: u8 = 0;
 const MAP_READY: u8 = 1;
 const MAP_FAILED: u8 = 2;
 
-/// One primitive's world AABB, fed to the box vertex shader through an
-/// instance-step vertex buffer. The draw for primitive `i` binds instances
-/// `i..i+1`, so exactly that primitive's box is emitted.
+/// One primitive's world AABB, an instance-step vertex; primitive `i` draws instances `i..i+1`.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct BboxInstance {
@@ -91,22 +50,13 @@ impl BboxInstance {
 struct Slot {
     resolve: wgpu::Buffer,
     readback: wgpu::Buffer,
-    /// `Some` while a map is outstanding; the callback flips it to READY/FAILED
-    /// and the next `end_frame` drains it.
+    /// `Some` while a map is outstanding; the callback sets READY/FAILED, `end_frame` drains it.
     map_state: Option<Arc<AtomicU8>>,
     /// Queries actually recorded into this slot (this frame's primitive count).
     count: u32,
-    /// The scene generation this slot was recorded under. A readback whose
-    /// generation no longer matches the current one is from a scene that has
-    /// since been replaced, so its samples are drained but must not update
-    /// visibility - else a new, smaller scene inherits the old scene's
-    /// per-index culling for a frame or two.
+    /// Scene generation at record time; a stale one is drained without touching visibility.
     generation: u64,
-    /// Per-primitive "eye is inside this AABB" flags, computed from the SAME
-    /// eye this slot's queries were recorded with. Stored here rather than on
-    /// `Self` directly because the readback lands one or more frames late -
-    /// mixing a later frame's eye into an earlier frame's samples would
-    /// re-introduce the flicker in a subtler form (see `record`'s doc).
+    /// "Eye inside this AABB" flags from this slot's own eye, since the readback lands late.
     forced_visible: Vec<bool>,
 }
 
@@ -125,20 +75,16 @@ pub struct OcclusionQueries {
     current: usize,
     /// True when this frame claimed a free slot and recorded a pass.
     recording: bool,
-    /// Latest completed readback: sample count per primitive, index-aligned to
-    /// `ForwardRenderer::primitives`.
+    /// Latest sample count per primitive, index-aligned to `ForwardRenderer::primitives`.
     samples: Vec<u64>,
     /// `samples[i] > 0`, cached so callers get a `&[bool]` without recomputing.
     visibility: Vec<bool>,
-    /// Bumped by [`Self::reset`] on a scene change. Stamped onto each slot at
-    /// record time and checked at readback so results from a replaced scene are
-    /// discarded rather than applied to the new one.
+    /// Bumped by [`Self::reset`] so readbacks from a replaced scene are discarded.
     generation: u64,
 }
 
 impl OcclusionQueries {
-    /// Initial per-buffer capacity. Small - a scene with more primitives grows
-    /// it on the first frame that needs to, exactly like the instance buffer.
+    /// Initial per-buffer capacity; grown on the first frame that needs more.
     const INITIAL_CAPACITY: u32 = 32;
 
     pub fn new(device: &wgpu::Device) -> Self {
@@ -164,23 +110,19 @@ impl OcclusionQueries {
                 buffers: &[Some(BboxInstance::LAYOUT)],
                 compilation_options: Default::default(),
             },
-            // A fragment stage with ZERO color targets: the pass has no color
-            // attachment, only the depth test and the occlusion count matter.
-            // WebGPU still wants the stage present to complete the pipeline.
+            // No color targets, but WebGPU still wants a fragment stage for the pipeline.
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[],
                 compilation_options: Default::default(),
             }),
-            // Cull nothing: winding on the box is arbitrary and the camera may
-            // sit inside a box, where the front faces are behind it.
+            // Cull nothing: box winding is arbitrary and the camera may sit inside a box.
             primitive: wgpu::PrimitiveState {
                 cull_mode: None,
                 ..Default::default()
             },
-            // Test against the stored forward depth, never write it - writing
-            // would corrupt the depth SSAO reads back.
+            // Test the forward depth but never write it: SSAO reads it next.
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(false),
@@ -224,29 +166,9 @@ impl OcclusionQueries {
         }
     }
 
-    /// Records the occlusion pass into `encoder` and resolves it, or does
-    /// nothing when there is no scene or no free ring slot this frame.
-    ///
-    /// `depth_view` is the forward pass's depth buffer, `view_proj` the matrix
-    /// the forward pass drew with, `aabbs` one world AABB per primitive in
-    /// primitive order, and `eye` the camera position the forward pass drew
-    /// from. Must be recorded into the same encoder as the forward pass and
-    /// before submit; call [`Self::end_frame`] after submit.
-    ///
-    /// A primitive whose AABB contains `eye` is force-visible in the result
-    /// [`Self::end_frame`] eventually produces: from inside its own box, the
-    /// proxy geometry's near-facing side is near-plane clipped and its
-    /// far-facing side sits behind the primitive's own depth, so the query
-    /// reads back 0 samples regardless of whether the primitive is actually
-    /// on screen. The mask is computed HERE, against this call's `eye`, and
-    /// carried on the ring slot so it lines up with the samples it corrects -
-    /// computing it instead at readback time would pair a stale query result
-    /// with a newer eye, which is the same late-binding hazard `generation`
-    /// guards against for scene changes.
-    // Eight distinct inputs, none bundleable without an artificial wrapper:
-    // the device (buffer growth), queue (uploads), encoder (the pass), the
-    // forward depth, the camera matrix, the AABBs, the eye position, and the
-    // timing scope. Already over clippy's default of seven before `eye`.
+    /// Records and resolves the pass in the forward encoder; call [`Self::end_frame`] after submit.
+    /// A box containing `eye` reads 0 samples, so it is forced visible, with the mask kept per slot.
+    // Eight distinct inputs; a wrapper struct would be artificial.
     #[allow(clippy::too_many_arguments)]
     pub fn record(
         &mut self,
@@ -266,8 +188,7 @@ impl OcclusionQueries {
         }
         self.ensure_capacity(device, count);
 
-        // Claim a free slot; if every slot is still mapping, skip this frame
-        // rather than stall - the same trade `gpu_timing` makes.
+        // Every slot still mapping: skip this frame rather than stall.
         let Some(slot_index) = self.free_slot() else {
             return;
         };
@@ -298,9 +219,7 @@ impl OcclusionQueries {
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
-                    // Load the forward depth and store it back untouched: the
-                    // pipeline writes no depth, so Store just preserves what
-                    // SSAO reads next.
+                    // Store only preserves the untouched forward depth for SSAO.
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -314,8 +233,7 @@ impl OcclusionQueries {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.view_proj_bind_group, &[]);
             pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-            // Exactly one draw per query, indices unique and dense in 0..count,
-            // all inside this single pass whose occlusion_query_set is set.
+            // One draw per query, indices dense in 0..count, all in this one pass.
             for i in 0..count {
                 pass.begin_occlusion_query(i);
                 pass.draw(0..36, i..i + 1);
@@ -332,8 +250,7 @@ impl OcclusionQueries {
         self.recording = true;
     }
 
-    /// Starts this frame's readback and consumes any slot whose readback has
-    /// since completed. Never blocks; call after submit.
+    /// Starts this frame's readback and consumes completed slots; never blocks, call after submit.
     pub fn end_frame(&mut self, device: &wgpu::Device) {
         if self.recording {
             let state = Arc::new(AtomicU8::new(MAP_PENDING));
@@ -356,8 +273,7 @@ impl OcclusionQueries {
             self.recording = false;
         }
 
-        // Non-blocking: only lets already-finished callbacks run. A waiting
-        // poll here would reintroduce the stall the ring exists to avoid.
+        // Non-blocking: a waiting poll would bring back the stall the ring avoids.
         let _ = device.poll(wgpu::PollType::Poll);
 
         for index in 0..self.slots.len() {
@@ -370,10 +286,7 @@ impl OcclusionQueries {
                     let samples = read_samples(&self.slots[index].readback, count);
                     self.slots[index].readback.unmap();
                     self.slots[index].map_state = None;
-                    // A stale generation means the scene was replaced after this
-                    // slot recorded; drain the buffer (done above) but keep the
-                    // reset's empty visibility so the new scene is not culled by
-                    // the old scene's samples.
+                    // A stale generation is drained but must not cull the new scene.
                     if self.slots[index].generation == self.generation {
                         let forced = &self.slots[index].forced_visible;
                         self.visibility = samples
@@ -392,72 +305,45 @@ impl OcclusionQueries {
         }
     }
 
-    /// Per-primitive visibility from the most recent completed readback: `true`
-    /// when the primitive's box had > 0 fragments pass the depth test, OR the
-    /// primitive's AABB contained `eye` at record time (see [`Self::record`]).
-    /// Empty until the first readback lands (a frame or two after recording
-    /// starts).
+    /// Latest per-primitive visibility (samples > 0 or eye inside); empty until a readback lands.
     pub fn visibility(&self) -> &[bool] {
         &self.visibility
     }
 
-    /// Raw sample counts behind [`Self::visibility`], for tests and diagnostics
-    /// that want the actual fragment counts rather than the boolean.
+    /// Raw sample counts behind [`Self::visibility`], for tests and diagnostics.
     pub fn samples(&self) -> &[u64] {
         &self.samples
     }
 
-    /// Whether primitive `i` should be drawn given the last readback.
-    ///
-    /// Defaults to VISIBLE (`true`) for any index the readback has not covered
-    /// yet - the first frames before results land, or a primitive added since.
-    /// Defaulting to visible is the safe direction: a never-culled primitive
-    /// costs a draw, a wrongly-culled one pops out of existence.
+    /// Whether primitive `i` should be drawn; uncovered indices default to visible, the safe side.
     pub fn visible(&self, i: usize) -> bool {
         self.visibility.get(i).copied().unwrap_or(true)
     }
 
-    /// Forgets all readback state, to be called when the scene changes. The
-    /// per-index visibility is only meaningful for the primitive list it was
-    /// measured against; carrying it into a different (e.g. smaller) scene would
-    /// cull an unrelated primitive that happens to share the index of a
-    /// previously occluded one. Clearing makes `visible` default to true again
-    /// (draw everything) until fresh queries land, and the bumped generation
-    /// discards any readback still in flight from the old scene.
+    /// Forgets all readback state on a scene change, since visibility is per index of the old list.
     pub fn reset(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.visibility.clear();
         self.samples.clear();
-        // Belt-and-suspenders alongside the generation bump above: a slot's
-        // stale mask can never reach `self.visibility` once its generation no
-        // longer matches (see `end_frame`), but clearing it too means a slot
-        // never *holds* a previous scene's flags past the reset that
-        // invalidated them.
+        // The generation already blocks stale masks; clearing means no slot even holds one.
         for slot in &mut self.slots {
             slot.forced_visible.clear();
         }
     }
 
-    /// Index of a slot with no outstanding map, preferring `current` so the
-    /// ring advances in order when nothing is in flight.
+    /// A slot with no outstanding map, preferring `current` so the ring advances in order.
     fn free_slot(&self) -> Option<usize> {
         (0..SLOT_COUNT)
             .map(|offset| (self.current + offset) % SLOT_COUNT)
             .find(|&candidate| self.slots[candidate].map_state.is_none())
     }
 
-    /// Grows the query set and every buffer to hold at least `count` queries.
-    ///
-    /// The query set's count is fixed at creation, so growing means recreating
-    /// it and the slot buffers. In-flight readbacks in the old slots are
-    /// dropped - a scene whose primitive count just changed re-measures over
-    /// the next frames anyway, and a resize is rare.
+    /// Recreates the query set and buffers for `count` queries, dropping in-flight readbacks.
     fn ensure_capacity(&mut self, device: &wgpu::Device, count: u32) {
         if count <= self.capacity {
             return;
         }
-        // Grow generously so a slowly growing scene does not reallocate every
-        // frame; matches the "double or the request" habit of Vec growth.
+        // Double, so a slowly growing scene does not reallocate every frame.
         let capacity = count.max(self.capacity * 2);
         self.instance_buffer = create_instance_buffer(device, capacity);
         self.query_set = create_query_set(device, capacity);
@@ -564,8 +450,7 @@ mod tests {
 
     #[test]
     fn aabb_contains_point_degenerate_zero_extent_box() {
-        // A relative-only margin would vanish to zero here; the fixed 1 cm
-        // floor is what keeps a degenerate box from rejecting its own point.
+        // A relative-only margin vanishes here; the fixed 1 cm floor keeps the point inside.
         let p = Vec3::new(3.0, -2.0, 0.5);
         assert!(
             aabb_contains(p, p, p, CONTAINMENT_MARGIN),

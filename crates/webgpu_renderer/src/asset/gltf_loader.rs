@@ -1,7 +1,4 @@
-//! glTF 2.0 -> `CpuScene`. Positions, normals, UVs, tangents (generated when
-//! absent), indices, flattened node transforms, and the metallic-roughness
-//! material model: factors + base color / metallic-roughness / normal /
-//! emissive / occlusion textures with their glTF sampler settings.
+//! glTF 2.0 -> `CpuScene`: geometry, node transforms, animation and metallic-roughness materials.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -23,8 +20,7 @@ pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
         .with_context(|| format!("Failed to build scene from {}", path.display()))
 }
 
-/// In-memory variant (embedded assets, wasm32 where there is no filesystem).
-/// Buffers must be embedded (data URIs or GLB binary chunk).
+/// In-memory variant for wasm32 and embedded assets; buffers must be embedded (data URIs or GLB).
 pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
     let (document, buffers, images) =
         gltf::import_slice(bytes).context("Failed to import glTF from memory")?;
@@ -65,8 +61,6 @@ fn build_scene(
         ..CpuScene::default()
     };
 
-    // Animations (linear/step; cubic spline collapses to linear on the
-    // in-between values for now).
     for animation in document.animations() {
         let mut channels = Vec::new();
         let mut duration = 0.0f32;
@@ -177,14 +171,7 @@ fn build_scene(
     Ok(scene)
 }
 
-/// Returns the uv-set bit for a material texture slot: `1 << bit` when the
-/// texture references TEXCOORD_1, 0 for TEXCOORD_0.
-///
-/// Both UV0 and UV1 are loaded, so a slot bound to TEXCOORD_1 (baked
-/// AO/lightmaps on UV1 are the standard Blender/Substance export) is sampled
-/// with the correct set. texCoord >= 2 is still unsupported: it falls back to
-/// UV0 and logs which slot and which set, because "looks subtly wrong" is far
-/// harder to diagnose than a line in the log saying exactly what happened.
+/// UV-set bit for a texture slot: `1 << bit` for TEXCOORD_1, else 0 (TEXCOORD_2+ warns and uses UV0).
 fn uv_set_bit(slot: &str, tex_coord: u32, bit: u32) -> u32 {
     match tex_coord {
         0 => 0,
@@ -200,11 +187,7 @@ fn uv_set_bit(slot: &str, tex_coord: u32, bit: u32) -> u32 {
 
 const IDENTITY_UV_TRANSFORM: [[f32; 3]; 2] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
 
-/// Affine T*R*S rows for a KHR_texture_transform, from its raw
-/// offset/rotation/scale. Rotation is negated: `gltf`'s `rotation()` is
-/// counter-clockwise per spec, but this engine's UV space is Y-down, so a
-/// positive spec rotation must apply clockwise in UV terms (matches the C++
-/// loader's `ObjMaterial` fix, `f5e27d46`).
+/// Affine T*R*S rows for KHR_texture_transform; rotation is negated because this engine's UV space is Y-down.
 fn uv_transform_rows(offset: [f32; 2], rotation: f32, scale: [f32; 2]) -> [[f32; 3]; 2] {
     let m = glam::Mat3::from_translation(glam::Vec2::from_array(offset))
         * glam::Mat3::from_angle(-rotation)
@@ -215,21 +198,14 @@ fn uv_transform_rows(offset: [f32; 2], rotation: f32, scale: [f32; 2]) -> [[f32;
     ]
 }
 
-/// KHR_texture_transform for a base-colour/metallic-roughness/emissive slot,
-/// which `gltf::texture::Info` exposes as a typed accessor. Identity when the
-/// slot has no texture or no transform extension.
+/// KHR_texture_transform of a typed `Info` slot (base colour, metallic-roughness, emissive), else identity.
 fn uv_transform_from_info(transform: Option<gltf::texture::TextureTransform>) -> [[f32; 3]; 2] {
     transform.map_or(IDENTITY_UV_TRANSFORM, |t| {
         uv_transform_rows(t.offset(), t.rotation(), t.scale())
     })
 }
 
-/// KHR_texture_transform for the normal/occlusion slots. Unlike `Info`
-/// (above), `gltf`'s `NormalTexture`/`OcclusionTexture` structs don't expose a
-/// typed `texture_transform()` accessor in this crate version — only the
-/// generic unmodeled-extensions bag — so the extension is pulled out of the
-/// raw JSON and deserialized by hand. Identity when the slot has no texture
-/// or no transform extension.
+/// KHR_texture_transform for normal/occlusion slots, parsed from raw JSON since `gltf` has no typed accessor there.
 fn uv_transform_from_extension_json(value: Option<&gltf::json::Value>) -> [[f32; 3]; 2] {
     value
         .and_then(|v| {
@@ -240,10 +216,7 @@ fn uv_transform_from_extension_json(value: Option<&gltf::json::Value>) -> [[f32;
         })
 }
 
-/// Expands a triangle strip or fan into a plain triangle list.
-///
-/// Strip winding alternates: every odd triangle has its first two indices
-/// swapped, otherwise half the faces come out back-facing and get culled.
+/// Expands a triangle strip or fan into a triangle list; odd strip triangles swap two indices to keep winding.
 fn triangulate(indices: &[u32], mode: gltf::mesh::Mode) -> Vec<u32> {
     use gltf::mesh::Mode;
     match mode {
@@ -270,24 +243,8 @@ fn triangulate(indices: &[u32], mode: gltf::mesh::Mode) -> Vec<u32> {
     }
 }
 
-/// Drops every triangle with a corner that does not address a vertex this
-/// primitive actually shipped, returning the surviving triangle-list indices
-/// and the number of triangles dropped.
-///
-/// The `gltf` crate validates that an index accessor fits inside its buffer
-/// view; it does NOT validate that the index *values* address existing
-/// vertices. Everything downstream indexes `vertices` directly -
-/// [`compute_flat_normals`], [`compute_tangents`] and the MikkTSpace adapter's
-/// `self.indices[..] as usize` - so an out-of-range value is a bounds-check
-/// panic, and in the WASM demo a panic is an unrecoverable abort of the whole
-/// canvas: one malformed upload takes the page down. Mirrors the C++
-/// `GltfLoader::processPrimitive` guard (`353ab7d4`).
-///
-/// Filtering is at whole-triangle granularity (`chunks_exact(3)`) for the same
-/// reason the C++ side drops a whole triangle: a bad corner must not re-wind
-/// its neighbours, and the list has to stay a multiple of 3. A trailing
-/// partial triangle (index count not a multiple of 3) is dropped too, but is
-/// not counted - it was never a triangle.
+/// Drops whole triangles with an out-of-range corner, returning the kept list and the dropped count.
+/// `gltf` never checks index values, and a downstream bounds panic aborts the whole WASM canvas.
 fn drop_out_of_range_triangles(indices: Vec<u32>, vertex_count: usize) -> (Vec<u32>, usize) {
     let in_range = |tri: &&[u32]| tri.iter().all(|&i| (i as usize) < vertex_count);
     let triangle_count = indices.len() / 3;
@@ -303,8 +260,7 @@ fn drop_out_of_range_triangles(indices: Vec<u32>, vertex_count: usize) -> (Vec<u
     (out, triangle_count - kept)
 }
 
-/// Converts a decoded glTF image (any of the formats the `gltf` crate emits)
-/// into tightly packed RGBA8.
+/// Converts a decoded glTF image into tightly packed RGBA8.
 fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
     use gltf::image::Format;
 
@@ -333,12 +289,7 @@ fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
             }
             out
         }
-        // 16-bit channels: down-convert rather than reject. These arrive from
-        // ordinary tools (16-bit PNG height/normal maps are a Substance and
-        // Blender default), and refusing them failed the WHOLE file over one
-        // texture - the model would not open at all. Taking the high byte is
-        // exactly the >>8 requantisation, and the renderer's textures are 8-bit
-        // anyway, so nothing downstream can use the extra precision.
+        // 16-bit PNGs are common tool output: keep the high byte rather than fail the whole file.
         Format::R16 | Format::R16G16 | Format::R16G16B16 | Format::R16G16B16A16 => {
             let channels = match img.format {
                 Format::R16 => 1,
@@ -455,8 +406,7 @@ fn visit_node(
 
     if let Some(mesh) = node.mesh() {
         for primitive in mesh.primitives() {
-            // Strips and fans are triangulated on load (below); anything else
-            // (points, lines) genuinely has no triangles to draw.
+            // Strips and fans are triangulated on load; points and lines have nothing to draw.
             use gltf::mesh::Mode;
             if !matches!(
                 primitive.mode(),
@@ -472,9 +422,7 @@ fn visit_node(
             if let Some(mut cpu) = load_primitive(&primitive, world, buffers, textures)? {
                 cpu.node_index = Some(node.index());
                 cpu.skin_index = node.skin().map(|s| s.index());
-                // Default morph weights: node-level overrides mesh-level (glTF
-                // spec), applied before any animation channel drives them. Kept
-                // only when the count matches this primitive's target count.
+                // Node weights override mesh weights (glTF spec); kept only when the count matches.
                 if !cpu.morph_targets.is_empty() {
                     if let Some(weights) = node.weights().or_else(|| mesh.weights()) {
                         if weights.len() == cpu.morph_weights.len() {
@@ -514,8 +462,7 @@ fn load_primitive(
         Some(iter) => iter.into_f32().collect(),
         None => vec![[0.0, 0.0]; positions.len()],
     };
-    // TEXCOORD_1: defaults to UV0 when absent, so a slot mistakenly flagged
-    // UV1 still samples something sane.
+    // TEXCOORD_1 falls back to UV0, so a slot wrongly flagged UV1 still samples something sane.
     let uvs1: Vec<[f32; 2]> = match reader.read_tex_coords(1) {
         Some(iter) => iter.into_f32().collect(),
         None => uvs.clone(),
@@ -531,9 +478,7 @@ fn load_primitive(
         Some(iter) => iter.into_f32().collect(),
         None => vec![[0.0; 4]; positions.len()],
     };
-    // COLOR_0: vec3 or vec4 in the file, always vec4 here (rgb -> rgb, a=1).
-    // White when absent, so the multiply into albedo is a no-op for the
-    // common textured/factor-only case.
+    // COLOR_0 defaults to white, so multiplying it into albedo is a no-op.
     let colors: Vec<[f32; 4]> = match reader.read_colors(0) {
         Some(iter) => iter.into_rgba_f32().collect(),
         None => vec![[1.0, 1.0, 1.0, 1.0]; positions.len()],
@@ -578,17 +523,9 @@ fn load_primitive(
         Some(iter) => iter.into_u32().collect(),
         None => (0..vertices.len() as u32).collect(),
     };
-    // Strip/fan primitives were skipped entirely, so those meshes simply never
-    // appeared - with only a log line to say why. Triangulating on load keeps
-    // every downstream stage (culling, LOD, QEM, the draw path) on one plain
-    // triangle-list representation.
+    // Triangulating on load keeps culling, LOD, QEM and drawing on one triangle-list representation.
     let indices = triangulate(&raw_indices, primitive.mode());
-    // Sanitize BEFORE anything consumes the list: compute_flat_normals,
-    // compute_tangents and the MikkTSpace adapter all index `vertices` with
-    // these values unchecked-by-us, so an out-of-range corner panics (an abort
-    // of the whole canvas in the WASM demo). One warn per primitive, never per
-    // triangle. Nothing downstream keeps a per-triangle side table - the
-    // material is per-primitive - so the filtered list is the only consumer.
+    // Sanitize before flat normals, tangents and MikkTSpace index `vertices` with these values.
     let (indices, dropped_triangles) = drop_out_of_range_triangles(indices, vertices.len());
     if dropped_triangles > 0 {
         log::warn!(
@@ -606,11 +543,7 @@ fn load_primitive(
     if !had_tangents {
         compute_tangents(&mut vertices, &indices);
     }
-    // Opt-in: regenerate the generated tangents with MikkTSpace (the reference
-    // basis DCC tools bake normal maps against). Off by default - the Lengyel
-    // path above stays the default - and only for meshes whose tangents WE
-    // generated; a file that shipped its own tangents keeps them. MikkTSpace may
-    // split vertices at UV seams, so it hands back fresh buffers.
+    // Opt-in MikkTSpace replaces only tangents we generated; a file's own tangents are kept.
     let (vertices, indices) = if !had_tangents && mikktspace_tangents_enabled() {
         match generate_tangents_mikktspace(&vertices, &indices) {
             Some(rebuilt) => rebuilt,
@@ -620,9 +553,7 @@ fn load_primitive(
         (vertices, indices)
     };
 
-    // Morph targets: per-target POSITION/NORMAL deltas. Weights start at zero
-    // here; mesh/node default weights are applied by the caller (which has the
-    // mesh/node), and a WEIGHTS animation channel can drive them per frame.
+    // Weights start at zero: the caller applies mesh/node defaults, and animation drives them.
     let morph_targets: Vec<crate::scene::MorphTarget> = reader
         .read_morph_targets()
         .map(|(pos, norm, tan)| crate::scene::MorphTarget {
@@ -632,8 +563,7 @@ fn load_primitive(
             normal_deltas: norm
                 .map(|it| it.map(Vec3::from_array).collect())
                 .unwrap_or_default(),
-            // glTF morph TANGENT deltas are vec3 (direction only); the base
-            // tangent's w handedness is never morphed.
+            // glTF morph TANGENT deltas are vec3: the base tangent's w handedness is never morphed.
             tangent_deltas: tan
                 .map(|it| it.map(Vec3::from_array).collect())
                 .unwrap_or_default(),
@@ -650,10 +580,7 @@ fn load_primitive(
         gltf::material::AlphaMode::Blend => AlphaMode::Blend,
     };
 
-    // KHR_texture_transform, per texture slot: the extension is scoped to
-    // `textureInfo`, so a transform on one slot (e.g. an atlased base colour)
-    // does not imply the same transform on another (e.g. an untiled normal
-    // map). T * R * S per spec; identity when the slot has no transform.
+    // KHR_texture_transform is scoped to `textureInfo`, so each slot carries its own transform.
     let base_uv_transform = uv_transform_from_info(
         pbr.base_color_texture()
             .and_then(|info| info.texture_transform()),
@@ -667,9 +594,7 @@ fn load_primitive(
             .emissive_texture()
             .and_then(|info| info.texture_transform()),
     );
-    // `.extensions()` borrows from the `NormalTexture`/`OcclusionTexture`
-    // value itself (not from the document), so it must outlive the `.and_then`
-    // chain rather than being produced inside it.
+    // `.extensions()` borrows from the texture-info value itself, so it must outlive the chain.
     let normal_texture_info = material.normal_texture();
     let normal_uv_transform = uv_transform_from_extension_json(
         normal_texture_info
@@ -695,10 +620,7 @@ fn load_primitive(
         alpha_mode,
         metallic_factor: pbr.metallic_factor(),
         roughness_factor: pbr.roughness_factor(),
-        // KHR_materials_emissive_strength scales the emissive contribution
-        // past the [0,1] glTF factor range (for HDR emitters). Fold it into
-        // the factor so the shader path stays unchanged; default 1.0 when the
-        // extension is absent.
+        // KHR_materials_emissive_strength folds into the factor so the shader path stays unchanged.
         emissive_factor: {
             let ef = material.emissive_factor();
             let strength = material.emissive_strength().unwrap_or(1.0);
@@ -722,8 +644,7 @@ fn load_primitive(
         emissive_texture: material
             .emissive_texture()
             .and_then(|info| texture_ref(&info.texture(), textures, true)),
-        // Occlusion matters most: baked AO on UV1 is the standard
-        // Blender/Substance export, so this is the slot most likely to be wrong.
+        // Occlusion is the slot most likely on UV1: baked AO is a standard Blender/Substance export.
         occlusion_texture: material
             .occlusion_texture()
             .and_then(|info| texture_ref(&info.texture(), textures, false)),
@@ -770,21 +691,8 @@ fn compute_flat_normals(vertices: &mut [Vertex], indices: &[u32]) {
     }
 }
 
-/// Per-vertex tangent frame from triangle UV gradients (Lengyel's method).
-///
-/// Accumulates BOTH the tangent and the bitangent per vertex, then stores the
-/// tangent with a handedness sign in `.w`. Handedness is the part that
-/// matters and that the earlier version got wrong: it hard-coded `w = 1.0`,
-/// so every mirrored UV island (the norm on a symmetric mesh - a face, a
-/// character) sampled its normal map with the bitangent flipped the wrong way,
-/// lighting the mirrored half as if lit from the opposite side. `w` now
-/// carries `sign(dot(cross(N, T), B))`, which the shader multiplies into its
-/// reconstructed bitangent - the glTF convention.
-///
-/// Still not full MikkTSpace: it does not split vertices across hard UV seams,
-/// so a vertex shared by islands of opposite handedness gets one averaged
-/// frame. That needs the welding pass MikkTSpace does and is a separate step;
-/// this fixes the handedness error, which is the visible one.
+/// Per-vertex tangent frame from triangle UV gradients (Lengyel), with glTF handedness in `.w`.
+/// Never splits vertices at UV seams; [`generate_tangents_mikktspace`] does.
 pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
     let mut tan_accum = vec![Vec3::ZERO; vertices.len()];
     let mut bitan_accum = vec![Vec3::ZERO; vertices.len()];
@@ -818,8 +726,7 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
 
     for ((vertex, tangent), bitangent) in vertices.iter_mut().zip(tan_accum).zip(bitan_accum) {
         let n = Vec3::from_array(vertex.normal);
-        // Gram-Schmidt against the normal; fall back to any perpendicular
-        // axis for degenerate UVs.
+        // Gram-Schmidt against the normal; any perpendicular axis for degenerate UVs.
         let mut t = (tangent - n * n.dot(tangent)).normalize_or_zero();
         if t == Vec3::ZERO {
             t = n.cross(Vec3::Y).normalize_or_zero();
@@ -827,9 +734,7 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
                 t = n.cross(Vec3::X).normalize_or_zero();
             }
         }
-        // Handedness: negative when the UV chart is mirrored relative to the
-        // geometric bitangent. Default to +1 for degenerate accumulation
-        // rather than 0, which would zero the shader's bitangent entirely.
+        // Degenerate accumulation gets +1, since 0 would zero the shader's bitangent.
         let w = if n.cross(t).dot(bitangent) < 0.0 {
             -1.0
         } else {
@@ -839,31 +744,13 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
     }
 }
 
-/// Whether to regenerate generated tangents with MikkTSpace instead of the
-/// Lengyel default. Off unless `KATAGLYPHIS_MIKKTSPACE_TANGENTS` is set in the
-/// environment (mirrors the C++ engine's asset-loading override style). On
-/// wasm32 there is no environment, so it is always off and the browser demo
-/// keeps the default basis.
+/// Opt-in MikkTSpace via `KATAGLYPHIS_MIKKTSPACE_TANGENTS`; always off on wasm32, which has no environment.
 fn mikktspace_tangents_enabled() -> bool {
     std::env::var_os("KATAGLYPHIS_MIKKTSPACE_TANGENTS").is_some()
 }
 
-/// MikkTSpace reference tangent generation (opt-in; [`compute_tangents`] stays
-/// the default).
-///
-/// The default Lengyel path accumulates ONE averaged tangent per vertex. It is
-/// adequate, but it is not the per-face-corner basis that DCC tools (Blender,
-/// the glTF reference exporter) bake normal maps against, so a normal-mapped
-/// surface authored elsewhere can show subtle seams. MikkTSpace is that standard.
-///
-/// MikkTSpace computes a tangent per face-corner, and where a shared vertex's
-/// corners disagree - a hard UV seam or a mirrored island - the vertex must be
-/// SPLIT. So this returns fresh vertex+index buffers rather than writing tangents
-/// in place. Corners MikkTSpace considers identical weld back together (it emits
-/// bit-identical tangents for them), so only genuine seams add vertices.
-///
-/// Returns `None` if MikkTSpace reports failure (e.g. no triangles), so the
-/// caller can keep its existing buffers.
+/// MikkTSpace tangents, the basis DCC tools bake normal maps against (opt-in; [`compute_tangents`] is the default).
+/// Splits vertices at seams, so it returns fresh buffers; `None` on failure keeps the caller's.
 pub(crate) fn generate_tangents_mikktspace(
     vertices: &[Vertex],
     indices: &[u32],
@@ -905,9 +792,7 @@ pub(crate) fn generate_tangents_mikktspace(
             face: usize,
             vert: usize,
         ) {
-            // `tangent_encoded()` is [x, y, z, w] with w carrying the handedness
-            // sign - the glTF convention `Vertex::tangent` stores. A `None` space
-            // (degenerate corner) keeps the initialized default.
+            // A `None` space (degenerate corner) keeps the initialized default.
             if let Some(ts) = tangent_space {
                 self.tangents[face * 3 + vert] = ts.tangent_encoded();
             }
@@ -924,10 +809,7 @@ pub(crate) fn generate_tangents_mikktspace(
         return None;
     }
 
-    // Weld corners back into vertices, splitting only where a vertex's corners
-    // carry different tangents. Key on (original index, exact tangent bits):
-    // MikkTSpace emits bit-identical tangents for corners it treats as shared,
-    // so identical corners collapse and real seams split.
+    // MikkTSpace emits bit-identical tangents for shared corners, so keying on the bits splits only seams.
     let mut remap: std::collections::HashMap<(u32, [u32; 4]), u32> =
         std::collections::HashMap::new();
     let mut out_vertices: Vec<Vertex> = Vec::with_capacity(vertices.len());
@@ -962,8 +844,7 @@ mod tests {
         use gltf::mesh::Mode;
         let idx = [0u32, 1, 2, 3, 4];
 
-        // Strip: 3 triangles, and the ODD one must have its first two indices
-        // swapped or half the faces come out back-facing and get culled.
+        // The odd strip triangle swaps its first two indices, or it comes out back-facing.
         let strip = triangulate(&idx, Mode::TriangleStrip);
         assert_eq!(strip, vec![0, 1, 2, /*swapped*/ 2, 1, 3, 2, 3, 4]);
 
@@ -981,10 +862,7 @@ mod tests {
 
     #[test]
     fn out_of_range_indices_drop_their_triangle() {
-        // Two triangles over 3 vertices; the second references vertex 7, which
-        // this primitive never shipped. Before the guard this reached
-        // `vertices[7]` in compute_flat_normals - a bounds-check panic, i.e. an
-        // unrecoverable abort of the whole canvas in the WASM demo.
+        // Vertex 7 was never shipped; unguarded, compute_flat_normals panics on it.
         let (kept, dropped) = drop_out_of_range_triangles(vec![0, 1, 2, 7, 1, 2], 3);
         assert_eq!(kept, vec![0, 1, 2], "only the in-range triangle survives");
         assert_eq!(dropped, 1);
@@ -997,14 +875,12 @@ mod tests {
             "every surviving index must address a real vertex"
         );
 
-        // The whole triangle goes, not just the bad corner: dropping only the
-        // corner would re-wind its neighbours into a different triangle.
+        // The whole triangle goes: dropping only the corner would re-wind its neighbours.
         let (kept, dropped) = drop_out_of_range_triangles(vec![9, 1, 2, 0, 1, 2], 3);
         assert_eq!(kept, vec![0, 1, 2]);
         assert_eq!(dropped, 1);
 
-        // The consumers that used to panic must now run clean on the filtered
-        // list. This is the actual oracle - it panics without the fix.
+        // The oracle: these consumers panic on the unfiltered list.
         let mut vertices: Vec<Vertex> = (0..3)
             .map(|i| Vertex {
                 position: [i as f32, 0.0, 0.0],
@@ -1023,11 +899,7 @@ mod tests {
         compute_flat_normals(&mut vertices, &filtered);
         compute_tangents(&mut vertices, &filtered);
 
-        // Degenerate input, mirroring how `strips_and_fans_expand_to_triangle_lists`
-        // pins triangulate's: empty stays empty, an all-bad list empties out, a
-        // trailing partial triangle is truncated away (it was never a triangle,
-        // so it is not counted as dropped), and a fully valid list is returned
-        // untouched with a zero count.
+        // A trailing partial triangle is truncated but not counted as dropped.
         assert_eq!(drop_out_of_range_triangles(vec![], 3), (vec![], 0));
         assert_eq!(drop_out_of_range_triangles(vec![5, 6, 7], 3), (vec![], 1));
         assert_eq!(
@@ -1040,16 +912,13 @@ mod tests {
             (vec![0, 1, 2, 2, 1, 0], 0),
             "a fully in-range list must pass through unchanged"
         );
-        // vertex_count 0 (a primitive with no POSITION data behind it) must
-        // reject everything rather than index into an empty slice.
+        // vertex_count 0 (no POSITION data) must reject everything.
         assert_eq!(drop_out_of_range_triangles(vec![0, 0, 0], 0), (vec![], 1));
     }
 
     #[test]
     fn sixteen_bit_images_down_convert_instead_of_failing_the_whole_file() {
-        // A 16-bit PNG (a Substance/Blender default for height and normal maps)
-        // used to abort the ENTIRE glTF load over one texture, so the model
-        // would not open at all. 2x1 R16G16B16A16, little-endian.
+        // 2x1 R16G16B16A16, little-endian.
         let texel = |r: u16, g: u16, b: u16, a: u16| {
             let mut v = Vec::new();
             for c in [r, g, b, a] {
@@ -1138,11 +1007,7 @@ mod tests {
 
     #[test]
     fn mirrored_uvs_flip_handedness() {
-        // The headline regression this rewrite fixes. Same quad, but the V
-        // axis of the UVs is mirrored (v = 1 - v). The geometry is unchanged,
-        // so the tangent still points along +X, but the chart is now
-        // left-handed and the handedness sign MUST flip to -1. The previous
-        // implementation hard-coded +1 and would fail this.
+        // Mirroring V keeps the +X tangent but makes the chart left-handed, so w must flip to -1.
         let (mut normal, idx) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
         compute_tangents(&mut normal, &idx);
 
@@ -1163,9 +1028,7 @@ mod tests {
 
     #[test]
     fn mikktspace_quad_tangent_is_x() {
-        // Unit quad in XY, UVs aligned with X/Y: MikkTSpace must produce a
-        // unit +X tangent, right-handed (+1), and weld the corners back to the
-        // original 4 vertices (no seam -> no split).
+        // Aligned UVs have no seam, so the corners must weld back to the original 4 vertices.
         let (vertices, indices) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
         let (out_v, out_i) =
             generate_tangents_mikktspace(&vertices, &indices).expect("mikktspace should succeed");
@@ -1193,8 +1056,7 @@ mod tests {
 
     #[test]
     fn mikktspace_mirrored_uvs_flip_handedness() {
-        // Same geometry, V axis mirrored: handedness must flip to -1, matching
-        // the Lengyel path's mirrored_uvs_flip_handedness and the glTF convention.
+        // V mirrored: handedness must flip to -1, as on the Lengyel path.
         let (vertices, indices) = quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
         let (out_v, _) =
             generate_tangents_mikktspace(&vertices, &indices).expect("mikktspace should succeed");
@@ -1209,8 +1071,7 @@ mod tests {
 
     #[test]
     fn mikktspace_rejects_degenerate_input() {
-        // Fewer than one triangle (or a non-multiple of 3) -> None, so the
-        // caller keeps its existing buffers instead of getting empty geometry.
+        // None, so the caller keeps its buffers instead of getting empty geometry.
         let (vertices, _) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
         assert!(generate_tangents_mikktspace(&vertices, &[0, 1]).is_none());
         assert!(generate_tangents_mikktspace(&vertices, &[]).is_none());

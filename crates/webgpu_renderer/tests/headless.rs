@@ -1,6 +1,4 @@
-//! Headless golden tests: load the bundled cube glTF, render a frame to an
-//! offscreen texture, and assert structural pixel properties (robust across
-//! GPUs/drivers, unlike exact image comparison).
+//! Headless golden tests asserting structural pixel properties, which survive driver differences.
 
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
@@ -52,9 +50,7 @@ fn gltf_loader_reads_base_color_texture() {
 
 #[test]
 fn gltf_loader_applies_emissive_strength() {
-    // The asset declares emissiveFactor [0.5, 0.4, 0.3] and a
-    // KHR_materials_emissive_strength of 3.0, so the loaded factor must be the
-    // product (HDR emitters exceed the [0,1] glTF factor range).
+    // emissiveFactor [0.5, 0.4, 0.3] times emissive_strength 3.0: HDR emitters exceed [0,1].
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/assets/cube_emissive_strength.gltf");
     let scene = load_gltf(path).expect("cube_emissive_strength.gltf must load");
@@ -66,9 +62,7 @@ fn gltf_loader_applies_emissive_strength() {
 
 #[test]
 fn gltf_loader_reads_morph_target_and_default_weight() {
-    // cube_morph.gltf carries one POSITION morph target (every vertex +Y) and a
-    // mesh-level default weight of 1.0. The loader must parse the deltas AND
-    // apply the mesh default weight (not leave it at zero).
+    // One +Y morph target with a mesh default weight of 1.0, which must not load as zero.
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_morph.gltf");
     let scene = load_gltf(path).expect("cube_morph.gltf must load");
@@ -113,15 +107,9 @@ fn renders_cube_headless() {
         [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
     };
 
-    // NOTE: the target is Rgba8UnormSrgb, so all read-back bytes are
-    // sRGB-encoded (linear 0.05 clear -> byte ~63, not ~13).
+    // The target is Rgba8UnormSrgb, so read-back bytes are sRGB-encoded.
 
-    // Center: lit red-ish cube — red clearly dominant over green/blue. Sampled
-    // over a small neighbourhood rather than the exact centre pixel: at this
-    // camera's exact 45-degree yaw the centre ray grazes the seam between two
-    // cube faces, and view-dependent ambient (Fresnel-weighted, see
-    // `forward.slang`'s `fs_main`) can legitimately render that one knife-edge
-    // pixel dark even though the faces either side of it are brightly lit.
+    // A neighbourhood, not the centre pixel: at 45 degrees yaw it grazes a face seam and may be dark.
     let center_neighbourhood_is_red = (width / 2 - 4..=width / 2 + 4)
         .flat_map(|x| (height / 2 - 4..=height / 2 + 4).map(move |y| (x, y)))
         .map(|(x, y)| pixel(x, y))
@@ -167,8 +155,7 @@ fn renders_textured_cube_headless() {
         .render_to_pixels(&gpu, width, height, &camera)
         .expect("headless render must succeed");
 
-    // The checker must produce BOTH green-dominant and magenta-dominant
-    // pixels — proving the base color texture is actually sampled.
+    // Both checker colours must appear, proving the texture is sampled.
     let mut green = 0usize;
     let mut magenta = 0usize;
     for p in pixels.chunks_exact(4) {
@@ -185,11 +172,7 @@ fn renders_textured_cube_headless() {
     );
 }
 
-/// Golden coverage for the morph-target GPU apply path: a weight channel that
-/// ramps 0 -> 1 must visibly lift the cube on screen. This is the render-path
-/// counterpart to the CPU `blend_morph_targets`/`sample_morph_weights` unit
-/// tests — it proves `set_animation_time` -> `apply_morph_targets` re-blends
-/// and re-uploads the vertex buffer so the rendered silhouette actually moves.
+/// A morph weight ramping 0 -> 1 must re-blend, re-upload and visibly lift the cube.
 #[test]
 fn morph_weight_lifts_the_silhouette() {
     use glam::{Quat, Vec3};
@@ -201,8 +184,7 @@ fn morph_weight_lifts_the_silhouette() {
         return;
     };
 
-    // Bundled cube + one morph target that lifts every vertex +Y, driven by a
-    // linear weight channel on the cube's node (0 at t=0, 1 at t=1).
+    // One +Y morph target driven by a linear weight channel, 0 at t=0 and 1 at t=1.
     let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
     let mut prim = scene.primitives[0].clone();
     let vcount = prim.vertices.len();
@@ -221,8 +203,7 @@ fn morph_weight_lifts_the_silhouette() {
         scale: Vec3::ONE,
     }];
     scene.animations = vec![CpuAnimation {
-        // Duration deliberately longer than the last keyframe: sampling at
-        // t=1.0 must land at full weight, not wrap (t % duration) back to 0.
+        // Longer than the last keyframe, so t=1.0 lands at full weight instead of wrapping.
         name: "morph".into(),
         duration: 2.0,
         channels: vec![CpuAnimationChannel {
@@ -238,9 +219,7 @@ fn morph_weight_lifts_the_silhouette() {
     renderer.upload_scene(&gpu, &scene);
     let camera = OrbitCamera::default();
 
-    // Red-dominant pixels are the (red-ish) cube; measure how many there are
-    // and their vertical centroid. Row index grows downward in the readback,
-    // so lifting the cube in world space lowers the mean row.
+    // Count and mean row of the red cube pixels; rows grow downward, so lifting lowers it.
     let cube_stats = |pixels: &[u8]| -> (usize, f64) {
         let mut count = 0usize;
         let mut sum_y = 0f64;
@@ -300,9 +279,7 @@ fn shadow_darkens_plane_under_cube() {
     let (width, height) = (256, 256);
     let mut renderer = ForwardRenderer::new(&gpu, width, height);
     renderer.upload_scene(&gpu, &scene);
-    // Low light from -x/-z so the floating cube casts a long shadow onto the
-    // +x/+z plane area the camera looks at (default light is too steep — the
-    // shadow hides directly beneath the cube).
+    // Low light, so the shadow falls where the camera looks rather than under the cube.
     renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
 
     // Look down from above so the plane fills most of the frame.
@@ -315,9 +292,7 @@ fn shadow_darkens_plane_under_cube() {
         .render_to_pixels(&gpu, width, height, &camera)
         .expect("headless render must succeed");
 
-    // Plane pixels are near-neutral (white albedo). The shadowed patch under
-    // the cube only receives ambient light and is therefore much darker than
-    // sunlit plane areas — both populations must exist.
+    // Sunlit plane pixels are near-neutral; the shadowed patch gets only ambient. Both must exist.
     let mut lit_plane = 0usize;
     let mut shadowed_plane = 0usize;
     for p in pixels.chunks_exact(4) {
@@ -326,8 +301,7 @@ fn shadow_darkens_plane_under_cube() {
         if neutral && r > 180 {
             lit_plane += 1;
         } else if r < 110 && b > r + 15 && b < 180 {
-            // Sky-lit shadow: with analytic IBL the shadowed plane only
-            // receives blue hemisphere irradiance.
+            // With analytic IBL the shadow receives only blue hemisphere irradiance.
             shadowed_plane += 1;
         }
     }
@@ -341,15 +315,7 @@ fn shadow_darkens_plane_under_cube() {
     );
 }
 
-/// Before the fix, `cascade_splits.z` doubled as both the shadow cascade
-/// count *and* the tile grid width, and the tile counts were written into
-/// `FrameUniforms` a frame late (initialized to `(0, 0)`). Both bugs forced
-/// `cascade = -1` for every fragment on a renderer's very first frame,
-/// silently disabling shadows until a second frame ran. This renders exactly
-/// ONE frame per fresh renderer — the case that used to be broken — at two
-/// target sizes whose tile counts differ, and reuses
-/// `shadow_darkens_plane_under_cube`'s neutral-vs-blue-shadow classifier to
-/// prove the shadow is present in that very first frame at both sizes.
+/// A fresh renderer's very first frame must already cast shadows, at two tile-grid sizes.
 #[test]
 fn first_frame_uses_the_correct_cascade_and_tile_counts() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -397,11 +363,7 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
     );
 }
 
-/// Reads `Resources/ShadersSlang/forward/forward.slang`, four directories up
-/// from this crate (out of the `OxidANT` submodule
-/// into the superproject tree). Returns `None` — with an `eprintln!` — when
-/// that tree is not present, matching the existing no-GPU skip convention so
-/// the pin tests below don't fail in a checkout of the submodule alone.
+/// The superproject's `forward.slang`, or `None` (a skip) in a checkout of this submodule alone.
 fn slang_source() -> Option<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../../Resources/ShadersSlang/forward/forward.slang");
@@ -414,8 +376,7 @@ fn slang_source() -> Option<String> {
     }
 }
 
-/// Parses `static const <ty> <name> = <value>;` out of `source` and returns
-/// `value` parsed as `T`.
+/// The value of `static const <ty> <name> = <value>;` in `source`, parsed as `T`.
 fn parse_slang_constant<T: std::str::FromStr>(source: &str, name: &str) -> Option<T> {
     let needle = format!(" {name} = ");
     let start = source.find(&needle)? + needle.len();
@@ -423,10 +384,7 @@ fn parse_slang_constant<T: std::str::FromStr>(source: &str, name: &str) -> Optio
     source[start..end].trim().parse().ok()
 }
 
-/// Pins `CASCADE_COUNT` in Rust against the `static const int CASCADE_COUNT`
-/// baked into `forward.slang` — there are exactly three `light_space*`
-/// matrices on both sides, so the two must never drift silently. No GPU
-/// needed.
+/// Pins Rust `CASCADE_COUNT` against `forward.slang`'s; no GPU needed.
 #[test]
 fn cascade_count_matches_the_slang_constant() {
     assert_eq!(
@@ -446,11 +404,7 @@ fn cascade_count_matches_the_slang_constant() {
     );
 }
 
-/// Pins `render::tile_grid::TILE_SIZE` against the `static const uint
-/// TILE_SIZE` baked into `forward.slang` — `punctual_lighting` divides
-/// `fragCoord` by that constant to pick a tile, and the CPU derives the tile
-/// grid's dimensions from the same constant, so the two must never drift
-/// apart. No GPU needed.
+/// Pins `render::tile_grid::TILE_SIZE` against `forward.slang`'s; no GPU needed.
 #[test]
 fn tile_size_matches_the_slang_constant() {
     let Some(source) = slang_source() else {
@@ -505,14 +459,11 @@ fn alpha_modes_blend_and_mask() {
     let mut yellowish = 0usize;
     for p in pixels.chunks_exact(4) {
         let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
-        // Green blend quad over the bright white plane: green-tinted but
-        // clearly translucent (red/blue still present from the white below).
+        // Green blend quad over the white plane: tinted, with red/blue still showing through.
         if g > 140 && g > r + 25 && g > b + 25 && r > 70 && b > 60 {
             blended_over_cube += 1;
         }
-        // The MASK quad (saturated yellow 0.9/0.9/0.1, alpha 0.3 < cutoff
-        // 0.5) must be fully discarded. Require STRONG yellow so darkened
-        // olive blend-mix tones never trip the detector.
+        // The below-cutoff yellow MASK quad must vanish; only strong yellow counts, not olive mixes.
         if r > 140 && g > 140 && b * 3 < r {
             yellowish += 1;
         }
@@ -657,12 +608,7 @@ fn ssao_darkens_geometry() {
     );
 }
 
-/// A structural counterpart to `ssao_darkens_geometry`: that test only checks
-/// that SSAO removes *some* energy, which a flat `1 - ssao_strength` output
-/// (independent of the reconstructed normal) would also satisfy. This test
-/// asks for the property a correct kernel must have - a fronto-parallel
-/// surface has no neighbouring occluders within its hemisphere, so its
-/// interior must read as unoccluded regardless of `ssao_strength`.
+/// A fronto-parallel face must read as unoccluded, which a flat `1 - strength` SSAO would fail.
 #[test]
 fn ssao_leaves_a_flat_surface_unoccluded() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -677,9 +623,7 @@ fn ssao_leaves_a_flat_surface_unoccluded() {
     renderer.upload_scene(&gpu, &scene);
     renderer.bloom_strength = 0.0;
 
-    // Head-on view of the cube's +Z face: target its centre, pitch 0, yaw 90
-    // (camera on +Z looking down -Z), close enough that the face fills most
-    // of the frame.
+    // Head-on view of the cube's +Z face, filling most of the frame.
     let camera = OrbitCamera {
         target: glam::Vec3::new(0.0, 0.5, 0.0),
         radius: 2.0,
@@ -697,9 +641,7 @@ fn ssao_leaves_a_flat_surface_unoccluded() {
         .render_to_pixels(&gpu, width, height, &camera)
         .expect("render with ssao");
 
-    // Sample the central half of the frame, well inside the face and away
-    // from its silhouette edges (and from the elevated blend/mask quads,
-    // which are edge-on at pitch 0 and do not reach this region).
+    // The central half stays inside the face, away from silhouette edges.
     let margin = width as usize / 4;
     let mut max_diff = 0i32;
     for y in margin..(height as usize - margin) {
@@ -798,8 +740,7 @@ fn skinning_bends_the_bar() {
         ..OrbitCamera::default()
     };
 
-    // Mean x of the bar's red pixels in the TOP half of the frame: bending
-    // joint 1 swings the upper half sideways.
+    // Mean x of the bar's red pixels in the top half, which bending joint 1 swings sideways.
     let upper_centroid_x = |pixels: &[u8]| -> f32 {
         let (mut sum, mut count) = (0.0f32, 0u32);
         for (i, p) in pixels.chunks_exact(4).enumerate() {
@@ -926,25 +867,13 @@ fn resize_handles_zero_dimensions() {
     let Some(mut gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    // Headless context has no surface: resize must be a no-op, not a crash —
-    // same contract the windowed path relies on when minimized.
+    // No surface: resize must be a no-op, as the windowed path relies on when minimized.
     gpu.resize(0, 0);
     gpu.resize(800, 600);
     gpu.reconfigure();
 }
 
-/// The web sRGB fix, asserted rather than assumed.
-///
-/// Native swapchains expose an sRGB format and the hardware gamma-encodes the
-/// tonemap output. WebGPU canvases do not: the browser hands back something
-/// like `Bgra8Unorm`, and writing linear values there displays them
-/// uncorrected - the "slightly dark web demo" that
-/// <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/webgpu-srgb-audit.md>
-/// carried as the single known deviation.
-///
-/// With the shader-side encode in place, both targets must end up holding
-/// approximately the SAME sRGB-encoded bytes. Without it the non-sRGB buffer
-/// is dramatically darker: linear 0.05 stores as byte ~13 instead of ~63.
+/// A non-sRGB target (as WebGPU canvases are) must hold the same encoded bytes as an sRGB one.
 #[test]
 fn non_srgb_target_is_gamma_encoded_like_an_srgb_one() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -982,10 +911,7 @@ fn non_srgb_target_is_gamma_encoded_like_an_srgb_one() {
     let mean_srgb = mean(&srgb);
     let mean_unorm = mean(&unorm);
 
-    // Hardware encode and the shader's transfer function are the same curve,
-    // so the two differ only by rounding. A tolerance of 2 levels is far
-    // tighter than the gap the bug produced (tens of levels) while leaving
-    // room for per-driver rounding of the hardware path.
+    // Same curve in hardware and shader, so only per-driver rounding separates them.
     assert!(
         (mean_srgb - mean_unorm).abs() < 2.0,
         "non-sRGB target should be gamma-encoded to match the sRGB one; \
@@ -1000,12 +926,7 @@ fn non_srgb_target_is_gamma_encoded_like_an_srgb_one() {
     );
 }
 
-/// Auto-exposure, end to end through the real frame path.
-///
-/// The unit and compute tests cover the maths and the passes in isolation.
-/// This covers the wiring, which is where it would silently do nothing: the
-/// tonemap reading a buffer nobody writes, the passes never encoded, or the
-/// exposure never reaching the pixels.
+/// Auto-exposure wiring end to end, where a disconnect would silently do nothing.
 #[test]
 fn auto_exposure_brightens_a_dark_scene_over_successive_frames() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -1019,8 +940,7 @@ fn auto_exposure_brightens_a_dark_scene_over_successive_frames() {
         pixels.iter().map(|&b| b as f64).sum::<f64>() / pixels.len() as f64
     };
 
-    // A deliberately underlit scene: dim sun, almost no ambient. Manual
-    // exposure leaves it dark; auto-exposure should pull it up.
+    // Underlit on purpose: manual exposure leaves it dark, auto should pull it up.
     let render = |auto: bool, frames: usize| -> f64 {
         let mut renderer = ForwardRenderer::new(&gpu, width, height);
         renderer.upload_scene(&gpu, &scene);
@@ -1028,8 +948,7 @@ fn auto_exposure_brightens_a_dark_scene_over_successive_frames() {
         renderer.light_color_intensity = glam::Vec4::new(1.0, 1.0, 1.0, 0.05);
         renderer.auto_exposure = auto;
         renderer.exposure_ev = 0.0;
-        // Large steps so adaptation converges within a few frames rather than
-        // needing hundreds - this tests the wiring, not the rate constant.
+        // Large steps converge in a few frames; this tests the wiring, not the rate.
         renderer.frame_delta_seconds = 0.5;
 
         let camera = OrbitCamera::default();
@@ -1049,20 +968,14 @@ fn auto_exposure_brightens_a_dark_scene_over_successive_frames() {
         manual > 1.0,
         "the reference render is essentially black ({manual}); the comparison below would prove nothing"
     );
-    // Measured 182.7 with auto vs 163.1 manual, a 12% lift. The bound is 8%:
-    // comfortably under what the feature actually does, comfortably over the
-    // 0% a disconnected one would. The lift is this modest because the
-    // procedural sky fills much of the frame and is already well exposed -
-    // auto-exposure is correcting the lit geometry, not the whole image.
+    // A modest bound: the already well-exposed sky fills much of the frame.
     assert!(
         automatic > manual * 1.08,
         "auto-exposure did not brighten an underlit scene: mean {automatic} with auto vs {manual} manual"
     );
 }
 
-/// Manual mode must keep behaving exactly as before the auto path existed.
-/// The exposure now travels through the same GPU buffer, so a regression here
-/// would mean the slider stopped reaching the pixels.
+/// Manual exposure shares the auto path's GPU buffer and must still reach the pixels.
 #[test]
 fn manual_exposure_still_controls_brightness() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -1093,12 +1006,7 @@ fn manual_exposure_still_controls_brightness() {
     );
 }
 
-/// GPU instancing, through the real frame path.
-///
-/// The failure mode this guards is not a crash: an instance transform that
-/// never reaches the shader draws every copy on top of the original, which
-/// looks exactly like a scene with one object. Counting covered pixels is
-/// what distinguishes "three instances" from "three draws of the same place".
+/// Instances must land at their own transforms, not stack invisibly on the original.
 #[test]
 fn instances_appear_at_their_own_transforms() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -1112,9 +1020,7 @@ fn instances_appear_at_their_own_transforms() {
         ..OrbitCamera::default()
     };
 
-    // Counts pixels that are not sky. The cube is lit and red-dominant; the
-    // procedural sky is blue-dominant, so "red exceeds blue" separates them
-    // without depending on exact shading.
+    // Non-sky pixels: the cube is red-dominant, the sky blue-dominant.
     let covered = |pixels: &[u8]| -> usize {
         pixels
             .chunks_exact(4)
@@ -1178,8 +1084,7 @@ fn clearing_instances_restores_a_single_copy_rather_than_none() {
     renderer.set_instances(&gpu, 0, &[glam::Mat4::IDENTITY, glam::Mat4::IDENTITY]);
     assert_eq!(renderer.instance_count(0), 2);
 
-    // Zero instances would make the primitive vanish, which is
-    // indistinguishable from a culling or upload bug when looking at a frame.
+    // Zero instances would look exactly like a culling or upload bug.
     renderer.set_instances(&gpu, 0, &[]);
     assert_eq!(
         renderer.instance_count(0),
@@ -1210,9 +1115,7 @@ fn growing_the_instance_count_reallocates_correctly() {
     let mut renderer = ForwardRenderer::new(&gpu, 96, 96);
     renderer.upload_scene(&gpu, &scene);
 
-    // Starting buffer holds exactly one instance, so this exercises the grow
-    // path; writing past a too-small buffer is a validation error, and
-    // reusing the old one silently draws the wrong count.
+    // The initial buffer holds one instance, so this exercises the grow path.
     for count in [1usize, 4, 2, 16] {
         let transforms: Vec<glam::Mat4> = (0..count)
             .map(|i| glam::Mat4::from_translation(glam::Vec3::new(i as f32, 0.0, 0.0)))
@@ -1226,23 +1129,8 @@ fn growing_the_instance_count_reallocates_correctly() {
     }
 }
 
-/// Per-cascade shadow-caster culling engages without eating any shadow.
-///
-/// Two assertions that only mean something together: the shadow image test
-/// above must still pass (culling deleted nothing the camera can see), and
-/// the caster counters must show drawn < considered once a caster sits far
-/// outside every cascade (culling actually engaged - without this, an inert
-/// cull test would pass forever).
-///
-/// DISABLED assertion 2026-07-24: the shadow pass records a single
-/// RenderBundle (now cached across frames, not just across cascades within
-/// one - see `shadow_caster_bundle_is_cached_across_frames` below) and
-/// replays it once per cascade. Per-cascade caster culling stays disabled: a
-/// culled draw set differs per cascade and per camera move, which the single
-/// cached bundle can't represent. Re-enabling it (per-cascade bundles, or
-/// union-frustum culling with camera-move invalidation) is a follow-up
-/// decision, not this change. Until then, drawn == considered.
-/// The structural shadow check below still proves the shadow itself survives.
+/// Shadows survive caster culling; `drawn < considered` is unchecked while one cached bundle
+/// serves every cascade, which leaves per-cascade culling off.
 #[test]
 fn caster_culling_engages_and_shadows_survive() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -1253,9 +1141,7 @@ fn caster_culling_engages_and_shadows_survive() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
     let mut scene = load_gltf(path).expect("cube_on_plane.gltf must load");
 
-    // A third primitive far outside every cascade's fitted box: clone the
-    // cube and push it 500 units away. Cascades fit the camera slice, which
-    // ends well before that.
+    // A third primitive far outside every cascade's fitted box.
     let mut far_cube = scene.primitives[0].clone();
     far_cube.transform = glam::Mat4::from_translation(glam::Vec3::new(500.0, 0.0, 500.0));
     scene.primitives.push(far_cube);
@@ -1276,15 +1162,8 @@ fn caster_culling_engages_and_shadows_survive() {
 
     let (_drawn, considered) = renderer.shadow_caster_stats();
     assert!(considered > 0, "no casters considered - did the pass run?");
-    // Per-cascade culling is disabled during the RenderBundle transition
-    // (2026-07-24). Re-enable when bundle invalidation is designed.
-    // assert!(drawn < considered, "culling never engaged");
 
-    // Same classification as shadow_darkens_plane_under_cube: the plane is
-    // near-neutral (white albedo) in full sun, but with analytic IBL a
-    // shadowed patch receives only blue hemisphere irradiance - not neutral
-    // dark, but tinted blue. A neutral-only classifier sees no shadow pixels
-    // at all regardless of whether the shadow renders correctly.
+    // As in shadow_darkens_plane_under_cube: the shadow is blue-tinted, never neutral dark.
     let mut lit_plane = 0usize;
     let mut shadowed_plane = 0usize;
     for p in pixels.chunks_exact(4) {
@@ -1303,16 +1182,7 @@ fn caster_culling_engages_and_shadows_survive() {
     );
 }
 
-/// The shadow-caster `RenderBundle` is cached across frames, not rebuilt
-/// every frame: `None` right after `upload_scene`, `Some` after the first
-/// frame records it, and STILL `Some` (not rebuilt) after
-/// `set_animation_time` — an animated pose only rewrites vertex/uniform
-/// buffer contents via `write_buffer`, which a bundle already captures by
-/// reference, so it must not invalidate the cache. If a future change
-/// accidentally cleared the cache on every frame, this test would still pass
-/// on the `None` check but fail the "still `Some`" one; if invalidation broke
-/// and animation changes were never picked up, `animation_moves_the_cube`
-/// above would catch that.
+/// The shadow-caster bundle survives `set_animation_time`, which only rewrites buffer contents.
 #[test]
 fn shadow_caster_bundle_is_cached_across_frames() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -1364,9 +1234,7 @@ fn gltf_loader_reads_unlit_flag() {
     assert!(!lit.primitives[0].material.unlit);
 }
 
-/// An unlit material is defined as exactly base_color: no lighting, IBL,
-/// shadowing or emissive. So changing the light must not change a single pixel
-/// of it, while the lit control changes visibly.
+/// An unlit material is exactly base_color, so moving the light changes none of its pixels.
 #[test]
 fn unlit_material_ignores_the_light() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -1387,9 +1255,7 @@ fn unlit_material_ignores_the_light() {
         (a, b)
     };
 
-    // Compare ONLY the cube's own pixels: the procedural sky follows the sun,
-    // so a whole-frame comparison would measure the background, not the
-    // material. Sample a centred window the cube covers in both frames.
+    // Only the cube's pixels: the procedural sky follows the sun.
     let centre_window = |px: &[u8]| -> Vec<u8> {
         let mut out = Vec::new();
         for y in (h / 2 - 12)..(h / 2 + 12) {
@@ -1418,10 +1284,7 @@ fn unlit_material_ignores_the_light() {
     );
 }
 
-/// A shared image must be uploaded ONCE, not once per primitive that references
-/// it. Without dedup a 200-primitive glTF sharing one atlas ran 200 CPU
-/// mip-chain builds and uploaded the same pixels 200 times - the load hitch and
-/// the VRAM ceiling both.
+/// A shared image uploads once, not once per referencing primitive.
 #[test]
 fn a_shared_texture_uploads_once() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -1465,15 +1328,8 @@ fn a_shared_texture_uploads_once() {
     );
 }
 
-/// Per-pixel alpha-tested shadows: a MASK card whose texture cuts half of it
-/// away must cast roughly HALF the shadow of the same card rendered opaque.
-///
-/// The caster is a single horizontal QUAD, deliberately not a closed cube: a
-/// cube's shadow is the union of six faces' projections, so discarding half of
-/// every face leaves the silhouette unchanged and an alpha test that provably
-/// ran moves the shadowed count by under 10% (measured on the reverted first
-/// attempt). Red state (depth-only shadow pipeline for MASK casters): the
-/// masked count equals the opaque count and the upper bound fails.
+/// A half-cut MASK card casts about half the opaque card's shadow.
+/// A quad, not a cube: a cube's silhouette survives cutting half of every face.
 #[test]
 fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
     use kataglyphis_webgpu_renderer::scene::{
@@ -1485,8 +1341,7 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
         return;
     };
 
-    // Receiver: the bundled plane (primitive 1 of cube_on_plane is the cube -
-    // drop it; primitive 0 is the 10x10 ground plane).
+    // Receiver: cube_on_plane's ground plane, without its cube.
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
     let base = load_gltf(path).expect("cube_on_plane.gltf must load");
@@ -1497,9 +1352,7 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
         .expect("the ground plane is the 4-vertex primitive")
         .clone();
 
-    // Caster: a 2x2 horizontal card at y = 1.4 - the top of the proven
-    // shadow test's cube, so its shadow lands exactly where that test's
-    // camera demonstrably sees shadow. u spans left-to-right.
+    // A 2x2 card at the proven shadow test's cube top, so its shadow lands where that camera looks.
     let card_vertices: Vec<Vertex> = [
         ([-1.0f32, 1.4, -1.0], [0.0f32, 0.0]),
         ([1.0, 1.4, -1.0], [1.0, 0.0]),
@@ -1519,8 +1372,7 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
     })
     .collect();
 
-    // 2x1 texture: left texel fully opaque, right texel fully transparent -
-    // with nearest filtering the card's right half is cut away.
+    // Opaque left texel, transparent right: nearest filtering cuts the right half away.
     let cutout = CpuTextureRef {
         texture: Arc::new(CpuTexture {
             width: 2,
@@ -1538,10 +1390,7 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
 
     let card = |material: CpuMaterial| CpuPrimitive {
         vertices: card_vertices.clone(),
-        // Winding chosen so the geometric normal points UP toward the
-        // light: the depth-only shadow pipeline backface-culls, and the
-        // first version of this test wound the quad downward - the light saw
-        // its back face and the card cast nothing at all.
+        // Wound to face the light: the shadow pipeline backface-culls.
         indices: vec![0, 2, 1, 0, 3, 2],
         transform: glam::Mat4::IDENTITY,
         node_index: None,
@@ -1558,13 +1407,9 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
         let (width, height) = (256u32, 256u32);
         let mut renderer = ForwardRenderer::new(&gpu, width, height);
         renderer.upload_scene(&gpu, &scene);
-        // The proven shadow test's light/camera: low light from -x/-z pushes
-        // the shadow onto the +x/+z plane area this camera looks at.
+        // The proven shadow test's light and camera.
         renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
-        // SSAO OFF: it darkens the plane behind the card from the FORWARD
-        // depth - which the forward alpha test already halves - and the
-        // first version of this oracle measured exactly that instead of the
-        // shadow map (the red state passed with a perfectly halved "shadow").
+        // SSAO off: it darkens from forward depth, which the forward alpha test already halves.
         renderer.ssao_strength = 0.0;
 
         let camera = OrbitCamera {
@@ -1577,14 +1422,7 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
             .expect("headless render must succeed")
     };
 
-    // Differential shadow oracle: pixels the caster DARKENS versus a
-    // caster-free baseline, keeping only the NEAR-BLACK ones. Instrumented
-    // fact from building this test: the card's lit top face renders MID-GRAY
-    // from this camera and the true sky-ambient shadow renders near-black
-    // (~10 luminance) - an earlier filter with the opposite assumption
-    // counted the card body as "shadow" and measured the forward alpha test
-    // instead of the shadow map (a red state with routing disabled still
-    // "halved" perfectly). lum < 30 keeps the shadow, drops the card.
+    // Pixels the caster darkens to near-black: the shadow is, the mid-gray card body is not.
     let baseline = render(vec![plane.clone()]);
     let shadowed_count = |caster_material: CpuMaterial| -> usize {
         let with_card = render(vec![plane.clone(), card(caster_material)]);
@@ -1627,10 +1465,7 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
     );
 }
 
-/// glTF COLOR_0 vertex colours multiply the base colour. A mesh with green
-/// vertex colours and a WHITE unlit material must render green - the loader
-/// used to drop COLOR_0 entirely, so such a mesh rendered white. Unlit keeps
-/// the assertion about the colour path alone, with no lighting in the way.
+/// COLOR_0 multiplies the base colour: green vertices on a white unlit material render green.
 #[test]
 fn vertex_colors_tint_the_surface() {
     use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial, CpuPrimitive, Vertex};
@@ -1721,12 +1556,7 @@ fn vertex_colors_tint_the_surface() {
     );
 }
 
-/// A texture whose slot references TEXCOORD_1 must sample the second UV set,
-/// not UV0. Baked AO on UV1 is the standard Blender/Substance export and used
-/// to be sampled with albedo (UV0) UVs. Here the base-colour texture is put on
-/// UV1: UV0 is CONSTANT (all 0,0 -> one texel) while UV1 SPANS the texture, so
-/// sampling UV1 shows the texture's two halves (red/blue) across the quad and
-/// sampling UV0 would show one flat colour.
+/// A slot declaring TEXCOORD_1 samples UV1; constant UV0 would show one flat colour.
 #[test]
 fn texture_slot_samples_its_declared_uv_set() {
     use kataglyphis_webgpu_renderer::scene::{
@@ -1754,8 +1584,7 @@ fn texture_slot_samples_its_declared_uv_set() {
         srgb: true,
     };
 
-    // Quad facing the camera. UV0 = (0,0) everywhere (samples the red texel);
-    // UV1 = the full 0..1 span (left red, right blue).
+    // UV0 is (0,0) everywhere (the red texel); UV1 spans 0..1 (red, then blue).
     let corners = [
         ([-2.0f32, -2.0, 0.0], [0.0f32, 0.0]),
         ([2.0, -2.0, 0.0], [1.0, 0.0]),
@@ -1827,8 +1656,7 @@ fn texture_slot_samples_its_declared_uv_set() {
         "right of the quad should be blue on UV1 (got r={rr} b={rb})"
     );
 
-    // Base slot on UV0 (mask 0): UV0 is constant (0,0) -> the whole quad is the
-    // red texel, no blue anywhere. This is what the old always-UV0 code did.
+    // Base slot on UV0 (mask 0): the whole quad is the red texel.
     let on_uv0 = render(0);
     let (l0r, _l0g, l0b) = sample(&on_uv0, 40);
     let (r0r, _r0g, r0b) = sample(&on_uv0, 88);

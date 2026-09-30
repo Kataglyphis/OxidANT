@@ -1,31 +1,9 @@
-//! Regression guard for "Give the Rust crate's 26 `wgpu::BufferDescriptor`
-//! literals five named constructors": every `wgpu::BufferDescriptor {`
-//! literal outside `render::buffer_desc` is either a copy that escaped the
-//! conversion, or one of the two genuinely different shapes (the exposure
-//! state buffer in `histogram.rs`, the vertex-usage instance buffer in
-//! `occlusion.rs`) that stay literal because folding them into
-//! `buffer_desc` would turn five named shapes back into one anonymous one.
-//!
-//! Pure CPU, no adapter: this only inspects source text, so it runs
-//! everywhere, including environments with no adapter.
+//! Every `wgpu::BufferDescriptor` literal lives in `render::buffer_desc`, bar two named outliers.
+//! Source text only, so it needs no GPU adapter.
 
 const NEEDLE: &str = "wgpu::BufferDescriptor {";
 
-/// The part of `line` that is code: everything before the first `//`.
-///
-/// This guard matches source TEXT, so it used to count prose. `buffer_desc.rs`
-/// documents, in its own module comment, that two call sites stay literal
-/// `wgpu::BufferDescriptor { .. }` calls - and a plain `matches()` counted
-/// that sentence as a sixth constructor. The test has been wrong since the
-/// commit that introduced it (2a56786 wrote the five constructors, the
-/// sentence and the test together); it went red the first time this repo's
-/// Rust step actually ran it, on 2026-08-05, without a single buffer having
-/// been added. The same blindness applies to the per-file scan below, where a
-/// comment mentioning the needle would have been reported as a stray literal.
-///
-/// A `//` inside a string literal would truncate this early, which can only
-/// make the guard blinder, never noisier - and there is no such string in the
-/// files it reads.
+/// The part of `line` before the first `//`, so a comment naming the needle is not counted.
 fn code_of(line: &str) -> &str {
     match line.find("//") {
         Some(comment_start) => &line[..comment_start],
@@ -87,8 +65,8 @@ fn buffer_descriptor_literals_are_the_single_definition_or_the_two_named_outlier
     assert_eq!(
         unmarked,
         vec![
-            "render/occlusion.rs:472".to_string(),
-            "render/histogram.rs:110".to_string(),
+            "render/occlusion.rs:358".to_string(),
+            "render/histogram.rs:102".to_string(),
         ],
         "found unexpected wgpu::BufferDescriptor literals outside render/buffer_desc.rs - \
          route new buffer sites through the helpers, or add a genuinely new outlier here \
@@ -112,8 +90,7 @@ fn buffer_descriptor_literals_are_the_single_definition_or_the_two_named_outlier
     );
 }
 
-/// Returns the text of the first `needle { ... }` block found in `src`, from
-/// the needle up to (and including) its matching closing brace.
+/// The first `needle { ... }` block in `src`, through its first closing brace.
 fn descriptor_block<'a>(src: &'a str, needle: &str) -> &'a str {
     let start = src.find(needle).expect("needle present in source");
     let rest = &src[start..];

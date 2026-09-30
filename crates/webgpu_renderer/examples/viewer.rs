@@ -1,7 +1,5 @@
 //! Minimal glTF viewer: `cargo run -p kataglyphis_webgpu_renderer --example viewer [model.gltf]`
-//! Drag to orbit, wheel to zoom (auto-orbit until first drag), egui overlay
-//! with light/tonemap controls and an occlusion-culling toggle. Keys: Esc
-//! closes, "s" screenshot, "r" reload shaders. Drag-and-drop loads a model.
+//! Drag orbits, wheel zooms, Esc quits, S screenshots, R reloads shaders, drag-and-drop loads.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -92,8 +90,7 @@ impl Viewer {
         }
     }
 
-    /// Hot shader reload: re-reads src/shaders/*.wgsl and rebuilds the
-    /// pipelines; invalid WGSL keeps the previous pipelines running.
+    /// Hot shader reload; invalid WGSL keeps the previous pipelines running.
     fn reload_shaders(&mut self) {
         let (Some(gpu), Some(renderer)) = (self.gpu.as_ref(), self.renderer.as_mut()) else {
             return;
@@ -179,8 +176,6 @@ impl Viewer {
             .frame_clock
             .tick_at(self.started.elapsed().as_secs_f64());
 
-        // wgpu 29: get_current_texture returns a CurrentSurfaceTexture enum
-        // instead of Result<_, SurfaceError>.
         let frame = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -199,9 +194,7 @@ impl Viewer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        // Size from the ACQUIRED texture, not the window: during a resize the
-        // window's client size can already differ from the still-configured
-        // surface, and depth/color attachments must match exactly.
+        // Size from the acquired texture: mid-resize the window already differs from the surface.
         let (width, height) = (frame.texture.width(), frame.texture.height());
         renderer.render_tonemapped(gpu, tonemap, &view, width, height, &self.camera);
 
@@ -210,8 +203,7 @@ impl Viewer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("overlay_encoder"),
             });
-        // Feed this frame's cull counts to the panel so the toggle's effect is
-        // visible (drew N/M) rather than invisible.
+        // Feed this frame's cull counts to the panel so the toggle's effect is visible.
         controls.occlusion_stats = Some(renderer.occlusion_cull_stats());
         let mut changed = false;
         overlay.render(
@@ -238,8 +230,6 @@ impl Viewer {
         }
 
         window.pre_present_notify();
-        // wgpu 30 moved presentation from `SurfaceTexture::present(self)` to
-        // `Queue::present(&self, texture)`.
         gpu.queue.present(frame);
         window.request_redraw();
     }
@@ -279,11 +269,7 @@ impl ApplicationHandler for Viewer {
         );
         renderer.upload_scene(&gpu, &scene);
 
-        // Light the scene with real split-sum IBL, baked from the same
-        // procedural sky the background shows, so reflections and ambient come
-        // from the actual environment rather than the analytic hemisphere
-        // fallback. Baked once here; 256x128 is plenty for the low-frequency
-        // irradiance and prefilter this feeds.
+        // IBL baked from the background's own sky; 256x128 suffices for low-frequency lighting.
         let sky_env = kataglyphis_webgpu_renderer::EquirectImage::sky(256, 128);
         renderer.set_environment(&gpu, &sky_env);
 

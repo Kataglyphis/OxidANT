@@ -19,13 +19,7 @@ pub fn run() -> anyhow::Result<glib::ExitCode> {
 fn build_ui(app: &Application) {
     match try_build_ui(app) {
         Ok(_bus_watch_guard) => {
-            // `_bus_watch_guard` is kept alive for the duration of this
-            // closure's scope — but `connect_activate` does not return until
-            // the GTK main loop is done, so the bus watch remains active.
-            // However, `connect_activate` *does* return immediately in
-            // practice.  Move the guard into a prevent-drop binding that lives
-            // as long as the GTK application object.  GTK keeps the closure
-            // alive, and the closure keeps the guard alive.
+            // The guard drops at the end of this arm, and dropping it removes the bus watch.
         }
         Err(err) => {
             error!("Failed to build UI: {err:#}");
@@ -127,8 +121,7 @@ fn try_build_ui(app: &Application) -> Result<gst::bus::BusWatchGuard> {
     let bus = pipeline.bus().context("Pipeline has no bus")?;
     let pipeline_weak = pipeline.downgrade();
 
-    // Guard: dropping this removes the bus watch, so it MUST remain alive
-    // for the duration of the GTK main loop.  We return it to the caller.
+    // Dropping this guard removes the bus watch, so it is returned to the caller.
     let bus_watch = bus
         .add_watch_local(move |_, msg| {
             use gst::MessageView;

@@ -1,38 +1,5 @@
-//! Per-pass GPU timestamp queries.
-//!
-//! The point of this module is comparability: the C++ Vulkan engine in the
-//! sibling tree reports per-pass GPU times (`GUIRendererSharedVars::gpuTimings`,
-//! keyed by a `GpuTimedPass` enum), and a side-by-side harness can only compare
-//! numbers that are shaped the same way. So the output here is deliberately the
-//! same shape - a fixed set of named passes, each a duration in milliseconds.
-//!
-//! Three constraints drove the design:
-//!
-//! 1. **`TIMESTAMP_QUERY` is optional, and this renderer targets the web.**
-//!    Browsers gate the feature behind a flag and most do not expose it at all.
-//!    So the subsystem has an explicit "unavailable" state carrying no wgpu
-//!    resources ([`GpuTiming::unavailable`]), every pass asks for its timestamp
-//!    writes and gets `None`, and the frame records exactly as it did before.
-//!    Nothing here may panic or unwrap on a missing feature.
-//!
-//! 2. **A pass is not a render pass.** Shadows are `CASCADE_COUNT` render
-//!    passes, bloom is three, SSAO two, the histogram two compute passes. WebGPU
-//!    can only stamp a timestamp at the start or end of a pass, so a scope
-//!    spans sub-passes: the first sub-pass writes the begin query, the last
-//!    writes the end query, and the middle ones write nothing. That is what
-//!    [`PassScope::render_writes`] encodes.
-//!
-//! 3. **Reading results must not stall the frame.** Timestamps land in a ring
-//!    of `SLOT_COUNT` slots; a slot's readback is mapped asynchronously after
-//!    submit and consumed whenever it happens to be ready, which in practice is
-//!    two to three frames later. A slot still in flight is simply skipped for
-//!    that frame rather than waited on, so the frame path never blocks.
-//!
-//! Rejected alternative: `CommandEncoder::write_timestamp`, which reads much
-//! more naturally (stamp anywhere, no sub-pass bookkeeping). It needs
-//! `TIMESTAMP_QUERY_INSIDE_ENCODERS`, a second optional feature that is rarer
-//! than the first and absent on WebGPU entirely - it would have made the web
-//! target permanently untimed.
+//! Per-pass GPU timestamp queries, in the C++ engine's `gpuTimings` shape so the two compare.
+//! Stamps at pass boundaries: `write_timestamp` needs a feature WebGPU never exposes.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -40,21 +7,14 @@ use std::sync::Arc;
 use crate::render::buffer_desc;
 
 /// The passes we time, in the order they are recorded in a frame.
-///
-/// Opaque and blended geometry are *not* split, though they are conceptually
-/// two passes: they share one `wgpu::RenderPass` (the blended draws need the
-/// opaque depth buffer without a store/load round trip), and a timestamp can
-/// only be written at a pass boundary. Splitting the render pass purely to
-/// time it would change what is being measured.
+/// Opaque and blended share one: splitting that render pass to time it would change its cost.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TimedPass {
     /// All shadow cascades, one render pass each.
     ShadowCascades,
     /// Opaque geometry, sky, and blended geometry in one render pass.
     Forward,
-    /// The occlusion-query bounding-box pass (one render pass, only recorded
-    /// when occlusion culling is on). Its cost is the overhead the cull must
-    /// beat: measuring it is how you tell whether culling actually pays.
+    /// The occlusion-query box pass (only with culling on); its cost is what the cull must beat.
     OcclusionCull,
     /// Brightpass plus separable blur (three render passes).
     Bloom,
@@ -113,25 +73,12 @@ impl TimedPass {
 pub const PASS_COUNT: usize = TimedPass::ALL.len();
 /// Two queries (begin, end) per pass.
 const QUERIES_PER_SLOT: u32 = PASS_COUNT as u32 * 2;
-/// Frames of timestamp storage in flight.
-///
-/// Two would cover wgpu's `desired_maximum_frame_latency: 2`, but a slot is
-/// only recycled once its map callback has fired, and that fires on a poll -
-/// one spare slot means a frame where the poll came up empty still finds a
-/// free slot instead of dropping the sample.
+/// Frames in flight: latency 2 plus a spare, since a slot frees only once a poll maps it.
 const SLOT_COUNT: usize = 3;
-/// Samples averaged for the reported value.
-///
-/// Raw per-frame GPU times jitter by tens of percent (clock/residency noise),
-/// which makes an on-screen number unreadable. 32 frames is roughly half a
-/// second at 60 Hz: steady enough to read, short enough to react to a change.
+/// Samples averaged per reported value: about half a second at 60 Hz, readable yet responsive.
 const AVERAGE_WINDOW: usize = 32;
 
-/// Fixed-window mean over the most recent samples.
-///
-/// A ring rather than an exponential decay because the window is an exact,
-/// statable number of frames - "the mean of the last 32 frames" is something a
-/// comparison harness can reproduce, where a decay constant is not.
+/// Fixed-window mean: an exact frame count a comparison harness can reproduce, unlike a decay.
 #[derive(Clone, Debug)]
 pub struct RollingAverage {
     samples: [f32; AVERAGE_WINDOW],
@@ -167,11 +114,7 @@ impl RollingAverage {
     }
 
     /// Mean of the recorded samples, or `None` before the first sample.
-    ///
-    /// `None` rather than 0.0 on purpose: "this pass has never reported" and
-    /// "this pass took no measurable time" are different facts, and a caller
-    /// printing 0.00 ms for the former is exactly the fake number this
-    /// subsystem exists to avoid.
+    /// `None`, not 0.0: never having reported is not the same as taking no time.
     pub fn average(&self) -> Option<f32> {
         if self.filled == 0 {
             None
@@ -191,22 +134,13 @@ impl RollingAverage {
 }
 
 /// Converts a GPU timestamp delta to milliseconds.
-///
-/// `period_ns` is whatever `Queue::get_timestamp_period()` reports - it varies
-/// by an order of magnitude across vendors (~1 ns on current NVIDIA, ~40 ns on
-/// some AMD parts), so it is never assumed.
-///
-/// The arithmetic is done in `f64`: a tick count is a `u64`, and on a 1 ns
-/// timer a GPU that has been up for an hour is already past `f32`'s 24-bit
-/// mantissa, so an `f32` multiply would quantise the delta.
+/// `period_ns` differs by vendor; the math is `f64` since tick deltas outgrow `f32`'s mantissa.
 pub fn ticks_to_ms(ticks: u64, period_ns: f32) -> f32 {
     (ticks as f64 * period_ns as f64 / 1_000_000.0) as f32
 }
 
 /// The timestamp writes one pass should hand to its render/compute passes.
-///
-/// Cheap to copy and safe to ask for when timing is off, in which case every
-/// accessor yields `None` and call sites need no branch of their own.
+/// Safe when timing is off: every accessor then yields `None`, so call sites need no branch.
 #[derive(Copy, Clone)]
 pub struct PassScope<'a> {
     query_set: Option<&'a wgpu::QuerySet>,
@@ -214,9 +148,7 @@ pub struct PassScope<'a> {
     end: u32,
 }
 
-// The write descriptors borrow the query set (`'a`), NOT the scope: a call site
-// that builds a scope inline and immediately asks it for writes would otherwise
-// be handing wgpu a borrow of a temporary.
+// Writes borrow the query set (`'a`), not the scope, so an inline temporary scope still works.
 impl<'a> PassScope<'a> {
     /// A scope that writes nothing - timing off, or feature unavailable.
     pub fn disabled() -> Self {
@@ -233,10 +165,7 @@ impl<'a> PassScope<'a> {
     }
 
     /// Timestamp writes for sub-pass `sub` of `count` in this scope.
-    ///
-    /// The begin query rides the first sub-pass and the end query the last, so
-    /// the measured span covers the whole scope including the gaps between its
-    /// sub-passes. With `count == 1` both land on the same pass.
+    /// Begin rides the first sub-pass and end the last, so the span covers the gaps too.
     pub fn render_writes(
         &self,
         sub: usize,
@@ -276,11 +205,7 @@ impl<'a> PassScope<'a> {
 }
 
 /// Which of a scope's two queries sub-pass `sub` of `count` should write.
-///
-/// Split out from [`PassScope`] because it is the whole of the sub-pass
-/// bookkeeping and it is pure - it can be tested without a GPU. `None` means
-/// this sub-pass stamps nothing, which must become "no descriptor at all":
-/// wgpu rejects a timestamp-writes descriptor with both indices unset.
+/// `None` means no descriptor at all: wgpu rejects one with both indices unset.
 fn sub_pass_write_indices(
     sub: usize,
     count: usize,
@@ -303,8 +228,7 @@ const MAP_FAILED: u8 = 2;
 struct Slot {
     resolve: wgpu::Buffer,
     readback: wgpu::Buffer,
-    /// `Some` while a map is outstanding; the callback flips it to
-    /// READY/FAILED and the next `end_frame` drains it.
+    /// `Some` while a map is outstanding; the callback sets READY/FAILED for `end_frame` to drain.
     map_state: Option<Arc<AtomicU8>>,
 }
 
@@ -326,10 +250,7 @@ pub struct GpuTiming {
 }
 
 impl GpuTiming {
-    /// The state every caller can always construct: no queries, no timings.
-    ///
-    /// Deliberately takes no device, so the unsupported path is reachable in a
-    /// unit test on a machine with no GPU at all.
+    /// Inert timing with no queries; takes no device so GPU-less unit tests can reach it.
     pub fn unavailable() -> Self {
         Self {
             resources: None,
@@ -338,8 +259,7 @@ impl GpuTiming {
         }
     }
 
-    /// Allocates query and readback resources, or returns the inert instance
-    /// when the device lacks `TIMESTAMP_QUERY`.
+    /// Allocates the queries and readbacks, or goes inert without `TIMESTAMP_QUERY`.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             log::info!("TIMESTAMP_QUERY unavailable; per-pass GPU timings disabled");
@@ -387,9 +307,7 @@ impl GpuTiming {
     }
 
     /// Averaged duration of each pass that has reported at least once.
-    ///
-    /// Empty while unavailable, and short of `PASS_COUNT` entries until every
-    /// pass has produced a sample - a caller must not read absence as zero.
+    /// A pass with no sample yet is absent, which a caller must not read as zero.
     pub fn timings_ms(&self) -> Vec<(&'static str, f32)> {
         TimedPass::ALL
             .iter()
@@ -402,10 +320,7 @@ impl GpuTiming {
     }
 
     /// Opens the frame: claims a slot if one is free.
-    ///
-    /// A slot whose readback is still mapping cannot be overwritten, so if
-    /// every slot is busy this frame goes untimed. Dropping a sample is the
-    /// right trade against either stalling or corrupting an in-flight one.
+    /// With every slot still mapping the frame goes untimed: dropping a sample beats stalling.
     pub fn begin_frame(&mut self) {
         self.recording = false;
         let Some(resources) = self.resources.as_mut() else {
@@ -437,8 +352,7 @@ impl GpuTiming {
         }
     }
 
-    /// Resolves this frame's queries into the slot's readback buffer. Must be
-    /// recorded into the same encoder as the passes, before submit.
+    /// Resolves this frame's queries; record into the passes' encoder before submit.
     pub fn resolve(&mut self, encoder: &mut wgpu::CommandEncoder) {
         if !self.recording {
             return;
@@ -457,8 +371,7 @@ impl GpuTiming {
         encoder.copy_buffer_to_buffer(&slot.resolve, 0, &slot.readback, 0, slot.resolve.size());
     }
 
-    /// Closes the frame: starts this slot's readback and consumes any slot
-    /// whose readback has since completed. Never blocks.
+    /// Closes the frame: maps this slot and consumes any finished readbacks, without blocking.
     pub fn end_frame(&mut self, device: &wgpu::Device) {
         let Some(resources) = self.resources.as_mut() else {
             return;
@@ -482,9 +395,7 @@ impl GpuTiming {
             self.recording = false;
         }
 
-        // Non-blocking: this only lets already-finished map callbacks run. A
-        // waiting poll here would reintroduce exactly the stall the ring
-        // exists to avoid.
+        // Poll, never wait: a blocking poll would bring back the stall the ring exists to avoid.
         let _ = device.poll(wgpu::PollType::Poll);
 
         for index in 0..resources.slots.len() {
@@ -499,10 +410,7 @@ impl GpuTiming {
                     for pass in TimedPass::ALL {
                         let i = pass.index();
                         let (begin, end) = (ticks[i * 2], ticks[i * 2 + 1]);
-                        // Queries a skipped pass never wrote resolve to
-                        // undefined contents; a real GPU timestamp is never 0
-                        // and never runs backwards, so those two checks reject
-                        // the garbage without inventing a number for it.
+                        // Unwritten queries hold garbage; real stamps are nonzero and monotonic.
                         if begin == 0 || end == 0 || end < begin {
                             continue;
                         }
@@ -562,8 +470,7 @@ mod tests {
 
     #[test]
     fn tick_conversion_keeps_precision_on_a_large_timestamp_delta() {
-        // A delta past f32's 24-bit mantissa: computed in f32 this rounds to a
-        // multiple of 2 ticks and the sub-microsecond digits vanish.
+        // Past f32's 24-bit mantissa: f32 math would round this to an even tick count.
         let ticks = 16_777_217u64;
         assert_eq!(ticks_to_ms(ticks, 1.0), 16.777217);
     }
@@ -612,8 +519,7 @@ mod tests {
 
     #[test]
     fn a_multi_sub_pass_scope_stamps_only_its_outer_passes() {
-        // Bloom: brightpass, blur H, blur V. The middle one must get no
-        // descriptor at all rather than one with both indices unset.
+        // Bloom's middle blur pass gets no descriptor, not one with both indices unset.
         assert_eq!(sub_pass_write_indices(0, 3, 4, 5), Some((Some(4), None)));
         assert_eq!(sub_pass_write_indices(1, 3, 4, 5), None);
         assert_eq!(sub_pass_write_indices(2, 3, 4, 5), Some((None, Some(5))));

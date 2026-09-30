@@ -1,7 +1,5 @@
 //! Webcam/video capture built on GStreamer.
-//!
-//! Everything is gated behind the `gstreamer` feature; without it this crate
-//! compiles to nothing so non-media builds never require GStreamer dev files.
+//! Empty without the `gstreamer` feature, so non-media builds need no GStreamer dev files.
 
 #[cfg(feature = "gstreamer")]
 pub mod capture;

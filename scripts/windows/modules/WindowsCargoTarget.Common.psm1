@@ -1,21 +1,13 @@
 #requires -Version 7.0
 
-# PROJECT-LOCAL: where one Windows build of this repo lands. The arch facts themselves (the accepted
-# spellings, cross or not, the Rust triple, what a package calls the arch) are the hub's
-# WindowsTargetArch.Common and WindowsCrossBundle.Common, which the caller imports. amd64 is the build
-# host and keeps cargo's plain target\release; arm64 is the cross build in the arm64 bundle, which
-# cargo keys by triple. Both write their products to dist\windows-<x64|arm64>, the directory each
-# Windows lane uploads whole.
+# Project-local layout only; the arch facts are the hub's WindowsTargetArch/WindowsCrossBundle, imported by the caller.
 
 Set-StrictMode -Version Latest
 
 function Get-CargoTargetLayout {
     <#
     .SYNOPSIS
-        The arch-dependent paths and names of one build: Arch (the hub's canonical name), IsCross,
-        CargoArgs (the --target pair, empty on the host), ArchTargetDir (cargo's per-arch root, where the
-        payloads and staging dirs go too), ReleaseDir, PackageArch (MSIX ProcessorArchitecture and
-        `wix -arch`) and DistDir (dist\windows-<PackageArch>).
+        One build's arch-dependent paths and names: Arch, IsCross, CargoArgs, ArchTargetDir, ReleaseDir, PackageArch, DistDir.
     #>
     [CmdletBinding()]
     param(

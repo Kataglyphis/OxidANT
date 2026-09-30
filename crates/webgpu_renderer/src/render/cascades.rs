@@ -1,88 +1,7 @@
-//! Pure-CPU shadow-cascade fitting, split out of `forward.rs`.
-//!
-//! The shader picks a cascade by *eye distance*
-//! (`forward.slang:151`, `o.viewDepth = distance(worldPos, camera_position)`,
-//! interpolated from per-vertex values - see below) and compares it against
-//! `frame.cascade_splits.xy` (`forward.slang:198-211`). Those splits
-//! therefore have to live in eye-distance units, and each cascade's
-//! light-space box has to cover whatever the shader can route to it. The
-//! previous `update_cascades` sized ITS boxes, and picked its splits, from
-//! the scene's own radius alone - a quantity that does not move with the
-//! camera. Zoom the camera out and every fragment's real eye distance
-//! outgrows both (fixed) splits, so cascade selection always lands on the
-//! last cascade and the two near ones are never sampled.
-//!
-//! `fit_cascades` keeps the box *shapes* unchanged (a near box hugging the
-//! camera focus, a mid box around the orbit target, a far box around the
-//! whole scene), but derives the near/mid *radii* - and therefore the
-//! splits, which are `2 * radius` - from the camera's actual distance to the
-//! scene, floored at the scene's own radius and then QUANTIZED to powers of
-//! two of that radius. The floor matters: `viewDepth` is only ever linearly
-//! interpolated from per-vertex distances (not recomputed per-fragment),
-//! which is a poor approximation on a large, coarsely-triangulated receiver -
-//! measured against `tests/assets/cube_on_plane.gltf`'s single-quad ground
-//! plane, the interpolated value can be off by several units. The old
-//! scene-radius sizing happened to be generous enough to absorb that error
-//! for every camera position the existing GPU golden tests exercise (all of
-//! which sit within the scene's own radius); an earlier version of this
-//! module that additionally re-derived box *position/size* from the exact
-//! camera frustum shrank the boxes enough to expose it and regressed
-//! `shadow_darkens_plane_under_cube` to zero shadowed pixels. Flooring
-//! `dist_to_center` at `scene_radius` reproduces the old (already-correct)
-//! sizing exactly whenever the camera sits at or inside the scene's radius,
-//! and only grows the boxes once the camera moves farther out than that -
-//! which is exactly the situation the bug report describes. The quantization
-//! matters separately: sizing the near/mid radii from the RAW (continuous)
-//! distance re-scales the texel grid on every dolly of the camera, which
-//! defeats the whole-texel snap described below (ingredient 3) for exactly
-//! the motion that snap exists to fix - a static shadow edge would still
-//! crawl, just from the box's own size changing instead of its center.
-//! Snapping distance to the nearest power-of-two multiple of `scene_radius`
-//! (rounding away from the origin, so the floor case above stays bit-for-bit
-//! exact) makes the box size a step function of camera distance instead: it
-//! only changes at discrete zoom thresholds, where a one-frame reprojection
-//! is an acceptable, rare cost, and is otherwise perfectly stable under
-//! dollying.
-//!
-//! Each cascade's box is then STABILIZED against camera motion, mirroring
-//! `CascadedShadowMapMath.cpp:154-201`. Three ingredients, each necessary:
-//!
-//! 1. A WORLD-FIXED light basis (pure rotation about the origin, built from
-//!    `light_dir` alone). A basis anchored at a moving slice center absorbs
-//!    camera translation continuously, and no snap applied afterwards can
-//!    undo that.
-//! 2. A box sized from each cascade's `radius` alone - a function of the
-//!    slice geometry (see above), not of instantaneous camera position - so
-//!    its texel footprint never changes as the camera turns, nor (thanks to
-//!    the quantization above) as the camera dollies, except at the discrete
-//!    zoom steps where a one-time reprojection is expected.
-//! 3. The box center snapped to whole texels in that fixed basis, so the box
-//!    only ever moves in texel increments and a static shadow edge always
-//!    lands on the same texels. The box is padded by one texel of the box
-//!    that is actually PROJECTED, not of the raw radius: `texel_world` must
-//!    equal `2 * half_extent / shadow_map_size`, or the grid the center
-//!    snaps to and the grid the box projects disagree and a "whole texel"
-//!    snap drifts by a fraction of a texel every step. Solving
-//!    `half_extent = radius + 2 * half_extent / shadow_map_size` gives
-//!    `half_extent = radius * shadow_map_size / (shadow_map_size - 2)`.
-//!
-//! Depth (near/far) is deliberately NOT tightened to the sphere the way the
-//! C++ version tightens to its exact frustum corners: per-cascade caster
-//! culling is disabled here (every primitive is submitted to every cascade's
-//! shadow pass, see `shadow_caster_bundle_is_cached_across_frames`), so a
-//! caster can legitimately sit outside a given cascade's sphere and still
-//! need to survive that cascade's depth range. A tight `±radius` bound
-//! measurably clipped such casters (`caster_culling_engages_and_shadows_survive`
-//! went from a real shadow to none), so the depth window stays proportional
-//! to `radius` but generous - the same scale as the legacy eye-pulled-back
-//! `radius * 4` / `far = radius * 8` window it replaces. Near may legitimately
-//! come out negative (the basis is anchored at the origin, not behind the
-//! scene); the orthographic constructor accepts that.
+//! Pure-CPU shadow-cascade fitting, texel-stabilized like `CascadedShadowMapMath.cpp`.
+//! Splits are eye distances: `forward.slang:151` selects by `distance(worldPos, camera_position)`.
 
-// glam 0.33 moved the camera constructors off `Mat4` and split them by clip-
-// space convention. `directx` is glam's name for NDC Z in [0,1] with Y up —
-// which is also wgpu's and Metal's — and it reproduces the old
-// `Mat4::perspective_rh`/`orthographic_rh` bit for bit (verified 2026-08-07).
+// glam's `directx` clip convention is NDC Z in [0,1] with Y up, the same as wgpu's.
 use glam::camera::rh::proj::directx as clip;
 use glam::camera::rh::view::look_at_mat4;
 use glam::{Mat4, Vec3};
@@ -95,11 +14,7 @@ pub(crate) struct CascadeFit {
     pub matrices: [Mat4; CASCADE_COUNT],
 }
 
-/// Fits one orthographic light matrix per cascade: cascade 0 hugs the camera
-/// focus (crisp near shadows), cascade 1 sits around the orbit target,
-/// cascade 2 covers the whole scene. `light_dir` is a parameter rather than
-/// read off a renderer so this is callable from a plain unit test, without a
-/// GPU or a `ForwardRenderer`.
+/// Fits one ortho light matrix per cascade: camera focus, orbit target, whole scene.
 pub(crate) fn fit_cascades(
     camera: &OrbitCamera,
     scene_min: Vec3,
@@ -112,17 +27,12 @@ pub(crate) fn fit_cascades(
         scene_radius = 1.0;
     }
 
-    // See the module doc comment for why this is floored at scene_radius
-    // rather than used raw.
+    // Floored: `viewDepth` is interpolated per vertex, and smaller boxes miss its error.
     let mut raw_dist = (scene_center - camera.eye()).length().max(scene_radius);
     if !raw_dist.is_finite() {
         raw_dist = scene_radius;
     }
-    // Sizing the cascade from a CONTINUOUS camera distance re-scales the
-    // texel grid every frame, which defeats the whole-texel snap in
-    // stabilized_light_matrix_for. Quantize to powers of two of the scene's
-    // own radius: the box then changes size only at discrete zoom steps
-    // (where a one-frame reprojection is invisible) and is otherwise fixed.
+    // Quantized: a continuous size re-scales the texel grid every dolly, defeating the snap.
     let mut steps = (raw_dist / scene_radius).log2().ceil().max(0.0);
     if !steps.is_finite() {
         steps = 0.0;
@@ -151,13 +61,7 @@ pub(crate) fn fit_cascades(
     } else {
         Vec3::Y
     };
-    // World-fixed: a pure rotation about the origin, independent of any
-    // cascade's center. See the module doc comment, ingredient 1. Eye is
-    // `light_dir` (not `-light_dir`, unlike the C++ reference): this crate's
-    // `light_dir` already points FROM the surface TOWARD the light (the
-    // legacy `light_matrix_for` placed its eye at `center + light_dir * d`,
-    // i.e. on the light's side), whereas the C++ `lightDir` is the ray's
-    // travel direction, the opposite convention.
+    // Eye at +light_dir, not -: ours points toward the light, the C++ `lightDir` along the ray.
     let light_basis = look_at_mat4(light_dir, Vec3::ZERO, up);
 
     let mut matrices = [Mat4::IDENTITY; CASCADE_COUNT];
@@ -168,18 +72,15 @@ pub(crate) fn fit_cascades(
     CascadeFit { splits, matrices }
 }
 
-/// One cascade's orthographic light matrix, fitted to a world-space sphere
-/// (`center`, `radius`) and stabilized in the given world-fixed `light_basis`
-/// so it only ever moves in whole-texel increments. See the module doc
-/// comment for why each step is necessary.
+/// One cascade's ortho light matrix for a sphere, snapped to whole texels in `light_basis`.
+/// The basis must be world-fixed: one anchored at a moving center absorbs motion no snap undoes.
 fn stabilized_light_matrix_for(
     light_basis: Mat4,
     center: Vec3,
     radius: f32,
     shadow_map_size: u32,
 ) -> Mat4 {
-    // shadow_map_size <= 2 has no consistent solution (the pad would
-    // swallow the whole box); fall back to the unsnapped tight fit.
+    // Pad by one projected texel so snap and projection share a grid; size <= 2 cannot be padded.
     let (half_extent, texel_world) = if shadow_map_size > 2 {
         let half_extent = radius * shadow_map_size as f32 / (shadow_map_size as f32 - 2.0);
         let texel_world = (2.0 * half_extent) / shadow_map_size as f32;
@@ -197,16 +98,7 @@ fn stabilized_light_matrix_for(
         (center_ls.x, center_ls.y)
     };
 
-    // Depth range: unlike the C++ reference this cascade has no exact frustum
-    // corners to bound, only a sphere approximation whose caster may sit
-    // anywhere in the wider scene (per-cascade caster culling is disabled -
-    // see `shadow_caster_bundle_is_cached_across_frames` - so every primitive
-    // is submitted to every cascade's pass and relies on this range not
-    // clipping it). Pad generously in proportion to `radius`, matching the
-    // legacy eye-pulled-back-by-`radius * 4` / `far = radius * 8` window this
-    // replaces (that window was symmetric around `center`, roughly `radius *
-    // 4` either side) rather than tightening to just the sphere itself, which
-    // measurably clips real casters - see `caster_culling_engages_and_shadows_survive`.
+    // Not sphere-tight: every caster reaches every cascade's pass, so a tight range clips some.
     let depth_pad = radius * 4.0;
     let near = -center_ls.z - depth_pad;
     let mut far = -center_ls.z + depth_pad;
@@ -238,11 +130,7 @@ mod tests {
 
     #[test]
     fn splits_track_the_camera_instead_of_staying_scene_fixed() {
-        // THE bug this module fixes: splits derived purely from scene radius
-        // do not move when the camera does, so a camera far from the scene
-        // eventually has every fragment's eye distance outgrow both splits
-        // and cascade selection gets stuck on the last cascade. A correct
-        // fit pushes the splits out roughly in step with eye distance.
+        // Scene-fixed splits leave a far camera's every fragment in the last cascade.
         let scene_min = Vec3::splat(-1.0);
         let scene_max = Vec3::splat(1.0);
         let light_dir = Vec3::Y;
@@ -265,12 +153,7 @@ mod tests {
 
     #[test]
     fn a_camera_inside_the_scene_radius_matches_the_original_scene_radius_derived_split() {
-        // Regression pin for `shadow_darkens_plane_under_cube` /
-        // `first_frame_uses_the_correct_cascade_and_tile_counts`: those GPU
-        // golden tests use a camera whose distance to the scene center is
-        // LESS than the scene's own radius, which must fall back to exactly
-        // the original (already-correct, already shadow-map-verified)
-        // scene-radius-derived sizing.
+        // The GPU golden tests' cameras sit inside the scene radius and rely on this exact sizing.
         let scene_min = Vec3::new(-4.0, 0.0, -4.0);
         let scene_max = Vec3::new(4.0, 1.4, 4.0);
         let camera = OrbitCamera {
@@ -319,10 +202,7 @@ mod tests {
         }
     }
 
-    /// Texel-space coordinate of a world point under one cascade's matrix:
-    /// NDC scaled so one shadow-map texel is exactly 1.0. Whole-texel motion
-    /// of the box shows up here as integer deltas. Mirrors
-    /// `cascadedShadowMapSuite.cpp`'s `texel_space` helper.
+    /// `world` in `view_proj`'s texel space, where one shadow-map texel is exactly 1.0.
     fn texel_space(view_proj: Mat4, world: Vec3) -> (f32, f32) {
         let clip = view_proj * world.extend(1.0);
         (
@@ -333,20 +213,14 @@ mod tests {
 
     #[test]
     fn cascades_shift_by_whole_texels_under_camera_motion() {
-        // The shimmer bug: refitting the ortho box every frame moves every
-        // shadow edge by whatever sub-texel amount the camera moved, and
-        // edges crawl. Stabilized cascades may only move the box in WHOLE
-        // texel increments, so a static world point's projected texel
-        // position may only shift by a (near-)integer amount.
+        // Shimmer guard: a static point may only shift by whole texels as the camera moves.
         let scene_min = Vec3::splat(-1.0);
         let scene_max = Vec3::splat(1.0);
         let light_dir = Vec3::new(-0.4, -1.0, -0.2);
         let probe = Vec3::new(0.2, 0.3, 0.1);
 
         let camera_a = OrbitCamera::default();
-        // Sub-texel: the near cascade's texel size here is ~1.4e-3 world
-        // units (radius ~1.4, SHADOW_MAP_SIZE 2048); this offset is well
-        // under one texel.
+        // Well under one near-cascade texel (~1.4e-3 world units here).
         let camera_b = OrbitCamera {
             target: camera_a.target + Vec3::new(4e-4, 0.0, 0.0),
             ..camera_a.clone()
@@ -370,26 +244,7 @@ mod tests {
 
     #[test]
     fn cascades_stay_texel_aligned_over_long_camera_travel() {
-        // The off-by-2/shadow_map_size bug: texel_world was computed from the
-        // UNPADDED radius, but the box that is actually projected is
-        // 2*half_extent wide (half_extent = radius + texel_world), so the
-        // true texel size is texel_world * (1 + 2/shadow_map_size), not
-        // texel_world. Snapping the center by k grid steps then moves a fixed
-        // world point by only k/(1+2/shadow_map_size) texels - short of an
-        // integer by ~2k/shadow_map_size texels. That error is invisible for
-        // the sub-texel offset used above (k is 0 or 1), so move the box
-        // center by well over one texel instead (the near cascade's texel
-        // here is ~1.4e-3 world units, so 0.5 is hundreds of grid steps),
-        // which accumulates the drift past the 5e-2 tolerance unless the fix
-        // (deriving texel_world from the padded half_extent) is in place.
-        //
-        // Unlike `cascades_shift_by_whole_texels_under_camera_motion`, this
-        // calls `stabilized_light_matrix_for` directly with a FIXED radius
-        // rather than routing the travel through `fit_cascades`: `near_radius`
-        // there scales with camera-to-scene distance (see the module doc
-        // comment), a separate and correct behavior that would itself change
-        // the box size between the two samples and swamp the texel-alignment
-        // signal this test targets.
+        // Far travel at fixed radius: an unpadded texel_world would drift past the tolerance.
         let light_dir = Vec3::new(-0.4, -1.0, -0.2).normalize();
         let up = if light_dir.dot(Vec3::Y).abs() > 0.99 {
             Vec3::Z
@@ -419,10 +274,7 @@ mod tests {
         );
     }
 
-    /// Mirrors `forward.slang:198-227`'s cascade selection + projection, up
-    /// through the `uv`/`proj.z` range check at `:212` (the point where the
-    /// shader currently gives up and returns "fully lit"). Returns whether
-    /// `world` lands inside cascade `c`'s box.
+    /// Whether `world` lands inside the box, per `forward.slang:212`'s `uv`/`proj.z` check.
     fn shader_covers(view_proj: Mat4, world: Vec3) -> bool {
         let clip = view_proj * world.extend(1.0);
         if clip.w.abs() < 1e-6 {
@@ -448,15 +300,7 @@ mod tests {
 
     #[test]
     fn every_selectable_eye_distance_lands_inside_the_cascade_it_selects() {
-        // The near-band hole: a fragment closer to the camera than roughly
-        // half the near split is routed to cascade 0 by `select_cascade`,
-        // but cascade 0's box hugs the camera FOCUS point
-        // (`camera.target.lerp(camera.eye(), 0.15)`), not the camera itself,
-        // so a point that close to the eye can fall outside it. The fix
-        // (`forward.slang`'s `shadow_visibility`) retries the next coarser
-        // cascade before giving up, so the invariant this test pins is
-        // UNION coverage: some cascade at or above the selected index must
-        // contain the fragment, not necessarily the selected one alone.
+        // Near-eye points can miss cascade 0 (it hugs the focus); the shader retries coarser ones.
         let scene_min = Vec3::new(-4.0, 0.0, -4.0);
         let scene_max = Vec3::new(4.0, 1.4, 4.0);
         let light_dir = Vec3::new(-1.0, -0.3, -1.0);
@@ -501,11 +345,7 @@ mod tests {
 
     #[test]
     fn cascade_box_size_is_invariant_under_camera_motion() {
-        // The other half of the shimmer: if the box resized as the camera
-        // turned, the world-size of a texel would breathe. As long as the
-        // camera stays within the scene's own radius (the floor in
-        // `fit_cascades`), the box size must be bit-for-bit stable across
-        // rotation of the camera.
+        // Turning inside the scene radius must not resize the box, or the texel size breathes.
         let scene_min = Vec3::splat(-50.0);
         let scene_max = Vec3::splat(50.0);
         let light_dir = Vec3::new(-0.3, -1.0, 0.2);
@@ -526,9 +366,7 @@ mod tests {
         let fit_a = fit_cascades(&camera_a, scene_min, scene_max, light_dir);
         let fit_b = fit_cascades(&camera_b, scene_min, scene_max, light_dir);
 
-        // viewProj = ortho * light_basis; row norms of the upper 3x3 recover
-        // the ortho scales (1 / half_extent) since light_basis is a pure
-        // rotation.
+        // Upper-3x3 row norms are the ortho scales, since light_basis is a pure rotation.
         let row_norm =
             |m: &Mat4, row: usize| Vec3::new(m.x_axis[row], m.y_axis[row], m.z_axis[row]).length();
 
@@ -546,14 +384,7 @@ mod tests {
 
     #[test]
     fn cascade_box_size_is_invariant_under_small_camera_dolly() {
-        // The dolly half of the shimmer bug: `near_radius`/`mid_radius` used
-        // to scale continuously with `dist_to_center`, so moving the camera
-        // one millimetre toward or away from the scene re-scaled the texel
-        // grid every frame - defeating the whole-texel snap in
-        // `stabilized_light_matrix_for` for exactly the motion that snap
-        // exists to fix. Both cameras sit well outside `scene_radius` (so
-        // the floor does not bind) and close enough together that they must
-        // land on the same quantized zoom step.
+        // A small dolly outside the floor must stay on one quantized zoom step.
         let scene_min = Vec3::splat(-1.0);
         let scene_max = Vec3::splat(1.0);
         let light_dir = Vec3::new(-0.3, -1.0, 0.2);

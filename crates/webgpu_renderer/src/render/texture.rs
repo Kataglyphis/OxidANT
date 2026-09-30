@@ -33,18 +33,7 @@ pub(crate) fn create_sampler(device: &wgpu::Device, desc: &CpuSampler) -> wgpu::
     })
 }
 
-/// Anisotropy for a glTF sampler.
-///
-/// The mip chain is already generated correctly, so this is the cheapest visible
-/// quality win available: without it a floor or wall seen at a grazing angle -
-/// i.e. most of any architectural or photogrammetry scene - is over-blurred by
-/// several mip levels.
-///
-/// wgpu REQUIRES min/mag/mipmap to all be Linear before anisotropy above 1, and
-/// validates it, so a sampler that asked for Nearest anywhere must stay at 1.
-/// That is not a nicety: returning 16 there is a device-lost-grade validation
-/// error, and the nearest-filtered assets are exactly the pixel-art ones whose
-/// look the author chose deliberately.
+/// Anisotropy for a glTF sampler; wgpu rejects anisotropy above 1 unless every filter is Linear.
 pub(crate) fn anisotropy_for(desc: &CpuSampler) -> u16 {
     if desc.mag_nearest || desc.min_nearest || desc.mip_nearest {
         1
@@ -71,8 +60,7 @@ pub(crate) fn linear_to_srgb(value: f32) -> u8 {
     (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
 }
 
-/// Full mip chain via 2x2 box filtering. sRGB data is averaged in linear
-/// space; data maps (normals, metallic-roughness) are averaged raw.
+/// Full mip chain via 2x2 box filtering; sRGB averaged in linear space, data maps raw.
 pub(crate) fn generate_mips(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
     let mut levels = vec![(base.width, base.height, base.rgba8.clone())];
     if base.width == 0 || base.height == 0 {
@@ -101,10 +89,7 @@ pub(crate) fn generate_mips(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec
                         let sum: f32 = samples.iter().map(|&b| srgb_to_linear(b)).sum();
                         linear_to_srgb(sum / 4.0)
                     } else {
-                        // Round-half-up: the sRGB arm above already rounds via
-                        // `linear_to_srgb`, and the two arms disagreeing is what let a
-                        // truncation bias compound once per level down the whole chain.
-                        // Four u8 values sum to at most 1020, so `+ 2` cannot overflow.
+                        // Round half up like the sRGB arm; truncating compounds a bias per level.
                         ((samples.iter().map(|&b| b as u32).sum::<u32>() + 2) / 4) as u8
                     };
                     next.push(value);
@@ -152,9 +137,7 @@ pub(crate) fn create_compressed_texture(
         }
     }
     let format = compressed_wgpu_format(compressed.format, srgb);
-    // `compressed.mips` is trusted here (level count and per-level byte size both
-    // match `texture.width`/`texture.height`) because `ktx2_loader::validate_mip_chain`
-    // already rejected anything that wouldn't.
+    // `compressed.mips` is trusted: `ktx2_loader::validate_mip_chain` already checked its sizes.
     let block_bytes = compressed.format.block_bytes();
     let gpu_texture = create_2d_texture(
         &gpu.device,
@@ -293,15 +276,7 @@ pub(crate) fn create_hdr_texture(
     )
 }
 
-/// Single-layer 2D texture: `dimension: D2`, `depth_or_array_layers: 1`,
-/// `view_formats: &[]`. Covers every 2D texture in the crate except the two
-/// shapes that are genuinely different - cube textures
-/// (`ibl.rs`'s `dummy_cube`, `create_cube`) and the shadow cascade depth
-/// array (`forward.rs`'s `shadow_map_array`) - which stay hand-written.
-///
-/// Clamps `width`/`height` to at least 1: a zero-sized request is a wgpu
-/// validation error, and rendering a 1x1 texture instead is strictly better
-/// than that for every call site here.
+/// The crate's single-layer 2D texture; clamps `width`/`height` to 1, as zero is a wgpu error.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn create_2d_texture(
     device: &wgpu::Device,
@@ -329,9 +304,7 @@ pub(crate) fn create_2d_texture(
     })
 }
 
-/// As [`create_2d_texture`], but returns the default view directly - the
-/// shape most call sites want when they never need the `wgpu::Texture` itself
-/// again (no later `write_texture` or readback).
+/// As [`create_2d_texture`], but returns the default view for callers that never touch the texture.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn create_2d_view(
     device: &wgpu::Device,
@@ -363,8 +336,7 @@ mod tests {
 
     #[test]
     fn anisotropy_is_requested_only_when_every_filter_is_linear() {
-        // wgpu validates this: anisotropy > 1 with any Nearest filter is an
-        // error, not a hint. The all-linear default must still get the win.
+        // wgpu rejects anisotropy > 1 with any Nearest filter; all-linear must still get 16x.
         let linear = CpuSampler::default();
         assert_eq!(
             anisotropy_for(&linear),
@@ -406,8 +378,7 @@ mod tests {
     #[test]
     fn compressed_wgpu_format_is_decided_by_usage_not_by_the_container() {
         use CompressedFormat as F;
-        // The KTX2 container's declared colour space must never change which
-        // wgpu format is picked; only the material's `srgb` usage flag does.
+        // Only the material's `srgb` usage picks the format, never the KTX2 declared colour space.
         let cases = [
             (F::Bc1RgbaUnorm, false, wgpu::TextureFormat::Bc1RgbaUnorm),
             (F::Bc1RgbaUnorm, true, wgpu::TextureFormat::Bc1RgbaUnormSrgb),
@@ -451,9 +422,7 @@ mod tests {
 
     #[test]
     fn generate_mips_averages_srgb_in_linear_space() {
-        // One black and one white texel: a raw byte average gives 127/128,
-        // but averaging in linear space (as sRGB data must be) gives a
-        // darker result because sRGB is a nonlinear encoding.
+        // Black and white texels: a raw byte average gives ~127, a linear-space one differs.
         let base = CpuTexture {
             width: 2,
             height: 1,
@@ -475,8 +444,7 @@ mod tests {
                 "a raw byte average would incorrectly give ~127/128"
             );
         }
-        // Alpha is linear even for sRGB textures: raw byte average of two 0s and two 255s.
-        // The exact mean of two 0s and two 255s is 127.5; round-half-up gives 128.
+        // Alpha is averaged raw: the mean of two 0s and two 255s is 127.5, rounded up to 128.
         assert_eq!(data[3], 128);
     }
 

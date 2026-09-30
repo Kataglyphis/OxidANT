@@ -1,9 +1,4 @@
-//! Webcam → ONNX person-detection engine (native only).
-//!
-//! Owns a [`CaptureSession`] plus a worker thread that pushes every processed
-//! frame into the Flutter texture (via the native plugin's `knt_push_frame`
-//! C ABI) and runs person detection on it, emitting metadata through a
-//! callback that the frb layer forwards to Dart as a stream.
+//! Webcam → ONNX person-detection engine (native only): frames to the texture, detections out.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,8 +49,7 @@ struct TexturePusher {
 
 impl TexturePusher {
     fn new(target: &TextureTarget) -> Result<Self> {
-        // The plugin DLL is already loaded in-process by the Flutter engine;
-        // this bumps its refcount and resolves the symbol.
+        // The Flutter engine already loaded the plugin DLL; this only bumps its refcount.
         unsafe {
             let lib = libloading::Library::new(&target.library)
                 .with_context(|| format!("failed to open texture library `{}`", target.library))?;

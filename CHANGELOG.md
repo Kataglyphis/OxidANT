@@ -122,6 +122,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **Comments are one line, only the why (2026-09-30).** The family rule, linked from
+  `AGENTS.md` to [the hub's `AGENTS.md`](third_party/ANTfrastructure/AGENTS.md#comments-one-line-only-the-why):
+  140 files, 5.7k lines out and 1.2k in. Traps moved to their docs pages (for example
+  `crates/webgpu_renderer/docs/renderer-bounds-invariant.md`), and `AGENTS.md` gains
+  *Tests and scripts that read source text*. The line-number pins in
+  `buffer_desc_single_definition.rs` follow the edit (`occlusion.rs:358`,
+  `histogram.rs:102`). `cargo fmt --check`, clippy `-D warnings` and the source-reading
+  tests pass. ANTfrastructure moves to `9e9d9828` for the gate that grades every
+  language and the bootstrap templates the two local copies follow.
 - **`run-producer-pi.sh` runs through the image's entrypoint (2026-09-29).** All three
   `nerdctl run`s drop `--entrypoint bash`; `/hostlibs` is handed in as the caller's
   `LD_LIBRARY_PATH`, which ANTfrastructure CON23's entrypoint keeps ahead of the

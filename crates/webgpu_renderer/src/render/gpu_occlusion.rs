@@ -1,12 +1,5 @@
-//! GPU-driven occlusion culling: compute shader tests primitives against the
-//! depth buffer, writes per-primitive visibility flags to a storage buffer.
-//! Read back to CPU → drives the forward draw loop's skip logic.
-//!
-//! This replaces the hardware occlusion query approach (`OcclusionQueries`)
-//! with a compute-shader-based test that evaluates every primitive each frame.
-//! The readback follows the same non-blocking ring as [`crate::render::occlusion`]:
-//! `map_async` is polled, never waited on, so a frame whose result is not yet
-//! ready simply keeps drawing with the last-known visibility.
+//! GPU occlusion culling: a compute pass tests every primitive against depth, read back per frame.
+//! The readback ring never waits, as in [`crate::render::occlusion`]; late frames keep old results.
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
@@ -35,14 +28,10 @@ struct AabbGpu {
     max: [f32; 4],
 }
 
-/// Readback ring depth, same reasoning as `occlusion::SLOT_COUNT`: two slots
-/// cover `desired_maximum_frame_latency: 2`, and a third spare means a frame
-/// whose poll comes up empty still finds a free slot instead of the frame
-/// being dropped outright.
+/// Ring depth: two slots for frame latency 2, plus a spare so an empty poll drops no frame.
 const SLOT_COUNT: usize = 3;
 
-/// Workgroup size of `gpu_cull.wgsl`'s `cs_main`; must match the shader's
-/// `@workgroup_size(64, 1, 1)`.
+/// Must match `cs_main`'s `@workgroup_size(64, 1, 1)` in `gpu_cull.wgsl`.
 pub const CULL_WORKGROUP: u32 = 64;
 
 /// Map state of one readback slot, shared with the `map_async` callback.
@@ -52,13 +41,11 @@ const MAP_FAILED: u8 = 2;
 
 struct Slot {
     readback: wgpu::Buffer,
-    /// `Some` while a map is outstanding; the callback flips it to READY/FAILED
-    /// and the next `end_frame` drains it.
+    /// `Some` while a map is outstanding; the callback sets READY/FAILED, `end_frame` drains it.
     map_state: Option<Arc<AtomicU8>>,
     /// Primitives actually recorded into this slot (this frame's count).
     count: u32,
-    /// The scene generation this slot was recorded under; see
-    /// [`crate::render::occlusion::OcclusionQueries`]'s field of the same name.
+    /// Scene generation this slot was recorded under; see `GpuCulling::generation`.
     generation: u64,
 }
 
@@ -74,12 +61,9 @@ pub struct GpuCulling {
     current: usize,
     /// True when this frame claimed a free slot and recorded a dispatch.
     recording: bool,
-    /// Bumped by [`Self::reset`] on a scene change; stamped onto a slot when
-    /// its readback is kicked off and checked when it lands, so results from a
-    /// replaced scene are discarded rather than applied to the new one.
+    /// Bumped by [`Self::reset`]; a readback from an older generation is discarded when it lands.
     generation: u64,
-    /// Per-primitive visibility from the most recent completed readback,
-    /// `true` when the primitive's centre passed the depth test.
+    /// Latest completed readback, `true` where the primitive's centre passed the depth test.
     visibility: Vec<bool>,
 }
 
@@ -155,10 +139,8 @@ impl GpuCulling {
         }
     }
 
-    /// Upload AABBs, run the culling compute pass, and kick off a copy into
-    /// this frame's readback slot - or do nothing when every slot is still
-    /// mapping from a prior frame, the same trade `OcclusionQueries::record`
-    /// makes rather than stalling. Call [`Self::end_frame`] after submit.
+    /// Uploads AABBs, dispatches the cull pass and copies into a free readback slot.
+    /// Skips the frame rather than stall if every slot is mapping; call [`Self::end_frame`] after.
     #[allow(clippy::too_many_arguments)]
     pub fn cull(
         &mut self,
@@ -177,8 +159,7 @@ impl GpuCulling {
             return;
         }
 
-        // Claim a free slot; if every slot is still mapping, skip this frame
-        // rather than stall.
+        // Every slot still mapping: skip this frame rather than stall.
         let Some(slot_index) = self.free_slot() else {
             return;
         };
@@ -256,9 +237,7 @@ impl GpuCulling {
         self.recording = true;
     }
 
-    /// Starts this frame's readback and consumes any slot whose readback has
-    /// since completed. Never blocks; call after submit, alongside
-    /// [`crate::render::occlusion::OcclusionQueries::end_frame`].
+    /// Starts this frame's readback and drains completed slots without blocking; call after submit.
     pub fn end_frame(&mut self, device: &wgpu::Device) {
         if self.recording {
             let state = Arc::new(AtomicU8::new(MAP_PENDING));
@@ -281,8 +260,7 @@ impl GpuCulling {
             self.recording = false;
         }
 
-        // Non-blocking: only lets already-finished callbacks run. A waiting
-        // poll here would reintroduce the stall the ring exists to avoid.
+        // Never a waiting poll: that would reintroduce the stall the ring exists to avoid.
         let _ = device.poll(wgpu::PollType::Poll);
 
         for index in 0..self.slots.len() {
@@ -303,9 +281,7 @@ impl GpuCulling {
                     drop(view);
                     self.slots[index].readback.unmap();
                     self.slots[index].map_state = None;
-                    // A stale generation means the scene was replaced after this
-                    // slot recorded; keep the reset's empty visibility so the new
-                    // scene is not culled by the old scene's samples.
+                    // A stale generation is the old scene's; never cull the new one with it.
                     if self.slots[index].generation == self.generation {
                         self.visibility = visibility;
                     }
@@ -318,36 +294,25 @@ impl GpuCulling {
         }
     }
 
-    /// Per-primitive visibility from the most recent completed readback, same
-    /// contract as [`crate::render::occlusion::OcclusionQueries::visibility`].
+    /// Latest completed readback, as [`crate::render::occlusion::OcclusionQueries::visibility`].
     pub fn visibility(&self) -> &[bool] {
         &self.visibility
     }
 
     /// Whether primitive `i` should be drawn given the last readback.
-    ///
-    /// Defaults to VISIBLE (`true`) for any index the readback has not covered
-    /// yet - the first frames before results land, or a primitive added since.
-    /// Defaulting to visible is the safe direction: a never-culled primitive
-    /// costs a draw, a wrongly-culled one pops out of existence.
+    /// Unknown indices default to visible: a spare draw is cheap, a wrong cull pops geometry out.
     pub fn visible(&self, i: usize) -> bool {
         self.visibility.get(i).copied().unwrap_or(true)
     }
 
-    /// Forgets all readback state; call when the scene changes. Per-index
-    /// visibility is only meaningful for the primitive list it was measured
-    /// against - see [`crate::render::occlusion::OcclusionQueries::reset`] for
-    /// why carrying it across a scene change is unsafe. Clearing makes
-    /// [`Self::visible`] default to true again until fresh results land, and
-    /// the bumped generation discards any readback still in flight from the
-    /// old scene.
+    /// Forgets all readback state; call when the scene changes.
+    /// Visibility is per index of the old primitive list; in-flight readbacks are discarded too.
     pub fn reset(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.visibility.clear();
     }
 
-    /// Index of a slot with no outstanding map, preferring `current` so the
-    /// ring advances in order when nothing is in flight.
+    /// A slot with no outstanding map, trying `current` first so the ring advances in order.
     fn free_slot(&self) -> Option<usize> {
         (0..SLOT_COUNT)
             .map(|offset| (self.current + offset) % SLOT_COUNT)

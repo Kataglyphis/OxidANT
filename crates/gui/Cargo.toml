@@ -32,18 +32,14 @@ anyhow = { workspace = true }
 log = { workspace = true }
 kataglyphis_core = { path = "../core" }
 kataglyphis_inference = { path = "../inference", optional = true }
-# GStreamer's init, which points GST_PLUGIN_PATH at the plugins a package carries
-# beside the exe; the same entry point the webcam engine uses.
+# Its GStreamer init points GST_PLUGIN_PATH at the plugins a package carries beside the exe.
 kataglyphis_media = { path = "../media", optional = true }
 kataglyphis_telemetry = { path = "../telemetry" }
 tokio = { version = "1", features = ["sync", "time"] }
 chrono = { workspace = true }
 
 gtk = { version = "0.11", package = "gtk4", features = ["v4_10"], optional = true }
-# Workspace-pinned, NOT a local version: these used to be hard-coded at 0.25
-# here while crates/media followed the workspace pin at 0.24, so a build with
-# both features linked two GStreamer major versions - two -sys layers binding
-# the same system libgstreamer.
+# Workspace-pinned so this and crates/media never link two GStreamer versions against one libgstreamer.
 gstreamer = { workspace = true, optional = true }
 gstreamer-app = { workspace = true, optional = true }
 winit = { version = "0.30", optional = true }

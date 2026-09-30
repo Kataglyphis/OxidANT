@@ -1,11 +1,5 @@
-//! Renders a glTF file to a PNG without opening a window.
-//!
-//! ```bash
-//! cargo run -p kataglyphis_webgpu_renderer --example headless_render -- model.gltf out.png [width height]
-//! ```
-//!
-//! Useful for docs screenshots, batch turntables, and regression baselines
-//! — the same path the golden tests use.
+//! Renders a glTF file to a PNG without opening a window, through the golden tests' path.
+//! Usage: `cargo run --example headless_render -- model.gltf out.png [width height]`
 
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 

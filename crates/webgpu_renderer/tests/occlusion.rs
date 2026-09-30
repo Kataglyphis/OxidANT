@@ -1,10 +1,4 @@
-//! GPU occlusion DETECTION against a real adapter.
-//!
-//! The ring/readback plumbing has no pure part worth unit-testing in isolation;
-//! it is a mirror of `gpu_timing`, whose maths is covered there. What only a
-//! GPU can answer is the thing this feature exists for: that a primitive hidden
-//! behind other geometry reads back 0 occlusion samples and a visible one reads
-//! back more than 0. Both tests print the actual sample counts they measured.
+//! Occlusion detection and culling against a real adapter: hidden reads 0 samples, visible > 0.
 
 use glam::{Mat4, Vec3};
 use kataglyphis_webgpu_renderer::{load_gltf, CpuScene, ForwardRenderer, GpuContext, OrbitCamera};
@@ -31,10 +25,7 @@ fn looking_down_neg_z() -> OrbitCamera {
     }
 }
 
-/// Renders enough frames for the asynchronous occlusion readback to land. The
-/// readback lags the frame it measures by one or more frames (it is mapped
-/// after submit and never waited on), so a single frame would read nothing -
-/// the same reason `gpu_timing`'s test loops 64 times.
+/// Renders enough frames for the never-awaited occlusion readback to land.
 fn render_until_readback_lands(
     renderer: &mut ForwardRenderer,
     gpu: &GpuContext,
@@ -53,10 +44,7 @@ fn a_cube_hidden_behind_another_reads_back_zero_samples() {
         return;
     };
 
-    // A large occluder near the camera (index 0) and a small cube directly
-    // behind it (index 1). From +Z looking down -Z, the occluder's world AABB
-    // spans x,y in [-2, 2] at z in [0, 4] and the hidden cube sits at z ~= -3,
-    // fully behind the occluder in both screen coverage and depth.
+    // A large occluder (index 0) fully covers a small cube behind it (index 1).
     let occluder = cube_with_transform(
         Mat4::from_translation(Vec3::new(0.0, 0.0, 2.0)) * Mat4::from_scale(Vec3::splat(4.0)),
     );
@@ -142,8 +130,7 @@ fn detection_is_off_by_default() {
     let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
     renderer.upload_scene(&gpu, &scene);
 
-    // Default-off is the contract: the frame renders exactly as before and no
-    // occlusion is measured.
+    // Default-off contract: nothing is measured.
     assert!(!renderer.occlusion_queries_enabled);
     let camera = OrbitCamera::default();
     for _ in 0..4 {
@@ -159,10 +146,7 @@ fn detection_is_off_by_default() {
 
 #[test]
 fn an_occluded_primitive_is_actually_skipped_in_the_opaque_pass() {
-    // Increment 2: detection feeds the draw loop. Same occluder/hidden scene
-    // as the detection test; after the readback lands, the hidden cube must be
-    // SKIPPED - 1 of 2 opaque primitives drawn - while both are still frustum-
-    // visible (so this proves occlusion, not frustum, culling).
+    // Both cubes are frustum-visible, so skipping the hidden one proves occlusion culling.
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -205,8 +189,7 @@ fn an_occluded_primitive_is_actually_skipped_in_the_opaque_pass() {
 
 #[test]
 fn two_visible_cubes_are_both_drawn_with_culling_on() {
-    // Guard against over-culling: two side-by-side cubes (both visible) must
-    // BOTH draw even with occlusion enabled.
+    // Over-culling guard: two visible cubes both draw with occlusion on.
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -230,12 +213,7 @@ fn two_visible_cubes_are_both_drawn_with_culling_on() {
 
 #[test]
 fn loading_a_new_scene_does_not_inherit_the_old_scene_visibility() {
-    // Per-index occlusion visibility is only meaningful for the primitive list
-    // it was measured against. If it survives a scene change, a new scene whose
-    // primitive shares the index of a previously occluded one gets wrongly
-    // culled. Reproduce: occlude index 1 in scene A, then load a scene B of two
-    // fully visible cubes and render ONE frame - the frame where stale
-    // visibility would still bite, before scene B's own queries land.
+    // Visibility is per index: scene B's first frame must not cull what scene A occluded.
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -258,16 +236,14 @@ fn loading_a_new_scene_does_not_inherit_the_old_scene_visibility() {
     renderer
         .render_to_pixels(&gpu, 256, 256, &camera)
         .expect("render");
-    // Precondition: scene A really did cull its hidden primitive, so there is
-    // stale `false` visibility at index 1 to (wrongly) carry over.
+    // Precondition: stale `false` visibility exists at index 1.
     assert_eq!(
         renderer.occlusion_cull_stats().0,
         1,
         "scene A must occlusion-cull its hidden cube, or this test proves nothing"
     );
 
-    // Scene B: two side-by-side cubes, both fully visible, neither occluding the
-    // other. Index 1 here is a DIFFERENT, visible primitive.
+    // Scene B: two visible cubes; index 1 is a different, visible primitive.
     let scene_b = CpuScene {
         primitives: vec![
             cube_with_transform(Mat4::from_translation(Vec3::new(-3.0, 0.0, 0.0))),
@@ -277,9 +253,7 @@ fn loading_a_new_scene_does_not_inherit_the_old_scene_visibility() {
     };
     renderer.upload_scene(&gpu, &scene_b);
 
-    // The very next frame: scene B's own queries have not landed yet, so this is
-    // exactly when leftover visibility would cull index 1. With the reset in
-    // upload_scene it defaults back to visible and both cubes draw.
+    // Before scene B's own queries land, leftover visibility would cull index 1.
     renderer
         .render_to_pixels(&gpu, 256, 256, &camera)
         .expect("render");
@@ -294,10 +268,7 @@ fn loading_a_new_scene_does_not_inherit_the_old_scene_visibility() {
 
 #[test]
 fn an_occluded_primitive_is_skipped_with_gpu_culling() {
-    // Same shape as `an_occluded_primitive_is_actually_skipped_in_the_opaque_pass`,
-    // but exercising the compute-shader path (`gpu_culling_enabled`) instead of
-    // hardware occlusion queries - the two must be interchangeable from the
-    // draw loop's point of view.
+    // The compute-shader path must be interchangeable with the queries for the draw loop.
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -336,8 +307,7 @@ fn an_occluded_primitive_is_skipped_with_gpu_culling() {
 
 #[test]
 fn two_visible_cubes_are_both_drawn_with_gpu_culling() {
-    // Over-culling guard for the compute-shader path, mirroring
-    // `two_visible_cubes_are_both_drawn_with_culling_on`.
+    // Over-culling guard for the compute-shader path.
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -358,15 +328,7 @@ fn two_visible_cubes_are_both_drawn_with_gpu_culling() {
 
 #[test]
 fn a_primitive_containing_the_camera_is_always_reported_visible() {
-    // Regression for the strobe described in BACKLOG's "Force-visible any
-    // primitive whose AABB contains the camera" task: from inside a
-    // primitive's own AABB, the occlusion proxy box's near-facing side is
-    // near-plane clipped and its far-facing side sits behind the primitive's
-    // own depth, so the hardware query reads back 0 samples even though the
-    // primitive fills the screen. Needs geometry that actually renders from
-    // the inside (double-sided - a closed, single-sided cube renders nothing
-    // from inside, leaves the depth buffer empty, and can't reach this path
-    // at all).
+    // From inside its AABB the query reads 0; double-sided, as a culled cube renders nothing inside.
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -382,8 +344,7 @@ fn a_primitive_containing_the_camera_is_always_reported_visible() {
     renderer.upload_scene(&gpu, &scene);
     renderer.occlusion_queries_enabled = true;
 
-    // Eye at radius 0.2 from the origin: inside the unit cube's [-0.5, 0.5]
-    // bounds on every axis, well past the 0.1 near plane.
+    // Eye inside the unit cube, well past the 0.1 near plane.
     let camera = OrbitCamera {
         radius: 0.2,
         yaw_deg: 0.0,
@@ -414,33 +375,17 @@ fn a_primitive_containing_the_camera_is_always_reported_visible() {
 
 #[test]
 fn gpu_culling_respects_vertical_screen_position() {
-    // `an_occluded_primitive_is_skipped_with_gpu_culling` and
-    // `two_visible_cubes_are_both_drawn_with_gpu_culling` above both use
-    // vertically centred, symmetric geometry, so a vertically mirrored
-    // NDC->uv mapping in gpu_cull.slang samples the same depth-buffer region
-    // either way and neither test can tell a correct mapping from a mirrored
-    // one. This test breaks that symmetry: a large occluder covers only the
-    // TOP half of the screen (world y in [0, 8], which the camera below,
-    // looking down -Z with +Y up, projects above the screen's vertical
-    // centre), with one small cube behind it in the top half (must be
-    // occluded) and one in the bottom half, outside the occluder's screen
-    // footprint (must stay visible). On a mirrored uv mapping this comes out
-    // exactly backwards: the top cube reads back visible and the bottom one
-    // reads back occluded, because each is tested against the depth in the
-    // wrong half of the screen.
+    // Top-half-only occluder: a vertically mirrored NDC->uv mapping swaps both cubes' results.
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
-    // World y in [0, 8], x in [-4, 4], z in [0, 4]: near the camera (eye at
-    // z=8) and spanning from the screen's vertical centre (y=0) upward, so it
-    // occupies only the top half of the frame.
+    // y in [0, 8] near the camera: only the top half of the frame.
     let occluder = cube_with_transform(
         Mat4::from_translation(Vec3::new(0.0, 4.0, 2.0))
             * Mat4::from_scale(Vec3::new(8.0, 8.0, 4.0)),
     );
-    // Behind the occluder in depth (z = -3, same as the other tests' hidden
-    // cube), one in the top half of the screen, one in the bottom half.
+    // Both behind the occluder's depth, one per screen half.
     let hidden_top = cube_with_transform(Mat4::from_translation(Vec3::new(0.0, 2.0, -3.0)));
     let hidden_bottom = cube_with_transform(Mat4::from_translation(Vec3::new(0.0, -2.0, -3.0)));
 

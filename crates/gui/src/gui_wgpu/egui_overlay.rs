@@ -85,8 +85,7 @@ impl EguiOverlay {
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let score_threshold = inference.score_threshold;
 
-        // egui 0.35 replaced Context::run with begin_pass/end_pass. The clone
-        // is a cheap Arc handle and dodges the self-borrow inside the closures.
+        // The clone is a cheap Arc handle that dodges the self-borrow inside the closures.
         let ctx = self.ctx.clone();
         ctx.begin_pass(raw_input);
         {

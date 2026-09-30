@@ -27,9 +27,6 @@ pub(crate) struct GpuSample {
 }
 
 /// Global counters singleton for tracking inference and camera metrics.
-///
-/// This struct encapsulates all atomic counters in a single type,
-/// making it easier to manage and reducing global state sprawl.
 static GLOBAL_COUNTERS: GlobalCounters = GlobalCounters {
     inference_completions: AtomicU64::new(0),
     camera_frames: AtomicU64::new(0),

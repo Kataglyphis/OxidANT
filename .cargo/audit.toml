@@ -1,14 +1,7 @@
-# THIS LIST AND deny.toml's [advisories].ignore MUST MATCH. cargo-audit reads
-# only this file, cargo-deny only that one, and both run in the same gating CI
-# step (scripts/linux/ci-container-steps.sh security), so an id added to one is
-# still reported by the other.
+# Must match deny.toml's [advisories].ignore: cargo-audit and cargo-deny each read only their own list, and both gate.
 [advisories]
 ignore = [
   "RUSTSEC-2025-0141", # bincode: unmaintained (via burn-core)
   "RUSTSEC-2024-0436", # paste: unmaintained (via burn-ndarray, cubecl-core)
   "RUSTSEC-2026-0192", # ttf-parser: unmaintained (transitive font-parsing dep); informational, not a vulnerability
-  # The two quick-xml entries (RUSTSEC-2026-0194 / -0195) are gone: quick-xml
-  # moved to 0.41.0 in Cargo.lock, which carries the fix, and cargo-deny then
-  # warned `advisory-not-detected` on both. Take the upgrade and delete the
-  # ignore - an ignore that no longer matches is a claim nobody re-checks.
 ]

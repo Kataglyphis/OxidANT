@@ -1,10 +1,5 @@
 //! KTX2 loading for block-compressed textures (BCn passthrough).
-//!
-//! Scope: containers whose payload is already a GPU format we can upload
-//! directly (BC1/BC3/BC5/BC7), with no supercompression. Basis
-//! ETC1S/UASTC transcoding needs a transcoder dependency and is not
-//! handled yet — such files are reported as an error so callers can fall
-//! back instead of rendering garbage.
+//! Supercompressed/Basis files are an error, so callers fall back instead of rendering garbage.
 
 use anyhow::Context as _;
 
@@ -35,9 +30,7 @@ fn map_format(vk_format: u32) -> Option<CompressedFormat> {
     }
 }
 
-/// The colour space a KTX2 vkFormat declares: `Some(true)` for a
-/// `*_SRGB_BLOCK` format, `Some(false)` for a colour `*_UNORM_BLOCK` format,
-/// `None` for a data format with no colour space to declare (BC5).
+/// Whether a vkFormat declares sRGB; `None` for data formats with no colour space (BC5).
 fn declared_srgb_for(vk_format: u32) -> Option<bool> {
     match vk_format {
         VK_FORMAT_BC1_RGBA_SRGB_BLOCK | VK_FORMAT_BC3_SRGB_BLOCK | VK_FORMAT_BC7_SRGB_BLOCK => {
@@ -50,11 +43,7 @@ fn declared_srgb_for(vk_format: u32) -> Option<bool> {
     }
 }
 
-/// Rejects a mip chain that cannot possibly belong to a `width`x`height`
-/// texture in `format`: an empty chain, more levels than the full mip
-/// pyramid allows, or any level whose data is too small for the block
-/// dimensions it is claimed to cover. Pure and adapter-free, so it can run
-/// long before any wgpu resource exists.
+/// Rejects an empty mip chain, too many levels, or a level too small for its block dimensions.
 pub(crate) fn validate_mip_chain(
     width: u32,
     height: u32,
@@ -163,8 +152,7 @@ mod tests {
             map_format(VK_FORMAT_BC7_SRGB_BLOCK),
             Some(CompressedFormat::Bc7RgbaUnorm)
         );
-        // An uncompressed format (VK_FORMAT_R8G8B8A8_UNORM = 37) is not a BCn
-        // passthrough target.
+        // 37 is VK_FORMAT_R8G8B8A8_UNORM: uncompressed, so no passthrough.
         assert_eq!(map_format(37), None);
         assert_eq!(map_format(0), None);
     }
@@ -213,21 +201,18 @@ mod tests {
 
     #[test]
     fn rejects_non_ktx2_bytes_without_panicking() {
-        // Garbage in -> a graceful Err, never a panic.
         assert!(load_ktx2(b"not a ktx2 file at all").is_err());
         assert!(load_ktx2(&[]).is_err());
     }
 
-    /// A correctly-sized 4x4 BC1 mip chain: one 4x4 block per level, 8 bytes
-    /// (one block) apiece, down to the 1x1 level.
+    /// A correctly-sized 4x4 BC1 mip chain: one 8-byte block per level.
     fn valid_4x4_bc1_chain(levels: usize) -> Vec<Vec<u8>> {
         (0..levels).map(|_| vec![0u8; 8]).collect()
     }
 
     #[test]
     fn validate_mip_chain_rejects_more_levels_than_the_dimensions_allow() {
-        // 4x4 has a full pyramid of 3 levels (4x4, 2x2, 1x1); a 5th level
-        // cannot correspond to any real mip of a 4x4 texture.
+        // A 4x4 pyramid has 3 levels (4x4, 2x2, 1x1).
         let five_levels = valid_4x4_bc1_chain(5);
         assert!(validate_mip_chain(4, 4, CompressedFormat::Bc1RgbaUnorm, &five_levels).is_err());
 

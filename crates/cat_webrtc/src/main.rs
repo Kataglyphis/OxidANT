@@ -1,25 +1,5 @@
 //! Cat detector → WebRTC producer.
-//!
-//! Loops a still image (or a `videotestsrc` pattern) through `jpegdec` into an
-//! appsink — or captures from `v4l2src` / `libcamerasrc` — runs YOLO ONNX
-//! inference for COCO class 15 (cat) with `kataglyphis_inference` on a worker
-//! thread, paints the latest boxes into the RGBA frames and pushes them into
-//! `webrtcsink`, which publishes them over the GStreamer signalling protocol
-//! OmniAccelerANT's Stream page (`lib/Pages/StreamPage`) consumes.
-//!
-//! **No path outside this repository is baked in.** A live source needs
-//! nothing but a flag; the still-image mode takes its picture from
-//! `--image` or `$KATAGLYPHIS_CAT_IMAGE`, because that picture is not
-//! tracked here and its checkout layout differs between a workstation, the
-//! CI container and a Raspberry Pi:
-//!
-//! ```text
-//! ORT_DYLIB_PATH=/usr/local/lib/onnxruntime-cpu/lib/libonnxruntime.so \
-//!   kataglyphis_cat_webrtc --v4l2 /dev/video0
-//! ORT_DYLIB_PATH=/usr/local/lib/onnxruntime-cpu/lib/libonnxruntime.so \
-//!   kataglyphis_cat_webrtc --libcamera      # Raspberry Pi CSI camera
-//! KATAGLYPHIS_CAT_IMAGE=/srv/assets/Thundy.jpg kataglyphis_cat_webrtc
-//! ```
+//! Nothing outside this repo is baked in: the still image is `--image` or `$KATAGLYPHIS_CAT_IMAGE`.
 
 use std::thread;
 
@@ -32,21 +12,9 @@ use kataglyphis_inference::person_detection::PersonDetector;
 const COCO_CAT: i64 = 15;
 
 /// Environment variable naming the still image looped as the demo source.
-///
-/// It replaced a compile-time default that concatenated `CARGO_MANIFEST_DIR`
-/// with `/../../../ANThology/assets/images/cats/Thundy.jpg` - a path that
-/// reached out of this repository, past its superproject, and into a SIBLING
-/// submodule checkout. That resolved only while OxidANT sat at exactly one
-/// place inside exactly one superproject: a standalone clone, a different
-/// superproject or a Raspberry Pi got a path to nothing, and the failure
-/// surfaced as a `multifilesrc` error logged from a worker thread rather
-/// than as a bad argument. The location is configurable now, and nothing
-/// this crate cannot see is assumed.
 const IMAGE_ENV: &str = "KATAGLYPHIS_CAT_IMAGE";
 
-/// Where that picture lives in a full family checkout, quoted in the error
-/// below so "which image?" is answered without leaving the terminal. A
-/// hint, deliberately NOT a fallback: no code path resolves it.
+/// Where that picture lives in a full family checkout; an error-message hint, never a fallback.
 const DEFAULT_IMAGE_HINT: &str = "<family checkout root>/ANThology/assets/images/cats/Thundy.jpg";
 
 /// Default ONNX model (OxidANT's yolov10m, end-to-end `[1,N,6]` output).
@@ -58,9 +26,7 @@ const DEFAULT_MODEL: &str = concat!(
 #[derive(Parser, Debug)]
 #[command(name = "cat-webrtc", about = "Cat detection over WebRTC (GStreamer)")]
 struct Args {
-    /// Still image to loop as the live source; `--test`, `--v4l2` and
-    /// `--libcamera` override it. Falls back to `$KATAGLYPHIS_CAT_IMAGE`,
-    /// and with neither set one of the live-source flags is required.
+    /// Still image to loop, else `$KATAGLYPHIS_CAT_IMAGE`; any live-source flag overrides it.
     #[arg(long)]
     image: Option<String>,
 
@@ -72,18 +38,15 @@ struct Args {
     #[arg(long)]
     v4l2: Option<String>,
 
-    /// Use the system libcamera source (`libcamerasrc`). Required for the
-    /// Raspberry Pi CSI camera, whose V4L2 nodes carry raw Bayer only.
+    /// Use `libcamerasrc`; required for the Pi CSI camera, whose V4L2 nodes carry raw Bayer only.
     #[arg(long)]
     libcamera: bool,
 
-    /// Stream frames without loading the ONNX model or running detection.
-    /// For bring-up and for hosts too weak to run inference.
+    /// Stream frames without loading the model, for bring-up or hosts too weak for inference.
     #[arg(long)]
     no_inference: bool,
 
-    /// Rotate the stream by this many degrees: 0, 90, 180 or 270. Use 180
-    /// for a camera that is mounted upside down.
+    /// Rotate the stream by 0, 90, 180 or 270 degrees (180 for an upside-down camera).
     #[arg(long, default_value_t = 0)]
     rotate: u32,
 
@@ -95,8 +58,7 @@ struct Args {
     #[arg(long, default_value_t = 8443)]
     listen_port: u32,
 
-    /// TLS certificate (PEM) for the built-in signalling server — enables WSS,
-    /// which a phone needs because an HTTPS page cannot open `ws://`.
+    /// TLS certificate (PEM) enabling WSS, since a phone's HTTPS page cannot open `ws://`.
     #[arg(long)]
     cert: Option<String>,
 
@@ -125,9 +87,7 @@ struct Args {
     all_classes: bool,
 }
 
-/// `--image`, else `$KATAGLYPHIS_CAT_IMAGE`, else nothing. A blank
-/// environment value counts as unset: exporting the variable empty to
-/// "clear" it otherwise built a `multifilesrc` for the empty path.
+/// `--image`, else `$KATAGLYPHIS_CAT_IMAGE`; a blank value counts as unset.
 fn resolve_image(flag: Option<String>) -> Option<String> {
     flag.or_else(|| std::env::var(IMAGE_ENV).ok())
         .filter(|value| !value.trim().is_empty())
@@ -245,10 +205,7 @@ fn build_output_pipeline(
         .name("ws")
         .build()
         .context("webrtcsink (is the rswebrtc plugin available?)")?;
-    // webrtcsink can run the signalling server itself; that keeps this demo to
-    // one process and the same GStreamer signalling protocol the web client
-    // speaks. (Setting the separate signaller's `uri` is not possible from a
-    // plain Element: `signaller` is NULL until a child property is written.)
+    // Built-in signalling server: a plain Element cannot set the separate signaller's `uri`.
     webrtc.set_property("run-signalling-server", true);
     webrtc.set_property("signalling-server-host", "0.0.0.0");
     webrtc.set_property("signalling-server-port", args.listen_port);
@@ -313,9 +270,7 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
             .build()
             .context("videotestsrc")?
     } else {
-        // main() rejects this combination before the pipeline is built. The
-        // check is repeated rather than unwrapped so a second caller of
-        // run_worker cannot reintroduce a panic here.
+        // main() already rejects this; not unwrapped so another caller cannot panic here.
         let image = args.image.as_deref().ok_or_else(missing_source_error)?;
         let caps = gstreamer::Caps::builder("image/jpeg")
             .field("framerate", gstreamer::Fraction::new(args.fps as i32, 1))
@@ -383,11 +338,7 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
 
     let mut elements: Vec<gstreamer::Element> = vec![source.clone()];
     if args.libcamera {
-        // Ask libcamera for the stream size up front: the sensor's default
-        // mode is far larger than the inference input, and the ISP's scaler
-        // is much cheaper than doing it later in videoscale. The format must
-        // be a processed one (`RGB`), otherwise the element hands back raw
-        // Bayer and `videoconvert` cannot negotiate.
+        // The ISP scales cheaper than videoscale, and without `RGB` libcamera hands back raw Bayer.
         let caps = gstreamer::Caps::builder("video/x-raw")
             .field("format", "RGB")
             .field("width", args.width as i32)
@@ -402,9 +353,7 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
         );
     }
     if args.v4l2.is_some() {
-        // Force a raw format out of v4l2src: the C920 happily negotiates MJPG,
-        // which videoconvert cannot decode. A bare video/x-raw capsfilter makes
-        // v4l2src pick YUYV instead.
+        // Force raw caps: the C920 otherwise negotiates MJPG, which videoconvert cannot decode.
         let raw = gstreamer::ElementFactory::make("capsfilter")
             .property("caps", gstreamer::Caps::builder("video/x-raw").build())
             .build()
@@ -433,11 +382,7 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
         Some(vec![COCO_CAT])
     };
 
-    // Inference is seconds per frame on a Raspberry Pi while capture runs at
-    // camera rate. Running it inline would throttle the WebRTC stream to the
-    // model's rate, so frames go to an inference thread and the render loop
-    // keeps drawing the latest boxes: the stream stays smooth and the boxes
-    // lag by one inference.
+    // Inference is far slower than capture, so it runs off-thread; frames get the latest boxes.
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
     let boxes = std::sync::Arc::new(std::sync::Mutex::new(
         Vec::<kataglyphis_core::Detection>::new(),
@@ -515,8 +460,7 @@ fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::
             }
         }
 
-        // Queue the freshest frame only while the inference thread is idle: a
-        // frame of lag is the point, a backlog is not.
+        // Only while the inference thread is idle: a frame of lag is fine, a backlog is not.
         if infer_thread.is_some() {
             let _ = frame_tx.try_send(rgba.to_vec());
         }

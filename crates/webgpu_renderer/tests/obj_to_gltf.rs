@@ -1,9 +1,4 @@
-//! OBJ -> glTF conversion, verified by loading the result back.
-//!
-//! The emitter writes glTF JSON by hand, so "it produced a file" proves
-//! nothing. Every test here round-trips through the real `gltf` crate via the
-//! renderer's own loader: if the offsets, accessor counts, component types or
-//! bounds are wrong, the load fails or the geometry comes back different.
+//! OBJ -> glTF conversion, verified by loading the hand-written JSON back through the real loader.
 
 use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf;
 use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{convert_file, parse_obj, to_gltf};
@@ -56,9 +51,7 @@ fn parses_positions_normals_uvs_and_triangulates() {
 
 #[test]
 fn the_v_axis_is_flipped_for_gltf() {
-    // OBJ's V points up, glTF's points down. Getting this wrong mirrors every
-    // texture vertically - which looks plausible on a symmetric test texture
-    // and wrong on everything else.
+    // OBJ's V points up, glTF's down; a missing flip mirrors every texture vertically.
     let mesh = parse_obj(CUBE_OBJ).expect("parse");
     // OBJ vt 0.0 0.0 -> glTF 0.0 1.0
     assert!(
@@ -88,8 +81,7 @@ f 1 2 3 4
 
 #[test]
 fn malformed_input_is_rejected_rather_than_guessed_at() {
-    // Each of these could plausibly be "fixed up" silently, and each would
-    // produce an asset that differs from the source without anyone noticing.
+    // A silent fix-up of any of these would make the asset differ from its source unnoticed.
     assert!(
         parse_obj("v 1.0 2.0\nf 1 1 1\n").is_err(),
         "a 2-component vertex must be rejected"
@@ -125,8 +117,7 @@ fn converted_gltf_loads_back_with_matching_geometry() {
 
     let source = convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
 
-    // The real loader, not a bespoke parser: this is what makes the test
-    // meaningful, since it exercises the same code path the renderer uses.
+    // The renderer's own loader, not a bespoke parser.
     let scene = load_gltf(&gltf_path).expect("the converted glTF must load");
     assert_eq!(scene.primitives.len(), 1);
     let loaded = &scene.primitives[0];
@@ -156,9 +147,7 @@ fn converted_gltf_loads_back_with_matching_geometry() {
 
 #[test]
 fn the_declared_buffer_length_matches_the_bytes_written() {
-    // glTF loaders trust byteLength. A mismatch either truncates geometry or
-    // reads past the buffer, and the gltf crate rejects it - so this also
-    // guards the offset arithmetic above it.
+    // Loaders trust byteLength, so this also guards the offset arithmetic.
     let mesh = parse_obj(CUBE_OBJ).expect("parse");
     let (json, bin) = to_gltf(&mesh, "cube.bin");
 
@@ -178,9 +167,7 @@ fn the_declared_buffer_length_matches_the_bytes_written() {
 
 #[test]
 fn converts_a_real_engine_asset() {
-    // The point of the whole exercise: the C++ engine's own models becoming
-    // loadable here. Skips rather than fails if the asset tree is absent, so
-    // the crate stays testable standalone.
+    // A C++ engine model; skips when the superproject tree is absent.
     let obj = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../../Resources/Models/ShadowTest/shadow_rig.obj");
     if !obj.exists() {
@@ -251,9 +238,7 @@ fn mtl_diffuse_and_opacity_become_base_color() {
 fn tr_is_inverted_relative_to_d() {
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
 
-    // The same quantity written two ways. Treating them as interchangeable
-    // makes transparent materials opaque and vice versa - a mistake that
-    // looks like a renderer bug, not a converter bug.
+    // Tr = 1 - d; confusing them swaps opaque and transparent materials.
     let by_opacity = parse_mtl("newmtl a\nd 0.25\n");
     let by_transparency = parse_mtl("newmtl a\nTr 0.25\n");
 
@@ -299,10 +284,7 @@ fn mtl_without_ke_emits_no_emissive_factor() {
 fn an_hdr_ke_emits_emissive_strength() {
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
 
-    // The C++ engine keeps an HDR `Ke` verbatim (Src/GraphicsEngineVulkan/
-    // scene/ObjLoader.cpp), so this converter must carry the same magnitude
-    // via KHR_materials_emissive_strength instead of clamping it to 1 and
-    // rendering four times dimmer than the C++ side.
+    // The C++ engine keeps HDR `Ke` verbatim, so carry it via emissive_strength, not a clamp.
     let materials = parse_mtl("newmtl a\nKe 4 4 4\n");
     assert_eq!(
         materials[0].emissive,
@@ -335,9 +317,7 @@ fn an_hdr_ke_emits_emissive_strength() {
 fn a_non_hdr_ke_emits_no_emissive_strength_extension() {
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
 
-    // The byte-identical case: every document converted before this
-    // extension existed must not gain an unconditional extensions/
-    // extensionsUsed array.
+    // Non-HDR output stays byte-identical: no unconditional extensions arrays.
     let materials = parse_mtl("newmtl a\nKe 0.5 0.5 0.5\n");
     let mesh = ObjMesh {
         materials,
@@ -356,9 +336,7 @@ fn a_non_hdr_ke_emits_no_emissive_strength_extension() {
 
 #[test]
 fn an_hdr_ke_round_trips_through_the_real_gltf_loader() {
-    // That is the property that actually matters: the loader folds
-    // emissiveFactor * emissiveStrength back into the HDR value, so this is
-    // what makes the C++ and Rust renderers agree on brightness.
+    // The loader folds factor * strength back to HDR, so both renderers agree on brightness.
     let dir = temp_dir("hdr_emissive");
     std::fs::write(dir.join("hdr.mtl"), "newmtl painted\nKd 1 1 1\nKe 4 4 4\n").expect("mtl");
     let obj_path = dir.join("hdr.obj");
@@ -425,9 +403,7 @@ fn each_usemtl_run_becomes_its_own_primitive() {
 
 #[test]
 fn material_runs_share_one_vertex_buffer() {
-    // Splitting vertex data per material would duplicate shared vertices and
-    // change the geometry - the exact thing a cross-renderer comparison must
-    // hold constant. Both triangles here share two of the four vertices.
+    // Per-material vertex data would duplicate shared vertices and change the geometry.
     let dir = temp_dir("shared_vertices");
     std::fs::write(dir.join("pair.mtl"), PAIR_MTL).expect("write mtl");
     let obj_path = dir.join("pair.obj");
@@ -452,8 +428,7 @@ fn material_runs_share_one_vertex_buffer() {
 
 #[test]
 fn an_obj_without_materials_still_gets_a_usable_default() {
-    // glTF's default material is metallic 1 / roughness 1, which renders as a
-    // dark mirror. An OBJ with no mtllib must not convert into that.
+    // glTF's default material (metallic 1, roughness 1) renders as a dark mirror.
     let dir = temp_dir("no_materials");
     let obj_path = dir.join("cube.obj");
     std::fs::write(&obj_path, CUBE_OBJ).expect("write obj");
@@ -475,9 +450,7 @@ fn an_obj_without_materials_still_gets_a_usable_default() {
 
 #[test]
 fn a_usemtl_naming_an_undeclared_material_is_visible_not_silent() {
-    // Referencing a material the .mtl never declared is an authoring error.
-    // Collapsing it onto material 0 would render the geometry with someone
-    // else's colour and look intentional.
+    // An undeclared material is an authoring error; mapping it to material 0 would look intended.
     let mesh = parse_obj("v 0 0 0\nv 1 0 0\nv 1 1 0\nusemtl ghost\nf 1 2 3\n").expect("parse");
     assert!(
         mesh.materials.iter().any(|m| m.name == "ghost"),
@@ -499,8 +472,7 @@ usemtl painted
 f 1/1/1 2/2/1 3/3/1
 ";
 
-/// Writes a 2x2 PNG with a distinctive corner so the round trip can prove the
-/// image data survived, not merely that a file was referenced.
+/// Writes a 2x2 PNG with distinct corners, so a round trip proves the pixels survived.
 fn write_test_png(path: &std::path::Path) {
     use image::{ImageBuffer, Rgba};
     let mut buffer: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(2, 2);
@@ -515,9 +487,7 @@ fn write_test_png(path: &std::path::Path) {
 fn map_kd_takes_the_filename_not_the_first_option() {
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
 
-    // MTL allows options before the path. Taking the first token turns any
-    // option-carrying map into a texture named "-s", which fails to load with
-    // a message about a file nobody wrote.
+    // MTL options precede the path, so the first token would be "-s".
     let plain = parse_mtl("newmtl a\nmap_Kd wood.png\n");
     assert_eq!(plain[0].base_color_texture.as_deref(), Some("wood.png"));
 
@@ -545,8 +515,7 @@ fn a_textured_obj_converts_to_a_gltf_with_a_loadable_texture() {
     let gltf_path = out.join("textured.gltf");
     convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
 
-    // The texture must have been copied next to the output, or the document
-    // only loads on the machine that produced it.
+    // Copied next to the output, or the document loads only where it was made.
     assert!(
         out.join("paint.png").exists(),
         "the referenced texture was not copied next to the glTF"
@@ -567,13 +536,7 @@ fn a_textured_obj_converts_to_a_gltf_with_a_loadable_texture() {
 
 #[test]
 fn a_textures_subdirectory_layout_is_resolved() {
-    // Every shipped engine OBJ (crytek-sponza, Pillum, Sulo/WolfStahl,
-    // VikingRoom) puts its textures in a `textures/` subdirectory next to the
-    // .mtl and references them by bare filename - `map_Kd` does not name the
-    // subdirectory. The second candidate in
-    // https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/model-loading.md
-    // is the rule that makes that layout resolve instead of converting to an
-    // untextured glTF.
+    // Engine OBJs name bare files living in `textures/`; see the superproject's model-loading.md.
     let dir = temp_dir("textures_subdir");
     let texture_dir = dir.join("textures");
     std::fs::create_dir_all(&texture_dir).expect("textures dir");
@@ -590,8 +553,7 @@ fn a_textures_subdirectory_layout_is_resolved() {
     let gltf_path = out.join("textured.gltf");
     convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
 
-    // The bare filename is what gets copied and emitted as the glTF uri -
-    // which candidate resolved it is not observable from the output.
+    // The bare filename is copied and emitted, whichever candidate resolved it.
     assert!(
         out.join("paint.png").exists(),
         "the textures/-subdirectory texture was not copied next to the glTF"
@@ -608,13 +570,7 @@ fn a_textures_subdirectory_layout_is_resolved() {
 
 #[test]
 fn a_backslash_map_kd_under_textures_is_resolved() {
-    // A Windows-authored `map_Kd textures\paint.png` must normalise to
-    // `textures/paint.png` (parse_mtl) before path resolution ever runs, or
-    // the literal backslash is just another filename character on Linux and
-    // the candidate lookup misses. .obj and .gltf share a directory here (as
-    // in `a_backslash_texture_path_does_not_corrupt_the_document` above), so
-    // the copy step short-circuits on source == destination and the test
-    // isolates normalisation from the separate copy-destination behaviour.
+    // A backslash must normalise before resolution, or Linux treats it as a filename character.
     let dir = temp_dir("backslash_subdir");
     let texture_dir = dir.join("textures");
     std::fs::create_dir_all(&texture_dir).expect("textures dir");
@@ -657,8 +613,7 @@ usemtl a\nf 1/1/1 2/2/1 3/3/1\nusemtl b\nf 1/1/1 3/3/1 4/4/1\n",
     let gltf_path = dir.join("shared.gltf");
     convert_file(&obj_path, &gltf_path).expect("convert");
 
-    // Emitting one image per material makes the loader decode the same file
-    // repeatedly and upload duplicate GPU textures.
+    // One image per material would decode and upload the same file repeatedly.
     let json = std::fs::read_to_string(&gltf_path).expect("read gltf");
     let image_count = json.matches(r#""uri": "shared.png""#).count();
     assert_eq!(
@@ -678,8 +633,7 @@ usemtl a\nf 1/1/1 2/2/1 3/3/1\nusemtl b\nf 1/1/1 3/3/1 4/4/1\n",
 
 #[test]
 fn a_missing_texture_does_not_abort_the_conversion() {
-    // OBJ files routinely reference maps that were never shipped with them.
-    // Geometry and base colours are still worth converting.
+    // OBJs routinely reference unshipped maps; geometry and colours still convert.
     let dir = temp_dir("missing_texture");
     std::fs::write(
         dir.join("textured.mtl"),
@@ -700,8 +654,7 @@ fn a_missing_texture_does_not_abort_the_conversion() {
 
 #[test]
 fn an_untextured_obj_emits_no_texture_arrays() {
-    // Empty images/samplers/textures arrays are legal but noisy, and an empty
-    // samplers array with a texture referencing sampler 0 would be invalid.
+    // Empty arrays are noisy, and a texture naming sampler 0 of an empty array is invalid.
     let dir = temp_dir("untextured");
     let obj_path = dir.join("cube.obj");
     std::fs::write(&obj_path, CUBE_OBJ).expect("obj");
@@ -722,10 +675,7 @@ fn an_untextured_obj_emits_no_texture_arrays() {
 
 #[test]
 fn a_material_name_with_json_metacharacters_still_produces_loadable_gltf() {
-    // A quote and a trailing backslash in a material name would otherwise
-    // terminate the JSON string early or escape the closing quote. Every
-    // material declared in the .mtl reaches the output regardless of whether
-    // any `usemtl` references it, so this does not need to match `painted`.
+    // A quote and trailing backslash would end or escape the JSON string; declared materials all emit.
     let dir = temp_dir("quoted_material_name");
     std::fs::write(
         dir.join("textured.mtl"),
@@ -742,10 +692,7 @@ fn a_material_name_with_json_metacharacters_still_produces_loadable_gltf() {
 
 #[test]
 fn a_backslash_texture_path_does_not_corrupt_the_document() {
-    // A Windows-authored `map_Kd textures\wood.png` must not be interpolated
-    // as a raw JSON string, or `\w` becomes an invalid escape sequence. The
-    // OBJ and glTF live in the same directory, so the referenced texture
-    // resolves without needing the (separate) copy-next-to-output step.
+    // A raw `textures\wood.png` in JSON makes `\w` an invalid escape.
     let dir = temp_dir("backslash_texture");
     let texture_dir = dir.join("textures");
     std::fs::create_dir_all(&texture_dir).expect("textures dir");
@@ -767,8 +714,7 @@ fn a_backslash_texture_path_does_not_corrupt_the_document() {
 fn an_empty_mesh_emits_finite_accessor_bounds() {
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::ObjMesh;
 
-    // `bounds()` returns +/-infinity when there is no geometry to fold over,
-    // and `inf`/`NaN` are not valid JSON numbers.
+    // Empty `bounds()` is +/-infinity, which is not a valid JSON number.
     let (json, _bin) = to_gltf(&ObjMesh::default(), "empty.bin");
 
     assert!(
@@ -818,8 +764,7 @@ fn a_colorless_obj_has_no_vertex_colors_and_no_color_0() {
 
 #[test]
 fn a_colorless_obj_index_accessors_are_unchanged() {
-    // Pins the index-accessor numbering for the common (colourless) case, so
-    // adding the COLOR_0 attribute slot cannot silently repoint `indices`.
+    // The COLOR_0 slot must not repoint `indices` for a colourless mesh.
     let mesh = parse_obj(CUBE_OBJ).expect("parse");
     let (json, _bin) = to_gltf(&mesh, "cube.bin");
 
@@ -835,11 +780,7 @@ fn a_colorless_obj_index_accessors_are_unchanged() {
 
 #[test]
 fn a_vn_less_obj_gets_a_geometric_flat_normal_not_an_up_vector() {
-    // Two coplanar triangles in the XZ plane, no `vn` at all. The old
-    // fallback returned a fabricated (0, 1, 0) for every corner - which
-    // happens to be right here by coincidence of the geometry, so this test
-    // alone would not prove anything; see the XY-plane case below for the
-    // one that actually distinguishes fabricated from geometric.
+    // XZ-plane triangles without `vn`; an up-vector fallback also passes, see the XY case.
     let mesh = parse_obj("v 0 0 0\nv 1 0 0\nv 1 0 1\nv 0 0 1\nf 1 2 3\nf 1 3 4\n").expect("parse");
     assert!(!mesh.has_normals, "no vn line appeared in the source");
     for normal in &mesh.normals {
@@ -854,9 +795,7 @@ fn a_vn_less_obj_gets_a_geometric_flat_normal_not_an_up_vector() {
 
 #[test]
 fn a_vn_less_obj_in_the_xy_plane_gets_a_z_normal_not_a_fabricated_up_vector() {
-    // The case that red-proves the fix: the old code fabricated (0, 1, 0)
-    // for every corner regardless of the triangle's actual orientation. A
-    // triangle lying in the XY plane must come out normal-Z, not normal-Y.
+    // An XY-plane triangle must get normal Z, not a fabricated up vector.
     let mesh = parse_obj("v 0 0 0\nv 1 0 0\nv 1 1 0\nf 1 2 3\n").expect("parse");
     for normal in &mesh.normals {
         assert!(
@@ -870,10 +809,7 @@ fn a_vn_less_obj_in_the_xy_plane_gets_a_z_normal_not_a_fabricated_up_vector() {
 
 #[test]
 fn a_mixed_obj_preserves_explicit_normals_and_fills_the_rest_geometrically() {
-    // One face carries `vn`, the other does not. The explicit normal must
-    // survive verbatim, and the vn-less face must get its own geometric
-    // normal rather than either the other face's normal or a fabricated up
-    // vector.
+    // An explicit `vn` survives verbatim; the vn-less face gets its own geometric normal.
     let mesh = parse_obj(
         "\
 v 0 0 0
@@ -890,15 +826,11 @@ f 4 5 6
     .expect("parse");
     assert!(mesh.has_normals);
 
-    // First triangle: explicit normal preserved verbatim, even though it
-    // does not match the triangle's actual (XY-plane) geometry - proving
-    // this is the explicit `vn`, not a recomputed value.
+    // The explicit normal disagrees with the geometry, proving it was not recomputed.
     for i in 0..3 {
         assert_eq!(mesh.normals[i], [1.0, 0.0, 0.0]);
     }
-    // Second triangle: no vn, lies in the XZ plane -> its own geometric flat
-    // normal, not the first face's explicit normal and not a fabricated up
-    // vector.
+    // The XZ-plane face without vn gets its own flat normal.
     for i in 3..6 {
         let n = mesh.normals[i];
         assert!(
@@ -923,8 +855,7 @@ fn parse_mtl_reads_map_bump_as_the_normal_texture() {
 fn parse_mtl_prefers_norm_over_map_bump() {
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
 
-    // norm first, map_Bump second: the later, less-specific directive must
-    // not override it.
+    // norm first: the later, less specific map_Bump must not override it.
     let norm_first = parse_mtl("newmtl a\nnorm better.png\nmap_Bump worse.png\n");
     assert_eq!(norm_first[0].normal_texture.as_deref(), Some("better.png"));
 
@@ -937,8 +868,7 @@ fn parse_mtl_prefers_norm_over_map_bump() {
 fn parse_mtl_takes_the_last_token_of_an_option_carrying_map_bump() {
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
 
-    // MTL allows options before the path, and a bump directive's `-bm` option
-    // sets glTF's normalTexture.scale.
+    // Options precede the path; `-bm` sets normalTexture.scale.
     let materials = parse_mtl("newmtl a\nmap_Bump -bm 0.5 rock_normal.png\n");
     assert_eq!(
         materials[0].normal_texture.as_deref(),
@@ -999,8 +929,7 @@ fn to_gltf_shares_one_image_when_map_kd_and_map_bump_name_the_same_file() {
 fn parse_mtl_takes_the_last_token_of_an_option_carrying_map_ke() {
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
 
-    // Same option-skipping rule as map_Kd/map_Bump: the path is the LAST
-    // token, not the first.
+    // As for map_Kd/map_Bump, the path is the last token.
     let materials = parse_mtl("newmtl a\nmap_Ke -s 1 1 1 glow.png\n");
     assert_eq!(
         materials[0].emissive_texture.as_deref(),
@@ -1034,8 +963,7 @@ fn to_gltf_emits_an_emissive_texture_pointing_at_the_right_image() {
 fn a_map_ke_without_ke_gets_a_normalised_emissive_factor() {
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
 
-    // glTF's default emissiveFactor is [0,0,0] - a material with a map_Ke and
-    // no Ke line would render black without this.
+    // glTF's default emissiveFactor [0,0,0] would render a map_Ke without Ke black.
     let materials = parse_mtl("newmtl a\nmap_Ke glow.png\n");
     let mesh = ObjMesh {
         materials,
@@ -1118,8 +1046,7 @@ fn ns_without_pr_derives_roughness_via_the_shininess_curve() {
     use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf;
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{convert_file, parse_mtl};
 
-    // sqrt(2/(96+2)) ~= 0.14286, the same curve as material_rules.slang's
-    // material_roughness() for the C++ engine's OBJ path.
+    // sqrt(2/(Ns+2)), the C++ engine's material_rules.slang curve.
     let materials = parse_mtl("newmtl a\nNs 96\n");
     assert_eq!(materials[0].shininess, Some(96.0));
 

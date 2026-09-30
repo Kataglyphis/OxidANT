@@ -1,8 +1,5 @@
-//! Orbit/zoom controls for [`OrbitCamera`], shared by the native viewer and
-//! the browser demo (winit delivers the same events on both).
-//!
-//! Mouse: left-drag orbits, wheel zooms. Touch: one finger orbits, two
-//! fingers pinch to zoom.
+//! Orbit/zoom controls for [`OrbitCamera`], shared by the native viewer and the browser demo.
+//! Mouse: left-drag orbits, wheel zooms. Touch: one finger orbits, two pinch to zoom.
 
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 
@@ -15,14 +12,9 @@ pub struct OrbitController {
     pub zoom_step: f32,
     dragging: bool,
     last_cursor: Option<(f64, f64)>,
-    /// Active touch points, most recent position per finger.
-    ///
-    /// A Vec rather than a map: gestures here use at most two fingers, and a
-    /// linear scan over two entries beats hashing. Order is insertion order,
-    /// so `touches[0]` is the finger that started the gesture.
+    /// Active touch points in insertion order, so `touches[0]` started the gesture.
     touches: Vec<(u64, (f64, f64))>,
-    /// Distance between two fingers on the previous move, for pinch deltas.
-    /// Cleared whenever the number of fingers changes.
+    /// Two-finger distance on the previous move; cleared whenever the finger count changes.
     last_pinch_distance: Option<f64>,
 }
 
@@ -94,11 +86,7 @@ impl OrbitController {
         }
     }
 
-    /// Feeds an event the overlay already consumed, so the controller's
-    /// idea of cursor/drag state does not go stale while it has no say over
-    /// the camera - the same property `WindowInputCallbacks.ixx`'s
-    /// `handle_mouse_callback` buys by re-seeding `last_x`/`last_y` under
-    /// capture: the first event after capture ends produces no delta.
+    /// Feeds an event the overlay consumed, so the first event after capture produces no delta.
     pub fn note_consumed_event(&mut self, event: &WindowEvent) {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
@@ -120,12 +108,8 @@ impl OrbitController {
         }
     }
 
-    /// One finger orbits, two pinch to zoom. Returns true when the camera moved.
-    ///
-    /// Takes the touch's fields rather than a `winit::event::Touch` so the
-    /// gesture logic can be tested directly: `Touch` embeds a `DeviceId` with
-    /// no public constructor, and faking one would mean `mem::zeroed()` in
-    /// the tests.
+    /// One finger orbits, two pinch to zoom; true when the camera moved.
+    /// Takes fields, not a `Touch`, whose `DeviceId` has no public constructor for tests.
     pub fn handle_touch(
         &mut self,
         id: u64,
@@ -136,9 +120,7 @@ impl OrbitController {
         match phase {
             TouchPhase::Started => {
                 self.auto_orbit = false;
-                // Replace rather than push if the platform re-reports an id:
-                // a duplicate entry would make a one-finger gesture look like
-                // a pinch against itself, distance 0.
+                // Replace a re-reported id: a duplicate would pinch against itself.
                 if let Some(slot) = self
                     .touches
                     .iter_mut()
@@ -148,9 +130,7 @@ impl OrbitController {
                 } else {
                     self.touches.push((id, position));
                 }
-                // The finger count changed, so any stored pinch distance
-                // describes a different gesture. Dropping it is what stops
-                // the camera jumping when a second finger lands.
+                // A stale pinch distance would jump the camera when a second finger lands.
                 self.last_pinch_distance = None;
                 false
             }
@@ -160,10 +140,7 @@ impl OrbitController {
                     .iter()
                     .position(|(existing, _)| *existing == id)
                 else {
-                    // A move for a finger we never saw start. Ignoring it is
-                    // deliberate: synthesising a start here would treat the
-                    // finger's absolute position as a drag delta and spin the
-                    // camera by hundreds of degrees.
+                    // Unknown finger: a synthesised start would turn its position into a huge delta.
                     return false;
                 };
                 let previous = self.touches[index].1;
@@ -181,10 +158,7 @@ impl OrbitController {
                     2 => {
                         let distance = touch_distance(self.touches[0].1, self.touches[1].1);
                         let moved = match self.last_pinch_distance {
-                            // Relative change, so the gesture behaves the same
-                            // on a phone and a large tablet - an absolute pixel
-                            // delta would zoom far more per centimetre of
-                            // finger travel on a high-DPI screen.
+                            // Relative change, so zoom per finger travel is DPI-independent.
                             Some(previous_distance)
                                 if previous_distance > 1.0 && distance > 1.0 =>
                             {
@@ -196,16 +170,13 @@ impl OrbitController {
                         self.last_pinch_distance = Some(distance);
                         moved
                     }
-                    // Three or more fingers: track them, but do not guess at
-                    // an interpretation.
+                    // Three or more fingers: tracked, not interpreted.
                     _ => false,
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 self.touches.retain(|(existing, _)| *existing != id);
-                // Same reason as Started: with a different number of fingers
-                // the old distance is meaningless, and keeping it would make
-                // the camera lurch as the remaining finger continues.
+                // As in Started: a stale distance would lurch the camera.
                 self.last_pinch_distance = None;
                 false
             }
@@ -224,11 +195,7 @@ impl OrbitController {
         camera.radius = (camera.radius * (1.0 - amount * self.zoom_step)).clamp(0.2, 500.0);
     }
 
-    /// Pinch: fingers moving apart zooms in, together zooms out.
-    ///
-    /// Scales the radius by the inverse ratio of finger separation, which
-    /// makes the gesture reversible - pinching out and back in returns to the
-    /// starting radius, where an additive step would not.
+    /// Pinch zoom by the inverse separation ratio, so out-and-back returns to the start radius.
     pub fn apply_pinch(
         &self,
         camera: &mut OrbitCamera,
@@ -335,8 +302,7 @@ mod tests {
 
     #[test]
     fn a_second_finger_does_not_jump_the_camera() {
-        // The classic touch bug: the new finger's absolute position gets
-        // treated as a drag delta and the camera spins wildly.
+        // The new finger's absolute position must not become a drag delta.
         let mut controller = OrbitController::default();
         let mut camera = OrbitCamera::default();
 
@@ -389,8 +355,7 @@ mod tests {
 
     #[test]
     fn pinch_is_reversible() {
-        // Ratio-based scaling, not additive steps: out and back must return to
-        // where it started, or repeated gestures drift the camera away.
+        // Out and back must return to the start, or repeated gestures drift.
         let mut controller = OrbitController::default();
         let mut camera = OrbitCamera {
             radius: 10.0,
@@ -428,8 +393,7 @@ mod tests {
         let radius_after_lift = camera.radius;
         let yaw_after_lift = camera.yaw_deg;
 
-        // The remaining finger keeps moving; it must orbit from its own last
-        // position, not from the departed finger's.
+        // The remaining finger must orbit from its own last position.
         controller.handle_touch(1, TouchPhase::Moved, (110.0, 300.0), &mut camera);
 
         assert_eq!(

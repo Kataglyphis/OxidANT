@@ -1,9 +1,4 @@
-//! `wgpu::BindGroupLayoutEntry` constructors for the five shapes that cover
-//! all 47 call sites across the render passes. 24 of those entries repeated
-//! `has_dynamic_offset: false, min_binding_size: None` verbatim, which is
-//! exactly where the one field that actually differs (the binding, the
-//! stage, read-only-ness) got lost. One helper per shape keeps that field
-//! visible at the call site instead of buried in a six-line literal.
+//! `wgpu::BindGroupLayoutEntry` constructors, one per shape, so the differing field stays visible.
 
 /// A uniform buffer binding.
 pub const fn uniform(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
@@ -37,8 +32,7 @@ pub const fn storage_buffer(
     }
 }
 
-/// The general texture binding: every `sample_type`/`view_dimension`/
-/// `multisampled` combination goes through this one.
+/// The general texture binding, for any sample type, view dimension and multisampling.
 pub const fn texture(
     binding: u32,
     visibility: wgpu::ShaderStages,
@@ -58,8 +52,7 @@ pub const fn texture(
     }
 }
 
-/// A non-multisampled 2D float texture - the majority shape among the
-/// texture bindings. Thin wrapper over [`texture`], not a new concept.
+/// A non-multisampled 2D float texture, the most common [`texture`] shape.
 pub const fn texture_2d(
     binding: u32,
     visibility: wgpu::ShaderStages,
@@ -188,9 +181,7 @@ mod tests {
         ));
     }
 
-    /// Regression guard: every `BindGroupLayoutEntry {` literal outside this
-    /// module is a copy that escaped the conversion (or a new one added
-    /// after this landed). Fails RED before the conversion, GREEN after.
+    /// Every `BindGroupLayoutEntry {` literal outside this module must go through the helpers.
     #[test]
     fn bind_group_layout_entries_go_through_the_helpers() {
         let src_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");

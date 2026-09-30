@@ -1,18 +1,11 @@
-//! Pure keyframe sampling over glTF animation tracks.
-//!
-//! Step / linear / cubic-spline interpolation for translation, scale,
-//! rotation and morph-weight channels. No GPU types, no `ForwardRenderer` —
-//! callers own retargeting the sampled values onto nodes/primitives.
+//! Pure keyframe sampling over glTF animation tracks; callers retarget the sampled values.
 
 use glam::{Quat, Vec3, Vec4};
 
 use crate::scene::Interpolation;
 
-/// Returns `(i0, i1, frac, td)`: the bracketing keyframe indices, the lerp
-/// fraction in `[0,1]` (clamped away from a zero-length span), and the true
-/// segment duration `times[i1] - times[i0]` (0.0 when `i0 == i1`). `td` is
-/// the glTF CUBICSPLINE tangent scale and must be the *unclamped* span —
-/// callers must not reuse `frac`'s clamped span for it.
+/// Returns `(i0, i1, frac, td)`: bracketing keyframes, lerp fraction in `[0,1]`, segment duration.
+/// `td` is the unclamped span CUBICSPLINE tangents scale by; never substitute `frac`'s clamped one.
 pub(crate) fn keyframe_lerp_indices(times: &[f32], t: f32) -> (usize, usize, f32, f32) {
     if times.is_empty() {
         return (0, 0, 0.0, 0.0);
@@ -24,16 +17,13 @@ pub(crate) fn keyframe_lerp_indices(times: &[f32], t: f32) -> (usize, usize, f32
         let last = times.len() - 1;
         return (last, last, 0.0, 0.0);
     }
-    // `times` is sorted (glTF requires it), so binary-search the first index
-    // whose time is >= t; the bracketing segment is the one just before it.
+    // glTF requires sorted `times`, which makes the binary search valid.
     let i = times.partition_point(|&x| x < t) - 1;
     let span = times[i + 1] - times[i];
     (i, i + 1, (t - times[i]) / span.max(1e-6), span)
 }
 
-/// glTF CUBICSPLINE Hermite basis weights for (value0, out_tangent0, value1,
-/// in_tangent1) at local time `t` in [0,1] over a segment of duration `td`.
-/// The tangent weights are scaled by `td` per the glTF spec.
+/// glTF CUBICSPLINE Hermite weights for (v0, out0, v1, in1) at `t`, tangents scaled by `td`.
 pub(crate) fn cubic_spline_weights(t: f32, td: f32) -> (f32, f32, f32, f32) {
     let t2 = t * t;
     let t3 = t2 * t;
@@ -45,10 +35,8 @@ pub(crate) fn cubic_spline_weights(t: f32, td: f32) -> (f32, f32, f32, f32) {
     )
 }
 
-/// Sample a Vec3 channel (translation/scale) between keyframes `i0` and `i1` at
-/// fraction `frac`, honoring the interpolation mode. `dt` is the segment's time
-/// span (used by CubicSpline). For CubicSpline the array is 3x `times`
-/// (in-tangent, value, out-tangent per keyframe).
+/// Samples a translation/scale channel between keyframes `i0` and `i1` at `frac`.
+/// CubicSpline stores (in-tangent, value, out-tangent) per keyframe and scales tangents by `dt`.
 pub(crate) fn sample_vec3(
     values: &[Vec3],
     interp: Interpolation,
@@ -71,9 +59,7 @@ pub(crate) fn sample_vec3(
     }
 }
 
-/// Sample a rotation channel. CubicSpline interpolates the quaternion components
-/// with the Hermite basis and renormalizes (the glTF-spec approximation);
-/// Linear uses slerp; Step holds the keyframe.
+/// Samples a rotation channel; CubicSpline Hermite-blends components and renormalizes, per glTF.
 pub(crate) fn sample_quat(
     values: &[Quat],
     interp: Interpolation,
@@ -98,11 +84,8 @@ pub(crate) fn sample_quat(
     }
 }
 
-/// Sample a morph-weights channel: `n` weights per keyframe, returned as a Vec
-/// of length `n`. Under CubicSpline the channel stores `3 * n` per keyframe as
-/// three contiguous `n`-blocks (in-tangents, values, out-tangents), each target
-/// Hermite-interpolated with the same basis the vector/quaternion paths use. On
-/// any out-of-range index the weight falls back to 0 rather than panicking.
+/// Samples `n` morph weights; CubicSpline stores three `n`-blocks (in, value, out) per keyframe.
+/// Out-of-range samples read as 0 so a malformed channel cannot panic.
 pub(crate) fn sample_morph_weights(
     values: &[f32],
     n: usize,
@@ -155,8 +138,7 @@ mod tests {
 
     #[test]
     fn cubic_spline_vec3_hits_keyframe_values_at_segment_ends() {
-        // 2 keyframes, cubic layout: [in0, v0, out0, in1, v1, out1]. The tangents
-        // are non-zero to prove the ends ignore them.
+        // Layout [in0, v0, out0, in1, v1, out1]; non-zero tangents prove the ends ignore them.
         let v0 = Vec3::new(1.0, 2.0, 3.0);
         let v1 = Vec3::new(4.0, 5.0, 6.0);
         let vals = vec![
@@ -178,8 +160,7 @@ mod tests {
 
     #[test]
     fn cubic_spline_vec3_zero_tangents_reduce_to_smoothstep_midpoint() {
-        // With zero tangents the Hermite basis is h00·v0 + h01·v1; at t=0.5 both
-        // are 0.5, so the midpoint is the linear midpoint.
+        // Zero tangents leave h00·v0 + h01·v1, and both weights are 0.5 at t=0.5.
         let vals = vec![
             Vec3::ZERO,
             Vec3::ZERO,
@@ -246,9 +227,7 @@ mod tests {
 
     #[test]
     fn morph_weights_cubic_hits_keyframe_values_at_ends() {
-        // 1 target, 2 keyframes, cubic layout is [in, value, out] per keyframe:
-        // [in0, v0, out0, in1, v1, out1] with non-zero tangents to prove the
-        // ends ignore them.
+        // Layout [in0, v0, out0, in1, v1, out1]; non-zero tangents prove the ends ignore them.
         let vals = vec![9.0, 0.2, -4.0, 7.0, 0.8, -3.0];
         let start = sample_morph_weights(&vals, 1, Interpolation::CubicSpline, 0, 1, 0.0, 1.0);
         let end = sample_morph_weights(&vals, 1, Interpolation::CubicSpline, 0, 1, 1.0, 1.0);

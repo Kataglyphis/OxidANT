@@ -89,6 +89,16 @@ exactly, over-cover it:
 Each of those is a proof, not a fudge factor — which is why none of them needs a
 magic epsilon.
 
+### The tile-light grid is not conservative
+
+`render/tile_grid.rs` bounds a point or spot light by the screen AABB of its centre
+and the six `pos ± range * axis` points (the whole grid when it straddles the near
+plane). That AABB can still miss tiles: a sphere's silhouette is set by tangent
+points mixing lateral and depth offsets, so the true footprint is wider by up to
+`D / sqrt(D² - r²)`. Until a projection-aware sphere bound replaces it (Mara &
+McGuire, *2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere*), the
+shader's per-tile `count <= 0` fallback that iterates every light must stay.
+
 ## Non-finite input
 
 Bounds are also where bad data does the most damage, because it *spreads*:

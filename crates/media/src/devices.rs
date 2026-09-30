@@ -8,8 +8,7 @@ use crate::ensure_gst_initialized;
 
 #[derive(Debug, Clone)]
 pub struct CameraInfo {
-    /// Enumeration order — matches the `device-index` the capture pipeline
-    /// passes to `mfvideosrc`/`ksvideosrc`.
+    /// Enumeration order, matching the `device-index` the capture pipeline passes.
     pub index: u32,
     pub display_name: String,
     /// Provider element class, e.g. `Source/Video`.

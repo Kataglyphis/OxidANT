@@ -3,11 +3,7 @@
 use std::io::Write;
 
 /// Initialise the `env_logger` with a loguru-style format (`HH:MM:SS | LEVEL | msg`).
-///
-/// Logging behaviour:
-/// - If `RUST_LOG` is set, the user has full control.
-/// - Otherwise default to INFO (override with `KATAGLYPHIS_LOG_LEVEL`).
-/// - Noisy wgpu / naga modules are clamped to WARN.
+/// Without `RUST_LOG`, `KATAGLYPHIS_LOG_LEVEL` sets the level and wgpu/naga are clamped to WARN.
 pub fn init_logger() {
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default());
 
@@ -41,8 +37,7 @@ pub fn init_logger() {
     builder.init();
 }
 
-/// Log a message at INFO level with the target set to `"SUCCESS"` so the
-/// formatter renders it with the `SUCCESS` label.
+/// Log at INFO with target `"SUCCESS"`, which the formatter labels `SUCCESS`.
 #[macro_export]
 macro_rules! success {
     ($($arg:tt)*) => {

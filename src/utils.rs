@@ -10,9 +10,7 @@ pub struct FileStats {
     pub bytes: u64,
 }
 
-/// Platform-agnostic read_file shim. Prefer using `crate::platform::read_file`
-/// for platform-specific implementations; this remains as a compatibility
-/// shim that delegates to the platform module.
+/// Compatibility shim delegating to `crate::platform::read_file`, which new code should call.
 pub async fn read_file(path: impl AsRef<Path>) -> Result<String> {
     crate::platform::read_file(path).await
 }

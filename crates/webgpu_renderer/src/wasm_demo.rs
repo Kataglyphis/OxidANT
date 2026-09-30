@@ -1,6 +1,4 @@
-//! Browser (wasm32/WebGPU) demo entry point: renders the embedded
-//! cube-on-plane shadow scene into a canvas appended to the document body.
-//! Built with wasm-bindgen; see crates/webgpu_renderer/web/index.html.
+//! Browser (wasm32/WebGPU) demo entry point; the page is crates/webgpu_renderer/web/index.html.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -24,12 +22,7 @@ use crate::scene::controller::OrbitController;
 
 const DEMO_SCENE: &[u8] = include_bytes!("../tests/assets/cube_on_plane.gltf");
 
-/// Feature-showcase scenes bundled into the wasm binary, selectable from the
-/// header dropdown. Each is self-contained (buffers/images embedded as `data:`
-/// URIs, no external `.bin`), so it loads from a single `include_bytes!` slice
-/// — the same single-file constraint drag-and-drop lives under. Index 0 is the
-/// startup scene and must stay `DEMO_SCENE` so the initial view is unchanged.
-/// The `<option>` order in web/index.html mirrors this array by index.
+/// Self-contained showcase scenes, indexed like web/index.html's `<option>`s; 0 is the startup scene.
 const DEMO_SCENES: &[(&str, &[u8])] = &[
     ("cube_on_plane (shadows)", DEMO_SCENE),
     (
@@ -50,26 +43,17 @@ const DEMO_SCENES: &[(&str, &[u8])] = &[
     ),
 ];
 
-/// A model dropped onto the page, parked here until the render loop picks it
-/// up: the File read is async, and the GPU state may not even exist yet when
-/// the drop happens.
+/// A dropped model parked until the render loop takes it; the read is async and GPU state may lag.
 type DroppedScene = Rc<RefCell<Option<(String, Vec<u8>)>>>;
 
 thread_local! {
-    /// A clone of the render loop's drag-drop swap slot, published here so the
-    /// JS-callable [`select_demo_scene`] picker can feed an embedded scene
-    /// through the exact same upload + camera re-frame path a dropped file
-    /// uses. Set once the demo app initializes; wasm is single-threaded so a
-    /// thread-local is a plain global.
+    /// The drag-drop slot, shared so [`select_demo_scene`] reuses the dropped-file path.
     static SCENE_SLOT: RefCell<Option<DroppedScene>> = const { RefCell::new(None) };
 }
 
-/// Browser drag-and-drop model loading (the winit web backend never delivers
-/// `WindowEvent::DroppedFile`, so this goes through the DOM File API).
-/// Listeners go on the document so the whole page is the drop target.
+/// Drag-and-drop via the DOM File API, since winit's web backend never sends `DroppedFile`.
 fn install_drop_zone(document: &web_sys::Document, slot: DroppedScene) {
-    // dragover must be cancelled, otherwise the browser handles the drop
-    // itself and navigates away to the file.
+    // An uncancelled dragover lets the browser navigate away to the file.
     let on_dragover = Closure::<dyn FnMut(web_sys::DragEvent)>::new(|event: web_sys::DragEvent| {
         event.prevent_default();
     });
@@ -103,10 +87,7 @@ fn install_drop_zone(document: &web_sys::Document, slot: DroppedScene) {
     on_drop.forget();
 }
 
-/// Monotonic wall-clock reading in seconds, for [`FrameClock::tick_at`].
-/// `std::time::Instant` panics on wasm32-unknown-unknown; `Performance::now()`
-/// (already available via the `web-sys` dependency) is the browser's
-/// equivalent, in milliseconds since the navigation start.
+/// Monotonic seconds for [`FrameClock::tick_at`]; `std::time::Instant` panics on wasm32.
 fn performance_now_seconds() -> f64 {
     web_sys::window()
         .and_then(|w| w.performance())
@@ -114,9 +95,7 @@ fn performance_now_seconds() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Syncs the canvas backing store to its CSS layout size x devicePixelRatio
-/// and returns the backing size. winit does not do this on web — an unsized
-/// canvas leads to an invisible ~1x1 surface.
+/// Sizes the canvas backing store to CSS size x devicePixelRatio, which winit skips on web.
 fn sync_canvas_backing_size(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
     let dpr = web_sys::window().map_or(1.0, |w| w.device_pixel_ratio());
     let width = ((canvas.client_width().max(1) as f64) * dpr) as u32;
@@ -165,8 +144,7 @@ impl ApplicationHandler for DemoApp {
                 .expect("failed to create window"),
         );
 
-        // Attach the winit canvas to the page; CSS drives the layout size,
-        // the backing store follows it (responsive, DPI-aware).
+        // CSS drives the canvas layout size; the backing store follows it.
         let canvas = window.canvas().expect("winit window must expose a canvas");
         let style = canvas.style();
         let _ = style.set_property("width", "100%");
@@ -181,15 +159,13 @@ impl ApplicationHandler for DemoApp {
             .append_child(&canvas)
             .expect("failed to append canvas");
         install_drop_zone(&document, Rc::clone(&self.dropped_scene));
-        // Publish the same swap slot to the JS scene picker (see
-        // `select_demo_scene`), so the dropdown and drag-drop share one path.
+        // The scene picker and drag-drop share one slot.
         SCENE_SLOT.with(|slot| {
             slot.borrow_mut().replace(Rc::clone(&self.dropped_scene));
         });
         let (initial_width, initial_height) = sync_canvas_backing_size(&canvas);
 
-        // WebGPU init is async-only in browsers: fill the shared state slot
-        // when ready and kick the first redraw.
+        // WebGPU init is async-only in browsers.
         let state_slot = Rc::clone(&self.state);
         let init_window = Arc::clone(&window);
         wasm_bindgen_futures::spawn_local(async move {
@@ -197,8 +173,7 @@ impl ApplicationHandler for DemoApp {
                 .await
                 .expect("WebGPU init failed (does this browser support WebGPU?)");
             let format = gpu.surface_format().expect("windowed context has a format");
-            // The context read inner_size before the canvas sizing propagated
-            // through winit — force the surface to the real canvas size.
+            // The context read inner_size before the canvas size propagated through winit.
             gpu.resize(initial_width, initial_height);
             let mut renderer = ForwardRenderer::new(&gpu, initial_width, initial_height);
             let tonemap = TonemapPass::new(&gpu, format);
@@ -206,10 +181,7 @@ impl ApplicationHandler for DemoApp {
             let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
             renderer.upload_scene(&gpu, &scene);
 
-            // Real split-sum IBL from the procedural sky, so the web showcase
-            // shows environment-lit reflections rather than the analytic
-            // fallback. Baked once from a small panorama - enough for the
-            // low-frequency irradiance and prefilter.
+            // IBL from the procedural sky, so the showcase has real environment reflections.
             let sky_env = crate::render::ibl::EquirectImage::sky(256, 128);
             renderer.set_environment(&gpu, &sky_env);
 
@@ -258,11 +230,7 @@ impl ApplicationHandler for DemoApp {
                     return;
                 };
 
-                // A dropped model swaps the scene with the same semantics as
-                // the native viewer: upload, re-frame the camera, and on a
-                // parse error keep the current scene running. Only .glb (or
-                // .gltf with embedded buffers) can work from a single file -
-                // external .bin/textures are unreachable from one File.
+                // As the native viewer: swap and re-frame, keeping the scene on a parse error.
                 if let Some((name, bytes)) = self.dropped_scene.borrow_mut().take() {
                     match load_gltf_slice(&bytes) {
                         Ok(scene) => {
@@ -283,8 +251,7 @@ impl ApplicationHandler for DemoApp {
                     }
                 }
 
-                // Responsive canvas: follow the CSS layout size every frame
-                // and reconfigure the surface when it changes.
+                // Follow the CSS layout size every frame.
                 if let Some(canvas) = window.canvas() {
                     let (width, height) = sync_canvas_backing_size(&canvas);
                     let configured = state
@@ -311,16 +278,11 @@ impl ApplicationHandler for DemoApp {
                     self.camera.radius = 6.0;
                     self.camera.pitch_deg = 35.0;
                 }
-                // Unlike Instant, Performance::now() works on wasm32 - the rAF
-                // rate here is the display refresh rate (often 120/144 Hz), so
-                // without this auto-exposure adaptation would run 2x+ too fast.
+                // rAF runs at the display rate, so adaptation needs real time, not frames.
                 state.renderer.frame_delta_seconds =
                     self.frame_clock.tick_at(performance_now_seconds());
 
-                // wgpu 29: get_current_texture returns a CurrentSurfaceTexture
-                // enum instead of Result<_, SurfaceError>. This mirrors the
-                // native viewer exactly - it is the same acquire, and the two
-                // drifting apart is what broke the web build unnoticed.
+                // Keep this acquire identical to the native viewer's.
                 let frame = match surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(frame)
                     | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -353,8 +315,7 @@ impl ApplicationHandler for DemoApp {
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("overlay_encoder"),
                         });
-                // Show this frame's cull counts next to the occlusion toggle,
-                // same as the native viewer, so the web overlay reports them too.
+                // Cull counts for the overlay's occlusion toggle.
                 controls.occlusion_stats = Some(renderer.occlusion_cull_stats());
                 let mut changed = false;
                 overlay.render(
@@ -391,12 +352,7 @@ impl ApplicationHandler for DemoApp {
     }
 }
 
-/// Switch the live demo to one of the bundled feature-showcase scenes,
-/// selected by the header dropdown (see web/index.html). The chosen scene's
-/// bytes are parked in the *same* slot drag-and-drop uses, so the render loop
-/// performs the identical `load_gltf_slice` + `upload_scene` + camera re-frame
-/// on the next frame — no load/re-frame logic is duplicated here. Out-of-range
-/// indices are ignored; calls before the demo has initialized are a no-op.
+/// Switches the demo to a bundled scene through the drag-drop slot; bad or early calls are ignored.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn select_demo_scene(index: u32) {

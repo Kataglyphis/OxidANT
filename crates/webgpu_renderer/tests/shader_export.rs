@@ -1,5 +1,4 @@
-//! Guards the WGSL -> SPIR-V path used to share shader code with the C++
-//! Vulkan engine: every shader must parse, validate, and emit SPIR-V.
+//! Every shader must parse, validate and emit SPIR-V, the path shared with the C++ Vulkan engine.
 
 use naga::back::spv;
 use naga::valid::{Capabilities, ValidationFlags, Validator};
@@ -45,12 +44,7 @@ fn all_shaders_export_to_spirv() {
     }
 }
 
-/// `SHADERS` above is a hand-maintained list; nothing previously enforced that
-/// every `.wgsl` file in `src/shaders/` actually appears in it, which is
-/// exactly how `depth_resolve` (and `gpu_cull`/`histogram`) went unchecked.
-/// `histogram.wgsl` is deliberately hand-written rather than Slang-generated
-/// (see `Build-SlangShaders.ps1:105-109`), so it belongs in this export
-/// gate but is exempt from any Slang-source staleness gate.
+/// Every `.wgsl` in `src/shaders/` must appear in the hand-maintained `SHADERS` list.
 #[test]
 fn every_shader_file_is_covered() {
     let shaders_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/shaders");
@@ -79,13 +73,8 @@ fn every_shader_file_is_covered() {
     );
 }
 
-/// WGSL has no string literals, so a `//` can only ever appear as the start
-/// of a comment - the Slang WGSL backend itself emits none. A `//` in a
-/// checked-in generated file is therefore always a hand-edit made directly on
-/// the output, with a regenerate's expiry date on it: the next
-/// `compile-slang-shaders` run silently drops it. `histogram.wgsl` is exempt
-/// (see `every_shader_file_is_covered` above): it is hand-written, not
-/// Slang-generated, so comments in it are normal.
+/// Slang emits no comments, so a `//` in generated WGSL is a hand-edit the next regenerate drops.
+/// `histogram.wgsl` is hand-written, so it is exempt.
 #[test]
 fn generated_wgsl_has_no_hand_edits() {
     let shaders_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/shaders");
@@ -117,14 +106,7 @@ fn generated_wgsl_has_no_hand_edits() {
     );
 }
 
-/// Hand-maintained: `src/render/*.rs` pipeline builders name these entry
-/// points by string, so a `.slang`/manifest edit that drops or renames one
-/// compiles fine and fails only at pipeline-creation time (or worse, is
-/// silently masked by a `filterable`/binding mismatch). This table pins the
-/// pipeline-builder's expectations against the actual WGSL export so the
-/// mismatch is a `cargo test` failure instead - this is what caught
-/// `Precompute::new` naming a `fs_downsample_cube` that `ibl.wgsl` did not
-/// export. Seeded by grepping `entry_point: Some(` across `src/render/`.
+/// Entry points `src/render/*.rs` names by string, which otherwise fail only at pipeline creation.
 const REQUIRED_ENTRY_POINTS: &[(&str, &[&str])] = &[
     (
         "forward",
@@ -184,13 +166,7 @@ fn every_pipeline_entry_point_is_exported() {
     }
 }
 
-/// The depth-resolve pass has zero colour attachments (see the pipeline in
-/// `forward.rs`) and must write the depth aspect via `@builtin(frag_depth)`.
-/// Slang's WGSL backend has no depth-write control, so it emits a plain
-/// `@location(0)` colour output that gets silently dropped by wgpu, and the
-/// rasterizer's own fragment z is written instead (the fullscreen triangle's
-/// NDC z is 0.0, so every pixel resolves to 0.0). `compile-slang-shaders.*`
-/// patches this after emit; this test pins the patched result.
+/// Pins the post-emit patch to `@builtin(frag_depth)`: Slang emits a colour output wgpu drops.
 #[test]
 fn depth_resolve_fragment_writes_frag_depth() {
     let source = include_str!("../src/shaders/depth_resolve.wgsl");
@@ -225,10 +201,7 @@ fn depth_resolve_fragment_writes_frag_depth() {
     );
 }
 
-/// Slices the source text of a `fn <name>(` between its opening and closing
-/// brace. Naga's parsed AST loses the original identifier names (`uv1`,
-/// `material_flags`), so the checks below inspect the generated text
-/// directly rather than the parsed module.
+/// Text from `start_idx`'s first `open` to its match; naga's AST loses the identifier names.
 fn extract_balanced(source: &str, start_idx: usize, open: char, close: char) -> &str {
     let mut depth = 0i32;
     let mut body_start = None;
@@ -249,13 +222,10 @@ fn extract_balanced(source: &str, start_idx: usize, open: char, close: char) -> 
     panic!("unbalanced '{open}'/'{close}' starting at byte {start_idx}");
 }
 
-/// Name prefix the shared base-colour UV selector is emitted under. The
-/// compiler appends a mangling suffix (`_0`), so match on the prefix and read
-/// the real name back out of the call.
+/// Prefix of the shared base-colour UV selector, before the compiler's mangling suffix.
 const UV_SELECTOR_PREFIX: &str = "base_color_uv_select";
 
-/// The mangled name of the UV selector called inside `body`, when the
-/// selection was factored into a helper rather than inlined.
+/// The mangled name of the UV selector `body` calls, when it is not inlined.
 fn uv_selector_called_in(body: &str) -> Option<String> {
     let start = body.find(UV_SELECTOR_PREFIX)?;
     let rest = &body[start..];
@@ -271,14 +241,7 @@ fn fn_body<'a>(source: &'a str, fn_name: &str) -> &'a str {
     extract_balanced(source, idx, '{', '}')
 }
 
-/// The masked-shadow pass must alpha-test with the same UV set and vertex
-/// alpha as the forward pass (`fs_main`), or a foliage card that alpha-tests
-/// correctly in colour but casts a solid shadow reads as "shadows are
-/// broken" rather than "wrong UV set". Regression coverage for that bug:
-/// `vs_shadow_masked` must pick `uv1` when `material_flags` says so (the same
-/// selector `fs_main` uses for the base-colour slot), and `fs_shadow_masked`
-/// must multiply the vertex-colour alpha into the discard test alongside the
-/// base-colour factor and the texture sample.
+/// The masked-shadow pass alpha-tests with the forward pass's UV set and vertex alpha.
 #[test]
 fn shadow_masked_uses_the_forward_pass_uv_set() {
     let source = include_str!("../src/shaders/forward.wgsl");
@@ -289,19 +252,7 @@ fn shadow_masked_uses_the_forward_pass_uv_set() {
         "vs_shadow_masked must reference the uv1 input member to pick the base-colour UV set the same way fs_main does; body:\n{vs_body}"
     );
 
-    // The selection itself may sit INLINE in this body or be factored into a
-    // helper - which is what the compiler emits today:
-    //
-    //   vs_shadow_masked -> base_color_uv_select_0(uv, uv1)
-    //   fs_main -> base_color_uv_0 -> base_color_uv_select_0(uv, uv1)
-    //
-    // Asserting on `material_flags` appearing literally in this body only
-    // held while the selection was inlined; once it moved into the shared
-    // helper the guard failed even though the guarantee had got STRONGER (one
-    // selector, provably shared, instead of two copies). What matters is that
-    // whatever performs the selection branches on material_flags and that the
-    // forward path uses the same one, so check that instead of the shape of
-    // the generated code.
+    // The selection may be inlined or a shared helper; either way it must branch on material_flags.
     if !vs_body.contains("material_flags") {
         let selector = uv_selector_called_in(vs_body).unwrap_or_else(|| {
             panic!(
@@ -321,9 +272,7 @@ fn shadow_masked_uses_the_forward_pass_uv_set() {
             "`{selector}` must be able to return the uv1 set; body:\n{selector_body}"
         );
 
-        // Definition + at least two call sites: the shadow pass and the
-        // forward path. One call site would mean the passes had drifted apart
-        // again, which is the bug this test exists for.
+        // Definition plus two call sites; one would mean the passes drifted apart.
         let mentions = source.matches(&format!("{selector}(")).count();
         assert!(
             mentions >= 3,

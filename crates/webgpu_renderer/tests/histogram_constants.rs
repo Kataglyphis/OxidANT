@@ -1,18 +1,5 @@
-//! Pins `histogram.wgsl`'s hand-duplicated constants against the Rust copies
-//! in `render::auto_exposure`.
-//!
-//! `histogram.wgsl` is the one shader in this crate Slang cannot generate (no
-//! `InterlockedAdd` on `RWStructuredBuffer` for the WGSL target, per
-//! AGENTS.md), so none of the generated-shader gates
-//! (`SlangCompileManifestsAgree`, `CheckedInWgslIsNotOlderThanItsSlangSource`,
-//! `CheckedInWgslHasNoHandEdits`) cover it. A drifted `MIN_LOG_LUMINANCE` here
-//! does not crash anything - it just makes the CPU oracle in
-//! `tests/histogram.rs` validate the GPU against a mapping the GPU is no
-//! longer using.
-//!
-//! Deliberately separate from `tests/histogram.rs`: this one is pure CPU (no
-//! `GpuContext`) so it runs everywhere, including environments with no
-//! adapter.
+//! Pins hand-written `histogram.wgsl`'s constants against `render::auto_exposure`'s copies.
+//! No generated-shader gate covers that shader; pure CPU, so it runs where no adapter exists.
 
 use kataglyphis_webgpu_renderer::render::auto_exposure::{
     BLACK_THRESHOLD, BUILD_WORKGROUP, CLEAR_WORKGROUP, EXPOSURE_KEY, HISTOGRAM_BINS,
@@ -21,8 +8,7 @@ use kataglyphis_webgpu_renderer::render::auto_exposure::{
 
 const SHADER_SOURCE: &str = include_str!("../src/shaders/histogram.wgsl");
 
-/// Extracts the value literal from a `const <name>: <type> = <value>[u];`
-/// declaration line in [`SHADER_SOURCE`].
+/// The value literal of `const <name>: <type> = <value>[u];` in [`SHADER_SOURCE`].
 fn extract_const(name: &str) -> &'static str {
     let needle = format!("const {name}:");
     let line = SHADER_SOURCE
@@ -41,8 +27,7 @@ fn extract_const(name: &str) -> &'static str {
         .trim()
 }
 
-/// Finds `fn <entry_point>(` in [`SHADER_SOURCE`] and returns the x dimension
-/// of the nearest preceding `@workgroup_size(x, y, z)`.
+/// The x of the `@workgroup_size` nearest before `fn <entry_point>(` in [`SHADER_SOURCE`].
 fn extract_workgroup_x(entry_point: &str) -> u32 {
     let fn_needle = format!("fn {entry_point}(");
     let fn_pos = SHADER_SOURCE

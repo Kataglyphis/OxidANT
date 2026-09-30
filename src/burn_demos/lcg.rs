@@ -1,7 +1,4 @@
-/// Minimal deterministic LCG (linear congruential generator) PRNG.
-///
-/// Used across burn demos for reproducible random data generation without
-/// pulling in a full `rand` dependency. **Not** cryptographically secure.
+/// Deterministic LCG PRNG for reproducible demo data without `rand`; not cryptographically secure.
 pub struct Lcg {
     state: u64,
 }

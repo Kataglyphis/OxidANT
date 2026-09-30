@@ -1,42 +1,12 @@
-//! Radiance HDR (`.hdr`, RGBE) decoding, by hand.
-//!
-//! The IBL bake takes decoded linear floats ([`EquirectImage`]); this module is
-//! how a real panorama file becomes one. Hand-rolled rather than a dependency
-//! on purpose: the crate ships to wasm where an image stack is real download
-//! weight, and RGBE is a genuinely small format - a text header, one shared
-//! exponent byte per pixel, and two run-length schemes.
-//!
-//! Decisions this file records:
-//!
-//! - **Orientation**: only the standard `-Y H +X W` layout (rows top to
-//!   bottom, columns left to right) is decoded. The other seven orientations
-//!   are rejected *by name* rather than decoded as if they were `-Y +X`, which
-//!   would silently flip or transpose the panorama - the kind of bug that
-//!   surfaces months later as "the sun is on the wrong side".
-//! - **EXPOSURE** is parsed and divided out. The Radiance spec defines it as
-//!   "a multiplier that has been applied to all the pixels in the file", i.e.
-//!   `stored = radiance * EXPOSURE`, so recovering physical radiance divides
-//!   by it. Repeated EXPOSURE lines compose multiplicatively.
-//! - **Untrusted input**: every failure is a typed [`HdrError`], dimensions
-//!   are capped before anything allocates proportionally to them, and the
-//!   output grows scanline by scanline so a lying header cannot allocate more
-//!   than the body actually decodes. No panics on any input.
+//! Radiance HDR (`.hdr`, RGBE) decoding, hand-rolled to keep an image stack out of the wasm download.
+//! Only `-Y +X` decodes (other orientations are refused, not flipped); untrusted input never panics.
 
 use crate::render::ibl::EquirectImage;
 
-/// Upper bound on `width * height`, checked before decoding starts.
-///
-/// Exactly a 16384 x 8192 equirect - the largest panorama in common
-/// circulation. Beyond protecting the multiplication itself, the cap keeps
-/// `width * height * 16` bytes representable in `usize` on wasm32, where
-/// `usize` is 32 bits and the arithmetic would otherwise wrap before the
-/// allocator ever saw it.
+/// Cap on `width * height` (16384 x 8192), so `pixels * 16` bytes fits a 32-bit wasm `usize`.
 const MAX_PIXELS: u64 = 1 << 27;
 
-/// Everything that can be wrong with an `.hdr` file.
-///
-/// The decoder will eventually see untrusted bytes, so every branch that a
-/// fuzzer can reach reports through here rather than panicking.
+/// Everything that can be wrong with an `.hdr` file; the decoder reports here instead of panicking.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HdrError {
     BadMagic,
@@ -45,8 +15,7 @@ pub enum HdrError {
         context: &'static str,
     },
     MissingFormat,
-    /// A FORMAT the file declared but this decoder does not speak
-    /// (`32-bit_rle_xyze` being the one that exists in the wild).
+    /// A declared FORMAT other than rgbe (in the wild: `32-bit_rle_xyze`).
     UnsupportedFormat(String),
     /// A header variable that was recognised but failed to parse.
     BadHeaderValue {
@@ -138,8 +107,7 @@ impl std::error::Error for HdrError {}
 pub fn decode_hdr(bytes: &[u8]) -> Result<EquirectImage, HdrError> {
     let mut cursor = Cursor { bytes, pos: 0 };
 
-    // Photosphere and a few other writers use `#?RGBE`; Radiance itself writes
-    // `#?RADIANCE`. Both mark the same format.
+    // Radiance writes `#?RADIANCE`; Photosphere and a few others write `#?RGBE`.
     let magic = cursor.read_line("magic line")?;
     if !(magic.starts_with("#?RADIANCE") || magic.starts_with("#?RGBE")) {
         return Err(HdrError::BadMagic);
@@ -172,12 +140,9 @@ pub fn decode_hdr(bytes: &[u8]) -> Result<EquirectImage, HdrError> {
             }
             exposure *= factor;
         }
-        // GAMMA=, PRIMARIES=, PIXASPECT=, VIEW=, SOFTWARE= and any custom
-        // variables carry nothing the renderer consumes; skipped, not errors.
+        // Other variables (GAMMA=, PRIMARIES=, VIEW=, ...) carry nothing the renderer uses.
     }
-    // FORMAT is mandatory in the spec and present in practice. Assuming rgbe
-    // when it is absent would decode an ancient xyze file as plausible-looking
-    // wrong colours, which is worse than rejecting it.
+    // Assuming rgbe without FORMAT would decode an xyze file as plausible wrong colours.
     if !format_seen {
         return Err(HdrError::MissingFormat);
     }
@@ -185,9 +150,7 @@ pub fn decode_hdr(bytes: &[u8]) -> Result<EquirectImage, HdrError> {
     let resolution = cursor.read_line("resolution line")?;
     let (width, height) = parse_resolution(resolution.trim())?;
 
-    // Grown per scanline rather than reserved from the header: the header is
-    // untrusted, and the decode below fails at the first missing byte, so a
-    // file claiming 16k x 8k with a ten-byte body never allocates for it.
+    // Grown per scanline, not reserved from the untrusted header, so a lying size never allocates.
     let mut rgba32f = Vec::new();
     let mut scanline = vec![[0u8; 4]; width as usize];
     for _ in 0..height {
@@ -198,8 +161,7 @@ pub fn decode_hdr(bytes: &[u8]) -> Result<EquirectImage, HdrError> {
         }
     }
 
-    // The buffer is `width * height * 4` floats by construction, which is the
-    // invariant `EquirectImage::new` would re-check.
+    // Built directly: the length is `width * height * 4` by construction, what `EquirectImage::new` checks.
     Ok(EquirectImage {
         width,
         height,
@@ -214,12 +176,7 @@ fn rgbe_to_linear(rgbe: [u8; 4], exposure: f64) -> [f32; 3] {
     if e == 0 {
         return [0.0; 3];
     }
-    // v = m * 2^(E - 128 - 8). The bias is 128; the additional -8 is because
-    // the mantissa bytes are 8-bit *fractions* of the shared exponent, not
-    // integers. Dropping it decodes everything 256x too bright - bright enough
-    // to look like "HDR working really well" until a known value is checked.
-    // f64 so 2^-135 (smallest exponent, subnormal in f32) survives the
-    // arithmetic instead of flushing to zero mid-expression.
+    // -136 is bias 128 plus 8 mantissa-fraction bits (without them 256x too bright); f64 keeps 2^-135 nonzero.
     let scale = f64::exp2(f64::from(e) - 136.0) / exposure;
     [
         (f64::from(r) * scale) as f32,
@@ -237,9 +194,7 @@ fn parse_resolution(line: &str) -> Result<(u32, u32), HdrError> {
         return Err(bad());
     };
 
-    // Distinguish "a real orientation we refuse" from "not a resolution line
-    // at all", so the error tells the user whether their file is exotic or
-    // broken.
+    // Tell an exotic-but-valid orientation apart from a broken resolution line.
     let is_axis = |t: &str| matches!(t, "+X" | "-X" | "+Y" | "-Y");
     if !is_axis(axis_a) || !is_axis(axis_b) || axis_a.as_bytes()[1] == axis_b.as_bytes()[1] {
         return Err(bad());
@@ -259,13 +214,7 @@ fn parse_resolution(line: &str) -> Result<(u32, u32), HdrError> {
     Ok((width as u32, height as u32))
 }
 
-/// Decodes one scanline, choosing the encoding the way Radiance's own
-/// `freadcolrs` does.
-///
-/// New-style adaptive RLE is only defined for widths 8..=32767 and announces
-/// itself with `0x02 0x02` and a high byte without the top bit; anything else
-/// - including a genuine flat pixel that happens to start with two 2s but
-///   fails the third-byte test - falls through to the old flat decoding.
+/// Decodes one scanline, choosing new-style RLE or flat the way Radiance's `freadcolrs` does.
 fn decode_scanline(cursor: &mut Cursor<'_>, scanline: &mut [[u8; 4]]) -> Result<(), HdrError> {
     let width = scanline.len();
     if (8..=0x7fff).contains(&width) {
@@ -286,10 +235,7 @@ fn decode_scanline(cursor: &mut Cursor<'_>, scanline: &mut [[u8; 4]]) -> Result<
     decode_flat_scanline(cursor, scanline)
 }
 
-/// New-style adaptive RLE: the four components arrive as separate planes (all
-/// R codes, then G, then B, then E), each a sequence of runs (`code > 128`:
-/// `code - 128` copies of the next byte) and literals (`code <= 128`: `code`
-/// raw bytes).
+/// New-style RLE: four component planes, each of runs (`code > 128`) and literals (`code <= 128`).
 fn decode_rle_scanline(cursor: &mut Cursor<'_>, scanline: &mut [[u8; 4]]) -> Result<(), HdrError> {
     for component in 0..4 {
         let mut x = 0usize;
@@ -305,8 +251,7 @@ fn decode_rle_scanline(cursor: &mut Cursor<'_>, scanline: &mut [[u8; 4]]) -> Res
                 x += run;
             } else {
                 let count = usize::from(code);
-                // A zero-length literal consumes no output; accepting it would
-                // let a crafted file spin the loop forever.
+                // A zero-length literal never advances, so a crafted file could loop forever.
                 if count == 0 {
                     return Err(HdrError::ZeroLengthRleLiteral);
                 }
@@ -322,13 +267,8 @@ fn decode_rle_scanline(cursor: &mut Cursor<'_>, scanline: &mut [[u8; 4]]) -> Res
     Ok(())
 }
 
-/// Flat RGBE quadruples, with the old-style RLE convention: a pixel of
-/// `(1, 1, 1, n)` repeats the previous pixel `n` times, and each *consecutive*
-/// marker shifts its count 8 bits further left so long runs can be expressed.
-///
-/// Like Radiance's `oldreadcolrs`, repeats do not cross scanline boundaries -
-/// each scanline is decoded independently, so a marker with no preceding pixel
-/// in its own scanline is an error rather than a read of stale state.
+/// Flat RGBE with old-style RLE: `(1, 1, 1, n)` repeats the previous pixel, each consecutive marker shifting 8 more.
+/// Like Radiance's `oldreadcolrs`, repeats never cross scanlines.
 fn decode_flat_scanline(cursor: &mut Cursor<'_>, scanline: &mut [[u8; 4]]) -> Result<(), HdrError> {
     let mut shift = 0u32;
     let mut x = 0usize;
@@ -339,15 +279,12 @@ fn decode_flat_scanline(cursor: &mut Cursor<'_>, scanline: &mut [[u8; 4]]) -> Re
             let Some(previous_index) = x.checked_sub(1) else {
                 return Err(HdrError::RepeatBeforeFirstPixel);
             };
-            // A fifth consecutive marker would shift by 32 - undefined for the
-            // count and describing a run longer than MAX_PIXELS, so it cannot
-            // be anything but an overrun.
+            // A fifth consecutive marker would shift by 32, a run longer than MAX_PIXELS.
             if shift > 24 {
                 return Err(HdrError::RleOverrun);
             }
             let count = usize::from(quad[3]) << shift;
-            // checked_add because `count` can reach 255 << 24, which added to
-            // `x` wraps a 32-bit usize on wasm32.
+            // `count` can reach 255 << 24, which wraps a 32-bit wasm `usize` when added to `x`.
             let end = x.checked_add(count).ok_or(HdrError::RleOverrun)?;
             let previous = scanline[previous_index];
             let span = scanline.get_mut(x..end).ok_or(HdrError::RleOverrun)?;
@@ -388,10 +325,7 @@ impl<'a> Cursor<'a> {
         self.bytes.get(self.pos..end)?.try_into().ok()
     }
 
-    /// Next `\n`-terminated line, without the terminator (and without a
-    /// trailing `\r`, for files that passed through a Windows text mode).
-    /// Lossy UTF-8: the header is ASCII in practice, and a stray high byte in
-    /// a comment should not make the file undecodable.
+    /// Next line without its `\n`/`\r`; lossy UTF-8 so a stray high byte in a comment is not fatal.
     fn read_line(&mut self, context: &'static str) -> Result<String, HdrError> {
         let rest = &self.bytes[self.pos..];
         let newline = rest
@@ -412,8 +346,6 @@ mod tests {
     use super::*;
 
     /// Inverse of [`rgbe_to_linear`], truncating like Radiance's `setcolr`.
-    /// Test-only: the renderer never writes `.hdr` files, but round-tripping
-    /// through a known-good encoder is how the decoder is proven.
     fn encode_rgbe([r, g, b]: [f32; 3]) -> [u8; 4] {
         let max = r.max(g).max(b);
         if max < 1e-32 {
@@ -473,8 +405,7 @@ mod tests {
         out
     }
 
-    /// Runs of >= 3 as runs, everything else as literals - enough to make real
-    /// files exercise both decoder branches.
+    /// Runs of >= 3 as runs, everything else as literals, so both decoder branches run.
     fn emit_plane(plane: &[u8], out: &mut Vec<u8>) {
         let mut i = 0;
         while i < plane.len() {
@@ -506,9 +437,7 @@ mod tests {
         }
     }
 
-    /// Worst per-channel error relative to the pixel's brightest channel - the
-    /// quantity RGBE actually bounds (the shared exponent follows the maximum,
-    /// so dim channels of a bright pixel quantise coarsely in their own terms).
+    /// Worst per-channel error relative to the brightest channel, the quantity a shared exponent bounds.
     fn worst_relative_error(decoded: &EquirectImage, expected: &[[f32; 3]]) -> f32 {
         let mut worst = 0.0f32;
         for (texel, want) in decoded.rgba32f.chunks_exact(4).zip(expected) {
@@ -526,8 +455,7 @@ mod tests {
 
     #[test]
     fn flat_pixels_round_trip_across_six_orders_of_magnitude() {
-        // Width 4 is below the new-RLE minimum of 8, so this also pins the
-        // "narrow images are always flat" rule.
+        // Width 4 is below the new-RLE minimum of 8, so this also pins flat decoding for narrow images.
         let pixels = [
             [0.001, 0.002, 0.0015],
             [0.03, 0.01, 0.02],
@@ -541,9 +469,7 @@ mod tests {
         let decoded = decode_hdr(&encode_flat(4, 2, &pixels, &[])).expect("well-formed file");
         assert_eq!((decoded.width, decoded.height), (4, 2));
 
-        // The encoder truncates the 8-bit mantissa, so the quantum is 1/256 of
-        // the shared exponent's range and the error bound is 1/128 relative to
-        // the brightest channel.
+        // Truncated 8-bit mantissas bound the error at 1/128 of the brightest channel.
         let worst = worst_relative_error(&decoded, &pixels);
         eprintln!("flat round-trip worst relative error: {worst:.6}");
         assert!(
@@ -554,10 +480,7 @@ mod tests {
 
     #[test]
     fn one_decodes_to_one_not_two_hundred_fifty_six() {
-        // 1.0 encodes as (128, 128, 128, 129): mantissa 128/256 = 0.5, shared
-        // exponent 2^(129-128) = 2. With the -8 fraction shift, 128 * 2^(129 -
-        // 136) = 1.0 exactly; without it, 256.0. The single most load-bearing
-        // assertion in this module.
+        // 1.0 encodes as (128, 128, 128, 129); without the -8 fraction shift it decodes as 256.0.
         assert_eq!(encode_rgbe([1.0, 1.0, 1.0]), [128, 128, 128, 129]);
 
         let mut file = header(1, 1, &[]);
@@ -568,8 +491,7 @@ mod tests {
 
     #[test]
     fn new_style_rle_with_runs_and_literals_matches_the_flat_encoding() {
-        // Half the row a constant (long runs in every plane), half a ramp
-        // (literal spans), so both branches of the plane decoder execute.
+        // A constant half (runs) and a ramp half (literals), so both plane-decoder branches run.
         let width = 32;
         let mut pixels = Vec::new();
         for y in 0..2 {
@@ -606,8 +528,7 @@ mod tests {
             assert_eq!(&texel[..3], &[0.5, 0.5, 0.5]);
         }
 
-        // Consecutive markers shift left 8 bits each: pixel + repeat(2) +
-        // repeat(1 << 8) = 259 pixels.
+        // Consecutive markers shift 8 bits each: pixel + repeat(2) + repeat(1 << 8) = 259 pixels.
         let width = 259;
         let mut file = header(width, 1, &[]);
         file.extend_from_slice(&encode_rgbe([0.25, 0.25, 0.25]));
@@ -622,8 +543,7 @@ mod tests {
 
     #[test]
     fn widths_beyond_the_rle_maximum_decode_flat() {
-        // 40000 > 0x7fff, so even a scanline that happens to begin with two 2s
-        // must be read as raw quadruples.
+        // 40000 > 0x7fff, so even a scanline starting with two 2s must decode flat.
         let width = 40000;
         let pixels = vec![[0.25, 0.5, 0.75]; width];
         let decoded = decode_hdr(&encode_flat(width, 1, &pixels, &[])).expect("wide flat file");
@@ -634,9 +554,7 @@ mod tests {
 
     #[test]
     fn exposure_is_divided_out_and_composes_multiplicatively() {
-        // The spec defines EXPOSURE as a multiplier already applied to the
-        // stored pixels, so decoding *divides*: the same bytes tagged
-        // EXPOSURE=2 mean half the radiance.
+        // EXPOSURE is already applied to the stored pixels, so EXPOSURE=2 means half the radiance.
         let pixels = [[1.0, 1.0, 1.0]];
         let plain = decode_hdr(&encode_flat(1, 1, &pixels, &[])).expect("plain");
         let doubled = decode_hdr(&encode_flat(1, 1, &pixels, &["EXPOSURE=2.0"])).expect("exposed");

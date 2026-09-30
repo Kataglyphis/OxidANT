@@ -37,8 +37,7 @@ fn uploads_bc1_when_supported() {
         eprintln!("SKIP: adapter lacks TEXTURE_COMPRESSION_BC");
         return;
     }
-    // Building a scene with the compressed texture must not panic or trip
-    // wgpu validation (block layout/rows-per-image are easy to get wrong).
+    // Block layout and rows-per-image are easy to get wrong; wgpu validation must stay quiet.
     let texture = load_ktx2(RED_BC1).expect("load");
     let scene = kataglyphis_webgpu_renderer::CpuScene {
         primitives: vec![],

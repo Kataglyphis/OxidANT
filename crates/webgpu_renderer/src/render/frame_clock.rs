@@ -1,25 +1,13 @@
-//! Wall-clock frame pacing for time-dependent effects (currently
-//! [`crate::render::forward::ForwardRenderer::frame_delta_seconds`], which
-//! drives auto-exposure adaptation).
-//!
-//! The clamping and "no previous tick yet" logic is the part worth testing;
-//! the timestamp itself is not, so [`FrameClock::tick_at`] takes an injected
-//! seconds-since-some-epoch value and never touches a real clock. Callers
-//! (the native `viewer` example, the wasm demo) supply that value from
-//! whatever monotonic source their platform has - `Instant` natively,
-//! `Performance::now()` on wasm, where `std::time::Instant` panics.
+//! Clamped frame deltas for time-dependent effects such as auto-exposure adaptation.
+//! Callers inject the timestamp because `std::time::Instant` panics on wasm.
 
-/// Upper bound on a reported delta. A suspended tab or a debugger pause must
-/// not slam whatever adapts on this value (auto-exposure) with a
-/// multi-second step.
+/// Delta cap, so a suspended tab or debugger pause cannot slam auto-exposure with a huge step.
 pub const MAX_DELTA_SECONDS: f32 = 0.25;
 
-/// Reported before the first real tick, matching the nominal rate
-/// `frame_delta_seconds` defaulted to before any caller wrote it.
+/// Delta reported before the first real tick.
 pub const NOMINAL_DELTA_SECONDS: f32 = 1.0 / 60.0;
 
-/// Turns a monotonic seconds-since-epoch reading into a clamped
-/// frame-to-frame delta.
+/// Turns monotonic seconds-since-epoch readings into clamped frame-to-frame deltas.
 #[derive(Default)]
 pub struct FrameClock {
     last_seconds: Option<f64>,
@@ -30,11 +18,8 @@ impl FrameClock {
         Self::default()
     }
 
-    /// `now_seconds` must come from a monotonic source (e.g. an `Instant`
-    /// fixed at startup, elapsed as `as_secs_f64()`, or
-    /// `Performance::now() / 1000.0`). Not required to be strictly
-    /// increasing: a backwards or repeated reading clamps to `0.0` rather
-    /// than producing a negative delta.
+    /// Clamped delta since the last tick; `now_seconds` comes from a monotonic source.
+    /// A backwards or repeated reading yields `0.0`, never a negative delta.
     pub fn tick_at(&mut self, now_seconds: f64) -> f32 {
         let delta = match self.last_seconds {
             None => NOMINAL_DELTA_SECONDS,
@@ -72,8 +57,7 @@ mod tests {
 
     #[test]
     fn a_backwards_or_repeated_reading_clamps_to_zero_not_negative() {
-        // A coarse or glitching timer must not hand adapt_exposure_ev a
-        // negative delta.
+        // A coarse or glitching timer must not hand adapt_exposure_ev a negative delta.
         let mut clock = FrameClock::new();
         clock.tick_at(10.0);
         assert_eq!(clock.tick_at(9.5), 0.0);

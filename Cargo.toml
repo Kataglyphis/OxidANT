@@ -16,21 +16,10 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Kataglyphis/OxidANT"
-# THE FLOOR OF THE RESOLVED GRAPH, not a wish. It read 1.92.0 and was false:
-# sysinfo 0.39.6 and every egui 0.36 crate declare 1.95, and kstring 2.0.4
-# declares 1.96.0, so `cargo +1.92 check --locked` cannot have worked. The
-# abandoned main branch "fixed" the same contradiction the other way in 4438964
-# (resolver 3 + sysinfo 0.38) because the image shipped rustc 1.93.1 at the time;
-# that is not the trade today - versions.env pins RUST_VERSION 1.98.1 and the
-# image ships it, so the honest move is to declare what the lockfile actually
-# needs rather than downgrade a dependency to meet a number nobody verified.
-# Recompute after a lockfile bump: the max `rust_version` in `cargo metadata`.
+# The resolved graph's floor: recompute after a lockfile bump as the max `rust_version` in `cargo metadata`.
 rust-version = "1.96.0"
 
-# TEMPORARY, remove when egui 0.37 is released: egui-winit 0.36.2 plus upstream PR
-# emilk/egui#8516 (merged 2026-09-07 on main, not in 0.36.2). No published
-# egui-winit compiles for wasm32 (egui#8436), and the renderer's wasm demo uses it.
-# Provenance and the removal steps: third_party/egui-winit-0.36.2/PATCHED.md.
+# Until egui 0.37: no published egui-winit compiles for wasm32 (egui#8436); see third_party/egui-winit-0.36.2/PATCHED.md.
 [patch.crates-io]
 egui-winit = { path = "third_party/egui-winit-0.36.2" }
 
@@ -47,8 +36,7 @@ burn-ndarray = { version = "0.21.0" }
 ndarray = { version = "0.17" }
 plotters = { version = "0.3" }
 tempfile = { version = "3" }
-# load-dynamic on the declaration, not a feature: no feature set can link ORT
-# (owner rule 2026-09-23). scripts/linux/check-ort-chain-only.sh enforces it.
+# load-dynamic on the declaration so no feature set can link ORT; scripts/linux/check-ort-chain-only.sh enforces it.
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-24"] }
 gstreamer = "0.25"
 gstreamer-app = "0.25"
@@ -81,10 +69,7 @@ gui_wgpu = ["kataglyphis_gui/gui_wgpu"]
 gui_windows = ["kataglyphis_gui/gui_windows"]
 onnx_tract = ["kataglyphis_inference/onnx_tract"]
 onnxruntime = ["kataglyphis_inference/onnxruntime", "dep:ort", "ort/std"]
-# An alias since 2026-09-23: every `onnxruntime*` feature runtime-loads the
-# family's chain-built ONNX Runtime now and none downloads one at build time
-# (crates/inference/Cargo.toml says why). Kept because OmniAccelerANT's
-# KATAGLYPHIS_RUST_FEATURES names it.
+# Now just an alias, kept because OmniAccelerANT's KATAGLYPHIS_RUST_FEATURES names it.
 onnxruntime_dynamic = ["onnxruntime", "kataglyphis_inference/onnxruntime_dynamic"]
 onnxruntime_directml = ["kataglyphis_inference/onnxruntime_directml"]
 onnxruntime_cuda = ["kataglyphis_inference/onnxruntime_cuda"]
@@ -134,21 +119,7 @@ wmi = { workspace = true }
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(onnx)', 'cfg(gui_wgpu_backend)'] }
 
 [workspace.lints.clippy]
-# NEW IN CLIPPY 1.98, and the reason the Linux lane's "Check formatting
-# and clippy" step went red the moment the hub pin moved to fa9ecdb6
-# (versions.env RUST_VERSION 1.97.1 -> 1.98.1). It fires 22 times, all inside
-# crates/webgpu_renderer, on `chunks_exact(N)` with a literal N.
-#
-# It is a style lint, not a correctness one: `as_chunks::<N>().0` iterates the
-# same elements and drops the same remainder, it just yields `&[T; N]` instead
-# of `&[T]`. Migrating means changing the element type at 22 call sites in the
-# glTF loader, the HDR decoder and four render passes - a renderer refactor
-# that has no business riding along in a documentation-and-CI audit, and
-# `cargo clippy --fix` does not converge on it (it rewrote the test files and
-# left every src site). Allowed HERE, once, rather than sprinkled as
-# #[allow] attributes, so removing it is one line. Tracked in BACKLOG.md.
-#
-# Everything else stays at -D warnings.
+# Style-only, and `clippy --fix` does not converge on the renderer's sites; allowed once here. Tracked in BACKLOG.md.
 chunks_exact_to_as_chunks = "allow"
 
 [lints]

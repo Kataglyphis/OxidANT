@@ -1,24 +1,13 @@
-# Runs INSIDE the Windows container under pwsh 7 (see #requires below), with the
-# VsDevCmd env supplied by the entrypoint.
-# Builds the workspace in dev (debug), profile, and release, then copies artifacts
-# back to the bind-mounted repo. All build writes go to fresh container-local dirs
-# (C:\ct, C:\ch) to dodge the wcifs/bindFlt rename bugs on this host/base skew
-# (see third_party/ANTfrastructure/docs/windows-builds.md, run-side wcifs
-# symptoms).
+# In-container debug/profile/release build into local C:\ct, C:\ch to dodge wcifs renames; see third_party/ANTfrastructure/docs/windows-builds.md.
 #requires -Version 7.0
 
-# NB: EAP stays 'Continue' and $LASTEXITCODE is checked by hand -- native-command
-# stderr handling has shifted across PowerShell versions; the explicit check does not.
+# EAP stays 'Continue' and $LASTEXITCODE is checked by hand: native stderr handling varies by version.
 $ProgressPreference = 'SilentlyContinue'
 
-# Logging comes from ANTfrastructure. The driver copies this module next to this
-# script into the mounted scratch dir, because the staged sources deliberately
-# exclude third_party - nothing under windows/scripts/modules/ is reachable
-# from inside the container otherwise.
+# The driver copies this hub module into scratch, since the staged sources exclude third_party.
 Import-Module 'C:\host-scratch\WindowsContainerLog.Common.psm1' -Force
 
-# Persist ALL output to the mounted scratch dir -- the docker CLI pipe drops
-# intermittently on this host, so console logs alone can be lost.
+# Log to scratch too: the docker CLI pipe drops output intermittently on this host.
 Start-ContainerLog -Path 'C:\host-scratch\in-container-build.log'
 
 Write-ContainerLog "=== Rust container build: debug / profile / release ==="
@@ -47,8 +36,7 @@ foreach ($p in $profiles) {
     Write-Host ("<== {0} OK in {1:mm\:ss}" -f $p.Name, $sw.Elapsed)
 }
 
-# Copy artifacts to the mounted repo. Plain copies are verified to work on bind
-# mounts on this host; renames/two-path ops are not -- so cmd copy, no Move-Item.
+# cmd copy, not Move-Item: renames fail on this host's bind mounts, plain copies work.
 foreach ($p in $profiles) {
     $src = Join-Path 'C:\ct' $p.Name
     $dst = "C:\ws-mnt\target\container\$($p.Name)"

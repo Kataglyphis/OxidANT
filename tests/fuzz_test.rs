@@ -2,8 +2,7 @@ use proptest::prelude::*;
 
 // Example function to fuzz - replace with your actual API function.
 fn parse_and_process_data(data: &str) -> bool {
-    // This is a dummy logic that might fail on specific edge cases,
-    // demonstrating what a fuzzer would catch.
+    // Dummy logic with an edge case, the kind a fuzzer catches.
     if data.contains("panic_keyword") {
         // In real code this might be an actual bug you want to find.
         return false;
@@ -21,8 +20,7 @@ proptest! {
         // Assert that parsing the generated data doesn't crash or behave unexpectedly.
         let result = parse_and_process_data(&s);
 
-        // As long as the string doesn't explicitly contain our bug condition, it should pass.
-        // The fuzzer will try thousands of random inputs.
+        // Any string without the bug condition must pass.
         if !s.contains("panic_keyword") {
             prop_assert!(result);
         }

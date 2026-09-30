@@ -1,6 +1,4 @@
-//! Capture pipeline integration test — container/CI safe (videotestsrc only;
-//! containers have no camera devices).
-//!
+//! Capture pipeline integration test, container/CI safe because it uses videotestsrc only.
 //! Run with: `cargo test -p kataglyphis_media --features gstreamer`
 
 #![cfg(feature = "gstreamer")]

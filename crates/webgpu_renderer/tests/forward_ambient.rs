@@ -1,11 +1,5 @@
-//! `fs_main`'s IBL ambient block, restored after the Slang port (`2a4ae68`)
-//! kept the entry point but dropped what it computed: a metal with no
-//! environment bound rendered fully black (no specular term at all in the
-//! analytic fallback), and both `light_dir_ambient.w` (the ambient slider)
-//! and `ibl_params.enabled_maxmip_intensity.z` (environment intensity) were
-//! computed and never read. See `Resources/ShadersSlang/forward/forward.slang`
-//! and <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md>
-//! for how this shader feeds this renderer.
+//! `fs_main`'s ambient term: fallback specular, the ambient slider and the environment intensity.
+//! See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md>.
 
 use kataglyphis_webgpu_renderer::{
     load_gltf, EquirectImage, ForwardRenderer, GpuContext, OrbitCamera,
@@ -21,11 +15,7 @@ fn render(renderer: &mut ForwardRenderer, gpu: &GpuContext) -> Vec<u8> {
         .expect("headless render must succeed")
 }
 
-/// Mean R+G+B over the cube's pixels only. The cube is red-dominant and the
-/// procedural sky behind it is blue-dominant (see `sky_radiance` in
-/// `forward.slang`), so `pixel[0] > pixel[2]` separates them the same way
-/// `ibl.rs`'s `setting_an_environment_actually_changes_the_rendered_frame`
-/// does.
+/// Mean R+G+B over the red-dominant cube pixels, which the blue-dominant sky never matches.
 fn cube_luma(pixels: &[u8]) -> f64 {
     let mut total = 0u64;
     let mut count = 0u64;
@@ -46,18 +36,14 @@ fn a_metal_without_an_environment_still_gets_ambient_specular() {
     };
 
     let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
-    // Full metal, low roughness. Under the old fallback
-    // (`hemisphere_irradiance(n) * albedo * (1 - metallic)`) this renders
-    // exactly black: `1 - metallic` is zero and the no-environment path had
-    // no specular term at all.
+    // Full metal: a diffuse-only fallback renders it exactly black.
     scene.primitives[0].material.metallic_factor = 1.0;
     scene.primitives[0].material.roughness_factor = 0.05;
 
     let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
     renderer.upload_scene(&gpu, &scene);
     assert!(!renderer.environment_enabled());
-    // Kill the direct sun and any punctual lights so the only possible
-    // contribution left in the frame is ambient.
+    // No direct light, so only ambient remains.
     renderer.light_color_intensity.w = 0.0;
     renderer.light_dir_ambient.w = 1.0;
 
@@ -77,8 +63,7 @@ fn environment_intensity_scales_the_ambient_term() {
 
     let scene = load_gltf(cube_path()).expect("cube.gltf must load");
 
-    // `set_environment` bakes `ibl_intensity` into the uniform buffer at
-    // call time, so the intensity must be set beforehand.
+    // `set_environment` bakes `ibl_intensity` at call time, so set it first.
     let mut dim = ForwardRenderer::new(&gpu, 128, 128);
     dim.upload_scene(&gpu, &scene);
     dim.ibl_intensity = 1.0;

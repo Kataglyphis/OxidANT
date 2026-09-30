@@ -1,11 +1,4 @@
-//! Quadric error decimation, measured against the clustering simplifier it
-//! is meant to beat.
-//!
-//! The properties worth pinning are geometric, not structural: does the
-//! output still describe the same SURFACE, and does it keep the features
-//! clustering loses. So the assertions here go through a point-to-surface
-//! distance rather than through the simplifier's internal bookkeeping - a
-//! rewrite of the collapse machinery should not need this file edited.
+//! Quadric decimation measured against clustering by point-to-surface distance, not internals.
 
 use glam::{Mat4, Vec3};
 use kataglyphis_webgpu_renderer::scene::lod::simplify_primitive;
@@ -60,8 +53,7 @@ fn plane_grid(n: usize) -> CpuPrimitive {
     primitive(vertices, indices)
 }
 
-/// A bumpy grid: the plane displaced by a smooth function, so collapses have
-/// real (non-zero) costs to rank.
+/// The plane displaced by a smooth function, so collapses have non-zero costs to rank.
 fn bumpy_grid(n: usize) -> CpuPrimitive {
     let mut prim = plane_grid(n);
     for v in &mut prim.vertices {
@@ -71,12 +63,7 @@ fn bumpy_grid(n: usize) -> CpuPrimitive {
     prim
 }
 
-/// A flat square base with one vertex pulled up into a tall thin spike.
-///
-/// The spike is a single vertex of an otherwise planar grid, which is
-/// exactly the configuration centroid clustering cannot represent: the tip
-/// shares a cell with its flat neighbours and gets averaged down toward
-/// them, while QEM sees an enormous quadric there and refuses to remove it.
+/// A flat grid with one vertex pulled into a spike, which clustering averages away and QEM keeps.
 fn spiked_grid(n: usize, height: f32) -> CpuPrimitive {
     let mut prim = plane_grid(n);
     let tip = (n / 2) * n + n / 2;
@@ -151,11 +138,7 @@ fn max_deviation(original: &CpuPrimitive, simplified: &CpuPrimitive) -> f32 {
     worst
 }
 
-/// Highest Z reached by the rendered SURFACE - how much of the spike survived.
-///
-/// Referenced vertices only. Clustering leaves the merged-away vertices in
-/// its buffer, so a naive max over `vertices` reports the full spike height
-/// from a vertex that no triangle uses and nothing draws.
+/// Highest Z of referenced vertices; clustering leaves unreferenced ones in its buffer.
 fn peak_height(prim: &CpuPrimitive) -> f32 {
     prim.indices.iter().fold(f32::NEG_INFINITY, |acc, &i| {
         acc.max(prim.vertices[i as usize].position[2])
@@ -181,8 +164,7 @@ fn assert_well_formed(prim: &CpuPrimitive) {
             "degenerate triangle {tri:?} survived"
         );
     }
-    // Every emitted vertex must be referenced; a compaction bug that leaves
-    // orphans would otherwise pass silently and bloat the buffer.
+    // Every emitted vertex must be referenced, or compaction bugs pass silently.
     let mut used = vec![false; prim.vertices.len()];
     for &i in &prim.indices {
         used[i as usize] = true;
@@ -226,24 +208,12 @@ fn harder_decimation_costs_more_error() {
 
 #[test]
 fn a_plane_decimates_to_near_minimal_with_no_error() {
-    // The QEM signature result. Every interior collapse on a co-planar mesh
-    // has exactly zero cost, so the whole grid should fold down to the few
-    // triangles that span the square - and the surface must not move at all.
-    // Clustering cannot do this: it is bounded by its cell grid regardless
-    // of how flat the input is.
-    //
-    // The ratio is small but not zero: decimation is driven by a triangle
-    // budget, not by an error threshold, so a target of zero really does
-    // consume the mesh - boundary quadrics make the last collapses
-    // expensive, not illegal.
+    // Co-planar collapses cost zero; the ratio is not 0, since a zero budget consumes the mesh.
     let full = plane_grid(16);
     let out = simplify_primitive_qem(&full, 0.01);
     assert_well_formed(&out);
 
-    // Measured: 450 triangles collapse to 4, max deviation 5.06e-6 - which
-    // is f32 round-off on unit-scale coordinates, not surface movement.
-    // 1e-4 leaves margin over that while staying four orders below the
-    // mesh's own size.
+    // 1e-4 allows f32 round-off while staying far below the mesh's size.
     assert!(
         triangle_count(&out) <= 6,
         "a flat grid should collapse to a handful of triangles, got {}",
@@ -258,10 +228,7 @@ fn a_plane_decimates_to_near_minimal_with_no_error() {
 
 #[test]
 fn a_sharp_spike_survives_qem_where_clustering_rounds_it_off() {
-    // The headline comparison. Both simplifiers are held to the same
-    // triangle budget: clustering runs first and QEM is then asked for no
-    // more triangles than clustering produced, so QEM cannot win by simply
-    // keeping more geometry.
+    // QEM gets clustering's triangle count, so it cannot win by keeping more geometry.
     const HEIGHT: f32 = 2.0;
     let full = spiked_grid(17, HEIGHT);
 
@@ -281,20 +248,7 @@ fn a_sharp_spike_survives_qem_where_clustering_rounds_it_off() {
     let qem_deviation = max_deviation(&full, &qem);
     let clustered_deviation = max_deviation(&full, &clustered);
 
-    // Measured on this mesh (17x17 grid, 512 triangles, both cut to 18):
-    //   QEM        surface peak 2.000000, max deviation 6.66e-8
-    //   clustering surface peak 0.000000, max deviation 2.0000
-    // Clustering does not merely shorten the spike, it loses it entirely -
-    // the tip lands alone in its own grid cell, survives as a vertex, and
-    // then every triangle that referenced it is dropped as degenerate, so
-    // the drawn surface is flat and the tip is a full 2.0 away from it.
-    // QEM instead places the merged vertex exactly at the apex, because the
-    // cone of steep face planes there makes the 3x3 well-conditioned and its
-    // solution is the apex itself.
-    //
-    // The thresholds are those measurements with margin, not predictions.
-    // The gap is large enough that they do not need to be tight; a
-    // regression that half-loses the spike still trips them.
+    // Clustering drops every triangle at the tip; QEM's steep planes solve to the apex itself.
     assert!(
         qem_peak > HEIGHT * 0.95,
         "QEM lost the spike: surface peak {qem_peak} of {HEIGHT}"
@@ -313,10 +267,7 @@ fn a_sharp_spike_survives_qem_where_clustering_rounds_it_off() {
 
 #[test]
 fn output_is_bit_identical_across_runs() {
-    // f32/f64 costs in a heap are the classic source of nondeterminism here:
-    // equal-cost edges pop in whatever order the heap happens to store them
-    // unless the comparator breaks ties on vertex index. A flat region of
-    // the bumpy grid produces plenty of exact ties to expose that.
+    // Equal-cost edges pop in heap order unless ties break on index; flat regions tie a lot.
     let full = bumpy_grid(20);
     let a = simplify_primitive_qem(&full, 0.3);
     let b = simplify_primitive_qem(&full, 0.3);
@@ -336,9 +287,7 @@ fn output_is_bit_identical_across_runs() {
 
 #[test]
 fn attributes_are_carried_through_collapses() {
-    // Not just positions: a collapse that dropped UVs or left normals
-    // unnormalised would pass every geometric assertion above and then shade
-    // and texture wrongly.
+    // Dropped UVs or unnormalised normals would pass every geometric assertion.
     let mut full = bumpy_grid(16);
     for v in &mut full.vertices {
         let n = Vec3::new(v.position[0], v.position[1], 1.0).normalize();
@@ -387,18 +336,13 @@ fn degenerate_inputs_do_not_panic() {
     );
     assert_well_formed(&simplify_primitive_qem(&identical, 0.5));
 
-    // Zero-area faces mixed into a real mesh: the plane is undefined there
-    // and must be skipped rather than producing a NaN quadric.
+    // Zero-area faces have no plane and must be skipped, not become NaN quadrics.
     let mut with_slivers = bumpy_grid(8);
     with_slivers.indices.extend_from_slice(&[0, 0, 1, 2, 2, 2]);
     assert_well_formed(&simplify_primitive_qem(&with_slivers, 0.5));
 }
 
-/// The chain builder must actually route to the chosen simplifier.
-///
-/// Worth its own test because the wiring is inert-failure-prone: if
-/// `build_lod_chain_with` ignored its `Simplifier` argument, every existing
-/// test would still pass and QEM would silently never run in production.
+/// The chain builder must route to the chosen simplifier; nothing else would notice if it did not.
 #[test]
 fn the_chain_builder_routes_to_the_requested_simplifier() {
     use kataglyphis_webgpu_renderer::{build_lod_chain_with, Simplifier};
@@ -417,9 +361,7 @@ fn the_chain_builder_routes_to_the_requested_simplifier() {
         assert_eq!(c.min_distance, q.min_distance);
     }
 
-    // Every QEM level keeps the spike; clustering loses it at these ratios.
-    // This is the same measurement as the headline test, applied through the
-    // public chain API rather than to the simplifier directly.
+    // Every QEM level keeps the spike, through the public chain API.
     for lod in &quadric {
         assert!(
             peak_height(&lod.primitive) > 1.9,
@@ -429,10 +371,7 @@ fn the_chain_builder_routes_to_the_requested_simplifier() {
         assert_well_formed(&lod.primitive);
     }
 
-    // Routing is proven by the geometry differing, NOT by QEM winning here:
-    // the chain's first level uses a 0.02 cell, which barely simplifies at
-    // all, so clustering still holds the spike at that level. Triangle count
-    // is the signal that separates them.
+    // Triangle count proves routing: a 0.02 cell barely simplifies, so both keep the spike.
     eprintln!(
         "level0 tris: clustering {} qem {}",
         triangle_count(&clustered[0].primitive),

@@ -1,13 +1,4 @@
-# .github/workflows/windows-arm64-cross.yml
-#
-# The Windows arm64 lane (owner decision 2026-09-25): Build-Windows.ps1
-# -TargetArch arm64 cross-builds in the family image's arm64 bundle on an amd64
-# runner, and GitHub's windows-11-arm then RUNS the product. A thin caller of
-# ANTfrastructure's container-ci-windows.yml, which owns the image, the arch gate,
-# the upload and the run job; what is left here is what only this repo knows.
-# What a cross build skips: AGENTS.md § Continuous integration.
-#
-# ALWAYS RUNS, like every lane here: no job-level `if:`.
+# Cross-builds arm64 on an amd64 runner, then windows-11-arm runs it; what that skips: AGENTS.md § Continuous integration.
 name: Windows arm64 · cross build + run
 
 on:
@@ -20,8 +11,7 @@ on:
 permissions:
   contents: read
 
-# Same rule as windows-x64.yml: a superseded run on a feature branch or PR is
-# cancelled, runs on the default branch always finish.
+# Superseded runs off the default branch cancel; default-branch runs always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -36,8 +26,7 @@ jobs:
       build-args: |
         -TargetArch
         arm64
-      # The package features and MSIX metadata are Build-Windows.config.psd1's, as
-      # for x64; the version is the one both lanes resolve from VERSION.txt.
+      # Package features and MSIX metadata come from Build-Windows.config.psd1, as for x64.
       container-env: |
         CARGO_TERM_COLOR=always
       version-file: VERSION.txt
@@ -45,11 +34,7 @@ jobs:
       artifact-dir: dist/windows-arm64
       # The exe, the VC++ runtime and the chain ONNX Runtime at the least.
       arch-gate-min-inspected: 3
-      # Loading at all proves the bundle's import closure on a real device;
-      # `stats` then runs real code, `onnx-runtime` loads the bundle's chain
-      # ONNX Runtime, and `media-check` builds the GUI's camera pipeline from the
-      # bundle's GStreamer plugins. The GUI itself needs a desktop the runner has
-      # not got. The hub fails the lane on any line's non-zero exit.
+      # Proves the bundle's imports, chain ONNX Runtime and GStreamer plugins on a real device; the runner has no desktop for the GUI.
       run-command: |
         ./bundle/kataglyphis_cli.exe --help
         ./bundle/kataglyphis_cli.exe stats --path ./bundle/resources/web/redirect/index.html

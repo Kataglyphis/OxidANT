@@ -1,36 +1,12 @@
 #!/bin/bash
-#
-# Env vars:
-#   IMAGE   Container image to run in. Defaults to the family Linux CI image.
+# IMAGE overrides the container image, which defaults to the family Linux CI image.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/antfrastructure.sh
 source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
-# The tag is NOT spelled here, and until now it was: this script carried the
-# full reference inline with no override of any kind, so a fleet-wide tag bump
-# left it behind silently and a local experiment meant editing the file. It is
-# not repeated in this comment either - a literal in a comment rots exactly the
-# same way, and verify_ci_image_refs.py check D now reads *.sh and *.ps1 as well
-# as <root>/.github/**.yml, comments included. ANTfrastructure's
-# linux/scripts/ci-image-ref.sh composes
-# ${IMAGE_REGISTRY_PREFIX}:${CI_IMAGE_LINUX_TAG} from the hub's
-# linux/scripts/01-core/versions.env, the fleet's one owner of both CI refs.
-# Linux, not --windows: this is a `docker run` against /dev/video0 and an X11
-# socket.
-#
-# Its stdout carries the reference and nothing else (every diagnostic goes to
-# stderr), so it is safe inside a command substitution, and a missing key exits
-# non-zero rather than yielding an empty string - under `set -e` that aborts
-# here instead of reaching `docker run` as "run the next argument as an image".
-#
-# antfrastructure_path is resolved on its own line rather than nested inside that
-# substitution. Nested, a missing submodule printed the helper's three-line
-# diagnostic and then ran `bash ""`, adding a bare "bash: : No such file or
-# directory" of its own before exiting 127. Assigned first, `set -e` stops on
-# the real message - the same shape antfrastructure_source and antfrastructure_exec
-# already use.
+# The tag comes from the hub's ci-image-ref.sh, never a literal; two assignments so `set -e` stops.
 if [ -z "${IMAGE:-}" ]; then
     _ci_image_ref_sh="$(antfrastructure_path linux/scripts/ci-image-ref.sh)"
     IMAGE="$(bash "${_ci_image_ref_sh}")"

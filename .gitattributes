@@ -1,14 +1,6 @@
-# PowerShell backtick line-continuations in the Windows workflows are broken by
-# CRLF: a backtick before CR escapes the CR, not the newline, so the continuation
-# dies with "Missing expression after unary operator". Force LF for workflow YAML.
+# Under CRLF a PowerShell backtick escapes the CR, not the newline, breaking line continuations.
 .github/workflows/*.yml text eol=lf
 
-# Shell scripts must stay LF in the working tree on EVERY platform, mirroring
-# the rule ANTfrastructure already carries. They are run by bash inside Linux
-# containers, and on a Windows host this repo is bind-mounted into one - the
-# documented Rancher Desktop workflow. Without this, core.autocrlf=true gives
-# them CRLF and bash dies on the trailing \r with errors that name the wrong
-# culprit: "set: pipefail\r: invalid option name", "$'\r': command not found".
-# Verified 2026-08-07: this is exactly how a local Rancher build failed.
+# Bash in the bind-mounted Linux container dies on a trailing \r that core.autocrlf would add.
 *.sh text eol=lf
 *.bash text eol=lf

@@ -12,20 +12,12 @@ pub struct TonemapPass {
     sampler: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
     bind_group: Option<wgpu::BindGroup>,
-    /// Whether the shader must gamma-encode its output itself.
-    ///
-    /// An sRGB target encodes in hardware, so the shader emits linear and the
-    /// flag is false. WebGPU canvases expose no sRGB surface format - the
-    /// browser hands back something like `Bgra8Unorm` - and writing linear
-    /// values to a non-sRGB target displays them uncorrected, which is why the
-    /// web demo rendered noticeably dark. There the shader has to apply the
-    /// transfer function itself.
+    /// Whether the shader must gamma-encode itself: WebGPU canvases have no sRGB surface format.
     encode_srgb: bool,
 }
 
 impl TonemapPass {
-    /// `output_format` is the format of the view passed to [`Self::render`], e.g.
-    /// the surface format or `Rgba8UnormSrgb` for readback targets.
+    /// `output_format` is the format of the view later passed to [`Self::render`].
     pub fn new(gpu: &GpuContext, output_format: wgpu::TextureFormat) -> Self {
         let device = &gpu.device;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -45,8 +37,7 @@ impl TonemapPass {
                 bind_layout::texture_2d(2, wgpu::ShaderStages::FRAGMENT, true),
                 bind_layout::uniform(3, wgpu::ShaderStages::FRAGMENT),
                 bind_layout::texture_2d(4, wgpu::ShaderStages::FRAGMENT, true),
-                // Exposure comes from the auto-exposure reduction rather than
-                // a CPU uniform, so no frame has to wait on a readback.
+                // Exposure stays on the GPU, so no frame waits on a readback.
                 bind_layout::storage_buffer(5, wgpu::ShaderStages::FRAGMENT, true),
             ],
         });
@@ -94,14 +85,9 @@ impl TonemapPass {
             bytemuck::bytes_of(&[
                 bloom_strength,
                 ssao_strength,
-                // params.z: unused. Exposure comes from exposureState (see
-                // TonemapUniforms in tonemap.slang) so this used to carry a
-                // dead exposure_ev.exp2() write; kept as a field because the
-                // uniform layout is pinned by the shader struct.
+                // params.z: unused, but the shader struct pins the layout.
                 0.0,
-                // params.w: see `encode_srgb`. Decided by the output format at
-                // pipeline creation, not per frame, but it rides along here
-                // because the uniform already exists and its w was unused.
+                // params.w: `encode_srgb`, fixed at creation but carried in the spare slot.
                 if self.encode_srgb { 1.0 } else { 0.0 },
             ]),
         );

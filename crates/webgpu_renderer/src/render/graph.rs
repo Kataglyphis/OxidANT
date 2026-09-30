@@ -1,23 +1,5 @@
-//! A small render graph: passes declare the resources they read and write,
-//! the graph validates the wiring and records them in order.
-//!
-//! This is deliberately *not* a full automatic-scheduling graph. It gives
-//! the three things that actually hurt as pass count grows:
-//!
-//! 1. **A declared frame structure** — the pass list is data, printable and
-//!    testable, instead of an implicit sequence buried in one long function.
-//! 2. **Read/write validation** — a pass that reads a resource nothing has
-//!    written, or two passes writing the same resource in one frame, is a
-//!    hard error at build time rather than a silently black screen.
-//! 3. **A declaration checked against reality** — `TimedPass` (the set of
-//!    passes actually timed at runtime) is validated against this graph's
-//!    rows, in both directions: every timed pass must name a real row, and
-//!    every row must either be timed or be listed as deliberately untimed.
-//!    No pass is recorded through this module; it only describes and checks
-//!    the frame that the renderer's own code records.
-//!
-//! Execution order stays explicit (the order passes are added), because at
-//! this scale a topological sort would hide more than it automates.
+//! A small render graph: passes declare what they read and write, and `validate` checks the wiring.
+//! It only describes the frame the renderer records; order is insertion order, not a scheduler.
 
 #[cfg(test)]
 use super::gpu_timing::TimedPass;
@@ -30,14 +12,11 @@ pub enum Resource {
     ShadowMap,
     /// MSAA depth buffer written by the forward pass.
     DepthMsaa,
-    /// Single-sample depth resolved from `DepthMsaa`; SSAO and the cull
-    /// pass's input.
+    /// Single-sample depth resolved from `DepthMsaa`; SSAO and the cull pass's input.
     Depth,
     /// HDR scene color.
     HdrColor,
-    /// Occlusion/visibility result of the cull pass. Consumed by the
-    /// *following* frame's forward pass (a one-frame-latent feedback loop),
-    /// so nothing reads it within this frame's graph.
+    /// Cull-pass visibility; the *next* frame's forward pass reads it, so nothing here does.
     Visibility,
     /// Blurred bloom contribution.
     Bloom,
@@ -88,11 +67,7 @@ impl std::fmt::Display for GraphError {
 
 impl std::error::Error for GraphError {}
 
-/// Validates a frame's pass list: every read must be satisfied by an
-/// earlier write, and no resource may be written twice.
-///
-/// Resources listed in `external` are considered already available (e.g.
-/// the swapchain frame the caller hands in).
+/// Checks every read follows an earlier write (or is in `external`) and nothing is written twice.
 pub fn validate(passes: &[PassDesc<'_>], external: &[Resource]) -> Result<(), GraphError> {
     let mut written: HashSet<Resource> = external.iter().copied().collect();
     for pass in passes {
@@ -116,15 +91,7 @@ pub fn validate(passes: &[PassDesc<'_>], external: &[Resource]) -> Result<(), Gr
     Ok(())
 }
 
-/// The frame graph the forward renderer records, as data. Kept next to the
-/// recording code so the two stay in step; `validate` proves the wiring.
-///
-/// This is the *maximal* frame: passes the renderer may skip at runtime
-/// (bloom and SSAO at zero strength, occlusion cull when disabled, and the
-/// histogram build when auto-exposure is off) are still declared here, since
-/// the graph documents wiring, not what a given frame actually recorded. Do
-/// not add conditional rows for that - `validate` only needs to prove a
-/// legal read/write order exists, not reproduce runtime toggles.
+/// The forward renderer's *maximal* frame as data; passes skipped at runtime stay declared.
 pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
     vec![
         PassDesc {
@@ -180,10 +147,7 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
     ]
 }
 
-/// Maps a timed pass to the name of the graph row that records it. A
-/// `match` (rather than a string lookup) makes a new `TimedPass` variant a
-/// compile error here, which is what keeps this mapping - and the test built
-/// on it - honest.
+/// Graph row of a timed pass; a `match` so a new `TimedPass` variant fails to compile here.
 #[cfg(test)]
 fn graph_pass_name(pass: TimedPass) -> &'static str {
     match pass {
@@ -198,9 +162,7 @@ fn graph_pass_name(pass: TimedPass) -> &'static str {
     }
 }
 
-/// Graph rows with no `TimedPass` counterpart. Adding a name here is a
-/// deliberate statement that the pass is not worth timing, not a way to
-/// silence `every_graph_row_is_timed_or_explicitly_untimed`.
+/// Graph rows deliberately left untimed; not a way to silence the timed-rows test.
 #[cfg(test)]
 const UNTIMED_ROWS: &[&str] = &["depth_resolve"];
 

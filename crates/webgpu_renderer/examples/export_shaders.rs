@@ -1,16 +1,5 @@
-//! Exports the crate's WGSL shaders as SPIR-V (and GLSL 450) so the C++
-//! Vulkan engine can consume the same shader code.
-//!
-//! Usage:
-//!   cargo run -p kataglyphis_webgpu_renderer --example export_shaders -- [out_dir]
-//!
-//! Default out_dir: `target/shader-export`. Each WGSL entry point becomes
-//! `<shader>.<entry>.spv` plus `<shader>.<entry>.glsl`.
-//!
-//! Why this direction (WGSL as the source of truth): WGSL is the stricter
-//! language (uniformity analysis, no implicit conversions), so what
-//! validates here also compiles for Vulkan — the reverse is not true. See
-//! <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md>.
+//! Exports the crate's WGSL shaders as SPIR-V and GLSL 450 for the C++ Vulkan engine.
+//! See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md>.
 
 use std::path::{Path, PathBuf};
 
@@ -86,8 +75,7 @@ fn main() -> anyhow::Result<()> {
                     exported += 1;
                 }
                 Err(err) => {
-                    // Not every WGSL construct maps to GLSL 450 (e.g. some
-                    // texture array forms); SPIR-V remains the portable path.
+                    // Not every WGSL construct maps to GLSL 450; SPIR-V remains the portable path.
                     println!("skip {name}.{} (GLSL): {err:?}", entry.name);
                 }
             }
