@@ -6,8 +6,7 @@ license.workspace = true
 
 [features]
 default = []
-# GStreamer-backed webcam/video capture. Off by default so non-media builds
-# (and platforms without GStreamer dev files) never touch pkg-config.
+# Off by default so non-media builds never touch pkg-config or need GStreamer dev files.
 gstreamer = [
     "dep:gstreamer",
     "dep:gstreamer-app",

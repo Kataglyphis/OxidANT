@@ -1,10 +1,6 @@
-//! Orbit camera producing wgpu-convention (depth 0..1) view-projection
-//! matrices. Yaw/pitch semantics mirror the C++ engine's camera.
+//! Orbit camera producing wgpu-convention (depth 0..1) view-projection matrices.
 
-// glam 0.33 moved the camera constructors off `Mat4` and split them by clip-
-// space convention. `directx` is glam's name for NDC Z in [0,1] with Y up —
-// which is also wgpu's and Metal's — and it reproduces the old
-// `Mat4::perspective_rh`/`orthographic_rh` bit for bit (verified 2026-08-07).
+// glam's `directx` convention is NDC Z in [0,1], Y up: wgpu's, and the old `Mat4::*_rh` exactly.
 use glam::camera::rh::proj::directx as clip;
 use glam::camera::rh::view::look_at_mat4;
 use glam::{Mat4, Vec3};

@@ -38,8 +38,7 @@ lock_deps_of() {
   ' "$1"
 }
 
-# Reads `cargo metadata` JSON; prints a FAIL line per ort/ort-sys declaration
-# that could link ORT, then "DECLS <count>".
+# Reads `cargo metadata` JSON; prints FAIL per declaration that could link ORT, then "DECLS <count>".
 decl_check_py='
 import json, sys
 need = {"ort": "load-dynamic", "ort-sys": "disable-linking"}
@@ -95,8 +94,7 @@ if [[ "${lock_only}" -eq 0 ]]; then
     failures=$((failures + 1))
   fi
 
-  # (2) sees only the --all-features union; a declaration without load-dynamic
-  # links ORT under any feature subset that activates it alone.
+  # (2) sees only the --all-features union; a subset could still link ORT without load-dynamic.
   py="$(command -v python3 || command -v python || true)"
   if [[ -z "${py}" ]]; then
     printf 'FAIL no python3 to read cargo metadata with\n' >&2

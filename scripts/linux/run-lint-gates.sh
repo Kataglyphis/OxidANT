@@ -1,66 +1,10 @@
 #!/usr/bin/env bash
-# run-lint-gates.sh - this repository's shell + workflow + secret lint gates.
-#
-# THIN WRAPPER over ANTfrastructure linux/scripts/run-lint-gates.sh, which owns the
-# gates themselves, their pinned and SHA-verified bootstraps, the git-ls-files
-# scope construction, the empty-list vacuity guards, the run-them-all-then-fail-
-# once accumulator and the secret gate's self-test (an empty tree must scan
-# clean, a planted PAT must be reported at the path that was passed in -
-# otherwise "no findings" cannot be told apart from "the scanner never started").
-#
-# THIS CLOSES A GAP, IT DOES NOT REPLACE ANYTHING. Before this file OxidANT ran
-# no gate over its SHELL, WORKFLOWS or SECRETS. It was not ungated entirely:
-# the Linux lane's "Check formatting and clippy" step already enforces
-# `cargo fmt --all -- --check` and `cargo clippy`, which is the Rust half and stays
-# where it is (it runs through scripts/linux/ci-container-steps.sh fmt-clippy). Named
-# by step rather than by line number, because the line numbers moved twice already.
-# 4 tracked *.sh and 2 workflows went ungraded, and -
-# the part that matters most - nothing ever scanned the tree for committed
-# credentials, while the Linux lane publishes the docs over FTP with
-# secrets.SERVER / secrets.USERNAME / secrets.PW. That lane is
-# .github/workflows/reusable-linux.yml since 2026-09-24, called by linux-x64.yml
-# (which publishes) and linux-arm64.yml.
-#
-# CI and a human run the SAME gate with the SAME flags, so the gate that blocks
-# a merge can be reproduced on a dev box without pushing:
-#
-#   bash scripts/linux/run-lint-gates.sh   # the whole repo
-#
-# CI reaches the aggregator through ANTfrastructure's reusable lint-gates.yml
-# rather than through this file (the wrappers sit at different paths across the
-# family, and one consumer has no submodule at all), so the two are equivalent
-# by construction rather than by call: same aggregator, same explicit root,
-# same --exclude third_party, same --ratchets.
-#
-# The consumer root is passed EXPLICITLY and is never inferred upstream: the
-# hub half of this gate lives inside third_party/ANTfrastructure, so a root derived
-# from its own location would grade ANTfrastructure's tree and report green over
-# the wrong repository.
-#
-# Extra arguments are forwarded. Upstream takes --ratchets (already passed
-# below) and --exclude <top-level-dir>, and --exclude REPLACES the third_party
-# default rather than adding to it, so a narrower sweep has to name third_party
-# again:
-#
-#   bash scripts/linux/run-lint-gates.sh --exclude third_party --exclude logs
-#
-# That default is what this repo wants unqualified: third_party/ANTfrastructure is
-# a submodule, graded in its own repository at its own ratchet. Everything else
-# here - including resources/ and logs/ - is OxidANT's own and stays in scope.
-#
-# The gate binaries are fetched on first use (pinned and SHA-verified upstream),
-# so the first local run is not instant.
+# The hub lint aggregator on this repo's explicit root, as lint-gates.yml runs it; --exclude replaces third_party.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/antfrastructure.sh
 source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
-# --ratchets is ON, matching .github/workflows/lint-gates.yml's `ratchets: true`.
-# It adds the eight --root measurement gates plus the docs cross-reference gate,
-# frozen at <repo>/<gate>.allow. Three of those freeze files carry rows -
-# comment-size.allow, code-complexity.allow, dead-functions.allow - and were
-# seeded from the first run on 2026-09-15; the others are absent, which the
-# gates read as a zero baseline. The flag is repeatable upstream, so passing
-# --ratchets again on the command line is harmless.
+# Matches lint-gates.yml's `ratchets: true`; baselines are the <gate>.allow files, absent meaning zero.
 antfrastructure_exec linux/scripts/run-lint-gates.sh "${KATAGLYPHIS_REPO_ROOT}" --ratchets "$@"

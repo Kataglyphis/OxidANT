@@ -1,8 +1,5 @@
 /// A single detection in *original image pixel coordinates*.
-///
-/// This struct is always compiled (not feature-gated) so that public API
-/// surfaces (`api::onnx`) can reference it regardless of which ONNX backend
-/// is enabled.
+/// Not feature-gated, so `api::onnx` can name it whichever ONNX backend is enabled.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[allow(dead_code)]
 pub struct Detection {

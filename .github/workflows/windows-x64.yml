@@ -1,16 +1,4 @@
-# .github/workflows/windows-x64.yml
-#
-# The Windows x64 lane: debug tests, the app config matrix, the lint + package
-# build, then on the runner host the WebGPU renderer tests and a run of the
-# packaged exe. A thin caller of ANTfrastructure's container-ci-windows.yml since
-# 2026-09-25 (the family's hub reusable lanes); the container half is
-# scripts/windows/Invoke-WindowsLane.ps1, which a local container run executes
-# too. The products land in dist/windows-x64 and upload as one artifact, like
-# the arm64 lane's.
-#
-# ALWAYS RUNS since 2026-09-24 (owner request): no job-level `if:`, and none may
-# be added back. Family naming, same date: kebab-case files, one per platform +
-# arch, display name '<Platform> <Arch> · <what>'.
+# The container half is scripts/windows/Invoke-WindowsLane.ps1, which a local container run executes too.
 name: Windows x64 · build + test
 
 on:
@@ -23,8 +11,7 @@ on:
 permissions:
   contents: read
 
-# This lane is two hours long, so a run superseded by a newer push to a feature
-# branch or PR is cancelled; runs on the default branch always finish.
+# A two-hour lane: superseded runs off the default branch cancel; default-branch runs always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -39,38 +26,26 @@ jobs:
       build-args: |
         -TargetArch
         amd64
-      # 2500M, not 3G: the prune job below deletes the older x64-windows entry only after the
-      # save, so two of them share the 10 GB cache quota for a moment with both cargo caches.
-      # At 3G that was 10.4 GB, and GitHub would have evicted the x64 cargo cache. A cold build
-      # stores about 2 GiB; the hit rate stayed 90.84 % whether the entry was 2.3, 2.8 or 3.1 GB
-      # (2026-09-29), so the extra was the 120 misses each run adds and never reads again.
+      # 2500M: until the prune, two x64-windows entries share the 10 GB quota with both cargo caches.
       container-env: |
         CARGO_TERM_COLOR=always
         SCCACHE_CACHE_SIZE=2500M
-      # CARGO_HOME (the cargo-audit/-deny installs) and a rustc sccache across runs;
-      # Invoke-WindowsLane.ps1 moves them in and out of the container-local dirs.
+      # Invoke-WindowsLane.ps1 moves CARGO_HOME and sccache in and out of the container-local dirs.
       compiler-cache-key: x64-windows
       version-file: VERSION.txt
-      # The renderer's lib tests cannot start on Server Core: wgpu's gles backend
-      # imports opengl32.dll, which it does not ship. The host has it, so the host
-      # runs them, and runs the packaged exe to prove the chain ONNX Runtime loads
-      # and the GUI's camera pipeline builds from the plugins the bundle carries.
+      # Server Core lacks the opengl32.dll wgpu's gles backend imports, so the host runs the renderer tests and the exe.
       host-command: |
         ./scripts/windows/Invoke-HostTests.ps1 -ContainerRoot 'C:\ws'
         ./dist/windows-x64/bundle/kataglyphis_cli.exe onnx-runtime
         ./dist/windows-x64/bundle/kataglyphis_cli.exe media-check
       artifact-name: kataglyphis_cli-windows-x64
       artifact-dir: dist/windows-x64
-      # The last green runs took 122 and 155 min; four hours still stops a hung
-      # container step long before the six-hour default.
+      # Green runs take two to three hours; four still stops a hung step long before the six-hour default.
       timeout-minutes: 240
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
-  # container-ci-windows.yml saves the x64-windows cache but cannot delete: its job grants
-  # contents: read only. This deletes the entries older runs left, so the key keeps one
-  # (about 3.0 GB) inside the repository's 10 GB cache quota. It deletes nothing when the
-  # build never saved (require-saved), so a failed host keeps the older entry.
+  # The reusable lane can save the cache but not delete (contents: read), so this keeps the key to one entry.
   prune-compiler-cache:
     name: Prune the compiler cache
     needs: build

@@ -1,21 +1,9 @@
 //! Shared helpers for working with `ort` (ONNX Runtime) results and outputs.
-//!
-//! `ort::Error<R>` implements `Display` for all `R`, but only implements
-//! `std::error::Error + Send + Sync` when `R` does too.  Since `SessionBuilder`
-//! lacks those traits, anyhow's `.context()` cannot be used directly on
-//! `Result<T, ort::Error<SessionBuilder>>`.
-//!
-//! This module provides:
-//!
-//! - [`OrtResultExt`] — converts any `Result<T, ort::Error<R>>` to
-//!   `anyhow::Result<T>` via the always-available `Display` impl.
-//! - [`extract_first_f32_output`] — extracts the first tensor output from a
-//!   completed ORT session run as `(shape, flat_data)`.
+//! `ort::Error<SessionBuilder>` is not `Send + Sync`, so anyhow's `.context()` cannot take it.
 
 use anyhow::{bail, Context, Result};
 
-/// Extension trait that maps `ort::Error<R>` (for any `R`) into `anyhow::Error`
-/// using the `Display` impl, which is available unconditionally.
+/// Maps `ort::Error<R>` for any `R` into `anyhow::Error` through its unconditional `Display`.
 pub trait OrtResultExt<T> {
     fn with_ort_context(self, msg: &'static str) -> Result<T>;
 }
@@ -27,10 +15,7 @@ impl<T, R> OrtResultExt<T> for std::result::Result<T, ort::Error<R>> {
     }
 }
 
-/// Extract the first output from a completed ORT run, returning owned data.
-///
-/// Returns `(shape, flat_f32_data)` with dimensions converted from `i64` to
-/// `usize`.  Bails on negative (dynamic) dimensions.
+/// Extract the first output of an ORT run as owned `(shape, flat_f32_data)`; bails on dynamic dims.
 pub fn extract_first_f32_output(
     outputs: &ort::session::SessionOutputs<'_>,
 ) -> Result<(Vec<usize>, Vec<f32>)> {

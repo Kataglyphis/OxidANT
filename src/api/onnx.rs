@@ -10,8 +10,7 @@ pub fn detect_persons_rgba(
     height: u32,
     score_threshold: f32,
 ) -> Result<Vec<Detection>, String> {
-    // Note: `person_detection` is feature-gated; keep this function compilable even when
-    // ONNX features are disabled (e.g. for WASM builds).
+    // `person_detection` is feature-gated; this must still compile without ONNX (e.g. WASM).
     let resolved_model_path = {
         #[cfg(onnx)]
         {
@@ -67,13 +66,11 @@ fn detect_persons_rgba_impl(
             .unwrap_or(true)
     };
 
-    // Load the model *outside* the lock so concurrent callers aren't blocked
-    // for the (potentially multi-second) model load.
+    // Load outside the lock so concurrent callers are not blocked for a multi-second load.
     if needs_reload {
         let detector = PersonDetector::new(model_path)?;
         let mut guard = lock_guard();
-        // Re-check: another thread may have loaded the same model while we
-        // were loading ours.
+        // Re-check: another thread may have loaded the same model meanwhile.
         let still_needs = guard
             .as_ref()
             .map(|c| c.model_path != model_path)

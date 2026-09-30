@@ -1,8 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 
-/// WASM implementation of file read using blocking std::fs (suitable for tests
-/// and environments where tokio isn't available).
+/// WASM read_file on blocking std::fs, for environments without tokio.
 pub async fn read_file(path: impl AsRef<Path>) -> Result<String> {
     // run blocking sync function inside async fn, keep signature consistent
     let path = path.as_ref().to_path_buf();

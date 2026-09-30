@@ -75,6 +75,7 @@ The entries this repo reaches for most:
 | Which image, which tag, which engine? | `docs/adopting-in-a-new-project.md` |
 | Why did my lane not run? | `docs/ci-build-triggers.md` |
 | How do I upgrade a dependency, and what will `--apply` refuse to move? | `docs/dependency-updates.md` |
+| How long may a code comment be? One line, only the why; API docs short; gated | [the hub rule, Comments](third_party/ANTfrastructure/AGENTS.md#comments-one-line-only-the-why) |
 
 When something in this file contradicts one of those, **the submodule wins**.
 That has happened twice, both times because a procedure was retyped here instead
@@ -319,6 +320,17 @@ full-workspace release build confirms it. zune-jpeg's newest release is still 0.
   **Fix it upstream, not here.** The `.wgsl` files in `src/shaders/` are checked-in *generated artifacts*; there is no `.slang` file in this repo, and the code comments reference the C++ engine's `forward.slang` by line number (e.g. `cascades.rs` → `forward.slang:151`). Hand-editing the generated WGSL would desynchronise it from its source.
 
   **That one test is `#[ignore]`d, with the reason in the attribute**, and it is the only scope cut on `KATAGLYPHIS_REQUIRE_GPU`: it fails on every adapter, software or not, so letting it red the lane would only have pushed the flag back out. `cargo test -p kataglyphis_webgpu_renderer --test skinned_bounds -- --ignored` still runs it; remove the attribute with the fix.
+
+### Tests and scripts that read source text
+
+- `crates/webgpu_renderer/tests/buffer_desc_single_definition.rs` pins the two `BufferDescriptor` outliers by
+  line number (`occlusion.rs:358`, `histogram.rs:102`), so a comment edit above either line breaks it.
+- `TEXTURE_2D_SHAPE_OK` must stay on the first line of its `wgpu::TextureDescriptor {` body
+  (`tests/texture_desc_single_definition.rs`).
+- `scripts/linux/check-ort-chain-only.sh --help` prints lines 2-10 of the file (`sed -n '2,10p'`).
+- The two bootstrap copies (`scripts/linux/lib/antfrastructure.sh`, `scripts/windows/Resolve-BuildModule.ps1`)
+  must equal the hub templates below their header (`sync-shared-config.sh --check`). Re-copy them after an
+  upstream change; never edit them here.
 
 ### Verifying locally on a Windows box (no MSVC required)
 

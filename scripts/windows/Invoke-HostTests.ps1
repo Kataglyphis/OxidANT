@@ -1,14 +1,8 @@
 #requires -Version 7.0
-# Runs, on the runner HOST, the test binaries the Windows container builds but
-# cannot start: wgpu's gles backend imports opengl32.dll at load time, which
-# servercore does not ship (STATUS_DLL_NOT_FOUND before main). Invoke-DebugTests.ps1
-# records one repo-relative path per line in target\host-tests\*.txt.
+# Runs on the host the test binaries listed in target\host-tests\*.txt, which servercore cannot load.
 [CmdletBinding()]
 param(
-  # The workspace path INSIDE the build container. Test binaries embed it at compile time
-  # (env!("CARGO_MANIFEST_DIR") -> C:\ws\crates\...), so their fixtures resolve on the host
-  # only if that path reaches this tree (run 36038436509: four renderer tests could not load
-  # C:\ws\crates\webgpu_renderer\tests\assets\*.gltf from a checkout at D:\ws).
+  # The container's workspace path, which test binaries embed via CARGO_MANIFEST_DIR for fixtures.
   [string]$ContainerRoot = 'C:\ws'
 )
 
@@ -21,8 +15,7 @@ if ($lists.Count -eq 0) {
   throw 'No test list under target\host-tests: Invoke-DebugTests.ps1 must run first, in the container.'
 }
 
-# A junction, not a copy: no admin needed, and the tree is the one the container built.
-# An existing path that leads anywhere else is refused, never replaced.
+# A junction needs no admin; an existing path leading elsewhere is refused, never replaced.
 if ($ContainerRoot -and ($ContainerRoot.TrimEnd('\') -ne $repoRoot.TrimEnd('\'))) {
   $existing = Get-Item -LiteralPath $ContainerRoot -Force -ErrorAction SilentlyContinue
   if (-not $existing) {

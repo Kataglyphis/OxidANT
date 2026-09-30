@@ -21,11 +21,7 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     train_device: &TrainB::Device,
 ) -> anyhow::Result<()> {
     kataglyphis_inference::ort_runtime::ensure_ort_loaded()?;
-    // `mut` is load-bearing on BOTH paths since ort rc.13: `commit_from_file`
-    // takes `&mut self` there (it took `self` through rc.12). Assigning into
-    // the same binding rather than shadowing it keeps the DirectML path free
-    // of an `unused_mut` warning, which `-D warnings` would turn into a build
-    // failure on the Windows lane only.
+    // `commit_from_file` takes `&mut self`; reassign rather than shadow, or DirectML hits `unused_mut`.
     let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
 
     #[cfg(all(feature = "onnxruntime_directml", windows))]
@@ -48,8 +44,7 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
         println!("output[{i}] name={:?}", output.name());
     }
 
-    // Warmup — intentionally allocates fresh input each iteration to warm the
-    // allocator as well as the ORT session.
+    // Fresh input per warmup iteration warms the allocator as well as the ORT session.
     for i in 0..warmup {
         let input = make_demo_image_1x3x640x640(i as u64);
         let out = run_once(&mut session, input).context("warmup run")?;
@@ -58,8 +53,7 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
         }
     }
 
-    // Timed runs — pre-allocate all input images so the benchmark only
-    // measures inference latency, not random-number generation / allocation.
+    // Inputs are pre-allocated so the timed runs measure inference only.
     let inputs: Vec<Array4<f32>> = (0..runs.max(1))
         .map(|i| make_demo_image_1x3x640x640(1234 + i as u64))
         .collect();
@@ -143,8 +137,7 @@ fn make_adapter_batch<B: Backend>(
     let flat: Vec<f32> = features_300x6.iter().copied().collect();
     let n_rows = features_300x6.nrows();
     let data = TensorData::new(flat, [n_rows, 6]);
-    // Identity target: x == y.  Clone the tensor (shares layout metadata,
-    // copies only the backing buffer) rather than re-collecting flat data.
+    // Identity target (x == y), built from one TensorData rather than re-collecting the flat data.
     let x = Tensor::<B, 2>::from_data(data.clone(), device);
     let y = Tensor::<B, 2>::from_data(data, device);
     (x, y)

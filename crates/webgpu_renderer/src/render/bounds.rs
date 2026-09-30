@@ -1,20 +1,12 @@
-//! Pure-CPU bounds and frustum-culling geometry, split out of `forward.rs`.
-//!
-//! > **World bounds must cover every pose the geometry can actually reach —
-//! > not the pose it was authored in.**
-//!
-//! See this crate's `../../docs/renderer-bounds-invariant.md` for the full
-//! rule, why it keeps recurring, and every consumer that reads bounds. The path
-//! is relative to this file and correct in every checkout: it moved here from
-//! BeschleunigerBallett under decision D6, so it travels with the code.
+//! Pure-CPU bounds and frustum-culling geometry.
+//! See `../../docs/renderer-bounds-invariant.md` § The rule
 
 use glam::{Mat4, Vec3};
 
 use crate::render::forward::MAX_JOINTS;
 use crate::scene::{CpuScene, CpuSkin};
 
-/// View-frustum from a wgpu-convention (0..1 depth) view-projection matrix
-/// (Gribb-Hartmann plane extraction; plane normals point inward).
+/// View frustum from a wgpu (0..1 depth) view-projection; Gribb-Hartmann planes, normals inward.
 pub(crate) struct Frustum {
     planes: [glam::Vec4; 6],
 }
@@ -37,24 +29,13 @@ impl Frustum {
         }
     }
 
-    /// Positive-vertex test: the AABB is outside when its most favorable
-    /// corner is behind any plane.
+    /// Positive-vertex test: outside when the AABB's most favourable corner is behind any plane.
     pub(crate) fn intersects_aabb(&self, min: Vec3, max: Vec3) -> bool {
         self.test_planes(min, max, &self.planes)
     }
 
-    /// Visibility test for SHADOW CASTERS: identical, except the near plane
-    /// is ignored - a correctness requirement, not an optimisation. A
-    /// cascade's ortho box is fitted to the camera slice it covers; geometry
-    /// between the light and that box lies outside the near plane but still
-    /// casts into it along the box's own depth axis. Culling it produces the
-    /// missing-shadow-from-tall-geometry bug the C++ engine documents in
-    /// scene/Frustum.ixx. Side and far planes are safe: a caster outside them
-    /// in the light's XY casts its shadow outside the map too.
-    ///
-    /// Only the tests below exercise it today — the cascade pass still culls
-    /// casters with the near-plane-inclusive [`Self::intersects_aabb`]. Kept
-    /// (and tested) so wiring it up is a one-line change, not a rewrite.
+    /// Caster test without the near plane: casters between light and cascade box still shadow it.
+    /// Only tests call it yet; the cascade pass still culls casters with [`Self::intersects_aabb`].
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn intersects_aabb_as_caster(&self, min: Vec3, max: Vec3) -> bool {
         let [left, right, bottom, top, _near, far] = &self.planes;
@@ -76,13 +57,8 @@ impl Frustum {
     }
 }
 
-/// Inverse-transpose of a model matrix, guarded against singular input.
-///
-/// A zero-scale node is how Blender (and plenty of exporters) hide an object, so
-/// singular model matrices arrive in ordinary files. `Mat4::inverse` on one
-/// yields inf/NaN, which poisons the normal matrix and shades that primitive as
-/// garbage. Fall back to identity: the geometry is degenerate anyway, and a
-/// finite wrong normal is strictly better than a NaN one.
+/// Inverse-transpose of a model matrix, identity when singular.
+/// Zero-scale nodes (how exporters hide objects) are common; a NaN normal matrix shades garbage.
 pub(crate) fn normal_matrix_of(model: Mat4) -> Mat4 {
     let inv = model.inverse();
     if inv.is_finite() {
@@ -92,13 +68,8 @@ pub(crate) fn normal_matrix_of(model: Mat4) -> Mat4 {
     }
 }
 
-/// True when `p` lies inside the AABB expanded by the SAME margin the occlusion
-/// proxy box uses (`occlusion_bbox.wgsl`: 2% of the half-extent plus 1 cm), so
-/// this CPU test agrees with the box actually rasterised rather than a slightly
-/// different one. Thin wrapper over [`crate::render::occlusion::aabb_contains`],
-/// which `OcclusionQueries::record` also uses to force-visible a primitive the
-/// camera sits inside - kept here too since the GPU-culling path (no such
-/// baked-in forcing) still needs this guard at the draw-skip decision below.
+/// True when `p` is inside the AABB grown by the occlusion proxy's margin (`occlusion_bbox.wgsl`).
+/// The GPU-culling path needs it at draw-skip time; `OcclusionQueries::record` has it built in.
 pub(crate) fn aabb_contains_point(min: Vec3, max: Vec3, p: Vec3) -> bool {
     crate::render::occlusion::aabb_contains(
         min,
@@ -108,20 +79,8 @@ pub(crate) fn aabb_contains_point(min: Vec3, max: Vec3, p: Vec3) -> bool {
     )
 }
 
-/// Bounds covering every instance of `pre`.
-///
-/// See this crate's `../../docs/renderer-bounds-invariant.md`
-/// for the rule these helpers exist to uphold, the full list of consumers
-/// that read bounds, and why each over-cover argument is a proof rather than
-/// a fudge factor. Eight bugs in this renderer were the same bug; that
-/// document is the checklist for not writing a ninth.
-///
-/// The shader builds its world position as `instance_matrix * skin_matrix * v`,
-/// so instance transforms apply ON TOP of the posed box. With bounds left at the
-/// un-instanced position the frustum test culls the whole primitive - every
-/// instance with it - as soon as the base position leaves the view, even while
-/// the instances are on screen. Empty means the default single identity
-/// instance, for which the bounds are unchanged.
+/// Bounds covering every instance of `pre`; empty `instances` means one identity instance.
+/// See `../../docs/renderer-bounds-invariant.md` § How to be conservative correctly
 pub(crate) fn instanced_bounds(pre: (Vec3, Vec3), instances: &[Mat4]) -> (Vec3, Vec3) {
     if instances.is_empty() {
         return pre;
@@ -136,17 +95,8 @@ pub(crate) fn instanced_bounds(pre: (Vec3, Vec3), instances: &[Mat4]) -> (Vec3, 
     (min, max)
 }
 
-/// Widen world bounds so they cover every pose the skin can put this geometry
-/// in.
-///
-/// A skinned vertex ignores the node/model matrix entirely (`skin_matrix` in
-/// forward.wgsl returns the joint blend and only falls back to `uniforms.model`
-/// when the weights are zero), so node-derived bounds describe the bind pose,
-/// not what is drawn. Skin weights are normalized, which makes the skinned
-/// position a CONVEX COMBINATION of `J_i * v`; it therefore lies inside the
-/// union of the per-joint boxes, so unioning them is conservative and never
-/// culls visible geometry. The caller's node-derived box is kept in the union
-/// because a skinned primitive may still contain zero-weight vertices.
+/// Widens world bounds to every pose the skin can reach by unioning the per-joint boxes.
+/// The node-derived box stays in the union because zero-weight vertices still use the model matrix.
 pub(crate) fn widen_bounds_for_skin(
     bounds: (Vec3, Vec3),
     local_min: Vec3,
@@ -170,10 +120,7 @@ pub(crate) fn widen_bounds_for_skin(
 }
 
 pub(crate) fn primitive_world_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
-    // Morphed primitives go through the pose-covering local bounds and are then
-    // transformed as a box, which stays conservative under rotation. Everything
-    // else keeps the exact per-vertex transform - a tighter box, and the path
-    // every non-morph primitive used before morph targets existed.
+    // Morphed primitives transform their pose-covering local box; the rest keep a per-vertex fit.
     if !prim.morph_targets.is_empty() {
         let (lo, hi) = primitive_local_aabb(prim);
         return transform_aabb(prim.transform, lo, hi);
@@ -184,8 +131,7 @@ pub(crate) fn primitive_world_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, 
         let world = prim
             .transform
             .transform_point3(Vec3::from_array(vertex.position));
-        // Same reasoning as primitive_local_aabb: never let a non-finite vertex
-        // (or a non-finite transform) reach the cascade fitting.
+        // A non-finite vertex or transform must never reach the cascade fitting.
         if !world.is_finite() {
             continue;
         }
@@ -199,26 +145,13 @@ pub(crate) fn primitive_world_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, 
     }
 }
 
-/// Local-space bounds that cover every pose the primitive can reach.
-///
-/// Morph targets move vertices away from the neutral pose, so bounds taken from
-/// `vertices` alone would be too small and frustum culling would drop a morphed
-/// primitive while it is still on screen. For weights in [0,1] the reachable
-/// extremes of a vertex are its position plus the sum of the negative deltas
-/// (lower corner) and plus the sum of the positive deltas (upper corner), so
-/// this is exact over that weight range and conservative outside it. Primitives
-/// without morph targets are unaffected.
+/// Local-space bounds covering every morph pose the primitive can reach (exact for weights 0..1).
 pub(crate) fn primitive_local_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     for (i, vertex) in prim.vertices.iter().enumerate() {
         let p = Vec3::from_array(vertex.position);
-        // Skip non-finite positions instead of letting them propagate. A single
-        // NaN/inf vertex otherwise NaNs these bounds, then the scene bounds, then
-        // the cascade radius - and ALL THREE cascade matrices become NaN, so
-        // shadows break for every object in the scene, not just the bad mesh.
-        // (`Frustum::test_planes` also treats NaN as visible, so the bad
-        // primitive would additionally never cull.)
+        // One NaN vertex would NaN the scene bounds and every cascade matrix, so skip it.
         if !p.is_finite() {
             continue;
         }
@@ -261,11 +194,7 @@ pub(crate) fn transform_aabb(m: Mat4, min: Vec3, max: Vec3) -> (Vec3, Vec3) {
 }
 
 pub(crate) fn compute_world_bounds(scene: &CpuScene) -> Option<(Vec3, Vec3)> {
-    // Union the per-primitive world AABBs rather than raw vertices: that helper
-    // covers the morphed pose, so a morphing scene cannot report bounds smaller
-    // than the geometry it actually draws (these bounds fit the shadow
-    // cascades). For primitives without morph targets the helper still does the
-    // exact per-vertex transform, so this is identical to the previous result.
+    // Per-primitive AABBs, not raw vertices, so the cascades fit the morphed pose actually drawn.
     let mut bounds: Option<(Vec3, Vec3)> = None;
     for prim in &scene.primitives {
         if prim.vertices.is_empty() {
@@ -282,20 +211,13 @@ pub(crate) fn compute_world_bounds(scene: &CpuScene) -> Option<(Vec3, Vec3)> {
 
 #[cfg(test)]
 mod tests {
-    // glam 0.33 moved the camera constructors off `Mat4` and split them by
-    // clip-space convention. `directx` is glam's name for NDC Z in [0,1] with
-    // Y up — which is also wgpu's and Metal's — and it reproduces the old
-    // `Mat4::perspective_rh`/`orthographic_rh` bit for bit (verified against
-    // glam 0.33.3 on 2026-08-07).
+    // glam's `directx` clip space (NDC Z 0..1, Y up) is wgpu's and matches the old `Mat4::*_rh`.
     use glam::camera::rh::proj::directx as clip;
     use glam::camera::rh::view::look_at_mat4;
 
     #[test]
     fn caster_test_ignores_the_near_plane_and_nothing_else() {
-        // Ortho box [-1,1]^3: something BEHIND the near plane (z just above
-        // 1 in view space, i.e. between the light and the box) must survive
-        // the caster test - its shadow still falls into the box - while the
-        // full test rejects it. Anything outside a SIDE plane must fail both.
+        // Between the light and the box only the caster test passes; beside the box both fail.
         let light = clip::orthographic(-1.0, 1.0, -1.0, 1.0, 0.0, 2.0)
             * look_at_mat4(Vec3::new(0.0, 0.0, 1.0), Vec3::ZERO, Vec3::Y);
 
@@ -324,9 +246,7 @@ mod tests {
 
     #[test]
     fn a_singular_model_matrix_yields_a_finite_normal_matrix() {
-        // Zero scale on an axis is how Blender hides an object, so singular
-        // matrices arrive in ordinary files. inverse() is inf/NaN there, and a
-        // NaN normal matrix shades the primitive as garbage.
+        // Zero scale on an axis is how Blender hides an object.
         let squashed = Mat4::from_scale(Vec3::new(1.0, 0.0, 1.0));
         assert!(
             !squashed.inverse().is_finite(),
@@ -344,8 +264,7 @@ mod tests {
 
     #[test]
     fn a_non_finite_vertex_cannot_poison_the_bounds() {
-        // One bad vertex used to NaN these bounds, then the scene bounds, then
-        // the cascade radius - breaking shadows for EVERY object in the scene.
+        // One bad vertex would otherwise break shadows for every object in the scene.
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
         let scene = crate::load_gltf(path).expect("cube.gltf must load");
         let mut prim = scene.primitives[0].clone();
@@ -370,10 +289,7 @@ mod tests {
 
     #[test]
     fn aabb_contains_point_matches_the_occlusion_proxy_margin() {
-        // The guard that keeps a camera-containing primitive drawn must agree
-        // with the box occlusion_bbox.wgsl actually rasterises, or it protects a
-        // slightly different volume than the one that misbehaves. That shader
-        // expands by `half * 0.02 + 0.01`.
+        // Must match occlusion_bbox.wgsl's `half * 0.02 + 0.01` growth or it guards another volume.
         let (min, max) = (Vec3::splat(-0.5), Vec3::splat(0.5));
         let margin = 0.5 * 0.02 + 0.01; // half-extent 0.5
 
@@ -393,11 +309,7 @@ mod tests {
 
     #[test]
     fn morph_targets_expand_the_culling_bounds() {
-        // cube_morph.gltf is the unit cube (positions in [-0.5, 0.5]) plus one
-        // target that lifts every vertex +1.0 in Y. Bounds taken from the
-        // neutral pose alone would stop at y = 0.5, so a fully-weighted morph
-        // would sit outside its own AABB and the frustum test could cull it
-        // while it is plainly on screen.
+        // cube_morph.gltf: the unit cube plus one target lifting every vertex +1.0 in Y.
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_morph.gltf");
         let scene = crate::load_gltf(path).expect("cube_morph.gltf must load");
@@ -410,8 +322,7 @@ mod tests {
             "bounds must reach the fully-morphed pose (0.5 + 1.0), got max.y={}",
             max.y
         );
-        // The neutral pose stays inside: the +Y target only has positive deltas,
-        // so the lower bound must NOT be dragged upward.
+        // The +Y target has only positive deltas, so the lower bound must not move.
         assert!(
             (min.y + 0.5).abs() < 1e-5,
             "unmorphed extent must be preserved, got min.y={}",

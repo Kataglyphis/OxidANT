@@ -1,22 +1,4 @@
-# .github/workflows/reusable-linux.yml
-#
-# THE LINUX LANE, WRITTEN ONCE FOR BOTH ARCHITECTURES. linux-x64.yml and
-# linux-arm64.yml are thin callers: each says WHEN it runs and WHICH runner,
-# container platform and artifact suffix it wants, and this file says HOW. Every
-# step is shared, so an arch-specific copy of any of them would be a second
-# place to edit and a second chance to drift.
-#
-# Until 2026-09-24 this was one workflow, rust_ubuntu26_04.yml, whose arm64 row
-# only ran with `[build-arm]` in the HEAD commit message. The owner asked for
-# every platform lane on every push and PR, and the family naming convention
-# is one kebab-case file per platform + arch, so the matrix became two callers
-# of this file. Neither caller carries an `if:`; that is what "always runs"
-# rests on.
-#
-# NO `concurrency:` HERE, DELIBERATELY. Inside a called workflow
-# `github.workflow` is the CALLER's name, so a group here would repeat the
-# caller's own and GitHub cancels the run as a concurrency deadlock. Each caller
-# owns its group, one per workflow.
+# Both Linux lanes' steps; no `concurrency:` here, since github.workflow is the caller's name and a group would deadlock.
 name: Linux · reusable build
 
 on:
@@ -46,9 +28,7 @@ on:
           one caller sets this: the site is one site, not one per architecture.
         type: boolean
         default: false
-    # All four optional, because a fork PR has none of them:
-    # prepare-linux-ci-host skips the registry login on an empty password (the
-    # image is public) and the FTP publish never runs on a pull_request.
+    # All optional for fork PRs: the image is public and the FTP publish never runs on a pull_request.
     secrets:
       GHCR_PAT:
         required: false
@@ -59,43 +39,21 @@ on:
       PW:
         required: false
 
-# Nothing in this workflow writes to the repository. The GHCR pull and the
-# docs publish authenticate with their own secrets, never with GITHUB_TOKEN,
-# so the default (often write) token permissions are pure attack surface.
+# The GHCR pull and docs publish use their own secrets, never GITHUB_TOKEN.
 permissions:
   contents: read
 
-# NO CONTAINER_IMAGE HERE, DELIBERATELY. This workflow opened with a
-# `CONTAINER_IMAGE:` holding the full image reference and handed it to all
-# twelve container steps below. It called itself the "single source of truth"
-# for the build image and was the opposite: a COPY of a value ANTfrastructure
-# already owns (versions.env's IMAGE_REGISTRY_PREFIX + CI_IMAGE_LINUX_TAG), so
-# a fleet-wide tag bump landed everywhere except here. The ref is not repeated
-# in this comment either - a literal in a comment rots the same way, and
-# verify_ci_image_refs.py check D reads comments too.
-#
-# Both container actions declare that composed ref as their `image:` input
-# DEFAULT, so OMITTING the input is how a lane says "the family image"; check A
-# of that same gate fails ANTfrastructure's own build if a default and versions.env
-# ever disagree. This is exactly the route the actions' input docs prescribe
-# ("SINGLE SOURCE OF TRUTH: omit this input").
+# No image ref here: omitting the actions' `image:` input takes the family image from versions.env.
 env:
   CARGO_TERM_COLOR: always
-  # The image ships CARGO_HOME=/usr/local/cargo owned by root while the
-  # container runs as uid 1001. Every cargo step that WRITES (registry cache,
-  # `cargo install`, tarpaulin, rustdoc) dies with "Permission denied" unless
-  # CARGO_HOME points somewhere the uid owns. ANTfrastructure's cargo scripts
-  # carry a guard for this, but setting it here covers the direct cargo
-  # invocations below too - one place instead of six.
+  # The image's CARGO_HOME is root-owned and the container runs as uid 1001, so cargo writes need their own.
   CONTAINER_ENV: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always
 
 jobs:
   build:
     name: Build, test, package (${{ inputs.arch }})
     runs-on: ${{ inputs.runner }}
-    # About 35 minutes on x64 (the 2026-09-22 and 2026-09-23 runs); arm64 runs
-    # the same steps natively. Room for twice that plus a cold image pull, and
-    # far short of the six-hour account default a hung step would burn.
+    # Room for twice a normal run plus a cold image pull.
     timeout-minutes: 90
     permissions:
       contents: read
@@ -109,14 +67,9 @@ jobs:
       # VERSION is computed by scripts/linux/compute-version.sh into GITHUB_ENV.
       REF_NAME: ${{ github.ref_name }}
       RUN_NUMBER: ${{ github.run_number }}
-      # package_archive.sh only writes a tarball; PACKAGE_TYPES merely gates whether
-      # --flatpak-manifest is demanded. Naming formats it cannot build made the step
-      # claim four artifacts and upload one. See BACKLOG.md.
+      # package_archive.sh only writes a tarball; naming other formats claims artifacts it never builds. See BACKLOG.md.
       PACKAGE_TYPES: tar
     steps:
-      # Free disk, checkout (recursive), registry login and a retried image
-      # pull - four steps that used to be ~35 hand-maintained lines here, and
-      # drifted from the sibling Windows lane. Now one shared action.
       - name: Prepare the CI host
         uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
         with:
@@ -128,10 +81,7 @@ jobs:
         shell: bash
         run: bash scripts/linux/compute-version.sh
 
-      # CARGO_HOME (the registry, and the cargo-audit/-deny/-tarpaulin installs
-      # that took about 8 min a run) and an sccache for rustc outlive the
-      # per-step containers. The guarded launcher compiles directly if sccache
-      # itself fails. Only pushes to develop save.
+      # CARGO_HOME and sccache outlive the per-step containers; the launcher compiles directly if sccache fails.
       - name: Restore the cargo and compiler cache
         id: cc
         uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-restore@develop
@@ -140,19 +90,9 @@ jobs:
           mounts: 'cargo-home:/tmp/cargo-home sccache:/var/cache/sccache'
           env: 'SCCACHE_CACHE_SIZE=1500M RUSTC_WRAPPER=/workspace/third_party/ANTfrastructure/linux/scripts/01-core/sccache-launcher.sh'
 
-      # EVERY CONTAINER STEP BELOW IS ONE NAMED STEP OF ONE SCRIPT,
-      # scripts/linux/ci-container-steps.sh. Each of them used to inline its
-      # own `bash -lc 'set -e; git config --global --add safe.directory ...;
-      # bash third_party/.../cargo_<x>.sh'` - the same prologue eight times,
-      # eight places to edit, and nothing a human could run without retyping
-      # a container command out of YAML. The script IS the reproduction:
-      #   bash scripts/linux/ci-container-steps.sh <step>
-      # inside the family Linux image. Every step delegates to ANTfrastructure's
-      # cargo_*.sh drivers - including `fmt-clippy`, which hand-rolled its two
-      # cargo calls until the driver grew a CARGO_CLIPPY_ARGS knob.
-      # GATING. The family owner rule (2026-09-23): ONNX Runtime is the chain
-      # build only. Fails if any feature set could download ORT (pyke's CDN) or
-      # take a pkg-config one - lock and resolved feature graph, all targets.
+      # Each container step below reproduces by hand as `bash scripts/linux/ci-container-steps.sh <step>` in the family image.
+
+      # Gating: ONNX Runtime must come from the chain build, never pyke's CDN or pkg-config.
       - name: ONNX Runtime chain-only check
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
@@ -165,25 +105,14 @@ jobs:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh debug'
 
-      # GATING, and the gate that was red on 2026-09-14. It reads two ignore
-      # lists that must agree: .cargo/audit.toml and deny.toml's
-      # [advisories].ignore. While this step fails, the docs publish at the
-      # end of this job never runs.
+      # Gating: .cargo/audit.toml and deny.toml's [advisories].ignore must agree.
       - name: Security checks (cargo audit + cargo deny)
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh security'
 
-      # GATING, with no continue-on-error. It was `continue-on-error: true`
-      # for months and exited 127 every time - the driver it called opened
-      # with `rustup component add rustfmt` on an image that ships no rustup -
-      # so an entire crate (crates/webgpu_renderer) reached the default branch
-      # unformatted and with 12 clippy errors. It runs ANTfrastructure's
-      # cargo_fmt_clippy.sh now, with CARGO_CLIPPY_ARGS='--workspace --locked'
-      # set in the `fmt-clippy` case of scripts/linux/ci-container-steps.sh:
-      # --all-features is what this image cannot build, and it is a knob rather
-      # than a hard-coded scope since the pinned hub.
+      # Gating, never continue-on-error; the fmt-clippy step drops --all-features, which this image cannot build.
       - name: Check formatting and clippy
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
@@ -214,10 +143,7 @@ jobs:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh release'
 
-      # --privileged is here so AppImage creation can reach FUSE. --device
-      # /dev/fuse would be the narrower grant, but the AppImage tooling also
-      # wants the mount capability; extract-and-run avoids FUSE entirely and
-      # is the better long-term fix.
+      # --privileged: the AppImage tooling needs FUSE and the mount capability, not just /dev/fuse.
       - name: 📦 Create archive (tar)
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
@@ -246,20 +172,13 @@ jobs:
             --archive-out-file "dist/archive_path.txt"
             --no-github-output'
 
-      # Named by VERSION, not by github.ref_name. On a pull_request the ref name
-      # is `<number>/merge`, and upload-artifact refuses a `/` in a name - so
-      # every PR run of this lane went red at this step with the build, tests
-      # and package all green (run 35752031200, 2026-09-22). VERSION comes from
-      # VERSION.txt and is what the Windows lane and the tarball already use.
-      #
-      # `error`, not the `warn` default: `always()` means this also runs after a
-      # failed build, and a lane that produced nothing must not upload nothing
-      # and look delivered.
+      # Named by VERSION: a PR's ref_name is `<n>/merge` and upload-artifact refuses the `/`.
       - name: Upload all artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.BINARY }}-${{ env.VERSION }}-${{ inputs.artifact-suffix }}-all
+          # This also runs after a failed build, which must not look delivered.
           if-no-files-found: error
           path: |
             tarpaulin-report.html
@@ -274,8 +193,7 @@ jobs:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh docs'
 
-      # registry/src and the git checkouts are re-extracted from registry/cache
-      # in seconds, so they stay out of the saved archive.
+      # registry/src and git checkouts re-extract from registry/cache in seconds, so they stay out of the archive.
       - name: Trim the cargo home
         if: always() && steps.cc.outputs.path != ''
         env:
@@ -288,27 +206,10 @@ jobs:
         with:
           key: ${{ inputs.arch }}-cargo
 
-      # The family's FTP action owns the readability fixup (the `sudo chown -R`
-      # step that used to precede this) and pins the upstream action by SHA.
       - name: 📂 Sync files to domain
-        # Only publish docs from the default branch. Every push to develop used
-        # to overwrite the live documentation with in-progress state.
-        #
-        # ASKED FOR, NOT TYPED. This said `refs/heads/main` while main was an
-        # abandoned branch three 'fix' commits deep and develop carried every
-        # commit and was the default - so the comment above was false and the
-        # docs at rust.jonasheinle.de were never republished at all. Reading
-        # the repository's own default_branch keeps the comment true through
-        # the main/develop reconciliation and through whatever comes after it.
-        # Inside a called workflow `github` is the CALLER's context, so this
-        # still reads the push that started linux-x64.yml.
+        # Default branch only, read rather than typed; in a called workflow `github` is the caller's context.
         if: inputs.docs && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
-        # Best-effort publish: a transient FTP control-socket timeout
-        # (observed 2026-07-22) must NOT red-light a lane whose build, test
-        # and package all passed. The step still shows as failed with a
-        # warning annotation - it just no longer fails the job. Note the
-        # action's own policy is the opposite ("a failed publish fails the
-        # job", see its action.yml); this tolerance is the owner's call.
+        # Best-effort: a transient FTP timeout must not fail a lane whose build, tests and package passed.
         continue-on-error: true
         uses: Kataglyphis/ANTfrastructure/.github/actions/deploy-over-ftp@develop
         with:

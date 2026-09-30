@@ -1,44 +1,5 @@
-//! Split-sum image-based lighting: the precompute that turns one
-//! equirectangular HDR panorama into the three maps `forward.wgsl` samples.
-//!
-//! Karis' split-sum approximation factors the specular environment integral
-//! into two independent pieces, each precomputable:
-//!
-//! ```text
-//!   L_o ~= prefiltered(R, roughness) * (F0 * lut.r + lut.g)
-//! ```
-//!
-//! so this module bakes, in order:
-//!
-//! 1. **Environment cube** ([`ENV_SIZE`], with a mip chain) - the panorama
-//!    reprojected onto six faces. Everything downstream samples the cube, not
-//!    the panorama, so the equirect distortion is paid for exactly once.
-//! 2. **Irradiance cube** ([`IRRADIANCE_SIZE`]) - cosine convolution, for
-//!    diffuse. Stores E / PI, the quantity that multiplies albedo directly.
-//! 3. **Prefiltered cube** ([`PREFILTER_SIZE`], [`PREFILTER_MIPS`] mips) - GGX
-//!    importance sampling, roughness = mip / (mips - 1).
-//! 4. **BRDF LUT** ([`BRDF_LUT_SIZE`], `Rg16Float`) - the second split-sum
-//!    factor.
-//!
-//! **The BRDF LUT is environment-independent by construction**: it integrates
-//! the GGX BRDF against a *white furnace*, with no environment term anywhere in
-//! [`crate::render::ibl`]'s `fs_brdf_lut`. It is therefore baked once by
-//! [`BrdfLut`] and shared by every [`IblEnvironment`] the renderer ever sets.
-//! Baking it per environment would be pure waste; hard-coding the Karis
-//! analytic fit instead (which `forward.wgsl` still uses on the fallback path)
-//! would have saved the 256x256 pass at the cost of a visible error at high
-//! roughness, and the whole point of this feature is to stop approximating.
-//!
-//! **Precompute is one-shot.** [`IblEnvironment::bake`] records every pass into
-//! one encoder and submits once; the frame path only ever samples the results.
-//! Nothing here runs per frame, which is why none of it is wired into
-//! [`crate::render::gpu_timing`].
-//!
-//! Decoding image files is still not this module's job: the entry point takes
-//! decoded linear float pixels ([`EquirectImage`]) and the caller chooses how
-//! they were produced - [`crate::asset::hdr::decode_hdr`] for Radiance `.hdr`
-//! files, or [`EquirectImage::sky`] for the procedural fallback.
-//! [`IblEnvironment::bake_hdr`] composes decode and bake for the common case.
+//! Split-sum IBL precompute: one equirect HDR panorama to the cubes `forward.wgsl` samples.
+//! The BRDF LUT has no environment term, so [`BrdfLut`] is baked once and shared by every environment.
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
@@ -46,19 +7,11 @@ use crate::render::buffer_desc;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
 use crate::render::texture::{create_2d_texture, create_2d_view};
 
-/// Environment cube face resolution.
-///
-/// 128 rather than the 512-1024 an offline baker would use: the prefiltered
-/// cube is what actually carries sharp reflections and it is baked at the same
-/// resolution, so this only bounds mirror-like detail. 128 keeps a full bake
-/// (including the 8192-sample-per-texel irradiance convolution) inside a few
-/// milliseconds, which matters because a bake blocks the frame that requests it.
+/// Environment cube face resolution; small because a bake blocks the frame that requests it.
 pub const ENV_SIZE: u32 = 128;
-/// Mips of the environment cube. Only the prefilter reads them, to pick a
-/// footprint matching each GGX sample's solid angle.
+/// Environment cube mips; only the prefilter reads them, to match each GGX sample's footprint.
 pub const ENV_MIPS: u32 = 5;
-/// Irradiance cube face resolution. Cosine convolution is a very low-pass
-/// filter - 32 is the standard choice and holds all the signal there is.
+/// Irradiance cube face resolution; cosine convolution is low-pass, so 32 holds all the signal.
 pub const IRRADIANCE_SIZE: u32 = 32;
 /// Prefiltered specular cube face resolution (mip 0).
 pub const PREFILTER_SIZE: u32 = 128;
@@ -69,35 +22,23 @@ pub const PREFILTER_SAMPLES: u32 = 256;
 /// Split-sum BRDF lookup table edge length.
 pub const BRDF_LUT_SIZE: u32 = 256;
 
-/// Analytic sky gradient constants, pinned against `sky.wgsl`'s copy (Slang's
-/// `common/sky_model.slang`) by `tests/sky_constants.rs`. `EnvironmentImage::sky`
-/// panoramises the same gradient over a different parameterisation, so only the
-/// numbers are shared, not the code.
+/// Analytic sky gradient, pinned against `sky.wgsl`'s copy by `tests/sky_constants.rs`.
 pub const SKY_ZENITH: [f32; 3] = [0.09, 0.16, 0.35];
 pub const SKY_HORIZON: [f32; 3] = [0.55, 0.62, 0.72];
 pub const SKY_GROUND: [f32; 3] = [0.18, 0.16, 0.15];
 
-// A mip chain deeper than its base resolution would ask wgpu to render into a
-// zero-texel level. Checked at compile time because the sizes are constants and
-// a runtime test would only notice on a machine that ran the bake.
+// A mip chain deeper than its base size would render into a zero-texel level.
 const _: () = assert!(PREFILTER_SIZE >> (PREFILTER_MIPS - 1) >= 1);
 const _: () = assert!(ENV_SIZE >> (ENV_MIPS - 1) >= 1);
 
-/// Roughness the prefilter bakes into mip `mip`.
-///
-/// `forward.wgsl` inverts this as `roughness * max_prefiltered_mip`, so the two
-/// have to be exact inverses or a material samples the wrong sharpness. Written
-/// once here and used by the bake so there is only one place to get it wrong.
+/// Roughness baked into mip `mip`; `forward.wgsl` must invert it exactly as `roughness * max_mip`.
 pub fn prefilter_roughness(mip: u32) -> f32 {
     mip as f32 / (PREFILTER_MIPS - 1) as f32
 }
 
 const CUBE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const LUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
-/// The panorama is uploaded as-is, in f32. `Float32Filterable` is an optional
-/// WebGPU feature the context does not request, so `ibl.wgsl` filters it by
-/// hand with textureLoad; that keeps the CPU side free of an f32 -> f16
-/// conversion and its rounding decisions.
+/// Uploaded as f32; `Float32Filterable` is not requested, so `ibl.wgsl` filters it by hand.
 const EQUIRECT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 /// A decoded equirectangular panorama: linear radiance, RGBA, row-major.
@@ -128,10 +69,7 @@ impl EquirectImage {
         })
     }
 
-    /// A constant-radiance panorama.
-    ///
-    /// The only environment whose convolution has a closed form, which makes it
-    /// the reference the irradiance pass is checked against.
+    /// A constant-radiance panorama, the one environment whose convolution has a closed form.
     pub fn constant(width: u32, height: u32, radiance: [f32; 3]) -> Self {
         let mut rgba32f = Vec::with_capacity((width * height * 4) as usize);
         for _ in 0..width * height {
@@ -144,12 +82,7 @@ impl EquirectImage {
         }
     }
 
-    /// The analytic sky of `sky.wgsl`, panoramised.
-    ///
-    /// Exists so the renderer has a usable environment with no asset pipeline
-    /// and no decoder: setting it swaps the fallback's analytic hemisphere for
-    /// a real convolution of the same sky, which is the cleanest way to see
-    /// that the IBL path is doing something and doing it plausibly.
+    /// The analytic sky of `sky.wgsl`, panoramised: an environment that needs no asset or decoder.
     pub fn sky(width: u32, height: u32) -> Self {
         let mut rgba32f = Vec::with_capacity((width * height * 4) as usize);
         for y in 0..height {
@@ -173,8 +106,7 @@ impl EquirectImage {
         }
     }
 
-    /// Largest radiance in any colour channel. The energy bound the irradiance
-    /// map must respect is derived from this - see `tests/ibl.rs`.
+    /// Largest radiance in any colour channel; bounds the irradiance map's energy (`tests/ibl.rs`).
     pub fn max_radiance(&self) -> f32 {
         self.rgba32f
             .chunks_exact(4)
@@ -191,11 +123,7 @@ fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     ]
 }
 
-/// IEEE-754 binary16 to f32.
-///
-/// Hand-rolled rather than pulling in `half`: the crate ships to wasm and this
-/// is needed only to read `Rgba16Float`/`Rg16Float` targets back for tests and
-/// diagnostics - the frame path never sees a half on the CPU.
+/// IEEE-754 binary16 to f32; hand-rolled because only test and diagnostic readbacks need it.
 pub fn half_to_f32(bits: u16) -> f32 {
     let sign = ((bits >> 15) & 1) as u32;
     let exponent = ((bits >> 10) & 0x1f) as u32;
@@ -203,9 +131,7 @@ pub fn half_to_f32(bits: u16) -> f32 {
     let out = match exponent {
         0 if mantissa == 0 => sign << 31,
         0 => {
-            // Subnormal: shift the implicit leading 1 into place and pay for
-            // it in the exponent. Value is (m >> k)/1024 * 2^-14, i.e.
-            // 1.xxx * 2^(-14-k), so the biased f32 exponent is 113 - k.
+            // Subnormal: normalise; the value is 1.xxx * 2^(-14-k), so the f32 exponent is 113 - k.
             let mut m = mantissa;
             let mut k = 0u32;
             while m & 0x400 == 0 {
@@ -220,12 +146,7 @@ pub fn half_to_f32(bits: u16) -> f32 {
     f32::from_bits(out)
 }
 
-/// Shared pipeline set for every precompute pass.
-///
-/// One bind group layout serves all four entry points, with the texture a pass
-/// does not read bound to a 1x1 dummy. Four near-identical layouts would be the
-/// tidier abstraction and buy nothing: this is one-shot code that runs at most
-/// once per environment change.
+/// Pipelines for every precompute pass; one layout, with a pass's unread texture a 1x1 dummy.
 struct Precompute {
     bind_group_layout: wgpu::BindGroupLayout,
     equirect_to_cube: wgpu::RenderPipeline,
@@ -249,9 +170,7 @@ impl Precompute {
             label: Some("ibl_bind_group_layout"),
             entries: &[
                 bind_layout::uniform(0, wgpu::ShaderStages::FRAGMENT),
-                // Not filterable, and not sampled: `sample_equirect` uses
-                // textureLoad. Declaring it filterable would need the
-                // FLOAT32_FILTERABLE feature, which browsers gate.
+                // Unfilterable, read by textureLoad: filterable f32 needs a browser-gated feature.
                 bind_layout::texture_2d(1, wgpu::ShaderStages::FRAGMENT, false),
                 bind_layout::texture(
                     2,
@@ -281,10 +200,7 @@ impl Precompute {
                     vs_entry: "vs_fullscreen",
                     fs_entry: entry_point,
                     format,
-                    // Equivalent to `None` (an opaque destination and a fully
-                    // covering fullscreen triangle never blend), kept verbatim
-                    // from the pre-migration literal - see pipeline_desc.rs's
-                    // module doc comment.
+                    // Same as `None` here: an opaque target under a full-cover triangle never blends.
                     blend: Some(wgpu::BlendState::REPLACE),
                 },
             )
@@ -358,14 +274,7 @@ fn dummy_cube(device: &wgpu::Device) -> wgpu::TextureView {
         })
 }
 
-/// The 1x1 stand-ins `forward.wgsl` samples when no environment is set.
-///
-/// The forward shader samples all three IBL maps unconditionally and `select`s
-/// between the environment and the analytic result, so the bindings must be
-/// valid even on the fallback path. Sampling a 1x1 texture and discarding the
-/// result is the price; the alternative - two forward pipelines, one per
-/// branch - doubles the pipeline set and the shader-reload path to save three
-/// texture fetches.
+/// 1x1 stand-ins for when no environment is set; `forward.wgsl` samples all three maps regardless.
 pub struct IblFallback {
     pub irradiance: wgpu::TextureView,
     pub prefiltered: wgpu::TextureView,
@@ -410,9 +319,7 @@ pub struct BrdfLut {
 }
 
 impl BrdfLut {
-    /// Bakes the table. Roughly `BRDF_LUT_SIZE^2 * 1024` GGX samples; measured
-    /// at a few milliseconds on a discrete GPU, and it happens once per
-    /// renderer, the first time an environment is set.
+    /// Bakes the table, once per renderer, the first time an environment is set.
     pub fn new(gpu: &GpuContext) -> Self {
         let precompute = Precompute::new(&gpu.device);
         let texture = create_2d_texture(
@@ -454,19 +361,14 @@ impl BrdfLut {
         &self.view
     }
 
-    /// (scale, bias) per texel, row-major, `BRDF_LUT_SIZE^2` entries.
-    /// `u` (column) is N.V, `v` (row) is roughness, both at texel centres.
+    /// (scale, bias) per texel, row-major; column is N.V, row is roughness, at texel centres.
     pub fn read_back(&self, gpu: &GpuContext) -> Vec<[f32; 2]> {
         let halves = read_texture_halves(gpu, &self.texture, 0, 0, BRDF_LUT_SIZE, BRDF_LUT_SIZE, 2);
         halves.chunks_exact(2).map(|c| [c[0], c[1]]).collect()
     }
 }
 
-/// A baked environment: the three maps `forward.wgsl` binds.
-///
-/// The BRDF LUT is not here on purpose - it does not depend on the
-/// environment, so it lives beside the renderer and outlives every
-/// environment set on it.
+/// A baked environment's maps; the environment-independent BRDF LUT lives beside the renderer.
 pub struct IblEnvironment {
     environment: wgpu::Texture,
     irradiance: wgpu::Texture,
@@ -508,9 +410,7 @@ impl IblEnvironment {
             );
         }
 
-        // 2. Environment mip chain. Each level reads the one above it, so the
-        // source view is restricted to that single mip - binding the whole
-        // chain while rendering into part of it is a usage conflict.
+        // 2. Mip chain; bind only the source mip, the whole chain would be a usage conflict.
         for mip in 1..ENV_MIPS {
             let source_mip = cube_view_of_mip(&environment, mip - 1);
             for face in 0..6u32 {
@@ -589,12 +489,7 @@ impl IblEnvironment {
         }
     }
 
-    /// Radiance `.hdr` bytes straight to a baked environment.
-    ///
-    /// Just [`crate::asset::hdr::decode_hdr`] into [`Self::bake`], so a caller
-    /// holding a downloaded panorama does not have to learn the intermediate
-    /// [`EquirectImage`] step. The only error is the decode - the bake itself
-    /// cannot fail.
+    /// Radiance `.hdr` bytes straight to a baked environment; only the decode can fail.
     pub fn bake_hdr(
         gpu: &GpuContext,
         hdr_bytes: &[u8],
@@ -610,8 +505,7 @@ impl IblEnvironment {
         &self.prefiltered_view
     }
 
-    /// Highest prefiltered mip index, i.e. the roughness-1.0 level. The
-    /// forward shader multiplies material roughness by this to pick a mip.
+    /// Highest prefiltered mip (roughness 1.0); the forward shader scales roughness by it.
     pub fn max_prefiltered_mip(&self) -> f32 {
         (PREFILTER_MIPS - 1) as f32
     }
@@ -695,10 +589,7 @@ fn draw_fullscreen(
     cube: &wgpu::TextureView,
     label: &str,
 ) {
-    // A fresh uniform buffer and bind group per draw. Dynamic offsets into one
-    // buffer would be the frame-path answer; here there are at most ~60 draws
-    // total, once, and per-draw buffers remove the 256-byte alignment
-    // arithmetic that is the usual source of an off-by-one-face bug.
+    // Per-draw buffers: few one-shot draws, and no dynamic-offset alignment arithmetic to get wrong.
     let uniforms = wgpu::util::DeviceExt::create_buffer_init(
         device,
         &wgpu::util::BufferInitDescriptor {
@@ -795,10 +686,7 @@ fn read_cube_face_rgb(
     halves.chunks_exact(4).map(|c| [c[0], c[1], c[2]]).collect()
 }
 
-/// Blocking readback of a half-float texture subresource, decoded to f32.
-///
-/// Diagnostics and tests only: it stalls the queue. Nothing on the frame path
-/// reads any of these maps back.
+/// Blocking readback of a half-float subresource as f32; tests and diagnostics only.
 fn read_texture_halves(
     gpu: &GpuContext,
     texture: &wgpu::Texture,
@@ -889,9 +777,7 @@ mod tests {
         assert!((half_to_f32(0x3555) - 1.0 / 3.0).abs() < 1e-3);
         // Largest finite half.
         assert_eq!(half_to_f32(0x7bff), 65504.0);
-        // Smallest positive subnormal: 2^-24. The subnormal branch is the one
-        // a naive implementation gets wrong, and it is what a near-black
-        // irradiance texel decodes through.
+        // Smallest positive subnormal, 2^-24: the branch near-black texels decode through.
         assert_eq!(half_to_f32(0x0001), 2.0f32.powi(-24));
         // Largest subnormal: 1023 * 2^-24.
         assert_eq!(half_to_f32(0x03ff), 1023.0 * 2.0f32.powi(-24));
@@ -917,9 +803,7 @@ mod tests {
 
     #[test]
     fn the_procedural_sky_is_brightest_at_the_horizon_and_darkest_below() {
-        // Rows run +Y (v = 0) to -Y. The analytic sky in sky.wgsl peaks at the
-        // horizon, so the panorama must too - if the latitude mapping were
-        // flipped, ground and zenith would swap and nothing else would notice.
+        // Rows run +Y (v = 0) to -Y; a flipped latitude mapping swaps ground and zenith.
         let height = 64;
         let sky = EquirectImage::sky(4, height);
         let luminance = |row: usize| {
@@ -936,9 +820,7 @@ mod tests {
 
     #[test]
     fn prefilter_roughness_round_trips_through_the_shader_mip_selection() {
-        // forward.wgsl picks a mip as `roughness * max_prefiltered_mip`. That
-        // is the inverse of `prefilter_roughness` only if the endpoints line up
-        // and nothing rounds, so walk the chain and check both directions.
+        // forward.wgsl picks mip `roughness * max_prefiltered_mip`; only exact if nothing rounds.
         let max_mip = (PREFILTER_MIPS - 1) as f32;
         assert_eq!(prefilter_roughness(0), 0.0);
         assert_eq!(prefilter_roughness(PREFILTER_MIPS - 1), 1.0);

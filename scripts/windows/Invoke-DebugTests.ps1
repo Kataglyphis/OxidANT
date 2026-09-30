@@ -24,19 +24,13 @@ foreach ($step in $testSteps) {
   }
 }
 
-# The WebGPU renderer's lib tests are BUILT here and RUN on the runner host
-# (Invoke-HostTests.ps1). Every renderer test binary links wgpu, whose gles
-# backend imports opengl32.dll at load time, and servercore does not ship it:
-# the process dies with STATUS_DLL_NOT_FOUND (0xc0000135) before main, so no
-# "skip without an adapter" guard can run (lib binary: run 36019995362). The
-# runner host is a desktop Windows Server, where the DLL exists (README.md).
+# Built here, run by Invoke-HostTests.ps1: servercore lacks the opengl32.dll wgpu imports at load.
 Write-Host '==> WebGPU renderer lib tests: build here, run on the host'
 $messages = & cargo test --package kataglyphis_webgpu_renderer --lib --no-run --message-format=json
 if ($LASTEXITCODE -ne 0) {
   throw "Building the WebGPU renderer lib tests failed with exit code $LASTEXITCODE."
 }
-# compiler-artifact messages always carry target, profile and executable, so
-# strict mode can read them once `reason` has picked those out.
+# Filter on `reason` first: only compiler-artifact messages carry the fields strict mode reads.
 $executables = @($messages | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { $_ | ConvertFrom-Json } |
     Where-Object { $_.reason -eq 'compiler-artifact' } |
     Where-Object { $_.profile.test -and $_.target.name -eq 'kataglyphis_webgpu_renderer' -and $_.executable })

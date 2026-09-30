@@ -1,23 +1,5 @@
-//! Split-sum IBL, checked against the properties the maths guarantees.
-//!
-//! These are structural readback assertions, not golden images. The maps are
-//! `Rgba16Float` cubes whose exact contents vary with driver filtering, but the
-//! things that make them *correct* - a constant environment convolving to
-//! itself, energy never being created, roughness monotonically blurring - are
-//! exact statements that hold on any conforming GPU.
-//!
-//! The single most valuable one is `a_constant_environment_convolves_to_its_own_radiance`.
-//! Dropping the sin(theta) solid-angle weight from the irradiance convolution
-//! is the classic bug in this pipeline and is invisible on a rendered frame -
-//! the map just comes out uniformly too bright, which reads as "the ambient
-//! slider wants turning down". Deleting that one factor was measured against
-//! this test: the map comes out exactly 2x too bright, a relative error of
-//! 1.000, because the average of cos(theta) over theta uniform on [0, PI/2] is
-//! 2/PI where the cosine-weighted solid angle average is 1/PI.
-//!
-//! `the_brdf_lut_reproduces_the_known_mirror_and_grazing_behaviour` earned its
-//! keep the same way: it caught a NaN in the near-zero-roughness GGX sample
-//! that silently discarded 44% of the samples.
+//! Split-sum IBL checked against properties the maths guarantees, not driver-dependent golden images.
+//! A dropped sin(theta) solid-angle weight doubles irradiance yet looks plausible on a rendered frame.
 
 use kataglyphis_webgpu_renderer::render::ibl::{
     BrdfLut, IblEnvironment, BRDF_LUT_SIZE, IRRADIANCE_SIZE, PREFILTER_MIPS, PREFILTER_SIZE,
@@ -30,13 +12,7 @@ fn cube_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
 }
 
-/// An environment split at the equator: bright above, dark below.
-///
-/// A two-level signal whose contrast lives at the lowest possible spatial
-/// frequency. That matters for the roughness test: the variance of a two-level
-/// image depends only on the proportion of bright to dark texels, not on the
-/// resolution, so comparing variance across mips of different sizes measures
-/// the GGX blur and not the downsampling.
+/// Bright above the equator, dark below: its variance is resolution-independent across mips.
 fn split_environment(width: u32, height: u32, upper: f32, lower: f32) -> EquirectImage {
     let mut rgba32f = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height {
@@ -63,13 +39,7 @@ fn a_constant_environment_convolves_to_its_own_radiance() {
         return;
     };
 
-    // The one environment whose convolution has a closed form. For constant
-    // radiance L the irradiance is E = integral of L cos(theta) dw over the
-    // hemisphere = PI * L, and the map stores E / PI (the value that
-    // multiplies albedo directly), so every texel of every face must read back
-    // as exactly L - independent of the normal, the face, everything.
-    // 0.25 and 0.5 are exact in binary16; 0.7 is not, so the measured error is
-    // a real number rather than an artefact of picking friendly constants.
+    // Constant L gives E = PI * L and the map stores E / PI, so every texel reads back L.
     let radiance = [0.25f32, 0.5, 0.7];
     let environment = IblEnvironment::bake(&gpu, &EquirectImage::constant(64, 32, radiance));
 
@@ -85,13 +55,7 @@ fn a_constant_environment_convolves_to_its_own_radiance() {
         }
     }
 
-    // Measured worst-case relative error: 0.000419 with the midpoint
-    // quadrature (128x64 steps, explicit mip-0 sampling) versus 0.001814 with
-    // the left-endpoint quadrature this test used to tolerate (64x32 steps).
-    // 0.001 sits between the two, so it fails on a regression back to
-    // left-endpoint sampling while leaving headroom for the Rgba16Float
-    // storage of both the environment and the result (2^-11 each) and
-    // driver-dependent cube filtering across face seams.
+    // 0.001 fails a regression to left-endpoint quadrature yet allows half-float storage.
     assert!(
         worst < 0.001,
         "constant environment did not convolve to itself: worst relative error {worst}"
@@ -105,11 +69,7 @@ fn a_constant_environment_prefilters_to_its_own_radiance_at_every_roughness() {
         return;
     };
 
-    // The prefilter is a weighted average of environment samples normalised by
-    // the sum of its own weights, so a constant environment must survive it
-    // untouched at every roughness. This is what catches a missing or
-    // mis-summed `total_weight` - which otherwise shows up only as an
-    // environment that gets darker as it gets rougher, and looks plausible.
+    // A normalised average leaves a constant untouched; a bad `total_weight` darkens with roughness.
     let radiance = [0.4f32, 0.4, 0.4];
     let environment = IblEnvironment::bake(&gpu, &EquirectImage::constant(64, 32, radiance));
 
@@ -135,18 +95,7 @@ fn irradiance_never_exceeds_the_brightest_radiance_in_the_environment() {
         return;
     };
 
-    // The bound, derived rather than guessed:
-    //
-    //   stored(n) = (1/PI) * integral_hemisphere L(w) cos(theta) dw
-    //            <= (1/PI) * L_max * integral_hemisphere cos(theta) dw
-    //             = (1/PI) * L_max * PI
-    //             = L_max
-    //
-    // i.e. the cosine-weighted average of a bounded environment cannot exceed
-    // that bound. It is tight: a fully constant environment attains it, which
-    // is exactly what the test above asserts. Any weighting error that
-    // over-counts solid angle - the dropped sin(theta), a hemisphere
-    // integrated as a full sphere - breaks this.
+    // (1/PI) * integral of L cos(theta) dw <= L_max; over-counted solid angle breaks it.
     let bright = 4.0f32;
     let image = split_environment(64, 32, bright, 0.0);
     assert_eq!(image.max_radiance(), bright);
@@ -165,10 +114,7 @@ fn irradiance_never_exceeds_the_brightest_radiance_in_the_environment() {
         highest <= bright * 1.01,
         "irradiance {highest} exceeds the environment's maximum radiance {bright}"
     );
-    // The bound must not be satisfied trivially: a normal pointing straight up
-    // sees only the bright half and a normal pointing down only the dark half,
-    // so the map has to span most of the range. A map of all zeros would pass
-    // the bound above and nothing else.
+    // Not trivially: up- and down-facing normals must span most of the range.
     assert!(
         highest > bright * 0.8,
         "the up-facing normal should see nearly the full bright hemisphere, got {highest}"
@@ -188,9 +134,7 @@ fn higher_roughness_prefilter_mips_are_strictly_blurrier() {
 
     let environment = IblEnvironment::bake(&gpu, &split_environment(128, 64, 1.0, 0.0));
 
-    // Face 4 is +Z, which straddles the equator symmetrically, so roughly half
-    // its texels start bright and half dark. Blurring can only move texels
-    // toward the mean, so the variance must fall with every roughness step.
+    // Face 4 (+Z) straddles the equator; blur moves texels to the mean, so variance falls.
     let variances: Vec<f32> = (0..PREFILTER_MIPS)
         .map(|mip| {
             let face: Vec<f32> = environment
@@ -216,8 +160,7 @@ fn higher_roughness_prefilter_mips_are_strictly_blurrier() {
             variances[mip - 1]
         );
     }
-    // Not merely monotone but substantially so: roughness 1.0 should have
-    // smeared the hemisphere edge into something close to flat.
+    // Substantially: roughness 1.0 should smear the edge nearly flat.
     assert!(
         variances[PREFILTER_MIPS as usize - 1] < variances[0] * 0.25,
         "roughness 1.0 barely blurred anything: {variances:?}"
@@ -240,9 +183,7 @@ fn the_brdf_lut_stays_in_range_and_conserves_energy() {
             (0.0..=1.0).contains(&entry[0]) && (0.0..=1.0).contains(&entry[1]),
             "BRDF LUT entry out of [0,1]: {entry:?}"
         );
-        // The two terms are the split of a single Fresnel-weighted integral of
-        // a BRDF that cannot reflect more than it receives, so scale + bias
-        // (the value at F0 = 1) is bounded by 1.
+        // scale + bias is the reflectance at F0 = 1, which cannot exceed 1.
         worst_sum = worst_sum.max(entry[0] + entry[1]);
     }
     assert!(
@@ -267,11 +208,7 @@ fn the_brdf_lut_reproduces_the_known_mirror_and_grazing_behaviour() {
     let rough = BRDF_LUT_SIZE - 1;
     let grazing = 0u32;
     let normal_incidence = BRDF_LUT_SIZE - 1;
-    // A perfect mirror loses nothing: shadowing-masking is 1, so scale + bias
-    // integrates to exactly 1 at every angle, with Fresnel deciding the split.
-    // This is the assertion that caught the near-zero-roughness NaN in
-    // `importance_sample_ggx` - it summed to 0.563 instead of 1.0, uniformly,
-    // which no in-range or monotonicity check would have noticed.
+    // A perfect mirror is lossless: scale + bias is 1 at every angle, Fresnel only splits it.
 
     for n_dot_v in [grazing, BRDF_LUT_SIZE / 2, normal_incidence] {
         let [scale, bias] = at(n_dot_v, smooth);
@@ -288,16 +225,14 @@ fn the_brdf_lut_reproduces_the_known_mirror_and_grazing_behaviour() {
         "mirror at normal incidence should be (1, 0), got ({scale}, {bias})"
     );
 
-    // At grazing incidence Fresnel drives reflectance to 1 regardless of F0,
-    // so the F0-independent bias takes over from the scale.
+    // At grazing incidence Fresnel goes to 1 whatever F0 is, so the bias dominates.
     let [grazing_scale, grazing_bias] = at(grazing, smooth);
     assert!(
         grazing_bias > grazing_scale,
         "grazing Fresnel should be F0-independent, got scale {grazing_scale} bias {grazing_bias}"
     );
 
-    // Roughness costs energy: the Smith term removes light to shadowing and
-    // masking, and none of it comes back.
+    // Roughness costs energy: the Smith term loses light to shadowing and masking.
     let smooth_total = {
         let [s, b] = at(BRDF_LUT_SIZE / 2, smooth);
         s + b
@@ -322,9 +257,7 @@ fn the_equirect_projection_puts_the_sky_on_the_right_faces() {
         return;
     };
 
-    // Bright above the equator, dark below. If a face's basis were mirrored or
-    // the latitude mapping flipped, the +Y and -Y faces would swap - which a
-    // smooth panorama hides completely and every derived map inherits.
+    // A flipped latitude or mirrored basis swaps +Y and -Y, which a smooth panorama hides.
     let environment = IblEnvironment::bake(&gpu, &split_environment(128, 64, 1.0, 0.0));
     let face_mean = |face: u32| {
         let values: Vec<f32> = environment
@@ -346,9 +279,7 @@ fn the_equirect_projection_puts_the_sky_on_the_right_faces() {
         "-Y face must be entirely the dark half, got {down}"
     );
 
-    // The four side faces each straddle the equator, so each is about half
-    // bright. A mirrored side face would still average 0.5, but a face taking
-    // its latitude from the wrong axis would not.
+    // Side faces straddle the equator; one taking latitude from the wrong axis would not.
     for face in [0u32, 1, 4, 5] {
         let side = face_mean(face);
         assert!(
@@ -380,10 +311,7 @@ fn with_no_environment_the_analytic_path_renders_exactly_what_it_always_did() {
     );
     let baseline = render(&mut renderer, &gpu);
 
-    // Round-tripping through an environment and back must land on the same
-    // pixels, byte for byte. `forward.wgsl` picks between the analytic and the
-    // environment result with `select`, so the fallback is not "close to" the
-    // old path, it IS the old path.
+    // Setting and clearing an environment must restore the analytic frame byte for byte.
     let mut round_tripped = ForwardRenderer::new(&gpu, 128, 128);
     round_tripped.upload_scene(&gpu, &scene);
     round_tripped.set_environment(&gpu, &EquirectImage::sky(64, 32));
@@ -404,17 +332,13 @@ fn setting_an_environment_actually_changes_the_rendered_frame() {
         return;
     };
 
-    // The guard against a feature that bakes beautiful maps nothing samples.
-    // Everything above tests the precompute in isolation; this is the only
-    // test that fails if group 1 is never bound, if the uniform's enabled flag
-    // never reaches the shader, or if `select` picks the wrong branch.
+    // The only test that fails if the baked maps never reach the shader.
     let scene = load_gltf(cube_path()).expect("cube.gltf must load");
     let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
     renderer.upload_scene(&gpu, &scene);
     let analytic = render(&mut renderer, &gpu);
 
-    // A bright white environment: far brighter ambient than the analytic
-    // sky/ground, so the cube's shaded side must lift.
+    // Far brighter than the analytic sky, so the cube's shaded side must lift.
     renderer.set_environment(&gpu, &EquirectImage::constant(64, 32, [3.0, 3.0, 3.0]));
     let lit = render(&mut renderer, &gpu);
     assert_ne!(
@@ -422,9 +346,7 @@ fn setting_an_environment_actually_changes_the_rendered_frame() {
         "the baked environment never reached the frame"
     );
 
-    // Directional, not merely different: sum over the cube's pixels only. The
-    // sky fills the background and is drawn by its own pass, which IBL does
-    // not touch, so comparing whole-frame means would dilute the signal.
+    // Cube pixels only: the sky pass ignores IBL and would dilute the signal.
     let cube_luma = |pixels: &[u8]| {
         let mut total = 0u64;
         let mut count = 0u64;
@@ -447,8 +369,7 @@ fn setting_an_environment_actually_changes_the_rendered_frame() {
         "a 3.0-radiance environment should brighten the cube: {analytic_luma} -> {lit_luma}"
     );
 
-    // A dark environment must push it the other way, so the test cannot be
-    // passed by anything that merely adds a constant.
+    // A dark environment must push the other way, so adding a constant cannot pass.
     renderer.set_environment(&gpu, &EquirectImage::constant(64, 32, [0.01, 0.01, 0.01]));
     let dim_luma = cube_luma(&render(&mut renderer, &gpu));
     eprintln!("cube mean luma: dark environment {dim_luma:.2}");
@@ -458,11 +379,7 @@ fn setting_an_environment_actually_changes_the_rendered_frame() {
     );
 }
 
-/// Radiance-encodes an [`EquirectImage`] as a flat (unRLE'd) `.hdr` file.
-///
-/// A test-local encoder rather than a crate API on purpose: the renderer only
-/// ever *reads* `.hdr`, and keeping the writer beside the test that needs it
-/// stops it from looking like a supported feature.
+/// Encodes a flat (unRLE'd) `.hdr`; test-local, since the renderer only reads `.hdr`.
 fn encode_hdr_flat(image: &EquirectImage) -> Vec<u8> {
     let mut out = format!(
         "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {} +X {}\n",
@@ -475,8 +392,7 @@ fn encode_hdr_flat(image: &EquirectImage) -> Vec<u8> {
             out.extend_from_slice(&[0; 4]);
             continue;
         }
-        // frexp by hand: max = v * 2^e, v in [0.5, 1); mantissas are then
-        // 8-bit fractions of 2^e, matching Radiance's setcolr.
+        // frexp by hand, matching Radiance's setcolr: max = v * 2^e, v in [0.5, 1).
         let mut e = 0i32;
         let mut v = max;
         while v >= 1.0 {
@@ -500,9 +416,7 @@ fn encode_hdr_flat(image: &EquirectImage) -> Vec<u8> {
 
 #[test]
 fn hdr_bytes_decode_and_bake_into_the_same_environment_as_the_source_pixels() {
-    // The whole pipeline the decoder exists for: sky -> .hdr bytes -> decode
-    // -> bake, checked against baking the sky directly. The CPU half runs
-    // everywhere; the bake comparison needs an adapter.
+    // sky -> .hdr -> decode -> bake against baking the sky directly; only the bake needs a GPU.
     let sky = EquirectImage::sky(64, 32);
     let bytes = encode_hdr_flat(&sky);
     let decoded = decode_hdr(&bytes).expect("the encoded sky must decode");
@@ -532,9 +446,7 @@ fn hdr_bytes_decode_and_bake_into_the_same_environment_as_the_source_pixels() {
     let direct = IblEnvironment::bake(&gpu, &sky);
     let via_hdr = IblEnvironment::bake_hdr(&gpu, &bytes).expect("bake_hdr composes decode + bake");
 
-    // The irradiance convolution averages thousands of environment texels, so
-    // the per-pixel RGBE quantisation (< 1/128) cannot grow on the way
-    // through; 2% also covers the half-float storage of both maps.
+    // Averaging cannot grow the RGBE quantum; 2% also covers half-float storage.
     let mut worst = 0.0f32;
     for face in 0..6u32 {
         let a = direct.read_irradiance_face(&gpu, face);
@@ -558,9 +470,7 @@ fn the_brdf_table_is_baked_once_and_shared_across_environments() {
         return;
     };
 
-    // The LUT integrates the GGX BRDF against a white furnace and has no
-    // environment term, so rebaking it per environment would be pure waste.
-    // Pin the sharing so a later refactor cannot quietly reintroduce it.
+    // The LUT has no environment term, so rebaking it per environment would be waste.
     let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
     assert!(
         renderer.brdf_lut().is_none(),

@@ -73,8 +73,7 @@ pub fn run_with_backend(backend: &GpuBackend) -> anyhow::Result<()> {
 }
 
 fn run_inner(backends: wgpu::Backends, backend_label: &str) -> anyhow::Result<()> {
-    // Not a bare gst::init(): this one first points GST_PLUGIN_PATH at the plugins a
-    // package carries beside the exe, which a host's GST_PLUGIN_SYSTEM_PATH would hide.
+    // Not a bare gst::init(): the packaged plugins must win over a host's GStreamer install.
     kataglyphis_media::ensure_gst_initialized().context("Failed to initialize GStreamer")?;
 
     let (frame_tx, frame_rx) = sync_channel::<Frame>(2);
@@ -92,7 +91,7 @@ fn run_inner(backends: wgpu::Backends, backend_label: &str) -> anyhow::Result<()
     window_result
 }
 
-// ── GuiApp ─────────────────────────────────────────────────────────
+// GuiApp
 
 struct GuiApp {
     frame_rx: Receiver<Frame>,
@@ -110,8 +109,7 @@ struct GuiApp {
 }
 
 impl GuiApp {
-    /// Drain all pending frames from the channel, keeping only the latest.
-    /// Returns `true` if at least one new frame was received.
+    /// Drain pending frames, keeping only the latest; `true` if any arrived.
     fn drain_frames(&mut self) -> bool {
         let mut got_frame = false;
         while let Ok(frame) = self.frame_rx.try_recv() {
@@ -222,9 +220,7 @@ impl ApplicationHandler for GuiApp {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // Keep the UI responsive even if the video source is low-FPS.
-        // We upload new video frames only when they arrive, but we redraw at a steady cadence
-        // so egui interactions feel smooth.
+        // Redraw at a steady cadence so egui stays smooth even with a low-FPS video source.
         let got_frame = self.drain_frames();
 
         let Some(window) = self.window.as_ref() else {

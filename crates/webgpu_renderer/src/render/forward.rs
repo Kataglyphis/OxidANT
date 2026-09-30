@@ -1,6 +1,4 @@
-//! Forward PBR pass over a `CpuScene` into an internal HDR target,
-//! composited to the output through the ACES tonemap pass. Also provides
-//! headless render-to-pixels for golden tests and CI.
+//! Forward PBR pass into an HDR target, ACES-tonemapped to the output, plus headless readback.
 
 use anyhow::Context as _;
 use glam::{Mat4, Vec3, Vec4};
@@ -37,9 +35,7 @@ pub const MAX_JOINTS: usize = 256;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// MSAA sample count for the forward color/depth render targets.
-/// 1 = no MSAA, 4 = 4× MSAA. Must match the sample count of the HDR and
-/// depth textures used by the forward render pass.
+/// MSAA sample count of the forward HDR and depth targets (1 disables MSAA).
 const MSAA_SAMPLE_COUNT: u32 = 4;
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 /// Cascaded shadow map layers (split by view distance).
@@ -87,13 +83,7 @@ struct PrimUniforms {
     material_flags: [f32; 4],
 }
 
-/// One pre-uploaded LOD level: its own vertex and index buffer, built once.
-///
-/// Every level is simplified and uploaded at `upload_scene` time. Simplifying
-/// on demand inside a frame would make frame cost depend on how the camera
-/// moved, which is exactly the hitch LOD exists to avoid; this is a demo
-/// renderer, so the VRAM for all levels at once is the cheaper trade and
-/// nothing is streamed or evicted.
+/// One LOD level, uploaded at `upload_scene` so frame cost never depends on camera motion.
 struct LodLevel {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -106,30 +96,20 @@ struct GpuPrimitive {
     index_count: u32,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    /// Uniforms-only group for the shadow pass: the full group samples the
-    /// shadow map, which the shadow pass writes — an exclusive-usage conflict.
+    /// Uniforms-only group: the full group samples the shadow map the shadow pass writes.
     shadow_bind_group: wgpu::BindGroup,
-    /// MASK material with a real base-color texture: route through the
-    /// alpha-testing shadow pipeline so the cut-out's shape shadows.
+    /// MASK material with a base-color texture: shadows through the alpha-testing pipeline.
     alpha_masked: bool,
     shadow_masked_bind_group: Option<wgpu::BindGroup>,
-    /// Per-instance transforms. Always at least one (identity), so every draw
-    /// binds slot 1 and there is no un-instanced code path to diverge.
+    /// Per-instance transforms; always at least one, so every draw binds slot 1.
     instance_buffer: wgpu::Buffer,
     instance_count: u32,
-    /// Instance transforms as last set, empty for the default identity. Kept on
-    /// the CPU so culling bounds can be recomposed whenever EITHER side moves:
-    /// the instances (`set_instances`) or the posed geometry they replicate
-    /// (`set_animation_time`).
+    /// Last-set instance transforms (empty = identity); bounds recompose when either side moves.
     instance_transforms: Vec<Mat4>,
-    /// World bounds BEFORE instance transforms are applied - the box each
-    /// instance replicates. Stored so recomposition never has to re-derive the
-    /// skinned/morphed pose.
+    /// World bounds before instancing, so recomposition never re-derives the skinned/morphed pose.
     pre_instance_aabb: (Vec3, Vec3),
     model: Mat4,
-    /// Cached `normal_matrix_of(model)`. Recomputed only at the sites that
-    /// change `model` (upload, `set_animation_time`) instead of once per
-    /// primitive per frame in the uniform-write loop.
+    /// Cached `normal_matrix_of(model)`, recomputed only where `model` changes.
     normal_matrix: Mat4,
     base_color: [f32; 4],
     material_factors: [f32; 4],
@@ -139,8 +119,7 @@ struct GpuPrimitive {
     normal_uv_transform: [[f32; 3]; 2],
     emissive_uv_transform: [[f32; 3]; 2],
     occlusion_uv_transform: [[f32; 3]; 2],
-    /// Per-slot UV1 selector (bit per texture slot); packed into
-    /// material_flags.y for the shader.
+    /// Per-slot UV1 selector bits, packed into `material_flags.y`.
     uv_set_mask: u32,
     double_sided: bool,
     /// KHR_materials_unlit: skip lighting entirely and emit the base color.
@@ -155,39 +134,24 @@ struct GpuPrimitive {
     joint_buffer: wgpu::Buffer,
     local_aabb_min: Vec3,
     local_aabb_max: Vec3,
-    /// Simplified levels, coarsest last. Empty when LOD is off, which is what
-    /// makes the disabled path identical to the pre-LOD renderer rather than
-    /// merely equivalent to it.
+    /// Simplified levels, coarsest last; empty when LOD is off, so that draw path is unchanged.
     lod_levels: Vec<LodLevel>,
-    /// Switch distance per entry in `lod_levels`. Held separately from the
-    /// levels so per-frame selection scans a contiguous f32 slice and never
-    /// allocates.
+    /// Switch distance per `lod_levels` entry, kept contiguous so selection never allocates.
     lod_min_distances: Vec<f32>,
-    /// Un-morphed vertices, kept only when this primitive has morph targets so
-    /// each frame re-blends from the neutral pose rather than accumulating.
-    /// Empty (and cheap) for the overwhelming majority of primitives.
+    /// Neutral pose, kept only for morphed primitives so each frame re-blends, not accumulates.
     base_vertices: Vec<Vertex>,
     /// POSITION/NORMAL deltas, one entry per morph target.
     morph_targets: Vec<MorphTarget>,
     /// Current per-target weights (animation-driven or the mesh defaults).
     morph_weights: Vec<f32>,
-    /// Set when `morph_weights` changed and the vertex buffer needs re-blending
-    /// on the next render. Starts true so non-zero default weights apply once.
+    /// Vertex buffer needs re-blending; starts true so non-zero default weights apply once.
     morph_dirty: bool,
-    /// Set when `model`/`normal_matrix` or any other `PrimUniforms` field
-    /// changed and the uniform buffer needs re-uploading. Starts true so the
-    /// first frame always writes. `set_instances` does NOT set this: instance
-    /// transforms live in a separate per-instance buffer, not `PrimUniforms`.
+    /// `PrimUniforms` need re-upload; instance changes don't count, they have their own buffer.
     uniforms_dirty: bool,
 }
 
 impl GpuPrimitive {
-    /// Vertex buffer, index buffer and index count the draw path should use
-    /// from a camera at `eye`.
-    ///
-    /// Distance is measured to `world_center`, matching the metric the sorted
-    /// blend pass already uses, so a primitive cannot be "far" for one pass
-    /// and "near" for another.
+    /// Buffers and index count to draw from `eye`, by `world_center` distance like the blend sort.
     fn geometry_for(&self, eye: Vec3) -> (&wgpu::Buffer, &wgpu::Buffer, u32) {
         let distance = self.world_center.distance(eye);
         match crate::scene::lod::select_lod_by_distance(&self.lod_min_distances, distance) {
@@ -207,8 +171,7 @@ pub struct ForwardRenderer {
     pipeline_blend_double_sided: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
-    // Read only by the native-only shader hot-reload path; on wasm32 they are
-    // retained state with no reader, which is fine.
+    // Read only by the native shader hot-reload path, so unread on wasm32.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pipeline_layout: wgpu::PipelineLayout,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -227,18 +190,13 @@ pub struct ForwardRenderer {
     ibl_bind_group_layout: wgpu::BindGroupLayout,
     ibl_uniform_buffer: wgpu::Buffer,
     ibl_bind_group: wgpu::BindGroup,
-    /// Group 2 of the forward + shadow pipelines: per-frame data (view/proj,
-    /// lights, camera) shared by every primitive, written once per frame.
-    /// Consumed when the pipeline layouts are built and never read again;
-    /// retained alongside its sibling layout fields rather than dropped.
+    /// Group 2 (per-frame data) of the forward and shadow layouts; only read to build them.
     #[allow(dead_code)]
     frame_bind_group_layout: wgpu::BindGroupLayout,
     frame_uniform_buffer: wgpu::Buffer,
-    /// Storage buffer for punctual lights (supports MAX_PUNCTUAL_LIGHTS).
-    /// Written every frame and read by the forward shader via @group(3).
+    /// Punctual lights (up to `MAX_PUNCTUAL_LIGHTS`), read by the forward shader at group 3.
     light_storage_buffer: wgpu::Buffer,
-    /// Same as [`Self::frame_bind_group_layout`]: built into the pipeline
-    /// layouts at construction, never read afterwards.
+    /// Like [`Self::frame_bind_group_layout`]: only read to build the pipeline layouts.
     #[allow(dead_code)]
     light_bind_group_layout: wgpu::BindGroupLayout,
     light_bind_group: wgpu::BindGroup,
@@ -253,13 +211,9 @@ pub struct ForwardRenderer {
     frame_bind_group: wgpu::BindGroup,
     /// 1x1 stand-ins so group 1 is always bindable, environment or not.
     ibl_fallback: IblFallback,
-    /// `None` until [`Self::set_environment`]; the fallback analytic path runs
-    /// until then, unchanged.
+    /// `None` until [`Self::set_environment`]; the analytic fallback runs until then.
     ibl_environment: Option<IblEnvironment>,
-    /// Environment-independent, so it is baked at most once and survives every
-    /// later `set_environment`. Lazily built rather than built in `new`: a
-    /// renderer that never sets an environment must not pay for a 256x256 x
-    /// 1024-sample pass it will never sample.
+    /// Environment-independent, baked lazily once so a renderer without an environment never pays.
     brdf_lut: Option<BrdfLut>,
     shadow_sampler: wgpu::Sampler,
     white_texture_view: wgpu::TextureView,
@@ -269,44 +223,26 @@ pub struct ForwardRenderer {
     cascade_index_bind_groups: Vec<wgpu::BindGroup>,
     cascade_matrices: [Mat4; CASCADE_COUNT],
     cascade_splits: [f32; 4],
-    /// Caster draws submitted / considered across all cascades in the last
-    /// frame. Summed over cascades, so one mesh under three cascades
-    /// considers 3 - same convention as the C++ engine's counters.
-    /// Opaque primitives drawn / considered by the camera pass last frame,
-    /// after both frustum and (when enabled) occlusion culling. `drawn <
-    /// considered` is the observable proof occlusion culling engaged.
+    /// Opaque primitives drawn / considered by the camera pass last frame, after all culling.
     occlusion_drawn: u32,
     occlusion_considered: u32,
+    /// Caster draws submitted / considered last frame, summed over cascades.
     shadow_casters_drawn: u32,
     shadow_casters_considered: u32,
-    /// The shadow-caster draw list, recorded once and replayed for every
-    /// cascade. `None` means the next frame must re-record it; invalidated
-    /// wherever the draw set or a captured buffer's identity can change
-    /// (`upload_scene`, an `instance_buffer` reallocation in `set_instances`).
-    /// A per-frame `write_buffer` into an already-captured buffer (animation,
-    /// morph targets, `PrimUniforms`) does NOT invalidate: bundles capture
-    /// buffer references, not contents, so those updates flow through
-    /// unchanged. LOD level switches don't invalidate either: the shadow pass
-    /// always draws the full-resolution `vertex_buffer`/`index_buffer`
-    /// (`geometry_for`'s LOD selection is only read by the camera pass), so a
-    /// LOD switch never changes what this bundle references.
+    /// Shadow-caster draw list, recorded once and replayed per cascade; `None` re-records it.
+    /// Only a new draw set or buffer identity invalidates it, not buffer writes or LOD switches.
     shadow_caster_bundle: Option<wgpu::RenderBundle>,
-    /// Caster count baked into `shadow_caster_bundle`, cached alongside it so
-    /// the stat counters stay correct on frames that reuse the bundle instead
-    /// of re-walking `primitives`.
+    /// Caster count baked into the bundle, so the stats stay right on frames that reuse it.
     shadow_caster_count: u32,
     primitives: Vec<GpuPrimitive>,
     scene_bounds: Option<(Vec3, Vec3)>,
-    /// GPU textures actually created by the last `upload_scene` (shared images
-    /// are uploaded once). Exposed so tests can prove the dedup, not infer it.
+    /// GPU textures created by the last `upload_scene`, so tests can prove the dedup.
     uploaded_texture_count: usize,
     depth: wgpu::TextureView,
     hdr_view: wgpu::TextureView,
-    /// MSAA depth texture (sample_count=MSAA_SAMPLE_COUNT) for the forward
-    /// render pass. Resolved to [`depth`] after the pass via depth_resolve.
+    /// MSAA depth of the forward pass, resolved into `depth` by the depth-resolve pass.
     depth_msaa: wgpu::TextureView,
-    /// MSAA HDR color texture (sample_count=MSAA_SAMPLE_COUNT) for the
-    /// forward render pass. Auto-resolved to [`hdr_view`] via resolve_target.
+    /// MSAA HDR color of the forward pass, auto-resolved into `hdr_view`.
     hdr_msaa: wgpu::TextureView,
     /// Pipeline and bind group for the MSAA depth → single-sample resolve.
     depth_resolve_pipeline: wgpu::RenderPipeline,
@@ -326,10 +262,7 @@ pub struct ForwardRenderer {
     pub auto_exposure: bool,
     /// Adaptation rate; higher settles faster.
     pub auto_exposure_speed: f32,
-    /// Seconds since the previous frame, for exposure adaptation. A field
-    /// rather than a render() parameter so existing call sites keep working;
-    /// leaving it at the default just means adaptation runs at a nominal
-    /// 60 Hz rate.
+    /// Seconds since the previous frame, for exposure adaptation (defaults to 60 Hz).
     pub frame_delta_seconds: f32,
     histogram: crate::render::histogram::HistogramPass,
     punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
@@ -340,44 +273,26 @@ pub struct ForwardRenderer {
     pending_joint_world: Option<Vec<Mat4>>,
     /// Direction towards the light (world space) + ambient strength.
     pub light_dir_ambient: Vec4,
-    /// Light color (rgb) + intensity multiplier (w). Values > 1 are the
-    /// point of the HDR pipeline; the BRDF divides diffuse by PI.
+    /// Light color (rgb) + intensity (w); HDR, so values above 1 are expected.
     pub light_color_intensity: Vec4,
-    /// Build and draw per-primitive LOD chains.
-    ///
-    /// Off by default, and read only by `upload_scene`: with it off no chain
-    /// is built and every primitive keeps an empty level list, so the draw
-    /// path is the pre-LOD one instruction for instruction and every golden
-    /// test keeps the meaning it was written with. Set it (and
-    /// `lod_switch_distances`) BEFORE `upload_scene`.
+    /// Build and draw per-primitive LOD chains; off by default.
+    /// Read only by `upload_scene`, so set it (and `lod_switch_distances`) before uploading.
     pub lod_enabled: bool,
-    /// Multiplier on the environment's contribution. 1.0 means "use the
-    /// panorama's radiance as authored"; it is not the ambient slider, which
-    /// is `light_dir_ambient.w` and scales both IBL paths alike.
+    /// Multiplier on the environment's radiance; the ambient slider is `light_dir_ambient.w`.
     pub ibl_intensity: f32,
     /// Per-pass GPU timestamps. Inert until [`Self::enable_gpu_timing`].
     gpu_timing: GpuTiming,
-    /// Per-primitive hardware occlusion detection over the forward depth.
-    /// Resources always exist; recording only happens when the flag below is
-    /// set. See [`crate::render::occlusion`].
+    /// Hardware occlusion queries over the forward depth; records only when enabled.
     occlusion: OcclusionQueries,
-    /// GPU compute-shader-based occlusion culling (replaces hardware queries
-    /// when enabled). See [`crate::render::gpu_occlusion::GpuCulling`].
+    /// Compute-shader occlusion culling, created on first use when enabled.
     gpu_culling: Option<GpuCulling>,
-    /// Record the occlusion detection pass after the forward pass.
-    ///
-    /// Off by default, like `lod_enabled` and `enable_gpu_timing`: it adds a
-    /// depth-only pass plus a query resolve. The visibility is exposed via
-    /// [`Self::occlusion_visibility`].
+    /// Record occlusion detection after the forward pass; off by default since it adds a pass.
+    /// Results land in [`Self::occlusion_visibility`].
     pub occlusion_queries_enabled: bool,
-    /// Use GPU compute-shader culling instead of hardware occlusion queries.
-    /// When true, [`GpuCulling`] replaces [`OcclusionQueries`].
+    /// Use compute-shader culling ([`GpuCulling`]) instead of hardware occlusion queries.
     pub gpu_culling_enabled: bool,
-    /// Camera distances at which successive levels take over, ascending.
-    ///
-    /// Two levels by default: the geometry roughly halves at each, so the
-    /// coarsest is a quarter of the original triangle budget. Tuned for the
-    /// unit-scale test assets; a scene in metres wants larger numbers.
+    /// Camera distances at which successive LOD levels take over, ascending.
+    /// Defaults suit unit-scale assets; a scene in metres wants larger values.
     pub lod_switch_distances: Vec<f32>,
 }
 
@@ -404,8 +319,7 @@ impl ForwardRenderer {
                 wgpu::SamplerBindingType::Comparison,
             ),
         ];
-        // Five material texture/sampler pairs: base color, metallic-roughness,
-        // normal, emissive, occlusion (bindings 3..=12).
+        // Bindings 3..=12: base color, metallic-roughness, normal, emissive, occlusion pairs.
         for slot in 0..5u32 {
             entries.push(bind_layout::texture_2d(
                 3 + slot * 2,
@@ -460,8 +374,7 @@ impl ForwardRenderer {
             }],
         });
 
-        // Light storage buffer: group(3) for forward pipelines only (shadow
-        // and sky don't need punctual lights).
+        // Group 3: punctual lights, forward pipelines only.
         let light_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("light_bind_group_layout"),
@@ -485,8 +398,7 @@ impl ForwardRenderer {
             }],
         });
 
-        // Tile light grid: group(4) for forward pipelines only.
-        // Per tile: offset + count into the light index list.
+        // Group 4: per-tile offset + count into the light index list, forward pipelines only.
         let tile_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("tile_light_bgl"),
@@ -522,12 +434,7 @@ impl ForwardRenderer {
             ],
         });
 
-        // The forward pipeline layout now carries group 2 (frame), group 3
-        // (light storage), group 4 (tile light grid) in addition to group 0
-        // (per-primitive) and group 1 (IBL). vs_shadow / vs_shadow_masked also live in this module, so
-        // the shadow pipelines need group 2 too - wgpu requires every bind
-        // group the module declares in the layout.
-        // Group 3 (lights) is forward-only and omitted from shadow/sky layouts.
+        // The shadow entry points share this module, so their layouts need group 2 as well.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("forward_pipeline_layout"),
             bind_group_layouts: &[
@@ -540,20 +447,7 @@ impl ForwardRenderer {
             immediate_size: 0,
         });
 
-        // One tiny static buffer per cascade, bound at group(1) of the shadow
-        // pipeline, telling vs_shadow which cascade matrix to project with.
-        //
-        // This is the fix for a real ordering bug, not a convenience. The
-        // cascade index used to be written into every primitive's SHARED
-        // uniform buffer once per cascade inside a single encoder, and
-        // Queue::write_buffer applies all its writes before the command buffer
-        // executes - so every one of the three shadow passes saw the LAST
-        // cascade's index, and all three depth layers were rendered with
-        // cascade 2's matrix while the fragment stage still sampled them as
-        // 0/1/2. The structural shadow tests could not see it (a shadow still
-        // appeared); it showed up as coarse, slightly-wrong cascades. Static
-        // per-cascade buffers written once cannot express the bug, and they
-        // also delete 3 x primitive-count queue writes per frame.
+        // Per cascade: write_buffer lands before any pass, so a shared buffer keeps the last index.
         let cascade_index_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_cascade_index_layout"),
@@ -588,11 +482,7 @@ impl ForwardRenderer {
                 immediate_size: 0,
             });
 
-        // Masked-shadow variant: same per-primitive uniform + joints, plus the
-        // material's base color texture/sampler at the MAIN pass's slot
-        // numbers (3/4), so the WGSL entry points reuse the existing global
-        // declarations. Binding 0 needs FRAGMENT visibility too - the alpha
-        // test reads the cutoff and base color factor from the uniform.
+        // Slots 3/4 match the main pass so WGSL globals are shared; the alpha test reads binding 0.
         let shadow_masked_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_masked_bind_group_layout"),
@@ -621,8 +511,7 @@ impl ForwardRenderer {
         let (pipeline, pipeline_double_sided, pipeline_blend, pipeline_blend_double_sided) =
             create_forward_pipeline_set(device, &shader, &pipeline_layout);
 
-        // Procedural sky: fullscreen triangle at far depth, only where no
-        // geometry was drawn (LessEqual vs the cleared 1.0, no depth writes).
+        // Sky: fullscreen triangle at far depth, drawn only where depth is still the cleared 1.0.
         let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sky_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sky.wgsl").into()),
@@ -800,8 +689,7 @@ impl ForwardRenderer {
             shadow_casters_considered: 0,
             shadow_caster_bundle: None,
             shadow_caster_count: 0,
-            // z, w (tile_w, tile_h) are supplied by the per-frame uniform
-            // write in `render`, not this constructor-time default.
+            // z, w (tile counts) are written per frame in `render_tonemapped`.
             cascade_splits: [10.0, 30.0, 0.0, 0.0],
             primitives: Vec::new(),
             gpu_timing: GpuTiming::unavailable(),
@@ -838,21 +726,12 @@ impl ForwardRenderer {
             skins: Vec::new(),
             pending_joint_world: None,
             light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.35),
-            // The BRDF divides diffuse by PI: intensity ~5 restores the
-            // pre-PBR brightness ballpark.
+            // ~5 because the BRDF divides diffuse by PI.
             light_color_intensity: Vec4::new(1.0, 0.97, 0.92, 5.0),
         }
     }
 
-    /// Uploads a CPU scene, replacing any previously uploaded one.
-    /// Replaces the instance transforms of one primitive.
-    ///
-    /// Passing an empty slice restores the single identity instance rather
-    /// than drawing nothing: a primitive with zero instances silently
-    /// disappears, which is indistinguishable from a culling or upload bug
-    /// when you are looking at the frame.
-    ///
-    /// Reallocates when the count grows; a same-size update just writes.
+    /// Replaces one primitive's instance transforms; an empty slice restores the identity instance.
     pub fn set_instances(&mut self, gpu: &GpuContext, primitive_index: usize, transforms: &[Mat4]) {
         let Some(primitive) = self.primitives.get_mut(primitive_index) else {
             return;
@@ -865,8 +744,7 @@ impl ForwardRenderer {
                 bytemuck::bytes_of(&InstanceRaw::IDENTITY),
             );
             primitive.instance_count = 1;
-            // Back to the single identity instance: bounds collapse to the
-            // posed box.
+            // Single identity instance again: bounds collapse to the posed box.
             primitive.instance_transforms.clear();
             let (min, max) = primitive.pre_instance_aabb;
             primitive.aabb_min = min;
@@ -894,9 +772,7 @@ impl ForwardRenderer {
                         contents: bytes,
                         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     });
-            // The bundle captured the old instance_buffer by reference; a
-            // same-size update above just writes into it and stays valid, but
-            // this replaced the buffer object outright.
+            // The bundle captured the old buffer by reference, and this replaced it.
             self.shadow_caster_bundle = None;
         }
         primitive.instance_count = raw.len() as u32;
@@ -917,22 +793,17 @@ impl ForwardRenderer {
             .unwrap_or(0)
     }
 
-    /// GPU textures created by the most recent [`Self::upload_scene`]. Shared
-    /// images upload once, so this is < the number of material slots whenever a
-    /// scene reuses a texture.
+    /// GPU textures created by the last [`Self::upload_scene`]; shared images count once.
     pub fn uploaded_texture_count(&self) -> usize {
         self.uploaded_texture_count
     }
 
-    /// Whole-scene world bounds, exactly as cascade fitting reads them. `None`
-    /// before anything is uploaded.
+    /// Whole-scene world bounds as cascade fitting reads them; `None` before any upload.
     pub fn scene_bounds(&self) -> Option<(Vec3, Vec3)> {
         self.scene_bounds
     }
 
-    /// World-space culling bounds of a primitive, exactly as the frustum test
-    /// reads them. Exposed so tests can assert on the bounds that actually gate
-    /// drawing rather than on a recomputed copy.
+    /// A primitive's world culling bounds, exactly as the frustum test reads them.
     pub fn primitive_world_aabb(&self, primitive_index: usize) -> Option<(Vec3, Vec3)> {
         self.primitives
             .get(primitive_index)
@@ -956,89 +827,48 @@ impl ForwardRenderer {
             .map(|l| l.index_count)
     }
 
-    /// Index count the draw path would actually issue for a primitive with the
-    /// camera at `eye`.
-    ///
-    /// This calls the same `geometry_for` the render pass calls, so a test
-    /// against it fails if selection is computed but not bound. A test that
-    /// only asked "is LOD enabled?" would pass against wiring that draws the
-    /// full-detail buffer every frame, which is the bug this whole feature was
-    /// added to fix.
+    /// Index count the draw path issues for a primitive from `eye` (the pass's own `geometry_for`).
     pub fn selected_index_count(&self, primitive_index: usize, eye: Vec3) -> Option<u32> {
         let prim = self.primitives.get(primitive_index)?;
         Some(prim.geometry_for(eye).2)
     }
 
-    /// Starts collecting per-pass GPU timings; returns whether it took effect.
-    ///
-    /// Off by default, and a method rather than a `pub` flag because switching
-    /// it on allocates a query set and readback buffers, which needs the
-    /// device. `false` means the adapter has no `TIMESTAMP_QUERY` (every
-    /// browser today, and some native drivers) - the caller gets no timings and
-    /// the frame renders exactly as before.
-    ///
-    /// Off by default for the same reason as `lod_enabled`: it is not free.
-    /// Every timed pass gains two timestamp writes, and the frame gains a query
-    /// resolve plus a buffer copy. Small, but it is a diagnostic, and a golden
-    /// or perf test must measure the shipping path unless it asked not to.
+    /// Starts collecting per-pass GPU timings (off by default: it is not free).
+    /// Returns `false` when the adapter lacks `TIMESTAMP_QUERY`; the frame then renders unchanged.
     pub fn enable_gpu_timing(&mut self, gpu: &GpuContext) -> bool {
         self.gpu_timing = GpuTiming::new(&gpu.device, &gpu.queue);
         self.gpu_timing.is_available()
     }
 
-    /// Averaged per-pass GPU durations in milliseconds, in record order.
-    ///
-    /// Empty until timing is enabled AND the first readback has landed (a few
-    /// frames in, by design - see [`crate::render::gpu_timing`]). A pass absent
-    /// from the list has not reported yet; that is not the same as zero.
-    /// Shadow caster draws submitted / considered in the last frame, summed
-    /// over cascades. `drawn < considered` is the observable proof that
-    /// per-cascade culling actually engaged.
+    /// Shadow caster draws submitted / considered last frame, summed over cascades.
     pub fn shadow_caster_stats(&self) -> (u32, u32) {
         (self.shadow_casters_drawn, self.shadow_casters_considered)
     }
 
-    /// Whether the shadow-caster `RenderBundle` is currently cached. `false`
-    /// right after construction/`upload_scene`/an `instance_buffer`
-    /// reallocation; `true` again once a frame has rebuilt it. Exposed so
-    /// tests can pin the cache/invalidate contract directly instead of
-    /// inferring it from render output.
+    /// Whether the shadow-caster bundle is cached, so tests can pin the cache/invalidate contract.
     pub fn shadow_caster_bundle_is_cached(&self) -> bool {
         self.shadow_caster_bundle.is_some()
     }
 
-    /// Opaque primitives drawn / considered by the camera pass last frame.
-    /// `drawn < considered` once a primitive has been occluded for a frame -
-    /// the observable proof the skip engaged. Fed by whichever of
-    /// `occlusion_queries_enabled` (hardware queries, [`OcclusionQueries`]) or
-    /// `gpu_culling_enabled` (compute-shader depth test, [`GpuCulling`]) is
-    /// on; the two are mutually exclusive and `gpu_culling_enabled` takes
-    /// priority if both are somehow set. With both off, `drawn == considered`.
+    /// Opaque primitives drawn / considered by the camera pass last frame (equal with culling off).
+    /// Fed by `gpu_culling_enabled` (takes priority) or `occlusion_queries_enabled`.
     pub fn occlusion_cull_stats(&self) -> (u32, u32) {
         (self.occlusion_drawn, self.occlusion_considered)
     }
 
+    /// Averaged per-pass GPU durations in ms, in record order; empty until the first readback.
+    /// A pass absent from the list has not reported yet, which is not zero.
     pub fn gpu_timings_ms(&self) -> Vec<(&'static str, f32)> {
         self.gpu_timing.timings_ms()
     }
 
-    /// Per-primitive occlusion visibility from the most recent completed
-    /// readback, index-aligned to the uploaded primitives: `true` when the
-    /// primitive's world AABB had > 0 fragments pass the depth test.
-    ///
-    /// Empty until occlusion queries are enabled AND the first readback has
-    /// landed (a frame or two after the first recorded frame - the readback is
-    /// asynchronous, exactly like the GPU timings). A primitive absent from the
-    /// slice has not been measured yet; that is not the same as "occluded".
+    /// Per-primitive occlusion visibility from the latest readback, index-aligned to primitives.
+    /// Empty until the first async readback lands; a missing entry is unmeasured, not occluded.
     pub fn occlusion_visibility(&self) -> &[bool] {
         self.occlusion.visibility()
     }
 
-    /// Per-primitive visibility from the compute-shader culling path
-    /// (`gpu_culling_enabled`), index-aligned to the uploaded primitives. Same
-    /// contract as [`Self::occlusion_visibility`], but fed by [`GpuCulling`]
-    /// instead of hardware occlusion queries. Empty until GPU culling is
-    /// enabled AND the first readback has landed.
+    /// Like [`Self::occlusion_visibility`], but fed by the compute-shader culling path.
     pub fn gpu_culling_visibility(&self) -> &[bool] {
         self.gpu_culling
             .as_ref()
@@ -1046,8 +876,7 @@ impl ForwardRenderer {
             .unwrap_or(&[])
     }
 
-    /// Raw occlusion sample counts behind [`Self::occlusion_visibility`], for
-    /// tests and diagnostics that want the fragment counts, not just the bool.
+    /// Raw fragment counts behind [`Self::occlusion_visibility`].
     pub fn occlusion_samples(&self) -> &[u64] {
         self.occlusion.samples()
     }
@@ -1057,21 +886,10 @@ impl ForwardRenderer {
         self.gpu_timing.is_available()
     }
 
-    /// Bakes `equirect` into irradiance/prefiltered maps and lights the scene
-    /// with them from the next frame on.
-    ///
-    /// Off by default, like `lod_enabled` and `enable_gpu_timing`: with no
-    /// environment the forward shader takes the analytic hemisphere path it
-    /// always took, so every golden test keeps the meaning it was written
-    /// with. Setting one is the only thing that changes shading.
-    ///
-    /// Blocks for the length of the bake (one submit, tens of milliseconds) -
-    /// it is a load-time operation, not a per-frame one. Nothing is recomputed
-    /// afterwards; the frame path only samples the results.
+    /// Bakes `equirect` into IBL maps that light the scene from the next frame on.
+    /// Blocks for the bake (one submit): a load-time call, not a per-frame one.
     pub fn set_environment(&mut self, gpu: &GpuContext, equirect: &EquirectImage) {
-        // The BRDF table integrates the GGX BRDF against a white furnace and
-        // never touches the environment, so it is baked once and reused for
-        // every environment this renderer is ever given.
+        // The BRDF table never touches the environment, so it is baked once and reused.
         let brdf_lut = self.brdf_lut.get_or_insert_with(|| BrdfLut::new(gpu));
         let environment = IblEnvironment::bake(gpu, equirect);
 
@@ -1119,8 +937,7 @@ impl ForwardRenderer {
         self.ibl_environment.is_some()
     }
 
-    /// The baked environment, for tests and diagnostics that want to inspect
-    /// the maps the frame is actually sampling.
+    /// The baked environment the frame is sampling, for tests and diagnostics.
     pub fn environment(&self) -> Option<&IblEnvironment> {
         self.ibl_environment.as_ref()
     }
@@ -1130,15 +947,13 @@ impl ForwardRenderer {
         self.brdf_lut.as_ref()
     }
 
+    /// Uploads a CPU scene, replacing any previously uploaded one.
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
         let device = &gpu.device;
         self.primitives.clear();
-        // The whole draw set is being replaced; any cached bundle references
-        // buffers that are about to be dropped.
+        // A cached bundle references buffers that are about to be dropped.
         self.shadow_caster_bundle = None;
-        // Per-index occlusion visibility is only valid for the primitive list it
-        // was measured against; a new scene must not inherit it (a smaller scene
-        // would see stale culls at shared indices).
+        // Visibility is per primitive index, so a new scene must not inherit stale culls.
         self.occlusion.reset();
         if let Some(gpu_cull) = self.gpu_culling.as_mut() {
             gpu_cull.reset();
@@ -1158,18 +973,10 @@ impl ForwardRenderer {
             );
         }
 
-        // Resolved once for the whole upload: skinned primitives need the joint
-        // nodes' world matrices to size their bounds (below).
+        // Skinned primitives need the joint nodes' world matrices to size their bounds.
         let upload_node_world = CpuScene::compute_world_transforms(&scene.nodes);
 
-        // One GPU texture per (image, color space), not one per primitive that
-        // references it. Without this a 200-primitive glTF sharing a single 4K
-        // atlas ran 200 CPU mip-chain builds - `generate_mips` does a per-texel
-        // powf for the sRGB-correct average - and uploaded the same pixels 200
-        // times. That is the load hitch AND the VRAM ceiling. The CPU side is
-        // already `Arc<CpuTexture>`, so the pointer is a free identity key;
-        // `srgb` joins it because the same image can legitimately be uploaded
-        // both ways (base color vs a data map).
+        // One upload and mip build per (image `Arc` pointer, sRGB), not per referencing primitive.
         let mut texture_cache: std::collections::HashMap<(usize, bool), wgpu::TextureView> =
             std::collections::HashMap::new();
         let mut sampler_cache: std::collections::HashMap<CpuSampler, wgpu::Sampler> =
@@ -1177,8 +984,7 @@ impl ForwardRenderer {
         let mut uploaded_textures = 0usize;
 
         for (i, prim) in scene.primitives.iter().enumerate() {
-            // Morphed primitives are re-blended and re-uploaded per frame, so
-            // their vertex buffer needs COPY_DST. Everyone else stays upload-once.
+            // Morphed vertex buffers are re-uploaded per frame, so they need COPY_DST.
             let has_morph = !prim.morph_targets.is_empty();
             let vertex_usage = if has_morph {
                 wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST
@@ -1202,10 +1008,7 @@ impl ForwardRenderer {
             );
 
             let local_bounds = primitive_local_aabb(prim);
-            // Skinned bounds matter even before any animation runs: a scene can
-            // be authored with its joints already posed away from the bind pose,
-            // and set_animation_time (which also widens) bails out early when the
-            // scene carries no animations.
+            // Widen now: joints may start posed, and set_animation_time bails without animations.
             let mut prim_bounds = primitive_world_aabb(prim);
             if let Some(skin) = prim.skin_index.and_then(|s| scene.skins.get(s)) {
                 prim_bounds = widen_bounds_for_skin(
@@ -1336,11 +1139,7 @@ impl ForwardRenderer {
                 ],
             });
 
-            // Per-pixel alpha-tested shadows: MASK materials with a real
-            // base-color texture get a bind group carrying that texture (the
-            // SAME dedup-cached view/sampler the forward pass binds - slot 0
-            // of the views built above), routed through the masked shadow
-            // pipeline in the caster loop.
+            // Textured MASK casters alpha-test with the forward pass's own slot-0 view/sampler.
             let alpha_masked = matches!(material.alpha_mode, AlphaMode::Mask(_))
                 && material.base_color_texture.is_some();
             let shadow_masked_bind_group = if alpha_masked {
@@ -1376,31 +1175,18 @@ impl ForwardRenderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
-            // Quadric decimation, not vertex clustering: clustering's first
-            // level at cell ratio 0.02 is a no-op on anything but a dense
-            // photogrammetry mesh (every vertex lands in its own cell), so a
-            // chain built with it would draw the same triangle count at every
-            // distance and the whole system would look wired but do nothing.
-            // QEM's ratio is a triangle budget, so level 0 halves regardless
-            // of how dense the input is.
-            // Morphed primitives are excluded from LOD: `apply_morph_targets`
-            // re-blends only the full-res `vertex_buffer`, so a simplified LOD
-            // level would draw the un-morphed neutral pose and the object would
-            // visibly pop to its rest shape at distance. Keep them full-res.
+            // Morphed primitives skip LOD: only `vertex_buffer` is re-blended, so levels would pop.
             let (lod_levels, lod_min_distances) = if self.lod_enabled && !has_morph {
                 let chain = crate::scene::lod::build_lod_chain_with(
                     prim,
                     &self.lod_switch_distances,
+                    // QEM's ratio is a triangle budget; clustering is a no-op on non-dense meshes.
                     crate::scene::lod::Simplifier::Quadric,
                 );
                 let mut levels = Vec::with_capacity(chain.len());
                 let mut distances = Vec::with_capacity(chain.len());
                 for (level, lod) in chain.iter().enumerate() {
-                    // A level that decimated to nothing ends the chain: a
-                    // zero-length buffer is invalid in wgpu, and there is no
-                    // sensible thing to draw past the point where the mesh has
-                    // no triangles left. The primitive then simply stops
-                    // getting coarser beyond that distance.
+                    // A level decimated to nothing ends the chain (wgpu rejects empty buffers).
                     if lod.primitive.indices.is_empty() || lod.primitive.vertices.is_empty() {
                         break;
                     }
@@ -1474,29 +1260,19 @@ impl ForwardRenderer {
                 double_sided: material.double_sided,
                 unlit: material.unlit,
                 alpha_blend: material.alpha_mode == AlphaMode::Blend,
-                // Transparents cast no shadow (v1); a MASK primitive whose
-                // base alpha is fully below the cutoff is invisible and must
-                // not shadow either. Per-pixel alpha-tested shadows for
-                // textured masks are a later refinement.
+                // Blend casts no shadow; a MASK whose base alpha is below the cutoff is invisible.
                 casts_shadow: match material.alpha_mode {
                     AlphaMode::Blend => false,
                     AlphaMode::Mask(cutoff) => material.base_color[3] >= cutoff,
                     AlphaMode::Opaque => true,
                 },
-                // AABB centre, NOT the vertex centroid: every other site that
-                // maintains this field uses the box centre, so seeding it with a
-                // centroid meant the value silently changed definition the first
-                // time an animation or instance update ran. For an unevenly
-                // tessellated mesh the two differ, so `set_animation_time(0.0)` -
-                // no movement at all - could flip the LOD level across a switch
-                // distance and reorder the transparent draw list.
+                // AABB centre, not vertex centroid: `world_center` must stay one metric everywhere.
                 world_center: (prim_bounds.0 + prim_bounds.1) * 0.5,
                 aabb_min: prim_bounds.0,
                 aabb_max: prim_bounds.1,
                 lod_levels,
                 lod_min_distances,
-                // Keep the neutral pose only for morphed primitives; the render
-                // path re-blends from it each time the weights move.
+                // Neutral pose only for morphed primitives; the render path re-blends from it.
                 base_vertices: if has_morph {
                     prim.vertices.clone()
                 } else {
@@ -1504,8 +1280,7 @@ impl ForwardRenderer {
                 },
                 morph_targets: prim.morph_targets.clone(),
                 morph_weights: prim.morph_weights.clone(),
-                // Apply once up front so non-zero mesh default weights show
-                // even before any animation channel drives them.
+                // Non-zero default weights must show before any animation drives them.
                 morph_dirty: has_morph && prim.morph_weights.iter().any(|w| *w != 0.0),
                 uniforms_dirty: true,
             });
@@ -1513,8 +1288,7 @@ impl ForwardRenderer {
         self.uploaded_texture_count = uploaded_textures;
     }
 
-    /// Renders the scene HDR->tonemap into `output_view` (surface frame or
-    /// offscreen texture). `width`/`height` must match `output_view`.
+    /// Renders the scene HDR->tonemap into `output_view`, which must be `width` x `height`.
     pub fn render_tonemapped(
         &mut self,
         gpu: &GpuContext,
@@ -1574,9 +1348,6 @@ impl ForwardRenderer {
             self.hdr_rebound_needed = false;
         }
         tonemap.set_params(&gpu.queue, self.bloom_strength, self.ssao_strength);
-        // Manual mode still routes through the reduction, which copies the
-        // slider value into the same buffer the tonemap reads - one source of
-        // truth, and switching modes cannot strand a stale value.
         self.histogram.set_exposure_settings(
             &gpu.queue,
             crate::render::histogram::ExposureSettings {
@@ -1614,9 +1385,7 @@ impl ForwardRenderer {
             bytemuck::bytes_of(&sky_uniforms),
         );
 
-        // Tile grid dimensions must be known before the frame uniforms are
-        // built below, so this frame's tile counts land in the uniform
-        // instead of last frame's (cascade_splits.zw carries them).
+        // Before the frame uniforms, so this frame's tile counts land in cascade_splits.zw.
         let tx = width.div_ceil(TILE_SIZE);
         let ty = height.div_ceil(TILE_SIZE);
         self.tile_counts = (tx, ty);
@@ -1660,9 +1429,7 @@ impl ForwardRenderer {
             );
             let total_tiles = (tx * ty) as usize;
 
-            // Ensure buffer capacity; rebuild the bind group if either buffer
-            // was recreated, since a bind group captures the buffer identity
-            // at creation time and does not follow a later reassignment.
+            // A bind group captures buffer identity, so rebuild it if either buffer is recreated.
             let mut bind_group_dirty = false;
             let needed_grid = (total_tiles as u64) * 8; // vec2<u32> × total_tiles
             if needed_grid > self.tile_light_grid_buffer.size() {
@@ -1704,8 +1471,7 @@ impl ForwardRenderer {
             );
         }
 
-        // Splits a KHR_texture_transform's two affine rows into the padded
-        // [f32; 4] pair PrimUniforms packs (w is unused, kept for alignment).
+        // Pads a KHR_texture_transform's two affine rows to the [f32; 4] pair PrimUniforms packs.
         fn uv_rows(t: [[f32; 3]; 2]) -> ([f32; 4], [f32; 4]) {
             (
                 [t[0][0], t[0][1], t[0][2], 0.0],
@@ -1750,14 +1516,9 @@ impl ForwardRenderer {
             prim.uniforms_dirty = false;
         }
 
-        // The frame's pass wiring is declared in render::graph; its own test
-        // (`graph::tests::forward_graph_is_valid`) proves the wiring, so
-        // re-validating it here on every debug frame would only repeat that
-        // proof against an input that cannot vary at runtime.
+        // Pass wiring is validated once by `graph::tests::forward_graph_is_valid`, not per frame.
 
-        // Claimed before any pass asks for a scope: begin_frame decides which
-        // ring slot this frame writes into, and every scope handed out below
-        // must agree on that answer.
+        // Before any scope: begin_frame picks the ring slot every scope below writes into.
         self.gpu_timing.begin_frame();
 
         let mut encoder = gpu
@@ -1767,24 +1528,7 @@ impl ForwardRenderer {
             });
         let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
 
-        // Record the shadow-caster draw list once into a RenderBundle, cache
-        // it on `self`, and replay it for every cascade with only the
-        // cascade-index bind group changing. Without this the draw list was
-        // identically re-recorded three times per frame: at 1000 primitives,
-        // that is 3000 × set_bind_group/set_vertex_buffer/set_index_buffer/
-        // draw_indexed calls the CPU was issuing every frame. Caching across
-        // frames (not just across cascades within one frame) removes the
-        // re-record entirely on every frame that does not invalidate it - see
-        // the field doc on `shadow_caster_bundle` for exactly what does.
-        //
-        // Trade-off: per-cascade caster culling is disabled because the
-        // bundle's draw list is baked at record time. Re-enable it when
-        // culling-aware bundle invalidation is designed (record a fresh
-        // bundle when `{aabb,casts_shadow}` changes for any primitive, or when
-        // the camera moves far enough to change a union-frustum cull) - a
-        // follow-up decision, not this change. Until then the ~2× cascade
-        // cost the comparison harness measured is the dominant factor, and
-        // the bundle eliminates it.
+        // A cached bundle replayed per cascade; the baked draw list rules out per-cascade culling.
         if self.shadow_caster_bundle.is_none() {
             let mut bundle_encoder =
                 gpu.device
@@ -1799,11 +1543,7 @@ impl ForwardRenderer {
                         sample_count: 1,
                         multiview: None,
                     });
-            // Pipeline and group 0 (per-primitive, includes uniforms+textures)
-            // are baked at record time. Groups 1 and 2 must also be set in the
-            // bundle for validation (the pipeline layout requires them), but the
-            // parent pass sets the per-cascade group 1 and shared group 2 before
-            // execute_bundles; the bundle's values at 1/2 are overwritten.
+            // Groups 1/2 only satisfy layout validation; the parent pass sets the real ones.
             bundle_encoder.set_bind_group(1, &self.cascade_index_bind_groups[0], &[]);
             bundle_encoder.set_bind_group(2, &self.frame_bind_group, &[]);
             let mut caster_count = 0u32;
@@ -1836,12 +1576,6 @@ impl ForwardRenderer {
             .expect("just built above when absent");
 
         for cascade in 0..CASCADE_COUNT {
-            // Per-cascade culling against this cascade's light frustum is
-            // deliberately NOT applied here: a culled draw set differs per
-            // cascade and per camera move, which is incompatible with one
-            // bundle cached across frames. Re-adding it (per-cascade bundles,
-            // or union-frustum culling with camera-move invalidation) is the
-            // follow-up decision noted above.
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow_pass"),
                 color_attachments: &[],
@@ -1861,15 +1595,10 @@ impl ForwardRenderer {
             pass.set_bind_group(2, &self.frame_bind_group, &[]);
             pass.execute_bundles(std::iter::once(caster_bundle));
         }
-        // The bundle draws every caster it was built with in every cascade
-        // (no per-cascade culling), so drawn == considered by construction -
-        // that is now a true statement, not the divide-by-CASCADE_COUNT fudge
-        // this replaced. The culling test below uses the counter to detect
-        // engagement and won't engage until culling is re-added.
+        // No per-cascade culling, so drawn == considered by construction.
         self.shadow_casters_drawn = self.shadow_caster_count;
         self.shadow_casters_considered = self.shadow_caster_count;
-        // Occlusion-cull stats, filled by the opaque loop below and read back
-        // out to the fields once the pass (which borrows self) has ended.
+        // Copied to the fields once the pass, which borrows `self`, has ended.
         let mut occ_drawn = 0u32;
         let mut occ_considered = 0u32;
         {
@@ -1893,19 +1622,7 @@ impl ForwardRenderer {
                     view: &self.depth_msaa,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        // Must be Store, not Discard: the depth-resolve pass
-                        // below is a SEPARATE render pass recorded after this
-                        // one ends, not a subpass. A store op determines what
-                        // happens to the attachment when ITS OWN pass ends, so
-                        // Discard here throws the MSAA depth away before the
-                        // resolve pass - which runs later in the same encoder
-                        // - ever reads it, and every pixel resolves to
-                        // whatever the backend leaves behind (0.0 measured on
-                        // this AMD/Vulkan host). Confirmed by an isolated
-                        // repro: a known clear value round-trips through the
-                        // resolve pass correctly with Store, and comes back
-                        // as 0.0 with Discard, independent of the frag_depth
-                        // fix below.
+                        // Not Discard: the depth resolve is a later, separate pass that reads this.
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -1918,11 +1635,7 @@ impl ForwardRenderer {
                 multiview_mask: None,
             });
 
-            // Group 1 (IBL) and group 2 (frame) are per-frame, not per-draw,
-            // so they are set once here and again after the sky. The sky
-            // pipeline has its own layout, which invalidates every group
-            // binding when it is bound.
-            // Group 3 (lights) and group 4 (tile grid) are also per-frame.
+            // Per-frame groups 1-4; rebound after the sky, whose own layout invalidates them.
             pass.set_bind_group(1, &self.ibl_bind_group, &[]);
             pass.set_bind_group(2, &self.frame_bind_group, &[]);
             pass.set_bind_group(3, &self.light_bind_group, &[]);
@@ -1933,25 +1646,7 @@ impl ForwardRenderer {
                     continue;
                 }
                 occ_considered += 1;
-                // Occlusion skip uses LAST frame's query result (this frame's
-                // is still being recorded below). One-frame latency is the
-                // accepted cost; `visible` defaults to true for primitives the
-                // readback has not covered, so nothing pops on the first frames
-                // or right after a scene change. The occlusion pass still
-                // queries EVERY primitive, so a skipped one is re-evaluated and
-                // reappears the frame its occluder moves away.
-                // Never skip a primitive the camera is INSIDE. Its proxy box
-                // surrounds the eye, so the box's front faces are near-plane
-                // clipped and only back faces rasterise; those sit behind the
-                // primitive's own surface and fail LessEqual, so the query reports
-                // zero, the skip empties that surface from the depth buffer, the
-                // box passes next frame and the object strobes at frame rate.
-                //
-                // Cheap insurance rather than a fix for an observed failure: with
-                // the current closed, back-face-culled fixtures nothing renders
-                // from inside at all (so depth stays empty and the box passes
-                // regardless), and I could not build a failing case from them.
-                // Interior/double-sided geometry does reach the bad path.
+                // Last frame's result; unmeasured primitives count as visible, so nothing pops.
                 let occluded = if self.gpu_culling_enabled {
                     self.gpu_culling.as_ref().is_some_and(|c| !c.visible(i))
                 } else if self.occlusion_queries_enabled {
@@ -1959,6 +1654,7 @@ impl ForwardRenderer {
                 } else {
                     false
                 };
+                // Eye inside the box: only back faces rasterise and fail depth, so never skip.
                 if occluded && !aabb_contains_point(prim.aabb_min, prim.aabb_max, eye) {
                     continue;
                 }
@@ -1968,10 +1664,6 @@ impl ForwardRenderer {
                 } else {
                     &self.pipeline
                 };
-                // Selection sits beside the frustum test on purpose: both are
-                // per-primitive, per-frame decisions about what this draw
-                // costs, and splitting them apart is how one of them ends up
-                // computed and then ignored.
                 let (vertex_buffer, index_buffer, index_count) = prim.geometry_for(eye);
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &prim.bind_group, &[]);
@@ -2019,9 +1711,7 @@ impl ForwardRenderer {
             }
         }
 
-        // Depth resolve: downsample MSAA depth → single-sample for SSAO,
-        // occlusion, and the tonemap pass. This is a fullscreen pass that
-        // writes the minimum depth across all MSAA samples.
+        // Depth resolve: MSAA depth to single-sample (min over samples) for SSAO and occlusion.
         {
             let mut resolve = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("depth_resolve"),
@@ -2046,12 +1736,7 @@ impl ForwardRenderer {
         self.occlusion_drawn = occ_drawn;
         self.occlusion_considered = occ_considered;
 
-        // Occlusion DETECTION rides the forward depth: a separate depth-only
-        // pass draws each primitive's world AABB with depth-write off, so a box
-        // fully behind other geometry counts zero fragments.
-        //
-        // When `gpu_culling_enabled` is set, a compute shader replaces the
-        // hardware occlusion query path with a depth-texture-based test.
+        // Occlusion detection: AABB proxies vs this frame's depth, by compute or hardware queries.
         if !self.primitives.is_empty() {
             let aabbs: Vec<(Vec3, Vec3)> = self
                 .primitives
@@ -2092,12 +1777,7 @@ impl ForwardRenderer {
             }
         }
 
-        // Skip these outright at zero strength. The tonemap composites bloom as
-        // `bloom * params.x` and AO as `mix(1.0, ao_raw, params.y)`, so at zero
-        // the (now stale) texture provably contributes nothing - while the passes
-        // themselves still cost a brightpass plus a separable Gaussian, and a
-        // half-res depth pass plus a 3x3 blur, every single frame. Turning the
-        // overlay slider to 0 used to cost exactly as much as leaving it on.
+        // At zero strength the tonemap provably ignores these outputs, so skip the passes.
         if self.bloom_strength > 0.0 {
             self.bloom
                 .encode(&mut encoder, self.gpu_timing.scope(TimedPass::Bloom));
@@ -2106,21 +1786,7 @@ impl ForwardRenderer {
             self.ssao
                 .encode(&mut encoder, self.gpu_timing.scope(TimedPass::Ssao));
         }
-        // Histogram and reduction run against THIS frame's HDR target, before
-        // the tonemap reads the exposure they produce. Measuring the frame it
-        // is about to expose costs one extra pass over the HDR image and
-        // avoids the frame-of-lag a previous-frame measurement would add.
-        //
-        // Manual mode never reads the bins, only the reduction below, so the
-        // build (clear + histogram) is skipped whenever auto-exposure is off -
-        // full-resolution, unlike the half-res bloom/SSAO skip above, and paid
-        // every frame in the default configuration before this gate existed.
-        // Gating on the *current* frame's flag already covers the frame
-        // auto-exposure switches back on: the build clears and rebuilds from
-        // scratch, so the first adapted frame reduces over its own bins, not
-        // whatever was left behind the last time it ran. The adapted EV still
-        // takes a few frames to settle towards the target after that - that's
-        // ordinary temporal adaptation, not staleness.
+        // Manual exposure never reads the bins, so the full-res histogram build is auto-mode only.
         if self.auto_exposure {
             self.histogram.encode(
                 &mut encoder,
@@ -2129,9 +1795,7 @@ impl ForwardRenderer {
                 self.gpu_timing.scope(TimedPass::Histogram),
             );
         }
-        // Manual mode still routes through the reduction, which copies the
-        // slider value into the same buffer the tonemap reads - switching
-        // modes cannot strand a stale value.
+        // Always reduce: manual mode copies its EV into the one buffer the tonemap reads.
         self.histogram.encode_reduce(
             &mut encoder,
             self.gpu_timing.scope(TimedPass::ExposureReduce),
@@ -2141,19 +1805,13 @@ impl ForwardRenderer {
             output_view,
             self.gpu_timing.scope(TimedPass::Tonemap),
         );
-        // Resolve rides the frame's own encoder: a second submit purely to
-        // copy 112 bytes would serialise against the frame it is measuring.
+        // In the frame's encoder: a second submit would serialise against the frame it measures.
         self.gpu_timing.resolve(&mut encoder);
         gpu.queue.submit(Some(encoder.finish()));
         self.gpu_timing.end_frame(&gpu.device);
-        // Consume any occlusion readback that has landed. Non-blocking: results
-        // lag the frame they measured by one or more frames, which is fine -
-        // detection is advisory and a later increment reads last-known
-        // visibility. When disabled this is a cheap poll over empty slots.
+        // Non-blocking: results lag a frame or more, which advisory visibility tolerates.
         self.occlusion.end_frame(&gpu.device);
-        // Same non-blocking drain for the GPU-culling ring, gated on the flag
-        // like `cull` above - the two paths are mutually exclusive so only one
-        // ever has readbacks in flight.
+        // The culling paths are exclusive, so only the enabled one has readbacks in flight.
         if self.gpu_culling_enabled {
             if let Some(gpu_cull) = self.gpu_culling.as_mut() {
                 gpu_cull.end_frame(&gpu.device);
@@ -2161,8 +1819,7 @@ impl ForwardRenderer {
         }
     }
 
-    /// Headless helper: renders one tonemapped frame into a fresh RGBA8
-    /// texture and returns the pixel bytes (RGBA, row-major, tightly packed).
+    /// Renders one tonemapped frame headless and returns tightly packed row-major RGBA8 bytes.
     pub fn render_to_pixels(
         &mut self,
         gpu: &GpuContext,
@@ -2179,12 +1836,7 @@ impl ForwardRenderer {
         )
     }
 
-    /// As [`Self::render_to_pixels`], but with an explicit target format.
-    ///
-    /// Exists so tests can exercise a NON-sRGB target, which is what browsers
-    /// hand out: WebGPU canvases expose no sRGB surface format. The tonemap
-    /// pass has to gamma-encode itself there, and that path is otherwise
-    /// unreachable from a headless test - every readback target is sRGB.
+    /// As [`Self::render_to_pixels`] with an explicit format, for the non-sRGB path browsers use.
     pub fn render_to_pixels_with_format(
         &mut self,
         gpu: &GpuContext,
@@ -2255,9 +1907,7 @@ impl ForwardRenderer {
             .context("Readback mapping callback dropped")?
             .context("Failed to map readback buffer")?;
 
-        // wgpu 30 made `get_mapped_range` fallible. The map above already
-        // succeeded, so an error here is a logic fault, not a device loss -
-        // but this function returns Result, so propagate rather than panic.
+        // Fallible since wgpu 30; this function returns Result, so propagate rather than panic.
         let data = slice
             .get_mapped_range()
             .context("Failed to view the mapped readback buffer")?;
@@ -2271,9 +1921,7 @@ impl ForwardRenderer {
         Ok(pixels)
     }
 
-    /// Rebuilds the scene/shadow/sky pipelines from new WGSL sources.
-    /// Invalid shaders are rejected (wgpu validation error scope) and the
-    /// previous pipelines stay active.
+    /// Rebuilds the scene/shadow/sky pipelines from new WGSL; invalid shaders keep the old ones.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn reload_shaders(
         &mut self,
@@ -2311,8 +1959,7 @@ impl ForwardRenderer {
         Ok(())
     }
 
-    /// Uploads joint matrices for skinned primitives (skin joint world
-    /// transform * inverse bind matrix), called once per frame.
+    /// Uploads skin joint matrices (joint world * inverse bind) once per frame.
     fn update_joint_matrices(&mut self, gpu: &GpuContext) {
         let Some(world) = self.pending_joint_world.take() else {
             return;
@@ -2349,11 +1996,7 @@ impl ForwardRenderer {
         }
     }
 
-    /// Re-blend and re-upload the vertex buffer of every morphed primitive whose
-    /// weights moved since the last frame. The dirty flag gates the work, so a
-    /// paused animation (or a scene with no morph targets) costs nothing here,
-    /// and only morphed primitives carry the `base_vertices` copy this reads.
-    /// LOD levels are left un-morphed (simplified meshes drop morphing, v1).
+    /// Re-blends and re-uploads the vertex buffer of every morphed primitive whose weights moved.
     fn apply_morph_targets(&mut self, gpu: &GpuContext) {
         for prim in &mut self.primitives {
             if !prim.morph_dirty || prim.base_vertices.is_empty() {
@@ -2375,9 +2018,7 @@ impl ForwardRenderer {
         !self.animations.is_empty()
     }
 
-    /// Samples every animation at `time` (seconds), recomputes node world
-    /// transforms and retargets the affected primitives (transforms, AABBs,
-    /// blend-sort centers).
+    /// Samples every animation at `time` (s) and retargets transforms, bounds and blend centres.
     pub fn set_animation_time(&mut self, time: f32) {
         if self.animations.is_empty() || self.nodes.is_empty() {
             return;
@@ -2415,17 +2056,13 @@ impl ForwardRenderer {
                             node.scale = v;
                         }
                     }
-                    // Morph weights don't drive a node transform; they re-pose
-                    // the primitives on this node, handled in a separate pass
-                    // below so it doesn't fight the `nodes` mutable borrow.
+                    // Sampled in the pass below, which avoids fighting the `nodes` borrow.
                     ChannelValues::MorphWeights(_) => {}
                 }
             }
         }
 
-        // Morph-weight pass: sample per-target weights and mark affected
-        // primitives dirty. `num_targets` comes from each primitive, so the
-        // sampler strides the flattened channel correctly regardless of mesh.
+        // Morph weights; the target count comes from each primitive to stride the flat channel.
         for animation in &self.animations {
             let t = if animation.duration > 0.0 {
                 time % animation.duration
@@ -2470,8 +2107,7 @@ impl ForwardRenderer {
                             &world,
                         );
                     }
-                    // The posed box just moved, so the instances that replicate
-                    // it have to be re-applied on top.
+                    // The posed box moved, so re-apply the instances on top.
                     prim.pre_instance_aabb = bounds;
                     let (min, max) = instanced_bounds(bounds, &prim.instance_transforms);
                     prim.aabb_min = min;
@@ -2483,14 +2119,8 @@ impl ForwardRenderer {
         self.recompute_scene_bounds();
     }
 
-    /// Re-derive `scene_bounds` from the current per-primitive world AABBs.
-    ///
-    /// These bounds are the ONLY input to cascade fitting (`update_cascades`), so
-    /// anything that moves a primitive's box has to call this or the shadow
-    /// cascades stay fitted to a scene that no longer exists - geometry then falls
-    /// outside every cascade and neither receives nor casts shadows. Kept as one
-    /// function precisely because the bug it fixes was two call sites disagreeing
-    /// about whose job this was.
+    /// Re-derives `scene_bounds`, the sole cascade-fitting input; every box mutator must call it.
+    /// See `../../docs/renderer-bounds-invariant.md` § Maintainers — everything that must update bounds
     fn recompute_scene_bounds(&mut self) {
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
@@ -2503,10 +2133,7 @@ impl ForwardRenderer {
         }
     }
 
-    /// Fits one orthographic light matrix per cascade to the eye-distance
-    /// splits the shader (`forward.slang:198-211`) picks a cascade with -
-    /// see `render::cascades` for why the split *values* have to be derived
-    /// from the camera, not the scene alone.
+    /// Fits one light matrix per cascade; see `render::cascades` for why splits track the camera.
     fn update_cascades(&mut self, camera: &OrbitCamera) {
         let (min, max) = self
             .scene_bounds
@@ -2514,8 +2141,7 @@ impl ForwardRenderer {
         let light_dir = self.light_dir_ambient.truncate().normalize_or_zero();
 
         let fit = crate::render::cascades::fit_cascades(camera, min, max, light_dir);
-        // z, w (tile_w, tile_h) are supplied by the per-frame uniform write
-        // in `render`, not here.
+        // z, w (tile counts) are written per frame in `render_tonemapped`.
         self.cascade_splits = [fit.splits[0], fit.splits[1], 0.0, 0.0];
         self.cascade_matrices = fit.matrices;
     }
@@ -2737,17 +2363,14 @@ fn create_masked_shadow_pipeline(
             buffers: &[Some(Vertex::LAYOUT), Some(InstanceRaw::LAYOUT)],
             compilation_options: Default::default(),
         },
-        // A fragment stage with no color targets: it exists purely for the
-        // alpha-test discard.
+        // No color targets: the fragment stage exists only for the alpha-test discard.
         fragment: Some(wgpu::FragmentState {
             module: shader,
             entry_point: Some("fs_shadow_masked"),
             targets: &[],
             compilation_options: Default::default(),
         }),
-        // Cut-out cards are usually single-sided quads viewed from either
-        // side by the light; culling them would delete the shadow whenever
-        // the light sits behind the card's front face.
+        // Unculled: cut-out cards are single-sided quads the light may see from behind.
         primitive: wgpu::PrimitiveState {
             cull_mode: None,
             ..Default::default()
@@ -2876,8 +2499,7 @@ mod tests {
             "cube_animated.gltf must have at least one node-driven primitive"
         );
 
-        // Simulate "already uploaded this frame": the next set_animation_time
-        // call is then the only thing that can re-dirty the flag.
+        // As if uploaded this frame, so only set_animation_time can re-dirty the flag.
         for prim in &mut renderer.primitives {
             prim.uniforms_dirty = false;
         }

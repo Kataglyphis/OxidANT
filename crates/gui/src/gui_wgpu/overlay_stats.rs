@@ -5,10 +5,8 @@ use sysinfo::{Pid, ProcessesToUpdate, System};
 
 use kataglyphis_telemetry::resource_monitor::{self, CounterSnapshot};
 
-/// Cached overlay statistics, sampled periodically from atomic counters and sysinfo.
-///
-/// `update()` should be called every frame; internally it rate-limits itself to
-/// one real sample every 500 ms so the cost of `sysinfo` refresh is amortised.
+/// Cached overlay statistics from atomic counters and sysinfo.
+/// Call `update()` every frame; it samples at most every 500 ms to amortise the sysinfo refresh.
 pub(crate) struct OverlayStats {
     sysinfo: System,
     pid: Pid,
@@ -58,10 +56,7 @@ impl OverlayStats {
 
         self.sysinfo
             .refresh_processes(ProcessesToUpdate::Some(&[self.pid]), true);
-        // Note: refresh_memory() is intentionally omitted here — the overlay
-        // only uses per-process CPU% and RSS (which come from refresh_processes),
-        // not system-wide memory totals.  The background ResourceMonitor thread
-        // handles the full system-memory refresh for its own logging.
+        // No refresh_memory(): the overlay needs only per-process CPU% and RSS.
 
         let (cpu_pct, rss_bytes) = self
             .sysinfo

@@ -1,16 +1,4 @@
-//! WebGPU renderer with glTF loading. The plan it implements is this crate's
-//! own `../docs/webgpu-gltf-rust-plan.md`. The path is relative to this file and
-//! resolves in every checkout - standalone, from OmniAccelerANT and from
-//! BeschleunigerBallett - because the document moved out of
-//! BeschleunigerBallett and next to the code under decision D6.
-//!
-//! Milestones implemented so far:
-//! 1. Context + surface lifecycle with correct resize/outdated handling.
-//! 2. glTF meshes (positions/normals/UVs/indices, node transforms) rendered
-//!    through a forward pass with per-material base color and a directional
-//!    light; headless render-to-texture for golden tests.
-//! 3. Base-color textures (sRGB, white fallback) and an HDR (Rgba16Float)
-//!    render target composited through an ACES tonemap pass.
+//! WebGPU renderer with glTF loading; the plan it implements is `../docs/webgpu-gltf-rust-plan.md`.
 
 pub mod asset;
 pub mod context;

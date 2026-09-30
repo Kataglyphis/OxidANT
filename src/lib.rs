@@ -34,10 +34,6 @@ pub use kataglyphis_inference::person_detection;
 mod webcam_engine;
 
 /// C FFI demo stub — returns a fixed integer to verify `extern "C"` linkage works.
-///
-/// # Safety
-/// Exported with `#[no_mangle]` for C interop. Callers must ensure this is invoked
-/// according to the C calling convention.
 #[unsafe(no_mangle)]
 pub extern "C" fn rusty_extern_c_integer() -> i32 {
     322

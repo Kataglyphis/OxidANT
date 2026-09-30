@@ -1,51 +1,26 @@
-//! Auto-exposure maths: luminance histogram binning, average extraction, and
-//! temporal adaptation.
-//!
-//! Deliberately free functions over plain numbers, with no wgpu types. The GPU
-//! side of auto-exposure is a compute shader writing a histogram and a second
-//! pass reducing it, and neither is testable without a device - but the parts
-//! that are actually easy to get wrong are all here:
-//!
-//! - log-space binning, where an off-by-one or a wrong base silently shifts
-//!   every measurement;
-//! - the empty/black-scene case, where a naive average is 0 and the derived
-//!   exposure is +infinity;
-//! - adaptation direction and framerate independence, where "it converges"
-//!   and "it converges at the same speed on a 30 Hz and a 300 Hz machine" are
-//!   different properties and only one of them is obvious.
+//! Auto-exposure maths: luminance histogram binning, average extraction and temporal adaptation.
+//! Free of wgpu types so the easy-to-get-wrong parts are testable without a device.
 
-/// Number of histogram bins. 64 is enough resolution for exposure decisions
-/// (each bin spans ~0.2 EV over the default range) while staying a single
-/// workgroup's worth of shared memory on the GPU side.
+/// Histogram bin count: ~0.2 EV per bin, and one workgroup of shared memory on the GPU.
 pub const HISTOGRAM_BINS: usize = 64;
 
-/// Luminance range the histogram covers, in log2 units. Values outside are
-/// clamped into the end bins rather than dropped: a scene brighter than the
-/// range should read as "very bright", not as "no data".
+/// Log2 luminance range; values outside clamp into the end bins so "very bright" is not "no data".
 pub const MIN_LOG_LUMINANCE: f32 = -10.0;
 pub const MAX_LOG_LUMINANCE: f32 = 4.0;
 
-/// Workgroup size of `histogram.wgsl`'s `cs_build_histogram`; must match the
-/// shader's `@workgroup_size(16, 16, 1)`.
+/// Must match `cs_build_histogram`'s `@workgroup_size(16, 16, 1)` in `histogram.wgsl`.
 pub const BUILD_WORKGROUP: u32 = 16;
-/// Workgroup size of `histogram.wgsl`'s `cs_clear_histogram`; must match the
-/// shader's `@workgroup_size(64, 1, 1)`.
+/// Must match `cs_clear_histogram`'s `@workgroup_size(64, 1, 1)` in `histogram.wgsl`.
 pub const CLEAR_WORKGROUP: u32 = 64;
 
-/// Middle grey. The exposure that maps average scene luminance onto this is
-/// what "correctly exposed" means here.
+/// Middle grey, the target the average scene luminance is exposed onto.
 pub const EXPOSURE_KEY: f32 = 0.18;
 
-/// Luminance at or below which a sample is treated as "effectively black"
-/// rather than measured. Shared with `histogram.wgsl`'s `BLACK_THRESHOLD`.
+/// Luminance at or below which a sample counts as black; shared with `histogram.wgsl`.
 pub const BLACK_THRESHOLD: f32 = 1e-6;
 
 /// Which histogram bin a linear luminance falls into.
-///
-/// Bin 0 is reserved for "effectively black". Without that, near-zero
-/// luminance dominates the log-space average in any scene with background -
-/// log2 of a tiny number is a large negative that drags the mean down and
-/// blows the exposure up.
+/// Bin 0 holds black, else log2 of near-zero background drags the mean down and blows exposure up.
 pub fn histogram_bin(luminance: f32) -> usize {
     if luminance.is_nan() || luminance <= BLACK_THRESHOLD {
         return 0;
@@ -58,8 +33,7 @@ pub fn histogram_bin(luminance: f32) -> usize {
     1 + ((normalized * (HISTOGRAM_BINS - 2) as f32) as usize).min(HISTOGRAM_BINS - 2)
 }
 
-/// Representative linear luminance for a bin, i.e. the inverse of
-/// [`histogram_bin`] evaluated at the bin's centre.
+/// Linear luminance at a bin's centre, the inverse of [`histogram_bin`].
 pub fn bin_luminance(bin: usize) -> f32 {
     if bin == 0 {
         return 0.0;
@@ -71,11 +45,7 @@ pub fn bin_luminance(bin: usize) -> f32 {
 }
 
 /// Geometric mean luminance of a histogram, ignoring the black bin.
-///
-/// Returns `None` when nothing was sampled or every sample was black, so the
-/// caller can hold the previous exposure rather than adapt to a meaningless
-/// number. Returning 0.0 here would push exposure to infinity on the first
-/// frame of a scene that has not finished loading.
+/// `None` when every sample was black, so the caller holds exposure instead of going infinite.
 pub fn average_luminance(histogram: &[u32]) -> Option<f32> {
     let mut weighted_log_sum = 0.0f64;
     let mut counted = 0u64;
@@ -100,9 +70,7 @@ pub fn average_luminance(histogram: &[u32]) -> Option<f32> {
 
 /// Exposure multiplier that maps `average_luminance` onto middle grey.
 pub fn exposure_for_luminance(average_luminance: f32) -> f32 {
-    // Guard the divide: a caller that ignored average_luminance's None and
-    // passed 0 would otherwise get infinity, and infinity times any colour is
-    // a NaN frame.
+    // A caller that ignored `average_luminance`'s None would otherwise get a NaN frame.
     if average_luminance.is_nan() || average_luminance <= BLACK_THRESHOLD {
         return 1.0;
     }
@@ -114,17 +82,8 @@ pub fn exposure_ev_for_luminance(average_luminance: f32) -> f32 {
     exposure_for_luminance(average_luminance).log2()
 }
 
-/// Moves `current_ev` toward `target_ev` at a rate independent of framerate.
-///
-/// `speed` is the exponential rate constant: higher adapts faster. The
-/// framerate independence is the point - a naive `current + (target -
-/// current) * speed` converges roughly twice as fast at 120 Hz as at 60 Hz,
-/// so a value tuned on one machine is wrong on every other.
-///
-/// The two degenerate cases are different rules: `speed <= 0` means
-/// adaptation is disabled, so the target applies immediately; `delta_time_seconds
-/// <= 0` means no time passed (a stalled frame or a coarse/repeated timer
-/// reading from `frame_clock::tick_at`), so the current value must hold.
+/// Moves `current_ev` toward `target_ev` exponentially at rate `speed`, independent of framerate.
+/// `speed <= 0` applies the target at once; `delta_time_seconds <= 0` holds the current value.
 pub fn adapt_exposure_ev(
     current_ev: f32,
     target_ev: f32,
@@ -177,9 +136,7 @@ mod tests {
 
     #[test]
     fn out_of_range_luminance_clamps_instead_of_wrapping() {
-        // Above the range must read as the brightest bin, not wrap to a dark
-        // one - an overexposed scene that reports "dark" would drive exposure
-        // the wrong way and stay overexposed.
+        // An overexposed scene reading as "dark" would drive exposure the wrong way.
         assert_eq!(histogram_bin(1e9), HISTOGRAM_BINS - 1);
         // Below the range but not black: the darkest non-black bin.
         assert_eq!(histogram_bin(1e-5), 1);
@@ -227,10 +184,7 @@ mod tests {
 
     #[test]
     fn average_is_geometric_so_one_bright_pixel_does_not_dominate() {
-        // A dim scene with a single blown-out highlight. An arithmetic mean
-        // would be dragged up by the highlight and underexpose everything
-        // else; the geometric mean is what makes exposure track the bulk of
-        // the image.
+        // An arithmetic mean would let one highlight underexpose the rest of a dim scene.
         let dim_bin = 20;
         let bright_bin = HISTOGRAM_BINS - 2;
         let mut histogram = [0u32; HISTOGRAM_BINS];
@@ -293,15 +247,11 @@ mod tests {
 
     #[test]
     fn adaptation_is_framerate_independent() {
-        // The property a naive lerp fails. Same wall-clock time, different
-        // step sizes, must land in the same place.
+        // A naive lerp fails this: same wall-clock time at different step sizes must agree.
         let target = 4.0f32;
         let seconds = 0.5f32;
 
-        // A wide step-count spread on purpose. With 30 vs 300 steps a naive
-        // lerp lands within 0.03 of the correct answer, which is too close to
-        // float noise to assert on; 8 vs 2000 makes the two formulations
-        // disagree by more than an EV.
+        // Wide spread: at 30 vs 300 steps a naive lerp's error is too close to float noise.
         let mut slow = 0.0f32;
         for _ in 0..8 {
             slow = adapt_exposure_ev(slow, target, seconds / 8.0, 2.5);
@@ -352,18 +302,14 @@ mod tests {
 
     #[test]
     fn a_non_finite_current_value_recovers_instead_of_propagating() {
-        // If exposure ever becomes NaN the frame is lost; adaptation must be
-        // able to climb out rather than staying NaN forever.
+        // A NaN exposure must recover rather than stay NaN forever.
         assert_eq!(adapt_exposure_ev(f32::NAN, 2.0, 0.016, 3.0), 2.0);
         assert_eq!(adapt_exposure_ev(f32::INFINITY, 2.0, 0.016, 3.0), 2.0);
     }
 
     #[test]
     fn a_fixed_pre_exposure_threshold_cannot_serve_a_dark_and_a_bright_scene() {
-        // Pins the reason bloom.slang now thresholds the *exposed* HDR value
-        // instead of the raw one: the exposure a dark scene and a bright
-        // scene need differs by more than a decade, so no single raw-space
-        // constant can put both anywhere near a fixed threshold of 1.0.
+        // Why bloom thresholds the exposed HDR value: no raw constant fits scenes a decade apart.
         let dark_exposure = exposure_for_luminance(0.05);
         let bright_exposure = exposure_for_luminance(2.0);
         assert!(

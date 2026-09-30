@@ -7,8 +7,7 @@ description = "WebGPU (wgpu) renderer with glTF loading; runs native and on wasm
 readme = "README.md"
 
 [lib]
-# cdylib is what wasm-bindgen consumes for the wasm32 browser demo; rlib
-# keeps the crate usable as a normal dependency and for tests/examples.
+# cdylib for wasm-bindgen's browser demo; rlib for dependents, tests and examples.
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
@@ -21,9 +20,7 @@ pollster = "1.0"
 bytemuck = { version = "1.25", features = ["derive"] }
 glam = { version = "0.33", features = ["bytemuck"] }
 gltf = { version = "1", features = ["import", "KHR_lights_punctual", "KHR_texture_transform", "KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions"] }
-# MikkTSpace reference tangent generation (opt-in; the default stays Lengyel).
-# bevy_mikktspace is the pure-Rust port - unlike the `mikktspace` crate it does
-# NOT pull the stale nalgebra 0.26 (which is future-incompat on current rustc).
+# Not the `mikktspace` crate: it pulls nalgebra 0.26, which is future-incompatible on current rustc.
 bevy_mikktspace = "1"
 egui = "0.36"
 egui-wgpu = "0.36"
@@ -41,9 +38,7 @@ wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
 console_log = "1"
 js-sys = "0.3"
-# Node + EventTarget are Element's deref chain (needed to attach the
-# drag-and-drop listeners); DragEvent/DataTransfer/FileList/File are the
-# drop-zone payload types.
+# Node + EventTarget are Element's deref chain, needed to attach the drag-and-drop listeners.
 web-sys = { version = "0.3", features = [
     "Document",
     "Window",

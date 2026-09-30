@@ -1,6 +1,4 @@
-//! Half-resolution bloom chain: bright-pass -> horizontal blur -> vertical
-//! blur, ping-ponging two Rgba16Float textures. The blurred result is
-//! composited by the tonemap pass.
+//! Half-resolution bloom (bright-pass, H blur, V blur) over two ping-ponged Rgba16Float textures.
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
@@ -40,11 +38,7 @@ impl BloomPass {
                     wgpu::ShaderStages::FRAGMENT,
                     wgpu::SamplerBindingType::Filtering,
                 ),
-                // [adapted EV, target EV], the same buffer tonemap.rs binds at
-                // binding 5. Only fs_brightpass reads it, but one layout keeps
-                // all three bloom pipelines on the same pipeline layout - see
-                // ssao.rs's ssao_bg/ssao_blur_bg for the same "one layout, one
-                // binding some pipelines ignore" precedent.
+                // Exposure: only fs_brightpass reads it, but all three pipelines share one layout.
                 bind_layout::storage_buffer(2, wgpu::ShaderStages::FRAGMENT, true),
             ],
         });
@@ -90,9 +84,7 @@ impl BloomPass {
         }
     }
 
-    /// (Re)creates the half-res chain for a new HDR target. `exposure_buffer`
-    /// is the same `[adapted EV, target EV]` buffer passed to
-    /// `TonemapPass::set_input`.
+    /// (Re)creates the half-res chain; `exposure_buffer` is the one `TonemapPass::set_input` takes.
     pub fn rebuild(
         &mut self,
         gpu: &GpuContext,

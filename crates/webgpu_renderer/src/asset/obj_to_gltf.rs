@@ -1,28 +1,5 @@
-//! Converts Wavefront OBJ to glTF 2.0, so the C++ engine's `Resources/Models`
-//! can be loaded by this renderer.
-//!
-//! Written by hand rather than pulling in an OBJ crate and a JSON crate: the
-//! subset that matters here is small (positions, normals, UVs, triangulated
-//! faces), and the output is checked by loading it back with the real `gltf`
-//! crate rather than by trusting the emitter.
-//!
-//! Materials carry across as far as glTF's PBR model allows: OBJ's diffuse
-//! `Kd` becomes `baseColorFactor`, `d`/`Tr` its alpha, `Ke` its
-//! `emissiveFactor`, `map_Kd` its `baseColorTexture`,
-//! `norm`/`map_Bump`/`map_bump`/`bump` its `normalTexture`, `map_Ke` its
-//! `emissiveTexture`, and `Pm`/`Pr` its `metallicFactor`/`roughnessFactor`.
-//! When `Pr` is absent, `Ns` maps to `roughnessFactor` through the same
-//! curve the C++ engine's `material_rules.slang` (`material_roughness()`)
-//! applies to every OBJ material it loads directly, so a converted asset
-//! matches what the C++ renderer shows for the source `.mtl`. `Ks` still has
-//! no faithful PBR equivalent and is dropped rather than guessed at.
-//!
-//! Smoothing groups (`s`) are ignored, not rejected: every real OBJ carries
-//! them, and refusing the file over a directive with no glTF equivalent would
-//! make the converter useless. Negative (relative) indices ARE rejected
-//! rather than silently mangled - see `resolve`. A converter that quietly
-//! drops what it does not understand produces assets that differ from the
-//! source in ways nobody notices until the two renderers disagree.
+//! Converts Wavefront OBJ to glTF 2.0, so the C++ engine's `Resources/Models` load in this renderer.
+//! Unknown OBJ input fails loudly, so a converted asset never silently differs from its source.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -39,24 +16,17 @@ pub struct ObjMaterial {
     pub base_color_texture: Option<String>,
     /// `Ke`.
     pub emissive: [f32; 3],
-    /// `norm`/`map_Bump`/`map_bump`/`bump`, as written in the .mtl (relative
-    /// to it).
+    /// `norm`/`map_Bump`/`map_bump`/`bump`, as written in the .mtl (relative to it).
     pub normal_texture: Option<String>,
-    /// The bump directive's `-bm` option; glTF's `normalTexture.scale`. Only
-    /// meaningful when `normal_texture` is `Some`.
+    /// The bump directive's `-bm` option (glTF `normalTexture.scale`).
     pub normal_scale: f32,
     /// `map_Ke`, as written in the .mtl (relative to it).
     pub emissive_texture: Option<String>,
-    /// `Pm`. `None` when absent, distinct from an authored `Pm 0.0` - the
-    /// distinction tinyobjloader's C++ twin cannot make, but this hand-rolled
-    /// parser can, so it does.
+    /// `Pm`; `None` when absent, distinct from an authored `Pm 0.0`.
     pub metallic: Option<f32>,
     /// `Pr`. `None` when absent, same reasoning as `metallic`.
     pub roughness: Option<f32>,
-    /// `Ns`. `None` when absent. Used to derive `roughnessFactor` when `Pr`
-    /// is absent, mirroring `material_rules.slang`'s `material_roughness()` -
-    /// the same fallback the C++ engine applies to every OBJ material it
-    /// loads directly.
+    /// `Ns`; derives `roughnessFactor` when `Pr` is absent, as the C++ `material_roughness()` does.
     pub shininess: Option<f32>,
 }
 
@@ -64,18 +34,13 @@ impl Default for ObjMaterial {
     fn default() -> Self {
         Self {
             name: "default".to_string(),
-            // glTF's own default base colour, so an OBJ without materials
-            // converts to something a loader treats as untinted rather than
-            // black.
+            // glTF's own default, so an OBJ without materials converts untinted rather than black.
             base_color: [1.0, 1.0, 1.0, 1.0],
             base_color_texture: None,
-            // glTF's own default emissiveFactor, so a .mtl without Ke
-            // converts byte-identically to before this field existed.
+            // glTF's own default emissiveFactor.
             emissive: [0.0, 0.0, 0.0],
             normal_texture: None,
-            // glTF's own default normalTexture.scale, so a .mtl without a
-            // bump directive converts byte-identically to before this field
-            // existed.
+            // glTF's own default normalTexture.scale.
             normal_scale: 1.0,
             emissive_texture: None,
             metallic: None,
@@ -92,29 +57,17 @@ pub struct ObjMesh {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
-    /// `[1,1,1,1]` per vertex when the OBJ carried no `v x y z r g b [a]`
-    /// colour, so a colourless OBJ converts byte-identically to before this
-    /// existed - the actual presence flag is [`ObjMesh::has_vertex_colors`].
+    /// `[1,1,1,1]` per vertex when the OBJ had no vertex colour; see [`ObjMesh::has_vertex_colors`].
     pub colors: Vec<[f32; 4]>,
-    /// Whether any `v` line in the source carried a colour. `colors` is
-    /// always fully populated (with white) regardless, so this - not
-    /// `colors.is_empty()` - is what gates emitting `COLOR_0`.
+    /// Whether any `v` line carried a colour; this, not `colors.is_empty()`, gates `COLOR_0`.
     pub has_vertex_colors: bool,
-    /// Whether any `vn` line appeared in the source. `normals` is always
-    /// fully populated regardless - corners with no `vn` index get a flat
-    /// face normal filled in by `fill_missing_flat_normals` - so this is
-    /// informational only, mirroring `has_vertex_colors`.
+    /// Whether any `vn` line appeared; informational, since missing normals are filled flat.
     pub has_normals: bool,
     pub indices: Vec<u32>,
     /// Materials referenced by the file, in declaration order.
     pub materials: Vec<ObjMaterial>,
-    /// `(first_index, index_count, material_index)` per material run.
-    ///
-    /// OBJ interleaves `usemtl` with faces, so one file becomes several glTF
-    /// primitives. Indices stay in ONE array and the ranges point into it -
-    /// splitting the vertex data per material would duplicate shared vertices
-    /// and change the geometry, which is exactly what a comparison harness
-    /// must not do.
+    /// `(first_index, index_count, material_index)` per `usemtl` run, all into one index array.
+    /// Splitting vertex data per material would duplicate shared vertices and change the geometry.
     pub submeshes: Vec<(u32, u32, usize)>,
 }
 
@@ -123,8 +76,7 @@ impl ObjMesh {
         self.indices.len() / 3
     }
 
-    /// Axis-aligned bounds; glTF requires min/max on the POSITION accessor,
-    /// and loaders use them for culling, so they are not optional metadata.
+    /// Axis-aligned bounds; glTF requires min/max on POSITION and loaders cull with them.
     pub fn bounds(&self) -> ([f32; 3], [f32; 3]) {
         let mut min = [f32::INFINITY; 3];
         let mut max = [f32::NEG_INFINITY; 3];
@@ -138,13 +90,7 @@ impl ObjMesh {
     }
 }
 
-/// Parses the `.mtl` subset that maps onto glTF's PBR base colour.
-///
-/// Unknown directives are ignored here, unlike in the OBJ parser: MTL files
-/// are full of Phong-era fields (`Ns`, `Ka`, `Ks`, `illum`) that have no glTF
-/// equivalent, and refusing a file for containing them would reject
-/// essentially every real material library. `map_Bump` is not one of these -
-/// it maps onto glTF's `normalTexture` and is handled below.
+/// Parses the `.mtl` subset glTF can represent; unknown Phong-era directives are ignored, not rejected.
 pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
     let mut materials: Vec<ObjMaterial> = Vec::new();
 
@@ -173,10 +119,7 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     }
                 }
             }
-            // Stored verbatim, including HDR values above 1: `to_gltf` splits
-            // any component above 1 into a `[0,1]` `emissiveFactor` plus a
-            // `KHR_materials_emissive_strength` factor, so the magnitude
-            // survives instead of being clamped away here.
+            // Stored unclamped: `to_gltf` carries values above 1 via KHR_materials_emissive_strength.
             "Ke" if values.len() >= 3 => {
                 if let Some(material) = materials.last_mut() {
                     for (axis, value) in values.iter().take(3).enumerate() {
@@ -186,9 +129,7 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     }
                 }
             }
-            // `d` is opacity, `Tr` is transparency - the same quantity
-            // inverted. Treating them as interchangeable makes transparent
-            // materials opaque and vice versa.
+            // `d` is opacity and `Tr` its inverse; mixing them up swaps opaque and transparent.
             "d" if !values.is_empty() => {
                 if let (Some(material), Ok(opacity)) =
                     (materials.last_mut(), values[0].parse::<f32>())
@@ -198,22 +139,11 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
             }
             "map_Kd" if !values.is_empty() => {
                 if let Some(material) = materials.last_mut() {
-                    // MTL allows options before the filename
-                    // (`map_Kd -s 1 1 1 wood.png`), so the path is the LAST
-                    // token, not the first. Taking values[0] silently turns
-                    // any option-carrying map into a texture named "-s".
-                    //
-                    // Normalising `\` to `/` is a deliberate deviation from
-                    // "as written in the .mtl": a Windows-authored relative
-                    // path (`textures\wood.png`) must still resolve when the
-                    // conversion runs on Linux, where `\` is just another
-                    // filename character rather than a separator.
+                    // Last token, past any options; `\` becomes `/` so Windows-authored paths resolve on Linux.
                     material.base_color_texture = values.last().map(|name| name.replace('\\', "/"));
                 }
             }
-            // Same "last token past any options", backslash-normalising rule
-            // as `map_Kd` above; glTF's `emissiveTexture` is its exact
-            // equivalent.
+            // Same last-token, backslash-normalising rule as `map_Kd`.
             "map_Ke" if !values.is_empty() => {
                 if let Some(material) = materials.last_mut() {
                     material.emissive_texture = values.last().map(|name| name.replace('\\', "/"));
@@ -247,13 +177,7 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     }
                 }
             }
-            // `norm`, `map_Bump`/`map_bump` and bare `bump` all name a normal
-            // map; `norm` is preferred when a material names both, taking the
-            // same "last token past any options" and backslash-normalising
-            // rules as `map_Kd` above. A bump directive already carrying a
-            // texture is left alone by a later `map_Bump`/`bump` line - only
-            // an explicit `norm` may override it - which is what makes the
-            // preference hold regardless of which directive appears first.
+            // `norm` wins whatever the order; bump directives only fill an empty slot.
             "norm" | "map_Bump" | "map_bump" | "bump" if !values.is_empty() => {
                 if let Some(material) = materials.last_mut() {
                     if keyword == "norm" || material.normal_texture.is_none() {
@@ -271,8 +195,7 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
     materials
 }
 
-/// Finds a bump directive's `-bm <factor>` option among its option/filename
-/// tokens, e.g. `bump -bm 0.5 rock_normal.png`.
+/// Finds a bump directive's `-bm <factor>` option, e.g. `bump -bm 0.5 rock_normal.png`.
 fn bump_scale_option(values: &[&str]) -> Option<f32> {
     values
         .iter()
@@ -282,12 +205,7 @@ fn bump_scale_option(values: &[&str]) -> Option<f32> {
 }
 
 /// Parses the OBJ subset this converter supports.
-///
-/// OBJ indices are 1-based and per-attribute: one face vertex is a
-/// `position/uv/normal` triple, and the same position can appear with
-/// different normals. glTF has a single index stream, so each distinct triple
-/// becomes one vertex - which is why the output vertex count is usually
-/// higher than the OBJ's `v` count and that is not a bug.
+/// Each distinct `position/uv/normal` triple becomes one vertex, so more vertices than `v` lines is expected.
 pub fn parse_obj(source: &str) -> Result<ObjMesh> {
     parse_obj_with_materials(source, Vec::new())
 }
@@ -303,10 +221,7 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
         materials,
         ..ObjMesh::default()
     };
-    // Keyed on the (position, uv, normal) triple, so with no `vn` at all every
-    // corner at one position collapses onto one vertex; the fill pass below
-    // then resolves each shared vertex to whichever triangle visits it last -
-    // the same flat approximation the two C++ loaders make.
+    // Without `vn`, corners at one position share a vertex and one flat normal, as in the C++ loaders.
     let mut seen: HashMap<(i64, i64, i64), u32> = HashMap::new();
     let mut active_material: usize = 0;
     let mut run_start: u32 = 0;
@@ -368,9 +283,7 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                 if values.len() < 2 {
                     bail!("line {at}: 'vt' needs 2 components, got {}", values.len());
                 }
-                // OBJ's V axis points up, glTF's points down. Flipping here
-                // rather than at load time keeps the converted asset correct
-                // for any consumer, not just this renderer.
+                // OBJ's V points up and glTF's down; flipping here keeps the asset right for any consumer.
                 uvs.push([parse_f32(values[0], at)?, 1.0 - parse_f32(values[1], at)?]);
             }
             "f" => {
@@ -401,10 +314,7 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                                 let normal = resolve(key.2, normals.len(), at, "normal")?;
                                 mesh.normals.push(normals[normal]);
                             } else {
-                                // Zero is a marker `fill_missing_flat_normals`
-                                // finds after parsing and replaces with the
-                                // owning triangle's geometric normal; it never
-                                // survives to the emitted file.
+                                // Zero marks the corner for `fill_missing_flat_normals`.
                                 mesh.normals.push([0.0, 0.0, 0.0]);
                             }
 
@@ -416,18 +326,14 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                     face.push(index);
                 }
 
-                // Fan-triangulate. Correct for convex faces, which is what
-                // OBJ exporters emit; concave n-gons would need ear clipping
-                // and are not worth supporting until something needs them.
+                // Fan triangulation: correct for the convex faces OBJ exporters emit.
                 for i in 1..face.len() - 1 {
                     mesh.indices
                         .extend_from_slice(&[face[0], face[i], face[i + 1]]);
                 }
             }
             "usemtl" => {
-                // Close the run in progress before switching. A material
-                // change with no faces since the last one produces an empty
-                // run, which would become a glTF primitive drawing nothing.
+                // Skip empty runs, which would become primitives drawing nothing.
                 let current = mesh.indices.len() as u32;
                 if current > run_start {
                     mesh.submeshes
@@ -440,9 +346,7 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                     .iter()
                     .position(|material| material.name == name)
                     .unwrap_or_else(|| {
-                        // Referenced but not declared: keep the name so the
-                        // mismatch is visible in the output rather than
-                        // silently collapsing onto material 0.
+                        // Undeclared: keep the name so the mismatch shows instead of collapsing onto material 0.
                         mesh.materials.push(ObjMaterial {
                             name: name.to_string(),
                             ..ObjMaterial::default()
@@ -450,9 +354,7 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                         mesh.materials.len() - 1
                     });
             }
-            // Known-but-unsupported directives are ignored rather than fatal:
-            // almost every real OBJ carries them, and refusing the file would
-            // make the converter useless.
+            // Ignored rather than fatal: almost every real OBJ carries them.
             "mtllib" | "o" | "g" | "s" => {}
             other => {
                 bail!("line {at}: unsupported OBJ directive '{other}'");
@@ -481,14 +383,8 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
     Ok(mesh)
 }
 
-/// Fills every (near-)zero-length corner normal - left behind by a face
-/// vertex with no `vn` index - with its triangle's flat face normal.
-///
-/// Mirrors `gltf_loader::compute_flat_normals`'s face-normal rule and C++
-/// `vertex::fillMissingFlatNormals`'s degenerate-triangle skip: a triangle
-/// whose face normal has zero length (degenerate, zero area) is skipped
-/// rather than normalized into a NaN, leaving its corners' placeholder zero
-/// normals to whichever other triangle sharing that vertex fills them.
+/// Fills zero corner normals (no `vn` index) with their triangle's flat face normal.
+/// Degenerate triangles are skipped rather than normalized into NaN, as C++ `fillMissingFlatNormals` does.
 fn fill_missing_flat_normals(mesh: &mut ObjMesh) {
     for tri in mesh.indices.chunks_exact(3) {
         let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
@@ -523,12 +419,7 @@ fn fill_missing_flat_normals(mesh: &mut ObjMesh) {
     }
 }
 
-/// Escapes a string for embedding in a JSON string literal, per RFC 8259.
-///
-/// Material names and texture URIs come straight from the `.mtl` file and are
-/// interpolated into hand-written JSON (see `to_gltf`) - an unescaped `"` or
-/// `\` (routine in a Windows-authored `map_Kd textures\wood.png`) would
-/// otherwise corrupt the document.
+/// Escapes `.mtl` names and paths for the hand-written JSON string literals (RFC 8259).
 fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -542,8 +433,7 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-/// glTF's own default base colour / a zero bound - used to replace non-finite
-/// floats that would `Display` as `inf`/`NaN`, neither of which is valid JSON.
+/// Replaces non-finite floats, which `Display` as `inf`/`NaN` and are not valid JSON.
 fn finite_or(value: f32, default: f32) -> f32 {
     if value.is_finite() {
         value
@@ -585,10 +475,7 @@ fn resolve(index: i64, available: usize, line: usize, what: &str) -> Result<usiz
     Ok(zero_based)
 }
 
-/// Serialises a mesh as a glTF 2.0 document plus its binary buffer.
-///
-/// Returns `(gltf_json, bin)`. The JSON references `bin_uri`, so the caller
-/// decides the file layout.
+/// Serialises a mesh as `(gltf_json, bin)`; the JSON references `bin_uri`, so the caller picks the layout.
 pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     let mut bin: Vec<u8> = Vec::new();
 
@@ -610,9 +497,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
             bin.extend_from_slice(&component.to_le_bytes());
         }
     }
-    // Colours are appended only when the source actually carried them, so a
-    // colourless OBJ's buffer layout - and every offset computed from it -
-    // stays byte-identical to before COLOR_0 existed.
+    // Colours only when the source had them, so a colourless OBJ's buffer layout stays unchanged.
     let colors_offset = bin.len();
     if mesh.has_vertex_colors {
         for c in &mesh.colors {
@@ -621,9 +506,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
             }
         }
     }
-    // Index data must start on a multiple of its component size; u32 needs 4,
-    // which the float arrays above already guarantee, but pad defensively so
-    // a future non-float attribute cannot silently misalign it.
+    // u32 indices need 4-byte alignment; padded in case a non-float attribute is ever added.
     while !bin.len().is_multiple_of(4) {
         bin.push(0);
     }
@@ -636,17 +519,11 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     let vertex_count = mesh.positions.len();
     let index_count = mesh.indices.len();
 
-    // bufferView/accessor 0-2 are always POSITION/NORMAL/TEXCOORD_0; COLOR_0,
-    // when present, takes slot 3. The index bufferView/accessors are
-    // addressed off this computed base - not a literal - so adding an
-    // attribute here can never silently repoint every primitive's `indices`.
+    // Slots 0-2 are POSITION/NORMAL/TEXCOORD_0 and COLOR_0 takes 3; indices follow the computed base.
     let indices_buffer_view = if mesh.has_vertex_colors { 4 } else { 3 };
     let index_accessor_base = indices_buffer_view;
 
-    // One index accessor and one primitive per material run. They all view
-    // the SAME index bufferView at different offsets, so shared vertices stay
-    // shared - splitting the vertex data per material would duplicate them
-    // and change the geometry a comparison harness is meant to hold constant.
+    // Per-run accessors view one index bufferView at different offsets, so shared vertices stay shared.
     let color_attribute = if mesh.has_vertex_colors {
         r#", "COLOR_0": 3"#
     } else {
@@ -673,9 +550,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         ));
     }
 
-    // Deduplicate textures: several materials commonly share one map, and
-    // emitting an image per material makes the loader decode the same file
-    // repeatedly and upload duplicate GPU textures.
+    // Deduplicated, or a shared map is decoded and uploaded once per material.
     let mut image_uris: Vec<String> = Vec::new();
     for material in &mesh.materials {
         for uri in [
@@ -701,9 +576,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         .map(|index| format!(r#"{{ "source": {index}, "sampler": 0 }}"#))
         .collect::<Vec<_>>()
         .join(", ");
-    // REPEAT wrap (10497) matches OBJ's convention of UVs running outside
-    // 0..1 for tiling; glTF's default is also repeat, but stating it keeps
-    // the asset explicit rather than dependent on loader defaults.
+    // Explicit REPEAT (10497), OBJ's tiling convention, rather than relying on loader defaults.
     let samplers_json = if image_uris.is_empty() {
         String::new()
     } else {
@@ -714,28 +587,14 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         .materials
         .iter()
         .map(|material| {
-            // glTF's own default base colour is 1.0 in every channel, so a
-            // non-finite `Kd`/`d`/`Tr` (`Display`s as `inf`/`NaN`, neither
-            // valid JSON) falls back to fully-opaque white rather than
-            // corrupting the document.
+            // Non-finite colour falls back to glTF's default white.
             let [r, g, b, a] = material.base_color.map(|component| finite_or(component, 1.0));
-            // 0 metallic and 1 roughness - the closest thing to "plain
-            // diffuse", which is what Kd describes - is the fallback when
-            // `Pm`/`Pr` are absent. Kept as the literal "0.0"/"1.0" strings
-            // (rather than formatting the fallback f32s, which `Display`
-            // would render as "0"/"1") so a .mtl without Pm/Pr converts
-            // byte-identically to before those directives were read.
+            // Plain-diffuse fallback as literal "0.0"/"1.0" (`Display` prints "0"/"1"); tests pin the output.
             let metallic_factor = match material.metallic {
                 Some(value) => format!("{}", finite_or(value, 0.0)),
                 None => "0.0".to_string(),
             };
-            // An authored Pr always wins. Absent Pr with a finite,
-            // non-negative Ns derives roughness the same way
-            // material_rules.slang's material_roughness() does for every OBJ
-            // material the C++ engine loads directly, so a converted asset
-            // matches what the C++ renderer shows for the same .mtl. Absent
-            // Pr with no usable Ns keeps the literal "1.0" string, so a .mtl
-            // with neither directive still converts byte-identically.
+            // Without Pr, Ns maps through the C++ material_roughness() curve so both renderers agree.
             let roughness_factor = match material.roughness {
                 Some(value) => format!("{}", finite_or(value, 1.0)),
                 None => match material.shininess {
@@ -768,12 +627,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
                 None => String::new(),
             };
             let [er, eg, eb] = material.emissive.map(|component| finite_or(component, 0.0));
-            // glTF's `emissiveFactor` is `[0,1]` per component. An HDR `Ke`
-            // (any component above 1) is split into that `[0,1]` factor plus
-            // a `KHR_materials_emissive_strength` multiplier that carries the
-            // magnitude, rather than losing it to a clamp. At `strength <=
-            // 1.0` this divides by 1 in spirit - the branch below keeps the
-            // output byte-identical to before the extension existed.
+            // `emissiveFactor` is [0,1], so an HDR `Ke` moves its magnitude into KHR_materials_emissive_strength.
             let strength = er.max(eg).max(eb);
             let uses_emissive_strength = strength > 1.0;
             let (er, eg, eb, extensions_json) = if uses_emissive_strength {
@@ -788,12 +642,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
             } else {
                 (er, eg, eb, String::new())
             };
-            // Emitted only when non-zero, so a .mtl without Ke - i.e. every
-            // document converted before this field existed - produces
-            // byte-identical JSON. glTF's default emissiveFactor is
-            // `[0,0,0]`, so a material with a map_Ke and no Ke line would
-            // otherwise render black - emit an explicit `[1,1,1]` factor in
-            // that case instead of omitting it.
+            // glTF's default factor is [0,0,0], so a map_Ke without Ke needs an explicit [1,1,1].
             let emissive_json = if er != 0.0 || eg != 0.0 || eb != 0.0 {
                 format!(r#", "emissiveFactor": [{er}, {eg}, {eb}]"#)
             } else if material.emissive_texture.is_some() {
@@ -823,10 +672,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         .map(|(json, _)| json.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    // Root-level `extensionsUsed` is only ever added when a material actually
-    // needed the extension: the document has no such array today, and the
-    // existing tests compare generated JSON, so an unconditional array would
-    // churn every one of them.
+    // Only when a material needs it: tests compare the generated JSON.
     let extensions_used_json = if material_entries.iter().any(|(_, used)| *used) {
         r#",
   "extensionsUsed": ["KHR_materials_emissive_strength"]"#
@@ -835,8 +681,6 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         String::new()
     };
 
-    // Colours add a bufferView/accessor only when present, so a colourless
-    // mesh's JSON is untouched by this feature entirely.
     let color_buffer_view_json = if mesh.has_vertex_colors {
         format!(
             r#",
@@ -906,9 +750,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
   \"textures\": [{textures_json}],"
             )
         },
-        // `bounds()` returns +/-infinity for an empty mesh (no positions to
-        // fold `min`/`max` over); `inf` is not a valid JSON number, so it is
-        // replaced with 0.0 rather than left to corrupt the document.
+        // An empty mesh's bounds are +/-infinity, which is not valid JSON.
         min0 = finite_or(min[0], 0.0),
         min1 = finite_or(min[1], 0.0),
         min2 = finite_or(min[2], 0.0),
@@ -925,10 +767,7 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     let source = std::fs::read_to_string(obj_path)
         .with_context(|| format!("reading {}", obj_path.display()))?;
 
-    // Load every mtllib the OBJ names, resolved next to the OBJ itself. A
-    // missing library is not fatal: the geometry is still worth converting,
-    // and failing the whole conversion over an absent .mtl would block assets
-    // that ship without one.
+    // A missing .mtl is not fatal: the geometry is still worth converting.
     let mut materials: Vec<ObjMaterial> = Vec::new();
     for line in source.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
@@ -961,10 +800,7 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     let bin_path = gltf_path.with_file_name(bin_name);
     std::fs::write(&bin_path, bin).with_context(|| format!("writing {}", bin_path.display()))?;
 
-    // Copy referenced textures next to the glTF so the output is
-    // self-contained. Emitting a URI that points back into the source tree
-    // would produce a document that loads on this machine and nowhere else -
-    // and the failure would be a missing texture, not a missing file.
+    // Copy textures beside the glTF: a URI into the source tree would only load on this machine.
     let mut copied: Vec<&str> = Vec::new();
     for material in &mesh.materials {
         for uri in [
@@ -986,15 +822,9 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     Ok(mesh)
 }
 
-/// Copies the texture named by `uri` (as written in the .mtl) to sit beside
-/// `gltf_path`, so the converted document is self-contained.
+/// Copies the texture named by `uri` (as written in the .mtl) beside `gltf_path`.
 fn copy_texture_beside_gltf(uri: &str, obj_path: &Path, gltf_path: &Path) {
-    // https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/model-loading.md
-    // says: resolve relative to the directory containing the
-    // .mtl (== the .obj's directory - the mtllib loop in `convert_file`
-    // always resolves there) first, and retry under a textures/ subdirectory
-    // of that same directory second, because every shipped asset in this
-    // repo puts its textures there instead of beside the .mtl.
+    // See https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/model-loading.md
     let beside_mtl = obj_path.with_file_name(uri);
     let under_textures = obj_path.with_file_name(format!("textures/{uri}"));
     let source_path = if beside_mtl.exists() {
@@ -1011,9 +841,7 @@ fn copy_texture_beside_gltf(uri: &str, obj_path: &Path, gltf_path: &Path) {
     match std::fs::copy(&source_path, &destination) {
         Ok(_) => {}
         Err(error) => {
-            // Warn rather than fail: the geometry and materials are still
-            // worth having, and OBJ files routinely reference textures that
-            // were never shipped alongside them.
+            // Warn rather than fail: OBJ files routinely reference textures never shipped with them.
             log::warn!(
                 "{} (also tried {}): {error}; the converted glTF references a texture that is not there",
                 beside_mtl.display(),

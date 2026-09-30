@@ -1,16 +1,4 @@
-# .github/workflows/linux-x64.yml
-#
-# The Linux x86_64 lane: WHEN it runs and WHICH runner, nothing else. Every step
-# lives in reusable-linux.yml, shared with linux-arm64.yml. This is also the one
-# architecture that builds and publishes the rustdoc site (docs: true).
-#
-# ALWAYS RUNS. No job-level `if:` and no commit-message marker: every push and
-# every PR to main/develop, plus workflow_dispatch. The only opt-in job left in
-# this file is the feature check below.
-#
-# Family naming (2026-09-24): kebab-case files, one per platform + arch, display
-# name '<Platform> <Arch> · <what>'. This file and linux-arm64.yml were one
-# workflow until then, rust_ubuntu26_04.yml.
+# Linux x64 lane: only when and which runner; every step lives in reusable-linux.yml, and only this arch publishes the docs.
 name: Linux x64 · build + test
 
 on:
@@ -20,26 +8,17 @@ on:
     branches: [ "main", "develop" ]
   workflow_dispatch:
 
-# Nothing here writes through GITHUB_TOKEN: the GHCR pull and the docs publish
-# authenticate with repository secrets of their own. The called workflow cannot
-# widen this - a callee's token is capped by its caller's.
+# The GHCR pull and docs publish use their own secrets; this also caps the called workflow's token.
 permissions:
   contents: read
 
-# One group per workflow: `github.workflow` is this file's display name, so the
-# x64 and arm64 lanes never cancel each other. A lane already superseded by a
-# newer push is wasted runner time, but queued runs on the DEFAULT branch still
-# finish - releases and the docs publish are cut from there. The branch is asked
-# for rather than typed: this repo spent months with `main` abandoned and
-# `develop` carrying every commit, so a literal 'refs/heads/main' here protected
-# a branch nobody pushed to and cancelled the one everybody did.
+# Grouped by display name so x64 and arm64 never cancel each other; default-branch runs (releases, docs) always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 jobs:
   # No timeout-minutes: a job that calls a reusable workflow may not carry one.
-  # The callee's `build` job owns it.
   build:
     name: Linux x64
     uses: ./.github/workflows/reusable-linux.yml
@@ -59,33 +38,7 @@ jobs:
       USERNAME: ${{ secrets.USERNAME }}
       PW: ${{ secrets.PW }}
 
-  # Every optional feature is built by NOTHING else: both Linux lanes use
-  # default features (which are empty) and the Windows lane builds one fixed
-  # set. That is how a GStreamer major-version skew between crates/gui and
-  # crates/media survived unnoticed until 2026-08-07 - two -sys layers binding
-  # one system libgstreamer, and no build anywhere that would link them together.
-  #
-  # Every combination below was verified green on 2026-08-07 (Ubuntu 24.04,
-  # Rust 1.97.1), so a failure here is an image problem, not a broken feature.
-  # The image supplies what they need: GStreamer is source-built into
-  # /opt/gstreamer and already on PKG_CONFIG_PATH, and libssl-dev arrives via
-  # ANTfrastructure's package-lists.sh. Do NOT "fix" a failure by apt-installing
-  # libgstreamer*-dev — the image purges the distro packages deliberately.
-  #
-  # `gui_unix` is deliberately ABSENT: it is the only feature needing
-  # libgtk-4-dev, which ANTfrastructure excludes on purpose because the
-  # foreign-arch GTK dev chain pulls target-side Python and breaks cross builds
-  # on python3-minimal's postinst. `gui_linux` needs no GTK, but it only pulls
-  # the wgpu dependencies: the wgpu GUI module (`crates/gui/src/gui_wgpu`)
-  # compiles under `gui_windows` alone, which checks fine on Linux - so that row
-  # is the one that compiles it here (2026-09-24: a wgpu 30 field it lacked
-  # reached the Windows lane with no Linux build ever seeing the code).
-  #
-  # Opt-in because it is a second full container pull per combination, not
-  # because it is expected to fail. Enable with `[build-features]` in the
-  # commit message, or workflow_dispatch. It is a feature check, not a platform
-  # lane: the 2026-09-24 always-on request named the x64, arm64 and Windows
-  # lanes, and a skipped job here does not skip this workflow.
+  # The only build of each optional feature; opt-in ([build-features]) because each row is a full image pull.
   feature-matrix:
     name: Feature check (${{ matrix.features }})
     if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message || '', '[build-features]') }}
@@ -95,12 +48,12 @@ jobs:
     permissions:
       contents: read
     env:
-      # Same value, same reason as reusable-linux.yml's CONTAINER_ENV: the
-      # image's CARGO_HOME is root-owned and the container runs as uid 1001.
+      # The image's CARGO_HOME is root-owned and the container runs as uid 1001.
       CONTAINER_ENV: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always
     strategy:
       fail-fast: false
       matrix:
+        # gui_unix is absent (needs GTK 4, which the image excludes); gui_windows is the row that compiles gui_wgpu.
         features:
           - gstreamer
           - gui_linux
@@ -116,6 +69,7 @@ jobs:
           registry-password: ${{ secrets.GHCR_PAT }}
           fetch-depth: '1'
 
+      # GStreamer is source-built into the image: never fix a failure by apt-installing libgstreamer*-dev.
       - name: cargo check --features ${{ matrix.features }}
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:

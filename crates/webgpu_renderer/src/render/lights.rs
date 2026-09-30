@@ -1,20 +1,5 @@
-//! Punctual-light packing: the host side of the storage buffer
-//! `forward.slang` reads as `punctualLights`.
-//!
-//! Each light occupies four consecutive `vec4` rows, `[lightIdx * 4 .. + 4]`:
-//!
-//! - row 0 (`a`): `position.xyz`, `kind` (`1.0` point, `2.0` spot, `3.0`
-//!   directional) in `.w`
-//! - row 1 (`b`): `color * intensity` in `.rgb`, `range` in `.w`
-//! - row 2 (`cvec`): `direction.xyz`, `cos_inner` in `.w`
-//! - row 3 (`dvec`): `cos_outer` in `.x`, unused `.yzw`
-//!
-//! `forward.slang`'s `for` loop over `punctualLights` (around line 317-345)
-//! is the decoder: it reads `kind` from row `a.w` (`> 2.5` directional,
-//! `> 1.5` spot) and spot cone attenuation as
-//! `smoothstep(dvec.x, cvec.w, cosAngle)`, i.e. outer cosine from row 3's
-//! `.x` and inner cosine from row 2's `.w`. Changing this layout means
-//! changing both sides together.
+//! Packs punctual lights for `forward.slang`'s `punctualLights`; change both sides together.
+//! Four vec4 rows per light: [pos, kind], [color * intensity, range], [dir, cos_inner], [cos_outer].
 
 use crate::scene::{CpuLight, CpuLightKind};
 
@@ -104,10 +89,7 @@ mod tests {
         let (packed, count) = pack_punctual_lights(&lights);
         assert_eq!(count, 3);
 
-        // forward.slang: `kind > 2.5` is directional, else `kind > 1.5` is spot,
-        // else point. The packed values must land on the correct side of both
-        // thresholds, not merely equal 1.0/2.0/3.0.
-        // Each light occupies 4 vec4s; the discriminant is .w of the first.
+        // forward.slang: kind > 2.5 directional, > 1.5 spot, else point; test both thresholds.
         let kind_of = |light_index: usize| packed[light_index * 4][3];
         let point_kind = kind_of(0);
         let spot_kind = kind_of(1);
@@ -164,8 +146,7 @@ mod tests {
     fn spot_cone_angles_land_in_the_slots_smoothstep_reads() {
         let lights = [spot_light(0.9, 0.7)];
         let (packed, _) = pack_punctual_lights(&lights);
-        // forward.slang: `smoothstep(dvec.x, cvec.w, cosAngle)` — dvec is row
-        // base+3, cvec is row base+2.
+        // forward.slang: `smoothstep(dvec.x, cvec.w, cosAngle)`, dvec row base+3, cvec base+2.
         let cvec = packed[2];
         let dvec = packed[3];
         assert_eq!(cvec[3], 0.9, "cos_inner must be in packed[base+2][3]");

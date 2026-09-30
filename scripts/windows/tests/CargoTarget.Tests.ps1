@@ -1,8 +1,6 @@
 #requires -Version 7.0
 
-# WindowsCargoTarget.Common: every arch-dependent path and name Build-Windows.ps1 reads. The host (amd64)
-# keeps cargo's plain target\release; arm64 is the cross build. Both write dist\windows-<x64|arm64>.
-# NOTE: written for Pester 3.4.0 - no BeforeAll outside Describe, dash-less Should.
+# Written for Pester 3.4.0: no BeforeAll outside Describe, dash-less Should.
 
 Describe 'WindowsCargoTarget.Common' {
 

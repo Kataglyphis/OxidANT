@@ -1,34 +1,13 @@
-// src/config.rs — Centralised environment-variable configuration.
-//
-// All `KATAGLYPHIS_*` env vars are read here so that the configuration surface
-// is discoverable and documented in a single place.
-//
-// Each accessor caches the parsed value in a `OnceLock` so that the env var is
-// read at most once per process lifetime.
-//
-// The `env_cached!` macro eliminates the repetitive `OnceLock` + `get_or_init`
-// boilerplate that every accessor previously duplicated.
+// Every `KATAGLYPHIS_*` env var is read here, so the configuration surface lives in one place.
 
 use std::sync::OnceLock;
 
 use log::warn;
 
-// ── Helper macro ───────────────────────────────────────────────────
+// Helper macro
 
 /// Define an env-var accessor that parses once and caches in a `OnceLock`.
-///
-/// # Variants
-///
-/// ```ignore
-/// // Value type (returned by copy), public by default:
-/// env_cached!(fn_name -> Type, { || init_expr });
-///
-/// // Value type with explicit visibility:
-/// env_cached!(pub(crate) fn_name -> Type, { || init_expr });
-///
-/// // Reference type (returned by &'static ref):
-/// env_cached!(ref fn_name -> Type, { || init_expr });
-/// ```
+/// Variants: `fn` returns by copy, `$vis fn` sets the visibility, `ref fn` returns `&'static`.
 macro_rules! env_cached {
     // Copy variant — returns `T` by value (requires `T: Copy`).
     ($(#[$attr:meta])* fn $name:ident -> $ty:ty, $init:expr) => {
@@ -56,7 +35,7 @@ macro_rules! env_cached {
     };
 }
 
-// ── Preprocessing ──────────────────────────────────────────────────
+// Preprocessing
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -89,14 +68,10 @@ env_cached!(
     }
 );
 
-// ── ONNX backend selection ─────────────────────────────────────────
+// ONNX backend selection
 
 env_cached!(
-    /// `KATAGLYPHIS_ONNX_BACKEND`: `"ort"` / `"onnxruntime"` | `"tract"` | unset (auto).
-    ///
-    /// Returns `None` when the variable is unset, signalling automatic backend
-    /// selection.  The returned reference is `&'static` so callers can use
-    /// `.as_deref()` without allocation.
+    /// `KATAGLYPHIS_ONNX_BACKEND`: `"ort"` / `"onnxruntime"` | `"tract"` | unset (auto, `None`).
     ref fn onnx_backend -> Option<String>, || {
         std::env::var("KATAGLYPHIS_ONNX_BACKEND")
             .ok()
@@ -106,8 +81,6 @@ env_cached!(
 
 env_cached!(
     /// `KATAGLYPHIS_ORT_DEVICE`: `"cpu"` (default) | `"cuda"` | `"auto"`.
-    ///
-    /// Returns a `&'static String` to avoid cloning on every call.
     ref fn ort_device -> String, || {
         std::env::var("KATAGLYPHIS_ORT_DEVICE")
             .unwrap_or_else(|_| "cpu".to_string())
@@ -115,12 +88,10 @@ env_cached!(
     }
 );
 
-// ── Inference / GUI ────────────────────────────────────────────────
+// Inference / GUI
 
 env_cached!(
     /// `KATAGLYPHIS_ONNX_MODEL`: override path to the ONNX model file.
-    ///
-    /// Returns a `&'static Option<String>` to avoid cloning on every call.
     ref fn onnx_model_override -> Option<String>, || {
         std::env::var("KATAGLYPHIS_ONNX_MODEL").ok()
     }
@@ -146,7 +117,7 @@ env_cached!(
     }
 );
 
-// ── Logging ────────────────────────────────────────────────────────
+// Logging
 
 env_cached!(
     /// `KATAGLYPHIS_LOG_LEVEL`: `error` | `warn` | `info` (default) | `debug` | `trace`.

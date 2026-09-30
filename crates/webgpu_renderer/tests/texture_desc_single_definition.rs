@@ -1,14 +1,5 @@
-//! Regression guard for "Give the crate's single-layer 2D
-//! `wgpu::TextureDescriptor` one definition": every `wgpu::TextureDescriptor {`
-//! literal outside `render::texture::create_2d_texture` is either a copy that
-//! escaped the conversion, or a genuinely different shape (cube texture,
-//! depth array) marked with a `// TEXTURE_2D_SHAPE_OK: <reason>` comment on
-//! the literal's own line or as the first line of its body -- rustfmt moves a
-//! trailing comment that overflows `max_width` down into the body, so both
-//! placements name the same literal and both count as marked.
-//!
-//! Pure CPU, no adapter: this only inspects source text, so it runs
-//! everywhere, including environments with no adapter.
+//! Single-layer 2D textures go through `create_2d_texture`; other shapes carry a marker comment.
+//! The marker sits on the literal's line or its body's first line, where rustfmt may move it.
 
 const SOURCES: &[(&str, &str, bool)] = &[
     (

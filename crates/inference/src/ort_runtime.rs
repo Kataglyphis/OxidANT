@@ -1,18 +1,5 @@
-//! Which ONNX Runtime dylib `ort` loads - chosen here, once, before the first
-//! `ort` call.
-//!
-//! Every `onnxruntime*` feature is `load-dynamic` (see `Cargo.toml`), and the
-//! family's owner rule (2026-09-23) allows only the chain-built ORT of the
-//! ANTfrastructure images. So the search is closed: an explicit
-//! `ORT_DYLIB_PATH`, the executable's own directory (where packaging stages the
-//! chain copy), then the images' chain prefix. There is deliberately no
-//! bare-name fallback: `LoadLibraryExW` searches System32 before `PATH` and
-//! finds Windows ML's in-box `onnxruntime.dll` there. The path handed to `ort`
-//! is always absolute: `ort` passes a relative one straight to the OS loader.
-//!
-//! The file found is then refused unless it embeds the chain's ORT source path
-//! (ORT compiles it in through `__FILE__`), whoever named it. What this does NOT
-//! prove: the version - a stale chain build passes.
+//! Picks the chain-built ONNX Runtime dylib `ort` loads: `ORT_DYLIB_PATH`, exe dir, chain prefix.
+//! No bare-name fallback: Windows would find System32's in-box `onnxruntime.dll` first.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -31,8 +18,7 @@ const IMAGE_CHAIN_DIR: &str = r"C:\runtime\lib\onnxruntime-source\bin";
 #[cfg(not(windows))]
 const IMAGE_CHAIN_DIR: &str = "/usr/local/lib/onnxruntime-cpu/lib";
 
-/// The chain's ORT checkout as ORT embeds it: the hub's Build-OnnxFromSource.ps1
-/// `SourceDir` (Windows) and onnxruntime/build/lib/common.sh `ORT_SRC_DIR` (Linux).
+/// The chain's ORT source dir as ORT embeds it through `__FILE__`; must match the hub's build.
 #[cfg(windows)]
 const CHAIN_SOURCE_MARKER: Option<&str> = Some(r"C:\temp\onnx-src\onnxruntime\core\");
 #[cfg(target_os = "linux")]
@@ -70,8 +56,7 @@ pub fn verify_chain_build(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Everything the search reads from the process, gathered so the ordering can
-/// be tested without touching the real environment.
+/// Everything the search reads from the process, so the ordering is testable.
 #[derive(Debug, Default, Clone)]
 pub struct DylibSearch {
     /// `ORT_DYLIB_PATH`, when set and non-empty.
@@ -83,8 +68,7 @@ pub struct DylibSearch {
 }
 
 impl DylibSearch {
-    /// Reads `ORT_DYLIB_PATH`, the executable directory and the chain
-    /// variables (`ONNX_ROOT` on Windows, `ORT_LIB_LOCATION` elsewhere).
+    /// Reads `ORT_DYLIB_PATH`, the exe dir and `ONNX_ROOT` (Windows) or `ORT_LIB_LOCATION`.
     pub fn from_process() -> Self {
         let explicit = std::env::var_os("ORT_DYLIB_PATH").filter(|v| !v.is_empty());
         let exe_dir = std::env::current_exe()
@@ -107,9 +91,7 @@ impl DylibSearch {
         }
     }
 
-    /// Candidate files in priority order. An explicit path is the ONLY
-    /// candidate when set, so a typo fails instead of silently loading
-    /// something else.
+    /// Candidates in priority order; an explicit path is the only one, so a typo fails loudly.
     pub fn candidates(&self) -> Vec<PathBuf> {
         if let Some(explicit) = &self.explicit {
             let path = PathBuf::from(explicit);
@@ -134,13 +116,11 @@ impl DylibSearch {
             .collect()
     }
 
-    /// The first candidate that exists, made absolute, or an error naming
-    /// every path tried.
+    /// The first existing candidate, made absolute, or an error naming every path tried.
     pub fn resolve(&self, exists: impl Fn(&Path) -> bool) -> Result<PathBuf> {
         let candidates = self.candidates();
         if let Some(found) = candidates.iter().find(|p| exists(p)) {
-            // A relative path reaches LoadLibraryExW/dlopen verbatim, whose search
-            // is not the working-directory file `exists` just checked.
+            // The OS loader would search for a relative path, not open the file just checked.
             return std::path::absolute(found)
                 .with_context(|| format!("cannot make {} absolute", found.display()));
         }
@@ -160,9 +140,7 @@ impl DylibSearch {
 
 static LOADED: OnceLock<std::result::Result<PathBuf, String>> = OnceLock::new();
 
-/// Loads the chain ONNX Runtime exactly once and returns its path. Call it
-/// before any other `ort` API; every session constructor in this workspace
-/// does.
+/// Loads the chain ONNX Runtime once and returns its path; call it before any other `ort` API.
 pub fn ensure_ort_loaded() -> Result<PathBuf> {
     LOADED
         .get_or_init(|| {

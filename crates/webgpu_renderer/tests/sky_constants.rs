@@ -1,23 +1,11 @@
-//! Pins `sky.wgsl`'s analytic sky gradient (emitted from Slang's
-//! `common/sky_model.slang`) against the Rust copy in `render::ibl` that
-//! `EnvironmentImage::sky` panoramises into the IBL fallback environment.
-//!
-//! The two feed each other's ambient (see the "Give the analytic sky one
-//! definition" entry in
-//! <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md>):
-//! a drift here would not crash
-//! anything, it would just make the sky the camera sees disagree with the
-//! sky baked into the reflections around it.
-//!
-//! Deliberately separate from any `GpuContext`-backed test: this one is pure
-//! CPU so it runs everywhere, including environments with no adapter.
+//! Pins `sky.wgsl`'s gradient against `render::ibl`'s copy, or the sky and its reflections disagree.
+//! Pure CPU, so it runs where no adapter exists.
 
 use kataglyphis_webgpu_renderer::render::ibl::{SKY_GROUND, SKY_HORIZON, SKY_ZENITH};
 
 const SHADER_SOURCE: &str = include_str!("../src/shaders/sky.wgsl");
 
-/// Finds the body of `fn <name>(...)` in [`SHADER_SOURCE`] (from its opening
-/// `{` to the matching `}`) and returns it.
+/// The brace-balanced body of `fn <name>(...)` in [`SHADER_SOURCE`].
 fn extract_fn_body(name: &str) -> &'static str {
     let fn_needle = format!("fn {name}(");
     let fn_pos = SHADER_SOURCE
@@ -44,9 +32,7 @@ fn extract_fn_body(name: &str) -> &'static str {
     panic!("`fn {name}`'s body is never closed");
 }
 
-/// Extracts every flat `vec3<f32>(a, b, c)` literal (three comma-separated
-/// numbers, no nested calls) from `source`, in order of appearance. Skips
-/// `vec3<f32>(pow(...))`-style splats, which nest a call and so never match.
+/// Every flat `vec3<f32>(a, b, c)` literal in `source`, in order; nested calls never match.
 fn extract_flat_vec3_literals(source: &str) -> Vec<[f32; 3]> {
     let mut out = Vec::new();
     let needle = "vec3<f32>(";

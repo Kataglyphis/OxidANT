@@ -1,23 +1,12 @@
-//! The GPU luminance histogram, checked against the CPU binning it must match.
-//!
-//! render::auto_exposure::histogram_bin and histogram.wgsl's histogram_bin are
-//! the same function written twice, in two languages, and auto-exposure is
-//! only correct if they agree. The CPU one is unit-tested; this pins the
-//! shader to it.
-//!
-//! Runs over a texture with known contents rather than a rendered frame, so a
-//! disagreement points at the binning rather than at whatever the renderer
-//! happened to draw.
+//! Pins histogram.wgsl's `histogram_bin` to the unit-tested CPU copy in `render::auto_exposure`.
+//! Uses known texture contents, not a rendered frame, so a mismatch points at the binning.
 
 use kataglyphis_webgpu_renderer::context::GpuContext;
 use kataglyphis_webgpu_renderer::render::auto_exposure::{histogram_bin, HISTOGRAM_BINS};
 use kataglyphis_webgpu_renderer::render::gpu_timing::PassScope;
 use kataglyphis_webgpu_renderer::render::histogram::HistogramPass;
 
-/// Builds an Rgba32Float texture whose pixels have the given luminances.
-///
-/// Grey pixels (r = g = b) so luminance equals the channel value under any
-/// sane weighting - the test is about binning, not about the luma constants.
+/// An Rgba32Float texture of grey pixels, so luminance is the channel value under any weighting.
 fn texture_with_luminances(gpu: &GpuContext, luminances: &[f32], width: u32) -> wgpu::TextureView {
     let height = luminances.len() as u32 / width;
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -89,8 +78,7 @@ fn gpu_binning_matches_the_cpu_binning() {
         return;
     };
 
-    // A spread covering black, sub-range, in-range across many decades, and
-    // above-range - i.e. every branch of the binning function.
+    // Black, sub-range, many in-range decades and above-range: every branch of the binning.
     let width = 16u32;
     let luminances: Vec<f32> = (0..256)
         .map(|i| match i % 8 {
@@ -125,10 +113,7 @@ fn every_pixel_is_counted_exactly_once() {
         return;
     };
 
-    // 40x24 is deliberately NOT a multiple of the 16x16 workgroup. Rounding
-    // the dispatch down would silently drop the right and bottom edges;
-    // rounding up without the bounds check would double-count them. Either
-    // way the total stops matching the pixel count.
+    // Not a multiple of the 16x16 workgroup, so dropped or double-counted edges show.
     let width = 40u32;
     let height = 24u32;
     let luminances = vec![0.5f32; (width * height) as usize];
@@ -149,10 +134,7 @@ fn the_histogram_is_cleared_between_builds() {
         return;
     };
 
-    // Reusing one pass across two frames must not accumulate. Without the
-    // clear dispatch the second build doubles every count, which reads as a
-    // scene twice as populated and skews nothing visibly - the exposure just
-    // drifts.
+    // A reused pass must not accumulate; without the clear, exposure silently drifts.
     let width = 16u32;
     let luminances = vec![0.25f32; 256];
     let view = texture_with_luminances(&gpu, &luminances, width);
@@ -223,8 +205,7 @@ fn gpu_reduction_matches_the_cpu_exposure_maths() {
     for &scene_luminance in &[0.01f32, 0.18, 1.0, 25.0] {
         let luminances = vec![scene_luminance; 256];
 
-        // speed 0 disables smoothing, so the adapted value IS the target and
-        // this compares the maths rather than the adaptation curve.
+        // speed 0 disables smoothing, so this compares the maths, not the adaptation curve.
         let settings = ExposureSettings {
             delta_time_seconds: 1.0 / 60.0,
             speed: 0.0,
@@ -279,9 +260,7 @@ fn adaptation_moves_toward_the_target_without_jumping_to_it() {
     };
     use kataglyphis_webgpu_renderer::render::histogram::ExposureSettings;
 
-    // One frame at 60 Hz with a moderate rate: exposure should move a
-    // fraction of the way, not snap. Snapping is what makes auto-exposure
-    // look like a flicker rather than an eye adjusting.
+    // One 60 Hz frame moves exposure part of the way; snapping would look like flicker.
     let settings = ExposureSettings {
         delta_time_seconds: 1.0 / 60.0,
         speed: 3.0,
@@ -308,9 +287,7 @@ fn an_all_black_frame_holds_the_previous_exposure() {
     };
     use kataglyphis_webgpu_renderer::render::histogram::ExposureSettings;
 
-    // A scene that has not loaded yet. Deriving an exposure from an empty
-    // histogram would divide by zero and blow the frame out; holding is the
-    // only safe answer.
+    // An empty histogram would divide by zero; holding is the only safe answer.
     let start_ev = 1.75f32;
     let (adapted, _target) = reduce_exposure(
         &gpu,
@@ -333,10 +310,7 @@ fn a_zero_length_frame_does_not_snap_the_exposure() {
     };
     use kataglyphis_webgpu_renderer::render::histogram::ExposureSettings;
 
-    // A stalled frame or a coarse/repeated FrameClock reading reports dt as
-    // 0.0 (see render::frame_clock::tick_at). That must hold the current
-    // value, not snap to the target the way a disabled-smoothing (speed 0)
-    // frame legitimately does.
+    // A stalled frame reports dt 0.0 and must hold, unlike speed 0, which snaps.
     let luminances = vec![0.005f32; 256];
     let settings = ExposureSettings {
         delta_time_seconds: 1.0 / 60.0,
@@ -369,8 +343,7 @@ fn manual_mode_writes_the_slider_value_through() {
     };
     use kataglyphis_webgpu_renderer::render::histogram::ExposureSettings;
 
-    // Manual mode still writes the buffer so the tonemap has one source of
-    // truth; switching modes must not leave a stale auto value behind.
+    // Manual mode writes the same buffer, so no stale auto value survives a switch.
     let settings = ExposureSettings {
         auto_enabled: false,
         manual_ev: -2.5,

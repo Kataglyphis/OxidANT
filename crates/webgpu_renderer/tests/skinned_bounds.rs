@@ -1,13 +1,5 @@
-//! Culling bounds must follow SKINNED deformation.
-//!
-//! A skinned vertex ignores the node/model matrix entirely: `skin_matrix` in
-//! forward.wgsl returns the weighted joint blend and only falls back to
-//! `uniforms.model` when the weights are zero. So bounds derived from the node
-//! transform alone describe the bind pose, not the pose being drawn, and an
-//! animated limb gets frustum-culled while it is plainly on screen.
-//!
-//! These tests assert on `primitive_world_aabb`, the same value the frustum
-//! test reads, rather than on a recomputed copy.
+//! Culling bounds follow skinning, which ignores the node matrix; asserted on `primitive_world_aabb`.
+//! See crates/webgpu_renderer/docs/renderer-bounds-invariant.md.
 
 use glam::{Mat4, Quat, Vec3};
 use kataglyphis_webgpu_renderer::scene::{CpuNode, CpuSkin};
@@ -17,8 +9,7 @@ fn cube_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
 }
 
-/// The bundled cube, fully weighted to joint 0 of a one-joint skin. Node 0 is
-/// the mesh node (identity); node 1 is the joint, placed by `joint_translation`.
+/// The cube fully weighted to a one-joint skin whose joint (node 1) sits at `joint_translation`.
 fn skinned_cube_scene(joint_translation: Vec3) -> kataglyphis_webgpu_renderer::CpuScene {
     let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
     let mut prim = scene.primitives[0].clone();
@@ -58,9 +49,7 @@ fn bounds_follow_the_joint_not_the_bind_pose() {
         return;
     };
 
-    // The joint lifts the cube 10 units. The cube itself spans [-0.5, 0.5], so
-    // bind-pose bounds would stop at y = 0.5 and the drawn geometry (y ~= 10)
-    // would sit entirely outside its own AABB.
+    // The joint lifts the cube 10 units, entirely outside its bind-pose AABB.
     let scene = skinned_cube_scene(Vec3::new(0.0, 10.0, 0.0));
     let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
     renderer.upload_scene(&gpu, &scene);
@@ -91,8 +80,7 @@ fn an_identity_joint_leaves_bounds_at_the_bind_pose() {
         return;
     };
 
-    // Guard against over-widening: with the joint at the origin the skinned
-    // bounds must still be the cube's own box, not something inflated.
+    // Over-widening guard: an identity joint keeps the cube's own box.
     let scene = skinned_cube_scene(Vec3::ZERO);
     let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
     renderer.upload_scene(&gpu, &scene);
@@ -109,9 +97,7 @@ fn an_identity_joint_leaves_bounds_at_the_bind_pose() {
     );
 }
 
-/// Instance transforms apply on top of the posed box (`instance_matrix *
-/// skin_matrix * v`), so bounds that ignore them cull every instance the moment
-/// the BASE position leaves the view - even with the instances on screen.
+/// Bounds must include instance transforms, or instances cull when the base leaves the view.
 #[test]
 fn bounds_span_every_instance() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -141,8 +127,7 @@ fn bounds_span_every_instance() {
         max.x
     );
 
-    // Resetting to the default identity instance must collapse them back, not
-    // leave the primitive permanently over-sized.
+    // Clearing instances must collapse the box back.
     renderer.set_instances(&gpu, 0, &[]);
     let (rmin, rmax) = renderer.primitive_world_aabb(0).expect("primitive 0");
     assert!(
@@ -155,9 +140,7 @@ fn bounds_span_every_instance() {
     );
 }
 
-/// scene_bounds is the ONLY input to shadow-cascade fitting, so it has to track
-/// instances too. Before this was wired, cascades stayed fitted to the
-/// un-instanced scene and distant instances neither received nor cast shadows.
+/// scene_bounds alone fits the shadow cascades, so it must track instances too.
 #[test]
 fn scene_bounds_track_instances() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -195,19 +178,8 @@ fn scene_bounds_track_instances() {
     );
 }
 
-/// A non-uniform scale applied via the NODE transform and the same scale applied
-/// via an INSTANCE transform must shade identically - the geometry is the same
-/// in both cases. Applying the raw instance matrix to normals (instead of its
-/// inverse-transpose/cofactor) shears them off the surface, so the two disagree
-/// in the shaded pixels while the silhouette matches.
-///
-/// Ignored because it FAILS, deterministically, on every adapter it has met
-/// (llvmpipe in WSL on 2026-08-07, lavapipe in the family image on
-/// 2026-09-29): 987 pixels differ against a threshold of 40. The bug is the
-/// instanced normal transform in the generated `src/shaders/forward.wgsl`, whose
-/// `forward.slang` source lives in the C++ engine repository (BACKLOG). The CI
-/// lanes run with `KATAGLYPHIS_REQUIRE_GPU=1`, so this ignore is what keeps the
-/// rest of the golden suite gating; `cargo test -- --ignored` still runs it.
+/// Node and instance scale must shade alike; raw instance matrices shear normals off the surface.
+/// Ignored: fails on every adapter until `forward.slang` in the C++ engine repo is fixed (BACKLOG.md).
 #[test]
 #[ignore = "known instanced-normal shading bug, 987 px differ; see BACKLOG.md"]
 fn a_non_uniform_instance_scale_shades_like_the_same_node_scale() {
@@ -216,10 +188,7 @@ fn a_non_uniform_instance_scale_shades_like_the_same_node_scale() {
     };
     let (w, h) = (128, 128);
     let camera = kataglyphis_webgpu_renderer::OrbitCamera::default();
-    // Scale COMBINED with a rotation: a cube's normals are axis-aligned, and for
-    // a plain diagonal scale the raw matrix and the inverse-transpose normalize
-    // to the same direction - so an unrotated squash cannot tell them apart.
-    // Rotating first puts the normals off the scale axes, where they differ.
+    // Rotate too: on axis-aligned normals a plain scale hides the missing inverse-transpose.
     let squash = Mat4::from_scale(Vec3::new(0.25, 1.0, 1.0))
         * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_4);
 

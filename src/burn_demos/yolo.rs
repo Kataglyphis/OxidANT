@@ -18,9 +18,7 @@ pub struct YoloTiny<B: Backend> {
 }
 
 impl<B: Backend> YoloTiny<B> {
-    /// A tiny YOLO-like detector head.
-    ///
-    /// Output tensor shape: [batch, anchors * (5 + num_classes), grid_h, grid_w]
+    /// A tiny YOLO-like head; output [batch, anchors * (5 + num_classes), grid_h, grid_w].
     pub fn new(device: &B::Device, num_classes: usize, num_anchors: usize) -> Self {
         let out_channels = num_anchors * (5 + num_classes);
 

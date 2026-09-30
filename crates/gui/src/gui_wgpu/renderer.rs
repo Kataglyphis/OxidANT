@@ -231,8 +231,7 @@ impl WgpuState {
             .ctx
             .tessellate(shapes, self.egui.screen.pixels_per_point);
 
-        // egui 0.36: one texture id can carry several deltas per frame, so the
-        // value is a SmallVec. Apply them all, in order.
+        // One texture id can carry several deltas per frame; apply them in order.
         for (id, image_deltas) in &full_output.textures_delta.set {
             for image_delta in image_deltas {
                 self.egui
@@ -259,9 +258,7 @@ impl WgpuState {
         clipped_primitives: &[egui::ClippedPrimitive],
         _full_output: &egui::FullOutput,
     ) -> anyhow::Result<()> {
-        // wgpu 29: get_current_texture returns a CurrentSurfaceTexture enum
-        // instead of Result<_, SurfaceError>. Outdated/Lost reconfigure and
-        // skip the frame rather than tearing the app down.
+        // Outdated/Lost reconfigure and skip the frame rather than tearing the app down.
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,

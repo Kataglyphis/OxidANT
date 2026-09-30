@@ -1,7 +1,6 @@
 // src/main.rs — Thin CLI driver.  All logic lives in the library crate.
 
-/// Minimum resource logging interval in milliseconds.
-/// Values below this threshold are clamped to prevent excessive logging overhead.
+/// Floor for the resource logging interval in milliseconds, against excessive logging overhead.
 const MIN_RESOURCE_LOG_INTERVAL_MS: u64 = 100;
 use anyhow::Result;
 use clap::Parser;

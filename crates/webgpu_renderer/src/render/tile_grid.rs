@@ -1,28 +1,16 @@
-//! Tile-light-grid binning for tiled/clustered lighting.
-//!
-//! Pure CPU math: given the frame's packed punctual lights and a view-proj
-//! matrix, bin each light into the screen-space tiles its footprint
-//! overlaps. Binning is **range-aware** — a light covers the screen-space
-//! rectangle its `range` subtends, not just the single tile its centre
-//! projects to, so a large or off-centre light still lights every tile it
-//! actually reaches. `tileW == 0` (an empty grid) is the shader's documented
-//! all-lights fallback.
+//! CPU binning of punctual lights into the screen tiles their `range` covers, for tiled lighting.
+//! An empty grid (`tileW == 0`) is the shader's all-lights fallback.
 
 use glam::{Mat4, Vec4Swizzles};
 
 use crate::render::forward::MAX_PUNCTUAL_LIGHTS;
 
-/// Tile size for clustered/tiled lighting. Each tile is TILE_SIZE×TILE_SIZE
-/// pixels in screen space. Lights are binned per tile so that each fragment
-/// iterates only the lights overlapping its tile.
+/// Tile edge in pixels; each fragment iterates only its tile's lights.
 pub const TILE_SIZE: u32 = 16;
 /// Maximum number of lights that can overlap a single tile (conservative).
 pub const MAX_LIGHTS_PER_TILE: u32 = 32;
 
-/// Reusable scratch storage for [`build_tile_light_grid`], hoisted onto
-/// `ForwardRenderer` so a frame does not make four heap allocations over the
-/// screen's ~8100 tiles. `grid` and `indices` are the buffers uploaded to the
-/// GPU; `per_tile_counts`/`write_positions` are pass-internal.
+/// Scratch for [`build_tile_light_grid`], kept on `ForwardRenderer` to avoid per-frame allocations.
 #[derive(Default)]
 pub(crate) struct TileLightGridScratch {
     pub(crate) per_tile_counts: Vec<u32>,
@@ -31,44 +19,9 @@ pub(crate) struct TileLightGridScratch {
     pub(crate) write_positions: Vec<u32>,
 }
 
-/// The inclusive tile range `[min_tx, min_ty, max_tx, max_ty]` a light's
-/// screen-space footprint covers, or `None` if it contributes no visible
-/// tile (fully behind the camera).
-///
-/// Directional lights (`kind == 3.0`) have no position and light every
-/// pixel, so they cover the whole grid. Point/spot lights are approximated by
-/// projecting the light centre plus the six `pos ± range * axis` points and
-/// taking the screen-space AABB of whichever of those seven land in front of
-/// the camera (`clip.w > 0.0`) — a conservative bound, not an exact
-/// cone/sphere-vs-frustum test, which is not worth it at this light count.
-/// If some candidates are in front of the camera and others are behind
-/// (the light straddles the near plane), the AABB of the in-front subset is
-/// not a valid bound — a sphere crossing `w == 0` can cover the whole screen
-/// near that singularity — so the whole grid is returned instead.
-///
-/// **This AABB is not actually conservative in general**, even when every
-/// candidate is in front of the camera: the sphere's true screen-space
-/// silhouette is bounded by tangent points that combine a lateral and a
-/// depth-axis offset, not by any single `pos ± range * axis` candidate, so
-/// the true footprint can extend beyond this AABB (confirmed by direct
-/// calculation: for a sphere at eye-distance `D` with radius `r`, the true
-/// tangent extent exceeds the naive axis-candidate extent by a factor of
-/// `D / sqrt(D² - r²)`, worse the larger `r` is relative to `D`). A
-/// brute-force sphere-surface-sampling test reproduced this as an actual
-/// missed tile, not just a theoretical gap. Fixing it rigorously needs a
-/// projection-matrix-aware sphere bound (see Mara & McGuire, "2D Polyhedral
-/// Bounds of a Clipped, Perspective-Projected 3D Sphere", 2013), not a
-/// uniform scalar inflation - the correct bound is direction-dependent once
-/// the light is off the view axis or the projection is not symmetric. Until
-/// that lands, the shader's `count <= 0` per-tile fallback (iterate every
-/// light) MUST stay in place as the safety net for this gap; see
-/// `forward.slang`'s `punctual_lighting`.
-///
-/// Screen fractions are **framebuffer-oriented** (y down, `0.0` = top) to
-/// match `@builtin(position)` in the consuming shader, not NDC-oriented (y up).
-// A private, single-call-site helper whose arguments are the tile-grid
-// parameters themselves; bundling them into a struct would only move the
-// argument list one level out.
+/// Inclusive tile rect a light's footprint covers, or `None` when it is entirely behind the camera.
+/// See crates/webgpu_renderer/docs/renderer-bounds-invariant.md § The tile-light grid is not conservative.
+// Single call site; a struct of the grid parameters would only move the argument list.
 #[allow(clippy::too_many_arguments)]
 fn tile_rect_for_light(
     pos: glam::Vec3,
@@ -107,8 +60,7 @@ fn tile_rect_for_light(
         }
         any_in_front = true;
         let ndc = clip.xy() / clip.w;
-        // Framebuffer-oriented (y down, 0.0 = top), matching @builtin(position)
-        // in the consuming shader — not NDC-oriented (y up).
+        // Framebuffer-oriented (y down, 0.0 = top) to match @builtin(position), not NDC.
         let uv = glam::Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
         min_uv = min_uv.min(uv);
         max_uv = max_uv.max(uv);
@@ -119,11 +71,7 @@ fn tile_rect_for_light(
     }
 
     if any_behind {
-        // The light straddles the near plane: the AABB of only the in-front
-        // candidates does not bound its true screen footprint (a sphere
-        // crossing w == 0 can cover the whole screen near that singularity).
-        // Fall back to the whole grid, the same conservative answer the
-        // directional branch already gives.
+        // Straddles the near plane: the in-front AABB bounds nothing, so cover the whole grid.
         return Some((0, 0, tile_x.saturating_sub(1), tile_y.saturating_sub(1)));
     }
 
@@ -145,11 +93,7 @@ fn tile_rect_for_light(
     ))
 }
 
-/// Build a per-tile light index list for tiled lighting.
-/// Each tile gets a list of light indices whose range overlaps its
-/// screen-space area (directional lights are in every tile). Results land in
-/// `scratch.grid` ([count, offset] per tile) and `scratch.indices` (flat
-/// list); both are read back by the caller and uploaded to the GPU.
+/// Bins lights per tile into `scratch.grid` ([count, offset] per tile) and flat `scratch.indices`.
 pub(crate) fn build_tile_light_grid(
     scratch: &mut TileLightGridScratch,
     packed_lights: &[[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
@@ -199,10 +143,7 @@ pub(crate) fn build_tile_light_grid(
         running_offset += cnt;
     }
 
-    // Fill indices. write_positions tracks the next free slot per tile,
-    // bounded by that tile's [offset, offset + count) so a tile whose actual
-    // hit count exceeds the MAX_LIGHTS_PER_TILE cap cannot spill into the
-    // next tile's block.
+    // Each tile writes only within [offset, offset + count), so an over-cap tile cannot spill.
     let max_indices = running_offset as usize;
     scratch.indices.clear();
     scratch.indices.resize(max_indices.max(1), 0);
@@ -244,8 +185,7 @@ pub(crate) fn build_tile_light_grid(
 #[cfg(test)]
 mod tests {
     use super::*;
-    // See render/bounds.rs's test module for why `directx` is the clip-space
-    // module that matches the old `Mat4::*_rh` constructors.
+    // See render/bounds.rs's tests for why `directx` matches the old `Mat4::*_rh` constructors.
     use glam::camera::rh::proj::directx as clip;
     use glam::camera::rh::view::look_at_mat4;
     use glam::Vec3;
@@ -258,12 +198,7 @@ mod tests {
         let vp = proj * view;
 
         let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        // One point light at origin with a range large enough to span the
-        // whole frustum at this distance - it now covers every tile, not
-        // just the centre one, since binning is range-aware. The centre
-        // tile containing it is what stays true; an exact count of 1 does
-        // not (see build_tile_light_grid_covers_tiles_within_range for the
-        // "more than one tile, still a bounded rectangle" case).
+        // The range spans the frustum, so only "the centre tile holds it" is checkable here.
         packed[0] = [0.0, 0.0, 0.0, 1.0]; // position + kind=point
         packed[1] = [1.0, 1.0, 1.0, 10.0]; // color*intensity + range
 
@@ -301,12 +236,7 @@ mod tests {
 
     #[test]
     fn build_tile_light_grid_skips_lights_behind_camera() {
-        // Camera at (5,0,0) looking toward origin; light at (10,0,0) is
-        // behind the camera, with a range too small to reach in front of it
-        // (a range large enough to reach past the camera position would
-        // legitimately light what's in front - see
-        // build_tile_light_grid_keeps_offscreen_but_overlapping_lights for
-        // that case).
+        // Light behind the camera, with a range too short to reach in front of it.
         let view = look_at_mat4(Vec3::new(5.0, 0.0, 0.0), Vec3::ZERO, Vec3::Y);
         let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
@@ -317,8 +247,6 @@ mod tests {
 
         let mut scratch = TileLightGridScratch::default();
         build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
-        // All tiles should have zero lights since the light (and its range)
-        // is entirely behind the camera.
         for chunk in scratch.grid.chunks(2) {
             assert_eq!(chunk[0], 0, "no light should reach any tile");
         }
@@ -326,9 +254,7 @@ mod tests {
 
     #[test]
     fn build_tile_light_grid_covers_tiles_within_range() {
-        // Point light at the origin with a modest range - large enough to
-        // spill past the centre tile, small enough to stay a proper subset
-        // of the screen so the "contiguous rectangle" shape is checkable.
+        // Range spills past the centre tile but stays a proper subset, so the rectangle is checkable.
         let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
         let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
@@ -398,8 +324,7 @@ mod tests {
 
     #[test]
     fn build_tile_light_grid_bins_a_light_into_the_row_the_shader_reads() {
-        // Small-range point light clearly above the centre, so its rect stays
-        // inside the upper half of the screen.
+        // Small-range light above centre, so its rect stays in the upper half.
         let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
         let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
@@ -411,8 +336,7 @@ mod tests {
         let mut scratch = TileLightGridScratch::default();
         build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
 
-        // Compute the expected tile the way the shader does: fragCoord is
-        // framebuffer-oriented (y down, 0.0 = top).
+        // Expected tile as the shader computes it: fragCoord is y down, 0.0 = top.
         let clip = vp * glam::Vec4::new(0.0, 1.5, 0.0, 1.0);
         let ndc = clip.xy() / clip.w;
         let uv_y = 0.5 - (ndc.y) * 0.5;
@@ -470,9 +394,7 @@ mod tests {
             scratch.indices[offset..offset + count].contains(&light)
         };
 
-        // Light 0 (above centre) must appear somewhere in the upper half and
-        // must not appear in the lower half; light 1 (below centre) the
-        // mirror of that.
+        // Each light must appear in its own half and never leak into the other.
         let light0_in_upper = (0..8).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 0)));
         let light0_in_lower = (8..tile_h).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 0)));
         let light1_in_lower = (8..tile_h).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 1)));
@@ -498,8 +420,7 @@ mod tests {
 
     #[test]
     fn build_tile_light_grid_keeps_offscreen_but_overlapping_lights() {
-        // Light centre is off to the side, beyond the frustum's horizontal
-        // extent, but its range reaches back onto the screen.
+        // Centre outside the frustum, but the range reaches back onto the screen.
         let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
         let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
@@ -520,12 +441,7 @@ mod tests {
 
     #[test]
     fn a_light_straddling_the_near_plane_covers_the_whole_grid() {
-        // Camera at (0,0,5) looking at the origin. A point light at
-        // (0.0, 0.0, 4.9) with range 2.0 has a sphere spanning both sides of
-        // the camera's eye plane (its +Z candidate reaches world z = 6.9,
-        // behind the camera at z = 5, while its centre and other candidates
-        // are in front) - the AABB-of-in-front-candidates approach silently
-        // under-covered this case before the straddle fix.
+        // The +Z candidate (z = 6.9) is behind the eye at z = 5 while the centre is in front.
         let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
         let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;

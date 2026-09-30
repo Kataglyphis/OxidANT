@@ -54,8 +54,7 @@ pub enum Commands {
     },
     /// Launch the GUI (requires a gui feature).
     Gui {
-        /// WGPU backend to use.
-        /// Note: dx12 is only available on Windows.
+        /// WGPU backend to use (dx12 is Windows-only).
         #[cfg(feature = "gui_windows")]
         #[arg(long, value_enum, default_value_t = GpuBackend::Auto)]
         backend: GpuBackend,
@@ -66,8 +65,7 @@ pub enum Commands {
     /// Load the chain-built ONNX Runtime and print where it was found; fails when none loads.
     #[cfg(any(feature = "onnxruntime_directml", feature = "onnxruntime_cuda"))]
     OnnxRuntime,
-    /// Build the GUI's camera pipeline without starting it and print the plugin file behind
-    /// each element; fails when one is missing. Needs no camera and no window.
+    /// Build the GUI's camera pipeline without starting it and print each element's plugin file.
     #[cfg(feature = "gui_windows")]
     MediaCheck,
 }

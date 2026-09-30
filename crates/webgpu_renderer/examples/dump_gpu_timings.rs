@@ -1,21 +1,5 @@
-//! Renders headlessly and writes per-pass GPU timings as JSON.
-//!
-//! The schema deliberately matches the C++ engine's KATAGLYPHIS_GPU_TIMING_JSON
-//! export, so the side-by-side comparison script can read both files with one
-//! parser:
-//!
-//! ```json
-//! { "frames_measured": 96, "timestamps_supported": true,
-//!   "passes": { "Forward": 0.02, ... } }
-//! ```
-//!
+//! Renders headlessly and writes per-pass GPU timings as JSON in the C++ engine's schema.
 //! Usage: `cargo run --example dump_gpu_timings -- <out.json> [scene.gltf [width height]]`
-//! Defaults to the bundled test cube at 1280x720. The resolution arguments
-//! exist so the comparison script can match the C++ golden harness (1200x768)
-//! - per-pass milliseconds are only comparable at one pixel count.
-//!
-//! JSON is written by hand: the fixed schema is four lines, and this crate
-//! deliberately carries no JSON dependency.
 
 use kataglyphis_webgpu_renderer::{
     load_gltf, ForwardRenderer, GpuContext, OrbitCamera, TonemapPass,
@@ -64,9 +48,7 @@ fn main() {
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // Matches what the C++ export measures over a golden-test run, and covers
-    // the readback latency plus the 32-frame averaging window (see
-    // tests/gpu_timing.rs for why 64 is the minimum that yields averages).
+    // Matches the C++ export; tests/gpu_timing.rs says why 64 is the minimum that yields averages.
     let frames = 96u32;
     for _ in 0..frames {
         renderer.render_tonemapped(&gpu, &mut tonemap, &view, width, height, &camera);

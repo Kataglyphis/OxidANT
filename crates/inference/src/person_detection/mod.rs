@@ -38,10 +38,8 @@ pub fn resolve_model_path(explicit: Option<&str>) -> String {
         .unwrap_or_else(default_model_path)
 }
 
-/// `<exe dir>/resources/models/yolov10m.onnx`, when that file exists. Every Windows
-/// package puts `resources\` beside the exe (the portable bundle, the MSIX and the
-/// MSI), so a packaged app finds its model with nothing set. A dev build's exe has
-/// no `resources\` beside it and falls through to [`default_model_path`].
+/// `<exe dir>/resources/models/yolov10m.onnx`, when that file exists.
+/// Every Windows package puts `resources\` beside the exe, so a packaged app needs nothing set.
 fn bundled_model_path() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     existing_model_under(exe.parent()?)
@@ -58,31 +56,16 @@ fn model_under(root: &std::path::Path) -> std::path::PathBuf {
     root.join("resources").join("models").join(MODEL_FILE)
 }
 
-/// The compile-time fallback model path: `<workspace>/resources/models/yolov10m.onnx`.
-///
-/// Resolved from the WORKSPACE root, not this crate's directory. It used to be
-/// `env!("CARGO_MANIFEST_DIR")/resources/models/...`, which for this crate is
-/// `crates/inference/resources/models/` — a directory that has never existed in
-/// the tree. Every caller that neither passes an explicit path nor sets
-/// `KATAGLYPHIS_ONNX_MODEL` therefore failed with a file-not-found, including
-/// the Flutter UI, which sends an empty string when its model box is blank.
-///
-/// This is a development convenience, not a deployment mechanism: a binary
-/// shipped away from the checkout has no workspace. A packaged build finds the
-/// model beside its exe ([`bundled_model_path`]); anything else sets
-/// `KATAGLYPHIS_ONNX_MODEL` or passes the path explicitly.
+/// The dev-checkout fallback `<workspace>/resources/models/yolov10m.onnx`, from the workspace root.
 fn default_model_path() -> String {
-    // crates/inference -> crates -> workspace root. `ancestors().nth(2)` rather
-    // than two `parent()` unwraps so a moved crate degrades to the manifest dir
-    // instead of panicking.
+    // `ancestors().nth(2)` rather than `parent()` unwraps, so a moved crate cannot panic.
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = manifest.ancestors().nth(2).unwrap_or(manifest);
     model_under(root).to_string_lossy().to_string()
 }
 
 enum Backend {
-    // tract 0.23's `run` takes `self: &Arc<Self>`, so the plan has to live in an
-    // Arc -- a Box no longer resolves the method at all.
+    // tract's `run` takes `self: &Arc<Self>`, so the plan must live in an Arc.
     #[cfg(feature = "onnx_tract")]
     Tract { model: std::sync::Arc<TractPlan> },
 
@@ -314,10 +297,7 @@ impl PersonDetector {
                 let out = outputs.first().context("Model returned no outputs")?;
 
                 let shape = out.shape().to_vec();
-                // tract 0.23 removed `Tensor::as_slice`. `to_plain_array_view`
-                // is the safe replacement: it errors unless the storage is
-                // plain (contiguous) AND the datum type really is f32, which is
-                // exactly what the old call checked.
+                // `to_plain_array_view` errors unless the storage is plain and really f32.
                 let view = out
                     .to_plain_array_view::<f32>()
                     .context("Model output is not plain f32")?;
@@ -330,11 +310,7 @@ impl PersonDetector {
 
             #[cfg(feature = "onnxruntime")]
             Backend::Ort { session } => {
-                // NOTE: ORT's `Tensor::from_array` requires owned data (Box<[f32]>).
-                // The `to_vec().into_boxed_slice()` pattern performs a single allocation
-                // (Vec allocates with exact capacity, then converts to Box without reallocation).
-                // This is optimal for the current ort API. If ort exposes a borrowed-data
-                // constructor in the future, we could eliminate this allocation entirely.
+                // `Tensor::from_array` needs owned data; this is a single allocation.
                 let input_tensor = ort::value::Tensor::from_array((
                     [1usize, 3usize, input_h as usize, input_w as usize],
                     input.to_vec().into_boxed_slice(),

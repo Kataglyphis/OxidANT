@@ -3,11 +3,7 @@ pub fn greet(name: String) -> String {
     format!("Hello, you {name}!")
 }
 
-// `init_app` is platform-specific and provided from `crate::platform`.
-// Keep `greet`, `heavy_computation`, and async helpers here.
-
-/// Forwarding shim for platform-specific initialization.
-/// The real implementation lives in `crate::platform` (wasm/native).
+/// Forwarding shim; the real implementation lives in `crate::platform` (wasm/native).
 pub fn init_app() {
     crate::platform::init_app();
 }

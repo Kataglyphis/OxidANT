@@ -1,5 +1,4 @@
-//! CPU-side scene representation produced by the asset loaders and consumed
-//! by the render passes.
+//! CPU-side scene produced by the asset loaders and consumed by the render passes.
 
 pub mod camera;
 pub mod controller;
@@ -8,10 +7,7 @@ pub mod qem;
 
 use std::sync::Arc;
 
-// glam 0.33 moved the camera constructors off `Mat4` and split them by clip-
-// space convention. `directx` is glam's name for NDC Z in [0,1] with Y up —
-// which is also wgpu's and Metal's — and it reproduces the old
-// `Mat4::perspective_rh`/`orthographic_rh` bit for bit (verified 2026-08-07).
+// glam's `directx` convention is NDC Z in [0,1], Y up: wgpu's, and the old `Mat4::*_rh` exactly.
 use glam::camera::rh::proj::directx as clip;
 use glam::{Mat4, Quat, Vec3};
 
@@ -27,14 +23,9 @@ pub struct Vertex {
     pub joints: [f32; 4],
     /// Skin weights (glTF WEIGHTS_0); all zero = unskinned.
     pub weights: [f32; 4],
-    /// glTF COLOR_0 vertex colour, linear RGBA. (1,1,1,1) when the asset ships
-    /// no colours - the most common way texture-less assets (photogrammetry,
-    /// CAD, low-poly, baked-AO packs) carry colour, previously dropped so they
-    /// rendered uniformly white.
+    /// glTF COLOR_0, linear RGBA; (1,1,1,1) when the asset ships none.
     pub color: [f32; 4],
-    /// glTF TEXCOORD_1: the second UV set. A texture slot whose `texCoord` is
-    /// 1 (baked AO on UV1 is the standard Blender/Substance export) samples
-    /// this instead of `uv`. Copies `uv` when the asset ships no second set.
+    /// glTF TEXCOORD_1, for slots whose `texCoord` is 1; copies `uv` when the asset has none.
     pub uv1: [f32; 2],
 }
 
@@ -42,14 +33,7 @@ impl Vertex {
     pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
-        // These @location numbers must match forward.wgsl's vertexInput_0/1/2
-        // structs exactly (position=0, uv1=1, normal=4, uv=5, tangent=6,
-        // joints=7, weights=8, color=9) - that layout comes from the Slang
-        // WGSL backend's own attribute assignment, not the field order below.
-        // The entries here must stay in FIELD order (position, normal, uv,
-        // tangent, joints, weights, color, uv1) since vertex_attr_array
-        // derives each attribute's byte offset from its position in this
-        // list, not from the @location number attached to it.
+        // Locations are forward.wgsl's; entries stay in field order, which sets the offsets.
         attributes: &wgpu::vertex_attr_array![
             0 => Float32x3, 4 => Float32x3, 5 => Float32x2, 6 => Float32x4,
             7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 1 => Float32x2
@@ -57,10 +41,7 @@ impl Vertex {
     };
 }
 
-/// A per-instance transform, uploaded as four vec4 columns.
-///
-/// mat4 has no vertex-attribute format, so it travels as four Float32x4 at
-/// consecutive locations and is reassembled in the shader.
+/// A per-instance transform as four vec4 columns, since mat4 has no vertex-attribute format.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct InstanceRaw {
@@ -72,9 +53,7 @@ impl InstanceRaw {
         array_stride: std::mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
         // The whole point: advance once per INSTANCE, not per vertex.
         step_mode: wgpu::VertexStepMode::Instance,
-        // forward.wgsl assigns the four instance-matrix columns locations
-        // 10, 11, 2, 3 (in that order) - see the Vertex::LAYOUT comment above
-        // for why these numbers don't run sequentially.
+        // forward.wgsl places the four columns at locations 10, 11, 2, 3.
         attributes: &wgpu::vertex_attr_array![10 => Float32x4, 11 => Float32x4, 2 => Float32x4, 3 => Float32x4],
     };
 
@@ -106,8 +85,7 @@ pub enum CpuWrap {
     ClampToEdge,
 }
 
-/// GPU block-compressed formats we can upload straight through (no
-/// transcode). Basis ETC1S/UASTC supercompression is not handled yet.
+/// GPU block-compressed formats uploaded without transcoding; Basis supercompression is unsupported.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CompressedFormat {
     Bc1RgbaUnorm,
@@ -132,17 +110,11 @@ pub struct CompressedTexture {
     pub format: CompressedFormat,
     /// Block data per mip level, level 0 first.
     pub mips: Vec<Vec<u8>>,
-    /// The colour space the KTX2 container's vkFormat declares
-    /// (`Some(true)` for a `*_SRGB_BLOCK` format, `Some(false)` for a
-    /// colour `*_UNORM_BLOCK` format, `None` for a data format with no
-    /// colour space, e.g. BC5). glTF usage decides the GPU format
-    /// regardless; this is only used to warn on a mismatch.
+    /// Colour space the KTX2 vkFormat declares (`None` for data formats); only warns on mismatch.
     pub declared_srgb: Option<bool>,
 }
 
-/// Decoded RGBA8 texture (or a compressed payload). `srgb` decides the GPU
-/// format: color data (base color, emissive) is sRGB; data maps (normal,
-/// metallic-roughness, occlusion) are linear.
+/// Decoded RGBA8 texture, or a compressed payload.
 #[derive(Clone, Debug)]
 pub struct CpuTexture {
     pub width: u32,
@@ -172,20 +144,13 @@ pub enum AlphaMode {
 #[derive(Clone, Debug)]
 pub struct CpuMaterial {
     pub base_color: [f32; 4],
-    /// KHR_texture_transform per texture slot, as two affine rows [m00, m01,
-    /// tx], [m10, m11, ty]. Identity when a slot has no transform — glTF
-    /// scopes the extension to `textureInfo`, so a transform authored on one
-    /// slot (e.g. an atlased base colour) must not leak into another (e.g. an
-    /// untiled normal map).
+    /// KHR_texture_transform as two affine rows, per slot because glTF scopes it to `textureInfo`.
     pub base_uv_transform: [[f32; 3]; 2],
     pub mr_uv_transform: [[f32; 3]; 2],
     pub normal_uv_transform: [[f32; 3]; 2],
     pub emissive_uv_transform: [[f32; 3]; 2],
     pub occlusion_uv_transform: [[f32; 3]; 2],
-    /// Which texture slots sample TEXCOORD_1 instead of TEXCOORD_0, as a bit
-    /// per slot: bit 0 base, 1 metallic-roughness, 2 normal, 3 emissive,
-    /// 4 occlusion. 0 = every slot on UV0 (the common case). Only UV sets 0
-    /// and 1 are supported; texCoord >= 2 falls back to UV0 with a warning.
+    /// Slots on TEXCOORD_1, bits 0-4: base, MR, normal, emissive, occlusion; texCoord >= 2 uses UV0.
     pub uv_set_mask: u32,
     pub alpha_mode: AlphaMode,
     pub metallic_factor: f32,
@@ -194,8 +159,7 @@ pub struct CpuMaterial {
     pub occlusion_strength: f32,
     pub normal_scale: f32,
     pub double_sided: bool,
-    /// KHR_materials_unlit: shade as flat base color, ignoring lights, IBL and
-    /// shadows entirely. Widely used by Sketchfab/mobile/AR and stylised assets.
+    /// KHR_materials_unlit: flat base color, ignoring lights, IBL and shadows.
     pub unlit: bool,
     pub base_color_texture: Option<CpuTextureRef>,
     pub metallic_roughness_texture: Option<CpuTextureRef>,
@@ -269,15 +233,11 @@ pub enum ChannelValues {
     Translation(Vec<Vec3>),
     Rotation(Vec<Quat>),
     Scale(Vec<Vec3>),
-    /// Morph-target weights, flattened: `num_targets` weights per keyframe
-    /// (length `num_targets * times.len()`, ×3 under CubicSpline). `num_targets`
-    /// is derived at apply time from the target primitive's morph-target count.
+    /// Morph weights flattened, `num_targets` per keyframe (x3 under CubicSpline).
     MorphWeights(Vec<f32>),
 }
 
-/// glTF keyframe interpolation mode. For `CubicSpline` the value array holds
-/// THREE entries per keyframe - in-tangent, value, out-tangent - so it is 3x
-/// the length of `times`; `Linear`/`Step` store one value per keyframe.
+/// glTF keyframe interpolation; `CubicSpline` stores in-tangent, value, out-tangent per keyframe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Interpolation {
     #[default]
@@ -292,8 +252,7 @@ pub struct CpuAnimationChannel {
     /// Keyframe times (seconds), ascending.
     pub times: Vec<f32>,
     pub values: ChannelValues,
-    /// How to interpolate between keyframes. Note `CubicSpline` makes `values`
-    /// 3x as long as `times` (in-tangent, value, out-tangent per keyframe).
+    /// Interpolation between keyframes; `CubicSpline` makes `values` 3x as long as `times`.
     pub interpolation: Interpolation,
 }
 
@@ -304,9 +263,7 @@ pub struct CpuAnimation {
     pub channels: Vec<CpuAnimationChannel>,
 }
 
-/// A camera's projection, exactly as glTF 2.0 §5.16 defines it. Kept as an
-/// enum rather than a shared perspective-shaped struct so an orthographic
-/// camera cannot be represented as a fake perspective one.
+/// A glTF 2.0 camera projection; an enum so an orthographic camera cannot pose as perspective.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CpuCameraProjection {
     Perspective {
@@ -324,8 +281,7 @@ pub enum CpuCameraProjection {
 }
 
 impl CpuCameraProjection {
-    /// Right-handed, `[0,1]`-depth-range projection matrix matching the
-    /// WebGPU clip space `OrbitCamera::projection` already produces.
+    /// Right-handed, `[0,1]`-depth projection matching `OrbitCamera::projection`'s clip space.
     pub fn matrix(&self, aspect_ratio: f32) -> Mat4 {
         match *self {
             CpuCameraProjection::Perspective {
@@ -368,26 +324,18 @@ pub struct CpuPrimitive {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub transform: Mat4,
-    /// Index into `CpuScene::nodes` when the primitive belongs to the scene
-    /// graph (animation retargets its transform).
+    /// Index into `CpuScene::nodes` when in the scene graph, so animation can retarget it.
     pub node_index: Option<usize>,
     /// Index into `CpuScene::skins` for skinned primitives.
     pub skin_index: Option<usize>,
     pub material: CpuMaterial,
-    /// glTF morph targets (POSITION/NORMAL deltas per target). Empty for meshes
-    /// without morphing.
+    /// glTF morph targets; empty for meshes without morphing.
     pub morph_targets: Vec<MorphTarget>,
-    /// Current morph weights, one per `morph_targets` entry. Seeded from the
-    /// mesh's default weights and animatable via a WEIGHTS animation channel.
+    /// Current morph weights, one per target; seeded from the mesh defaults, animatable.
     pub morph_weights: Vec<f32>,
 }
 
-/// One glTF morph target: per-vertex deltas added to the base attributes,
-/// scaled by the target's weight. `normal_deltas`/`tangent_deltas` are empty
-/// when the target morphs only positions.
-///
-/// Tangent deltas are vec3 per the glTF spec: a morph target displaces the
-/// tangent direction only, never the `w` handedness of the base TANGENT.
+/// One glTF morph target's per-vertex deltas; tangent deltas are vec3 and never touch `w`.
 #[derive(Clone, Debug, Default)]
 pub struct MorphTarget {
     pub position_deltas: Vec<Vec3>,
@@ -395,11 +343,7 @@ pub struct MorphTarget {
     pub tangent_deltas: Vec<Vec3>,
 }
 
-/// Blend a base vertex buffer with its morph targets at the given weights:
-/// `out[v] = base[v] + Σ_i weight[i] * target[i].delta[v]`. Positions always,
-/// normals when the target provides them (re-normalized). Targets/weights of
-/// mismatched length and zero-weight targets are skipped. Returns a fresh buffer
-/// so the base stays intact for the next frame's weights.
+/// Blends morph targets into a fresh buffer, so the base survives for the next frame's weights.
 pub fn blend_morph_targets(
     base: &[Vertex],
     targets: &[MorphTarget],
@@ -424,8 +368,7 @@ pub fn blend_morph_targets(
                 vert.normal[2] += w * delta.z;
             }
         }
-        // Tangent xyz only - w carries the bitangent handedness and is not
-        // morphed (glTF morph TANGENT accessors are vec3).
+        // Tangent xyz only: w is the handedness, and glTF morph tangents are vec3.
         for (v, delta) in target.tangent_deltas.iter().enumerate() {
             if let Some(vert) = out.get_mut(v) {
                 vert.tangent[0] += w * delta.x;
@@ -475,11 +418,7 @@ impl CpuScene {
     pub fn compute_world_transforms(nodes: &[CpuNode]) -> Vec<Mat4> {
         let mut world = vec![Mat4::IDENTITY; nodes.len()];
         let mut done = vec![false; nodes.len()];
-        // `visiting` breaks parent cycles. A malformed file can point a node at
-        // its own descendant (or at itself); without this the recursion below
-        // never terminates and the process dies by stack overflow - an abort, not
-        // an error anyone can catch. On a cycle we stop climbing and treat the
-        // node as a root, which yields a wrong-but-finite transform instead.
+        // `visiting` breaks parent cycles, which would otherwise overflow the stack (an abort).
         let mut visiting = vec![false; nodes.len()];
         fn resolve(
             i: usize,
@@ -495,11 +434,7 @@ impl CpuScene {
                 return Mat4::IDENTITY;
             }
             visiting[i] = true;
-            // Guard every non-finite input: a NaN from a buggy exporter or a
-            // zero-scale hide-node (Blender scale=(0,0,0)) produces NaN/Inf
-            // matrices that poison the rest of the scene graph through the
-            // parent-product below, collapsing every downstream node's transform
-            // and everything computed from it (bounds, cascades, LOD).
+            // Non-finite or zero-scale inputs would NaN every descendant through the product.
             let translation = if nodes[i].translation.is_finite() {
                 nodes[i].translation
             } else {
@@ -517,9 +452,7 @@ impl CpuScene {
             };
             let local = Mat4::from_scale_rotation_translation(scale, rotation, translation);
             if !local.is_finite() {
-                // Guard the matrix itself (corner case: the glue maths can still
-                // produce NaN with perfectly finite inputs via degenerate rotation
-                // or de-orthogonalised quaternion).
+                // Finite inputs can still yield NaN through a degenerate rotation.
                 visiting[i] = false;
                 world[i] = Mat4::IDENTITY;
                 done[i] = true;
@@ -621,9 +554,7 @@ mod tests {
 
     #[test]
     fn a_cyclic_parent_chain_terminates_instead_of_overflowing_the_stack() {
-        // A malformed file can point a node at its own descendant. The resolver
-        // used to recurse forever and die by stack overflow - an abort, not an
-        // error anyone can catch. It must terminate with finite transforms.
+        // A parent cycle must terminate with finite transforms, not overflow the stack.
         let node = |parent| CpuNode {
             parent,
             translation: Vec3::new(1.0, 0.0, 0.0),
@@ -656,8 +587,7 @@ mod tests {
 
     #[test]
     fn a_zero_scale_node_produces_a_finite_identity_transform() {
-        // Blender's "Hide" shortcut sets scale=(0,0,0). `from_scale_rotation_translation`
-        // on a zero scale is degenerate and must not NaN the whole scene graph.
+        // Blender's Hide sets scale 0; the degenerate matrix must not NaN the scene graph.
         let nodes = vec![CpuNode {
             parent: None,
             translation: Vec3::new(1.0, 2.0, 3.0),
@@ -710,9 +640,7 @@ mod tests {
 
     #[test]
     fn morph_tangents_blend_and_keep_their_handedness() {
-        // glTF morph TANGENT deltas are vec3: they rotate the tangent direction
-        // but must never touch w, which carries the bitangent handedness. A
-        // flipped w would mirror the normal-mapped lighting on that vertex.
+        // Tangent deltas must never touch w; a flipped w mirrors normal-mapped lighting.
         let mut base = vert([0.0, 0.0, 0.0]);
         base.tangent = [1.0, 0.0, 0.0, -1.0];
         let t = MorphTarget {
@@ -771,8 +699,7 @@ mod tests {
 
     #[test]
     fn child_transform_composes_with_its_parent() {
-        // Parent translates +10 X, child translates +5 Y: the child's origin
-        // lands at (10, 5, 0) in world space.
+        // Parent +10 X, child +5 Y: the child's origin lands at (10, 5, 0).
         let nodes = vec![
             node(None, Vec3::new(10.0, 0.0, 0.0)),
             node(Some(0), Vec3::new(0.0, 5.0, 0.0)),
@@ -784,9 +711,7 @@ mod tests {
 
     #[test]
     fn resolves_correctly_when_a_child_precedes_its_parent_in_the_array() {
-        // The memoized recursion must handle out-of-order nodes: here the child
-        // is index 0 and its parent index 1. A naive single forward pass would
-        // compute the child before the parent and get the wrong world matrix.
+        // Child before parent in the array: a single forward pass would get this wrong.
         let nodes = vec![
             node(Some(1), Vec3::new(0.0, 0.0, 2.0)), // child first
             node(None, Vec3::new(1.0, 0.0, 0.0)),    // parent second

@@ -104,8 +104,6 @@ pub(crate) fn create_render_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("pipeline_layout"),
-        // wgpu 29: layouts are Option-wrapped and push constants became the
-        // immediates API.
         bind_group_layouts: &[Some(&bind_group_layout)],
         immediate_size: 0,
     });
@@ -116,8 +114,6 @@ pub(crate) fn create_render_pipeline(
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: Some("vs_main"),
-            // wgpu 30: vertex buffer slots are `Option`, so a slot can be left
-            // unbound without shifting the ones after it.
             buffers: &[Some(Vertex::desc())],
             compilation_options: Default::default(),
         },
@@ -150,8 +146,7 @@ pub(crate) async fn init_wgpu(
 )> {
     let size = window.inner_size();
 
-    // wgpu 29: InstanceDescriptor lost Default (the new `display` field is a
-    // deliberate decision) and Instance::new takes it by value.
+    // No Default for InstanceDescriptor: its `display` field is a deliberate choice.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends,
         flags: wgpu::InstanceFlags::default(),
@@ -167,9 +162,7 @@ pub(crate) async fn init_wgpu(
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-            // wgpu 30: limit bucketing is a fingerprinting defence for hosts
-            // that expose wgpu to untrusted content. This is the trusted app,
-            // so keep the adapter's real limits, as wgpu 29 did.
+            // Limit bucketing is anti-fingerprinting for untrusted content; this app is trusted.
             apply_limit_buckets: false,
         })
         .await
@@ -205,9 +198,7 @@ pub(crate) async fn init_wgpu(
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: surface_format,
-        // wgpu 30 made the swap-chain colour space explicit; `Auto` is its
-        // default and keeps wgpu 29's behaviour — see the same field in
-        // webgpu_renderer's `context.rs` for why no other value is safe here.
+        // Only `Auto` is safe here; webgpu_renderer's `context.rs` says why.
         color_space: wgpu::SurfaceColorSpace::Auto,
         width: size.width.max(1),
         height: size.height.max(1),

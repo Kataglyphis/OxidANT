@@ -1,15 +1,5 @@
-//! Garland-Heckbert quadric error metric decimation.
-//!
-//! The upgrade `lod::simplify_primitive` documents as missing. Clustering
-//! merges vertices to a cell centroid, so it minimises distance to the
-//! original VERTICES and rounds off anything smaller than a cell. QEM places
-//! the merged vertex where the summed squared distance to the original
-//! PLANES is smallest, so a crease or a spike survives at ratios where
-//! clustering has already flattened it.
-//!
-//! Clustering stays: it is O(n) and needs no adjacency, which is still the
-//! right trade for distant photogrammetry LODs. This is the O(n log n)
-//! quality path, chosen per primitive by the caller.
+//! Garland-Heckbert quadric error metric decimation: keeps creases that clustering flattens.
+//! The O(n log n) quality path; O(n) clustering stays the right trade for distant LODs.
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -18,31 +8,14 @@ use glam::{DMat3, DVec3, Vec3};
 
 use crate::scene::{CpuPrimitive, Vertex};
 
-/// Weight applied to the plane constraints synthesised along open boundaries.
-///
-/// Boundary edges have only one incident face, so nothing in the ordinary
-/// face quadric resists pulling them inward - an open mesh erodes from its
-/// rim. Garland's fix is a virtual plane through the edge perpendicular to
-/// its face; the weight decides how much stronger than a real face it is.
-/// 100 was enough to pin the border of the flat grid in the tests while
-/// still letting boundary vertices slide ALONG the rim (which costs nothing,
-/// because that motion stays inside the constraint plane).
+/// Weight of the virtual planes along open boundaries, which stop an open mesh eroding from its rim.
 const BOUNDARY_WEIGHT: f64 = 100.0;
 
-/// Relative determinant below which the 3x3 solve is treated as singular.
-///
-/// Scaled by the matrix norm cubed so the test is on conditioning, not on
-/// the mesh's units - an absolute epsilon rejects everything on a
-/// millimetre-scale mesh and nothing on a kilometre-scale one.
+/// Relative determinant below which the 3x3 solve is singular; scaled by norm cubed, so unit-free.
 const SINGULAR_EPSILON: f64 = 1e-10;
 
-/// Symmetric 4x4 error quadric, upper triangle only.
-///
-/// Order: a2 ab ac ad b2 bc bd c2 cd d2, for the plane (a, b, c, d).
-/// f64 rather than f32 because these are sums of squares of coordinates:
-/// accumulating a few hundred face quadrics in f32 on a mesh that is not
-/// centred on the origin loses the small off-diagonal terms the 3x3 solve
-/// depends on, and the solve then reports "singular" on curved regions.
+/// Symmetric 4x4 error quadric, upper triangle: a2 ab ac ad b2 bc bd c2 cd d2.
+/// f64 because f32 sums of squares lose the small off-diagonal terms the 3x3 solve needs.
 #[derive(Clone, Copy, Default, Debug)]
 struct Quadric {
     m: [f64; 10],
@@ -90,10 +63,7 @@ impl Quadric {
             + d2
     }
 
-    /// The position minimising `error`, or `None` when the derived 3x3 is
-    /// too ill-conditioned to trust - which is the COMMON case, not the rare
-    /// one: every planar region gives a rank-1 system, and every straight
-    /// crease a rank-2 one.
+    /// Position minimising `error`, or `None` when ill-conditioned, as every flat region is.
     fn optimal_position(&self) -> Option<DVec3> {
         let [a2, ab, ac, ad, b2, bc, bd, c2, cd, _] = self.m;
         let a = DMat3::from_cols(
@@ -116,14 +86,10 @@ impl Quadric {
     }
 }
 
-/// A pending collapse. Costs are pushed rather than decrease-keyed, so an
-/// entry is stale once either endpoint has been collapsed into since it was
-/// queued; `versions` detects that on pop.
+/// A pending collapse; pushed, not decrease-keyed, so `versions` detects stale entries on pop.
 #[derive(Clone, Copy, Debug)]
 struct Candidate {
-    /// Cost as an order-preserving integer key. Ordering f64 directly is not
-    /// a total order, and `partial_cmp().unwrap()` in a heap comparator is a
-    /// panic waiting for the first NaN quadric on a degenerate face.
+    /// Cost as an order-preserving integer, since f64 is not totally ordered (NaN).
     key: u64,
     v0: u32,
     v1: u32,
@@ -145,11 +111,7 @@ impl PartialEq for Candidate {
 }
 impl Eq for Candidate {}
 impl Ord for Candidate {
-    /// Reversed: `BinaryHeap` is a max-heap and we want the cheapest
-    /// collapse. Ties break on vertex index so the sequence of collapses is
-    /// fixed even when a mesh has many equal-cost edges - a flat grid has
-    /// thousands of exactly-zero-cost edges, and without the tiebreak the
-    /// output depends on heap internals.
+    /// Reversed for a min-heap; ties break on vertex index so equal-cost collapses stay deterministic.
     fn cmp(&self, other: &Self) -> Ordering {
         other.order().cmp(&self.order())
     }
@@ -168,13 +130,7 @@ fn cost_key(cost: f64) -> u64 {
     cost.max(0.0).to_bits()
 }
 
-/// Simplifies a primitive with quadric error metric decimation.
-///
-/// `target_ratio` is the fraction of TRIANGLES to keep (0.25 = a quarter).
-/// Values >= 1.0 return the input unchanged. The result may have more
-/// triangles than requested when no further collapse is legal - boundary
-/// constraints and the normal-flip rejection both stop decimation early, by
-/// design.
+/// QEM decimation keeping `target_ratio` of the triangles; stops early when no collapse is legal.
 pub fn simplify_primitive_qem(prim: &CpuPrimitive, target_ratio: f32) -> CpuPrimitive {
     let face_count = prim.indices.len() / 3;
     if face_count == 0 || prim.vertices.is_empty() || target_ratio >= 1.0 {
@@ -195,8 +151,7 @@ pub fn simplify_primitive_qem(prim: &CpuPrimitive, target_ratio: f32) -> CpuPrim
     mesh.into_primitive(prim)
 }
 
-/// The mesh in the form decimation needs: positionally welded vertices, face
-/// adjacency, and one quadric per vertex.
+/// The mesh as decimation needs it: welded vertices, face adjacency, one quadric per vertex.
 struct WeldedMesh {
     positions: Vec<DVec3>,
     /// Attributes for each welded vertex, blended as collapses proceed.
@@ -204,8 +159,7 @@ struct WeldedMesh {
     quadrics: Vec<Quadric>,
     alive: Vec<bool>,
     versions: Vec<u32>,
-    /// Face indices touching each vertex. May contain removed faces and
-    /// duplicates; consumers filter.
+    /// Faces touching each vertex, removed ones and duplicates included; consumers filter.
     incident: Vec<Vec<u32>>,
     faces: Vec<[u32; 3]>,
     face_alive: Vec<bool>,
@@ -226,12 +180,7 @@ impl WeldedMesh {
             return None;
         }
 
-        // Weld first. A glTF index buffer routinely stores the same corner
-        // several times (split UVs, split normals), and every one of those
-        // duplicates makes its edges look like boundary edges: two faces meet
-        // there geometrically but reference different indices. Without
-        // welding, BOUNDARY_WEIGHT would pin the entire interior of a
-        // hard-edged mesh and nothing would decimate.
+        // Weld first: split-UV duplicates look like boundary edges and would pin the interior.
         let epsilon = (diagonal as f64) * 1e-6;
         let mut key_to_welded: HashMap<[i64; 3], u32> = HashMap::new();
         let mut remap = Vec::with_capacity(prim.vertices.len());
@@ -295,10 +244,7 @@ impl WeldedMesh {
         Some(mesh)
     }
 
-    /// Face quadrics (area-weighted) plus boundary constraint quadrics.
-    ///
-    /// Area weighting is Garland's: an unweighted sum lets a fan of slivers
-    /// outvote one large face that actually describes the surface.
+    /// Area-weighted face quadrics, so slivers cannot outvote a large face, plus boundary quadrics.
     fn accumulate_quadrics(&mut self) {
         for face_index in 0..self.faces.len() {
             let face = self.faces[face_index];
@@ -322,8 +268,7 @@ impl WeldedMesh {
             }
         }
 
-        // Sorted so the accumulation order (and thus f64 rounding) does not
-        // depend on HashMap iteration order.
+        // Sorted so f64 rounding does not depend on HashMap iteration order.
         let mut boundary: Vec<((u32, u32), u32)> = edge_faces
             .iter()
             .filter(|(_, (count, _))| *count == 1)
@@ -392,11 +337,7 @@ impl WeldedMesh {
         edges
     }
 
-    /// Collapse target and cost for an edge.
-    ///
-    /// The fallback is not an edge case: on any flat or straight-crease
-    /// region the 3x3 is singular, and returning "no collapse" there would
-    /// leave exactly the regions that are cheapest to simplify untouched.
+    /// Collapse target and cost; the fallback serves the singular flat regions, the cheapest ones.
     fn evaluate(&self, v0: u32, v1: u32) -> (DVec3, f64) {
         let mut q = self.quadrics[v0 as usize];
         q.add(&self.quadrics[v1 as usize]);
@@ -405,8 +346,7 @@ impl WeldedMesh {
 
         if let Some(optimal) = q.optimal_position() {
             let cost = q.error(optimal);
-            // A negative error is round-off on an exactly-zero quadric, not a
-            // better-than-perfect placement.
+            // A negative error is round-off on an exactly-zero quadric.
             if cost.is_finite() && cost >= -1e-9 {
                 return (optimal, cost.max(0.0));
             }
@@ -495,17 +435,12 @@ impl WeldedMesh {
         result
     }
 
-    /// Collapses `v1` into `v0` at `target`. Returns false (changing
-    /// nothing) if the collapse would fold the surface.
+    /// Collapses `v1` into `v0` at `target`; false, changing nothing, if it would fold the surface.
     fn collapse(&mut self, v0: u32, v1: u32, target: DVec3) -> bool {
         let faces0 = self.live_incident(v0);
         let faces1 = self.live_incident(v1);
 
-        // Faces containing both endpoints vanish; every other incident face
-        // is reshaped and must keep its orientation. Skipping this check is
-        // what makes a naive QEM implementation produce visibly folded
-        // geometry - the metric itself is happy to put a vertex on the far
-        // side of its own one-ring.
+        // Reshaped faces must keep their orientation; the metric alone happily folds the one-ring.
         for (&face_index, moved) in faces0
             .iter()
             .map(|f| (f, v0))
@@ -557,13 +492,7 @@ impl WeldedMesh {
         self.versions[v0 as usize] += 1;
         self.versions[v1 as usize] += 1;
 
-        // Only v0 moved and only v0's quadric grew, so only edges incident
-        // to v0 need requeueing - and the version bump must be confined to
-        // v0 and v1 for the same reason. A first attempt also bumped the
-        // one-ring, which invalidated every queued (n, m) edge among the
-        // neighbours without requeueing them; the heap drained, decimation
-        // stalled far short of the target, and the spike test's tip was
-        // removed by one of the few collapses still reachable.
+        // Only v0 changed: bumping the one-ring's versions would orphan queued edges and stall.
         true
     }
 
@@ -609,11 +538,7 @@ fn edge_key(a: u32, b: u32) -> (u32, u32) {
     }
 }
 
-/// Where `target` falls along the collapsed edge, clamped to it.
-///
-/// The optimal QEM position is generally OFF the segment, so this is a
-/// projection rather than a true parameter - but it still gives the nearer
-/// endpoint the larger share, which is what attribute blending wants.
+/// `target` projected onto the collapsed edge, clamped; the nearer endpoint gets the larger share.
 fn interpolation_parameter(p0: DVec3, p1: DVec3, target: DVec3) -> f32 {
     let edge = p1 - p0;
     let length_sq = edge.length_squared();
@@ -623,11 +548,7 @@ fn interpolation_parameter(p0: DVec3, p1: DVec3, target: DVec3) -> f32 {
     ((target - p0).dot(edge) / length_sq).clamp(0.0, 1.0) as f32
 }
 
-/// Blends vertex attributes for a collapse, `t` = 0 keeps `a`.
-///
-/// Skin joints are NOT interpolated: joint slots are indices, and the mean
-/// of joint 3 and joint 9 is joint 6, which is a different bone. The nearer
-/// endpoint's binding is taken whole, together with its weights.
+/// Blends attributes for a collapse (`t` = 0 keeps `a`); joints are indices, so the nearer wins.
 fn blend(a: &Vertex, b: &Vertex, t: f32) -> Vertex {
     let lerp2 = |x: [f32; 2], y: [f32; 2]| [x[0] + (y[0] - x[0]) * t, x[1] + (y[1] - x[1]) * t];
     let na = Vec3::from_array(a.normal);
@@ -653,8 +574,7 @@ fn blend(a: &Vertex, b: &Vertex, t: f32) -> Vertex {
                 tangent.x,
                 tangent.y,
                 tangent.z,
-                // Handedness is a sign, not a quantity; averaging +1 and -1
-                // yields 0, which is not a valid bitangent direction.
+                // Handedness is a sign: averaging +1 and -1 gives an invalid 0.
                 nearer.tangent[3],
             ]
         },
@@ -741,8 +661,7 @@ mod tests {
 
     #[test]
     fn coplanar_quadric_is_reported_singular() {
-        // The case the fallback exists for: one plane summed many times is
-        // still rank 1, and the optimal position is a whole plane of points.
+        // One plane summed many times is still rank 1: the fallback's case.
         let mut q = Quadric::default();
         for _ in 0..64 {
             q.add(&Quadric::from_plane(DVec3::Z, 0.0, 1.0));
@@ -752,9 +671,7 @@ mod tests {
 
     #[test]
     fn welding_merges_duplicated_positions() {
-        // Two triangles sharing an edge, but with the shared corners stored
-        // twice - the split-UV case that makes every edge look like a
-        // boundary until welding fixes it.
+        // Shared corners stored twice (split UVs) look like boundaries until welded.
         let vertices = vec![
             vertex([0.0, 0.0, 0.0]),
             vertex([1.0, 0.0, 0.0]),
@@ -803,8 +720,7 @@ mod tests {
 
     #[test]
     fn collapse_that_folds_a_face_is_rejected() {
-        // A fan around a centre vertex: dragging the rim vertex across the
-        // fan inverts the faces on the far side.
+        // Dragging a vertex across its fan inverts the faces on the far side.
         let mut mesh = WeldedMesh::build(&grid(5)).expect("weldable");
         let far = DVec3::new(-50.0, -50.0, 0.0);
         assert!(

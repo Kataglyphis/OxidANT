@@ -1,6 +1,4 @@
-//! KHR_texture_transform is scoped per `textureInfo` (glTF 2.0 spec): a
-//! transform authored on one texture slot must not leak into another. These
-//! tests guard against the "fix" of copying one slot's transform to all five.
+//! KHR_texture_transform is scoped per `textureInfo`, so one slot's transform must not leak to others.
 
 use kataglyphis_webgpu_renderer::load_gltf;
 
@@ -41,8 +39,7 @@ fn texture_transform_on_normal_slot_does_not_leak_to_other_slots() {
 
 #[test]
 fn texture_transform_on_base_color_slot_does_not_leak_to_other_slots() {
-    // cube_textured.gltf carries KHR_texture_transform on baseColorTexture
-    // only (offset (0.25, 0), scale (2, 2)).
+    // cube_textured.gltf transforms baseColorTexture only.
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_textured.gltf");
     let scene = load_gltf(path).expect("cube_textured.gltf must load");

@@ -1,10 +1,5 @@
 //! Webcam → RGBA frame capture.
-//!
-//! A [`CaptureSession`] owns a GStreamer pipeline
-//! (`<source> ! videoconvert ! videoscale ! capsfilter(RGBA) ! appsink`) and
-//! publishes frames into a single-slot [`FrameSlot`] with overwrite semantics:
-//! consumers always see the newest frame and capture is never back-pressured
-//! by slow inference.
+//! Frames overwrite a single [`FrameSlot`], so slow inference never back-pressures capture.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -20,8 +15,7 @@ use crate::ensure_gst_initialized;
 /// Which video source element feeds the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraSource {
-    /// Best available webcam source (`mfvideosrc`, else `ksvideosrc`,
-    /// else `autovideosrc`), first device.
+    /// First device of the best source: `mfvideosrc`, else `ksvideosrc`, else `autovideosrc`.
     Auto,
     /// Webcam by enumeration index (`device-index` property).
     Device(u32),
@@ -98,8 +92,7 @@ impl FrameSlot {
         self.inner.signal.notify_all();
     }
 
-    /// Takes the newest frame, waiting up to `timeout` for one to arrive.
-    /// Returns `None` on timeout or after the session closed.
+    /// Takes the newest frame, waiting up to `timeout`; `None` on timeout or once closed.
     pub fn take_latest(&self, timeout: Duration) -> Option<VideoFrame> {
         let mut slot = self.inner.latest.lock().expect("frame slot poisoned");
         loop {
@@ -162,8 +155,7 @@ impl CaptureSession {
                 log::info!("using webcam source element `{factory}`");
                 let mut builder = gst::ElementFactory::make(factory);
                 if let CameraSource::Device(index) = config.source {
-                    // Only mfvideosrc/ksvideosrc expose `device-index`; setting
-                    // an unknown property would panic on the fallback sources.
+                    // Only these two have `device-index`; setting it on a fallback would panic.
                     if matches!(factory, "mfvideosrc" | "ksvideosrc") {
                         builder = builder.property("device-index", index as i32);
                     } else {

@@ -7,9 +7,7 @@ param(
   [string]$Package = 'kataglyphis_cli',
   [string]$Binary = 'kataglyphis_cli',
   [string]$TargetDir = '',
-  # Build the binary but skip launching it. Needed for GUI-featured builds in
-  # the headless servercore CI container, where the process dies at load time
-  # (missing display/DLLs) before main() ever runs.
+  # Build without launching: GUI builds die at load time in the headless servercore container.
   [switch]$BuildOnly
 )
 

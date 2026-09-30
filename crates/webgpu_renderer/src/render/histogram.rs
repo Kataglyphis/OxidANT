@@ -1,9 +1,5 @@
 //! GPU luminance histogram over the HDR target, for auto-exposure.
-//!
-//! The first compute pass in this renderer. Everything else here is a render
-//! pass, so the plumbing (storage buffer, atomics, a readback path) is new -
-//! which is exactly why it lands on its own, verified against the CPU binning
-//! in [`crate::render::auto_exposure`], before anything depends on its output.
+//! Verified against the CPU binning in [`crate::render::auto_exposure`].
 
 use crate::context::GpuContext;
 use crate::render::auto_exposure::{BUILD_WORKGROUP, CLEAR_WORKGROUP, HISTOGRAM_BINS};
@@ -41,13 +37,11 @@ pub struct HistogramPass {
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: Option<wgpu::BindGroup>,
     histogram_buffer: wgpu::Buffer,
-    /// [adapted EV, target EV]. Lives on the GPU for the tonemap to read;
-    /// reading it back per frame would serialise the pipeline.
+    /// [adapted EV, target EV], kept on the GPU: a per-frame readback would serialise the pipeline.
     exposure_buffer: wgpu::Buffer,
     exposure_params_buffer: wgpu::Buffer,
     exposure_readback_buffer: wgpu::Buffer,
-    /// MAP_READ staging target. Kept alive rather than allocated per read so a
-    /// diagnostic readback does not churn allocations.
+    /// MAP_READ staging target, kept alive so diagnostic readbacks do not churn allocations.
     readback_buffer: wgpu::Buffer,
 }
 
@@ -62,9 +56,7 @@ impl HistogramPass {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("histogram_bind_group_layout"),
             entries: &[
-                // textureLoad, not textureSample: no filtering, and sampling
-                // an HDR target with a filtering sampler is not guaranteed on
-                // every backend.
+                // textureLoad: a filtering sampler on an HDR target is not guaranteed everywhere.
                 bind_layout::texture_2d(0, wgpu::ShaderStages::COMPUTE, false),
                 bind_layout::storage_buffer(1, wgpu::ShaderStages::COMPUTE, false),
                 bind_layout::storage_buffer(2, wgpu::ShaderStages::COMPUTE, false),
@@ -134,8 +126,7 @@ impl HistogramPass {
         }
     }
 
-    /// (Re)binds the HDR source. Call whenever the HDR target is recreated,
-    /// e.g. on resize - a stale view here reads a destroyed texture.
+    /// (Re)binds the HDR source; call on every HDR target recreation, or it reads a dead texture.
     pub fn set_input(&mut self, gpu: &GpuContext, hdr_view: &wgpu::TextureView) {
         self.bind_group = Some(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("histogram_bind_group"),
@@ -161,10 +152,7 @@ impl HistogramPass {
         }));
     }
 
-    /// Clears and rebuilds the histogram for a `width` x `height` HDR target.
-    ///
-    /// Both passes go into one encoder in order; wgpu inserts the barrier
-    /// between them, so the build cannot observe a partially cleared buffer.
+    /// Clears and rebuilds the histogram in one encoder, so wgpu's barrier orders clear and build.
     pub fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -197,9 +185,7 @@ impl HistogramPass {
             });
             pass.set_pipeline(&self.build_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
-            // Round UP: a truncating division leaves the right and bottom
-            // edges of the image unsampled, which biases exposure toward
-            // whatever is in the middle of the frame.
+            // Round up: truncating leaves the right and bottom edges unsampled and biases exposure.
             pass.dispatch_workgroups(
                 width.div_ceil(BUILD_WORKGROUP),
                 height.div_ceil(BUILD_WORKGROUP),
@@ -226,8 +212,7 @@ impl HistogramPass {
         );
     }
 
-    /// Reduces the histogram to an adapted exposure, in the same encoder and
-    /// after [`Self::encode`] so the barrier between them is wgpu's problem.
+    /// Reduces the histogram to an adapted exposure; encode after [`Self::encode`], same encoder.
     pub fn encode_reduce(&self, encoder: &mut wgpu::CommandEncoder, scope: PassScope<'_>) {
         let Some(bind_group) = self.bind_group.as_ref() else {
             return;
@@ -246,16 +231,12 @@ impl HistogramPass {
         &self.exposure_buffer
     }
 
-    /// Resets the adaptation state. Without this a test (or a scene change)
-    /// inherits whatever exposure the previous frames converged to, which
-    /// makes "did it adapt?" unanswerable.
+    /// Resets the adaptation state, so a test or scene change does not inherit the last exposure.
     pub fn reset_exposure(&self, queue: &wgpu::Queue, ev: f32) {
         queue.write_buffer(&self.exposure_buffer, 0, bytemuck::bytes_of(&[ev, ev]));
     }
 
-    /// Copies the exposure state out for tests and diagnostics. Same caveat as
-    /// [`Self::read_back`]: it stalls the queue and must not be on the frame
-    /// path.
+    /// Copies the exposure state out for tests and diagnostics; stalls, so never on the frame path.
     pub fn encode_exposure_readback(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.copy_buffer_to_buffer(
             &self.exposure_buffer,
@@ -290,8 +271,7 @@ impl HistogramPass {
         values
     }
 
-    /// Copies the histogram into the mappable staging buffer. Must be encoded
-    /// after [`Self::encode`] and submitted before [`Self::read_back`].
+    /// Copies the histogram to staging; after [`Self::encode`], before [`Self::read_back`].
     pub fn encode_readback(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.copy_buffer_to_buffer(
             &self.histogram_buffer,
@@ -302,11 +282,7 @@ impl HistogramPass {
         );
     }
 
-    /// Blocking readback of the last copied histogram.
-    ///
-    /// For tests and diagnostics only: it stalls the queue. The real
-    /// auto-exposure path reduces the histogram on the GPU and never reads it
-    /// back - a per-frame CPU readback would serialise the pipeline.
+    /// Blocking readback of the last copied histogram; it stalls, so tests and diagnostics only.
     pub fn read_back(&self, gpu: &GpuContext) -> Vec<u32> {
         let slice = self.readback_buffer.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();

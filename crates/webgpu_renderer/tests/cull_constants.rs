@@ -1,20 +1,11 @@
-//! Pins `gpu_cull.wgsl`'s workgroup size against the Rust copy in
-//! `render::gpu_occlusion`.
-//!
-//! `gpu_cull.wgsl` *is* Slang-generated, so `SlangCompileManifestsAgree` and
-//! `CheckedInWgslHasNoHandEdits` keep it honest against its Slang source, but
-//! nothing checks it against the Rust dispatch count - this test covers that
-//! gap.
-//!
-//! Deliberately separate from any `GpuContext`-backed test: this one is pure
-//! CPU so it runs everywhere, including environments with no adapter.
+//! Pins `gpu_cull.wgsl`'s workgroup size against the Rust dispatch copy in `render::gpu_occlusion`.
+//! Pure CPU, so it runs where no adapter exists.
 
 use kataglyphis_webgpu_renderer::render::gpu_occlusion::CULL_WORKGROUP;
 
 const SHADER_SOURCE: &str = include_str!("../src/shaders/gpu_cull.wgsl");
 
-/// Finds `fn <entry_point>(` in [`SHADER_SOURCE`] and returns the x dimension
-/// of the nearest preceding `@workgroup_size(x, y, z)`.
+/// The x of the `@workgroup_size` nearest before `fn <entry_point>(` in [`SHADER_SOURCE`].
 fn extract_workgroup_x(entry_point: &str) -> u32 {
     let fn_needle = format!("fn {entry_point}(");
     let fn_pos = SHADER_SOURCE

@@ -1,40 +1,11 @@
 #!/usr/bin/env bash
-# Runs the cat-detection producer (kataglyphis_cat_webrtc) from the
-# :latest container against a Raspberry Pi's CSI camera.
-#
-# Why this is not a plain `nerdctl run`: the Pi 5 kernel (6.18) renamed the
-# rp1-cfe media entities to underscores (`rp1-cfe-fe_image0`) and moved to the
-# libpisp 1.7 uAPI. The image's upstream libcamera 0.7.2 / libpisp 1.5 cannot
-# drive that camera — no CFE match at first, then a segfault in the IPA. The
-# host's Raspberry Pi OS libcamera (0.7.2+rpt) *does* match the kernel, so its
-# stack and the transitive closure of its shared libraries are collected into
-# build/cat-stream/hostlibs and bind-mounted ahead of the image's copy.
-# Everything else (GStreamer 1.29, gst-plugins-rs/webrtcsink, ONNX Runtime,
-# the Rust binary) still comes from the image.
-#
-# Usage:
-#   scripts/linux/cat-stream/run-producer-pi.sh [--build] [--port 8443]
-#       [--model FILE] [--width N] [--height N] [--fps N] [--name NAME]
-#       [--libs-only]
-#
-# --build      build the producer in the container first (long cargo build)
-# --libs-only  refresh build/cat-stream/hostlibs and exit
-#
-# Why it lives HERE and not in OmniAccelerANT, which shows the stream: the
-# crate it drives is this repo's (crates/cat_webrtc), so the runner belongs
-# beside the code it builds and starts. OmniAccelerANT keeps a pointer.
-#
-# The web frontend half is OmniAccelerANT's, because the Flutter app is:
-#   OmniAccelerANT/scripts/linux/cat-stream/serve.sh
+# Cat producer on a Pi CSI camera; the host libcamera stack is mounted over the image's, which the Pi 5 kernel outgrew.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../../.." && pwd)"
 
-# The image ref is ANTfrastructure's, never spelled out here: versions.env is
-# the fleet's one owner of both tags, and a literal copy freezes at today's.
-# Resolved in two assignments, never one: a command substitution that dies
-# inside a larger expansion is swallowed by `set -e`.
+# The image ref comes from versions.env, in two assignments so `set -e` sees a failed substitution.
 # shellcheck source=../lib/antfrastructure.sh
 source "${script_dir}/../lib/antfrastructure.sh"
 _ci_image_ref_sh="$(antfrastructure_path linux/scripts/ci-image-ref.sh)"
@@ -92,8 +63,7 @@ command -v nerdctl >/dev/null 2>&1 || {
   exit 1
 }
 
-# Collect the host libcamera stack and its library closure. Done once; delete
-# build/cat-stream/hostlibs to refresh after a system upgrade.
+# Collected once; delete build/cat-stream/hostlibs to refresh after a system upgrade.
 collect_hostlibs() {
   local libcamera_real libcamera_base
   libcamera_real="$(readlink -f /usr/lib/aarch64-linux-gnu/libcamera.so.0.7 2>/dev/null || true)"
@@ -117,8 +87,7 @@ collect_hostlibs() {
   rm -rf "${hostlibs_dir}"
   mkdir -p "${hostlibs_dir}"
   printf 'collecting host libcamera libraries into %s\n' "${hostlibs_dir}"
-  # `ipa_rpi_pisp.so` is copied for name-sake only; libcamera loads the IPA
-  # from its own (mounted) directory, not from here.
+  # The IPA is copied only for its dependencies; libcamera loads it from its own mounted directory.
   local queue=(
     "$(readlink -f "${libcamera_base}/libcamera.so.0.7")"
     "$(readlink -f "${libcamera_base}/libcamera-base.so.0.7")"
@@ -142,8 +111,7 @@ collect_hostlibs() {
       [ -n "$dep" ] && [ -e "$dep" ] && queue+=("$dep")
     done < <(ldd "$f" 2>/dev/null | awk '/=> \// {print $3} /^\t\/[^ ]+ \(/ {print $1}')
   done
-  # NEEDED entries reference sonames; the closure names files after their real
-  # paths, so link each soname the loader will ask for.
+  # NEEDED names sonames, but files are named after their real paths, so link each soname.
   local lib soname
   for lib in "${hostlibs_dir}"/*; do
     soname="$(readelf -d "$lib" 2>/dev/null | awk '/SONAME/ {gsub(/[][]/,""); print $NF}')"
@@ -160,9 +128,7 @@ if [ "${libs_only}" = true ]; then
 fi
 [ -d "${hostlibs_dir}" ] || collect_hostlibs
 
-# Rootless containers map container-root to the invoking host user, so the
-# video/media/dma-heap nodes need an ACL for that user (the `video` group is
-# not carried into the user namespace).
+# Rootless: the `video` group does not reach the user namespace, so grant the invoking user ACLs.
 for dev in /dev/media* /dev/video* /dev/dma_heap/*; do
   [ -e "$dev" ] || continue
   [ -w "$dev" ] && continue
@@ -170,34 +136,7 @@ for dev in /dev/media* /dev/video* /dev/dma_heap/*; do
   sudo setfacl -m "u:$(id -un):rw" "$dev"
 done
 
-# The loader paths are ANTfrastructure's and are NOT retyped here. A copy of
-# them freezes at today's prefixes - it spelled out /opt/gcc-16.2.0 twice, so a
-# GCC bump upstream silently dropped the C++ runtime out of the search path.
-#
-# The container runs through the image's NORMAL entrypoint, and /hostlibs is
-# handed in as the caller's LD_LIBRARY_PATH. That works since hub CON23
-# (:latest of 2026-09-29): libcamera-env.sh APPENDS the image's /opt/libcamera
-# after whatever the caller set, and the entrypoint puts ${GCC_PREFIX}'s runtime
-# ahead of it, so the host libcamera closure wins over the image's older copy
-# and a host libstdc++ cannot shadow GCC's (`GLIBCXX_3.4.36 not found`). Before
-# CON23 the entrypoint PREPENDED /opt/libcamera over the caller's value, which
-# is why this runner used to bypass it with `--entrypoint bash`. Proven under
-# QEMU only (arm64 child, empty /hostlibs); a board run is still owed - BACKLOG.
-#
-# The prologue below is still needed, for three reasons that have nothing to do
-# with the entrypoint:
-#   - a caller's LD_LIBRARY_PATH REPLACES the image's ENV value, and the
-#     entrypoint restores only GStreamer, libcamera and GCC. The rest of the
-#     image's media paths (/usr/local/lib, OpenCV, FFmpeg) come from
-#     media-env.sh - the same file the Dockerfiles source - and are APPENDED,
-#     so they stay behind /hostlibs;
-#   - ${HOST_MULTIARCH_DIR} goes last, so the host's bind-mounted libcamera IPA
-#     directory resolves without shadowing the image's own libraries;
-#   - it refuses an image older than CON23, where /opt/libcamera would sit
-#     ahead of /hostlibs and the Pi 5's camera would fail with no hint why.
-#
-# Quoted heredoc on purpose: every expansion below belongs to the CONTAINER's
-# shell, not this one.
+# Runs in the container (quoted heredoc): re-appends image media paths after /hostlibs, refuses pre-CON23 images.
 host_multiarch_dir="/usr/lib/aarch64-linux-gnu"
 container_prologue="$(cat <<'PROLOGUE'
 set -euo pipefail
@@ -240,8 +179,7 @@ nerdctl_args=(
   --name "${container_name}"
   --user 0:0
   --network host
-  # The RPi IPA proxy starts a forked worker; the default seccomp profile
-  # answers that fork with ENOSYS.
+  # The RPi IPA proxy forks a worker, which the default seccomp profile answers with ENOSYS.
   --security-opt seccomp=unconfined
   -v /sys:/sys:ro
   -v /dev:/dev
@@ -293,8 +231,7 @@ if [ "${do_build}" = true ] || ! producer_present; then
     bash -lc 'cd /workspace && cargo build --release --locked -p kataglyphis_cat_webrtc'
 fi
 
-# A producer from an interrupted run still holds the name; replace it rather
-# than fail at container creation.
+# A producer from an interrupted run still holds the name.
 nerdctl rm -f "${container_name}" >/dev/null 2>&1 || true
 
 printf 'starting the producer: libcamerasrc -> YOLO -> webrtcsink on port %s\n' "${port}"

@@ -1,8 +1,4 @@
-//! Webcam live-inference API: camera enumeration + a detection event stream.
-//!
-//! Video frames never cross the bridge — they go straight from the capture
-//! pipeline into the Flutter texture via the native plugin's C ABI. Only
-//! detection metadata streams to Dart, where the UI overlays boxes.
+//! Webcam live-inference API; frames go straight to the texture, only detections cross the bridge.
 
 use crate::frb_generated::StreamSink;
 
@@ -11,9 +7,7 @@ pub struct CameraDesc {
     pub name: String,
 }
 
-/// A detection in source-frame pixel coordinates. Field-accessible Dart
-/// mirror of `kataglyphis_core::detection::Detection` (which the bridge
-/// would otherwise expose as an opaque type).
+/// A detection in source-frame pixels; a field-accessible mirror of the opaque core `Detection`.
 pub struct DetectionBox {
     pub x1: f32,
     pub y1: f32,
@@ -82,8 +76,7 @@ pub fn list_cameras() -> Result<Vec<CameraDesc>, String> {
     }
 }
 
-/// Starts capture + inference; events arrive on `sink` until
-/// [`stop_webcam_inference`] is called. Errors if already running.
+/// Streams capture + inference events to `sink` until [`stop_webcam_inference`]; errors if running.
 pub fn start_webcam_inference(
     config: WebcamStreamConfig,
     sink: StreamSink<DetectionEvent>,

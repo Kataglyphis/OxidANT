@@ -4,9 +4,7 @@ use burn::nn;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::record::{BinFileRecorder, FullPrecisionSettings, Recorder};
 use burn::tensor::activation::{relu, sigmoid};
-// burn 0.21 moved `Device` off `Backend` and onto its new `BackendTypes`
-// supertrait, so naming it on a CONCRETE backend needs that trait qualified.
-// (`B::Device` on a generic `B: Backend` still resolves via the supertrait.)
+// burn 0.21 moved `Device` onto the `BackendTypes` supertrait, which a concrete backend must name.
 use burn::tensor::{
     backend::{Backend, BackendTypes},
     Tensor, TensorData,

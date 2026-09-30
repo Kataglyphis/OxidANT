@@ -1,79 +1,29 @@
 <#
 .SYNOPSIS
-  Windows build and packaging script for Rust projects.
-  Similar pattern to BeschleunigerBallett's Build-Windows.ps1
-
+  Builds, lints, tests and packages the app into dist\windows-<arch> (bundle, MSIX, MSI).
 .DESCRIPTION
-  - Uses ANTfrastructure's WindowsBuild.Common.psm1 for structured logging,
-    WindowsConfig.Common for config access, WindowsMsix.Common for the version
-    parse and the whole MSIX pack (Get-PackageVersion, Invoke-MsixPackage),
-    and WindowsScripts.Shared for guards.
-  - Runs cargo build, test and lint by calling cargo DIRECTLY. It does NOT go
-    through ANTfrastructure's windows/scripts/rust/Build-Windows.ps1: that script
-    has no consumer, does `rustup component add` against this image's offline
-    rustup, and builds --all-features, which needs vendor SDKs the image has
-    not got. The line that used to claim otherwise was wrong from the day it
-    was written.
-  - Packages MSIX using local config and template, then MSI with WiX v4.
-  - Every target writes dist\windows-<x64|arm64>: the portable bundle (the exe,
-    resources\ and every DLL it needs on a clean machine, the VC++ runtime and the
-    chain ONNX Runtime included), the MSIX and the MSI, each carrying that same
-    DLL closure. The lane scripts upload the directory whole.
-  - -TargetArch arm64 is the cross build of windows-arm64-cross.yml, run in the
-    family image's arm64 bundle. It builds with --target and leaves the
-    arch-independent source gates (audit/deny, fmt, tests) to the x64 lane.
+  Calls cargo directly, not the hub's rust Build-Windows.ps1 (offline rustup, no --all-features).
+  -TargetArch arm64 cross-builds and leaves audit/deny, fmt and tests to the x64 lane.
 #>
 
 param(
 #requires -Version 7.0
 
-  # NOTE: there is deliberately no -Configurations here. One used to be
-  # declared and nothing ever read it, so `-Configurations gui_windows` was
-  # accepted and silently ignored. The feature-matrix concept lives in
-  # Invoke-WindowsConfigMatrix.ps1, which implements it properly and drives
-  # Invoke-AppProfiles.ps1 per configuration. Use that script instead of
-  # reintroducing the parameter here.
+  # No -Configurations on purpose: the feature matrix is Invoke-WindowsConfigMatrix.ps1's.
   [switch]$SkipMsix,
   [switch]$SkipMsi,
   [switch]$SkipBuild,
   [switch]$SkipTests,
   [switch]$Clean,
-  # amd64 (alias x64) or arm64. Empty: the image's WINDOWS_TARGET_ARCH, else amd64,
-  # resolved by the hub's Get-WindowsTargetArch, which throws on anything else.
+  # amd64 (alias x64) or arm64; empty means the image's WINDOWS_TARGET_ARCH, else amd64.
   [string]$TargetArch = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-# Get-OrDefault and Get-ConfigValue used to be defined here, byte-identical to
-# ANTfrastructure's WindowsConfig.Common.psm1. They now come from that module -
-# see the import block below.
-
-# Assert-Command comes from ANTfrastructure's WindowsScripts.Shared.psm1. SDK
-# tool lookup is no longer called from here at all: Invoke-MsixPackage resolves
-# makeappx itself, and the Resolve-Executable that used to sit here recursed the
-# whole Windows Kits tree, where the module consults VsDevCmd's
-# WindowsSdkVerBinPath / WindowsSDKVersion first and scans newest-first.
-
-# The version file is parsed by WindowsMsix.Common's Get-PackageVersion, once
-# per packaging step, and no longer by a local Normalize-Version or by the two
-# divergent inline parses that followed it. It handles the 'v' prefix, a
-# missing component and the component count each packager needs (4 for an
-# AppxManifest, 3 for an MSI ProductVersion).
-
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-# One bootstrap resolves every module ANTfrastructure-first, with
-# scripts/windows/modules/ as the project-specific fallback. It replaces four
-# near-identical hard-coded import blocks; a module that moves upstream is now
-# picked up without editing this script, and a missing submodule reports the
-# exact `git submodule update` command instead of a bare path.
-#
-# Import-BuildModule pulls WindowsScripts.Shared in whether or not it is listed,
-# which is what the four blocks below had each worked around by hand: a nested
-# Import-Module inside a .psm1 binds into THAT module's private scope and never
-# reaches this session, so importing only WindowsBuild.Common left
-# Resolve-WorkspacePath undefined.
+# Resolves modules ANTfrastructure-first, with scripts/windows/modules/ as the local fallback.
 . (Join-Path $PSScriptRoot 'Resolve-BuildModule.ps1')
 
 Import-BuildModule @(
@@ -85,13 +35,11 @@ Import-BuildModule @(
   'WindowsTargetArch.Common' # the arch facts: accepted spellings, cross or not, the Rust triple
   'WindowsCargoTarget.Common' # project-local: where each arch's build lands, what packages call it
 )
-# The chain ONNX Runtime staged beside the exe and every payload proved by G6: the hub's
-# WindowsOrtPayload.Common, this repo's own module until 2026-09-25. An older pin lacks it.
+# Chain ONNX Runtime staging and the G6 payload proof; a hub pin before ad08bc30 lacks the module.
 try { Import-BuildModule @('WindowsOrtPayload.Common') } catch {
   throw "This build needs ANTfrastructure's WindowsOrtPayload.Common (hub commit ad08bc30 of 2026-09-25, third_party/ANTfrastructure/docs/onnxruntime-single-source.md § The shared Windows glue); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
 }
-# The package arch, the DLL closure and where it comes from; a hub pin older than
-# 2026-09-25's x64 closure lacks Get-ProductDllSearchPath and says so here.
+# Package arch and DLL closure; an older hub pin lacks Get-ProductDllSearchPath, named here.
 try {
   Import-BuildModule @('WindowsCrossBundle.Common')
   $null = Get-Command -Name 'Get-ProductDllSearchPath' -ErrorAction Stop
@@ -149,29 +97,14 @@ try {
   $workspacePath = $isolatedWorkspace
   Set-Location -Path $workspacePath
 
-  # CARGO_TARGET_DIR is a standard cargo variable and is commonly ABSOLUTE (the
-  # in-container scripts here set C:\ct). PowerShell's Join-Path does not
-  # collapse that the way Path.Combine would - `Join-Path 'C:\a' 'C:\b'` yields
-  # 'C:\a\C:\b' - and MSIX packaging then died on "The filename, directory name,
-  # or volume label syntax is incorrect". Resolved once here; it was computed in
-  # three steps before.
+  # CARGO_TARGET_DIR is often absolute, and Join-Path would glue it on as 'C:\a\C:\b'.
   $targetRoot = if ([System.IO.Path]::IsPathRooted($cargoTargetDir)) { $cargoTargetDir } else { Join-Path $workspacePath $cargoTargetDir }
   $layout = Get-CargoTargetLayout -Arch $TargetArch -TargetRoot $targetRoot -WorkspacePath $workspacePath
   Write-BuildLog -Context $context -Message "Target: $($layout.Arch)$(if ($layout.IsCross) { " (cross: $($layout.CargoArgs -join ' '))" }), release dir $($layout.ReleaseDir)"
   if ($layout.IsCross) {
-    # The pkg-config crate refuses a cross build unless told to (gstreamer-sys
-    # asks it, under gui_windows). The arm64 bundle's PKG_CONFIG_PATH holds the
-    # arm64 .pc files, so what it finds is the target's.
+    # pkg-config refuses cross builds by default; the arm64 bundle's PKG_CONFIG_PATH is the target's.
     $env:PKG_CONFIG_ALLOW_CROSS = '1'
   }
-
-  # The scoop-shims PATH prepend that used to sit here is gone. It pointed at
-  # C:\Users\ContainerAdministrator\scoop\shims, which does not exist in the
-  # family Windows image: ANTfrastructure's windows/Dockerfile.base installs the
-  # toolchain proper and puts it on PATH itself, and scoop is a HOST-side
-  # concern (windows/scripts/host/Install-ScoopTools.ps1). The block therefore
-  # prepended a non-existent directory on every single run and hid the fact
-  # that nothing here needs it.
 
   Invoke-BuildStep -Context $context -StepName 'Verify Toolchain' -Critical -Script {
     Assert-Command -Name 'cargo' -InstallHint 'Install Rust toolchain via rustup'
@@ -195,28 +128,13 @@ try {
   }
 
   if (-not $SkipBuild) {
-    # A cross build leaves the source gates that do not depend on the target to
-    # the x64 lane, which grades the same commit: audit/deny and fmt read the
-    # source, and an arm64 test binary cannot run on this x64 host. Clippy below
-    # does run, for the target: it type-checks every cfg(target_arch) path and
-    # compiles the test code for aarch64.
+    # Cross builds leave target-independent gates to the x64 lane; clippy still runs for the target.
     if ($layout.IsCross) {
       Write-BuildLog -Context $context -Message "Cross build: security checks, format check and unit tests are the x64 lane's."
     }
     if (-not $layout.IsCross) {
       Invoke-BuildStep -Context $context -StepName 'Security Checks (audit & deny)' -Script {
-        # PINNED, and a failure to resolve the pin is fatal. `cargo install
-        # --locked cargo-audit cargo-deny` with no --version resolves to
-        # whatever crates.io serves that minute, so a new advisory-db schema or
-        # a new default cargo-deny lint turns this step red with no commit
-        # behind it and nothing to bisect. The try/catch that used to wrap the
-        # install is gone with it: a swallowed install failure left the two
-        # gates below running whatever happened to be on PATH, or nothing.
-        #
-        # The versions come from the image (baked in as environment variables),
-        # else from the submodule's versions.env - the fleet's single owner of
-        # both pins - parsed with ANTfrastructure's own ConvertFrom-VersionsEnv
-        # rather than a fourth hand-rolled .env reader. Unresolvable throws.
+        # Pinned from the image env or versions.env, else fatal: unpinned, crates.io picks the verdict.
         $versionsEnv = Join-Path $repoRoot 'third_party/ANTfrastructure/linux/scripts/01-core/versions.env'
         $pins = if (Test-Path $versionsEnv) { ConvertFrom-VersionsEnv -Path $versionsEnv } else { [ordered]@{} }
 
@@ -239,38 +157,18 @@ try {
         Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoAuditVersion, 'cargo-audit') | Out-Null
         Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoDenyVersion, 'cargo-deny') | Out-Null
 
-      # No try/catch around these two. Swallowing them into a warning is how
-      # `licenses FAILED` shipped unnoticed: cargo-deny rejected xxhash-rust's
-      # BSL-1.0 on every single build and the step still reported success. A
-      # security gate that cannot fail is not a gate. Findings belong in
-      # deny.toml (allow the licence, or ignore the advisory with a reason) -
-      # not in a catch block here.
+      # No try/catch: a gate that cannot fail is not a gate; findings belong in deny.toml.
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('audit') | Out-Null
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('deny', 'check', 'advisories', 'licenses', 'bans', 'sources') | Out-Null
       } | Out-Null
 
-      # NEVER `rustup component add` here. The image's rustup is offline - its
-      # dist server is a file:// mirror that Install-RustToolchain.ps1 deletes
-      # after installing - so the call can only ever fail, and the previous
-      # skip-on-failure made both gates decorative: each finished in ~0.1s and
-      # reported success, so neither had run even once (measured 2026-08-07).
-      # Call the components directly and let a failure BE a failure. If they are
-      # missing the image is wrong, not the code; ANTfrastructure now installs them
-      # with `-c rustfmt -c clippy` and asserts them at image-build time.
+      # Never `rustup component add`: the image's rustup is offline, and the image installs both.
       Invoke-BuildStep -Context $context -StepName 'Format Check' -Critical -Script {
         Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('fmt', '--all', '--', '--check') | Out-Null
       } | Out-Null
     }
 
-    # Never --all-features: it pulls gui_unix (GTK4), which this image has not
-    # got. The ONNX Runtime features need nothing at build time since they became
-    # load-dynamic; the feature-matrix CI job lints the buildable combinations.
-    #
-    # The root package, and the two the release exe is built from: kataglyphis_cli and
-    # kataglyphis_gui, whose gui_windows code compiles in no other lane, so a warning
-    # there reached the release build unlinted until 2026-09-25. The features are the
-    # CLI's, as in the release build, qualified so the CLI's feature map carries them
-    # to the other two.
+    # Not --all-features (GTK4); the release crates too, as only this lane compiles gui_windows.
     Invoke-BuildStep -Context $context -StepName 'Linting (cargo clippy)' -Critical -Script {
       $clippyParams = @('clippy', '--all-targets', '--package', 'oxidant', '--package', 'kataglyphis_cli', '--package', 'kataglyphis_gui') + $layout.CargoArgs
       if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
@@ -298,10 +196,7 @@ try {
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $buildParams | Out-Null
     } | Out-Null
 
-    # Owner rule 2026-09-23: the exe runtime-loads ONNX Runtime (ort load-dynamic),
-    # so every package carries the image's chain-built copy beside it - never another.
-    # Staged beside the exe in target\release so it runs there too; each package then
-    # ships a payload that G6 proves (New-OrtProvenPayload), here first to fail early.
+    # The exe loads ONNX Runtime at run time, so only the chain-built copy goes beside it.
     Invoke-BuildStep -Context $context -StepName 'Stage Chain ONNX Runtime' -Critical -Script {
       $releaseDir = $layout.ReleaseDir
       $exePath = Join-Path $releaseDir "$binary.exe"
@@ -315,13 +210,7 @@ try {
       Write-BuildLog -Context $context -Message "Chain ONNX Runtime staged from $env:ONNX_ROOT\bin and proved by G6: $(@($payload.OrtDlls | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
     } | Out-Null
 
-    # The GUI creates its GStreamer elements by name, so their plugins are in no import
-    # table and the closure below would never find them: an exe that links GStreamer
-    # gets the config's plugins in lib\gstreamer-1.0 beside it. GStreamer looks there
-    # unasked while its own DLL sits beside the exe, and kataglyphis_media points
-    # GST_PLUGIN_PATH at it. A plugin the image lacks fails the build, never shrinks the
-    # set. What the plugins import joins the closure below, beside the exe, which is
-    # where Windows looks for a plugin's imports.
+    # Plugins are loaded by name, in no import table, so the config's list is staged explicitly.
     Invoke-BuildStep -Context $context -StepName 'Stage GStreamer Plugins' -Critical -Script {
       $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
       $pluginTarget = Join-Path $layout.ReleaseDir 'lib\gstreamer-1.0'
@@ -339,12 +228,7 @@ try {
       Write-BuildLog -Context $context -Message "GStreamer plugins staged in $pluginTarget from $gstPluginDir`: $($gstPlugins -join ', ')"
     } | Out-Null
 
-    # A clean machine has none of the image's C:\runtime, and an arm64 device, or a
-    # fresh x64 PC, no VC++ redist either. Everything the exe and the DLLs beside it
-    # import, transitively, is staged beside the exe too, so every package below
-    # ships it (owner decision 2026-09-25: x64 exactly like arm64). ORT and the
-    # GStreamer plugins enter as seeds: loaded by name, they are in no import table.
-    # The search order is the hub's (Get-ProductDllSearchPath), the chain ORT first.
+    # A clean machine has no C:\runtime or VC++ redist, so the whole import closure ships.
     Invoke-BuildStep -Context $context -StepName 'Stage DLL Closure' -Critical -Script {
       $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
       $seeds = @($exePath) + @(Get-ChildItem -LiteralPath $layout.ReleaseDir -Filter '*.dll' -File | ForEach-Object FullName) +
@@ -355,11 +239,7 @@ try {
     } | Out-Null
   }
 
-  # The product both Windows lanes upload in dist\windows-<arch>, and the tree the
-  # arm64 lane's arch gate walks and its windows-11-arm job runs: the exe with
-  # every DLL beside it and its GStreamer plugins in lib\, proved by G6 like each
-  # package, plus resources\ (the model among them), which the app looks for beside
-  # the exe.
+  # The uploaded product: exe, DLLs, lib\ plugins and resources\, which the app expects beside it.
   Invoke-BuildStep -Context $context -StepName 'Portable Bundle' -Critical -Script {
     $bundleDir = Join-Path $layout.DistDir 'bundle'
     $bundle = New-OrtProvenPayload -ExePath (Join-Path $layout.ReleaseDir "$binary.exe") -Destination $bundleDir -IncludeDirectory 'lib'
@@ -368,31 +248,13 @@ try {
     Write-BuildLogSuccess -Context $context -Message "Portable bundle: $bundleDir ($(@($bundle.Dlls).Count) DLLs beside $binary.exe)"
   } | Out-Null
 
-  # Invoke-BuildStep, NOT Invoke-BuildOptional. The latter is
-  # `try { & $Script } catch { Write-BuildLogWarning }` and never registers the
-  # step with the context, so packaging failures appeared in neither the
-  # SUCCEEDED nor the FAILED list - a run with a broken MSI still printed
-  # "7 steps, 7 succeeded, 0 failed (100% success rate)". If packaging was
-  # asked for and it breaks, that is a failure and the summary must say so.
+  # Invoke-BuildStep, not Invoke-BuildOptional, which hides failures from the summary.
   if (-not $SkipMsix) {
     Invoke-BuildStep -Context $context -StepName 'MSIX Packaging' -Critical -Script {
-      # Invoke-MsixPackage (WindowsMsix.Common) owns everything from "the
-      # staging directory holds what goes in the package" onwards: makeappx
-      # lookup, the four logo assets, the token expansion, the pack, and the
-      # assertion that a file really appeared. Three consumers had each written
-      # that orchestration out; this repo's copy was ~100 lines and is gone.
-      #
-      # STAGING STAYS HERE, which is the split the module documents: what goes
-      # into the package is this project's business (a cargo release exe, the
-      # DLLs beside it, resources/), and it is the only part the three
-      # consumers did differently. Every path is the target arch's ($layout).
+      # Staging is this project's; Invoke-MsixPackage owns everything from the staged tree on.
       $releaseDir = $layout.ReleaseDir
 
-      # Get-PackageVersion, not a local parse. This script used to read the
-      # version file TWICE - here and in the MSI step below - with two
-      # different fallbacks and two different component rules, which is the
-      # exact divergence that function was written to end. 4 components here
-      # because an AppxManifest rejects 3.
+      # 4 components: an AppxManifest rejects 3.
       $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 4
 
       $msixStaging = Join-Path $layout.ArchTargetDir 'msix-staging'
@@ -404,14 +266,10 @@ try {
       if (-not (Test-Path $exePath)) {
         throw "Expected executable not found: $exePath"
       }
-      # The package ships the payload G6 just proved; -SkipBuild skips the staging
-      # step, so this is where a packaged-only run still proves its ORT.
+      # Proved again here, since -SkipBuild skips the staging step.
       $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msix') -IncludeDirectory 'lib'
 
-      # -ExtraFiles, not -ResourcesDir: the module's -ResourcesDir flattens the
-      # directory's CONTENTS into the package root, and this app looks for
-      # resources\ (and lib\gstreamer-1.0) beside the exe. Copying the directory
-      # itself keeps that.
+      # -ExtraFiles, not -ResourcesDir, which flattens resources\ into the package root.
       $extraFiles = @($payload.Dlls) + @($payload.Included)
       $resourcesSource = Join-Path $workspacePath 'resources'
       if (Test-Path $resourcesSource) { $extraFiles += $resourcesSource }
@@ -433,11 +291,7 @@ try {
 
       Write-BuildLog -Context $context -Message "Creating MSIX package: $packageFile"
 
-      # ONE TokenMap, where this script used to expand the template twice. The
-      # module escapes each value for XML and replaces ordinally, which is the
-      # bug fix that matters: `-replace` treats its replacement as a
-      # substitution TEMPLATE, so a display name or description containing
-      # `$&` or `$1` was silently rewritten into the manifest.
+      # The module XML-escapes and replaces ordinally, unlike `-replace`, which expands `$1`.
       Invoke-MsixPackage -Context $context `
         -StagingDir $msixStaging `
         -ExePath $payload.Exe `
@@ -466,16 +320,7 @@ try {
     }
   }
 
-  # MSI packaging with WiX Toolset v4, driving wix.exe directly.
-  #
-  # NOT cargo-wix. 0.3.9 is its newest release and it shells out to WiX v3's
-  # candle.exe + light.exe, neither of which exists here: ANTfrastructure installs
-  # WiX 4.0.6 as a dotnet tool (a single wix.exe) in
-  # windows/scripts/host/Install-ScoopTools.ps1 and points WIX=C:\WiX at it in
-  # windows/Dockerfile.base. Every MSI run therefore died with
-  # "The compiler application ('candle') does not exist at the 'C:\WiX' path",
-  # which went unnoticed while this step still ran as optional. Calling wix.exe
-  # keeps the image on one WiX generation instead of adding a second.
+  # wix.exe (WiX v4) directly, not cargo-wix, which needs WiX v3's candle/light.
   $msiEnabled = Get-ConfigValue -Config $config -Path 'Msi.Enabled'
   if (-not $SkipMsi -and $msiEnabled) {
     Invoke-BuildStep -Context $context -StepName 'MSI Packaging' -Critical -Script {
@@ -492,12 +337,7 @@ try {
       }
       Write-BuildLog -Context $context -Message "Using WiX: $wixExe"
 
-      # The SAME parse the MSIX step above uses, from the same module, with the
-      # component count as the only difference: MSI ProductVersion is
-      # major.minor.build, an AppxManifest wants four. Until this call the file
-      # was read twice in one script, with two fallbacks and two rules for a
-      # 'v' prefix and a missing component - the divergence Get-PackageVersion
-      # exists to end.
+      # MSI ProductVersion is major.minor.build.
       $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 3
 
       $msiOutputName = Get-OrDefault $env:MSI_OUTPUT_NAME (Get-ConfigValue -Config $config -Path 'Msi.OutputName')
@@ -512,10 +352,6 @@ try {
 
       Write-BuildLog -Context $context -Message "Creating MSI package: $msiFile"
 
-      # Msi.WxsFile has been in Build-Windows.config.psd1 all along and was
-      # never read - the old cargo-wix call let it look for WXS files under
-      # crates/cli/wix/, which does not exist, so it also failed with
-      # "There are no WXS files to create an installer".
       $wxsRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.WxsFile') 'wix/main.wxs'
       $wxsPath = if ([System.IO.Path]::IsPathRooted($wxsRel)) { $wxsRel } else { Join-Path $workspacePath $wxsRel }
       if (-not (Test-Path $wxsPath)) {
@@ -535,10 +371,7 @@ try {
         throw "License file not found: $licenseRtf (Msi.LicenseFile = '$licenseRel', referenced by $wxsPath)."
       }
 
-      # Msi.ProductName and Msi.Manufacturer were declared in the config and
-      # never read, while those same two strings sat hard-coded in the WXS --
-      # two sources of truth, where editing the config silently did nothing.
-      # They are preprocessor variables now, so the config is the only one.
+      # The config owns these strings; the WXS takes them as preprocessor variables.
       $msiProductName = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.ProductName') $msixDisplayName
       $msiManufacturer = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.Manufacturer') $msixPublisherDisplayName
       if ([string]::IsNullOrWhiteSpace($msiProductName)) {
@@ -548,9 +381,7 @@ try {
         throw "Msi.Manufacturer is empty and Msix.PublisherDisplayName gave no fallback; $wxsPath requires it."
       }
 
-      # The WXS takes every moving value as a preprocessor variable so it never
-      # has to assume a target\release next to the workspace root, and never
-      # duplicates a string the config already owns.
+      # Every moving value is a preprocessor variable, so the WXS assumes no paths.
       $wixParams = @(
         'build',
         '-arch', $layout.PackageArch,
@@ -564,12 +395,7 @@ try {
         $wxsPath
       )
 
-      # Every other file the app needs, installed where the bundle has it, one
-      # generated component each, named by main.wxs's PayloadFiles ComponentGroupRef:
-      # the payload's DLLs beside the exe (the chain ORT and the staged closure alike),
-      # its lib\gstreamer-1.0 plugins, and resources\, where the app finds its model.
-      # A component's Subdirectory places it under APPLICATIONFOLDER. The fragment is
-      # an intermediate, so it stays out of dist.
+      # One generated component per payload file for main.wxs's PayloadFiles, laid out like the bundle.
       $payloadFiles = [System.Collections.Generic.List[object]]::new()
       foreach ($dll in @($msiPayload.Dlls)) { $payloadFiles.Add([pscustomobject]@{ Source = $dll; Subdirectory = '' }) }
       $trees = @($msiPayload.Included | ForEach-Object { [pscustomobject]@{ Base = $msiPayload.Directory; Dir = $_ } })
