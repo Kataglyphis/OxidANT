@@ -55,6 +55,19 @@ protocol exists and the backlog is empty" — it was neither.
       its own change and its own review. `cargo clippy --fix` does not do it:
       it rewrites the tests and leaves every src site.
 
+- [ ] Find why the renderer's `headless.exe` dies on `windows-11-arm` when its
+      tests run in parallel. Run 36889467167 (2026-10-01): WARP (`Microsoft
+      Basic Render Driver`, Dx12), `KATAGLYPHIS_REQUIRE_GPU=1`, the process
+      exited after `running 39 tests` with no test finished and no panic text,
+      the first time any arm64 test rendered. The same binaries on the x64
+      runner's WARP pass in parallel, and serially (`--test-threads=1`, set in
+      `Stage-CrossTests.ps1`) all 38 pass on arm64 (run 36907253720). One
+      sample each, so it may be a race in WARP's arm64 JIT or a flake. Done
+      when a parallel arm64 run is green repeatedly and the flag goes, or the
+      crash has a name (exit code, faulting module; the hub's
+      `Invoke-StagedTests.ps1` does not print the exit code when a binary ends
+      without a summary).
+
 - [ ] Decide whether the Linux x64 feature check (`feature-matrix` in
       `linux-x64.yml`) should also run on every push. It is the one job still
       behind a marker (`[build-features]`), six extra image pulls per run (one

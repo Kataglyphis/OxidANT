@@ -522,9 +522,10 @@ which a local container run executes too:
   plugins and the renderer's fixtures. The hub's arch gate then grades `dist/windows-arm64`
   and the test tree, and `windows-11-arm` runs `kataglyphis_cli.exe --help`, `stats`,
   `onnx-runtime` and `media-check` natively, then every staged test with
-  `KATAGLYPHIS_REQUIRE_GPU=1` (hub CON43), the renderer's one test at a time: WARP on
-  `windows-11-arm` killed `headless.exe` mid-run with no panic text (run 36889467167), and
-  a serial run names the test that dies. No arm64 Windows container image exists, so that
+  `KATAGLYPHIS_REQUIRE_GPU=1` (hub CON43), the renderer's one test at a time. In parallel,
+  WARP on `windows-11-arm` killed `headless.exe` before any test finished, with no panic
+  text (run 36889467167); serially all of them pass (run 36907253720), and the whole job
+  takes 2.5 min. Not root-caused: BACKLOG.md. No arm64 Windows container image exists, so that
   job is the only place an arm64 binary of this repo executes.
 
 Both lanes resolve the version from `VERSION.txt` (the lane's `version-file`). Both take
