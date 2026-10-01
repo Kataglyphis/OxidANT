@@ -6,6 +6,9 @@ on:
     branches: [ "main", "develop" ]
   pull_request:
     branches: [ "main", "develop" ]
+  # Weekly GPU run: the suites on lavapipe under QEMU take ~44 min, too long for every push (owner decision 2026-10-01).
+  schedule:
+    - cron: '17 2 * * 0'
   workflow_dispatch:
     inputs:
       gpu-tests:
@@ -33,10 +36,10 @@ jobs:
     with:
       script: bash -lc 'bash scripts/linux/ci-container-steps.sh riscv64-test'
       # The image's CARGO_HOME is root-owned and the container runs as uid 1001.
-      container-args: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always -e RISCV64_GPU_TESTS=${{ inputs.gpu-tests && '1' || '0' }}
+      container-args: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always -e RISCV64_GPU_TESTS=${{ (github.event_name == 'schedule' || inputs.gpu-tests) && '1' || '0' }}
       cache-lane: riscv64-cargo
       cache-mounts: 'cargo-home:/tmp/cargo-home sccache:/var/cache/sccache'
       cache-env: 'SCCACHE_CACHE_SIZE=1500M RUSTC_WRAPPER=/workspace/third_party/ANTfrastructure/linux/scripts/01-core/sccache-launcher.sh'
-      timeout-minutes: ${{ inputs.gpu-tests && 120 || 60 }}
+      timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.gpu-tests) && 120 || 60 }}
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
