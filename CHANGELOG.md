@@ -50,7 +50,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
     `headless.exe`: the process died after `running 39 tests` with no test finished and no
     panic text, the first rendering any arm64 test had done on WARP (the tests that ran
     before it create devices but draw nothing). Its renderer binaries now run one test at
-    a time (`--test-threads=1`), so a crash names its test.
+    a time (`--test-threads=1`), which passes; the parallel crash is not root-caused
+    (BACKLOG.md).
+  - Measured at af096e5, every lane green and the same set everywhere: Linux x64 and arm64
+    360 passed, 1 ignored (runs 36907253295, 36907253309), coverage 65.26% (5000/7662);
+    Windows x64 360 passed, 1 ignored, 30 in the container and 330 on the host (run
+    36907253841); Windows arm64 `TESTS: passed=360 failed=0 skipped=1` on `windows-11-arm`
+    (run 36907253720). WARP reports `bc=true timestamps=true` on both Windows runners.
 - **The arm64 cross lane runs the x64 lane's tests on `windows-11-arm` (hub CON43, 2026-10-01).**
   - `Invoke-WindowsLane.ps1 -StageTests` calls the new `Stage-CrossTests.ps1`. It builds
     the four targets of `Invoke-DebugTests.ps1` with `cargo test --no-run` for the target

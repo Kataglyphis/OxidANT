@@ -47,7 +47,7 @@ if ($rendererTests.Count -ne $expectedRenderer) {
   throw "Expected $expectedRenderer WebGPU renderer test binaries (the lib and one per tests\*.rs); cargo reported $($rendererTests.Count)."
 }
 
-# The renderer's own GPU skip line is counted as a skip, not a pass; one test at a time, so a WARP crash names its test.
+# The renderer's GPU skip line counts as a skip; serial, as WARP on windows-11-arm killed a parallel headless.exe (BACKLOG).
 $entries = foreach ($test in $tests) {
   $entry = [ordered]@{ exe = [System.IO.Path]::GetRelativePath($repoRoot, $test.executable); kind = 'cargo' }
   if (& $isRenderer $test) {
