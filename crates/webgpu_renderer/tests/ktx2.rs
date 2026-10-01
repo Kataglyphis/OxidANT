@@ -34,6 +34,11 @@ fn uploads_bc1_when_supported() {
         return;
     };
     if !gpu.supports_bc {
+        // Every CI adapter (lavapipe, WARP) offers BC, so under REQUIRE_GPU its absence is a regression.
+        assert!(
+            !GpuContext::gpu_required(),
+            "KATAGLYPHIS_REQUIRE_GPU is set but the adapter lacks TEXTURE_COMPRESSION_BC"
+        );
         eprintln!("SKIP: adapter lacks TEXTURE_COMPRESSION_BC");
         return;
     }

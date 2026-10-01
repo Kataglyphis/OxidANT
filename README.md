@@ -180,7 +180,7 @@ cargo clippy --workspace --all-targets --locked \
     --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime' -- -D warnings
 ```
 
-The `crates/webgpu_renderer` headless golden tests need a GPU adapter and **silently skip without one**. `KATAGLYPHIS_REQUIRE_GPU=1` turns a missing adapter into a failure, so a green run actually means they rendered. Every CI lane that renders sets it: the Linux lanes render on the image's software Vulkan device (lavapipe), the Windows lanes on the runners' software Direct3D 12 adapter (WARP). The `reports_the_adapter_it_renders_on` test prints an `ADAPTER:` line in each lane's log, naming the adapter and whether it offers BC textures and timestamp queries.
+The `crates/webgpu_renderer` headless golden tests need a GPU adapter and **silently skip without one**. `KATAGLYPHIS_REQUIRE_GPU=1` turns a missing adapter into a failure, so a green run actually means they rendered. Every CI lane that renders sets it: the Linux lanes render on the image's software Vulkan device (lavapipe), the Windows lanes on the runners' software Direct3D 12 adapter (WARP). Each GPU test binary prints one `ADAPTER:` line to stderr when it first gets a device (`GpuContext::headless_or_skip()`), naming the adapter and whether it offers BC textures and timestamp queries; every CI adapter offers both, so under `KATAGLYPHIS_REQUIRE_GPU` the BC-upload and GPU-timing tests fail instead of skipping without them.
 
 The suites live in:
 

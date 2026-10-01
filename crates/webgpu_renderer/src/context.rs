@@ -144,8 +144,12 @@ impl GpuContext {
     /// See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/gpu-golden-testing.md>.
     #[doc(hidden)]
     pub fn headless_or_skip() -> Option<Self> {
+        static REPORTED: std::sync::Once = std::sync::Once::new();
         match Self::new_headless() {
-            Ok(gpu) => Some(gpu),
+            Ok(gpu) => {
+                REPORTED.call_once(|| gpu.report_adapter());
+                Some(gpu)
+            }
             Err(err) => {
                 if Self::gpu_required() {
                     panic!("KATAGLYPHIS_REQUIRE_GPU is set but no GPU adapter is usable: {err}");
@@ -160,6 +164,23 @@ impl GpuContext {
     #[doc(hidden)]
     pub fn gpu_required() -> bool {
         std::env::var("KATAGLYPHIS_REQUIRE_GPU").is_ok_and(|v| !v.is_empty())
+    }
+
+    /// One `ADAPTER:` line on stderr naming the adapter and the optional features the tests use.
+    fn report_adapter(&self) {
+        let info = &self.adapter_info;
+        let line = format!(
+            "ADAPTER: {} ({:?}, {:?}, driver '{}' '{}') bc={} timestamps={}\n",
+            info.name,
+            info.backend,
+            info.device_type,
+            info.driver,
+            info.driver_info,
+            self.supports_bc,
+            self.supports_timestamps
+        );
+        // A direct write: libtest captures eprintln!, and a crash in the first render must not hide the adapter.
+        let _ = std::io::Write::write_all(&mut std::io::stderr(), line.as_bytes());
     }
 
     pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {
