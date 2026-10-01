@@ -55,19 +55,6 @@ protocol exists and the backlog is empty" — it was neither.
       its own change and its own review. `cargo clippy --fix` does not do it:
       it rewrites the tests and leaves every src site.
 
-- [ ] Get `windows-x64.yml` green. It runs on every push and PR since
-      2026-09-24, but it had not executed in CI since 2026-08-07, when all
-      four runs (commits 23f13aec and f0801be0) failed in *Run debug unit,
-      integration, and fuzz tests* after 59-77 minutes. The last green run is 2026-07-22
-      (122 minutes). Until a first always-on run says otherwise, expect this
-      lane red; the fix belongs in `scripts/windows/`, not in an `if:` that
-      turns the lane back into a `skipped` badge.
-      Status 2026-09-25: green on every push since run 36101777411 (hub
-      20bb0026), four in a row through 36162262349, the first run as a thin
-      caller of the hub's `container-ci-windows.yml`: 12 of 12 Build-Windows
-      steps, the config matrix, 163 renderer lib tests on the host and
-      `onnx-runtime` loading the bundle's chain ORT. Looks done; left open
-      for the owner to close.
 - [ ] Decide whether the Linux x64 feature check (`feature-matrix` in
       `linux-x64.yml`) should also run on every push. It is the one job still
       behind a marker (`[build-features]`), six extra image pulls per run (one
