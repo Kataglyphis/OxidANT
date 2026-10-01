@@ -29,7 +29,7 @@ jobs:
       script: bash -lc 'bash scripts/linux/ci-container-steps.sh riscv64-test'
       # The image's CARGO_HOME is root-owned and the container runs as uid 1001.
       container-args: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always
-      cache-key: riscv64-cargo
+      cache-lane: riscv64-cargo
       cache-mounts: 'cargo-home:/tmp/cargo-home sccache:/var/cache/sccache'
       cache-env: 'SCCACHE_CACHE_SIZE=1500M RUSTC_WRAPPER=/workspace/third_party/ANTfrastructure/linux/scripts/01-core/sccache-launcher.sh'
       timeout-minutes: 60
