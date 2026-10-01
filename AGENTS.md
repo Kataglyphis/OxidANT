@@ -611,6 +611,10 @@ from the image's riscv64 child, the distro clang as linker, binfmt with QEMU 10.
   work under QEMU: `RISCV64_GPU_TESTS=1` sets `KATAGLYPHIS_REQUIRE_GPU=1`, and the whole
   workspace then passed in 16 min 55 s on a 32-core host (the headless suite alone: 38
   tests), too long for a 4-vCPU runner on every push.
+- **The GPU suites run weekly instead** (owner decision 2026-10-01): a `schedule` run every
+  Sunday 02:17 UTC, and any manual run with the `gpu-tests` input, set
+  `RISCV64_GPU_TESTS=1` and a 120-min timeout. Measured on GitHub (run 36885386597): 358
+  passed, 0 failed, no `SKIP: no GPU`; the test step took 43.5 min, the job 56 min.
 - **Locally:** build the sysroot once with the hub's
   `linux/scripts/02-toolchain/riscv64-sysroot.sh`, mount it at `/opt/riscv64-sysroot`, and
   run the same step in the family image (the hub page has the command). The step prints
