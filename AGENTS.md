@@ -473,7 +473,7 @@ Seven workflow files: six triggered, one reusable. The four build lanes — one 
 | Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push/PR to `main`/`develop`, and `workflow_dispatch` | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
 | Linux arm64 · build + test | `linux-arm64.yml` → `reusable-linux.yml` | same | same image (a multi-arch index); native `ubuntu-26.04-arm`, no QEMU |
 | Windows x64 · build + test | `windows-x64.yml` → the hub's reusable `container-ci-windows.yml` (since 2026-09-25) | same | family Windows CI image, inherited; `windows-2025`, whose host runs the renderer tests and the packaged exe |
-| Windows arm64 · cross build + run | `windows-arm64-cross.yml` → the hub's reusable `container-ci-windows.yml` | same | the family image's arm64 bundle, inherited from the action's `image-arm64` default; `windows-2025` builds, `windows-11-arm` runs the product |
+| Windows arm64 · cross build + test | `windows-arm64-cross.yml` → the hub's reusable `container-ci-windows.yml` | same | the family image's arm64 bundle, inherited from the action's `image-arm64` default; `windows-2025` builds, `windows-11-arm` runs the product |
 | Linux x64 · build + test | `linux-x64.yml` (job `feature-matrix`) | opt-in: `[build-features]` in the HEAD commit message, or `workflow_dispatch` | family Linux CI image; `ubuntu-26.04` |
 
 **Every platform lane runs on every push and PR, since 2026-09-24** (owner request).
