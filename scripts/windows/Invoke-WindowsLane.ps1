@@ -9,7 +9,9 @@
 [CmdletBinding()]
 param(
   # amd64 (alias x64) or arm64; empty takes the image's WINDOWS_TARGET_ARCH.
-  [string]$TargetArch = ''
+  [string]$TargetArch = '',
+  # Cross only: after the build, stage the x64 lane's tests for the target (Stage-CrossTests.ps1, hub CON43).
+  [switch]$StageTests
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,6 +56,7 @@ try {
     Invoke-LaneStep -Script 'Invoke-WindowsConfigMatrix.ps1'
   }
   Invoke-LaneStep -Script 'Build-Windows.ps1' -Arguments @('-SkipTests', '-TargetArch', $arch)
+  if ($StageTests) { Invoke-LaneStep -Script 'Stage-CrossTests.ps1' -Arguments @('-TargetArch', $arch) }
 } finally {
   if ($ciCache) {
     & sccache --show-stats | Out-Host

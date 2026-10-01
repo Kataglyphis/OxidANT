@@ -14,6 +14,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- **The arm64 cross lane runs the x64 lane's tests on `windows-11-arm` (hub CON43, 2026-10-01).**
+  - `Invoke-WindowsLane.ps1 -StageTests` calls the new `Stage-CrossTests.ps1`. It builds
+    the four targets of `Invoke-DebugTests.ps1` with `cargo test --no-run` for the target
+    triple, from `C:\ws` like the x64 tests.
+  - It stages them under their repo-relative paths, together with `kataglyphis_cli.exe`
+    (for `CARGO_BIN_EXE`), the per-directory DLL closure, the renderer's source tree and
+    fixtures, the hub's `Invoke-StagedTests.ps1` and a `tests.json`.
+  - On the runner, the test-command links `C:\ws` to that mirror, so the paths compiled
+    into the binaries resolve.
+  - The renderer runs with `--nocapture`, and its `SKIP: no GPU adapter` lines count as
+    skips, not passes.
+  - Measured on x64 in `:winamd64`: 4 test binaries and the CLI staged, and
+    `TESTS: passed=4 failed=0 skipped=0`, the renderer left out because Server Core has no
+    `opengl32.dll`.
 - **The Linux lanes render the WebGPU golden tests, on lavapipe (2026-09-29).** The
   `test` step of `scripts/linux/ci-container-steps.sh` exports
   `KATAGLYPHIS_REQUIRE_GPU=1`, so a missing adapter panics instead of skipping. The
