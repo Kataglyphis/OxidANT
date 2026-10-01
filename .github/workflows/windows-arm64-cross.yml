@@ -1,5 +1,5 @@
 # Cross-builds arm64 on an amd64 runner, then windows-11-arm runs it; what that skips: AGENTS.md § Continuous integration.
-name: Windows arm64 · cross build + run
+name: Windows arm64 · cross build + test
 
 on:
   push:
