@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
+# capture_test.rs is cfg(gstreamer); `?/` names the member's feature without enabling gui's and oxidant's optional deps.
+TEST_FEATURES='kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
 
 usage() {
     cat >&2 <<'USAGE'
@@ -16,7 +18,7 @@ usage: ci-container-steps.sh <step>
   security    cargo_security_checks.sh  - cargo audit + cargo deny (GATING)
   fmt-clippy  cargo_fmt_clippy.sh         - fmt --check + clippy -D warnings (GATING)
   test        cargo_test.sh             - unit + integration + proptest + doc
-  coverage    cargo_coverage.sh         - tarpaulin
+  coverage    cargo_coverage.sh         - tarpaulin over the workspace
   bench       cargo_bench.sh
   release     cargo_release.sh          - fat LTO release build
   docs        cargo_build_doc.sh        - rustdoc into target/doc
@@ -41,9 +43,13 @@ case "$step" in
     # Golden tests must render (the image has lavapipe), not skip; `-` lets an empty value opt out.
     test)
         export KATAGLYPHIS_REQUIRE_GPU="${KATAGLYPHIS_REQUIRE_GPU-1}"
-        antfrastructure_exec "${RUST_DRIVERS}/cargo_test.sh" "$@"
+        antfrastructure_exec "${RUST_DRIVERS}/cargo_test.sh" --features "${TEST_FEATURES}" "$@"
         ;;
-    coverage)  antfrastructure_exec "${RUST_DRIVERS}/cargo_coverage.sh" "$@" ;;
+    # Without --workspace tarpaulin measures the root package alone, which has no unit tests: 0.00%.
+    coverage)
+        export KATAGLYPHIS_REQUIRE_GPU="${KATAGLYPHIS_REQUIRE_GPU-1}"
+        antfrastructure_exec "${RUST_DRIVERS}/cargo_coverage.sh" --workspace --features "${TEST_FEATURES}" "$@"
+        ;;
     bench)     antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" "$@" ;;
     release)   antfrastructure_exec "${RUST_DRIVERS}/cargo_release.sh" "$@" ;;
     docs)      antfrastructure_exec "${RUST_DRIVERS}/cargo_build_doc.sh" "$@" ;;
@@ -52,7 +58,7 @@ case "$step" in
 
     # Not --all-features: gui_unix needs GTK4, which the image lacks; exported since the helper execs.
     fmt-clippy)
-        export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked}"
+        export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked --features ${TEST_FEATURES}}"
         antfrastructure_exec "${RUST_DRIVERS}/cargo_fmt_clippy.sh" "$@"
         ;;
 

@@ -13,6 +13,8 @@ pub struct GpuContext {
     pub supports_bc: bool,
     /// TIMESTAMP_QUERY was available and enabled; browsers rarely expose it, so GPU timings are desktop-only.
     pub supports_timestamps: bool,
+    /// The adapter the device was created on.
+    pub adapter_info: wgpu::AdapterInfo,
     /// Present target; `None` for headless (render-to-texture) contexts.
     pub surface: Option<wgpu::Surface<'static>>,
     pub surface_config: Option<wgpu::SurfaceConfiguration>,
@@ -50,6 +52,7 @@ impl GpuContext {
             .context("No suitable GPU adapter found")?;
 
         let (device, queue, supports_bc, supports_timestamps) = request_device(&adapter).await?;
+        let adapter_info = adapter.get_info();
 
         let caps = surface.get_capabilities(&adapter);
         let format = caps
@@ -84,6 +87,7 @@ impl GpuContext {
             queue,
             supports_bc,
             supports_timestamps,
+            adapter_info,
             surface: Some(surface),
             surface_config: Some(surface_config),
         })
@@ -114,13 +118,13 @@ impl GpuContext {
             .context("No GPU adapter found (headless)")?;
 
         // GL counts as no adapter: naga cannot translate SSAO's depth `textureLoad` to GLSL, so pipelines abort.
-        let info = adapter.get_info();
-        if info.backend == wgpu::Backend::Gl {
+        let adapter_info = adapter.get_info();
+        if adapter_info.backend == wgpu::Backend::Gl {
             anyhow::bail!(
                 "headless adapter '{}' is the OpenGL backend, which cannot run this \
                  renderer's WGSL (depth textureLoad has no GLSL translation); \
                  treating as no usable adapter",
-                info.name
+                adapter_info.name
             );
         }
 
@@ -130,6 +134,7 @@ impl GpuContext {
             queue,
             supports_bc,
             supports_timestamps,
+            adapter_info,
             surface: None,
             surface_config: None,
         })
@@ -142,13 +147,19 @@ impl GpuContext {
         match Self::new_headless() {
             Ok(gpu) => Some(gpu),
             Err(err) => {
-                if std::env::var("KATAGLYPHIS_REQUIRE_GPU").is_ok_and(|v| !v.is_empty()) {
+                if Self::gpu_required() {
                     panic!("KATAGLYPHIS_REQUIRE_GPU is set but no GPU adapter is usable: {err}");
                 }
                 eprintln!("SKIP: no GPU adapter available in this environment");
                 None
             }
         }
+    }
+
+    /// `KATAGLYPHIS_REQUIRE_GPU` is set and non-empty: a GPU test must fail rather than skip itself.
+    #[doc(hidden)]
+    pub fn gpu_required() -> bool {
+        std::env::var("KATAGLYPHIS_REQUIRE_GPU").is_ok_and(|v| !v.is_empty())
     }
 
     pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {

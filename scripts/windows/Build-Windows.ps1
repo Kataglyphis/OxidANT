@@ -168,9 +168,9 @@ try {
       } | Out-Null
     }
 
-    # Not --all-features (GTK4); the release crates too, as only this lane compiles gui_windows.
+    # The workspace and all targets as on Linux, with the release features: only this lane compiles gui_windows. Not --all-features (GTK4).
     Invoke-BuildStep -Context $context -StepName 'Linting (cargo clippy)' -Critical -Script {
-      $clippyParams = @('clippy', '--all-targets', '--package', 'oxidant', '--package', 'kataglyphis_cli', '--package', 'kataglyphis_gui') + $layout.CargoArgs
+      $clippyParams = @('clippy', '--workspace', '--all-targets', '--locked') + $layout.CargoArgs
       if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
         $clippyParams += @('--features', ((@($cargoFeatures -split ',') | ForEach-Object { "kataglyphis_cli/$($_.Trim())" }) -join ','))
       }
