@@ -73,7 +73,10 @@ images, so they survive driver differences. They skip themselves when no
 adapter is present and still report as passed, unless `KATAGLYPHIS_REQUIRE_GPU=1`
 turns a missing adapter into a failure. The Linux CI lanes set it (the `test`
 step of `scripts/linux/ci-container-steps.sh`) and render on the family image's
-software Vulkan device (lavapipe), so a green Linux run has drawn them. The
-Windows x64 lane runs only the lib tests, on its runner host, without it.
+software Vulkan device (lavapipe), so a green Linux run has drawn them. Both
+Windows lanes set it too and run every renderer test on the runners' software
+Direct3D 12 adapter (WARP): x64 on its runner host, arm64 on `windows-11-arm`.
+`reports_the_adapter_it_renders_on` prints an `ADAPTER:` line naming the adapter
+in each lane's log.
 `a_non_uniform_instance_scale_shades_like_the_same_node_scale` is `#[ignore]`d:
 a known shading bug (BACKLOG.md) fails it on every adapter.

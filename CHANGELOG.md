@@ -14,6 +14,33 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- **Every test runs on every Linux and Windows lane (2026-10-01).** Before this, the Linux
+  lanes ran 358 tests and both Windows lanes 167.
+  - All lanes test with `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'`
+    (`TEST_FEATURES` in `scripts/linux/ci-container-steps.sh`). `crates/media`'s
+    `capture_test` is `cfg(feature = "gstreamer")` and had compiled empty everywhere. The
+    `?/` form selects the member's own feature: the plain one also switched on the optional
+    `kataglyphis_media` dependency of `kataglyphis_gui` and the root package
+    (`cargo tree -e features`). Linux clippy takes the same features.
+  - Windows x64: `Invoke-DebugTests.ps1` runs the workspace minus the renderer, adding
+    `kataglyphis_inference` (20), `kataglyphis_telemetry` (4) and the capture tests (2). It
+    builds the renderer's lib and all 18 integration test binaries for the host, listed in
+    `target\host-tests\tests.json` and checked against `tests\*.rs`. `Invoke-HostTests.ps1`
+    runs them through the hub's `Invoke-StagedTests.ps1`, which the arm64 lane uses too.
+  - Windows arm64: `Stage-CrossTests.ps1` builds the whole workspace's tests, renderer
+    included, with the same features. It stages the product's GStreamer plugins beside the
+    capture test, and of the programs only those an integration test starts.
+  - Both Windows lanes set `KATAGLYPHIS_REQUIRE_GPU=1`, so a renderer test with no
+    adapter fails instead of skipping itself. `GpuContext` carries the `adapter_info`, and
+    `reports_the_adapter_it_renders_on` writes it straight to stderr, past libtest's
+    capture, as an `ADAPTER:` line in every lane's log. lavapipe in `:latest` reports
+    `bc=true timestamps=true`.
+  - Both Windows lanes' clippy covers `--workspace --all-targets --locked`, as on Linux; it
+    covered the root package, `kataglyphis_cli` and `kataglyphis_gui` only.
+  - Coverage passes `--workspace`, the test features and `KATAGLYPHIS_REQUIRE_GPU=1` to the
+    hub's `cargo_coverage.sh`. Without `--workspace`, tarpaulin measured the root package
+    alone, which has no unit tests: `0.00% coverage, 0/754 lines covered`.
+  - Measured in the `:latest` image: the Linux `test` step passes 361 tests, with 1 ignored.
 - **The arm64 cross lane runs the x64 lane's tests on `windows-11-arm` (hub CON43, 2026-10-01).**
   - `Invoke-WindowsLane.ps1 -StageTests` calls the new `Stage-CrossTests.ps1`. It builds
     the four targets of `Invoke-DebugTests.ps1` with `cargo test --no-run` for the target

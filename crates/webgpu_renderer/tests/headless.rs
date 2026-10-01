@@ -86,6 +86,26 @@ fn gltf_loader_reads_morph_target_and_default_weight() {
 }
 
 #[test]
+fn reports_the_adapter_it_renders_on() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let info = &gpu.adapter_info;
+    let line = format!(
+        "ADAPTER: {} ({:?}, {:?}, driver '{}' '{}') bc={} timestamps={}\n",
+        info.name,
+        info.backend,
+        info.device_type,
+        info.driver,
+        info.driver_info,
+        gpu.supports_bc,
+        gpu.supports_timestamps
+    );
+    // A direct write, because libtest captures eprintln! and every lane's log should name the adapter.
+    std::io::Write::write_all(&mut std::io::stderr(), line.as_bytes()).expect("stderr");
+}
+
+#[test]
 fn renders_cube_headless() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;

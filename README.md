@@ -158,47 +158,51 @@ An existing clone without the submodule: `git submodule update --init --recursiv
 
 ## Tests
 
-Run the complete suite (unit + integration + proptest fuzz + doc tests) at the debug profile:
+Run the complete suite (unit + integration + proptest fuzz + doc tests) at the debug profile, as every CI lane does:
 
 ```bash
-cargo test --workspace --locked
+KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked \
+    --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
 ```
+
+The two features reach the suites a default build compiles empty: `kataglyphis_media`'s
+capture tests are `cfg(feature = "gstreamer")` and need GStreamer installed, and the
+inference crate's ORT-loader tests are `cfg(feature = "onnxruntime")`. The `?/` form
+names each member's own feature. Plain `kataglyphis_media/gstreamer` would also switch on
+the optional `kataglyphis_media` dependency of `kataglyphis_gui` and the root package,
+because with `--workspace` cargo applies `dep/feature` to every selected package.
 
 CI additionally gates on formatting and lints, both as hard failures. Run them before pushing:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy --workspace --all-targets --locked \
+    --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime' -- -D warnings
 ```
 
-The `crates/webgpu_renderer` headless golden tests need a GPU adapter and **silently skip without one**. Set `KATAGLYPHIS_REQUIRE_GPU=1` to turn a missing adapter into a failure, so a green run actually means they rendered. The Linux CI lanes set it and render on the image's software Vulkan device (lavapipe):
-
-```bash
-KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked
-```
+The `crates/webgpu_renderer` headless golden tests need a GPU adapter and **silently skip without one**. `KATAGLYPHIS_REQUIRE_GPU=1` turns a missing adapter into a failure, so a green run actually means they rendered. Every CI lane that renders sets it: the Linux lanes render on the image's software Vulkan device (lavapipe), the Windows lanes on the runners' software Direct3D 12 adapter (WARP). The `reports_the_adapter_it_renders_on` test prints an `ADAPTER:` line in each lane's log, naming the adapter and whether it offers BC textures and timestamp queries.
 
 The suites live in:
 
 - Unit tests inside the workspace crates (`kataglyphis_telemetry`, `kataglyphis_inference`, and the renderer's own suite).
-- Integration tests: `tests/integration/integration.rs`, which run the CLI and are compiled as `kataglyphis_cli`'s `integration` test (`crates/cli/tests/integration.rs`).
+- Integration tests: `tests/integration/integration.rs`, which run the CLI and are compiled as `kataglyphis_cli`'s `integration` test (`crates/cli/tests/integration.rs`); `crates/media/tests/capture_test.rs` (a `videotestsrc` pipeline and camera enumeration); and the renderer's 18 binaries under `crates/webgpu_renderer/tests/`.
 - Fuzz (property-based) tests: `tests/fuzz_test.rs` via [proptest](https://proptest-rs.github.io/proptest/) (256 random inputs per case by default). There is no separate `cargo-fuzz`/libFuzzer setup.
 
-Latest verified run (2026-08-07, Stevedore Windows container): the 8 tests that predate `crates/webgpu_renderer` pass — 3 integration, 1 proptest fuzz case, 4 telemetry unit.
-
-**`kataglyphis_webgpu_renderer` is now excluded from the container run on purpose.** Any of its test binaries links wgpu, and wgpu's `gles` backend makes the executable import `opengl32.dll` at load time; Windows Server Core does not ship that DLL, so the process dies with `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`. The loader resolves that import, so no runtime flag avoids it — and letting it run turned the entire `cargo test --workspace` into a crash with no results. The `gles` feature is kept deliberately: it is the OpenGL fallback for machines without Vulkan/DX12. Run those tests on a desktop Windows host, where the DLL exists:
+**On Windows the renderer's tests run outside the container.** Any of its test binaries links wgpu, and wgpu's `gles` backend makes the executable import `opengl32.dll` at load time; Windows Server Core does not ship that DLL, so the process dies with `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`. The loader resolves that import, so no runtime flag avoids it — and letting it run turned the entire `cargo test --workspace` into a crash with no results. The `gles` feature is kept deliberately: it is the OpenGL fallback for machines without Vulkan/DX12. Run those tests on a desktop Windows host, where the DLL exists:
 
 ```pwsh
-cargo test -p kataglyphis_webgpu_renderer --locked
+$env:KATAGLYPHIS_REQUIRE_GPU = '1'; cargo test -p kataglyphis_webgpu_renderer --locked
 ```
 
-CI does exactly that since 2026-09-24. In `windows-x64.yml` the container half
-(`Invoke-WindowsLane.ps1`, which starts with `Invoke-DebugTests.ps1`) **builds** the
-renderer's lib tests and records the executable in `target\host-tests\`. The lane's
-`host-command` then runs `Invoke-HostTests.ps1` on the runner, which is a desktop
-Windows Server with `opengl32.dll`. It fails if the list or the binary is missing, so
-it can never report green over nothing.
-
-Not a regression either way — the old "8 passed" figure was recorded a day before that crate existed. See [AGENTS.md](AGENTS.md) for the full analysis.
+That is the CI split too. In `windows-x64.yml` the container half (`Invoke-WindowsLane.ps1`,
+which starts with `Invoke-DebugTests.ps1`) runs the workspace tests except the renderer's,
+then **builds** the renderer's lib and integration tests and lists the executables in
+`target\host-tests\tests.json`. The lane's `host-command` runs them on the runner, a desktop
+Windows Server with `opengl32.dll`, through `Invoke-HostTests.ps1` and the hub's
+`Invoke-StagedTests.ps1`. It fails if the list, a binary or a passing test is missing, so it
+can never report green over nothing. `windows-arm64-cross.yml` builds the whole workspace's
+tests for arm64 (`Stage-CrossTests.ps1`) and runs them all on `windows-11-arm` with the same
+runner script.
 
 <!-- ROADMAP -->
 ## Run

@@ -33,8 +33,9 @@ jobs:
       # Invoke-WindowsLane.ps1 moves CARGO_HOME and sccache in and out of the container-local dirs.
       compiler-cache-key: x64-windows
       version-file: VERSION.txt
-      # Server Core lacks the opengl32.dll wgpu's gles backend imports, so the host runs the renderer tests and the exe.
+      # Server Core lacks the opengl32.dll wgpu's gles backend imports, so the host runs the renderer tests (never self-skipped) and the exe.
       host-command: |
+        $env:KATAGLYPHIS_REQUIRE_GPU = '1'
         ./scripts/windows/Invoke-HostTests.ps1 -ContainerRoot 'C:\ws'
         ./dist/windows-x64/bundle/kataglyphis_cli.exe onnx-runtime
         ./dist/windows-x64/bundle/kataglyphis_cli.exe media-check

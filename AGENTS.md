@@ -242,7 +242,7 @@ Because cargo is what makes it bite:
 
 ### `cargo_fmt_clippy.sh`
 
-**The lint step runs the driver now, with a narrower clippy scope.** Both of the reasons this repo hand-rolled `cargo fmt` / `cargo clippy` are gone: the leading `rustup component add rustfmt` (the driver probes first — its header says PROBE, DO NOT ADD), and the hard-coded `--all-features`, which is a `CARGO_CLIPPY_ARGS` knob since the pinned hub. `scripts/linux/ci-container-steps.sh` sets it to `--workspace --locked` — the scope the hand-rolled pair used — because this image cannot build `--all-features` (GTK4/ORT, and uid 1001 cannot install either). Note the other half of that change: positional arguments now reach `cargo fmt` **only**, not both tools. See the CI section.
+**The lint step runs the driver now, with a narrower clippy scope.** Both of the reasons this repo hand-rolled `cargo fmt` / `cargo clippy` are gone: the leading `rustup component add rustfmt` (the driver probes first — its header says PROBE, DO NOT ADD), and the hard-coded `--all-features`, which is a `CARGO_CLIPPY_ARGS` knob since the pinned hub. `scripts/linux/ci-container-steps.sh` sets it to `--workspace --locked --features <TEST_FEATURES>` — the scope the hand-rolled pair used, plus since 2026-10-01 the test step's features, so the capture test is linted where it runs — because this image cannot build `--all-features` (GTK4/ORT, and uid 1001 cannot install either). Note the other half of that change: positional arguments now reach `cargo fmt` **only**, not both tools. See the CI section.
 
 ### Never expand a manifest template with `-replace`
 
@@ -271,9 +271,9 @@ On a plain Ubuntu box (e.g. the WSL recipe below) you *do* need the distro packa
 | `gui_unix` | clean |
 | `burn_demos` | clean |
 
-Worth stating plainly what CI lints of those rows. The Linux lanes lint default features only (which are empty). Since the Windows lanes went always-on (x64 2026-09-24, arm64 2026-09-25), `Build-Windows.ps1` runs `cargo clippy --all-targets -- -D warnings` over the root package, `kataglyphis_cli` and `kataglyphis_gui` with the CLI's features qualified (`kataglyphis_cli/gui_windows,kataglyphis_cli/onnxruntime_directml`), the set the release exe is built with. Until 2026-09-25 it linted the root package alone, so `crates/cli` and the GUI's inference overlay, which only the CLI's features switch on, reached the release build unlinted. The x64 lane's config matrix also *builds*, without linting, the CLI with `gui_windows` alone and with each inference backend. `crates/media`, `gui_linux` and the burn demos are unguarded, not neglected — the `feature-matrix` job exists to close that.
+Worth stating plainly what CI lints of those rows. The Linux lanes lint the workspace with default features plus the test step's two (`kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime`, since 2026-10-01). Since 2026-10-01 both Windows lanes' `Build-Windows.ps1` runs `cargo clippy --workspace --all-targets --locked -- -D warnings`, as Linux does, with the CLI's features qualified (`kataglyphis_cli/gui_windows,kataglyphis_cli/onnxruntime_directml`), the set the release exe is built with, which also switches on `kataglyphis_media/gstreamer` and the inference crate's ORT. From 2026-09-25 it linted only the root package, `kataglyphis_cli` and `kataglyphis_gui`, and before that the root package alone, so `crates/cli` and the GUI's inference overlay, which only the CLI's features switch on, reached the release build unlinted. The x64 lane's config matrix also *builds*, without linting, the CLI with `gui_windows` alone and with each inference backend. `gui_linux` and the burn demos are unguarded, not neglected — the `feature-matrix` job exists to close that.
 
-Note the feature names belong to the **root package**. `cargo clippy --workspace --features gstreamer` fails with *"package `kataglyphis_gui` does not have feature `gstreamer`"* because `--workspace` applies the list to every member; drop `--workspace` to scope it to the root.
+Note the feature names belong to the **root package**. `cargo clippy --workspace --features gstreamer` fails with *"package `kataglyphis_gui` does not have feature `gstreamer`"* because `--workspace` applies the list to every member; drop `--workspace` to scope it to the root. A member's own feature takes the weak form, `kataglyphis_media?/gstreamer`: under `--workspace` the plain `kataglyphis_media/gstreamer` also switches on the optional `kataglyphis_media` dependency of every selected package that declares one (`kataglyphis_gui` and the root; `cargo tree -e features -i kataglyphis_media`, 2026-10-01).
 
 ### Do not let `cargo update` take zune-core to 0.5.2
 
@@ -305,9 +305,9 @@ full-workspace release build confirms it. zune-jpeg's newest release is still 0.
 
 ### Known gaps
 
-- **No always-on Linux lane builds any optional feature.** Both Linux lanes build default features. The Windows lanes build `gui_windows,onnxruntime_directml` (x64 since 2026-09-24, arm64 since 2026-09-25), and the x64 lane's config matrix adds `gui_windows` with `onnx_tract` and with `onnxruntime_cuda`. So `crates/media`, `gui_linux` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `linux-x64.yml` closes this, and the image already carries what its rows need (the table above), but it is still opt-in (`[build-features]` or a manual run) and has never run: as of 2026-09-25 no commit message carries the marker and the repository has no `workflow_dispatch` run.
+- **No always-on Linux lane builds the GUI or burn features.** Both Linux lanes build default features, plus for the tests and clippy `kataglyphis_media?/gstreamer` and `kataglyphis_inference?/onnxruntime` (since 2026-10-01). The Windows lanes build `gui_windows,onnxruntime_directml` (x64 since 2026-09-24, arm64 since 2026-09-25), and the x64 lane's config matrix adds `gui_windows` with `onnx_tract` and with `onnxruntime_cuda`. So `gui_linux` and the burn demos have no automated coverage, and until 2026-10-01 `crates/media` had none either — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `linux-x64.yml` closes this, and the image already carries what its rows need (the table above), but it is still opt-in (`[build-features]` or a manual run) and has never run: as of 2026-09-25 no commit message carries the marker and the repository has no `workflow_dispatch` run.
 
-- **The Linux lanes render the golden tests on a software Vulkan device, and must** (since 2026-09-29). The family image carries lavapipe (`vulkaninfo --summary`: deviceType CPU, `llvmpipe`) on amd64 and arm64 since ANTfrastructure CON19, and the `test` step of `scripts/linux/ci-container-steps.sh` exports `KATAGLYPHIS_REQUIRE_GPU=1`, so `GpuContext::headless_or_skip()` panics instead of returning `None` and a green run means the ~40 headless render tests drew something. Before that no CI lane had an adapter and every one of them reported as passed having drawn nothing. The Windows x64 lane's host renderer tests (`Invoke-HostTests.ps1`) do not set it. Running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**, which the image's lavapipe reproduces byte-for-byte (987 pixels, 2026-09-29):
+- **The Linux lanes render the golden tests on a software Vulkan device, and must** (since 2026-09-29). The family image carries lavapipe (`vulkaninfo --summary`: deviceType CPU, `llvmpipe`) on amd64 and arm64 since ANTfrastructure CON19, and the `test` step of `scripts/linux/ci-container-steps.sh` exports `KATAGLYPHIS_REQUIRE_GPU=1`, so `GpuContext::headless_or_skip()` panics instead of returning `None` and a green run means the ~40 headless render tests drew something. Before that no CI lane had an adapter and every one of them reported as passed having drawn nothing. Both Windows lanes set it too since 2026-10-01 (`windows-x64.yml`'s `host-command`, `windows-arm64-cross.yml`'s `test-command`) and render on the runners' WARP; `reports_the_adapter_it_renders_on` (`tests/headless.rs`) prints each lane's adapter as an `ADAPTER:` line. Only the riscv64 lane leaves it unset by default (§ *The riscv64 lane*). Running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**, which the image's lavapipe reproduces byte-for-byte (987 pixels, 2026-09-29):
 
   ```
   a_non_uniform_instance_scale_shades_like_the_same_node_scale
@@ -341,7 +341,7 @@ The fastest real fix is to verify in WSL against the CI's own target platform:
 ```bash
 # once, as root inside the distro
 apt-get install -y build-essential pkg-config curl git libssl-dev \
-    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgtk-4-dev
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base libgtk-4-dev
 # optional: a software Vulkan adapter so the headless golden tests actually run
 apt-get install -y mesa-vulkan-drivers vulkan-tools
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/ri.sh
@@ -355,10 +355,13 @@ Then, from the repo root, with `CARGO_TARGET_DIR` pointed at a **Linux-native** 
 
 ```bash
 export CARGO_TARGET_DIR=/root/kt
+FEATURES='kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked --features "$FEATURES" -- -D warnings
+KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked --features "$FEATURES"
 ```
+
+The features are the CI lanes' (`TEST_FEATURES` in `scripts/linux/ci-container-steps.sh`): without them the capture tests and the ORT-loader tests compile empty.
 
 `KATAGLYPHIS_REQUIRE_GPU` is the important one: without it `GpuContext::headless_or_skip()` silently returns `None` and the whole golden-test suite "passes" having rendered nothing. Set it and a missing adapter becomes a panic, so green *proves* the tests ran.
 
@@ -371,11 +374,14 @@ cargo build --workspace --locked --release            # fat LTO, codegen-units 1
 cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
 ```
 
-Run the lint gates before pushing. CI's formatting-and-clippy step is ANTfrastructure's `cargo_fmt_clippy.sh` with `CARGO_CLIPPY_ARGS='--workspace --locked'`, which is the same pair of hard failures written below — reproduce the step itself with `bash scripts/linux/ci-container-steps.sh fmt-clippy` inside the image. The shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
+Every CI lane's tests add `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'` and `KATAGLYPHIS_REQUIRE_GPU=1` (README § Tests).
+
+Run the lint gates before pushing. CI's formatting-and-clippy step is ANTfrastructure's `cargo_fmt_clippy.sh` with `CARGO_CLIPPY_ARGS='--workspace --locked --features <those two>'`, which is the same pair of hard failures written below — reproduce the step itself with `bash scripts/linux/ci-container-steps.sh fmt-clippy` inside the image. The shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets --workspace --locked -- -D warnings
+cargo clippy --all-targets --workspace --locked \
+    --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime' -- -D warnings
 ```
 
 Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest in `tests/fuzz_test.rs`; there is no cargo-fuzz/libFuzzer target.
@@ -503,14 +509,21 @@ decisions 2026-09-25). Its container half is `scripts/windows/Invoke-WindowsLane
 which a local container run executes too:
 
 - **x64** (`windows-x64.yml`): `Invoke-DebugTests.ps1`, `Invoke-WindowsConfigMatrix.ps1`,
-  then `Build-Windows.ps1 -SkipTests`. The lane's `host-command` then runs, on the runner
-  host, the WebGPU renderer tests (`Invoke-HostTests.ps1`) and the packaged exe's
-  `onnx-runtime` and `media-check` (`dist/windows-x64/bundle/kataglyphis_cli.exe`).
-- **arm64** (`windows-arm64-cross.yml`): `Build-Windows.ps1` alone, in the family image's
-  arm64 bundle. The hub's arch gate then grades `dist/windows-arm64`, and `windows-11-arm`
-  runs `kataglyphis_cli.exe --help`, `stats`, `onnx-runtime` and `media-check` natively. No arm64 Windows
-  container image exists, so that job is the only place an arm64 binary of this repo
-  executes.
+  then `Build-Windows.ps1 -SkipTests`. `Invoke-DebugTests.ps1` runs the workspace tests
+  with the Linux lanes' test features, all but the WebGPU renderer's, and builds the
+  renderer's lib and 18 integration test binaries into `target\host-tests\tests.json`. The
+  lane's `host-command` then runs, on the runner host, those binaries
+  (`Invoke-HostTests.ps1`, through the hub's `Invoke-StagedTests.ps1`, with
+  `KATAGLYPHIS_REQUIRE_GPU=1`) and the packaged exe's `onnx-runtime` and `media-check`
+  (`dist/windows-x64/bundle/kataglyphis_cli.exe`).
+- **arm64** (`windows-arm64-cross.yml`): `Build-Windows.ps1`, in the family image's arm64
+  bundle, then `Stage-CrossTests.ps1`, which builds the whole workspace's tests for arm64,
+  renderer included, and stages them with their DLL closure, the product's GStreamer
+  plugins and the renderer's fixtures. The hub's arch gate then grades `dist/windows-arm64`
+  and the test tree, and `windows-11-arm` runs `kataglyphis_cli.exe --help`, `stats`,
+  `onnx-runtime` and `media-check` natively, then every staged test with
+  `KATAGLYPHIS_REQUIRE_GPU=1` (hub CON43). No arm64 Windows container image exists, so that
+  job is the only place an arm64 binary of this repo executes.
 
 Both lanes resolve the version from `VERSION.txt` (the lane's `version-file`). Both take
 the package features and MSIX metadata from `Build-Windows.config.psd1`
@@ -551,8 +564,8 @@ On a cross build the script also:
 
 - builds with `--target aarch64-pc-windows-msvc` and `PKG_CONFIG_ALLOW_CROSS=1`
   (gstreamer-sys asks pkg-config; the bundle's `.pc` files are arm64);
-- runs clippy for aarch64, and leaves audit/deny, fmt and the tests to the x64
-  lane, which grades the same commit.
+- runs clippy for aarch64, and leaves audit/deny and fmt to the x64 lane, which
+  grades the same commit; the tests it only builds, for `windows-11-arm` to run.
 
 Every arch-dependent path and name comes from `Get-CargoTargetLayout`
 (`scripts/windows/modules/WindowsCargoTarget.Common.psm1`, pinned by
@@ -609,7 +622,8 @@ Facts that cost real debugging time:
 - **The arm64 lane runs natively on `ubuntu-26.04-arm`, on every push since 2026-09-24.** It was opt-in via `[build-arm]` for runner minutes before that, never because it could not pass: `:latest` (then `:latest-cross`) has been a multi-arch index since 2026-09-04.
 - **Linux artifacts are named by `VERSION`, not by `github.ref_name`.** On a pull request the ref name is `<number>/merge`, `upload-artifact` refuses a `/` in a name, and every PR run of the Linux lane went red at *Upload all artifacts* with the build, tests and package green (run 35752031200, 2026-09-22). Fixed on 2026-09-24, when the lane started running on every PR on both architectures.
 - **Every cargo step of both Linux lanes is one named step of one script**, `scripts/linux/ci-container-steps.sh` (`ort-chain-only`, `debug`, `security`, `fmt-clippy`, `test`, `coverage`, `bench`, `release`, `docs`). Each step used to inline its own `bash -lc 'set -e; git config --global --add safe.directory /workspace; bash third_party/.../cargo_<x>.sh'` — the same prologue eight times. Reproduce any step by hand with `bash scripts/linux/ci-container-steps.sh <step>` inside the image; `reusable-linux.yml` runs exactly that line. The one container step outside it is the tarball, which calls ANTfrastructure's `package_archive.sh` directly.
-- **`cargo fmt`/`cargo clippy` run through ANTfrastructure's `cargo_fmt_clippy.sh`** like every other step — `fmt-clippy` was the one case that did not delegate, and stopped being one on 2026-09-15. Two things had to change upstream first, and both did: the driver's old first line `rustup component add rustfmt` exited 127 on an image without rustup (it probes first now — header: PROBE, DO NOT ADD), and `--all-features` was hard-coded at its line 40, which this image cannot build (GTK4/ORT, see the last bullet). The scope is `CARGO_CLIPPY_ARGS`, set to `--workspace --locked` in `scripts/linux/ci-container-steps.sh`. That exit 127 was masked by `continue-on-error: true` for months and let an entire crate reach the default branch unformatted and with 12 clippy errors — the step gates now.
+- **Coverage measures the workspace** (since 2026-10-01). The hub's `cargo_coverage.sh` runs tarpaulin without `--workspace`, so it measured only the root package, which has no unit tests: `0.00% coverage, 0/754 lines covered` (run 36868485805). The `coverage` step passes `--workspace` and the test features, and sets `KATAGLYPHIS_REQUIRE_GPU=1` like the `test` step.
+- **`cargo fmt`/`cargo clippy` run through ANTfrastructure's `cargo_fmt_clippy.sh`** like every other step — `fmt-clippy` was the one case that did not delegate, and stopped being one on 2026-09-15. Two things had to change upstream first, and both did: the driver's old first line `rustup component add rustfmt` exited 127 on an image without rustup (it probes first now — header: PROBE, DO NOT ADD), and `--all-features` was hard-coded at its line 40, which this image cannot build (GTK4/ORT, see the last bullet). The scope is `CARGO_CLIPPY_ARGS`, set to `--workspace --locked` plus the test features in `scripts/linux/ci-container-steps.sh`. That exit 127 was masked by `continue-on-error: true` for months and let an entire crate reach the default branch unformatted and with 12 clippy errors — the step gates now.
 - **The docs publish follows the repository's own default branch**, not a typed `refs/heads/main`. It asks for `format('refs/heads/{0}', github.event.repository.default_branch)`, and so does `cancel-in-progress`. The literal was wrong for as long as `main` was abandoned and `develop` carried every commit: the comment said "only publish from the default branch" while the condition matched a branch nobody pushed to, so <https://rust.jonasheinle.de> was never republished at all. A red **Security checks** step has the same effect for a different reason — the publish is the last step of that job.
 - **The container runs as uid 1001, not root.** `apt-get` fails with `Permission denied`, so a workflow step cannot install system packages — whatever the image lacks, it lacks. And `CARGO_HOME=/usr/local/cargo` is root-owned, so every writing cargo step needs `-e CARGO_HOME=/tmp/cargo-home`.
 - **The lint gate runs default features on purpose.** `--all-features` would need GTK4 headers (`gui_unix`), which the image has not got and uid 1001 cannot install.
