@@ -462,7 +462,7 @@ malformed and stayed that way through several edits.
 
 ### Continuous integration
 
-Seven workflow files: six triggered, one reusable. The four build lanes — one file per platform + arch — run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and **none of the three gate jobs is a copied job any more** — all three are one `uses:` onto ANTfrastructure, two onto a reusable workflow and one onto a composite action:
+Eight workflow files: seven triggered, one reusable. The five build lanes — one file per platform + arch — run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and **none of the three gate jobs is a copied job any more** — all three are one `uses:` onto ANTfrastructure, two onto a reusable workflow and one onto a composite action:
 
 | Lane (display name) | Workflow | Runs when | Image and runner |
 | --- | --- | --- | --- |
@@ -472,12 +472,13 @@ Seven workflow files: six triggered, one reusable. The four build lanes — one 
 | Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — the hub's reusable `submodule-pins.yml` (`Submodule.Pins.Tests.ps1`, Pester 3.4.0, `windows-2025`) |
 | Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push/PR to `main`/`develop`, and `workflow_dispatch` | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
 | Linux arm64 · build + test | `linux-arm64.yml` → `reusable-linux.yml` | same | same image (a multi-arch index); native `ubuntu-26.04-arm`, no QEMU |
+| Linux riscv64 · cross build + test | `linux-riscv64.yml` → the hub's reusable `container-ci-riscv64.yml` (since 2026-10-01) | same | family Linux CI image (amd64) on `ubuntu-26.04`, plus a sysroot exported from the image's riscv64 child; the tests run under QEMU |
 | Windows x64 · build + test | `windows-x64.yml` → the hub's reusable `container-ci-windows.yml` (since 2026-09-25) | same | family Windows CI image, inherited; `windows-2025`, whose host runs the renderer tests and the packaged exe |
 | Windows arm64 · cross build + test | `windows-arm64-cross.yml` → the hub's reusable `container-ci-windows.yml` | same | the family image's arm64 bundle, inherited from the action's `image-arm64` default; `windows-2025` builds, `windows-11-arm` runs the product |
 | Linux x64 · build + test | `linux-x64.yml` (job `feature-matrix`) | opt-in: `[build-features]` in the HEAD commit message, or `workflow_dispatch` | family Linux CI image; `ubuntu-26.04` |
 
 **Every platform lane runs on every push and PR, since 2026-09-24** (owner request).
-None of the four build lanes carries an `if:`, and none may be added back. Until that
+None of the five build lanes carries an `if:`, and none may be added back. Until that
 date the arm64 row needed `[build-arm]` and the Windows lane `[build-win]` in the HEAD
 commit message, so both reported `skipped` on almost every push — which a badge
 renders the same as a pass. ANTfrastructure's `docs/ci-build-triggers.md` still
@@ -574,6 +575,34 @@ re-typed into a workflow, a script, or a comment.
 **Nothing generated may be tracked.** `scripts/windows/tests/Repo.GeneratedArtifacts.Tests.ps1` runs ANTfrastructure's `Get-TrackedIgnoredFile` and `Get-TrackedGeneratedArtifact` over this root; only the root and the list of generated-output pathspecs are local. A `.gitignore` rule stops a file from being *added* and does nothing once a path is in the index, which is why `git rm --cached` has already been needed twice here (build logs under `logs\windows\`, and the flatpak repo). Note the pathspec form: `'**/__pycache__/*'` matches, `'**/__pycache__/'` matches **nothing** and would grade zero paths while reporting clean.
 
 **The lint lane runs with `--ratchets` on** since 2026-09-15. On top of the six always-on gates that adds the docs cross-reference gate plus eight measurement gates (code size, complexity, dead functions, comment size, stdout returns, masked declarations, trailing conditionals, and a shellcheck *warning* ratchet), each graded against a freeze file at the repo root. Three of them carry rows — `comment-size.allow`, `code-complexity.allow`, `dead-functions.allow` — seeded from the first run; the rest are absent, which the gates read as a zero baseline. **The contract is two-way**: a new offender fails, and so does an entry that is no longer over the limit, so fixing one of these means deleting or updating its row in the same change. The docs gate has no freeze file at all and never will — a `docs/…md` pointer in code either resolves from the repo root (or, when it starts `../`, from the file) or it is a finding.
+
+### The riscv64 lane
+
+**Cross-built on amd64, tested under QEMU** (owner decision 2026-10-01, hub CON48). An
+emulated riscv64 build is 20-30x slower than native, so `linux-riscv64.yml` builds on the
+amd64 runner and runs only the test binaries as riscv64. It is a thin caller of the hub's
+`container-ci-riscv64.yml`; the container half is `bash scripts/linux/ci-container-steps.sh
+riscv64-test`, which runs `cargo test --workspace --locked --target
+riscv64gc-unknown-linux-gnu` after the hub's `riscv64_cross_env`. The mechanism (sysroot
+from the image's riscv64 child, the distro clang as linker, binfmt with QEMU 10.2.3 at
+`rva23u64`) is the hub's:
+[`docs/riscv64-cross-test-lanes.md`](third_party/ANTfrastructure/docs/riscv64-cross-test-lanes.md).
+
+- **What runs:** every workspace test, 358 of them (measured 2026-10-01: build 1 min 43 s,
+  whole step 2 min 52 s on a warm cargo home). `cat_webrtc` links the image's riscv64
+  GStreamer, the inference tests the riscv64 ORT loader, and the CLI integration test spawns
+  the riscv64 `kataglyphis_cli` through binfmt.
+- **What skips:** the renderer's GPU rendering. The step disables every Vulkan driver
+  (`VK_LOADER_DRIVERS_DISABLE='*'`) and leaves `KATAGLYPHIS_REQUIRE_GPU` unset, so
+  `headless_or_skip()` returns `None` and the CPU-side assertions still run. lavapipe does
+  work under QEMU: `RISCV64_GPU_TESTS=1` sets `KATAGLYPHIS_REQUIRE_GPU=1`, and the whole
+  workspace then passed in 16 min 55 s on a 32-core host (the headless suite alone: 38
+  tests), too long for a 4-vCPU runner on every push.
+- **Locally:** build the sysroot once with the hub's
+  `linux/scripts/02-toolchain/riscv64-sysroot.sh`, mount it at `/opt/riscv64-sysroot`, and
+  run the same step in the family image (the hub page has the command). The step prints
+  `unstable feature specified for -Ctarget-feature: v` per crate: the image's riscv64 Rust
+  flags, not a fault.
 
 Facts that cost real debugging time:
 
