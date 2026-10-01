@@ -76,7 +76,8 @@ step of `scripts/linux/ci-container-steps.sh`) and render on the family image's
 software Vulkan device (lavapipe), so a green Linux run has drawn them. Both
 Windows lanes set it too and run every renderer test on the runners' software
 Direct3D 12 adapter (WARP): x64 on its runner host, arm64 on `windows-11-arm`.
-`reports_the_adapter_it_renders_on` prints an `ADAPTER:` line naming the adapter
-in each lane's log.
+Each test binary prints one `ADAPTER:` line naming the adapter when it first
+gets a device, and under the flag the BC-upload and GPU-timing tests fail
+rather than skip on an adapter without those features.
 `a_non_uniform_instance_scale_shades_like_the_same_node_scale` is `#[ignore]`d:
 a known shading bug (BACKLOG.md) fails it on every adapter.

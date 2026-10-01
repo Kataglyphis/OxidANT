@@ -16,6 +16,11 @@ fn every_pass_reports_a_finite_non_negative_duration() {
         return;
     };
     if !gpu.supports_timestamps {
+        // Every CI adapter (lavapipe, WARP) offers timestamps, so under REQUIRE_GPU their absence is a regression.
+        assert!(
+            !GpuContext::gpu_required(),
+            "KATAGLYPHIS_REQUIRE_GPU is set but the adapter lacks TIMESTAMP_QUERY"
+        );
         eprintln!("adapter has no TIMESTAMP_QUERY; skipping");
         return;
     }

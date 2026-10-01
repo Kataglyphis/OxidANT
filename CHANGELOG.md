@@ -32,15 +32,25 @@ on 2026-09-15, verbatim. Nothing was deleted.
     capture test, and of the programs only those an integration test starts.
   - Both Windows lanes set `KATAGLYPHIS_REQUIRE_GPU=1`, so a renderer test with no
     adapter fails instead of skipping itself. `GpuContext` carries the `adapter_info`, and
-    `reports_the_adapter_it_renders_on` writes it straight to stderr, past libtest's
-    capture, as an `ADAPTER:` line in every lane's log. lavapipe in `:latest` reports
-    `bc=true timestamps=true`.
+    `headless_or_skip()` writes it once per test binary straight to stderr, past libtest's
+    capture, as an `ADAPTER:` line. lavapipe (x64 and arm64) and the x64 runner's WARP
+    (`Microsoft Basic Render Driver`, Dx12) all report `bc=true timestamps=true`, so under
+    the flag `ktx2::uploads_bc1_when_supported` and
+    `gpu_timing::every_pass_reports_a_finite_non_negative_duration` fail rather than skip
+    without those features.
   - Both Windows lanes' clippy covers `--workspace --all-targets --locked`, as on Linux; it
     covered the root package, `kataglyphis_cli` and `kataglyphis_gui` only.
   - Coverage passes `--workspace`, the test features and `KATAGLYPHIS_REQUIRE_GPU=1` to the
     hub's `cargo_coverage.sh`. Without `--workspace`, tarpaulin measured the root package
     alone, which has no unit tests: `0.00% coverage, 0/754 lines covered`.
-  - Measured in the `:latest` image: the Linux `test` step passes 361 tests, with 1 ignored.
+  - Measured at f1f535c, which still carried a separate adapter-report test (360 without
+    it): Linux x64 and arm64 361 passed, 1 ignored (runs 36889465993, 36889466121), coverage
+    65.23% (4994/7656 lines); Windows x64 361 passed, 1 ignored, 30 in the container and 331
+    on the host (run 36889466941). The Windows arm64 run (36889467167) stopped in
+    `headless.exe`: the process died after `running 39 tests` with no test finished and no
+    panic text, the first rendering any arm64 test had done on WARP (the tests that ran
+    before it create devices but draw nothing). Its renderer binaries now run one test at
+    a time (`--test-threads=1`), so a crash names its test.
 - **The arm64 cross lane runs the x64 lane's tests on `windows-11-arm` (hub CON43, 2026-10-01).**
   - `Invoke-WindowsLane.ps1 -StageTests` calls the new `Stage-CrossTests.ps1`. It builds
     the four targets of `Invoke-DebugTests.ps1` with `cargo test --no-run` for the target
