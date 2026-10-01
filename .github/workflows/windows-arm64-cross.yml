@@ -26,6 +26,7 @@ jobs:
       build-args: |
         -TargetArch
         arm64
+        -StageTests
       # Package features and MSIX metadata come from Build-Windows.config.psd1, as for x64.
       container-env: |
         CARGO_TERM_COLOR=always
@@ -40,5 +41,12 @@ jobs:
         ./bundle/kataglyphis_cli.exe stats --path ./bundle/resources/web/redirect/index.html
         ./bundle/kataglyphis_cli.exe onnx-runtime
         ./bundle/kataglyphis_cli.exe media-check
+      # The x64 lane's four test targets, built for arm64 (Stage-CrossTests.ps1) and run natively (hub CON43).
+      test-artifact-dir: dist/windows-arm64-tests
+      # The binaries embed C:\ws (CARGO_MANIFEST_DIR, CARGO_BIN_EXE); a junction points it at the staged mirror.
+      test-command: |
+        if (Test-Path -LiteralPath 'C:\ws') { throw 'C:\ws exists on the runner; the tests would read another tree' }
+        $null = New-Item -ItemType Junction -Path 'C:\ws' -Target $PWD
+        & ./Invoke-StagedTests.ps1
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
