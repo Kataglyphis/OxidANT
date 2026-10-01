@@ -21,6 +21,7 @@ usage: ci-container-steps.sh <step>
   release     cargo_release.sh          - fat LTO release build
   docs        cargo_build_doc.sh        - rustdoc into target/doc
   ort-chain-only  check-ort-chain-only.sh - no downloaded ONNX Runtime (GATING)
+  riscv64-test    the workspace tests, cross-built for riscv64 and run under QEMU
 
 Run inside the family Linux CI image, from the repository root.
 USAGE
@@ -53,6 +54,20 @@ case "$step" in
     fmt-clippy)
         export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked}"
         antfrastructure_exec "${RUST_DRIVERS}/cargo_fmt_clippy.sh" "$@"
+        ;;
+
+    # GPU suites skip unless RISCV64_GPU_TESTS=1: lavapipe under QEMU is the long pole. See AGENTS.md § The riscv64 lane
+    riscv64-test)
+        antfrastructure_source linux/scripts/lib/riscv64-cross.sh
+        riscv64_cross_env
+        if [ "${RISCV64_GPU_TESTS:-0}" = 1 ]; then
+            export KATAGLYPHIS_REQUIRE_GPU=1
+        else
+            unset KATAGLYPHIS_REQUIRE_GPU
+            export VK_LOADER_DRIVERS_DISABLE='*'
+            echo "riscv64-test: GPU suites excluded (no Vulkan driver); RISCV64_GPU_TESTS=1 runs them on lavapipe"
+        fi
+        exec cargo test --workspace --locked --target riscv64gc-unknown-linux-gnu "$@"
         ;;
 
     -h|--help|help) usage; exit 0 ;;

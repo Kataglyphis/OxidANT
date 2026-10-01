@@ -1,0 +1,37 @@
+# Linux riscv64 lane: cross-built on amd64, the whole workspace's tests run under QEMU; GPU suites skip (AGENTS.md § The riscv64 lane).
+name: Linux riscv64 · cross build + test
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+# Nothing here writes through GITHUB_TOKEN; the GHCR pull uses its own secret.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+jobs:
+  # No timeout-minutes: a job that calls a reusable workflow may not carry one; the hub's job has it.
+  riscv64:
+    name: Linux riscv64
+    uses: Kataglyphis/ANTfrastructure/.github/workflows/container-ci-riscv64.yml@develop
+    permissions:
+      contents: read
+      # compiler-cache-save deletes its key's older entries.
+      actions: write
+    with:
+      script: bash -lc 'bash scripts/linux/ci-container-steps.sh riscv64-test'
+      # The image's CARGO_HOME is root-owned and the container runs as uid 1001.
+      container-args: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always
+      cache-key: riscv64-cargo
+      cache-mounts: 'cargo-home:/tmp/cargo-home sccache:/var/cache/sccache'
+      cache-env: 'SCCACHE_CACHE_SIZE=1500M RUSTC_WRAPPER=/workspace/third_party/ANTfrastructure/linux/scripts/01-core/sccache-launcher.sh'
+      timeout-minutes: 60
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
