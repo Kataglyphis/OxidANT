@@ -47,9 +47,14 @@ fn load_depth_0( uv_1 : vec2<f32>) -> f32
     return (textureLoad((depthTex_0), ((_S1)).xy, ((_S1)).z));
 }
 
-fn view_pos_at_0( uv_2 : vec2<f32>,  depth_0 : f32) -> vec3<f32>
+fn fullscreen_uv_to_ndc_0( uv_2 : vec2<f32>) -> vec2<f32>
 {
-    var v_0 : vec4<f32> = (((vec4<f32>(uv_2.x * 2.0f - 1.0f, 1.0f - uv_2.y * 2.0f, depth_0, 1.0f)) * (mat4x4<f32>(u_0.inv_proj_0.data_0[i32(0)][i32(0)], u_0.inv_proj_0.data_0[i32(1)][i32(0)], u_0.inv_proj_0.data_0[i32(2)][i32(0)], u_0.inv_proj_0.data_0[i32(3)][i32(0)], u_0.inv_proj_0.data_0[i32(0)][i32(1)], u_0.inv_proj_0.data_0[i32(1)][i32(1)], u_0.inv_proj_0.data_0[i32(2)][i32(1)], u_0.inv_proj_0.data_0[i32(3)][i32(1)], u_0.inv_proj_0.data_0[i32(0)][i32(2)], u_0.inv_proj_0.data_0[i32(1)][i32(2)], u_0.inv_proj_0.data_0[i32(2)][i32(2)], u_0.inv_proj_0.data_0[i32(3)][i32(2)], u_0.inv_proj_0.data_0[i32(0)][i32(3)], u_0.inv_proj_0.data_0[i32(1)][i32(3)], u_0.inv_proj_0.data_0[i32(2)][i32(3)], u_0.inv_proj_0.data_0[i32(3)][i32(3)]))));
+    return vec2<f32>(uv_2.x * 2.0f - 1.0f, 1.0f - uv_2.y * 2.0f);
+}
+
+fn view_pos_at_0( uv_3 : vec2<f32>,  depth_0 : f32) -> vec3<f32>
+{
+    var v_0 : vec4<f32> = (((vec4<f32>(fullscreen_uv_to_ndc_0(uv_3), depth_0, 1.0f)) * (mat4x4<f32>(u_0.inv_proj_0.data_0[i32(0)][i32(0)], u_0.inv_proj_0.data_0[i32(1)][i32(0)], u_0.inv_proj_0.data_0[i32(2)][i32(0)], u_0.inv_proj_0.data_0[i32(3)][i32(0)], u_0.inv_proj_0.data_0[i32(0)][i32(1)], u_0.inv_proj_0.data_0[i32(1)][i32(1)], u_0.inv_proj_0.data_0[i32(2)][i32(1)], u_0.inv_proj_0.data_0[i32(3)][i32(1)], u_0.inv_proj_0.data_0[i32(0)][i32(2)], u_0.inv_proj_0.data_0[i32(1)][i32(2)], u_0.inv_proj_0.data_0[i32(2)][i32(2)], u_0.inv_proj_0.data_0[i32(3)][i32(2)], u_0.inv_proj_0.data_0[i32(0)][i32(3)], u_0.inv_proj_0.data_0[i32(1)][i32(3)], u_0.inv_proj_0.data_0[i32(2)][i32(3)], u_0.inv_proj_0.data_0[i32(3)][i32(3)]))));
     return v_0.xyz / vec3<f32>(v_0.w);
 }
 
@@ -60,24 +65,24 @@ struct pixelOutput_0
 
 struct pixelInput_0
 {
-    @location(0) uv_3 : vec2<f32>,
+    @location(0) uv_4 : vec2<f32>,
 };
 
 @fragment
 fn fs_ssao( _S2 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
-    var depth_1 : f32 = load_depth_0(_S2.uv_3);
+    var depth_1 : f32 = load_depth_0(_S2.uv_4);
     if(depth_1 >= 1.0f)
     {
         var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(1.0f) );
         return _S3;
     }
-    var p_0 : vec3<f32> = view_pos_at_0(_S2.uv_3, depth_1);
+    var p_0 : vec3<f32> = view_pos_at_0(_S2.uv_4, depth_1);
     var w_1 : u32;
     var h_1 : u32;
     {var dim = textureDimensions((depthTex_0));((w_1)) = dim.x;((h_1)) = dim.y;};
-    var _S4 : vec2<f32> = _S2.uv_3 + vec2<f32>(1.0f / f32(w_1), 0.0f);
-    var _S5 : vec2<f32> = _S2.uv_3 + vec2<f32>(0.0f, 1.0f / f32(h_1));
+    var _S4 : vec2<f32> = _S2.uv_4 + vec2<f32>(1.0f / f32(w_1), 0.0f);
+    var _S5 : vec2<f32> = _S2.uv_4 + vec2<f32>(0.0f, 1.0f / f32(h_1));
     var n_0 : vec3<f32> = normalize(cross(view_pos_at_0(_S5, load_depth_0(_S5)) - p_0, view_pos_at_0(_S4, load_depth_0(_S4)) - p_0));
     const _S6 : vec3<f32> = vec3<f32>(0.0f, 1.0f, 0.0f);
     var up_0 : vec3<f32>;
@@ -172,7 +177,7 @@ struct pixelOutput_1
 
 struct pixelInput_1
 {
-    @location(0) uv_4 : vec2<f32>,
+    @location(0) uv_5 : vec2<f32>,
 };
 
 @fragment
@@ -181,7 +186,7 @@ fn fs_blur( _S17 : pixelInput_1, @builtin(position) svPosition_2 : vec4<f32>) ->
     var w_2 : u32;
     var h_2 : u32;
     {var dim = textureDimensions((aoTex_0));((w_2)) = dim.x;((h_2)) = dim.y;};
-    var _S18 : vec2<i32> = vec2<i32>(_S17.uv_4 * vec2<f32>(f32(w_2), f32(h_2)));
+    var _S18 : vec2<i32> = vec2<i32>(_S17.uv_5 * vec2<f32>(f32(w_2), f32(h_2)));
     var _S19 : vec2<i32> = vec2<i32>(i32(w_2), i32(h_2)) - vec2<i32>(i32(1));
     var y_1 : i32 = i32(-1);
     var total_0 : f32 = 0.0f;

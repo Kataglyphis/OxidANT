@@ -172,6 +172,50 @@ fn renders_textured_cube_headless() {
     );
 }
 
+/// A cube above the camera's aim point must land in the upper half of the frame, and below it in the lower half.
+#[test]
+fn world_up_is_screen_up() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+
+    let mut red_centroid_y = |aim_y: f32| -> f64 {
+        let camera = OrbitCamera {
+            target: glam::Vec3::new(0.0, aim_y, 0.0),
+            ..OrbitCamera::default()
+        };
+        let pixels = renderer
+            .render_to_pixels(&gpu, width, height, &camera)
+            .expect("headless render must succeed");
+        let rows: Vec<u32> = pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, p)| p[0] > 110 && p[0] as i32 > p[1] as i32 + 40)
+            .map(|(i, _)| i as u32 / width)
+            .collect();
+        assert!(rows.len() > 200, "cube not found at aim_y {aim_y}");
+        rows.iter().map(|&y| f64::from(y)).sum::<f64>() / rows.len() as f64
+    };
+
+    // Rows grow downward: aiming below the cube must put it above the centre line.
+    let (above, below) = (red_centroid_y(-1.2), red_centroid_y(1.2));
+    eprintln!("orientation golden: centroid_y aimed below {above:.1}, aimed above {below:.1}");
+    let half = f64::from(height) / 2.0;
+    assert!(
+        above < half * 0.6,
+        "a cube above the aim point must be in the upper half, centroid_y {above:.1}"
+    );
+    assert!(
+        below > half * 1.4,
+        "a cube below the aim point must be in the lower half, centroid_y {below:.1}"
+    );
+}
+
 /// A morph weight ramping 0 -> 1 must re-blend, re-upload and visibly lift the cube.
 #[test]
 fn morph_weight_lifts_the_silhouette() {
