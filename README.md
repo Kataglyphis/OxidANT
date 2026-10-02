@@ -16,6 +16,7 @@
 
 [![Linux x64 · build + test](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-x64.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-x64.yml)
 [![Linux arm64 · build + test](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-arm64.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-arm64.yml)
+[![Linux riscv64 · cross build + test](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-riscv64.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-riscv64.yml)
 [![Windows x64 · build + test](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-x64.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-x64.yml)
 [![Windows arm64 · cross build + test](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-arm64-cross.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-arm64-cross.yml)
 [![CodeQL](https://github.com/Kataglyphis/OxidANT/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/github-code-scanning/codeql)
