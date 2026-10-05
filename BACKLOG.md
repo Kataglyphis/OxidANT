@@ -43,9 +43,12 @@ protocol exists and the backlog is empty" — it was neither.
       `Stage-CrossTests.ps1`) all 38 pass on arm64 (run 36907253720). One
       sample each, so it may be a race in WARP's arm64 JIT or a flake. Done
       when a parallel arm64 run is green repeatedly and the flag goes, or the
-      crash has a name (exit code, faulting module; the hub's
-      `Invoke-StagedTests.ps1` does not print the exit code when a binary ends
-      without a summary).
+      crash has a name (exit code, faulting module). Since hub `05f8d3e3` the
+      hub's `Invoke-StagedTests.ps1` gives both. A binary that ends without a
+      summary fails with its exit code as an NTSTATUS name (e.g. `0xC0000005
+      STATUS_ACCESS_VIOLATION`), plus WER's faulting module, offset and
+      exception code when the runner logged event 1000. So one parallel arm64
+      run, without `--test-threads=1`, is enough to name it.
 
 - [ ] Decide whether the Linux x64 feature check (`feature-matrix` in
       `linux-x64.yml`) should also run on every push. It is the one job still
