@@ -29,9 +29,8 @@ Run inside the family Linux CI image, from the repository root.
 USAGE
 }
 
-# Uid 1001 does not own the bind mount, so git would refuse it as dubious ownership.
-: "${CARGO_SAFE_DIRECTORY:=${KATAGLYPHIS_REPO_ROOT}}"
-git config --global --add safe.directory "${CARGO_SAFE_DIRECTORY}" || true
+# The hub's cargo drivers register it as a git safe.directory (uid 1001 does not own the bind mount).
+export CARGO_SAFE_DIRECTORY="${CARGO_SAFE_DIRECTORY-${KATAGLYPHIS_REPO_ROOT}}"
 
 step="${1-}"
 [ "$#" -ge 1 ] || { usage; exit 2; }
@@ -64,6 +63,8 @@ case "$step" in
 
     # GPU suites skip unless RISCV64_GPU_TESTS=1: lavapipe under QEMU is the long pole. See AGENTS.md § The riscv64 lane
     riscv64-test)
+        # Runs cargo itself, so it takes the drivers' guards (safe.directory, CARGO_HOME, toolchain) directly.
+        antfrastructure_source linux/scripts/02-toolchain/rust/_cargo_wrapper.sh
         antfrastructure_source linux/scripts/lib/riscv64-cross.sh
         riscv64_cross_env
         if [ "${RISCV64_GPU_TESTS:-0}" = 1 ]; then

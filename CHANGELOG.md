@@ -179,6 +179,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **Five local copies became hub calls (2026-10-05, hub `61cb0e42`, CON55).** The hub's
+  `Get-ANTfrastructurePin` replaces `Resolve-CargoToolPin` in `scripts/windows/Build-Windows.ps1`.
+  The hub's cargo drivers register `CARGO_SAFE_DIRECTORY`, so `ci-container-steps.sh` only
+  exports it; `riscv64-test`, which runs cargo itself, sources the hub's `_cargo_wrapper.sh`.
+  The README links the hub's MSIX trust steps instead of repeating them. The hub's unused
+  `windows/scripts/rust/Build-Windows.ps1` is deleted by owner decision: this repo owns its
+  Windows Rust build.
 - **Comments are one line, only the why (2026-09-30).** The family rule, linked from
   `AGENTS.md` to [the hub's `AGENTS.md`](third_party/ANTfrastructure/AGENTS.md#comments-one-line-only-the-why):
   140 files, 5.7k lines out and 1.2k in. Traps moved to their docs pages (for example

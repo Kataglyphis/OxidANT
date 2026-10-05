@@ -457,22 +457,16 @@ cannot package this repo: it fills `__PACKAGE_NAME__`-style tokens, while
 `packaging/msix/AppxManifest.template.xml` carries the `__MSIX_*__` tokens that
 `Build-Windows.ps1` fills.
 
-Installing a test-signed package needs an **elevated** PowerShell, because the
-certificate has to be trusted machine-wide first:
+Installing a test-signed package needs its certificate trusted machine-wide first,
+in `LocalMachine\Root` **and** `LocalMachine\TrustedPeople`, from an elevated
+PowerShell. The steps and the errors they prevent (`0x800B0109`, `Access denied`,
+`Get-AppxLog`) are in
+[ANTfrastructure's certificates README](third_party/ANTfrastructure/windows/scripts/certificates/README.md#trust-it-then-install-a-test-signed-package).
+With this repo's names (repo-relative, so they hold in any checkout):
 
 ```pwsh
-$certPath = 'Kataglyphis.OxidANT.testcert.pfx'
-$msixPath = 'dist\windows-x64\msix\Kataglyphis.OxidANT_2.3.4.0_x64.msix'
-$pfxPw    = ConvertTo-SecureString '<TEST_CERT_PASSWORD>' -AsPlainText -Force
-
-Import-PfxCertificate -FilePath $certPath -Password $pfxPw -CertStoreLocation 'Cert:\LocalMachine\Root'
-Import-PfxCertificate -FilePath $certPath -Password $pfxPw -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople'
-
-Add-AppxPackage -Path $msixPath
+Add-AppxPackage -Path 'dist\windows-x64\msix\Kataglyphis.OxidANT_2.3.4.0_x64.msix'
 ```
-
-Both paths are repo-relative on purpose: the absolute `C:\GitHub\OmniAccelerANT\third_party\OxidANT\...` they used to carry was one
-developer's checkout and was wrong for everyone else.
 
 Check, launch, update, remove:
 
@@ -487,17 +481,6 @@ Add-AppxPackage -Path dist\windows-x64\msix\Kataglyphis.OxidANT_<NEW_VERSION>_x6
 
 Get-AppxPackage -Name Kataglyphis.OxidANT | Remove-AppxPackage
 ```
-
-Troubleshooting:
-
-- `0x800B0109` — the certificate chain is not trusted. Import the certificate into
-  both `LocalMachine\Root` and `LocalMachine\TrustedPeople` as above (needs admin).
-- `Import-PfxCertificate: Access denied` — the shell is not elevated.
-- `Get-AppxLog -ActivityID <ACTIVITY_ID>` prints the detail behind the last deploy
-  failure.
-
-The certificate half of this belongs upstream and is partly there already:
-[`third_party/ANTfrastructure/windows/scripts/certificates/README.md`](third_party/ANTfrastructure/windows/scripts/certificates/README.md).
 
 **The package identity changed on 2026-09-05** from
 `Kataglyphis.RustProjectTemplate` to `Kataglyphis.OxidANT`. Windows treats the two
