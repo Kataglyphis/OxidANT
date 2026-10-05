@@ -30,7 +30,7 @@ Import-BuildModule @(
   'WindowsScripts.Shared'   # Assert-Command, Resolve-WorkspacePath
   'WindowsBuild.Common'     # build context/log/step primitives, Sync-BuildArtifacts
   'WindowsConfig.Common'    # Get-OrDefault, Get-ConfigValue
-  'WindowsMsix.Common'      # Get-PackageVersion, Invoke-MsixPackage
+  'WindowsMsix.Common'      # Get-PackageVersion, Invoke-MsixPackage, Invoke-MsiPackage
   'WindowsMsix.Signing'     # Invoke-MsixSign, which Invoke-MsixPackage -Sign calls
   'WindowsTargetArch.Common' # the arch facts: accepted spellings, cross or not, the Rust triple
   'WindowsCargoTarget.Common' # project-local: where each arch's build lands, what packages call it
@@ -312,19 +312,6 @@ try {
   $msiEnabled = Get-ConfigValue -Config $config -Path 'Msi.Enabled'
   if (-not $SkipMsi -and $msiEnabled) {
     Invoke-BuildStep -Context $context -StepName 'MSI Packaging' -Critical -Script {
-      $wixExe = $null
-      if (-not [string]::IsNullOrWhiteSpace($env:WIX)) {
-        $candidate = Join-Path $env:WIX 'wix.exe'
-        if (Test-Path $candidate) { $wixExe = $candidate }
-      }
-      if (-not $wixExe) {
-        $wixExe = (Get-Command 'wix.exe' -ErrorAction SilentlyContinue).Source
-      }
-      if (-not $wixExe) {
-        throw "WiX v4 (wix.exe) not found. Looked under `$env:WIX ('$env:WIX') and on PATH. The container image installs it via ANTfrastructure's windows/scripts/host/Install-ScoopTools.ps1."
-      }
-      Write-BuildLog -Context $context -Message "Using WiX: $wixExe"
-
       # MSI ProductVersion is major.minor.build.
       $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 3
 
@@ -342,9 +329,6 @@ try {
 
       $wxsRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.WxsFile') 'wix/main.wxs'
       $wxsPath = if ([System.IO.Path]::IsPathRooted($wxsRel)) { $wxsRel } else { Join-Path $workspacePath $wxsRel }
-      if (-not (Test-Path $wxsPath)) {
-        throw "WiX source not found: $wxsPath (Msi.WxsFile = '$wxsRel')."
-      }
 
       $msiExePath = Join-Path $layout.ReleaseDir "$binary.exe"
       if (-not (Test-Path $msiExePath)) {
@@ -355,9 +339,6 @@ try {
 
       $licenseRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.LicenseFile') 'wix/License.rtf'
       $licenseRtf = if ([System.IO.Path]::IsPathRooted($licenseRel)) { $licenseRel } else { Join-Path $workspacePath $licenseRel }
-      if (-not (Test-Path $licenseRtf)) {
-        throw "License file not found: $licenseRtf (Msi.LicenseFile = '$licenseRel', referenced by $wxsPath)."
-      }
 
       # The config owns these strings; the WXS takes them as preprocessor variables.
       $msiProductName = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.ProductName') $msixDisplayName
@@ -368,20 +349,6 @@ try {
       if ([string]::IsNullOrWhiteSpace($msiManufacturer)) {
         throw "Msi.Manufacturer is empty and Msix.PublisherDisplayName gave no fallback; $wxsPath requires it."
       }
-
-      # Every moving value is a preprocessor variable, so the WXS assumes no paths.
-      $wixParams = @(
-        'build',
-        '-arch', $layout.PackageArch,
-        '-ext', 'WixToolset.UI.wixext',
-        '-d', "Version=$resolvedVersion",
-        '-d', "ExeSource=$($msiPayload.Exe)",
-        '-d', "LicenseRtf=$licenseRtf",
-        '-d', "ProductName=$msiProductName",
-        '-d', "Manufacturer=$msiManufacturer",
-        '-out', $msiFile,
-        $wxsPath
-      )
 
       # One generated component per payload file for main.wxs's PayloadFiles, laid out like the bundle.
       $payloadFiles = [System.Collections.Generic.List[object]]::new()
@@ -394,28 +361,11 @@ try {
           $payloadFiles.Add([pscustomobject]@{ Source = $file.FullName; Subdirectory = [System.IO.Path]::GetRelativePath($tree.Base, $file.DirectoryName) })
         }
       }
-      if ($payloadFiles.Count -gt 0) {
-        $components = for ($i = 0; $i -lt $payloadFiles.Count; $i++) {
-          $src = [System.Security.SecurityElement]::Escape($payloadFiles[$i].Source)
-          $sub = if ($payloadFiles[$i].Subdirectory) { " Subdirectory='$([System.Security.SecurityElement]::Escape($payloadFiles[$i].Subdirectory))'" } else { '' }
-          "      <Component Id='payload$i' Bitness='always64'$sub><File Id='payloadFile$i' Source='$src' KeyPath='yes'/></Component>"
-        }
-        $fragmentPath = Join-Path $layout.ArchTargetDir 'msi-payload-files.wxs'
-        @(
-          "<Wix xmlns='http://wixtoolset.org/schemas/v4/wxs'><Fragment>"
-          "    <ComponentGroup Id='PayloadFiles' Directory='APPLICATIONFOLDER'>"
-          $components
-          '    </ComponentGroup>'
-          '</Fragment></Wix>'
-        ) | Set-Content -LiteralPath $fragmentPath -Encoding utf8
-        $wixParams += @('-d', 'PayloadFiles=1', $fragmentPath)
-        Write-BuildLog -Context $context -Message "MSI payload: $($payloadFiles.Count) files with $binary.exe, $(@($payloadFiles | Where-Object Subdirectory).Count) of them in subdirectories"
-      }
-      Invoke-BuildExternal -Context $context -File $wixExe -Parameters $wixParams | Out-Null
-
-      if (-not (Test-Path $msiFile)) {
-        throw "wix.exe reported success but produced no file at $msiFile"
-      }
+      Write-BuildLog -Context $context -Message "MSI payload: $($payloadFiles.Count) files with $binary.exe, $(@($payloadFiles | Where-Object Subdirectory).Count) of them in subdirectories"
+      Invoke-MsiPackage -Context $context -WxsFile $wxsPath -LicenseFile $licenseRtf -ProductName $msiProductName `
+        -Manufacturer $msiManufacturer -ExeSource $msiPayload.Exe -Version $resolvedVersion -OutFile $msiFile `
+        -Arch $layout.PackageArch -PayloadFiles $payloadFiles.ToArray() `
+        -FragmentPath (Join-Path $layout.ArchTargetDir 'msi-payload-files.wxs') | Out-Null
 
       Write-BuildLogSuccess -Context $context -Message "MSI package created: $msiFile"
     }

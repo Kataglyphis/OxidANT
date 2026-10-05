@@ -203,6 +203,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **The MSI step and the helper table became hub calls (2026-10-05, hub `c4052035`, CON55).**
+  The *MSI Packaging* step of `scripts/windows/Build-Windows.ps1` calls the hub's
+  `Invoke-MsiPackage`. It used to resolve `wix.exe` itself, assemble the `wix build` argv and
+  write the payload fragment, about 50 lines. It still decides what the payload is: the G6-proven
+  DLLs, `lib\` and `resources\`. `AGENTS.md` § 2 links the hub's
+  *Reach for these before writing a helper* table instead of carrying a copy of it. With those
+  two, `BACKLOG.md` § *Waiting on ANTfrastructure* is empty and gone.
 - **Five local copies became hub calls (2026-10-05, hub `61cb0e42`, CON55).** The hub's
   `Get-ANTfrastructurePin` replaces `Resolve-CargoToolPin` in `scripts/windows/Build-Windows.ps1`.
   The hub's cargo drivers register `CARGO_SAFE_DIRECTORY`, so `ci-container-steps.sh` only
