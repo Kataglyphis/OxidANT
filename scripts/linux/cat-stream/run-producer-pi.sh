@@ -197,6 +197,9 @@ nerdctl_args=(
   bash -c "${container_prologue}" cat-producer "${producer}"
   --libcamera
   --listen-port "${port}"
+  # serve.sh is this setup's web half, here or on another host (--producer-host): keep signalling reachable.
+  --signalling-host 0.0.0.0
+  --http-port 0
   --name "${name}"
   --width "${width}"
   --height "${height}"

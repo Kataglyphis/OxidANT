@@ -1,512 +1,464 @@
-//! Cat detector → WebRTC producer.
-//! Nothing outside this repo is baked in: the still image is `--image` or `$KATAGLYPHIS_CAT_IMAGE`.
+//! Cat cam service: picks the camera, burns YOLO cat boxes into the frames, streams them over
+//! WebRTC and serves the web page that plays the stream. One process, so one service unit.
 
-use std::thread;
+mod camera;
+mod capture;
+mod config;
+mod output;
+mod status;
+mod web;
 
-use anyhow::{anyhow, Context as _};
+use std::net::{IpAddr, Ipv4Addr};
+use std::path::PathBuf;
+use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use anyhow::Context as _;
 use clap::Parser;
+use gstreamer as gst;
 use gstreamer::prelude::*;
-use kataglyphis_inference::person_detection::PersonDetector;
+use kataglyphis_inference::person_detection::{resolve_model_path, PersonDetector};
 
-/// COCO class id of "cat" in the 80-class YOLO models shipped in this tree.
-const COCO_CAT: i64 = 15;
+use crate::config::{Config, Inference};
 
 /// Environment variable naming the still image looped as the demo source.
 const IMAGE_ENV: &str = "KATAGLYPHIS_CAT_IMAGE";
 
-/// Where that picture lives in a full family checkout; an error-message hint, never a fallback.
-const DEFAULT_IMAGE_HINT: &str = "<family checkout root>/ANThology/assets/images/cats/Thundy.jpg";
+/// Environment variable naming the Flutter web build to serve.
+const WEB_ROOT_ENV: &str = "KATAGLYPHIS_WEB_ROOT";
 
-/// Default ONNX model (OxidANT's yolov10m, end-to-end `[1,N,6]` output).
-const DEFAULT_MODEL: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../resources/models/yolov10m.onnx"
-);
+/// webrtcsink's signalling server logs every SDP and ICE message unless this says otherwise.
+const SIGNALLING_LOG_ENV: &str = "WEBRTCSINK_SIGNALLING_SERVER_LOG";
+
+/// `inference = "auto"` skips the model on boards with less memory than this (a Pi Zero 2 W has 512 MB).
+const AUTO_INFERENCE_MIN_MIB: u64 = 1024;
 
 #[derive(Parser, Debug)]
-#[command(name = "cat-webrtc", about = "Cat detection over WebRTC (GStreamer)")]
+#[command(
+    name = "kataglyphis_cat_webrtc",
+    about = "Cat cam: camera -> YOLO cat boxes -> WebRTC, plus the web page that plays it"
+)]
 struct Args {
-    /// Still image to loop, else `$KATAGLYPHIS_CAT_IMAGE`; any live-source flag overrides it.
+    /// TOML config (default: $KATAGLYPHIS_CATCAM_CONFIG, then /etc/omni-accelerant/catcam.toml).
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Print the effective config as TOML and exit.
+    #[arg(long)]
+    print_config: bool,
+    /// auto, rpicam, libcamera, v4l2[:DEVICE], mf, ks, test or image:FILE.
+    #[arg(long)]
+    camera: Option<String>,
+    /// Still image to loop (else $KATAGLYPHIS_CAT_IMAGE); a camera flag overrides it.
     #[arg(long)]
     image: Option<String>,
-
-    /// Use `videotestsrc pattern=ball` instead of the image.
+    /// Same as --camera test.
     #[arg(long)]
     test: bool,
-
-    /// V4L2 capture device, e.g. `/dev/video0` (Linux; overrides image/test).
+    /// Same as --camera v4l2:DEVICE.
     #[arg(long)]
     v4l2: Option<String>,
-
-    /// Use `libcamerasrc`; required for the Pi CSI camera, whose V4L2 nodes carry raw Bayer only.
+    /// Same as --camera libcamera.
     #[arg(long)]
     libcamera: bool,
-
-    /// Stream frames without loading the model, for bring-up or hosts too weak for inference.
+    /// auto, on or off.
+    #[arg(long, value_enum)]
+    inference: Option<Inference>,
+    /// Same as --inference off.
     #[arg(long)]
     no_inference: bool,
-
-    /// Rotate the stream by 0, 90, 180 or 270 degrees (180 for an upside-down camera).
-    #[arg(long, default_value_t = 0)]
-    rotate: u32,
-
-    /// ONNX model (default: OxidANT's yolov10m, end-to-end [1,N,6] output).
-    #[arg(long, default_value = DEFAULT_MODEL)]
-    model: String,
-
-    /// Port for webrtcsink's built-in signalling server.
-    #[arg(long, default_value_t = 8443)]
-    listen_port: u32,
-
-    /// TLS certificate (PEM) enabling WSS, since a phone's HTTPS page cannot open `ws://`.
+    /// Rotate the stream by 0, 90, 180 or 270 degrees.
     #[arg(long)]
-    cert: Option<String>,
-
-    /// TLS private key (PEM) matching `--cert`.
+    rotate: Option<u32>,
+    /// ONNX model (default: $KATAGLYPHIS_ONNX_MODEL, then the one beside the binary).
     #[arg(long)]
-    key: Option<String>,
-
-    /// Producer name shown to consumers.
-    #[arg(long, default_value = "Trouble Tabbls Cat Cam")]
-    name: String,
-
+    model: Option<String>,
     /// Detection score threshold.
-    #[arg(long, default_value_t = 0.25)]
-    score: f32,
-
-    /// Frame size pushed to webrtcsink.
-    #[arg(long, default_value_t = 640)]
-    width: u32,
-    #[arg(long, default_value_t = 480)]
-    height: u32,
-    #[arg(long, default_value_t = 30)]
-    fps: u32,
-
+    #[arg(long)]
+    score: Option<f32>,
+    #[arg(long)]
+    width: Option<u32>,
+    #[arg(long)]
+    height: Option<u32>,
+    #[arg(long)]
+    fps: Option<u32>,
     /// Keep every class instead of only cats.
     #[arg(long)]
     all_classes: bool,
+    /// Producer name shown to viewers.
+    #[arg(long)]
+    name: Option<String>,
+    /// Port of the built-in signalling server.
+    #[arg(long, alias = "signalling-port")]
+    listen_port: Option<u16>,
+    /// Address the signalling server listens on (default 127.0.0.1: the web server proxies to it).
+    #[arg(long)]
+    signalling_host: Option<String>,
+    /// TLS certificate (PEM) for the signalling server itself.
+    #[arg(long)]
+    cert: Option<String>,
+    /// TLS private key (PEM) matching --cert.
+    #[arg(long)]
+    key: Option<String>,
+    /// Address the web server listens on.
+    #[arg(long)]
+    http_host: Option<String>,
+    /// Port of the web server; 0 turns it off.
+    #[arg(long)]
+    http_port: Option<u16>,
+    /// The Flutter web build to serve (default: $KATAGLYPHIS_WEB_ROOT, then web/ beside the binary).
+    #[arg(long)]
+    web_root: Option<PathBuf>,
+    /// stun://host:port; an empty value keeps the stream LAN-only.
+    #[arg(long)]
+    stun_server: Option<String>,
+    /// UDP range for WebRTC media as MIN-MAX; 0-0 leaves the ports free.
+    #[arg(long)]
+    ice_ports: Option<String>,
 }
 
-/// `--image`, else `$KATAGLYPHIS_CAT_IMAGE`; a blank value counts as unset.
-fn resolve_image(flag: Option<String>) -> Option<String> {
-    flag.or_else(|| std::env::var(IMAGE_ENV).ok())
-        .filter(|value| !value.trim().is_empty())
-}
-
-fn missing_source_error() -> anyhow::Error {
-    anyhow!(
-        "no video source. Pass one of --test, --v4l2 <DEVICE> or --libcamera, or point the still-image mode at a file with --image <FILE> or ${IMAGE_ENV}. That picture is not tracked in this repository; in a full family checkout it is {DEFAULT_IMAGE_HINT}."
-    )
-}
-
-fn main() -> anyhow::Result<()> {
-    env_logger::init();
-    let args = Args::parse();
-
-    let image = resolve_image(args.image.clone());
-    if image.is_none() && !args.test && args.v4l2.is_none() && !args.libcamera {
-        return Err(missing_source_error());
+fn main() -> ExitCode {
+    if std::env::var_os(SIGNALLING_LOG_ENV).is_none() {
+        // Still single-threaded here, so changing the environment cannot race a reader.
+        std::env::set_var(SIGNALLING_LOG_ENV, "warn");
     }
-
-    gstreamer::init().context("gstreamer::init")?;
-
-    let (out_pipeline, appsrc) = build_output_pipeline(&args)?;
-    out_pipeline
-        .set_state(gstreamer::State::Playing)
-        .context("output pipeline Playing")?;
-
-    let worker = {
-        let mut worker_args = WorkerArgs {
-            image: image.clone(),
-            test: args.test,
-            v4l2: args.v4l2.clone(),
-            libcamera: args.libcamera,
-            no_inference: args.no_inference,
-            rotate: args.rotate,
-            model: args.model.clone(),
-            score: args.score,
-            width: args.width,
-            height: args.height,
-            fps: args.fps,
-            all_classes: args.all_classes,
-        };
-        let appsrc = appsrc;
-        thread::Builder::new()
-            .name("cat-infer".into())
-            .spawn(move || {
-                if let Err(err) = run_worker(&mut worker_args, &appsrc) {
-                    log::error!("worker stopped: {err:#}");
-                }
-            })
-            .context("spawn worker")?
-    };
-
-    let bus = out_pipeline
-        .bus()
-        .ok_or_else(|| anyhow!("output pipeline has no bus"))?;
-    for msg in bus.iter_timed(gstreamer::ClockTime::NONE) {
-        use gstreamer::MessageView;
-        match msg.view() {
-            MessageView::Eos(..) => break,
-            MessageView::Error(err) => {
-                log::error!(
-                    "pipeline error: {} ({:?})",
-                    err.error(),
-                    err.debug().unwrap_or_default()
-                );
-                break;
-            }
-            MessageView::StateChanged(state) if state.src().is_some_and(|s| s.name() == "ws") => {
-                log::info!("webrtcsink state: {:?}", state.current());
-            }
-            _ => (),
+    kataglyphis_core::logging::init_logger();
+    match run(Args::parse()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            log::error!("{err:#}");
+            ExitCode::FAILURE
         }
     }
+}
 
-    let _ = out_pipeline.set_state(gstreamer::State::Null);
+fn run(args: Args) -> anyhow::Result<()> {
+    let (mut config, source) = Config::load(args.config.as_deref())?;
+    apply_args(&args, &mut config)?;
+    config.validate()?;
+    if args.print_config {
+        print!("{}", toml::to_string(&config)?);
+        return Ok(());
+    }
+    match &source {
+        Some(path) => log::info!("config: {}", path.display()),
+        None => log::info!("config: built-in defaults"),
+    }
+    let choice = camera::Choice::parse(&config.camera)?;
+    kataglyphis_media::ensure_gst_initialized()?;
+
+    let detector = load_detector(&config)?;
+    let status = Arc::new(status::Status::new(&config.name, detector.is_some()));
+    let (pipeline, appsrc) = output::build(&config)?;
+    pipeline
+        .set_state(gst::State::Playing)
+        .context("output pipeline to PLAYING")?;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("cat-web")
+        .enable_all()
+        .build()
+        .context("tokio runtime")?;
+    if config.http_port != 0 {
+        start_web(&runtime, &config, status.clone())?;
+    }
+    let for_signals = pipeline.clone();
+    runtime.spawn(async move {
+        shutdown_signal().await;
+        log::info!("shutting down");
+        output::request_shutdown(&for_signals);
+    });
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let worker = capture::Worker {
+        config: Arc::new(config),
+        choice,
+        appsrc,
+        detector,
+        status,
+        shutdown: shutdown.clone(),
+    }
+    .spawn()
+    .context("spawn capture worker")?;
+
+    let outcome = output::run(&pipeline);
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = pipeline.set_state(gst::State::Null);
     let _ = worker.join();
+    runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+    outcome
+}
+
+/// Flags override the config file; the camera flags keep their old meaning and precedence.
+fn apply_args(args: &Args, config: &mut Config) -> anyhow::Result<()> {
+    let live = if args.libcamera {
+        Some("libcamera".to_owned())
+    } else if let Some(device) = &args.v4l2 {
+        Some(format!("v4l2:{device}"))
+    } else if args.test {
+        Some("test".to_owned())
+    } else {
+        None
+    };
+    let image = args
+        .image
+        .clone()
+        .or_else(|| std::env::var(IMAGE_ENV).ok())
+        .filter(|value| !value.trim().is_empty())
+        .map(|path| format!("image:{path}"));
+    if let Some(camera) = args.camera.clone().or(live).or(image) {
+        config.camera = camera;
+    }
+    if args.no_inference {
+        config.inference = Inference::Off;
+    } else if let Some(mode) = args.inference {
+        config.inference = mode;
+    }
+    if args.all_classes {
+        config.all_classes = true;
+    }
+    macro_rules! copied {
+        ($($field:ident),*) => { $( if let Some(value) = args.$field { config.$field = value; } )* };
+    }
+    macro_rules! cloned {
+        ($($field:ident),*) => { $( if let Some(value) = &args.$field { config.$field.clone_from(value); } )* };
+    }
+    copied!(rotate, score, width, height, fps, http_port);
+    cloned!(name, signalling_host, http_host);
+    if let Some(port) = args.listen_port {
+        config.signalling_port = port;
+    }
+    if args.model.is_some() {
+        config.model.clone_from(&args.model);
+    }
+    if args.cert.is_some() || args.key.is_some() {
+        config.cert.clone_from(&args.cert);
+        config.key.clone_from(&args.key);
+    }
+    if args.web_root.is_some() {
+        config.web_root.clone_from(&args.web_root);
+    }
+    if args.stun_server.is_some() {
+        config.stun_server.clone_from(&args.stun_server);
+    }
+    if let Some(range) = &args.ice_ports {
+        let (min, max) = range
+            .split_once('-')
+            .with_context(|| format!("--ice-ports wants MIN-MAX (got {range:?})"))?;
+        config.ice_port_min = min.trim().parse().context("--ice-ports MIN")?;
+        config.ice_port_max = max.trim().parse().context("--ice-ports MAX")?;
+    }
     Ok(())
 }
 
-fn build_output_pipeline(
-    args: &Args,
-) -> anyhow::Result<(gstreamer::Pipeline, gstreamer_app::AppSrc)> {
-    let pipeline = gstreamer::Pipeline::new();
-
-    let caps = gstreamer::Caps::builder("video/x-raw")
-        .field("format", "RGBA")
-        .field("width", args.width as i32)
-        .field("height", args.height as i32)
-        .field("framerate", gstreamer::Fraction::new(args.fps as i32, 1))
-        .build();
-
-    let appsrc = gstreamer::ElementFactory::make("appsrc")
-        .name("frames")
-        .build()
-        .context("appsrc")?
-        .downcast::<gstreamer_app::AppSrc>()
-        .map_err(|_| anyhow!("element 'appsrc' is not an AppSrc"))?;
-    appsrc.set_is_live(true);
-    appsrc.set_do_timestamp(true);
-    appsrc.set_format(gstreamer::Format::Time);
-    appsrc.set_caps(Some(&caps));
-
-    let queue = gstreamer::ElementFactory::make("queue")
-        .property("max-size-buffers", 1u32)
-        .property_from_str("leaky", "downstream")
-        .build()
-        .context("queue")?;
-    let convert = gstreamer::ElementFactory::make("videoconvert")
-        .name("out-convert")
-        .build()
-        .context("videoconvert")?;
-
-    let webrtc = gstreamer::ElementFactory::make("webrtcsink")
-        .name("ws")
-        .build()
-        .context("webrtcsink (is the rswebrtc plugin available?)")?;
-    // Built-in signalling server: a plain Element cannot set the separate signaller's `uri`.
-    webrtc.set_property("run-signalling-server", true);
-    webrtc.set_property("signalling-server-host", "0.0.0.0");
-    webrtc.set_property("signalling-server-port", args.listen_port);
-    if let (Some(cert), Some(key)) = (&args.cert, &args.key) {
-        webrtc.set_property("signalling-server-cert", cert.as_str());
-        webrtc.set_property("signalling-server-key", key.as_str());
-    }
-    let meta = gstreamer::Structure::builder("meta")
-        .field("name", args.name.as_str())
-        .build();
-    webrtc.set_property("meta", &meta);
-
-    pipeline
-        .add_many([appsrc.upcast_ref(), &queue, &convert, &webrtc])
-        .context("add elements")?;
-    gstreamer::Element::link_many([appsrc.upcast_ref(), &queue, &convert, &webrtc])
-        .context("link output pipeline")?;
-
-    Ok((pipeline, appsrc))
-}
-
-struct WorkerArgs {
-    image: Option<String>,
-    test: bool,
-    v4l2: Option<String>,
-    libcamera: bool,
-    no_inference: bool,
-    rotate: u32,
-    model: String,
-    score: f32,
-    width: u32,
-    height: u32,
-    fps: u32,
-    all_classes: bool,
-}
-
-fn run_worker(args: &mut WorkerArgs, appsrc: &gstreamer_app::AppSrc) -> anyhow::Result<()> {
-    let mut detector = if args.no_inference {
-        log::info!("inference disabled (--no-inference): publishing frames unannotated");
-        None
-    } else {
-        Some(
-            PersonDetector::new(&args.model)
-                .with_context(|| format!("load ONNX model {}", args.model))?,
-        )
+/// `None` when inference is off, or when `auto` finds a small board or a model that does not load.
+fn load_detector(config: &Config) -> anyhow::Result<Option<PersonDetector>> {
+    let open = || {
+        let path = resolve_model_path(config.model.as_deref());
+        log::info!("model: {path}");
+        PersonDetector::new(&path).with_context(|| format!("load ONNX model {path}"))
     };
-
-    let pipeline = gstreamer::Pipeline::new();
-    let source: gstreamer::Element = if args.libcamera {
-        gstreamer::ElementFactory::make("libcamerasrc")
-            .build()
-            .context("libcamerasrc (is the GStreamer libcamera plugin available?)")?
-    } else if let Some(device) = &args.v4l2 {
-        gstreamer::ElementFactory::make("v4l2src")
-            .property("device", device.as_str())
-            .build()
-            .with_context(|| format!("v4l2src {device}"))?
-    } else if args.test {
-        gstreamer::ElementFactory::make("videotestsrc")
-            .property("is-live", true)
-            .property_from_str("pattern", "ball")
-            .build()
-            .context("videotestsrc")?
-    } else {
-        // main() already rejects this; not unwrapped so another caller cannot panic here.
-        let image = args.image.as_deref().ok_or_else(missing_source_error)?;
-        let caps = gstreamer::Caps::builder("image/jpeg")
-            .field("framerate", gstreamer::Fraction::new(args.fps as i32, 1))
-            .build();
-        gstreamer::ElementFactory::make("multifilesrc")
-            .property("location", image)
-            .property("loop", true)
-            .property("caps", &caps)
-            .build()
-            .with_context(|| format!("multifilesrc for {image}"))?
-    };
-
-    let decoder = if args.test || args.v4l2.is_some() || args.libcamera {
-        None
-    } else {
-        Some(
-            gstreamer::ElementFactory::make("jpegdec")
-                .build()
-                .context("jpegdec")?,
-        )
-    };
-    let convert = gstreamer::ElementFactory::make("videoconvert")
-        .name("cap-convert")
-        .build()
-        .context("videoconvert")?;
-    let flip = match args.rotate {
-        0 => None,
-        90 | 180 | 270 => {
-            let method = match args.rotate {
-                90 => "clockwise",
-                180 => "rotate-180",
-                _ => "counterclockwise",
-            };
-            Some(
-                gstreamer::ElementFactory::make("videoflip")
-                    .property_from_str("method", method)
-                    .build()
-                    .with_context(|| format!("videoflip for --rotate {}", args.rotate))?,
-            )
+    match config.inference {
+        Inference::Off => {
+            log::info!("inference off: streaming frames without boxes");
+            Ok(None)
         }
-        other => return Err(anyhow!("--rotate must be 0, 90, 180 or 270 (got {other})")),
-    };
-    let scale = gstreamer::ElementFactory::make("videoscale")
-        .build()
-        .context("videoscale")?;
-    let caps = gstreamer::Caps::builder("video/x-raw")
-        .field("format", "RGBA")
-        .field("width", args.width as i32)
-        .field("height", args.height as i32)
-        .field("framerate", gstreamer::Fraction::new(args.fps as i32, 1))
-        .build();
-    let capsfilter = gstreamer::ElementFactory::make("capsfilter")
-        .property("caps", &caps)
-        .build()
-        .context("capsfilter")?;
-    let sink = gstreamer::ElementFactory::make("appsink")
-        .property("max-buffers", 1u32)
-        .property("drop", true)
-        // sync=true paces the non-live image loop at the requested framerate.
-        .property("sync", true)
-        .build()
-        .context("appsink")?
-        .downcast::<gstreamer_app::AppSink>()
-        .map_err(|_| anyhow!("element 'appsink' is not an AppSink"))?;
+        Inference::On => open().map(Some),
+        Inference::Auto => {
+            let mib = total_memory_mib();
+            if mib < AUTO_INFERENCE_MIN_MIB {
+                log::info!(
+                    "inference off: {mib} MiB RAM is below the {AUTO_INFERENCE_MIN_MIB} MiB auto needs"
+                );
+                return Ok(None);
+            }
+            match open() {
+                Ok(detector) => Ok(Some(detector)),
+                Err(err) => {
+                    log::warn!("inference off: {err:#}");
+                    Ok(None)
+                }
+            }
+        }
+    }
+}
 
-    let mut elements: Vec<gstreamer::Element> = vec![source.clone()];
-    if args.libcamera {
-        // The ISP scales cheaper than videoscale, and without `RGB` libcamera hands back raw Bayer.
-        let caps = gstreamer::Caps::builder("video/x-raw")
-            .field("format", "RGB")
-            .field("width", args.width as i32)
-            .field("height", args.height as i32)
-            .field("framerate", gstreamer::Fraction::new(args.fps as i32, 1))
-            .build();
-        elements.push(
-            gstreamer::ElementFactory::make("capsfilter")
-                .property("caps", &caps)
-                .build()
-                .context("libcamera capsfilter")?,
+fn total_memory_mib() -> u64 {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    system.total_memory() / (1024 * 1024)
+}
+
+fn start_web(
+    runtime: &tokio::runtime::Runtime,
+    config: &Config,
+    status: Arc<status::Status>,
+) -> anyhow::Result<()> {
+    let web_root = web_root(config);
+    match &web_root {
+        Some(root) if !root.join("index.html").is_file() => {
+            log::warn!("no index.html in {}: the page will 404", root.display());
+        }
+        Some(root) => log::info!("web: serving {}", root.display()),
+        None => log::warn!(
+            "web: no web build (set web_root or ${WEB_ROOT_ENV}); only /webrtc-ws and /healthz answer"
+        ),
+    }
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind((
+            config.http_host.as_str(),
+            config.http_port,
+        )))
+        .with_context(|| {
+            format!(
+                "bind the web server to {}:{}",
+                config.http_host, config.http_port
+            )
+        })?;
+    log::info!(
+        "web: http://{}:{}/ (proxying {} to the signalling server on port {})",
+        display_host(&config.http_host),
+        config.http_port,
+        web::SIGNALLING_PATH,
+        config.signalling_port
+    );
+    let site = Arc::new(web::Site {
+        web_root,
+        signalling: (
+            loopback_for(&config.signalling_host),
+            config.signalling_port,
+        ),
+        status,
+    });
+    runtime.spawn(web::serve(listener, site));
+    if config.cert.is_some() {
+        log::warn!(
+            "the signalling server speaks TLS, so {} cannot proxy to it",
+            web::SIGNALLING_PATH
         );
     }
-    if args.v4l2.is_some() {
-        // Force raw caps: the C920 otherwise negotiates MJPG, which videoconvert cannot decode.
-        let raw = gstreamer::ElementFactory::make("capsfilter")
-            .property("caps", gstreamer::Caps::builder("video/x-raw").build())
-            .build()
-            .context("raw capsfilter")?;
-        elements.push(raw);
-    }
-    elements.extend(decoder.clone());
-    elements.push(convert.clone());
-    elements.extend(flip.clone());
-    elements.push(scale.clone());
-    elements.push(capsfilter.clone());
-    elements.push(sink.clone().upcast());
-    pipeline
-        .add_many(elements.iter().collect::<Vec<_>>())
-        .context("add capture elements")?;
-    gstreamer::Element::link_many(elements.iter().collect::<Vec<_>>())
-        .context("link capture pipeline")?;
-
-    pipeline
-        .set_state(gstreamer::State::Playing)
-        .context("capture pipeline Playing")?;
-
-    let wanted: Option<Vec<i64>> = if args.all_classes {
-        None
-    } else {
-        Some(vec![COCO_CAT])
-    };
-
-    // Inference is far slower than capture, so it runs off-thread; frames get the latest boxes.
-    let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
-    let boxes = std::sync::Arc::new(std::sync::Mutex::new(
-        Vec::<kataglyphis_core::Detection>::new(),
-    ));
-    let infer_boxes = boxes.clone();
-    let (infer_width, infer_height, infer_score) = (args.width, args.height, args.score);
-    let infer_thread = match detector.take() {
-        Some(mut detector) => Some(
-            thread::Builder::new()
-                .name("cat-infer".into())
-                .spawn(move || {
-                    let mut runs: u64 = 0;
-                    while let Ok(rgba) = frame_rx.recv() {
-                        match detector.infer_rgba(
-                            &rgba,
-                            infer_width,
-                            infer_height,
-                            infer_score,
-                            wanted.as_deref(),
-                        ) {
-                            Ok(detections) => {
-                                runs += 1;
-                                if let Some(first) = detections.first() {
-                                    log::info!(
-                                        "inference {runs}: {} detection(s), first class={} score={:.2} box=({:.0},{:.0})-({:.0},{:.0})",
-                                        detections.len(),
-                                        first.class_id,
-                                        first.score,
-                                        first.x1,
-                                        first.y1,
-                                        first.x2,
-                                        first.y2,
-                                    );
-                                }
-                                if let Ok(mut current) = infer_boxes.lock() {
-                                    *current = detections;
-                                }
-                            }
-                            Err(err) => log::warn!("inference failed: {err:#}"),
-                        }
-                    }
-                })
-                .context("spawn inference thread")?,
-        ),
-        None => None,
-    };
-
-    loop {
-        let sample = match sink.pull_sample() {
-            Ok(sample) => sample,
-            Err(err) => {
-                log::warn!("appsink pull failed (stream ended?): {err}");
-                break;
-            }
-        };
-        let Some(buffer) = sample.buffer() else {
-            continue;
-        };
-        let Ok(map) = buffer.map_readable() else {
-            continue;
-        };
-        let rgba = map.as_slice();
-
-        let mut annotated = rgba.to_vec();
-        if let Ok(current) = boxes.lock() {
-            for detection in current.iter() {
-                draw_rect(
-                    &mut annotated,
-                    args.width,
-                    args.height,
-                    [detection.x1, detection.y1, detection.x2, detection.y2],
-                    [0, 255, 0, 255],
-                    4,
-                );
-            }
-        }
-
-        // Only while the inference thread is idle: a frame of lag is fine, a backlog is not.
-        if infer_thread.is_some() {
-            let _ = frame_tx.try_send(rgba.to_vec());
-        }
-
-        let buffer = gstreamer::Buffer::from_slice(annotated);
-        appsrc
-            .push_buffer(buffer)
-            .map_err(|err| anyhow!("appsrc push: {err:?}"))?;
-    }
-
-    drop(frame_tx);
-    if let Some(infer_thread) = infer_thread {
-        let _ = infer_thread.join();
-    }
-    let _ = pipeline.set_state(gstreamer::State::Null);
     Ok(())
 }
 
-fn draw_rect(
-    frame: &mut [u8],
-    width: u32,
-    height: u32,
-    rect: [f32; 4],
-    color: [u8; 4],
-    thickness: i32,
-) {
-    let w = width as i32;
-    let h = height as i32;
-    let [x1, y1, x2, y2] = rect;
-    let clamp = |v: f32, max: i32| v.round().max(0.0).min((max - 1) as f32) as i32;
-    let (x1, y1, x2, y2) = (clamp(x1, w), clamp(y1, h), clamp(x2, w), clamp(y2, h));
-    for t in 0..thickness {
-        for x in x1..=x2 {
-            put(frame, w, x, (y1 + t).min(h - 1), color);
-            put(frame, w, x, (y2 - t).max(0), color);
-        }
-        for y in y1..=y2 {
-            put(frame, w, (x1 + t).min(w - 1), y, color);
-            put(frame, w, (x2 - t).max(0), y, color);
-        }
+/// The configured web root, else `$KATAGLYPHIS_WEB_ROOT`, else `web/` beside the binary.
+fn web_root(config: &Config) -> Option<PathBuf> {
+    config
+        .web_root
+        .clone()
+        .or_else(|| std::env::var_os(WEB_ROOT_ENV).map(PathBuf::from))
+        .or_else(|| {
+            let beside = std::env::current_exe().ok()?.parent()?.join("web");
+            beside.join("index.html").is_file().then_some(beside)
+        })
+}
+
+/// A wildcard listen address is reached through loopback.
+fn loopback_for(host: &str) -> String {
+    match host.parse::<IpAddr>() {
+        Ok(ip) if ip.is_unspecified() => Ipv4Addr::LOCALHOST.to_string(),
+        _ => host.to_owned(),
     }
 }
 
-fn put(frame: &mut [u8], width: i32, x: i32, y: i32, color: [u8; 4]) {
-    let idx = ((y * width + x) * 4) as usize;
-    if idx + 4 <= frame.len() {
-        frame[idx..idx + 4].copy_from_slice(&color);
+fn display_host(host: &str) -> &str {
+    match host.parse::<IpAddr>() {
+        Ok(ip) if ip.is_unspecified() => "<this-host>",
+        _ => host,
+    }
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = term.recv() => {}
+                    _ = tokio::signal::ctrl_c() => {}
+                }
+            }
+            Err(err) => {
+                log::warn!("no SIGTERM handler ({err}); only Ctrl-C stops the service cleanly");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Args {
+        Args::try_parse_from(std::iter::once("cat").chain(list.iter().copied())).unwrap()
+    }
+
+    fn applied(list: &[&str]) -> Config {
+        let mut config = Config::default();
+        apply_args(&args(list), &mut config).unwrap();
+        config
+    }
+
+    #[test]
+    fn the_pi_runner_flags_keep_working() {
+        let config = applied(&[
+            "--libcamera",
+            "--listen-port",
+            "8443",
+            "--name",
+            "Pi Cam",
+            "--width",
+            "1280",
+            "--height",
+            "720",
+            "--fps",
+            "15",
+            "--rotate",
+            "180",
+        ]);
+        assert_eq!(config.camera, "libcamera");
+        assert_eq!(config.signalling_port, 8443);
+        assert_eq!(config.name, "Pi Cam");
+        assert_eq!((config.width, config.height, config.fps), (1280, 720, 15));
+        assert_eq!(config.rotate, 180);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn camera_flags_override_the_still_image() {
+        assert_eq!(applied(&["--image", "cat.jpg", "--test"]).camera, "test");
+        assert_eq!(applied(&["--image", "cat.jpg"]).camera, "image:cat.jpg");
+        assert_eq!(
+            applied(&["--v4l2", "/dev/video2", "--camera", "rpicam"]).camera,
+            "rpicam"
+        );
+    }
+
+    #[test]
+    fn no_inference_wins_and_ice_ports_parse() {
+        let config = applied(&[
+            "--inference",
+            "on",
+            "--no-inference",
+            "--ice-ports",
+            "50000-50010",
+        ]);
+        assert_eq!(config.inference, Inference::Off);
+        assert_eq!((config.ice_port_min, config.ice_port_max), (50000, 50010));
+        let mut config = Config::default();
+        assert!(apply_args(&args(&["--ice-ports", "50000"]), &mut config).is_err());
+    }
+
+    #[test]
+    fn a_wildcard_signalling_address_is_reached_through_loopback() {
+        assert_eq!(loopback_for("0.0.0.0"), "127.0.0.1");
+        assert_eq!(loopback_for("::"), "127.0.0.1");
+        assert_eq!(loopback_for("192.168.188.98"), "192.168.188.98");
     }
 }

@@ -28,7 +28,7 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/gui` — feature-gated GUI (`gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix`)
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/media` — GStreamer capture, feature-gated (`gstreamer`)
-- `crates/cat_webrtc` — cat-cam WebRTC producer (`kataglyphis_cat_webrtc`); consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/cat-stream/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
+- `crates/cat_webrtc` — the cat cam service (`kataglyphis_cat_webrtc`): picks the camera, burns YOLO cat boxes into the frames, streams them through `webrtcsink` and serves OmniAccelerANT's web build itself; consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/cat-stream/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands, plus `onnx-runtime` when built with `onnxruntime_directml` or `onnxruntime_cuda` and `media-check` when built with `gui_windows`; `stats --path <file>`). It was renamed on 2026-08-07 from `kataglyphis_rustprojecttemplate`, the root package's name until 2026-09-05 — see the pdb note below. It is not the root package's bin, so `cargo run` needs `-p kataglyphis_cli`.
 - `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{onnx,simple,webcam}.rs`, `src/webcam_engine.rs`), the cxx bridge BeschleunigerBallett links (`src/native_only.rs`, compiled by `build.rs` with `cxx-build` on every non-wasm target) and the `burn-demos` bin
 - `tests/` — the root package's proptest fuzz tests (`fuzz_test.rs`), and the CLI's integration tests (`tests/integration/integration.rs`, compiled as `kataglyphis_cli`'s `integration` test through `crates/cli/tests/integration.rs`)
@@ -387,6 +387,41 @@ cargo clippy --all-targets --workspace --locked \
 
 Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest in `tests/fuzz_test.rs`; there is no cargo-fuzz/libFuzzer target.
 
+### The cat cam service
+
+`kataglyphis_cat_webrtc` is one process doing everything a cat cam board needs, so a
+board runs it as one service unit:
+
+- **The camera is chosen, and chosen again.** `camera = "auto"` (the default) takes a
+  Raspberry Pi camera through `rpicam-vid` piping raw I420 when `rpicam-hello
+  --list-cameras` lists one, which keeps the host's own libcamera whatever its ABI.
+  Otherwise it takes a CSI camera libcamera lists, then a UVC webcam (`v4l2src`, MJPEG
+  only when it offers no raw format), then Media Foundation or kernel streaming on
+  Windows. The Pi's `rp1-cfe`, `unicam` and ISP nodes never qualify. With no camera it
+  streams a test pattern and probes again every 30 s. A capture that ends, errors or
+  delivers nothing for 10 s is rebuilt with backoff, so an unplugged or late camera
+  needs no restart.
+- **Probes start only the camera device providers** (`libcameraprovider`,
+  `v4l2deviceprovider`, `mfdeviceprovider`, `ksdeviceprovider`). A device monitor would
+  start every provider instead, NDI and PipeWire included, on each probe.
+- **It serves the page itself.** `http_port` (8080) serves `web_root`, the OmniAccelerANT
+  web build, with the MIME types and COOP/COEP that `serve.sh` adds, plus an SPA
+  fallback and ETags. It also answers `/healthz` (camera, inference) and forwards
+  `/webrtc-ws` byte for byte to the signalling server, which listens on `127.0.0.1` by
+  default now. `run-producer-pi.sh` keeps the old shape (`--signalling-host 0.0.0.0
+  --http-port 0`) because `serve.sh` is that setup's web half.
+- **The network is pinned.** Media uses UDP `ice_port_min..ice_port_max`
+  (40000-40099), set on every viewer's ICE agent from `consumer-added`, and STUN is off
+  unless `stun_server` names one, so a LAN stream needs nothing outside it.
+- **Settings** come from `/etc/omni-accelerant/catcam.toml`, `--config` or
+  `$KATAGLYPHIS_CATCAM_CONFIG`, with the flags on top. Unknown keys are errors, and
+  `--print-config` prints the effective set. Every earlier flag still works.
+  `inference = "auto"` skips the model below 1 GiB of RAM or when it does not load.
+- **Logs and exit:** it logs at info (`KATAGLYPHIS_LOG_LEVEL`) and quiets the
+  signalling server's per-message INFO (`WEBRTCSINK_SIGNALLING_SERVER_LOG=warn` unless
+  set). It stops cleanly on SIGTERM and exits non-zero only when the output pipeline
+  fails.
+
 ### The cat producer on a Raspberry Pi 5
 
 `scripts/linux/cat-stream/run-producer-pi.sh` builds and runs
@@ -732,7 +767,7 @@ that two other repositories pin by sha, for a saving nobody has asked for.
 
 | File | Size | Why it is tracked |
 | --- | --- | --- |
-| `resources/models/yolov10m.onnx` | ~59 MiB | The YOLOv10m weights. `crates/inference`'s default model and `crates/cat_webrtc`'s `--model` default; the burn demos' `onnx-yolov10` run uses it too. Fetching it at build time would put a network call in front of every build and every offline container run. |
+| `resources/models/yolov10m.onnx` | ~59 MiB | The YOLOv10m weights. `crates/inference`'s default model, so `crates/cat_webrtc`'s too when nothing names another; the burn demos' `onnx-yolov10` run uses it as well. Fetching it at build time would put a network call in front of every build and every offline container run. |
 | `images/Rust.gif` | ~7 MiB | The README hero image, rendered by GitHub. |
 
 Everything else tracked is small: the renderer's glTF/GLB/KTX2 test assets are a few
