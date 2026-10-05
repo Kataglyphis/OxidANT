@@ -120,33 +120,11 @@ this repo declined.
 
 Each row now also says what a re-check at `57ca2b14`, the pin on 2026-09-25, found.
 
-- [b] Hub text still names this repo's retired workflow files. On
-      2026-09-24 `rust_ubuntu26_04.yml` became `linux-x64.yml` +
-      `linux-arm64.yml` over `reusable-linux.yml`, and `rust_windows2025.yml`
-      became `windows-x64.yml`. Upstream mentions of the old names:
-      `linux/scripts/workflow-conventions.allow` (the three OxidANT CENSUS
-      rows - every count is 0 now, so they can be deleted; the consumer run
-      prints `RATCHET ... can be lowered` until then), `docs/ftp-deploys.md`,
-      `docs/shared-script-libraries.md`, `linux/scripts/shellcheck-warnings.allow`
-      (the package_archive.sh row), `.github/consumers.json` (the
-      windows/scripts/rust row's `why`),
-      `linux/scripts/02-toolchain/rust/cargo_fmt_clippy.sh`,
-      `windows/scripts/rust/New-Archive.ps1` and `CHANGELOG.md`.
-      `docs/ci-build-triggers.md` still teaches `[build-win]`/`[build-arm]`,
-      which this repo no longer reads. A hub change, not one to make here.
-      Re-checked at `57ca2b14`: the OxidANT CENSUS rows are gone from
-      `workflow-conventions.allow` (hub 0e3a3412), and `docs/ftp-deploys.md`,
-      `docs/shared-script-libraries.md`, `shellcheck-warnings.allow`,
-      `consumers.json` and `New-Archive.ps1`'s header now give the new name
-      beside the old; `docs/adopting-in-a-new-project.md` carries the rename
-      table. Still stale: `cargo_fmt_clippy.sh`'s pointer to
-      `rust_ubuntu26_04.yml:134-139`, and `docs/ci-build-triggers.md`, which
-      lists `windows-x64.yml` and `linux-arm64.yml` as skipped without their
-      markers. New since:
-      `.github/consumers.json` (the OxidANT entry's `note` and the
-      windows/scripts/rust row's `why`) still says this repo's Windows lane
-      reaches `New-Archive.ps1` by hub path. It stopped on 2026-09-23 (f018bec),
-      and no family repo calls that script now.
+Re-checked at `62487181`, the pin on 2026-10-05: every row below is unmoved,
+and the hub now tracks all seven as CON55 in its `BACKLOG.md`. The row about
+retired workflow names closed upstream: `cargo_fmt_clippy.sh`,
+`docs/ci-build-triggers.md` and `.github/consumers.json` all give the new names.
+
 - [b] `_cargo_wrapper.sh` needs the safe.directory guard that
       `lib/cmake-build.sh:140-144` already has, behind a `CARGO_SAFE_DIRECTORY`
       knob defaulting to `/workspace`, and `cargo_release/bench/build_doc/`
