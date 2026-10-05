@@ -149,6 +149,10 @@ the root package's `build.rs`, which compiles the cxx bridge in `src/native_only
 (on Windows, the Visual Studio C++ build tools, which the MSVC Rust toolchain needs
 to link anyway). Nothing else is needed for a default-feature build.
 
+Search the tree with [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`):
+`winget install --id BurntSushi.ripgrep.MSVC -e --scope user` on Windows,
+`apt install ripgrep` on Linux.
+
 ```bash
 git clone --recurse-submodules https://github.com/Kataglyphis/OxidANT.git
 cd OxidANT

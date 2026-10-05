@@ -76,6 +76,7 @@ The entries this repo reaches for most:
 | Why did my lane not run? | `docs/ci-build-triggers.md` |
 | How do I upgrade a dependency, and what will `--apply` refuse to move? | `docs/dependency-updates.md` |
 | How long may a code comment be? One line, only the why; API docs short; gated | [the hub rule, Comments](third_party/ANTfrastructure/AGENTS.md#comments-one-line-only-the-why) |
+| Searching the tree: `rg`, not `grep -r` | [the hub rule, Searching](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/AGENTS.md#searching-the-tree-ripgrep-rg) |
 
 When something in this file contradicts one of those, **the submodule wins**.
 That has happened twice, both times because a procedure was retyped here instead
