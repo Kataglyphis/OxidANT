@@ -14,6 +14,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- **`crates/cat_webrtc` is the cat cam service (2026-10-05).** One process now does what
+  a container, nginx and a board-local script did:
+  - It picks the camera: a Pi camera through `rpicam-vid`, else a libcamera CSI camera,
+    else a UVC webcam. With none it streams a test pattern and re-probes every 30 s.
+  - It serves OmniAccelerANT's web build with `/webrtc-ws` proxied to its signalling
+    server, which moved to `127.0.0.1` by default.
+  - It reads a TOML config under the flags, pins the ICE ports, turns STUN off by
+    default and stops cleanly on SIGTERM.
+  - Measured in `:latest` (x64), with nothing else running:
+    - Headless Chrome played the stream from the built-in server over plain HTTP from a
+      non-loopback address: 640x480, 875 frames in 29 s.
+    - Every ICE candidate sat in 40000-40099.
+    - Inference found both cats in ANThology's photo (best score 0.59).
+    - A missing camera and a broken source recovered as designed.
+  - No board and no real camera has run it yet.
 - **Every test runs on every Linux and Windows lane (2026-10-01).** Before this, the Linux
   lanes ran 358 tests and both Windows lanes 167.
   - All lanes test with `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'`

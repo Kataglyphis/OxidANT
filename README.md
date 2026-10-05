@@ -89,7 +89,7 @@ other repositories, so its `[lib] name` is not free to change.
 | `crates/media` | `kataglyphis_media` | GStreamer capture, feature-gated (`gstreamer`) |
 | `crates/gui` | `kataglyphis_gui` | Feature-gated GUI: `gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix` |
 | `crates/webgpu_renderer` | `kataglyphis_webgpu_renderer` | wgpu glTF renderer, native and wasm32/WebGPU: PBR+IBL, cascaded shadows, SSAO, bloom, skinning, animations, LOD, headless golden tests |
-| `crates/cat_webrtc` | `kataglyphis_cat_webrtc` | Cat-detection WebRTC producer; consumed by OmniAccelerANT's Stream page |
+| `crates/cat_webrtc` | `kataglyphis_cat_webrtc` | Cat cam service: picks the camera, YOLO cat boxes, WebRTC, and the web server for OmniAccelerANT's Stream page |
 | `crates/cli` | `kataglyphis_cli` | The CLI binary (`read` / `stats` / `gui`, plus `onnx-runtime` with an `onnxruntime_*` feature and `media-check` with `gui_windows`) |
 | `src/` | `oxidant` | The root package: the flutter_rust_bridge surface for OmniAccelerANT, plus the feature-gated `burn-demos` bin |
 
