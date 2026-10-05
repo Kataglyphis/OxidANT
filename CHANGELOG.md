@@ -28,7 +28,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
     - Every ICE candidate sat in 40000-40099.
     - Inference found both cats in ANThology's photo (best score 0.59).
     - A missing camera and a broken source recovered as designed.
-  - No board and no real camera has run it yet.
+  - **First board run: himbeere2 (Raspberry Pi 5, imx219, Debian 13), 2026-10-05.** It
+    ran as OmniAccelerANT's packaged service and picked the camera via `rpicam-vid`.
+    Headless Chrome on another host played it at 29 fps. Three fixes came out of it:
+    - `rpicam-vid` is now owned by a guard. A failed pipeline setup no longer leaves one
+      zombie per retry.
+    - Probes skip the device providers when rpicam has the camera, and probe nothing for
+      `test` and `image:`. The host's libcamera, with its TensorFlow Lite and abseil, no
+      longer loads into the service.
+    - `inference_fps` (default 2, `--inference-fps`) caps the model's rate. Without a
+      cap, YOLO held the Pi 5 at 380 % CPU; capped, it uses 132 % of one core.
 - **Every test runs on every Linux and Windows lane (2026-10-01).** Before this, the Linux
   lanes ran 358 tests and both Windows lanes 167.
   - All lanes test with `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'`

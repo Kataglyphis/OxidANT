@@ -36,6 +36,8 @@ pub struct Config {
     /// ONNX model; unset means `KATAGLYPHIS_ONNX_MODEL`, then the one beside the binary.
     pub model: Option<String>,
     pub score: f32,
+    /// Detections per second at most; 0 runs the model on every frame it can take.
+    pub inference_fps: f32,
     /// Keep every COCO class instead of only cats.
     pub all_classes: bool,
     pub http_host: String,
@@ -68,6 +70,8 @@ impl Default for Config {
             inference: Inference::Auto,
             model: None,
             score: 0.25,
+            // Unbounded, YOLO held a Pi 5's four cores at 380 %; two boxes a second still follow a cat.
+            inference_fps: 2.0,
             all_classes: false,
             http_host: "0.0.0.0".into(),
             http_port: 8080,
@@ -133,6 +137,12 @@ impl Config {
         }
         if !(0.0..=1.0).contains(&self.score) {
             bail!("score must lie in 0..=1 (got {})", self.score);
+        }
+        if !self.inference_fps.is_finite() || self.inference_fps < 0.0 {
+            bail!(
+                "inference_fps must be 0 or positive (got {})",
+                self.inference_fps
+            );
         }
         if self.signalling_port == 0 {
             bail!("signalling_port must be non-zero");
@@ -200,6 +210,10 @@ mod tests {
         let bad = [
             Config {
                 rotate: 45,
+                ..Config::default()
+            },
+            Config {
+                inference_fps: -1.0,
                 ..Config::default()
             },
             Config {

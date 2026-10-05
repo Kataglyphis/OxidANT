@@ -55,7 +55,7 @@ impl Worker {
         let frames = inference.as_ref().map(|(tx, _)| tx);
         let mut failures: u32 = 0;
         while !self.shutdown.load(Ordering::Relaxed) {
-            let found = camera::probe();
+            let found = camera::probe(&self.choice);
             let plan = camera::choose(&self.choice, &found.probe);
             let label = plan.describe(&found.probe);
             self.status.set_camera(&label);
@@ -138,6 +138,7 @@ impl Worker {
 
         let bus = pipeline.bus().context("capture pipeline has no bus")?;
         let mut last_frame = Instant::now();
+        let mut next_inference = last_frame;
         loop {
             if self.shutdown.load(Ordering::Relaxed)
                 || deadline.is_some_and(|d| Instant::now() >= d)
@@ -159,7 +160,7 @@ impl Worker {
                 continue;
             };
             last_frame = Instant::now();
-            if !self.push(&sample, boxes, inference)? {
+            if !self.push(&sample, boxes, inference, &mut next_inference)? {
                 return Ok(());
             }
         }
@@ -171,6 +172,7 @@ impl Worker {
         sample: &gst::Sample,
         boxes: &Boxes,
         inference: Option<&mpsc::SyncSender<Vec<u8>>>,
+        next_inference: &mut Instant,
     ) -> anyhow::Result<bool> {
         let config = &self.config;
         let buffer = sample.buffer().context("sample without buffer")?;
@@ -194,7 +196,10 @@ impl Worker {
         }
         // Only while the inference thread is idle: a frame of lag is fine, a backlog is not.
         if let Some(tx) = inference {
-            let _ = tx.try_send(rgba.to_vec());
+            let now = Instant::now();
+            if now >= *next_inference && tx.try_send(rgba.to_vec()).is_ok() {
+                *next_inference = now + inference_period(config.inference_fps);
+            }
         }
         match self
             .appsrc
@@ -228,7 +233,23 @@ fn bus_says_done(bus: &gst::Bus) -> anyhow::Result<bool> {
 struct Source {
     elements: Vec<gst::Element>,
     #[cfg(unix)]
-    rpicam: Option<(std::process::Child, std::process::ChildStdout)>,
+    #[allow(dead_code)]
+    rpicam: Option<RpicamProcess>,
+}
+
+/// `rpicam-vid` and the pipe it writes into; dropping it stops and reaps the process.
+#[cfg(unix)]
+struct RpicamProcess {
+    child: std::process::Child,
+    stdout: Option<std::process::ChildStdout>,
+}
+
+#[cfg(unix)]
+impl Drop for RpicamProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 impl Source {
@@ -307,7 +328,7 @@ impl Source {
         use std::process::{Command, Stdio};
 
         let (w, h, fps) = (config.width, config.height, config.fps);
-        let mut child = Command::new("rpicam-vid")
+        let child = Command::new("rpicam-vid")
             .args([
                 "--timeout",
                 "0",
@@ -324,9 +345,19 @@ impl Source {
             .stderr(Stdio::inherit())
             .spawn()
             .context("start rpicam-vid")?;
-        let stdout = child.stdout.take().context("rpicam-vid stdout")?;
+        // Owned before anything below can fail, so an error cannot leave the process behind.
+        let mut process = RpicamProcess {
+            child,
+            stdout: None,
+        };
+        process.stdout = process.child.stdout.take();
+        let fd = process
+            .stdout
+            .as_ref()
+            .context("rpicam-vid stdout")?
+            .as_raw_fd();
         let fdsrc = gst::ElementFactory::make("fdsrc")
-            .property("fd", stdout.as_raw_fd())
+            .property("fd", fd)
             .property("blocksize", w * h * 3 / 2)
             .build()
             .context("fdsrc")?;
@@ -336,10 +367,10 @@ impl Source {
             .property("height", h as i32)
             .property("framerate", gst::Fraction::new(fps as i32, 1))
             .build()
-            .context("rawvideoparse (is the videoparsersbad plugin installed?)")?;
+            .context("rawvideoparse (is the rawparse plugin installed?)")?;
         Ok(Self {
             elements: vec![fdsrc, parse],
-            rpicam: Some((child, stdout)),
+            rpicam: Some(process),
         })
     }
 
@@ -349,7 +380,7 @@ impl Source {
     }
 }
 
-/// Stops the pipeline, then the child process it read from, whichever way the capture ends.
+/// Stops the pipeline, then (as `source` drops) the child process it read from, whichever way the capture ends.
 struct Running {
     pipeline: gst::Pipeline,
     #[allow(dead_code)]
@@ -359,12 +390,15 @@ struct Running {
 impl Drop for Running {
     fn drop(&mut self) {
         let _ = self.pipeline.set_state(gst::State::Null);
-        #[cfg(unix)]
-        if let Some((mut child, stdout)) = self.source.rpicam.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-            drop(stdout);
-        }
+    }
+}
+
+/// The least time between two frames handed to the model; zero for `inference_fps = 0`.
+fn inference_period(inference_fps: f32) -> Duration {
+    if inference_fps > 0.0 {
+        Duration::from_secs_f32(1.0 / inference_fps)
+    } else {
+        Duration::ZERO
     }
 }
 
@@ -501,6 +535,13 @@ fn put(frame: &mut [u8], width: i32, x: i32, y: i32, color: [u8; 4]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inference_period_follows_the_rate_and_zero_means_unbounded() {
+        assert_eq!(inference_period(2.0), Duration::from_millis(500));
+        assert_eq!(inference_period(0.5), Duration::from_secs(2));
+        assert_eq!(inference_period(0.0), Duration::ZERO);
+    }
 
     #[test]
     fn draw_rect_marks_the_outline_and_leaves_the_inside_alone() {

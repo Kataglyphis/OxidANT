@@ -404,6 +404,18 @@ board runs it as one service unit:
 - **Probes start only the camera device providers** (`libcameraprovider`,
   `v4l2deviceprovider`, `mfdeviceprovider`, `ksdeviceprovider`). A device monitor would
   start every provider instead, NDI and PipeWire included, on each probe.
+  - **They also start only for the choice that needs them.** When `rpicam-hello` lists
+    a camera, no provider starts at all. `libcameraprovider` loads the host's
+    libcamera into the service, and on himbeere2 (2026-10-05) that brought the host's
+    abseil, TensorFlow Lite and lttng along, into a process that runs its own glibc.
+  - `test` and `image:` probe nothing.
+- **`rpicam-vid` belongs to a guard** (`RpicamProcess`). The guard kills and reaps the
+  process however the capture setup fails. Before it existed, a missing
+  `rawvideoparse` (the `rawparse` plugin, not `videoparsersbad`) left one zombie per
+  retry.
+- **Inference is capped at `inference_fps`** (default 2) frames a second. Without a
+  cap, YOLO held a Pi 5's four cores at 380 %; capped, it costs 132 % of one core
+  there. `0` removes the cap. The stream itself keeps the camera's rate.
 - **It serves the page itself.** `http_port` (8080) serves `web_root`, the OmniAccelerANT
   web build, with the MIME types and COOP/COEP that `serve.sh` adds, plus an SPA
   fallback and ETags. It also answers `/healthz` (camera, inference) and forwards

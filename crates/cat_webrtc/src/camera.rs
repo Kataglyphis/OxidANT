@@ -227,25 +227,34 @@ pub struct Found {
     pub devices: Vec<gst::Device>,
 }
 
-/// Runs every probe; each one that cannot run (no rpicam-apps, no device provider) finds nothing.
-pub fn probe() -> Found {
-    let rpicam_cameras = if find_on_path("rpicam-hello").is_some() {
-        run_with_timeout("rpicam-hello", &["--list-cameras"], Duration::from_secs(15))
-            .map(|out| parse_rpicam_list(&out))
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    let rpicam_vid = find_on_path("rpicam-vid").is_some();
-    let (infos, devices) = monitor_devices();
-    Found {
-        probe: Probe {
-            rpicam_cameras,
-            rpicam_vid,
-            devices: infos,
-        },
-        devices,
+/// Runs the probes `choice` can use; each one that cannot run (no rpicam-apps, no device provider) finds nothing.
+pub fn probe(choice: &Choice) -> Found {
+    let mut probe = Probe::default();
+    if matches!(choice, Choice::Test | Choice::Image(_)) {
+        return Found {
+            probe,
+            devices: Vec::new(),
+        };
     }
+    if matches!(choice, Choice::Auto | Choice::Rpicam) {
+        probe.rpicam_vid = find_on_path("rpicam-vid").is_some();
+        if probe.rpicam_vid && find_on_path("rpicam-hello").is_some() {
+            probe.rpicam_cameras =
+                run_with_timeout("rpicam-hello", &["--list-cameras"], Duration::from_secs(15))
+                    .map(|out| parse_rpicam_list(&out))
+                    .unwrap_or_default();
+        }
+    }
+    let rpicam_wins = probe.rpicam_vid && !probe.rpicam_cameras.is_empty();
+    if rpicam_wins || *choice == Choice::Rpicam {
+        return Found {
+            probe,
+            devices: Vec::new(),
+        };
+    }
+    let (infos, devices) = monitor_devices();
+    probe.devices = infos;
+    Found { probe, devices }
 }
 
 /// The device providers that can see a camera this service captures. A device monitor would start
