@@ -27,18 +27,6 @@ protocol exists and the backlog is empty" — it was neither.
       Reproduced byte-for-byte on the image's lavapipe (2026-09-29), where the
       Linux lanes now run the golden suite with `KATAGLYPHIS_REQUIRE_GPU=1`;
       the test is `#[ignore]`d for that, so drop the attribute with the fix.
-- [ ] Run `scripts/linux/cat-stream/run-producer-pi.sh` on a real Pi 5 with
-      its CSI camera. On 2026-09-29 it stopped bypassing the image's
-      entrypoint (`--entrypoint bash`) and hands `/hostlibs` in as the
-      caller's `LD_LIBRARY_PATH`, which ANTfrastructure CON23's entrypoint
-      keeps ahead of the image's `/opt/libcamera` (with GCC's runtime first).
-      Proven in emulation only: the arm64 child under QEMU, the runner's
-      recorded `nerdctl run` with an empty stand-in `/hostlibs`, gives the
-      right order, a stubbed `/hostlibs/libcamera.so.0.7` wins in `ldd`, and
-      `gst-inspect-1.0 libcamerasrc`/`webrtcsink` load. No camera, no
-      producer build. Done when the producer streams from the board; if it
-      does not, the old `--entrypoint bash` form is in git history.
-
 - [b] Ship the .slang sources with crates/webgpu_renderer, or add a
       slang -> wgsl step, so "there is no .slang file in this repo" stops
       being true. src/shaders/*.wgsl are checked-in GENERATED artifacts whose

@@ -38,6 +38,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
       longer loads into the service.
     - `inference_fps` (default 2, `--inference-fps`) caps the model's rate. Without a
       cap, YOLO held the Pi 5 at 380 % CPU; capped, it uses 132 % of one core.
+  - **`run-producer-pi.sh` streamed from that board's CSI camera on 2026-10-06, the first
+    time outside QEMU.**
+    - `--build` built the producer, and the image's entrypoint kept `/hostlibs` ahead of
+      its own libcamera (CON23's order), so `libcamerasrc` ran the host's `v0.7.2+rpt`
+      with libpisp 1.7.
+    - `yolov10m` ran on ORT.
+    - Through `serve.sh --http`, Chrome on another host played 701 frames in 23 s.
+    - A trap for anyone sharing the `kataglyphis-cat-target` volume: a build from the
+      superproject layout leaves `env!("CARGO_MANIFEST_DIR")` pointing at
+      `/workspace/third_party/OxidANT`. Cargo sees the same relative paths under the
+      runner's mount and does not rebuild, so `--build` keeps that model path. `cargo
+      clean -p` on the workspace crates cures it.
 - **Every test runs on every Linux and Windows lane (2026-10-01).** Before this, the Linux
   lanes ran 358 tests and both Windows lanes 167.
   - All lanes test with `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'`
