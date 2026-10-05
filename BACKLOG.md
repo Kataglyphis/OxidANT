@@ -100,42 +100,6 @@ protocol exists and the backlog is empty" — it was neither.
       `package_archive.sh` last changed in f2c8a78a, its 2026-08-11 restore,
       and is still tar-only.
 
-## Waiting on ANTfrastructure
-
-Each of these is half-done here on purpose: the other half is a change to the
-submodule, which is a different repository with other consumers. The local side
-is written so that finishing it upstream is a deletion here, not a rewrite. The
-hub tracks both as CON55.
-
-Five rows closed at hub `61cb0e42` (2026-10-05), and their local halves are gone:
-- `_cargo_wrapper.sh` registers `CARGO_SAFE_DIRECTORY` and every hub cargo
-  driver sources it. `ci-container-steps.sh` now only exports the knob; its
-  `riscv64-test` step, which runs cargo itself, sources the wrapper.
-- `Get-ANTfrastructurePin` lives in `WindowsScripts.Shared.psm1`, so
-  `Resolve-CargoToolPin` is deleted from `scripts/windows/Build-Windows.ps1`.
-- The hub's `windows/scripts/rust/Build-Windows.ps1` is deleted by owner
-  decision. This repo owns its Windows Rust build.
-- The MSIX trust steps live in the hub's certificates README, which this
-  README links.
-- `docs/adopting-in-a-new-project.md` § 8 names `scripts/windows/container/`.
-
-- [b] The MSI Packaging step of `scripts/windows/Build-Windows.ps1` should
-      become a hub function taking `-WxsFile -LicenseFile -ProductName
-      -Manufacturer -ExeSource -Version -OutFile`, plus `-Arch` (`wix build
-      -arch`) and the generated `PayloadDlls` fragment. The MSIX half landed
-      upstream on 2026-09-15 as `Invoke-MsixPackage`. The CMake repos build their
-      MSIs through CPack's WiX generator, so this repo would be the only caller.
-      Re-checked at `61cb0e42`: no MSI function in the hub.
-- [b] The module inventory in AGENTS.md section 2 carries rows with no upstream
-      owner (`WindowsMsix.Common`, `WindowsConfig.Common`, `WindowsBuild.Common`,
-      `WindowsScripts.Shared`, the rust drivers, `package_archive.sh`, the
-      composite actions, `lint-workflows.sh`, the agentic-loop templates, the
-      01-core helpers). Once the hub lists those functions
-      (`docs/adopting-in-a-new-project.md` sections 2/8 or `docs/INDEX.md`), the
-      table becomes a link. Re-checked at `61cb0e42`: § 7 names the MSIX, ORT
-      payload and cross-bundle modules, § 8 now the `container/` directory, and
-      the functions are still listed nowhere upstream.
-
 ## Not adopted yet
 
 The loop itself — config, runner wrappers, `scripts/agentic-loop/` — is not set

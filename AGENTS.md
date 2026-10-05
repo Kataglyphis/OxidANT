@@ -99,36 +99,10 @@ Two consumer-specific traps are *this* repo's, so they are written out in § 4.
 
 ### Reach for these before writing a helper
 
-Every row below was written locally first and later found to already exist upstream —
-usually in a better form, twice with a bug the local copy did not have. All paths are
-relative to `third_party/ANTfrastructure/`.
-
-| Need | Use | Defined in | Not |
-| --- | --- | --- | --- |
-| `docker.exe` discovery (Stevedore) | `Resolve-DockerExe` | [`windows/scripts/modules/WindowsContainerBuild.Reuse.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsContainerBuild.Reuse.psm1) | a hand-rolled candidate list |
-| `--isolation process` and friends | `Get-ContainerIsolationArgs` | same file | inline flags |
-| Container teardown | `Remove-BuildContainerSafe` | same file | `docker rm -f` (misses the wcifs teardown lock) |
-| Bind-mount probe, artifact delivery | `Test-ContainerBindMount`, `Test-BuildArtifactsDelivered` | same file | assuming a green build delivered something |
-| Stage, manifest, pack, sign one MSIX | `Invoke-MsixPackage` | [`windows/scripts/modules/WindowsMsix.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsMsix.Common.psm1) | the ~100-line makeappx/assets/tokens/pack sequence this repo carried until 2026-09-15 |
-| The version to stamp a package with | `Get-PackageVersion` | same file | reading `VERSION.txt` inline, once per packaging step, with a different fallback each time |
-| SDK tools (makeappx, signtool) | `Resolve-WindowsSdkToolPath` | same file | `Get-ChildItem -Recurse` over the Kits tree |
-| MSIX manifest tokens, XML escaping, placeholder PNGs | `Expand-XmlTemplateTokens`, `ConvertTo-XmlEscapedText`, `New-TransparentPng` | same file | `-replace` — see below — and local redefinitions |
-| Config access | `Get-OrDefault`, `Get-ConfigValue` | [`windows/scripts/modules/WindowsConfig.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsConfig.Common.psm1) | copies |
-| Build logging and steps | `New-BuildContext`, `Invoke-BuildStep`, `Invoke-BuildExternal`, `Write-BuildLog*` | [`windows/scripts/modules/WindowsBuild.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsBuild.Common.psm1) | ad-hoc `Write-Host` wrappers |
-| Tool guards, workspace paths (pwsh) | `Assert-Command`, `Resolve-WorkspacePath` | [`windows/scripts/modules/WindowsScripts.Shared.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsScripts.Shared.psm1) | a second implementation |
-| Logging inside a container | `Start-ContainerLog`, `Write-ContainerLog`, `Invoke-ContainerLoggedCommand` | [`windows/scripts/modules/WindowsContainerLog.Common.psm1`](third_party/ANTfrastructure/windows/scripts/modules/WindowsContainerLog.Common.psm1) | a `Say`/`Run-Logged` pair per script |
-| CI version stamping (bash) | `version_util.sh --github-env` / `--resolve-ci` / `--normalize` | [`linux/scripts/02-toolchain/rust/version_util.sh`](third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/version_util.sh) | re-reading VERSION.txt yourself |
-| In-container cargo steps | `cargo_debug.sh`, `cargo_release.sh`, `cargo_test.sh`, `cargo_coverage.sh`, `cargo_fmt_clippy.sh` (`CARGO_CLIPPY_ARGS`), … | [`linux/scripts/02-toolchain/rust/`](third_party/ANTfrastructure/linux/scripts/02-toolchain/rust) | inline cargo invocations |
-| Linux packaging (tar/deb/AppImage/Flatpak) | `package_archive.sh` | [`linux/scripts/06-packaging/package_archive.sh`](third_party/ANTfrastructure/linux/scripts/06-packaging/package_archive.sh) | bespoke packaging |
-| CI job plumbing | `prepare-linux-ci-host`, `run-in-linux-container`, `run-in-windows-container`, `clone-into-short-path`, `cleanup-disk-space`, `assert-docker-disk-space` | [`.github/actions/`](third_party/ANTfrastructure/.github/actions) | hand-written `docker run` blocks |
-| Linting workflows locally | `lint-workflows.sh <root>` (pinned, SHA-verified actionlint) | [`linux/scripts/lint-workflows.sh`](third_party/ANTfrastructure/linux/scripts/lint-workflows.sh) | bootstrapping your own |
-| Agentic loop | config + runner templates | [`shared/agentic-loop/templates/`](third_party/ANTfrastructure/shared/agentic-loop/templates) | writing one from scratch |
-| Bash helpers (logging, retry, SHA'd downloads, parallelism) | `logging.sh`, `downloads.sh`, `parallelism.sh`, … | [`linux/scripts/01-core/`](third_party/ANTfrastructure/linux/scripts/01-core) | new implementations |
-
-Two caveats:
-
-- **Nested module imports are module-private.** `WindowsBuild.Common` importing `WindowsScripts.Shared` does not re-export it to you; import each module you call into directly, or you get a "command not found" the first time that code path runs.
-- **Editing the submodule is allowed** (it is the same owner), but it is consumed by other repos. Change it there, push, then move this repo's submodule pointer — do not fork behaviour locally.
+The table of hub helpers this file used to carry (each one written here first and later found upstream) is the hub's own now:
+[`docs/adopting-in-a-new-project.md` § *Reach for these before writing a helper*](third_party/ANTfrastructure/docs/adopting-in-a-new-project.md#reach-for-these-before-writing-a-helper),
+with its two caveats. Read it before writing a PowerShell function, a cargo step or a CI action. The MSI step is a hub call too:
+`Invoke-MsiPackage` in `WindowsMsix.Common`, which this repo is the first caller of.
 
 Nothing here needs Windows PowerShell 5.1 semantics: every script carries `#requires -Version 7.0` and CI invokes `pwsh`.
 
