@@ -118,10 +118,6 @@ wmi = { workspace = true }
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(onnx)', 'cfg(gui_wgpu_backend)'] }
 
-[workspace.lints.clippy]
-# Style-only, and `clippy --fix` does not converge on the renderer's sites; allowed once here. Tracked in BACKLOG.md.
-chunks_exact_to_as_chunks = "allow"
-
 [lints]
 workspace = true
 

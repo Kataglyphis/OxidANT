@@ -110,7 +110,7 @@ fn an_lod_frame_still_renders() {
         .expect("a frame with LOD enabled must render");
     assert_eq!(pixels.len(), 128 * 128 * 4);
     assert!(
-        pixels.chunks_exact(4).any(|p| p[0] != pixels[0]),
+        pixels.as_chunks::<4>().0.iter().any(|p| p[0] != pixels[0]),
         "the LOD frame came out uniformly flat"
     );
 }

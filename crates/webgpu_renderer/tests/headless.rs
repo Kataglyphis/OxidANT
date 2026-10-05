@@ -129,7 +129,9 @@ fn renders_cube_headless() {
 
     // The cube must cover a plausible portion of the frame: count lit pixels.
     let lit = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|p| p[0] > 110 && p[0] > p[1] + 40)
         .count();
     let total = (width * height) as usize;
@@ -158,7 +160,7 @@ fn renders_textured_cube_headless() {
     // Both checker colours must appear, proving the texture is sampled.
     let mut green = 0usize;
     let mut magenta = 0usize;
-    for p in pixels.chunks_exact(4) {
+    for p in pixels.as_chunks::<4>().0 {
         let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
         if g > 100 && g > r + 30 && g > b + 30 {
             green += 1;
@@ -193,7 +195,9 @@ fn world_up_is_screen_up() {
             .render_to_pixels(&gpu, width, height, &camera)
             .expect("headless render must succeed");
         let rows: Vec<u32> = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(_, p)| p[0] > 110 && p[0] as i32 > p[1] as i32 + 40)
             .map(|(i, _)| i as u32 / width)
@@ -267,7 +271,7 @@ fn morph_weight_lifts_the_silhouette() {
     let cube_stats = |pixels: &[u8]| -> (usize, f64) {
         let mut count = 0usize;
         let mut sum_y = 0f64;
-        for (i, p) in pixels.chunks_exact(4).enumerate() {
+        for (i, p) in pixels.as_chunks::<4>().0.iter().enumerate() {
             let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
             if r > 110 && r > g + 40 && r > b + 40 {
                 count += 1;
@@ -339,7 +343,7 @@ fn shadow_darkens_plane_under_cube() {
     // Sunlit plane pixels are near-neutral; the shadowed patch gets only ambient. Both must exist.
     let mut lit_plane = 0usize;
     let mut shadowed_plane = 0usize;
-    for p in pixels.chunks_exact(4) {
+    for p in pixels.as_chunks::<4>().0 {
         let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
         let neutral = (r - g).abs() < 25 && (g - b).abs() < 25 && (r - b).abs() < 25;
         if neutral && r > 180 {
@@ -386,7 +390,9 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
             .expect("headless render must succeed");
 
         pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| {
                 let (r, b) = (p[0] as i32, p[2] as i32);
                 r < 110 && b > r + 15 && b < 180
@@ -501,7 +507,7 @@ fn alpha_modes_blend_and_mask() {
 
     let mut blended_over_cube = 0usize;
     let mut yellowish = 0usize;
-    for p in pixels.chunks_exact(4) {
+    for p in pixels.as_chunks::<4>().0 {
         let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
         // Green blend quad over the white plane: tinted, with red/blue still showing through.
         if g > 140 && g > r + 25 && g > b + 25 && r > 70 && b > 60 {
@@ -559,7 +565,7 @@ fn punctual_lights_pool_on_plane() {
 
     let mut red_pool = 0usize;
     let mut green_pool = 0usize;
-    for p in pixels.chunks_exact(4) {
+    for p in pixels.as_chunks::<4>().0 {
         let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
         if r > 120 && r > g + 40 && r > b + 40 {
             red_pool += 1;
@@ -728,7 +734,7 @@ fn animation_moves_the_cube() {
 
     let red_centroid_x = |pixels: &[u8]| -> f32 {
         let (mut sum_x, mut count) = (0.0f32, 0u32);
-        for (i, p) in pixels.chunks_exact(4).enumerate() {
+        for (i, p) in pixels.as_chunks::<4>().0.iter().enumerate() {
             let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
             if r > 110 && r > g + 40 && r > b + 40 {
                 sum_x += (i % width as usize) as f32;
@@ -787,7 +793,7 @@ fn skinning_bends_the_bar() {
     // Mean x of the bar's red pixels in the top half, which bending joint 1 swings sideways.
     let upper_centroid_x = |pixels: &[u8]| -> f32 {
         let (mut sum, mut count) = (0.0f32, 0u32);
-        for (i, p) in pixels.chunks_exact(4).enumerate() {
+        for (i, p) in pixels.as_chunks::<4>().0.iter().enumerate() {
             let (x, y) = (i % width as usize, i / width as usize);
             if y > (height as usize) / 2 {
                 continue;
@@ -1067,7 +1073,9 @@ fn instances_appear_at_their_own_transforms() {
     // Non-sky pixels: the cube is red-dominant, the sky blue-dominant.
     let covered = |pixels: &[u8]| -> usize {
         pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[0] as i32 > p[2] as i32 + 20)
             .count()
     };
@@ -1140,7 +1148,9 @@ fn clearing_instances_restores_a_single_copy_rather_than_none() {
         .render_to_pixels(&gpu, width, height, &camera)
         .expect("render");
     let lit = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|p| p[0] as i32 > p[2] as i32 + 20)
         .count();
     assert!(
@@ -1210,7 +1220,7 @@ fn caster_culling_engages_and_shadows_survive() {
     // As in shadow_darkens_plane_under_cube: the shadow is blue-tinted, never neutral dark.
     let mut lit_plane = 0usize;
     let mut shadowed_plane = 0usize;
-    for p in pixels.chunks_exact(4) {
+    for p in pixels.as_chunks::<4>().0 {
         let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
         let neutral = (r - g).abs() < 25 && (g - b).abs() < 25 && (r - b).abs() < 25;
         if neutral && r > 180 {
@@ -1367,7 +1377,7 @@ fn a_shared_texture_uploads_once() {
         .render_to_pixels(&gpu, 64, 64, &OrbitCamera::default())
         .expect("render with shared textures must succeed");
     assert!(
-        px.chunks_exact(4).any(|p| p[0] != px[0]),
+        px.as_chunks::<4>().0.iter().any(|p| p[0] != px[0]),
         "frame is uniformly flat"
     );
 }
@@ -1471,8 +1481,10 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
     let shadowed_count = |caster_material: CpuMaterial| -> usize {
         let with_card = render(vec![plane.clone(), card(caster_material)]);
         baseline
-            .chunks_exact(4)
-            .zip(with_card.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(with_card.as_chunks::<4>().0)
             .filter(|(b, w)| {
                 let lum_b = (b[0] as i32 * 3 + b[1] as i32 * 6 + b[2] as i32) / 10;
                 let lum_w = (w[0] as i32 * 3 + w[1] as i32 * 6 + w[2] as i32) / 10;

@@ -46,15 +46,6 @@ protocol exists and the backlog is empty" — it was neither.
       desynchronises it, which is why the instanced-normal bug above cannot be
       fixed here. Blocked on deciding who compiles tex_quad.slang.
 
-- [ ] Migrate crates/webgpu_renderer off `chunks_exact(N)` with a literal N.
-      clippy 1.98 added `chunks_exact_to_as_chunks` and it fires 22 times there
-      (glTF loader, OBJ converter, HDR decoder, gpu_timing, histogram, ibl,
-      occlusion, lod, qem). It is allowed once in the root Cargo.toml's
-      `[workspace.lints.clippy]` with a reason; the migration changes the
-      iterated element type from `&[T]` to `&[T; N]` at every site, so it wants
-      its own change and its own review. `cargo clippy --fix` does not do it:
-      it rewrites the tests and leaves every src site.
-
 - [ ] Find why the renderer's `headless.exe` dies on `windows-11-arm` when its
       tests run in parallel. Run 36889467167 (2026-10-01): WARP (`Microsoft
       Basic Render Driver`, Dx12), `KATAGLYPHIS_REQUIRE_GPU=1`, the process

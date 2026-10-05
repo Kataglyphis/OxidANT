@@ -213,7 +213,12 @@ fn a_non_uniform_instance_scale_shades_like_the_same_node_scale() {
 
     // Compare only lit cube pixels; count how many differ beyond dither noise.
     let mut differing = 0usize;
-    for (a, b) in pixels_a.chunks_exact(4).zip(pixels_b.chunks_exact(4)) {
+    for (a, b) in pixels_a
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(pixels_b.as_chunks::<4>().0)
+    {
         let d = (a[0] as i32 - b[0] as i32).abs()
             + (a[1] as i32 - b[1] as i32).abs()
             + (a[2] as i32 - b[2] as i32).abs();

@@ -246,15 +246,15 @@ fn triangulate(indices: &[u32], mode: gltf::mesh::Mode) -> Vec<u32> {
 /// Drops whole triangles with an out-of-range corner, returning the kept list and the dropped count.
 /// `gltf` never checks index values, and a downstream bounds panic aborts the whole WASM canvas.
 fn drop_out_of_range_triangles(indices: Vec<u32>, vertex_count: usize) -> (Vec<u32>, usize) {
-    let in_range = |tri: &&[u32]| tri.iter().all(|&i| (i as usize) < vertex_count);
+    let in_range = |tri: &&[u32; 3]| tri.iter().all(|&i| (i as usize) < vertex_count);
     let triangle_count = indices.len() / 3;
-    let kept = indices.chunks_exact(3).filter(in_range).count();
+    let kept = indices.as_chunks::<3>().0.iter().filter(in_range).count();
     if kept == triangle_count && indices.len().is_multiple_of(3) {
         return (indices, 0);
     }
 
     let mut out = Vec::with_capacity(kept * 3);
-    for tri in indices.chunks_exact(3).filter(in_range) {
+    for tri in indices.as_chunks::<3>().0.iter().filter(in_range) {
         out.extend_from_slice(tri);
     }
     (out, triangle_count - kept)
@@ -269,7 +269,7 @@ fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
         Format::R8G8B8A8 => img.pixels,
         Format::R8G8B8 => {
             let mut out = Vec::with_capacity(pixel_count * 4);
-            for rgb in img.pixels.chunks_exact(3) {
+            for rgb in img.pixels.as_chunks::<3>().0 {
                 out.extend_from_slice(rgb);
                 out.push(255);
             }
@@ -284,7 +284,7 @@ fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
         }
         Format::R8G8 => {
             let mut out = Vec::with_capacity(pixel_count * 4);
-            for rg in img.pixels.chunks_exact(2) {
+            for rg in img.pixels.as_chunks::<2>().0 {
                 out.extend_from_slice(&[rg[0], rg[1], 0, 255]);
             }
             out
@@ -679,8 +679,8 @@ fn load_primitive(
 }
 
 fn compute_flat_normals(vertices: &mut [Vertex], indices: &[u32]) {
-    for tri in indices.chunks_exact(3) {
-        let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+    for tri in indices.as_chunks::<3>().0 {
+        let [i0, i1, i2] = tri.map(|i| i as usize);
         let p0 = Vec3::from_array(vertices[i0].position);
         let p1 = Vec3::from_array(vertices[i1].position);
         let p2 = Vec3::from_array(vertices[i2].position);
@@ -697,8 +697,8 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
     let mut tan_accum = vec![Vec3::ZERO; vertices.len()];
     let mut bitan_accum = vec![Vec3::ZERO; vertices.len()];
 
-    for tri in indices.chunks_exact(3) {
-        let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+    for tri in indices.as_chunks::<3>().0 {
+        let [i0, i1, i2] = tri.map(|i| i as usize);
         let p0 = Vec3::from_array(vertices[i0].position);
         let p1 = Vec3::from_array(vertices[i1].position);
         let p2 = Vec3::from_array(vertices[i2].position);

@@ -19,7 +19,7 @@ fn render(renderer: &mut ForwardRenderer, gpu: &GpuContext) -> Vec<u8> {
 fn cube_luma(pixels: &[u8]) -> f64 {
     let mut total = 0u64;
     let mut count = 0u64;
-    for pixel in pixels.chunks_exact(4) {
+    for pixel in pixels.as_chunks::<4>().0 {
         if pixel[0] > pixel[2] {
             total += pixel[0] as u64 + pixel[1] as u64 + pixel[2] as u64;
             count += 1;

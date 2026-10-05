@@ -262,8 +262,10 @@ impl HistogramPass {
                 .get_mapped_range()
                 .expect("map completed above, so viewing it cannot fail");
             let floats: Vec<f32> = data
-                .chunks_exact(4)
-                .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| f32::from_ne_bytes(*b))
                 .collect();
             (floats[0], floats[1])
         };
@@ -296,8 +298,10 @@ impl HistogramPass {
             let data = slice
                 .get_mapped_range()
                 .expect("map completed above, so viewing it cannot fail");
-            data.chunks_exact(4)
-                .map(|bytes| u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+            data.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| u32::from_ne_bytes(*bytes))
                 .collect::<Vec<u32>>()
         };
         self.readback_buffer.unmap();

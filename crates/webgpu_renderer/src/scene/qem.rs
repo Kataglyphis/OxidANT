@@ -207,7 +207,7 @@ impl WeldedMesh {
         }
 
         let mut faces: Vec<[u32; 3]> = Vec::with_capacity(prim.indices.len() / 3);
-        for tri in prim.indices.chunks_exact(3) {
+        for tri in prim.indices.as_chunks::<3>().0 {
             let (a, b, c) = (
                 remap[tri[0] as usize],
                 remap[tri[1] as usize],
