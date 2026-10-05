@@ -76,6 +76,9 @@ struct Args {
     /// Detection score threshold.
     #[arg(long)]
     score: Option<f32>,
+    /// Detections per second at most (default 2); 0 runs the model on every frame it can take.
+    #[arg(long)]
+    inference_fps: Option<f32>,
     #[arg(long)]
     width: Option<u32>,
     #[arg(long)]
@@ -224,7 +227,7 @@ fn apply_args(args: &Args, config: &mut Config) -> anyhow::Result<()> {
     macro_rules! cloned {
         ($($field:ident),*) => { $( if let Some(value) = &args.$field { config.$field.clone_from(value); } )* };
     }
-    copied!(rotate, score, width, height, fps, http_port);
+    copied!(rotate, score, inference_fps, width, height, fps, http_port);
     cloned!(name, signalling_host, http_host);
     if let Some(port) = args.listen_port {
         config.signalling_port = port;
