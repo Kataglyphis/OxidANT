@@ -350,7 +350,7 @@ fn setting_an_environment_actually_changes_the_rendered_frame() {
     let cube_luma = |pixels: &[u8]| {
         let mut total = 0u64;
         let mut count = 0u64;
-        for pixel in pixels.chunks_exact(4) {
+        for pixel in pixels.as_chunks::<4>().0 {
             // The cube is red-dominant; the sky is blue-dominant.
             if pixel[0] > pixel[2] {
                 total += pixel[0] as u64 + pixel[1] as u64 + pixel[2] as u64;
@@ -386,7 +386,7 @@ fn encode_hdr_flat(image: &EquirectImage) -> Vec<u8> {
         image.height, image.width
     )
     .into_bytes();
-    for texel in image.rgba32f.chunks_exact(4) {
+    for texel in image.rgba32f.as_chunks::<4>().0 {
         let max = texel[0].max(texel[1]).max(texel[2]);
         if max < 1e-32 {
             out.extend_from_slice(&[0; 4]);
@@ -425,8 +425,10 @@ fn hdr_bytes_decode_and_bake_into_the_same_environment_as_the_source_pixels() {
     let mut worst = 0.0f32;
     for (got, want) in decoded
         .rgba32f
-        .chunks_exact(4)
-        .zip(sky.rgba32f.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(sky.rgba32f.as_chunks::<4>().0)
     {
         let max = want[0].max(want[1]).max(want[2]);
         for channel in 0..3 {

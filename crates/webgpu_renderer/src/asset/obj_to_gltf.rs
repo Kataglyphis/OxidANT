@@ -386,8 +386,8 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
 /// Fills zero corner normals (no `vn` index) with their triangle's flat face normal.
 /// Degenerate triangles are skipped rather than normalized into NaN, as C++ `fillMissingFlatNormals` does.
 fn fill_missing_flat_normals(mesh: &mut ObjMesh) {
-    for tri in mesh.indices.chunks_exact(3) {
-        let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+    for tri in mesh.indices.as_chunks::<3>().0 {
+        let [i0, i1, i2] = tri.map(|i| i as usize);
         let p0 = mesh.positions[i0];
         let p1 = mesh.positions[i1];
         let p2 = mesh.positions[i2];

@@ -203,6 +203,22 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **The renderer iterates fixed chunks as arrays (2026-10-06).** All 46 sites in
+  `crates/webgpu_renderer` that clippy 1.98's `chunks_exact_to_as_chunks` flagged now use
+  `as_chunks::<N>()`, so each element is a `&[T; N]`:
+  - the glTF and OBJ triangle loops, with `tri.map(|i| i as usize)`;
+  - the HDR tests;
+  - histogram;
+  - IBL, whose BRDF read-back is now a plain `.to_vec()`;
+  - LOD and QEM;
+  - 26 in the integration tests, which clippy reaches only once the lib compiles.
+
+  The two GPU timestamp read-backs drop their `try_into().expect(…)` for
+  `u64::from_le_bytes(*b)`. The workspace-wide allow in `Cargo.toml` is gone. The one
+  `chunks_exact` left, `channels * 2` in the 16-bit PNG path, has no constant size.
+  In `:latest`: workspace clippy with CI's features and `-D warnings` is clean, rustfmt is
+  clean, and the renderer's 163 unit tests and every integration suite pass, the 38
+  `headless` GPU tests on lavapipe included.
 - **The MSI step and the helper table became hub calls (2026-10-05, hub `c4052035`, CON55).**
   The *MSI Packaging* step of `scripts/windows/Build-Windows.ps1` calls the hub's
   `Invoke-MsiPackage`. It used to resolve `wix.exe` itself, assemble the `wix build` argv and

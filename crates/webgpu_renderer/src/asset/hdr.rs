@@ -440,7 +440,7 @@ mod tests {
     /// Worst per-channel error relative to the brightest channel, the quantity a shared exponent bounds.
     fn worst_relative_error(decoded: &EquirectImage, expected: &[[f32; 3]]) -> f32 {
         let mut worst = 0.0f32;
-        for (texel, want) in decoded.rgba32f.chunks_exact(4).zip(expected) {
+        for (texel, want) in decoded.rgba32f.as_chunks::<4>().0.iter().zip(expected) {
             let max = want[0].max(want[1]).max(want[2]);
             if max <= 0.0 {
                 assert_eq!(&texel[..3], &[0.0; 3], "black must decode to exact black");
@@ -524,7 +524,7 @@ mod tests {
         file.extend_from_slice(&encode_rgbe([0.5, 0.5, 0.5]));
         file.extend_from_slice(&[1, 1, 1, 7]);
         let decoded = decode_hdr(&file).expect("old-style repeat");
-        for texel in decoded.rgba32f.chunks_exact(4) {
+        for texel in decoded.rgba32f.as_chunks::<4>().0 {
             assert_eq!(&texel[..3], &[0.5, 0.5, 0.5]);
         }
 
@@ -536,7 +536,7 @@ mod tests {
         file.extend_from_slice(&[1, 1, 1, 1]);
         let decoded = decode_hdr(&file).expect("composed repeat");
         assert_eq!(decoded.rgba32f.len(), width * 4);
-        for texel in decoded.rgba32f.chunks_exact(4) {
+        for texel in decoded.rgba32f.as_chunks::<4>().0 {
             assert_eq!(&texel[..3], &[0.25, 0.25, 0.25]);
         }
     }

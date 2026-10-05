@@ -127,7 +127,7 @@ fn max_deviation(original: &CpuPrimitive, simplified: &CpuPrimitive) -> f32 {
     for v in &original.vertices {
         let p = Vec3::from_array(v.position);
         let mut nearest = f32::INFINITY;
-        for tri in simplified.indices.chunks_exact(3) {
+        for tri in simplified.indices.as_chunks::<3>().0 {
             let a = Vec3::from_array(simplified.vertices[tri[0] as usize].position);
             let b = Vec3::from_array(simplified.vertices[tri[1] as usize].position);
             let c = Vec3::from_array(simplified.vertices[tri[2] as usize].position);
@@ -151,7 +151,7 @@ fn assert_well_formed(prim: &CpuPrimitive) {
         0,
         "output must stay a triangle list"
     );
-    for tri in prim.indices.chunks_exact(3) {
+    for tri in prim.indices.as_chunks::<3>().0 {
         for &i in tri {
             assert!(
                 (i as usize) < prim.vertices.len(),

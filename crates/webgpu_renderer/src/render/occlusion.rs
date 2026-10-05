@@ -393,8 +393,10 @@ fn read_samples(buffer: &wgpu::Buffer, count: usize) -> Vec<u64> {
         .get_mapped_range()
         .expect("caller maps the buffer before calling this");
     let samples = view
-        .chunks_exact(8)
-        .map(|b| u64::from_le_bytes(b.try_into().expect("chunks_exact(8) yields 8 bytes")))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|b| u64::from_le_bytes(*b))
         .collect();
     drop(view);
     samples

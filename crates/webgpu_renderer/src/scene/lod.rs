@@ -104,7 +104,7 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
 
     // Rebuild indices, dropping triangles that collapsed to a line/point.
     let mut indices = Vec::with_capacity(prim.indices.len());
-    for tri in prim.indices.chunks_exact(3) {
+    for tri in prim.indices.as_chunks::<3>().0 {
         let (a, b, c) = (
             remap[tri[0] as usize],
             remap[tri[1] as usize],

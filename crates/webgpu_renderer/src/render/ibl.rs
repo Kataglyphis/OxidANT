@@ -109,7 +109,9 @@ impl EquirectImage {
     /// Largest radiance in any colour channel; bounds the irradiance map's energy (`tests/ibl.rs`).
     pub fn max_radiance(&self) -> f32 {
         self.rgba32f
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|texel| texel[..3].iter().copied())
             .fold(0.0f32, f32::max)
     }
@@ -364,7 +366,7 @@ impl BrdfLut {
     /// (scale, bias) per texel, row-major; column is N.V, row is roughness, at texel centres.
     pub fn read_back(&self, gpu: &GpuContext) -> Vec<[f32; 2]> {
         let halves = read_texture_halves(gpu, &self.texture, 0, 0, BRDF_LUT_SIZE, BRDF_LUT_SIZE, 2);
-        halves.chunks_exact(2).map(|c| [c[0], c[1]]).collect()
+        halves.as_chunks::<2>().0.to_vec()
     }
 }
 
@@ -683,7 +685,12 @@ fn read_cube_face_rgb(
     size: u32,
 ) -> Vec<[f32; 3]> {
     let halves = read_texture_halves(gpu, texture, face, mip, size, size, 4);
-    halves.chunks_exact(4).map(|c| [c[0], c[1], c[2]]).collect()
+    halves
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| [c[0], c[1], c[2]])
+        .collect()
 }
 
 /// Blocking readback of a half-float subresource as f32; tests and diagnostics only.
@@ -752,8 +759,8 @@ fn read_texture_halves(
         for row in 0..height {
             let start = (row * bytes_per_row) as usize;
             let end = start + unpadded as usize;
-            for pair in data[start..end].chunks_exact(2) {
-                values.push(half_to_f32(u16::from_le_bytes([pair[0], pair[1]])));
+            for pair in data[start..end].as_chunks::<2>().0 {
+                values.push(half_to_f32(u16::from_le_bytes(*pair)));
             }
         }
         values
