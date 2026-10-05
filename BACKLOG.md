@@ -104,112 +104,37 @@ protocol exists and the backlog is empty" — it was neither.
 
 Each of these is half-done here on purpose: the other half is a change to the
 submodule, which is a different repository with other consumers. The local side
-is written so that finishing it upstream is a deletion here, not a rewrite.
+is written so that finishing it upstream is a deletion here, not a rewrite. The
+hub tracks both as CON55.
 
-Every row below still says "re-checked against hub 49be50f0" because that
-re-check still holds at `604294e2`. The bump between the two pins touches nine
-files -- `.github/workflows/python-ci-windows.yml`, `CHANGELOG.md`,
-`docs/code-quality-tooling.md`, `docs/python-ci.md`, `docs/scripts/mutations.json`,
-`docs/shared-script-libraries.md`, `linux/scripts/lib/app-packaging.sh` and two
-`linux/scripts/tests/` suites -- and none of them is `_cargo_wrapper.sh`,
-`WindowsScripts.Shared.psm1`, anything under `windows/scripts/rust/`,
-`docs/adopting-in-a-new-project.md`, `docs/INDEX.md` or the certificates README.
-What it DID close was not a row here but a comment: the `powershell-lint` job in
-`lint-gates.yml` is a `uses:` now, which is the one thing `49be50f0` offered and
-this repo declined.
+Five rows closed at hub `61cb0e42` (2026-10-05), and their local halves are gone:
+- `_cargo_wrapper.sh` registers `CARGO_SAFE_DIRECTORY` and every hub cargo
+  driver sources it. `ci-container-steps.sh` now only exports the knob; its
+  `riscv64-test` step, which runs cargo itself, sources the wrapper.
+- `Get-ANTfrastructurePin` lives in `WindowsScripts.Shared.psm1`, so
+  `Resolve-CargoToolPin` is deleted from `scripts/windows/Build-Windows.ps1`.
+- The hub's `windows/scripts/rust/Build-Windows.ps1` is deleted by owner
+  decision. This repo owns its Windows Rust build.
+- The MSIX trust steps live in the hub's certificates README, which this
+  README links.
+- `docs/adopting-in-a-new-project.md` § 8 names `scripts/windows/container/`.
 
-Each row now also says what a re-check at `57ca2b14`, the pin on 2026-09-25, found.
-
-Re-checked at `62487181`, the pin on 2026-10-05: every row below is unmoved,
-and the hub now tracks all seven as CON55 in its `BACKLOG.md`. The row about
-retired workflow names closed upstream: `cargo_fmt_clippy.sh`,
-`docs/ci-build-triggers.md` and `.github/consumers.json` all give the new names.
-
-- [b] `_cargo_wrapper.sh` needs the safe.directory guard that
-      `lib/cmake-build.sh:140-144` already has, behind a `CARGO_SAFE_DIRECTORY`
-      knob defaulting to `/workspace`, and `cargo_release/bench/build_doc/`
-      `coverage/security_checks.sh` should source it the way `cargo_debug.sh`
-      does. Then drop the guard from `ci-container-steps.sh`. Re-checked against
-      hub 49be50f0: `_cargo_wrapper.sh` still has no safe.directory line at all
-      and `CARGO_SAFE_DIRECTORY` appears nowhere in the hub -- still blocked.
-      That bump's `01-core/fix_bind_mount_ownership` is NOT this: it chowns a
-      tree a container wrote back to the mount's uid:gid, which is a filesystem
-      ownership problem. This one is git refusing a checkout for dubious
-      ownership, which `git config --global --add safe.directory` fixes and
-      `chown` does not. Nothing here is replaced by it. Re-checked at
-      `57ca2b14`: still no safe.directory line in `_cargo_wrapper.sh`, and no
-      `CARGO_SAFE_DIRECTORY` anywhere in the hub.
-- [b] `Get-ANTfrastructurePin` (hub `windows/scripts/rust/Build-Windows.ps1`)
-      belongs in `WindowsScripts.Shared.psm1`, so this repo's
-      `Resolve-CargoToolPin` in `scripts/windows/Build-Windows.ps1` can be
-      deleted and both sides share one implementation. Re-checked against hub
-      49be50f0: the function is still only in that one script, still blocked.
-      Re-checked at `57ca2b14`: unchanged.
 - [b] The MSI Packaging step of `scripts/windows/Build-Windows.ps1` should
-      become a hub `windows/scripts/rust/New-MsiPackage.ps1` (or a
-      `WindowsMsix.Common` function) taking `-WxsFile -LicenseFile
-      -ProductName -Manufacturer -ExeSource -Version -OutFile`. The MSIX half
-      of this landed upstream on 2026-09-15 as `Invoke-MsixPackage`, and this
-      repo's ~100-line copy went with it; the MSI half has no hub function yet.
-      Re-checked against hub 49be50f0: `windows/scripts/rust/` is still
-      Build-Windows.ps1, New-Archive.ps1 and New-MsixPackage.ps1, with no
-      `New-MsiPackage` anywhere in the tree -- still blocked.
-      Re-checked at `57ca2b14`: no MSI function anywhere in the hub. Since
-      2026-09-25 the step also passes the arch (`wix build -arch`) and a
-      generated `PayloadDlls` fragment, so the function would need `-Arch` and
-      the DLL list as well. The CMake repos build their MSIs through CPack's
-      WiX generator (the hub's `cmake/CPackCommon.cmake`), so this repo would
-      be its only caller.
-- [b] Decide the fate of the hub's `windows/scripts/rust/Build-Windows.ps1`:
-      it has zero consumers, does `rustup component add` against an offline
-      rustup and builds `--all-features`. Either make it callable
-      (`-Features`/`-AllFeatures`, `-Package`/`-Bin`, opt-in benchmarks, no
-      rustup calls, no scoop block) or delete it and record OxidANT as the
-      owner of the Windows Rust build. Re-checked against hub 49be50f0:
-      unchanged, and still the sole home of `Get-ANTfrastructurePin` above, so
-      the two rows are decided together. Re-checked at `57ca2b14`: still
-      `rustup component add`, `--all-features` and the scoop block.
-- [b] `docs/adopting-in-a-new-project.md` section 8 should list
-      `scripts/windows/container/` as "scripts that run inside the Windows
-      image" - the casing convention this repo now follows everywhere.
-      Re-checked against hub 49be50f0: the file is untouched by that bump and
-      § 8 still does not name it. Re-checked at `57ca2b14`: the file changed,
-      § 8 still does not name it.
-- [b] The MSIX certificate trust dance (importing into `LocalMachine\Root`
-      *and* `LocalMachine\TrustedPeople`, `0x800B0109`, `Get-AppxLog`) is
-      still written out in this repo's README. It belongs in the hub's
-      `windows/scripts/certificates/README.md`, which today covers only
-      `TrustedPeople`. Re-checked against hub 49be50f0: unchanged. Re-checked at
-      `57ca2b14`: unchanged, and README's MSIX section still carries the dance
-      after its 2026-09-25 rewrite.
+      become a hub function taking `-WxsFile -LicenseFile -ProductName
+      -Manufacturer -ExeSource -Version -OutFile`, plus `-Arch` (`wix build
+      -arch`) and the generated `PayloadDlls` fragment. The MSIX half landed
+      upstream on 2026-09-15 as `Invoke-MsixPackage`. The CMake repos build their
+      MSIs through CPack's WiX generator, so this repo would be the only caller.
+      Re-checked at `61cb0e42`: no MSI function in the hub.
 - [b] The module inventory in AGENTS.md section 2 carries rows with no upstream
       owner (`WindowsMsix.Common`, `WindowsConfig.Common`, `WindowsBuild.Common`,
       `WindowsScripts.Shared`, the rust drivers, `package_archive.sh`, the
       composite actions, `lint-workflows.sh`, the agentic-loop templates, the
-      01-core helpers). Once they are described in the hub's
-      `docs/adopting-in-a-new-project.md` sections 2/8 or `docs/INDEX.md`, that
-      table becomes a link. Re-checked against hub 49be50f0: neither
-      `docs/adopting-in-a-new-project.md` nor `docs/INDEX.md` changed in that
-      bump, so only `WindowsMsix.Common` is still named (§ 7) and the table
-      stays. The bump's new `WindowsMediaRuntime.Common` adds no row: it stages
-      a GStreamer/ONNX DLL closure next to a built exe. Since 2026-09-23
-      `scripts/windows/` here stages the chain-built ONNX Runtime itself
-      (Build-Windows.ps1's *Stage Chain ONNX Runtime*, via
-      `WindowsOrtPayload.Common`, this repo's own module until 2026-09-25 and the
-      hub's since, at `ad08bc30`), and since 2026-09-25 the rest of the DLL
-      closure too, with the hub's `Copy-PeImportClosure` over
-      `Get-ProductDllSearchPath` (`WindowsCrossBundle.Common`, not
-      `WindowsMediaRuntime.Common`) in its *Stage DLL Closure* step. The proof
-      is the hub's ORT census (G6, `Test-OrtProvenanceTree`), which needs the
-      hub pin at its ORT single-source commit of 2026-09-23 or later.
-      Re-checked at `57ca2b14`: § 7 names `WindowsMsix.Common` (with
-      `WindowsMsix.Signing` and `WindowsWebDav.Common`), § 8's sample imports
-      `WindowsScripts.Shared` and `WindowsBuild.Common`, and `docs/INDEX.md`
-      points at the module, library, template and action directories, but
-      nothing upstream lists the functions the table names, so it stays.
-      Re-checked at `ad08bc30`: § 7 now also names `WindowsOrtPayload.Common`
-      and `WindowsCrossBundle.Common`'s closure, and the functions the table
-      names are still listed nowhere upstream.
+      01-core helpers). Once the hub lists those functions
+      (`docs/adopting-in-a-new-project.md` sections 2/8 or `docs/INDEX.md`), the
+      table becomes a link. Re-checked at `61cb0e42`: § 7 names the MSIX, ORT
+      payload and cross-bundle modules, § 8 now the `container/` directory, and
+      the functions are still listed nowhere upstream.
 
 ## Not adopted yet
 

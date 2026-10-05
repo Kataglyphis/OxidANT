@@ -134,24 +134,12 @@ try {
     }
     if (-not $layout.IsCross) {
       Invoke-BuildStep -Context $context -StepName 'Security Checks (audit & deny)' -Script {
-        # Pinned from the image env or versions.env, else fatal: unpinned, crates.io picks the verdict.
-        $versionsEnv = Join-Path $repoRoot 'third_party/ANTfrastructure/linux/scripts/01-core/versions.env'
-        $pins = if (Test-Path $versionsEnv) { ConvertFrom-VersionsEnv -Path $versionsEnv } else { [ordered]@{} }
-
-        function Resolve-CargoToolPin {
-          param([Parameter(Mandatory)][string]$Name)
-          $fromEnv = [Environment]::GetEnvironmentVariable($Name)
-          if (-not [string]::IsNullOrWhiteSpace($fromEnv)) { return $fromEnv }
-          if ($pins.Contains($Name) -and -not [string]::IsNullOrWhiteSpace($pins[$Name])) {
-            return $pins[$Name]
-          }
-          throw ("$Name is not set and could not be read from $versionsEnv. It pins a " +
-                 'cargo tool whose verdict decides this step; installing it unpinned ' +
-                 'would let crates.io choose the version instead.')
+        # Pinned from the image env or the hub's versions.env, else fatal: unpinned, crates.io picks the verdict.
+        if (-not (Get-Command -Name 'Get-ANTfrastructurePin' -ErrorAction SilentlyContinue)) {
+          throw 'Get-ANTfrastructurePin is missing: move third_party/ANTfrastructure to hub 61cb0e42 (2026-10-05) or later.'
         }
-
-        $cargoAuditVersion = Resolve-CargoToolPin -Name 'CARGO_AUDIT_VERSION'
-        $cargoDenyVersion = Resolve-CargoToolPin -Name 'CARGO_DENY_VERSION'
+        $cargoAuditVersion = Get-ANTfrastructurePin -Name 'CARGO_AUDIT_VERSION'
+        $cargoDenyVersion = Get-ANTfrastructurePin -Name 'CARGO_DENY_VERSION'
         Write-BuildLog -Context $context -Message "cargo-audit $cargoAuditVersion, cargo-deny $cargoDenyVersion"
 
         Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoAuditVersion, 'cargo-audit') | Out-Null
