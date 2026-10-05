@@ -52,6 +52,7 @@ impl Worker {
             .detector
             .take()
             .and_then(|detector| spawn_inference(detector, &self.config, boxes.clone()));
+        let frames = inference.as_ref().map(|(tx, _)| tx);
         let mut failures: u32 = 0;
         while !self.shutdown.load(Ordering::Relaxed) {
             let found = camera::probe();
@@ -61,7 +62,7 @@ impl Worker {
             log::info!("camera: {label}");
             let started = Instant::now();
             let deadline = plan.is_stand_in().then(|| started + REPROBE_EVERY);
-            let result = self.capture(&plan, &found, &boxes, inference.as_ref(), deadline);
+            let result = self.capture(&plan, &found, &boxes, frames, deadline);
             if self.shutdown.load(Ordering::Relaxed) {
                 break;
             }
@@ -79,6 +80,11 @@ impl Worker {
                 failures = failures.saturating_add(1);
                 self.sleep(pause);
             }
+        }
+        // Finish the frame in flight: an ORT session still running at process exit errors out.
+        if let Some((tx, handle)) = inference {
+            drop(tx);
+            let _ = handle.join();
         }
         log::info!("capture worker stopped");
     }
@@ -363,11 +369,12 @@ impl Drop for Running {
 }
 
 /// The inference thread: takes the newest frame, writes the boxes, logs when cats come and go.
+/// It ends once its sender is dropped.
 fn spawn_inference(
     mut detector: PersonDetector,
     config: &Config,
     boxes: Boxes,
-) -> Option<mpsc::SyncSender<Vec<u8>>> {
+) -> Option<(mpsc::SyncSender<Vec<u8>>, thread::JoinHandle<()>)> {
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
     let (width, height, score) = (config.width, config.height, config.score);
     let wanted = (!config.all_classes).then(|| vec![COCO_CAT]);
@@ -398,7 +405,7 @@ fn spawn_inference(
             }
         });
     match spawned {
-        Ok(_) => Some(tx),
+        Ok(handle) => Some((tx, handle)),
         Err(err) => {
             log::error!("could not start the inference thread, streaming without boxes: {err}");
             None
