@@ -443,6 +443,9 @@ fn light_space_for_0( cascade_2 : i32) -> mat4x4<f32>
 
 fn shadow_visibility_0( viewDepth_1 : f32,  worldPos_1 : vec3<f32>,  nDotL_0 : f32) -> f32
 {
+    var inBounds_0 : bool;
+    var _S32 : bool;
+    var _S33 : bool;
     var selected_0 : i32;
     if(viewDepth_1 > (frame_0.cascade_splits_0.x))
     {
@@ -460,9 +463,6 @@ fn shadow_visibility_0( viewDepth_1 : f32,  worldPos_1 : vec3<f32>,  nDotL_0 : f
     {
         selected_0 = i32(2);
     }
-    var _S32 : bool;
-    var _S33 : bool;
-    var inBounds_0 : bool;
     const _S34 : vec3<f32> = vec3<f32>(0.0f, 0.0f, 0.0f);
     var uv_13 : vec2<f32> = vec2<f32>(0.0f, 0.0f);
     var proj_0 : vec3<f32> = _S34;
@@ -492,22 +492,22 @@ fn shadow_visibility_0( viewDepth_1 : f32,  worldPos_1 : vec3<f32>,  nDotL_0 : f
         }
         if(inBounds_0)
         {
-            _S33 = _S36 >= 0.0f;
-        }
-        else
-        {
-            _S33 = false;
-        }
-        if(_S33)
-        {
-            _S32 = _S36 <= 1.0f;
+            _S32 = _S36 >= 0.0f;
         }
         else
         {
             _S32 = false;
         }
-        var _S37 : bool;
         if(_S32)
+        {
+            _S33 = _S36 <= 1.0f;
+        }
+        else
+        {
+            _S33 = false;
+        }
+        var _S37 : bool;
+        if(_S33)
         {
             _S37 = (proj_1.z) <= 1.0f;
         }
@@ -570,22 +570,22 @@ fn shadow_visibility_0( viewDepth_1 : f32,  worldPos_1 : vec3<f32>,  nDotL_0 : f
             }
             if(inBounds_0)
             {
-                _S33 = (tapUV_0.y) >= 0.0f;
-            }
-            else
-            {
-                _S33 = false;
-            }
-            if(_S33)
-            {
-                _S32 = (tapUV_0.y) <= 1.0f;
+                _S32 = (tapUV_0.y) >= 0.0f;
             }
             else
             {
                 _S32 = false;
             }
-            var _S42 : f32;
             if(_S32)
+            {
+                _S33 = (tapUV_0.y) <= 1.0f;
+            }
+            else
+            {
+                _S33 = false;
+            }
+            var _S42 : f32;
+            if(_S33)
             {
                 var _S43 : vec3<f32> = vec3<f32>(tapUV_0, f32(cascade_3));
                 _S42 = (textureSampleCompareLevel((shadowMap_0), (shadowSampler_0), ((_S43)).xy, i32(((_S43)).z), (proj_0.z - _S39)));
