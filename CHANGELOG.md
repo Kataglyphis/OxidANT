@@ -215,6 +215,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **The arm64 lane can run the renderer tests in parallel on dispatch (2026-10-06).** The
+  `parallel-renderer-tests` input of `windows-arm64-cross.yml` drops Stage-CrossTests.ps1's
+  `--test-threads=1` from `tests.json` on the runner, so one run can name the WARP crash
+  with the hub runner's exit-code and WER reporting. Push runs stay serial.
 - **The Linux lanes ship a deb, an AppImage and a flatpak beside the tar (2026-10-06, hub
   `fbab76c8`).** `PACKAGE_TYPES` was `tar`, because the hub's `package_archive.sh` wrote the
   tar and stopped. It now builds all four from the release `kataglyphis_cli`, installed as

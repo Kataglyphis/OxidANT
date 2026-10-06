@@ -49,6 +49,9 @@ protocol exists and the backlog is empty" — it was neither.
       STATUS_ACCESS_VIOLATION`), plus WER's faulting module, offset and
       exception code when the runner logged event 1000. So one parallel arm64
       run, without `--test-threads=1`, is enough to name it.
+      That run is a dispatch, not a red develop: `gh workflow run
+      windows-arm64-cross.yml -f parallel-renderer-tests=true` drops the flag
+      from `tests.json` on the runner only (2026-10-06).
 
 - [ ] Decide whether the Linux x64 feature check (`feature-matrix` in
       `linux-x64.yml`) should also run on every push. It is the one job still
