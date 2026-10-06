@@ -25,7 +25,7 @@ struct Aabb_std430_0
 
 @binding(0) @group(0) var depthTex_0 : texture_depth_2d;
 
-const UNIT_CORNERS_0 : array<vec3<f32>, i32(8)> = array<vec3<f32>, i32(8)>( vec3<f32>(0.0f, 0.0f, 0.0f), vec3<f32>(1.0f, 0.0f, 0.0f), vec3<f32>(0.0f, 1.0f, 0.0f), vec3<f32>(1.0f, 1.0f, 0.0f), vec3<f32>(0.0f, 0.0f, 1.0f), vec3<f32>(1.0f, 0.0f, 1.0f), vec3<f32>(0.0f, 1.0f, 1.0f), vec3<f32>(1.0f, 1.0f, 1.0f) );
+var<private> UNIT_CORNERS_0 : array<vec3<f32>, i32(8)> = array<vec3<f32>, i32(8)>( vec3<f32>(0.0f, 0.0f, 0.0f), vec3<f32>(1.0f, 0.0f, 0.0f), vec3<f32>(0.0f, 1.0f, 0.0f), vec3<f32>(1.0f, 1.0f, 0.0f), vec3<f32>(0.0f, 0.0f, 1.0f), vec3<f32>(1.0f, 0.0f, 1.0f), vec3<f32>(0.0f, 1.0f, 1.0f), vec3<f32>(1.0f, 1.0f, 1.0f) );
 @compute
 @workgroup_size(64, 1, 1)
 fn cs_main(@builtin(global_invocation_id) gid_0 : vec3<u32>)
