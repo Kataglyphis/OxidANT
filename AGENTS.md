@@ -545,9 +545,12 @@ which a local container run executes too:
   and the test tree, and `windows-11-arm` runs `kataglyphis_cli.exe --help`, `stats`,
   `onnx-runtime` and `media-check` natively, then every staged test with
   `KATAGLYPHIS_REQUIRE_GPU=1` (hub CON43), the renderer's one test at a time. In parallel,
-  WARP on `windows-11-arm` killed `headless.exe` before any test finished, with no panic
-  text (run 36889467167); serially all of them pass (run 36907253720), and the whole job
-  takes 2.5 min. Not root-caused: BACKLOG.md. No arm64 Windows container image exists, so that
+  WARP itself crashes: dispatch 37422053110 (2026-10-06, `parallel-renderer-tests`) stopped
+  `ibl.exe` with `0xC0000005 STATUS_ACCESS_VIOLATION`, faulting module `d3d10warp.dll` at
+  offset 0x80528 (WARP 10.0.26100.9278), as run 36889467167 had stopped `headless.exe`.
+  Serially all of them pass (run 36907253720), and the whole job takes 2.5 min. The fault is
+  in Microsoft's driver, not this repo; re-dispatch with the input after a runner image
+  update to see whether it is gone. No arm64 Windows container image exists, so that
   job is the only place an arm64 binary of this repo executes.
 
 Both lanes resolve the version from `VERSION.txt` (the lane's `version-file`). Both take
