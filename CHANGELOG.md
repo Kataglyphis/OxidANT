@@ -215,6 +215,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **The Linux x64 feature check runs on every push (2026-10-06).** `feature-matrix` lost its
+  `[build-features]` marker, the last opt-in job here: the owner's rule is that every lane
+  runs. Its first run ever, dispatch 37423257667, passed all six rows (`gstreamer`,
+  `gui_linux`, `gui_linux,gstreamer`, `gui_windows`, `onnxruntime`, `burn_demos`).
 - **The arm64 lane can run the renderer tests in parallel on dispatch (2026-10-06).** The
   `parallel-renderer-tests` input of `windows-arm64-cross.yml` drops Stage-CrossTests.ps1's
   `--test-threads=1` from `tests.json` on the runner, so one run can name the WARP crash

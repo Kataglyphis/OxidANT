@@ -23,7 +23,7 @@
 
 For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 
-> **Every platform lane runs on every push and PR** to `main`/`develop` — Linux x64, Linux arm64, Windows x64 and Windows arm64 (cross-built, then run on a real arm64 runner), one workflow each, so each badge above reports a real run. No commit-message marker is needed. The one opt-in job left is the Linux x64 feature check (`[build-features]` in the HEAD commit message, or a manual run). See [AGENTS.md](AGENTS.md#continuous-integration).
+> **Every platform lane runs on every push and PR** to `main`/`develop` — Linux x64, Linux arm64, Windows x64 and Windows arm64 (cross-built, then run on a real arm64 runner), one workflow each, so each badge above reports a real run. No commit-message marker is needed, the Linux x64 feature check included (since 2026-10-06). See [AGENTS.md](AGENTS.md#continuous-integration).
 
 <!-- [![Linux build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml)
 [![Windows build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml)
