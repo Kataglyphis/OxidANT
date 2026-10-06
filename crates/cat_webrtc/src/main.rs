@@ -4,6 +4,7 @@
 mod camera;
 mod capture;
 mod config;
+mod install;
 mod output;
 mod status;
 mod web;
@@ -121,8 +122,9 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    // Still single-threaded here, so changing the environment cannot race a reader.
+    install::adopt();
     if std::env::var_os(SIGNALLING_LOG_ENV).is_none() {
-        // Still single-threaded here, so changing the environment cannot race a reader.
         std::env::set_var(SIGNALLING_LOG_ENV, "warn");
     }
     kataglyphis_core::logging::init_logger();

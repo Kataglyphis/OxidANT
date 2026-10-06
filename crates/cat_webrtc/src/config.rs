@@ -8,8 +8,20 @@ use serde::{Deserialize, Serialize};
 /// Environment variable naming the config file, for installs that keep it elsewhere.
 pub const CONFIG_ENV: &str = "KATAGLYPHIS_CATCAM_CONFIG";
 
-/// Where a packaged install keeps its config; read only when it exists.
-pub const SYSTEM_CONFIG: &str = "/etc/omni-accelerant/catcam.toml";
+/// Where a packaged install keeps its config, read only when it exists: `%ProgramData%` on Windows, `/etc` elsewhere.
+pub fn system_config() -> PathBuf {
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("ProgramData")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+        base.join("omni-accelerant").join("catcam.toml")
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/etc/omni-accelerant/catcam.toml")
+    }
+}
 
 /// Whether the YOLO model runs: `auto` skips it on a small board or when it does not load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -93,13 +105,13 @@ impl Config {
         Ok(toml::from_str(text)?)
     }
 
-    /// `explicit`, else `$KATAGLYPHIS_CATCAM_CONFIG`, else [`SYSTEM_CONFIG`] when present, else defaults.
+    /// `explicit`, else `$KATAGLYPHIS_CATCAM_CONFIG`, else [`system_config`] when present, else defaults.
     pub fn load(explicit: Option<&Path>) -> anyhow::Result<(Self, Option<PathBuf>)> {
         let path = explicit
             .map(Path::to_path_buf)
             .or_else(|| std::env::var_os(CONFIG_ENV).map(PathBuf::from))
             .or_else(|| {
-                let system = PathBuf::from(SYSTEM_CONFIG);
+                let system = system_config();
                 system.is_file().then_some(system)
             });
         let Some(path) = path else {

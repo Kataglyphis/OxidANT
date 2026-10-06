@@ -400,10 +400,20 @@ board runs it as one service unit:
 - **The network is pinned.** Media uses UDP `ice_port_min..ice_port_max`
   (40000-40099), set on every viewer's ICE agent from `consumer-added`, and STUN is off
   unless `stun_server` names one, so a LAN stream needs nothing outside it.
-- **Settings** come from `/etc/omni-accelerant/catcam.toml`, `--config` or
+- **Settings** come from `/etc/omni-accelerant/catcam.toml` (Windows:
+  `%ProgramData%\omni-accelerant\catcam.toml`, `config::system_config`), `--config` or
   `$KATAGLYPHIS_CATCAM_CONFIG`, with the flags on top. Unknown keys are errors, and
   `--print-config` prints the effective set. Every earlier flag still works.
   `inference = "auto"` skips the model below 1 GiB of RAM or when it does not load.
+- **A Windows install is one folder, and the exe finds everything in it** (`install.rs`).
+  - When `lib\gstreamer-1.0` sits beside the exe, `install::adopt` sets the variables the
+    folder implies, first thing in `main`: `GST_PLUGIN_PATH`, an empty
+    `GST_PLUGIN_SYSTEM_PATH[_1_0]`, `GST_PLUGIN_SCANNER`, `GST_REGISTRY` under
+    `%LOCALAPPDATA%`, `ORT_DYLIB_PATH` and `KATAGLYPHIS_ONNX_MODEL` (`models\yolo26n.onnx`).
+  - A variable the caller already set wins.
+  - On Linux the bundle's `catcam` launcher does the same job, so `adopt` is a no-op there.
+  - OmniAccelerANT's `scripts/windows/cat-stream/Package-CatCam.ps1` builds that folder
+    and the MSI around it.
 - **Logs and exit:** it logs at info (`KATAGLYPHIS_LOG_LEVEL`) and quiets the
   signalling server's per-message INFO (`WEBRTCSINK_SIGNALLING_SERVER_LOG=warn` unless
   set). It stops cleanly on SIGTERM and exits non-zero only when the output pipeline
