@@ -67,8 +67,8 @@ jobs:
       # VERSION is computed by scripts/linux/compute-version.sh into GITHUB_ENV.
       REF_NAME: ${{ github.ref_name }}
       RUN_NUMBER: ${{ github.run_number }}
-      # package_archive.sh only writes a tarball; naming other formats claims artifacts it never builds. See BACKLOG.md.
-      PACKAGE_TYPES: tar
+      # Each format package_archive.sh builds from the one release binary (hub fbab76c8).
+      PACKAGE_TYPES: tar,deb,appimage,flatpak
     steps:
       - name: Prepare the CI host
         uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
@@ -143,8 +143,8 @@ jobs:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh release'
 
-      # --privileged: the AppImage tooling needs FUSE and the mount capability, not just /dev/fuse.
-      - name: 📦 Create archive (tar)
+      # --privileged: flatpak-builder runs its build under bubblewrap.
+      - name: 📦 Create packages (tar, deb, AppImage, flatpak)
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: >-
@@ -155,6 +155,9 @@ jobs:
             -e PACKAGE_TYPES="${{ env.PACKAGE_TYPES }}"
             -e PLATFORM="${{ env.PLATFORM }}"
             -e ARCH="${{ env.ARCH }}"
+            -e APP_PACKAGING_APP_ID_PREFIX=org.kataglyphis
+            -e APP_PACKAGING_MAINTAINER="Kataglyphis <dev@kataglyphis.local>"
+            -e APP_PACKAGING_DESCRIPTION="OxidANT, the Kataglyphis Rust tooling."
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
@@ -166,9 +169,8 @@ jobs:
             --package-types "${PACKAGE_TYPES}"
             --platform "${PLATFORM}"
             --arch "${ARCH}"
-            --flatpak-manifest "packaging/flatpak/kataglyphis.flatpak.json"
-            --desktop-file "packaging/flatpak/kataglyphis.desktop"
-            --icon-file "packaging/flatpak/icon.png"
+            --desktop-file "packaging/linux/oxidant.desktop"
+            --icon-file "images/logo.png"
             --archive-out-file "dist/archive_path.txt"
             --no-github-output'
 

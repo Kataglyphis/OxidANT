@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=OxidANT
+Comment=Kataglyphis Rust tooling: inference, media and rendering from the command line
+Exec=oxidant
+Icon=oxidant
+Terminal=true
+Categories=Utility;Development;

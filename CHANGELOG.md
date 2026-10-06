@@ -215,6 +215,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **The Linux lanes ship a deb, an AppImage and a flatpak beside the tar (2026-10-06, hub
+  `fbab76c8`).** `PACKAGE_TYPES` was `tar`, because the hub's `package_archive.sh` wrote the
+  tar and stopped. It now builds all four from the release `kataglyphis_cli`, installed as
+  `oxidant`:
+  - the deb as `/usr/bin/oxidant`, depending on `libc6, libgcc-s1` (the binary links
+    `libc`, `libm` and `libgcc_s`);
+  - the AppImage;
+  - the flatpak as `org.kataglyphis.oxidant` on freedesktop 24.08.
+
+  The lane passes `packaging/linux/oxidant.desktop` (`Name=OxidANT`, `Terminal=true`) and
+  `images/logo.png`, a real 128×128 PNG. `packaging/flatpak/` is gone: its `icon.png` was
+  the escaped text of a 1×1 PNG, `icon.png.b64` a 1×1 image, and its hand-written
+  manifest pointed at `../../target/release/oxidant` and was never read. Proven in
+  `:latest` on this binary: the deb's binary runs, the AppImage runs, and the flatpak
+  installs and runs through `flatpak run`. The BACKLOG row is closed.
 - **The renderer iterates fixed chunks as arrays (2026-10-06).** All 46 sites in
   `crates/webgpu_renderer` that clippy 1.98's `chunks_exact_to_as_chunks` flagged now use
   `as_chunks::<N>()`, so each element is a `&[T; N]`:
