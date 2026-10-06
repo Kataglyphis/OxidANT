@@ -53,13 +53,6 @@ protocol exists and the backlog is empty" — it was neither.
       windows-arm64-cross.yml -f parallel-renderer-tests=true` drops the flag
       from `tests.json` on the runner only (2026-10-06).
 
-- [ ] Decide whether the Linux x64 feature check (`feature-matrix` in
-      `linux-x64.yml`) should also run on every push. It is the one job still
-      behind a marker (`[build-features]`), six extra image pulls per run (one
-      per matrix row since the `gui_windows` row joined on 2026-09-24); the
-      2026-09-24 always-on request named the x64, arm64 and Windows lanes
-      only. As of 2026-09-25 it has never run: no commit message carries the
-      marker and the repository has no `workflow_dispatch` run.
 ## Not adopted yet
 
 The loop itself — config, runner wrappers, `scripts/agentic-loop/` — is not set

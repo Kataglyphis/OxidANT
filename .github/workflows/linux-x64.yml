@@ -38,10 +38,9 @@ jobs:
       USERNAME: ${{ secrets.USERNAME }}
       PW: ${{ secrets.PW }}
 
-  # The only build of each optional feature; opt-in ([build-features]) because each row is a full image pull.
+  # The only build of each optional feature, on every push like the lane (owner rule: no opt-in jobs); one image pull per row.
   feature-matrix:
     name: Feature check (${{ matrix.features }})
-    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message || '', '[build-features]') }}
     runs-on: ubuntu-26.04
     # One image pull and one `cargo check` per row - no build, test or package.
     timeout-minutes: 45
