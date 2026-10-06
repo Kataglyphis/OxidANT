@@ -57,31 +57,6 @@ protocol exists and the backlog is empty" — it was neither.
       2026-09-24 always-on request named the x64, arm64 and Windows lanes
       only. As of 2026-09-25 it has never run: no commit message carries the
       marker and the repository has no `workflow_dispatch` run.
-- [ ] The Linux lanes can only produce a tarball. ANTfrastructure's
-      `package_archive.sh` writes the tar and stops; its `create_deb()` was
-      deleted on 2026-08-08 as unreachable, and `--flatpak-manifest`,
-      `--desktop-file` and `--appdata-file` are checked for existence and then
-      never read. `PACKAGE_TYPES` now says `tar`, which is honest but narrow.
-      Restoring deb/AppImage/Flatpak means changing ANTfrastructure, not this repo
-      -- the packaging/flatpak/ files here are ready and unused.
-      Re-checked against hub 49be50f0, which DID add a flatpak pair
-      (`app_packaging_ensure_flatpak_runtime`,
-      `app_packaging_package_cmake_install_flatpak`): it does not close this.
-      Both live in `lib/app-packaging.sh` and neither is reachable from
-      `06-packaging/package_archive.sh`, which is byte-identical across the
-      bump -- still `PACKAGE_TYPES=tar`, still accepting `--flatpak-manifest`
-      and never reading it. The new entry point also stages from
-      `cmake --install <build_dir>` and asserts an executable at
-      `<prefix>/bin/<project_name>`; this repo has no CMakeLists.txt and builds
-      with cargo, so it would need a cargo-install-tree twin, not a caller.
-      Re-checked again at hub `604294e2`, the one bump that touches
-      `lib/app-packaging.sh` (it makes `ostree` a required flatpak tool and says
-      so when it is missing): `06-packaging/package_archive.sh` is still
-      byte-identical and still never reads `--flatpak-manifest`, so the row is
-      unmoved. Re-checked at hub `57ca2b14` (the pin on 2026-09-25):
-      `package_archive.sh` last changed in f2c8a78a, its 2026-08-11 restore,
-      and is still tar-only.
-
 ## Not adopted yet
 
 The loop itself — config, runner wrappers, `scripts/agentic-loop/` — is not set
