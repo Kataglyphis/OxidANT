@@ -34,25 +34,6 @@ protocol exists and the backlog is empty" — it was neither.
       desynchronises it, which is why the instanced-normal bug above cannot be
       fixed here. Blocked on deciding who compiles tex_quad.slang.
 
-- [ ] Find why the renderer's `headless.exe` dies on `windows-11-arm` when its
-      tests run in parallel. Run 36889467167 (2026-10-01): WARP (`Microsoft
-      Basic Render Driver`, Dx12), `KATAGLYPHIS_REQUIRE_GPU=1`, the process
-      exited after `running 39 tests` with no test finished and no panic text,
-      the first time any arm64 test rendered. The same binaries on the x64
-      runner's WARP pass in parallel, and serially (`--test-threads=1`, set in
-      `Stage-CrossTests.ps1`) all 38 pass on arm64 (run 36907253720). One
-      sample each, so it may be a race in WARP's arm64 JIT or a flake. Done
-      when a parallel arm64 run is green repeatedly and the flag goes, or the
-      crash has a name (exit code, faulting module). Since hub `05f8d3e3` the
-      hub's `Invoke-StagedTests.ps1` gives both. A binary that ends without a
-      summary fails with its exit code as an NTSTATUS name (e.g. `0xC0000005
-      STATUS_ACCESS_VIOLATION`), plus WER's faulting module, offset and
-      exception code when the runner logged event 1000. So one parallel arm64
-      run, without `--test-threads=1`, is enough to name it.
-      That run is a dispatch, not a red develop: `gh workflow run
-      windows-arm64-cross.yml -f parallel-renderer-tests=true` drops the flag
-      from `tests.json` on the runner only (2026-10-06).
-
 ## Not adopted yet
 
 The loop itself — config, runner wrappers, `scripts/agentic-loop/` — is not set

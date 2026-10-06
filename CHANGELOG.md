@@ -215,6 +215,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **The arm64 parallel renderer crash has a name (2026-10-06).** Dispatch 37422053110 ran the
+  renderer tests in parallel on `windows-11-arm`: `ibl.exe` died with `0xC0000005
+  STATUS_ACCESS_VIOLATION`, faulting module `d3d10warp.dll` at offset 0x80528 (WARP
+  10.0.26100.9278), reported by the hub runner's exit-code and WER naming. The fault is in
+  Microsoft's WARP, so the renderer tests stay serial there and the BACKLOG row is closed.
 - **The Linux x64 feature check runs on every push (2026-10-06).** `feature-matrix` lost its
   `[build-features]` marker, the last opt-in job here: the owner's rule is that every lane
   runs. Its first run ever, dispatch 37423257667, passed all six rows (`gstreamer`,
