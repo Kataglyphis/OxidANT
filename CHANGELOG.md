@@ -28,6 +28,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
     - Every ICE candidate sat in 40000-40099.
     - Inference found both cats in ANThology's photo (best score 0.59).
     - A missing camera and a broken source recovered as designed.
+  - **On Windows the exe runs from its install folder (2026-10-06).**
+    - `install.rs` points GStreamer, ONNX Runtime and the model at the folder beside the
+      exe, and the settings file moves to `%ProgramData%\omni-accelerant\catcam.toml`
+      there.
+    - In a `:winamd64` rebuilt with the hub's WebRTC fixes, OmniAccelerANT's MSI
+      installed it, and it ran with only System32 on PATH, loading modules only from that
+      folder and Windows.
+    - A `webrtcsrc` viewer decoded 60 frames, and the bundled `yolo26n` on the bundled
+      chain ORT found the cat.
   - **First board run: himbeere2 (Raspberry Pi 5, imx219, Debian 13), 2026-10-05.** It
     ran as OmniAccelerANT's packaged service and picked the camera via `rpicam-vid`.
     Headless Chrome on another host played it at 29 fps. Three fixes came out of it:
