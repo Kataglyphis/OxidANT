@@ -215,6 +215,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **arm64's renderer tests run llvmpipe at 128-bit vectors (2026-10-06).** The image's
+  256-bit setting (hub CON44, for Mesa's BVH sort) made LLVM's AArch64 JIT kill a renderer
+  test binary in four of about twenty arm64 runs since 2026-10-05. Three SIGABRTs were
+  `LLVM ERROR: Do not know how to split this operator's operand!` (`forward_ambient`,
+  `occlusion`, `headless`) and one a SIGSEGV in `forward_ambient`. OxidANT uses no ray
+  tracing and no subgroups, so `ci-container-steps.sh` exports `LP_NATIVE_VECTOR_WIDTH=128`
+  on aarch64, the native NEON width.
 - **The arm64 parallel renderer crash has a name (2026-10-06).** Dispatch 37422053110 ran the
   renderer tests in parallel on `windows-11-arm`: `ibl.exe` died with `0xC0000005
   STATUS_ACCESS_VIOLATION`, faulting module `d3d10warp.dll` at offset 0x80528 (WARP

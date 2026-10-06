@@ -32,6 +32,9 @@ USAGE
 # The hub's cargo drivers register it as a git safe.directory (uid 1001 does not own the bind mount).
 export CARGO_SAFE_DIRECTORY="${CARGO_SAFE_DIRECTORY-${KATAGLYPHIS_REPO_ROOT}}"
 
+# 256-bit llvmpipe (hub CON44) is for Mesa's BVH sort; LLVM's AArch64 JIT aborts on it, and nothing here needs it.
+if [ "$(uname -m)" = aarch64 ]; then export LP_NATIVE_VECTOR_WIDTH=128; fi
+
 step="${1-}"
 [ "$#" -ge 1 ] || { usage; exit 2; }
 shift
