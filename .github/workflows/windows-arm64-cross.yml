@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [ "main", "develop" ]
   workflow_dispatch:
+    inputs:
+      parallel-renderer-tests:
+        description: Run the renderer tests in parallel on windows-11-arm, to name the WARP crash (BACKLOG)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -48,6 +53,15 @@ jobs:
         if (Test-Path -LiteralPath 'C:\ws') { throw 'C:\ws exists on the runner; the tests would read another tree' }
         $null = New-Item -ItemType Junction -Path 'C:\ws' -Target $PWD
         $env:KATAGLYPHIS_REQUIRE_GPU = '1'
+        # Dispatch-only: drops Stage-CrossTests.ps1's --test-threads=1 so the hub runner can name the parallel crash.
+        if ('${{ inputs.parallel-renderer-tests }}' -eq 'true') {
+          $manifest = @(Get-Content -Raw -LiteralPath tests.json | ConvertFrom-Json)
+          foreach ($entry in $manifest) {
+            if ($entry.PSObject.Properties['args']) { $entry.args = @($entry.args | Where-Object { $_ -ne '--test-threads=1' }) }
+          }
+          ConvertTo-Json -InputObject $manifest -Depth 4 | Set-Content -LiteralPath tests.json -Encoding utf8
+          Write-Host 'Renderer tests run in parallel (dispatch input parallel-renderer-tests)'
+        }
         & ./Invoke-StagedTests.ps1
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
