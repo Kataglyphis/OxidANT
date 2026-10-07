@@ -90,7 +90,7 @@ enum Command {
         model_path: Option<std::path::PathBuf>,
     },
 
-    /// Save/Load demonstration using Burn recorders.
+    /// Save/Load demonstration using a burnpack file.
     SaveLoad,
 }
 
@@ -98,9 +98,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::TensorDemo => {
-            oxidant::burn_demos::simple::tensor_demo::<oxidant::burn_demos::InferenceBackend>()
-        }
+        Command::TensorDemo => oxidant::burn_demos::simple::tensor_demo(),
 
         Command::LinearRegression {
             epochs,
@@ -171,11 +169,8 @@ fn main() -> anyhow::Result<()> {
                     .join("yolov10m.onnx")
             });
 
-            // burn 0.21: `Device` hangs off the `BackendTypes` supertrait now.
-            let device = <oxidant::burn_demos::TrainingBackend as burn::tensor::backend::BackendTypes>::Device::default();
-            oxidant::burn_demos::onnx_yolov10::onnx_yolov10_demo::<
-                oxidant::burn_demos::TrainingBackend,
-            >(
+            let device = oxidant::burn_demos::training_device();
+            oxidant::burn_demos::onnx_yolov10::onnx_yolov10_demo(
                 &model_path,
                 warmup,
                 runs,

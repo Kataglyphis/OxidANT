@@ -18,7 +18,7 @@ wgpu = "30"
 winit = "0.30"
 pollster = "1.0"
 bytemuck = { version = "1.25", features = ["derive"] }
-glam = { version = "0.33", features = ["bytemuck"] }
+glam = { version = "0.34", features = ["bytemuck"] }
 gltf = { version = "1", features = ["import", "KHR_lights_punctual", "KHR_texture_transform", "KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions"] }
 # Not the `mikktspace` crate: it pulls nalgebra 0.26, which is future-incompatible on current rustc.
 bevy_mikktspace = "1"
