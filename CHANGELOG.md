@@ -224,6 +224,30 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **burn 0.21.0 → 0.22.0 and glam 0.33 → 0.34 (2026-10-07, from the Renovate report).**
+  - burn 0.22 drops the backend type parameter: models and tensors are plain types
+    (`Tensor<2>`, `nn::Linear`), and the backend is a runtime `Device`. The burn demos
+    run on `Device::flex()`, with `.autodiff()` for training. Flex replaces NdArray,
+    which 0.22 deprecates.
+  - `burn-ndarray` and `burn-autodiff` are gone as direct dependencies. The root package
+    enables burn's `flex` and `optim` features instead, and `optim` implies `autodiff`.
+  - Two smaller API changes: the optimizer is a `ModuleOptimizer`, and `save-load` writes
+    a burnpack file through `Module::save_file`/`try_load_file`, because 0.22 removed the
+    `Recorder` API.
+  - `tensor-demo` prints `TensorData` through `Display`, because its `Debug` shows raw
+    bytes in 0.22.
+  - The bincode advisory (RUSTSEC-2025-0141) left both ignore lists: burn-core no longer
+    pulls bincode, and cargo-deny reported it `advisory-not-detected`.
+  - glam 0.34 removed the deprecated `Mat4` projection and `look_at_*` methods. The
+    renderer already used `glam::camera`, so it needed no code change.
+  - Verified in `:latest` (x64):
+    - `ci-container-steps.sh fmt-clippy`, `test`, `security`, `release` and
+      `ort-chain-only` pass, and so does `run-lint-gates.sh`. The test step ran
+      395 tests on lavapipe with `KATAGLYPHIS_REQUIRE_GPU=1`, with 0 failed and the one
+      known ignore.
+    - `cargo clippy --all-targets --features burn_demos -D warnings` is clean.
+    - All six `feature-matrix` rows and the renderer's wasm32 check build.
+    - Every burn demo ran, including `onnx-yolov10` with adapter training on the chain ORT.
 - **arm64's renderer tests run llvmpipe at 128-bit vectors (2026-10-06).** The image's
   256-bit setting (hub CON44, for Mesa's BVH sort) made LLVM's AArch64 JIT kill a renderer
   test binary in four of about twenty arm64 runs since 2026-10-05. Three SIGABRTs were

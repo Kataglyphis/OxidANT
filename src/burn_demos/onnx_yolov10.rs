@@ -1,8 +1,8 @@
 use anyhow::Context;
 use burn::module::Module;
 use burn::nn;
-use burn::optim::{AdamConfig, GradientsParams, Optimizer};
-use burn::tensor::{backend::AutodiffBackend, backend::Backend, Tensor, TensorData};
+use burn::optim::{AdamConfig, GradientsParams};
+use burn::tensor::{Device, Tensor, TensorData};
 use ndarray::{Array4, Axis};
 use ort::session::Session;
 use std::path::Path;
@@ -11,14 +11,14 @@ use std::time::Instant;
 use super::lcg::Lcg;
 use crate::ort_ext::{extract_first_f32_output, OrtResultExt};
 
-pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
+pub fn onnx_yolov10_demo(
     model_path: &Path,
     warmup: usize,
     runs: usize,
     print_topk: usize,
     train_adapter_steps: usize,
     lr: f64,
-    train_device: &TrainB::Device,
+    train_device: &Device,
 ) -> anyhow::Result<()> {
     kataglyphis_inference::ort_runtime::ensure_ort_loaded()?;
     // `commit_from_file` takes `&mut self`; reassign rather than shadow, or DirectML hits `unused_mut`.
@@ -93,7 +93,7 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     // Optional: train a tiny adapter layer on frozen ONNX outputs.
     if train_adapter_steps > 0 {
         let first = first_batch.to_owned();
-        train_adapter::<TrainB>(&first, train_adapter_steps, lr, train_device)?;
+        train_adapter(&first, train_adapter_steps, lr, train_device)?;
     }
 
     Ok(())
@@ -115,45 +115,45 @@ fn run_once(
 }
 
 #[derive(Module, Debug)]
-struct OutputAdapter<B: Backend> {
-    linear: nn::Linear<B>,
+struct OutputAdapter {
+    linear: nn::Linear,
 }
 
-impl<B: Backend> OutputAdapter<B> {
-    fn new(device: &B::Device) -> Self {
+impl OutputAdapter {
+    fn new(device: &Device) -> Self {
         let linear = nn::LinearConfig::new(6, 6).init(device);
         Self { linear }
     }
 
-    fn forward(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
+    fn forward(&self, x: Tensor<2>) -> Tensor<2> {
         self.linear.forward(x)
     }
 }
 
-fn make_adapter_batch<B: Backend>(
-    device: &B::Device,
+fn make_adapter_batch(
+    device: &Device,
     features_300x6: &ndarray::Array2<f32>,
-) -> (Tensor<B, 2>, Tensor<B, 2>) {
+) -> (Tensor<2>, Tensor<2>) {
     let flat: Vec<f32> = features_300x6.iter().copied().collect();
     let n_rows = features_300x6.nrows();
     let data = TensorData::new(flat, [n_rows, 6]);
     // Identity target (x == y), built from one TensorData rather than re-collecting the flat data.
-    let x = Tensor::<B, 2>::from_data(data.clone(), device);
-    let y = Tensor::<B, 2>::from_data(data, device);
+    let x = Tensor::<2>::from_data(data.clone(), device);
+    let y = Tensor::<2>::from_data(data, device);
     (x, y)
 }
 
-fn train_adapter<TrainB: AutodiffBackend>(
+fn train_adapter(
     features: &ndarray::Array2<f32>,
     steps: usize,
     lr: f64,
-    device: &TrainB::Device,
+    device: &Device,
 ) -> anyhow::Result<()> {
-    let mut model = OutputAdapter::<TrainB>::new(device);
+    let mut model = OutputAdapter::new(device);
     let mut optim = AdamConfig::new().init();
 
     for step in 0..steps {
-        let (x, y) = make_adapter_batch::<TrainB>(device, features);
+        let (x, y) = make_adapter_batch(device, features);
         let pred = model.forward(x);
 
         let loss = (pred - y).powf_scalar(2.0).mean();
@@ -161,7 +161,10 @@ fn train_adapter<TrainB: AutodiffBackend>(
         model = optim.step(lr, model, grads);
 
         if step % 5 == 0 {
-            println!("adapter step {step}/{steps} loss={:.6}", loss.into_scalar());
+            println!(
+                "adapter step {step}/{steps} loss={:.6}",
+                loss.into_scalar::<f32>()
+            );
         }
     }
 

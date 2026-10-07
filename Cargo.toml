@@ -30,9 +30,7 @@ anyhow = "1"
 chrono = "0.4"
 tokio = "1"
 clap = { version = "4", features = ["derive"] }
-burn = { version = "0.21.0", default-features = false }
-burn-autodiff = { version = "0.21.0" }
-burn-ndarray = { version = "0.21.0" }
+burn = { version = "0.22.0", default-features = false }
 ndarray = { version = "0.17" }
 plotters = { version = "0.3" }
 tempfile = { version = "3" }
@@ -75,7 +73,7 @@ onnxruntime_directml = ["kataglyphis_inference/onnxruntime_directml"]
 onnxruntime_cuda = ["kataglyphis_inference/onnxruntime_cuda"]
 # GStreamer-backed webcam capture (crates/media) + the webcam→inference engine.
 gstreamer = ["dep:kataglyphis_media", "kataglyphis_media/gstreamer", "dep:libloading"]
-burn_demos = ["dep:burn", "dep:burn-autodiff", "dep:burn-ndarray", "dep:ndarray", "dep:plotters", "dep:tempfile", "onnxruntime"]
+burn_demos = ["dep:burn", "dep:ndarray", "dep:plotters", "dep:tempfile", "onnxruntime"]
 
 [dependencies]
 kataglyphis_core = { path = "crates/core" }
@@ -93,9 +91,8 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 sysinfo = { workspace = true }
 
-burn = { workspace = true, features = ["std", "ndarray", "autodiff"], optional = true }
-burn-autodiff = { workspace = true, optional = true }
-burn-ndarray = { workspace = true, optional = true }
+# Since 0.22 the backend is a runtime Device: Flex (NdArray's successor) plus autodiff, which `optim` implies.
+burn = { workspace = true, features = ["std", "flex", "optim"], optional = true }
 ndarray = { workspace = true, optional = true }
 plotters = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }

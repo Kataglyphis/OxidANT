@@ -1,32 +1,28 @@
 use anyhow::Context;
-use burn::module::{AutodiffModule, Module};
+use burn::module::Module;
 use burn::nn;
-use burn::optim::{AdamConfig, GradientsParams, Optimizer};
+use burn::optim::{AdamConfig, GradientsParams, ModuleOptimizer};
 use burn::tensor::activation::{relu, sigmoid};
-// See simple.rs: burn 0.21 moved `Device` onto the `BackendTypes` supertrait.
-use burn::tensor::{
-    backend::{Backend, BackendTypes},
-    Tensor, TensorData,
-};
+use burn::tensor::{Device, Tensor, TensorData};
 
-use crate::burn_demos::{lcg::Lcg, losses, plot, InferenceBackend, TrainingBackend};
+use crate::burn_demos::{inference_device, lcg::Lcg, losses, plot, training_device};
 
 #[derive(Module, Debug)]
-struct DeepClassifier<B: Backend> {
-    l1: nn::Linear<B>,
-    l2: nn::Linear<B>,
-    l3: nn::Linear<B>,
+struct DeepClassifier {
+    l1: nn::Linear,
+    l2: nn::Linear,
+    l3: nn::Linear,
 }
 
-impl<B: Backend> DeepClassifier<B> {
-    fn new(device: &B::Device, hidden: usize) -> Self {
+impl DeepClassifier {
+    fn new(device: &Device, hidden: usize) -> Self {
         let l1 = nn::LinearConfig::new(2, hidden).init(device);
         let l2 = nn::LinearConfig::new(hidden, hidden).init(device);
         let l3 = nn::LinearConfig::new(hidden, 1).init(device);
         Self { l1, l2, l3 }
     }
 
-    fn forward(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
+    fn forward(&self, x: Tensor<2>) -> Tensor<2> {
         let x = relu(self.l1.forward(x));
         let x = relu(self.l2.forward(x));
         sigmoid(self.l3.forward(x))
@@ -83,12 +79,7 @@ impl TwoMoonsDataset {
         Self { x, y, n }
     }
 
-    fn batch<B: Backend>(
-        &self,
-        device: &B::Device,
-        batch_size: usize,
-        step: usize,
-    ) -> (Tensor<B, 2>, Tensor<B, 2>) {
+    fn batch(&self, device: &Device, batch_size: usize, step: usize) -> (Tensor<2>, Tensor<2>) {
         let mut xb = Vec::with_capacity(batch_size * 2);
         let mut yb = Vec::with_capacity(batch_size);
 
@@ -100,8 +91,8 @@ impl TwoMoonsDataset {
             yb.push(self.y[idx]);
         }
 
-        let x = Tensor::<B, 2>::from_data(TensorData::new(xb, [batch_size, 2]), device);
-        let y = Tensor::<B, 2>::from_data(TensorData::new(yb, [batch_size, 1]), device);
+        let x = Tensor::<2>::from_data(TensorData::new(xb, [batch_size, 2]), device);
+        let y = Tensor::<2>::from_data(TensorData::new(yb, [batch_size, 1]), device);
         (x, y)
     }
 }
@@ -120,18 +111,18 @@ fn accuracy_from_sigmoid(pred: &[f32], target: &[f32]) -> f32 {
 }
 
 fn eval_two_moons_accuracy(
-    model: &DeepClassifier<TrainingBackend>,
+    model: &DeepClassifier,
     dataset: &TwoMoonsDataset,
 ) -> anyhow::Result<f32> {
-    let infer_device = <InferenceBackend as BackendTypes>::Device::default();
+    let infer_device = inference_device();
     let infer_model = model.valid().to_device(&infer_device);
 
-    let x_all = Tensor::<InferenceBackend, 2>::from_data(
+    let x_all = Tensor::<2>::from_data(
         TensorData::new(dataset.x.clone(), [dataset.n, 2]),
         &infer_device,
     );
 
-    let y_all = Tensor::<InferenceBackend, 2>::from_data(
+    let y_all = Tensor::<2>::from_data(
         TensorData::new(dataset.y.clone(), [dataset.n, 1]),
         &infer_device,
     )
@@ -158,16 +149,16 @@ struct EpochConfig {
 }
 
 fn train_two_moons_epoch(
-    mut model: DeepClassifier<TrainingBackend>,
-    optim: &mut impl Optimizer<DeepClassifier<TrainingBackend>, TrainingBackend>,
+    mut model: DeepClassifier,
+    optim: &mut ModuleOptimizer,
     dataset: &TwoMoonsDataset,
-    device: &<TrainingBackend as BackendTypes>::Device,
+    device: &Device,
     config: &EpochConfig,
-) -> (DeepClassifier<TrainingBackend>, f32) {
+) -> (DeepClassifier, f32) {
     let mut loss_sum = 0.0f32;
 
     for step in 0..config.steps_per_epoch {
-        let (x, y) = dataset.batch::<TrainingBackend>(
+        let (x, y) = dataset.batch(
             device,
             config.batch_size,
             config.epoch * config.steps_per_epoch + step,
@@ -177,7 +168,7 @@ fn train_two_moons_epoch(
         // Binary cross-entropy.
         let loss = losses::binary_cross_entropy(pred, y);
 
-        let loss_val = loss.clone().into_scalar();
+        let loss_val = loss.clone().into_scalar::<f32>();
         let grads = GradientsParams::from_grads(loss.backward(), &model);
         model = optim.step(config.lr, model, grads);
         loss_sum += loss_val;
@@ -206,10 +197,10 @@ pub fn two_moons_demo(
     seed: u64,
     plot_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    let device = <TrainingBackend as BackendTypes>::Device::default();
+    let device = training_device();
     let dataset = TwoMoonsDataset::generate(2000, noise, seed);
 
-    let mut model = DeepClassifier::<TrainingBackend>::new(&device, 64);
+    let mut model = DeepClassifier::new(&device, 64);
     let mut optim = AdamConfig::new().init();
 
     let mut losses = Vec::with_capacity(epochs);

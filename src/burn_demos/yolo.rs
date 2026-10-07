@@ -2,24 +2,23 @@ use burn::module::Module;
 use burn::nn;
 use burn::nn::PaddingConfig2d;
 use burn::tensor::activation::relu;
-use burn::tensor::backend::Backend;
-use burn::tensor::{Tensor, TensorData};
+use burn::tensor::{Device, Tensor, TensorData};
 
 use super::lcg::Lcg;
 
 #[derive(Module, Debug)]
-pub struct YoloTiny<B: Backend> {
-    c1: nn::conv::Conv2d<B>,
-    c2: nn::conv::Conv2d<B>,
-    c3: nn::conv::Conv2d<B>,
-    c4: nn::conv::Conv2d<B>,
-    c5: nn::conv::Conv2d<B>,
-    head: nn::conv::Conv2d<B>,
+pub struct YoloTiny {
+    c1: nn::conv::Conv2d,
+    c2: nn::conv::Conv2d,
+    c3: nn::conv::Conv2d,
+    c4: nn::conv::Conv2d,
+    c5: nn::conv::Conv2d,
+    head: nn::conv::Conv2d,
 }
 
-impl<B: Backend> YoloTiny<B> {
+impl YoloTiny {
     /// A tiny YOLO-like head; output [batch, anchors * (5 + num_classes), grid_h, grid_w].
-    pub fn new(device: &B::Device, num_classes: usize, num_anchors: usize) -> Self {
+    pub fn new(device: &Device, num_classes: usize, num_anchors: usize) -> Self {
         let out_channels = num_anchors * (5 + num_classes);
 
         let c1 = nn::conv::Conv2dConfig::new([3, 16], [3, 3])
@@ -55,7 +54,7 @@ impl<B: Backend> YoloTiny<B> {
         }
     }
 
-    pub fn forward(&self, x: Tensor<B, 4>) -> Tensor<B, 4> {
+    pub fn forward(&self, x: Tensor<4>) -> Tensor<4> {
         let x = relu(self.c1.forward(x));
         let x = relu(self.c2.forward(x));
         let x = relu(self.c3.forward(x));
@@ -64,17 +63,12 @@ impl<B: Backend> YoloTiny<B> {
         self.head.forward(x)
     }
 
-    pub fn demo_input(
-        device: &B::Device,
-        batch: usize,
-        height: usize,
-        width: usize,
-    ) -> Tensor<B, 4> {
+    pub fn demo_input(device: &Device, batch: usize, height: usize, width: usize) -> Tensor<4> {
         let mut rng = Lcg::new(42);
         let mut data = Vec::with_capacity(batch * 3 * height * width);
         for _ in 0..(batch * 3 * height * width) {
             data.push(rng.next_f32());
         }
-        Tensor::<B, 4>::from_data(TensorData::new(data, [batch, 3, height, width]), device)
+        Tensor::<4>::from_data(TensorData::new(data, [batch, 3, height, width]), device)
     }
 }
