@@ -224,6 +224,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **tokio 1.53.1 → 1.53.2, hyper 1.11.1 → 1.12.0, upload-artifact v7.0.1 → v7.0.2
+  (2026-10-07, the evening Renovate report).**
+  - Both crates are lockfile-only moves (`cargo update -p tokio@1`, then `-p hyper@1`,
+    the order `renovate-local.sh --apply` runs them). hyper 1.12 drops `futures-channel`,
+    and the lock loses windows-sys 0.60 and the windows-targets 0.53 family with it.
+  - The report's five rows for `third_party/egui-winit-0.36.2` (log, serde, webbrowser,
+    smithay-clipboard, objc2) were not taken. That `Cargo.lock` is the published crate's
+    and is never read: cargo refuses to refresh it because the crate sits inside this
+    workspace, which is also why the apply half refused the whole run.
+  - Verified in `:latest` (x64): `ci-container-steps.sh fmt-clippy`, `test` (395 passed,
+    the one known ignore, lavapipe with `KATAGLYPHIS_REQUIRE_GPU=1`), `security` and
+    `ort-chain-only` pass, so do the renderer's wasm32 check and `run-lint-gates.sh`.
 - **burn 0.21.0 → 0.22.0 and glam 0.33 → 0.34 (2026-10-07, from the Renovate report).**
   - burn 0.22 drops the backend type parameter: models and tensors are plain types
     (`Tensor<2>`, `nn::Linear`), and the backend is a runtime `Device`. The burn demos
