@@ -27,15 +27,21 @@ const CHAIN_SOURCE_MARKER: Option<&str> = Some("/opt/onnxruntime/onnxruntime/cor
 #[cfg(not(any(windows, target_os = "linux")))]
 const CHAIN_SOURCE_MARKER: Option<&str> = None;
 
-/// True when `haystack` contains `needle`, ignoring ASCII case (Windows paths).
+/// True when `haystack` contains `needle`, ignoring ASCII case and the path separator (Windows paths).
 pub fn embeds_marker(haystack: &[u8], needle: &str) -> bool {
     let needle = needle.as_bytes();
-    let Some(first) = needle.first() else {
+    if needle.is_empty() {
         return true;
-    };
+    }
     haystack
         .windows(needle.len())
-        .any(|w| w[0].eq_ignore_ascii_case(first) && w.eq_ignore_ascii_case(needle))
+        .any(|w| w.iter().zip(needle).all(|(a, b)| same_path_byte(*a, *b)))
+}
+
+/// clang-cl writes `__FILE__` with whatever separators CMake handed it; the 2026-10-08 chain ORT has `C:/temp/...`.
+fn same_path_byte(a: u8, b: u8) -> bool {
+    let separator = |c: u8| c == b'/' || c == b'\\';
+    a.eq_ignore_ascii_case(&b) || (separator(a) && separator(b))
 }
 
 /// Refuses `path` unless it was compiled from the chain's ORT checkout.
@@ -246,6 +252,22 @@ mod tests {
     fn the_chain_marker_matches_regardless_of_case() {
         let bin = b"\0ORT C:\\TEMP\\onnx-src\\onnxruntime\\core\\session\\x.cc\0";
         assert!(embeds_marker(bin, r"C:\temp\onnx-src\onnxruntime\core\"));
+    }
+
+    #[test]
+    fn the_chain_marker_matches_forward_and_mixed_separators() {
+        let forward = b"\0C:/temp/onnx-src/onnxruntime/core/mlas/lib/q4_dq.cpp\0";
+        assert!(embeds_marker(
+            forward,
+            r"C:\temp\onnx-src\onnxruntime\core\"
+        ));
+        let mixed = b"\0C:/temp/onnx-src/onnxruntime\\core/framework/copy.h\0";
+        assert!(embeds_marker(mixed, r"C:\temp\onnx-src\onnxruntime\core\"));
+        let other_root = b"\0C:/temp/onnx-src2/onnxruntime/core/x.cc\0";
+        assert!(!embeds_marker(
+            other_root,
+            r"C:\temp\onnx-src\onnxruntime\core\"
+        ));
     }
 
     #[test]
