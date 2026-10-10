@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed
+- **The ORT loader accepts the chain ORT of the 2026-10-08 `:winamd64` (2026-10-10).** That image's
+  `onnxruntime.dll` names its sources `C:/temp/onnx-src/onnxruntime/core/...`, with forward and mixed
+  separators, and no longer the backslash form `verify_chain_build` looked for. So every Windows ORT
+  session fell back and failed, and OmniAccelerANT's Windows cat cam test lost its cat. `embeds_marker` now
+  treats `/` and `\` alike, as it already ignored case. In `:winamd64`, the cat cam found 2 cats (best score
+  0.72) with the image's ORT, where it failed before the change.
+
 ### Added
 - **`crates/cat_webrtc` is the cat cam service (2026-10-05).** One process now does what
   a container, nginx and a board-local script did:
