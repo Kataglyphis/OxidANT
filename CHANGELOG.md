@@ -31,6 +31,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   threshold logged an arrival and a departure a second apart, and drew a box for half a
   second. 52 of the 72 arrivals in himbeere2's journal were that. A cat now leaves after
   3 s without a hit (longer at slow rates). The journal keeps its words.
+- **The cat cam's frames stay I420 from camera to encoder (2026-10-12).** The capture
+  asked for RGBA, so every frame was converted from the camera's I420 and back for the
+  encoder. Boxes are drawn into the YUV planes now, and only the model's frames and
+  snapshots are converted. himbeere2's idle service went from 13 % to 9 % of a core. On
+  ANThology's photo the best score moved from 0.72 to 0.76: the photo now passes through
+  chroma subsampling, as a camera's frames always did.
 - **A Pi camera mounted upside down is flipped by the sensor (2026-10-11).** `rotate = 180`
   becomes `rpicam-vid --rotation 180` instead of a `videoflip` over every RGBA frame, which
   halved the capture thread on himbeere2 (11 % to 5 %). Two 4 s stills of its imx219, with

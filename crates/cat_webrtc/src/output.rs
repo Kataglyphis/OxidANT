@@ -1,4 +1,4 @@
-//! The output pipeline: annotated RGBA frames from an appsrc into `webrtcsink` and its signalling server.
+//! The output pipeline: annotated I420 frames from an appsrc into `webrtcsink` and its signalling server.
 
 use anyhow::{anyhow, Context as _};
 use gstreamer as gst;
@@ -22,7 +22,7 @@ pub fn build(config: &Config) -> anyhow::Result<(gst::Pipeline, gst_app::AppSrc)
     appsrc.set_is_live(true);
     appsrc.set_do_timestamp(true);
     appsrc.set_format(gst::Format::Time);
-    appsrc.set_caps(Some(&crate::capture::rgba_caps(config)));
+    appsrc.set_caps(Some(&crate::frame::caps(config)));
 
     let queue = gst::ElementFactory::make("queue")
         .property("max-size-buffers", 1u32)

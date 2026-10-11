@@ -391,6 +391,13 @@ board runs it as one service unit:
 - **Inference is capped at `inference_fps`** (default 2) frames a second. Without a
   cap, YOLO held a Pi 5's four cores at 380 %. `0` removes the cap. The stream itself
   keeps the camera's rate.
+- **Frames stay I420 from capture to output** (`frame.rs`). A Pi camera delivers I420 and
+  the encoder takes it, so neither end converts. Boxes are drawn into the three planes, the
+  inference thread converts only the frames it takes to RGBA (BT.601 limited range, what
+  `videoconvert` assumes for these caps), and `/snapshot.jpg` converts on request. Asking
+  the capture for RGBA again would bring back a conversion of every frame: on himbeere2
+  (2026-10-12) the idle service went from 13 % to 9 % of a core with I420, its capture
+  thread from 5.2 % to 1.7 %.
 - **A still, empty room idles the model** (`motion.rs`). At most once an inference period
   the capture compares a thumbnail of 8x8-block mean luma (80x60 at 640x480) with the last
   one. A frame goes to the model when at least 0.5 % of the blocks moved by more than 12

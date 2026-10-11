@@ -467,7 +467,12 @@ mod tests {
         assert!(get(addr, SNAPSHOT_PATH, "")
             .await
             .starts_with("HTTP/1.1 503"));
-        status.set_frame(&gstreamer::Buffer::from_mut_slice(vec![90u8; 16 * 8 * 4]));
+        status.set_frame(&gstreamer::Buffer::from_mut_slice(vec![
+            90u8;
+            crate::frame::size(
+                16, 8
+            )
+        ]));
         let jpeg = get(addr, SNAPSHOT_PATH, "").await;
         assert!(jpeg.starts_with("HTTP/1.1 200"), "{jpeg}");
         assert!(jpeg.contains("content-type: image/jpeg"), "{jpeg}");

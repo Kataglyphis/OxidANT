@@ -12,18 +12,16 @@ const CHANGED_LUMA: u8 = 12;
 /// Motion is at least this many changed blocks per 10 000: 24 of the 4 800 at 640x480.
 const MOTION_PER_10K: usize = 50;
 
-/// Mean luma of each `BLOCK`x`BLOCK` block of an RGBA frame, row by row; partial edge blocks are dropped.
-pub fn thumbnail(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+/// Mean of each `BLOCK`x`BLOCK` block of a luma plane, row by row; partial edge blocks are dropped.
+pub fn thumbnail(luma: &[u8], width: u32, height: u32) -> Vec<u8> {
     let (w, h) = (width as usize, height as usize);
     let (cols, rows) = (w / BLOCK, h / BLOCK);
     let mut sums = vec![0u32; cols * rows];
     for y in 0..rows * BLOCK {
-        let row = &rgba[y * w * 4..(y * w + cols * BLOCK) * 4];
-        let (pixels, _) = row.as_chunks::<4>();
+        let row = &luma[y * w..y * w + cols * BLOCK];
         let sums_row = &mut sums[(y / BLOCK) * cols..(y / BLOCK + 1) * cols];
-        for (x, &[r, g, b, _]) in pixels.iter().enumerate() {
-            sums_row[x / BLOCK] +=
-                (77 * u32::from(r) + 150 * u32::from(g) + 29 * u32::from(b)) >> 8;
+        for (x, &value) in row.iter().enumerate() {
+            sums_row[x / BLOCK] += u32::from(value);
         }
     }
     let area = (BLOCK * BLOCK) as u32;
@@ -76,7 +74,7 @@ impl Pacer {
     pub fn wants(
         &mut self,
         now: Instant,
-        rgba: &[u8],
+        luma: &[u8],
         width: u32,
         height: u32,
         cat_seen: bool,
@@ -92,7 +90,7 @@ impl Pacer {
             self.pending = true;
             return true;
         };
-        let current = thumbnail(rgba, width, height);
+        let current = thumbnail(luma, width, height);
         let motion = self.previous.as_deref().is_none_or(|p| moved(p, &current));
         self.previous = Some(current);
         let idle_over = self.last_run.is_none_or(|t| now.duration_since(t) >= idle);
@@ -124,7 +122,7 @@ mod tests {
     const H: u32 = 48;
 
     fn frame(luma: u8) -> Vec<u8> {
-        [luma, luma, luma, 255].repeat((W * H) as usize)
+        vec![luma; (W * H) as usize]
     }
 
     /// `frame(base)` with a `side`x`side` square at the origin painted `luma`.
@@ -132,8 +130,7 @@ mod tests {
         let mut f = frame(base);
         for y in 0..side {
             for x in 0..side {
-                let i = ((y * W + x) * 4) as usize;
-                f[i..i + 3].copy_from_slice(&[luma; 3]);
+                f[(y * W + x) as usize] = luma;
             }
         }
         f

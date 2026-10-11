@@ -15,6 +15,7 @@ use kataglyphis_inference::person_detection::PersonDetector;
 
 use crate::camera::{self, Choice, Found, Plan};
 use crate::config::Config;
+use crate::frame;
 use crate::motion::{rate_period, Pacer};
 use crate::presence::{best_score, Change, Presence};
 use crate::status::Status;
@@ -116,7 +117,7 @@ impl Worker {
             }
         }
         elements.push(make("videoscale")?);
-        elements.push(capsfilter(rgba_caps(config))?);
+        elements.push(capsfilter(frame::caps(config))?);
         let sink = gst::ElementFactory::make("appsink")
             .property("max-buffers", 1u32)
             .property("drop", true)
@@ -177,39 +178,32 @@ impl Worker {
         inference: Option<&mpsc::SyncSender<Vec<u8>>>,
         pacer: &mut Pacer,
     ) -> anyhow::Result<bool> {
-        let config = &self.config;
+        let (width, height) = (self.config.width, self.config.height);
         let buffer = sample.buffer().context("sample without buffer")?;
         let map = buffer.map_readable().context("map frame")?;
-        let rgba = map.as_slice();
-        if rgba.len() < (config.width * config.height * 4) as usize {
+        let Some(i420) = map.as_slice().get(..frame::size(width, height)) else {
             return Ok(true);
-        }
-        let mut annotated = rgba.to_vec();
+        };
+        let mut annotated = i420.to_vec();
         if let Ok(current) = boxes.lock() {
             for detection in current.iter() {
-                draw_rect(
-                    &mut annotated,
-                    config.width,
-                    config.height,
-                    [detection.x1, detection.y1, detection.x2, detection.y2],
-                    [0, 255, 0, 255],
-                    4,
-                );
+                let rect = [detection.x1, detection.y1, detection.x2, detection.y2];
+                frame::draw_rect(&mut annotated, width, height, rect, frame::GREEN, 4);
             }
         }
         // Only while the inference thread is idle: a frame of lag is fine, a backlog is not.
         if let Some(tx) = inference {
             let now = Instant::now();
-            let seen = self.status.cat_seen();
-            if pacer.wants(now, rgba, config.width, config.height, seen)
-                && tx.try_send(rgba.to_vec()).is_ok()
+            let luma = &i420[..(width * height) as usize];
+            if pacer.wants(now, luma, width, height, self.status.cat_seen())
+                && tx.try_send(i420.to_vec()).is_ok()
             {
                 pacer.ran(now);
             }
         }
-        let frame = gst::Buffer::from_mut_slice(annotated);
-        self.status.set_frame(&frame);
-        match self.appsrc.push_buffer(frame) {
+        let pushed = gst::Buffer::from_mut_slice(annotated);
+        self.status.set_frame(&pushed);
+        match self.appsrc.push_buffer(pushed) {
             Ok(_) => Ok(true),
             Err(gst::FlowError::Flushing) => Ok(false),
             Err(err) => Err(anyhow!("appsrc push: {err:?}")),
@@ -424,7 +418,8 @@ fn spawn_inference(
     let spawned = thread::Builder::new()
         .name("cat-infer".into())
         .spawn(move || {
-            while let Ok(rgba) = rx.recv() {
+            while let Ok(i420) = rx.recv() {
+                let rgba = frame::to_rgba(&i420, width, height);
                 let detections =
                     match detector.infer_rgba(&rgba, width, height, score, wanted.as_deref()) {
                         Ok(detections) => detections,
@@ -490,16 +485,6 @@ fn libcamera_caps(config: &Config) -> gst::Caps {
         .build()
 }
 
-/// The frame format the output pipeline's appsrc is fixed to.
-pub fn rgba_caps(config: &Config) -> gst::Caps {
-    gst::Caps::builder("video/x-raw")
-        .field("format", "RGBA")
-        .field("width", config.width as i32)
-        .field("height", config.height as i32)
-        .field("framerate", gst::Fraction::new(config.fps as i32, 1))
-        .build()
-}
-
 fn videoflip(rotate: u32) -> anyhow::Result<Option<gst::Element>> {
     let method = match rotate {
         0 => return Ok(None),
@@ -514,38 +499,6 @@ fn videoflip(rotate: u32) -> anyhow::Result<Option<gst::Element>> {
             .build()
             .context("videoflip")?,
     ))
-}
-
-fn draw_rect(
-    frame: &mut [u8],
-    width: u32,
-    height: u32,
-    rect: [f32; 4],
-    color: [u8; 4],
-    thickness: i32,
-) {
-    let w = width as i32;
-    let h = height as i32;
-    let [x1, y1, x2, y2] = rect;
-    let clamp = |v: f32, max: i32| v.round().max(0.0).min((max - 1) as f32) as i32;
-    let (x1, y1, x2, y2) = (clamp(x1, w), clamp(y1, h), clamp(x2, w), clamp(y2, h));
-    for t in 0..thickness {
-        for x in x1..=x2 {
-            put(frame, w, x, (y1 + t).min(h - 1), color);
-            put(frame, w, x, (y2 - t).max(0), color);
-        }
-        for y in y1..=y2 {
-            put(frame, w, (x1 + t).min(w - 1), y, color);
-            put(frame, w, (x2 - t).max(0), y, color);
-        }
-    }
-}
-
-fn put(frame: &mut [u8], width: i32, x: i32, y: i32, color: [u8; 4]) {
-    let idx = ((y * width + x) * 4) as usize;
-    if idx + 4 <= frame.len() {
-        frame[idx..idx + 4].copy_from_slice(&color);
-    }
 }
 
 #[cfg(test)]
@@ -563,7 +516,7 @@ mod tests {
         appsrc.set_is_live(true);
         appsrc.set_do_timestamp(true);
         appsrc.set_format(gst::Format::Time);
-        appsrc.set_caps(Some(&rgba_caps(&config)));
+        appsrc.set_caps(Some(&frame::caps(&config)));
         let sink = gst::ElementFactory::make("appsink")
             .property("sync", false)
             .build()
@@ -604,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn the_test_pattern_reaches_the_output_as_rgba_at_the_configured_size() {
+    fn the_test_pattern_reaches_the_output_as_i420_at_the_configured_size() {
         let config = Config {
             camera: "test".into(),
             width: 64,
@@ -614,10 +567,10 @@ mod tests {
         let (frames, status) = capture_frames(config, 3);
         for (caps, data) in &frames {
             let s = caps.structure(0).unwrap();
-            assert_eq!(s.get::<&str>("format").unwrap(), "RGBA");
+            assert_eq!(s.get::<&str>("format").unwrap(), "I420");
             assert_eq!(s.get::<i32>("width").unwrap(), 64);
             assert_eq!(s.get::<i32>("height").unwrap(), 48);
-            assert_eq!(data.len(), 64 * 48 * 4);
+            assert_eq!(data.len(), frame::size(64, 48));
         }
         let health: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
         assert_eq!(health["camera"], "test pattern");
@@ -629,32 +582,5 @@ mod tests {
         assert_eq!(rate_period(2.0), Duration::from_millis(500));
         assert_eq!(rate_period(0.5), Duration::from_secs(2));
         assert_eq!(rate_period(0.0), Duration::ZERO);
-    }
-
-    #[test]
-    fn draw_rect_marks_the_outline_and_leaves_the_inside_alone() {
-        let (w, h) = (8u32, 8u32);
-        let mut frame = vec![0u8; (w * h * 4) as usize];
-        draw_rect(&mut frame, w, h, [1.0, 1.0, 6.0, 6.0], [9, 9, 9, 9], 1);
-        let at = |x: u32, y: u32| frame[((y * w + x) * 4) as usize];
-        assert_eq!(at(1, 1), 9);
-        assert_eq!(at(6, 6), 9);
-        assert_eq!(at(3, 1), 9);
-        assert_eq!(at(3, 3), 0);
-    }
-
-    #[test]
-    fn draw_rect_clamps_boxes_that_leave_the_frame() {
-        let (w, h) = (4u32, 4u32);
-        let mut frame = vec![0u8; (w * h * 4) as usize];
-        draw_rect(
-            &mut frame,
-            w,
-            h,
-            [-10.0, -10.0, 40.0, 40.0],
-            [7, 7, 7, 7],
-            2,
-        );
-        assert!(frame.contains(&7));
     }
 }

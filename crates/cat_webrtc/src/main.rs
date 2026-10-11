@@ -4,6 +4,7 @@
 mod camera;
 mod capture;
 mod config;
+mod frame;
 mod install;
 mod motion;
 mod output;

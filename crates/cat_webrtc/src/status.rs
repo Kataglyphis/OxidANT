@@ -82,7 +82,12 @@ impl Status {
         let map = buffer
             .map_readable()
             .map_err(|_| anyhow::anyhow!("map frame"))?;
-        encode_jpeg(map.as_slice(), self.width, self.height).map(Some)
+        let i420 = map
+            .as_slice()
+            .get(..crate::frame::size(self.width, self.height))
+            .ok_or_else(|| anyhow::anyhow!("frame smaller than its caps"))?;
+        let rgba = crate::frame::to_rgba(i420, self.width, self.height);
+        encode_jpeg(&rgba, self.width, self.height).map(Some)
     }
 
     pub fn to_json(&self) -> String {
@@ -175,7 +180,10 @@ mod tests {
         gst::init().unwrap();
         let status = Status::new("Cam", false, 16, 8);
         assert!(status.snapshot_jpeg().unwrap().is_none());
-        status.set_frame(&gst::Buffer::from_mut_slice(vec![200u8; 16 * 8 * 4]));
+        status.set_frame(&gst::Buffer::from_mut_slice(vec![
+            200u8;
+            crate::frame::size(16, 8)
+        ]));
         let jpeg = status.snapshot_jpeg().unwrap().unwrap();
         assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
     }
