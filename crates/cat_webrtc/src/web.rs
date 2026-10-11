@@ -21,6 +21,9 @@ use crate::status::Status;
 /// What the web client's host-relative `signalingServerUrl` resolves to.
 pub const SIGNALLING_PATH: &str = "/webrtc-ws";
 
+/// The latest annotated frame as a JPEG.
+pub const SNAPSHOT_PATH: &str = "/snapshot.jpg";
+
 /// How long the signalling server may take to answer the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -76,6 +79,8 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
             HeaderValue::from_static("application/json"),
         );
         response
+    } else if path == SNAPSHOT_PATH {
+        snapshot(site.status.clone()).await
     } else {
         static_file(&req, site.web_root.as_deref()).await
     };
@@ -103,6 +108,24 @@ fn plain(status: StatusCode, text: &'static str) -> Response<Body> {
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/plain; charset=utf-8"),
     );
+    response
+}
+
+async fn snapshot(status: Arc<Status>) -> Response<Body> {
+    // Off the runtime's two workers, so a snapshot cannot stall a signalling connection.
+    let jpeg = match tokio::task::spawn_blocking(move || status.snapshot_jpeg()).await {
+        Ok(Ok(Some(jpeg))) => jpeg,
+        Ok(Ok(None)) => return plain(StatusCode::SERVICE_UNAVAILABLE, "no frame yet"),
+        Ok(Err(err)) => {
+            log::warn!("{SNAPSHOT_PATH}: {err:#}");
+            return plain(StatusCode::INTERNAL_SERVER_ERROR, "snapshot failed");
+        }
+        Err(_) => return plain(StatusCode::INTERNAL_SERVER_ERROR, "snapshot failed"),
+    };
+    let mut response = Response::new(Full::new(Bytes::from(jpeg)));
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 
@@ -334,7 +357,7 @@ mod tests {
         let site = Arc::new(Site {
             web_root,
             signalling: ("127.0.0.1".into(), signalling_port),
-            status: Arc::new(Status::new("Test Cam", false)),
+            status: Arc::new(Status::new("Test Cam", false, 16, 8)),
         });
         tokio::spawn(serve(listener, site));
         addr
@@ -427,6 +450,28 @@ mod tests {
             .to_owned();
         let again = get(addr, "/index.html", &format!("if-none-match: {etag}\r\n")).await;
         assert!(again.starts_with("HTTP/1.1 304"), "{again}");
+    }
+
+    #[tokio::test]
+    async fn the_snapshot_waits_for_a_frame_then_serves_a_jpeg() {
+        gstreamer::init().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let status = Arc::new(Status::new("Test Cam", false, 16, 8));
+        let site = Arc::new(Site {
+            web_root: None,
+            signalling: ("127.0.0.1".into(), 9),
+            status: status.clone(),
+        });
+        tokio::spawn(serve(listener, site));
+        assert!(get(addr, SNAPSHOT_PATH, "")
+            .await
+            .starts_with("HTTP/1.1 503"));
+        status.set_frame(&gstreamer::Buffer::from_mut_slice(vec![90u8; 16 * 8 * 4]));
+        let jpeg = get(addr, SNAPSHOT_PATH, "").await;
+        assert!(jpeg.starts_with("HTTP/1.1 200"), "{jpeg}");
+        assert!(jpeg.contains("content-type: image/jpeg"), "{jpeg}");
+        assert!(jpeg.contains("cache-control: no-store"), "{jpeg}");
     }
 
     #[tokio::test]

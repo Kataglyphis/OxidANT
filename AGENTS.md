@@ -389,11 +389,35 @@ board runs it as one service unit:
   `rawvideoparse` (the `rawparse` plugin, not `videoparsersbad`) left one zombie per
   retry.
 - **Inference is capped at `inference_fps`** (default 2) frames a second. Without a
-  cap, YOLO held a Pi 5's four cores at 380 %; capped, it costs 132 % of one core
-  there. `0` removes the cap. The stream itself keeps the camera's rate.
+  cap, YOLO held a Pi 5's four cores at 380 %. `0` removes the cap. The stream itself
+  keeps the camera's rate.
+- **ORT runs two threads that sleep between runs.** `main` sets `KATAGLYPHIS_ORT_SPIN=0`
+  unless the caller set it, and `inference_threads` (default 2, `0` one per core) becomes
+  `KATAGLYPHIS_ORT_THREADS`. Both are set before anything starts a thread. ORT's own
+  default, four threads that spin-wait between runs, is for back-to-back inference, and
+  the inference crate keeps it for every other caller. Measured on himbeere2 (Pi 5,
+  2026-10-11; ANThology's photo at 2 Hz, 45 s per row, the live service beside it):
+
+  | ORT setting | process CPU |
+  | --- | --- |
+  | spinning, 4 threads (ORT's default) | 183 % |
+  | sleeping, 4 threads | 106 % |
+  | sleeping, 2 threads (the default) | 81 % |
+  | sleeping, 1 thread | 71 % |
+  | no inference | 10 % |
+
+  Every row found both cats, best score 0.72. Letterboxing (`KATAGLYPHIS_PREPROCESS`)
+  scored the same photo 0.61, so the preprocessing stays the crate's default, stretch.
+- **A cat counts after two hits in a row** (`presence.rs`). It leaves once no hit came for
+  3 s, or 2.5 inference periods when that is longer. Until then no box is drawn and nothing
+  is logged. A lone detection near `score` is mostly noise: of the 72 arrivals the old rule
+  logged on himbeere2 (2026-10-09 to -11, 2 Hz), 52 were a single hit, and 42 of the 72
+  scored 0.2x. The journal keeps its words, `cat in view: …` on arrival and `no cat in view
+  (stayed N s)`, because OmniAccelerANT's package tests grep the first.
 - **It serves the page itself.** `http_port` (8080) serves `web_root`, the OmniAccelerANT
   web build, with the MIME types and COOP/COEP that `serve.sh` adds, plus an SPA
-  fallback and ETags. It also answers `/healthz` (camera, inference) and forwards
+  fallback and ETags. It also answers `/healthz` (camera, inference, the cat's presence),
+  serves `/snapshot.jpg` (the latest frame, boxes included, encoded on request) and forwards
   `/webrtc-ws` byte for byte to the signalling server, which listens on `127.0.0.1` by
   default now. `run-producer-pi.sh` keeps the old shape (`--signalling-host 0.0.0.0
   --http-port 0`) because `serve.sh` is that setup's web half.

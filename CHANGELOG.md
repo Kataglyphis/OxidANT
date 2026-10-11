@@ -20,8 +20,26 @@ on 2026-09-15, verbatim. Nothing was deleted.
   session fell back and failed, and OmniAccelerANT's Windows cat cam test lost its cat. `embeds_marker` now
   treats `/` and `\` alike, as it already ignored case. In `:winamd64`, the cat cam found 2 cats (best score
   0.72) with the image's ORT, where it failed before the change.
+- **The cat cam runs ORT on two threads that sleep between runs (2026-10-11).** ORT's
+  default, four threads spin-waiting for the next run, kept himbeere2's live service at a
+  133 % average over 5.8 days at 2 Hz. On ANThology's photo the process took 183 % that
+  way and 81 % now, with the same detections. Installed there, the live service went from
+  131 % to 70 % of a core (60 s each, same camera, same scene). `inference_threads` sets
+  the count. The inference crate keeps ORT's default for every other caller, and
+  `KATAGLYPHIS_ORT_SPIN` / `KATAGLYPHIS_ORT_THREADS` set both for any of them.
+- **A cat counts after two hits in a row (2026-10-11).** A lone detection near the score
+  threshold logged an arrival and a departure a second apart, and drew a box for half a
+  second. 52 of the 72 arrivals in himbeere2's journal were that. A cat now leaves after
+  3 s without a hit (longer at slow rates). The journal keeps its words.
+- **A Pi camera mounted upside down is flipped by the sensor (2026-10-11).** `rotate = 180`
+  becomes `rpicam-vid --rotation 180` instead of a `videoflip` over every RGBA frame, which
+  halved the capture thread on himbeere2 (11 % to 5 %). Two 4 s stills of its imx219, with
+  and without the flag, show the same scene turned 180°, as the `videoflip` turned it.
 
 ### Added
+- **`/snapshot.jpg` and the cat in `/healthz` (2026-10-11).** The cat cam's web server
+  encodes the latest frame, boxes included, when asked. `/healthz` gains `cat`: whether
+  one is in view, when one was last seen, the visits counted and the last best score.
 - **`crates/cat_webrtc` is the cat cam service (2026-10-05).** One process now does what
   a container, nginx and a board-local script did:
   - It picks the camera: a Pi camera through `rpicam-vid`, else a libcamera CSI camera,

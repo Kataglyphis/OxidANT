@@ -287,6 +287,10 @@ Optional environment variables:
   `resources/models/yolov10m.onnx`, a path fixed at compile time
 - `KATAGLYPHIS_ONNX_BACKEND` – `tract` or `ort` (default: automatic)
 - `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (default: `cpu`)
+- `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: `0`, one per core)
+- `KATAGLYPHIS_ORT_SPIN` – `0` stops idle ONNX Runtime threads spin-waiting for the next run
+  (default: ORT's, spinning). Worth it when inference runs at a capped rate: the cat cam sets it
+  itself
 - `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (default: `stretch`)
 - `KATAGLYPHIS_SWAP_XY` – set to `1` if the model output swaps X and Y (default: `0`)
 - `KATAGLYPHIS_SCORE_THRESHOLD` – detection score threshold (default: `0.5`)

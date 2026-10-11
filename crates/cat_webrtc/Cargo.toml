@@ -27,6 +27,8 @@ percent-encoding = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
+# /snapshot.jpg; the lockfile already carries image 0.25 for the renderer.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

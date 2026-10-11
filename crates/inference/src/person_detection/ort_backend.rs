@@ -67,6 +67,17 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Sessio
         info!("ORT DirectML execution provider enabled");
     }
 
+    // After the EP block, whose CUDA fallback starts a new builder; spinning suits back-to-back runs only.
+    builder = builder
+        .with_intra_op_spinning(kataglyphis_core::config::ort_spin_enabled())
+        .with_ort_context("Failed to set ORT intra-op spinning")?;
+    let threads = kataglyphis_core::config::ort_intra_threads();
+    if threads > 0 {
+        builder = builder
+            .with_intra_threads(threads)
+            .with_ort_context("Failed to set ORT intra-op threads")?;
+    }
+
     let session = builder
         .commit_from_file(&canonical_path)
         .with_ort_context("Failed to load ONNX model (ort)")?;

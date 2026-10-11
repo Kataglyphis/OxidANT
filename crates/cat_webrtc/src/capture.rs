@@ -15,6 +15,7 @@ use kataglyphis_inference::person_detection::PersonDetector;
 
 use crate::camera::{self, Choice, Found, Plan};
 use crate::config::Config;
+use crate::presence::{best_score, Change, Presence};
 use crate::status::Status;
 
 /// COCO class id of "cat" in the 80-class YOLO models shipped in this tree.
@@ -48,10 +49,9 @@ impl Worker {
 
     fn run(mut self) {
         let boxes: Boxes = Arc::new(Mutex::new(Vec::new()));
-        let inference = self
-            .detector
-            .take()
-            .and_then(|detector| spawn_inference(detector, &self.config, boxes.clone()));
+        let inference = self.detector.take().and_then(|detector| {
+            spawn_inference(detector, &self.config, boxes.clone(), self.status.clone())
+        });
         let frames = inference.as_ref().map(|(tx, _)| tx);
         let mut failures: u32 = 0;
         while !self.shutdown.load(Ordering::Relaxed) {
@@ -109,8 +109,10 @@ impl Worker {
         let pipeline = gst::Pipeline::new();
         let mut elements = std::mem::take(&mut source.elements);
         elements.push(make("videoconvert")?);
-        if let Some(flip) = videoflip(config.rotate)? {
-            elements.push(flip);
+        if !source.rotated {
+            if let Some(flip) = videoflip(config.rotate)? {
+                elements.push(flip);
+            }
         }
         elements.push(make("videoscale")?);
         elements.push(capsfilter(rgba_caps(config))?);
@@ -201,10 +203,9 @@ impl Worker {
                 *next_inference = now + inference_period(config.inference_fps);
             }
         }
-        match self
-            .appsrc
-            .push_buffer(gst::Buffer::from_mut_slice(annotated))
-        {
+        let frame = gst::Buffer::from_mut_slice(annotated);
+        self.status.set_frame(&frame);
+        match self.appsrc.push_buffer(frame) {
             Ok(_) => Ok(true),
             Err(gst::FlowError::Flushing) => Ok(false),
             Err(err) => Err(anyhow!("appsrc push: {err:?}")),
@@ -232,6 +233,8 @@ fn bus_says_done(bus: &gst::Bus) -> anyhow::Result<bool> {
 /// The source half of a capture pipeline, plus a child process it may read from.
 struct Source {
     elements: Vec<gst::Element>,
+    /// The camera already applied `rotate`, so no `videoflip` follows.
+    rotated: bool,
     #[cfg(unix)]
     #[allow(dead_code)]
     rpicam: Option<RpicamProcess>,
@@ -316,6 +319,7 @@ impl Source {
         };
         Ok(Self {
             elements,
+            rotated: false,
             #[cfg(unix)]
             rpicam: None,
         })
@@ -328,6 +332,8 @@ impl Source {
         use std::process::{Command, Stdio};
 
         let (w, h, fps) = (config.width, config.height, config.fps);
+        // The sensor flips for 180 at no cost; rpicam-vid takes no other angle.
+        let rotated = config.rotate == 180;
         let child = Command::new("rpicam-vid")
             .args([
                 "--timeout",
@@ -340,6 +346,11 @@ impl Source {
             ])
             .args(["--width", &w.to_string(), "--height", &h.to_string()])
             .args(["--framerate", &fps.to_string()])
+            .args(if rotated {
+                &["--rotation", "180"][..]
+            } else {
+                &[]
+            })
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -370,6 +381,7 @@ impl Source {
             .context("rawvideoparse (is the rawparse plugin installed?)")?;
         Ok(Self {
             elements: vec![fdsrc, parse],
+            rotated,
             rpicam: Some(process),
         })
     }
@@ -402,39 +414,48 @@ fn inference_period(inference_fps: f32) -> Duration {
     }
 }
 
-/// The inference thread: takes the newest frame, writes the boxes, logs when cats come and go.
+/// The inference thread: takes the newest frame, boxes a cat once [`Presence`] confirms it, logs visits.
 /// It ends once its sender is dropped.
 fn spawn_inference(
     mut detector: PersonDetector,
     config: &Config,
     boxes: Boxes,
+    status: Arc<Status>,
 ) -> Option<(mpsc::SyncSender<Vec<u8>>, thread::JoinHandle<()>)> {
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
     let (width, height, score) = (config.width, config.height, config.score);
     let wanted = (!config.all_classes).then(|| vec![COCO_CAT]);
+    let mut presence = Presence::new(inference_period(config.inference_fps));
     let spawned = thread::Builder::new()
         .name("cat-infer".into())
         .spawn(move || {
-            let mut seen = 0usize;
             while let Ok(rgba) = rx.recv() {
-                match detector.infer_rgba(&rgba, width, height, score, wanted.as_deref()) {
-                    Ok(detections) => {
-                        if detections.is_empty() != (seen == 0) {
-                            match detections.first() {
-                                Some(first) => log::info!(
-                                    "cat in view: {} detection(s), best score {:.2}",
-                                    detections.len(),
-                                    first.score
-                                ),
-                                None => log::info!("no cat in view"),
-                            }
+                let detections =
+                    match detector.infer_rgba(&rgba, width, height, score, wanted.as_deref()) {
+                        Ok(detections) => detections,
+                        Err(err) => {
+                            log::warn!("inference failed: {err:#}");
+                            continue;
                         }
-                        seen = detections.len();
-                        if let Ok(mut current) = boxes.lock() {
-                            *current = detections;
-                        }
+                    };
+                let change = presence.update(Instant::now(), &detections);
+                match &change {
+                    Some(Change::Arrived { count, best }) => {
+                        log::info!("cat in view: {count} detection(s), best score {best:.2}");
                     }
-                    Err(err) => log::warn!("inference failed: {err:#}"),
+                    Some(Change::Left { stayed }) => {
+                        log::info!("no cat in view (stayed {} s)", stayed.as_secs());
+                    }
+                    None => {}
+                }
+                let in_view = presence.in_view();
+                status.set_cat(
+                    in_view,
+                    best_score(&detections),
+                    matches!(change, Some(Change::Arrived { .. })),
+                );
+                if let Ok(mut current) = boxes.lock() {
+                    *current = if in_view { detections } else { Vec::new() };
                 }
             }
         });

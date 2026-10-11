@@ -88,6 +88,23 @@ env_cached!(
     }
 );
 
+env_cached!(
+    /// `KATAGLYPHIS_ORT_THREADS`: ORT intra-op threads; unset or `0` keeps ORT's one per core.
+    fn ort_intra_threads -> usize, || {
+        std::env::var("KATAGLYPHIS_ORT_THREADS")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0)
+    }
+);
+
+env_cached!(
+    /// `KATAGLYPHIS_ORT_SPIN`: `"0"` stops idle ORT workers spin-waiting for the next run (default: ORT's, on).
+    fn ort_spin_enabled -> bool, || {
+        std::env::var("KATAGLYPHIS_ORT_SPIN").ok().as_deref() != Some("0")
+    }
+);
+
 // Inference / GUI
 
 env_cached!(

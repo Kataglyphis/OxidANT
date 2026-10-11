@@ -6,6 +6,7 @@ mod capture;
 mod config;
 mod install;
 mod output;
+mod presence;
 mod status;
 mod web;
 
@@ -31,6 +32,12 @@ const WEB_ROOT_ENV: &str = "KATAGLYPHIS_WEB_ROOT";
 
 /// webrtcsink's signalling server logs every SDP and ICE message unless this says otherwise.
 const SIGNALLING_LOG_ENV: &str = "WEBRTCSINK_SIGNALLING_SERVER_LOG";
+
+/// ORT's idle workers spin-wait for the next run unless this is `0`; between capped runs that is waste.
+const ORT_SPIN_ENV: &str = "KATAGLYPHIS_ORT_SPIN";
+
+/// ORT's intra-op thread count, read once when the session is built.
+const ORT_THREADS_ENV: &str = "KATAGLYPHIS_ORT_THREADS";
 
 /// `inference = "auto"` skips the model on boards with less memory than this (a Pi Zero 2 W has 512 MB).
 const AUTO_INFERENCE_MIN_MIB: u64 = 1024;
@@ -80,6 +87,9 @@ struct Args {
     /// Detections per second at most (default 2); 0 runs the model on every frame it can take.
     #[arg(long)]
     inference_fps: Option<f32>,
+    /// ONNX Runtime threads for the model (default 2); 0 takes one per core.
+    #[arg(long)]
+    inference_threads: Option<u32>,
     #[arg(long)]
     width: Option<u32>,
     #[arg(long)]
@@ -127,6 +137,9 @@ fn main() -> ExitCode {
     if std::env::var_os(SIGNALLING_LOG_ENV).is_none() {
         std::env::set_var(SIGNALLING_LOG_ENV, "warn");
     }
+    if std::env::var_os(ORT_SPIN_ENV).is_none() {
+        std::env::set_var(ORT_SPIN_ENV, "0");
+    }
     kataglyphis_core::logging::init_logger();
     match run(Args::parse()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -145,6 +158,8 @@ fn run(args: Args) -> anyhow::Result<()> {
         print!("{}", toml::to_string(&config)?);
         return Ok(());
     }
+    // Still single-threaded here, so changing the environment cannot race a reader.
+    std::env::set_var(ORT_THREADS_ENV, config.inference_threads.to_string());
     match &source {
         Some(path) => log::info!("config: {}", path.display()),
         None => log::info!("config: built-in defaults"),
@@ -153,7 +168,12 @@ fn run(args: Args) -> anyhow::Result<()> {
     kataglyphis_media::ensure_gst_initialized()?;
 
     let detector = load_detector(&config)?;
-    let status = Arc::new(status::Status::new(&config.name, detector.is_some()));
+    let status = Arc::new(status::Status::new(
+        &config.name,
+        detector.is_some(),
+        config.width,
+        config.height,
+    ));
     let (pipeline, appsrc) = output::build(&config)?;
     pipeline
         .set_state(gst::State::Playing)
@@ -229,7 +249,16 @@ fn apply_args(args: &Args, config: &mut Config) -> anyhow::Result<()> {
     macro_rules! cloned {
         ($($field:ident),*) => { $( if let Some(value) = &args.$field { config.$field.clone_from(value); } )* };
     }
-    copied!(rotate, score, inference_fps, width, height, fps, http_port);
+    copied!(
+        rotate,
+        score,
+        inference_fps,
+        inference_threads,
+        width,
+        height,
+        fps,
+        http_port
+    );
     cloned!(name, signalling_host, http_host);
     if let Some(port) = args.listen_port {
         config.signalling_port = port;
@@ -453,8 +482,11 @@ mod tests {
             "--no-inference",
             "--ice-ports",
             "50000-50010",
+            "--inference-threads",
+            "1",
         ]);
         assert_eq!(config.inference, Inference::Off);
+        assert_eq!(config.inference_threads, 1);
         assert_eq!((config.ice_port_min, config.ice_port_max), (50000, 50010));
         let mut config = Config::default();
         assert!(apply_args(&args(&["--ice-ports", "50000"]), &mut config).is_err());

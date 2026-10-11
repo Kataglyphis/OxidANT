@@ -50,6 +50,8 @@ pub struct Config {
     pub score: f32,
     /// Detections per second at most; 0 runs the model on every frame it can take.
     pub inference_fps: f32,
+    /// ONNX Runtime threads for the model; 0 takes one per core.
+    pub inference_threads: u32,
     /// Keep every COCO class instead of only cats.
     pub all_classes: bool,
     pub http_host: String,
@@ -84,6 +86,8 @@ impl Default for Config {
             score: 0.25,
             // Unbounded, YOLO held a Pi 5's four cores at 380 %; two boxes a second still follow a cat.
             inference_fps: 2.0,
+            // At 2 Hz a Pi 5 ran at 183 % with ORT's four spinning threads, 81 % with two that sleep (2026-10-11).
+            inference_threads: 2,
             all_classes: false,
             http_host: "0.0.0.0".into(),
             http_port: 8080,
@@ -190,6 +194,17 @@ mod tests {
         assert_eq!(config.camera, "v4l2:/dev/video2");
         assert_eq!(config.rotate, 180);
         assert_eq!(config.http_port, Config::default().http_port);
+    }
+
+    #[test]
+    fn inference_threads_reads_from_the_file() {
+        assert_eq!(Config::default().inference_threads, 2);
+        assert_eq!(
+            Config::parse("inference_threads = 0")
+                .unwrap()
+                .inference_threads,
+            0
+        );
     }
 
     #[test]
