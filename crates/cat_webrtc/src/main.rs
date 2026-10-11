@@ -341,7 +341,7 @@ fn start_web(
         }
         Some(root) => log::info!("web: serving {}", root.display()),
         None => log::warn!(
-            "web: no web build (set web_root or ${WEB_ROOT_ENV}); only /webrtc-ws and /healthz answer"
+            "web: no web build (set web_root or ${WEB_ROOT_ENV}); only /webrtc-ws, /healthz and /snapshot.jpg answer"
         ),
     }
     let listener = runtime

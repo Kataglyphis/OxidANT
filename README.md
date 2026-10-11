@@ -41,6 +41,7 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 - [Getting Started](#getting-started)
 - [Tests](#tests)
 - [Run](#run)
+  - [The cat cam](#the-cat-cam)
 - [Analysis](#analysis)
 - [Docs](#docs)
 - [Updates](#updates)
@@ -218,6 +219,26 @@ The CLI is its own package, not the root one (whose only bin is `burn-demos`), s
 ```bash
 cargo run -p kataglyphis_cli -- read --path README.md
 ```
+
+### The cat cam
+
+`crates/cat_webrtc` is one service: the camera, YOLO cat boxes, a WebRTC stream and the
+web page that plays it. It needs GStreamer and the chain-built ONNX Runtime, so try it
+in the family `:latest` image:
+
+```bash
+cargo build --release -p kataglyphis_cat_webrtc
+target/release/kataglyphis_cat_webrtc --camera test --print-config  # the settings in effect
+target/release/kataglyphis_cat_webrtc --camera test                 # a test pattern, no camera
+curl localhost:8080/healthz                    # the camera, the model's runs, the cat
+curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
+```
+
+The settings come from a TOML file (`--config`, else `/etc/omni-accelerant/catcam.toml`)
+with the flags on top; `--web-root` names OmniAccelerANT's web build, served on `:8080`.
+OmniAccelerANT packages the service as a .deb, AppImage, flatpak, MSI and MSIX. How it
+picks the camera and paces the model, and the measurements behind both:
+[AGENTS.md § The cat cam service](AGENTS.md#the-cat-cam-service).
 
 ### Windows: GStreamer + ONNX Overlay (WGPU)
 
