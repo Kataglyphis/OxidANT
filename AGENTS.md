@@ -406,7 +406,10 @@ board runs it as one service unit:
   model, turns the gate off. On himbeere2 (2026-10-11, 2 Hz, 60 s per row) a still scene
   without a cat took 12 % CPU and 11 runs, against 74 % and 100 with the gate off. The cat
   photo and the moving test pattern kept the full rate. `/healthz` counts the runs
-  (`model_runs`).
+  (`model_runs`). A black frame, every block at luma 20 or less, skips the idle run too: a
+  camera without IR sees nothing at night. Light coming on is motion. On himbeere2's dark
+  room (2026-10-12) the service went from 9 % to 2 % of a core, and the model ran once in
+  a minute instead of eleven times.
 - **ORT runs two threads that sleep between runs.** `main` sets `KATAGLYPHIS_ORT_SPIN=0`
   unless the caller set it, and `inference_threads` (default 2, `0` one per core) becomes
   `KATAGLYPHIS_ORT_THREADS`. Both are set before anything starts a thread. ORT's own

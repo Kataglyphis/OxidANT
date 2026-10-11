@@ -52,7 +52,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   8x8-block mean luma between looks; with no motion and no cat in sight the model runs at
   `idle_inference_fps` (default 0.2) instead of `inference_fps`. A still scene without a
   cat dropped from 74 % to 12 % of a Pi 5 core at 2 Hz. A cat in view, a fresh hit or
-  motion keeps the full rate. `/healthz` gains `model_runs`.
+  motion keeps the full rate. `/healthz` gains `model_runs`. A black frame (2026-10-12)
+  skips the idle run as well, which took the dark room at night from 9 % to 2 %.
 - **`/snapshot.jpg` and the cat in `/healthz` (2026-10-11).** The cat cam's web server
   encodes the latest frame, boxes included, when asked. `/healthz` gains `cat`: whether
   one is in view, when one was last seen, the visits counted and the last best score.

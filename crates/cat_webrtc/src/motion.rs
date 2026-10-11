@@ -1,5 +1,6 @@
 //! When a frame is worth the model: something moved since the last look, a cat is in view or was
-//! just seen, or the idle period ran out. A still, empty room then costs one run every few seconds.
+//! just seen, or the idle period ran out on a frame that is not black. A still, empty room then
+//! costs one run every few seconds, and a dark one none.
 
 use std::time::{Duration, Instant};
 
@@ -11,6 +12,9 @@ const CHANGED_LUMA: u8 = 12;
 
 /// Motion is at least this many changed blocks per 10 000: 24 of the 4 800 at 640x480.
 const MOTION_PER_10K: usize = 50;
+
+/// A frame whose blocks all sit at or below this luma is black (limited-range black is 16).
+const DARK_LUMA: u8 = 20;
 
 /// Mean of each `BLOCK`x`BLOCK` block of a luma plane, row by row; partial edge blocks are dropped.
 pub fn thumbnail(luma: &[u8], width: u32, height: u32) -> Vec<u8> {
@@ -92,9 +96,11 @@ impl Pacer {
         };
         let current = thumbnail(luma, width, height);
         let motion = self.previous.as_deref().is_none_or(|p| moved(p, &current));
+        // A camera without IR sees black at night, where the model can find nothing.
+        let dark = current.iter().all(|&v| v <= DARK_LUMA);
         self.previous = Some(current);
         let idle_over = self.last_run.is_none_or(|t| now.duration_since(t) >= idle);
-        self.pending = motion || cat_seen || idle_over;
+        self.pending = motion || cat_seen || (idle_over && !dark);
         self.pending
     }
 
@@ -179,6 +185,20 @@ mod tests {
         p.ran(half);
         let one = t + Duration::from_secs(1);
         assert!(p.wants(one, &with_square(50, 24, 220), W, H, true));
+    }
+
+    #[test]
+    fn a_black_frame_skips_the_idle_run_until_light_or_a_cat_comes_back() {
+        let t = Instant::now();
+        let at = |s: f32| t + Duration::from_secs_f32(s);
+        let mut p = Pacer::new(2.0, 0.2, t);
+        assert!(p.wants(t, &frame(16), W, H, false));
+        p.ran(t);
+        assert!(!p.wants(at(5.0), &frame(16), W, H, false));
+        assert!(!p.wants(at(9.5), &frame(18), W, H, false));
+        assert!(p.wants(at(10.0), &frame(16), W, H, true));
+        p.ran(at(10.0));
+        assert!(p.wants(at(10.5), &frame(120), W, H, false));
     }
 
     #[test]
