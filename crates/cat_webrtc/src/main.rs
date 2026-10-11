@@ -5,6 +5,7 @@ mod camera;
 mod capture;
 mod config;
 mod install;
+mod motion;
 mod output;
 mod presence;
 mod status;
@@ -90,6 +91,9 @@ struct Args {
     /// ONNX Runtime threads for the model (default 2); 0 takes one per core.
     #[arg(long)]
     inference_threads: Option<u32>,
+    /// The model's rate while nothing moves and no cat is in view (default 0.2).
+    #[arg(long)]
+    idle_inference_fps: Option<f32>,
     #[arg(long)]
     width: Option<u32>,
     #[arg(long)]
@@ -253,6 +257,7 @@ fn apply_args(args: &Args, config: &mut Config) -> anyhow::Result<()> {
         rotate,
         score,
         inference_fps,
+        idle_inference_fps,
         inference_threads,
         width,
         height,

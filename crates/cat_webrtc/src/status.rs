@@ -1,4 +1,4 @@
-//! What `/healthz` reports (which camera is live, whether the model runs, when a cat was last seen)
+//! What `/healthz` reports (which camera is live, how often the model ran, when a cat was last seen)
 //! and the latest annotated frame `/snapshot.jpg` encodes.
 
 use std::sync::Mutex;
@@ -12,6 +12,9 @@ struct Cat {
     last_seen: Option<u64>,
     visits: u64,
     best_score: f32,
+    runs: u64,
+    /// The last run saw a cat, confirmed or not.
+    hit: bool,
 }
 
 pub struct Status {
@@ -46,6 +49,8 @@ impl Status {
     /// Records one inference run's view of the cat, after presence smoothing.
     pub fn set_cat(&self, in_view: bool, best_score: Option<f32>, arrived: bool) {
         if let Ok(mut cat) = self.cat.lock() {
+            cat.runs += 1;
+            cat.hit = best_score.is_some();
             cat.in_view = in_view;
             if in_view {
                 cat.last_seen = Some(unix_now());
@@ -55,6 +60,11 @@ impl Status {
                 cat.visits += 1;
             }
         }
+    }
+
+    /// A cat is in view, or the last run saw one that is not confirmed yet.
+    pub fn cat_seen(&self) -> bool {
+        self.cat.lock().is_ok_and(|cat| cat.in_view || cat.hit)
     }
 
     /// Keeps a reference to the frame just pushed; a buffer is refcounted, so this copies nothing.
@@ -78,15 +88,16 @@ impl Status {
     pub fn to_json(&self) -> String {
         let camera = self.camera.lock().map(|c| c.clone()).unwrap_or_default();
         let cat = self.cat.lock();
-        let (in_view, last_seen, visits, best) = cat
+        let (in_view, last_seen, visits, best, runs) = cat
             .as_deref()
-            .map(|c| (c.in_view, c.last_seen, c.visits, c.best_score))
+            .map(|c| (c.in_view, c.last_seen, c.visits, c.best_score, c.runs))
             .unwrap_or_default();
         serde_json::json!({
             "ok": true,
             "name": self.name,
             "camera": camera,
             "inference": self.inference,
+            "model_runs": runs,
             "cat": {
                 "in_view": in_view,
                 "last_seen": last_seen,
@@ -151,6 +162,10 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
         assert_eq!(json["cat"]["in_view"], false);
         assert_eq!(json["cat"]["visits"], 1);
+        assert_eq!(json["model_runs"], 3);
+        assert!(!status.cat_seen());
+        status.set_cat(false, Some(0.3), false);
+        assert!(status.cat_seen());
         assert!(json["cat"]["last_seen"].as_u64().unwrap() > 0);
         assert!((json["cat"]["last_score"].as_f64().unwrap() - 0.6).abs() < 1e-6);
     }

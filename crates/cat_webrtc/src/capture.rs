@@ -15,6 +15,7 @@ use kataglyphis_inference::person_detection::PersonDetector;
 
 use crate::camera::{self, Choice, Found, Plan};
 use crate::config::Config;
+use crate::motion::{rate_period, Pacer};
 use crate::presence::{best_score, Change, Presence};
 use crate::status::Status;
 
@@ -140,7 +141,7 @@ impl Worker {
 
         let bus = pipeline.bus().context("capture pipeline has no bus")?;
         let mut last_frame = Instant::now();
-        let mut next_inference = last_frame;
+        let mut pacer = Pacer::new(config.inference_fps, config.idle_inference_fps, last_frame);
         loop {
             if self.shutdown.load(Ordering::Relaxed)
                 || deadline.is_some_and(|d| Instant::now() >= d)
@@ -162,7 +163,7 @@ impl Worker {
                 continue;
             };
             last_frame = Instant::now();
-            if !self.push(&sample, boxes, inference, &mut next_inference)? {
+            if !self.push(&sample, boxes, inference, &mut pacer)? {
                 return Ok(());
             }
         }
@@ -174,7 +175,7 @@ impl Worker {
         sample: &gst::Sample,
         boxes: &Boxes,
         inference: Option<&mpsc::SyncSender<Vec<u8>>>,
-        next_inference: &mut Instant,
+        pacer: &mut Pacer,
     ) -> anyhow::Result<bool> {
         let config = &self.config;
         let buffer = sample.buffer().context("sample without buffer")?;
@@ -199,8 +200,11 @@ impl Worker {
         // Only while the inference thread is idle: a frame of lag is fine, a backlog is not.
         if let Some(tx) = inference {
             let now = Instant::now();
-            if now >= *next_inference && tx.try_send(rgba.to_vec()).is_ok() {
-                *next_inference = now + inference_period(config.inference_fps);
+            let seen = self.status.cat_seen();
+            if pacer.wants(now, rgba, config.width, config.height, seen)
+                && tx.try_send(rgba.to_vec()).is_ok()
+            {
+                pacer.ran(now);
             }
         }
         let frame = gst::Buffer::from_mut_slice(annotated);
@@ -405,15 +409,6 @@ impl Drop for Running {
     }
 }
 
-/// The least time between two frames handed to the model; zero for `inference_fps = 0`.
-fn inference_period(inference_fps: f32) -> Duration {
-    if inference_fps > 0.0 {
-        Duration::from_secs_f32(1.0 / inference_fps)
-    } else {
-        Duration::ZERO
-    }
-}
-
 /// The inference thread: takes the newest frame, boxes a cat once [`Presence`] confirms it, logs visits.
 /// It ends once its sender is dropped.
 fn spawn_inference(
@@ -425,7 +420,7 @@ fn spawn_inference(
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
     let (width, height, score) = (config.width, config.height, config.score);
     let wanted = (!config.all_classes).then(|| vec![COCO_CAT]);
-    let mut presence = Presence::new(inference_period(config.inference_fps));
+    let mut presence = Presence::new(rate_period(config.inference_fps));
     let spawned = thread::Builder::new()
         .name("cat-infer".into())
         .spawn(move || {
@@ -558,10 +553,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn inference_period_follows_the_rate_and_zero_means_unbounded() {
-        assert_eq!(inference_period(2.0), Duration::from_millis(500));
-        assert_eq!(inference_period(0.5), Duration::from_secs(2));
-        assert_eq!(inference_period(0.0), Duration::ZERO);
+    fn the_rate_period_follows_the_rate_and_zero_means_unbounded() {
+        assert_eq!(rate_period(2.0), Duration::from_millis(500));
+        assert_eq!(rate_period(0.5), Duration::from_secs(2));
+        assert_eq!(rate_period(0.0), Duration::ZERO);
     }
 
     #[test]

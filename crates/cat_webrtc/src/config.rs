@@ -50,6 +50,8 @@ pub struct Config {
     pub score: f32,
     /// Detections per second at most; 0 runs the model on every frame it can take.
     pub inference_fps: f32,
+    /// The model's rate while nothing moves and no cat is in view; at `inference_fps` or above the motion gate is off.
+    pub idle_inference_fps: f32,
     /// ONNX Runtime threads for the model; 0 takes one per core.
     pub inference_threads: u32,
     /// Keep every COCO class instead of only cats.
@@ -86,6 +88,7 @@ impl Default for Config {
             score: 0.25,
             // Unbounded, YOLO held a Pi 5's four cores at 380 %; two boxes a second still follow a cat.
             inference_fps: 2.0,
+            idle_inference_fps: 0.2,
             // At 2 Hz a Pi 5 ran at 183 % with ORT's four spinning threads, 81 % with two that sleep (2026-10-11).
             inference_threads: 2,
             all_classes: false,
@@ -158,6 +161,12 @@ impl Config {
             bail!(
                 "inference_fps must be 0 or positive (got {})",
                 self.inference_fps
+            );
+        }
+        if !self.idle_inference_fps.is_finite() || self.idle_inference_fps <= 0.0 {
+            bail!(
+                "idle_inference_fps must be positive (got {})",
+                self.idle_inference_fps
             );
         }
         if self.signalling_port == 0 {
@@ -241,6 +250,10 @@ mod tests {
             },
             Config {
                 inference_fps: -1.0,
+                ..Config::default()
+            },
+            Config {
+                idle_inference_fps: 0.0,
                 ..Config::default()
             },
             Config {

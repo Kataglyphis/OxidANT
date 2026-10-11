@@ -391,6 +391,15 @@ board runs it as one service unit:
 - **Inference is capped at `inference_fps`** (default 2) frames a second. Without a
   cap, YOLO held a Pi 5's four cores at 380 %. `0` removes the cap. The stream itself
   keeps the camera's rate.
+- **A still, empty room idles the model** (`motion.rs`). At most once an inference period
+  the capture compares a thumbnail of 8x8-block mean luma (80x60 at 640x480) with the last
+  one. A frame goes to the model when at least 0.5 % of the blocks moved by more than 12
+  levels, when a cat is in view or the last run saw one, or once `idle_inference_fps`
+  (default 0.2) allows. An `idle_inference_fps` at or above `inference_fps`, or an uncapped
+  model, turns the gate off. On himbeere2 (2026-10-11, 2 Hz, 60 s per row) a still scene
+  without a cat took 12 % CPU and 11 runs, against 74 % and 100 with the gate off. The cat
+  photo and the moving test pattern kept the full rate. `/healthz` counts the runs
+  (`model_runs`).
 - **ORT runs two threads that sleep between runs.** `main` sets `KATAGLYPHIS_ORT_SPIN=0`
   unless the caller set it, and `inference_threads` (default 2, `0` one per core) becomes
   `KATAGLYPHIS_ORT_THREADS`. Both are set before anything starts a thread. ORT's own
@@ -416,7 +425,7 @@ board runs it as one service unit:
   (stayed N s)`, because OmniAccelerANT's package tests grep the first.
 - **It serves the page itself.** `http_port` (8080) serves `web_root`, the OmniAccelerANT
   web build, with the MIME types and COOP/COEP that `serve.sh` adds, plus an SPA
-  fallback and ETags. It also answers `/healthz` (camera, inference, the cat's presence),
+  fallback and ETags. It also answers `/healthz` (camera, model runs, the cat's presence),
   serves `/snapshot.jpg` (the latest frame, boxes included, encoded on request) and forwards
   `/webrtc-ws` byte for byte to the signalling server, which listens on `127.0.0.1` by
   default now. `run-producer-pi.sh` keeps the old shape (`--signalling-host 0.0.0.0
