@@ -552,6 +552,78 @@ fn put(frame: &mut [u8], width: i32, x: i32, y: i32, color: [u8; 4]) {
 mod tests {
     use super::*;
 
+    /// Runs the capture worker on the test pattern into an appsrc/appsink pair and returns `wanted` frames.
+    fn capture_frames(config: Config, wanted: usize) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {
+        gst::init().unwrap();
+        let appsrc = gst::ElementFactory::make("appsrc")
+            .build()
+            .unwrap()
+            .downcast::<gst_app::AppSrc>()
+            .unwrap();
+        appsrc.set_is_live(true);
+        appsrc.set_do_timestamp(true);
+        appsrc.set_format(gst::Format::Time);
+        appsrc.set_caps(Some(&rgba_caps(&config)));
+        let sink = gst::ElementFactory::make("appsink")
+            .property("sync", false)
+            .build()
+            .unwrap()
+            .downcast::<gst_app::AppSink>()
+            .unwrap();
+        let output = gst::Pipeline::new();
+        output
+            .add_many([appsrc.upcast_ref::<gst::Element>(), sink.upcast_ref()])
+            .unwrap();
+        appsrc.link(&sink).unwrap();
+        output.set_state(gst::State::Playing).unwrap();
+
+        let status = Arc::new(Status::new("test", false, config.width, config.height));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let worker = Worker {
+            config: Arc::new(config),
+            choice: Choice::Test,
+            appsrc,
+            detector: None,
+            status: status.clone(),
+            shutdown: shutdown.clone(),
+        }
+        .spawn()
+        .unwrap();
+        let mut frames = Vec::new();
+        while frames.len() < wanted {
+            let sample = sink
+                .try_pull_sample(gst::ClockTime::from_seconds(20))
+                .expect("a frame within 20 s");
+            let data = sample.buffer().unwrap().map_readable().unwrap().to_vec();
+            frames.push((sample.caps().unwrap().to_owned(), data));
+        }
+        shutdown.store(true, Ordering::Relaxed);
+        worker.join().unwrap();
+        output.set_state(gst::State::Null).unwrap();
+        (frames, status)
+    }
+
+    #[test]
+    fn the_test_pattern_reaches_the_output_as_rgba_at_the_configured_size() {
+        let config = Config {
+            camera: "test".into(),
+            width: 64,
+            height: 48,
+            ..Config::default()
+        };
+        let (frames, status) = capture_frames(config, 3);
+        for (caps, data) in &frames {
+            let s = caps.structure(0).unwrap();
+            assert_eq!(s.get::<&str>("format").unwrap(), "RGBA");
+            assert_eq!(s.get::<i32>("width").unwrap(), 64);
+            assert_eq!(s.get::<i32>("height").unwrap(), 48);
+            assert_eq!(data.len(), 64 * 48 * 4);
+        }
+        let health: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        assert_eq!(health["camera"], "test pattern");
+        assert!(status.snapshot_jpeg().unwrap().is_some());
+    }
+
     #[test]
     fn the_rate_period_follows_the_rate_and_zero_means_unbounded() {
         assert_eq!(rate_period(2.0), Duration::from_millis(500));
