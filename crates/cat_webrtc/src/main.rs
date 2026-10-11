@@ -370,6 +370,7 @@ fn start_web(
             config.signalling_port,
         ),
         status,
+        gzip: web::GzipCache::default(),
     });
     runtime.spawn(web::serve(listener, site));
     if config.cert.is_some() {

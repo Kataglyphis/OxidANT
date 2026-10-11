@@ -43,6 +43,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and without the flag, show the same scene turned 180°, as the `videoflip` turned it.
 
 ### Added
+- **The cat cam serves its web build gzipped (2026-10-12).** The Flutter boot's main files
+  went from 20.2 MB to 7.5 MB for a browser that accepts gzip. Each file is compressed on
+  its first request (614 ms for the 7 MB CanvasKit on a Pi 5) and kept in memory while it
+  is unchanged. A revalidation, the common request of a return visit, no longer reads the
+  file at all.
 - **The cat cam idles its model while nothing moves (2026-10-11).** `motion.rs` compares
   8x8-block mean luma between looks; with no motion and no cat in sight the model runs at
   `idle_inference_fps` (default 0.2) instead of `inference_fps`. A still scene without a

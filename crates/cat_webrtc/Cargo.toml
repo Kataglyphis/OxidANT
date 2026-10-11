@@ -29,6 +29,8 @@ serde_json = "1"
 toml = "1"
 # /snapshot.jpg; the lockfile already carries image 0.25 for the renderer.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# Gzipped web assets; already in the lockfile.
+flate2 = "1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

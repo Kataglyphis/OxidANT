@@ -1,16 +1,18 @@
 //! The built-in web server: the Flutter web build, `/healthz`, and `/webrtc-ws` forwarded to the
 //! signalling server, so one origin serves the page and its WebSocket and no nginx is needed.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
+use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::{bail, Context as _};
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::body::Incoming;
-use hyper::header::{self, HeaderValue};
+use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -27,6 +29,9 @@ pub const SNAPSHOT_PATH: &str = "/snapshot.jpg";
 /// How long the signalling server may take to answer the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Smaller files go out as they are: gzip's header would eat most of the saving.
+const MIN_GZIP_BYTES: u64 = 1024;
+
 type Body = Full<Bytes>;
 
 pub struct Site {
@@ -34,6 +39,73 @@ pub struct Site {
     /// Where `/webrtc-ws` goes: the signalling server's host and port.
     pub signalling: (String, u16),
     pub status: Arc<Status>,
+    pub gzip: GzipCache,
+}
+
+/// Gzipped copies of the web build's files, made on first request and kept while the file is unchanged.
+#[derive(Default)]
+pub struct GzipCache(Mutex<HashMap<PathBuf, (String, Bytes)>>);
+
+impl GzipCache {
+    /// The gzipped file; `version` is its identity ETag, so a changed file is compressed again.
+    async fn get(&self, file: &Path, version: &str) -> std::io::Result<Bytes> {
+        let cached = self.0.lock().ok().and_then(|cache| {
+            cache
+                .get(file)
+                .filter(|(v, _)| v == version)
+                .map(|(_, gz)| gz.clone())
+        });
+        if let Some(gz) = cached {
+            return Ok(gz);
+        }
+        let bytes = tokio::fs::read(file).await?;
+        // Off the runtime's two workers: the 7 MB CanvasKit takes a while.
+        let gz = tokio::task::spawn_blocking(move || gzip(&bytes))
+            .await
+            .map_err(std::io::Error::other)??;
+        if let Ok(mut cache) = self.0.lock() {
+            cache.insert(file.to_path_buf(), (version.to_owned(), gz.clone()));
+        }
+        Ok(gz)
+    }
+}
+
+fn gzip(data: &[u8]) -> std::io::Result<Bytes> {
+    let mut encoder = flate2::write::GzEncoder::new(
+        Vec::with_capacity(data.len() / 3),
+        flate2::Compression::default(),
+    );
+    encoder.write_all(data)?;
+    encoder.finish().map(Bytes::from)
+}
+
+/// Whether the client takes gzip: listed (or `*`) without `q=0`.
+fn accepts_gzip(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|item| {
+            let mut parts = item.split(';');
+            let coding = parts.next().unwrap_or_default().trim();
+            let refused = parts.any(|p| {
+                p.trim()
+                    .strip_prefix("q=")
+                    .and_then(|q| q.parse::<f32>().ok())
+                    .is_some_and(|q| q == 0.0)
+            });
+            (coding.eq_ignore_ascii_case("gzip") || coding == "*") && !refused
+        })
+}
+
+/// Types gzip shrinks; images and woff fonts are compressed already.
+fn compressible(content_type: &str) -> bool {
+    content_type.starts_with("text/")
+        || matches!(
+            content_type,
+            "application/wasm" | "application/json" | "image/svg+xml" | "font/ttf" | "font/otf"
+        )
 }
 
 /// Serves connections until the runtime shuts down.
@@ -82,7 +154,7 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
     } else if path == SNAPSHOT_PATH {
         snapshot(site.status.clone()).await
     } else {
-        static_file(&req, site.web_root.as_deref()).await
+        static_file(&req, site.web_root.as_deref(), &site.gzip).await
     };
     let headers = response.headers_mut();
     // Isolation lets Firefox and Safari load the Rust core's shared-memory wasm; the stream needs neither.
@@ -129,7 +201,11 @@ async fn snapshot(status: Arc<Status>) -> Response<Body> {
     response
 }
 
-async fn static_file(req: &Request<Incoming>, root: Option<&Path>) -> Response<Body> {
+async fn static_file(
+    req: &Request<Incoming>,
+    root: Option<&Path>,
+    gzip_cache: &GzipCache,
+) -> Response<Body> {
     let Some(root) = root else {
         return plain(StatusCode::NOT_FOUND, "no web build configured (web_root)");
     };
@@ -139,42 +215,54 @@ async fn static_file(req: &Request<Incoming>, root: Option<&Path>) -> Response<B
     let Some(file) = resolve(root, &relative) else {
         return plain(StatusCode::NOT_FOUND, "not found");
     };
-    let (bytes, modified) = match tokio::fs::read(&file).await {
-        Ok(bytes) => {
-            let modified = tokio::fs::metadata(&file)
-                .await
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_secs());
-            (bytes, modified)
-        }
-        Err(_) => return plain(StatusCode::NOT_FOUND, "not found"),
+    let Ok(meta) = tokio::fs::metadata(&file).await else {
+        return plain(StatusCode::NOT_FOUND, "not found");
     };
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
     // Size and mtime: a redeployed build changes both, so a returning viewer never keeps a stale page.
-    let etag = format!("\"{:x}-{:x}\"", bytes.len(), modified);
+    let identity = format!("\"{:x}-{:x}\"", meta.len(), modified);
+    let kind = content_type(&file);
+    let gzipped = compressible(kind) && meta.len() >= MIN_GZIP_BYTES && accepts_gzip(req.headers());
+    let etag = if gzipped {
+        format!("\"{:x}-{:x}-gz\"", meta.len(), modified)
+    } else {
+        identity.clone()
+    };
     let fresh = req
         .headers()
         .get(header::IF_NONE_MATCH)
         .is_some_and(|tag| tag.as_bytes() == etag.as_bytes());
+    // A revalidation, the common request on a return visit, reads nothing.
     let body = if fresh || req.method() == Method::HEAD {
-        Bytes::new()
+        Ok(Bytes::new())
+    } else if gzipped {
+        gzip_cache.get(&file, &identity).await
     } else {
-        Bytes::from(bytes)
+        tokio::fs::read(&file).await.map(Bytes::from)
+    };
+    let Ok(body) = body else {
+        return plain(StatusCode::NOT_FOUND, "not found");
     };
     let mut response = Response::new(Full::new(body));
     if fresh {
         *response.status_mut() = StatusCode::NOT_MODIFIED;
     }
     let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(content_type(&file)),
-    );
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(kind));
     // Flutter's entry files are not content-hashed: revalidate everything rather than cache stale code.
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     if let Ok(value) = HeaderValue::from_str(&etag) {
         headers.insert(header::ETAG, value);
+    }
+    if compressible(kind) {
+        headers.insert(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
+    if gzipped {
+        headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
     }
     response
 }
@@ -358,6 +446,7 @@ mod tests {
             web_root,
             signalling: ("127.0.0.1".into(), signalling_port),
             status: Arc::new(Status::new("Test Cam", false, 16, 8)),
+            gzip: GzipCache::default(),
         });
         tokio::spawn(serve(listener, site));
         addr
@@ -438,6 +527,95 @@ mod tests {
             .starts_with("HTTP/1.1 400"));
     }
 
+    /// One raw HTTP/1.1 exchange; returns the response head as text and the body as bytes.
+    async fn get_raw(addr: std::net::SocketAddr, path: &str, extra: &str) -> (String, Vec<u8>) {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let request =
+            format!("GET {path} HTTP/1.1\r\nhost: cat.local\r\nconnection: close\r\n{extra}\r\n");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        let split = response.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        let head = String::from_utf8_lossy(&response[..split]).into_owned();
+        (head, response[split + 4..].to_vec())
+    }
+
+    fn etag_of(head: &str) -> String {
+        head.lines()
+            .find_map(|l| l.strip_prefix("etag: "))
+            .expect("etag header")
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn big_assets_go_out_gzipped_to_a_client_that_asks_and_plain_to_one_that_does_not() {
+        use std::io::Read as _;
+        let build = web_build();
+        let script = "let cat = 'Thundy';\n".repeat(4000);
+        std::fs::write(build.path().join("main.dart.js"), &script).unwrap();
+        let addr = start(Some(build.path().to_path_buf()), 9).await;
+
+        let (head, body) = get_raw(
+            addr,
+            "/main.dart.js",
+            "accept-encoding: gzip, deflate, br\r\n",
+        )
+        .await;
+        assert!(head.contains("content-encoding: gzip"), "{head}");
+        assert!(head.contains("vary: accept-encoding"), "{head}");
+        assert!(etag_of(&head).ends_with("-gz\""), "{head}");
+        assert!(body.len() < script.len() / 10, "{} bytes", body.len());
+        let mut unzipped = String::new();
+        flate2::read::GzDecoder::new(&body[..])
+            .read_to_string(&mut unzipped)
+            .unwrap();
+        assert_eq!(unzipped, script);
+
+        let (head, body) = get_raw(addr, "/main.dart.js", "").await;
+        assert!(!head.contains("content-encoding"), "{head}");
+        assert_eq!(body, script.as_bytes());
+        let (head, _) = get_raw(addr, "/index.html", "accept-encoding: gzip\r\n").await;
+        assert!(
+            !head.contains("content-encoding"),
+            "a 20-byte page went out gzipped: {head}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_gzipped_file_revalidates_against_its_own_etag() {
+        let build = web_build();
+        std::fs::write(build.path().join("main.dart.js"), "1;".repeat(2000)).unwrap();
+        let addr = start(Some(build.path().to_path_buf()), 9).await;
+        let gzip = "accept-encoding: gzip\r\n";
+        let gz_tag = etag_of(&get_raw(addr, "/main.dart.js", gzip).await.0);
+        let plain_tag = etag_of(&get_raw(addr, "/main.dart.js", "").await.0);
+        assert_ne!(gz_tag, plain_tag);
+        let revalidate = |tag: &str| format!("{gzip}if-none-match: {tag}\r\n");
+        let (head, body) = get_raw(addr, "/main.dart.js", &revalidate(&gz_tag)).await;
+        assert!(head.starts_with("HTTP/1.1 304"), "{head}");
+        assert!(body.is_empty());
+        let (head, _) = get_raw(addr, "/main.dart.js", &revalidate(&plain_tag)).await;
+        assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    }
+
+    #[test]
+    fn accept_encoding_is_read_with_its_q_values() {
+        let accepts = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::ACCEPT_ENCODING,
+                HeaderValue::from_str(value).unwrap(),
+            );
+            accepts_gzip(&headers)
+        };
+        assert!(accepts("gzip, deflate, br"));
+        assert!(accepts("br;q=1.0, GZIP;q=0.5"));
+        assert!(accepts("*"));
+        assert!(!accepts("gzip;q=0"));
+        assert!(!accepts("identity"));
+        assert!(!accepts_gzip(&HeaderMap::new()));
+    }
+
     #[tokio::test]
     async fn an_unchanged_file_revalidates_as_304() {
         let build = web_build();
@@ -462,6 +640,7 @@ mod tests {
             web_root: None,
             signalling: ("127.0.0.1".into(), 9),
             status: status.clone(),
+            gzip: GzipCache::default(),
         });
         tokio::spawn(serve(listener, site));
         assert!(get(addr, SNAPSHOT_PATH, "")

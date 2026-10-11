@@ -432,7 +432,12 @@ board runs it as one service unit:
   (stayed N s)`, because OmniAccelerANT's package tests grep the first.
 - **It serves the page itself.** `http_port` (8080) serves `web_root`, the OmniAccelerANT
   web build, with the MIME types and COOP/COEP that `serve.sh` adds, plus an SPA
-  fallback and ETags. It also answers `/healthz` (camera, model runs, the cat's presence),
+  fallback and ETags. A revalidation reads no file. A client that accepts gzip gets the
+  compressible files over 1 KB gzipped (`GzipCache`): compressed on first request, kept in
+  memory while the file is unchanged, with an ETag of their own and `Vary:
+  accept-encoding`. On himbeere2 (2026-10-12) the boot's main files went from 20.2 MB to
+  7.5 MB; the first request for the 7 MB CanvasKit spent 614 ms compressing, later ones
+  2 ms. It also answers `/healthz` (camera, model runs, the cat's presence),
   serves `/snapshot.jpg` (the latest frame, boxes included, encoded on request) and forwards
   `/webrtc-ws` byte for byte to the signalling server, which listens on `127.0.0.1` by
   default now. `run-producer-pi.sh` keeps the old shape (`--signalling-host 0.0.0.0

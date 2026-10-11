@@ -5112,6 +5112,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
+ "flate2",
  "gstreamer",
  "gstreamer-app",
  "http-body-util",
