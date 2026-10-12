@@ -1,6 +1,7 @@
 //! What `/healthz` reports (which camera is live, how often the model ran, when a cat was last seen)
 //! and the latest annotated frame `/snapshot.jpg` encodes.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -8,11 +9,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use gstreamer as gst;
 use serde::{Deserialize, Serialize};
 
+use crate::presence::Change;
+
 /// The cat's visits, kept across restarts in the state directory.
 const CAT_FILE: &str = "cat.json";
 
 /// The frame of the last arrival, kept across restarts beside it.
 const ARRIVAL_FILE: &str = "arrival.jpg";
+
+/// How many visits `/healthz` lists and the state directory keeps.
+const RECENT_VISITS: usize = 20;
+
+/// One visit: when the cat was confirmed, and how long it stayed once it has left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct Visit {
+    arrived: u64,
+    stayed_s: Option<u64>,
+}
 
 /// What a restart should not forget about the cat.
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -20,6 +33,9 @@ struct Remembered {
     last_seen: Option<u64>,
     visits: u64,
     last_score: Option<f32>,
+    /// Newest first; a cat.json from before the log has none.
+    #[serde(default)]
+    recent: Vec<Visit>,
 }
 
 #[derive(Default)]
@@ -31,6 +47,8 @@ struct Cat {
     runs: u64,
     /// The last run saw a cat, confirmed or not.
     hit: bool,
+    /// Newest first, at most [`RECENT_VISITS`].
+    recent: VecDeque<Visit>,
 }
 
 pub struct Status {
@@ -74,6 +92,13 @@ impl Status {
                         cat.last_seen = r.last_seen;
                         cat.visits = r.visits;
                         cat.best_score = r.last_score.unwrap_or_default();
+                        cat.recent = r.recent.into_iter().take(RECENT_VISITS).collect();
+                        // The service stopped with the cat in view: it stayed at least until last_seen.
+                        if let (Some(open), Some(seen)) = (cat.recent.front_mut(), cat.last_seen) {
+                            if open.stayed_s.is_none() {
+                                open.stayed_s = Some(seen.saturating_sub(open.arrived));
+                            }
+                        }
                     }
                 }
                 Err(err) => log::warn!("{}: {err}; starting afresh", dir.join(CAT_FILE).display()),
@@ -100,6 +125,7 @@ impl Status {
             last_seen: cat.last_seen,
             visits: cat.visits,
             last_score: cat.last_seen.map(|_| cat.best_score),
+            recent: cat.recent.iter().copied().collect(),
         }) else {
             return;
         };
@@ -115,8 +141,8 @@ impl Status {
         }
     }
 
-    /// Records one inference run's view of the cat, after presence smoothing.
-    pub fn set_cat(&self, in_view: bool, best_score: Option<f32>, arrived: bool) {
+    /// Records one inference run's view of the cat, after presence smoothing, and the visit it starts or ends.
+    pub fn set_cat(&self, in_view: bool, best_score: Option<f32>, change: Option<&Change>) {
         if let Ok(mut cat) = self.cat.lock() {
             cat.runs += 1;
             cat.hit = best_score.is_some();
@@ -125,8 +151,21 @@ impl Status {
                 cat.last_seen = Some(unix_now());
                 cat.best_score = best_score.unwrap_or(cat.best_score);
             }
-            if arrived {
-                cat.visits += 1;
+            match change {
+                Some(Change::Arrived { .. }) => {
+                    cat.visits += 1;
+                    cat.recent.push_front(Visit {
+                        arrived: unix_now(),
+                        stayed_s: None,
+                    });
+                    cat.recent.truncate(RECENT_VISITS);
+                }
+                Some(Change::Left { stayed }) => {
+                    if let Some(open) = cat.recent.front_mut() {
+                        open.stayed_s.get_or_insert(stayed.as_secs());
+                    }
+                }
+                None => {}
             }
         }
     }
@@ -181,6 +220,10 @@ impl Status {
             .as_deref()
             .map(|c| (c.in_view, c.last_seen, c.visits, c.best_score, c.runs))
             .unwrap_or_default();
+        let recent: Vec<Visit> = cat
+            .as_deref()
+            .map(|c| c.recent.iter().copied().collect())
+            .unwrap_or_default();
         serde_json::json!({
             "ok": true,
             "name": self.name,
@@ -192,6 +235,7 @@ impl Status {
                 "last_seen": last_seen,
                 "visits": visits,
                 "last_score": (last_seen.is_some()).then_some(best),
+                "recent": recent,
             },
         })
         .to_string()
@@ -236,6 +280,20 @@ pub fn encode_jpeg(rgba: &[u8], width: u32, height: u32) -> anyhow::Result<Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    fn arrived() -> Change {
+        Change::Arrived {
+            count: 2,
+            best: 0.8,
+        }
+    }
+
+    fn left(seconds: u64) -> Change {
+        Change::Left {
+            stayed: Duration::from_secs(seconds),
+        }
+    }
 
     #[test]
     fn reports_the_camera_last_set() {
@@ -252,15 +310,15 @@ mod tests {
     #[test]
     fn a_visit_is_counted_once_and_last_seen_stays_after_it_ends() {
         let status = Status::new("Cam", true, 4, 4);
-        status.set_cat(true, Some(0.8), true);
-        status.set_cat(true, Some(0.6), false);
-        status.set_cat(false, None, false);
+        status.set_cat(true, Some(0.8), Some(&arrived()));
+        status.set_cat(true, Some(0.6), None);
+        status.set_cat(false, None, None);
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
         assert_eq!(json["cat"]["in_view"], false);
         assert_eq!(json["cat"]["visits"], 1);
         assert_eq!(json["model_runs"], 3);
         assert!(!status.cat_seen());
-        status.set_cat(false, Some(0.3), false);
+        status.set_cat(false, Some(0.3), None);
         assert!(status.cat_seen());
         assert!(json["cat"]["last_seen"].as_u64().unwrap() > 0);
         assert!((json["cat"]["last_score"].as_f64().unwrap() - 0.6).abs() < 1e-6);
@@ -270,9 +328,9 @@ mod tests {
     fn a_restart_remembers_the_visits_and_the_arrival_frame() {
         let dir = tempfile::tempdir().unwrap();
         let before = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
-        before.set_cat(true, Some(0.7), true);
+        before.set_cat(true, Some(0.7), Some(&arrived()));
         before.set_arrival(vec![0xFF, 0xD8, 0xFF, 0xD9]);
-        before.set_cat(false, None, false);
+        before.set_cat(false, None, Some(&left(42)));
         before.persist();
 
         let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
@@ -282,7 +340,70 @@ mod tests {
         assert!(json["cat"]["last_seen"].as_u64().unwrap() > 0);
         assert!((json["cat"]["last_score"].as_f64().unwrap() - 0.7).abs() < 1e-6);
         assert_eq!(after.arrival_jpeg().unwrap(), [0xFF, 0xD8, 0xFF, 0xD9]);
+        assert_eq!(json["cat"]["recent"][0]["stayed_s"], 42);
         assert!(!dir.path().join("cat.partial").exists());
+    }
+
+    #[test]
+    fn the_log_keeps_each_visit_and_its_stay_newest_first() {
+        let status = Status::new("Cam", true, 4, 4);
+        status.set_cat(true, Some(0.8), Some(&arrived()));
+        let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        assert!(json["cat"]["recent"][0]["arrived"].as_u64().unwrap() > 0);
+        assert!(json["cat"]["recent"][0]["stayed_s"].is_null());
+        status.set_cat(false, None, Some(&left(95)));
+        for _ in 0..RECENT_VISITS + 4 {
+            status.set_cat(true, Some(0.8), Some(&arrived()));
+            status.set_cat(false, None, Some(&left(7)));
+        }
+        let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        let recent = json["cat"]["recent"].as_array().unwrap();
+        assert_eq!(recent.len(), RECENT_VISITS);
+        assert!(recent.iter().all(|v| v["stayed_s"] == 7));
+        assert_eq!(json["cat"]["visits"], RECENT_VISITS + 5);
+    }
+
+    #[test]
+    fn a_restart_closes_the_visit_it_cut_short_at_last_seen() {
+        let dir = tempfile::tempdir().unwrap();
+        let open = Remembered {
+            last_seen: Some(1_000_030),
+            visits: 2,
+            last_score: Some(0.7),
+            recent: vec![
+                Visit {
+                    arrived: 1_000_000,
+                    stayed_s: None,
+                },
+                Visit {
+                    arrived: 900_000,
+                    stayed_s: Some(60),
+                },
+            ],
+        };
+        std::fs::write(
+            dir.path().join(CAT_FILE),
+            serde_json::to_vec(&open).unwrap(),
+        )
+        .unwrap();
+        let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        assert_eq!(json["cat"]["recent"][0]["stayed_s"], 30);
+        assert_eq!(json["cat"]["recent"][1]["stayed_s"], 60);
+    }
+
+    #[test]
+    fn a_cat_json_from_before_the_log_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(CAT_FILE),
+            r#"{"last_seen":1791763273,"visits":3,"last_score":0.76}"#,
+        )
+        .unwrap();
+        let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        assert_eq!(json["cat"]["visits"], 3);
+        assert_eq!(json["cat"]["recent"], serde_json::json!([]));
     }
 
     #[test]

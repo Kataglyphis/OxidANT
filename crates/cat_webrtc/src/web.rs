@@ -690,6 +690,10 @@ mod tests {
         assert!(head.starts_with("HTTP/1.1 200"), "{head}");
         assert!(head.contains("content-type: image/jpeg"), "{head}");
         assert_eq!(body, [0xFF, 0xD8, 0xFF, 0xD9]);
+        // The Stream page keys the picture by visit (`?visit=3`); the route must match the path alone.
+        let (head, body) = get_raw(addr, &format!("{ARRIVAL_PATH}?visit=3"), "").await;
+        assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+        assert_eq!(body, [0xFF, 0xD8, 0xFF, 0xD9]);
     }
 
     #[tokio::test]

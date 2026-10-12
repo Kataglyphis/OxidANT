@@ -43,6 +43,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and without the flag, show the same scene turned 180°, as the `videoflip` turned it.
 
 ### Added
+- **The cat cam keeps a log of the cat's visits (2026-10-12).** `/healthz`'s `cat.recent`
+  lists the latest 20, newest first: `arrived` in Unix seconds and, once the cat has left,
+  `stayed_s`. The log lives in `cat.json` beside the count, and a `cat.json` from before it
+  still loads. The service also writes that file once more when it stops, so the next start
+  closes a visit the stop cut short at the cat's last sighting; after a power cut, at the
+  last arrival or departure written.
 - **The cat cam remembers its cat across restarts (2026-10-12).** Visits, the last
   sighting and score, and the arrival frame are written to systemd's `$STATE_DIRECTORY` on
   every arrival and departure and read back at start, so an upgrade or a reboot no longer

@@ -459,11 +459,7 @@ fn spawn_inference(
                     notifier.send(change);
                 }
                 let in_view = presence.in_view();
-                status.set_cat(
-                    in_view,
-                    best_score(&detections),
-                    matches!(change, Some(Change::Arrived { .. })),
-                );
+                status.set_cat(in_view, best_score(&detections), change.as_ref());
                 if change.is_some() {
                     status.persist();
                 }

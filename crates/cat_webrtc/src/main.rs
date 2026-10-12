@@ -216,6 +216,7 @@ fn run(args: Args) -> anyhow::Result<()> {
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let notifier = start_notifier(&config, detector.is_some());
+    let at_exit = status.clone();
     let worker = capture::Worker {
         config: Arc::new(config),
         choice,
@@ -232,6 +233,8 @@ fn run(args: Args) -> anyhow::Result<()> {
     shutdown.store(true, Ordering::Relaxed);
     let _ = pipeline.set_state(gst::State::Null);
     let _ = worker.join();
+    // The last sighting before a stop, so the next start closes the visit the stop cut short there.
+    at_exit.persist();
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
     outcome
 }
