@@ -17,7 +17,7 @@ protocol exists and the backlog is empty" — it was neither.
       `[patch.crates-io]` entry once egui 0.37 (or any release carrying
       emilk/egui#8516) is on crates.io, then move the egui family to it.
       Blocked on that release. Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.
-      Re-checked 2026-10-11: crates.io's newest `egui-winit` is still 0.36.2 (emilk/egui#8516 merged 2026-09-07, unreleased).
+      Re-checked 2026-10-12: crates.io's newest `egui` and `egui-winit` are still 0.36.2, published 2026-09-08 (emilk/egui#8516 merged 2026-09-07, unreleased).
 
 - [b] Instanced normals shade differently from the equivalent node transform.
       `a_non_uniform_instance_scale_shades_like_the_same_node_scale` fails with
