@@ -28,9 +28,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **`--precompress DIR` ships a web build smaller (2026-10-12).** It writes a zopfli
   `<file>.gz` beside every file the server would gzip, on every core, and the server sends
   that file instead of compressing its own, unless the original is newer. OmniAccelerANT's
-  packager runs it: on a Pi 5, a first visit to the cat cam page went from 3.93 MB to
-  3.75 MB (`skwasm.wasm` 1543 to 1478 kB, `main.dart.wasm` 1484 to 1418 kB), and nothing
-  is compressed or held in memory for it at run time. `zopfli` 0.8.3; its dependencies
+  packager runs it: on a Pi 5, a phone's first visit to the cat cam page went from about
+  4.62 MB to 4.46 MB (`skwasm_heavy.wasm` 2291 to 2214 kB, `main.dart.wasm` 1479 to
+  1418 kB; plain HTTP at a LAN address is no secure context, so Flutter loads the heavy
+  renderer), 3.93 to 3.75 MB over loopback, and nothing is compressed or held in memory
+  for it at run time. `zopfli` 0.8.3; its dependencies
   were in the lockfile already.
 - **The kept clips are listed, and a departure names its arrival (2026-10-12).**
   `/healthz` gains `cat.clips`: the arrival of every clip `?t=` still serves, newest
