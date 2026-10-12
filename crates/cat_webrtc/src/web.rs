@@ -26,6 +26,9 @@ pub const SIGNALLING_PATH: &str = "/webrtc-ws";
 /// The latest annotated frame as a JPEG.
 pub const SNAPSHOT_PATH: &str = "/snapshot.jpg";
 
+/// The frame the last cat arrival was confirmed on, as a JPEG.
+pub const ARRIVAL_PATH: &str = "/arrival.jpg";
+
 /// How long the signalling server may take to answer the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -153,6 +156,11 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
         response
     } else if path == SNAPSHOT_PATH {
         snapshot(site.status.clone()).await
+    } else if path == ARRIVAL_PATH {
+        match site.status.arrival_jpeg() {
+            Some(jpeg) => jpeg_response(jpeg),
+            None => plain(StatusCode::NOT_FOUND, "no cat has arrived yet"),
+        }
     } else {
         static_file(&req, site.web_root.as_deref(), &site.gzip).await
     };
@@ -194,6 +202,10 @@ async fn snapshot(status: Arc<Status>) -> Response<Body> {
         }
         Err(_) => return plain(StatusCode::INTERNAL_SERVER_ERROR, "snapshot failed"),
     };
+    jpeg_response(jpeg)
+}
+
+fn jpeg_response(jpeg: Vec<u8>) -> Response<Body> {
     let mut response = Response::new(Full::new(Bytes::from(jpeg)));
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
@@ -656,6 +668,28 @@ mod tests {
         assert!(jpeg.starts_with("HTTP/1.1 200"), "{jpeg}");
         assert!(jpeg.contains("content-type: image/jpeg"), "{jpeg}");
         assert!(jpeg.contains("cache-control: no-store"), "{jpeg}");
+    }
+
+    #[tokio::test]
+    async fn the_arrival_is_a_404_until_a_cat_came_then_its_jpeg() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let status = Arc::new(Status::new("Test Cam", false, 16, 8));
+        let site = Arc::new(Site {
+            web_root: None,
+            signalling: ("127.0.0.1".into(), 9),
+            status: status.clone(),
+            gzip: GzipCache::default(),
+        });
+        tokio::spawn(serve(listener, site));
+        assert!(get(addr, ARRIVAL_PATH, "")
+            .await
+            .starts_with("HTTP/1.1 404"));
+        status.set_arrival(vec![0xFF, 0xD8, 0xFF, 0xD9]);
+        let (head, body) = get_raw(addr, ARRIVAL_PATH, "").await;
+        assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+        assert!(head.contains("content-type: image/jpeg"), "{head}");
+        assert_eq!(body, [0xFF, 0xD8, 0xFF, 0xD9]);
     }
 
     #[tokio::test]

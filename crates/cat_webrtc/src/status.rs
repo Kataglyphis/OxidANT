@@ -25,6 +25,8 @@ pub struct Status {
     camera: Mutex<String>,
     cat: Mutex<Cat>,
     frame: Mutex<Option<gst::Buffer>>,
+    /// The JPEG of the frame the last arrival was confirmed on.
+    arrival: Mutex<Option<Vec<u8>>>,
 }
 
 impl Status {
@@ -37,6 +39,7 @@ impl Status {
             camera: Mutex::new("starting".to_owned()),
             cat: Mutex::new(Cat::default()),
             frame: Mutex::new(None),
+            arrival: Mutex::new(None),
         }
     }
 
@@ -72,6 +75,16 @@ impl Status {
         if let Ok(mut current) = self.frame.lock() {
             *current = Some(frame.clone());
         }
+    }
+
+    pub fn set_arrival(&self, jpeg: Vec<u8>) {
+        if let Ok(mut current) = self.arrival.lock() {
+            *current = Some(jpeg);
+        }
+    }
+
+    pub fn arrival_jpeg(&self) -> Option<Vec<u8>> {
+        self.arrival.lock().ok().and_then(|a| a.clone())
     }
 
     /// The latest annotated frame as JPEG, or `None` before the first frame.

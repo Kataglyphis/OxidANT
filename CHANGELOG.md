@@ -43,6 +43,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and without the flag, show the same scene turned 180°, as the `videoflip` turned it.
 
 ### Added
+- **The cat cam tells a webhook when a cat comes or goes (2026-10-12).** `notify_url`
+  gets `{"event": "arrived"|"left", ...}` as JSON over http or https, from a thread of its
+  own; `/arrival.jpg` is the frame the arrival was confirmed on, boxes drawn. Logs never
+  carry the URL's path, which is a Home Assistant webhook's secret.
 - **The cat cam serves its web build gzipped (2026-10-12).** The Flutter boot's main files
   went from 20.2 MB to 7.5 MB for a browser that accepts gzip. Each file is compressed on
   its first request (614 ms for the 7 MB CanvasKit on a Pi 5) and kept in memory while it

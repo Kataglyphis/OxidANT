@@ -17,6 +17,7 @@ use crate::camera::{self, Choice, Found, Plan};
 use crate::config::Config;
 use crate::frame;
 use crate::motion::{rate_period, Pacer};
+use crate::notify::Notifier;
 use crate::presence::{best_score, Change, Presence};
 use crate::status::Status;
 
@@ -40,6 +41,7 @@ pub struct Worker {
     pub detector: Option<PersonDetector>,
     pub status: Arc<Status>,
     pub shutdown: Arc<AtomicBool>,
+    pub notifier: Option<Notifier>,
 }
 
 impl Worker {
@@ -51,8 +53,15 @@ impl Worker {
 
     fn run(mut self) {
         let boxes: Boxes = Arc::new(Mutex::new(Vec::new()));
+        let notifier = self.notifier.take();
         let inference = self.detector.take().and_then(|detector| {
-            spawn_inference(detector, &self.config, boxes.clone(), self.status.clone())
+            spawn_inference(
+                detector,
+                &self.config,
+                boxes.clone(),
+                self.status.clone(),
+                notifier,
+            )
         });
         let frames = inference.as_ref().map(|(tx, _)| tx);
         let mut failures: u32 = 0;
@@ -410,6 +419,7 @@ fn spawn_inference(
     config: &Config,
     boxes: Boxes,
     status: Arc<Status>,
+    notifier: Option<Notifier>,
 ) -> Option<(mpsc::SyncSender<Vec<u8>>, thread::JoinHandle<()>)> {
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
     let (width, height, score) = (config.width, config.height, config.score);
@@ -438,6 +448,16 @@ fn spawn_inference(
                     }
                     None => {}
                 }
+                // Before the event goes out, so a receiver that fetches /arrival.jpg gets this one.
+                if matches!(change, Some(Change::Arrived { .. })) {
+                    match arrival_jpeg(&i420, width, height, &detections) {
+                        Ok(jpeg) => status.set_arrival(jpeg),
+                        Err(err) => log::warn!("arrival snapshot: {err:#}"),
+                    }
+                }
+                if let (Some(notifier), Some(change)) = (&notifier, &change) {
+                    notifier.send(change);
+                }
                 let in_view = presence.in_view();
                 status.set_cat(
                     in_view,
@@ -456,6 +476,27 @@ fn spawn_inference(
             None
         }
     }
+}
+
+/// The frame a cat was confirmed on, boxes drawn, as JPEG.
+fn arrival_jpeg(
+    i420: &[u8],
+    width: u32,
+    height: u32,
+    detections: &[Detection],
+) -> anyhow::Result<Vec<u8>> {
+    let mut boxed = i420.to_vec();
+    for d in detections {
+        frame::draw_rect(
+            &mut boxed,
+            width,
+            height,
+            [d.x1, d.y1, d.x2, d.y2],
+            frame::GREEN,
+            4,
+        );
+    }
+    crate::status::encode_jpeg(&frame::to_rgba(&boxed, width, height), width, height)
 }
 
 fn make(factory: &str) -> anyhow::Result<gst::Element> {
@@ -539,6 +580,7 @@ mod tests {
             detector: None,
             status: status.clone(),
             shutdown: shutdown.clone(),
+            notifier: None,
         }
         .spawn()
         .unwrap();

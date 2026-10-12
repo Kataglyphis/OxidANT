@@ -69,6 +69,8 @@ pub struct Config {
     pub key: Option<String>,
     /// `stun://host:port`; empty or unset keeps the stream LAN-only, with no outside lookup.
     pub stun_server: Option<String>,
+    /// An http(s) URL POSTed a JSON event whenever a cat arrives or leaves; empty or unset sends nothing.
+    pub notify_url: Option<String>,
     /// UDP range for WebRTC media, so a firewall can open exactly it; 0..0 leaves it free.
     pub ice_port_min: u16,
     pub ice_port_max: u16,
@@ -100,6 +102,7 @@ impl Default for Config {
             cert: None,
             key: None,
             stun_server: None,
+            notify_url: None,
             ice_port_min: 40000,
             ice_port_max: 40099,
         }
@@ -134,6 +137,14 @@ impl Config {
     /// The STUN server to hand to webrtcsink, if any.
     pub fn stun(&self) -> Option<&str> {
         self.stun_server
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// The webhook to POST cat events to, if any.
+    pub fn notify(&self) -> Option<&str> {
+        self.notify_url
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -182,6 +193,11 @@ impl Config {
         }
         if self.cert.is_some() != self.key.is_some() {
             bail!("cert and key go together");
+        }
+        if let Some(url) = self.notify() {
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                bail!("notify_url must be an http:// or https:// URL (got {url:?})");
+            }
         }
         crate::camera::Choice::parse(&self.camera)?;
         Ok(())
@@ -241,6 +257,20 @@ mod tests {
     }
 
     #[test]
+    fn a_blank_notify_url_sends_nothing() {
+        let mut config = Config::default();
+        assert_eq!(config.notify(), None);
+        config.notify_url = Some(" ".into());
+        assert_eq!(config.notify(), None);
+        assert!(config.validate().is_ok());
+        config.notify_url = Some("http://localhost:8123/api/webhook/cats".into());
+        assert_eq!(
+            config.notify(),
+            Some("http://localhost:8123/api/webhook/cats")
+        );
+    }
+
+    #[test]
     fn validation_rejects_what_the_pipeline_cannot_take() {
         assert!(Config::default().validate().is_ok());
         let bad = [
@@ -275,6 +305,10 @@ mod tests {
             },
             Config {
                 camera: "webcam".into(),
+                ..Config::default()
+            },
+            Config {
+                notify_url: Some("mqtt://broker/cats".into()),
                 ..Config::default()
             },
         ];

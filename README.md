@@ -232,7 +232,11 @@ target/release/kataglyphis_cat_webrtc --camera test --print-config  # the settin
 target/release/kataglyphis_cat_webrtc --camera test                 # a test pattern, no camera
 curl localhost:8080/healthz                    # the camera, the model's runs, the cat
 curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
+curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on
 ```
+
+`--notify-url <http(s) URL>` (`notify_url` in the file) POSTs a JSON event there whenever
+a cat arrives or leaves, a Home Assistant webhook trigger for instance.
 
 The settings come from a TOML file (`--config`, else `/etc/omni-accelerant/catcam.toml`)
 with the flags on top; `--web-root` names OmniAccelerANT's web build, served on `:8080`.

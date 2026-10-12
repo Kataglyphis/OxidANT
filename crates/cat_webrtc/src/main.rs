@@ -7,6 +7,7 @@ mod config;
 mod frame;
 mod install;
 mod motion;
+mod notify;
 mod output;
 mod presence;
 mod status;
@@ -131,6 +132,9 @@ struct Args {
     /// stun://host:port; an empty value keeps the stream LAN-only.
     #[arg(long)]
     stun_server: Option<String>,
+    /// An http(s) URL to POST a JSON event to when a cat arrives or leaves.
+    #[arg(long)]
+    notify_url: Option<String>,
     /// UDP range for WebRTC media as MIN-MAX; 0-0 leaves the ports free.
     #[arg(long)]
     ice_ports: Option<String>,
@@ -201,6 +205,7 @@ fn run(args: Args) -> anyhow::Result<()> {
     });
 
     let shutdown = Arc::new(AtomicBool::new(false));
+    let notifier = start_notifier(&config, detector.is_some());
     let worker = capture::Worker {
         config: Arc::new(config),
         choice,
@@ -208,6 +213,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         detector,
         status,
         shutdown: shutdown.clone(),
+        notifier,
     }
     .spawn()
     .context("spawn capture worker")?;
@@ -282,6 +288,9 @@ fn apply_args(args: &Args, config: &mut Config) -> anyhow::Result<()> {
     if args.stun_server.is_some() {
         config.stun_server.clone_from(&args.stun_server);
     }
+    if args.notify_url.is_some() {
+        config.notify_url.clone_from(&args.notify_url);
+    }
     if let Some(range) = &args.ice_ports {
         let (min, max) = range
             .split_once('-')
@@ -320,6 +329,25 @@ fn load_detector(config: &Config) -> anyhow::Result<Option<PersonDetector>> {
                     Ok(None)
                 }
             }
+        }
+    }
+}
+
+/// The webhook's delivery thread when `notify_url` is set; logs name only the URL's origin.
+fn start_notifier(config: &Config, inference: bool) -> Option<notify::Notifier> {
+    let url = config.notify()?;
+    if !inference {
+        log::warn!("notify_url is set, but with the model off no cat is ever seen");
+        return None;
+    }
+    match notify::Notifier::spawn(url, &config.name) {
+        Ok(notifier) => {
+            log::info!("notify: cat events go to {}", notify::origin(url));
+            Some(notifier)
+        }
+        Err(err) => {
+            log::warn!("notify: no delivery thread: {err}");
+            None
         }
     }
 }

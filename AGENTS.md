@@ -445,6 +445,11 @@ board runs it as one service unit:
   `/webrtc-ws` byte for byte to the signalling server, which listens on `127.0.0.1` by
   default now. `run-producer-pi.sh` keeps the old shape (`--signalling-host 0.0.0.0
   --http-port 0`) because `serve.sh` is that setup's web half.
+- **A webhook hears about every visit** (`notify.rs`). With `notify_url` set, each
+  arrival and departure is POSTed as JSON (`ureq` with rustls, so https too) from the
+  `cat-notify` thread, which a slow receiver cannot turn into slow detection. Before the
+  arrival goes out, `/arrival.jpg` is set to the frame the model confirmed it on, boxes
+  drawn. Logs name only the URL's origin: a Home Assistant webhook's path is its secret.
 - **The network is pinned.** Media uses UDP `ice_port_min..ice_port_max`
   (40000-40099), set on every viewer's ICE agent from `consumer-added`, and STUN is off
   unless `stun_server` names one, so a LAN stream needs nothing outside it.
