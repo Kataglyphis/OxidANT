@@ -202,7 +202,9 @@ pub fn encode_mp4(
             short.size()
         );
     }
-    let dir = tempfile_dir()?;
+    // Declared before the pipeline, so it drops after it: Windows deletes no file a filesink holds.
+    let scratch = Scratch(tempfile_dir()?);
+    let dir = &scratch.0;
     let out = dir.join("clip.mp4");
     let pipeline = gst::Pipeline::new();
     let src = gst::ElementFactory::make("appsrc")
@@ -278,11 +280,17 @@ pub fn encode_mp4(
         }
     })();
     let _ = pipeline.set_state(gst::State::Null);
-    let mp4 = result
-        .and_then(|()| std::fs::read(&out).with_context(|| format!("read {}", out.display())));
-    // On an error too: a failed encode must not leave its scratch files in /tmp.
-    let _ = std::fs::remove_dir_all(&dir);
-    mp4
+    result.and_then(|()| std::fs::read(&out).with_context(|| format!("read {}", out.display())))
+}
+
+/// One encode's scratch directory, removed however [`encode_mp4`] returns: a GStreamer without
+/// one of its elements returned before the cleanup, and left a directory per arrival.
+struct Scratch(std::path::PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// A private directory for one encode; the service's sandbox gives it a /tmp of its own.
@@ -364,6 +372,29 @@ mod tests {
             crate::frame::size(64, 48)
         ])];
         assert!(encode_mp4(&frames, 64, 48, gst::Fraction::new(0, 1)).is_err());
+        assert_eq!(scratch_dirs(), before);
+    }
+
+    #[test]
+    fn a_gstreamer_without_the_encoder_leaves_no_scratch_directory() {
+        let _one = ENCODES.lock().unwrap_or_else(|e| e.into_inner());
+        gst::init().unwrap();
+        let registry = gst::Registry::get();
+        // Windows arm64's GStreamer has no openh264enc; hide it here for one encode.
+        let hidden = registry.find_feature("openh264enc", gst::ElementFactory::static_type());
+        if let Some(feature) = &hidden {
+            registry.remove_feature(feature);
+        }
+        let before = scratch_dirs();
+        let frames = vec![gst::Buffer::from_mut_slice(vec![
+            16u8;
+            crate::frame::size(64, 48)
+        ])];
+        let result = encode_mp4(&frames, 64, 48, gst::Fraction::new(10, 1));
+        if let Some(feature) = &hidden {
+            registry.add_feature(feature).unwrap();
+        }
+        assert!(format!("{:#}", result.unwrap_err()).contains("openh264enc"));
         assert_eq!(scratch_dirs(), before);
     }
 
