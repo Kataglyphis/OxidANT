@@ -194,6 +194,14 @@ pub fn encode_mp4(
     if frames.is_empty() {
         bail!("no frames");
     }
+    // openh264enc reads a frame's full size whatever the buffer holds: a short one crashed the process.
+    let want = crate::frame::size(width, height);
+    if let Some(short) = frames.iter().find(|f| f.size() != want) {
+        bail!(
+            "a frame of {} bytes, not the {want} of {width}x{height} I420",
+            short.size()
+        );
+    }
     let dir = tempfile_dir()?;
     let out = dir.join("clip.mp4");
     let pipeline = gst::Pipeline::new();
@@ -237,8 +245,13 @@ pub fn encode_mp4(
         pipeline
             .set_state(gst::State::Playing)
             .context("clip pipeline to PLAYING")?;
+        // mul_div_floor panics on a zero denominator, which would end the encoder thread for good.
+        let (num, den) = (rate.numer(), rate.denom());
+        if num <= 0 || den <= 0 {
+            bail!("frame rate {num}/{den}");
+        }
         let step = gst::ClockTime::SECOND
-            .mul_div_floor(rate.denom() as u64, rate.numer() as u64)
+            .mul_div_floor(den as u64, num as u64)
             .context("frame duration")?;
         for (i, frame) in frames.iter().enumerate() {
             let mut buffer = frame.copy();
@@ -265,10 +278,11 @@ pub fn encode_mp4(
         }
     })();
     let _ = pipeline.set_state(gst::State::Null);
-    result?;
-    let mp4 = std::fs::read(&out).with_context(|| format!("read {}", out.display()))?;
+    let mp4 = result
+        .and_then(|()| std::fs::read(&out).with_context(|| format!("read {}", out.display())));
+    // On an error too: a failed encode must not leave its scratch files in /tmp.
     let _ = std::fs::remove_dir_all(&dir);
-    Ok(mp4)
+    mp4
 }
 
 /// A private directory for one encode; the service's sandbox gives it a /tmp of its own.
@@ -287,6 +301,9 @@ fn tempfile_dir() -> anyhow::Result<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One encode at a time: the scratch-directory count must not see a parallel test's.
+    static ENCODES: Mutex<()> = Mutex::new(());
 
     #[test]
     fn the_ring_keeps_the_last_seconds_at_the_clip_rate() {
@@ -327,7 +344,41 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_shorter_than_its_caps_is_refused_before_the_encoder_sees_it() {
+        let _one = ENCODES.lock().unwrap_or_else(|e| e.into_inner());
+        gst::init().unwrap();
+        // Without the check this one 16-byte frame took the test process down with SIGSEGV.
+        let frames = vec![gst::Buffer::from_mut_slice(vec![0u8; 16])];
+        let err = encode_mp4(&frames, 64, 48, gst::Fraction::new(10, 1)).unwrap_err();
+        assert!(err.to_string().contains("not the 4608"), "{err:#}");
+    }
+
+    #[test]
+    fn a_failed_encode_leaves_no_scratch_directory() {
+        let _one = ENCODES.lock().unwrap_or_else(|e| e.into_inner());
+        gst::init().unwrap();
+        let before = scratch_dirs();
+        // A rate of 0 fails after the scratch directory exists, while the frames are pushed.
+        let frames = vec![gst::Buffer::from_mut_slice(vec![
+            16u8;
+            crate::frame::size(64, 48)
+        ])];
+        assert!(encode_mp4(&frames, 64, 48, gst::Fraction::new(0, 1)).is_err());
+        assert_eq!(scratch_dirs(), before);
+    }
+
+    fn scratch_dirs() -> usize {
+        let prefix = format!("catcam-clip-{}-", std::process::id());
+        std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+            .count()
+    }
+
+    #[test]
     fn frames_of_an_mp4_clip_come_out_as_one_with_its_index_first() {
+        let _one = ENCODES.lock().unwrap_or_else(|e| e.into_inner());
         gst::init().unwrap();
         if ["openh264enc", "h264parse", "mp4mux"]
             .iter()
