@@ -450,6 +450,10 @@ board runs it as one service unit:
   `cat-notify` thread, which a slow receiver cannot turn into slow detection. Before the
   arrival goes out, `/arrival.jpg` is set to the frame the model confirmed it on, boxes
   drawn. Logs name only the URL's origin: a Home Assistant webhook's path is its secret.
+- **The cat outlives a restart.** When systemd sets `$STATE_DIRECTORY` (the unit's
+  `StateDirectory=`), every arrival and departure writes `cat.json` (last seen, visits,
+  last score) and `arrival.jpg` there, each through a rename so a crash leaves no torn
+  file, and the next start reads them back. Without it nothing is kept.
 - **The network is pinned.** Media uses UDP `ice_port_min..ice_port_max`
   (40000-40099), set on every viewer's ICE agent from `consumer-added`, and STUN is off
   unless `stun_server` names one, so a LAN stream needs nothing outside it.

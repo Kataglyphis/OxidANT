@@ -464,6 +464,9 @@ fn spawn_inference(
                     best_score(&detections),
                     matches!(change, Some(Change::Arrived { .. })),
                 );
+                if change.is_some() {
+                    status.persist();
+                }
                 if let Ok(mut current) = boxes.lock() {
                     *current = if in_view { detections } else { Vec::new() };
                 }

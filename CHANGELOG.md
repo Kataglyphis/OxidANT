@@ -43,6 +43,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and without the flag, show the same scene turned 180°, as the `videoflip` turned it.
 
 ### Added
+- **The cat cam remembers its cat across restarts (2026-10-12).** Visits, the last
+  sighting and score, and the arrival frame are written to systemd's `$STATE_DIRECTORY` on
+  every arrival and departure and read back at start, so an upgrade or a reboot no longer
+  turns the Stream page back to "No cat seen yet".
 - **The cat cam tells a webhook when a cat comes or goes (2026-10-12).** `notify_url`
   gets `{"event": "arrived"|"left", ...}` as JSON over http or https, from a thread of its
   own; `/arrival.jpg` is the frame the arrival was confirmed on, boxes drawn. Logs never

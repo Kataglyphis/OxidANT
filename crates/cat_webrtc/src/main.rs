@@ -42,6 +42,9 @@ const ORT_SPIN_ENV: &str = "KATAGLYPHIS_ORT_SPIN";
 /// ORT's intra-op thread count, read once when the session is built.
 const ORT_THREADS_ENV: &str = "KATAGLYPHIS_ORT_THREADS";
 
+/// systemd's `StateDirectory=` for the unit; the cat's visits are kept there across restarts.
+const STATE_DIR_ENV: &str = "STATE_DIRECTORY";
+
 /// `inference = "auto"` skips the model on boards with less memory than this (a Pi Zero 2 W has 512 MB).
 const AUTO_INFERENCE_MIN_MIB: u64 = 1024;
 
@@ -177,12 +180,19 @@ fn run(args: Args) -> anyhow::Result<()> {
     kataglyphis_media::ensure_gst_initialized()?;
 
     let detector = load_detector(&config)?;
-    let status = Arc::new(status::Status::new(
+    let status = status::Status::new(
         &config.name,
         detector.is_some(),
         config.width,
         config.height,
-    ));
+    );
+    let status = Arc::new(match state_dir() {
+        Some(dir) => {
+            log::info!("state: {}", dir.display());
+            status.remember_in(dir)
+        }
+        None => status,
+    });
     let (pipeline, appsrc) = output::build(&config)?;
     pipeline
         .set_state(gst::State::Playing)
@@ -350,6 +360,13 @@ fn start_notifier(config: &Config, inference: bool) -> Option<notify::Notifier> 
             None
         }
     }
+}
+
+/// The first of `$STATE_DIRECTORY`'s colon-separated directories, if systemd set one.
+fn state_dir() -> Option<PathBuf> {
+    let value = std::env::var(STATE_DIR_ENV).ok()?;
+    let first = value.split(':').next()?.trim();
+    (!first.is_empty()).then(|| PathBuf::from(first))
 }
 
 fn total_memory_mib() -> u64 {

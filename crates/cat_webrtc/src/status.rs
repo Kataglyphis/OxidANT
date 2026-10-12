@@ -1,10 +1,26 @@
 //! What `/healthz` reports (which camera is live, how often the model ran, when a cat was last seen)
 //! and the latest annotated frame `/snapshot.jpg` encodes.
 
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gstreamer as gst;
+use serde::{Deserialize, Serialize};
+
+/// The cat's visits, kept across restarts in the state directory.
+const CAT_FILE: &str = "cat.json";
+
+/// The frame of the last arrival, kept across restarts beside it.
+const ARRIVAL_FILE: &str = "arrival.jpg";
+
+/// What a restart should not forget about the cat.
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+struct Remembered {
+    last_seen: Option<u64>,
+    visits: u64,
+    last_score: Option<f32>,
+}
 
 #[derive(Default)]
 struct Cat {
@@ -27,6 +43,8 @@ pub struct Status {
     frame: Mutex<Option<gst::Buffer>>,
     /// The JPEG of the frame the last arrival was confirmed on.
     arrival: Mutex<Option<Vec<u8>>>,
+    /// Where [`CAT_FILE`] and [`ARRIVAL_FILE`] live; `None` forgets everything at exit.
+    state_dir: Option<PathBuf>,
 }
 
 impl Status {
@@ -40,6 +58,51 @@ impl Status {
             cat: Mutex::new(Cat::default()),
             frame: Mutex::new(None),
             arrival: Mutex::new(None),
+            state_dir: None,
+        }
+    }
+
+    /// Restores the cat's visits and last arrival frame from `dir` and keeps them there from now on.
+    pub fn remember_in(mut self, dir: PathBuf) -> Self {
+        match std::fs::read_to_string(dir.join(CAT_FILE)) {
+            Ok(text) => match serde_json::from_str::<Remembered>(&text) {
+                Ok(r) => {
+                    if let Ok(cat) = self.cat.get_mut() {
+                        cat.last_seen = r.last_seen;
+                        cat.visits = r.visits;
+                        cat.best_score = r.last_score.unwrap_or_default();
+                    }
+                }
+                Err(err) => log::warn!("{}: {err}; starting afresh", dir.join(CAT_FILE).display()),
+            },
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => log::warn!("{}: {err}", dir.join(CAT_FILE).display()),
+        }
+        if let (Ok(jpeg), Ok(arrival)) = (
+            std::fs::read(dir.join(ARRIVAL_FILE)),
+            self.arrival.get_mut(),
+        ) {
+            *arrival = Some(jpeg);
+        }
+        self.state_dir = Some(dir);
+        self
+    }
+
+    /// Writes what a restart should keep; called on every arrival and departure.
+    pub fn persist(&self) {
+        let Some(dir) = &self.state_dir else {
+            return;
+        };
+        let Ok(remembered) = self.cat.lock().map(|cat| Remembered {
+            last_seen: cat.last_seen,
+            visits: cat.visits,
+            last_score: cat.last_seen.map(|_| cat.best_score),
+        }) else {
+            return;
+        };
+        let json = serde_json::to_vec(&remembered).unwrap_or_default();
+        if let Err(err) = write_atomic(&dir.join(CAT_FILE), &json) {
+            log::warn!("{}: {err}", dir.join(CAT_FILE).display());
         }
     }
 
@@ -78,6 +141,11 @@ impl Status {
     }
 
     pub fn set_arrival(&self, jpeg: Vec<u8>) {
+        if let Some(dir) = &self.state_dir {
+            if let Err(err) = write_atomic(&dir.join(ARRIVAL_FILE), &jpeg) {
+                log::warn!("{}: {err}", dir.join(ARRIVAL_FILE).display());
+            }
+        }
         if let Ok(mut current) = self.arrival.lock() {
             *current = Some(jpeg);
         }
@@ -125,6 +193,13 @@ impl Status {
         })
         .to_string()
     }
+}
+
+/// A rename after the write, so a crash never leaves half a file for the next start.
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let partial = path.with_extension("partial");
+    std::fs::write(&partial, bytes)?;
+    std::fs::rename(&partial, path)
 }
 
 fn unix_now() -> u64 {
@@ -186,6 +261,37 @@ mod tests {
         assert!(status.cat_seen());
         assert!(json["cat"]["last_seen"].as_u64().unwrap() > 0);
         assert!((json["cat"]["last_score"].as_f64().unwrap() - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_restart_remembers_the_visits_and_the_arrival_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        before.set_cat(true, Some(0.7), true);
+        before.set_arrival(vec![0xFF, 0xD8, 0xFF, 0xD9]);
+        before.set_cat(false, None, false);
+        before.persist();
+
+        let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
+        assert_eq!(json["cat"]["visits"], 1);
+        assert_eq!(json["cat"]["in_view"], false);
+        assert!(json["cat"]["last_seen"].as_u64().unwrap() > 0);
+        assert!((json["cat"]["last_score"].as_f64().unwrap() - 0.7).abs() < 1e-6);
+        assert_eq!(after.arrival_jpeg().unwrap(), [0xFF, 0xD8, 0xFF, 0xD9]);
+        assert!(!dir.path().join("cat.partial").exists());
+    }
+
+    #[test]
+    fn a_broken_or_missing_state_starts_afresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        assert!(fresh.arrival_jpeg().is_none());
+        std::fs::write(dir.path().join(CAT_FILE), "{not json").unwrap();
+        let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        assert_eq!(json["cat"]["visits"], 0);
+        assert!(json["cat"]["last_seen"].is_null());
     }
 
     #[test]
