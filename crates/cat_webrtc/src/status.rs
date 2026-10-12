@@ -248,6 +248,16 @@ impl Status {
         }
     }
 
+    /// How long the visit that began at `arrived` lasted; `None` while it goes on or once it left the log.
+    pub fn visit_stay(&self, arrived: u64) -> Option<u64> {
+        self.cat.lock().ok().and_then(|cat| {
+            cat.recent
+                .iter()
+                .find(|v| v.arrived == arrived)
+                .and_then(|v| v.stayed_s)
+        })
+    }
+
     /// When the newest visit began, as its log entry says.
     pub fn latest_arrival(&self) -> Option<u64> {
         self.cat
@@ -288,6 +298,12 @@ impl Status {
                 )
             })
             .unwrap_or_default();
+        // The arrivals whose clips /arrival.mp4?t= still serves, newest first.
+        let clips: Vec<u64> = self
+            .clips
+            .lock()
+            .map(|c| c.iter().map(|(t, _)| *t).collect())
+            .unwrap_or_default();
         let recent: Vec<Visit> = cat
             .as_deref()
             .map(|c| c.recent.iter().copied().collect())
@@ -305,6 +321,7 @@ impl Status {
                 "last_score": (last_seen.is_some()).then_some(best),
                 "recent": recent,
                 "clip": clip,
+                "clips": clips,
             },
         })
         .to_string()
@@ -461,6 +478,21 @@ mod tests {
             .path()
             .join(format!("clip-{arrived_at}.partial"))
             .exists());
+    }
+
+    #[test]
+    fn healthz_lists_the_kept_clips_and_a_visit_knows_its_stay() {
+        let status = Status::new("Cam", true, 4, 4);
+        status.set_cat(true, Some(0.8), Some(&arrived()));
+        let at = status.latest_arrival().unwrap();
+        assert_eq!(status.visit_stay(at), None);
+        status.set_clip(vec![1], at);
+        status.set_clip(vec![2], at + 60);
+        status.set_cat(false, None, Some(&left(42)));
+        assert_eq!(status.visit_stay(at), Some(42));
+        assert_eq!(status.visit_stay(at + 1), None);
+        let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        assert_eq!(json["cat"]["clips"], serde_json::json!([at + 60, at]));
     }
 
     #[test]

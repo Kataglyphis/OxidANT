@@ -432,6 +432,8 @@ fn spawn_inference(
     let (width, height, score) = (config.width, config.height, config.score);
     let wanted = (!config.all_classes).then(|| vec![COCO_CAT]);
     let mut presence = Presence::new(rate_period(config.inference_fps));
+    // The open visit's arrival, which its departure event names.
+    let mut visit: Option<Arrival> = None;
     let spawned = thread::Builder::new()
         .name("cat-infer".into())
         .spawn(move || {
@@ -470,14 +472,22 @@ fn spawn_inference(
                     Some(Change::Arrived { .. }) => status.latest_arrival().unwrap_or(now),
                     _ => now,
                 };
-                if let (Some(notifier), Some(change)) = (&notifier, &change) {
-                    notifier.send(change, time);
-                }
-                if let (Some(clip), Some(Change::Arrived { best, .. })) = (&clip, &change) {
-                    clip.start(Arrival {
+                if let Some(Change::Arrived { best, .. }) = &change {
+                    visit = Some(Arrival {
                         time,
                         best_score: *best,
                     });
+                }
+                if let (Some(notifier), Some(change)) = (&notifier, &change) {
+                    notifier.send(change, time, visit);
+                }
+                if let (Some(clip), Some(Change::Arrived { .. }), Some(arrival)) =
+                    (&clip, &change, visit)
+                {
+                    clip.start(arrival);
+                }
+                if matches!(change, Some(Change::Left { .. })) {
+                    visit = None;
                 }
                 if change.is_some() {
                     status.persist();

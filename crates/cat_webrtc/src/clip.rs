@@ -138,7 +138,7 @@ impl Clip {
                             );
                             status.set_clip(mp4, arrival.time);
                             if let Some(notifier) = &notifier {
-                                notifier.send_clip(arrival);
+                                notifier.send_clip(arrival, status.visit_stay(arrival.time));
                             }
                         }
                         Err(err) => log::warn!("arrival clip: {err:#}"),

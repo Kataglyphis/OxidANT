@@ -47,26 +47,32 @@ impl Notifier {
     }
 
     /// `time` is the event's Unix time; for an arrival, the visit log's, which the clip is kept under.
-    pub fn send(&self, change: &Change, time: u64) {
-        let _ = self.tx.send(payload(&self.name, change, time));
+    /// A departure names its `visit`, so a receiver can update what it sent for that arrival.
+    pub fn send(&self, change: &Change, time: u64, visit: Option<Arrival>) {
+        let _ = self.tx.send(payload(&self.name, change, time, visit));
     }
 
-    /// The clip of `arrival` is at [`CLIP_PATH`]: a second event, so a notification can add it.
-    pub fn send_clip(&self, arrival: Arrival) {
-        let _ = self.tx.send(clip_payload(&self.name, arrival));
+    /// The clip of `arrival` is at [`CLIP_PATH`]: a second event, so a notification can add it;
+    /// `stayed_s` once the visit is over, as a short one ends before its clip is encoded.
+    pub fn send_clip(&self, arrival: Arrival, stayed_s: Option<u64>) {
+        let _ = self.tx.send(clip_payload(&self.name, arrival, stayed_s));
     }
 }
 
 /// The event for a finished clip; `best_score` lets a receiver apply the same threshold as to arrivals.
-fn clip_payload(name: &str, arrival: Arrival) -> serde_json::Value {
-    serde_json::json!({
+fn clip_payload(name: &str, arrival: Arrival, stayed_s: Option<u64>) -> serde_json::Value {
+    let mut event = serde_json::json!({
         "event": "clip",
         "name": name,
         "time": arrival.time,
         "best_score": arrival.best_score,
         "clip": CLIP_PATH,
         "snapshot": ARRIVAL_PATH,
-    })
+    });
+    if let Some(stayed) = stayed_s {
+        event["stayed_s"] = stayed.into();
+    }
+    event
 }
 
 pub fn unix_now() -> u64 {
@@ -85,8 +91,13 @@ pub fn origin(url: &str) -> &str {
 }
 
 /// The JSON a receiver gets: `event` is `arrived` or `left`, `time` Unix seconds.
-pub fn payload(name: &str, change: &Change, time: u64) -> serde_json::Value {
-    match change {
+pub fn payload(
+    name: &str,
+    change: &Change,
+    time: u64,
+    visit: Option<Arrival>,
+) -> serde_json::Value {
+    let mut event = match change {
         Change::Arrived { count, best } => serde_json::json!({
             "event": "arrived",
             "name": name,
@@ -101,7 +112,13 @@ pub fn payload(name: &str, change: &Change, time: u64) -> serde_json::Value {
             "time": time,
             "stayed_s": stayed.as_secs(),
         }),
+    };
+    // The arrival this departure ends, with the score that arrival was confirmed at.
+    if let (Change::Left { .. }, Some(visit)) = (change, visit) {
+        event["arrived"] = visit.time.into();
+        event["best_score"] = visit.best_score.into();
     }
+    event
 }
 
 #[cfg(test)]
@@ -119,6 +136,7 @@ mod tests {
                 best: 0.5,
             },
             7,
+            None,
         );
         assert_eq!(arrived["event"], "arrived");
         assert_eq!(arrived["detections"], 2);
@@ -130,6 +148,7 @@ mod tests {
                 stayed: Duration::from_millis(42_900),
             },
             8,
+            None,
         );
         assert_eq!(left["event"], "left");
         assert_eq!(left["stayed_s"], 42);
@@ -144,6 +163,7 @@ mod tests {
                 time: 1_791_763_273,
                 best_score: 0.75,
             },
+            None,
         );
         assert_eq!(clip["event"], "clip");
         assert_eq!(clip["name"], "Cam");
@@ -151,6 +171,47 @@ mod tests {
         assert_eq!(clip["best_score"], 0.75);
         assert_eq!(clip["clip"], CLIP_PATH);
         assert_eq!(clip["snapshot"], ARRIVAL_PATH);
+        assert!(clip.get("stayed_s").is_none());
+    }
+
+    #[test]
+    fn a_clip_of_a_visit_already_over_says_how_long_it_lasted() {
+        let arrival = Arrival {
+            time: 100,
+            best_score: 0.9,
+        };
+        assert_eq!(clip_payload("Cam", arrival, Some(5))["stayed_s"], 5);
+    }
+
+    #[test]
+    fn a_departure_names_the_arrival_it_ends_and_its_score() {
+        let visit = Arrival {
+            time: 1_791_763_200,
+            best_score: 0.8,
+        };
+        let left = payload(
+            "Cam",
+            &Change::Left {
+                stayed: Duration::from_secs(240),
+            },
+            1_791_763_440,
+            Some(visit),
+        );
+        assert_eq!(left["event"], "left");
+        assert_eq!(left["arrived"], 1_791_763_200u64);
+        assert!((left["best_score"].as_f64().unwrap() - 0.8).abs() < 1e-6);
+        assert_eq!(left["stayed_s"], 240);
+        // An arrival names itself; only a departure carries `arrived`.
+        let arrived = payload(
+            "Cam",
+            &Change::Arrived {
+                count: 1,
+                best: 0.8,
+            },
+            1_791_763_200,
+            Some(visit),
+        );
+        assert!(arrived.get("arrived").is_none());
     }
 
     #[test]
@@ -197,6 +258,7 @@ mod tests {
                 best: 0.8,
             },
             1_791_763_273,
+            None,
         );
         let (head, body) = server.join().unwrap();
         assert_eq!(head[0], "post /api/webhook/cats http/1.1");
