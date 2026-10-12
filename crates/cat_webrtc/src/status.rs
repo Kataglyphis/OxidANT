@@ -64,6 +64,9 @@ impl Status {
 
     /// Restores the cat's visits and last arrival frame from `dir` and keeps them there from now on.
     pub fn remember_in(mut self, dir: PathBuf) -> Self {
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            log::warn!("{}: {err}", dir.display());
+        }
         match std::fs::read_to_string(dir.join(CAT_FILE)) {
             Ok(text) => match serde_json::from_str::<Remembered>(&text) {
                 Ok(r) => {

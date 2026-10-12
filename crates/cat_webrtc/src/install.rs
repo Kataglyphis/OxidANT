@@ -27,8 +27,13 @@ pub fn plan(
         wanted.push(("GST_PLUGIN_SCANNER", scanner.into_os_string()));
     }
     if let Some(base) = local_app_data {
-        let registry: PathBuf = base.join("omni-accelerant-catcam").join("gst-registry.bin");
-        wanted.push(("GST_REGISTRY", registry.into_os_string()));
+        let own = base.join("omni-accelerant-catcam");
+        wanted.push((
+            "GST_REGISTRY",
+            own.join("gst-registry.bin").into_os_string(),
+        ));
+        // No systemd to provide it: the cat's visits outlive a restart here.
+        wanted.push(("STATE_DIRECTORY", own.into_os_string()));
     }
     let ort = dir.join("onnxruntime.dll");
     if ort.is_file() {
@@ -109,6 +114,7 @@ mod tests {
                 "GST_PLUGIN_SYSTEM_PATH",
                 "GST_PLUGIN_SCANNER",
                 "GST_REGISTRY",
+                "STATE_DIRECTORY",
                 "ORT_DYLIB_PATH",
                 "KATAGLYPHIS_ONNX_MODEL"
             ]
@@ -120,6 +126,10 @@ mod tests {
             dir.path().join("onnxruntime.dll")
         );
         assert!(PathBuf::from(value("GST_REGISTRY")).starts_with(&local));
+        assert_eq!(
+            PathBuf::from(value("STATE_DIRECTORY")),
+            local.join("omni-accelerant-catcam")
+        );
     }
 
     #[test]
