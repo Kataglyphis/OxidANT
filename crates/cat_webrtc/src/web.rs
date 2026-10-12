@@ -164,9 +164,15 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
             None => plain(StatusCode::NOT_FOUND, "no cat has arrived yet"),
         }
     } else if path == CLIP_PATH {
-        match site.status.clip_mp4() {
-            Some(mp4) => mp4_response(req.headers(), mp4),
-            None => plain(StatusCode::NOT_FOUND, "no arrival clip yet"),
+        // ?t= names the arrival, so a link in an older notification never plays a newer visit.
+        let at = query_u64(req.uri().query(), "t");
+        match (site.status.clip_mp4(at), at) {
+            (Some(mp4), _) => mp4_response(req.headers(), mp4),
+            (None, None) => plain(StatusCode::NOT_FOUND, "no arrival clip yet"),
+            (None, Some(_)) => plain(
+                StatusCode::NOT_FOUND,
+                "that arrival's clip is no longer kept",
+            ),
         }
     } else {
         static_file(&req, site.web_root.as_deref(), &site.gzip).await
@@ -243,6 +249,15 @@ fn mp4_response(headers: &HeaderMap, mp4: Bytes) -> Response<Body> {
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+/// The number `key=` carries in a query string, if any.
+fn query_u64(query: Option<&str>, key: &str) -> Option<u64> {
+    query?
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(k, _)| *k == key)
+        .and_then(|(_, v)| v.parse().ok())
 }
 
 #[derive(Debug, PartialEq)]
@@ -526,6 +541,16 @@ async fn read_response_head(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_arrival_time_comes_from_the_query_and_nothing_else() {
+        assert_eq!(query_u64(Some("t=1791763273"), "t"), Some(1_791_763_273));
+        assert_eq!(query_u64(Some("visit=3&t=42"), "t"), Some(42));
+        assert_eq!(query_u64(Some("visit=3"), "t"), None);
+        assert_eq!(query_u64(Some("t=soon"), "t"), None);
+        assert_eq!(query_u64(Some("at=5"), "t"), None);
+        assert_eq!(query_u64(None, "t"), None);
+    }
 
     #[test]
     fn a_byte_range_is_served_as_asked_and_clamped_to_the_clip() {

@@ -16,8 +16,10 @@ const CAT_FILE: &str = "cat.json";
 
 /// The frame of the last arrival, kept across restarts beside it.
 const ARRIVAL_FILE: &str = "arrival.jpg";
-/// The last arrival's clip, kept across restarts beside it.
-const CLIP_FILE: &str = "arrival.mp4";
+/// How many arrivals' clips stay addressable: a false visit must not replace the clip a notification links.
+const CLIPS_KEPT: usize = 5;
+/// How far a requested arrival time may be from a kept clip's and still name it.
+const CLIP_TIME_SLACK_S: u64 = 2;
 
 /// How many visits `/healthz` lists and the state directory keeps.
 const RECENT_VISITS: usize = 20;
@@ -38,9 +40,6 @@ struct Remembered {
     /// Newest first; a cat.json from before the log has none.
     #[serde(default)]
     recent: Vec<Visit>,
-    /// When the arrival in [`CLIP_FILE`] happened; a cat.json from before clips has none.
-    #[serde(default)]
-    clip: Option<u64>,
 }
 
 #[derive(Default)]
@@ -68,8 +67,8 @@ pub struct Status {
     frame: Mutex<Option<gst::Buffer>>,
     /// The JPEG of the frame the last arrival was confirmed on.
     arrival: Mutex<Option<Vec<u8>>>,
-    /// The MP4 of the last arrival, from a few seconds before it.
-    clip: Mutex<Option<bytes::Bytes>>,
+    /// The last [`CLIPS_KEPT`] arrivals as MP4, newest first, by arrival time.
+    clips: Mutex<VecDeque<(u64, bytes::Bytes)>>,
     /// Where [`CAT_FILE`] and [`ARRIVAL_FILE`] live; `None` forgets everything at exit.
     state_dir: Option<PathBuf>,
 }
@@ -85,7 +84,7 @@ impl Status {
             cat: Mutex::new(Cat::default()),
             frame: Mutex::new(None),
             arrival: Mutex::new(None),
-            clip: Mutex::new(None),
+            clips: Mutex::new(VecDeque::new()),
             state_dir: None,
         }
     }
@@ -103,7 +102,6 @@ impl Status {
                         cat.visits = r.visits;
                         cat.best_score = r.last_score.unwrap_or_default();
                         cat.recent = r.recent.into_iter().take(RECENT_VISITS).collect();
-                        cat.clip = r.clip;
                         // The service stopped with the cat in view: it stayed at least until last_seen.
                         if let (Some(open), Some(seen)) = (cat.recent.front_mut(), cat.last_seen) {
                             if open.stayed_s.is_none() {
@@ -123,8 +121,12 @@ impl Status {
         ) {
             *arrival = Some(jpeg);
         }
-        if let (Ok(mp4), Ok(clip)) = (std::fs::read(dir.join(CLIP_FILE)), self.clip.get_mut()) {
-            *clip = Some(mp4.into());
+        let restored = read_clips(&dir);
+        if let (Ok(cat), Some((newest, _))) = (self.cat.get_mut(), restored.front()) {
+            cat.clip = Some(*newest);
+        }
+        if let Ok(clips) = self.clips.get_mut() {
+            *clips = restored;
         }
         self.state_dir = Some(dir);
         self
@@ -140,7 +142,6 @@ impl Status {
             visits: cat.visits,
             last_score: cat.last_seen.map(|_| cat.best_score),
             recent: cat.recent.iter().copied().collect(),
-            clip: cat.clip,
         }) else {
             return;
         };
@@ -212,24 +213,39 @@ impl Status {
         self.arrival.lock().ok().and_then(|a| a.clone())
     }
 
-    /// Keeps the clip of the arrival at `arrived`, on disk too, and names it in `/healthz`.
+    /// Keeps the clip of the arrival at `arrived` with the last few, on disk too, and names it in `/healthz`.
     pub fn set_clip(&self, mp4: Vec<u8>, arrived: u64) {
         if let Some(dir) = &self.state_dir {
-            if let Err(err) = write_atomic(&dir.join(CLIP_FILE), &mp4) {
-                log::warn!("{}: {err}", dir.join(CLIP_FILE).display());
+            let path = dir.join(clip_file(arrived));
+            if let Err(err) = write_atomic(&path, &mp4) {
+                log::warn!("{}: {err}", path.display());
             }
         }
-        if let Ok(mut current) = self.clip.lock() {
-            *current = Some(mp4.into());
+        if let Ok(mut clips) = self.clips.lock() {
+            clips.retain(|(t, _)| *t != arrived);
+            clips.push_front((arrived, mp4.into()));
+            while clips.len() > CLIPS_KEPT {
+                if let (Some((old, _)), Some(dir)) = (clips.pop_back(), &self.state_dir) {
+                    let _ = std::fs::remove_file(dir.join(clip_file(old)));
+                }
+            }
         }
         if let Ok(mut cat) = self.cat.lock() {
             cat.clip = Some(arrived);
         }
-        self.persist();
     }
 
-    pub fn clip_mp4(&self) -> Option<bytes::Bytes> {
-        self.clip.lock().ok().and_then(|c| c.clone())
+    /// The newest clip, or with `at` the one of the arrival at that time; `None` once it is dropped.
+    pub fn clip_mp4(&self, at: Option<u64>) -> Option<bytes::Bytes> {
+        let clips = self.clips.lock().ok()?;
+        match at {
+            None => clips.front().map(|(_, mp4)| mp4.clone()),
+            Some(at) => clips
+                .iter()
+                .filter(|(t, _)| t.abs_diff(at) <= CLIP_TIME_SLACK_S)
+                .min_by_key(|(t, _)| t.abs_diff(at))
+                .map(|(_, mp4)| mp4.clone()),
+        }
     }
 
     /// When the newest visit began, as its log entry says.
@@ -293,6 +309,34 @@ impl Status {
         })
         .to_string()
     }
+}
+
+fn clip_file(arrived: u64) -> String {
+    format!("clip-{arrived}.mp4")
+}
+
+/// The clips a previous run left in `dir`, newest first, at most [`CLIPS_KEPT`].
+fn read_clips(dir: &Path) -> VecDeque<(u64, bytes::Bytes)> {
+    let mut found: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let time = name
+                .strip_prefix("clip-")?
+                .strip_suffix(".mp4")?
+                .parse()
+                .ok()?;
+            Some((time, entry.path()))
+        })
+        .collect();
+    found.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
+    found
+        .into_iter()
+        .take(CLIPS_KEPT)
+        .filter_map(|(time, path)| std::fs::read(path).ok().map(|mp4| (time, mp4.into())))
+        .collect()
 }
 
 /// A rename after the write, so a crash never leaves half a file for the next start.
@@ -401,8 +445,10 @@ mod tests {
     fn a_restart_keeps_the_clip_and_the_arrival_it_shows() {
         let dir = tempfile::tempdir().unwrap();
         let before = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
-        assert!(before.clip_mp4().is_none());
+        assert!(before.clip_mp4(None).is_none());
         before.set_cat(true, Some(0.7), Some(&arrived()));
+        // As the inference thread does after every arrival and departure.
+        before.persist();
         let arrived_at = before.latest_arrival().unwrap();
         before.set_clip(b"\0\0\0\x18ftypisom".to_vec(), arrived_at);
 
@@ -410,8 +456,34 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
         assert_eq!(json["cat"]["clip"], arrived_at);
         assert_eq!(json["cat"]["recent"][0]["arrived"], arrived_at);
-        assert_eq!(&after.clip_mp4().unwrap()[4..8], b"ftyp");
-        assert!(!dir.path().join("arrival.partial").exists());
+        assert_eq!(&after.clip_mp4(None).unwrap()[4..8], b"ftyp");
+        assert!(!dir
+            .path()
+            .join(format!("clip-{arrived_at}.partial"))
+            .exists());
+    }
+
+    #[test]
+    fn each_of_the_last_five_arrivals_keeps_its_own_clip() {
+        let dir = tempfile::tempdir().unwrap();
+        let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        for t in 1..=7u64 {
+            status.set_clip(vec![t as u8], 1_000 * t);
+        }
+        // A later false visit does not take an earlier arrival's clip.
+        assert_eq!(status.clip_mp4(Some(4_000)).unwrap()[..], [4]);
+        assert_eq!(status.clip_mp4(Some(4_001)).unwrap()[..], [4]);
+        assert_eq!(status.clip_mp4(None).unwrap()[..], [7]);
+        // Two arrivals ago and older than the five kept: gone, in memory and on disk.
+        assert!(status.clip_mp4(Some(2_000)).is_none());
+        assert!(status.clip_mp4(Some(4_500)).is_none());
+        assert!(!dir.path().join("clip-2000.mp4").exists());
+        assert!(dir.path().join("clip-3000.mp4").exists());
+
+        let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
+        assert_eq!(json["cat"]["clip"], 7_000);
+        assert_eq!(after.clip_mp4(Some(3_000)).unwrap()[..], [3]);
     }
 
     #[test]
@@ -464,7 +536,6 @@ mod tests {
                     stayed_s: Some(60),
                 },
             ],
-            clip: None,
         };
         std::fs::write(
             dir.path().join(CAT_FILE),

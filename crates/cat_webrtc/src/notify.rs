@@ -46,11 +46,9 @@ impl Notifier {
         })
     }
 
-    pub fn send(&self, change: &Change) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let _ = self.tx.send(payload(&self.name, change, now));
+    /// `time` is the event's Unix time; for an arrival, the visit log's, which the clip is kept under.
+    pub fn send(&self, change: &Change, time: u64) {
+        let _ = self.tx.send(payload(&self.name, change, time));
     }
 
     /// The clip of `arrival` is at [`CLIP_PATH`]: a second event, so a notification can add it.
@@ -69,6 +67,12 @@ fn clip_payload(name: &str, arrival: Arrival) -> serde_json::Value {
         "clip": CLIP_PATH,
         "snapshot": ARRIVAL_PATH,
     })
+}
+
+pub fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// `scheme://host` of a URL: a webhook's path is often its secret, so logs never carry it.
@@ -187,10 +191,13 @@ mod tests {
             (head, body)
         });
         let notifier = Notifier::spawn(&url, "Test Cam").unwrap();
-        notifier.send(&Change::Arrived {
-            count: 1,
-            best: 0.8,
-        });
+        notifier.send(
+            &Change::Arrived {
+                count: 1,
+                best: 0.8,
+            },
+            1_791_763_273,
+        );
         let (head, body) = server.join().unwrap();
         assert_eq!(head[0], "post /api/webhook/cats http/1.1");
         assert!(
@@ -199,6 +206,7 @@ mod tests {
         );
         let event: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(event["event"], "arrived");
+        assert_eq!(event["time"], 1_791_763_273u64);
         assert_eq!(event["name"], "Test Cam");
     }
 }

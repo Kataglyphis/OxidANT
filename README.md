@@ -234,6 +234,7 @@ curl localhost:8080/healthz                    # the camera, the model's runs, t
 curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
 curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on
 curl -o cat.mp4 localhost:8080/arrival.mp4     # that arrival as H.264, 3 s before it to 7 s after
+curl -o cat.mp4 'localhost:8080/arrival.mp4?t=1791763273'  # one of the last five, by arrival time
 ```
 
 `--notify-url <http(s) URL>` (`notify_url` in the file) POSTs a JSON event there whenever

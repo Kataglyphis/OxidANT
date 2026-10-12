@@ -19,9 +19,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   arrival adds the next 7 s and encodes them on a thread of its own with `openh264enc`,
   `h264parse` and `mp4mux` (faststart, so playback starts before the end loads).
   `/arrival.mp4` serves it with byte ranges, which Safari's `<video>` needs; `/healthz`
-  names the arrival it shows as `cat.clip`; the state directory keeps it across a restart;
-  and `notify_url` gets a `clip` event once it is written, with the arrival's time and
-  score, so a notification can add it. `clip_seconds` (default 10, 0 for none) sets the
+  names the newest one's arrival as `cat.clip`; and `notify_url` gets a `clip` event once
+  it is written, with the arrival's time and score, so a notification can add it. The last
+  five clips stay in the state directory as `clip-<time>.mp4`, and `?t=<time>` serves that
+  arrival's own or `404`, so a false visit right after the cat cannot put its clip behind
+  the cat's notification; arrival events carry the visit log's own time for that. `clip_seconds` (default 10, 0 for none) sets the
   length. A GStreamer without one of those elements records no clip and says which.
 
 ### Fixed

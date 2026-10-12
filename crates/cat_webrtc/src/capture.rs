@@ -462,19 +462,22 @@ fn spawn_inference(
                         Err(err) => log::warn!("arrival snapshot: {err:#}"),
                     }
                 }
-                if let (Some(notifier), Some(change)) = (&notifier, &change) {
-                    notifier.send(change);
-                }
                 let in_view = presence.in_view();
                 status.set_cat(in_view, best_score(&detections), change.as_ref());
-                // After set_cat, so the clip carries the visit log's own arrival time.
+                // The visit log's own arrival time, so /arrival.mp4?t= finds the clip an event names.
+                let now = crate::notify::unix_now();
+                let time = match change {
+                    Some(Change::Arrived { .. }) => status.latest_arrival().unwrap_or(now),
+                    _ => now,
+                };
+                if let (Some(notifier), Some(change)) = (&notifier, &change) {
+                    notifier.send(change, time);
+                }
                 if let (Some(clip), Some(Change::Arrived { best, .. })) = (&clip, &change) {
-                    if let Some(time) = status.latest_arrival() {
-                        clip.start(Arrival {
-                            time,
-                            best_score: *best,
-                        });
-                    }
+                    clip.start(Arrival {
+                        time,
+                        best_score: *best,
+                    });
                 }
                 if change.is_some() {
                     status.persist();
