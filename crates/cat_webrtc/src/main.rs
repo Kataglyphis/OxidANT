@@ -10,6 +10,7 @@ mod install;
 mod motion;
 mod notify;
 mod output;
+mod precompress;
 mod presence;
 mod status;
 mod web;
@@ -142,6 +143,9 @@ struct Args {
     /// UDP range for WebRTC media as MIN-MAX; 0-0 leaves the ports free.
     #[arg(long)]
     ice_ports: Option<String>,
+    /// Write a zopfli `<file>.gz` beside each file of this web build the server gzips, and exit.
+    #[arg(long, value_name = "DIR")]
+    precompress: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -164,6 +168,17 @@ fn main() -> ExitCode {
 }
 
 fn run(args: Args) -> anyhow::Result<()> {
+    if let Some(dir) = &args.precompress {
+        let done = precompress::precompress(dir)?;
+        println!(
+            "precompressed {} files in {}: {} -> {} bytes",
+            done.files,
+            dir.display(),
+            done.raw_bytes,
+            done.gz_bytes
+        );
+        return Ok(());
+    }
     let (mut config, source) = Config::load(args.config.as_deref())?;
     apply_args(&args, &mut config)?;
     config.validate()?;

@@ -31,6 +31,8 @@ toml = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # Gzipped web assets; already in the lockfile.
 flate2 = "1"
+# --precompress: zopfli's gzip, smaller than flate2's at any level; its dependencies are in the lockfile.
+zopfli = { version = "0.8.3", default-features = false, features = ["gzip", "std"] }
 # notify_url's POSTs, https included; ureq, rustls and ring are already in the lockfile.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 

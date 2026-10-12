@@ -240,7 +240,9 @@ curl -o cat.mp4 'localhost:8080/arrival.mp4?t=1791763273'  # one of the last fiv
 `--notify-url <http(s) URL>` (`notify_url` in the file) POSTs a JSON event there whenever
 a cat arrives or leaves, a Home Assistant webhook trigger for instance, and a `clip`
 event once the arrival's video is encoded. A departure names the arrival it ends
-(`arrived`, `best_score`), so a receiver can update what it sent for that arrival. `clip_seconds` (default 10, 0 for none) sets
+(`arrived`, `best_score`), so a receiver can update what it sent for that arrival.
+`--precompress <web build>` writes a zopfli `.gz` beside each file the server gzips and
+exits; a packager runs it once, and the server then sends those files as they are. `clip_seconds` (default 10, 0 for none) sets
 that video's length; it needs `openh264enc`, `h264parse` and `mp4mux`, and without them
 the service records none and says so at start.
 

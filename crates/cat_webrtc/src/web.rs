@@ -6,7 +6,7 @@ use std::convert::Infallible;
 use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context as _};
 use bytes::Bytes;
@@ -35,7 +35,7 @@ pub const CLIP_PATH: &str = "/arrival.mp4";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Smaller files go out as they are: gzip's header would eat most of the saving.
-const MIN_GZIP_BYTES: u64 = 1024;
+pub const MIN_GZIP_BYTES: u64 = 1024;
 
 type Body = Full<Bytes>;
 
@@ -75,6 +75,18 @@ impl GzipCache {
     }
 }
 
+/// The `<file>.gz` packaged beside `file`, unless it is older: zopfli-made at package time, so
+/// smaller than [`gzip`]'s, and neither compressed nor held in memory here.
+async fn precompressed(file: &Path, modified: Option<SystemTime>) -> Option<Bytes> {
+    let mut gz = file.as_os_str().to_owned();
+    gz.push(".gz");
+    let meta = tokio::fs::metadata(&gz).await.ok()?;
+    if meta.modified().ok()? < modified? {
+        return None;
+    }
+    tokio::fs::read(&gz).await.ok().map(Bytes::from)
+}
+
 fn gzip(data: &[u8]) -> std::io::Result<Bytes> {
     let mut encoder = flate2::write::GzEncoder::new(
         Vec::with_capacity(data.len() / 3),
@@ -105,7 +117,7 @@ fn accepts_gzip(headers: &HeaderMap) -> bool {
 }
 
 /// Types gzip shrinks; images and woff fonts are compressed already.
-fn compressible(content_type: &str) -> bool {
+pub fn compressible(content_type: &str) -> bool {
     content_type.starts_with("text/")
         || matches!(
             content_type,
@@ -354,7 +366,10 @@ async fn static_file(
     let body = if fresh || req.method() == Method::HEAD {
         Ok(Bytes::new())
     } else if gzipped {
-        gzip_cache.get(&file, &identity).await
+        match precompressed(&file, meta.modified().ok()).await {
+            Some(gz) => Ok(gz),
+            None => gzip_cache.get(&file, &identity).await,
+        }
     } else {
         tokio::fs::read(&file).await.map(Bytes::from)
     };
@@ -740,6 +755,35 @@ mod tests {
             !head.contains("content-encoding"),
             "a 20-byte page went out gzipped: {head}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_packaged_gz_beside_a_file_is_sent_unless_the_file_is_newer() {
+        let build = web_build();
+        let script = build.path().join("main.dart.js");
+        std::fs::write(&script, "1;".repeat(2000)).unwrap();
+        // Not a real gzip of the file: the body proves which one went out.
+        std::fs::write(build.path().join("main.dart.js.gz"), b"packaged").unwrap();
+        let addr = start(Some(build.path().to_path_buf()), 9).await;
+        let gzip = "accept-encoding: gzip\r\n";
+
+        let (head, body) = get_raw(addr, "/main.dart.js", gzip).await;
+        assert!(head.contains("content-encoding: gzip"), "{head}");
+        assert_eq!(body, b"packaged");
+        let (_, body) = get_raw(addr, "/main.dart.js", "").await;
+        assert_eq!(body, "1;".repeat(2000).as_bytes());
+
+        // A file edited after packaging is compressed here again rather than sent stale.
+        let later = SystemTime::now() + Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&script)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let (_, body) = get_raw(addr, "/main.dart.js", gzip).await;
+        assert_ne!(body, b"packaged");
+        assert!(body.starts_with(&[0x1f, 0x8b]), "not gzip: {body:?}");
     }
 
     #[tokio::test]

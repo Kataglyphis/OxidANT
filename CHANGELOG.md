@@ -25,6 +25,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   arrival's own or `404`, so a false visit right after the cat cannot put its clip behind
   the cat's notification; arrival events carry the visit log's own time for that. `clip_seconds` (default 10, 0 for none) sets the
   length. A GStreamer without one of those elements records no clip and says which.
+- **`--precompress DIR` ships a web build smaller (2026-10-12).** It writes a zopfli
+  `<file>.gz` beside every file the server would gzip, on every core, and the server sends
+  that file instead of compressing its own, unless the original is newer. OmniAccelerANT's
+  packager runs it: on a Pi 5, a first visit to the cat cam page went from 3.93 MB to
+  3.75 MB (`skwasm.wasm` 1543 to 1478 kB, `main.dart.wasm` 1484 to 1418 kB), and nothing
+  is compressed or held in memory for it at run time. `zopfli` 0.8.3; its dependencies
+  were in the lockfile already.
 - **The kept clips are listed, and a departure names its arrival (2026-10-12).**
   `/healthz` gains `cat.clips`: the arrival of every clip `?t=` still serves, newest
   first, for a page that lists them all. A `left` event carries the arrival it ends
