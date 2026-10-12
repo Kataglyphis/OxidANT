@@ -233,10 +233,14 @@ target/release/kataglyphis_cat_webrtc --camera test                 # a test pat
 curl localhost:8080/healthz                    # the camera, the model's runs, the cat
 curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
 curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on
+curl -o cat.mp4 localhost:8080/arrival.mp4     # that arrival as H.264, 3 s before it to 7 s after
 ```
 
 `--notify-url <http(s) URL>` (`notify_url` in the file) POSTs a JSON event there whenever
-a cat arrives or leaves, a Home Assistant webhook trigger for instance.
+a cat arrives or leaves, a Home Assistant webhook trigger for instance, and a `clip`
+event once the arrival's video is encoded. `clip_seconds` (default 10, 0 for none) sets
+that video's length; it needs `openh264enc`, `h264parse` and `mp4mux`, and without them
+the service records none and says so at start.
 
 The settings come from a TOML file (`--config`, else `/etc/omni-accelerant/catcam.toml`)
 with the flags on top; `--web-root` names OmniAccelerANT's web build, served on `:8080`.

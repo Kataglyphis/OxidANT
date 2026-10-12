@@ -14,6 +14,7 @@ use kataglyphis_core::Detection;
 use kataglyphis_inference::person_detection::PersonDetector;
 
 use crate::camera::{self, Choice, Found, Plan};
+use crate::clip::{Arrival, Clip};
 use crate::config::Config;
 use crate::frame;
 use crate::motion::{rate_period, Pacer};
@@ -42,6 +43,7 @@ pub struct Worker {
     pub status: Arc<Status>,
     pub shutdown: Arc<AtomicBool>,
     pub notifier: Option<Notifier>,
+    pub clip: Option<Arc<Clip>>,
 }
 
 impl Worker {
@@ -61,6 +63,7 @@ impl Worker {
                 boxes.clone(),
                 self.status.clone(),
                 notifier,
+                self.clip.clone(),
             )
         });
         let frames = inference.as_ref().map(|(tx, _)| tx);
@@ -212,6 +215,9 @@ impl Worker {
         }
         let pushed = gst::Buffer::from_mut_slice(annotated);
         self.status.set_frame(&pushed);
+        if let Some(clip) = &self.clip {
+            clip.frame(&pushed);
+        }
         match self.appsrc.push_buffer(pushed) {
             Ok(_) => Ok(true),
             Err(gst::FlowError::Flushing) => Ok(false),
@@ -420,6 +426,7 @@ fn spawn_inference(
     boxes: Boxes,
     status: Arc<Status>,
     notifier: Option<Notifier>,
+    clip: Option<Arc<Clip>>,
 ) -> Option<(mpsc::SyncSender<Vec<u8>>, thread::JoinHandle<()>)> {
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
     let (width, height, score) = (config.width, config.height, config.score);
@@ -460,6 +467,15 @@ fn spawn_inference(
                 }
                 let in_view = presence.in_view();
                 status.set_cat(in_view, best_score(&detections), change.as_ref());
+                // After set_cat, so the clip carries the visit log's own arrival time.
+                if let (Some(clip), Some(Change::Arrived { best, .. })) = (&clip, &change) {
+                    if let Some(time) = status.latest_arrival() {
+                        clip.start(Arrival {
+                            time,
+                            best_score: *best,
+                        });
+                    }
+                }
                 if change.is_some() {
                     status.persist();
                 }
@@ -580,6 +596,7 @@ mod tests {
             status: status.clone(),
             shutdown: shutdown.clone(),
             notifier: None,
+            clip: None,
         }
         .spawn()
         .unwrap();

@@ -71,6 +71,8 @@ pub struct Config {
     pub stun_server: Option<String>,
     /// An http(s) URL POSTed a JSON event whenever a cat arrives or leaves; empty or unset sends nothing.
     pub notify_url: Option<String>,
+    /// Seconds of H.264 clip per arrival at `/arrival.mp4`, three of them before it; 0 records none.
+    pub clip_seconds: u32,
     /// UDP range for WebRTC media, so a firewall can open exactly it; 0..0 leaves it free.
     pub ice_port_min: u16,
     pub ice_port_max: u16,
@@ -103,6 +105,7 @@ impl Default for Config {
             key: None,
             stun_server: None,
             notify_url: None,
+            clip_seconds: 10,
             ice_port_min: 40000,
             ice_port_max: 40099,
         }
@@ -182,6 +185,13 @@ impl Config {
         }
         if self.signalling_port == 0 {
             bail!("signalling_port must be non-zero");
+        }
+        // A clip is held in memory until encoded: 60 s at 640x480 is about 280 MB of frames.
+        if self.clip_seconds > 60 {
+            bail!(
+                "clip_seconds must lie in 0..=60 (got {})",
+                self.clip_seconds
+            );
         }
         let range = (self.ice_port_min, self.ice_port_max);
         if range != (0, 0) && (range.0 == 0 || range.0 > range.1) {

@@ -28,6 +28,8 @@ pub const SNAPSHOT_PATH: &str = "/snapshot.jpg";
 
 /// The frame the last cat arrival was confirmed on, as a JPEG.
 pub const ARRIVAL_PATH: &str = "/arrival.jpg";
+/// The last arrival as an H.264 clip, from a few seconds before it.
+pub const CLIP_PATH: &str = "/arrival.mp4";
 
 /// How long the signalling server may take to answer the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -161,6 +163,11 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
             Some(jpeg) => jpeg_response(jpeg),
             None => plain(StatusCode::NOT_FOUND, "no cat has arrived yet"),
         }
+    } else if path == CLIP_PATH {
+        match site.status.clip_mp4() {
+            Some(mp4) => mp4_response(req.headers(), mp4),
+            None => plain(StatusCode::NOT_FOUND, "no arrival clip yet"),
+        }
     } else {
         static_file(&req, site.web_root.as_deref(), &site.gzip).await
     };
@@ -203,6 +210,86 @@ async fn snapshot(status: Arc<Status>) -> Response<Body> {
         Err(_) => return plain(StatusCode::INTERNAL_SERVER_ERROR, "snapshot failed"),
     };
     jpeg_response(jpeg)
+}
+
+/// The clip, whole or the byte range asked for: Safari plays a `<video>` only from a server that answers ranges.
+fn mp4_response(headers: &HeaderMap, mp4: Bytes) -> Response<Body> {
+    let len = mp4.len() as u64;
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| byte_range(v, len));
+    let mut response = match range {
+        None | Some(Range::Ignored) => Response::new(Full::new(mp4)),
+        Some(Range::Satisfiable(start, end)) => {
+            let mut partial = Response::new(Full::new(mp4.slice(start as usize..=end as usize)));
+            *partial.status_mut() = StatusCode::PARTIAL_CONTENT;
+            if let Ok(value) = HeaderValue::from_str(&format!("bytes {start}-{end}/{len}")) {
+                partial.headers_mut().insert(header::CONTENT_RANGE, value);
+            }
+            partial
+        }
+        Some(Range::Unsatisfiable) => {
+            let mut refused = Response::new(Full::new(Bytes::new()));
+            *refused.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
+            if let Ok(value) = HeaderValue::from_str(&format!("bytes */{len}")) {
+                refused.headers_mut().insert(header::CONTENT_RANGE, value);
+            }
+            refused
+        }
+    };
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("video/mp4"));
+    headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+#[derive(Debug, PartialEq)]
+enum Range {
+    /// The whole file goes out: not a single `bytes=` range this server serves.
+    Ignored,
+    /// Inclusive first and last byte.
+    Satisfiable(u64, u64),
+    Unsatisfiable,
+}
+
+/// One `bytes=a-b`, `bytes=a-` or `bytes=-n` range against `len` bytes; several ranges get the whole file.
+fn byte_range(value: &str, len: u64) -> Range {
+    let Some(spec) = value.trim().strip_prefix("bytes=") else {
+        return Range::Ignored;
+    };
+    if spec.contains(',') {
+        return Range::Ignored;
+    }
+    let Some((first, last)) = spec.split_once('-') else {
+        return Range::Ignored;
+    };
+    let (first, last) = (first.trim(), last.trim());
+    let parsed = match (first.is_empty(), last.is_empty()) {
+        (true, true) => return Range::Ignored,
+        (true, false) => match last.parse::<u64>() {
+            Ok(0) => return Range::Unsatisfiable,
+            Ok(n) => Some((len.saturating_sub(n), len.saturating_sub(1))),
+            Err(_) => None,
+        },
+        (false, _) => match (
+            first.parse::<u64>(),
+            if last.is_empty() {
+                Ok(u64::MAX)
+            } else {
+                last.parse::<u64>()
+            },
+        ) {
+            (Ok(a), Ok(b)) if a <= b => Some((a, b.min(len.saturating_sub(1)))),
+            _ => None,
+        },
+    };
+    match parsed {
+        None => Range::Ignored,
+        Some((a, _)) if len == 0 || a >= len => Range::Unsatisfiable,
+        Some((a, b)) => Range::Satisfiable(a, b),
+    }
 }
 
 fn jpeg_response(jpeg: Vec<u8>) -> Response<Body> {
@@ -439,6 +526,43 @@ async fn read_response_head(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_byte_range_is_served_as_asked_and_clamped_to_the_clip() {
+        assert_eq!(byte_range("bytes=0-1", 100), Range::Satisfiable(0, 1));
+        assert_eq!(byte_range("bytes=0-", 100), Range::Satisfiable(0, 99));
+        assert_eq!(byte_range("bytes=90-500", 100), Range::Satisfiable(90, 99));
+        assert_eq!(byte_range("bytes=-10", 100), Range::Satisfiable(90, 99));
+        assert_eq!(byte_range("bytes=-500", 100), Range::Satisfiable(0, 99));
+    }
+
+    #[test]
+    fn a_range_past_the_end_is_refused_and_anything_else_gets_the_whole_clip() {
+        assert_eq!(byte_range("bytes=100-", 100), Range::Unsatisfiable);
+        assert_eq!(byte_range("bytes=-0", 100), Range::Unsatisfiable);
+        assert_eq!(byte_range("bytes=0-1,5-6", 100), Range::Ignored);
+        assert_eq!(byte_range("bytes=5-2", 100), Range::Ignored);
+        assert_eq!(byte_range("items=0-1", 100), Range::Ignored);
+        assert_eq!(byte_range("bytes=x-1", 100), Range::Ignored);
+    }
+
+    #[test]
+    fn the_clip_answers_a_range_with_206_and_says_it_takes_ranges() {
+        let mp4 = Bytes::from_static(b"0123456789");
+        let mut headers = HeaderMap::new();
+        let whole = mp4_response(&headers, mp4.clone());
+        assert_eq!(whole.status(), StatusCode::OK);
+        assert_eq!(whole.headers()[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(whole.headers()[header::CONTENT_TYPE], "video/mp4");
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=2-4"));
+        let part = mp4_response(&headers, mp4.clone());
+        assert_eq!(part.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(part.headers()[header::CONTENT_RANGE], "bytes 2-4/10");
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=10-"));
+        let refused = mp4_response(&headers, mp4);
+        assert_eq!(refused.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(refused.headers()[header::CONTENT_RANGE], "bytes */10");
+    }
 
     /// One raw HTTP/1.1 exchange; returns the whole response as text.
     async fn get(addr: std::net::SocketAddr, path: &str, extra: &str) -> String {

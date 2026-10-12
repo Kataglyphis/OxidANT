@@ -3,6 +3,7 @@
 
 mod camera;
 mod capture;
+mod clip;
 mod config;
 mod frame;
 mod install;
@@ -216,6 +217,17 @@ fn run(args: Args) -> anyhow::Result<()> {
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let notifier = start_notifier(&config, detector.is_some());
+    // Only the model sees arrivals, so without it there is nothing to record.
+    let clip = if detector.is_some() {
+        clip::Clip::spawn(
+            config.clip_seconds,
+            (config.width, config.height, config.fps),
+            status.clone(),
+            notifier.clone(),
+        )
+    } else {
+        None
+    };
     let at_exit = status.clone();
     let worker = capture::Worker {
         config: Arc::new(config),
@@ -225,6 +237,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         status,
         shutdown: shutdown.clone(),
         notifier,
+        clip,
     }
     .spawn()
     .context("spawn capture worker")?;

@@ -5,12 +5,14 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::clip::Arrival;
 use crate::presence::Change;
-use crate::web::ARRIVAL_PATH;
+use crate::web::{ARRIVAL_PATH, CLIP_PATH};
 
 /// How long one delivery may take before it is given up.
 const TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Clone)]
 pub struct Notifier {
     name: String,
     tx: mpsc::Sender<serde_json::Value>,
@@ -50,6 +52,23 @@ impl Notifier {
             .map_or(0, |d| d.as_secs());
         let _ = self.tx.send(payload(&self.name, change, now));
     }
+
+    /// The clip of `arrival` is at [`CLIP_PATH`]: a second event, so a notification can add it.
+    pub fn send_clip(&self, arrival: Arrival) {
+        let _ = self.tx.send(clip_payload(&self.name, arrival));
+    }
+}
+
+/// The event for a finished clip; `best_score` lets a receiver apply the same threshold as to arrivals.
+fn clip_payload(name: &str, arrival: Arrival) -> serde_json::Value {
+    serde_json::json!({
+        "event": "clip",
+        "name": name,
+        "time": arrival.time,
+        "best_score": arrival.best_score,
+        "clip": CLIP_PATH,
+        "snapshot": ARRIVAL_PATH,
+    })
 }
 
 /// `scheme://host` of a URL: a webhook's path is often its secret, so logs never carry it.
@@ -111,6 +130,23 @@ mod tests {
         assert_eq!(left["event"], "left");
         assert_eq!(left["stayed_s"], 42);
         assert_eq!(left["time"], 8);
+    }
+
+    #[test]
+    fn a_finished_clip_is_an_event_of_its_own_with_the_arrival_it_shows() {
+        let clip = clip_payload(
+            "Cam",
+            Arrival {
+                time: 1_791_763_273,
+                best_score: 0.75,
+            },
+        );
+        assert_eq!(clip["event"], "clip");
+        assert_eq!(clip["name"], "Cam");
+        assert_eq!(clip["time"], 1_791_763_273u64);
+        assert_eq!(clip["best_score"], 0.75);
+        assert_eq!(clip["clip"], CLIP_PATH);
+        assert_eq!(clip["snapshot"], ARRIVAL_PATH);
     }
 
     #[test]

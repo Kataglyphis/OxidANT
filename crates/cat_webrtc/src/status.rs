@@ -16,6 +16,8 @@ const CAT_FILE: &str = "cat.json";
 
 /// The frame of the last arrival, kept across restarts beside it.
 const ARRIVAL_FILE: &str = "arrival.jpg";
+/// The last arrival's clip, kept across restarts beside it.
+const CLIP_FILE: &str = "arrival.mp4";
 
 /// How many visits `/healthz` lists and the state directory keeps.
 const RECENT_VISITS: usize = 20;
@@ -36,6 +38,9 @@ struct Remembered {
     /// Newest first; a cat.json from before the log has none.
     #[serde(default)]
     recent: Vec<Visit>,
+    /// When the arrival in [`CLIP_FILE`] happened; a cat.json from before clips has none.
+    #[serde(default)]
+    clip: Option<u64>,
 }
 
 #[derive(Default)]
@@ -49,6 +54,8 @@ struct Cat {
     hit: bool,
     /// Newest first, at most [`RECENT_VISITS`].
     recent: VecDeque<Visit>,
+    /// The arrival the current clip shows.
+    clip: Option<u64>,
 }
 
 pub struct Status {
@@ -61,6 +68,8 @@ pub struct Status {
     frame: Mutex<Option<gst::Buffer>>,
     /// The JPEG of the frame the last arrival was confirmed on.
     arrival: Mutex<Option<Vec<u8>>>,
+    /// The MP4 of the last arrival, from a few seconds before it.
+    clip: Mutex<Option<bytes::Bytes>>,
     /// Where [`CAT_FILE`] and [`ARRIVAL_FILE`] live; `None` forgets everything at exit.
     state_dir: Option<PathBuf>,
 }
@@ -76,6 +85,7 @@ impl Status {
             cat: Mutex::new(Cat::default()),
             frame: Mutex::new(None),
             arrival: Mutex::new(None),
+            clip: Mutex::new(None),
             state_dir: None,
         }
     }
@@ -93,6 +103,7 @@ impl Status {
                         cat.visits = r.visits;
                         cat.best_score = r.last_score.unwrap_or_default();
                         cat.recent = r.recent.into_iter().take(RECENT_VISITS).collect();
+                        cat.clip = r.clip;
                         // The service stopped with the cat in view: it stayed at least until last_seen.
                         if let (Some(open), Some(seen)) = (cat.recent.front_mut(), cat.last_seen) {
                             if open.stayed_s.is_none() {
@@ -112,6 +123,9 @@ impl Status {
         ) {
             *arrival = Some(jpeg);
         }
+        if let (Ok(mp4), Ok(clip)) = (std::fs::read(dir.join(CLIP_FILE)), self.clip.get_mut()) {
+            *clip = Some(mp4.into());
+        }
         self.state_dir = Some(dir);
         self
     }
@@ -126,6 +140,7 @@ impl Status {
             visits: cat.visits,
             last_score: cat.last_seen.map(|_| cat.best_score),
             recent: cat.recent.iter().copied().collect(),
+            clip: cat.clip,
         }) else {
             return;
         };
@@ -197,6 +212,34 @@ impl Status {
         self.arrival.lock().ok().and_then(|a| a.clone())
     }
 
+    /// Keeps the clip of the arrival at `arrived`, on disk too, and names it in `/healthz`.
+    pub fn set_clip(&self, mp4: Vec<u8>, arrived: u64) {
+        if let Some(dir) = &self.state_dir {
+            if let Err(err) = write_atomic(&dir.join(CLIP_FILE), &mp4) {
+                log::warn!("{}: {err}", dir.join(CLIP_FILE).display());
+            }
+        }
+        if let Ok(mut current) = self.clip.lock() {
+            *current = Some(mp4.into());
+        }
+        if let Ok(mut cat) = self.cat.lock() {
+            cat.clip = Some(arrived);
+        }
+        self.persist();
+    }
+
+    pub fn clip_mp4(&self) -> Option<bytes::Bytes> {
+        self.clip.lock().ok().and_then(|c| c.clone())
+    }
+
+    /// When the newest visit began, as its log entry says.
+    pub fn latest_arrival(&self) -> Option<u64> {
+        self.cat
+            .lock()
+            .ok()
+            .and_then(|cat| cat.recent.front().map(|v| v.arrived))
+    }
+
     /// The latest annotated frame as JPEG, or `None` before the first frame.
     pub fn snapshot_jpeg(&self) -> anyhow::Result<Option<Vec<u8>>> {
         let Some(buffer) = self.frame.lock().ok().and_then(|f| f.clone()) else {
@@ -216,9 +259,18 @@ impl Status {
     pub fn to_json(&self) -> String {
         let camera = self.camera.lock().map(|c| c.clone()).unwrap_or_default();
         let cat = self.cat.lock();
-        let (in_view, last_seen, visits, best, runs) = cat
+        let (in_view, last_seen, visits, best, runs, clip) = cat
             .as_deref()
-            .map(|c| (c.in_view, c.last_seen, c.visits, c.best_score, c.runs))
+            .map(|c| {
+                (
+                    c.in_view,
+                    c.last_seen,
+                    c.visits,
+                    c.best_score,
+                    c.runs,
+                    c.clip,
+                )
+            })
             .unwrap_or_default();
         let recent: Vec<Visit> = cat
             .as_deref()
@@ -236,6 +288,7 @@ impl Status {
                 "visits": visits,
                 "last_score": (last_seen.is_some()).then_some(best),
                 "recent": recent,
+                "clip": clip,
             },
         })
         .to_string()
@@ -345,6 +398,37 @@ mod tests {
     }
 
     #[test]
+    fn a_restart_keeps_the_clip_and_the_arrival_it_shows() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        assert!(before.clip_mp4().is_none());
+        before.set_cat(true, Some(0.7), Some(&arrived()));
+        let arrived_at = before.latest_arrival().unwrap();
+        before.set_clip(b"\0\0\0\x18ftypisom".to_vec(), arrived_at);
+
+        let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
+        assert_eq!(json["cat"]["clip"], arrived_at);
+        assert_eq!(json["cat"]["recent"][0]["arrived"], arrived_at);
+        assert_eq!(&after.clip_mp4().unwrap()[4..8], b"ftyp");
+        assert!(!dir.path().join("arrival.partial").exists());
+    }
+
+    #[test]
+    fn a_cat_json_from_before_clips_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("cat.json"),
+            r#"{"last_seen":5,"visits":3,"last_score":0.5,"recent":[{"arrived":4,"stayed_s":1}]}"#,
+        )
+        .unwrap();
+        let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        assert_eq!(json["cat"]["visits"], 3);
+        assert!(json["cat"]["clip"].is_null());
+    }
+
+    #[test]
     fn the_log_keeps_each_visit_and_its_stay_newest_first() {
         let status = Status::new("Cam", true, 4, 4);
         status.set_cat(true, Some(0.8), Some(&arrived()));
@@ -380,6 +464,7 @@ mod tests {
                     stayed_s: Some(60),
                 },
             ],
+            clip: None,
         };
         std::fs::write(
             dir.path().join(CAT_FILE),

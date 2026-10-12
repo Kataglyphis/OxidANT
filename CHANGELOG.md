@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added
+- **Each cat arrival is a video too (2026-10-12).** `cat_webrtc` keeps the last 3 s of
+  annotated frames at 10 fps (`clip.rs`, buffers held by reference, no copy), and on an
+  arrival adds the next 7 s and encodes them on a thread of its own with `openh264enc`,
+  `h264parse` and `mp4mux` (faststart, so playback starts before the end loads).
+  `/arrival.mp4` serves it with byte ranges, which Safari's `<video>` needs; `/healthz`
+  names the arrival it shows as `cat.clip`; the state directory keeps it across a restart;
+  and `notify_url` gets a `clip` event once it is written, with the arrival's time and
+  score, so a notification can add it. `clip_seconds` (default 10, 0 for none) sets the
+  length. A GStreamer without one of those elements records no clip and says which.
+
 ### Fixed
 - **The ORT loader accepts the chain ORT of the 2026-10-08 `:winamd64` (2026-10-10).** That image's
   `onnxruntime.dll` names its sources `C:/temp/onnx-src/onnxruntime/core/...`, with forward and mixed
