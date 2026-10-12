@@ -43,6 +43,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `stayed_s`, as a visit shorter than the clip's post-roll ends before the clip is written.
 
 ### Fixed
+- **A GStreamer without the clip encoder no longer leaves a scratch directory per arrival
+  (2026-10-13).** `encode_mp4` made its directory before it built `openh264enc`,
+  `h264parse` and `mp4mux`, and returned early when one was missing, past the cleanup at
+  its end. Windows arm64's GStreamer has no `openh264enc`, so the test that a failed
+  encode leaves nothing behind failed there from 0af682f on, while x64 stayed green. The
+  directory is removed on drop now, after the pipeline; a test hides `openh264enc` from
+  the registry for one encode, and fails against the old code (44dd90a).
 - **The ORT loader accepts the chain ORT of the 2026-10-08 `:winamd64` (2026-10-10).** That image's
   `onnxruntime.dll` names its sources `C:/temp/onnx-src/onnxruntime/core/...`, with forward and mixed
   separators, and no longer the backslash form `verify_chain_build` looked for. So every Windows ORT
