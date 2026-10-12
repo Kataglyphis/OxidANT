@@ -38,32 +38,26 @@ fn cube_direction_0( face_0 : u32,  uv_1 : vec2<f32>) -> vec3<f32>
     case u32(0):
         {
             dir_0 = vec3<f32>(1.0f, b_0, - a_0);
-            break;
         }
     case u32(1):
         {
             dir_0 = vec3<f32>(-1.0f, b_0, a_0);
-            break;
         }
     case u32(2):
         {
             dir_0 = vec3<f32>(a_0, 1.0f, - b_0);
-            break;
         }
     case u32(3):
         {
             dir_0 = vec3<f32>(a_0, -1.0f, b_0);
-            break;
         }
     case u32(4):
         {
             dir_0 = vec3<f32>(a_0, b_0, 1.0f);
-            break;
         }
     default :
         {
             dir_0 = vec3<f32>(- a_0, b_0, -1.0f);
-            break;
         }
     }
     return normalize(dir_0);
