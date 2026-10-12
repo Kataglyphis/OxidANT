@@ -230,7 +230,7 @@ in the family `:latest` image:
 cargo build --release -p kataglyphis_cat_webrtc
 target/release/kataglyphis_cat_webrtc --camera test --print-config  # the settings in effect
 target/release/kataglyphis_cat_webrtc --camera test                 # a test pattern, no camera
-curl localhost:8080/healthz                    # the camera, the model's runs, the cat
+curl localhost:8080/healthz                    # the camera, the model's runs, the cat, the kept clips
 curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
 curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on
 curl -o cat.mp4 localhost:8080/arrival.mp4     # that arrival as H.264, 3 s before it to 7 s after
@@ -239,7 +239,8 @@ curl -o cat.mp4 'localhost:8080/arrival.mp4?t=1791763273'  # one of the last fiv
 
 `--notify-url <http(s) URL>` (`notify_url` in the file) POSTs a JSON event there whenever
 a cat arrives or leaves, a Home Assistant webhook trigger for instance, and a `clip`
-event once the arrival's video is encoded. `clip_seconds` (default 10, 0 for none) sets
+event once the arrival's video is encoded. A departure names the arrival it ends
+(`arrived`, `best_score`), so a receiver can update what it sent for that arrival. `clip_seconds` (default 10, 0 for none) sets
 that video's length; it needs `openh264enc`, `h264parse` and `mp4mux`, and without them
 the service records none and says so at start.
 

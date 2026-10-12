@@ -25,6 +25,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   arrival's own or `404`, so a false visit right after the cat cannot put its clip behind
   the cat's notification; arrival events carry the visit log's own time for that. `clip_seconds` (default 10, 0 for none) sets the
   length. A GStreamer without one of those elements records no clip and says which.
+- **The kept clips are listed, and a departure names its arrival (2026-10-12).**
+  `/healthz` gains `cat.clips`: the arrival of every clip `?t=` still serves, newest
+  first, for a page that lists them all. A `left` event carries the arrival it ends
+  (`arrived`) and the score that arrival was confirmed at (`best_score`), so a receiver
+  can update the notification it sent for that arrival and drop a false visit's
+  departure under the same threshold. A `clip` event of a visit already over carries its
+  `stayed_s`, as a visit shorter than the clip's post-roll ends before the clip is written.
 
 ### Fixed
 - **The ORT loader accepts the chain ORT of the 2026-10-08 `:winamd64` (2026-10-10).** That image's
