@@ -590,4 +590,90 @@ mod tests {
         assert_eq!(loopback_for("::"), "127.0.0.1");
         assert_eq!(loopback_for("192.168.188.98"), "192.168.188.98");
     }
+
+    #[test]
+    fn every_other_flag_reaches_the_config() {
+        let config = applied(&[
+            "--all-classes",
+            "--inference",
+            "auto",
+            "--model",
+            "cat.onnx",
+            "--score",
+            "0.6",
+            "--inference-fps",
+            "1",
+            "--idle-inference-fps",
+            "0.1",
+            "--cert",
+            "cert.pem",
+            "--key",
+            "key.pem",
+            "--signalling-host",
+            "0.0.0.0",
+            "--http-host",
+            "0.0.0.0",
+            "--http-port",
+            "9090",
+            "--web-root",
+            "/srv/web",
+            "--stun-server",
+            "stun://stun.example:3478",
+            "--notify-url",
+            "http://ha.local:8123/api/webhook/catcam",
+        ]);
+        assert!(config.all_classes);
+        assert_eq!(config.inference, Inference::Auto);
+        assert_eq!(config.model.as_deref(), Some("cat.onnx"));
+        assert_eq!(
+            (
+                config.score,
+                config.inference_fps,
+                config.idle_inference_fps
+            ),
+            (0.6, 1.0, 0.1)
+        );
+        assert_eq!(
+            (config.cert.as_deref(), config.key.as_deref()),
+            (Some("cert.pem"), Some("key.pem"))
+        );
+        assert_eq!(
+            (config.signalling_host.as_str(), config.http_host.as_str()),
+            ("0.0.0.0", "0.0.0.0")
+        );
+        assert_eq!(config.http_port, 9090);
+        assert_eq!(
+            config.web_root.as_deref(),
+            Some(std::path::Path::new("/srv/web"))
+        );
+        assert_eq!(
+            config.stun_server.as_deref(),
+            Some("stun://stun.example:3478")
+        );
+        assert_eq!(
+            config.notify(),
+            Some("http://ha.local:8123/api/webhook/catcam")
+        );
+        // The config file's web root wins over the one beside the binary.
+        assert_eq!(web_root(&config), Some(PathBuf::from("/srv/web")));
+    }
+
+    #[test]
+    fn a_wildcard_address_is_shown_as_this_host() {
+        assert_eq!(display_host("0.0.0.0"), "<this-host>");
+        assert_eq!(display_host("::"), "<this-host>");
+        assert_eq!(display_host("192.168.188.98"), "192.168.188.98");
+        assert_eq!(display_host("catcam.local"), "catcam.local");
+    }
+
+    #[test]
+    fn with_the_model_off_there_is_no_detector_and_no_notifier() {
+        let mut config = applied(&["--no-inference", "--notify-url", "http://ha.local/hook"]);
+        assert!(load_detector(&config).unwrap().is_none());
+        let status = Arc::new(status::Status::new("Cam", false, 4, 4));
+        // Without the model no cat is ever seen, so no delivery thread is started.
+        assert!(start_notifier(&config, false, status.clone()).is_none());
+        config.notify_url = None;
+        assert!(start_notifier(&config, true, status).is_none());
+    }
 }
