@@ -91,6 +91,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `stayed_s`, as a visit shorter than the clip's post-roll ends before the clip is written.
 
 ### Changed
+- **Renovate skips the vendored `third_party/egui-winit-0.36.2` (2026-10-14).** A packageRule
+  in `.github/renovate.json` (`matchFileNames`, `enabled: false`) keeps its upstream
+  `Cargo.toml` and `Cargo.lock` out of the report and out of lock maintenance. Its rows had
+  made the 2026-10-07 apply refuse its whole run, and cargo exits 101 on that lock. The
+  egui family stays watched through the root `Cargo.toml`. The hub's planner
+  (`renovate_planner.py lockmaint`) now lists only the root and crate manifests.
 - **The six Linux feature checks run in one job (2026-10-13).** `linux-x64.yml`'s
   `feature-matrix` pulled the 12.8 GB image six times, once per feature set, and each job
   spent 6-9 min on that prologue for 1-3 min of `cargo check`: 56-67 runner-minutes a run
