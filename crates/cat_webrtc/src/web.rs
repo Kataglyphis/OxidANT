@@ -18,10 +18,13 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::static_files::{static_file, GzipCache};
-use crate::status::{Settings, Status};
+use crate::status::{Settings, Status, Viewer};
 
 /// What the web client's host-relative `signalingServerUrl` resolves to.
 pub const SIGNALLING_PATH: &str = "/webrtc-ws";
+
+/// What the cat cam runs and what it saw, as JSON.
+pub const HEALTHZ_PATH: &str = "/healthz";
 
 /// The latest annotated frame as a JPEG.
 pub const SNAPSHOT_PATH: &str = "/snapshot.jpg";
@@ -46,6 +49,19 @@ pub struct Site {
     pub gzip: GzipCache,
     /// Host names besides IPs and local names that may open the stream and change settings.
     pub allowed_hosts: Vec<String>,
+    /// Browser tabs on the stream at once; 0 means no limit.
+    pub max_viewers: usize,
+    /// The other cat cams' origins, whose pages may read this one's status and pictures.
+    pub peers: Vec<String>,
+}
+
+/// `origin` when it is one of `peers`: a page another cat cam serves, for the overview.
+fn peer_origin<'a>(origin: Option<&'a HeaderValue>, peers: &[String]) -> Option<&'a HeaderValue> {
+    let text = origin?.to_str().ok()?;
+    peers
+        .iter()
+        .any(|peer| peer.trim_end_matches('/').eq_ignore_ascii_case(text))
+        .then_some(origin?)
 }
 
 /// Names that only resolve inside a home network; a browser that reached the cat cam under a public
@@ -118,6 +134,8 @@ pub async fn serve(listener: TcpListener, site: Arc<Site>) {
 
 async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_owned();
+    let origin = req.headers().get(header::ORIGIN).cloned();
+    let reads = [HEALTHZ_PATH, SNAPSHOT_PATH, ARRIVAL_PATH, CLIP_PATH].contains(&path.as_str());
     let acts = path == SIGNALLING_PATH || (path == SETTINGS_PATH && req.method() == Method::POST);
     let refused = acts
         .then(|| own_page(req.headers(), &site.allowed_hosts).err())
@@ -126,18 +144,30 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
         log::warn!("{path}: {why}");
         plain(StatusCode::FORBIDDEN, why)
     } else if path == SIGNALLING_PATH {
-        match forward_upgrade(req, &site.signalling).await {
-            Ok(response) => response,
-            Err(err) => {
-                log::warn!("{SIGNALLING_PATH}: {err:#}");
-                plain(StatusCode::BAD_GATEWAY, "signalling server unreachable")
+        match site.status.viewer(site.max_viewers) {
+            None => {
+                log::warn!(
+                    "{SIGNALLING_PATH}: {} viewers already, refused one",
+                    site.max_viewers
+                );
+                plain(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "too many viewers: close another tab, or raise max_viewers",
+                )
             }
+            Some(viewer) => match forward_upgrade(req, &site.signalling, viewer).await {
+                Ok(response) => response,
+                Err(err) => {
+                    log::warn!("{SIGNALLING_PATH}: {err:#}");
+                    plain(StatusCode::BAD_GATEWAY, "signalling server unreachable")
+                }
+            },
         }
     } else if path == SETTINGS_PATH {
         settings(req, &site.status).await
     } else if req.method() != Method::GET && req.method() != Method::HEAD {
         plain(StatusCode::METHOD_NOT_ALLOWED, "GET or HEAD only")
-    } else if path == "/healthz" {
+    } else if path == HEALTHZ_PATH {
         let mut response = Response::new(Full::new(Bytes::from(site.status.to_json())));
         response.headers_mut().insert(
             header::CONTENT_TYPE,
@@ -172,6 +202,17 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
         static_file(&req, site.web_root.as_deref(), &site.gzip).await
     };
     let headers = response.headers_mut();
+    if let Some(peer) = peer_origin(origin.as_ref(), &site.peers).filter(|_| reads) {
+        // Another cat cam's page reads this one for its overview; under COEP its pictures need CORP too.
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, peer.clone());
+        headers.insert(
+            header::HeaderName::from_static("cross-origin-resource-policy"),
+            HeaderValue::from_static("cross-origin"),
+        );
+    }
+    if reads {
+        headers.append(header::VARY, HeaderValue::from_static("origin"));
+    }
     // Isolation lets Firefox and Safari load the Rust core's shared-memory wasm; the stream needs neither.
     headers.insert(
         "cross-origin-opener-policy",
@@ -348,6 +389,7 @@ fn jpeg_response(jpeg: impl Into<Bytes>) -> Response<Body> {
 async fn forward_upgrade(
     req: Request<Incoming>,
     (host, port): &(String, u16),
+    viewer: Viewer,
 ) -> anyhow::Result<Response<Body>> {
     let mut upstream = TcpStream::connect((host.as_str(), *port))
         .await
@@ -391,6 +433,8 @@ async fn forward_upgrade(
         return Ok(builder.body(Full::new(Bytes::from(leftover)))?);
     }
     tokio::spawn(async move {
+        // Held while the tab stays connected.
+        let _viewer = viewer;
         match hyper::upgrade::on(req).await {
             Ok(upgraded) => {
                 let mut client = TokioIo::new(upgraded);
@@ -511,6 +555,8 @@ mod tests {
             status: Arc::new(Status::new("Test Cam", false, 16, 8)),
             gzip: GzipCache::default(),
             allowed_hosts: Vec::new(),
+            max_viewers: 0,
+            peers: Vec::new(),
         });
         tokio::spawn(serve(listener, site));
         addr
@@ -782,6 +828,8 @@ mod tests {
             status: status.clone(),
             gzip: GzipCache::default(),
             allowed_hosts: Vec::new(),
+            max_viewers: 0,
+            peers: Vec::new(),
         });
         tokio::spawn(serve(listener, site));
         assert!(get(addr, SNAPSHOT_PATH, "")
@@ -810,6 +858,8 @@ mod tests {
             status: status.clone(),
             gzip: GzipCache::default(),
             allowed_hosts: Vec::new(),
+            max_viewers: 0,
+            peers: Vec::new(),
         });
         tokio::spawn(serve(listener, site));
         assert!(get(addr, ARRIVAL_PATH, "")
@@ -1051,5 +1101,93 @@ mod tests {
         )
         .await;
         assert!(socket.starts_with("HTTP/1.1 403"), "{socket}");
+    }
+
+    async fn start_with(site: Site) -> std::net::SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(serve(listener, Arc::new(site)));
+        addr
+    }
+
+    fn site(max_viewers: usize, peers: Vec<String>, signalling_port: u16) -> Site {
+        Site {
+            web_root: None,
+            signalling: ("127.0.0.1".into(), signalling_port),
+            status: Arc::new(Status::new("Cam", false, 4, 4)),
+            gzip: GzipCache::default(),
+            allowed_hosts: Vec::new(),
+            max_viewers,
+            peers,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_viewer_past_the_limit_is_refused_until_one_leaves() {
+        // A stand-in signalling server that upgrades every socket and keeps it open.
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = upstream.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = upstream.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut head = [0u8; 1024];
+                    let _ = socket.read(&mut head).await;
+                    let reply = "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: upgrade\r\n\r\n";
+                    socket.write_all(reply.as_bytes()).await.unwrap();
+                    let mut rest = [0u8; 16];
+                    while socket.read(&mut rest).await.is_ok_and(|n| n > 0) {}
+                });
+            }
+        });
+        let status_site = site(1, Vec::new(), port);
+        let status = status_site.status.clone();
+        let addr = start_with(status_site).await;
+        let open = |addr| async move {
+            let mut stream = TcpStream::connect(addr).await.unwrap();
+            let request = format!("GET {SIGNALLING_PATH} HTTP/1.1\r\nhost: cat.local\r\nupgrade: websocket\r\nconnection: upgrade\r\n\r\n");
+            stream.write_all(request.as_bytes()).await.unwrap();
+            let mut head = [0u8; 64];
+            let n = stream.read(&mut head).await.unwrap();
+            (stream, String::from_utf8_lossy(&head[..n]).into_owned())
+        };
+        let (first, reply) = open(addr).await;
+        assert!(reply.starts_with("HTTP/1.1 101"), "{reply}");
+        let (_, refused) = open(addr).await;
+        assert!(refused.starts_with("HTTP/1.1 503"), "{refused}");
+        drop(first);
+        // The closed tab frees its place once the proxy notices.
+        for _ in 0..50 {
+            if status.viewer(1).is_some() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the closed tab never freed its place");
+    }
+
+    #[tokio::test]
+    async fn another_cat_cams_page_may_read_this_one_and_no_other_page_may() {
+        let addr = start_with(site(0, vec!["http://10.0.0.2:8080/".into()], 9)).await;
+        let peer = get(addr, "/healthz", "origin: http://10.0.0.2:8080\r\n").await;
+        assert!(
+            peer.contains("access-control-allow-origin: http://10.0.0.2:8080"),
+            "{peer}"
+        );
+        assert!(
+            peer.contains("cross-origin-resource-policy: cross-origin"),
+            "{peer}"
+        );
+        let stranger = get(addr, "/healthz", "origin: http://10.0.0.3:8080\r\n").await;
+        assert!(
+            !stranger.contains("access-control-allow-origin"),
+            "{stranger}"
+        );
+        // Only reads: the page itself and the settings stay its own.
+        let settings = get(addr, "/settings", "origin: http://10.0.0.2:8080\r\n").await;
+        assert!(
+            !settings.contains("access-control-allow-origin"),
+            "{settings}"
+        );
     }
 }

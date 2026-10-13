@@ -15,6 +15,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Peers, a viewer cap and the build in `/healthz`** (2026-10-14).
+  - `peers` (origins) in the config: a GET of `/healthz`, `/snapshot.jpg`, `/arrival.jpg`
+    or `/arrival.mp4` whose `Origin` is one of them gets `Access-Control-Allow-Origin` and
+    `Cross-Origin-Resource-Policy: cross-origin`, so another cat cam's page can show this
+    one; `/healthz` lists them for the page's overview.
+  - `max_viewers` (8, 0 for no limit) caps the open `/webrtc-ws` sockets, `503` beyond;
+    `/healthz` counts them as `viewers`. Each viewer costs an encoder.
+  - `version` in `/healthz` and the start log: `CATCAM_VERSION` at build time, which
+    `package-catcam.sh` sets to the package version and commit, else the crate's `-dev`.
+
 - **A cat must move to arrive, and spots can be marked "not a cat"** (2026-10-14).
   - The motion pacer stamps each 8x8 block when it changes; a detection starts a visit
     only with two such blocks from the last 10 s in or around its box (`motion::Moving`).

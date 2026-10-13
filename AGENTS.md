@@ -458,6 +458,10 @@ board runs it as one service unit:
   event. `webrtcsink`'s `meta` keeps the name it started with. The frame caps say square
   pixels, so `videoscale` borders a quarter turn instead of stretching it; do not drop
   `pixel-aspect-ratio` from `frame::caps`.
+- **Who may read a cat cam from another origin** (2026-10-14): only the origins in its
+  `peers`, and only the reads (`web::handle`'s `reads`). The page's COOP/COEP stay, which
+  is why a peer's pictures need `Cross-Origin-Resource-Policy: cross-origin` as well as
+  CORS. Acting endpoints never get CORS headers; `own_page` still guards them.
 - **What a cat cam on a LAN must refuse** (2026-10-13). `web::own_page` guards the two
   endpoints that act, `/webrtc-ws` and `POST /settings`: a browser's `Origin` must equal the
   request's `Host`, and the host must be an IP, a dotless name, a local suffix (`.local`,

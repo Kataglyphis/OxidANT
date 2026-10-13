@@ -3,8 +3,8 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use gstreamer as gst;
@@ -31,6 +31,21 @@ const NAME_MAX: usize = 64;
 
 /// The most spots the page may mark "not a cat".
 const IGNORE_MAX: usize = 16;
+
+/// The build: the package's version, stamped by `package-catcam.sh`, else the crate's.
+pub const VERSION: &str = match option_env!("CATCAM_VERSION") {
+    Some(version) => version,
+    None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
+};
+
+/// One browser tab connected to the stream; dropping it frees its place.
+pub struct Viewer(Arc<AtomicUsize>);
+
+impl Drop for Viewer {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 /// The settings the page can change while the service runs; a value left out stays as it is.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
@@ -185,6 +200,10 @@ pub struct Status {
     page: Mutex<Settings>,
     /// Spots marked "not a cat"; the inference thread reads them each run.
     ignore: Mutex<Vec<Zone>>,
+    /// Browser tabs connected to the stream now.
+    viewers: Arc<AtomicUsize>,
+    /// The other cat cams' origins, which the page lists.
+    peers: Vec<String>,
 }
 
 impl Status {
@@ -210,7 +229,25 @@ impl Status {
             score: AtomicU32::new(0.25f32.to_bits()),
             page: Mutex::new(Settings::default()),
             ignore: Mutex::new(Vec::new()),
+            viewers: Arc::new(AtomicUsize::new(0)),
+            peers: Vec::new(),
         }
+    }
+
+    /// The other cat cams, which `/healthz` names for the page's overview.
+    pub fn peered(mut self, peers: Vec<String>) -> Self {
+        self.peers = peers;
+        self
+    }
+
+    /// A place for one more browser tab on the stream, unless `max` (0: no limit) are connected.
+    pub fn viewer(&self, max: usize) -> Option<Viewer> {
+        let before = self.viewers.fetch_add(1, Ordering::AcqRel);
+        if max != 0 && before >= max {
+            self.viewers.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        Some(Viewer(self.viewers.clone()))
     }
 
     /// The spots marked "not a cat".
@@ -615,6 +652,9 @@ impl Status {
         serde_json::json!({
             "ok": ok,
             "problem": problem,
+            "version": VERSION,
+            "viewers": self.viewers.load(Ordering::Acquire),
+            "peers": self.peers,
             "frame_age_s": frame_age,
             "model_age_s": model_age,
             "name": self.name(),
@@ -1100,6 +1140,27 @@ mod tests {
         let again = Status::new("Cam", true, 640, 480).remember_in(dir.path().to_path_buf());
         assert!(again.ignored().is_empty());
         assert_eq!(again.rotation(), 90);
+    }
+
+    #[test]
+    fn viewers_are_counted_and_capped_and_a_closed_tab_frees_its_place() {
+        let status = Status::new("Cam", true, 4, 4).peered(vec!["http://10.0.0.2:8080".into()]);
+        let health = |s: &Status| serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap();
+        let first = status.viewer(2).unwrap();
+        let second = status.viewer(2).unwrap();
+        assert!(status.viewer(2).is_none());
+        assert_eq!(health(&status)["viewers"], 2);
+        drop(first);
+        assert_eq!(health(&status)["viewers"], 1);
+        let third = status.viewer(2).unwrap();
+        // 0 is no limit.
+        let more: Vec<Viewer> = (0..20).map(|_| status.viewer(0).unwrap()).collect();
+        assert_eq!(health(&status)["viewers"], 22);
+        drop((second, third, more));
+        let json = health(&status);
+        assert_eq!(json["viewers"], 0);
+        assert_eq!(json["peers"], serde_json::json!(["http://10.0.0.2:8080"]));
+        assert!(json["version"].as_str().is_some_and(|v| !v.is_empty()));
     }
 
     #[test]

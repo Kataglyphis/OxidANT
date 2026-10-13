@@ -79,6 +79,12 @@ pub struct Config {
     /// Host names besides IPs and local names (`cat`, `*.local`, `*.fritz.box`, ...) under which the
     /// page may open the stream and change settings, such as a reverse proxy's.
     pub allowed_hosts: Vec<String>,
+    /// Browser tabs connected to the stream at once; each one the cat cam encodes for costs CPU.
+    /// 0 means no limit.
+    pub max_viewers: u32,
+    /// The other cat cams, as origins (`http://192.168.1.20:8080`): their pages may read this one's
+    /// status and pictures, and this one's page lists them.
+    pub peers: Vec<String>,
 }
 
 impl Default for Config {
@@ -112,6 +118,8 @@ impl Default for Config {
             ice_port_min: 40000,
             ice_port_max: 40099,
             allowed_hosts: Vec::new(),
+            max_viewers: 8,
+            peers: Vec::new(),
         }
     }
 }
@@ -211,6 +219,14 @@ impl Config {
         if let Some(url) = self.notify() {
             if !url.starts_with("http://") && !url.starts_with("https://") {
                 bail!("notify_url must be an http:// or https:// URL (got {url:?})");
+            }
+        }
+        for peer in &self.peers {
+            let rest = peer
+                .strip_prefix("http://")
+                .or_else(|| peer.strip_prefix("https://"));
+            if rest.is_none_or(|r| r.is_empty() || r.trim_end_matches('/').contains('/')) {
+                bail!("a peer is an origin such as \"http://192.168.1.20:8080\", no path (got {peer:?})");
             }
         }
         crate::camera::Choice::parse(&self.camera)?;

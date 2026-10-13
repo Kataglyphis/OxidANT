@@ -190,8 +190,8 @@ fn run(args: Args) -> anyhow::Result<()> {
     // Still single-threaded here, so changing the environment cannot race a reader.
     std::env::set_var(ORT_THREADS_ENV, config.inference_threads.to_string());
     match &source {
-        Some(path) => log::info!("config: {}", path.display()),
-        None => log::info!("config: built-in defaults"),
+        Some(path) => log::info!("config: {} (cat cam {})", path.display(), status::VERSION),
+        None => log::info!("config: built-in defaults (cat cam {})", status::VERSION),
     }
     let choice = camera::Choice::parse(&config.camera)?;
     kataglyphis_media::ensure_gst_initialized()?;
@@ -206,7 +206,8 @@ fn run(args: Args) -> anyhow::Result<()> {
     let status = status
         .rotated(config.rotate)
         .scored(config.score)
-        .at_fps(config.fps);
+        .at_fps(config.fps)
+        .peered(config.peers.clone());
     let status = Arc::new(match state_dir() {
         Some(dir) => {
             log::info!("state: {}", dir.display());
@@ -457,6 +458,8 @@ fn start_web(
         status,
         gzip: static_files::GzipCache::default(),
         allowed_hosts: config.allowed_hosts.clone(),
+        max_viewers: config.max_viewers as usize,
+        peers: config.peers.clone(),
     });
     runtime.spawn(web::serve(listener, site));
     if config.cert.is_some() {
