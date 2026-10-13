@@ -669,6 +669,13 @@ beside the exe before the compile-time checkout path, so a packaged app needs no
 `KATAGLYPHIS_ONNX_MODEL`. The MSI installs the same tree as the bundle: a generated
 component per file (`msi-payload-files.wxs`), placed with WiX v4's `Subdirectory`.
 
+**The tests' plugins are the product's plus `Build.TestGStreamerPlugins`.** On the arm64
+device the tests run against what `Stage-CrossTests.ps1` copied beside them, not the image's
+runtime, so the cat cam's capture tests need their own: `videofilter` for the `videoflip`
+that is always in the capture since its turn became a run-time setting, `multifile` and
+`jpeg` for the image source. Its rotation commit (11d8cf4) failed arm64 alone for that,
+while x64, which tests inside the image, had them all. The product bundle stays as it was.
+
 On a cross build the script also:
 
 - builds with `--target aarch64-pc-windows-msvc` and `PKG_CONFIG_ALLOW_CROSS=1`

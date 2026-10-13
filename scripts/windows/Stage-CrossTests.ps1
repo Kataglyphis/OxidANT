@@ -69,10 +69,10 @@ foreach ($exe in $binaries) {
   Copy-Item -LiteralPath $exe -Destination $target
 }
 
-# The capture test loads its elements by name, so the product's plugin set goes where bundled_plugin_dir() looks.
+# The capture tests load their elements by name, so the product's plugins and the tests' own go where bundled_plugin_dir() looks.
 $config = Import-PowerShellDataFile -Path (Join-Path $PSScriptRoot 'Build-Windows.config.psd1')
 $gstPluginDir = if ($env:GSTREAMER_PLUGIN_DIR) { $env:GSTREAMER_PLUGIN_DIR } else { $config.Build.GStreamerPluginDir }
-$plugins = @($config.Build.GStreamerPlugins | ForEach-Object { Join-Path $gstPluginDir "$_.dll" })
+$plugins = @(@($config.Build.GStreamerPlugins) + @($config.Build.TestGStreamerPlugins) | ForEach-Object { Join-Path $gstPluginDir "$_.dll" })
 $missing = @($plugins | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
 if ($missing.Count -gt 0) { throw "GStreamer plugins missing from $gstPluginDir`: $($missing -join ', ')" }
 
