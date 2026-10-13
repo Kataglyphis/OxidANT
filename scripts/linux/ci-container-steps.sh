@@ -9,6 +9,8 @@ source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
 # capture_test.rs is cfg(gstreamer); `?/` names the member's feature without enabling gui's and oxidant's optional deps.
 TEST_FEATURES='kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
+# The feature-check sets (AGENTS.md § Feature combinations): gui_windows compiles the wgpu GUI; no gui_unix, the image has no GTK 4.
+FEATURE_CHECK_SETS='gstreamer gui_linux gui_linux,gstreamer gui_windows onnxruntime burn_demos'
 
 usage() {
     cat >&2 <<'USAGE'
@@ -24,9 +26,42 @@ usage: ci-container-steps.sh <step>
   docs        cargo_build_doc.sh        - rustdoc into target/doc
   ort-chain-only  check-ort-chain-only.sh - no downloaded ONNX Runtime (GATING)
   riscv64-test    the workspace tests, cross-built for riscv64 and run under QEMU
+  feature-check [all|<set>...]  cargo check --locked --features <set>, each set
+                  in its own log group; every set runs, then any failure fails
 
 Run inside the family Linux CI image, from the repository root.
 USAGE
+}
+
+# One job checks every set (one image pull, one warm target dir); a failed set must not hide the ones after it.
+feature_check() {
+    local sets=() features start failed=()
+    if [ "${1-all}" = all ]; then
+        read -r -a sets <<<"${FEATURE_CHECK_SETS}"
+    else
+        sets=("$@")
+    fi
+    for features in "${sets[@]}"; do
+        case " ${FEATURE_CHECK_SETS} " in
+            *" ${features} "*) ;;
+            *) echo "::warning title=Feature check (${features})::not in FEATURE_CHECK_SETS, the list CI checks" ;;
+        esac
+        echo "::group::cargo check --locked --features ${features}"
+        start="${SECONDS}"
+        if cargo check --locked --features "${features}"; then
+            echo "::endgroup::"
+            echo "feature-check: ${features} passed in $((SECONDS - start)) s"
+        else
+            echo "::endgroup::"
+            echo "::error title=Feature check (${features})::cargo check --locked --features ${features} failed after $((SECONDS - start)) s"
+            failed+=("${features}")
+        fi
+    done
+    if [ "${#failed[@]}" -gt 0 ]; then
+        echo "feature-check: ${#failed[@]} of ${#sets[@]} set(s) failed: ${failed[*]}"
+        return 1
+    fi
+    echo "feature-check: all ${#sets[@]} set(s) passed"
 }
 
 # The hub's cargo drivers register it as a git safe.directory (uid 1001 does not own the bind mount).
@@ -78,6 +113,12 @@ case "$step" in
             echo "riscv64-test: GPU suites excluded (no Vulkan driver); RISCV64_GPU_TESTS=1 runs them on lavapipe"
         fi
         exec cargo test --workspace --locked --target riscv64gc-unknown-linux-gnu "$@"
+        ;;
+
+    # The only Linux build of the GUI and burn features; root-package names, so no --workspace.
+    feature-check)
+        antfrastructure_source linux/scripts/02-toolchain/rust/_cargo_wrapper.sh
+        feature_check "$@"
         ;;
 
     -h|--help|help) usage; exit 0 ;;

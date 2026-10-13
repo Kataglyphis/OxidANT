@@ -53,6 +53,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
   departure under the same threshold. A `clip` event of a visit already over carries its
   `stayed_s`, as a visit shorter than the clip's post-roll ends before the clip is written.
 
+### Changed
+- **The six Linux feature checks run in one job (2026-10-13).** `linux-x64.yml`'s
+  `feature-matrix` pulled the 12.8 GB image six times, once per feature set, and each job
+  spent 6-9 min on that prologue for 1-3 min of `cargo check`: 56-67 runner-minutes a run
+  for about 13 min of work (runs 38394017265, 38400294322, 38407158265). Now one job runs
+  `bash scripts/linux/ci-container-steps.sh feature-check`, which checks every set in
+  `FEATURE_CHECK_SETS` in one container and one warm target directory. Each set has its own
+  log group and, on failure, its own `::error` annotation, and every set runs even after
+  one fails. All six pass that way in `:latest` on the dev box. Dispatching `linux-x64.yml` with
+  `feature-checks-per-job` brings back one job per set.
+
 ### Fixed
 - **A GStreamer without the clip encoder no longer leaves a scratch directory per arrival
   (2026-10-13).** `encode_mp4` made its directory before it built `openh264enc`,

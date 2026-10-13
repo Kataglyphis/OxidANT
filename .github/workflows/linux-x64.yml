@@ -7,6 +7,13 @@ on:
   pull_request:
     branches: [ "main", "develop" ]
   workflow_dispatch:
+    inputs:
+      feature-checks-per-job:
+        description: >-
+          One feature-check job per set, the layout before 2026-10-13: six image
+          pulls instead of one, for when the shared job is in doubt.
+        type: boolean
+        default: false
 
 # The GHCR pull and docs publish use their own secrets; this also caps the called workflow's token.
 permissions:
@@ -38,11 +45,11 @@ jobs:
       USERNAME: ${{ secrets.USERNAME }}
       PW: ${{ secrets.PW }}
 
-  # The only build of each optional feature, on every push like the lane (owner rule: no opt-in jobs); one image pull per row.
+  # The only build of each optional feature, on every push like the lane (owner rule: no opt-in jobs).
   feature-matrix:
-    name: Feature check (${{ matrix.features }})
+    name: Feature checks (${{ matrix.sets }})
     runs-on: ubuntu-26.04
-    # One image pull and one `cargo check` per row - no build, test or package.
+    # Every set in one job: a check takes 1-3 min, the host prologue 6-9 min (runs 38394017265, 38400294322, 38407158265).
     timeout-minutes: 45
     permissions:
       contents: read
@@ -52,14 +59,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # gui_unix is absent (needs GTK 4, which the image excludes); gui_windows is the row that compiles gui_wgpu.
-        features:
-          - gstreamer
-          - gui_linux
-          - gui_linux,gstreamer
-          - gui_windows
-          - onnxruntime
-          - burn_demos
+        # `all` is FEATURE_CHECK_SETS in scripts/linux/ci-container-steps.sh; the dispatch input splits it into one job per set.
+        sets: ${{ fromJSON(inputs.feature-checks-per-job && '["gstreamer", "gui_linux", "gui_linux,gstreamer", "gui_windows", "onnxruntime", "burn_demos"]' || '["all"]') }}
     steps:
       - name: Prepare the CI host
         uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
@@ -69,11 +70,8 @@ jobs:
           fetch-depth: '1'
 
       # GStreamer is source-built into the image: never fix a failure by apt-installing libgstreamer*-dev.
-      - name: cargo check --features ${{ matrix.features }}
+      - name: cargo check per feature set (${{ matrix.sets }})
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
           extra-args: ${{ env.CONTAINER_ENV }}
-          script: >-
-            bash -lc 'set -e;
-            git config --global --add safe.directory /workspace || true;
-            cargo check --locked --features ${{ matrix.features }}'
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh feature-check ${{ matrix.sets }}'
