@@ -544,4 +544,80 @@ mod tests {
         );
         assert!(choose(&Choice::Rpicam, &Probe::default()).is_stand_in());
     }
+
+    #[test]
+    fn each_plan_describes_itself_as_healthz_shows_it() {
+        let probe = Probe {
+            rpicam_cameras: vec!["imx708 [4608x2592 10-bit RGGB]".into()],
+            rpicam_vid: true,
+            devices: vec![uvc("/dev/video2"), csi()],
+        };
+        let cases = [
+            (
+                Plan::Rpicam,
+                "Raspberry Pi camera via rpicam-vid (imx708 [4608x2592 10-bit RGGB])",
+            ),
+            (
+                Plan::Device {
+                    index: 0,
+                    mjpeg: true,
+                },
+                "v4l2src /dev/video2 (HD Pro Webcam C920, MJPEG)",
+            ),
+            (
+                Plan::Device {
+                    index: 1,
+                    mjpeg: false,
+                },
+                "libcamerasrc (imx219)",
+            ),
+            (Plan::Libcamera, "libcamerasrc"),
+            (Plan::V4l2Path("/dev/video9".into()), "v4l2src /dev/video9"),
+            (Plan::Test(None), "test pattern"),
+            (
+                Plan::Test(Some("no camera found".into())),
+                "test pattern (no camera found)",
+            ),
+            (Plan::Image("cat.jpg".into()), "still image cat.jpg"),
+        ];
+        for (plan, text) in cases {
+            assert_eq!(plan.describe(&probe), text);
+        }
+        assert!(Plan::Rpicam.describe(&Probe::default()).ends_with("(?)"));
+    }
+
+    #[test]
+    fn a_test_pattern_or_an_image_probes_nothing() {
+        for choice in [Choice::Test, Choice::Image("cat.jpg".into())] {
+            let found = probe(&choice);
+            assert_eq!(found.probe, Probe::default());
+            assert!(found.devices.is_empty());
+        }
+    }
+
+    #[test]
+    fn find_on_path_finds_a_shell_and_not_a_made_up_name() {
+        let shell = if cfg!(windows) { "cmd" } else { "sh" };
+        assert!(find_on_path(shell).is_some_and(|p| p.is_file()));
+        assert_eq!(find_on_path("no-such-program-kataglyphis-cat"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_with_timeout_returns_stdout_and_gives_up_on_a_hang_or_a_missing_program() {
+        let out = run_with_timeout("sh", &["-c", "echo imx708"], Duration::from_secs(10));
+        assert_eq!(out.as_deref(), Some("imx708\n"));
+        assert_eq!(
+            run_with_timeout("sleep", &["5"], Duration::from_millis(100)),
+            None
+        );
+        assert_eq!(
+            run_with_timeout(
+                "no-such-program-kataglyphis-cat",
+                &[],
+                Duration::from_secs(1)
+            ),
+            None
+        );
+    }
 }
