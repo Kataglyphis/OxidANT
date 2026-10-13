@@ -3,7 +3,7 @@
 
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use std::sync::Arc;
 
@@ -15,17 +15,47 @@ use crate::web::{ARRIVAL_PATH, CLIP_PATH};
 /// How long one delivery may take before it is given up.
 const TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The waits before each new try of an event the receiver refused or did not answer: a Home
+/// Assistant restart takes about a minute, an update a few.
+const RETRY_DELAYS: [Duration; 4] = [
+    Duration::from_secs(5),
+    Duration::from_secs(15),
+    Duration::from_secs(45),
+    Duration::from_secs(120),
+];
+
+/// An event older than this is dropped untried: a notification that late helps nobody.
+const MAX_AGE: Duration = Duration::from_secs(10 * 60);
+
+/// When to try an event again, and when to give it up.
+#[derive(Clone, Copy)]
+struct Retry {
+    delays: &'static [Duration],
+    max_age: Duration,
+}
+
 #[derive(Clone)]
 pub struct Notifier {
     /// The camera's name comes from here at each event, so a rename on the settings page reaches it.
     status: Arc<Status>,
-    tx: mpsc::Sender<serde_json::Value>,
+    tx: mpsc::Sender<(Instant, serde_json::Value)>,
 }
 
 impl Notifier {
-    /// Starts the delivery thread; events queue while one is in flight.
+    /// Starts the delivery thread; events queue in order while one is in flight or waits to be retried.
     pub fn spawn(url: &str, status: Arc<Status>) -> std::io::Result<Self> {
-        let (tx, rx) = mpsc::channel::<serde_json::Value>();
+        Self::spawn_with(
+            url,
+            status,
+            Retry {
+                delays: &RETRY_DELAYS,
+                max_age: MAX_AGE,
+            },
+        )
+    }
+
+    fn spawn_with(url: &str, status: Arc<Status>, retry: Retry) -> std::io::Result<Self> {
+        let (tx, rx) = mpsc::channel::<(Instant, serde_json::Value)>();
         let url = url.to_owned();
         thread::Builder::new()
             .name("cat-notify".into())
@@ -34,14 +64,8 @@ impl Notifier {
                     .timeout_global(Some(TIMEOUT))
                     .build()
                     .into();
-                for event in rx {
-                    let sent = agent
-                        .post(&url)
-                        .header("content-type", "application/json")
-                        .send(event.to_string());
-                    if let Err(err) = sent {
-                        log::warn!("notify {}: {err}", origin(&url));
-                    }
+                for (queued, event) in rx {
+                    deliver(&agent, &url, queued, &event, retry);
                 }
             })?;
         Ok(Self { status, tx })
@@ -50,21 +74,62 @@ impl Notifier {
     /// `time` is the event's Unix time; for an arrival, the visit log's, which the clip is kept under.
     /// A departure names its `visit`, so a receiver can update what it sent for that arrival.
     pub fn send(&self, change: &Change, time: u64, visit: Option<Arrival>) {
-        let _ = self
-            .tx
-            .send(payload(&self.status.name(), change, time, visit));
+        let _ = self.tx.send((
+            Instant::now(),
+            payload(&self.status.name(), change, time, visit),
+        ));
     }
 
     /// The clip of `arrival` is at [`CLIP_PATH`]: a second event, so a notification can add it;
     /// `stayed_s` once the visit is over, as a short one ends before its clip is encoded.
     pub fn send_clip(&self, arrival: Arrival, stayed_s: Option<u64>) {
-        let _ = self
-            .tx
-            .send(clip_payload(&self.status.name(), arrival, stayed_s));
+        let _ = self.tx.send((
+            Instant::now(),
+            clip_payload(&self.status.name(), arrival, stayed_s),
+        ));
     }
 }
 
 /// The event for a finished clip; `best_score` lets a receiver apply the same threshold as to arrivals.
+/// Posts `event` to `url`, tried again after each of the retry delays until the receiver takes it.
+fn deliver(
+    agent: &ureq::Agent,
+    url: &str,
+    queued: Instant,
+    event: &serde_json::Value,
+    retry: Retry,
+) {
+    let waits = std::iter::once(Duration::ZERO).chain(retry.delays.iter().copied());
+    for (tried, wait) in waits.enumerate() {
+        thread::sleep(wait);
+        if queued.elapsed() > retry.max_age {
+            log::warn!(
+                "notify {}: dropped an event {} s old",
+                origin(url),
+                queued.elapsed().as_secs()
+            );
+            return;
+        }
+        let sent = agent
+            .post(url)
+            .header("content-type", "application/json")
+            .send(event.to_string());
+        match sent {
+            Ok(_) if tried > 0 => {
+                log::info!("notify {}: delivered on try {}", origin(url), tried + 1);
+                return;
+            }
+            Ok(_) => return,
+            Err(err) => log::warn!("notify {} (try {}): {err}", origin(url), tried + 1),
+        }
+    }
+    log::warn!(
+        "notify {}: gave up on an event after {} tries",
+        origin(url),
+        retry.delays.len() + 1
+    );
+}
+
 fn clip_payload(name: &str, arrival: Arrival, stayed_s: Option<u64>) -> serde_json::Value {
     let mut event = serde_json::json!({
         "event": "clip",
@@ -309,5 +374,84 @@ mod tests {
         assert_eq!(event["event"], "clip");
         assert_eq!(event["name"], "Futtertrog");
         assert_eq!(event["stayed_s"], 12);
+    }
+
+    #[test]
+    fn a_refused_event_is_tried_again_and_the_next_one_waits_its_turn() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/api/webhook/cats", listener.local_addr().unwrap());
+        // Home Assistant restarting: the first try gets a 503, the second and third a 200.
+        let server = thread::spawn(move || {
+            let mut events = Vec::new();
+            for reply in [
+                &b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n"[..],
+                b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n",
+                b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n",
+            ] {
+                let (stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut length = 0;
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap() > 2 {
+                    if let Some(n) = line.to_ascii_lowercase().strip_prefix("content-length: ") {
+                        length = n.trim().parse().unwrap();
+                    }
+                    line.clear();
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                reader.get_mut().write_all(reply).unwrap();
+                let event: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                events.push(event["event"].as_str().unwrap().to_owned());
+            }
+            events
+        });
+        static FAST: [Duration; 2] = [Duration::from_millis(50), Duration::from_millis(50)];
+        let status = Arc::new(Status::new("Test Cam", true, 4, 4));
+        let retry = Retry {
+            delays: &FAST,
+            max_age: Duration::from_secs(60),
+        };
+        let notifier = Notifier::spawn_with(&url, status, retry).unwrap();
+        notifier.send(
+            &Change::Arrived {
+                count: 1,
+                best: 0.8,
+            },
+            1_791_763_273,
+            None,
+        );
+        let arrival = Arrival {
+            time: 1_791_763_273,
+            best_score: 0.8,
+        };
+        notifier.send_clip(arrival, None);
+        // The arrival twice (refused, then taken), and only then its clip: order holds.
+        assert_eq!(server.join().unwrap(), ["arrived", "arrived", "clip"]);
+    }
+
+    #[test]
+    fn an_event_older_than_its_limit_is_dropped_untried() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/hook", listener.local_addr().unwrap());
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_millis(500)))
+            .build()
+            .into();
+        let retry = Retry {
+            delays: &[],
+            max_age: Duration::from_secs(1),
+        };
+        let queued = Instant::now() - Duration::from_secs(5);
+        deliver(
+            &agent,
+            &url,
+            queued,
+            &serde_json::json!({"event": "arrived"}),
+            retry,
+        );
+        // Nobody knocked: a stale event never reaches the receiver.
+        listener.set_nonblocking(true).unwrap();
+        assert!(listener.accept().is_err());
     }
 }

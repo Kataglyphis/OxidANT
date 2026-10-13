@@ -2,6 +2,7 @@
 //! signalling server, so one origin serves the page and its WebSocket and no nginx is needed.
 
 use std::convert::Infallible;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,6 +44,52 @@ pub struct Site {
     pub signalling: (String, u16),
     pub status: Arc<Status>,
     pub gzip: GzipCache,
+    /// Host names besides IPs and local names that may open the stream and change settings.
+    pub allowed_hosts: Vec<String>,
+}
+
+/// Names that only resolve inside a home network; a browser that reached the cat cam under a public
+/// name was sent there by DNS rebinding.
+const LOCAL_SUFFIXES: [&str; 6] = [
+    ".local",
+    ".lan",
+    ".home",
+    ".internal",
+    ".home.arpa",
+    ".fritz.box",
+];
+
+/// `Ok` when a request that acts, the signalling socket or a settings change, comes from this cat
+/// cam's own page; a tool such as curl sends no `Origin` and passes.
+pub(crate) fn own_page(headers: &HeaderMap, allowed_hosts: &[String]) -> Result<(), &'static str> {
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+    if let Some(host) = host {
+        let name = host_name(host);
+        let local = name.parse::<IpAddr>().is_ok()
+            || !name.contains('.')
+            || LOCAL_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+            || allowed_hosts.iter().any(|a| a.eq_ignore_ascii_case(&name));
+        if !local {
+            return Err("this host name is not the cat cam's own; add it to allowed_hosts");
+        }
+    }
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        let origin = origin.to_str().unwrap_or_default();
+        let authority = origin.split_once("://").map_or("", |(_, rest)| rest);
+        if host.is_none_or(|host| !authority.eq_ignore_ascii_case(host)) {
+            return Err("cross-site request refused");
+        }
+    }
+    Ok(())
+}
+
+/// `host` without its port, lowercase; `[::1]:8080` is `::1`.
+fn host_name(host: &str) -> String {
+    let name = match host.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or_default(),
+        None => host.rsplit_once(':').map_or(host, |(name, _)| name),
+    };
+    name.to_ascii_lowercase()
 }
 
 /// Serves connections until the runtime shuts down.
@@ -71,7 +118,14 @@ pub async fn serve(listener: TcpListener, site: Arc<Site>) {
 
 async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_owned();
-    let mut response = if path == SIGNALLING_PATH {
+    let acts = path == SIGNALLING_PATH || (path == SETTINGS_PATH && req.method() == Method::POST);
+    let refused = acts
+        .then(|| own_page(req.headers(), &site.allowed_hosts).err())
+        .flatten();
+    let mut response = if let Some(why) = refused {
+        log::warn!("{path}: {why}");
+        plain(StatusCode::FORBIDDEN, why)
+    } else if path == SIGNALLING_PATH {
         match forward_upgrade(req, &site.signalling).await {
             Ok(response) => response,
             Err(err) => {
@@ -93,9 +147,15 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
     } else if path == SNAPSHOT_PATH {
         snapshot(site.status.clone()).await
     } else if path == ARRIVAL_PATH {
-        match site.status.arrival_jpeg() {
-            Some(jpeg) => jpeg_response(jpeg),
-            None => plain(StatusCode::NOT_FOUND, "no cat has arrived yet"),
+        // ?t= names the arrival, so a notification's picture is never a later, false visit's.
+        let at = query_u64(req.uri().query(), "t");
+        match (site.status.arrival_jpeg(at), at) {
+            (Some(jpeg), _) => jpeg_response(jpeg),
+            (None, None) => plain(StatusCode::NOT_FOUND, "no cat has arrived yet"),
+            (None, Some(_)) => plain(
+                StatusCode::NOT_FOUND,
+                "that arrival's picture is no longer kept",
+            ),
         }
     } else if path == CLIP_PATH {
         // ?t= names the arrival, so a link in an older notification never plays a newer visit.
@@ -276,8 +336,8 @@ fn byte_range(value: &str, len: u64) -> Range {
     }
 }
 
-fn jpeg_response(jpeg: Vec<u8>) -> Response<Body> {
-    let mut response = Response::new(Full::new(Bytes::from(jpeg)));
+fn jpeg_response(jpeg: impl Into<Bytes>) -> Response<Body> {
+    let mut response = Response::new(Full::new(jpeg.into()));
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -450,6 +510,7 @@ mod tests {
             signalling: ("127.0.0.1".into(), signalling_port),
             status: Arc::new(Status::new("Test Cam", false, 16, 8)),
             gzip: GzipCache::default(),
+            allowed_hosts: Vec::new(),
         });
         tokio::spawn(serve(listener, site));
         addr
@@ -720,6 +781,7 @@ mod tests {
             signalling: ("127.0.0.1".into(), 9),
             status: status.clone(),
             gzip: GzipCache::default(),
+            allowed_hosts: Vec::new(),
         });
         tokio::spawn(serve(listener, site));
         assert!(get(addr, SNAPSHOT_PATH, "")
@@ -747,12 +809,21 @@ mod tests {
             signalling: ("127.0.0.1".into(), 9),
             status: status.clone(),
             gzip: GzipCache::default(),
+            allowed_hosts: Vec::new(),
         });
         tokio::spawn(serve(listener, site));
         assert!(get(addr, ARRIVAL_PATH, "")
             .await
             .starts_with("HTTP/1.1 404"));
-        status.set_arrival(vec![0xFF, 0xD8, 0xFF, 0xD9]);
+        status.set_arrival(vec![0xFF, 0xD8, 0xFF, 0xD9], 1000);
+        status.set_arrival(vec![0xFF, 0xD8, 0x01, 0xFF, 0xD9], 2000);
+        // Each arrival keeps its own picture: a later, false visit does not replace the one a notification names.
+        let (_, first) = get_raw(addr, &format!("{ARRIVAL_PATH}?t=1000"), "").await;
+        assert_eq!(first, [0xFF, 0xD8, 0xFF, 0xD9]);
+        assert!(get(addr, &format!("{ARRIVAL_PATH}?t=5000"), "")
+            .await
+            .starts_with("HTTP/1.1 404"));
+        status.set_arrival(vec![0xFF, 0xD8, 0xFF, 0xD9], 3000);
         let (head, body) = get_raw(addr, ARRIVAL_PATH, "").await;
         assert!(head.starts_with("HTTP/1.1 200"), "{head}");
         assert!(head.contains("content-type: image/jpeg"), "{head}");
@@ -892,5 +963,93 @@ mod tests {
             "{page}"
         );
         assert!(get(addr, "/healthz", "").await.starts_with("HTTP/1.1 200"));
+    }
+
+    fn headers(list: &[(&'static str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in list {
+            map.insert(*name, HeaderValue::from_str(value).unwrap());
+        }
+        map
+    }
+
+    #[test]
+    fn only_the_cat_cams_own_page_may_act() {
+        let none: &[String] = &[];
+        // The page itself, under an IP, a bare name or a local suffix, port and all.
+        for host in [
+            "192.168.188.98:8080",
+            "himbeere2:8080",
+            "himbeere2.fritz.box:8080",
+            "[fd46::1]:8080",
+            "cat.local",
+        ] {
+            let page = headers(&[("host", host), ("origin", &format!("http://{host}"))]);
+            assert_eq!(own_page(&page, none), Ok(()), "{host}");
+        }
+        // A tool without a browser sends no Origin.
+        assert_eq!(
+            own_page(&headers(&[("host", "192.168.188.98:8080")]), none),
+            Ok(())
+        );
+        // Another site's page, a sandboxed one and DNS rebinding under a public name are refused.
+        let foreign = headers(&[
+            ("host", "192.168.188.98:8080"),
+            ("origin", "https://evil.example"),
+        ]);
+        assert!(own_page(&foreign, none).is_err());
+        let sandboxed = headers(&[("host", "192.168.188.98:8080"), ("origin", "null")]);
+        assert!(own_page(&sandboxed, none).is_err());
+        let rebound = headers(&[
+            ("host", "cat.evil.example:8080"),
+            ("origin", "http://cat.evil.example:8080"),
+        ]);
+        assert!(own_page(&rebound, none).is_err());
+        // Unless that name is the owner's own reverse proxy.
+        assert_eq!(own_page(&rebound, &["Cat.Evil.Example".to_owned()]), Ok(()));
+    }
+
+    async fn post_with(addr: std::net::SocketAddr, path: &str, extra: &str, body: &str) -> String {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let request = format!(
+            "POST {path} HTTP/1.1\r\nhost: cat.local\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: {}\r\n{extra}\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        String::from_utf8_lossy(&response).into_owned()
+    }
+
+    #[tokio::test]
+    async fn another_sites_page_can_neither_change_settings_nor_open_the_stream() {
+        let addr = start(None, 9).await;
+        let foreign = post_with(
+            addr,
+            "/settings",
+            "origin: https://evil.example\r\n",
+            r#"{"rotate": 90}"#,
+        )
+        .await;
+        assert!(foreign.starts_with("HTTP/1.1 403"), "{foreign}");
+        let own = post_with(
+            addr,
+            "/settings",
+            "origin: http://cat.local\r\n",
+            r#"{"rotate": 90}"#,
+        )
+        .await;
+        assert!(own.starts_with("HTTP/1.1 200"), "{own}");
+        // Reading stays open to anyone on the LAN; only acting is guarded.
+        assert!(get(addr, "/settings", "origin: https://evil.example\r\n")
+            .await
+            .starts_with("HTTP/1.1 200"));
+        let socket = get(
+            addr,
+            SIGNALLING_PATH,
+            "origin: https://evil.example\r\nupgrade: websocket\r\n",
+        )
+        .await;
+        assert!(socket.starts_with("HTTP/1.1 403"), "{socket}");
     }
 }

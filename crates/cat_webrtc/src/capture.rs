@@ -72,7 +72,7 @@ impl Worker {
             let found = camera::probe(&self.choice);
             let plan = camera::choose(&self.choice, &found.probe);
             let label = plan.describe(&found.probe);
-            self.status.set_camera(&label);
+            self.status.set_camera(&label, plan.is_stand_in());
             log::info!("camera: {label}");
             let started = Instant::now();
             let deadline = plan.is_stand_in().then(|| started + REPROBE_EVERY);
@@ -453,21 +453,21 @@ fn spawn_inference(
                     }
                     None => {}
                 }
-                // Before the event goes out, so a receiver that fetches /arrival.jpg gets this one.
-                if matches!(change, Some(Change::Arrived { .. })) {
-                    match arrival_jpeg(&i420, width, height, &detections) {
-                        Ok(jpeg) => status.set_arrival(jpeg),
-                        Err(err) => log::warn!("arrival snapshot: {err:#}"),
-                    }
-                }
                 let in_view = presence.in_view();
                 status.set_cat(in_view, best_score(&detections), change.as_ref());
-                // The visit log's own arrival time, so /arrival.mp4?t= finds the clip an event names.
+                // The visit log's own arrival time, so ?t= finds the picture and clip an event names.
                 let now = crate::notify::unix_now();
                 let time = match change {
                     Some(Change::Arrived { .. }) => status.latest_arrival().unwrap_or(now),
                     _ => now,
                 };
+                // Before the event goes out, so a receiver that fetches /arrival.jpg?t= gets this one.
+                if matches!(change, Some(Change::Arrived { .. })) {
+                    match arrival_jpeg(&i420, width, height, &detections) {
+                        Ok(jpeg) => status.set_arrival(jpeg, time),
+                        Err(err) => log::warn!("arrival snapshot: {err:#}"),
+                    }
+                }
                 if let Some(Change::Arrived { best, .. }) = &change {
                     visit = Some(Arrival {
                         time,

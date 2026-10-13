@@ -14,6 +14,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+
+- **The cat cam's review fixes (2026-10-13).**
+  - Each of the last five arrivals keeps its own picture, `/arrival.jpg?t=<arrival time>`
+    as for the clips, so a later false visit no longer replaces the picture a phone
+    notification shows. An earlier version's single `arrival.jpg` is taken over.
+  - A second arrival while one's clip records gets a clip of its own; overlapping clips
+    share their frames, at most three record at once, two wait for the encoder.
+  - The webhook tries an event again after 5 s, 15 s, 45 s and 2 min, in order, and drops
+    one older than ten minutes: a Home Assistant restart no longer loses a visit.
+  - `/healthz` says `ok: false` with a `problem` when no frame came for 20 s or a test
+    pattern stands in for a missing camera, and reports `frame_age_s` and `model_age_s`.
+  - `/webrtc-ws` and `POST /settings` take requests only from the cat cam's own page: a
+    browser's `Origin` must match its `Host`, and the host must be an IP, a bare or local
+    name, or listed in the new `allowed_hosts` (another site's page and DNS rebinding get 403).
+  - `/snapshot.jpg` encodes once per frame, one at a time, however often it is asked for.
 - **Each cat arrival is a video too (2026-10-12).** `cat_webrtc` keeps the last 3 s of
   annotated frames at 10 fps (`clip.rs`, buffers held by reference, no copy), and on an
   arrival adds the next 7 s and encodes them on a thread of its own with `openh264enc`,

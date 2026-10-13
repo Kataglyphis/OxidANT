@@ -458,6 +458,14 @@ board runs it as one service unit:
   event. `webrtcsink`'s `meta` keeps the name it started with. The frame caps say square
   pixels, so `videoscale` borders a quarter turn instead of stretching it; do not drop
   `pixel-aspect-ratio` from `frame::caps`.
+- **What a cat cam on a LAN must refuse** (2026-10-13). `web::own_page` guards the two
+  endpoints that act, `/webrtc-ws` and `POST /settings`: a browser's `Origin` must equal the
+  request's `Host`, and the host must be an IP, a dotless name, a local suffix (`.local`,
+  `.lan`, `.home`, `.internal`, `.home.arpa`, `.fritz.box`) or in `allowed_hosts`. Reads stay
+  open. A reverse proxy under a public name needs its name in `allowed_hosts`.
+- **Per-arrival files** (`status.rs`, `Kept`): clips (`clip-<t>.mp4`) and pictures
+  (`arrival-<t>.jpg`) both keep the last five by the visit log's arrival time, so `?t=`
+  names the visit's own; set them after `set_cat`, which writes that time.
 - **A webhook hears about every visit** (`notify.rs`). With `notify_url` set, each
   arrival and departure is POSTed as JSON (`ureq` with rustls, so https too) from the
   `cat-notify` thread, which a slow receiver cannot turn into slow detection. Before the

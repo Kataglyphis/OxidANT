@@ -76,6 +76,9 @@ pub struct Config {
     /// UDP range for WebRTC media, so a firewall can open exactly it; 0..0 leaves it free.
     pub ice_port_min: u16,
     pub ice_port_max: u16,
+    /// Host names besides IPs and local names (`cat`, `*.local`, `*.fritz.box`, ...) under which the
+    /// page may open the stream and change settings, such as a reverse proxy's.
+    pub allowed_hosts: Vec<String>,
 }
 
 impl Default for Config {
@@ -108,6 +111,7 @@ impl Default for Config {
             clip_seconds: 10,
             ice_port_min: 40000,
             ice_port_max: 40099,
+            allowed_hosts: Vec::new(),
         }
     }
 }

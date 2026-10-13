@@ -3,9 +3,9 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use gstreamer as gst;
 use serde::{Deserialize, Serialize};
@@ -15,8 +15,8 @@ use crate::presence::Change;
 /// The cat's visits, kept across restarts in the state directory.
 const CAT_FILE: &str = "cat.json";
 
-/// The frame of the last arrival, kept across restarts beside it.
-const ARRIVAL_FILE: &str = "arrival.jpg";
+/// The frame of the last arrival as an earlier version kept it; taken over as that arrival's.
+const LEGACY_ARRIVAL_FILE: &str = "arrival.jpg";
 /// What the settings page set; each value in it wins over `catcam.toml`, which the service cannot write.
 const SETTINGS_FILE: &str = "settings.json";
 
@@ -66,10 +66,36 @@ impl Settings {
         Ok(())
     }
 }
-/// How many arrivals' clips stay addressable: a false visit must not replace the clip a notification links.
+/// How many arrivals' clips and pictures stay addressable: a false visit must not replace the ones a
+/// notification links.
 const CLIPS_KEPT: usize = 5;
-/// How far a requested arrival time may be from a kept clip's and still name it.
+/// How far a requested arrival time may be from a kept clip's or picture's and still name it.
 const CLIP_TIME_SLACK_S: u64 = 2;
+
+/// With no frame for this long `/healthz` says the camera is not ok; the capture restarts after 10 s.
+const STALE_FRAME_S: u64 = 20;
+
+/// A kind of file kept per arrival in the state directory, `<prefix><arrival time><suffix>`.
+#[derive(Clone, Copy)]
+struct Kept {
+    prefix: &'static str,
+    suffix: &'static str,
+}
+
+const CLIPS: Kept = Kept {
+    prefix: "clip-",
+    suffix: ".mp4",
+};
+const PHOTOS: Kept = Kept {
+    prefix: "arrival-",
+    suffix: ".jpg",
+};
+
+impl Kept {
+    fn file(self, arrived: u64) -> String {
+        format!("{}{arrived}{}", self.prefix, self.suffix)
+    }
+}
 
 /// How many visits `/healthz` lists and the state directory keeps.
 const RECENT_VISITS: usize = 20;
@@ -114,13 +140,22 @@ pub struct Status {
     height: u32,
     fps: u32,
     camera: Mutex<String>,
+    /// A test pattern streams because no camera was found.
+    stand_in: AtomicBool,
     cat: Mutex<Cat>,
     frame: Mutex<Option<gst::Buffer>>,
-    /// The JPEG of the frame the last arrival was confirmed on.
-    arrival: Mutex<Option<Vec<u8>>>,
+    /// Counts the frames pushed, so a snapshot is encoded once per frame however often it is asked for.
+    frame_seq: AtomicU64,
+    /// The last snapshot and the frame it shows; its lock lets one encode run at a time.
+    snapshot: Mutex<Option<(u64, bytes::Bytes)>>,
+    /// When the capture last delivered a frame, and the model last ran.
+    last_frame: Mutex<Option<Instant>>,
+    last_run: Mutex<Option<Instant>>,
+    /// The frames the last [`CLIPS_KEPT`] arrivals were confirmed on, as JPEG, newest first.
+    photos: Mutex<VecDeque<(u64, bytes::Bytes)>>,
     /// The last [`CLIPS_KEPT`] arrivals as MP4, newest first, by arrival time.
     clips: Mutex<VecDeque<(u64, bytes::Bytes)>>,
-    /// Where [`CAT_FILE`] and [`ARRIVAL_FILE`] live; `None` forgets everything at exit.
+    /// Where [`CAT_FILE`], the photos and the clips live; `None` forgets everything at exit.
     state_dir: Option<PathBuf>,
     /// Clockwise degrees the capture turns the picture by; the capture thread follows a change.
     rotate: AtomicU32,
@@ -139,9 +174,14 @@ impl Status {
             height,
             fps: 0,
             camera: Mutex::new("starting".to_owned()),
+            stand_in: AtomicBool::new(false),
             cat: Mutex::new(Cat::default()),
             frame: Mutex::new(None),
-            arrival: Mutex::new(None),
+            frame_seq: AtomicU64::new(0),
+            snapshot: Mutex::new(None),
+            last_frame: Mutex::new(None),
+            last_run: Mutex::new(None),
+            photos: Mutex::new(VecDeque::new()),
             clips: Mutex::new(VecDeque::new()),
             state_dir: None,
             rotate: AtomicU32::new(0),
@@ -272,13 +312,11 @@ impl Status {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => log::warn!("{}: {err}", dir.join(CAT_FILE).display()),
         }
-        if let (Ok(jpeg), Ok(arrival)) = (
-            std::fs::read(dir.join(ARRIVAL_FILE)),
-            self.arrival.get_mut(),
-        ) {
-            *arrival = Some(jpeg);
+        adopt_legacy_photo(&dir, self.latest_arrival().unwrap_or(0));
+        if let Ok(photos) = self.photos.get_mut() {
+            *photos = read_kept(&dir, PHOTOS);
         }
-        let restored = read_clips(&dir);
+        let restored = read_kept(&dir, CLIPS);
         if let (Ok(cat), Some((newest, _))) = (self.cat.get_mut(), restored.front()) {
             cat.clip = Some(*newest);
         }
@@ -322,14 +360,39 @@ impl Status {
         }
     }
 
-    pub fn set_camera(&self, camera: &str) {
+    /// What the capture streams; `stand_in` when it is a test pattern for a camera that was not found.
+    pub fn set_camera(&self, camera: &str, stand_in: bool) {
         if let Ok(mut current) = self.camera.lock() {
             camera.clone_into(&mut current);
         }
+        self.stand_in.store(stand_in, Ordering::Relaxed);
+    }
+
+    /// Whether the camera delivers, and if not, why: `/healthz`'s `ok` and `problem`.
+    fn health(&self) -> (bool, Option<String>, Option<u64>, Option<u64>) {
+        let age = |at: &Mutex<Option<Instant>>| {
+            at.lock()
+                .ok()
+                .and_then(|t| t.map(|t| t.elapsed().as_secs()))
+        };
+        let (frame_age, model_age) = (age(&self.last_frame), age(&self.last_run));
+        let problem = if self.stand_in.load(Ordering::Relaxed) {
+            Some("no camera found, streaming a test pattern".to_owned())
+        } else {
+            match frame_age {
+                None => Some("waiting for the first frame".to_owned()),
+                Some(s) if s > STALE_FRAME_S => Some(format!("no frame for {s} s")),
+                Some(_) => None,
+            }
+        };
+        (problem.is_none(), problem, frame_age, model_age)
     }
 
     /// Records one inference run's view of the cat, after presence smoothing, and the visit it starts or ends.
     pub fn set_cat(&self, in_view: bool, best_score: Option<f32>, change: Option<&Change>) {
+        if let Ok(mut last) = self.last_run.lock() {
+            *last = Some(Instant::now());
+        }
         if let Ok(mut cat) = self.cat.lock() {
             cat.runs += 1;
             cat.hit = best_score.is_some();
@@ -366,41 +429,26 @@ impl Status {
     pub fn set_frame(&self, frame: &gst::Buffer) {
         if let Ok(mut current) = self.frame.lock() {
             *current = Some(frame.clone());
+            self.frame_seq.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Ok(mut last) = self.last_frame.lock() {
+            *last = Some(Instant::now());
         }
     }
 
-    pub fn set_arrival(&self, jpeg: Vec<u8>) {
-        if let Some(dir) = &self.state_dir {
-            if let Err(err) = write_atomic(&dir.join(ARRIVAL_FILE), &jpeg) {
-                log::warn!("{}: {err}", dir.join(ARRIVAL_FILE).display());
-            }
-        }
-        if let Ok(mut current) = self.arrival.lock() {
-            *current = Some(jpeg);
-        }
+    /// Keeps the frame the arrival at `arrived` was confirmed on with the last few, on disk too.
+    pub fn set_arrival(&self, jpeg: Vec<u8>, arrived: u64) {
+        self.keep(PHOTOS, &self.photos, arrived, jpeg);
     }
 
-    pub fn arrival_jpeg(&self) -> Option<Vec<u8>> {
-        self.arrival.lock().ok().and_then(|a| a.clone())
+    /// The newest arrival's frame, or with `at` that arrival's own; `None` once it is dropped.
+    pub fn arrival_jpeg(&self, at: Option<u64>) -> Option<bytes::Bytes> {
+        pick(&self.photos, at)
     }
 
     /// Keeps the clip of the arrival at `arrived` with the last few, on disk too, and names it in `/healthz`.
     pub fn set_clip(&self, mp4: Vec<u8>, arrived: u64) {
-        if let Some(dir) = &self.state_dir {
-            let path = dir.join(clip_file(arrived));
-            if let Err(err) = write_atomic(&path, &mp4) {
-                log::warn!("{}: {err}", path.display());
-            }
-        }
-        if let Ok(mut clips) = self.clips.lock() {
-            clips.retain(|(t, _)| *t != arrived);
-            clips.push_front((arrived, mp4.into()));
-            while clips.len() > CLIPS_KEPT {
-                if let (Some((old, _)), Some(dir)) = (clips.pop_back(), &self.state_dir) {
-                    let _ = std::fs::remove_file(dir.join(clip_file(old)));
-                }
-            }
-        }
+        self.keep(CLIPS, &self.clips, arrived, mp4);
         if let Ok(mut cat) = self.cat.lock() {
             cat.clip = Some(arrived);
         }
@@ -408,14 +456,31 @@ impl Status {
 
     /// The newest clip, or with `at` the one of the arrival at that time; `None` once it is dropped.
     pub fn clip_mp4(&self, at: Option<u64>) -> Option<bytes::Bytes> {
-        let clips = self.clips.lock().ok()?;
-        match at {
-            None => clips.front().map(|(_, mp4)| mp4.clone()),
-            Some(at) => clips
-                .iter()
-                .filter(|(t, _)| t.abs_diff(at) <= CLIP_TIME_SLACK_S)
-                .min_by_key(|(t, _)| t.abs_diff(at))
-                .map(|(_, mp4)| mp4.clone()),
+        pick(&self.clips, at)
+    }
+
+    /// Puts `bytes` first in `store` and on disk as `kind`, dropping the oldest beyond [`CLIPS_KEPT`].
+    fn keep(
+        &self,
+        kind: Kept,
+        store: &Mutex<VecDeque<(u64, bytes::Bytes)>>,
+        arrived: u64,
+        bytes: Vec<u8>,
+    ) {
+        if let Some(dir) = &self.state_dir {
+            let path = dir.join(kind.file(arrived));
+            if let Err(err) = write_atomic(&path, &bytes) {
+                log::warn!("{}: {err}", path.display());
+            }
+        }
+        if let Ok(mut kept) = store.lock() {
+            kept.retain(|(t, _)| *t != arrived);
+            kept.push_front((arrived, bytes.into()));
+            while kept.len() > CLIPS_KEPT {
+                if let (Some((old, _)), Some(dir)) = (kept.pop_back(), &self.state_dir) {
+                    let _ = std::fs::remove_file(dir.join(kind.file(old)));
+                }
+            }
         }
     }
 
@@ -437,11 +502,25 @@ impl Status {
             .and_then(|cat| cat.recent.front().map(|v| v.arrived))
     }
 
-    /// The latest annotated frame as JPEG, or `None` before the first frame.
-    pub fn snapshot_jpeg(&self) -> anyhow::Result<Option<Vec<u8>>> {
-        let Some(buffer) = self.frame.lock().ok().and_then(|f| f.clone()) else {
+    /// The latest annotated frame as JPEG, or `None` before the first frame; encoded once per frame,
+    /// one encode at a time, so a client asking in a loop cannot starve detection.
+    pub fn snapshot_jpeg(&self) -> anyhow::Result<Option<bytes::Bytes>> {
+        let mut cached = self
+            .snapshot
+            .lock()
+            .map_err(|_| anyhow::anyhow!("snapshot lock"))?;
+        let (seq, buffer) = match self.frame.lock() {
+            Ok(frame) => (self.frame_seq.load(Ordering::Relaxed), frame.clone()),
+            Err(_) => return Ok(None),
+        };
+        let Some(buffer) = buffer else {
             return Ok(None);
         };
+        if let Some((at, jpeg)) = cached.as_ref() {
+            if *at == seq {
+                return Ok(Some(jpeg.clone()));
+            }
+        }
         let map = buffer
             .map_readable()
             .map_err(|_| anyhow::anyhow!("map frame"))?;
@@ -450,7 +529,9 @@ impl Status {
             .get(..crate::frame::size(self.width, self.height))
             .ok_or_else(|| anyhow::anyhow!("frame smaller than its caps"))?;
         let rgba = crate::frame::to_rgba(i420, self.width, self.height);
-        encode_jpeg(&rgba, self.width, self.height).map(Some)
+        let jpeg = bytes::Bytes::from(encode_jpeg(&rgba, self.width, self.height)?);
+        *cached = Some((seq, jpeg.clone()));
+        Ok(Some(jpeg))
     }
 
     pub fn to_json(&self) -> String {
@@ -479,8 +560,12 @@ impl Status {
             .as_deref()
             .map(|c| c.recent.iter().copied().collect())
             .unwrap_or_default();
+        let (ok, problem, frame_age, model_age) = self.health();
         serde_json::json!({
-            "ok": true,
+            "ok": ok,
+            "problem": problem,
+            "frame_age_s": frame_age,
+            "model_age_s": model_age,
             "name": self.name(),
             "rotate": self.rotation(),
             "score": self.score_rounded(),
@@ -502,12 +587,32 @@ impl Status {
     }
 }
 
-fn clip_file(arrived: u64) -> String {
-    format!("clip-{arrived}.mp4")
+/// The newest of `store`, or with `at` the one kept for the arrival at that time.
+fn pick(store: &Mutex<VecDeque<(u64, bytes::Bytes)>>, at: Option<u64>) -> Option<bytes::Bytes> {
+    let kept = store.lock().ok()?;
+    match at {
+        None => kept.front().map(|(_, bytes)| bytes.clone()),
+        Some(at) => kept
+            .iter()
+            .filter(|(t, _)| t.abs_diff(at) <= CLIP_TIME_SLACK_S)
+            .min_by_key(|(t, _)| t.abs_diff(at))
+            .map(|(_, bytes)| bytes.clone()),
+    }
 }
 
-/// The clips a previous run left in `dir`, newest first, at most [`CLIPS_KEPT`].
-fn read_clips(dir: &Path) -> VecDeque<(u64, bytes::Bytes)> {
+/// An earlier version's single `arrival.jpg` becomes the photo of the arrival at `arrived`.
+fn adopt_legacy_photo(dir: &Path, arrived: u64) {
+    let legacy = dir.join(LEGACY_ARRIVAL_FILE);
+    if legacy.is_file() {
+        let adopted = dir.join(PHOTOS.file(arrived));
+        if let Err(err) = std::fs::rename(&legacy, &adopted) {
+            log::warn!("{}: {err}", legacy.display());
+        }
+    }
+}
+
+/// The files of `kind` a previous run left in `dir`, newest first, at most [`CLIPS_KEPT`].
+fn read_kept(dir: &Path, kind: Kept) -> VecDeque<(u64, bytes::Bytes)> {
     let mut found: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
@@ -515,8 +620,8 @@ fn read_clips(dir: &Path) -> VecDeque<(u64, bytes::Bytes)> {
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
             let time = name
-                .strip_prefix("clip-")?
-                .strip_suffix(".mp4")?
+                .strip_prefix(kind.prefix)?
+                .strip_suffix(kind.suffix)?
                 .parse()
                 .ok()?;
             Some((time, entry.path()))
@@ -526,7 +631,7 @@ fn read_clips(dir: &Path) -> VecDeque<(u64, bytes::Bytes)> {
     found
         .into_iter()
         .take(CLIPS_KEPT)
-        .filter_map(|(time, path)| std::fs::read(path).ok().map(|mp4| (time, mp4.into())))
+        .filter_map(|(time, path)| std::fs::read(path).ok().map(|bytes| (time, bytes.into())))
         .collect()
 }
 
@@ -586,7 +691,7 @@ mod tests {
     #[test]
     fn reports_the_camera_last_set() {
         let status = Status::new("Cat \"Cam\"", true, 4, 4);
-        status.set_camera("v4l2src /dev/video0 (C920)");
+        status.set_camera("v4l2src /dev/video0 (C920)", false);
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
         assert_eq!(json["camera"], "v4l2src /dev/video0 (C920)");
         assert_eq!(json["name"], "Cat \"Cam\"");
@@ -617,7 +722,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let before = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         before.set_cat(true, Some(0.7), Some(&arrived()));
-        before.set_arrival(vec![0xFF, 0xD8, 0xFF, 0xD9]);
+        let arrived = before.latest_arrival().unwrap();
+        before.set_arrival(vec![0xFF, 0xD8, 0xFF, 0xD9], arrived);
         before.set_cat(false, None, Some(&left(42)));
         before.persist();
 
@@ -627,7 +733,14 @@ mod tests {
         assert_eq!(json["cat"]["in_view"], false);
         assert!(json["cat"]["last_seen"].as_u64().unwrap() > 0);
         assert!((json["cat"]["last_score"].as_f64().unwrap() - 0.7).abs() < 1e-6);
-        assert_eq!(after.arrival_jpeg().unwrap(), [0xFF, 0xD8, 0xFF, 0xD9]);
+        assert_eq!(
+            after.arrival_jpeg(None).unwrap(),
+            [0xFF, 0xD8, 0xFF, 0xD9][..]
+        );
+        assert_eq!(
+            after.arrival_jpeg(Some(arrived)).unwrap(),
+            [0xFF, 0xD8, 0xFF, 0xD9][..]
+        );
         assert_eq!(json["cat"]["recent"][0]["stayed_s"], 42);
         assert!(!dir.path().join("cat.partial").exists());
     }
@@ -837,10 +950,66 @@ mod tests {
     }
 
     #[test]
+    fn each_of_the_last_five_arrivals_keeps_its_own_picture_and_an_old_one_is_taken_over() {
+        let dir = tempfile::tempdir().unwrap();
+        // An earlier version kept one arrival.jpg: it becomes the newest visit's picture.
+        std::fs::write(dir.path().join(LEGACY_ARRIVAL_FILE), [1u8]).unwrap();
+        let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        assert_eq!(status.arrival_jpeg(Some(0)).unwrap(), [1u8][..]);
+        assert!(!dir.path().join(LEGACY_ARRIVAL_FILE).exists());
+        for t in 1..=6u64 {
+            status.set_arrival(vec![t as u8 + 10], t * 100);
+        }
+        assert_eq!(status.arrival_jpeg(None).unwrap(), [16u8][..]);
+        assert_eq!(status.arrival_jpeg(Some(301)).unwrap(), [13u8][..]);
+        // Six arrivals after the adopted one: the adopted and the first new one are gone, files too.
+        assert!(status.arrival_jpeg(Some(0)).is_none());
+        assert!(status.arrival_jpeg(Some(100)).is_none());
+        assert!(!dir.path().join("arrival-100.jpg").exists());
+        let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        assert_eq!(after.arrival_jpeg(Some(200)).unwrap(), [12u8][..]);
+    }
+
+    #[test]
+    fn healthz_is_ok_only_while_a_real_camera_delivers_frames() {
+        gst::init().unwrap();
+        let status = Status::new("Cam", true, 4, 4);
+        let health = |s: &Status| serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap();
+        let fresh = health(&status);
+        assert_eq!(fresh["ok"], false);
+        assert_eq!(fresh["problem"], "waiting for the first frame");
+        assert!(fresh["frame_age_s"].is_null() && fresh["model_age_s"].is_null());
+        status.set_camera("v4l2src /dev/video0 (C920)", false);
+        status.set_frame(&gst::Buffer::from_mut_slice(vec![
+            0u8;
+            crate::frame::size(4, 4)
+        ]));
+        status.set_cat(false, None, None);
+        let running = health(&status);
+        assert_eq!(running["ok"], true);
+        assert!(running["problem"].is_null());
+        assert_eq!(
+            (
+                running["frame_age_s"].clone(),
+                running["model_age_s"].clone()
+            ),
+            (0.into(), 0.into())
+        );
+        // The camera went away and a test pattern stands in: still frames, but not ok.
+        status.set_camera("test pattern (no camera found)", true);
+        let stand_in = health(&status);
+        assert_eq!(stand_in["ok"], false);
+        assert_eq!(
+            stand_in["problem"],
+            "no camera found, streaming a test pattern"
+        );
+    }
+
+    #[test]
     fn a_broken_or_missing_state_starts_afresh() {
         let dir = tempfile::tempdir().unwrap();
         let fresh = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
-        assert!(fresh.arrival_jpeg().is_none());
+        assert!(fresh.arrival_jpeg(None).is_none());
         std::fs::write(dir.path().join(CAT_FILE), "{not json").unwrap();
         let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
@@ -859,5 +1028,15 @@ mod tests {
         ]));
         let jpeg = status.snapshot_jpeg().unwrap().unwrap();
         assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
+        // Asked again for the same frame: the very same bytes, no second encode.
+        let again = status.snapshot_jpeg().unwrap().unwrap();
+        assert_eq!(again.as_ptr(), jpeg.as_ptr());
+        status.set_frame(&gst::Buffer::from_mut_slice(vec![
+            20u8;
+            crate::frame::size(16, 8)
+        ]));
+        let next = status.snapshot_jpeg().unwrap().unwrap();
+        assert_ne!(next.as_ptr(), jpeg.as_ptr());
+        assert_ne!(next, jpeg);
     }
 }

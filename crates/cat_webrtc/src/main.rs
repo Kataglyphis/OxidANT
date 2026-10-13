@@ -456,6 +456,7 @@ fn start_web(
         ),
         status,
         gzip: static_files::GzipCache::default(),
+        allowed_hosts: config.allowed_hosts.clone(),
     });
     runtime.spawn(web::serve(listener, site));
     if config.cert.is_some() {

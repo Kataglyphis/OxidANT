@@ -23,19 +23,23 @@ const BITRATE: u32 = 800_000;
 /// How long encoding one clip may take before it is given up.
 const ENCODE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Collects frames: one in every `every` into a ring of the last `before`, and after [`Collector::start`]
-/// `after` more, then hands back the clip. Generic, so its tests need no GStreamer.
-pub struct Collector<T> {
+/// Clips recorded at once at most; overlapping ones share their frames, as a buffer is refcounted.
+pub const MAX_RECORDINGS: usize = 3;
+
+/// Collects frames: one in every `every` into a ring of the last `before`, and after each
+/// [`Collector::start`] `after` more, then hands back that clip with its tag. Generic, so its tests
+/// need no GStreamer.
+pub struct Collector<T, A> {
     every: u32,
     tick: u32,
     before: usize,
     after: usize,
     ring: VecDeque<T>,
-    /// The clip so far, and how many of its frames came from the ring.
-    recording: Option<(Vec<T>, usize)>,
+    /// Each clip being recorded: what it belongs to, its frames so far, how many came from the ring.
+    recordings: Vec<(A, Vec<T>, usize)>,
 }
 
-impl<T> Collector<T> {
+impl<T: Clone, A> Collector<T, A> {
     pub fn new(every: u32, before: usize, after: usize) -> Self {
         Self {
             every: every.max(1),
@@ -43,44 +47,41 @@ impl<T> Collector<T> {
             before,
             after,
             ring: VecDeque::with_capacity(before + 1),
-            recording: None,
+            recordings: Vec::new(),
         }
     }
 
-    /// Starts a clip with the frames already in the ring; `false` while one is being recorded.
-    pub fn start(&mut self) -> bool {
-        if self.recording.is_some() {
+    /// Starts a clip for `tag` with the frames in the ring; `false` while [`MAX_RECORDINGS`] run.
+    pub fn start(&mut self, tag: A) -> bool {
+        if self.recordings.len() >= MAX_RECORDINGS {
             return false;
         }
-        let pre: Vec<T> = self.ring.drain(..).collect();
+        let pre: Vec<T> = self.ring.iter().cloned().collect();
         let taken = pre.len();
-        self.recording = Some((pre, taken));
+        self.recordings.push((tag, pre, taken));
         true
     }
 
-    /// Takes one stream frame; returns the finished clip when this frame completed one.
-    pub fn push(&mut self, frame: T) -> Option<Vec<T>> {
+    /// Takes one stream frame; returns the clips this frame completed.
+    pub fn push(&mut self, frame: T) -> Vec<(A, Vec<T>)> {
         let keep = self.tick == 0;
         self.tick = (self.tick + 1) % self.every;
         if !keep {
-            return None;
+            return Vec::new();
         }
-        match &mut self.recording {
-            Some((clip, pre)) => {
-                clip.push(frame);
-                if clip.len() - *pre < self.after {
-                    return None;
-                }
-                self.recording.take().map(|(clip, _)| clip)
-            }
-            None => {
-                self.ring.push_back(frame);
-                if self.ring.len() > self.before {
-                    self.ring.pop_front();
-                }
-                None
-            }
+        for (_, clip, _) in &mut self.recordings {
+            clip.push(frame.clone());
         }
+        self.ring.push_back(frame);
+        if self.ring.len() > self.before {
+            self.ring.pop_front();
+        }
+        let after = self.after;
+        let (done, running): (Vec<_>, Vec<_>) = std::mem::take(&mut self.recordings)
+            .into_iter()
+            .partition(|(_, clip, pre)| clip.len() - pre >= after);
+        self.recordings = running;
+        done.into_iter().map(|(tag, clip, _)| (tag, clip)).collect()
     }
 }
 
@@ -94,8 +95,7 @@ pub struct Arrival {
 /// What the capture and inference threads share: frames go in, an arrival starts a clip, and a thread
 /// of its own encodes it to `/arrival.mp4` and tells the webhook.
 pub struct Clip {
-    collector: Mutex<Collector<gst::Buffer>>,
-    arrival: Mutex<Option<Arrival>>,
+    collector: Mutex<Collector<gst::Buffer, Arrival>>,
     tx: mpsc::SyncSender<(Arrival, Vec<gst::Buffer>)>,
 }
 
@@ -123,8 +123,8 @@ impl Clip {
         let before = (PRE_ROLL_S as f32 * per_second).round() as usize;
         let after =
             (seconds.saturating_sub(PRE_ROLL_S).max(1) as f32 * per_second).round() as usize;
-        // One clip in flight; a second arrival during an encode keeps the first clip.
-        let (tx, rx) = mpsc::sync_channel::<(Arrival, Vec<gst::Buffer>)>(1);
+        // Two clips may wait while one encodes: arrivals close together each keep theirs.
+        let (tx, rx) = mpsc::sync_channel::<(Arrival, Vec<gst::Buffer>)>(2);
         let spawned = thread::Builder::new()
             .name("cat-clip".into())
             .spawn(move || {
@@ -151,7 +151,6 @@ impl Clip {
         }
         Some(Arc::new(Self {
             collector: Mutex::new(Collector::new(every, before, after)),
-            arrival: Mutex::new(None),
             tx,
         }))
     }
@@ -161,25 +160,25 @@ impl Clip {
         let finished = self
             .collector
             .lock()
-            .ok()
-            .and_then(|mut c| c.push(frame.clone()));
-        if let Some(frames) = finished {
-            let arrival = self.arrival.lock().ok().and_then(|mut a| a.take());
-            if let Some(arrival) = arrival {
-                if self.tx.try_send((arrival, frames)).is_err() {
-                    log::warn!("arrival clip dropped: the last one is still encoding");
-                }
+            .map(|mut c| c.push(frame.clone()))
+            .unwrap_or_default();
+        for (arrival, frames) in finished {
+            if self.tx.try_send((arrival, frames)).is_err() {
+                log::warn!(
+                    "arrival clip of {} dropped: two are still encoding",
+                    arrival.time
+                );
             }
         }
     }
 
-    /// A cat arrived: the clip takes the ring's frames and the next few seconds.
+    /// A cat arrived: its clip takes the ring's frames and the next few seconds.
     pub fn start(&self, arrival: Arrival) {
-        let started = self.collector.lock().is_ok_and(|mut c| c.start());
-        if started {
-            if let Ok(mut current) = self.arrival.lock() {
-                *current = Some(arrival);
-            }
+        if !self.collector.lock().is_ok_and(|mut c| c.start(arrival)) {
+            log::warn!(
+                "no clip for the arrival at {}: {MAX_RECORDINGS} are recording",
+                arrival.time
+            );
         }
     }
 }
@@ -317,38 +316,55 @@ mod tests {
     fn the_ring_keeps_the_last_seconds_at_the_clip_rate() {
         let mut c = Collector::new(3, 4, 2);
         for frame in 0..30 {
-            assert!(c.push(frame).is_none());
+            assert!(c.push(frame).is_empty());
         }
         // One in three of 0..30 is 0, 3, ..., 27; the ring holds the last four.
-        assert!(c.start());
-        assert_eq!(c.push(30), None);
-        assert_eq!(c.push(31), None);
-        assert_eq!(c.push(32), None);
-        assert_eq!(c.push(33), Some(vec![18, 21, 24, 27, 30, 33]));
+        assert!(c.start('a'));
+        assert!(c.push(30).is_empty());
+        assert!(c.push(31).is_empty());
+        assert!(c.push(32).is_empty());
+        assert_eq!(c.push(33), vec![('a', vec![18, 21, 24, 27, 30, 33])]);
     }
 
     #[test]
     fn an_arrival_right_after_the_start_has_a_short_pre_roll() {
         let mut c = Collector::new(1, 30, 2);
         c.push(1);
-        assert!(c.start());
-        assert_eq!(c.push(2), None);
-        assert_eq!(c.push(3), Some(vec![1, 2, 3]));
+        assert!(c.start('a'));
+        assert!(c.push(2).is_empty());
+        assert_eq!(c.push(3), vec![('a', vec![1, 2, 3])]);
     }
 
     #[test]
-    fn a_second_start_while_recording_keeps_the_first_clip() {
+    fn a_second_arrival_while_recording_gets_a_clip_of_its_own() {
         let mut c = Collector::new(1, 2, 2);
         c.push(1);
         c.push(2);
-        assert!(c.start());
-        assert!(!c.start());
+        assert!(c.start('a'));
         c.push(3);
-        assert_eq!(c.push(4), Some(vec![1, 2, 3, 4]));
-        // Recording is over, so the next arrival starts a new clip from an empty ring.
-        assert!(c.start());
-        c.push(5);
-        assert_eq!(c.push(6), Some(vec![5, 6]));
+        // Its pre-roll is the ring as it is now, the first clip's frames shared.
+        assert!(c.start('b'));
+        assert_eq!(c.push(4), vec![('a', vec![1, 2, 3, 4])]);
+        assert_eq!(c.push(5), vec![('b', vec![2, 3, 4, 5])]);
+        // The ring kept filling while they recorded, so the next pre-roll is full.
+        assert!(c.start('c'));
+        c.push(6);
+        assert_eq!(c.push(7), vec![('c', vec![4, 5, 6, 7])]);
+    }
+
+    #[test]
+    fn at_most_max_recordings_run_at_once() {
+        let mut c = Collector::new(1, 1, 5);
+        for tag in 0..MAX_RECORDINGS {
+            assert!(c.start(tag));
+        }
+        assert!(!c.start(MAX_RECORDINGS));
+        for frame in 0..4 {
+            assert!(c.push(frame).is_empty());
+        }
+        // All of them finish on the same frame, and a start is possible again.
+        assert_eq!(c.push(4).len(), MAX_RECORDINGS);
+        assert!(c.start(9));
     }
 
     #[test]

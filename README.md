@@ -230,7 +230,7 @@ in the family `:latest` image:
 cargo build --release -p kataglyphis_cat_webrtc
 target/release/kataglyphis_cat_webrtc --camera test --print-config  # the settings in effect
 target/release/kataglyphis_cat_webrtc --camera test                 # a test pattern, no camera
-curl localhost:8080/healthz                    # the camera, the model's runs, the cat, the kept clips
+curl localhost:8080/healthz                    # ok or the problem, the camera, the model's runs, the cat, the kept clips
 curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
 curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on
 curl -o cat.mp4 localhost:8080/arrival.mp4     # that arrival as H.264, 3 s before it to 7 s after
