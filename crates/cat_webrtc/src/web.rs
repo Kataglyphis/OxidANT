@@ -408,6 +408,9 @@ mod tests {
         assert_eq!(byte_range("bytes=5-2", 100), Range::Ignored);
         assert_eq!(byte_range("items=0-1", 100), Range::Ignored);
         assert_eq!(byte_range("bytes=x-1", 100), Range::Ignored);
+        assert_eq!(byte_range("bytes=5", 100), Range::Ignored);
+        assert_eq!(byte_range("bytes=-", 100), Range::Ignored);
+        assert_eq!(byte_range("bytes=-x", 100), Range::Ignored);
     }
 
     #[test]
@@ -822,5 +825,61 @@ mod tests {
         let addr = start(None, port).await;
         let response = get(addr, "/webrtc-ws", "upgrade: websocket\r\n").await;
         assert!(response.starts_with("HTTP/1.1 502"), "{response}");
+    }
+
+    /// A stand-in signalling server that reads one request head, then answers with `reply` and hangs up.
+    async fn one_shot_backend(reply: &'static [u8]) -> u16 {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = backend.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = backend.accept().await.unwrap();
+            let mut seen = Vec::new();
+            let mut chunk = [0u8; 512];
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).await.unwrap();
+                seen.extend_from_slice(&chunk[..n]);
+            }
+            stream.write_all(reply).await.unwrap();
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_signalling_server_that_refuses_the_upgrade_is_passed_through() {
+        let port = one_shot_backend(
+            b"HTTP/1.1 404 Not Found\r\nContent-Length: 4\r\nX-Reason: room\r\n\r\nnope",
+        )
+        .await;
+        let addr = start(None, port).await;
+        let response = get(addr, "/webrtc-ws", "upgrade: websocket\r\n").await;
+        assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+        assert!(
+            response.to_lowercase().contains("x-reason: room"),
+            "{response}"
+        );
+        assert!(response.ends_with("nope"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn a_signalling_server_that_hangs_up_mid_handshake_is_a_502() {
+        let addr = start(None, one_shot_backend(b"").await).await;
+        let response = get(addr, "/webrtc-ws", "upgrade: websocket\r\n").await;
+        assert!(response.starts_with("HTTP/1.1 502"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn only_settings_take_a_post_and_no_clip_is_a_404() {
+        let addr = start(None, 9).await;
+        let post = post(addr, "/healthz", "application/json", "{}").await;
+        assert!(post.starts_with("HTTP/1.1 405"), "{post}");
+        let clip = get(addr, "/arrival.mp4", "").await;
+        assert!(
+            clip.starts_with("HTTP/1.1 404") && clip.ends_with("no arrival clip yet"),
+            "{clip}"
+        );
+        // An arrival's own clip that is not (or no longer) kept is a 404 too, never a newer one.
+        assert!(get(addr, "/arrival.mp4?t=1791763273", "")
+            .await
+            .starts_with("HTTP/1.1 404"));
     }
 }
