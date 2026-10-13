@@ -224,6 +224,30 @@ mod tests {
     }
 
     #[test]
+    fn load_reads_the_file_it_is_given_and_names_it_in_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("catcam.toml");
+        std::fs::write(&file, "fps = 15\nname = \"Garden\"\n").unwrap();
+        let (config, source) = Config::load(Some(&file)).unwrap();
+        assert_eq!((config.fps, config.name.as_str()), (15, "Garden"));
+        assert_eq!(source.as_deref(), Some(file.as_path()));
+
+        // An unreadable file and a typo are different mistakes; both say which file.
+        let missing = dir.path().join("nope.toml");
+        let err = format!("{:#}", Config::load(Some(&missing)).unwrap_err());
+        assert!(
+            err.contains("read config") && err.contains("nope.toml"),
+            "{err}"
+        );
+        std::fs::write(&file, "fsp = 15\n").unwrap();
+        let err = format!("{:#}", Config::load(Some(&file)).unwrap_err());
+        assert!(
+            err.contains("parse config") && err.contains("catcam.toml"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn a_partial_file_overrides_only_what_it_names() {
         let config = Config::parse("camera = \"v4l2:/dev/video2\"\nrotate = 180\n").unwrap();
         assert_eq!(config.camera, "v4l2:/dev/video2");
