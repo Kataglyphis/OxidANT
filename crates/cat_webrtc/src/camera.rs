@@ -348,7 +348,13 @@ fn run_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Option<S
         let _ = tx.send(child.wait_with_output());
     });
     match rx.recv_timeout(timeout) {
-        Ok(Ok(output)) => Some(String::from_utf8_lossy(&output.stdout).into_owned()),
+        Ok(Ok(output)) if output.status.success() => {
+            Some(String::from_utf8_lossy(&output.stdout).into_owned())
+        }
+        Ok(Ok(output)) => {
+            log::warn!("{program} failed: {}", output.status);
+            None
+        }
         Ok(Err(err)) => {
             log::warn!("{program} failed: {err}");
             None
@@ -604,19 +610,20 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn run_with_timeout_returns_stdout_and_gives_up_on_a_hang_or_a_missing_program() {
-        let out = run_with_timeout("sh", &["-c", "echo imx708"], Duration::from_secs(10));
+    fn run_with_timeout_returns_stdout_and_none_for_a_failure_a_hang_or_a_missing_program() {
+        let secs = Duration::from_secs;
+        let out = run_with_timeout("sh", &["-c", "echo imx708"], secs(10));
         assert_eq!(out.as_deref(), Some("imx708\n"));
+        // What it printed before failing is no answer: rpicam-hello without a camera exits non-zero.
         assert_eq!(
-            run_with_timeout("sleep", &["5"], Duration::from_millis(100)),
+            run_with_timeout("sh", &["-c", "echo half; exit 3"], secs(10)),
             None
         );
+        // Through sh: under the riscv64 lane's QEMU a bare `sleep` exits at once instead of hanging.
+        let hang = run_with_timeout("sh", &["-c", "sleep 5"], Duration::from_millis(200));
+        assert_eq!(hang, None);
         assert_eq!(
-            run_with_timeout(
-                "no-such-program-kataglyphis-cat",
-                &[],
-                Duration::from_secs(1)
-            ),
+            run_with_timeout("no-such-program-kataglyphis-cat", &[], secs(1)),
             None
         );
     }

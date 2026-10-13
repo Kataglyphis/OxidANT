@@ -736,6 +736,16 @@ from the image's riscv64 child, the distro clang as linker, binfmt with QEMU 10.
   run the same step in the family image (the hub page has the command). The step prints
   `unstable feature specified for -Ctarget-feature: v` per crate: the image's riscv64 Rust
   flags, not a fault.
+- **Not on a 16 KiB-page host.** A Raspberry Pi 5 kernel (`uname -r` ends in `16k`) cannot
+  run the lane faithfully: QEMU user mode cannot map the 4 KiB-aligned segments of
+  `liborc-0.4.so.0`, so every plugin that links ORC (`videoconvertscale` among them) fails to
+  load and the cat cam's capture tests time out waiting for a frame (2026-10-13). Everything
+  else runs; trust the capture tests only from a 4 KiB-page host such as the CI runner.
+- **A spawned host program is not remapped.** `QEMU_LD_PREFIX` sends the test binary's own
+  opens into the sysroot, but `execve` is not redirected, so a test that spawns a tool runs
+  the host's. A bare `sleep` exited at once there, which made a test of
+  `camera::run_with_timeout` see output instead of a timeout (67301b0 to 10c5b73, red); the
+  test now goes through `sh -c`, and the function returns `None` for any failed exit.
 
 Facts that cost real debugging time:
 
