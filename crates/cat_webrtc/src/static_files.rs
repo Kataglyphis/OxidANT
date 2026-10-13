@@ -241,6 +241,11 @@ mod tests {
             sanitize("/assets/Noto%20Sans.ttf"),
             Some(PathBuf::from("assets").join("Noto Sans.ttf"))
         );
+        // A `.` step is dropped, not refused: it stays inside the root.
+        assert_eq!(
+            sanitize("/./assets/./main.dart.wasm"),
+            Some(PathBuf::from("assets").join("main.dart.wasm"))
+        );
         for evil in [
             "/../etc/passwd",
             "/assets/%2e%2e/%2e%2e/secret",

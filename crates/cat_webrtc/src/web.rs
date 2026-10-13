@@ -882,4 +882,15 @@ mod tests {
             .await
             .starts_with("HTTP/1.1 404"));
     }
+
+    #[tokio::test]
+    async fn without_a_web_build_the_page_says_so_and_the_api_still_answers() {
+        let addr = start(None, 9).await;
+        let page = get(addr, "/", "").await;
+        assert!(
+            page.starts_with("HTTP/1.1 404") && page.contains("no web build configured"),
+            "{page}"
+        );
+        assert!(get(addr, "/healthz", "").await.starts_with("HTTP/1.1 200"));
+    }
 }
