@@ -398,6 +398,51 @@ mod tests {
         assert_eq!(scratch_dirs(), before);
     }
 
+    #[test]
+    fn an_arrival_is_encoded_on_its_own_thread_and_kept_for_that_arrival() {
+        let _one = ENCODES.lock().unwrap_or_else(|e| e.into_inner());
+        gst::init().unwrap();
+        if ["openh264enc", "h264parse", "mp4mux"]
+            .iter()
+            .any(|e| gst::ElementFactory::find(e).is_none())
+        {
+            eprintln!("skipped: this GStreamer cannot encode H.264 to MP4");
+            return;
+        }
+        let status = Arc::new(Status::new("Cam", true, 64, 48));
+        // 4 s at 10 fps: the 3 s pre-roll and 1 s after the arrival.
+        let clip = Clip::spawn(4, (64, 48, 10), status.clone(), None).expect("an encoder");
+        let frame = gst::Buffer::from_mut_slice(vec![16u8; crate::frame::size(64, 48)]);
+        for _ in 0..40 {
+            clip.frame(&frame);
+        }
+        assert!(status.clip_mp4(None).is_none(), "no clip before an arrival");
+        let arrival = Arrival {
+            time: 1_791_763_273,
+            best_score: 0.8,
+        };
+        clip.start(arrival);
+        for _ in 0..10 {
+            clip.frame(&frame);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while status.clip_mp4(Some(arrival.time)).is_none() && std::time::Instant::now() < deadline
+        {
+            thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let mp4 = status
+            .clip_mp4(Some(arrival.time))
+            .expect("the arrival's clip");
+        assert_eq!(&mp4[4..8], b"ftyp", "an MP4");
+        assert!(status.clip_mp4(Some(arrival.time + 600)).is_none());
+    }
+
+    #[test]
+    fn no_seconds_no_clip_thread() {
+        let status = Arc::new(Status::new("Cam", true, 64, 48));
+        assert!(Clip::spawn(0, (64, 48, 10), status, None).is_none());
+    }
+
     fn scratch_dirs() -> usize {
         let prefix = format!("catcam-clip-{}-", std::process::id());
         std::fs::read_dir(std::env::temp_dir())
