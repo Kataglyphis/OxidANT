@@ -17,15 +17,54 @@ const CAT_FILE: &str = "cat.json";
 
 /// The frame of the last arrival, kept across restarts beside it.
 const ARRIVAL_FILE: &str = "arrival.jpg";
-/// What the page set, such as the rotation; it wins over `catcam.toml`, which the service cannot write.
+/// What the settings page set; each value in it wins over `catcam.toml`, which the service cannot write.
 const SETTINGS_FILE: &str = "settings.json";
 
 /// The angles `videoflip` turns a picture by, clockwise.
 pub const ROTATIONS: [u32; 4] = [0, 90, 180, 270];
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct Settings {
-    rotate: Option<u32>,
+/// The detection score the page may set: lower counts noise as cats, higher misses them.
+pub const SCORES: std::ops::RangeInclusive<f32> = 0.05..=0.95;
+
+/// The longest name the page may give the camera.
+const NAME_MAX: usize = 64;
+
+/// The settings the page can change while the service runs; a value left out stays as it is.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotate: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl Settings {
+    /// Every value it carries, checked before any is applied, so a bad one changes nothing.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if let Some(degrees) = self.rotate {
+            if !ROTATIONS.contains(&degrees) {
+                anyhow::bail!("rotate must be 0, 90, 180 or 270 (got {degrees})");
+            }
+        }
+        if let Some(score) = self.score {
+            if !SCORES.contains(&score) {
+                anyhow::bail!("score must lie in 0.05..=0.95 (got {score})");
+            }
+        }
+        if let Some(name) = &self.name {
+            let name = name.trim();
+            if name.is_empty()
+                || name.chars().count() > NAME_MAX
+                || name.chars().any(char::is_control)
+            {
+                anyhow::bail!("name must be 1 to {NAME_MAX} printable characters");
+            }
+        }
+        Ok(())
+    }
 }
 /// How many arrivals' clips stay addressable: a false visit must not replace the clip a notification links.
 const CLIPS_KEPT: usize = 5;
@@ -69,10 +108,11 @@ struct Cat {
 }
 
 pub struct Status {
-    name: String,
+    name: Mutex<String>,
     inference: bool,
     width: u32,
     height: u32,
+    fps: u32,
     camera: Mutex<String>,
     cat: Mutex<Cat>,
     frame: Mutex<Option<gst::Buffer>>,
@@ -84,15 +124,20 @@ pub struct Status {
     state_dir: Option<PathBuf>,
     /// Clockwise degrees the capture turns the picture by; the capture thread follows a change.
     rotate: AtomicU32,
+    /// The detection score threshold as `f32` bits; the inference thread reads it each run.
+    score: AtomicU32,
+    /// What the page set so far, the content of [`SETTINGS_FILE`].
+    page: Mutex<Settings>,
 }
 
 impl Status {
     pub fn new(name: &str, inference: bool, width: u32, height: u32) -> Self {
         Self {
-            name: name.to_owned(),
+            name: Mutex::new(name.to_owned()),
             inference,
             width,
             height,
+            fps: 0,
             camera: Mutex::new("starting".to_owned()),
             cat: Mutex::new(Cat::default()),
             frame: Mutex::new(None),
@@ -100,12 +145,26 @@ impl Status {
             clips: Mutex::new(VecDeque::new()),
             state_dir: None,
             rotate: AtomicU32::new(0),
+            score: AtomicU32::new(0.25f32.to_bits()),
+            page: Mutex::new(Settings::default()),
         }
     }
 
-    /// The rotation `catcam.toml` asks for; a rotation the page saved overrides it in [`Self::remember_in`].
+    /// The rotation `catcam.toml` asks for; one the page saved overrides it in [`Self::remember_in`].
     pub fn rotated(self, degrees: u32) -> Self {
         self.rotate.store(degrees, Ordering::Relaxed);
+        self
+    }
+
+    /// The detection score `catcam.toml` asks for; one the page saved overrides it.
+    pub fn scored(self, score: f32) -> Self {
+        self.score.store(score.to_bits(), Ordering::Relaxed);
+        self
+    }
+
+    /// The camera's frame rate, for `/healthz`.
+    pub fn at_fps(mut self, fps: u32) -> Self {
+        self.fps = fps;
         self
     }
 
@@ -114,20 +173,77 @@ impl Status {
         self.rotate.load(Ordering::Relaxed)
     }
 
-    /// Turns the picture from now on, and from the next start too when a state directory keeps it.
+    /// The score a detection needs to count.
+    pub fn score(&self) -> f32 {
+        f32::from_bits(self.score.load(Ordering::Relaxed))
+    }
+
+    /// The score to two places, so JSON says 0.45 rather than the `f32`'s 0.44999998807907104.
+    fn score_rounded(&self) -> f64 {
+        (f64::from(self.score()) * 100.0).round() / 100.0
+    }
+
+    /// The camera's name, as viewers and webhook events see it.
+    pub fn name(&self) -> String {
+        self.name.lock().map(|n| n.clone()).unwrap_or_default()
+    }
+
+    /// Turns the picture as the settings page does; the tests' shorthand for [`Self::apply`].
+    #[cfg(test)]
     pub fn set_rotation(&self, degrees: u32) -> anyhow::Result<()> {
-        if !ROTATIONS.contains(&degrees) {
-            anyhow::bail!("rotate must be 0, 90, 180 or 270 (got {degrees})");
+        self.apply(Settings {
+            rotate: Some(degrees),
+            ..Settings::default()
+        })
+    }
+
+    /// The values the page can change, as `GET /settings` answers them.
+    pub fn settings_json(&self) -> String {
+        serde_json::json!({
+            "name": self.name(),
+            "rotate": self.rotation(),
+            "score": self.score_rounded(),
+        })
+        .to_string()
+    }
+
+    /// Applies what `update` carries, all or nothing, and keeps it in the state directory.
+    pub fn apply(&self, update: Settings) -> anyhow::Result<()> {
+        update.validate()?;
+        self.take(&update);
+        let Ok(mut page) = self.page.lock() else {
+            return Ok(());
+        };
+        if update.rotate.is_some() {
+            page.rotate = update.rotate;
         }
-        self.rotate.store(degrees, Ordering::Relaxed);
+        if update.score.is_some() {
+            page.score = update.score;
+        }
+        if let Some(name) = &update.name {
+            page.name = Some(name.trim().to_owned());
+        }
         if let Some(dir) = &self.state_dir {
-            let json = serde_json::to_vec(&Settings {
-                rotate: Some(degrees),
-            })?;
-            write_atomic(&dir.join(SETTINGS_FILE), &json)?;
+            write_atomic(&dir.join(SETTINGS_FILE), &serde_json::to_vec(&*page)?)?;
         }
-        log::info!("rotate: {degrees} degrees, set from the page");
+        log::info!(
+            "settings from the page: {}",
+            serde_json::to_string(&update)?
+        );
         Ok(())
+    }
+
+    /// Sets the values `settings` carries; [`Settings::validate`] has passed.
+    fn take(&self, settings: &Settings) {
+        if let Some(degrees) = settings.rotate {
+            self.rotate.store(degrees, Ordering::Relaxed);
+        }
+        if let Some(score) = settings.score {
+            self.score.store(score.to_bits(), Ordering::Relaxed);
+        }
+        if let (Some(name), Ok(mut current)) = (&settings.name, self.name.lock()) {
+            *current = name.trim().to_owned();
+        }
     }
 
     /// Restores the cat's visits and last arrival frame from `dir` and keeps them there from now on.
@@ -169,14 +285,19 @@ impl Status {
         if let Ok(clips) = self.clips.get_mut() {
             *clips = restored;
         }
-        if let Some(degrees) = std::fs::read_to_string(dir.join(SETTINGS_FILE))
+        if let Some(page) = std::fs::read_to_string(dir.join(SETTINGS_FILE))
             .ok()
             .and_then(|text| serde_json::from_str::<Settings>(&text).ok())
-            .and_then(|settings| settings.rotate)
-            .filter(|degrees| ROTATIONS.contains(degrees))
+            .filter(|page| page.validate().is_ok())
         {
-            log::info!("rotate: {degrees} degrees, as the page set it");
-            self.rotate.store(degrees, Ordering::Relaxed);
+            log::info!(
+                "settings the page set: {}",
+                serde_json::to_string(&page).unwrap_or_default()
+            );
+            self.take(&page);
+            if let Ok(saved) = self.page.get_mut() {
+                *saved = page;
+            }
         }
         self.state_dir = Some(dir);
         self
@@ -360,8 +481,10 @@ impl Status {
             .unwrap_or_default();
         serde_json::json!({
             "ok": true,
-            "name": self.name,
+            "name": self.name(),
             "rotate": self.rotation(),
+            "score": self.score_rounded(),
+            "frame": {"width": self.width, "height": self.height, "fps": self.fps},
             "camera": camera,
             "inference": self.inference,
             "model_runs": runs,
@@ -567,6 +690,52 @@ mod tests {
         assert_eq!(after.rotation(), 270);
         let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
         assert_eq!(json["rotate"], 270);
+    }
+
+    #[test]
+    fn the_page_keeps_only_what_it_set_across_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let status = Status::new("From The File", true, 4, 4)
+            .scored(0.25)
+            .remember_in(dir.path().to_path_buf());
+        status
+            .apply(Settings {
+                name: Some(" Futtertrog ".into()),
+                ..Settings::default()
+            })
+            .unwrap();
+        // catcam.toml's score moved meanwhile, and the page never set one: the file's counts.
+        let after = Status::new("From The File", true, 4, 4)
+            .scored(0.4)
+            .remember_in(dir.path().to_path_buf());
+        assert_eq!(after.name(), "Futtertrog");
+        assert_eq!(after.score(), 0.4);
+        assert!(
+            after.settings_json().contains(r#""score":0.4,"#)
+                || after.settings_json().ends_with(r#""score":0.4}"#)
+        );
+        let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
+        assert_eq!(json["name"], "Futtertrog");
+    }
+
+    #[test]
+    fn a_settings_update_is_checked_whole_before_any_of_it_applies() {
+        let status = Status::new("Cam", true, 4, 4).scored(0.25);
+        let mixed = Settings {
+            rotate: Some(90),
+            score: Some(0.99),
+            name: Some("New".into()),
+        };
+        assert!(status.apply(mixed).is_err());
+        assert_eq!(
+            (status.rotation(), status.score(), status.name()),
+            (0, 0.25, "Cam".into())
+        );
+        let long = Settings {
+            name: Some("x".repeat(65)),
+            ..Settings::default()
+        };
+        assert!(status.apply(long).is_err());
     }
 
     #[test]

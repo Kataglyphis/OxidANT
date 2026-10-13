@@ -422,7 +422,7 @@ fn spawn_inference(
     clip: Option<Arc<Clip>>,
 ) -> Option<(mpsc::SyncSender<Vec<u8>>, thread::JoinHandle<()>)> {
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
-    let (width, height, score) = (config.width, config.height, config.score);
+    let (width, height) = (config.width, config.height);
     let wanted = (!config.all_classes).then(|| vec![COCO_CAT]);
     let mut presence = Presence::new(rate_period(config.inference_fps));
     // The open visit's arrival, which its departure event names.
@@ -432,6 +432,8 @@ fn spawn_inference(
         .spawn(move || {
             while let Ok(i420) = rx.recv() {
                 let rgba = frame::to_rgba(&i420, width, height);
+                // The settings page may have moved it since the last run.
+                let score = status.score();
                 let detections =
                     match detector.infer_rgba(&rgba, width, height, score, wanted.as_deref()) {
                         Ok(detections) => detections,

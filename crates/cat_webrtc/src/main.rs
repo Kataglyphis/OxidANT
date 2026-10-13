@@ -203,7 +203,10 @@ fn run(args: Args) -> anyhow::Result<()> {
         config.width,
         config.height,
     );
-    let status = status.rotated(config.rotate);
+    let status = status
+        .rotated(config.rotate)
+        .scored(config.score)
+        .at_fps(config.fps);
     let status = Arc::new(match state_dir() {
         Some(dir) => {
             log::info!("state: {}", dir.display());
@@ -233,7 +236,7 @@ fn run(args: Args) -> anyhow::Result<()> {
     });
 
     let shutdown = Arc::new(AtomicBool::new(false));
-    let notifier = start_notifier(&config, detector.is_some());
+    let notifier = start_notifier(&config, detector.is_some(), status.clone());
     // Only the model sees arrivals, so without it there is nothing to record.
     let clip = if detector.is_some() {
         clip::Clip::spawn(
@@ -377,13 +380,17 @@ fn load_detector(config: &Config) -> anyhow::Result<Option<PersonDetector>> {
 }
 
 /// The webhook's delivery thread when `notify_url` is set; logs name only the URL's origin.
-fn start_notifier(config: &Config, inference: bool) -> Option<notify::Notifier> {
+fn start_notifier(
+    config: &Config,
+    inference: bool,
+    status: Arc<status::Status>,
+) -> Option<notify::Notifier> {
     let url = config.notify()?;
     if !inference {
         log::warn!("notify_url is set, but with the model off no cat is ever seen");
         return None;
     }
-    match notify::Notifier::spawn(url, &config.name) {
+    match notify::Notifier::spawn(url, status) {
         Ok(notifier) => {
             log::info!("notify: cat events go to {}", notify::origin(url));
             Some(notifier)

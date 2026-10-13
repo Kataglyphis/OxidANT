@@ -445,12 +445,16 @@ board runs it as one service unit:
   `/webrtc-ws` byte for byte to the signalling server, which listens on `127.0.0.1` by
   default now. `run-producer-pi.sh` keeps the old shape (`--signalling-host 0.0.0.0
   --http-port 0`) because `serve.sh` is that setup's web half.
-- **The picture turns at run time** (2026-10-13). `POST /rotate` (`{"rotate": 90}`, JSON only)
-  sets the clockwise angle in `Status`; the capture loop compares it each frame and sets the
-  method of its `videoflip`, which is always in the pipeline (a pass-through at 0), so a turn
-  needs no rebuild. `settings.json` in the state directory keeps it and wins over `rotate` in
-  the config file. The frame caps say square pixels, so `videoscale` borders a quarter turn
-  instead of stretching it; do not drop `pixel-aspect-ratio` from `frame::caps`.
+- **The settings page changes `rotate`, `score` and `name` at run time** (2026-10-13).
+  `POST /settings` (JSON only, any subset) goes through `Status::apply`, which validates the
+  whole update before it stores any of it; `settings.json` in the state directory keeps what
+  the page set and wins over the config file, key by key. Each reader takes the live value:
+  the capture loop compares the angle each frame and sets the method of its `videoflip`,
+  which is always in the pipeline (a pass-through at 0), so a turn needs no rebuild; the
+  inference thread reads `Status::score` each run; the notifier reads `Status::name` each
+  event. `webrtcsink`'s `meta` keeps the name it started with. The frame caps say square
+  pixels, so `videoscale` borders a quarter turn instead of stretching it; do not drop
+  `pixel-aspect-ratio` from `frame::caps`.
 - **A webhook hears about every visit** (`notify.rs`). With `notify_url` set, each
   arrival and departure is POSTed as JSON (`ureq` with rustls, so https too) from the
   `cat-notify` thread, which a slow receiver cannot turn into slow detection. Before the

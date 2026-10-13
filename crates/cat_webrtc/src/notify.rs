@@ -5,8 +5,11 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use std::sync::Arc;
+
 use crate::clip::Arrival;
 use crate::presence::Change;
+use crate::status::Status;
 use crate::web::{ARRIVAL_PATH, CLIP_PATH};
 
 /// How long one delivery may take before it is given up.
@@ -14,13 +17,14 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct Notifier {
-    name: String,
+    /// The camera's name comes from here at each event, so a rename on the settings page reaches it.
+    status: Arc<Status>,
     tx: mpsc::Sender<serde_json::Value>,
 }
 
 impl Notifier {
     /// Starts the delivery thread; events queue while one is in flight.
-    pub fn spawn(url: &str, name: &str) -> std::io::Result<Self> {
+    pub fn spawn(url: &str, status: Arc<Status>) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel::<serde_json::Value>();
         let url = url.to_owned();
         thread::Builder::new()
@@ -40,22 +44,23 @@ impl Notifier {
                     }
                 }
             })?;
-        Ok(Self {
-            name: name.to_owned(),
-            tx,
-        })
+        Ok(Self { status, tx })
     }
 
     /// `time` is the event's Unix time; for an arrival, the visit log's, which the clip is kept under.
     /// A departure names its `visit`, so a receiver can update what it sent for that arrival.
     pub fn send(&self, change: &Change, time: u64, visit: Option<Arrival>) {
-        let _ = self.tx.send(payload(&self.name, change, time, visit));
+        let _ = self
+            .tx
+            .send(payload(&self.status.name(), change, time, visit));
     }
 
     /// The clip of `arrival` is at [`CLIP_PATH`]: a second event, so a notification can add it;
     /// `stayed_s` once the visit is over, as a short one ends before its clip is encoded.
     pub fn send_clip(&self, arrival: Arrival, stayed_s: Option<u64>) {
-        let _ = self.tx.send(clip_payload(&self.name, arrival, stayed_s));
+        let _ = self
+            .tx
+            .send(clip_payload(&self.status.name(), arrival, stayed_s));
     }
 }
 
@@ -251,7 +256,8 @@ mod tests {
                 .unwrap();
             (head, body)
         });
-        let notifier = Notifier::spawn(&url, "Test Cam").unwrap();
+        let status = Arc::new(Status::new("Test Cam", true, 4, 4));
+        let notifier = Notifier::spawn(&url, status).unwrap();
         notifier.send(
             &Change::Arrived {
                 count: 1,

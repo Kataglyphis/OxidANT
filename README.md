@@ -235,7 +235,8 @@ curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes incl
 curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on
 curl -o cat.mp4 localhost:8080/arrival.mp4     # that arrival as H.264, 3 s before it to 7 s after
 curl -o cat.mp4 'localhost:8080/arrival.mp4?t=1791763273'  # one of the last five, by arrival time
-curl -X POST -H 'content-type: application/json' -d '{"rotate": 270}' localhost:8080/rotate  # turn the picture
+curl localhost:8080/settings                   # what the settings page can change
+curl -X POST -H 'content-type: application/json' -d '{"rotate": 270, "score": 0.5}' localhost:8080/settings
 ```
 
 `--notify-url <http(s) URL>` (`notify_url` in the file) POSTs a JSON event there whenever

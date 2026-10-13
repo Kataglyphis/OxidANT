@@ -25,14 +25,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
   arrival's own or `404`, so a false visit right after the cat cannot put its clip behind
   the cat's notification; arrival events carry the visit log's own time for that. `clip_seconds` (default 10, 0 for none) sets the
   length. A GStreamer without one of those elements records no clip and says which.
-- **The picture turns at run time, from the page (2026-10-13).** `POST /rotate` with
-  `{"rotate": 0|90|180|270}` (JSON only, so another site's form cannot send it) sets the
-  clockwise angle; `videoflip`, always in the capture pipeline now, follows on the next frame,
-  with no restart, and `/healthz` reports `rotate`. The angle is kept in the state directory's
-  `settings.json` and wins over `rotate` in the config file. The frame caps carry square
-  pixels, so a quarter turn is bordered into the frame instead of stretched: before, 90 and
-  270 squeezed the turned 3:4 picture into 4:3. `rpicam-vid --rotation 180` is gone; 180 goes
-  through `videoflip` like the other angles. OmniAccelerANT's Stream page has the buttons.
+- **The page changes the cat cam's settings at run time (2026-10-13).** `GET /settings`
+  answers the `name`, `rotate` and `score`; `POST /settings` takes any of them as JSON (JSON
+  only, so another site's form cannot send it) and checks the whole post before it applies
+  any of it. A turn (0, 90, 180 or 270 clockwise) reaches `videoflip`, always in the capture
+  pipeline now, on the next frame, with no restart; a score (0.05 to 0.95) the next model
+  run; a name the next webhook event. `/healthz` reports `rotate`, `score` and the `frame`
+  size and rate. What the page set is kept in the state directory's `settings.json` and wins
+  over the config file, key by key. The frame caps carry square pixels, so a quarter turn is
+  bordered into the frame instead of stretched: before, 90 and 270 squeezed the turned 3:4
+  picture into 4:3. `rpicam-vid --rotation 180` is gone; 180 goes through `videoflip` like
+  the other angles. OmniAccelerANT's Camera page is the front end.
 - **`--precompress DIR` ships a web build smaller (2026-10-12).** It writes a zopfli
   `<file>.gz` beside every file the server would gzip, on every core, and the server sends
   that file instead of compressing its own, unless the original is newer. OmniAccelerANT's

@@ -17,7 +17,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::static_files::{static_file, GzipCache};
-use crate::status::Status;
+use crate::status::{Settings, Status};
 
 /// What the web client's host-relative `signalingServerUrl` resolves to.
 pub const SIGNALLING_PATH: &str = "/webrtc-ws";
@@ -29,8 +29,8 @@ pub const SNAPSHOT_PATH: &str = "/snapshot.jpg";
 pub const ARRIVAL_PATH: &str = "/arrival.jpg";
 /// The last arrival as an H.264 clip, from a few seconds before it.
 pub const CLIP_PATH: &str = "/arrival.mp4";
-/// `POST {"rotate": 90}` turns the picture, as the page's rotate buttons do.
-pub const ROTATE_PATH: &str = "/rotate";
+/// `GET` the settings the page can change; `POST` any of them as JSON, e.g. `{"rotate": 90}`.
+pub const SETTINGS_PATH: &str = "/settings";
 
 /// How long the signalling server may take to answer the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -79,8 +79,8 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
                 plain(StatusCode::BAD_GATEWAY, "signalling server unreachable")
             }
         }
-    } else if path == ROTATE_PATH {
-        rotate(req, &site.status).await
+    } else if path == SETTINGS_PATH {
+        settings(req, &site.status).await
     } else if req.method() != Method::GET && req.method() != Method::HEAD {
         plain(StatusCode::METHOD_NOT_ALLOWED, "GET or HEAD only")
     } else if path == "/healthz" {
@@ -128,37 +128,34 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
     Ok(response)
 }
 
-/// JSON only: another site's form cannot send it, and a script needs a CORS preflight this server never grants.
-async fn rotate(req: Request<Incoming>, status: &Status) -> Response<Body> {
-    #[derive(serde::Deserialize)]
-    struct Rotate {
-        rotate: u32,
+/// The settings page's endpoint. A change is JSON only: another site's form cannot send it, and a
+/// script needs a CORS preflight this server never grants.
+async fn settings(req: Request<Incoming>, status: &Status) -> Response<Body> {
+    if req.method() == Method::POST {
+        let json = req
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("application/json"));
+        if !json {
+            return plain(StatusCode::UNSUPPORTED_MEDIA_TYPE, "application/json only");
+        }
+        let Ok(body) = Limited::new(req.into_body(), 1024).collect().await else {
+            return plain(StatusCode::BAD_REQUEST, "body too large or unreadable");
+        };
+        let applied = serde_json::from_slice::<Settings>(&body.to_bytes())
+            .map_err(anyhow::Error::from)
+            .and_then(|update| status.apply(update));
+        if let Err(err) = applied {
+            log::warn!("{SETTINGS_PATH}: {err:#}");
+            let mut response = Response::new(Full::new(Bytes::from(format!("{err:#}"))));
+            *response.status_mut() = StatusCode::BAD_REQUEST;
+            return response;
+        }
+    } else if req.method() != Method::GET && req.method() != Method::HEAD {
+        return plain(StatusCode::METHOD_NOT_ALLOWED, "GET or POST only");
     }
-    if req.method() != Method::POST {
-        return plain(StatusCode::METHOD_NOT_ALLOWED, "POST only");
-    }
-    let json = req
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.starts_with("application/json"));
-    if !json {
-        return plain(StatusCode::UNSUPPORTED_MEDIA_TYPE, "application/json only");
-    }
-    let Ok(body) = Limited::new(req.into_body(), 256).collect().await else {
-        return plain(StatusCode::BAD_REQUEST, "body too large or unreadable");
-    };
-    let Ok(Rotate { rotate }) = serde_json::from_slice(&body.to_bytes()) else {
-        return plain(
-            StatusCode::BAD_REQUEST,
-            r#"expected {"rotate": 0, 90, 180 or 270}"#,
-        );
-    };
-    if let Err(err) = status.set_rotation(rotate) {
-        log::warn!("{ROTATE_PATH}: {err:#}");
-        return plain(StatusCode::BAD_REQUEST, "rotate must be 0, 90, 180 or 270");
-    }
-    let mut response = Response::new(Full::new(Bytes::from(format!(r#"{{"rotate":{rotate}}}"#))));
+    let mut response = Response::new(Full::new(Bytes::from(status.settings_json())));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
@@ -527,41 +524,85 @@ mod tests {
         String::from_utf8_lossy(&response).into_owned()
     }
 
-    fn rotation_of(healthz: &str) -> u64 {
-        let body = &healthz[healthz.find("\r\n\r\n").unwrap() + 4..];
-        serde_json::from_str::<serde_json::Value>(body).unwrap()["rotate"]
-            .as_u64()
-            .unwrap()
+    fn body_json(response: &str) -> serde_json::Value {
+        serde_json::from_str(&response[response.find("\r\n\r\n").unwrap() + 4..]).unwrap()
     }
 
     #[tokio::test]
-    async fn a_json_post_turns_the_picture_and_healthz_says_so() {
+    async fn the_settings_page_reads_and_changes_name_rotation_and_score() {
         let addr = start(None, 9).await;
-        assert_eq!(rotation_of(&get(addr, "/healthz", "").await), 0);
-        let reply = post(addr, "/rotate", "application/json", r#"{"rotate": 270}"#).await;
+        let before = body_json(&get(addr, "/settings", "").await);
+        assert_eq!(before["rotate"], 0);
+        assert_eq!(before["name"], "Test Cam");
+        // Only what the post names changes.
+        let reply = post(
+            addr,
+            "/settings",
+            "application/json",
+            r#"{"rotate": 270, "score": 0.5}"#,
+        )
+        .await;
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
-        assert!(reply.ends_with(r#"{"rotate":270}"#), "{reply}");
-        assert_eq!(rotation_of(&get(addr, "/healthz", "").await), 270);
+        let after = body_json(&reply);
+        assert_eq!(
+            (after["rotate"].clone(), after["score"].clone()),
+            (270.into(), 0.5.into())
+        );
+        assert_eq!(after["name"], "Test Cam");
+        post(
+            addr,
+            "/settings",
+            "application/json",
+            r#"{"name": "  Futtertrog  "}"#,
+        )
+        .await;
+        let health = body_json(&get(addr, "/healthz", "").await);
+        assert_eq!(health["name"], "Futtertrog");
+        assert_eq!(health["rotate"], 270);
+        assert_eq!(health["score"], 0.5);
     }
 
     #[tokio::test]
-    async fn rotate_takes_only_a_json_post_of_a_right_angle() {
+    async fn settings_take_only_json_and_a_bad_value_changes_nothing() {
         let addr = start(None, 9).await;
         // A form post is what another site could send without a preflight.
         let form = post(
             addr,
-            "/rotate",
+            "/settings",
             "application/x-www-form-urlencoded",
             "rotate=90",
         )
         .await;
         assert!(form.starts_with("HTTP/1.1 415"), "{form}");
-        let odd = post(addr, "/rotate", "application/json", r#"{"rotate": 45}"#).await;
-        assert!(odd.starts_with("HTTP/1.1 400"), "{odd}");
-        let junk = post(addr, "/rotate", "application/json", "turn it").await;
-        assert!(junk.starts_with("HTTP/1.1 400"), "{junk}");
-        assert!(get(addr, "/rotate", "").await.starts_with("HTTP/1.1 405"));
-        assert_eq!(rotation_of(&get(addr, "/healthz", "").await), 0);
+        // One bad value refuses the whole post, the good one beside it included.
+        let mixed = post(
+            addr,
+            "/settings",
+            "application/json",
+            r#"{"rotate": 90, "score": 2}"#,
+        )
+        .await;
+        assert!(
+            mixed.starts_with("HTTP/1.1 400") && mixed.contains("score"),
+            "{mixed}"
+        );
+        for bad in [
+            r#"{"rotate": 45}"#,
+            r#"{"name": "   "}"#,
+            r#"{"colour": "red"}"#,
+            "turn it",
+        ] {
+            let reply = post(addr, "/settings", "application/json", bad).await;
+            assert!(reply.starts_with("HTTP/1.1 400"), "{bad}: {reply}");
+        }
+        assert!(post(addr, "/settings", "application/json", r#"{}"#)
+            .await
+            .starts_with("HTTP/1.1 200"));
+        let now = body_json(&get(addr, "/settings", "").await);
+        assert_eq!(
+            (now["rotate"].clone(), now["name"].clone()),
+            (0.into(), "Test Cam".into())
+        );
     }
 
     fn etag_of(head: &str) -> String {
