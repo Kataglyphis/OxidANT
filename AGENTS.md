@@ -401,8 +401,11 @@ board runs it as one service unit:
 - **A still, empty room idles the model** (`motion.rs`). At most once an inference period
   the capture compares a thumbnail of 8x8-block mean luma (80x60 at 640x480) with the last
   one. A frame goes to the model when at least 0.5 % of the blocks moved by more than 12
-  levels, when a cat is in view or the last run saw one, or once `idle_inference_fps`
-  (default 0.2) allows. An `idle_inference_fps` at or above `inference_fps`, or an uncapped
+  levels, once `idle_inference_fps` (default 0.2) allows, or, while a cat is in view or the
+  last run saw one, once a `still_period` (twice the full period, since 2026-10-13): a
+  still cat, asleep or a false one, costs half the runs, and leaving is motion, which
+  restores the full rate. `Presence` lingers past the still period, so one missed run never
+  ends a visit; himbeere2's drying rack, a false cat at 0.34, went from 69 % to 36 %. An `idle_inference_fps` at or above `inference_fps`, or an uncapped
   model, turns the gate off. On himbeere2 (2026-10-11, 2 Hz, 60 s per row) a still scene
   without a cat took 12 % CPU and 11 runs, against 74 % and 100 with the gate off. The cat
   photo and the moving test pattern kept the full rate. `/healthz` counts the runs
