@@ -21,6 +21,8 @@ pub fn caps(config: &Config) -> gst::Caps {
         .field("width", config.width as i32)
         .field("height", config.height as i32)
         .field("framerate", gst::Fraction::new(config.fps as i32, 1))
+        // Square pixels: videoscale then borders a picture turned by 90 degrees instead of stretching it.
+        .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
         .build()
 }
 

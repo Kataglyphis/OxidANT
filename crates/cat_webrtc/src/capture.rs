@@ -123,11 +123,9 @@ impl Worker {
         let pipeline = gst::Pipeline::new();
         let mut elements = std::mem::take(&mut source.elements);
         elements.push(make("videoconvert")?);
-        if !source.rotated {
-            if let Some(flip) = videoflip(config.rotate)? {
-                elements.push(flip);
-            }
-        }
+        let mut turned = self.status.rotation();
+        let flip = videoflip(turned)?;
+        elements.push(flip.clone());
         elements.push(make("videoscale")?);
         elements.push(capsfilter(frame::caps(config))?);
         let sink = gst::ElementFactory::make("appsink")
@@ -176,6 +174,12 @@ impl Worker {
                 continue;
             };
             last_frame = Instant::now();
+            // The page turned the picture: videoflip follows at once, and videoscale keeps the size.
+            let wanted = self.status.rotation();
+            if wanted != turned {
+                flip.set_property_from_str("method", flip_method(wanted)?);
+                turned = wanted;
+            }
             if !self.push(&sample, boxes, inference, &mut pacer)? {
                 return Ok(());
             }
@@ -246,8 +250,6 @@ fn bus_says_done(bus: &gst::Bus) -> anyhow::Result<bool> {
 /// The source half of a capture pipeline, plus a child process it may read from.
 struct Source {
     elements: Vec<gst::Element>,
-    /// The camera already applied `rotate`, so no `videoflip` follows.
-    rotated: bool,
     #[cfg(unix)]
     #[allow(dead_code)]
     rpicam: Option<RpicamProcess>,
@@ -332,7 +334,6 @@ impl Source {
         };
         Ok(Self {
             elements,
-            rotated: false,
             #[cfg(unix)]
             rpicam: None,
         })
@@ -345,8 +346,6 @@ impl Source {
         use std::process::{Command, Stdio};
 
         let (w, h, fps) = (config.width, config.height, config.fps);
-        // The sensor flips for 180 at no cost; rpicam-vid takes no other angle.
-        let rotated = config.rotate == 180;
         let child = Command::new("rpicam-vid")
             .args([
                 "--timeout",
@@ -359,11 +358,6 @@ impl Source {
             ])
             .args(["--width", &w.to_string(), "--height", &h.to_string()])
             .args(["--framerate", &fps.to_string()])
-            .args(if rotated {
-                &["--rotation", "180"][..]
-            } else {
-                &[]
-            })
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -394,7 +388,6 @@ impl Source {
             .context("rawvideoparse (is the rawparse plugin installed?)")?;
         Ok(Self {
             elements: vec![fdsrc, parse],
-            rotated,
             rpicam: Some(process),
         })
     }
@@ -554,28 +547,39 @@ fn libcamera_caps(config: &Config) -> gst::Caps {
         .build()
 }
 
-fn videoflip(rotate: u32) -> anyhow::Result<Option<gst::Element>> {
-    let method = match rotate {
-        0 => return Ok(None),
+/// Always in the pipeline, as a pass-through at 0, so a turn from the page needs no rebuild.
+fn videoflip(rotate: u32) -> anyhow::Result<gst::Element> {
+    gst::ElementFactory::make("videoflip")
+        .property_from_str("method", flip_method(rotate)?)
+        .build()
+        .context("videoflip")
+}
+
+fn flip_method(rotate: u32) -> anyhow::Result<&'static str> {
+    Ok(match rotate {
+        0 => "none",
         90 => "clockwise",
         180 => "rotate-180",
         270 => "counterclockwise",
         other => bail!("rotate must be 0, 90, 180 or 270 (got {other})"),
-    };
-    Ok(Some(
-        gst::ElementFactory::make("videoflip")
-            .property_from_str("method", method)
-            .build()
-            .context("videoflip")?,
-    ))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Runs the capture worker on the test pattern into an appsrc/appsink pair and returns `wanted` frames.
+    /// Runs the capture worker on `config.camera` into an appsrc/appsink pair and returns `wanted` frames.
     fn capture_frames(config: Config, wanted: usize) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {
+        capture_frames_turning(config, wanted, None)
+    }
+
+    /// As [`capture_frames`], turning the picture to `degrees` once `after` frames have come out.
+    fn capture_frames_turning(
+        config: Config,
+        wanted: usize,
+        turn: Option<(usize, u32)>,
+    ) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {
         gst::init().unwrap();
         let appsrc = gst::ElementFactory::make("appsrc")
             .build()
@@ -601,9 +605,10 @@ mod tests {
 
         let status = Arc::new(Status::new("test", false, config.width, config.height));
         let shutdown = Arc::new(AtomicBool::new(false));
+        let choice = Choice::parse(&config.camera).unwrap();
         let worker = Worker {
             config: Arc::new(config),
-            choice: Choice::Test,
+            choice,
             appsrc,
             detector: None,
             status: status.clone(),
@@ -620,6 +625,11 @@ mod tests {
                 .expect("a frame within 20 s");
             let data = sample.buffer().unwrap().map_readable().unwrap().to_vec();
             frames.push((sample.caps().unwrap().to_owned(), data));
+            if let Some((after, degrees)) = turn {
+                if frames.len() == after {
+                    status.set_rotation(degrees).unwrap();
+                }
+            }
         }
         shutdown.store(true, Ordering::Relaxed);
         worker.join().unwrap();
@@ -646,6 +656,54 @@ mod tests {
         let health: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
         assert_eq!(health["camera"], "test pattern");
         assert!(status.snapshot_jpeg().unwrap().is_some());
+    }
+
+    #[test]
+    fn a_turn_from_the_page_reaches_the_running_capture_without_stretching() {
+        // Left half white, right half black: a quarter turn clockwise puts the white on top.
+        let (w, h) = (64u32, 48u32);
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for _y in 0..h {
+            for x in 0..w {
+                let v = if x < w / 2 { 255 } else { 0 };
+                rgba.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("half.jpg");
+        std::fs::write(&image, crate::status::encode_jpeg(&rgba, w, h).unwrap()).unwrap();
+        let config = Config {
+            camera: format!("image:{}", image.display()),
+            width: w,
+            height: h,
+            ..Config::default()
+        };
+        let (frames, _) = capture_frames_turning(config, 30, Some((5, 90)));
+        let luma = |data: &[u8], x: u32, y: u32| data[(y * w + x) as usize];
+        let (_, before) = &frames[2];
+        assert!(
+            luma(before, 6, 24) > 200 && luma(before, 57, 24) < 50,
+            "white left, black right"
+        );
+        let (caps, after) = frames.last().unwrap();
+        let s = caps.structure(0).unwrap();
+        assert_eq!(
+            (
+                s.get::<i32>("width").unwrap(),
+                s.get::<i32>("height").unwrap()
+            ),
+            (64, 48)
+        );
+        assert_eq!(after.len(), frame::size(w, h));
+        assert!(
+            luma(after, 32, 6) > 200 && luma(after, 32, 41) < 50,
+            "white top, black bottom"
+        );
+        // The 48x64 picture is bordered into 64x48, not stretched: its sides are bars.
+        assert!(
+            luma(after, 2, 6) < 50 && luma(after, 61, 6) < 50,
+            "bars at the sides"
+        );
     }
 
     #[test]

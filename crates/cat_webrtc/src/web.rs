@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context as _};
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
@@ -29,6 +29,8 @@ pub const SNAPSHOT_PATH: &str = "/snapshot.jpg";
 pub const ARRIVAL_PATH: &str = "/arrival.jpg";
 /// The last arrival as an H.264 clip, from a few seconds before it.
 pub const CLIP_PATH: &str = "/arrival.mp4";
+/// `POST {"rotate": 90}` turns the picture, as the page's rotate buttons do.
+pub const ROTATE_PATH: &str = "/rotate";
 
 /// How long the signalling server may take to answer the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -77,6 +79,8 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
                 plain(StatusCode::BAD_GATEWAY, "signalling server unreachable")
             }
         }
+    } else if path == ROTATE_PATH {
+        rotate(req, &site.status).await
     } else if req.method() != Method::GET && req.method() != Method::HEAD {
         plain(StatusCode::METHOD_NOT_ALLOWED, "GET or HEAD only")
     } else if path == "/healthz" {
@@ -122,6 +126,44 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
         HeaderValue::from_static("nosniff"),
     );
     Ok(response)
+}
+
+/// JSON only: another site's form cannot send it, and a script needs a CORS preflight this server never grants.
+async fn rotate(req: Request<Incoming>, status: &Status) -> Response<Body> {
+    #[derive(serde::Deserialize)]
+    struct Rotate {
+        rotate: u32,
+    }
+    if req.method() != Method::POST {
+        return plain(StatusCode::METHOD_NOT_ALLOWED, "POST only");
+    }
+    let json = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/json"));
+    if !json {
+        return plain(StatusCode::UNSUPPORTED_MEDIA_TYPE, "application/json only");
+    }
+    let Ok(body) = Limited::new(req.into_body(), 256).collect().await else {
+        return plain(StatusCode::BAD_REQUEST, "body too large or unreadable");
+    };
+    let Ok(Rotate { rotate }) = serde_json::from_slice(&body.to_bytes()) else {
+        return plain(
+            StatusCode::BAD_REQUEST,
+            r#"expected {"rotate": 0, 90, 180 or 270}"#,
+        );
+    };
+    if let Err(err) = status.set_rotation(rotate) {
+        log::warn!("{ROTATE_PATH}: {err:#}");
+        return plain(StatusCode::BAD_REQUEST, "rotate must be 0, 90, 180 or 270");
+    }
+    let mut response = Response::new(Full::new(Bytes::from(format!(r#"{{"rotate":{rotate}}}"#))));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response
 }
 
 pub(crate) fn plain(status: StatusCode, text: &'static str) -> Response<Body> {
@@ -466,6 +508,60 @@ mod tests {
         let split = response.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
         let head = String::from_utf8_lossy(&response[..split]).into_owned();
         (head, response[split + 4..].to_vec())
+    }
+
+    async fn post(
+        addr: std::net::SocketAddr,
+        path: &str,
+        content_type: &str,
+        body: &str,
+    ) -> String {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let request = format!(
+            "POST {path} HTTP/1.1\r\nhost: cat.local\r\nconnection: close\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        String::from_utf8_lossy(&response).into_owned()
+    }
+
+    fn rotation_of(healthz: &str) -> u64 {
+        let body = &healthz[healthz.find("\r\n\r\n").unwrap() + 4..];
+        serde_json::from_str::<serde_json::Value>(body).unwrap()["rotate"]
+            .as_u64()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_json_post_turns_the_picture_and_healthz_says_so() {
+        let addr = start(None, 9).await;
+        assert_eq!(rotation_of(&get(addr, "/healthz", "").await), 0);
+        let reply = post(addr, "/rotate", "application/json", r#"{"rotate": 270}"#).await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.ends_with(r#"{"rotate":270}"#), "{reply}");
+        assert_eq!(rotation_of(&get(addr, "/healthz", "").await), 270);
+    }
+
+    #[tokio::test]
+    async fn rotate_takes_only_a_json_post_of_a_right_angle() {
+        let addr = start(None, 9).await;
+        // A form post is what another site could send without a preflight.
+        let form = post(
+            addr,
+            "/rotate",
+            "application/x-www-form-urlencoded",
+            "rotate=90",
+        )
+        .await;
+        assert!(form.starts_with("HTTP/1.1 415"), "{form}");
+        let odd = post(addr, "/rotate", "application/json", r#"{"rotate": 45}"#).await;
+        assert!(odd.starts_with("HTTP/1.1 400"), "{odd}");
+        let junk = post(addr, "/rotate", "application/json", "turn it").await;
+        assert!(junk.starts_with("HTTP/1.1 400"), "{junk}");
+        assert!(get(addr, "/rotate", "").await.starts_with("HTTP/1.1 405"));
+        assert_eq!(rotation_of(&get(addr, "/healthz", "").await), 0);
     }
 
     fn etag_of(head: &str) -> String {

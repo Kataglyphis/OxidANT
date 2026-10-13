@@ -203,6 +203,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         config.width,
         config.height,
     );
+    let status = status.rotated(config.rotate);
     let status = Arc::new(match state_dir() {
         Some(dir) => {
             log::info!("state: {}", dir.display());

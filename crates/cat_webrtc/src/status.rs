@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,6 +17,16 @@ const CAT_FILE: &str = "cat.json";
 
 /// The frame of the last arrival, kept across restarts beside it.
 const ARRIVAL_FILE: &str = "arrival.jpg";
+/// What the page set, such as the rotation; it wins over `catcam.toml`, which the service cannot write.
+const SETTINGS_FILE: &str = "settings.json";
+
+/// The angles `videoflip` turns a picture by, clockwise.
+pub const ROTATIONS: [u32; 4] = [0, 90, 180, 270];
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Settings {
+    rotate: Option<u32>,
+}
 /// How many arrivals' clips stay addressable: a false visit must not replace the clip a notification links.
 const CLIPS_KEPT: usize = 5;
 /// How far a requested arrival time may be from a kept clip's and still name it.
@@ -71,6 +82,8 @@ pub struct Status {
     clips: Mutex<VecDeque<(u64, bytes::Bytes)>>,
     /// Where [`CAT_FILE`] and [`ARRIVAL_FILE`] live; `None` forgets everything at exit.
     state_dir: Option<PathBuf>,
+    /// Clockwise degrees the capture turns the picture by; the capture thread follows a change.
+    rotate: AtomicU32,
 }
 
 impl Status {
@@ -86,7 +99,35 @@ impl Status {
             arrival: Mutex::new(None),
             clips: Mutex::new(VecDeque::new()),
             state_dir: None,
+            rotate: AtomicU32::new(0),
         }
+    }
+
+    /// The rotation `catcam.toml` asks for; a rotation the page saved overrides it in [`Self::remember_in`].
+    pub fn rotated(self, degrees: u32) -> Self {
+        self.rotate.store(degrees, Ordering::Relaxed);
+        self
+    }
+
+    /// Clockwise degrees the picture is turned by.
+    pub fn rotation(&self) -> u32 {
+        self.rotate.load(Ordering::Relaxed)
+    }
+
+    /// Turns the picture from now on, and from the next start too when a state directory keeps it.
+    pub fn set_rotation(&self, degrees: u32) -> anyhow::Result<()> {
+        if !ROTATIONS.contains(&degrees) {
+            anyhow::bail!("rotate must be 0, 90, 180 or 270 (got {degrees})");
+        }
+        self.rotate.store(degrees, Ordering::Relaxed);
+        if let Some(dir) = &self.state_dir {
+            let json = serde_json::to_vec(&Settings {
+                rotate: Some(degrees),
+            })?;
+            write_atomic(&dir.join(SETTINGS_FILE), &json)?;
+        }
+        log::info!("rotate: {degrees} degrees, set from the page");
+        Ok(())
     }
 
     /// Restores the cat's visits and last arrival frame from `dir` and keeps them there from now on.
@@ -127,6 +168,15 @@ impl Status {
         }
         if let Ok(clips) = self.clips.get_mut() {
             *clips = restored;
+        }
+        if let Some(degrees) = std::fs::read_to_string(dir.join(SETTINGS_FILE))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Settings>(&text).ok())
+            .and_then(|settings| settings.rotate)
+            .filter(|degrees| ROTATIONS.contains(degrees))
+        {
+            log::info!("rotate: {degrees} degrees, as the page set it");
+            self.rotate.store(degrees, Ordering::Relaxed);
         }
         self.state_dir = Some(dir);
         self
@@ -311,6 +361,7 @@ impl Status {
         serde_json::json!({
             "ok": true,
             "name": self.name,
+            "rotate": self.rotation(),
             "camera": camera,
             "inference": self.inference,
             "model_runs": runs,
@@ -493,6 +544,29 @@ mod tests {
         assert_eq!(status.visit_stay(at + 1), None);
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
         assert_eq!(json["cat"]["clips"], serde_json::json!([at + 60, at]));
+    }
+
+    #[test]
+    fn a_turn_from_the_page_outlives_a_restart_and_wins_over_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let status = Status::new("Cam", true, 4, 4)
+            .rotated(180)
+            .remember_in(dir.path().to_path_buf());
+        assert_eq!(
+            status.rotation(),
+            180,
+            "catcam.toml's rotate until the page sets one"
+        );
+        status.set_rotation(270).unwrap();
+        assert!(status.set_rotation(45).is_err());
+        assert_eq!(status.rotation(), 270);
+
+        let after = Status::new("Cam", true, 4, 4)
+            .rotated(180)
+            .remember_in(dir.path().to_path_buf());
+        assert_eq!(after.rotation(), 270);
+        let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
+        assert_eq!(json["rotate"], 270);
     }
 
     #[test]
