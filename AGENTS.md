@@ -467,6 +467,11 @@ board runs it as one service unit:
   request's `Host`, and the host must be an IP, a dotless name, a local suffix (`.local`,
   `.lan`, `.home`, `.internal`, `.home.arpa`, `.fritz.box`) or in `allowed_hosts`. Reads stay
   open. A reverse proxy under a public name needs its name in `allowed_hosts`.
+- **`rpicam-vid --codec yuv420` pads its rows** (2026-10-14): to 128 bytes, so a 480-wide
+  frame is 512-byte rows, 276480 bytes. `I420Layout::rpicam` hands `rawvideoparse` the
+  strides; a width that is a multiple of 128 (640) needs none, which is why 640x480 never
+  showed it. Read as tight rows, the picture turns into green stripes and the motion gate
+  sees motion everywhere.
 - **What may start a visit** (2026-10-14, `capture::counted`): only a detection with motion
   near it (`motion::Moving`, from the pacer's looks), after `presence::outside` dropped the
   spots marked "not a cat". Test inputs that never move, such as `image:FILE`, still arrive

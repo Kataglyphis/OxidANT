@@ -37,6 +37,15 @@ type Boxes = Arc<Mutex<Vec<Detection>>>;
 /// A frame for the model, and where something moved lately; `None` with the motion gate off.
 type Look = (Vec<u8>, Option<Moving>);
 
+/// Why a capture ended without an error.
+#[derive(Debug, PartialEq)]
+enum Ended {
+    /// The source finished, the stand-in's time ran out, or the service stops.
+    Done,
+    /// The page turned the picture between landscape and portrait: capture again at the new size.
+    Turned,
+}
+
 /// Everything the worker thread owns.
 pub struct Worker {
     pub config: Arc<Config>,
@@ -83,10 +92,17 @@ impl Worker {
             if self.shutdown.load(Ordering::Relaxed) {
                 break;
             }
+            if matches!(result, Ok(Ended::Turned)) {
+                log::info!(
+                    "the picture turned to {} degrees: capturing again at its size",
+                    self.status.rotation()
+                );
+                continue;
+            }
             match &result {
                 Err(err) => log::warn!("capture from {label} stopped: {err:#}"),
-                Ok(()) if !plan.is_stand_in() => log::info!("capture from {label} ended"),
-                Ok(()) => {}
+                Ok(_) if !plan.is_stand_in() => log::info!("capture from {label} ended"),
+                Ok(_) => {}
             }
             if started.elapsed() > Duration::from_secs(60) {
                 failures = 0;
@@ -120,13 +136,15 @@ impl Worker {
         boxes: &Boxes,
         inference: Option<&mpsc::SyncSender<Look>>,
         deadline: Option<Instant>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Ended> {
         let config = &self.config;
-        let mut source = Source::build(plan, found, config)?;
+        let mut turned = self.status.rotation();
+        let isp = isp_scales(plan, found);
+        let size = capture_size(isp, config, turned);
+        let mut source = Source::build(plan, found, config, size)?;
         let pipeline = gst::Pipeline::new();
         let mut elements = std::mem::take(&mut source.elements);
         elements.push(make("videoconvert")?);
-        let mut turned = self.status.rotation();
         let flip = videoflip(turned)?;
         elements.push(flip.clone());
         elements.push(make("videoscale")?);
@@ -160,16 +178,16 @@ impl Worker {
             if self.shutdown.load(Ordering::Relaxed)
                 || deadline.is_some_and(|d| Instant::now() >= d)
             {
-                return Ok(());
+                return Ok(Ended::Done);
             }
             if bus_says_done(&bus)? {
-                return Ok(());
+                return Ok(Ended::Done);
             }
             let Some(sample) = sink.try_pull_sample(PULL_TIMEOUT) else {
                 // A failing source posts its error and then sends EOS: report the error, not a clean end.
                 if sink.is_eos() {
                     bus_says_done(&bus)?;
-                    return Ok(());
+                    return Ok(Ended::Done);
                 }
                 if last_frame.elapsed() > STALL_AFTER {
                     bail!("no frame for {} s", STALL_AFTER.as_secs());
@@ -180,11 +198,14 @@ impl Worker {
             // The page turned the picture: videoflip follows at once, and videoscale keeps the size.
             let wanted = self.status.rotation();
             if wanted != turned {
+                if capture_size(isp, config, wanted) != size {
+                    return Ok(Ended::Turned);
+                }
                 flip.set_property_from_str("method", flip_method(wanted)?);
                 turned = wanted;
             }
             if !self.push(&sample, boxes, inference, &mut pacer)? {
-                return Ok(());
+                return Ok(Ended::Done);
             }
         }
     }
@@ -274,9 +295,15 @@ impl Drop for RpicamProcess {
 }
 
 impl Source {
-    fn build(plan: &Plan, found: &Found, config: &Config) -> anyhow::Result<Self> {
+    /// `size` is what the source delivers; [`capture_size`] picks it.
+    fn build(
+        plan: &Plan,
+        found: &Found,
+        config: &Config,
+        size: (u32, u32),
+    ) -> anyhow::Result<Self> {
         let elements = match plan {
-            Plan::Rpicam => return Self::rpicam(config),
+            Plan::Rpicam => return Self::rpicam(config, size),
             Plan::Device { index, mjpeg } => {
                 let info = &found.probe.devices[*index];
                 let source = found.devices[*index]
@@ -284,7 +311,7 @@ impl Source {
                     .with_context(|| format!("create {} for {}", info.factory, info.name))?;
                 let mut elements = vec![source];
                 match info.factory.as_str() {
-                    "libcamerasrc" => elements.push(capsfilter(libcamera_caps(config))?),
+                    "libcamerasrc" => elements.push(capsfilter(libcamera_caps(config, size))?),
                     "v4l2src" if *mjpeg => {
                         elements.push(capsfilter(gst::Caps::builder("image/jpeg").build())?);
                         elements.push(make("jpegdec")?);
@@ -297,7 +324,7 @@ impl Source {
             Plan::Libcamera => vec![
                 make("libcamerasrc")
                     .context("libcamerasrc (is the libcamera plugin installed?)")?,
-                capsfilter(libcamera_caps(config))?,
+                capsfilter(libcamera_caps(config, size))?,
             ],
             Plan::V4l2Path(path) => vec![
                 gst::ElementFactory::make("v4l2src")
@@ -344,11 +371,11 @@ impl Source {
 
     /// `rpicam-vid` writing raw I420 to a pipe: the host's camera stack, whatever its libcamera ABI.
     #[cfg(unix)]
-    fn rpicam(config: &Config) -> anyhow::Result<Self> {
+    fn rpicam(config: &Config, (w, h): (u32, u32)) -> anyhow::Result<Self> {
         use std::os::fd::AsRawFd as _;
         use std::process::{Command, Stdio};
 
-        let (w, h, fps) = (config.width, config.height, config.fps);
+        let fps = config.fps;
         let child = Command::new("rpicam-vid")
             .args([
                 "--timeout",
@@ -377,9 +404,10 @@ impl Source {
             .as_ref()
             .context("rpicam-vid stdout")?
             .as_raw_fd();
+        let layout = I420Layout::rpicam(w, h);
         let fdsrc = gst::ElementFactory::make("fdsrc")
             .property("fd", fd)
-            .property("blocksize", w * h * 3 / 2)
+            .property("blocksize", layout.frame_size)
             .build()
             .context("fdsrc")?;
         let parse = gst::ElementFactory::make("rawvideoparse")
@@ -387,6 +415,9 @@ impl Source {
             .property("width", w as i32)
             .property("height", h as i32)
             .property("framerate", gst::Fraction::new(fps as i32, 1))
+            .property_from_str("plane-strides", &layout.strides())
+            .property_from_str("plane-offsets", &layout.offsets())
+            .property("frame-size", layout.frame_size)
             .build()
             .context("rawvideoparse (is the rawparse plugin installed?)")?;
         Ok(Self {
@@ -396,7 +427,7 @@ impl Source {
     }
 
     #[cfg(not(unix))]
-    fn rpicam(_config: &Config) -> anyhow::Result<Self> {
+    fn rpicam(_config: &Config, _size: (u32, u32)) -> anyhow::Result<Self> {
         bail!("rpicam-vid exists on Raspberry Pi OS only")
     }
 }
@@ -560,12 +591,76 @@ fn raw_caps() -> gst::Caps {
     gst::Caps::builder("video/x-raw").build()
 }
 
+/// What the source delivers at `rotate`. A Pi camera's ISP scales for free, so a quarter turn
+/// captures the picture already as small as it ends up turned (480x360 for 640x480), and
+/// videoscale only adds the side borders: a Pi 5 spent 20 % of a core resampling it, 3 % now.
+fn capture_size(isp: bool, config: &Config, rotate: u32) -> (u32, u32) {
+    let (w, h) = (config.width, config.height);
+    // Only a width whose rows pad alike at 64 and 128 bytes, so the stride holds on any Pi's ISP.
+    let pads_alike = h.next_multiple_of(64) == h.next_multiple_of(128);
+    if isp && matches!(rotate, 90 | 270) && w > 0 && pads_alike {
+        let side = (u64::from(h) * u64::from(h) / u64::from(w)) as u32 & !1;
+        (h, side.max(2))
+    } else {
+        (w, h)
+    }
+}
+
+/// Where `rpicam-vid --codec yuv420` puts the planes of one frame: each row padded to 128 bytes,
+/// measured on a Pi (480 wide writes 512-byte rows, 640 none).
+#[derive(Debug, PartialEq)]
+struct I420Layout {
+    luma_stride: u32,
+    chroma_stride: u32,
+    height: u32,
+    frame_size: u32,
+}
+
+impl I420Layout {
+    fn rpicam(width: u32, height: u32) -> Self {
+        let luma_stride = width.next_multiple_of(128);
+        let chroma_stride = luma_stride / 2;
+        Self {
+            luma_stride,
+            chroma_stride,
+            height,
+            frame_size: luma_stride * height + 2 * chroma_stride * height.div_ceil(2),
+        }
+    }
+
+    fn strides(&self) -> String {
+        format!(
+            "<{}, {}, {}>",
+            self.luma_stride, self.chroma_stride, self.chroma_stride
+        )
+    }
+
+    fn offsets(&self) -> String {
+        let chroma = self.luma_stride * self.height;
+        let second = chroma + self.chroma_stride * self.height.div_ceil(2);
+        format!("<0, {chroma}, {second}>")
+    }
+}
+
+/// A source whose camera pipeline scales to any size it is asked for: a Pi camera's ISP.
+fn isp_scales(plan: &Plan, found: &Found) -> bool {
+    match plan {
+        Plan::Rpicam | Plan::Libcamera => true,
+        Plan::Device { index, .. } => found
+            .probe
+            .devices
+            .get(*index)
+            .is_some_and(|d| d.factory == "libcamerasrc"),
+        _ => false,
+    }
+}
+
 /// The ISP scales cheaper than videoscale, and without `RGB` libcamera hands back raw Bayer.
-fn libcamera_caps(config: &Config) -> gst::Caps {
+fn libcamera_caps(config: &Config, (width, height): (u32, u32)) -> gst::Caps {
     gst::Caps::builder("video/x-raw")
         .field("format", "RGB")
-        .field("width", config.width as i32)
-        .field("height", config.height as i32)
+        .field("width", width as i32)
+        .field("height", height as i32)
         .field("framerate", gst::Fraction::new(config.fps as i32, 1))
         .build()
 }
@@ -766,5 +861,93 @@ mod tests {
         assert_eq!(counted(&[rack], true, Some(&still)), vec![rack]);
         // With the motion gate off nothing is known about motion, and every detection counts.
         assert_eq!(counted(&[rack], false, None), vec![rack]);
+    }
+
+    #[test]
+    fn a_pi_camera_turned_a_quarter_captures_the_picture_as_small_as_it_ends_up() {
+        let config = Config::default();
+        assert_eq!(capture_size(true, &config, 0), (640, 480));
+        assert_eq!(capture_size(true, &config, 180), (640, 480));
+        assert_eq!(capture_size(true, &config, 90), (480, 360));
+        assert_eq!(capture_size(true, &config, 270), (480, 360));
+        // A webcam or a test source has no free scaler: it keeps its size, and videoscale scales.
+        assert_eq!(capture_size(false, &config, 270), (640, 480));
+        // Odd results round down to even, which I420 needs.
+        let wide = Config {
+            width: 1280,
+            height: 722,
+            ..Config::default()
+        };
+        assert_eq!(capture_size(true, &wide, 90), (722, 406));
+        // A height whose rows a 64-byte and a 128-byte ISP pad differently keeps the full size.
+        let odd = Config {
+            width: 768,
+            height: 576,
+            ..Config::default()
+        };
+        assert_eq!(capture_size(true, &odd, 90), (768, 576));
+    }
+
+    #[test]
+    fn rpicam_frames_are_read_with_their_padded_rows() {
+        // Measured on tabblscatcam: 480x360 is 276480 bytes a frame, 640x480 460800.
+        let turned = I420Layout::rpicam(480, 360);
+        assert_eq!(turned.frame_size, 276_480);
+        assert_eq!(turned.strides(), "<512, 256, 256>");
+        assert_eq!(turned.offsets(), "<0, 184320, 230400>");
+        assert_eq!(I420Layout::rpicam(640, 480).frame_size, 460_800);
+        assert_eq!(I420Layout::rpicam(448, 336).frame_size, 258_048);
+        // rawvideoparse takes them as written.
+        gst::init().unwrap();
+        let parse = gst::ElementFactory::make("rawvideoparse")
+            .property_from_str("format", "i420")
+            .property("width", 480i32)
+            .property("height", 360i32)
+            .property_from_str("plane-strides", &turned.strides())
+            .property_from_str("plane-offsets", &turned.offsets())
+            .property("frame-size", turned.frame_size)
+            .build()
+            .unwrap();
+        assert_eq!(parse.property::<u32>("frame-size"), 276_480);
+    }
+
+    #[test]
+    fn only_a_pi_camera_counts_as_scaling_for_free() {
+        let device = |factory: &str| crate::camera::DeviceInfo {
+            factory: factory.into(),
+            ..Default::default()
+        };
+        let found = Found {
+            probe: crate::camera::Probe {
+                devices: vec![device("libcamerasrc"), device("v4l2src")],
+                ..Default::default()
+            },
+            devices: Vec::new(),
+        };
+        assert!(isp_scales(&Plan::Rpicam, &found));
+        assert!(isp_scales(&Plan::Libcamera, &found));
+        assert!(isp_scales(
+            &Plan::Device {
+                index: 0,
+                mjpeg: false
+            },
+            &found
+        ));
+        assert!(!isp_scales(
+            &Plan::Device {
+                index: 1,
+                mjpeg: false
+            },
+            &found
+        ));
+        assert!(!isp_scales(
+            &Plan::Device {
+                index: 9,
+                mjpeg: false
+            },
+            &found
+        ));
+        assert!(!isp_scales(&Plan::V4l2Path("/dev/video0".into()), &found));
+        assert!(!isp_scales(&Plan::Test(None), &found));
     }
 }

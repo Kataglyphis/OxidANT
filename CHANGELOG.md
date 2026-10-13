@@ -91,6 +91,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `stayed_s`, as a visit shorter than the clip's post-roll ends before the clip is written.
 
 ### Changed
+- **A Pi camera turned a quarter captures the picture as small as it ends up** (2026-10-14).
+  At 90 and 270 degrees `rpicam-vid` and libcamera deliver 480x360 (for 640x480) through
+  the ISP's free scaler, so `videoscale` only adds the side borders. Measured on a Pi 5,
+  30 fps: resampling the turned 480x640 cost 20 % of a core, borders alone 3 %. A turn
+  between landscape and portrait restarts such a capture once (`Ended::Turned`); other
+  sources keep their size and still turn live. On tabblscatcam (rotate 270) the service
+  went from 21 % to 4 % of a core.
+  - `rpicam-vid --codec yuv420` pads each row to 128 bytes: 480 wide writes 512-byte rows
+    (276480 bytes a frame, measured). `rawvideoparse` now gets those strides and offsets;
+    read as tight rows the picture was green stripes. Only a width that pads alike at 64
+    and 128 bytes is captured smaller, so the stride holds on either ISP.
 - **Renovate skips the vendored `third_party/egui-winit-0.36.2` (2026-10-14).** A packageRule
   in `.github/renovate.json` (`matchFileNames`, `enabled: false`) keeps its upstream
   `Cargo.toml` and `Cargo.lock` out of the report and out of lock maintenance. Its rows had
