@@ -390,6 +390,32 @@ mod tests {
     }
 
     #[test]
+    fn a_peer_is_an_origin_and_nothing_more() {
+        let peers = |list: &[&str]| Config {
+            peers: list.iter().map(|p| (*p).to_owned()).collect(),
+            ..Config::default()
+        };
+        assert!(
+            peers(&["http://192.168.188.151:8080", "https://cat.local/"])
+                .validate()
+                .is_ok()
+        );
+        for bad in [
+            "192.168.188.151:8080",
+            "ftp://cat.local",
+            "http://",
+            "http://cat.local/stream",
+        ] {
+            assert!(peers(&[bad]).validate().is_err(), "accepted {bad}");
+        }
+        // Unset, none are listed and eight tabs may watch.
+        let text = toml::to_string(&Config::default()).unwrap();
+        let back = Config::parse(&text).unwrap();
+        assert!(back.peers.is_empty());
+        assert_eq!(back.max_viewers, 8);
+    }
+
+    #[test]
     fn the_effective_config_round_trips_through_toml() {
         let config = Config {
             camera: "rpicam".into(),

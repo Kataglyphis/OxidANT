@@ -405,8 +405,11 @@ fn start_notifier(
 
 /// The first of `$STATE_DIRECTORY`'s colon-separated directories, if systemd set one.
 fn state_dir() -> Option<PathBuf> {
-    let value = std::env::var(STATE_DIR_ENV).ok()?;
-    let first = value.split(':').next()?.trim();
+    first_dir(&std::env::var(STATE_DIR_ENV).ok()?)
+}
+
+fn first_dir(list: &str) -> Option<PathBuf> {
+    let first = list.split(':').next()?.trim();
     (!first.is_empty()).then(|| PathBuf::from(first))
 }
 
@@ -679,5 +682,90 @@ mod tests {
         assert!(start_notifier(&config, false, status.clone()).is_none());
         config.notify_url = None;
         assert!(start_notifier(&config, true, status).is_none());
+    }
+
+    #[test]
+    fn a_missing_model_stops_on_and_turns_auto_off() {
+        let mut config = applied(&["--inference", "on"]);
+        config.model = Some("/nonexistent/yolo.onnx".into());
+        let err = load_detector(&config)
+            .err()
+            .expect("on must fail without its model");
+        assert!(
+            format!("{err:#}").contains("/nonexistent/yolo.onnx"),
+            "{err:#}"
+        );
+        config.inference = Inference::Auto;
+        assert!(load_detector(&config).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_notify_url_with_the_model_on_starts_the_delivery_thread() {
+        let config = applied(&["--notify-url", "http://ha.local/api/webhook/x"]);
+        let status = Arc::new(status::Status::new("Cam", true, 4, 4));
+        assert!(start_notifier(&config, true, status).is_some());
+    }
+
+    #[test]
+    fn systemd_names_the_state_directory_first() {
+        assert_eq!(
+            first_dir("/var/lib/cat:/var/lib/other"),
+            Some(PathBuf::from("/var/lib/cat"))
+        );
+        assert_eq!(
+            first_dir(" /var/lib/cat "),
+            Some(PathBuf::from("/var/lib/cat"))
+        );
+        assert_eq!(first_dir(""), None);
+        assert_eq!(first_dir(":/var/lib/other"), None);
+    }
+
+    #[test]
+    fn the_web_server_answers_on_the_configured_address() {
+        use std::io::{Read as _, Write as _};
+        let web = tempfile::tempdir().unwrap();
+        std::fs::write(
+            web.path().join("index.html"),
+            "<!doctype html><title>cat</title>",
+        )
+        .unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut config = applied(&["--http-host", "127.0.0.1", "--http-port", &port.to_string()]);
+        config.web_root = Some(web.path().to_path_buf());
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let status = Arc::new(status::Status::new("Web Cam", false, 4, 4));
+        start_web(&runtime, &config, status).unwrap();
+        let get = |path: &str| {
+            let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(
+                stream,
+                "GET {path} HTTP/1.1\r\nhost: cat.local\r\nconnection: close\r\n\r\n"
+            )
+            .unwrap();
+            let mut reply = String::new();
+            stream.read_to_string(&mut reply).unwrap();
+            reply
+        };
+        let health = get("/healthz");
+        assert!(
+            health.starts_with("HTTP/1.1 200") && health.contains("\"name\":\"Web Cam\""),
+            "{health}"
+        );
+        assert!(get("/").contains("<title>cat</title>"));
+        // The port is taken now, so a second server on it fails and says where.
+        let status = Arc::new(status::Status::new("Second", false, 4, 4));
+        let err = start_web(&runtime, &config, status).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(&format!("127.0.0.1:{port}")),
+            "{err:#}"
+        );
     }
 }

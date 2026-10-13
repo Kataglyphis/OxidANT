@@ -627,4 +627,20 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn a_probe_lists_what_the_device_providers_see_and_a_plan_follows() {
+        gst::init().unwrap();
+        // Test and image sources need no probe at all.
+        assert_eq!(probe(&Choice::Test).probe, Probe::default());
+        // Auto asks rpicam-apps and the camera providers; whatever this host has, the lists agree.
+        let found = probe(&Choice::Auto);
+        assert_eq!(found.probe.devices.len(), found.devices.len());
+        assert!(found.probe.devices.iter().all(|d| !d.factory.is_empty()));
+        let plan = choose(&Choice::Auto, &found.probe);
+        if found.probe.devices.is_empty() && found.probe.rpicam_cameras.is_empty() {
+            assert!(plan.is_stand_in(), "{plan:?}");
+        }
+        assert!(!plan.describe(&found.probe).is_empty());
+    }
 }
