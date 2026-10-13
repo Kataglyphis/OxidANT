@@ -331,6 +331,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pointer and still owns the web half, `serve.sh`.
 
 ### Changed
+- **Lock file maintenance moves 61 packages (2026-10-13, the Renovate report).**
+  - `cargo update` takes every in-range release, among them cxx 1.0.205, proptest 1.12.0
+    (with rand_xorshift 0.5.0), serde_json 1.0.154, turso 0.8.3, uuid 1.28.0, zopfli 0.8.4
+    and syn 3.0.9. `ort` stays `=2.0.0-rc.13`: rc.14 targets ONNX Runtime 1.31.0 with a new
+    `Environment` API, and the images still carry 1.30.0. `zune-core` stays 0.5.3.
+  - `third_party/egui-winit-0.36.2/Cargo.lock` is again not refreshed. cargo exits 101 there
+    (`current package believes it's in a workspace when it's not`), because the crate sits
+    inside this workspace without being a member; a copy outside it updates. No build reads
+    that lock, and `PATCHED.md` vouches for every file but `src/lib.rs` as published.
+  - Verified in `:latest` (x64): `ci-container-steps.sh` `ort-chain-only`, `security`,
+    `fmt-clippy`, `test` (457 passed, the one known ignore, lavapipe with
+    `KATAGLYPHIS_REQUIRE_GPU=1`), `release` and `docs`; `cargo check` for each of the six
+    `feature-matrix` rows; the renderer's wasm32 check; `run-lint-gates.sh --ratchets`.
 - **tokio 1.53.1 → 1.53.2, hyper 1.11.1 → 1.12.0, upload-artifact v7.0.1 → v7.0.2
   (2026-10-07, the evening Renovate report).**
   - Both crates are lockfile-only moves (`cargo update -p tokio@1`, then `-p hyper@1`,
