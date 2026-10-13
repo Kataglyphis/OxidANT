@@ -710,10 +710,9 @@ mod tests {
             .remember_in(dir.path().to_path_buf());
         assert_eq!(after.name(), "Futtertrog");
         assert_eq!(after.score(), 0.4);
-        assert!(
-            after.settings_json().contains(r#""score":0.4,"#)
-                || after.settings_json().ends_with(r#""score":0.4}"#)
-        );
+        // Two places in the JSON, not the f32's 0.4000000059604645.
+        let settings: serde_json::Value = serde_json::from_str(&after.settings_json()).unwrap();
+        assert_eq!(settings["score"].to_string(), "0.4");
         let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
         assert_eq!(json["name"], "Futtertrog");
     }

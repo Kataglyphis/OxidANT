@@ -116,3 +116,94 @@ pub fn request_shutdown(pipeline: &gst::Pipeline) {
         SHUTDOWN,
     )));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn run_ends_on_a_shutdown_request_and_on_end_of_stream() {
+        gst::init().unwrap();
+        let pipeline = gst::Pipeline::new();
+        request_shutdown(&pipeline);
+        run(&pipeline).unwrap();
+        let bus = pipeline.bus().unwrap();
+        bus.post(gst::message::Eos::new()).unwrap();
+        run(&pipeline).unwrap();
+    }
+
+    #[test]
+    fn run_reports_a_pipeline_error_with_its_debug_text() {
+        gst::init().unwrap();
+        let pipeline = gst::Pipeline::new();
+        let message = gst::message::Error::builder(gst::CoreError::Failed, "the sink fell over")
+            .debug("a debug line")
+            .build();
+        pipeline.bus().unwrap().post(message).unwrap();
+        let err = run(&pipeline).unwrap_err().to_string();
+        assert!(
+            err.contains("the sink fell over") && err.contains("a debug line"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn the_sender_carries_the_config_and_its_signalling_server_answers() {
+        gst::init().unwrap();
+        if gst::ElementFactory::find("webrtcsink").is_none() {
+            eprintln!("skipped: this GStreamer has no webrtcsink");
+            return;
+        }
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let config = Config {
+            name: "Futtertrog".into(),
+            signalling_port: port,
+            ice_port_min: 50000,
+            ice_port_max: 50010,
+            width: 64,
+            height: 48,
+            ..Config::default()
+        };
+        let (pipeline, appsrc) = build(&config).unwrap();
+        assert_eq!(appsrc.caps().unwrap(), crate::frame::caps(&config));
+        let webrtc = pipeline.by_name("ws").unwrap();
+        assert_eq!(
+            webrtc.property::<u32>("signalling-server-port"),
+            u32::from(port)
+        );
+        let meta = webrtc.property::<gst::Structure>("meta");
+        assert_eq!(meta.get::<String>("name").unwrap(), "Futtertrog");
+
+        pipeline.set_state(gst::State::Playing).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let reply = loop {
+            if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                write!(
+                    stream,
+                    "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+                     Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+                )
+                .unwrap();
+                let mut head = [0u8; 64];
+                let n = stream.read(&mut head).unwrap_or(0);
+                break String::from_utf8_lossy(&head[..n]).into_owned();
+            }
+            assert!(Instant::now() < deadline, "no signalling server on {port}");
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert!(reply.starts_with("HTTP/1.1 101"), "{reply}");
+        request_shutdown(&pipeline);
+        run(&pipeline).unwrap();
+        pipeline.set_state(gst::State::Null).unwrap();
+    }
+}
