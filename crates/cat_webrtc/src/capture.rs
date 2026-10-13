@@ -17,7 +17,7 @@ use crate::camera::{self, Choice, Found, Plan};
 use crate::clip::{Arrival, Clip};
 use crate::config::Config;
 use crate::frame;
-use crate::motion::{rate_period, Pacer};
+use crate::motion::{still_period, Pacer};
 use crate::notify::Notifier;
 use crate::presence::{best_score, Change, Presence};
 use crate::status::Status;
@@ -424,7 +424,8 @@ fn spawn_inference(
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
     let (width, height) = (config.width, config.height);
     let wanted = (!config.all_classes).then(|| vec![COCO_CAT]);
-    let mut presence = Presence::new(rate_period(config.inference_fps));
+    // The slowest rate the model runs at with a cat in view, so a still one's visit never lapses.
+    let mut presence = Presence::new(still_period(config.inference_fps));
     // The open visit's arrival, which its departure event names.
     let mut visit: Option<Arrival> = None;
     let spawned = thread::Builder::new()
@@ -570,6 +571,7 @@ fn flip_method(rotate: u32) -> anyhow::Result<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::motion::rate_period;
 
     /// Runs the capture worker on `config.camera` into an appsrc/appsink pair and returns `wanted` frames.
     fn capture_frames(config: Config, wanted: usize) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {

@@ -115,6 +115,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   cat dropped from 74 % to 12 % of a Pi 5 core at 2 Hz. A cat in view, a fresh hit or
   motion keeps the full rate. `/healthz` gains `model_runs`. A black frame (2026-10-12)
   skips the idle run as well, which took the dark room at night from 9 % to 2 %.
+  A cat in view with nothing moving is looked at every `still_period`, twice the full
+  rate's period (2026-10-13); motion restores the full rate, and the visit lingers past
+  the still period. himbeere2's drying rack, a false cat at 0.34, went from 69 % to 36 %.
 - **`/snapshot.jpg` and the cat in `/healthz` (2026-10-11).** The cat cam's web server
   encodes the latest frame, boxes included, when asked. `/healthz` gains `cat`: whether
   one is in view, when one was last seen, the visits counted and the last best score.

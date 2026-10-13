@@ -1,6 +1,8 @@
 //! When a frame is worth the model: something moved since the last look, a cat is in view or was
 //! just seen, or the idle period ran out on a frame that is not black. A still, empty room then
-//! costs one run every few seconds, and a dark one none.
+//! costs one run every few seconds, and a dark one none. A still cat, asleep or a false one such
+//! as a drying rack, costs one run every [`still_period`]: leaving is motion, which restores the
+//! full rate.
 
 use std::time::{Duration, Instant};
 
@@ -43,6 +45,14 @@ pub fn moved(previous: &[u8], current: &[u8]) -> bool {
         .filter(|(a, b)| a.abs_diff(**b) > CHANGED_LUMA)
         .count();
     changed > 0 && changed * 10_000 >= MOTION_PER_10K * current.len()
+}
+
+/// A cat in view with nothing moving is looked at this many times less often than the full rate.
+const STILL_SLOWDOWN: u32 = 2;
+
+/// The longest time between two runs while a cat is in view; [`crate::presence::Presence`] lingers past it.
+pub fn still_period(inference_fps: f32) -> Duration {
+    rate_period(inference_fps) * STILL_SLOWDOWN
 }
 
 /// Decides which frames go to the model.
@@ -99,8 +109,10 @@ impl Pacer {
         // A camera without IR sees black at night, where the model can find nothing.
         let dark = current.iter().all(|&v| v <= DARK_LUMA);
         self.previous = Some(current);
-        let idle_over = self.last_run.is_none_or(|t| now.duration_since(t) >= idle);
-        self.pending = motion || cat_seen || (idle_over && !dark);
+        let since_run = self.last_run.map(|t| now.duration_since(t));
+        let idle_over = since_run.is_none_or(|d| d >= idle);
+        let still_over = since_run.is_none_or(|d| d >= self.period * STILL_SLOWDOWN);
+        self.pending = motion || (cat_seen && still_over) || (idle_over && !dark);
         self.pending
     }
 
@@ -175,16 +187,25 @@ mod tests {
     }
 
     #[test]
-    fn motion_or_a_cat_seen_runs_it_at_the_full_rate() {
+    fn motion_runs_it_at_the_full_rate_and_a_still_cat_at_half_of_it() {
         let t = Instant::now();
+        let at = |ms: u64| t + Duration::from_millis(ms);
         let mut p = Pacer::new(2.0, 0.2, t);
         assert!(p.wants(t, &frame(50), W, H, false));
         p.ran(t);
-        let half = t + Duration::from_millis(500);
-        assert!(p.wants(half, &with_square(50, 24, 220), W, H, false));
-        p.ran(half);
-        let one = t + Duration::from_secs(1);
-        assert!(p.wants(one, &with_square(50, 24, 220), W, H, true));
+        let cat = with_square(50, 24, 220);
+        assert!(p.wants(at(500), &cat, W, H, false), "motion");
+        p.ran(at(500));
+        // The cat sits still: every other look, once a second.
+        assert!(!p.wants(at(1000), &cat, W, H, true));
+        assert!(p.wants(at(1500), &cat, W, H, true));
+        p.ran(at(1500));
+        assert!(!p.wants(at(2000), &cat, W, H, true));
+        // It gets up: the full rate again at once.
+        assert!(p.wants(at(2500), &frame(50), W, H, true));
+        p.ran(at(2500));
+        assert!(p.wants(at(3000), &cat, W, H, true));
+        assert_eq!(still_period(2.0), Duration::from_secs(1));
     }
 
     #[test]
