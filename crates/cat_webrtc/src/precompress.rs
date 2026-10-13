@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use anyhow::Context as _;
 
-use crate::web::{compressible, content_type, MIN_GZIP_BYTES};
+use crate::static_files::{compressible, content_type, MIN_GZIP_BYTES};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Done {

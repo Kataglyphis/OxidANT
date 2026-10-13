@@ -12,6 +12,7 @@ mod notify;
 mod output;
 mod precompress;
 mod presence;
+mod static_files;
 mod status;
 mod web;
 
@@ -446,7 +447,7 @@ fn start_web(
             config.signalling_port,
         ),
         status,
-        gzip: web::GzipCache::default(),
+        gzip: static_files::GzipCache::default(),
     });
     runtime.spawn(web::serve(listener, site));
     if config.cert.is_some() {
