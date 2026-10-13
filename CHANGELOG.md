@@ -15,6 +15,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **A cat must move to arrive, and spots can be marked "not a cat"** (2026-10-14).
+  - The motion pacer stamps each 8x8 block when it changes; a detection starts a visit
+    only with two such blocks from the last 10 s in or around its box (`motion::Moving`).
+    An open visit takes every detection, so a sleeping cat stays counted. The first look
+    counts as motion everywhere: whatever the camera starts on has just come into view.
+  - `POST /settings {"ignore": [[x1, y1, x2, y2], ...]}` (fractions, at most 16) drops a
+    detection whose IoU with a spot exceeds 0.5 before it counts, is drawn or scores.
+    Kept in `settings.json`; a rotation change clears them. `/healthz` lists the boxes
+    drawn now as `cat.boxes`, which the web app's "Not a cat" button posts.
+  - `last_score` and the pacer's still-cat rate follow the counted detections, so a still
+    false cat costs the idle rate, not half the full one.
+
 - **The cat cam's review fixes (2026-10-13).**
   - Each of the last five arrivals keeps its own picture, `/arrival.jpg?t=<arrival time>`
     as for the clips, so a later false visit no longer replaces the picture a phone

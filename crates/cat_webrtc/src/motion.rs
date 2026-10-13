@@ -2,7 +2,8 @@
 //! just seen, or the idle period ran out on a frame that is not black. A still, empty room then
 //! costs one run every few seconds, and a dark one none. A still cat, asleep or a false one such
 //! as a drying rack, costs one run every [`still_period`]: leaving is motion, which restores the
-//! full rate.
+//! full rate. The same looks say where something moved lately ([`Moving`]), which a cat needs to
+//! arrive: a still object the model mistakes for one never starts a visit.
 
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,45 @@ const MOTION_PER_10K: usize = 50;
 
 /// A frame whose blocks all sit at or below this luma is black (limited-range black is 16).
 const DARK_LUMA: u8 = 20;
+
+/// How long a changed block counts as moving: a cat that walks in and sits down still arrives.
+const MOVED_LATELY: Duration = Duration::from_secs(10);
+
+/// Moving blocks under a box, grown by one block each side, that let it start a visit.
+const MOVING_BLOCKS: usize = 2;
+
+/// The blocks that changed in the last [`MOVED_LATELY`], for the frame the model gets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Moving {
+    cols: usize,
+    blocks: Vec<bool>,
+}
+
+impl Moving {
+    /// Whether something moved under `rect` (pixels: x1, y1, x2, y2) or in a block around it.
+    pub fn near(&self, rect: [f32; 4]) -> bool {
+        if self.cols == 0 {
+            return false;
+        }
+        let rows = self.blocks.len() / self.cols;
+        let block = BLOCK as f32;
+        // Truncation toward zero is the block index; a negative or NaN coordinate becomes 0.
+        let index = |v: f32| (v / block) as usize;
+        let (c1, r1) = (
+            index(rect[0]).saturating_sub(1),
+            index(rect[1]).saturating_sub(1),
+        );
+        let (c2, r2) = (
+            (index(rect[2]) + 1).min(self.cols - 1),
+            (index(rect[3]) + 1).min(rows.saturating_sub(1)),
+        );
+        let moving = (r1..=r2)
+            .flat_map(|r| (c1..=c2).map(move |c| (r, c)))
+            .filter(|&(r, c)| self.blocks.get(r * self.cols + c) == Some(&true))
+            .count();
+        moving >= MOVING_BLOCKS
+    }
+}
 
 /// Mean of each `BLOCK`x`BLOCK` block of a luma plane, row by row; partial edge blocks are dropped.
 pub fn thumbnail(luma: &[u8], width: u32, height: u32) -> Vec<u8> {
@@ -64,6 +104,9 @@ pub struct Pacer {
     next_look: Instant,
     last_run: Option<Instant>,
     previous: Option<Vec<u8>>,
+    /// When each block of the thumbnail last changed, and the thumbnail's width in blocks.
+    changed_at: Vec<Option<Instant>>,
+    cols: usize,
     /// A frame was wanted but the busy model could not take it yet.
     pending: bool,
 }
@@ -80,8 +123,21 @@ impl Pacer {
             next_look: now,
             last_run: None,
             previous: None,
+            changed_at: Vec::new(),
+            cols: 0,
             pending: false,
         }
+    }
+
+    /// Where something moved lately; `None` with the motion gate off, which never looks.
+    pub fn moving(&self, now: Instant) -> Option<Moving> {
+        self.idle?;
+        let lately =
+            |at: &Option<Instant>| at.is_some_and(|t| now.duration_since(t) <= MOVED_LATELY);
+        Some(Moving {
+            cols: self.cols,
+            blocks: self.changed_at.iter().map(lately).collect(),
+        })
     }
 
     /// Whether this frame goes to the model; called on every frame, it looks at most once a period.
@@ -105,6 +161,7 @@ impl Pacer {
             return true;
         };
         let current = thumbnail(luma, width, height);
+        self.note_changes(now, &current, width);
         let motion = self.previous.as_deref().is_none_or(|p| moved(p, &current));
         // A camera without IR sees black at night, where the model can find nothing.
         let dark = current.iter().all(|&v| v <= DARK_LUMA);
@@ -114,6 +171,26 @@ impl Pacer {
         let still_over = since_run.is_none_or(|d| d >= self.period * STILL_SLOWDOWN);
         self.pending = motion || (cat_seen && still_over) || (idle_over && !dark);
         self.pending
+    }
+
+    /// Stamps the blocks that changed since the last look; at the first look, or a new frame size,
+    /// all of them, since whatever the camera starts on has just come into view.
+    fn note_changes(&mut self, now: Instant, current: &[u8], width: u32) {
+        self.cols = width as usize / BLOCK;
+        match self
+            .previous
+            .as_deref()
+            .filter(|p| p.len() == current.len())
+        {
+            Some(previous) => {
+                for ((at, a), b) in self.changed_at.iter_mut().zip(previous).zip(current) {
+                    if a.abs_diff(*b) > CHANGED_LUMA {
+                        *at = Some(now);
+                    }
+                }
+            }
+            None => self.changed_at = vec![Some(now); current.len()],
+        }
     }
 
     /// The model took the frame [`Self::wants`] asked for.
@@ -247,5 +324,49 @@ mod tests {
         assert!(same.wants(t, &f, W, H, false));
         same.ran(t);
         assert!(same.wants(t + Duration::from_millis(500), &f, W, H, false));
+    }
+
+    #[test]
+    fn a_box_moves_when_its_blocks_or_the_ones_around_it_changed_lately() {
+        let t = Instant::now();
+        let at = |s: f32| t + Duration::from_secs_f32(s);
+        let mut p = Pacer::new(2.0, 0.2, t);
+        // Whatever the camera starts on has just come into view.
+        p.wants(t, &frame(50), W, H, false);
+        p.ran(t);
+        let start = p.moving(t).unwrap();
+        assert!(start.near([40.0, 30.0, 56.0, 46.0]));
+        // Ten seconds of a still room later, nothing has moved anywhere.
+        let still = at(10.5);
+        assert!(p.wants(still, &frame(50), W, H, false));
+        p.ran(still);
+        assert!(!p.moving(still).unwrap().near([0.0, 0.0, 63.0, 47.0]));
+        // A square appears at the top left: a box over it moves, one at the far corner does not.
+        p.wants(at(11.0), &with_square(50, 16, 220), W, H, false);
+        let moving = p.moving(at(11.0)).unwrap();
+        assert!(moving.near([0.0, 0.0, 16.0, 16.0]));
+        // A box just beside it, within one block, still counts; its motion may be the cat's edge.
+        assert!(moving.near([20.0, 0.0, 30.0, 10.0]));
+        assert!(!moving.near([40.0, 30.0, 63.0, 47.0]));
+        // It stays moving for a while after the square stops, then not.
+        assert!(p.moving(at(20.0)).unwrap().near([0.0, 0.0, 16.0, 16.0]));
+        assert!(!p.moving(at(21.5)).unwrap().near([0.0, 0.0, 16.0, 16.0]));
+    }
+
+    #[test]
+    fn a_box_outside_the_frame_or_without_looks_does_not_move() {
+        let none = Moving {
+            cols: 0,
+            blocks: Vec::new(),
+        };
+        assert!(!none.near([0.0, 0.0, 10.0, 10.0]));
+        let t = Instant::now();
+        let mut p = Pacer::new(2.0, 0.2, t);
+        p.wants(t, &frame(50), W, H, false);
+        let all = p.moving(t).unwrap();
+        // Coordinates past the edges are clamped to it, a negative one to 0.
+        assert!(all.near([-20.0, -5.0, 900.0, 900.0]));
+        // With the gate off nothing is looked at, so nothing is known to move.
+        assert!(Pacer::new(0.0, 0.2, t).moving(t).is_none());
     }
 }

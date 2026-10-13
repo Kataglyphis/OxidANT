@@ -463,6 +463,11 @@ board runs it as one service unit:
   request's `Host`, and the host must be an IP, a dotless name, a local suffix (`.local`,
   `.lan`, `.home`, `.internal`, `.home.arpa`, `.fritz.box`) or in `allowed_hosts`. Reads stay
   open. A reverse proxy under a public name needs its name in `allowed_hosts`.
+- **What may start a visit** (2026-10-14, `capture::counted`): only a detection with motion
+  near it (`motion::Moving`, from the pacer's looks), after `presence::outside` dropped the
+  spots marked "not a cat". Test inputs that never move, such as `image:FILE`, still arrive
+  once: the pacer's first look stamps every block. With the motion gate off there is no
+  `Moving`, and every detection counts.
 - **Per-arrival files** (`status.rs`, `Kept`): clips (`clip-<t>.mp4`) and pictures
   (`arrival-<t>.jpg`) both keep the last five by the visit log's arrival time, so `?t=`
   names the visit's own; set them after `set_cat`, which writes that time.

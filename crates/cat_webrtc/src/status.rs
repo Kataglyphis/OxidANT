@@ -10,7 +10,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use gstreamer as gst;
 use serde::{Deserialize, Serialize};
 
-use crate::presence::Change;
+use crate::presence::{Change, Zone};
 
 /// The cat's visits, kept across restarts in the state directory.
 const CAT_FILE: &str = "cat.json";
@@ -29,6 +29,9 @@ pub const SCORES: std::ops::RangeInclusive<f32> = 0.05..=0.95;
 /// The longest name the page may give the camera.
 const NAME_MAX: usize = 64;
 
+/// The most spots the page may mark "not a cat".
+const IGNORE_MAX: usize = 16;
+
 /// The settings the page can change while the service runs; a value left out stays as it is.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +42,9 @@ pub struct Settings {
     pub score: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Spots marked "not a cat", as fractions of the picture; a detection over one is dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore: Option<Vec<Zone>>,
 }
 
 impl Settings {
@@ -61,6 +67,18 @@ impl Settings {
                 || name.chars().any(char::is_control)
             {
                 anyhow::bail!("name must be 1 to {NAME_MAX} printable characters");
+            }
+        }
+        if let Some(zones) = &self.ignore {
+            if zones.len() > IGNORE_MAX {
+                anyhow::bail!("at most {IGNORE_MAX} ignored spots (got {})", zones.len());
+            }
+            let fraction = |v: f32| (0.0..=1.0).contains(&v);
+            if let Some(bad) = zones
+                .iter()
+                .find(|z| !z.iter().all(|&v| fraction(v)) || z[0] >= z[2] || z[1] >= z[3])
+            {
+                anyhow::bail!("an ignored spot is x1, y1, x2, y2 as fractions 0 to 1, x1 < x2 and y1 < y2 (got {bad:?})");
             }
         }
         Ok(())
@@ -131,6 +149,8 @@ struct Cat {
     recent: VecDeque<Visit>,
     /// The arrival the current clip shows.
     clip: Option<u64>,
+    /// The boxes drawn into the picture now, as fractions of it.
+    boxes: Vec<Zone>,
 }
 
 pub struct Status {
@@ -163,6 +183,8 @@ pub struct Status {
     score: AtomicU32,
     /// What the page set so far, the content of [`SETTINGS_FILE`].
     page: Mutex<Settings>,
+    /// Spots marked "not a cat"; the inference thread reads them each run.
+    ignore: Mutex<Vec<Zone>>,
 }
 
 impl Status {
@@ -187,6 +209,19 @@ impl Status {
             rotate: AtomicU32::new(0),
             score: AtomicU32::new(0.25f32.to_bits()),
             page: Mutex::new(Settings::default()),
+            ignore: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The spots marked "not a cat".
+    pub fn ignored(&self) -> Vec<Zone> {
+        self.ignore.lock().map(|z| z.clone()).unwrap_or_default()
+    }
+
+    /// The boxes drawn into the picture now, for `/healthz` and the page's "not a cat".
+    pub fn set_boxes(&self, boxes: Vec<Zone>) {
+        if let Ok(mut cat) = self.cat.lock() {
+            cat.boxes = boxes;
         }
     }
 
@@ -243,13 +278,19 @@ impl Status {
             "name": self.name(),
             "rotate": self.rotation(),
             "score": self.score_rounded(),
+            "ignore": rounded(&self.ignored()),
         })
         .to_string()
     }
 
     /// Applies what `update` carries, all or nothing, and keeps it in the state directory.
-    pub fn apply(&self, update: Settings) -> anyhow::Result<()> {
+    pub fn apply(&self, mut update: Settings) -> anyhow::Result<()> {
         update.validate()?;
+        let turned = update.rotate.is_some_and(|r| r != self.rotation());
+        if turned && update.ignore.is_none() && !self.ignored().is_empty() {
+            log::info!("the picture turned, so the spots marked not a cat no longer fit: cleared");
+            update.ignore = Some(Vec::new());
+        }
         self.take(&update);
         let Ok(mut page) = self.page.lock() else {
             return Ok(());
@@ -262,6 +303,9 @@ impl Status {
         }
         if let Some(name) = &update.name {
             page.name = Some(name.trim().to_owned());
+        }
+        if update.ignore.is_some() {
+            page.ignore.clone_from(&update.ignore);
         }
         if let Some(dir) = &self.state_dir {
             write_atomic(&dir.join(SETTINGS_FILE), &serde_json::to_vec(&*page)?)?;
@@ -283,6 +327,9 @@ impl Status {
         }
         if let (Some(name), Ok(mut current)) = (&settings.name, self.name.lock()) {
             *current = name.trim().to_owned();
+        }
+        if let (Some(zones), Ok(mut current)) = (&settings.ignore, self.ignore.lock()) {
+            current.clone_from(zones);
         }
     }
 
@@ -550,6 +597,10 @@ impl Status {
                 )
             })
             .unwrap_or_default();
+        let boxes = cat
+            .as_deref()
+            .map(|c| rounded(&c.boxes))
+            .unwrap_or_default();
         // The arrivals whose clips /arrival.mp4?t= still serves, newest first.
         let clips: Vec<u64> = self
             .clips
@@ -581,10 +632,19 @@ impl Status {
                 "recent": recent,
                 "clip": clip,
                 "clips": clips,
+                "boxes": boxes,
             },
         })
         .to_string()
     }
+}
+
+/// `zones` to three places, so JSON says 0.25 rather than the `f32`'s 0.25000000372529.
+fn rounded(zones: &[Zone]) -> Vec<[f64; 4]> {
+    zones
+        .iter()
+        .map(|z| z.map(|v| (f64::from(v) * 1000.0).round() / 1000.0))
+        .collect()
 }
 
 /// The newest of `store`, or with `at` the one kept for the arrival at that time.
@@ -837,6 +897,7 @@ mod tests {
             rotate: Some(90),
             score: Some(0.99),
             name: Some("New".into()),
+            ignore: None,
         };
         assert!(status.apply(mixed).is_err());
         assert_eq!(
@@ -1003,6 +1064,53 @@ mod tests {
             stand_in["problem"],
             "no camera found, streaming a test pattern"
         );
+    }
+
+    #[test]
+    fn spots_marked_not_a_cat_are_checked_kept_and_cleared_when_the_picture_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let status = Status::new("Cam", true, 640, 480).remember_in(dir.path().to_path_buf());
+        let rack = [0.25, 0.75, 0.75, 1.0];
+        let zones = |z: Vec<Zone>| Settings {
+            ignore: Some(z),
+            ..Settings::default()
+        };
+        status.apply(zones(vec![rack])).unwrap();
+        assert_eq!(status.ignored(), vec![rack]);
+        let json: serde_json::Value = serde_json::from_str(&status.settings_json()).unwrap();
+        assert_eq!(json["ignore"], serde_json::json!([[0.25, 0.75, 0.75, 1.0]]));
+        // Kept across a restart, as every other setting the page makes.
+        let again = Status::new("Cam", true, 640, 480).remember_in(dir.path().to_path_buf());
+        assert_eq!(again.ignored(), vec![rack]);
+        // A bad spot, or too many, changes nothing.
+        for bad in [
+            vec![[0.5, 0.5, 0.4, 0.9]],
+            vec![[0.0, 0.0, 1.5, 1.0]],
+            vec![[f32::NAN, 0.0, 1.0, 1.0]],
+            vec![rack; 17],
+        ] {
+            assert!(status.apply(zones(bad)).is_err());
+        }
+        assert_eq!(status.ignored(), vec![rack]);
+        // The same angle again keeps them; a turned picture no longer fits them.
+        status.set_rotation(0).unwrap();
+        assert_eq!(status.ignored(), vec![rack]);
+        status.set_rotation(90).unwrap();
+        assert!(status.ignored().is_empty());
+        let again = Status::new("Cam", true, 640, 480).remember_in(dir.path().to_path_buf());
+        assert!(again.ignored().is_empty());
+        assert_eq!(again.rotation(), 90);
+    }
+
+    #[test]
+    fn healthz_lists_the_boxes_drawn_now() {
+        let status = Status::new("Cam", true, 640, 480);
+        let boxes = |s: &Status| {
+            serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap()["cat"]["boxes"].clone()
+        };
+        assert_eq!(boxes(&status), serde_json::json!([]));
+        status.set_boxes(vec![[0.1, 0.2, 0.3, 0.4]]);
+        assert_eq!(boxes(&status), serde_json::json!([[0.1, 0.2, 0.3, 0.4]]));
     }
 
     #[test]

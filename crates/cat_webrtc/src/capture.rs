@@ -17,9 +17,9 @@ use crate::camera::{self, Choice, Found, Plan};
 use crate::clip::{Arrival, Clip};
 use crate::config::Config;
 use crate::frame;
-use crate::motion::{still_period, Pacer};
+use crate::motion::{still_period, Moving, Pacer};
 use crate::notify::Notifier;
-use crate::presence::{best_score, Change, Presence};
+use crate::presence::{best_score, outside, zone_of, Change, Presence};
 use crate::status::Status;
 
 /// COCO class id of "cat" in the 80-class YOLO models shipped in this tree.
@@ -33,6 +33,9 @@ const STALL_AFTER: Duration = Duration::from_secs(10);
 const PULL_TIMEOUT: gst::ClockTime = gst::ClockTime::from_mseconds(500);
 
 type Boxes = Arc<Mutex<Vec<Detection>>>;
+
+/// A frame for the model, and where something moved lately; `None` with the motion gate off.
+type Look = (Vec<u8>, Option<Moving>);
 
 /// Everything the worker thread owns.
 pub struct Worker {
@@ -115,7 +118,7 @@ impl Worker {
         plan: &Plan,
         found: &Found,
         boxes: &Boxes,
-        inference: Option<&mpsc::SyncSender<Vec<u8>>>,
+        inference: Option<&mpsc::SyncSender<Look>>,
         deadline: Option<Instant>,
     ) -> anyhow::Result<()> {
         let config = &self.config;
@@ -191,7 +194,7 @@ impl Worker {
         &self,
         sample: &gst::Sample,
         boxes: &Boxes,
-        inference: Option<&mpsc::SyncSender<Vec<u8>>>,
+        inference: Option<&mpsc::SyncSender<Look>>,
         pacer: &mut Pacer,
     ) -> anyhow::Result<bool> {
         let (width, height) = (self.config.width, self.config.height);
@@ -212,7 +215,7 @@ impl Worker {
             let now = Instant::now();
             let luma = &i420[..(width * height) as usize];
             if pacer.wants(now, luma, width, height, self.status.cat_seen())
-                && tx.try_send(i420.to_vec()).is_ok()
+                && tx.try_send((i420.to_vec(), pacer.moving(now))).is_ok()
             {
                 pacer.ran(now);
             }
@@ -420,8 +423,8 @@ fn spawn_inference(
     status: Arc<Status>,
     notifier: Option<Notifier>,
     clip: Option<Arc<Clip>>,
-) -> Option<(mpsc::SyncSender<Vec<u8>>, thread::JoinHandle<()>)> {
-    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
+) -> Option<(mpsc::SyncSender<Look>, thread::JoinHandle<()>)> {
+    let (tx, rx) = mpsc::sync_channel::<Look>(1);
     let (width, height) = (config.width, config.height);
     let wanted = (!config.all_classes).then(|| vec![COCO_CAT]);
     // The slowest rate the model runs at with a cat in view, so a still one's visit never lapses.
@@ -431,7 +434,7 @@ fn spawn_inference(
     let spawned = thread::Builder::new()
         .name("cat-infer".into())
         .spawn(move || {
-            while let Ok(i420) = rx.recv() {
+            while let Ok((i420, moving)) = rx.recv() {
                 let rgba = frame::to_rgba(&i420, width, height);
                 // The settings page may have moved it since the last run.
                 let score = status.score();
@@ -443,7 +446,9 @@ fn spawn_inference(
                             continue;
                         }
                     };
-                let change = presence.update(Instant::now(), &detections);
+                let detections = outside(detections, &status.ignored(), width, height);
+                let counted = counted(&detections, presence.in_view(), moving.as_ref());
+                let change = presence.update(Instant::now(), &counted);
                 match &change {
                     Some(Change::Arrived { count, best }) => {
                         log::info!("cat in view: {count} detection(s), best score {best:.2}");
@@ -454,7 +459,7 @@ fn spawn_inference(
                     None => {}
                 }
                 let in_view = presence.in_view();
-                status.set_cat(in_view, best_score(&detections), change.as_ref());
+                status.set_cat(in_view, best_score(&counted), change.as_ref());
                 // The visit log's own arrival time, so ?t= finds the picture and clip an event names.
                 let now = crate::notify::unix_now();
                 let time = match change {
@@ -488,8 +493,10 @@ fn spawn_inference(
                 if change.is_some() {
                     status.persist();
                 }
+                let shown = if in_view { detections } else { Vec::new() };
+                status.set_boxes(shown.iter().map(|d| zone_of(d, width, height)).collect());
                 if let Ok(mut current) = boxes.lock() {
-                    *current = if in_view { detections } else { Vec::new() };
+                    *current = shown;
                 }
             }
         });
@@ -499,6 +506,19 @@ fn spawn_inference(
             log::error!("could not start the inference thread, streaming without boxes: {err}");
             None
         }
+    }
+}
+
+/// The detections that count toward a visit: all while a cat is in view, and to start one only
+/// those where something moved lately, so a still object the model mistakes for a cat never arrives.
+fn counted(detections: &[Detection], in_view: bool, moving: Option<&Moving>) -> Vec<Detection> {
+    match moving {
+        Some(moving) if !in_view => detections
+            .iter()
+            .filter(|d| moving.near([d.x1, d.y1, d.x2, d.y2]))
+            .copied()
+            .collect(),
+        _ => detections.to_vec(),
     }
 }
 
@@ -715,5 +735,36 @@ mod tests {
         assert_eq!(rate_period(2.0), Duration::from_millis(500));
         assert_eq!(rate_period(0.5), Duration::from_secs(2));
         assert_eq!(rate_period(0.0), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_still_detection_cannot_start_a_visit_but_keeps_one_going() {
+        let (width, height) = (64, 48);
+        let grey = vec![50u8; (width * height) as usize];
+        let t = Instant::now();
+        let mut pacer = Pacer::new(2.0, 0.2, t);
+        pacer.wants(t, &grey, width, height, false);
+        pacer.ran(t);
+        let at_start = pacer.moving(t).unwrap();
+        let later = t + Duration::from_secs(11);
+        pacer.wants(later, &grey, width, height, false);
+        pacer.ran(later);
+        let still = pacer.moving(later).unwrap();
+        // A drying rack along the bottom edge that the model scores as a cat.
+        let rack = Detection {
+            x1: 8.0,
+            y1: 32.0,
+            x2: 56.0,
+            y2: 47.0,
+            score: 0.4,
+            class_id: COCO_CAT,
+        };
+        // Seen as the camera starts it counts, since anything there has just come into view.
+        assert_eq!(counted(&[rack], false, Some(&at_start)), vec![rack]);
+        // Ten seconds of stillness on, it cannot start a visit, but it keeps an open one going.
+        assert!(counted(&[rack], false, Some(&still)).is_empty());
+        assert_eq!(counted(&[rack], true, Some(&still)), vec![rack]);
+        // With the motion gate off nothing is known about motion, and every detection counts.
+        assert_eq!(counted(&[rack], false, None), vec![rack]);
     }
 }
