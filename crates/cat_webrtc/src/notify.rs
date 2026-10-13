@@ -229,8 +229,11 @@ mod tests {
         assert_eq!(origin("http://cats.local"), "http://cats.local");
     }
 
-    #[test]
-    fn an_event_is_posted_as_json_to_the_url() {
+    /// The lowercased request head lines and the body of the one POST a [`webhook`] took.
+    type Received = thread::JoinHandle<(Vec<String>, Vec<u8>)>;
+
+    /// A webhook stand-in on loopback that takes one POST and hands back its head and body.
+    fn webhook() -> (String, Received) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/api/webhook/cats", listener.local_addr().unwrap());
         let server = thread::spawn(move || {
@@ -256,6 +259,12 @@ mod tests {
                 .unwrap();
             (head, body)
         });
+        (url, server)
+    }
+
+    #[test]
+    fn an_event_is_posted_as_json_to_the_url() {
+        let (url, server) = webhook();
         let status = Arc::new(Status::new("Test Cam", true, 4, 4));
         let notifier = Notifier::spawn(&url, status).unwrap();
         notifier.send(
@@ -276,5 +285,29 @@ mod tests {
         assert_eq!(event["event"], "arrived");
         assert_eq!(event["time"], 1_791_763_273u64);
         assert_eq!(event["name"], "Test Cam");
+    }
+
+    #[test]
+    fn a_clip_event_goes_out_under_the_name_the_page_set_last() {
+        let (url, server) = webhook();
+        let status = Arc::new(Status::new("Old Name", true, 4, 4));
+        let notifier = Notifier::spawn(&url, status.clone()).unwrap();
+        // Renamed on the Camera page after the notifier started: the event must say so.
+        status
+            .apply(crate::status::Settings {
+                name: Some("Futtertrog".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let arrival = Arrival {
+            time: 1_791_763_273,
+            best_score: 0.8,
+        };
+        notifier.send_clip(arrival, Some(12));
+        let (_, body) = server.join().unwrap();
+        let event: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(event["event"], "clip");
+        assert_eq!(event["name"], "Futtertrog");
+        assert_eq!(event["stayed_s"], 12);
     }
 }

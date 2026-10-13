@@ -345,6 +345,18 @@ mod tests {
                 notify_url: Some("mqtt://broker/cats".into()),
                 ..Config::default()
             },
+            Config {
+                score: 1.5,
+                ..Config::default()
+            },
+            Config {
+                signalling_port: 0,
+                ..Config::default()
+            },
+            Config {
+                clip_seconds: 61,
+                ..Config::default()
+            },
         ];
         for config in bad {
             assert!(config.validate().is_err(), "accepted {config:?}");
