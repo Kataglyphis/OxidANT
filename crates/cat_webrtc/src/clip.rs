@@ -312,6 +312,15 @@ mod tests {
     /// One encode at a time: the scratch-directory count must not see a parallel test's.
     static ENCODES: Mutex<()> = Mutex::new(());
 
+    /// Waits for this test's turn to encode, with GStreamer ready.
+    fn one_encode() -> std::sync::MutexGuard<'static, ()> {
+        let turn = ENCODES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        gst::init().unwrap();
+        turn
+    }
+
     #[test]
     fn the_ring_keeps_the_last_seconds_at_the_clip_rate() {
         let mut c = Collector::new(3, 4, 2);
@@ -369,8 +378,7 @@ mod tests {
 
     #[test]
     fn a_frame_shorter_than_its_caps_is_refused_before_the_encoder_sees_it() {
-        let _one = ENCODES.lock().unwrap_or_else(|e| e.into_inner());
-        gst::init().unwrap();
+        let _one = one_encode();
         // Without the check this one 16-byte frame took the test process down with SIGSEGV.
         let frames = vec![gst::Buffer::from_mut_slice(vec![0u8; 16])];
         let err = encode_mp4(&frames, 64, 48, gst::Fraction::new(10, 1)).unwrap_err();
@@ -379,8 +387,7 @@ mod tests {
 
     #[test]
     fn a_failed_encode_leaves_no_scratch_directory() {
-        let _one = ENCODES.lock().unwrap_or_else(|e| e.into_inner());
-        gst::init().unwrap();
+        let _one = one_encode();
         let before = scratch_dirs();
         // A rate of 0 fails after the scratch directory exists, while the frames are pushed.
         let frames = vec![gst::Buffer::from_mut_slice(vec![
@@ -393,8 +400,7 @@ mod tests {
 
     #[test]
     fn a_gstreamer_without_the_encoder_leaves_no_scratch_directory() {
-        let _one = ENCODES.lock().unwrap_or_else(|e| e.into_inner());
-        gst::init().unwrap();
+        let _one = one_encode();
         let registry = gst::Registry::get();
         // Windows arm64's GStreamer has no openh264enc; hide it here for one encode.
         let hidden = registry.find_feature("openh264enc", gst::ElementFactory::static_type());
@@ -416,8 +422,7 @@ mod tests {
 
     #[test]
     fn an_arrival_is_encoded_on_its_own_thread_and_kept_for_that_arrival() {
-        let _one = ENCODES.lock().unwrap_or_else(|e| e.into_inner());
-        gst::init().unwrap();
+        let _one = one_encode();
         if ["openh264enc", "h264parse", "mp4mux"]
             .iter()
             .any(|e| gst::ElementFactory::find(e).is_none())
@@ -470,8 +475,7 @@ mod tests {
 
     #[test]
     fn frames_of_an_mp4_clip_come_out_as_one_with_its_index_first() {
-        let _one = ENCODES.lock().unwrap_or_else(|e| e.into_inner());
-        gst::init().unwrap();
+        let _one = one_encode();
         if ["openh264enc", "h264parse", "mp4mux"]
             .iter()
             .any(|e| gst::ElementFactory::find(e).is_none())

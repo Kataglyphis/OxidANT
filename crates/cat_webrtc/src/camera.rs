@@ -287,7 +287,7 @@ fn describe_device(device: &gst::Device) -> DeviceInfo {
     let element = device.create_element(None).ok();
     let factory = element
         .as_ref()
-        .and_then(|e| e.factory())
+        .and_then(gstreamer::prelude::ElementExt::factory)
         .map(|f| f.name().to_string())
         .unwrap_or_default();
     let props = device.properties();

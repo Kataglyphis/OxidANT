@@ -23,7 +23,7 @@ pub fn precompress(dir: &Path) -> anyhow::Result<Done> {
     work.sort_unstable();
     let queue = Mutex::new(work);
     let done = Mutex::new(Done::default());
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)
             .map(|_| scope.spawn(|| drain(&queue, &done)))
