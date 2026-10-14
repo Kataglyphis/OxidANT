@@ -38,7 +38,12 @@ zopfli = { version = "0.8.3", default-features = false, features = ["gzip", "std
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
+criterion = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "frame_stages"
+harness = false

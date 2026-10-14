@@ -92,7 +92,11 @@ case "$step" in
         # The floor sits just under the measured 71.3 % (2026-10-14); raise it as tests are added.
         antfrastructure_exec "${RUST_DRIVERS}/cargo_coverage.sh" --workspace --features "${TEST_FEATURES}" --fail-under 70 "$@"
         ;;
-    bench)     antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" "$@" ;;
+    # Every bench of the workspace, the detector's on the real model; scripts/linux/bench-report.py reads the results.
+    bench)
+        bash "${SCRIPT_DIR}/fetch-models.sh"
+        antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" --workspace --benches --features "${TEST_FEATURES}" "$@"
+        ;;
     release)   antfrastructure_exec "${RUST_DRIVERS}/cargo_release.sh" "$@" ;;
     docs)      antfrastructure_exec "${RUST_DRIVERS}/cargo_build_doc.sh" "$@" ;;
     # This repo's own gate, not a hub driver: the owner rule is chain-built ORT only.

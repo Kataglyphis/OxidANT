@@ -1,22 +1,5 @@
-//! ObservANT service: picks the camera, burns YOLO cat boxes into the frames, streams them over
-//! WebRTC and serves the web page that plays the stream. One process, so one service unit.
-
-mod camera;
-mod capture;
-mod clip;
-mod coco;
-mod config;
-mod frame;
-mod install;
-mod motion;
-mod notify;
-mod output;
-mod precompress;
-mod presence;
-mod static_files;
-mod stats;
-mod status;
-mod web;
+//! ObservANT service: picks the camera, burns the detection boxes (cats by default) into the frames, streams
+//! them over WebRTC and serves the web page that plays the stream. One process, so one service unit.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
@@ -30,7 +13,10 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use kataglyphis_inference::person_detection::{resolve_model_path, PersonDetector};
 
-use crate::config::{Config, Inference};
+use kataglyphis_observant::config::{Config, Inference};
+use kataglyphis_observant::{
+    camera, capture, clip, install, notify, output, precompress, static_files, stats, status, web,
+};
 
 /// Environment variable naming the still image looped as the demo source.
 const IMAGE_ENV: &str = "KATAGLYPHIS_CAT_IMAGE";

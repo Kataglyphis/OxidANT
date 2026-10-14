@@ -332,48 +332,6 @@ impl PersonDetector {
 mod tests {
     use super::*;
 
-    /// Mean milliseconds of `f` over `runs`, after one untimed run.
-    fn mean_ms(runs: usize, mut f: impl FnMut()) -> f64 {
-        f();
-        let started = std::time::Instant::now();
-        for _ in 0..runs {
-            f();
-        }
-        started.elapsed().as_secs_f64() * 1000.0 / runs as f64
-    }
-
-    /// Where a model run's time goes; `KATAGLYPHIS_BENCH_MODEL=<onnx> cargo test --release -- --ignored --nocapture`.
-    #[test]
-    #[ignore = "a measurement, with a real model"]
-    fn stage_costs_on_a_real_model() {
-        let Ok(model) = std::env::var("KATAGLYPHIS_BENCH_MODEL") else {
-            eprintln!("KATAGLYPHIS_BENCH_MODEL is unset: nothing to measure");
-            return;
-        };
-        let (w, h) = (640u32, 480u32);
-        let rgba: Vec<u8> = (0..w * h * 4).map(|i| (i % 251) as u8).collect();
-        let mut detector = PersonDetector::new(&model).unwrap();
-        let (iw, ih) = (detector.input_w, detector.input_h);
-        let mut buf = Vec::new();
-        let pre = mean_ms(50, || {
-            rgba_to_nchw_f32_stretched(&rgba, w, h, iw, ih, &mut buf).unwrap();
-        });
-        let mut out = (Vec::new(), Vec::new());
-        let run = mean_ms(10, || {
-            out = PersonDetector::infer_raw_nchw_f32(&mut detector.backend, &buf, ih, iw).unwrap();
-        });
-        let mapping = rgba_to_nchw_f32_stretched(&rgba, w, h, iw, ih, &mut buf).unwrap();
-        let post = mean_ms(200, || {
-            postprocess::parse_yolo_like_detections(&out.0, &out.1, 0.25, mapping, false).unwrap();
-        });
-        let whole = mean_ms(10, || {
-            detector.infer_rgba(&rgba, w, h, 0.25, None).unwrap();
-        });
-        eprintln!(
-            "{w}x{h} -> {iw}x{ih}: preprocess {pre:.2} ms, model {run:.1} ms, postprocess {post:.3} ms, infer_rgba {whole:.1} ms"
-        );
-    }
-
     #[test]
     fn an_explicit_path_wins_and_a_blank_one_does_not() {
         assert_eq!(resolve_model_path(Some("models/x.onnx")), "models/x.onnx");

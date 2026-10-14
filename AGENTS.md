@@ -352,6 +352,17 @@ cargo test  --workspace --locked                      # unit + integration + pro
 
 Every CI lane's tests add `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'` and `KATAGLYPHIS_REQUIRE_GPU=1` (README § Tests).
 
+**Benchmarks are Criterion's, run by `cargo bench`** (2026-10-14). `crates/observant/benches/frame_stages.rs`
+times what a frame pays before the model (I420 to RGBA, the privacy blocks, a box, the snapshot JPEG, the
+motion thumbnail) and `crates/inference/benches/detector.rs` a whole detection on the real model at
+ObservANT's two threads. The Linux lanes' *Run benchmarks* step (`ci-container-steps.sh bench`) fetches the
+model and runs every bench of the workspace; *Benchmark report* puts `scripts/linux/bench-report.py`'s table
+in the run's summary, each mean against the last default-branch run on that arch, whose `target/criterion`
+the cache keeps. A runner is noisy, so a benchmark more than 25 % slower warns and fails nothing. Locally:
+`cargo bench --workspace --benches --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'`,
+which compares against your last local run the same way. Benches need a library: `kataglyphis_observant`
+is one since that day, `main.rs` only wiring its modules into the service.
+
 **The detector meets its real model in the Linux lanes** (2026-10-14). `crates/inference/tests/real_model.rs`
 runs DEIM-D-FINE-N on `tests/fixtures/two_cats.jpg` and checks that both cats are found, where they
 are, and taken for no dog or person. Without the model it skips; the `test` and `coverage` steps of

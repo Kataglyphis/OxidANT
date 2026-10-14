@@ -15,6 +15,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Criterion benchmarks, tracked in CI** (2026-10-14, owner: benchmarks belong in each project's own
+  tooling, for regression testing). `crates/observant/benches/frame_stages.rs` and
+  `crates/inference/benches/detector.rs` run under the existing `cargo bench` step, which now fetches the
+  model and runs every bench of the workspace. The Linux lanes cache `target/criterion` from the default
+  branch per arch, and `scripts/linux/bench-report.py` writes each mean and its change into the run summary,
+  warning above +25 %. First numbers on a Pi 5: a detection 261 ms, I420 to RGBA 1.61 ms, the privacy
+  blocks 0.59 ms, a snapshot JPEG 11.0 ms, the motion thumbnail 0.52 ms. They replace the two `#[ignore]`d
+  `stage_costs` tests of the same day. `kataglyphis_observant` is a library plus `main.rs`, so benches and
+  integration tests can reach its modules.
+
 - **The detector is tested with its real model** (2026-10-14). `crates/inference/tests/real_model.rs`
   runs DEIM-D-FINE-N on a 480 px photo of two cats (`tests/fixtures/two_cats.jpg`, 85 kB):
   both found, the front one at 0.8 or more, every box inside the photo, neither taken for a
@@ -27,10 +37,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **`/healthz` says when ObservANT's picture is too dark** (2026-10-14). The motion gate
   already let the model idle on a black picture; `dark` now says so, and `ok` stays, since
   a night without IR is no outage.
-- **Two measurements, ignored by default**: `stage_costs_per_frame` (observant) and
-  `stage_costs_on_a_real_model` (inference, with `KATAGLYPHIS_BENCH_MODEL`), run by
-  `cargo test --release -- --ignored --nocapture stage_costs`. On a Pi 5: DEIM-D-FINE-N
-  420 / 258 / 265 ms at 1 / 2 / 4 threads, preprocessing 3 ms, postprocessing nil, a
+- **Two measurements, ignored by default** (replaced the same day by the Criterion benches above). On a
+  Pi 5: DEIM-D-FINE-N 420 / 258 / 265 ms at 1 / 2 / 4 threads, preprocessing 3 ms, postprocessing nil, a
   snapshot JPEG 10.7 ms, I420 to RGBA 1.7 ms.
 
 - **Configurable classes, cats by default** (2026-10-14). `classes` (COCO names, `["cat"]`
