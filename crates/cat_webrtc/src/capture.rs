@@ -608,6 +608,7 @@ fn capture_size(isp: bool, config: &Config, rotate: u32) -> (u32, u32) {
 
 /// Where `rpicam-vid --codec yuv420` puts the planes of one frame: each row padded to 128 bytes,
 /// measured on a Pi (480 wide writes 512-byte rows, 640 none).
+#[cfg(unix)]
 #[derive(Debug, PartialEq)]
 struct I420Layout {
     luma_stride: u32,
@@ -616,6 +617,7 @@ struct I420Layout {
     frame_size: u32,
 }
 
+#[cfg(unix)]
 impl I420Layout {
     fn rpicam(width: u32, height: u32) -> Self {
         let luma_stride = width.next_multiple_of(128);
@@ -888,6 +890,7 @@ mod tests {
         assert_eq!(capture_size(true, &odd, 90), (768, 576));
     }
 
+    #[cfg(unix)]
     #[test]
     fn rpicam_frames_are_read_with_their_padded_rows() {
         // Measured on tabblscatcam: 480x360 is 276480 bytes a frame, 640x480 460800.

@@ -467,6 +467,13 @@ board runs it as one service unit:
   request's `Host`, and the host must be an IP, a dotless name, a local suffix (`.local`,
   `.lan`, `.home`, `.internal`, `.home.arpa`, `.fritz.box`) or in `allowed_hosts`. Reads stay
   open. A reverse proxy under a public name needs its name in `allowed_hosts`.
+- **A helper only a `#[cfg(unix)]` path uses needs `#[cfg(unix)]` itself** (2026-10-14). The
+  Windows lanes lint with `clippy --all-targets -- -D warnings`, and there an unused struct is
+  an error: `I420Layout` (the rpicam path's) failed Windows arm64 run 38496162066 while every
+  Linux lane passed. The Windows lint runs on a Linux box too, in `:latest`:
+  `apt-get install gcc-mingw-w64-x86-64` (ring's C only), `rustup target add
+  x86_64-pc-windows-gnu`, then `PKG_CONFIG_ALLOW_CROSS=1 cargo clippy -p
+  kataglyphis_cat_webrtc --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings`.
 - **`rpicam-vid --codec yuv420` pads its rows** (2026-10-14): to 128 bytes, so a 480-wide
   frame is 512-byte rows, 276480 bytes. `I420Layout::rpicam` hands `rawvideoparse` the
   strides; a width that is a multiple of 128 (640) needs none, which is why 640x480 never
