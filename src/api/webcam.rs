@@ -55,7 +55,13 @@ pub struct DetectionEvent {
     pub fps: f32,
 }
 
+/// Whether this build can run the webcam pipeline: a compile-time answer, cheap enough for a widget's build.
 #[flutter_rust_bridge::frb(sync)]
+pub fn webcam_inference_available() -> bool {
+    cfg!(all(feature = "gstreamer", onnx))
+}
+
+/// Not sync on purpose: the device monitor starts libcamera, about a second the UI thread must not wait out.
 pub fn list_cameras() -> Result<Vec<CameraDesc>, String> {
     #[cfg(feature = "gstreamer")]
     {

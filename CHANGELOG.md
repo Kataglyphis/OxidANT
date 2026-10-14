@@ -200,6 +200,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `feature-checks-per-job` brings back one job per set.
 
 ### Fixed
+
+- **`list_cameras` no longer runs on the caller's thread** (2026-10-15). It was
+  `#[frb(sync)]`, and the device monitor it starts brings libcamera up: OmniAccelerANT's
+  Stream page called it as its feature probe, which held the app's first frame 0.94 s on a
+  Pi 5. It is async now, and `webcam_inference_available()` answers the probe from
+  `cfg!(all(feature = "gstreamer", onnx))`, which also stops a gstreamer-only build from
+  offering a pipeline whose start would fail.
 - **ObservANT, from the deep review of 2026-10-14:**
   - *Reads need a local host name too.* `own_host` now runs on every request, so a page
     that DNS rebinding pointed at the board cannot read `/snapshot.jpg`, the arrival
