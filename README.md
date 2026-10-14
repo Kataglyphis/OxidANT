@@ -325,9 +325,11 @@ cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --ba
 Optional environment variables:
 
 - `KATAGLYPHIS_ONNX_MODEL` – path to the ONNX model. Unset, the app takes
-  `resources\models\yolov10m.onnx` beside its exe, where the portable bundle, the
-  MSIX and the MSI all put it, and otherwise the checkout's
-  `resources/models/yolov10m.onnx`, a path fixed at compile time
+  `resources\models\deim_dfine_n_coco.onnx` beside its exe, where the portable bundle,
+  the MSIX and the MSI all put it, and otherwise the checkout's
+  `resources/models/deim_dfine_n_coco.onnx`, a path fixed at compile time. Models are
+  not tracked: `scripts/linux/fetch-models.sh` (Windows: `scripts/windows/Get-Models.ps1`)
+  downloads what `resources/models/models.lock` names and checks its SHA-256
 - `KATAGLYPHIS_ONNX_BACKEND` – `tract` or `ort` (default: automatic)
 - `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (default: `cpu`)
 - `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: `0`, one per core)
@@ -388,8 +390,9 @@ cargo run --features burn_demos --bin burn-demos -- xor --epochs 2000 --lr 0.05
 
 cargo run --features burn_demos --bin burn-demos -- two-moons --epochs 200 --steps-per-epoch 50 --lr 0.01 --batch-size 256
 
-# ONNX Runtime YOLOv10m Demo (Default model: resources/models/yolov10m.onnx)
-cargo run --features burn_demos --bin burn-demos -- onnx-yolov10 --runs 1 --print-topk 3
+# ONNX Runtime detector demo (default model: resources/models/deim_dfine_n_coco.onnx; fetch it first)
+scripts/linux/fetch-models.sh
+cargo run --features burn_demos --bin burn-demos -- onnx-detector --runs 1 --print-topk 3
 ```
 
 ### Windows

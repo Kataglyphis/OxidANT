@@ -3,6 +3,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use kataglyphis_inference::person_detection::MODEL_FILE;
+
 /// The variables an install folder `dir` implies, minus any `is_set` already holds; empty when `dir` is no install.
 pub fn plan(
     dir: &Path,
@@ -46,7 +48,7 @@ pub fn plan(
     if ort.is_file() {
         wanted.push(("ORT_DYLIB_PATH", ort.into_os_string()));
     }
-    let model = dir.join("models").join("yolo26n.onnx");
+    let model = dir.join("models").join(MODEL_FILE);
     if model.is_file() {
         wanted.push(("KATAGLYPHIS_ONNX_MODEL", model.into_os_string()));
     }
@@ -93,7 +95,7 @@ mod tests {
         if with_ort_and_model {
             std::fs::write(dir.join("onnxruntime.dll"), b"MZ").unwrap();
             std::fs::create_dir_all(dir.join("models")).unwrap();
-            std::fs::write(dir.join("models").join("yolo26n.onnx"), b"onnx").unwrap();
+            std::fs::write(dir.join("models").join(MODEL_FILE), b"onnx").unwrap();
         }
     }
 

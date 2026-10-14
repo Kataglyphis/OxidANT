@@ -1040,7 +1040,7 @@ mod tests {
         let none: &[String] = &[];
         // The page itself, under an IP, a bare name or a local suffix, port and all.
         for host in [
-            "192.168.188.98:8080",
+            "192.168.1.98:8080",
             "himbeere2:8080",
             "himbeere2.fritz.box:8080",
             "[fd46::1]:8080",
@@ -1051,16 +1051,16 @@ mod tests {
         }
         // A tool without a browser sends no Origin.
         assert_eq!(
-            own_page(&headers(&[("host", "192.168.188.98:8080")]), none),
+            own_page(&headers(&[("host", "192.168.1.98:8080")]), none),
             Ok(())
         );
         // Another site's page, a sandboxed one and DNS rebinding under a public name are refused.
         let foreign = headers(&[
-            ("host", "192.168.188.98:8080"),
+            ("host", "192.168.1.98:8080"),
             ("origin", "https://evil.example"),
         ]);
         assert!(own_page(&foreign, none).is_err());
-        let sandboxed = headers(&[("host", "192.168.188.98:8080"), ("origin", "null")]);
+        let sandboxed = headers(&[("host", "192.168.1.98:8080"), ("origin", "null")]);
         assert!(own_page(&sandboxed, none).is_err());
         let rebound = headers(&[
             ("host", "cat.evil.example:8080"),

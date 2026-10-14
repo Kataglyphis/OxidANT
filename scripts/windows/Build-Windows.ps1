@@ -227,6 +227,11 @@ try {
     } | Out-Null
   }
 
+  # Models are not tracked; the bundle, the MSIX and the MSI take them from resources\models.
+  Invoke-BuildStep -Context $context -StepName 'Fetch Models' -Critical -Script {
+    & (Join-Path $workspacePath 'scripts\windows\Get-Models.ps1')
+  } | Out-Null
+
   # The uploaded product: exe, DLLs, lib\ plugins and resources\, which the app expects beside it.
   Invoke-BuildStep -Context $context -StepName 'Portable Bundle' -Critical -Script {
     $bundleDir = Join-Path $layout.DistDir 'bundle'

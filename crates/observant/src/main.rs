@@ -600,7 +600,7 @@ mod tests {
     fn a_wildcard_signalling_address_is_reached_through_loopback() {
         assert_eq!(loopback_for("0.0.0.0"), "127.0.0.1");
         assert_eq!(loopback_for("::"), "127.0.0.1");
-        assert_eq!(loopback_for("192.168.188.98"), "192.168.188.98");
+        assert_eq!(loopback_for("192.168.1.98"), "192.168.1.98");
     }
 
     #[test]
@@ -674,7 +674,7 @@ mod tests {
     fn a_wildcard_address_is_shown_as_this_host() {
         assert_eq!(display_host("0.0.0.0"), "<this-host>");
         assert_eq!(display_host("::"), "<this-host>");
-        assert_eq!(display_host("192.168.188.98"), "192.168.188.98");
+        assert_eq!(display_host("192.168.1.98"), "192.168.1.98");
         assert_eq!(display_host("catcam.local"), "catcam.local");
     }
 

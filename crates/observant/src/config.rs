@@ -431,13 +431,11 @@ mod tests {
             peers: list.iter().map(|p| (*p).to_owned()).collect(),
             ..Config::default()
         };
-        assert!(
-            peers(&["http://192.168.188.151:8080", "https://cat.local/"])
-                .validate()
-                .is_ok()
-        );
+        assert!(peers(&["http://192.168.1.51:8080", "https://cat.local/"])
+            .validate()
+            .is_ok());
         for bad in [
-            "192.168.188.151:8080",
+            "192.168.1.51:8080",
             "ftp://cat.local",
             "http://",
             "http://cat.local/stream",
@@ -455,7 +453,7 @@ mod tests {
     fn the_effective_config_round_trips_through_toml() {
         let config = Config {
             camera: "rpicam".into(),
-            model: Some("/opt/models/yolo26n.onnx".into()),
+            model: Some("/opt/models/deim_dfine_n_coco.onnx".into()),
             ..Config::default()
         };
         let text = toml::to_string(&config).unwrap();

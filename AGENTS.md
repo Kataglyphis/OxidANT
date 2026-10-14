@@ -511,7 +511,7 @@ board runs it as one service unit:
   - When `lib\gstreamer-1.0` sits beside the exe, `install::adopt` sets the variables the
     folder implies, first thing in `main`: `GST_PLUGIN_PATH`, an empty
     `GST_PLUGIN_SYSTEM_PATH[_1_0]`, `GST_PLUGIN_SCANNER`, `GST_REGISTRY` under
-    `%LOCALAPPDATA%`, `ORT_DYLIB_PATH` and `KATAGLYPHIS_ONNX_MODEL` (`models\yolo26n.onnx`).
+    `%LOCALAPPDATA%`, `ORT_DYLIB_PATH` and `KATAGLYPHIS_ONNX_MODEL` (`models\deim_dfine_n_coco.onnx`).
   - A variable the caller already set wins.
   - On Linux the bundle's `catcam` launcher does the same job, so `adopt` is a no-op there.
   - OmniAccelerANT's `scripts/windows/observant/Package-ObservANT.ps1` builds that folder
@@ -695,8 +695,8 @@ bare `gst::init`, points `GST_PLUGIN_PATH` at it as well. The `media-check` subc
 builds the pipeline without starting it (no camera, no window) and fails when an element
 is missing, or when an exe that carries plugins takes one from anywhere else. Where Media
 Foundation is absent (Server Core has none) it builds the `autovideosrc` fallback. The model
-travels in `resources\`, and `resolve_model_path` takes `resources\models\yolov10m.onnx`
-beside the exe before the compile-time checkout path, so a packaged app needs no
+travels in `resources\` (the *Fetch Models* step puts it there), and `resolve_model_path` takes
+`resources\models\deim_dfine_n_coco.onnx` beside the exe before the compile-time checkout path, so a packaged app needs no
 `KATAGLYPHIS_ONNX_MODEL`. The MSI installs the same tree as the bundle: a generated
 component per file (`msi-payload-files.wxs`), placed with WiX v4's `Subdirectory`.
 
@@ -878,15 +878,24 @@ so a dead link there costs more than tidiness.
 
 ### Large tracked files
 
-Two files dominate the size of a clone. Both are tracked deliberately; neither is in
+One large file is tracked deliberately. It is not in
 git-lfs, and **the history is not being rewritten** (decision D4 — no `filter-repo`,
 no `filter-branch`, no BFG). A rewrite would change every commit id in a repository
 that two other repositories pin by sha, for a saving nobody has asked for.
 
 | File | Size | Why it is tracked |
 | --- | --- | --- |
-| `resources/models/yolov10m.onnx` | ~59 MiB | The YOLOv10m weights. `crates/inference`'s default model, so `crates/observant`'s too when nothing names another; the burn demos' `onnx-yolov10` run uses it as well. Fetching it at build time would put a network call in front of every build and every offline container run. |
 | `images/Rust.gif` | ~7 MiB | The README hero image, rendered by GitHub. |
+
+**Models are data, not code, and are never tracked** (owner, 2026-10-14). The AGPL-3.0
+`yolov10m.onnx` (59 MiB) left the tree then; it stays in the history (D4), so a clone still
+carries it. Its successor is DEIM-D-FINE-N (Apache-2.0, 15 MiB), built from its pinned
+upstream and released by [ModelANT](https://github.com/Kataglyphis/ModelANT).
+`resources/models/models.lock` names each file with its URL and SHA-256, and
+`scripts/linux/fetch-models.sh` (Windows: `scripts/windows/Get-Models.ps1`, the *Fetch
+Models* build step) puts them beside it, its license and notice included. A checked copy
+waits in `~/.cache/kataglyphis-models`, so only the first run needs the network. A new
+model goes into ModelANT first, and only the lock changes here.
 
 Everything else tracked is small: the renderer's glTF/GLB/KTX2 test assets are a few
 hundred kilobytes each, and they stay that way on purpose.

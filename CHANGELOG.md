@@ -122,6 +122,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `stayed_s`, as a visit shorter than the clip's post-roll ends before the clip is written.
 
 ### Changed
+- **The default model is DEIM-D-FINE-N (Apache-2.0), fetched rather than tracked**
+  (2026-10-14, owner). The AGPL-3.0 `resources/models/yolov10m.onnx` (59 MiB) is no longer
+  tracked; `MODEL_FILE` is `deim_dfine_n_coco.onnx` (15 MiB, COCO 80, 43.0 AP), built from
+  DEIM's pinned checkpoint by [ModelANT](https://github.com/Kataglyphis/ModelANT) in the
+  same `[1, 300, 6]` layout, so the parser and the default plain-resize preprocessing stay.
+  `resources/models/models.lock` names it, its license and notice with URL and SHA-256;
+  `scripts/linux/fetch-models.sh` and `scripts/windows/Get-Models.ps1` (the Windows build's
+  *Fetch Models* step) fetch and check them, through a cache. Against YOLO26n on 12 arrival
+  pictures of three cat cams it found cats more often and more surely, at about 260 ms a
+  run instead of 190 ms on a Pi 5. The burn demo `onnx-yolov10` is `onnx-detector` (the old
+  name stays an alias). Test fixtures use generic private addresses, not the cat cams' real ones.
 - **The cat cam is ObservANT** (2026-10-14, the owner's name for it). Cats stay the default,
   detecting is general. The crate is `crates/observant` (`kataglyphis_observant`), the Pi
   script `scripts/linux/observant/`. `/healthz`'s `cat` object is `detection`, the visits file
