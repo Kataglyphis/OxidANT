@@ -207,6 +207,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         .rotated(config.rotate)
         .scored(config.score)
         .at_fps(config.fps)
+        .private(config.privacy)
         .peered(config.peers.clone());
     let status = Arc::new(match state_dir() {
         Some(dir) => {

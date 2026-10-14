@@ -32,6 +32,16 @@ pub enum Inference {
     Off,
 }
 
+/// What of the scene leaves the camera: `pixelate` hides everything but the detection boxes in
+/// the stream, the snapshot, the arrival photos and the clips. Set here only, so no page turns it off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Privacy {
+    #[default]
+    Off,
+    Pixelate,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -56,6 +66,7 @@ pub struct Config {
     pub inference_threads: u32,
     /// Keep every COCO class instead of only cats.
     pub all_classes: bool,
+    pub privacy: Privacy,
     pub http_host: String,
     /// 0 turns the built-in web server off.
     pub http_port: u16,
@@ -105,6 +116,7 @@ impl Default for Config {
             // At 2 Hz a Pi 5 ran at 183 % with ORT's four spinning threads, 81 % with two that sleep (2026-10-11).
             inference_threads: 2,
             all_classes: false,
+            privacy: Privacy::Off,
             http_host: "0.0.0.0".into(),
             http_port: 8080,
             web_root: None,

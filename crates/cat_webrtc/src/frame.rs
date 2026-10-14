@@ -51,6 +51,81 @@ fn channel(scaled: i32) -> u8 {
     ((scaled + 128) >> 8).clamp(0, 255) as u8
 }
 
+/// A privacy block's edge at 640 pixels wide; other widths scale it, so the picture stays as coarse.
+const PRIVACY_BLOCK_AT_640: u32 = 32;
+
+/// How far a kept box grows on each side, as a share of its size: the model's boxes are up to
+/// half a second old, and an animal walking out of its box should not show the room behind.
+const KEEP_MARGIN: f32 = 0.15;
+
+/// Pixelates the I420 `frame` everywhere but inside the `keep` boxes (pixels: x1, y1, x2, y2),
+/// each grown by [`KEEP_MARGIN`]; with no box the whole frame. A block takes its own mean.
+pub fn pixelate_outside(frame: &mut [u8], width: u32, height: u32, keep: &[[f32; 4]]) {
+    let (w, h) = (width as usize, height as usize);
+    // Even, so a luma block is whole chroma blocks.
+    let block = ((PRIVACY_BLOCK_AT_640 * width / 640).max(8) & !1) as usize;
+    let kept: Vec<[usize; 4]> = keep.iter().map(|r| grown(*r, w, h)).collect();
+    let (luma, chroma) = frame.split_at_mut(w * h);
+    let (u_plane, v_plane) = chroma.split_at_mut(w * h / 4);
+    pixelate_plane(luma, w, h, block, &kept, 1);
+    pixelate_plane(u_plane, w / 2, h / 2, block / 2, &kept, 2);
+    pixelate_plane(v_plane, w / 2, h / 2, block / 2, &kept, 2);
+}
+
+/// `rect` grown by [`KEEP_MARGIN`] and clamped to the frame, as whole pixels x1, y1, x2, y2 (exclusive).
+fn grown(rect: [f32; 4], w: usize, h: usize) -> [usize; 4] {
+    let [x1, y1, x2, y2] = rect;
+    let (mx, my) = ((x2 - x1).abs() * KEEP_MARGIN, (y2 - y1).abs() * KEEP_MARGIN);
+    let clamp = |v: f32, len: usize| (v.max(0.0) as usize).min(len);
+    [
+        clamp((x1 - mx).floor(), w),
+        clamp((y1 - my).floor(), h),
+        clamp((x2 + mx).ceil(), w),
+        clamp((y2 + my).ceil(), h),
+    ]
+}
+
+/// One plane of [`pixelate_outside`]; `scale` maps its pixels back to luma pixels for `kept`.
+fn pixelate_plane(
+    plane: &mut [u8],
+    w: usize,
+    h: usize,
+    block: usize,
+    kept: &[[usize; 4]],
+    scale: usize,
+) {
+    let inside = |x: usize, y: usize| {
+        let (x, y) = (x * scale, y * scale);
+        kept.iter()
+            .any(|k| x >= k[0] && x < k[2] && y >= k[1] && y < k[3])
+    };
+    for by in (0..h).step_by(block) {
+        let y2 = (by + block).min(h);
+        for bx in (0..w).step_by(block) {
+            let x2 = (bx + block).min(w);
+            let sum: usize = (by..y2)
+                .flat_map(|row| &plane[row * w + bx..row * w + x2])
+                .map(|&p| usize::from(p))
+                .sum();
+            let mean = (sum / ((x2 - bx) * (y2 - by))) as u8;
+            let touches = kept.iter().any(|k| {
+                bx * scale < k[2] && x2 * scale > k[0] && by * scale < k[3] && y2 * scale > k[1]
+            });
+            for row in by..y2 {
+                if !touches {
+                    plane[row * w + bx..row * w + x2].fill(mean);
+                    continue;
+                }
+                for col in bx..x2 {
+                    if !inside(col, row) {
+                        plane[row * w + col] = mean;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A box outline in an I420 frame: `thickness` pixels in luma, half that in chroma.
 pub fn draw_rect(
     frame: &mut [u8],
@@ -140,5 +215,65 @@ mod tests {
         let mut g = gray(w, h, 100);
         draw_rect(&mut g, w, h, [6.0, 6.0, 2.0, 2.0], GREEN, 1);
         assert_eq!(g, gray(w, h, 100));
+    }
+
+    /// A frame whose every luma pixel differs from its neighbours: x + 3y, wrapped.
+    fn ramp(w: u32, h: u32) -> Vec<u8> {
+        let mut f = vec![128u8; size(w, h)];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                f[y * w as usize + x] = ((x + 3 * y) % 256) as u8;
+            }
+        }
+        f
+    }
+
+    #[test]
+    fn with_no_box_every_block_is_one_value() {
+        let (w, h) = (640u32, 480u32);
+        let mut f = ramp(w, h);
+        pixelate_outside(&mut f, w, h, &[]);
+        // 32-pixel blocks at 640 wide: each holds one value, its mean.
+        for (bx, by) in [(0usize, 0usize), (320, 224), (608, 448)] {
+            let first = f[by * 640 + bx];
+            for y in by..by + 32 {
+                assert!(f[y * 640 + bx..y * 640 + bx + 32]
+                    .iter()
+                    .all(|&p| p == first));
+            }
+        }
+        assert_ne!(f[0], f[32]);
+    }
+
+    #[test]
+    fn a_kept_box_and_its_margin_stay_sharp_and_the_rest_is_blocks() {
+        let (w, h) = (640u32, 480u32);
+        let original = ramp(w, h);
+        let mut f = original.clone();
+        // 100 x 100 at (200, 200): the margin grows it by 15 each side, to 185..315.
+        pixelate_outside(&mut f, w, h, &[[200.0, 200.0, 300.0, 300.0]]);
+        let at = |f: &[u8], x: usize, y: usize| f[y * 640 + x];
+        for (x, y) in [(200, 200), (299, 299), (186, 186), (314, 314), (250, 186)] {
+            assert_eq!(at(&f, x, y), at(&original, x, y), "({x}, {y}) kept");
+        }
+        // Outside the grown box, the block that holds (0, 0) and one beside the box are flat.
+        assert_ne!(at(&f, 1, 0), at(&original, 1, 0));
+        assert_eq!(at(&f, 1, 0), at(&f, 31, 31));
+        assert_eq!(at(&f, 160, 250), at(&f, 170, 250));
+        // Chroma follows: the planes keep their size, and a block outside is flat there too.
+        assert_eq!(f.len(), size(w, h));
+        let u = &f[(w * h) as usize..];
+        assert!(u[..16].iter().all(|&p| p == u[0]));
+    }
+
+    #[test]
+    fn a_box_over_the_edge_and_an_odd_width_do_not_panic() {
+        let (w, h) = (100u32, 50u32);
+        let mut f = ramp(w, h);
+        pixelate_outside(&mut f, w, h, &[[-20.0, -20.0, 500.0, 500.0]]);
+        assert_eq!(f, ramp(w, h));
+        let mut g = ramp(w, h);
+        pixelate_outside(&mut g, w, h, &[[90.0, 40.0, 99.0, 49.0]]);
+        assert_eq!(g.len(), size(w, h));
     }
 }

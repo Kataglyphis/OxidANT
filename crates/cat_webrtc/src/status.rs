@@ -10,6 +10,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use gstreamer as gst;
 use serde::{Deserialize, Serialize};
 
+use crate::config::Privacy;
 use crate::presence::{Change, Zone};
 
 /// The cat's visits, kept across restarts in the state directory.
@@ -178,6 +179,7 @@ struct Cat {
 pub struct Status {
     name: Mutex<String>,
     inference: bool,
+    privacy: Privacy,
     width: u32,
     height: u32,
     fps: u32,
@@ -218,6 +220,7 @@ impl Status {
         Self {
             name: Mutex::new(name.to_owned()),
             inference,
+            privacy: Privacy::Off,
             width,
             height,
             fps: 0,
@@ -278,6 +281,12 @@ impl Status {
     /// The detection score `catcam.toml` asks for; one the page saved overrides it.
     pub fn scored(self, score: f32) -> Self {
         self.score.store(score.to_bits(), Ordering::Relaxed);
+        self
+    }
+
+    /// The privacy filter in effect, for `/healthz` and the page.
+    pub fn private(mut self, privacy: Privacy) -> Self {
+        self.privacy = privacy;
         self
     }
 
@@ -672,6 +681,7 @@ impl Status {
             "frame": {"width": self.width, "height": self.height, "fps": self.fps},
             "camera": camera,
             "inference": self.inference,
+            "privacy": self.privacy,
             "model_runs": runs,
             "cat": {
                 "in_view": in_view,
@@ -1282,5 +1292,15 @@ mod tests {
         let next = status.snapshot_jpeg().unwrap().unwrap();
         assert_ne!(next.as_ptr(), jpeg.as_ptr());
         assert_ne!(next, jpeg);
+    }
+
+    #[test]
+    fn healthz_names_the_privacy_filter() {
+        let off: serde_json::Value =
+            serde_json::from_str(&Status::new("Cam", true, 4, 4).to_json()).unwrap();
+        assert_eq!(off["privacy"], "off");
+        let on = Status::new("Cam", true, 4, 4).private(Privacy::Pixelate);
+        let on: serde_json::Value = serde_json::from_str(&on.to_json()).unwrap();
+        assert_eq!(on["privacy"], "pixelate");
     }
 }

@@ -15,6 +15,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **A privacy filter for showing the cat cam in public** (2026-10-14). `privacy =
+  "pixelate"` in the settings blocks out everything but the detection boxes (each grown by
+  15 %, 32-pixel blocks at 640 wide) in the stream, `/snapshot.jpg`, the arrival photos and
+  the clips; the model still sees the whole frame. Only the file sets it; `/healthz` names it
+  (`privacy`). `frame::pixelate_outside`, with tests for blocks, kept boxes, edges, the
+  capture pipeline and the arrival photo.
+
 - **A visit keeps the boxes it arrived with** (2026-10-14): `/healthz`'s `cat.recent[]` and
   `cat.json` carry `boxes` (fractions), so a page can mark a past false arrival "not a cat";
   older visits have none.

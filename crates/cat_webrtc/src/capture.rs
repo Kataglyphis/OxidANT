@@ -15,7 +15,7 @@ use kataglyphis_inference::person_detection::PersonDetector;
 
 use crate::camera::{self, Choice, Found, Plan};
 use crate::clip::{Arrival, Clip};
-use crate::config::Config;
+use crate::config::{Config, Privacy};
 use crate::frame;
 use crate::motion::{still_period, Moving, Pacer};
 use crate::notify::Notifier;
@@ -225,11 +225,16 @@ impl Worker {
             return Ok(true);
         };
         let mut annotated = i420.to_vec();
-        if let Ok(current) = boxes.lock() {
-            for detection in current.iter() {
-                let rect = [detection.x1, detection.y1, detection.x2, detection.y2];
-                frame::draw_rect(&mut annotated, width, height, rect, frame::GREEN, 4);
-            }
+        let rects: Vec<[f32; 4]> = boxes
+            .lock()
+            .map(|current| current.iter().map(|d| [d.x1, d.y1, d.x2, d.y2]).collect())
+            .unwrap_or_default();
+        // Before the boxes, and on the copy only: the model keeps seeing the whole picture.
+        if self.config.privacy == Privacy::Pixelate {
+            frame::pixelate_outside(&mut annotated, width, height, &rects);
+        }
+        for rect in rects {
+            frame::draw_rect(&mut annotated, width, height, rect, frame::GREEN, 4);
         }
         // Only while the inference thread is idle: a frame of lag is fine, a backlog is not.
         if let Some(tx) = inference {
@@ -464,6 +469,7 @@ fn spawn_inference(
         visit: None,
         width,
         height,
+        privacy: config.privacy,
         boxes,
         status: status.clone(),
         notifier,
@@ -501,6 +507,7 @@ struct Visits {
     visit: Option<Arrival>,
     width: u32,
     height: u32,
+    privacy: Privacy,
     boxes: Boxes,
     status: Arc<Status>,
     notifier: Option<Notifier>,
@@ -550,7 +557,7 @@ impl Visits {
         };
         if let Some(Change::Arrived { best, .. }) = &change {
             // Before the event goes out, so a receiver that fetches /arrival.jpg?t= gets this one.
-            match arrival_jpeg(i420, width, height, &detections) {
+            match arrival_jpeg(i420, width, height, &detections, self.privacy) {
                 Ok(jpeg) => status.set_arrival(jpeg, time),
                 Err(err) => log::warn!("arrival snapshot: {err:#}"),
             }
@@ -599,8 +606,16 @@ fn arrival_jpeg(
     width: u32,
     height: u32,
     detections: &[Detection],
+    privacy: Privacy,
 ) -> anyhow::Result<Vec<u8>> {
     let mut boxed = i420.to_vec();
+    if privacy == Privacy::Pixelate {
+        let rects: Vec<[f32; 4]> = detections
+            .iter()
+            .map(|d| [d.x1, d.y1, d.x2, d.y2])
+            .collect();
+        frame::pixelate_outside(&mut boxed, width, height, &rects);
+    }
     for d in detections {
         frame::draw_rect(
             &mut boxed,
@@ -1000,6 +1015,7 @@ mod tests {
             visit: None,
             width: 64,
             height: 48,
+            privacy: Privacy::Off,
             boxes: Arc::new(Mutex::new(Vec::new())),
             status: status.clone(),
             notifier: None,
@@ -1085,5 +1101,46 @@ mod tests {
         assert_eq!(health(&status)["cat"]["visits"], 0);
         assert!(status.arrival_jpeg(None).is_none());
         assert!(v.boxes.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn with_the_privacy_filter_the_test_pattern_leaves_the_camera_as_blocks() {
+        let config = Config {
+            camera: "test".into(),
+            width: 64,
+            height: 48,
+            privacy: Privacy::Pixelate,
+            ..Config::default()
+        };
+        let (frames, status) = capture_frames(config, 3);
+        // No box: every 8 x 8 luma block (32 pixels at 640 wide, scaled) holds one value.
+        for (_, data) in &frames {
+            for by in (0..48).step_by(8) {
+                for bx in (0..64).step_by(8) {
+                    let first = data[by * 64 + bx];
+                    for y in by..by + 8 {
+                        assert!(data[y * 64 + bx..y * 64 + bx + 8]
+                            .iter()
+                            .all(|&p| p == first));
+                    }
+                }
+            }
+        }
+        let first = &frames[0].1;
+        assert!(
+            first[..64].windows(2).any(|w| w[0] != w[1]),
+            "the bars still differ"
+        );
+        assert!(status.snapshot_jpeg().unwrap().is_some());
+    }
+
+    #[test]
+    fn the_arrival_photo_is_filtered_too() {
+        let frame: Vec<u8> = (0..frame::size(64, 48))
+            .map(|i| (i * 7 % 251) as u8)
+            .collect();
+        let open = arrival_jpeg(&frame, 64, 48, &middle_cat(), Privacy::Off).unwrap();
+        let filtered = arrival_jpeg(&frame, 64, 48, &middle_cat(), Privacy::Pixelate).unwrap();
+        assert_ne!(open, filtered);
     }
 }
