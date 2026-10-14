@@ -109,6 +109,17 @@ fn host_name(host: &str) -> String {
 }
 
 /// Serves connections until the runtime shuts down.
+/// A browser that vanished without closing, a laptop asleep or a Wi-Fi gone, is noticed within
+/// about 2.5 minutes, so its viewer place and its signalling socket free.
+fn keep_alive(stream: &TcpStream) {
+    let probes = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(60))
+        .with_interval(Duration::from_secs(10));
+    if let Err(err) = socket2::SockRef::from(stream).set_tcp_keepalive(&probes) {
+        log::debug!("keepalive: {err}");
+    }
+}
+
 pub async fn serve(listener: TcpListener, site: Arc<Site>) {
     loop {
         let (stream, peer) = match listener.accept().await {
@@ -119,6 +130,7 @@ pub async fn serve(listener: TcpListener, site: Arc<Site>) {
                 continue;
             }
         };
+        keep_alive(&stream);
         let site = site.clone();
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req| handle(req, site.clone()));
@@ -1251,5 +1263,28 @@ mod tests {
         )
         .await;
         assert!(reply.starts_with("HTTP/1.1 502"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn every_connection_probes_a_peer_that_went_quiet() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _client = TcpStream::connect(addr).await.unwrap();
+        let (accepted, _) = listener.accept().await.unwrap();
+        let socket = socket2::SockRef::from(&accepted);
+        assert!(!socket.keepalive().unwrap());
+        keep_alive(&accepted);
+        assert!(socket.keepalive().unwrap());
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(
+                socket.tcp_keepalive_time().unwrap(),
+                Duration::from_secs(60)
+            );
+            assert_eq!(
+                socket.tcp_keepalive_interval().unwrap(),
+                Duration::from_secs(10)
+            );
+        }
     }
 }

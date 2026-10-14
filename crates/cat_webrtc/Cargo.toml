@@ -20,6 +20,7 @@ sysinfo = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "fs", "macros", "signal", "time"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+socket2 = { version = "0.6", features = ["all"] }
 http-body-util = "0.1"
 bytes = "1"
 httparse = "1"

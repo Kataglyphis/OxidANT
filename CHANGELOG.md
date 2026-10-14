@@ -129,6 +129,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Fixed
 
+- **A browser that vanished frees its viewer place** (2026-10-14). The web server's
+  connections carry TCP keepalive (60 s idle, then a probe every 10 s), so one whose peer
+  slept or left the Wi-Fi without closing ends in about 2.5 minutes, with its `/webrtc-ws`
+  socket and its `max_viewers` place. Before, nothing ended it until the server sent
+  something, and enough of them would have kept new tabs out.
+
 - **Windows arm64 built again after the quarter-turn capture** (2026-10-14). `I420Layout`
   serves only the `cfg(unix)` rpicam source, so Windows' clippy `-D warnings` called it dead
   code (run 38496162066); it is `cfg(unix)` now, and the next Windows round passed.
