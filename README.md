@@ -233,11 +233,19 @@ target/release/kataglyphis_cat_webrtc --camera test                 # a test pat
 curl localhost:8080/healthz                    # ok or the problem, the camera, the model's runs, the cat, the kept clips
 curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
 curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on
+curl -o cat.jpg 'localhost:8080/arrival.jpg?t=1791763273'  # one of the last five, by arrival time
 curl -o cat.mp4 localhost:8080/arrival.mp4     # that arrival as H.264, 3 s before it to 7 s after
 curl -o cat.mp4 'localhost:8080/arrival.mp4?t=1791763273'  # one of the last five, by arrival time
 curl localhost:8080/settings                   # what the settings page can change
 curl -X POST -H 'content-type: application/json' -d '{"rotate": 270, "score": 0.5}' localhost:8080/settings
+curl -X POST -H 'content-type: application/json' -d '{"ignore": [[0.25, 0.75, 0.75, 1.0]]}' localhost:8080/settings  # "not a cat" here
 ```
+
+A cat arrives only where something moved in the last 10 s, and a detection over a spot in
+`ignore` (fractions of the picture) never counts. `/webrtc-ws` and `POST /settings` take
+only the cat cam's own page (a browser's `Origin` must match a local `Host`; a reverse
+proxy's name goes into `allowed_hosts`), at most `max_viewers` tabs watch at once (8), and
+the origins in `peers` may read this one's status and pictures for their overview.
 
 `--notify-url <http(s) URL>` (`notify_url` in the file) POSTs a JSON event there whenever
 a cat arrives or leaves, a Home Assistant webhook trigger for instance, and a `clip`
