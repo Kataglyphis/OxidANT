@@ -139,7 +139,11 @@ const RECENT_VISITS: usize = 20;
 struct Visit {
     arrived: u64,
     stayed_s: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_rounded"
+    )]
     boxes: Vec<Zone>,
 }
 
@@ -692,6 +696,13 @@ fn rounded(zones: &[Zone]) -> Vec<[f64; 4]> {
         .collect()
 }
 
+fn serialize_rounded<S: serde::Serializer>(
+    zones: &[Zone],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    rounded(zones).serialize(serializer)
+}
+
 /// The newest of `store`, or with `at` the one kept for the arrival at that time.
 fn pick(store: &Mutex<VecDeque<(u64, bytes::Bytes)>>, at: Option<u64>) -> Option<bytes::Bytes> {
     let kept = store.lock().ok()?;
@@ -1208,6 +1219,23 @@ mod tests {
             serde_json::json!([[0.25, 0.75, 0.75, 1.0]])
         );
         assert_eq!(recent(&again)["stayed_s"], 172);
+        // A fraction no f32 holds exactly is written as the three places it means.
+        status.set_boxes(vec![[0.1, 0.2, 0.3, 0.4]]);
+        status.set_cat(
+            true,
+            Some(0.5),
+            Some(&Change::Arrived {
+                count: 1,
+                best: 0.5,
+            }),
+        );
+        assert_eq!(
+            recent(&status)["boxes"],
+            serde_json::json!([[0.1, 0.2, 0.3, 0.4]])
+        );
+        status.persist();
+        let file = std::fs::read_to_string(dir.path().join(CAT_FILE)).unwrap();
+        assert!(file.contains("[0.1,0.2,0.3,0.4]"), "{file}");
     }
 
     #[test]
