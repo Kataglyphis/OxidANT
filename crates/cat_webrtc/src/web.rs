@@ -1190,4 +1190,66 @@ mod tests {
             "{settings}"
         );
     }
+
+    async fn raw(addr: std::net::SocketAddr, request: &str) -> String {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        String::from_utf8_lossy(&response).into_owned()
+    }
+
+    #[tokio::test]
+    async fn before_the_first_frame_and_clip_the_pictures_say_so() {
+        let addr = start(None, 9).await;
+        let snapshot = get(addr, SNAPSHOT_PATH, "").await;
+        assert!(
+            snapshot.starts_with("HTTP/1.1 503") && snapshot.ends_with("no frame yet"),
+            "{snapshot}"
+        );
+        let clip = get(addr, CLIP_PATH, "").await;
+        assert!(
+            clip.starts_with("HTTP/1.1 404") && clip.ends_with("no arrival clip yet"),
+            "{clip}"
+        );
+        let picture = get(addr, ARRIVAL_PATH, "").await;
+        assert!(picture.starts_with("HTTP/1.1 404"), "{picture}");
+    }
+
+    #[tokio::test]
+    async fn settings_take_get_and_a_small_json_post_only() {
+        let addr = start(None, 9).await;
+        let put = raw(addr, "PUT /settings HTTP/1.1\r\nhost: cat.local\r\nconnection: close\r\ncontent-length: 2\r\n\r\n{}").await;
+        assert!(put.starts_with("HTTP/1.1 405"), "{put}");
+        // A name of 2000 characters is past the 1 KiB a settings body may be, so it is never parsed.
+        let huge = format!(r#"{{"name": "{}"}}"#, "x".repeat(2000));
+        let refused = post(addr, SETTINGS_PATH, "application/json", &huge).await;
+        assert!(refused.starts_with("HTTP/1.1 400"), "{refused}");
+    }
+
+    #[tokio::test]
+    async fn a_signalling_server_that_never_ends_its_head_gets_a_502_not_a_hang() {
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = upstream.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut socket, _) = upstream.accept().await.unwrap();
+            let mut head = [0u8; 1024];
+            let _ = socket.read(&mut head).await;
+            // A status line and then header bytes forever, never the blank line that ends them.
+            socket
+                .write_all(b"HTTP/1.1 101 Switching Protocols\r\n")
+                .await
+                .unwrap();
+            let filler = vec![b'x'; 4096];
+            while socket.write_all(&filler).await.is_ok() {}
+        });
+        let addr = start(None, port).await;
+        let reply = get(
+            addr,
+            SIGNALLING_PATH,
+            "upgrade: websocket\r\nconnection: upgrade\r\n",
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 502"), "{reply}");
+    }
 }

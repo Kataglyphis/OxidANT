@@ -454,4 +454,56 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         assert!(listener.accept().is_err());
     }
+
+    #[test]
+    fn a_receiver_that_keeps_refusing_gets_each_try_and_then_none() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/hook", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(2)))
+            .build()
+            .into();
+        static TWO: [Duration; 2] = [Duration::from_millis(20), Duration::from_millis(20)];
+        let retry = Retry {
+            delays: &TWO,
+            max_age: Duration::from_secs(60),
+        };
+        // Answers every try with a 500 on a thread of its own, and counts them.
+        let tries = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = tries.clone();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = stop.clone();
+        let server = thread::spawn(move || {
+            while !stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        let mut reader = BufReader::new(stream);
+                        let mut line = String::new();
+                        while reader.read_line(&mut line).unwrap_or(0) > 2 {
+                            line.clear();
+                        }
+                        let _ = reader.get_mut().write_all(
+                            b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n",
+                        );
+                        counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    Err(_) => thread::sleep(Duration::from_millis(5)),
+                }
+            }
+        });
+        deliver(
+            &agent,
+            &url,
+            Instant::now(),
+            &serde_json::json!({"event": "arrived"}),
+            retry,
+        );
+        thread::sleep(Duration::from_millis(100));
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        server.join().unwrap();
+        // The first try and one per delay: three, and no fourth once it gave up.
+        assert_eq!(tries.load(std::sync::atomic::Ordering::Relaxed), 3);
+    }
 }
