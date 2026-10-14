@@ -15,6 +15,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **`scripts/linux/clippy-windows.sh`** (2026-10-14) runs the Windows lanes' lint, clippy
+  `--all-targets -D warnings` for `x86_64-pc-windows-gnu`, on Linux in minutes: as root in
+  `:latest` it installs mingw for ring's C and adds the target. With the `I420Layout` slip
+  below put back, it fails with the CI's message.
+
 - **Peers, a viewer cap and the build in `/healthz`** (2026-10-14).
   - `peers` (origins) in the config: a GET of `/healthz`, `/snapshot.jpg`, `/arrival.jpg`
     or `/arrival.mp4` whose `Origin` is one of them gets `Access-Control-Allow-Origin` and
@@ -119,6 +124,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `feature-checks-per-job` brings back one job per set.
 
 ### Fixed
+
+- **Windows arm64 built again after the quarter-turn capture** (2026-10-14). `I420Layout`
+  serves only the `cfg(unix)` rpicam source, so Windows' clippy `-D warnings` called it dead
+  code (run 38496162066); it is `cfg(unix)` now, and the next Windows round passed.
 - **A GStreamer without the clip encoder no longer leaves a scratch directory per arrival
   (2026-10-13).** `encode_mp4` made its directory before it built `openh264enc`,
   `h264parse` and `mp4mux`, and returned early when one was missing, past the cleanup at
