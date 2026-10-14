@@ -1,4 +1,4 @@
-//! What the cat cam achieves and costs, sampled every [`PERIOD`] for `/healthz`: its frame and model
+//! What the ObservANT achieves and costs, sampled every [`PERIOD`] for `/healthz`: its frame and model
 //! rates and the model's time per run, and where `/proc` and `/sys` exist (Linux) its CPU share,
 //! memory, the system load and the board's temperature. A number that cannot be read is `None`.
 
@@ -13,7 +13,7 @@ use crate::status::Status;
 /// How often the sampler looks; the rates are over this window.
 pub const PERIOD: Duration = Duration::from_secs(2);
 
-/// Clock ticks per second in `/proc/<pid>/stat`: Linux's USER_HZ, 100 wherever the cat cam runs.
+/// Clock ticks per second in `/proc/<pid>/stat`: Linux's USER_HZ, 100 wherever the ObservANT runs.
 const TICKS_PER_SECOND: f64 = 100.0;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -73,7 +73,7 @@ impl Sampler {
 pub fn spawn(status: Arc<Status>) {
     let started = Instant::now();
     let spawned = thread::Builder::new()
-        .name("cat-stats".into())
+        .name("observant-stats".into())
         .spawn(move || {
             let mut sampler = Sampler::default();
             loop {

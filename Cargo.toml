@@ -8,7 +8,7 @@ members = [
     "crates/gui",
     "crates/cli",
     "crates/webgpu_renderer",
-    "crates/cat_webrtc",
+    "crates/observant",
 ]
 
 [workspace.package]

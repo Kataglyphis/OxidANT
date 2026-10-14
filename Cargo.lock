@@ -5096,37 +5096,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kataglyphis_cat_webrtc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "flate2",
- "gstreamer",
- "gstreamer-app",
- "http-body-util",
- "httparse",
- "hyper",
- "hyper-util",
- "image 0.25.10",
- "kataglyphis_core",
- "kataglyphis_inference",
- "kataglyphis_media",
- "log",
- "percent-encoding",
- "serde",
- "serde_json",
- "socket2",
- "sysinfo",
- "tempfile",
- "tokio",
- "toml",
- "ureq 3.4.2",
- "zopfli",
-]
-
-[[package]]
 name = "kataglyphis_cli"
 version = "0.1.0"
 dependencies = [
@@ -5196,6 +5165,37 @@ dependencies = [
  "gstreamer-app",
  "gstreamer-video",
  "log",
+]
+
+[[package]]
+name = "kataglyphis_observant"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "flate2",
+ "gstreamer",
+ "gstreamer-app",
+ "http-body-util",
+ "httparse",
+ "hyper",
+ "hyper-util",
+ "image 0.25.10",
+ "kataglyphis_core",
+ "kataglyphis_inference",
+ "kataglyphis_media",
+ "log",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "socket2",
+ "sysinfo",
+ "tempfile",
+ "tokio",
+ "toml",
+ "ureq 3.4.2",
+ "zopfli",
 ]
 
 [[package]]

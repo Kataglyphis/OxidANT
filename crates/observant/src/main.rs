@@ -1,4 +1,4 @@
-//! Cat cam service: picks the camera, burns YOLO cat boxes into the frames, streams them over
+//! ObservANT service: picks the camera, burns YOLO cat boxes into the frames, streams them over
 //! WebRTC and serves the web page that plays the stream. One process, so one service unit.
 
 mod camera;
@@ -55,11 +55,11 @@ const AUTO_INFERENCE_MIN_MIB: u64 = 1024;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "kataglyphis_cat_webrtc",
-    about = "Cat cam: camera -> YOLO cat boxes -> WebRTC, plus the web page that plays it"
+    name = "kataglyphis_observant",
+    about = "ObservANT: camera -> YOLO boxes (cats by default) -> WebRTC, plus the web page that plays it"
 )]
 struct Args {
-    /// TOML config (default: $KATAGLYPHIS_CATCAM_CONFIG, then /etc/omni-accelerant/catcam.toml).
+    /// TOML config (default: $KATAGLYPHIS_OBSERVANT_CONFIG, then /etc/omni-accelerant/observant.toml).
     #[arg(long)]
     config: Option<PathBuf>,
     /// Print the effective config as TOML and exit.
@@ -192,8 +192,8 @@ fn run(args: Args) -> anyhow::Result<()> {
     // Still single-threaded here, so changing the environment cannot race a reader.
     std::env::set_var(ORT_THREADS_ENV, config.inference_threads.to_string());
     match &source {
-        Some(path) => log::info!("config: {} (cat cam {})", path.display(), status::VERSION),
-        None => log::info!("config: built-in defaults (cat cam {})", status::VERSION),
+        Some(path) => log::info!("config: {} (ObservANT {})", path.display(), status::VERSION),
+        None => log::info!("config: built-in defaults (ObservANT {})", status::VERSION),
     }
     let choice = camera::Choice::parse(&config.camera)?;
     kataglyphis_media::ensure_gst_initialized()?;

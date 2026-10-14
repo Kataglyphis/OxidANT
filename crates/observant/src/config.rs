@@ -6,20 +6,38 @@ use anyhow::{bail, Context as _};
 use serde::{Deserialize, Serialize};
 
 /// Environment variable naming the config file, for installs that keep it elsewhere.
-pub const CONFIG_ENV: &str = "KATAGLYPHIS_CATCAM_CONFIG";
+pub const CONFIG_ENV: &str = "KATAGLYPHIS_OBSERVANT_CONFIG";
 
-/// Where a packaged install keeps its config, read only when it exists: `%ProgramData%` on Windows, `/etc` elsewhere.
+/// The variable's name before ObservANT (2026-10-14), still read when the new one is unset.
+const LEGACY_CONFIG_ENV: &str = "KATAGLYPHIS_CATCAM_CONFIG";
+
+/// Where a packaged install keeps its config, read only when it exists: `%ProgramData%` on Windows,
+/// `/etc` elsewhere. An install from before ObservANT keeps `catcam.toml`, read when this is absent.
 pub fn system_config() -> PathBuf {
+    config_in(&config_dir())
+}
+
+/// `observant.toml` in `dir`, or `catcam.toml` there when only that exists.
+fn config_in(dir: &Path) -> PathBuf {
+    let current = dir.join("observant.toml");
+    let legacy = dir.join("catcam.toml");
+    if !current.is_file() && legacy.is_file() {
+        return legacy;
+    }
+    current
+}
+
+fn config_dir() -> PathBuf {
     #[cfg(windows)]
     {
-        let base = std::env::var_os("ProgramData")
+        std::env::var_os("ProgramData")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
-        base.join("omni-accelerant").join("catcam.toml")
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+            .join("omni-accelerant")
     }
     #[cfg(not(windows))]
     {
-        PathBuf::from("/etc/omni-accelerant/catcam.toml")
+        PathBuf::from("/etc/omni-accelerant")
     }
 }
 
@@ -92,10 +110,10 @@ pub struct Config {
     /// Host names besides IPs and local names (`cat`, `*.local`, `*.fritz.box`, ...) under which the
     /// page may open the stream and change settings, such as a reverse proxy's.
     pub allowed_hosts: Vec<String>,
-    /// Browser tabs connected to the stream at once; each one the cat cam encodes for costs CPU.
+    /// Browser tabs connected to the stream at once; each one the ObservANT encodes for costs CPU.
     /// 0 means no limit.
     pub max_viewers: u32,
-    /// The other cat cams, as origins (`http://192.168.1.20:8080`): their pages may read this one's
+    /// The other ObservANT cameras, as origins (`http://192.168.1.20:8080`): their pages may read this one's
     /// status and pictures, and this one's page lists them.
     pub peers: Vec<String>,
 }
@@ -108,7 +126,7 @@ impl Default for Config {
             height: 480,
             fps: 30,
             rotate: 0,
-            name: "Trouble Tabbls Cat Cam".into(),
+            name: "ObservANT".into(),
             inference: Inference::Auto,
             model: None,
             score: 0.25,
@@ -145,11 +163,13 @@ impl Config {
         Ok(toml::from_str(text)?)
     }
 
-    /// `explicit`, else `$KATAGLYPHIS_CATCAM_CONFIG`, else [`system_config`] when present, else defaults.
+    /// `explicit`, else `$KATAGLYPHIS_OBSERVANT_CONFIG` (or its old name), else [`system_config`] when
+    /// present, else defaults.
     pub fn load(explicit: Option<&Path>) -> anyhow::Result<(Self, Option<PathBuf>)> {
         let path = explicit
             .map(Path::to_path_buf)
             .or_else(|| std::env::var_os(CONFIG_ENV).map(PathBuf::from))
+            .or_else(|| std::env::var_os(LEGACY_CONFIG_ENV).map(PathBuf::from))
             .or_else(|| {
                 let system = system_config();
                 system.is_file().then_some(system)
@@ -440,5 +460,15 @@ mod tests {
         };
         let text = toml::to_string(&config).unwrap();
         assert_eq!(Config::parse(&text).unwrap(), config);
+    }
+
+    #[test]
+    fn an_install_from_before_observant_keeps_its_catcam_toml_until_observant_toml_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(config_in(dir.path()), dir.path().join("observant.toml"));
+        std::fs::write(dir.path().join("catcam.toml"), "").unwrap();
+        assert_eq!(config_in(dir.path()), dir.path().join("catcam.toml"));
+        std::fs::write(dir.path().join("observant.toml"), "").unwrap();
+        assert_eq!(config_in(dir.path()), dir.path().join("observant.toml"));
     }
 }

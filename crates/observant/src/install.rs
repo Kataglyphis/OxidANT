@@ -27,7 +27,14 @@ pub fn plan(
         wanted.push(("GST_PLUGIN_SCANNER", scanner.into_os_string()));
     }
     if let Some(base) = local_app_data {
-        let own = base.join("omni-accelerant-catcam");
+        // An install from before ObservANT keeps its folder, and with it the visits.
+        let legacy = base.join("omni-accelerant-catcam");
+        let current = base.join("omni-observant");
+        let own = if !current.exists() && legacy.is_dir() {
+            legacy
+        } else {
+            current
+        };
         wanted.push((
             "GST_REGISTRY",
             own.join("gst-registry.bin").into_os_string(),
@@ -128,6 +135,17 @@ mod tests {
         assert!(PathBuf::from(value("GST_REGISTRY")).starts_with(&local));
         assert_eq!(
             PathBuf::from(value("STATE_DIRECTORY")),
+            local.join("omni-observant")
+        );
+        // A folder from before ObservANT stays in use.
+        std::fs::create_dir_all(local.join("omni-accelerant-catcam")).unwrap();
+        let legacy = plan(dir.path(), Some(&local), |_| false);
+        let state = legacy
+            .iter()
+            .find(|(name, _)| *name == "STATE_DIRECTORY")
+            .unwrap();
+        assert_eq!(
+            PathBuf::from(&state.1),
             local.join("omni-accelerant-catcam")
         );
     }

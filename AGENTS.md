@@ -28,7 +28,7 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/gui` — feature-gated GUI (`gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix`)
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/media` — GStreamer capture, feature-gated (`gstreamer`)
-- `crates/cat_webrtc` — the cat cam service (`kataglyphis_cat_webrtc`): picks the camera, burns YOLO cat boxes into the frames, streams them through `webrtcsink` and serves OmniAccelerANT's web build itself; consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/cat-stream/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
+- `crates/observant` — the ObservANT service (`kataglyphis_observant`): picks the camera, burns YOLO cat boxes into the frames, streams them through `webrtcsink` and serves OmniAccelerANT's web build itself; consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/observant/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands, plus `onnx-runtime` when built with `onnxruntime_directml` or `onnxruntime_cuda` and `media-check` when built with `gui_windows`; `stats --path <file>`). It was renamed on 2026-08-07 from `kataglyphis_rustprojecttemplate`, the root package's name until 2026-09-05 — see the pdb note below. It is not the root package's bin, so `cargo run` needs `-p kataglyphis_cli`.
 - `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{onnx,simple,webcam}.rs`, `src/webcam_engine.rs`), the cxx bridge BeschleunigerBallett links (`src/native_only.rs`, compiled by `build.rs` with `cxx-build` on every non-wasm target) and the `burn-demos` bin
 - `tests/` — the root package's proptest fuzz tests (`fuzz_test.rs`), and the CLI's integration tests (`tests/integration/integration.rs`, compiled as `kataglyphis_cli`'s `integration` test through `crates/cli/tests/integration.rs`)
@@ -42,7 +42,7 @@ to be carried into each of them **in the same change**:
 
 - [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) — the root package
   through flutter_rust_bridge (Cargokit, podspecs, the committed `frb_generated.dart`
-  loader stem) and `crates/cat_webrtc` for its Stream page
+  loader stem) and `crates/observant` for its Stream page
 - [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) —
   the root package through Corrosion, and `crates/webgpu_renderer` through plain
   cargo (its wasm32 demo for the docs site, its test suite and the wasm size budget:
@@ -364,7 +364,7 @@ Default features are empty — GUI and ONNX code only compiles with explicit `--
 
 ### The cat cam service
 
-`kataglyphis_cat_webrtc` is one process doing everything a cat cam board needs, so a
+`kataglyphis_observant` is one process doing everything an ObservANT board needs, so a
 board runs it as one service unit:
 
 - **The camera is chosen, and chosen again.** `camera = "auto"` (the default) takes a
@@ -514,7 +514,7 @@ board runs it as one service unit:
     `%LOCALAPPDATA%`, `ORT_DYLIB_PATH` and `KATAGLYPHIS_ONNX_MODEL` (`models\yolo26n.onnx`).
   - A variable the caller already set wins.
   - On Linux the bundle's `catcam` launcher does the same job, so `adopt` is a no-op there.
-  - OmniAccelerANT's `scripts/windows/cat-stream/Package-CatCam.ps1` builds that folder
+  - OmniAccelerANT's `scripts/windows/observant/Package-ObservANT.ps1` builds that folder
     and the MSI around it.
 - **Logs and exit:** it logs at info (`KATAGLYPHIS_LOG_LEVEL`) and quiets the
   signalling server's per-message INFO (`WEBRTCSINK_SIGNALLING_SERVER_LOG=warn` unless
@@ -523,16 +523,16 @@ board runs it as one service unit:
 
 ### The cat producer on a Raspberry Pi 5
 
-`scripts/linux/cat-stream/run-producer-pi.sh` builds and runs
-`crates/cat_webrtc` from the family CI image against a Pi 5 CSI camera. It moved
+`scripts/linux/observant/run-producer-pi.sh` builds and runs
+`crates/observant` from the family CI image against a Pi 5 CSI camera. It moved
 here from OmniAccelerANT on 2026-09-15 under decision D12, because the crate it
 drives is this repo's; OmniAccelerANT keeps a pointer and still owns the web half
-(`scripts/linux/cat-stream/serve.sh` over there).
+(`scripts/linux/observant/serve.sh` over there).
 
 ```bash
-scripts/linux/cat-stream/run-producer-pi.sh --build       # first run: cargo build in the image
-scripts/linux/cat-stream/run-producer-pi.sh               # start the producer
-scripts/linux/cat-stream/run-producer-pi.sh --libs-only   # refresh build/cat-stream/hostlibs
+scripts/linux/observant/run-producer-pi.sh --build       # first run: cargo build in the image
+scripts/linux/observant/run-producer-pi.sh               # start the producer
+scripts/linux/observant/run-producer-pi.sh --libs-only   # refresh build/observant/hostlibs
 ```
 
 Two things it deliberately does **not** spell out, because ANTfrastructure owns
@@ -749,7 +749,7 @@ from the image's riscv64 child, the distro clang as linker, binfmt with QEMU 10.
 [`docs/riscv64-cross-test-lanes.md`](third_party/ANTfrastructure/docs/riscv64-cross-test-lanes.md).
 
 - **What runs:** every workspace test, 358 of them (measured 2026-10-01: build 1 min 43 s,
-  whole step 2 min 52 s on a warm cargo home). `cat_webrtc` links the image's riscv64
+  whole step 2 min 52 s on a warm cargo home). `observant` links the image's riscv64
   GStreamer, the inference tests the riscv64 ORT loader, and the CLI integration test spawns
   the riscv64 `kataglyphis_cli` through binfmt.
 - **What skips:** the renderer's GPU rendering. The step disables every Vulkan driver
@@ -885,7 +885,7 @@ that two other repositories pin by sha, for a saving nobody has asked for.
 
 | File | Size | Why it is tracked |
 | --- | --- | --- |
-| `resources/models/yolov10m.onnx` | ~59 MiB | The YOLOv10m weights. `crates/inference`'s default model, so `crates/cat_webrtc`'s too when nothing names another; the burn demos' `onnx-yolov10` run uses it as well. Fetching it at build time would put a network call in front of every build and every offline container run. |
+| `resources/models/yolov10m.onnx` | ~59 MiB | The YOLOv10m weights. `crates/inference`'s default model, so `crates/observant`'s too when nothing names another; the burn demos' `onnx-yolov10` run uses it as well. Fetching it at build time would put a network call in front of every build and every offline container run. |
 | `images/Rust.gif` | ~7 MiB | The README hero image, rendered by GitHub. |
 
 Everything else tracked is small: the renderer's glTF/GLB/KTX2 test assets are a few

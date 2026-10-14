@@ -1,10 +1,10 @@
 [package]
-name = "kataglyphis_cat_webrtc"
+name = "kataglyphis_observant"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# Cat cam service publishing YOLO cat boxes over webrtcsink and serving its web client, OmniAccelerANT's Stream page.
+# ObservANT: a camera service publishing YOLO boxes (cats by default) over webrtcsink and serving its web client, OmniAccelerANT's Stream page.
 
 [dependencies]
 anyhow = { workspace = true }

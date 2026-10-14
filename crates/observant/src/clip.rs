@@ -295,7 +295,7 @@ impl Drop for Scratch {
 /// A private directory for one encode; the service's sandbox gives it a /tmp of its own.
 fn tempfile_dir() -> anyhow::Result<std::path::PathBuf> {
     let dir = std::env::temp_dir().join(format!(
-        "catcam-clip-{}-{}",
+        "observant-clip-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -465,7 +465,7 @@ mod tests {
     }
 
     fn scratch_dirs() -> usize {
-        let prefix = format!("catcam-clip-{}-", std::process::id());
+        let prefix = format!("observant-clip-{}-", std::process::id());
         std::fs::read_dir(std::env::temp_dir())
             .unwrap()
             .flatten()

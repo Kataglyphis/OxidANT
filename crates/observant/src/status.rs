@@ -15,7 +15,10 @@ use crate::presence::{Change, Zone};
 use crate::stats::Stats;
 
 /// The cat's visits, kept across restarts in the state directory.
-const CAT_FILE: &str = "cat.json";
+const VISITS_FILE: &str = "visits.json";
+
+/// The visits file's name before ObservANT (2026-10-14), read when [`VISITS_FILE`] is not there yet.
+const LEGACY_VISITS_FILE: &str = "cat.json";
 
 /// The frame of the last arrival as an earlier version kept it; taken over as that arrival's.
 const LEGACY_ARRIVAL_FILE: &str = "arrival.jpg";
@@ -34,11 +37,25 @@ const NAME_MAX: usize = 64;
 /// The most spots the page may mark "not a cat".
 const IGNORE_MAX: usize = 16;
 
-/// The build: the package's version, stamped by `package-catcam.sh`, else the crate's.
-pub const VERSION: &str = match option_env!("CATCAM_VERSION") {
+/// The build: the package's version, stamped by the package script (`OBSERVANT_VERSION`, before
+/// ObservANT `CATCAM_VERSION`), else the crate's.
+pub const VERSION: &str = match option_env!("OBSERVANT_VERSION") {
     Some(version) => version,
-    None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
+    None => match option_env!("CATCAM_VERSION") {
+        Some(version) => version,
+        None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
+    },
 };
+
+/// The visits file in `dir`, or the one from before ObservANT when only that exists.
+fn read_visits(dir: &Path) -> std::io::Result<String> {
+    match std::fs::read_to_string(dir.join(VISITS_FILE)) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::read_to_string(dir.join(LEGACY_VISITS_FILE))
+        }
+        other => other,
+    }
+}
 
 /// One browser tab connected to the stream; dropping it frees its place.
 pub struct Viewer(Arc<AtomicUsize>);
@@ -188,7 +205,7 @@ struct Remembered {
 }
 
 #[derive(Default)]
-struct Cat {
+struct Detected {
     in_view: bool,
     last_seen: Option<u64>,
     visits: u64,
@@ -221,7 +238,7 @@ pub struct Status {
     camera: Mutex<String>,
     /// A test pattern streams because no camera was found.
     stand_in: AtomicBool,
-    cat: Mutex<Cat>,
+    detected: Mutex<Detected>,
     frame: Mutex<Option<gst::Buffer>>,
     /// Counts the frames pushed, so a snapshot is encoded once per frame however often it is asked for.
     frame_seq: AtomicU64,
@@ -234,7 +251,7 @@ pub struct Status {
     photos: Mutex<VecDeque<(u64, bytes::Bytes)>>,
     /// The last [`CLIPS_KEPT`] arrivals as MP4, newest first, by arrival time.
     clips: Mutex<VecDeque<(u64, bytes::Bytes)>>,
-    /// Where [`CAT_FILE`], the photos and the clips live; `None` forgets everything at exit.
+    /// Where [`VISITS_FILE`], the photos and the clips live; `None` forgets everything at exit.
     state_dir: Option<PathBuf>,
     /// Clockwise degrees the capture turns the picture by; the capture thread follows a change.
     rotate: AtomicU32,
@@ -246,7 +263,7 @@ pub struct Status {
     ignore: Mutex<Vec<Zone>>,
     /// Browser tabs connected to the stream now.
     viewers: Arc<AtomicUsize>,
-    /// The other cat cams' origins, which the page lists.
+    /// The other ObservANT cameras' origins, which the page lists.
     peers: Vec<String>,
 }
 
@@ -265,7 +282,7 @@ impl Status {
             fps: 0,
             camera: Mutex::new("starting".to_owned()),
             stand_in: AtomicBool::new(false),
-            cat: Mutex::new(Cat::default()),
+            detected: Mutex::new(Detected::default()),
             frame: Mutex::new(None),
             frame_seq: AtomicU64::new(0),
             snapshot: Mutex::new(None),
@@ -283,7 +300,7 @@ impl Status {
         }
     }
 
-    /// The other cat cams, which `/healthz` names for the page's overview.
+    /// The other ObservANT cameras, which `/healthz` names for the page's overview.
     pub fn peered(mut self, peers: Vec<String>) -> Self {
         self.peers = peers;
         self
@@ -306,7 +323,7 @@ impl Status {
 
     /// The boxes drawn into the picture now, for `/healthz` and the page's "not a cat".
     pub fn set_boxes(&self, boxes: Vec<Zone>) {
-        if let Ok(mut cat) = self.cat.lock() {
+        if let Ok(mut cat) = self.detected.lock() {
             cat.boxes = boxes;
         }
     }
@@ -325,7 +342,7 @@ impl Status {
 
     /// Frames pushed and model runs so far, for the stats sampler.
     pub fn counters(&self) -> (u64, u64) {
-        let runs = self.cat.lock().map(|c| c.runs).unwrap_or(0);
+        let runs = self.detected.lock().map(|c| c.runs).unwrap_or(0);
         (self.frame_seq.load(Ordering::Relaxed), runs)
     }
 
@@ -482,10 +499,10 @@ impl Status {
         if let Err(err) = std::fs::create_dir_all(&dir) {
             log::warn!("{}: {err}", dir.display());
         }
-        match std::fs::read_to_string(dir.join(CAT_FILE)) {
+        match read_visits(&dir) {
             Ok(text) => match serde_json::from_str::<Remembered>(&text) {
                 Ok(r) => {
-                    if let Ok(cat) = self.cat.get_mut() {
+                    if let Ok(cat) = self.detected.get_mut() {
                         cat.last_seen = r.last_seen;
                         cat.visits = r.visits;
                         cat.best_score = r.last_score.unwrap_or_default();
@@ -498,17 +515,20 @@ impl Status {
                         }
                     }
                 }
-                Err(err) => log::warn!("{}: {err}; starting afresh", dir.join(CAT_FILE).display()),
+                Err(err) => log::warn!(
+                    "{}: {err}; starting afresh",
+                    dir.join(VISITS_FILE).display()
+                ),
             },
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => log::warn!("{}: {err}", dir.join(CAT_FILE).display()),
+            Err(err) => log::warn!("{}: {err}", dir.join(VISITS_FILE).display()),
         }
         adopt_legacy_photo(&dir, self.latest_arrival().unwrap_or(0));
         if let Ok(photos) = self.photos.get_mut() {
             *photos = read_kept(&dir, PHOTOS);
         }
         let restored = read_kept(&dir, CLIPS);
-        if let (Ok(cat), Some((newest, _))) = (self.cat.get_mut(), restored.front()) {
+        if let (Ok(cat), Some((newest, _))) = (self.detected.get_mut(), restored.front()) {
             cat.clip = Some(*newest);
         }
         if let Ok(clips) = self.clips.get_mut() {
@@ -537,7 +557,7 @@ impl Status {
         let Some(dir) = &self.state_dir else {
             return;
         };
-        let Ok(remembered) = self.cat.lock().map(|cat| Remembered {
+        let Ok(remembered) = self.detected.lock().map(|cat| Remembered {
             last_seen: cat.last_seen,
             visits: cat.visits,
             last_score: cat.last_seen.map(|_| cat.best_score),
@@ -546,8 +566,8 @@ impl Status {
             return;
         };
         let json = serde_json::to_vec(&remembered).unwrap_or_default();
-        if let Err(err) = write_atomic(&dir.join(CAT_FILE), &json) {
-            log::warn!("{}: {err}", dir.join(CAT_FILE).display());
+        if let Err(err) = write_atomic(&dir.join(VISITS_FILE), &json) {
+            log::warn!("{}: {err}", dir.join(VISITS_FILE).display());
         }
     }
 
@@ -580,11 +600,11 @@ impl Status {
     }
 
     /// Records one inference run's view of the cat, after presence smoothing, and the visit it starts or ends.
-    pub fn set_cat(&self, in_view: bool, best_score: Option<f32>, change: Option<&Change>) {
+    pub fn set_detection(&self, in_view: bool, best_score: Option<f32>, change: Option<&Change>) {
         if let Ok(mut last) = self.last_run.lock() {
             *last = Some(Instant::now());
         }
-        if let Ok(mut cat) = self.cat.lock() {
+        if let Ok(mut cat) = self.detected.lock() {
             cat.runs += 1;
             cat.hit = best_score.is_some();
             cat.in_view = in_view;
@@ -615,8 +635,8 @@ impl Status {
     }
 
     /// A cat is in view, or the last run saw one that is not confirmed yet.
-    pub fn cat_seen(&self) -> bool {
-        self.cat.lock().is_ok_and(|cat| cat.in_view || cat.hit)
+    pub fn anything_seen(&self) -> bool {
+        self.detected.lock().is_ok_and(|cat| cat.in_view || cat.hit)
     }
 
     /// Keeps a reference to the frame just pushed; a buffer is refcounted, so this copies nothing.
@@ -643,7 +663,7 @@ impl Status {
     /// Keeps the clip of the arrival at `arrived` with the last few, on disk too, and names it in `/healthz`.
     pub fn set_clip(&self, mp4: Vec<u8>, arrived: u64) {
         self.keep(CLIPS, &self.clips, arrived, mp4);
-        if let Ok(mut cat) = self.cat.lock() {
+        if let Ok(mut cat) = self.detected.lock() {
             cat.clip = Some(arrived);
         }
     }
@@ -680,7 +700,7 @@ impl Status {
 
     /// How long the visit that began at `arrived` lasted; `None` while it goes on or once it left the log.
     pub fn visit_stay(&self, arrived: u64) -> Option<u64> {
-        self.cat.lock().ok().and_then(|cat| {
+        self.detected.lock().ok().and_then(|cat| {
             cat.recent
                 .iter()
                 .find(|v| v.arrived == arrived)
@@ -690,7 +710,7 @@ impl Status {
 
     /// When the newest visit began, as its log entry says.
     pub fn latest_arrival(&self) -> Option<u64> {
-        self.cat
+        self.detected
             .lock()
             .ok()
             .and_then(|cat| cat.recent.front().map(|v| v.arrived))
@@ -730,7 +750,7 @@ impl Status {
 
     pub fn to_json(&self) -> String {
         let camera = self.camera.lock().map(|c| c.clone()).unwrap_or_default();
-        let cat = self.cat.lock();
+        let cat = self.detected.lock();
         let (in_view, last_seen, visits, best, runs, clip) = cat
             .as_deref()
             .map(|c| {
@@ -778,7 +798,7 @@ impl Status {
             "all_classes": self.all_classes,
             "model_runs": runs,
             "stats": self.stats.lock().map(|s| s.clone()).unwrap_or_default(),
-            "cat": {
+            "detection": {
                 "in_view": in_view,
                 "last_seen": last_seen,
                 "visits": visits,
@@ -912,49 +932,49 @@ mod tests {
 
     #[test]
     fn reports_the_camera_last_set() {
-        let status = Status::new("Cat \"Cam\"", true, 4, 4);
+        let status = Status::new("Detected \"Cam\"", true, 4, 4);
         status.set_camera("v4l2src /dev/video0 (C920)", false);
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
         assert_eq!(json["camera"], "v4l2src /dev/video0 (C920)");
-        assert_eq!(json["name"], "Cat \"Cam\"");
+        assert_eq!(json["name"], "Detected \"Cam\"");
         assert_eq!(json["inference"], true);
-        assert_eq!(json["cat"]["in_view"], false);
-        assert!(json["cat"]["last_seen"].is_null());
+        assert_eq!(json["detection"]["in_view"], false);
+        assert!(json["detection"]["last_seen"].is_null());
     }
 
     #[test]
     fn a_visit_is_counted_once_and_last_seen_stays_after_it_ends() {
         let status = Status::new("Cam", true, 4, 4);
-        status.set_cat(true, Some(0.8), Some(&arrived()));
-        status.set_cat(true, Some(0.6), None);
-        status.set_cat(false, None, None);
+        status.set_detection(true, Some(0.8), Some(&arrived()));
+        status.set_detection(true, Some(0.6), None);
+        status.set_detection(false, None, None);
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
-        assert_eq!(json["cat"]["in_view"], false);
-        assert_eq!(json["cat"]["visits"], 1);
+        assert_eq!(json["detection"]["in_view"], false);
+        assert_eq!(json["detection"]["visits"], 1);
         assert_eq!(json["model_runs"], 3);
-        assert!(!status.cat_seen());
-        status.set_cat(false, Some(0.3), None);
-        assert!(status.cat_seen());
-        assert!(json["cat"]["last_seen"].as_u64().unwrap() > 0);
-        assert!((json["cat"]["last_score"].as_f64().unwrap() - 0.6).abs() < 1e-6);
+        assert!(!status.anything_seen());
+        status.set_detection(false, Some(0.3), None);
+        assert!(status.anything_seen());
+        assert!(json["detection"]["last_seen"].as_u64().unwrap() > 0);
+        assert!((json["detection"]["last_score"].as_f64().unwrap() - 0.6).abs() < 1e-6);
     }
 
     #[test]
     fn a_restart_remembers_the_visits_and_the_arrival_frame() {
         let dir = tempfile::tempdir().unwrap();
         let before = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
-        before.set_cat(true, Some(0.7), Some(&arrived()));
+        before.set_detection(true, Some(0.7), Some(&arrived()));
         let arrived = before.latest_arrival().unwrap();
         before.set_arrival(vec![0xFF, 0xD8, 0xFF, 0xD9], arrived);
-        before.set_cat(false, None, Some(&left(42)));
+        before.set_detection(false, None, Some(&left(42)));
         before.persist();
 
         let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
-        assert_eq!(json["cat"]["visits"], 1);
-        assert_eq!(json["cat"]["in_view"], false);
-        assert!(json["cat"]["last_seen"].as_u64().unwrap() > 0);
-        assert!((json["cat"]["last_score"].as_f64().unwrap() - 0.7).abs() < 1e-6);
+        assert_eq!(json["detection"]["visits"], 1);
+        assert_eq!(json["detection"]["in_view"], false);
+        assert!(json["detection"]["last_seen"].as_u64().unwrap() > 0);
+        assert!((json["detection"]["last_score"].as_f64().unwrap() - 0.7).abs() < 1e-6);
         assert_eq!(
             after.arrival_jpeg(None).unwrap(),
             [0xFF, 0xD8, 0xFF, 0xD9][..]
@@ -963,7 +983,7 @@ mod tests {
             after.arrival_jpeg(Some(arrived)).unwrap(),
             [0xFF, 0xD8, 0xFF, 0xD9][..]
         );
-        assert_eq!(json["cat"]["recent"][0]["stayed_s"], 42);
+        assert_eq!(json["detection"]["recent"][0]["stayed_s"], 42);
         assert!(!dir.path().join("cat.partial").exists());
     }
 
@@ -972,7 +992,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let before = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         assert!(before.clip_mp4(None).is_none());
-        before.set_cat(true, Some(0.7), Some(&arrived()));
+        before.set_detection(true, Some(0.7), Some(&arrived()));
         // As the inference thread does after every arrival and departure.
         before.persist();
         let arrived_at = before.latest_arrival().unwrap();
@@ -980,8 +1000,8 @@ mod tests {
 
         let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
-        assert_eq!(json["cat"]["clip"], arrived_at);
-        assert_eq!(json["cat"]["recent"][0]["arrived"], arrived_at);
+        assert_eq!(json["detection"]["clip"], arrived_at);
+        assert_eq!(json["detection"]["recent"][0]["arrived"], arrived_at);
         assert_eq!(&after.clip_mp4(None).unwrap()[4..8], b"ftyp");
         assert!(!dir
             .path()
@@ -992,16 +1012,16 @@ mod tests {
     #[test]
     fn healthz_lists_the_kept_clips_and_a_visit_knows_its_stay() {
         let status = Status::new("Cam", true, 4, 4);
-        status.set_cat(true, Some(0.8), Some(&arrived()));
+        status.set_detection(true, Some(0.8), Some(&arrived()));
         let at = status.latest_arrival().unwrap();
         assert_eq!(status.visit_stay(at), None);
         status.set_clip(vec![1], at);
         status.set_clip(vec![2], at + 60);
-        status.set_cat(false, None, Some(&left(42)));
+        status.set_detection(false, None, Some(&left(42)));
         assert_eq!(status.visit_stay(at), Some(42));
         assert_eq!(status.visit_stay(at + 1), None);
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
-        assert_eq!(json["cat"]["clips"], serde_json::json!([at + 60, at]));
+        assert_eq!(json["detection"]["clips"], serde_json::json!([at + 60, at]));
     }
 
     #[test]
@@ -1093,7 +1113,7 @@ mod tests {
 
         let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         let json: serde_json::Value = serde_json::from_str(&after.to_json()).unwrap();
-        assert_eq!(json["cat"]["clip"], 7_000);
+        assert_eq!(json["detection"]["clip"], 7_000);
         assert_eq!(after.clip_mp4(Some(3_000)).unwrap()[..], [3]);
     }
 
@@ -1101,33 +1121,33 @@ mod tests {
     fn a_cat_json_from_before_clips_still_loads() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
-            dir.path().join("cat.json"),
+            dir.path().join("visits.json"),
             r#"{"last_seen":5,"visits":3,"last_score":0.5,"recent":[{"arrived":4,"stayed_s":1}]}"#,
         )
         .unwrap();
         let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
-        assert_eq!(json["cat"]["visits"], 3);
-        assert!(json["cat"]["clip"].is_null());
+        assert_eq!(json["detection"]["visits"], 3);
+        assert!(json["detection"]["clip"].is_null());
     }
 
     #[test]
     fn the_log_keeps_each_visit_and_its_stay_newest_first() {
         let status = Status::new("Cam", true, 4, 4);
-        status.set_cat(true, Some(0.8), Some(&arrived()));
+        status.set_detection(true, Some(0.8), Some(&arrived()));
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
-        assert!(json["cat"]["recent"][0]["arrived"].as_u64().unwrap() > 0);
-        assert!(json["cat"]["recent"][0]["stayed_s"].is_null());
-        status.set_cat(false, None, Some(&left(95)));
+        assert!(json["detection"]["recent"][0]["arrived"].as_u64().unwrap() > 0);
+        assert!(json["detection"]["recent"][0]["stayed_s"].is_null());
+        status.set_detection(false, None, Some(&left(95)));
         for _ in 0..RECENT_VISITS + 4 {
-            status.set_cat(true, Some(0.8), Some(&arrived()));
-            status.set_cat(false, None, Some(&left(7)));
+            status.set_detection(true, Some(0.8), Some(&arrived()));
+            status.set_detection(false, None, Some(&left(7)));
         }
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
-        let recent = json["cat"]["recent"].as_array().unwrap();
+        let recent = json["detection"]["recent"].as_array().unwrap();
         assert_eq!(recent.len(), RECENT_VISITS);
         assert!(recent.iter().all(|v| v["stayed_s"] == 7));
-        assert_eq!(json["cat"]["visits"], RECENT_VISITS + 5);
+        assert_eq!(json["detection"]["visits"], RECENT_VISITS + 5);
     }
 
     #[test]
@@ -1153,28 +1173,28 @@ mod tests {
             ],
         };
         std::fs::write(
-            dir.path().join(CAT_FILE),
+            dir.path().join(VISITS_FILE),
             serde_json::to_vec(&open).unwrap(),
         )
         .unwrap();
         let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
-        assert_eq!(json["cat"]["recent"][0]["stayed_s"], 30);
-        assert_eq!(json["cat"]["recent"][1]["stayed_s"], 60);
+        assert_eq!(json["detection"]["recent"][0]["stayed_s"], 30);
+        assert_eq!(json["detection"]["recent"][1]["stayed_s"], 60);
     }
 
     #[test]
     fn a_cat_json_from_before_the_log_still_loads() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
-            dir.path().join(CAT_FILE),
+            dir.path().join(VISITS_FILE),
             r#"{"last_seen":1791763273,"visits":3,"last_score":0.76}"#,
         )
         .unwrap();
         let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
-        assert_eq!(json["cat"]["visits"], 3);
-        assert_eq!(json["cat"]["recent"], serde_json::json!([]));
+        assert_eq!(json["detection"]["visits"], 3);
+        assert_eq!(json["detection"]["recent"], serde_json::json!([]));
     }
 
     #[test]
@@ -1212,7 +1232,7 @@ mod tests {
             0u8;
             crate::frame::size(4, 4)
         ]));
-        status.set_cat(false, None, None);
+        status.set_detection(false, None, None);
         let running = health(&status);
         assert_eq!(running["ok"], true);
         assert!(running["problem"].is_null());
@@ -1296,7 +1316,7 @@ mod tests {
         let status = Status::new("Cam", true, 640, 480).remember_in(dir.path().to_path_buf());
         let rack = [0.25, 0.75, 0.75, 1.0];
         status.set_boxes(vec![rack]);
-        status.set_cat(
+        status.set_detection(
             true,
             Some(0.36),
             Some(&Change::Arrived {
@@ -1307,7 +1327,7 @@ mod tests {
         );
         // The boxes move on with the picture; the visit keeps the ones it arrived with.
         status.set_boxes(Vec::new());
-        status.set_cat(
+        status.set_detection(
             false,
             None,
             Some(&Change::Left {
@@ -1316,8 +1336,9 @@ mod tests {
         );
         status.persist();
         let recent = |s: &Status| {
-            serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap()["cat"]["recent"][0]
-                .clone()
+            serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap()["detection"]["recent"]
+                [0]
+            .clone()
         };
         assert_eq!(
             recent(&status)["boxes"],
@@ -1331,7 +1352,7 @@ mod tests {
         assert_eq!(recent(&again)["stayed_s"], 172);
         // A fraction no f32 holds exactly is written as the three places it means.
         status.set_boxes(vec![[0.1, 0.2, 0.3, 0.4]]);
-        status.set_cat(
+        status.set_detection(
             true,
             Some(0.5),
             Some(&Change::Arrived {
@@ -1345,7 +1366,7 @@ mod tests {
             serde_json::json!([[0.1, 0.2, 0.3, 0.4]])
         );
         status.persist();
-        let file = std::fs::read_to_string(dir.path().join(CAT_FILE)).unwrap();
+        let file = std::fs::read_to_string(dir.path().join(VISITS_FILE)).unwrap();
         assert!(file.contains("[0.1,0.2,0.3,0.4]"), "{file}");
     }
 
@@ -1353,7 +1374,8 @@ mod tests {
     fn healthz_lists_the_boxes_drawn_now() {
         let status = Status::new("Cam", true, 640, 480);
         let boxes = |s: &Status| {
-            serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap()["cat"]["boxes"].clone()
+            serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap()["detection"]["boxes"]
+                .clone()
         };
         assert_eq!(boxes(&status), serde_json::json!([]));
         status.set_boxes(vec![[0.1, 0.2, 0.3, 0.4]]);
@@ -1365,11 +1387,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let fresh = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         assert!(fresh.arrival_jpeg(None).is_none());
-        std::fs::write(dir.path().join(CAT_FILE), "{not json").unwrap();
+        std::fs::write(dir.path().join(VISITS_FILE), "{not json").unwrap();
         let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
-        assert_eq!(json["cat"]["visits"], 0);
-        assert!(json["cat"]["last_seen"].is_null());
+        assert_eq!(json["detection"]["visits"], 0);
+        assert!(json["detection"]["last_seen"].is_null());
     }
 
     #[test]
@@ -1423,7 +1445,7 @@ mod tests {
         assert_eq!(json["stats"]["cores"], 4);
         assert_eq!(json["stats"]["uptime_s"], 61);
         assert!(json["stats"]["temperature_c"].is_null());
-        status.set_cat(false, None, None);
+        status.set_detection(false, None, None);
         assert_eq!(status.counters().1, 1);
     }
 
@@ -1442,7 +1464,7 @@ mod tests {
         let settings: serde_json::Value = serde_json::from_str(&status.settings_json()).unwrap();
         assert_eq!(settings["classes"], serde_json::json!(["cat", "dog"]));
         // A dog arrives: its visit says so.
-        status.set_cat(
+        status.set_detection(
             true,
             Some(0.8),
             Some(&Change::Arrived {
@@ -1453,7 +1475,7 @@ mod tests {
         );
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
         assert_eq!(json["classes"], serde_json::json!(["cat", "dog"]));
-        assert_eq!(json["cat"]["recent"][0]["class"], "dog");
+        assert_eq!(json["detection"]["recent"][0]["class"], "dog");
         // Every class: no filter.
         assert_eq!(
             Status::new("Cam", true, 4, 4)
@@ -1495,5 +1517,21 @@ mod tests {
             .unwrap();
         let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
         assert_eq!(after.classes(), ["bird"]);
+    }
+
+    #[test]
+    fn the_visits_of_a_cat_cam_from_before_observant_carry_over() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(LEGACY_VISITS_FILE),
+            r#"{"last_seen":5,"visits":3,"last_score":0.5,"recent":[{"arrived":4,"stayed_s":1}]}"#,
+        )
+        .unwrap();
+        let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        assert_eq!(json["detection"]["visits"], 3);
+        // From then on it keeps them under the new name.
+        status.persist();
+        assert!(dir.path().join(VISITS_FILE).is_file());
     }
 }

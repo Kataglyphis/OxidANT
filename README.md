@@ -5,7 +5,7 @@
 
   <h1>OxidANT</h1>
  
-  <h4>The Kataglyphis family's Rust crates (core, telemetry, inference, media, gui, cli, webgpu_renderer, cat_webrtc) and the Rust best practices they follow. Part of the <a href="https://github.com/Kataglyphis/ANTfrastructure">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
+  <h4>The Kataglyphis family's Rust crates (core, telemetry, inference, media, gui, cli, webgpu_renderer, observant) and the Rust best practices they follow. Part of the <a href="https://github.com/Kataglyphis/ANTfrastructure">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
 </div>
 
 <div align="center">
@@ -90,7 +90,7 @@ other repositories, so its `[lib] name` is not free to change.
 | `crates/media` | `kataglyphis_media` | GStreamer capture, feature-gated (`gstreamer`) |
 | `crates/gui` | `kataglyphis_gui` | Feature-gated GUI: `gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix` |
 | `crates/webgpu_renderer` | `kataglyphis_webgpu_renderer` | wgpu glTF renderer, native and wasm32/WebGPU: PBR+IBL, cascaded shadows, SSAO, bloom, skinning, animations, LOD, headless golden tests |
-| `crates/cat_webrtc` | `kataglyphis_cat_webrtc` | Cat cam service: picks the camera, YOLO cat boxes, WebRTC, and the web server for OmniAccelerANT's Stream page |
+| `crates/observant` | `kataglyphis_observant` | ObservANT service (cats by default): picks the camera, YOLO cat boxes, WebRTC, and the web server for OmniAccelerANT's Stream page |
 | `crates/cli` | `kataglyphis_cli` | The CLI binary (`read` / `stats` / `gui`, plus `onnx-runtime` with an `onnxruntime_*` feature and `media-check` with `gui_windows`) |
 | `src/` | `oxidant` | The root package: the flutter_rust_bridge surface for OmniAccelerANT, plus the feature-gated `burn-demos` bin |
 
@@ -100,7 +100,7 @@ libraries — [AGENTS.md](AGENTS.md) has the feature/dependency table.
 
 Two repositories build this one as a submodule, so a rename has to be carried into
 both: [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) (the root
-package through flutter_rust_bridge, and `crates/cat_webrtc`) and
+package through flutter_rust_bridge, and `crates/observant`) and
 [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) (the
 root package as a staticlib through Corrosion, and `crates/webgpu_renderer` through
 cargo for its wasm demo and its tests).
@@ -222,14 +222,14 @@ cargo run -p kataglyphis_cli -- read --path README.md
 
 ### The cat cam
 
-`crates/cat_webrtc` is one service: the camera, YOLO cat boxes, a WebRTC stream and the
+`crates/observant` is one service: the camera, YOLO cat boxes, a WebRTC stream and the
 web page that plays it. It needs GStreamer and the chain-built ONNX Runtime, so try it
 in the family `:latest` image:
 
 ```bash
-cargo build --release -p kataglyphis_cat_webrtc
-target/release/kataglyphis_cat_webrtc --camera test --print-config  # the settings in effect
-target/release/kataglyphis_cat_webrtc --camera test                 # a test pattern, no camera
+cargo build --release -p kataglyphis_observant
+target/release/kataglyphis_observant --camera test --print-config  # the settings in effect
+target/release/kataglyphis_observant --camera test                 # a test pattern, no camera
 curl localhost:8080/healthz                    # ok or the problem, the camera, the model's runs, the cat, the kept clips
 curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
 curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on

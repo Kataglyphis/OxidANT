@@ -237,7 +237,7 @@ impl Worker {
         if let Some(tx) = inference {
             let now = Instant::now();
             let luma = &i420[..(width * height) as usize];
-            if pacer.wants(now, luma, width, height, self.status.cat_seen())
+            if pacer.wants(now, luma, width, height, self.status.anything_seen())
                 && tx.try_send((i420.to_vec(), pacer.moving(now))).is_ok()
             {
                 pacer.ran(now);
@@ -472,7 +472,7 @@ fn spawn_inference(
         clip,
     };
     let spawned = thread::Builder::new()
-        .name("cat-infer".into())
+        .name("observant-infer".into())
         .spawn(move || {
             while let Ok((i420, moving)) = rx.recv() {
                 let rgba = frame::to_rgba(&i420, width, height);
@@ -548,7 +548,7 @@ impl Visits {
             Vec::new()
         };
         status.set_boxes(zones);
-        status.set_cat(in_view, best_score(&counted), change.as_ref());
+        status.set_detection(in_view, best_score(&counted), change.as_ref());
         // The visit log's own arrival time, so ?t= finds the picture and clip an event names.
         let unix = crate::notify::unix_now();
         let time = match change {
@@ -1049,38 +1049,38 @@ mod tests {
         let at = |s: f32| t + Duration::from_secs_f32(s);
 
         v.record(at(0.0), &frame, middle_cat(), None);
-        assert_eq!(health(&status)["cat"]["visits"], 0);
+        assert_eq!(health(&status)["detection"]["visits"], 0);
         assert!(v.boxes.lock().unwrap().is_empty());
 
         v.record(at(0.5), &frame, middle_cat(), None);
         let h = health(&status);
-        assert_eq!(h["cat"]["visits"], 1);
-        assert_eq!(h["cat"]["in_view"], true);
+        assert_eq!(h["detection"]["visits"], 1);
+        assert_eq!(h["detection"]["in_view"], true);
         assert_eq!(
-            h["cat"]["recent"][0]["boxes"],
+            h["detection"]["recent"][0]["boxes"],
             serde_json::json!([[0.25, 0.25, 0.75, 0.75]])
         );
         assert!(status.arrival_jpeg(None).is_some());
         assert_eq!(v.boxes.lock().unwrap().len(), 1);
         assert!(v.visit.is_some());
-        assert!(dir.path().join("cat.json").is_file());
+        assert!(dir.path().join("visits.json").is_file());
 
         // Behind the sofa: out of view after the linger, the visit still open.
         v.record(at(4.0), &frame, Vec::new(), None);
         let h = health(&status);
-        assert_eq!(h["cat"]["in_view"], false);
-        assert!(h["cat"]["recent"][0]["stayed_s"].is_null());
+        assert_eq!(h["detection"]["in_view"], false);
+        assert!(h["detection"]["recent"][0]["stayed_s"].is_null());
         assert!(v.boxes.lock().unwrap().is_empty());
 
         v.record(at(30.0), &frame, middle_cat(), None);
         v.record(at(30.5), &frame, middle_cat(), None);
-        assert_eq!(health(&status)["cat"]["in_view"], true);
-        assert_eq!(health(&status)["cat"]["visits"], 1);
+        assert_eq!(health(&status)["detection"]["in_view"], true);
+        assert_eq!(health(&status)["detection"]["visits"], 1);
 
         v.record(at(90.0), &frame, Vec::new(), None);
-        assert!(health(&status)["cat"]["recent"][0]["stayed_s"].is_null());
+        assert!(health(&status)["detection"]["recent"][0]["stayed_s"].is_null());
         v.record(at(91.0), &frame, Vec::new(), None);
-        assert_eq!(health(&status)["cat"]["recent"][0]["stayed_s"], 30);
+        assert_eq!(health(&status)["detection"]["recent"][0]["stayed_s"], 30);
         assert!(v.visit.is_none());
     }
 
@@ -1098,7 +1098,7 @@ mod tests {
         let t = Instant::now();
         v.record(t, &frame, middle_cat(), None);
         v.record(t + Duration::from_millis(500), &frame, middle_cat(), None);
-        assert_eq!(health(&status)["cat"]["visits"], 0);
+        assert_eq!(health(&status)["detection"]["visits"], 0);
         assert!(status.arrival_jpeg(None).is_none());
         assert!(v.boxes.lock().unwrap().is_empty());
     }

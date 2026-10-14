@@ -122,6 +122,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `stayed_s`, as a visit shorter than the clip's post-roll ends before the clip is written.
 
 ### Changed
+- **The cat cam is ObservANT** (2026-10-14, the owner's name for it). Cats stay the default,
+  detecting is general. The crate is `crates/observant` (`kataglyphis_observant`), the Pi
+  script `scripts/linux/observant/`. `/healthz`'s `cat` object is `detection`, the visits file
+  `visits.json`, the settings `observant.toml`, the variable `KATAGLYPHIS_OBSERVANT_CONFIG`, the
+  build stamp `OBSERVANT_VERSION` and the default name `ObservANT`. An install from before
+  carries over: `catcam.toml`, `cat.json`, `KATAGLYPHIS_CATCAM_CONFIG`, `CATCAM_VERSION` and
+  Windows' `omni-accelerant-catcam` folder are still read while the new ones are absent.
 - **A cat back within a minute continues its visit** (2026-10-14). At the feeding trough
   one cat walking about had made 21 visits in an hour, 10 to 90 s apart, each with its own
   arrival event, clip and count. Being in view still ends after about 3 s without a hit (the

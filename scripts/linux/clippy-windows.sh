@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-package=kataglyphis_cat_webrtc
+package=kataglyphis_observant
 target=x86_64-pc-windows-gnu
 
 usage() {

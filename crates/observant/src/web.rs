@@ -23,7 +23,7 @@ use crate::status::{Settings, Status, Viewer};
 /// What the web client's host-relative `signalingServerUrl` resolves to.
 pub const SIGNALLING_PATH: &str = "/webrtc-ws";
 
-/// What the cat cam runs and what it saw, as JSON.
+/// What the ObservANT runs and what it saw, as JSON.
 pub const HEALTHZ_PATH: &str = "/healthz";
 
 /// The latest annotated frame as a JPEG.
@@ -51,11 +51,11 @@ pub struct Site {
     pub allowed_hosts: Vec<String>,
     /// Browser tabs on the stream at once; 0 means no limit.
     pub max_viewers: usize,
-    /// The other cat cams' origins, whose pages may read this one's status and pictures.
+    /// The other ObservANT cameras' origins, whose pages may read this one's status and pictures.
     pub peers: Vec<String>,
 }
 
-/// `origin` when it is one of `peers`: a page another cat cam serves, for the overview.
+/// `origin` when it is one of `peers`: a page another ObservANT serves, for the overview.
 fn peer_origin<'a>(origin: Option<&'a HeaderValue>, peers: &[String]) -> Option<&'a HeaderValue> {
     let text = origin?.to_str().ok()?;
     peers
@@ -64,7 +64,7 @@ fn peer_origin<'a>(origin: Option<&'a HeaderValue>, peers: &[String]) -> Option<
         .then_some(origin?)
 }
 
-/// Names that only resolve inside a home network; a browser that reached the cat cam under a public
+/// Names that only resolve inside a home network; a browser that reached the ObservANT under a public
 /// name was sent there by DNS rebinding.
 const LOCAL_SUFFIXES: [&str; 6] = [
     ".local",
@@ -86,7 +86,7 @@ pub(crate) fn own_page(headers: &HeaderMap, allowed_hosts: &[String]) -> Result<
             || LOCAL_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
             || allowed_hosts.iter().any(|a| a.eq_ignore_ascii_case(&name));
         if !local {
-            return Err("this host name is not the cat cam's own; add it to allowed_hosts");
+            return Err("this host name is not the ObservANT's own; add it to allowed_hosts");
         }
     }
     if let Some(origin) = headers.get(header::ORIGIN) {
@@ -215,7 +215,7 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
     };
     let headers = response.headers_mut();
     if let Some(peer) = peer_origin(origin.as_ref(), &site.peers).filter(|_| reads) {
-        // Another cat cam's page reads this one for its overview; under COEP its pictures need CORP too.
+        // Another ObservANT's page reads this one for its overview; under COEP its pictures need CORP too.
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, peer.clone());
         headers.insert(
             header::HeaderName::from_static("cross-origin-resource-policy"),
@@ -576,7 +576,7 @@ mod tests {
 
     fn web_build() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("index.html"), "<html>cat cam</html>").unwrap();
+        std::fs::write(dir.path().join("index.html"), "<html>ObservANT</html>").unwrap();
         std::fs::write(dir.path().join("main.dart.wasm"), b"\0asm").unwrap();
         std::fs::create_dir(dir.path().join("pkg")).unwrap();
         std::fs::write(dir.path().join("pkg").join("oxidant.js"), "export {}").unwrap();
@@ -593,7 +593,7 @@ mod tests {
         assert!(index.contains("cross-origin-opener-policy: same-origin"));
         assert!(index.contains("cross-origin-embedder-policy: require-corp"));
         assert!(index.contains("content-type: text/html"));
-        assert!(index.ends_with("<html>cat cam</html>"));
+        assert!(index.ends_with("<html>ObservANT</html>"));
 
         let wasm = get(addr, "/main.dart.wasm", "").await;
         assert!(wasm.contains("content-type: application/wasm"), "{wasm}");
@@ -607,7 +607,7 @@ mod tests {
         let addr = start(Some(build.path().to_path_buf()), 9).await;
         assert!(get(addr, "/stream", "")
             .await
-            .ends_with("<html>cat cam</html>"));
+            .ends_with("<html>ObservANT</html>"));
         assert!(get(addr, "/missing.js", "")
             .await
             .starts_with("HTTP/1.1 404"));
