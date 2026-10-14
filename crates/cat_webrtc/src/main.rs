@@ -13,6 +13,7 @@ mod output;
 mod precompress;
 mod presence;
 mod static_files;
+mod stats;
 mod status;
 mod web;
 
@@ -216,6 +217,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         }
         None => status,
     });
+    stats::spawn(status.clone());
     let (pipeline, appsrc) = output::build(&config)?;
     pipeline
         .set_state(gst::State::Playing)

@@ -15,6 +15,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **`/healthz` reports what the cat cam achieves and costs** (2026-10-14): `stats`, sampled
+  every 2 s by a thread of its own (`stats.rs`), names the frames pushed per second, the
+  model's time per run (smoothed) and runs per second, and from `/proc` and `/sys` its CPU
+  share of one core, the cores, its resident memory, the 1-minute load, the board's
+  temperature, and its uptime. A number it cannot read is `null`, so off Linux only the
+  rates show. The web app's Stats panel reads it.
+
 - **A privacy filter for showing the cat cam in public** (2026-10-14). `privacy =
   "pixelate"` in the settings blocks out everything but the detection boxes (each grown by
   15 %, 32-pixel blocks at 640 wide) in the stream, `/snapshot.jpg`, the arrival photos and

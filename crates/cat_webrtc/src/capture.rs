@@ -482,8 +482,10 @@ fn spawn_inference(
                 let rgba = frame::to_rgba(&i420, width, height);
                 // The settings page may have moved it since the last run.
                 let score = status.score();
+                let started = Instant::now();
                 match detector.infer_rgba(&rgba, width, height, score, wanted.as_deref()) {
                     Ok(detections) => {
+                        status.record_model_time(started.elapsed());
                         visits.record(Instant::now(), &i420, detections, moving.as_ref());
                     }
                     Err(err) => log::warn!("inference failed: {err:#}"),

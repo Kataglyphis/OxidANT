@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Privacy;
 use crate::presence::{Change, Zone};
+use crate::stats::Stats;
 
 /// The cat's visits, kept across restarts in the state directory.
 const CAT_FILE: &str = "cat.json";
@@ -180,6 +181,10 @@ pub struct Status {
     name: Mutex<String>,
     inference: bool,
     privacy: Privacy,
+    /// The sampler's latest look, for `/healthz`'s `stats`.
+    stats: Mutex<Stats>,
+    /// The model's time per run in ms, smoothed; `None` before the first run.
+    model_ms: Mutex<Option<f64>>,
     width: u32,
     height: u32,
     fps: u32,
@@ -221,6 +226,8 @@ impl Status {
             name: Mutex::new(name.to_owned()),
             inference,
             privacy: Privacy::Off,
+            stats: Mutex::new(Stats::default()),
+            model_ms: Mutex::new(None),
             width,
             height,
             fps: 0,
@@ -282,6 +289,30 @@ impl Status {
     pub fn scored(self, score: f32) -> Self {
         self.score.store(score.to_bits(), Ordering::Relaxed);
         self
+    }
+
+    /// Frames pushed and model runs so far, for the stats sampler.
+    pub fn counters(&self) -> (u64, u64) {
+        let runs = self.cat.lock().map(|c| c.runs).unwrap_or(0);
+        (self.frame_seq.load(Ordering::Relaxed), runs)
+    }
+
+    pub fn set_stats(&self, stats: Stats) {
+        if let Ok(mut current) = self.stats.lock() {
+            *current = stats;
+        }
+    }
+
+    /// One model run's time; the stats show a mean that weighs the last runs most.
+    pub fn record_model_time(&self, took: std::time::Duration) {
+        let ms = took.as_secs_f64() * 1000.0;
+        if let Ok(mut mean) = self.model_ms.lock() {
+            *mean = Some(mean.map_or(ms, |m| m * 0.8 + ms * 0.2));
+        }
+    }
+
+    pub fn model_ms(&self) -> Option<f64> {
+        self.model_ms.lock().ok().and_then(|m| *m)
     }
 
     /// The privacy filter in effect, for `/healthz` and the page.
@@ -683,6 +714,7 @@ impl Status {
             "inference": self.inference,
             "privacy": self.privacy,
             "model_runs": runs,
+            "stats": self.stats.lock().map(|s| s.clone()).unwrap_or_default(),
             "cat": {
                 "in_view": in_view,
                 "last_seen": last_seen,
@@ -1302,5 +1334,27 @@ mod tests {
         let on = Status::new("Cam", true, 4, 4).private(Privacy::Pixelate);
         let on: serde_json::Value = serde_json::from_str(&on.to_json()).unwrap();
         assert_eq!(on["privacy"], "pixelate");
+    }
+
+    #[test]
+    fn healthz_carries_the_stats_and_the_model_time_weighs_the_last_runs_most() {
+        let status = Status::new("Cam", true, 4, 4);
+        assert_eq!(status.model_ms(), None);
+        status.record_model_time(std::time::Duration::from_millis(100));
+        status.record_model_time(std::time::Duration::from_millis(50));
+        assert!((status.model_ms().unwrap() - 90.0).abs() < 1e-9);
+        status.set_stats(Stats {
+            capture_fps: Some(29.8),
+            cores: 4,
+            uptime_s: 61,
+            ..Stats::default()
+        });
+        let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        assert_eq!(json["stats"]["capture_fps"], 29.8);
+        assert_eq!(json["stats"]["cores"], 4);
+        assert_eq!(json["stats"]["uptime_s"], 61);
+        assert!(json["stats"]["temperature_c"].is_null());
+        status.set_cat(false, None, None);
+        assert_eq!(status.counters().1, 1);
     }
 }
