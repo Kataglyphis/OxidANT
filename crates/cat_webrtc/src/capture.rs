@@ -458,10 +458,17 @@ fn spawn_inference(
     let (tx, rx) = mpsc::sync_channel::<Look>(1);
     let (width, height) = (config.width, config.height);
     let wanted = (!config.all_classes).then(|| vec![COCO_CAT]);
-    // The slowest rate the model runs at with a cat in view, so a still one's visit never lapses.
-    let mut presence = Presence::new(still_period(config.inference_fps));
-    // The open visit's arrival, which its departure event names.
-    let mut visit: Option<Arrival> = None;
+    let mut visits = Visits {
+        // The slowest rate the model runs at with a cat in view, so a still one's visit never lapses.
+        presence: Presence::new(still_period(config.inference_fps)),
+        visit: None,
+        width,
+        height,
+        boxes,
+        status: status.clone(),
+        notifier,
+        clip,
+    };
     let spawned = thread::Builder::new()
         .name("cat-infer".into())
         .spawn(move || {
@@ -469,74 +476,11 @@ fn spawn_inference(
                 let rgba = frame::to_rgba(&i420, width, height);
                 // The settings page may have moved it since the last run.
                 let score = status.score();
-                let detections =
-                    match detector.infer_rgba(&rgba, width, height, score, wanted.as_deref()) {
-                        Ok(detections) => detections,
-                        Err(err) => {
-                            log::warn!("inference failed: {err:#}");
-                            continue;
-                        }
-                    };
-                let detections = outside(detections, &status.ignored(), width, height);
-                let counted = counted(&detections, presence.in_view(), moving.as_ref());
-                let change = presence.update(Instant::now(), &counted);
-                match &change {
-                    Some(Change::Arrived { count, best }) => {
-                        log::info!("cat in view: {count} detection(s), best score {best:.2}");
+                match detector.infer_rgba(&rgba, width, height, score, wanted.as_deref()) {
+                    Ok(detections) => {
+                        visits.record(Instant::now(), &i420, detections, moving.as_ref());
                     }
-                    Some(Change::Left { stayed }) => {
-                        log::info!("no cat in view (stayed {} s)", stayed.as_secs());
-                    }
-                    None => {}
-                }
-                let in_view = presence.in_view();
-                // Before set_cat, which keeps an arrival's boxes with its visit.
-                let zones = if in_view {
-                    detections
-                        .iter()
-                        .map(|d| zone_of(d, width, height))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                status.set_boxes(zones);
-                status.set_cat(in_view, best_score(&counted), change.as_ref());
-                // The visit log's own arrival time, so ?t= finds the picture and clip an event names.
-                let now = crate::notify::unix_now();
-                let time = match change {
-                    Some(Change::Arrived { .. }) => status.latest_arrival().unwrap_or(now),
-                    _ => now,
-                };
-                // Before the event goes out, so a receiver that fetches /arrival.jpg?t= gets this one.
-                if matches!(change, Some(Change::Arrived { .. })) {
-                    match arrival_jpeg(&i420, width, height, &detections) {
-                        Ok(jpeg) => status.set_arrival(jpeg, time),
-                        Err(err) => log::warn!("arrival snapshot: {err:#}"),
-                    }
-                }
-                if let Some(Change::Arrived { best, .. }) = &change {
-                    visit = Some(Arrival {
-                        time,
-                        best_score: *best,
-                    });
-                }
-                if let (Some(notifier), Some(change)) = (&notifier, &change) {
-                    notifier.send(change, time, visit);
-                }
-                if let (Some(clip), Some(Change::Arrived { .. }), Some(arrival)) =
-                    (&clip, &change, visit)
-                {
-                    clip.start(arrival);
-                }
-                if matches!(change, Some(Change::Left { .. })) {
-                    visit = None;
-                }
-                if change.is_some() {
-                    status.persist();
-                }
-                let shown = if in_view { detections } else { Vec::new() };
-                if let Ok(mut current) = boxes.lock() {
-                    *current = shown;
+                    Err(err) => log::warn!("inference failed: {err:#}"),
                 }
             }
         });
@@ -545,6 +489,93 @@ fn spawn_inference(
         Err(err) => {
             log::error!("could not start the inference thread, streaming without boxes: {err}");
             None
+        }
+    }
+}
+
+/// What the model's runs make of a cat: presence, the visit log, the arrival picture, the webhook
+/// event and the clip. Apart from the model and the clock, so a test drives it with set times.
+struct Visits {
+    presence: Presence,
+    /// The open visit's arrival, which its departure event names.
+    visit: Option<Arrival>,
+    width: u32,
+    height: u32,
+    boxes: Boxes,
+    status: Arc<Status>,
+    notifier: Option<Notifier>,
+    clip: Option<Arc<Clip>>,
+}
+
+impl Visits {
+    /// Takes one run's `detections` on the frame `i420`, seen at `now`.
+    fn record(
+        &mut self,
+        now: Instant,
+        i420: &[u8],
+        detections: Vec<Detection>,
+        moving: Option<&Moving>,
+    ) {
+        let (width, height) = (self.width, self.height);
+        let status = &self.status;
+        let detections = outside(detections, &status.ignored(), width, height);
+        let counted = counted(&detections, self.presence.in_view(), moving);
+        let change = self.presence.update(now, &counted);
+        match &change {
+            Some(Change::Arrived { count, best }) => {
+                log::info!("cat in view: {count} detection(s), best score {best:.2}");
+            }
+            Some(Change::Left { stayed }) => {
+                log::info!("no cat in view (stayed {} s)", stayed.as_secs());
+            }
+            None => {}
+        }
+        let in_view = self.presence.in_view();
+        // Before set_cat, which keeps an arrival's boxes with its visit.
+        let zones = if in_view {
+            detections
+                .iter()
+                .map(|d| zone_of(d, width, height))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        status.set_boxes(zones);
+        status.set_cat(in_view, best_score(&counted), change.as_ref());
+        // The visit log's own arrival time, so ?t= finds the picture and clip an event names.
+        let unix = crate::notify::unix_now();
+        let time = match change {
+            Some(Change::Arrived { .. }) => status.latest_arrival().unwrap_or(unix),
+            _ => unix,
+        };
+        if let Some(Change::Arrived { best, .. }) = &change {
+            // Before the event goes out, so a receiver that fetches /arrival.jpg?t= gets this one.
+            match arrival_jpeg(i420, width, height, &detections) {
+                Ok(jpeg) => status.set_arrival(jpeg, time),
+                Err(err) => log::warn!("arrival snapshot: {err:#}"),
+            }
+            self.visit = Some(Arrival {
+                time,
+                best_score: *best,
+            });
+        }
+        if let (Some(notifier), Some(change)) = (&self.notifier, &change) {
+            notifier.send(change, time, self.visit);
+        }
+        if let (Some(clip), Some(Change::Arrived { .. }), Some(arrival)) =
+            (&self.clip, &change, self.visit)
+        {
+            clip.start(arrival);
+        }
+        if matches!(change, Some(Change::Left { .. })) {
+            self.visit = None;
+        }
+        if change.is_some() {
+            status.persist();
+        }
+        let shown = if in_view { detections } else { Vec::new() };
+        if let Ok(mut current) = self.boxes.lock() {
+            *current = shown;
         }
     }
 }
@@ -961,5 +992,98 @@ mod tests {
         ));
         assert!(!isp_scales(&Plan::V4l2Path("/dev/video0".into()), &found));
         assert!(!isp_scales(&Plan::Test(None), &found));
+    }
+
+    fn visits(status: &Arc<Status>) -> Visits {
+        Visits {
+            presence: Presence::new(Duration::from_millis(500)),
+            visit: None,
+            width: 64,
+            height: 48,
+            boxes: Arc::new(Mutex::new(Vec::new())),
+            status: status.clone(),
+            notifier: None,
+            clip: None,
+        }
+    }
+
+    /// A cat over the middle quarter of the 64x48 frame.
+    fn middle_cat() -> Vec<Detection> {
+        vec![Detection {
+            x1: 16.0,
+            y1: 12.0,
+            x2: 48.0,
+            y2: 36.0,
+            score: 0.6,
+            class_id: 15,
+        }]
+    }
+
+    fn health(status: &Status) -> serde_json::Value {
+        serde_json::from_str(&status.to_json()).unwrap()
+    }
+
+    #[test]
+    fn a_visit_opens_on_the_second_hit_and_ends_a_minute_after_the_last() {
+        let dir = tempfile::tempdir().unwrap();
+        let status = Arc::new(Status::new("Cam", true, 64, 48).remember_in(dir.path().into()));
+        let mut v = visits(&status);
+        let frame = vec![128u8; frame::size(64, 48)];
+        let t = Instant::now();
+        let at = |s: f32| t + Duration::from_secs_f32(s);
+
+        v.record(at(0.0), &frame, middle_cat(), None);
+        assert_eq!(health(&status)["cat"]["visits"], 0);
+        assert!(v.boxes.lock().unwrap().is_empty());
+
+        v.record(at(0.5), &frame, middle_cat(), None);
+        let h = health(&status);
+        assert_eq!(h["cat"]["visits"], 1);
+        assert_eq!(h["cat"]["in_view"], true);
+        assert_eq!(
+            h["cat"]["recent"][0]["boxes"],
+            serde_json::json!([[0.25, 0.25, 0.75, 0.75]])
+        );
+        assert!(status.arrival_jpeg(None).is_some());
+        assert_eq!(v.boxes.lock().unwrap().len(), 1);
+        assert!(v.visit.is_some());
+        assert!(dir.path().join("cat.json").is_file());
+
+        // Behind the sofa: out of view after the linger, the visit still open.
+        v.record(at(4.0), &frame, Vec::new(), None);
+        let h = health(&status);
+        assert_eq!(h["cat"]["in_view"], false);
+        assert!(h["cat"]["recent"][0]["stayed_s"].is_null());
+        assert!(v.boxes.lock().unwrap().is_empty());
+
+        v.record(at(30.0), &frame, middle_cat(), None);
+        v.record(at(30.5), &frame, middle_cat(), None);
+        assert_eq!(health(&status)["cat"]["in_view"], true);
+        assert_eq!(health(&status)["cat"]["visits"], 1);
+
+        v.record(at(90.0), &frame, Vec::new(), None);
+        assert!(health(&status)["cat"]["recent"][0]["stayed_s"].is_null());
+        v.record(at(91.0), &frame, Vec::new(), None);
+        assert_eq!(health(&status)["cat"]["recent"][0]["stayed_s"], 30);
+        assert!(v.visit.is_none());
+    }
+
+    #[test]
+    fn a_cat_over_a_spot_marked_not_a_cat_starts_no_visit() {
+        let status = Arc::new(Status::new("Cam", true, 64, 48));
+        status
+            .apply(crate::status::Settings {
+                ignore: Some(vec![[0.25, 0.25, 0.75, 0.75]]),
+                ..Default::default()
+            })
+            .unwrap();
+        let mut v = visits(&status);
+        let frame = vec![128u8; frame::size(64, 48)];
+        let t = Instant::now();
+        v.record(t, &frame, middle_cat(), None);
+        v.record(t + Duration::from_millis(500), &frame, middle_cat(), None);
+        assert_eq!(health(&status)["cat"]["visits"], 0);
+        assert!(status.arrival_jpeg(None).is_none());
+        assert!(v.boxes.lock().unwrap().is_empty());
     }
 }
