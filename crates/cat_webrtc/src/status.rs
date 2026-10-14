@@ -133,11 +133,14 @@ impl Kept {
 /// How many visits `/healthz` lists and the state directory keeps.
 const RECENT_VISITS: usize = 20;
 
-/// One visit: when the cat was confirmed, and how long it stayed once it has left.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// One visit: when the cat was confirmed, how long it stayed once it has left, and where its boxes
+/// were, which the Camera page offers to mark "not a cat" after the fact.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Visit {
     arrived: u64,
     stayed_s: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    boxes: Vec<Zone>,
 }
 
 /// What a restart should not forget about the cat.
@@ -434,7 +437,7 @@ impl Status {
             last_seen: cat.last_seen,
             visits: cat.visits,
             last_score: cat.last_seen.map(|_| cat.best_score),
-            recent: cat.recent.iter().copied().collect(),
+            recent: cat.recent.iter().cloned().collect(),
         }) else {
             return;
         };
@@ -488,9 +491,11 @@ impl Status {
             match change {
                 Some(Change::Arrived { .. }) => {
                     cat.visits += 1;
+                    let boxes = cat.boxes.clone();
                     cat.recent.push_front(Visit {
                         arrived: unix_now(),
                         stayed_s: None,
+                        boxes,
                     });
                     cat.recent.truncate(RECENT_VISITS);
                 }
@@ -646,7 +651,7 @@ impl Status {
             .unwrap_or_default();
         let recent: Vec<Visit> = cat
             .as_deref()
-            .map(|c| c.recent.iter().copied().collect())
+            .map(|c| c.recent.iter().cloned().collect())
             .unwrap_or_default();
         let (ok, problem, frame_age, model_age) = self.health();
         serde_json::json!({
@@ -1018,10 +1023,12 @@ mod tests {
                 Visit {
                     arrived: 1_000_000,
                     stayed_s: None,
+                    boxes: Vec::new(),
                 },
                 Visit {
                     arrived: 900_000,
                     stayed_s: Some(60),
+                    boxes: Vec::new(),
                 },
             ],
         };
@@ -1161,6 +1168,46 @@ mod tests {
         assert_eq!(json["viewers"], 0);
         assert_eq!(json["peers"], serde_json::json!(["http://10.0.0.2:8080"]));
         assert!(json["version"].as_str().is_some_and(|v| !v.is_empty()));
+    }
+
+    #[test]
+    fn a_visit_keeps_the_boxes_it_arrived_with_across_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let status = Status::new("Cam", true, 640, 480).remember_in(dir.path().to_path_buf());
+        let rack = [0.25, 0.75, 0.75, 1.0];
+        status.set_boxes(vec![rack]);
+        status.set_cat(
+            true,
+            Some(0.36),
+            Some(&Change::Arrived {
+                count: 1,
+                best: 0.36,
+            }),
+        );
+        // The boxes move on with the picture; the visit keeps the ones it arrived with.
+        status.set_boxes(Vec::new());
+        status.set_cat(
+            false,
+            None,
+            Some(&Change::Left {
+                stayed: std::time::Duration::from_secs(172),
+            }),
+        );
+        status.persist();
+        let recent = |s: &Status| {
+            serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap()["cat"]["recent"][0]
+                .clone()
+        };
+        assert_eq!(
+            recent(&status)["boxes"],
+            serde_json::json!([[0.25, 0.75, 0.75, 1.0]])
+        );
+        let again = Status::new("Cam", true, 640, 480).remember_in(dir.path().to_path_buf());
+        assert_eq!(
+            recent(&again)["boxes"],
+            serde_json::json!([[0.25, 0.75, 0.75, 1.0]])
+        );
+        assert_eq!(recent(&again)["stayed_s"], 172);
     }
 
     #[test]

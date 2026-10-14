@@ -15,6 +15,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **A visit keeps the boxes it arrived with** (2026-10-14): `/healthz`'s `cat.recent[]` and
+  `cat.json` carry `boxes` (fractions), so a page can mark a past false arrival "not a cat";
+  older visits have none.
+
 - **`scripts/linux/clippy-windows.sh`** (2026-10-14) runs the Windows lanes' lint, clippy
   `--all-targets -D warnings` for `x86_64-pc-windows-gnu`, on Linux in minutes: as root in
   `:latest` it installs mingw for ring's C and adds the target. With the `I420Layout` slip

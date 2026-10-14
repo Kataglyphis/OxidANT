@@ -490,6 +490,16 @@ fn spawn_inference(
                     None => {}
                 }
                 let in_view = presence.in_view();
+                // Before set_cat, which keeps an arrival's boxes with its visit.
+                let zones = if in_view {
+                    detections
+                        .iter()
+                        .map(|d| zone_of(d, width, height))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                status.set_boxes(zones);
                 status.set_cat(in_view, best_score(&counted), change.as_ref());
                 // The visit log's own arrival time, so ?t= finds the picture and clip an event names.
                 let now = crate::notify::unix_now();
@@ -525,7 +535,6 @@ fn spawn_inference(
                     status.persist();
                 }
                 let shown = if in_view { detections } else { Vec::new() };
-                status.set_boxes(shown.iter().map(|d| zone_of(d, width, height)).collect());
                 if let Ok(mut current) = boxes.lock() {
                     *current = shown;
                 }
