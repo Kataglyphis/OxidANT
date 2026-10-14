@@ -13,7 +13,7 @@ use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -38,6 +38,12 @@ pub const SETTINGS_PATH: &str = "/settings";
 
 /// How long the signalling server may take to answer the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Connections served at once; a flood beyond it is closed at once instead of using up the process's files.
+const MAX_CONNECTIONS: usize = 128;
+
+/// A client must send its request head within this, so idle or trickling sockets cannot hold a slot.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) type Body = Full<Bytes>;
 
@@ -75,20 +81,28 @@ const LOCAL_SUFFIXES: [&str; 6] = [
     ".fritz.box",
 ];
 
+/// `Ok` when the request names this ObservANT by a local name; every request is checked, since a page
+/// that DNS rebinding pointed here would otherwise read the pictures as its own.
+pub(crate) fn own_host(headers: &HeaderMap, allowed_hosts: &[String]) -> Result<(), &'static str> {
+    let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) else {
+        return Ok(());
+    };
+    let name = host_name(host);
+    let local = name.parse::<IpAddr>().is_ok()
+        || !name.contains('.')
+        || LOCAL_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+        || allowed_hosts.iter().any(|a| a.eq_ignore_ascii_case(&name));
+    if local {
+        return Ok(());
+    }
+    Err("this host name is not the ObservANT's own; add it to allowed_hosts")
+}
+
 /// `Ok` when a request that acts, the signalling socket or a settings change, comes from this cat
 /// cam's own page; a tool such as curl sends no `Origin` and passes.
 pub(crate) fn own_page(headers: &HeaderMap, allowed_hosts: &[String]) -> Result<(), &'static str> {
+    own_host(headers, allowed_hosts)?;
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    if let Some(host) = host {
-        let name = host_name(host);
-        let local = name.parse::<IpAddr>().is_ok()
-            || !name.contains('.')
-            || LOCAL_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
-            || allowed_hosts.iter().any(|a| a.eq_ignore_ascii_case(&name));
-        if !local {
-            return Err("this host name is not the ObservANT's own; add it to allowed_hosts");
-        }
-    }
     if let Some(origin) = headers.get(header::ORIGIN) {
         let origin = origin.to_str().unwrap_or_default();
         let authority = origin.split_once("://").map_or("", |(_, rest)| rest);
@@ -121,6 +135,8 @@ fn keep_alive(stream: &TcpStream) {
 }
 
 pub async fn serve(listener: TcpListener, site: Arc<Site>) {
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+    let mut last_refusal: Option<std::time::Instant> = None;
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(connection) => connection,
@@ -130,11 +146,25 @@ pub async fn serve(listener: TcpListener, site: Arc<Site>) {
                 continue;
             }
         };
+        let Ok(slot) = slots.clone().try_acquire_owned() else {
+            // Once a minute at most: a flood would otherwise write a line per connection.
+            if last_refusal.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
+                log::warn!(
+                    "{MAX_CONNECTIONS} connections open already; closing new ones, as {peer}'s"
+                );
+                last_refusal = Some(std::time::Instant::now());
+            }
+            drop(stream);
+            continue;
+        };
         keep_alive(&stream);
         let site = site.clone();
         tokio::spawn(async move {
+            let _slot = slot;
             let service = hyper::service::service_fn(move |req| handle(req, site.clone()));
             let connection = hyper::server::conn::http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(HEADER_READ_TIMEOUT)
                 .serve_connection(TokioIo::new(stream), service)
                 .with_upgrades();
             if let Err(err) = connection.await {
@@ -149,9 +179,11 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
     let origin = req.headers().get(header::ORIGIN).cloned();
     let reads = [HEALTHZ_PATH, SNAPSHOT_PATH, ARRIVAL_PATH, CLIP_PATH].contains(&path.as_str());
     let acts = path == SIGNALLING_PATH || (path == SETTINGS_PATH && req.method() == Method::POST);
-    let refused = acts
-        .then(|| own_page(req.headers(), &site.allowed_hosts).err())
-        .flatten();
+    let refused = if acts {
+        own_page(req.headers(), &site.allowed_hosts).err()
+    } else {
+        own_host(req.headers(), &site.allowed_hosts).err()
+    };
     let mut response = if let Some(why) = refused {
         log::warn!("{path}: {why}");
         plain(StatusCode::FORBIDDEN, why)
@@ -552,6 +584,16 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let request =
             format!("GET {path} HTTP/1.1\r\nhost: cat.local\r\nconnection: close\r\n{extra}\r\n");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        String::from_utf8_lossy(&response).into_owned()
+    }
+
+    /// [`get`] under another `host`, as a page that DNS rebinding pointed here asks.
+    async fn get_as(addr: std::net::SocketAddr, path: &str, host: &str) -> String {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let request = format!("GET {path} HTTP/1.1\r\nhost: {host}\r\nconnection: close\r\n\r\n");
         stream.write_all(request.as_bytes()).await.unwrap();
         let mut response = Vec::new();
         stream.read_to_end(&mut response).await.unwrap();
@@ -1081,6 +1123,58 @@ mod tests {
         let mut response = Vec::new();
         stream.read_to_end(&mut response).await.unwrap();
         String::from_utf8_lossy(&response).into_owned()
+    }
+
+    #[tokio::test]
+    async fn under_a_public_host_name_not_even_a_read_is_served() {
+        let addr = start(None, 9).await;
+        // The rebinding page asks under its own name; served, the pictures would be its own to read.
+        for path in [
+            HEALTHZ_PATH,
+            SNAPSHOT_PATH,
+            ARRIVAL_PATH,
+            SETTINGS_PATH,
+            "/",
+        ] {
+            let reply = get_as(addr, path, "rebind.evil.example").await;
+            assert!(reply.starts_with("HTTP/1.1 403"), "{path}: {reply}");
+        }
+        for host in ["cat.local", "192.168.1.98:8080", "himbeere2"] {
+            assert!(
+                get_as(addr, HEALTHZ_PATH, host)
+                    .await
+                    .starts_with("HTTP/1.1 200"),
+                "{host}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flood_of_idle_connections_is_cut_off_and_a_freed_slot_serves_again() {
+        let addr = start(None, 9).await;
+        let mut idle = Vec::new();
+        for _ in 0..MAX_CONNECTIONS {
+            idle.push(TcpStream::connect(addr).await.unwrap());
+        }
+        // Accepted in order, so this one is over the limit and closed unanswered.
+        let mut over = TcpStream::connect(addr).await.unwrap();
+        let _ = over
+            .write_all(b"GET /healthz HTTP/1.1\r\nhost: cat.local\r\nconnection: close\r\n\r\n")
+            .await;
+        let mut reply = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(5), over.read_to_end(&mut reply)).await;
+        assert!(reply.is_empty(), "{}", String::from_utf8_lossy(&reply));
+        drop(idle);
+        for _ in 0..50 {
+            if get(addr, HEALTHZ_PATH, "")
+                .await
+                .starts_with("HTTP/1.1 200")
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("the freed slots never served again");
     }
 
     #[tokio::test]

@@ -151,6 +151,9 @@ const CLIP_TIME_SLACK_S: u64 = 2;
 /// With no frame for this long `/healthz` says the camera is not ok; the capture restarts after 10 s.
 const STALE_FRAME_S: u64 = 20;
 
+/// Model runs failing in a row before `/healthz` says so; one odd frame is no outage.
+const MODEL_FAILURES_REPORTED: u32 = 3;
+
 /// A kind of file kept per arrival in the state directory, `<prefix><arrival time><suffix>`.
 #[derive(Clone, Copy)]
 struct Kept {
@@ -229,6 +232,9 @@ pub struct Status {
     stats: Mutex<Stats>,
     /// The model's time per run in ms, smoothed; `None` before the first run.
     model_ms: Mutex<Option<f64>>,
+    /// Model runs failed in a row, and the last one's error.
+    model_failures: AtomicU32,
+    model_error: Mutex<Option<String>>,
     /// The COCO classes that count, and whether every class does.
     classes: Mutex<Vec<String>>,
     all_classes: bool,
@@ -275,6 +281,8 @@ impl Status {
             privacy: Privacy::Off,
             stats: Mutex::new(Stats::default()),
             model_ms: Mutex::new(None),
+            model_failures: AtomicU32::new(0),
+            model_error: Mutex::new(None),
             classes: Mutex::new(vec!["cat".into()]),
             all_classes: false,
             width,
@@ -354,6 +362,7 @@ impl Status {
 
     /// One model run's time; the stats show a mean that weighs the last runs most.
     pub fn record_model_time(&self, took: std::time::Duration) {
+        self.model_failures.store(0, Ordering::Relaxed);
         let ms = took.as_secs_f64() * 1000.0;
         if let Ok(mut mean) = self.model_ms.lock() {
             *mean = Some(mean.map_or(ms, |m| m * 0.8 + ms * 0.2));
@@ -362,6 +371,23 @@ impl Status {
 
     pub fn model_ms(&self) -> Option<f64> {
         self.model_ms.lock().ok().and_then(|m| *m)
+    }
+
+    /// One failed model run; returns how many failed in a row, so the caller can keep its log short.
+    pub fn record_model_failure(&self, error: String) -> u32 {
+        if let Ok(mut last) = self.model_error.lock() {
+            *last = Some(error);
+        }
+        self.model_failures.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// The model's last error while it keeps failing.
+    fn model_problem(&self) -> Option<String> {
+        if self.model_failures.load(Ordering::Relaxed) < MODEL_FAILURES_REPORTED {
+            return None;
+        }
+        let error = self.model_error.lock().ok().and_then(|e| e.clone());
+        Some(format!("the model fails: {}", error.unwrap_or_default()))
     }
 
     /// The COCO classes that count; `all` keeps every class.
@@ -434,6 +460,7 @@ impl Status {
             "score": self.score_rounded(),
             "ignore": rounded(&self.ignored()),
             "classes": self.classes(),
+            "privacy": self.privacy,
         })
         .to_string()
     }
@@ -441,6 +468,16 @@ impl Status {
     /// Applies what `update` carries, all or nothing, and keeps it in the state directory.
     pub fn apply(&self, mut update: Settings) -> anyhow::Result<()> {
         update.validate()?;
+        if self.privacy == Privacy::Pixelate
+            && update
+                .classes
+                .as_ref()
+                .is_some_and(|c| *c != self.classes())
+        {
+            anyhow::bail!(
+                "the privacy filter is on, so only observant.toml sets the classes: a box of another class would show it unblurred"
+            );
+        }
         let turned = update.rotate.is_some_and(|r| r != self.rotation());
         if turned && update.ignore.is_none() && !self.ignored().is_empty() {
             log::info!("the picture turned, so the spots marked not a cat no longer fit: cleared");
@@ -534,11 +571,14 @@ impl Status {
         if let Ok(clips) = self.clips.get_mut() {
             *clips = restored;
         }
-        if let Some(page) = std::fs::read_to_string(dir.join(SETTINGS_FILE))
+        if let Some(mut page) = std::fs::read_to_string(dir.join(SETTINGS_FILE))
             .ok()
             .and_then(|text| serde_json::from_str::<Settings>(&text).ok())
             .filter(|page| page.validate().is_ok())
         {
+            if self.privacy == Privacy::Pixelate && page.classes.take().is_some() {
+                log::warn!("the privacy filter is on: the classes the page once set give way to observant.toml's");
+            }
             log::info!(
                 "settings the page set: {}",
                 serde_json::to_string(&page).unwrap_or_default()
@@ -593,7 +633,7 @@ impl Status {
             match frame_age {
                 None => Some("waiting for the first frame".to_owned()),
                 Some(s) if s > STALE_FRAME_S => Some(format!("no frame for {s} s")),
-                Some(_) => None,
+                Some(_) => self.model_problem(),
             }
         };
         (problem.is_none(), problem, frame_age, model_age)
@@ -1392,6 +1432,42 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
         assert_eq!(json["detection"]["visits"], 0);
         assert!(json["detection"]["last_seen"].is_null());
+    }
+
+    #[test]
+    fn with_the_privacy_filter_no_page_changes_the_classes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(SETTINGS_FILE),
+            r#"{"classes":["person"],"score":0.4}"#,
+        )
+        .unwrap();
+        let status = Status::new("Cam", true, 16, 8)
+            .private(Privacy::Pixelate)
+            .remember_in(dir.path().into());
+        // A choice the page made before the filter was on must not unblur people now.
+        assert_eq!(status.classes(), vec!["cat"]);
+        assert!(
+            (status.score() - 0.4).abs() < 1e-6,
+            "the rest of it still holds"
+        );
+        let person = Settings {
+            classes: Some(vec!["person".into()]),
+            ..Settings::default()
+        };
+        let err = status.apply(person).unwrap_err();
+        assert!(format!("{err}").contains("privacy filter"), "{err}");
+        assert_eq!(status.classes(), vec!["cat"]);
+        // The page sends the classes it has with its other changes; those still go through.
+        let same = Settings {
+            classes: Some(vec!["cat".into()]),
+            score: Some(0.5),
+            ..Settings::default()
+        };
+        status.apply(same).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&status.settings_json()).unwrap();
+        assert_eq!(json["privacy"], "pixelate");
+        assert_eq!(json["score"], 0.5);
     }
 
     #[test]

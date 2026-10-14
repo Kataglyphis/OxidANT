@@ -174,6 +174,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `feature-checks-per-job` brings back one job per set.
 
 ### Fixed
+- **ObservANT, from the deep review of 2026-10-14:**
+  - *Reads need a local host name too.* `own_host` now runs on every request, so a page
+    that DNS rebinding pointed at the board cannot read `/snapshot.jpg`, the arrival
+    photos or the clips as its own; `own_page` adds the `Origin` check for the acting ones.
+  - *No connection flood.* At most `MAX_CONNECTIONS` (128) are served at once, a newer one
+    is closed unanswered and logged once a minute, and hyper gets a timer, so a request
+    head must arrive within 10 s (without one hyper 1.x skips its header timeout).
+  - *A failing model shows.* Three failed runs in a row make `/healthz` say `ok: false`
+    with `the model fails: …`; every failed run clears the drawn boxes, which stayed sharp
+    under the privacy filter before; the log keeps the first failure and one line a minute.
+  - *The privacy filter locks the classes.* With `privacy = "pixelate"`, `POST /settings`
+    refuses other `classes` and classes a page saved earlier give way at start, since a box
+    of `person` stays sharp; `GET /settings` names `privacy`.
 
 - **A browser that vanished frees its viewer place** (2026-10-14). The web server's
   connections carry TCP keepalive (60 s idle, then a probe every 10 s), so one whose peer

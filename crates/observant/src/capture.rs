@@ -485,7 +485,7 @@ fn spawn_inference(
                         status.record_model_time(started.elapsed());
                         visits.record(Instant::now(), &i420, detections, moving.as_ref());
                     }
-                    Err(err) => log::warn!("inference failed: {err:#}"),
+                    Err(err) => visits.model_failed(format!("{err:#}")),
                 }
             }
         });
@@ -514,6 +514,19 @@ struct Visits {
 }
 
 impl Visits {
+    /// A failed run: no stale box stays drawn, unblurred under the privacy filter, and `/healthz` learns of it.
+    fn model_failed(&mut self, error: String) {
+        let failures = self.status.record_model_failure(error.clone());
+        // The first, then one a minute at two runs a second: a broken model would otherwise fill the journal.
+        if failures == 1 || failures.is_multiple_of(120) {
+            log::warn!("inference failed ({failures} in a row): {error}");
+        }
+        if let Ok(mut boxes) = self.boxes.lock() {
+            boxes.clear();
+        }
+        self.status.set_boxes(Vec::new());
+    }
+
     /// Takes one run's `detections` on the frame `i420`, seen at `now`.
     fn record(
         &mut self,
@@ -1037,6 +1050,41 @@ mod tests {
 
     fn health(status: &Status) -> serde_json::Value {
         serde_json::from_str(&status.to_json()).unwrap()
+    }
+
+    #[test]
+    fn a_failing_model_clears_the_boxes_and_healthz_says_so_until_a_run_succeeds() {
+        gst::init().unwrap();
+        let status = Arc::new(Status::new("Cam", true, 64, 48));
+        status.set_frame(&gst::Buffer::from_mut_slice(vec![
+            128u8;
+            frame::size(64, 48)
+        ]));
+        let mut v = visits(&status);
+        let frame = vec![128u8; frame::size(64, 48)];
+        let t = Instant::now();
+        v.record(t, &frame, middle_cat(), None);
+        v.record(t + Duration::from_millis(500), &frame, middle_cat(), None);
+        assert_eq!(v.boxes.lock().unwrap().len(), 1);
+
+        v.model_failed("ort: out of memory".into());
+        assert!(
+            v.boxes.lock().unwrap().is_empty(),
+            "a stale box would stay sharp"
+        );
+        assert!(health(&status)["detection"]["boxes"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(health(&status)["ok"], true, "one failed run is no outage");
+        v.model_failed("ort: out of memory".into());
+        v.model_failed("ort: out of memory".into());
+        let h = health(&status);
+        assert_eq!(h["ok"], false);
+        assert_eq!(h["problem"], "the model fails: ort: out of memory");
+
+        status.record_model_time(Duration::from_millis(250));
+        assert_eq!(health(&status)["ok"], true);
     }
 
     #[test]
