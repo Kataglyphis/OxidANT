@@ -100,6 +100,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `stayed_s`, as a visit shorter than the clip's post-roll ends before the clip is written.
 
 ### Changed
+- **A cat back within a minute continues its visit** (2026-10-14). At the feeding trough
+  one cat walking about had made 21 visits in an hour, 10 to 90 s apart, each with its own
+  arrival event, clip and count. Being in view still ends after about 3 s without a hit (the
+  boxes, the motion gate and the still rate follow it); the visit ends only a minute after the
+  last sighting, so the departure event comes a minute later and `stayed_s` spans the whole
+  stay.
 - **A Pi camera turned a quarter captures the picture as small as it ends up** (2026-10-14).
   At 90 and 270 degrees `rpicam-vid` and libcamera deliver 480x360 (for 640x480) through
   the ISP's free scaler, so `videoscale` only adds the side borders. Measured on a Pi 5,

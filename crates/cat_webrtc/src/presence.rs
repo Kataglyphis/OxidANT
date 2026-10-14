@@ -1,5 +1,7 @@
-//! Whether a cat is in view. A lone hit at the score threshold is mostly noise, so a cat arrives
-//! after [`CONFIRM`] hits in a row and leaves once no hit came for the linger time.
+//! Whether a cat is in view, and its visit. A lone hit at the score threshold is mostly noise, so
+//! a cat comes into view after [`CONFIRM`] hits in a row and is out of view once no hit came for
+//! the linger time. Its visit ends only [`RETURN`] after its last sighting, so a cat that walks
+//! behind the sofa and back is one visit, not several.
 
 use std::time::{Duration, Instant};
 
@@ -8,8 +10,12 @@ use kataglyphis_core::Detection;
 /// Hits in a row before a cat counts as arrived.
 pub const CONFIRM: u32 = 2;
 
-/// The shortest linger; slower inference rates linger longer, so one missed run never ends a visit.
+/// The shortest linger; slower inference rates linger longer, so one missed run never ends a view.
 const MIN_LINGER: Duration = Duration::from_secs(3);
+
+/// A cat seen again within this of its last sighting continues its visit. At the feeding trough
+/// on 2026-10-14 one cat walking about made 21 visits in an hour, 10 to 90 s apart.
+pub const RETURN: Duration = Duration::from_secs(60);
 
 /// What an inference result changed.
 #[derive(Debug, Clone, PartialEq)]
@@ -22,6 +28,8 @@ pub enum Change {
 pub struct Presence {
     linger: Duration,
     streak: u32,
+    in_view: bool,
+    /// The open visit's arrival.
     since: Option<Instant>,
     last_hit: Option<Instant>,
 }
@@ -32,13 +40,14 @@ impl Presence {
         Self {
             linger: MIN_LINGER.max(period.mul_f32(2.5)),
             streak: 0,
+            in_view: false,
             since: None,
             last_hit: None,
         }
     }
 
     pub fn in_view(&self) -> bool {
-        self.since.is_some()
+        self.in_view
     }
 
     /// Feeds one inference result.
@@ -46,19 +55,26 @@ impl Presence {
         if let Some(best) = best_score(detections) {
             self.streak = self.streak.saturating_add(1);
             self.last_hit = Some(now);
-            if self.since.is_none() && self.streak >= CONFIRM {
-                self.since = Some(now);
-                return Some(Change::Arrived {
-                    count: detections.len(),
-                    best,
-                });
+            if !self.in_view && self.streak >= CONFIRM {
+                self.in_view = true;
+                if self.since.is_none() {
+                    self.since = Some(now);
+                    return Some(Change::Arrived {
+                        count: detections.len(),
+                        best,
+                    });
+                }
             }
             return None;
         }
         self.streak = 0;
         let since = self.since?;
         let last = self.last_hit.unwrap_or(since);
-        if now.duration_since(last) < self.linger {
+        let quiet = now.duration_since(last);
+        if quiet >= self.linger {
+            self.in_view = false;
+        }
+        if quiet < self.linger.max(RETURN) {
             return None;
         }
         self.since = None;
@@ -167,16 +183,20 @@ mod tests {
     }
 
     #[test]
-    fn it_leaves_after_the_linger_and_reports_the_visit() {
+    fn it_is_out_of_view_after_the_linger_and_leaves_a_minute_after_its_last_sighting() {
         let t = Instant::now();
+        let s = Duration::from_secs;
         let mut p = Presence::new(HALF);
         p.update(t, &[cat(0.6)]);
         p.update(t + HALF, &[cat(0.6)]);
-        p.update(t + Duration::from_secs(10), &[cat(0.6)]);
-        let quiet = t + Duration::from_secs(12);
-        assert_eq!(p.update(quiet, &[]), None);
+        p.update(t + s(10), &[cat(0.6)]);
+        assert_eq!(p.update(t + s(12), &[]), None);
+        assert!(p.in_view());
+        assert_eq!(p.update(t + s(13), &[]), None);
+        assert!(!p.in_view());
+        assert_eq!(p.update(t + s(69), &[]), None);
         assert_eq!(
-            p.update(t + Duration::from_secs(13), &[]),
+            p.update(t + s(70), &[]),
             Some(Change::Left {
                 stayed: Duration::from_millis(9500)
             })
@@ -185,13 +205,42 @@ mod tests {
     }
 
     #[test]
+    fn a_cat_back_within_the_minute_continues_its_visit() {
+        let t = Instant::now();
+        let s = Duration::from_secs;
+        let mut p = Presence::new(HALF);
+        p.update(t, &[cat(0.6)]);
+        assert!(p.update(t + HALF, &[cat(0.6)]).is_some());
+        // Behind the sofa for 50 s: out of view, the visit still open.
+        assert_eq!(p.update(t + s(30), &[]), None);
+        assert!(!p.in_view());
+        assert_eq!(p.update(t + s(50), &[cat(0.7)]), None);
+        assert_eq!(p.update(t + s(51), &[cat(0.7)]), None);
+        assert!(p.in_view());
+        assert_eq!(
+            p.update(t + s(111), &[]),
+            Some(Change::Left {
+                stayed: Duration::from_millis(50_500)
+            })
+        );
+        // Back after the minute: a new visit.
+        p.update(t + s(200), &[cat(0.6)]);
+        assert!(matches!(
+            p.update(t + s(201), &[cat(0.6)]),
+            Some(Change::Arrived { .. })
+        ));
+    }
+
+    #[test]
     fn a_slow_inference_rate_lingers_longer() {
         let t = Instant::now();
         let mut p = Presence::new(Duration::from_secs(4));
         p.update(t, &[cat(0.6)]);
         p.update(t + Duration::from_secs(4), &[cat(0.6)]);
-        assert_eq!(p.update(t + Duration::from_secs(12), &[]), None);
-        assert!(p.update(t + Duration::from_secs(14), &[]).is_some());
+        p.update(t + Duration::from_secs(12), &[]);
+        assert!(p.in_view());
+        p.update(t + Duration::from_secs(14), &[]);
+        assert!(!p.in_view());
     }
 
     fn at(x1: f32, y1: f32, x2: f32, y2: f32, score: f32) -> Detection {
