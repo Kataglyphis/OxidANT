@@ -27,3 +27,6 @@ ort = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg"] }

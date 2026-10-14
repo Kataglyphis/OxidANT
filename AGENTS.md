@@ -28,7 +28,7 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/gui` — feature-gated GUI (`gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix`)
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/media` — GStreamer capture, feature-gated (`gstreamer`)
-- `crates/observant` — the ObservANT service (`kataglyphis_observant`): picks the camera, burns YOLO cat boxes into the frames, streams them through `webrtcsink` and serves OmniAccelerANT's web build itself; consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/observant/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
+- `crates/observant` — the ObservANT service (`kataglyphis_observant`): picks the camera, burns the detection boxes (cats by default) into the frames, streams them through `webrtcsink` and serves OmniAccelerANT's web build itself; consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/observant/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands, plus `onnx-runtime` when built with `onnxruntime_directml` or `onnxruntime_cuda` and `media-check` when built with `gui_windows`; `stats --path <file>`). It was renamed on 2026-08-07 from `kataglyphis_rustprojecttemplate`, the root package's name until 2026-09-05 — see the pdb note below. It is not the root package's bin, so `cargo run` needs `-p kataglyphis_cli`.
 - `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{onnx,simple,webcam}.rs`, `src/webcam_engine.rs`), the cxx bridge BeschleunigerBallett links (`src/native_only.rs`, compiled by `build.rs` with `cxx-build` on every non-wasm target) and the `burn-demos` bin
 - `tests/` — the root package's proptest fuzz tests (`fuzz_test.rs`), and the CLI's integration tests (`tests/integration/integration.rs`, compiled as `kataglyphis_cli`'s `integration` test through `crates/cli/tests/integration.rs`)
@@ -352,6 +352,14 @@ cargo test  --workspace --locked                      # unit + integration + pro
 
 Every CI lane's tests add `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'` and `KATAGLYPHIS_REQUIRE_GPU=1` (README § Tests).
 
+**The detector meets its real model in the Linux lanes** (2026-10-14). `crates/inference/tests/real_model.rs`
+runs DEIM-D-FINE-N on `tests/fixtures/two_cats.jpg` and checks that both cats are found, where they
+are, and taken for no dog or person. Without the model it skips; the `test` and `coverage` steps of
+`scripts/linux/ci-container-steps.sh` fetch it first (`scripts/linux/fetch-models.sh`) and set
+`KATAGLYPHIS_REQUIRE_MODEL=1`, so there a missing model fails, as `KATAGLYPHIS_REQUIRE_GPU` does
+for the golden tests. The `coverage` step also fails below 70 % of the workspace's lines (tarpaulin
+`--fail-under`; 71.3 % measured that day); raise the floor as tests are added.
+
 Run the lint gates before pushing. CI's formatting-and-clippy step is ANTfrastructure's `cargo_fmt_clippy.sh` with `CARGO_CLIPPY_ARGS='--workspace --locked --features <those two>'`, which is the same pair of hard failures written below — reproduce the step itself with `bash scripts/linux/ci-container-steps.sh fmt-clippy` inside the image. The shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
 
 ```bash
@@ -493,18 +501,19 @@ board runs it as one service unit:
   arrival goes out, `/arrival.jpg` is set to the frame the model confirmed it on, boxes
   drawn. Logs name only the URL's origin: a Home Assistant webhook's path is its secret.
 - **The cat outlives a restart.** When systemd sets `$STATE_DIRECTORY` (the unit's
-  `StateDirectory=`), every arrival and departure writes `cat.json` (last seen, visits,
-  last score) and `arrival.jpg` there, each through a rename so a crash leaves no torn
-  file, and the next start reads them back. Without it nothing is kept. Where no systemd
-  provides it, the installer does: the Windows exe's `install::adopt` sets it to
-  `%LOCALAPPDATA%\omni-accelerant-catcam`, OmniAccelerANT's flatpak launcher to its
-  `$XDG_STATE_HOME`.
+  `StateDirectory=`), every arrival and departure writes `visits.json` (last seen, visits,
+  last score) and the arrival pictures there, each through a rename so a crash leaves no torn
+  file, and the next start reads them back (a `cat.json` from before the rename too). Without
+  it nothing is kept. Where no systemd provides it, the installer does: the Windows exe's
+  `install::adopt` sets it to `%LOCALAPPDATA%\omni-observant` (taking over an older
+  `omni-accelerant-catcam`), OmniAccelerANT's flatpak launcher to its `$XDG_STATE_HOME`.
 - **The network is pinned.** Media uses UDP `ice_port_min..ice_port_max`
   (40000-40099), set on every viewer's ICE agent from `consumer-added`, and STUN is off
   unless `stun_server` names one, so a LAN stream needs nothing outside it.
-- **Settings** come from `/etc/omni-accelerant/catcam.toml` (Windows:
-  `%ProgramData%\omni-accelerant\catcam.toml`, `config::system_config`), `--config` or
-  `$KATAGLYPHIS_CATCAM_CONFIG`, with the flags on top. Unknown keys are errors, and
+- **Settings** come from `/etc/omni-accelerant/observant.toml` (Windows:
+  `%ProgramData%\omni-accelerant\observant.toml`, `config::system_config`; a `catcam.toml`
+  from before the rename still reads), `--config` or `$KATAGLYPHIS_OBSERVANT_CONFIG` (or the
+  older `$KATAGLYPHIS_CATCAM_CONFIG`), with the flags on top. Unknown keys are errors, and
   `--print-config` prints the effective set. Every earlier flag still works.
   `inference = "auto"` skips the model below 1 GiB of RAM or when it does not load.
 - **A Windows install is one folder, and the exe finds everything in it** (`install.rs`).
@@ -513,7 +522,7 @@ board runs it as one service unit:
     `GST_PLUGIN_SYSTEM_PATH[_1_0]`, `GST_PLUGIN_SCANNER`, `GST_REGISTRY` under
     `%LOCALAPPDATA%`, `ORT_DYLIB_PATH` and `KATAGLYPHIS_ONNX_MODEL` (`models\deim_dfine_n_coco.onnx`).
   - A variable the caller already set wins.
-  - On Linux the bundle's `catcam` launcher does the same job, so `adopt` is a no-op there.
+  - On Linux the bundle's `observant` launcher does the same job, so `adopt` is a no-op there.
   - OmniAccelerANT's `scripts/windows/observant/Package-ObservANT.ps1` builds that folder
     and the MSI around it.
 - **Logs and exit:** it logs at info (`KATAGLYPHIS_LOG_LEVEL`) and quiets the

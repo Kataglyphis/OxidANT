@@ -242,6 +242,7 @@ impl Worker {
             {
                 pacer.ran(now);
             }
+            self.status.set_dark(pacer.is_dark());
         }
         let pushed = gst::Buffer::from_mut_slice(annotated);
         self.status.set_frame(&pushed);
@@ -1050,6 +1051,43 @@ mod tests {
 
     fn health(status: &Status) -> serde_json::Value {
         serde_json::from_str(&status.to_json()).unwrap()
+    }
+
+    /// What each per-frame step costs at 640x480; `cargo test --release -- --ignored --nocapture stage_costs`.
+    #[test]
+    #[ignore = "a measurement"]
+    fn stage_costs_per_frame() {
+        let (w, h) = (640u32, 480u32);
+        let i420: Vec<u8> = (0..frame::size(w, h)).map(|i| (i % 253) as u8).collect();
+        let mean_us = |runs: u32, f: &mut dyn FnMut()| {
+            f();
+            let started = Instant::now();
+            for _ in 0..runs {
+                f();
+            }
+            started.elapsed().as_secs_f64() * 1e6 / f64::from(runs)
+        };
+        let boxes = [[200.0, 150.0, 420.0, 330.0]];
+        let rgba = frame::to_rgba(&i420, w, h);
+        let to_rgba = mean_us(100, &mut || drop(frame::to_rgba(&i420, w, h)));
+        let copy = mean_us(500, &mut || drop(i420.to_vec()));
+        let mut work = i420.clone();
+        let pixelate = mean_us(100, &mut || {
+            frame::pixelate_outside(&mut work, w, h, &boxes)
+        });
+        let draw = mean_us(500, &mut || {
+            frame::draw_rect(&mut work, w, h, boxes[0], frame::GREEN, 4)
+        });
+        let jpeg = mean_us(20, &mut || {
+            drop(crate::status::encode_jpeg(&rgba, w, h).unwrap())
+        });
+        let thumb = mean_us(500, &mut || {
+            drop(crate::motion::thumbnail(&i420[..(w * h) as usize], w, h))
+        });
+        eprintln!(
+            "per frame at {w}x{h}: to_rgba {to_rgba:.0} us, copy {copy:.0} us, pixelate {pixelate:.0} us, \
+             draw box {draw:.0} us, snapshot jpeg {jpeg:.0} us, motion thumbnail {thumb:.0} us"
+        );
     }
 
     #[test]

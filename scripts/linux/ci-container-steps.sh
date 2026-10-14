@@ -77,15 +77,20 @@ shift
 case "$step" in
     debug)     antfrastructure_exec "${RUST_DRIVERS}/cargo_debug.sh" "$@" ;;
     security)  antfrastructure_exec "${RUST_DRIVERS}/cargo_security_checks.sh" "$@" ;;
-    # Golden tests must render (the image has lavapipe), not skip; `-` lets an empty value opt out.
+    # Golden tests must render (the image has lavapipe) and the detector must meet its model, not skip; `-` opts out.
     test)
         export KATAGLYPHIS_REQUIRE_GPU="${KATAGLYPHIS_REQUIRE_GPU-1}"
+        export KATAGLYPHIS_REQUIRE_MODEL="${KATAGLYPHIS_REQUIRE_MODEL-1}"
+        bash "${SCRIPT_DIR}/fetch-models.sh"
         antfrastructure_exec "${RUST_DRIVERS}/cargo_test.sh" --features "${TEST_FEATURES}" "$@"
         ;;
     # Without --workspace tarpaulin measures the root package alone, which has no unit tests: 0.00%.
     coverage)
         export KATAGLYPHIS_REQUIRE_GPU="${KATAGLYPHIS_REQUIRE_GPU-1}"
-        antfrastructure_exec "${RUST_DRIVERS}/cargo_coverage.sh" --workspace --features "${TEST_FEATURES}" "$@"
+        export KATAGLYPHIS_REQUIRE_MODEL="${KATAGLYPHIS_REQUIRE_MODEL-1}"
+        bash "${SCRIPT_DIR}/fetch-models.sh"
+        # The floor sits just under the measured 71.3 % (2026-10-14); raise it as tests are added.
+        antfrastructure_exec "${RUST_DRIVERS}/cargo_coverage.sh" --workspace --features "${TEST_FEATURES}" --fail-under 70 "$@"
         ;;
     bench)     antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" "$@" ;;
     release)   antfrastructure_exec "${RUST_DRIVERS}/cargo_release.sh" "$@" ;;

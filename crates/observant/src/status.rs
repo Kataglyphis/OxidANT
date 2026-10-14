@@ -232,6 +232,8 @@ pub struct Status {
     stats: Mutex<Stats>,
     /// The model's time per run in ms, smoothed; `None` before the first run.
     model_ms: Mutex<Option<f64>>,
+    /// The camera sees black, so the model idles: no IR at night.
+    dark: AtomicBool,
     /// Model runs failed in a row, and the last one's error.
     model_failures: AtomicU32,
     model_error: Mutex<Option<String>>,
@@ -281,6 +283,7 @@ impl Status {
             privacy: Privacy::Off,
             stats: Mutex::new(Stats::default()),
             model_ms: Mutex::new(None),
+            dark: AtomicBool::new(false),
             model_failures: AtomicU32::new(0),
             model_error: Mutex::new(None),
             classes: Mutex::new(vec!["cat".into()]),
@@ -371,6 +374,11 @@ impl Status {
 
     pub fn model_ms(&self) -> Option<f64> {
         self.model_ms.lock().ok().and_then(|m| *m)
+    }
+
+    /// Whether the picture is too dark to detect anything; not a fault, so `ok` stays.
+    pub fn set_dark(&self, dark: bool) {
+        self.dark.store(dark, Ordering::Relaxed);
     }
 
     /// One failed model run; returns how many failed in a row, so the caller can keep its log short.
@@ -833,6 +841,7 @@ impl Status {
             "frame": {"width": self.width, "height": self.height, "fps": self.fps},
             "camera": camera,
             "inference": self.inference,
+            "dark": self.dark.load(Ordering::Relaxed),
             "privacy": self.privacy,
             "classes": self.classes(),
             "all_classes": self.all_classes,
@@ -1432,6 +1441,20 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
         assert_eq!(json["detection"]["visits"], 0);
         assert!(json["detection"]["last_seen"].is_null());
+    }
+
+    #[test]
+    fn healthz_says_when_the_picture_is_too_dark_and_stays_ok() {
+        let status = Status::new("Cam", true, 16, 8);
+        let json = |s: &Status| serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap();
+        assert_eq!(json(&status)["dark"], false);
+        status.set_dark(true);
+        assert_eq!(json(&status)["dark"], true);
+        // Dark is a fact about the scene, not a fault: an outage alert must not fire every night.
+        assert_eq!(
+            json(&status)["problem"],
+            json(&Status::new("Cam", true, 16, 8))["problem"]
+        );
     }
 
     #[test]
