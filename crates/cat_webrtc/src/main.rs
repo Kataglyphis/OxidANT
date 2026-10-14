@@ -4,6 +4,7 @@
 mod camera;
 mod capture;
 mod clip;
+mod coco;
 mod config;
 mod frame;
 mod install;
@@ -209,6 +210,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         .scored(config.score)
         .at_fps(config.fps)
         .private(config.privacy)
+        .watching(config.classes.clone(), config.all_classes)
         .peered(config.peers.clone());
     let status = Arc::new(match state_dir() {
         Some(dir) => {

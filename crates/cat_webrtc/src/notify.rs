@@ -168,10 +168,11 @@ pub fn payload(
     visit: Option<Arrival>,
 ) -> serde_json::Value {
     let mut event = match change {
-        Change::Arrived { count, best } => serde_json::json!({
+        Change::Arrived { count, best, class } => serde_json::json!({
             "event": "arrived",
             "name": name,
             "time": time,
+            "class": crate::coco::name(*class),
             "detections": count,
             "best_score": best,
             "snapshot": ARRIVAL_PATH,
@@ -204,6 +205,7 @@ mod tests {
             &Change::Arrived {
                 count: 2,
                 best: 0.5,
+                class: 15,
             },
             7,
             None,
@@ -277,6 +279,7 @@ mod tests {
             &Change::Arrived {
                 count: 1,
                 best: 0.8,
+                class: 15,
             },
             1_791_763_200,
             Some(visit),
@@ -336,6 +339,7 @@ mod tests {
             &Change::Arrived {
                 count: 1,
                 best: 0.8,
+                class: 15,
             },
             1_791_763_273,
             None,
@@ -417,6 +421,7 @@ mod tests {
             &Change::Arrived {
                 count: 1,
                 best: 0.8,
+                class: 15,
             },
             1_791_763_273,
             None,
@@ -505,5 +510,20 @@ mod tests {
         server.join().unwrap();
         // The first try and one per delay: three, and no fourth once it gave up.
         assert_eq!(tries.load(std::sync::atomic::Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn an_arrival_names_its_class() {
+        let dog = payload(
+            "Cam",
+            &Change::Arrived {
+                count: 1,
+                best: 0.7,
+                class: 16,
+            },
+            100,
+            None,
+        );
+        assert_eq!(dog["class"], "dog");
     }
 }

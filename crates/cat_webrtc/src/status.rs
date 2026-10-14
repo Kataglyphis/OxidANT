@@ -62,6 +62,27 @@ pub struct Settings {
     /// Spots marked "not a cat", as fractions of the picture; a detection over one is dropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ignore: Option<Vec<Zone>>,
+    /// The COCO classes that count, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classes: Option<Vec<String>>,
+}
+
+/// `classes` is one to all 80 COCO names, each once.
+pub fn check_classes(classes: &[String]) -> anyhow::Result<()> {
+    if classes.is_empty() {
+        anyhow::bail!("classes must name at least one COCO class");
+    }
+    if let Some(unknown) = classes.iter().find(|c| crate::coco::id(c).is_none()) {
+        anyhow::bail!(
+            "{unknown:?} is no COCO class; known: {}",
+            crate::coco::NAMES.join(", ")
+        );
+    }
+    let mut seen = std::collections::HashSet::new();
+    if let Some(twice) = classes.iter().find(|c| !seen.insert(c.as_str())) {
+        anyhow::bail!("classes names {twice:?} twice");
+    }
+    Ok(())
 }
 
 impl Settings {
@@ -85,6 +106,9 @@ impl Settings {
             {
                 anyhow::bail!("name must be 1 to {NAME_MAX} printable characters");
             }
+        }
+        if let Some(classes) = &self.classes {
+            check_classes(classes)?;
         }
         if let Some(zones) = &self.ignore {
             if zones.len() > IGNORE_MAX {
@@ -147,6 +171,9 @@ struct Visit {
         serialize_with = "serialize_rounded"
     )]
     boxes: Vec<Zone>,
+    /// The COCO class it arrived as; visits from before classes keep none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    class: Option<String>,
 }
 
 /// What a restart should not forget about the cat.
@@ -185,6 +212,9 @@ pub struct Status {
     stats: Mutex<Stats>,
     /// The model's time per run in ms, smoothed; `None` before the first run.
     model_ms: Mutex<Option<f64>>,
+    /// The COCO classes that count, and whether every class does.
+    classes: Mutex<Vec<String>>,
+    all_classes: bool,
     width: u32,
     height: u32,
     fps: u32,
@@ -228,6 +258,8 @@ impl Status {
             privacy: Privacy::Off,
             stats: Mutex::new(Stats::default()),
             model_ms: Mutex::new(None),
+            classes: Mutex::new(vec!["cat".into()]),
+            all_classes: false,
             width,
             height,
             fps: 0,
@@ -315,6 +347,27 @@ impl Status {
         self.model_ms.lock().ok().and_then(|m| *m)
     }
 
+    /// The COCO classes that count; `all` keeps every class.
+    pub fn watching(mut self, classes: Vec<String>, all: bool) -> Self {
+        self.classes = Mutex::new(classes);
+        self.all_classes = all;
+        self
+    }
+
+    pub fn classes(&self) -> Vec<String> {
+        self.classes.lock().map(|c| c.clone()).unwrap_or_default()
+    }
+
+    /// The class ids the model's results keep; `None` keeps every class.
+    pub fn wanted_classes(&self) -> Option<Vec<i64>> {
+        (!self.all_classes).then(|| {
+            self.classes()
+                .iter()
+                .filter_map(|c| crate::coco::id(c))
+                .collect()
+        })
+    }
+
     /// The privacy filter in effect, for `/healthz` and the page.
     pub fn private(mut self, privacy: Privacy) -> Self {
         self.privacy = privacy;
@@ -363,6 +416,7 @@ impl Status {
             "rotate": self.rotation(),
             "score": self.score_rounded(),
             "ignore": rounded(&self.ignored()),
+            "classes": self.classes(),
         })
         .to_string()
     }
@@ -391,6 +445,9 @@ impl Status {
         if update.ignore.is_some() {
             page.ignore.clone_from(&update.ignore);
         }
+        if update.classes.is_some() {
+            page.classes.clone_from(&update.classes);
+        }
         if let Some(dir) = &self.state_dir {
             write_atomic(&dir.join(SETTINGS_FILE), &serde_json::to_vec(&*page)?)?;
         }
@@ -414,6 +471,9 @@ impl Status {
         }
         if let (Some(zones), Ok(mut current)) = (&settings.ignore, self.ignore.lock()) {
             current.clone_from(zones);
+        }
+        if let (Some(classes), Ok(mut current)) = (&settings.classes, self.classes.lock()) {
+            current.clone_from(classes);
         }
     }
 
@@ -533,13 +593,14 @@ impl Status {
                 cat.best_score = best_score.unwrap_or(cat.best_score);
             }
             match change {
-                Some(Change::Arrived { .. }) => {
+                Some(Change::Arrived { class, .. }) => {
                     cat.visits += 1;
                     let boxes = cat.boxes.clone();
                     cat.recent.push_front(Visit {
                         arrived: unix_now(),
                         stayed_s: None,
                         boxes,
+                        class: crate::coco::name(*class).map(str::to_owned),
                     });
                     cat.recent.truncate(RECENT_VISITS);
                 }
@@ -713,6 +774,8 @@ impl Status {
             "camera": camera,
             "inference": self.inference,
             "privacy": self.privacy,
+            "classes": self.classes(),
+            "all_classes": self.all_classes,
             "model_runs": runs,
             "stats": self.stats.lock().map(|s| s.clone()).unwrap_or_default(),
             "cat": {
@@ -837,6 +900,7 @@ mod tests {
         Change::Arrived {
             count: 2,
             best: 0.8,
+            class: 15,
         }
     }
 
@@ -996,6 +1060,7 @@ mod tests {
             score: Some(0.99),
             name: Some("New".into()),
             ignore: None,
+            classes: None,
         };
         assert!(status.apply(mixed).is_err());
         assert_eq!(
@@ -1077,11 +1142,13 @@ mod tests {
                     arrived: 1_000_000,
                     stayed_s: None,
                     boxes: Vec::new(),
+                    class: None,
                 },
                 Visit {
                     arrived: 900_000,
                     stayed_s: Some(60),
                     boxes: Vec::new(),
+                    class: None,
                 },
             ],
         };
@@ -1235,6 +1302,7 @@ mod tests {
             Some(&Change::Arrived {
                 count: 1,
                 best: 0.36,
+                class: 15,
             }),
         );
         // The boxes move on with the picture; the visit keeps the ones it arrived with.
@@ -1269,6 +1337,7 @@ mod tests {
             Some(&Change::Arrived {
                 count: 1,
                 best: 0.5,
+                class: 15,
             }),
         );
         assert_eq!(
@@ -1356,5 +1425,75 @@ mod tests {
         assert!(json["stats"]["temperature_c"].is_null());
         status.set_cat(false, None, None);
         assert_eq!(status.counters().1, 1);
+    }
+
+    #[test]
+    fn the_watched_classes_come_from_the_settings_and_name_each_visit() {
+        let status = Status::new("Cam", true, 4, 4);
+        assert_eq!(status.classes(), ["cat"]);
+        assert_eq!(status.wanted_classes(), Some(vec![15]));
+        status
+            .apply(Settings {
+                classes: Some(vec!["cat".into(), "dog".into()]),
+                ..Settings::default()
+            })
+            .unwrap();
+        assert_eq!(status.wanted_classes(), Some(vec![15, 16]));
+        let settings: serde_json::Value = serde_json::from_str(&status.settings_json()).unwrap();
+        assert_eq!(settings["classes"], serde_json::json!(["cat", "dog"]));
+        // A dog arrives: its visit says so.
+        status.set_cat(
+            true,
+            Some(0.8),
+            Some(&Change::Arrived {
+                count: 1,
+                best: 0.8,
+                class: 16,
+            }),
+        );
+        let json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        assert_eq!(json["classes"], serde_json::json!(["cat", "dog"]));
+        assert_eq!(json["cat"]["recent"][0]["class"], "dog");
+        // Every class: no filter.
+        assert_eq!(
+            Status::new("Cam", true, 4, 4)
+                .watching(vec![], true)
+                .wanted_classes(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_bad_class_list_changes_nothing() {
+        let status = Status::new("Cam", true, 4, 4);
+        for bad in [
+            vec![],
+            vec!["unicorn".to_owned()],
+            vec!["cat".to_owned(), "cat".to_owned()],
+        ] {
+            assert!(status
+                .apply(Settings {
+                    classes: Some(bad),
+                    score: Some(0.5),
+                    ..Settings::default()
+                })
+                .is_err());
+        }
+        assert_eq!(status.classes(), ["cat"]);
+        assert_eq!(status.score(), 0.25);
+    }
+
+    #[test]
+    fn page_classes_survive_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        before
+            .apply(Settings {
+                classes: Some(vec!["bird".into()]),
+                ..Settings::default()
+            })
+            .unwrap();
+        let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        assert_eq!(after.classes(), ["bird"]);
     }
 }

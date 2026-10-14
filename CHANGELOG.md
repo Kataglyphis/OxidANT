@@ -15,6 +15,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Configurable classes, cats by default** (2026-10-14). `classes` (COCO names, `["cat"]`
+  unless set) replaces the hard-wired cat filter, in the settings and through
+  `POST /settings {"classes": [...]}`, checked whole (one to 80 known names, each once) and
+  kept across restarts in `settings.json`; the model's runs read them each time.
+  `/healthz` lists `classes`, each visit names its `class` and each `arrived` event too, the
+  class of the best detection. `coco.rs` holds the 80 names. `all_classes` still counts every
+  class.
+
 - **`/healthz` reports what the cat cam achieves and costs** (2026-10-14): `stats`, sampled
   every 2 s by a thread of its own (`stats.rs`), names the frames pushed per second, the
   model's time per run (smoothed) and runs per second, and from `/proc` and `/sys` its CPU

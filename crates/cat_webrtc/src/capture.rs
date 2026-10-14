@@ -22,9 +22,6 @@ use crate::notify::Notifier;
 use crate::presence::{best_score, outside, zone_of, Change, Presence};
 use crate::status::Status;
 
-/// COCO class id of "cat" in the 80-class YOLO models shipped in this tree.
-pub const COCO_CAT: i64 = 15;
-
 /// A stand-in test pattern runs this long before the camera is probed again.
 const REPROBE_EVERY: Duration = Duration::from_secs(30);
 /// A camera that delivers no frame for this long counts as gone.
@@ -462,7 +459,6 @@ fn spawn_inference(
 ) -> Option<(mpsc::SyncSender<Look>, thread::JoinHandle<()>)> {
     let (tx, rx) = mpsc::sync_channel::<Look>(1);
     let (width, height) = (config.width, config.height);
-    let wanted = (!config.all_classes).then(|| vec![COCO_CAT]);
     let mut visits = Visits {
         // The slowest rate the model runs at with a cat in view, so a still one's visit never lapses.
         presence: Presence::new(still_period(config.inference_fps)),
@@ -480,8 +476,9 @@ fn spawn_inference(
         .spawn(move || {
             while let Ok((i420, moving)) = rx.recv() {
                 let rgba = frame::to_rgba(&i420, width, height);
-                // The settings page may have moved it since the last run.
+                // The settings page may have moved them since the last run.
                 let score = status.score();
+                let wanted = status.wanted_classes();
                 let started = Instant::now();
                 match detector.infer_rgba(&rgba, width, height, score, wanted.as_deref()) {
                     Ok(detections) => {
@@ -531,8 +528,9 @@ impl Visits {
         let counted = counted(&detections, self.presence.in_view(), moving);
         let change = self.presence.update(now, &counted);
         match &change {
-            Some(Change::Arrived { count, best }) => {
-                log::info!("cat in view: {count} detection(s), best score {best:.2}");
+            Some(Change::Arrived { count, best, class }) => {
+                let class = crate::coco::name(*class).unwrap_or("?");
+                log::info!("{class} in view: {count} detection(s), best score {best:.2}");
             }
             Some(Change::Left { stayed }) => {
                 log::info!("no cat in view (stayed {} s)", stayed.as_secs());
@@ -911,7 +909,7 @@ mod tests {
             x2: 56.0,
             y2: 47.0,
             score: 0.4,
-            class_id: COCO_CAT,
+            class_id: 15,
         };
         // Seen as the camera starts it counts, since anything there has just come into view.
         assert_eq!(counted(&[rack], false, Some(&at_start)), vec![rack]);

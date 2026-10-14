@@ -64,7 +64,9 @@ pub struct Config {
     pub idle_inference_fps: f32,
     /// ONNX Runtime threads for the model; 0 takes one per core.
     pub inference_threads: u32,
-    /// Keep every COCO class instead of only cats.
+    /// The COCO classes that count, by name; the Camera page changes them while it runs.
+    pub classes: Vec<String>,
+    /// Keep every COCO class, whatever `classes` says.
     pub all_classes: bool,
     pub privacy: Privacy,
     pub http_host: String,
@@ -115,6 +117,7 @@ impl Default for Config {
             idle_inference_fps: 0.2,
             // At 2 Hz a Pi 5 ran at 183 % with ORT's four spinning threads, 81 % with two that sleep (2026-10-11).
             inference_threads: 2,
+            classes: vec!["cat".into()],
             all_classes: false,
             privacy: Privacy::Off,
             http_host: "0.0.0.0".into(),
@@ -192,6 +195,7 @@ impl Config {
         if self.fps == 0 {
             bail!("fps must be non-zero");
         }
+        crate::status::check_classes(&self.classes)?;
         if !(0.0..=1.0).contains(&self.score) {
             bail!("score must lie in 0..=1 (got {})", self.score);
         }

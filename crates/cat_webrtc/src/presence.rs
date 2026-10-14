@@ -20,8 +20,15 @@ pub const RETURN: Duration = Duration::from_secs(60);
 /// What an inference result changed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
-    Arrived { count: usize, best: f32 },
-    Left { stayed: Duration },
+    /// `class` is the COCO class of the best detection.
+    Arrived {
+        count: usize,
+        best: f32,
+        class: i64,
+    },
+    Left {
+        stayed: Duration,
+    },
 }
 
 #[derive(Debug)]
@@ -62,6 +69,7 @@ impl Presence {
                     return Some(Change::Arrived {
                         count: detections.len(),
                         best,
+                        class: best_class(detections),
                     });
                 }
             }
@@ -138,6 +146,14 @@ pub fn best_score(detections: &[Detection]) -> Option<f32> {
     detections.iter().map(|d| d.score).reduce(f32::max)
 }
 
+/// The COCO class of the highest-scoring detection; 0 for none.
+fn best_class(detections: &[Detection]) -> i64 {
+    detections
+        .iter()
+        .max_by(|a, b| a.score.total_cmp(&b.score))
+        .map_or(0, |d| d.class_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,7 +190,8 @@ mod tests {
             p.update(t + HALF, &[cat(0.3), cat(0.7)]),
             Some(Change::Arrived {
                 count: 2,
-                best: 0.7
+                best: 0.7,
+                class: 15,
             })
         );
         assert_eq!(p.update(t + HALF * 2, &[]), None);
@@ -277,5 +294,24 @@ mod tests {
         assert_eq!(iou(&rack, &rack), 1.0);
         assert_eq!(iou(&rack, &[0.0, 0.0, 0.1, 0.1]), 0.0);
         assert_eq!(iou(&[0.5, 0.5, 0.5, 0.5], &[0.5, 0.5, 0.5, 0.5]), 0.0);
+    }
+
+    #[test]
+    fn an_arrival_takes_the_class_of_its_best_detection() {
+        let t = Instant::now();
+        let mut p = Presence::new(HALF);
+        let dog = Detection {
+            class_id: 16,
+            ..cat(0.9)
+        };
+        p.update(t, &[cat(0.4), dog]);
+        assert_eq!(
+            p.update(t + HALF, &[cat(0.4), dog]),
+            Some(Change::Arrived {
+                count: 2,
+                best: 0.9,
+                class: 16
+            })
+        );
     }
 }
