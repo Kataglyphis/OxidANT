@@ -124,15 +124,24 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::time::{Duration, Instant};
 
+    /// [`run`] on a thread of its own: a run that never returns fails the test instead of hanging it.
+    fn run_within(pipeline: &gst::Pipeline) -> anyhow::Result<()> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let pipeline = pipeline.clone();
+        std::thread::spawn(move || tx.send(run(&pipeline)));
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("run did not return within 10 s")
+    }
+
     #[test]
     fn run_ends_on_a_shutdown_request_and_on_end_of_stream() {
         gst::init().unwrap();
         let pipeline = gst::Pipeline::new();
         request_shutdown(&pipeline);
-        run(&pipeline).unwrap();
+        run_within(&pipeline).unwrap();
         let bus = pipeline.bus().unwrap();
         bus.post(gst::message::Eos::new()).unwrap();
-        run(&pipeline).unwrap();
+        run_within(&pipeline).unwrap();
     }
 
     #[test]
@@ -143,7 +152,7 @@ mod tests {
             .debug("a debug line")
             .build();
         pipeline.bus().unwrap().post(message).unwrap();
-        let err = run(&pipeline).unwrap_err().to_string();
+        let err = run_within(&pipeline).unwrap_err().to_string();
         assert!(
             err.contains("the sink fell over") && err.contains("a debug line"),
             "{err}"

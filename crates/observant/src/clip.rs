@@ -117,12 +117,8 @@ impl Clip {
             log::warn!("arrival clips off: GStreamer has no {missing}");
             return None;
         }
-        let every = (fps as f32 / CLIP_FPS as f32).round().max(1.0) as u32;
+        let (every, before, after) = frames_kept(seconds, fps);
         let rate = gst::Fraction::new(fps as i32, every as i32);
-        let per_second = fps as f32 / every as f32;
-        let before = (PRE_ROLL_S as f32 * per_second).round() as usize;
-        let after =
-            (seconds.saturating_sub(PRE_ROLL_S).max(1) as f32 * per_second).round() as usize;
         // Two clips may wait while one encodes: arrivals close together each keep theirs.
         let (tx, rx) = mpsc::sync_channel::<(Arrival, Vec<gst::Buffer>)>(2);
         let spawned = thread::Builder::new()
@@ -181,6 +177,16 @@ impl Clip {
             );
         }
     }
+}
+
+/// For a clip of `seconds` from a stream at `fps`: keep one frame in `every`, `before` of them ahead of
+/// the arrival and `after` behind it, at least one second's worth.
+fn frames_kept(seconds: u32, fps: u32) -> (u32, usize, usize) {
+    let every = (fps as f32 / CLIP_FPS as f32).round().max(1.0) as u32;
+    let per_second = fps as f32 / every as f32;
+    let before = (PRE_ROLL_S as f32 * per_second).round() as usize;
+    let after = (seconds.saturating_sub(PRE_ROLL_S).max(1) as f32 * per_second).round() as usize;
+    (every, before, after)
 }
 
 /// I420 frames at `rate` to an MP4 with its index first, so a browser plays it before the end arrives.
@@ -319,6 +325,28 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         gst::init().unwrap();
         turn
+    }
+
+    #[test]
+    fn a_clip_keeps_about_10_frames_a_second_3_s_ahead_of_the_arrival() {
+        // 8 s at 30 fps: one frame in three, 3 s before the arrival and 5 s after.
+        assert_eq!(frames_kept(8, 30), (3, 30, 50));
+        assert_eq!(frames_kept(4, 10), (1, 30, 10));
+        // 25 fps rounds to one in three, 8.3 frames a second.
+        assert_eq!(frames_kept(8, 25), (3, 25, 42));
+        // A slower stream keeps every frame, and a clip shorter than its pre-roll still ends 1 s on.
+        assert_eq!(frames_kept(8, 5), (1, 15, 25));
+        assert_eq!(frames_kept(2, 10), (1, 30, 10));
+    }
+
+    #[test]
+    fn a_scratch_directory_is_new_and_under_the_temp_dir() {
+        let (a, b) = (tempfile_dir().unwrap(), tempfile_dir().unwrap());
+        assert!(a.is_dir() && b.is_dir());
+        assert_ne!(a, b);
+        assert!(a.starts_with(std::env::temp_dir()), "{a:?}");
+        drop((Scratch(a.clone()), Scratch(b)));
+        assert!(!a.exists());
     }
 
     #[test]

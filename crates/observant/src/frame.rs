@@ -192,6 +192,106 @@ mod tests {
     }
 
     #[test]
+    fn each_pixel_takes_its_own_luma_and_its_own_2x2_blocks_chroma() {
+        // 6x4: three by two chroma blocks, each its own colour, and a luma ramp across the frame.
+        let (w, h) = (6usize, 4usize);
+        let luma: Vec<u8> = (0..w * h).map(|i| 20 + 8 * i as u8).collect();
+        let u: Vec<u8> = (0..6).map(|i| 60 + 25 * i).collect();
+        let v: Vec<u8> = (0..6).map(|i| 200 - 20 * i).collect();
+        let frame = [luma.clone(), u.clone(), v.clone()].concat();
+        let rgba = to_rgba(&frame, w as u32, h as u32);
+        for (row, col) in (0..h).flat_map(|r| (0..w).map(move |c| (r, c))) {
+            let block = (row / 2) * (w / 2) + col / 2;
+            let alone = [vec![luma[row * w + col]; 4], vec![u[block]], vec![v[block]]].concat();
+            let at = (row * w + col) * 4;
+            assert_eq!(
+                rgba[at..at + 4],
+                to_rgba(&alone, 2, 2)[..4],
+                "pixel ({col}, {row})"
+            );
+        }
+    }
+
+    /// Which pixels of a `w`-wide plane an outline of `rect` (inclusive) and `t` pixels marks.
+    fn outline_mask(w: usize, h: usize, [x1, y1, x2, y2]: [usize; 4], t: usize) -> Vec<bool> {
+        (0..w * h)
+            .map(|i| (i % w, i / w))
+            .map(|(x, y)| {
+                let on_box = (x1..=x2).contains(&x) && (y1..=y2).contains(&y);
+                on_box && (y < y1 + t || y + t > y2 || x < x1 + t || x + t > x2)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_outline_is_its_thickness_in_luma_half_that_in_chroma_and_nothing_else() {
+        let (w, h) = (32usize, 24usize);
+        let mut f = gray(w as u32, h as u32, 100);
+        draw_rect(&mut f, w as u32, h as u32, [4.0, 4.0, 28.0, 20.0], GREEN, 4);
+        let planes = [
+            (0, w, h, [4, 4, 28, 20], 4, GREEN[0], 100),
+            (w * h, w / 2, h / 2, [2, 2, 14, 10], 2, GREEN[1], 128),
+            (
+                w * h * 5 / 4,
+                w / 2,
+                h / 2,
+                [2, 2, 14, 10],
+                2,
+                GREEN[2],
+                128,
+            ),
+        ];
+        for (start, pw, ph, rect, t, value, background) in planes {
+            let mask = outline_mask(pw, ph, rect, t);
+            for (i, &marked) in mask.iter().enumerate() {
+                let want = if marked { value } else { background };
+                assert_eq!(
+                    f[start + i],
+                    want,
+                    "plane at {start}, ({}, {})",
+                    i % pw,
+                    i / pw
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_outline_on_the_last_row_or_column_stays_in_its_plane() {
+        let (w, h) = (16usize, 12usize);
+        let marked = |rect: [f32; 4]| {
+            let mut f = gray(w as u32, h as u32, 100);
+            draw_rect(&mut f, w as u32, h as u32, rect, GREEN, 2);
+            assert!(
+                f[w * h..].iter().all(|&p| p != GREEN[0]),
+                "{rect:?} reached chroma"
+            );
+            (0..w * h)
+                .filter(|&i| f[i] == GREEN[0])
+                .map(|i| (i % w, i / w))
+                .collect::<Vec<_>>()
+        };
+        // A line thicker than its box grows inward, so a one-pixel-wide box marks the column before it.
+        let column: Vec<_> = (8..=11).flat_map(|y| [(14, y), (15, y)]).collect();
+        assert_eq!(marked([15.0, 8.0, 15.0, 11.0]), column);
+        let row: Vec<_> = (10..=11)
+            .flat_map(|y| (10..=13).map(move |x| (x, y)))
+            .collect();
+        assert_eq!(marked([10.0, 11.0, 13.0, 11.0]), row);
+    }
+
+    #[test]
+    fn a_box_with_its_corners_swapped_draws_nothing_and_a_one_pixel_wide_one_a_line() {
+        let (w, h) = (16usize, 12usize);
+        let mut f = gray(w as u32, h as u32, 100);
+        draw_rect(&mut f, w as u32, h as u32, [10.0, 2.0, 5.0, 8.0], GREEN, 2);
+        assert_eq!(f, gray(w as u32, h as u32, 100));
+        draw_rect(&mut f, w as u32, h as u32, [6.0, 2.0, 6.0, 8.0], GREEN, 1);
+        let column: Vec<usize> = (0..w * h).filter(|&i| f[i] == GREEN[0]).collect();
+        assert_eq!(column, (2..=8).map(|y| y * w + 6).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn a_box_marks_its_outline_in_every_plane_and_leaves_the_inside_alone() {
         let (w, h) = (16u32, 16u32);
         let mut f = gray(w, h, 100);
@@ -264,6 +364,68 @@ mod tests {
         assert_eq!(f.len(), size(w, h));
         let u = &f[(w * h) as usize..];
         assert!(u[..16].iter().all(|&p| p == u[0]));
+    }
+
+    /// [`ramp`] with chroma ramps too: U is x + y and V is 2x + y, per chroma pixel.
+    fn ramp_all(w: u32, h: u32) -> Vec<u8> {
+        let mut f = ramp(w, h);
+        let (cw, ch) = (w as usize / 2, h as usize / 2);
+        let luma = (w * h) as usize;
+        for y in 0..ch {
+            for x in 0..cw {
+                f[luma + y * cw + x] = ((x + y) % 256) as u8;
+                f[luma + cw * ch + y * cw + x] = ((2 * x + y) % 256) as u8;
+            }
+        }
+        f
+    }
+
+    #[test]
+    fn a_block_takes_its_own_mean() {
+        let mut f = ramp(640, 480);
+        pixelate_outside(&mut f, 640, 480, &[]);
+        // x + 3y over a 32-pixel block: 15.5 + 46.5 at (0, 0), and 32 more each way at (32, 32).
+        assert_eq!(f[0], 62);
+        assert_eq!(f[32 * 640 + 32], 190);
+    }
+
+    #[test]
+    fn the_margin_is_15_percent_of_the_box_each_way_and_no_more() {
+        let original = ramp(640, 480);
+        let mut f = original.clone();
+        // 100 x 40 at (200, 100): kept from 185 to 315 across and from 94 to 146 down, ends exclusive.
+        pixelate_outside(&mut f, 640, 480, &[[200.0, 100.0, 300.0, 140.0]]);
+        let same = |x: usize, y: usize| f[y * 640 + x] == original[y * 640 + x];
+        for (x, y) in [(185, 120), (314, 120), (250, 94), (250, 145)] {
+            assert!(same(x, y), "({x}, {y}) is inside the margin");
+        }
+        for (x, y) in [(184, 120), (315, 120), (250, 93), (250, 146)] {
+            assert!(!same(x, y), "({x}, {y}) is outside the margin");
+        }
+    }
+
+    #[test]
+    fn chroma_is_kept_inside_the_box_and_blocks_outside() {
+        let original = ramp_all(640, 480);
+        let mut f = original.clone();
+        pixelate_outside(&mut f, 640, 480, &[[200.0, 100.0, 300.0, 140.0]]);
+        let luma = 640 * 480;
+        for plane in [luma, luma + 320 * 240] {
+            let at = |f: &[u8], x: usize, y: usize| f[plane + y * 320 + x];
+            // Chroma (93, 60) is luma (186, 120), inside; (92, 60) is luma 184, outside.
+            assert_eq!(at(&f, 93, 60), at(&original, 93, 60), "plane at {plane}");
+            assert_eq!(at(&f, 157, 72), at(&original, 157, 72), "plane at {plane}");
+            assert_ne!(at(&f, 92, 60), at(&original, 92, 60), "plane at {plane}");
+            // A 16-pixel chroma block far from the box is one value, not its ramp.
+            let block: Vec<u8> = (0..16).map(|x| at(&f, 16 + x, 200)).collect();
+            assert!(
+                block.iter().all(|&p| p == block[0]),
+                "plane at {plane}: {block:?}"
+            );
+            assert_ne!(at(&f, 16, 200), at(&original, 16, 200), "plane at {plane}");
+            // Chroma blocks are 16 wide, the same area as luma's 32: the one before is its own.
+            assert_ne!(at(&f, 0, 200), at(&f, 16, 200), "plane at {plane}");
+        }
     }
 
     #[test]

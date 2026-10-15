@@ -146,6 +146,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_sampler_fills_the_stats_at_once() {
+        let status = Arc::new(Status::new("Cam", true, 4, 4));
+        spawn(status.clone());
+        let stats = |s: &Status| {
+            serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap()["stats"].clone()
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while stats(&status)["cores"] == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        let first = stats(&status);
+        assert!(first["cores"].as_u64().is_some_and(|n| n >= 1), "{first}");
+        // Where /proc exists, the process's own memory is read from it.
+        #[cfg(target_os = "linux")]
+        assert!(
+            first["rss_mb"]
+                .as_f64()
+                .is_some_and(|mb| (1.0..100_000.0).contains(&mb)),
+            "{first}"
+        );
+    }
+
+    #[test]
     fn the_proc_files_read_as_the_kernel_writes_them() {
         // A name with a space and a parenthesis, as a thread may carry.
         let stat = "4242 (cat (webrtc) x) S 1 4242 4242 0 -1 4194560 3045 0 0 0 1234 567 0 0 20 0 9 0 99 1000 2000";

@@ -15,6 +15,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Mutation testing of ObservANT's frame, clip and stats code** (2026-10-15). cargo-mutants on
+  `clip.rs`, `frame.rs`, `stats.rs`, `output.rs` and `precompress.rs`: 376 of 412 compiling
+  mutants caught at first, 400 now. The privacy filter had the most gaps, because its tests used
+  one-colour chroma: they now check the 15 % margin to the pixel in both directions, that a block
+  takes its own mean, and that the colour planes are kept inside a box and pixelated outside.
+  New tests also pin the box outline's exact pixels at every thickness and at the frame's last row
+  and column, a box with swapped corners, each pixel's own luma and 2x2 chroma in `to_rgba`, the
+  clip's frame counts (`frames_kept`, split out of `Clip::spawn`), a new scratch directory per
+  encode, and the stats sampler reading `/proc`. The output pipeline's tests fail after 10 s instead
+  of hanging when `run` never returns. Of the 12 left, 9 only widen the privacy filter's
+  whole-block shortcut, whose per-pixel path paints the same picture.
+
 - **Mutation testing of ObservANT's camera choice, config and webhook** (2026-10-15). cargo-mutants
   on `camera.rs`, `config.rs` and `notify.rs` caught about 90 % of 145 compiling mutants; now 134.
   New tests: a webcam counts by its UVC driver or its USB bus, and needs a format it can decode;
