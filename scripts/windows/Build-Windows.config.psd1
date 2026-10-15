@@ -10,7 +10,7 @@
     # The GUI pipeline's by-name elements plus autovideosrc's fallbacks; GSTREAMER_PLUGIN_DIR overrides the dir.
     GStreamerPluginDir = 'C:\runtime\lib\gstreamer-1.0'
     GStreamerPlugins = @('gstcoreelements', 'gstapp', 'gstvideoconvertscale', 'gstmediafoundation', 'gstautodetect', 'gstwinks', 'gstvideotestsrc')
-    # Staged beside the tests only: the cat cam's capture always has a videoflip, and its image source a multifilesrc and jpegdec.
+    # Staged beside the tests only: ObservANT's capture always has a videoflip, and its image source a multifilesrc and jpegdec.
     TestGStreamerPlugins = @('gstvideofilter', 'gstmultifile', 'gstjpeg')
   }
 

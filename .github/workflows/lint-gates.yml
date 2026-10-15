@@ -32,6 +32,17 @@ jobs:
       # Upstream's default too; explicit so a change to that default cannot re-point this gate.
       lint-path: scripts
 
+  # The CI scripts' own suites on synthetic input: the per-crate coverage floor and the benchmark report.
+  script-tests:
+    name: CI script suites
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run every suite
+        run: for suite in scripts/linux/tests/test-*.sh; do bash "$suite"; done
+
   # .gitignore does nothing once a path is tracked, so only this gate sees generated output reaching the index.
   generated-artifacts:
     name: No generated artifact is tracked

@@ -13,7 +13,7 @@ use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -23,7 +23,7 @@ use crate::status::{Settings, Status, Viewer};
 /// What the web client's host-relative `signalingServerUrl` resolves to.
 pub const SIGNALLING_PATH: &str = "/webrtc-ws";
 
-/// What the cat cam runs and what it saw, as JSON.
+/// What the ObservANT runs and what it saw, as JSON.
 pub const HEALTHZ_PATH: &str = "/healthz";
 
 /// The latest annotated frame as a JPEG.
@@ -39,6 +39,12 @@ pub const SETTINGS_PATH: &str = "/settings";
 /// How long the signalling server may take to answer the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Connections served at once; a flood beyond it is closed at once instead of using up the process's files.
+const MAX_CONNECTIONS: usize = 128;
+
+/// A client must send its request head within this, so idle or trickling sockets cannot hold a slot.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub(crate) type Body = Full<Bytes>;
 
 pub struct Site {
@@ -51,11 +57,11 @@ pub struct Site {
     pub allowed_hosts: Vec<String>,
     /// Browser tabs on the stream at once; 0 means no limit.
     pub max_viewers: usize,
-    /// The other cat cams' origins, whose pages may read this one's status and pictures.
+    /// The other ObservANT cameras' origins, whose pages may read this one's status and pictures.
     pub peers: Vec<String>,
 }
 
-/// `origin` when it is one of `peers`: a page another cat cam serves, for the overview.
+/// `origin` when it is one of `peers`: a page another ObservANT serves, for the overview.
 fn peer_origin<'a>(origin: Option<&'a HeaderValue>, peers: &[String]) -> Option<&'a HeaderValue> {
     let text = origin?.to_str().ok()?;
     peers
@@ -64,7 +70,7 @@ fn peer_origin<'a>(origin: Option<&'a HeaderValue>, peers: &[String]) -> Option<
         .then_some(origin?)
 }
 
-/// Names that only resolve inside a home network; a browser that reached the cat cam under a public
+/// Names that only resolve inside a home network; a browser that reached the ObservANT under a public
 /// name was sent there by DNS rebinding.
 const LOCAL_SUFFIXES: [&str; 6] = [
     ".local",
@@ -75,20 +81,28 @@ const LOCAL_SUFFIXES: [&str; 6] = [
     ".fritz.box",
 ];
 
+/// `Ok` when the request names this ObservANT by a local name; every request is checked, since a page
+/// that DNS rebinding pointed here would otherwise read the pictures as its own.
+pub(crate) fn own_host(headers: &HeaderMap, allowed_hosts: &[String]) -> Result<(), &'static str> {
+    let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) else {
+        return Ok(());
+    };
+    let name = host_name(host);
+    let local = name.parse::<IpAddr>().is_ok()
+        || !name.contains('.')
+        || LOCAL_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+        || allowed_hosts.iter().any(|a| a.eq_ignore_ascii_case(&name));
+    if local {
+        return Ok(());
+    }
+    Err("this host name is not the ObservANT's own; add it to allowed_hosts")
+}
+
 /// `Ok` when a request that acts, the signalling socket or a settings change, comes from this cat
 /// cam's own page; a tool such as curl sends no `Origin` and passes.
 pub(crate) fn own_page(headers: &HeaderMap, allowed_hosts: &[String]) -> Result<(), &'static str> {
+    own_host(headers, allowed_hosts)?;
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    if let Some(host) = host {
-        let name = host_name(host);
-        let local = name.parse::<IpAddr>().is_ok()
-            || !name.contains('.')
-            || LOCAL_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
-            || allowed_hosts.iter().any(|a| a.eq_ignore_ascii_case(&name));
-        if !local {
-            return Err("this host name is not the cat cam's own; add it to allowed_hosts");
-        }
-    }
     if let Some(origin) = headers.get(header::ORIGIN) {
         let origin = origin.to_str().unwrap_or_default();
         let authority = origin.split_once("://").map_or("", |(_, rest)| rest);
@@ -121,6 +135,8 @@ fn keep_alive(stream: &TcpStream) {
 }
 
 pub async fn serve(listener: TcpListener, site: Arc<Site>) {
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+    let mut last_refusal: Option<std::time::Instant> = None;
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(connection) => connection,
@@ -130,11 +146,25 @@ pub async fn serve(listener: TcpListener, site: Arc<Site>) {
                 continue;
             }
         };
+        let Ok(slot) = slots.clone().try_acquire_owned() else {
+            // Once a minute at most: a flood would otherwise write a line per connection.
+            if last_refusal.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
+                log::warn!(
+                    "{MAX_CONNECTIONS} connections open already; closing new ones, as {peer}'s"
+                );
+                last_refusal = Some(std::time::Instant::now());
+            }
+            drop(stream);
+            continue;
+        };
         keep_alive(&stream);
         let site = site.clone();
         tokio::spawn(async move {
+            let _slot = slot;
             let service = hyper::service::service_fn(move |req| handle(req, site.clone()));
             let connection = hyper::server::conn::http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(HEADER_READ_TIMEOUT)
                 .serve_connection(TokioIo::new(stream), service)
                 .with_upgrades();
             if let Err(err) = connection.await {
@@ -149,9 +179,11 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
     let origin = req.headers().get(header::ORIGIN).cloned();
     let reads = [HEALTHZ_PATH, SNAPSHOT_PATH, ARRIVAL_PATH, CLIP_PATH].contains(&path.as_str());
     let acts = path == SIGNALLING_PATH || (path == SETTINGS_PATH && req.method() == Method::POST);
-    let refused = acts
-        .then(|| own_page(req.headers(), &site.allowed_hosts).err())
-        .flatten();
+    let refused = if acts {
+        own_page(req.headers(), &site.allowed_hosts).err()
+    } else {
+        own_host(req.headers(), &site.allowed_hosts).err()
+    };
     let mut response = if let Some(why) = refused {
         log::warn!("{path}: {why}");
         plain(StatusCode::FORBIDDEN, why)
@@ -215,7 +247,7 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
     };
     let headers = response.headers_mut();
     if let Some(peer) = peer_origin(origin.as_ref(), &site.peers).filter(|_| reads) {
-        // Another cat cam's page reads this one for its overview; under COEP its pictures need CORP too.
+        // Another ObservANT's page reads this one for its overview; under COEP its pictures need CORP too.
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, peer.clone());
         headers.insert(
             header::HeaderName::from_static("cross-origin-resource-policy"),
@@ -498,6 +530,24 @@ mod tests {
     use std::time::SystemTime;
 
     #[test]
+    fn only_a_listed_peer_gets_its_origin_echoed() {
+        let peers = vec!["http://192.168.1.20:8080/".to_owned()];
+        let origin = |v: &str| HeaderValue::from_str(v).unwrap();
+        let listed = origin("HTTP://192.168.1.20:8080");
+        assert_eq!(peer_origin(Some(&listed), &peers), Some(&listed));
+        assert_eq!(
+            peer_origin(Some(&origin("http://192.168.1.21:8080")), &peers),
+            None
+        );
+        assert_eq!(
+            peer_origin(Some(&origin("http://192.168.1.20:8081")), &peers),
+            None
+        );
+        assert_eq!(peer_origin(None, &peers), None);
+        assert_eq!(peer_origin(Some(&listed), &[]), None);
+    }
+
+    #[test]
     fn the_arrival_time_comes_from_the_query_and_nothing_else() {
         assert_eq!(query_u64(Some("t=1791763273"), "t"), Some(1_791_763_273));
         assert_eq!(query_u64(Some("visit=3&t=42"), "t"), Some(42));
@@ -558,6 +608,16 @@ mod tests {
         String::from_utf8_lossy(&response).into_owned()
     }
 
+    /// [`get`] under another `host`, as a page that DNS rebinding pointed here asks.
+    async fn get_as(addr: std::net::SocketAddr, path: &str, host: &str) -> String {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let request = format!("GET {path} HTTP/1.1\r\nhost: {host}\r\nconnection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        String::from_utf8_lossy(&response).into_owned()
+    }
+
     async fn start(web_root: Option<PathBuf>, signalling_port: u16) -> std::net::SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -576,7 +636,7 @@ mod tests {
 
     fn web_build() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("index.html"), "<html>cat cam</html>").unwrap();
+        std::fs::write(dir.path().join("index.html"), "<html>ObservANT</html>").unwrap();
         std::fs::write(dir.path().join("main.dart.wasm"), b"\0asm").unwrap();
         std::fs::create_dir(dir.path().join("pkg")).unwrap();
         std::fs::write(dir.path().join("pkg").join("oxidant.js"), "export {}").unwrap();
@@ -593,7 +653,7 @@ mod tests {
         assert!(index.contains("cross-origin-opener-policy: same-origin"));
         assert!(index.contains("cross-origin-embedder-policy: require-corp"));
         assert!(index.contains("content-type: text/html"));
-        assert!(index.ends_with("<html>cat cam</html>"));
+        assert!(index.ends_with("<html>ObservANT</html>"));
 
         let wasm = get(addr, "/main.dart.wasm", "").await;
         assert!(wasm.contains("content-type: application/wasm"), "{wasm}");
@@ -607,7 +667,7 @@ mod tests {
         let addr = start(Some(build.path().to_path_buf()), 9).await;
         assert!(get(addr, "/stream", "")
             .await
-            .ends_with("<html>cat cam</html>"));
+            .ends_with("<html>ObservANT</html>"));
         assert!(get(addr, "/missing.js", "")
             .await
             .starts_with("HTTP/1.1 404"));
@@ -993,6 +1053,120 @@ mod tests {
         assert!(response.ends_with("nope"), "{response}");
     }
 
+    /// A stand-in signalling server that reads one request head, then writes `parts` 50 ms apart and keeps the line open.
+    async fn scripted_backend(parts: Vec<Vec<u8>>) -> u16 {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = backend.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = backend.accept().await.unwrap();
+            let mut seen = Vec::new();
+            let mut chunk = [0u8; 512];
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).await.unwrap();
+                seen.extend_from_slice(&chunk[..n]);
+            }
+            for part in parts {
+                if stream.write_all(&part).await.is_err() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn bytes_the_signalling_server_sends_with_its_101_reach_the_tab() {
+        let port = scripted_backend(vec![
+            b"HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\r\nhello".to_vec(),
+        ])
+        .await;
+        let addr = start(None, port).await;
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client
+            .write_all(b"GET /webrtc-ws HTTP/1.1\r\nhost: cat.local\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-key: k\r\nsec-websocket-version: 13\r\n\r\n")
+            .await
+            .unwrap();
+        let mut seen = Vec::new();
+        let mut chunk = [0u8; 512];
+        while !seen.ends_with(b"hello") {
+            let n = tokio::time::timeout(Duration::from_secs(5), client.read(&mut chunk))
+                .await
+                .expect("the bytes after the 101 never arrived")
+                .unwrap();
+            assert!(n > 0, "closed after {:?}", String::from_utf8_lossy(&seen));
+            seen.extend_from_slice(&chunk[..n]);
+        }
+        assert!(
+            seen.starts_with(b"HTTP/1.1 101"),
+            "{}",
+            String::from_utf8_lossy(&seen)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_response_head_split_over_packets_is_put_back_together() {
+        // 4 KiB of header in two writes: more than one read, well under the 16 KiB limit.
+        let pad = "p".repeat(4096);
+        let head = format!("HTTP/1.1 403 Forbidden\r\nX-Pad: {pad}\r\nContent-Length: 2\r\n\r\nno");
+        let (first, rest) = head.as_bytes().split_at(2000);
+        let addr = start(
+            None,
+            scripted_backend(vec![first.to_vec(), rest.to_vec()]).await,
+        )
+        .await;
+        let response = get(addr, "/webrtc-ws", "upgrade: websocket\r\n").await;
+        assert!(
+            response.starts_with("HTTP/1.1 403"),
+            "{}",
+            &response[..response.len().min(80)]
+        );
+        assert!(response.contains(&pad), "the padded header was cut");
+        assert!(response.ends_with("no"));
+    }
+
+    #[tokio::test]
+    async fn a_response_head_that_never_ends_is_cut_off_at_16_kib() {
+        // 100 bytes first, so the reads never land on exactly 16 KiB.
+        let parts = vec![
+            b"HTTP/1.1 200 OK\r\nX-Long: ".to_vec(),
+            vec![b'x'; 100],
+            vec![b'x'; 20 * 1024],
+        ];
+        let addr = start(None, scripted_backend(parts).await).await;
+        let started = std::time::Instant::now();
+        let response = get(addr, "/webrtc-ws", "upgrade: websocket\r\n").await;
+        assert!(
+            response.starts_with("HTTP/1.1 502"),
+            "{}",
+            &response[..response.len().min(80)]
+        );
+        // The limit, not the 10 s handshake timeout, ends it.
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_framed_anew_without_the_upstreams_transfer_encoding() {
+        let port = scripted_backend(vec![
+            b"HTTP/1.1 404 Not Found\r\nTransfer-Encoding: chunked\r\nX-Reason: room\r\n\r\n"
+                .to_vec(),
+        ])
+        .await;
+        let addr = start(None, port).await;
+        let response = get(addr, "/webrtc-ws", "upgrade: websocket\r\n")
+            .await
+            .to_lowercase();
+        assert!(response.starts_with("http/1.1 404"), "{response}");
+        assert!(response.contains("x-reason: room"), "{response}");
+        // Its body travels as a whole here, so its own framing would be a second, wrong one.
+        assert!(!response.contains("transfer-encoding"), "{response}");
+    }
+
     #[tokio::test]
     async fn a_signalling_server_that_hangs_up_mid_handshake_is_a_502() {
         let addr = start(None, one_shot_backend(b"").await).await;
@@ -1040,7 +1214,7 @@ mod tests {
         let none: &[String] = &[];
         // The page itself, under an IP, a bare name or a local suffix, port and all.
         for host in [
-            "192.168.188.98:8080",
+            "192.168.1.98:8080",
             "himbeere2:8080",
             "himbeere2.fritz.box:8080",
             "[fd46::1]:8080",
@@ -1051,16 +1225,16 @@ mod tests {
         }
         // A tool without a browser sends no Origin.
         assert_eq!(
-            own_page(&headers(&[("host", "192.168.188.98:8080")]), none),
+            own_page(&headers(&[("host", "192.168.1.98:8080")]), none),
             Ok(())
         );
         // Another site's page, a sandboxed one and DNS rebinding under a public name are refused.
         let foreign = headers(&[
-            ("host", "192.168.188.98:8080"),
+            ("host", "192.168.1.98:8080"),
             ("origin", "https://evil.example"),
         ]);
         assert!(own_page(&foreign, none).is_err());
-        let sandboxed = headers(&[("host", "192.168.188.98:8080"), ("origin", "null")]);
+        let sandboxed = headers(&[("host", "192.168.1.98:8080"), ("origin", "null")]);
         assert!(own_page(&sandboxed, none).is_err());
         let rebound = headers(&[
             ("host", "cat.evil.example:8080"),
@@ -1081,6 +1255,58 @@ mod tests {
         let mut response = Vec::new();
         stream.read_to_end(&mut response).await.unwrap();
         String::from_utf8_lossy(&response).into_owned()
+    }
+
+    #[tokio::test]
+    async fn under_a_public_host_name_not_even_a_read_is_served() {
+        let addr = start(None, 9).await;
+        // The rebinding page asks under its own name; served, the pictures would be its own to read.
+        for path in [
+            HEALTHZ_PATH,
+            SNAPSHOT_PATH,
+            ARRIVAL_PATH,
+            SETTINGS_PATH,
+            "/",
+        ] {
+            let reply = get_as(addr, path, "rebind.evil.example").await;
+            assert!(reply.starts_with("HTTP/1.1 403"), "{path}: {reply}");
+        }
+        for host in ["cat.local", "192.168.1.98:8080", "himbeere2"] {
+            assert!(
+                get_as(addr, HEALTHZ_PATH, host)
+                    .await
+                    .starts_with("HTTP/1.1 200"),
+                "{host}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flood_of_idle_connections_is_cut_off_and_a_freed_slot_serves_again() {
+        let addr = start(None, 9).await;
+        let mut idle = Vec::new();
+        for _ in 0..MAX_CONNECTIONS {
+            idle.push(TcpStream::connect(addr).await.unwrap());
+        }
+        // Accepted in order, so this one is over the limit and closed unanswered.
+        let mut over = TcpStream::connect(addr).await.unwrap();
+        let _ = over
+            .write_all(b"GET /healthz HTTP/1.1\r\nhost: cat.local\r\nconnection: close\r\n\r\n")
+            .await;
+        let mut reply = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(5), over.read_to_end(&mut reply)).await;
+        assert!(reply.is_empty(), "{}", String::from_utf8_lossy(&reply));
+        drop(idle);
+        for _ in 0..50 {
+            if get(addr, HEALTHZ_PATH, "")
+                .await
+                .starts_with("HTTP/1.1 200")
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("the freed slots never served again");
     }
 
     #[tokio::test]
@@ -1285,6 +1511,85 @@ mod tests {
                 socket.tcp_keepalive_interval().unwrap(),
                 Duration::from_secs(10)
             );
+        }
+    }
+
+    /// Rules that hold for every input, checked on random ones: what a request sends is the attacker's choice.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn host(value: &str) -> Option<HeaderMap> {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::HOST, HeaderValue::from_str(value).ok()?);
+            Some(headers)
+        }
+
+        proptest! {
+            #[test]
+            fn a_served_range_lies_inside_the_file(value in "\\PC{0,40}", len in 0u64..10_000) {
+                if let Range::Satisfiable(a, b) = byte_range(&value, len) {
+                    prop_assert!(a <= b && b < len, "{value:?} on {len} bytes gave {a}-{b}");
+                }
+            }
+
+            #[test]
+            fn a_range_header_of_digits_and_dashes_never_overreaches(value in "bytes= ?[0-9]{0,22} ?- ?[0-9]{0,22}", len in 0u64..u64::MAX) {
+                if let Range::Satisfiable(a, b) = byte_range(&value, len) {
+                    prop_assert!(a <= b && b < len, "{value:?} on {len} bytes gave {a}-{b}");
+                }
+            }
+
+            #[test]
+            fn a_well_formed_range_is_served_as_asked(len in 1u64..1_000_000, a in 0u64..2_000_000, extra in 0u64..2_000_000) {
+                let b = a + extra;
+                let expected = if a < len { Range::Satisfiable(a, b.min(len - 1)) } else { Range::Unsatisfiable };
+                prop_assert_eq!(byte_range(&format!("bytes={a}-{b}"), len), expected);
+            }
+
+            #[test]
+            fn a_suffix_range_serves_the_last_bytes(len in 1u64..1_000_000, n in 1u64..2_000_000) {
+                prop_assert_eq!(byte_range(&format!("bytes=-{n}"), len), Range::Satisfiable(len.saturating_sub(n), len - 1));
+            }
+
+            #[test]
+            fn the_first_matching_key_wins_among_other_pairs(before in "([a-z]{1,5}=[a-z0-9]{0,5}&){0,4}", n: u64, after in "(&[a-z]{1,5}=[a-z0-9]{0,5}){0,4}") {
+                // The key is upper case, which the noise never is.
+                let query = format!("{before}T={n}{after}");
+                prop_assert_eq!(query_u64(Some(&query), "T"), Some(n));
+            }
+
+            #[test]
+            fn any_query_is_read_without_panic(query in "\\PC{0,60}", key in "[a-z]{1,3}") {
+                let _ = query_u64(Some(&query), &key);
+            }
+
+            #[test]
+            fn a_public_host_name_is_refused(label in "[a-z][a-z0-9-]{0,20}", tld in "(com|net|org|de|io|cat)", port in proptest::option::of(1u16..)) {
+                let value = match port { Some(p) => format!("{label}.{tld}:{p}"), None => format!("{label}.{tld}") };
+                let headers = host(&value).unwrap();
+                prop_assert!(own_host(&headers, &[]).is_err(), "{value} passed");
+                // Unless the owner named it.
+                prop_assert!(own_host(&headers, &[format!("{label}.{tld}")]).is_ok(), "allowed {value} refused");
+            }
+
+            #[test]
+            fn an_address_literal_is_the_board_itself(v4: [u8; 4], v6: [u16; 8], port: u16) {
+                let v4 = std::net::Ipv4Addr::from(v4);
+                let v6 = std::net::Ipv6Addr::from(v6);
+                for value in [format!("{v4}"), format!("{v4}:{port}"), format!("[{v6}]"), format!("[{v6}]:{port}")] {
+                    prop_assert!(own_host(&host(&value).unwrap(), &[]).is_ok(), "{value} refused");
+                }
+            }
+
+            #[test]
+            fn any_host_and_origin_are_judged_without_panic(host_value in "\\PC{0,60}", origin in "\\PC{0,60}") {
+                let Some(mut headers) = host(&host_value) else { return Ok(()) };
+                if let Ok(origin) = HeaderValue::from_str(&origin) {
+                    headers.insert(header::ORIGIN, origin);
+                }
+                let _ = own_page(&headers, &[]);
+            }
         }
     }
 }

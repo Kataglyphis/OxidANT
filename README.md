@@ -5,7 +5,7 @@
 
   <h1>OxidANT</h1>
  
-  <h4>The Kataglyphis family's Rust crates (core, telemetry, inference, media, gui, cli, webgpu_renderer, cat_webrtc) and the Rust best practices they follow. Part of the <a href="https://github.com/Kataglyphis/ANTfrastructure">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
+  <h4>The Kataglyphis family's Rust crates (core, telemetry, inference, media, gui, cli, webgpu_renderer, observant) and the Rust best practices they follow. Part of the <a href="https://github.com/Kataglyphis/ANTfrastructure">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
 </div>
 
 <div align="center">
@@ -90,7 +90,7 @@ other repositories, so its `[lib] name` is not free to change.
 | `crates/media` | `kataglyphis_media` | GStreamer capture, feature-gated (`gstreamer`) |
 | `crates/gui` | `kataglyphis_gui` | Feature-gated GUI: `gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix` |
 | `crates/webgpu_renderer` | `kataglyphis_webgpu_renderer` | wgpu glTF renderer, native and wasm32/WebGPU: PBR+IBL, cascaded shadows, SSAO, bloom, skinning, animations, LOD, headless golden tests |
-| `crates/cat_webrtc` | `kataglyphis_cat_webrtc` | Cat cam service: picks the camera, YOLO cat boxes, WebRTC, and the web server for OmniAccelerANT's Stream page |
+| `crates/observant` | `kataglyphis_observant` | ObservANT service (cats by default): picks the camera, YOLO cat boxes, WebRTC, and the web server for OmniAccelerANT's Stream page |
 | `crates/cli` | `kataglyphis_cli` | The CLI binary (`read` / `stats` / `gui`, plus `onnx-runtime` with an `onnxruntime_*` feature and `media-check` with `gui_windows`) |
 | `src/` | `oxidant` | The root package: the flutter_rust_bridge surface for OmniAccelerANT, plus the feature-gated `burn-demos` bin |
 
@@ -100,7 +100,7 @@ libraries — [AGENTS.md](AGENTS.md) has the feature/dependency table.
 
 Two repositories build this one as a submodule, so a rename has to be carried into
 both: [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) (the root
-package through flutter_rust_bridge, and `crates/cat_webrtc`) and
+package through flutter_rust_bridge, and `crates/observant`) and
 [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) (the
 root package as a staticlib through Corrosion, and `crates/webgpu_renderer` through
 cargo for its wasm demo and its tests).
@@ -192,7 +192,7 @@ The suites live in:
 
 - Unit tests inside the workspace crates (`kataglyphis_telemetry`, `kataglyphis_inference`, and the renderer's own suite).
 - Integration tests: `tests/integration/integration.rs`, which run the CLI and are compiled as `kataglyphis_cli`'s `integration` test (`crates/cli/tests/integration.rs`); `crates/media/tests/capture_test.rs` (a `videotestsrc` pipeline and camera enumeration); and the renderer's 18 binaries under `crates/webgpu_renderer/tests/`.
-- Fuzz (property-based) tests: `tests/fuzz_test.rs` via [proptest](https://proptest-rs.github.io/proptest/) (256 random inputs per case by default). There is no separate `cargo-fuzz`/libFuzzer setup.
+- Property-based (fuzz) tests: [proptest](https://proptest-rs.github.io/proptest/) properties on ObservANT's network-facing parsers (Range header, query, Host/Origin check, request path, camera spec, config file), 256 random inputs per property and run, in each module's `properties` tests. There is no separate `cargo-fuzz`/libFuzzer setup.
 
 **On Windows the renderer's tests run outside the container.** Any of its test binaries links wgpu, and wgpu's `gles` backend makes the executable import `opengl32.dll` at load time; Windows Server Core does not ship that DLL, so the process dies with `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`. The loader resolves that import, so no runtime flag avoids it — and letting it run turned the entire `cargo test --workspace` into a crash with no results. The `gles` feature is kept deliberately: it is the OpenGL fallback for machines without Vulkan/DX12. Run those tests on a desktop Windows host, where the DLL exists:
 
@@ -222,14 +222,14 @@ cargo run -p kataglyphis_cli -- read --path README.md
 
 ### The cat cam
 
-`crates/cat_webrtc` is one service: the camera, YOLO cat boxes, a WebRTC stream and the
+`crates/observant` is one service: the camera, YOLO cat boxes, a WebRTC stream and the
 web page that plays it. It needs GStreamer and the chain-built ONNX Runtime, so try it
 in the family `:latest` image:
 
 ```bash
-cargo build --release -p kataglyphis_cat_webrtc
-target/release/kataglyphis_cat_webrtc --camera test --print-config  # the settings in effect
-target/release/kataglyphis_cat_webrtc --camera test                 # a test pattern, no camera
+cargo build --release -p kataglyphis_observant
+target/release/kataglyphis_observant --camera test --print-config  # the settings in effect
+target/release/kataglyphis_observant --camera test                 # a test pattern, no camera
 curl localhost:8080/healthz                    # ok or the problem, the camera, the model's runs, the cat, the kept clips
 curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
 curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on
@@ -325,9 +325,11 @@ cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --ba
 Optional environment variables:
 
 - `KATAGLYPHIS_ONNX_MODEL` – path to the ONNX model. Unset, the app takes
-  `resources\models\yolov10m.onnx` beside its exe, where the portable bundle, the
-  MSIX and the MSI all put it, and otherwise the checkout's
-  `resources/models/yolov10m.onnx`, a path fixed at compile time
+  `resources\models\deim_dfine_n_coco.onnx` beside its exe, where the portable bundle,
+  the MSIX and the MSI all put it, and otherwise the checkout's
+  `resources/models/deim_dfine_n_coco.onnx`, a path fixed at compile time. Models are
+  not tracked: `scripts/linux/fetch-models.sh` (Windows: `scripts/windows/Get-Models.ps1`)
+  downloads what `resources/models/models.lock` names and checks its SHA-256
 - `KATAGLYPHIS_ONNX_BACKEND` – `tract` or `ort` (default: automatic)
 - `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (default: `cpu`)
 - `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: `0`, one per core)
@@ -388,8 +390,9 @@ cargo run --features burn_demos --bin burn-demos -- xor --epochs 2000 --lr 0.05
 
 cargo run --features burn_demos --bin burn-demos -- two-moons --epochs 200 --steps-per-epoch 50 --lr 0.01 --batch-size 256
 
-# ONNX Runtime YOLOv10m Demo (Default model: resources/models/yolov10m.onnx)
-cargo run --features burn_demos --bin burn-demos -- onnx-yolov10 --runs 1 --print-topk 3
+# ONNX Runtime detector demo (default model: resources/models/deim_dfine_n_coco.onnx; fetch it first)
+scripts/linux/fetch-models.sh
+cargo run --features burn_demos --bin burn-demos -- onnx-detector --runs 1 --print-topk 3
 ```
 
 ### Windows

@@ -273,6 +273,80 @@ mod tests {
     }
 
     #[test]
+    fn every_extension_the_web_build_ships_gets_its_own_type() {
+        for (file, expected) in [
+            ("a.html", "text/html; charset=utf-8"),
+            ("a.htm", "text/html; charset=utf-8"),
+            ("a.js", "text/javascript; charset=utf-8"),
+            ("a.mjs", "text/javascript; charset=utf-8"),
+            ("a.wasm", "application/wasm"),
+            ("a.json", "application/json"),
+            ("a.js.map", "application/json"),
+            ("a.css", "text/css; charset=utf-8"),
+            ("a.svg", "image/svg+xml"),
+            ("a.png", "image/png"),
+            ("a.jpg", "image/jpeg"),
+            ("a.jpeg", "image/jpeg"),
+            ("a.gif", "image/gif"),
+            ("a.webp", "image/webp"),
+            ("a.ico", "image/x-icon"),
+            ("a.ttf", "font/ttf"),
+            ("a.otf", "font/otf"),
+            ("a.woff", "font/woff"),
+            ("a.woff2", "font/woff2"),
+            ("a.txt", "text/plain; charset=utf-8"),
+            ("a.md", "text/plain; charset=utf-8"),
+            ("A.PNG", "image/png"),
+        ] {
+            assert_eq!(content_type(Path::new(file)), expected, "{file}");
+        }
+    }
+
+    #[test]
+    fn a_path_resolves_to_its_file_a_directory_to_its_index_and_a_route_to_the_app() {
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        std::fs::create_dir_all(r.join("assets")).unwrap();
+        std::fs::create_dir_all(r.join("docs")).unwrap();
+        std::fs::create_dir_all(r.join("empty")).unwrap();
+        for file in ["index.html", "assets/app.js", "docs/index.html"] {
+            std::fs::write(r.join(file), file).unwrap();
+        }
+        let resolved = |path: &str| resolve(r, Path::new(path));
+        assert_eq!(resolved("assets/app.js"), Some(r.join("assets/app.js")));
+        assert_eq!(resolved("docs"), Some(r.join("docs/index.html")));
+        // A directory without an index is not a page of its own: the app takes the route.
+        assert_eq!(resolved("empty"), Some(r.join("index.html")));
+        assert_eq!(resolved("stream"), Some(r.join("index.html")));
+        assert_eq!(resolved("camera/settings"), Some(r.join("index.html")));
+        // A missing asset stays missing, or the browser would get HTML for a script.
+        assert_eq!(resolved("assets/missing.js"), None);
+        std::fs::remove_file(r.join("index.html")).unwrap();
+        assert_eq!(resolved("stream"), None, "no app to route to");
+    }
+
+    #[tokio::test]
+    async fn the_gzip_cache_compresses_once_per_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("main.js");
+        let gunzip = |gz: &Bytes| {
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&gz[..]), &mut text)
+                .unwrap();
+            text
+        };
+        std::fs::write(&file, "first").unwrap();
+        let cache = GzipCache::default();
+        assert_eq!(gunzip(&cache.get(&file, "v1").await.unwrap()), "first");
+
+        // Same version: the cached copy, not the changed file.
+        std::fs::write(&file, "second").unwrap();
+        assert_eq!(gunzip(&cache.get(&file, "v1").await.unwrap()), "first");
+        // A new version compresses the file again.
+        assert_eq!(gunzip(&cache.get(&file, "v2").await.unwrap()), "second");
+    }
+
+    #[test]
     fn accept_encoding_is_read_with_its_q_values() {
         let accepts = |value: &str| {
             let mut headers = HeaderMap::new();
@@ -288,5 +362,30 @@ mod tests {
         assert!(!accepts("gzip;q=0"));
         assert!(!accepts("identity"));
         assert!(!accepts_gzip(&HeaderMap::new()));
+    }
+
+    /// Rules for every request path, checked on random ones built from the pieces that escape a web root.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn no_path_leaves_the_web_root(path in "(/|\\.\\.|\\.|%2e|%2E|%2f|%2F|%5c|%5C|%00|%3a|a|b\\.js|\\\\|:|~|//){0,24}") {
+                if let Some(relative) = sanitize(&path) {
+                    prop_assert!(
+                        relative.components().all(|c| matches!(c, Component::Normal(_))),
+                        "{path:?} became {relative:?}"
+                    );
+                    let root = Path::new("/srv/web");
+                    prop_assert!(root.join(&relative).starts_with(root), "{path:?} left the root");
+                }
+            }
+
+            #[test]
+            fn any_text_is_sanitized_without_panic(path in "\\PC{0,80}") {
+                let _ = sanitize(&path);
+            }
+        }
     }
 }

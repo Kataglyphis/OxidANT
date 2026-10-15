@@ -3,6 +3,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use kataglyphis_inference::person_detection::MODEL_FILE;
+
 /// The variables an install folder `dir` implies, minus any `is_set` already holds; empty when `dir` is no install.
 pub fn plan(
     dir: &Path,
@@ -27,7 +29,14 @@ pub fn plan(
         wanted.push(("GST_PLUGIN_SCANNER", scanner.into_os_string()));
     }
     if let Some(base) = local_app_data {
-        let own = base.join("omni-accelerant-catcam");
+        // An install from before ObservANT keeps its folder, and with it the visits.
+        let legacy = base.join("omni-accelerant-catcam");
+        let current = base.join("omni-observant");
+        let own = if !current.exists() && legacy.is_dir() {
+            legacy
+        } else {
+            current
+        };
         wanted.push((
             "GST_REGISTRY",
             own.join("gst-registry.bin").into_os_string(),
@@ -39,7 +48,7 @@ pub fn plan(
     if ort.is_file() {
         wanted.push(("ORT_DYLIB_PATH", ort.into_os_string()));
     }
-    let model = dir.join("models").join("yolo26n.onnx");
+    let model = dir.join("models").join(MODEL_FILE);
     if model.is_file() {
         wanted.push(("KATAGLYPHIS_ONNX_MODEL", model.into_os_string()));
     }
@@ -86,7 +95,7 @@ mod tests {
         if with_ort_and_model {
             std::fs::write(dir.join("onnxruntime.dll"), b"MZ").unwrap();
             std::fs::create_dir_all(dir.join("models")).unwrap();
-            std::fs::write(dir.join("models").join("yolo26n.onnx"), b"onnx").unwrap();
+            std::fs::write(dir.join("models").join(MODEL_FILE), b"onnx").unwrap();
         }
     }
 
@@ -128,6 +137,17 @@ mod tests {
         assert!(PathBuf::from(value("GST_REGISTRY")).starts_with(&local));
         assert_eq!(
             PathBuf::from(value("STATE_DIRECTORY")),
+            local.join("omni-observant")
+        );
+        // A folder from before ObservANT stays in use.
+        std::fs::create_dir_all(local.join("omni-accelerant-catcam")).unwrap();
+        let legacy = plan(dir.path(), Some(&local), |_| false);
+        let state = legacy
+            .iter()
+            .find(|(name, _)| *name == "STATE_DIRECTORY")
+            .unwrap();
+        assert_eq!(
+            PathBuf::from(&state.1),
             local.join("omni-accelerant-catcam")
         );
     }

@@ -117,14 +117,17 @@ flake.lock
 
 
 ## Large binaries - see AGENTS.md, "Large tracked files"
-# Two large files are tracked on purpose and are named there. Decision D4 is
-# that they are DOCUMENTED, not rewritten: no filter-repo, no BFG, no git-lfs,
+# One large file is tracked on purpose and is named there. Decision D4 is
+# that it is DOCUMENTED, not rewritten: no filter-repo, no BFG, no git-lfs,
 # so anything big committed here is permanent for everyone who ever clones the
-# repo. These rules exist so nothing of the same shape joins them by accident.
-# Both exceptions are negations rather than a narrower pattern, so the rule
-# still bites if either file is ever moved or renamed.
+# repo. These rules exist so nothing of the same shape joins it by accident.
+# The exception is a negation rather than a narrower pattern, so the rule
+# still bites if the file is ever moved or renamed.
+# Models are never tracked: resources/models/models.lock names them and
+# scripts/linux/fetch-models.sh puts them beside it.
 *.onnx
-!resources/models/yolov10m.onnx
+/resources/models/*
+!/resources/models/models.lock
 *.gif
 !images/Rust.gif
 # other model-weight formats - none tracked, none wanted
@@ -160,3 +163,10 @@ flake.lock
 
 # HailoRT writes its log into the working directory whenever the image loads it
 hailort.log
+
+# The benchmark report's means and the history CI restores from its cache.
+/bench-means.json
+/.bench-history/
+# tarpaulin's reports, written where the coverage step runs.
+/cobertura.xml
+/tarpaulin-report.html

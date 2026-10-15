@@ -13,11 +13,11 @@ image="$(bash "${_ci_image_ref_sh}")"
 target_volume="kataglyphis-cat-target"
 cargo_volume="kataglyphis-cat-cargo"
 container_name="cat-producer"
-build_dir="${repo_root}/build/cat-stream"
+build_dir="${repo_root}/build/observant"
 hostlibs_dir="${build_dir}/hostlibs"
-producer="/cargo-target/release/kataglyphis_cat_webrtc"
+producer="/cargo-target/release/kataglyphis_observant"
 port=8443
-name="Trouble Tabbls Cat Cam"
+name="ObservANT"
 model=""
 width=640
 height=480
@@ -33,11 +33,11 @@ usage: run-producer-pi.sh [--build] [--libs-only] [--port N] [--model FILE]
                           [--rotate DEG]
 
   --build      build the producer in the container first (long cargo build)
-  --libs-only  refresh build/cat-stream/hostlibs and exit
+  --libs-only  refresh build/observant/hostlibs and exit
   --rotate     rotate the stream 90/180/270 (a camera mounted upside down)
 
 Runs the cat producer from the family CI container against the Pi's CSI
-camera; OmniAccelerANT's scripts/linux/cat-stream/serve.sh is the web/HTTPS
+camera; OmniAccelerANT's scripts/linux/observant/serve.sh is the web/HTTPS
 half. Stop the producer with `nerdctl rm -f cat-producer`.
 EOF
 }
@@ -63,7 +63,7 @@ command -v nerdctl >/dev/null 2>&1 || {
   exit 1
 }
 
-# Collected once; delete build/cat-stream/hostlibs to refresh after a system upgrade.
+# Collected once; delete build/observant/hostlibs to refresh after a system upgrade.
 collect_hostlibs() {
   local libcamera_real libcamera_base
   libcamera_real="$(readlink -f /usr/lib/aarch64-linux-gnu/libcamera.so.0.7 2>/dev/null || true)"
@@ -224,14 +224,14 @@ if [ "${do_build}" = true ] || ! producer_present; then
     printf 'producer binary missing in volume %s - rerun with --build\n' "${target_volume}" >&2
     exit 1
   }
-  printf 'building kataglyphis_cat_webrtc in the container (this takes a while)\n'
+  printf 'building kataglyphis_observant in the container (this takes a while)\n'
   nerdctl run --rm --user 0:0 --network host \
     -v "${repo_root}":/workspace \
     -v "${target_volume}":/cargo-target \
     -v "${cargo_volume}":/cargo-home \
     -e CARGO_TARGET_DIR=/cargo-target -e CARGO_HOME=/cargo-home \
     "${image}" \
-    bash -lc 'cd /workspace && cargo build --release --locked -p kataglyphis_cat_webrtc'
+    bash -lc 'cd /workspace && cargo build --release --locked -p kataglyphis_observant'
 fi
 
 # A producer from an interrupted run still holds the name.

@@ -28,10 +28,10 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/gui` — feature-gated GUI (`gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix`)
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/media` — GStreamer capture, feature-gated (`gstreamer`)
-- `crates/cat_webrtc` — the cat cam service (`kataglyphis_cat_webrtc`): picks the camera, burns YOLO cat boxes into the frames, streams them through `webrtcsink` and serves OmniAccelerANT's web build itself; consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/cat-stream/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
+- `crates/observant` — the ObservANT service (`kataglyphis_observant`): picks the camera, burns the detection boxes (cats by default) into the frames, streams them through `webrtcsink` and serves OmniAccelerANT's web build itself; consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/observant/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands, plus `onnx-runtime` when built with `onnxruntime_directml` or `onnxruntime_cuda` and `media-check` when built with `gui_windows`; `stats --path <file>`). It was renamed on 2026-08-07 from `kataglyphis_rustprojecttemplate`, the root package's name until 2026-09-05 — see the pdb note below. It is not the root package's bin, so `cargo run` needs `-p kataglyphis_cli`.
 - `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{onnx,simple,webcam}.rs`, `src/webcam_engine.rs`), the cxx bridge BeschleunigerBallett links (`src/native_only.rs`, compiled by `build.rs` with `cxx-build` on every non-wasm target) and the `burn-demos` bin
-- `tests/` — the root package's proptest fuzz tests (`fuzz_test.rs`), and the CLI's integration tests (`tests/integration/integration.rs`, compiled as `kataglyphis_cli`'s `integration` test through `crates/cli/tests/integration.rs`)
+- `tests/` — the CLI's integration tests (`tests/integration/integration.rs`, compiled as `kataglyphis_cli`'s `integration` test through `crates/cli/tests/integration.rs`)
 - `third_party/ANTfrastructure` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
 - `third_party/egui-winit-0.36.2` — a vendored `egui-winit` with upstream emilk/egui#8516 applied, routed in by the root `Cargo.toml`'s `[patch.crates-io]` so the renderer's wasm32 demo compiles. Temporary; `PATCHED.md` there says how to remove it once egui 0.37 is out.
 
@@ -42,7 +42,7 @@ to be carried into each of them **in the same change**:
 
 - [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) — the root package
   through flutter_rust_bridge (Cargokit, podspecs, the committed `frb_generated.dart`
-  loader stem) and `crates/cat_webrtc` for its Stream page
+  loader stem) and `crates/observant` for its Stream page
 - [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) —
   the root package through Corrosion, and `crates/webgpu_renderer` through plain
   cargo (its wasm32 demo for the docs site, its test suite and the wasm size budget:
@@ -350,7 +350,29 @@ cargo build --workspace --locked --release            # fat LTO, codegen-units 1
 cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
 ```
 
-Every CI lane's tests add `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'` and `KATAGLYPHIS_REQUIRE_GPU=1` (README § Tests).
+Every Linux lane's tests add `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime'` (`TEST_FEATURES` in `scripts/linux/ci-container-steps.sh`) and `KATAGLYPHIS_REQUIRE_GPU=1`, `KATAGLYPHIS_REQUIRE_MODEL=1`, `KATAGLYPHIS_REQUIRE_GST=1` (README § Tests). The root crate's own two features arrived on 2026-10-15: without them `src/webcam_engine.rs` and the webcam API were never compiled for a test. Each `KATAGLYPHIS_REQUIRE_*` turns the matching self-skip (no GPU, no model, a missing GStreamer element) into a failure, since `cargo test` hides a passing test's "SKIP" line.
+
+**Benchmarks are Criterion's, run by `cargo bench`** (2026-10-14). `crates/observant/benches/frame_stages.rs`
+times what a frame pays before the model (I420 to RGBA, the privacy blocks, a box, the snapshot JPEG, the
+motion thumbnail) and `crates/inference/benches/detector.rs` a whole detection on the real model at
+ObservANT's two threads. The Linux lanes' *Run benchmarks* step (`ci-container-steps.sh bench`) fetches the
+model and runs every bench of the workspace; *Benchmark report* puts `scripts/linux/bench-report.py`'s table
+in the run's summary, each mean against the **median** of the default branch's last 20 runs on that arch,
+whose means the cache keeps in `.bench-history/` (2026-10-15; until then the run before, so a slowdown
+creeping in a few per cent per commit never showed). More than 25 % slower warns; a mean from 100 µs that
+doubles fails the lane once 3 earlier runs exist, and such a run never joins the history. Faster benches only
+warn, since a shared runner's caches and clocks move them that much. Locally:
+`cargo bench --workspace --benches --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'`,
+where Criterion itself compares against your last local run. Benches need a library: `kataglyphis_observant`
+is one since that day, `main.rs` only wiring its modules into the service.
+
+**The detector meets its real model in the Linux lanes** (2026-10-14). `crates/inference/tests/real_model.rs`
+runs DEIM-D-FINE-N on `tests/fixtures/two_cats.jpg` and checks that both cats are found, where they
+are, and taken for no dog or person. Without the model it skips; the `test` and `coverage` steps of
+`scripts/linux/ci-container-steps.sh` fetch it first (`scripts/linux/fetch-models.sh`) and set
+`KATAGLYPHIS_REQUIRE_MODEL=1`, so there a missing model fails, as `KATAGLYPHIS_REQUIRE_GPU` does
+for the golden tests. The `coverage` step also fails below 70 % of the workspace's lines (tarpaulin
+`--fail-under`; 71.3 % measured that day); raise the floor as tests are added.
 
 Run the lint gates before pushing. CI's formatting-and-clippy step is ANTfrastructure's `cargo_fmt_clippy.sh` with `CARGO_CLIPPY_ARGS='--workspace --locked --features <those two>'`, which is the same pair of hard failures written below — reproduce the step itself with `bash scripts/linux/ci-container-steps.sh fmt-clippy` inside the image. The shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
 
@@ -360,11 +382,11 @@ cargo clippy --all-targets --workspace --locked \
     --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime' -- -D warnings
 ```
 
-Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest in `tests/fuzz_test.rs`; there is no cargo-fuzz/libFuzzer target.
+Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest properties in ObservANT's `web.rs`, `static_files.rs`, `camera.rs` and `config.rs` (`mod properties`), on every input those parse from the network or the config file; there is no cargo-fuzz/libFuzzer target.
 
 ### The cat cam service
 
-`kataglyphis_cat_webrtc` is one process doing everything a cat cam board needs, so a
+`kataglyphis_observant` is one process doing everything an ObservANT board needs, so a
 board runs it as one service unit:
 
 - **The camera is chosen, and chosen again.** `camera = "auto"` (the default) takes a
@@ -493,28 +515,29 @@ board runs it as one service unit:
   arrival goes out, `/arrival.jpg` is set to the frame the model confirmed it on, boxes
   drawn. Logs name only the URL's origin: a Home Assistant webhook's path is its secret.
 - **The cat outlives a restart.** When systemd sets `$STATE_DIRECTORY` (the unit's
-  `StateDirectory=`), every arrival and departure writes `cat.json` (last seen, visits,
-  last score) and `arrival.jpg` there, each through a rename so a crash leaves no torn
-  file, and the next start reads them back. Without it nothing is kept. Where no systemd
-  provides it, the installer does: the Windows exe's `install::adopt` sets it to
-  `%LOCALAPPDATA%\omni-accelerant-catcam`, OmniAccelerANT's flatpak launcher to its
-  `$XDG_STATE_HOME`.
+  `StateDirectory=`), every arrival and departure writes `visits.json` (last seen, visits,
+  last score) and the arrival pictures there, each through a rename so a crash leaves no torn
+  file, and the next start reads them back (a `cat.json` from before the rename too). Without
+  it nothing is kept. Where no systemd provides it, the installer does: the Windows exe's
+  `install::adopt` sets it to `%LOCALAPPDATA%\omni-observant` (taking over an older
+  `omni-accelerant-catcam`), OmniAccelerANT's flatpak launcher to its `$XDG_STATE_HOME`.
 - **The network is pinned.** Media uses UDP `ice_port_min..ice_port_max`
   (40000-40099), set on every viewer's ICE agent from `consumer-added`, and STUN is off
   unless `stun_server` names one, so a LAN stream needs nothing outside it.
-- **Settings** come from `/etc/omni-accelerant/catcam.toml` (Windows:
-  `%ProgramData%\omni-accelerant\catcam.toml`, `config::system_config`), `--config` or
-  `$KATAGLYPHIS_CATCAM_CONFIG`, with the flags on top. Unknown keys are errors, and
+- **Settings** come from `/etc/omni-accelerant/observant.toml` (Windows:
+  `%ProgramData%\omni-accelerant\observant.toml`, `config::system_config`; a `catcam.toml`
+  from before the rename still reads), `--config` or `$KATAGLYPHIS_OBSERVANT_CONFIG` (or the
+  older `$KATAGLYPHIS_CATCAM_CONFIG`), with the flags on top. Unknown keys are errors, and
   `--print-config` prints the effective set. Every earlier flag still works.
   `inference = "auto"` skips the model below 1 GiB of RAM or when it does not load.
 - **A Windows install is one folder, and the exe finds everything in it** (`install.rs`).
   - When `lib\gstreamer-1.0` sits beside the exe, `install::adopt` sets the variables the
     folder implies, first thing in `main`: `GST_PLUGIN_PATH`, an empty
     `GST_PLUGIN_SYSTEM_PATH[_1_0]`, `GST_PLUGIN_SCANNER`, `GST_REGISTRY` under
-    `%LOCALAPPDATA%`, `ORT_DYLIB_PATH` and `KATAGLYPHIS_ONNX_MODEL` (`models\yolo26n.onnx`).
+    `%LOCALAPPDATA%`, `ORT_DYLIB_PATH` and `KATAGLYPHIS_ONNX_MODEL` (`models\deim_dfine_n_coco.onnx`).
   - A variable the caller already set wins.
-  - On Linux the bundle's `catcam` launcher does the same job, so `adopt` is a no-op there.
-  - OmniAccelerANT's `scripts/windows/cat-stream/Package-CatCam.ps1` builds that folder
+  - On Linux the bundle's `observant` launcher does the same job, so `adopt` is a no-op there.
+  - OmniAccelerANT's `scripts/windows/observant/Package-ObservANT.ps1` builds that folder
     and the MSI around it.
 - **Logs and exit:** it logs at info (`KATAGLYPHIS_LOG_LEVEL`) and quiets the
   signalling server's per-message INFO (`WEBRTCSINK_SIGNALLING_SERVER_LOG=warn` unless
@@ -523,16 +546,16 @@ board runs it as one service unit:
 
 ### The cat producer on a Raspberry Pi 5
 
-`scripts/linux/cat-stream/run-producer-pi.sh` builds and runs
-`crates/cat_webrtc` from the family CI image against a Pi 5 CSI camera. It moved
+`scripts/linux/observant/run-producer-pi.sh` builds and runs
+`crates/observant` from the family CI image against a Pi 5 CSI camera. It moved
 here from OmniAccelerANT on 2026-09-15 under decision D12, because the crate it
 drives is this repo's; OmniAccelerANT keeps a pointer and still owns the web half
-(`scripts/linux/cat-stream/serve.sh` over there).
+(`scripts/linux/observant/serve.sh` over there).
 
 ```bash
-scripts/linux/cat-stream/run-producer-pi.sh --build       # first run: cargo build in the image
-scripts/linux/cat-stream/run-producer-pi.sh               # start the producer
-scripts/linux/cat-stream/run-producer-pi.sh --libs-only   # refresh build/cat-stream/hostlibs
+scripts/linux/observant/run-producer-pi.sh --build       # first run: cargo build in the image
+scripts/linux/observant/run-producer-pi.sh               # start the producer
+scripts/linux/observant/run-producer-pi.sh --libs-only   # refresh build/observant/hostlibs
 ```
 
 Two things it deliberately does **not** spell out, because ANTfrastructure owns
@@ -695,8 +718,8 @@ bare `gst::init`, points `GST_PLUGIN_PATH` at it as well. The `media-check` subc
 builds the pipeline without starting it (no camera, no window) and fails when an element
 is missing, or when an exe that carries plugins takes one from anywhere else. Where Media
 Foundation is absent (Server Core has none) it builds the `autovideosrc` fallback. The model
-travels in `resources\`, and `resolve_model_path` takes `resources\models\yolov10m.onnx`
-beside the exe before the compile-time checkout path, so a packaged app needs no
+travels in `resources\` (the *Fetch Models* step puts it there), and `resolve_model_path` takes
+`resources\models\deim_dfine_n_coco.onnx` beside the exe before the compile-time checkout path, so a packaged app needs no
 `KATAGLYPHIS_ONNX_MODEL`. The MSI installs the same tree as the bundle: a generated
 component per file (`msi-payload-files.wxs`), placed with WiX v4's `Subdirectory`.
 
@@ -749,7 +772,7 @@ from the image's riscv64 child, the distro clang as linker, binfmt with QEMU 10.
 [`docs/riscv64-cross-test-lanes.md`](third_party/ANTfrastructure/docs/riscv64-cross-test-lanes.md).
 
 - **What runs:** every workspace test, 358 of them (measured 2026-10-01: build 1 min 43 s,
-  whole step 2 min 52 s on a warm cargo home). `cat_webrtc` links the image's riscv64
+  whole step 2 min 52 s on a warm cargo home). `observant` links the image's riscv64
   GStreamer, the inference tests the riscv64 ORT loader, and the CLI integration test spawns
   the riscv64 `kataglyphis_cli` through binfmt.
 - **What skips:** the renderer's GPU rendering. The step disables every Vulkan driver
@@ -783,7 +806,9 @@ Facts that cost real debugging time:
 - **The arm64 lane runs natively on `ubuntu-26.04-arm`, on every push since 2026-09-24.** It was opt-in via `[build-arm]` for runner minutes before that, never because it could not pass: `:latest` (then `:latest-cross`) has been a multi-arch index since 2026-09-04.
 - **Linux artifacts are named by `VERSION`, not by `github.ref_name`.** On a pull request the ref name is `<number>/merge`, `upload-artifact` refuses a `/` in a name, and every PR run of the Linux lane went red at *Upload all artifacts* with the build, tests and package green (run 35752031200, 2026-09-22). Fixed on 2026-09-24, when the lane started running on every PR on both architectures.
 - **Every cargo step of both Linux lanes is one named step of one script**, `scripts/linux/ci-container-steps.sh` (`ort-chain-only`, `debug`, `security`, `fmt-clippy`, `test`, `coverage`, `bench`, `release`, `docs`, and `feature-check` for `linux-x64.yml`'s feature job). Each step used to inline its own `bash -lc 'set -e; git config --global --add safe.directory /workspace; bash third_party/.../cargo_<x>.sh'` — the same prologue eight times. Reproduce any step by hand with `bash scripts/linux/ci-container-steps.sh <step>` inside the image; `reusable-linux.yml` runs exactly that line. The one container step outside it is the tarball, which calls ANTfrastructure's `package_archive.sh` directly.
-- **Coverage measures the workspace** (since 2026-10-01). The hub's `cargo_coverage.sh` runs tarpaulin without `--workspace`, so it measured only the root package, which has no unit tests: `0.00% coverage, 0/754 lines covered` (run 36868485805). The `coverage` step passes `--workspace` and the test features, and sets `KATAGLYPHIS_REQUIRE_GPU=1` like the `test` step.
+- **Coverage measures the workspace** (since 2026-10-01). The hub's `cargo_coverage.sh` runs tarpaulin without `--workspace`, so it measured only the root package, which has no unit tests: `0.00% coverage, 0/754 lines covered` (run 36868485805). The `coverage` step passes `--workspace` and the test features, and sets `KATAGLYPHIS_REQUIRE_GPU=1` like the `test` step. Since 2026-10-15 it also grades each crate and `src/` against its own floor (`COVERAGE_FLOORS`, read by `scripts/linux/check-crate-coverage.py` from `cobertura.xml`), so the renderer's 90 % no longer carries telemetry's 8 %, and gives tarpaulin `--timeout 300` (its 60 s per test binary was too short on the Pi for an instrumented ObservANT).
+- **Mutation testing measures whether the tests notice a change** (2026-10-15). `cargo mutants -p kataglyphis_observant --file crates/observant/src/web.rs --file crates/observant/src/static_files.rs --jobs 1 -- --lib` (cargo-mutants 27.1.0, installed with `cargo install --locked cargo-mutants`) plants 163 small bugs in ObservANT's network-facing code, one at a time. The first run caught about 84 % of those that compile; tests for every gap it named (content types, the gzip cache, route resolution, peer CORS, the signalling proxy's leftover bytes, split and endless response heads, re-framing a refusal) brought it to 142 of 145, and the 3 left change nothing a client can see (HEAD and 304 bodies hyper drops anyway, a log line's throttle, `>` against `>=` at a 16 KiB limit). Keep `--jobs 1` or give each job its own target dir: two jobs sharing `CARGO_TARGET_DIR` overwrite each other's test binary and misreport. Run it after changing those files; it takes about 30 minutes on a Pi 5.
+- **Tarpaulin leaves out every module behind `#[cfg(feature = …)]`** (measured 2026-10-15, tarpaulin 0.37.5, both engines). `crates/media`, gated whole on `gstreamer`, is absent from the report although ObservANT's tests drive it, and `src/webcam_engine.rs` is absent while its 8 tests pass under tarpaulin. The plain feature spelling that its source analysis might match makes `cargo metadata` fail (`kataglyphis_gui` has no `gstreamer`), and the `pkg/feature` spelling is not matched. So the workspace figure covers the ungated code only, and those modules' tests count as tests, not as coverage. `cargo llvm-cov` reads rustc's own coverage map and would see them; the image does not carry it (a hub decision).
 - **`cargo fmt`/`cargo clippy` run through ANTfrastructure's `cargo_fmt_clippy.sh`** like every other step — `fmt-clippy` was the one case that did not delegate, and stopped being one on 2026-09-15. Two things had to change upstream first, and both did: the driver's old first line `rustup component add rustfmt` exited 127 on an image without rustup (it probes first now — header: PROBE, DO NOT ADD), and `--all-features` was hard-coded at its line 40, which this image cannot build (GTK4/ORT, see the last bullet). The scope is `CARGO_CLIPPY_ARGS`, set to `--workspace --locked` plus the test features in `scripts/linux/ci-container-steps.sh`. That exit 127 was masked by `continue-on-error: true` for months and let an entire crate reach the default branch unformatted and with 12 clippy errors — the step gates now.
 - **The docs publish follows the repository's own default branch**, not a typed `refs/heads/main`. It asks for `format('refs/heads/{0}', github.event.repository.default_branch)`, and so does `cancel-in-progress`. The literal was wrong for as long as `main` was abandoned and `develop` carried every commit: the comment said "only publish from the default branch" while the condition matched a branch nobody pushed to, so <https://rust.jonasheinle.de> was never republished at all. A red **Security checks** step has the same effect for a different reason — the publish is the last step of that job.
 - **The container runs as uid 1001, not root.** `apt-get` fails with `Permission denied`, so a workflow step cannot install system packages — whatever the image lacks, it lacks. And `CARGO_HOME=/usr/local/cargo` is root-owned, so every writing cargo step needs `-e CARGO_HOME=/tmp/cargo-home`.
@@ -878,15 +903,24 @@ so a dead link there costs more than tidiness.
 
 ### Large tracked files
 
-Two files dominate the size of a clone. Both are tracked deliberately; neither is in
+One large file is tracked deliberately. It is not in
 git-lfs, and **the history is not being rewritten** (decision D4 — no `filter-repo`,
 no `filter-branch`, no BFG). A rewrite would change every commit id in a repository
 that two other repositories pin by sha, for a saving nobody has asked for.
 
 | File | Size | Why it is tracked |
 | --- | --- | --- |
-| `resources/models/yolov10m.onnx` | ~59 MiB | The YOLOv10m weights. `crates/inference`'s default model, so `crates/cat_webrtc`'s too when nothing names another; the burn demos' `onnx-yolov10` run uses it as well. Fetching it at build time would put a network call in front of every build and every offline container run. |
 | `images/Rust.gif` | ~7 MiB | The README hero image, rendered by GitHub. |
+
+**Models are data, not code, and are never tracked** (owner, 2026-10-14). The AGPL-3.0
+`yolov10m.onnx` (59 MiB) left the tree then; it stays in the history (D4), so a clone still
+carries it. Its successor is DEIM-D-FINE-N (Apache-2.0, 15 MiB), built from its pinned
+upstream and released by [ModelANT](https://github.com/Kataglyphis/ModelANT).
+`resources/models/models.lock` names each file with its URL and SHA-256, and
+`scripts/linux/fetch-models.sh` (Windows: `scripts/windows/Get-Models.ps1`, the *Fetch
+Models* build step) puts them beside it, its license and notice included. A checked copy
+waits in `~/.cache/kataglyphis-models`, so only the first run needs the network. A new
+model goes into ModelANT first, and only the lock changes here.
 
 Everything else tracked is small: the renderer's glTF/GLB/KTX2 test assets are a few
 hundred kilobytes each, and they stay that way on purpose.

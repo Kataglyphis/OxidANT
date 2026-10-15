@@ -55,7 +55,13 @@ pub struct DetectionEvent {
     pub fps: f32,
 }
 
+/// Whether this build can run the webcam pipeline: a compile-time answer, cheap enough for a widget's build.
 #[flutter_rust_bridge::frb(sync)]
+pub fn webcam_inference_available() -> bool {
+    cfg!(all(feature = "gstreamer", onnx))
+}
+
+/// Not sync on purpose: the device monitor starts libcamera, about a second the UI thread must not wait out.
 pub fn list_cameras() -> Result<Vec<CameraDesc>, String> {
     #[cfg(feature = "gstreamer")]
     {
@@ -182,11 +188,32 @@ mod enabled {
         }
     }
 
-    fn default_texture_library() -> String {
+    pub(super) fn default_texture_library() -> String {
         if cfg!(windows) {
             "kataglyphis_native_inference_plugin.dll".into()
         } else {
             "libkataglyphis_native_inference_plugin.so".into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_probe_answers_what_this_build_was_compiled_with() {
+        assert_eq!(
+            super::webcam_inference_available(),
+            cfg!(all(feature = "gstreamer", onnx))
+        );
+    }
+
+    #[cfg(all(feature = "gstreamer", onnx))]
+    #[test]
+    fn the_default_texture_library_is_the_native_plugin() {
+        let name = super::enabled::default_texture_library();
+        assert!(
+            name.contains("kataglyphis_native_inference_plugin"),
+            "{name}"
+        );
     }
 }

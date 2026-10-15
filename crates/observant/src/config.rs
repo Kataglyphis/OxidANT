@@ -6,20 +6,38 @@ use anyhow::{bail, Context as _};
 use serde::{Deserialize, Serialize};
 
 /// Environment variable naming the config file, for installs that keep it elsewhere.
-pub const CONFIG_ENV: &str = "KATAGLYPHIS_CATCAM_CONFIG";
+pub const CONFIG_ENV: &str = "KATAGLYPHIS_OBSERVANT_CONFIG";
 
-/// Where a packaged install keeps its config, read only when it exists: `%ProgramData%` on Windows, `/etc` elsewhere.
+/// The variable's name before ObservANT (2026-10-14), still read when the new one is unset.
+const LEGACY_CONFIG_ENV: &str = "KATAGLYPHIS_CATCAM_CONFIG";
+
+/// Where a packaged install keeps its config, read only when it exists: `%ProgramData%` on Windows,
+/// `/etc` elsewhere. An install from before ObservANT keeps `catcam.toml`, read when this is absent.
 pub fn system_config() -> PathBuf {
+    config_in(&config_dir())
+}
+
+/// `observant.toml` in `dir`, or `catcam.toml` there when only that exists.
+fn config_in(dir: &Path) -> PathBuf {
+    let current = dir.join("observant.toml");
+    let legacy = dir.join("catcam.toml");
+    if !current.is_file() && legacy.is_file() {
+        return legacy;
+    }
+    current
+}
+
+fn config_dir() -> PathBuf {
     #[cfg(windows)]
     {
-        let base = std::env::var_os("ProgramData")
+        std::env::var_os("ProgramData")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
-        base.join("omni-accelerant").join("catcam.toml")
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+            .join("omni-accelerant")
     }
     #[cfg(not(windows))]
     {
-        PathBuf::from("/etc/omni-accelerant/catcam.toml")
+        PathBuf::from("/etc/omni-accelerant")
     }
 }
 
@@ -30,6 +48,16 @@ pub enum Inference {
     Auto,
     On,
     Off,
+}
+
+/// What of the scene leaves the camera: `pixelate` hides everything but the detection boxes in
+/// the stream, the snapshot, the arrival photos and the clips. Set here only, so no page turns it off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Privacy {
+    #[default]
+    Off,
+    Pixelate,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,8 +82,11 @@ pub struct Config {
     pub idle_inference_fps: f32,
     /// ONNX Runtime threads for the model; 0 takes one per core.
     pub inference_threads: u32,
-    /// Keep every COCO class instead of only cats.
+    /// The COCO classes that count, by name; the Camera page changes them while it runs.
+    pub classes: Vec<String>,
+    /// Keep every COCO class, whatever `classes` says.
     pub all_classes: bool,
+    pub privacy: Privacy,
     pub http_host: String,
     /// 0 turns the built-in web server off.
     pub http_port: u16,
@@ -79,10 +110,10 @@ pub struct Config {
     /// Host names besides IPs and local names (`cat`, `*.local`, `*.fritz.box`, ...) under which the
     /// page may open the stream and change settings, such as a reverse proxy's.
     pub allowed_hosts: Vec<String>,
-    /// Browser tabs connected to the stream at once; each one the cat cam encodes for costs CPU.
+    /// Browser tabs connected to the stream at once; each one the ObservANT encodes for costs CPU.
     /// 0 means no limit.
     pub max_viewers: u32,
-    /// The other cat cams, as origins (`http://192.168.1.20:8080`): their pages may read this one's
+    /// The other ObservANT cameras, as origins (`http://192.168.1.20:8080`): their pages may read this one's
     /// status and pictures, and this one's page lists them.
     pub peers: Vec<String>,
 }
@@ -95,7 +126,7 @@ impl Default for Config {
             height: 480,
             fps: 30,
             rotate: 0,
-            name: "Trouble Tabbls Cat Cam".into(),
+            name: "ObservANT".into(),
             inference: Inference::Auto,
             model: None,
             score: 0.25,
@@ -104,7 +135,9 @@ impl Default for Config {
             idle_inference_fps: 0.2,
             // At 2 Hz a Pi 5 ran at 183 % with ORT's four spinning threads, 81 % with two that sleep (2026-10-11).
             inference_threads: 2,
+            classes: vec!["cat".into()],
             all_classes: false,
+            privacy: Privacy::Off,
             http_host: "0.0.0.0".into(),
             http_port: 8080,
             web_root: None,
@@ -130,11 +163,13 @@ impl Config {
         Ok(toml::from_str(text)?)
     }
 
-    /// `explicit`, else `$KATAGLYPHIS_CATCAM_CONFIG`, else [`system_config`] when present, else defaults.
+    /// `explicit`, else `$KATAGLYPHIS_OBSERVANT_CONFIG` (or its old name), else [`system_config`] when
+    /// present, else defaults.
     pub fn load(explicit: Option<&Path>) -> anyhow::Result<(Self, Option<PathBuf>)> {
         let path = explicit
             .map(Path::to_path_buf)
             .or_else(|| std::env::var_os(CONFIG_ENV).map(PathBuf::from))
+            .or_else(|| std::env::var_os(LEGACY_CONFIG_ENV).map(PathBuf::from))
             .or_else(|| {
                 let system = system_config();
                 system.is_file().then_some(system)
@@ -180,6 +215,7 @@ impl Config {
         if self.fps == 0 {
             bail!("fps must be non-zero");
         }
+        crate::status::check_classes(&self.classes)?;
         if !(0.0..=1.0).contains(&self.score) {
             bail!("score must lie in 0..=1 (got {})", self.score);
         }
@@ -395,13 +431,11 @@ mod tests {
             peers: list.iter().map(|p| (*p).to_owned()).collect(),
             ..Config::default()
         };
-        assert!(
-            peers(&["http://192.168.188.151:8080", "https://cat.local/"])
-                .validate()
-                .is_ok()
-        );
+        assert!(peers(&["http://192.168.1.51:8080", "https://cat.local/"])
+            .validate()
+            .is_ok());
         for bad in [
-            "192.168.188.151:8080",
+            "192.168.1.51:8080",
             "ftp://cat.local",
             "http://",
             "http://cat.local/stream",
@@ -419,10 +453,54 @@ mod tests {
     fn the_effective_config_round_trips_through_toml() {
         let config = Config {
             camera: "rpicam".into(),
-            model: Some("/opt/models/yolo26n.onnx".into()),
+            model: Some("/opt/models/deim_dfine_n_coco.onnx".into()),
             ..Config::default()
         };
         let text = toml::to_string(&config).unwrap();
         assert_eq!(Config::parse(&text).unwrap(), config);
+    }
+
+    #[test]
+    fn an_install_from_before_observant_keeps_its_catcam_toml_until_observant_toml_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(config_in(dir.path()), dir.path().join("observant.toml"));
+        std::fs::write(dir.path().join("catcam.toml"), "").unwrap();
+        assert_eq!(config_in(dir.path()), dir.path().join("catcam.toml"));
+        std::fs::write(dir.path().join("observant.toml"), "").unwrap();
+        assert_eq!(config_in(dir.path()), dir.path().join("observant.toml"));
+    }
+
+    /// A config file is the owner's, but a typo in it must end in an error, never a panic or a value out of range.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn any_text_parses_or_fails_without_panic(text in "\\PC{0,200}") {
+                if let Ok(config) = Config::parse(&text) {
+                    let _ = config.validate();
+                }
+            }
+
+            #[test]
+            fn a_config_that_validates_keeps_its_numbers_in_range(
+                rotate in 0u32..400, width in 0u32..5000, height in 0u32..5000, fps in 0u32..120,
+                score in -1.0f64..2.0, clip_seconds in 0u32..200, ice in (0u16..70, 0u16..70),
+            ) {
+                let text = format!(
+                    "rotate = {rotate}\nwidth = {width}\nheight = {height}\nfps = {fps}\nscore = {score}\n\
+                     clip_seconds = {clip_seconds}\nice_port_min = {}\nice_port_max = {}\n",
+                    ice.0, ice.1
+                );
+                let config = Config::parse(&text).unwrap();
+                if config.validate().is_ok() {
+                    prop_assert!([0, 90, 180, 270].contains(&config.rotate));
+                    prop_assert!(width > 0 && width % 2 == 0 && height > 0 && height % 2 == 0);
+                    prop_assert!(fps > 0 && (0.0..=1.0).contains(&score) && clip_seconds <= 60);
+                    prop_assert!(ice == (0, 0) || (ice.0 > 0 && ice.0 <= ice.1));
+                }
+            }
+        }
     }
 }

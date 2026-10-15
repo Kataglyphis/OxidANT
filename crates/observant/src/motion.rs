@@ -109,6 +109,8 @@ pub struct Pacer {
     cols: usize,
     /// A frame was wanted but the busy model could not take it yet.
     pending: bool,
+    /// The last look saw black, as a camera without IR does at night.
+    dark: bool,
 }
 
 impl Pacer {
@@ -126,6 +128,7 @@ impl Pacer {
             changed_at: Vec::new(),
             cols: 0,
             pending: false,
+            dark: false,
         }
     }
 
@@ -165,6 +168,7 @@ impl Pacer {
         let motion = self.previous.as_deref().is_none_or(|p| moved(p, &current));
         // A camera without IR sees black at night, where the model can find nothing.
         let dark = current.iter().all(|&v| v <= DARK_LUMA);
+        self.dark = dark;
         self.previous = Some(current);
         let since_run = self.last_run.map(|t| now.duration_since(t));
         let idle_over = since_run.is_none_or(|d| d >= idle);
@@ -191,6 +195,11 @@ impl Pacer {
             }
             None => self.changed_at = vec![Some(now); current.len()],
         }
+    }
+
+    /// Whether the last look saw only black; the model idles then, so `/healthz` says why.
+    pub fn is_dark(&self) -> bool {
+        self.dark
     }
 
     /// The model took the frame [`Self::wants`] asked for.
@@ -237,6 +246,17 @@ mod tests {
         assert_eq!(t.len(), 8 * 6);
         assert_eq!(t[0], 250);
         assert!(t[1..].iter().all(|&v| v == 10));
+    }
+
+    #[test]
+    fn a_black_picture_is_dark_until_the_light_comes_back() {
+        let t = Instant::now();
+        let mut pacer = Pacer::new(2.0, 0.2, t);
+        pacer.wants(t, &frame(5), W, H, false);
+        assert!(pacer.is_dark());
+        pacer.ran(t);
+        pacer.wants(t + Duration::from_secs(1), &frame(120), W, H, false);
+        assert!(!pacer.is_dark());
     }
 
     #[test]

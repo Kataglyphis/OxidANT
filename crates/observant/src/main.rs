@@ -1,20 +1,5 @@
-//! Cat cam service: picks the camera, burns YOLO cat boxes into the frames, streams them over
-//! WebRTC and serves the web page that plays the stream. One process, so one service unit.
-
-mod camera;
-mod capture;
-mod clip;
-mod config;
-mod frame;
-mod install;
-mod motion;
-mod notify;
-mod output;
-mod precompress;
-mod presence;
-mod static_files;
-mod status;
-mod web;
+//! ObservANT service: picks the camera, burns the detection boxes (cats by default) into the frames, streams
+//! them over WebRTC and serves the web page that plays the stream. One process, so one service unit.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
@@ -28,7 +13,10 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use kataglyphis_inference::person_detection::{resolve_model_path, PersonDetector};
 
-use crate::config::{Config, Inference};
+use kataglyphis_observant::config::{Config, Inference};
+use kataglyphis_observant::{
+    camera, capture, clip, install, notify, output, precompress, static_files, stats, status, web,
+};
 
 /// Environment variable naming the still image looped as the demo source.
 const IMAGE_ENV: &str = "KATAGLYPHIS_CAT_IMAGE";
@@ -53,11 +41,11 @@ const AUTO_INFERENCE_MIN_MIB: u64 = 1024;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "kataglyphis_cat_webrtc",
-    about = "Cat cam: camera -> YOLO cat boxes -> WebRTC, plus the web page that plays it"
+    name = "kataglyphis_observant",
+    about = "ObservANT: camera -> YOLO boxes (cats by default) -> WebRTC, plus the web page that plays it"
 )]
 struct Args {
-    /// TOML config (default: $KATAGLYPHIS_CATCAM_CONFIG, then /etc/omni-accelerant/catcam.toml).
+    /// TOML config (default: $KATAGLYPHIS_OBSERVANT_CONFIG, then /etc/omni-accelerant/observant.toml).
     #[arg(long)]
     config: Option<PathBuf>,
     /// Print the effective config as TOML and exit.
@@ -190,8 +178,8 @@ fn run(args: Args) -> anyhow::Result<()> {
     // Still single-threaded here, so changing the environment cannot race a reader.
     std::env::set_var(ORT_THREADS_ENV, config.inference_threads.to_string());
     match &source {
-        Some(path) => log::info!("config: {} (cat cam {})", path.display(), status::VERSION),
-        None => log::info!("config: built-in defaults (cat cam {})", status::VERSION),
+        Some(path) => log::info!("config: {} (ObservANT {})", path.display(), status::VERSION),
+        None => log::info!("config: built-in defaults (ObservANT {})", status::VERSION),
     }
     let choice = camera::Choice::parse(&config.camera)?;
     kataglyphis_media::ensure_gst_initialized()?;
@@ -207,6 +195,8 @@ fn run(args: Args) -> anyhow::Result<()> {
         .rotated(config.rotate)
         .scored(config.score)
         .at_fps(config.fps)
+        .private(config.privacy)
+        .watching(config.classes.clone(), config.all_classes)
         .peered(config.peers.clone());
     let status = Arc::new(match state_dir() {
         Some(dir) => {
@@ -215,6 +205,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         }
         None => status,
     });
+    stats::spawn(status.clone());
     let (pipeline, appsrc) = output::build(&config)?;
     pipeline
         .set_state(gst::State::Playing)
@@ -595,7 +586,7 @@ mod tests {
     fn a_wildcard_signalling_address_is_reached_through_loopback() {
         assert_eq!(loopback_for("0.0.0.0"), "127.0.0.1");
         assert_eq!(loopback_for("::"), "127.0.0.1");
-        assert_eq!(loopback_for("192.168.188.98"), "192.168.188.98");
+        assert_eq!(loopback_for("192.168.1.98"), "192.168.1.98");
     }
 
     #[test]
@@ -669,7 +660,7 @@ mod tests {
     fn a_wildcard_address_is_shown_as_this_host() {
         assert_eq!(display_host("0.0.0.0"), "<this-host>");
         assert_eq!(display_host("::"), "<this-host>");
-        assert_eq!(display_host("192.168.188.98"), "192.168.188.98");
+        assert_eq!(display_host("192.168.1.98"), "192.168.1.98");
         assert_eq!(display_host("catcam.local"), "catcam.local");
     }
 

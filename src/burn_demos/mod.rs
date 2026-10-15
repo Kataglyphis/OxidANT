@@ -2,7 +2,7 @@ use burn::tensor::Device;
 
 pub mod lcg;
 pub mod losses;
-pub mod onnx_yolov10;
+pub mod onnx_detector;
 pub mod plot;
 pub mod simple;
 pub mod two_moons;

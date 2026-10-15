@@ -643,4 +643,24 @@ mod tests {
         }
         assert!(!plan.describe(&found.probe).is_empty());
     }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn any_camera_spec_parses_or_lists_the_choices(spec in "\\PC{0,40}") {
+                if let Err(e) = Choice::parse(&spec) {
+                    prop_assert!(e.to_string().contains("use auto, rpicam"), "{e}");
+                }
+            }
+
+            #[test]
+            fn a_camera_kind_ignores_case_and_padding(kind in "(auto|rpicam|libcamera|v4l2|mf|ks|test)", upper: bool, pad in " {0,3}") {
+                let spelled = if upper { kind.to_uppercase() } else { kind.clone() };
+                prop_assert_eq!(Choice::parse(&format!("{pad}{spelled}{pad}")).unwrap(), Choice::parse(&kind).unwrap());
+            }
+        }
+    }
 }

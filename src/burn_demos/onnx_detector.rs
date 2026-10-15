@@ -11,7 +11,7 @@ use std::time::Instant;
 use super::lcg::Lcg;
 use crate::ort_ext::{extract_first_f32_output, OrtResultExt};
 
-pub fn onnx_yolov10_demo(
+pub fn onnx_detector_demo(
     model_path: &Path,
     warmup: usize,
     runs: usize,
@@ -75,7 +75,7 @@ pub fn onnx_yolov10_demo(
     let (shape, out) = last_output.context("missing output")?;
     println!("output0 shape: {:?}", shape);
 
-    // Expected YOLOv10 export: [1, N, 6]
+    // The family's detector layout: [1, N, 6]
     let out3 = out
         .into_dimensionality::<ndarray::Ix3>()
         .context("expected output0 to have 3 dimensions")?;

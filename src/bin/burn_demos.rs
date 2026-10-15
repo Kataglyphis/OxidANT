@@ -74,8 +74,10 @@ enum Command {
         lr: f64,
     },
 
-    /// Loads models/yolov10m.onnx via ONNX Runtime and runs inference (optional: trains a tiny adapter on outputs).
-    OnnxYolov10 {
+    /// Loads resources/models/deim_dfine_n_coco.onnx (scripts/linux/fetch-models.sh) via ONNX Runtime and runs it;
+    /// optionally trains a tiny adapter on its outputs.
+    #[command(alias = "onnx-yolov10")]
+    OnnxDetector {
         #[arg(long, default_value_t = 0)]
         warmup: usize,
         #[arg(long, default_value_t = 1)]
@@ -154,7 +156,7 @@ fn main() -> anyhow::Result<()> {
             lr,
         ),
 
-        Command::OnnxYolov10 {
+        Command::OnnxDetector {
             warmup,
             runs,
             print_topk,
@@ -166,11 +168,11 @@ fn main() -> anyhow::Result<()> {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("resources")
                     .join("models")
-                    .join("yolov10m.onnx")
+                    .join(kataglyphis_inference::person_detection::MODEL_FILE)
             });
 
             let device = oxidant::burn_demos::training_device();
-            oxidant::burn_demos::onnx_yolov10::onnx_yolov10_demo(
+            oxidant::burn_demos::onnx_detector::onnx_detector_demo(
                 &model_path,
                 warmup,
                 runs,
@@ -179,7 +181,7 @@ fn main() -> anyhow::Result<()> {
                 lr,
                 &device,
             )
-            .with_context(|| format!("onnx-yolov10 demo failed (model={})", model_path.display()))
+            .with_context(|| format!("onnx-detector demo failed (model={})", model_path.display()))
         }
 
         Command::SaveLoad => oxidant::burn_demos::simple::save_load_demo(),

@@ -8,7 +8,7 @@ members = [
     "crates/gui",
     "crates/cli",
     "crates/webgpu_renderer",
-    "crates/cat_webrtc",
+    "crates/observant",
 ]
 
 [workspace.package]
@@ -24,6 +24,9 @@ rust-version = "1.96.0"
 egui-winit = { path = "third_party/egui-winit-0.36.2" }
 
 [workspace.dependencies]
+# Benches only; without plotters and rayon, which no report here needs.
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+proptest = "1.11"
 log = "0.4"
 env_logger = "0.11.10"
 anyhow = "1"
@@ -122,7 +125,6 @@ workspace = true
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
-proptest = "1.11"
 
 [build-dependencies]
 

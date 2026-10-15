@@ -9,7 +9,7 @@ default = []
 onnx_tract = ["dep:tract-onnx", "onnx"]
 # Always load-dynamic so only the chain-built ORT loads; check-ort-chain-only.sh fails on download-binaries.
 onnxruntime =["dep:ort", "ort/std", "ort/ndarray", "ort/load-dynamic", "ort/api-24", "onnx"]
-# Alias kept because OmniAccelerANT's KATAGLYPHIS_RUST_FEATURES and crates/cat_webrtc name it.
+# Alias kept because OmniAccelerANT's KATAGLYPHIS_RUST_FEATURES and crates/observant name it.
 onnxruntime_dynamic = ["onnxruntime"]
 # EP features only register the provider; the loaded chain dylib must carry it.
 onnxruntime_directml = ["onnxruntime", "ort/directml"]
@@ -27,3 +27,12 @@ ort = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+criterion = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+[[bench]]
+name = "detector"
+harness = false
+required-features = ["onnxruntime"]

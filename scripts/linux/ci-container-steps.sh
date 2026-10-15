@@ -7,8 +7,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
-# capture_test.rs is cfg(gstreamer); `?/` names the member's feature without enabling gui's and oxidant's optional deps.
-TEST_FEATURES='kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
+# `?/` keeps gui's optional deps off; oxidant's own two compile the webcam engine and its API, which were 6.2 % covered without.
+TEST_FEATURES='kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime'
+# Each crate's own floor, just under its latest figure, so one well-tested crate cannot carry a weak one; raise them as tests come.
+COVERAGE_FLOORS='--floor crates/observant=81 --floor crates/webgpu_renderer=89 --floor crates/inference=77 --floor crates/cli=72 --floor crates/core=62 --floor crates/telemetry=89 --floor src=5'
 # The feature-check sets (AGENTS.md § Feature combinations): gui_windows compiles the wgpu GUI; no gui_unix, the image has no GTK 4.
 FEATURE_CHECK_SETS='gstreamer gui_linux gui_linux,gstreamer gui_windows onnxruntime burn_demos'
 
@@ -77,17 +79,31 @@ shift
 case "$step" in
     debug)     antfrastructure_exec "${RUST_DRIVERS}/cargo_debug.sh" "$@" ;;
     security)  antfrastructure_exec "${RUST_DRIVERS}/cargo_security_checks.sh" "$@" ;;
-    # Golden tests must render (the image has lavapipe), not skip; `-` lets an empty value opt out.
+    # Golden tests must render (the image has lavapipe), the detector meet its model, the clips their encoder; `-` opts out.
     test)
         export KATAGLYPHIS_REQUIRE_GPU="${KATAGLYPHIS_REQUIRE_GPU-1}"
+        export KATAGLYPHIS_REQUIRE_MODEL="${KATAGLYPHIS_REQUIRE_MODEL-1}"
+        export KATAGLYPHIS_REQUIRE_GST="${KATAGLYPHIS_REQUIRE_GST-1}"
+        bash "${SCRIPT_DIR}/fetch-models.sh"
         antfrastructure_exec "${RUST_DRIVERS}/cargo_test.sh" --features "${TEST_FEATURES}" "$@"
         ;;
     # Without --workspace tarpaulin measures the root package alone, which has no unit tests: 0.00%.
     coverage)
         export KATAGLYPHIS_REQUIRE_GPU="${KATAGLYPHIS_REQUIRE_GPU-1}"
-        antfrastructure_exec "${RUST_DRIVERS}/cargo_coverage.sh" --workspace --features "${TEST_FEATURES}" "$@"
+        export KATAGLYPHIS_REQUIRE_MODEL="${KATAGLYPHIS_REQUIRE_MODEL-1}"
+        export KATAGLYPHIS_REQUIRE_GST="${KATAGLYPHIS_REQUIRE_GST-1}"
+        bash "${SCRIPT_DIR}/fetch-models.sh"
+        # Not antfrastructure_exec, which replaces this shell: the per-crate floors run after it. 300 s: an arm64 runner needed more than 60.
+        WORKSPACE_ROOT="${WORKSPACE_ROOT:-$KATAGLYPHIS_REPO_ROOT}" bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_coverage.sh")" \
+            --workspace --features "${TEST_FEATURES}" --timeout 300 --fail-under 70 "$@"
+        # shellcheck disable=SC2086 # COVERAGE_FLOORS is a list of --floor arguments.
+        python3 "${SCRIPT_DIR}/check-crate-coverage.py" cobertura.xml ${COVERAGE_FLOORS}
         ;;
-    bench)     antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" "$@" ;;
+    # Every bench of the workspace, the detector's on the real model; scripts/linux/bench-report.py reads the results.
+    bench)
+        bash "${SCRIPT_DIR}/fetch-models.sh"
+        antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" --workspace --benches --features "${TEST_FEATURES}" "$@"
+        ;;
     release)   antfrastructure_exec "${RUST_DRIVERS}/cargo_release.sh" "$@" ;;
     docs)      antfrastructure_exec "${RUST_DRIVERS}/cargo_build_doc.sh" "$@" ;;
     # This repo's own gate, not a hub driver: the owner rule is chain-built ORT only.

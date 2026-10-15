@@ -336,29 +336,108 @@ mod tests {
         assert!((bytes_to_mib(0) - 0.0).abs() < 0.001);
     }
 
+    // The only test that records: the counters are process-wide, so a second one would race it.
     #[test]
-    fn test_counter_snapshot_initial() {
-        let snapshot = CounterSnapshot::new();
-        assert_eq!(snapshot.values.camera_frames, 0);
-        assert_eq!(snapshot.values.inference_completions, 0);
+    fn tick_turns_the_counters_into_rates_over_the_elapsed_time() {
+        let mut snapshot = CounterSnapshot::new();
+        let start = snapshot.at;
+        for _ in 0..30 {
+            record_camera_frame();
+        }
+        for _ in 0..10 {
+            record_inference_completion();
+            record_inference_duration(Duration::from_millis(25));
+        }
+        let rates = snapshot.tick(start + Duration::from_secs(2));
+        assert_eq!(rates.cam_fps, 15.0);
+        assert_eq!(rates.infer_fps, 5.0);
+        assert!((rates.infer_latency_ms - 25.0).abs() < 1e-9, "{rates:?}");
+        assert!((rates.infer_capacity_fps - 40.0).abs() < 1e-9, "{rates:?}");
+
+        // Nothing since: every rate falls to zero rather than repeating the last one.
+        let idle = snapshot.tick(start + Duration::from_secs(3));
+        assert_eq!(
+            idle,
+            Rates {
+                cam_fps: 0.0,
+                infer_fps: 0.0,
+                infer_latency_ms: 0.0,
+                infer_capacity_fps: 0.0
+            }
+        );
     }
 
     #[test]
-    fn test_rates_zero_values() {
-        let zero = Rates {
-            cam_fps: 0.0,
-            infer_fps: 0.0,
-            infer_latency_ms: 0.0,
-            infer_capacity_fps: 0.0,
-        };
-        assert!(!zero.cam_fps.is_nan());
-        assert!(!zero.infer_fps.is_nan());
+    fn gpu_metrics_name_only_what_the_sample_has() {
+        let mut line = String::from("resource");
+        append_gpu_metrics(&mut line, &GpuSample::default());
+        assert_eq!(line, "resource");
+
+        append_gpu_metrics(
+            &mut line,
+            &GpuSample {
+                utilization_pct: Some(42.25),
+                dedicated_used_bytes: Some(512 * 1024 * 1024),
+                shared_used_bytes: None,
+                total_committed_bytes: Some(1024 * 1024 * 1024),
+            },
+        );
+        assert_eq!(
+            line,
+            "resource gpu_util=42.2% gpu_dedicated=512.0MiB gpu_total=1024.0MiB"
+        );
     }
 
     #[test]
-    fn test_gpu_sample_default() {
-        let sample = GpuSample::default();
-        assert!(sample.utilization_pct.is_none());
-        assert!(sample.dedicated_used_bytes.is_none());
+    fn write_line_appends_a_line_and_without_a_file_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resources.log");
+        let mut writer = Some(BufWriter::new(std::fs::File::create(&path).unwrap()));
+        write_line(&mut writer, "first");
+        write_line(&mut writer, "second");
+        drop(writer);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first\nsecond\n");
+
+        write_line(&mut None, "nowhere");
+    }
+
+    #[test]
+    fn the_monitor_logs_every_field_and_stops_when_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resources.log");
+        let monitor = ResourceMonitor::start(ResourceMonitorConfig {
+            interval: Duration::from_millis(20),
+            log_file: Some(path.clone()),
+            include_gpu: false,
+        });
+        std::thread::sleep(Duration::from_millis(150));
+        let started = Instant::now();
+        drop(monitor);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "Drop did not stop the thread"
+        );
+
+        let log = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = log.lines().collect();
+        assert!(lines.len() >= 2, "{log:?}");
+        for field in [
+            "cpu=",
+            "rss=",
+            "sys_used=",
+            "sys_total=",
+            "cam_fps=",
+            "infer_fps=",
+            "infer_ms=",
+            "infer_capacity_fps=",
+        ] {
+            assert!(lines[0].contains(field), "no {field} in {:?}", lines[0]);
+        }
+        assert!(lines[0].starts_with("resource "), "{:?}", lines[0]);
+        assert!(
+            !lines[0].contains("gpu_"),
+            "GPU fields without include_gpu: {:?}",
+            lines[0]
+        );
     }
 }

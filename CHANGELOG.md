@@ -15,6 +15,100 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Telemetry tests that test it** (2026-10-15). `kataglyphis_telemetry` stood at 8.4 % with
+  tests that built a struct and read it back, and one that expected the process-wide counters
+  at zero, which a second recording test would have broken. Now: `tick` turns frames,
+  inferences and their durations into rates over the elapsed time and falls to zero when idle;
+  the GPU fields appear only when sampled; `write_line` appends; the monitor thread writes every
+  field to its log file and stops on drop.
+
+- **Mutation testing of ObservANT's network-facing code** (2026-10-15). cargo-mutants planted 163
+  bugs in `web.rs` and `static_files.rs`; the tests caught about 84 % of those that compile. New
+  tests for each gap: every content type, the gzip cache (once per version), route resolution
+  (a file, a directory's index, an app route, a missing asset), the peer origin echo, bytes the
+  signalling server sends with its 101, a response head split over packets, an endless one cut
+  off at 16 KiB before the handshake timeout, and a refusal re-framed without the upstream's
+  `Transfer-Encoding`. Now 142 of 145; the 3 left are equivalent (AGENTS.md).
+
+- **Tests from the audit of 2026-10-15** (the owner asked whether the tests catch regressions):
+  - *The bridged core is tested with its real features.* `TEST_FEATURES` adds
+    `oxidant/gstreamer,oxidant/onnxruntime`, so `src/webcam_engine.rs` and the webcam API
+    compile for tests at all; `src/` stood at 6.2 %. Eight tests: the engine on
+    `videotestsrc` with the real model, headless, delivers frames in order with an inference
+    time and a frame rate and stops its worker (the channel closes); a missing model, a
+    missing texture library and a library without `knt_push_frame` each say so; the rolling
+    frame rate; the probe and the default plugin name.
+  - *Per-crate coverage floors.* `scripts/linux/check-crate-coverage.py` grades each crate
+    and `src/` from tarpaulin's `cobertura.xml` against its own floor, so the renderer's
+    90 % no longer carries a crate at 8 %. Its suite plants a crate under its floor. The
+    floors sit just under that day's figures (observant 82.7 %, renderer 90.8 %, inference
+    79.2 %, cli 74.1 %, core 63.6 %, telemetry 8.4 %, `src/` 5.7 %), and tarpaulin gets
+    `--timeout 300`. Measuring them showed that tarpaulin 0.37.5 leaves every
+    `#[cfg(feature = …)]` module out of its report (`crates/media`, `src/webcam_engine.rs`),
+    so those modules' new tests count as tests, not as coverage (AGENTS.md).
+  - *Property tests on what ObservANT reads from the network and its config file*, in each
+    module's `mod properties`: the Range header (a served range never leaves the file, a
+    well-formed one is served as asked), the query, the Host/Origin check (a public name is
+    refused unless allowed, an address literal passes), request paths (none, however
+    encoded, leaves the web root), the camera spec and the config (a config that validates
+    keeps its numbers in range). Two planted bugs, `..` let through and an unclamped range
+    end, each fail them with a shrunk input (`..`, `bytes=0-` on one byte). They replace
+    `tests/fuzz_test.rs`, which exercised a placeholder function of its own.
+  - *`KATAGLYPHIS_REQUIRE_GST=1`* in the test and coverage steps turns the clip and
+    `webrtcsink` tests' self-skip into a failure; `cargo test` hides a passing test's skip line.
+  - *Benchmarks against the median of the last 20 runs.* `bench-report.py` warns above
+    +25 % and fails a mean from 100 µs that doubles, once 3 earlier runs exist; the cache
+    keeps a small `.bench-history/` instead of `target/criterion`. `lint-gates.yml` runs the
+    script suites (`scripts/linux/tests/`).
+
+- **Criterion benchmarks, tracked in CI** (2026-10-14, owner: benchmarks belong in each project's own
+  tooling, for regression testing). `crates/observant/benches/frame_stages.rs` and
+  `crates/inference/benches/detector.rs` run under the existing `cargo bench` step, which now fetches the
+  model and runs every bench of the workspace. The Linux lanes cache `target/criterion` from the default
+  branch per arch, and `scripts/linux/bench-report.py` writes each mean and its change into the run summary,
+  warning above +25 %. First numbers on a Pi 5: a detection 261 ms, I420 to RGBA 1.61 ms, the privacy
+  blocks 0.59 ms, a snapshot JPEG 11.0 ms, the motion thumbnail 0.52 ms. They replace the two `#[ignore]`d
+  `stage_costs` tests of the same day. `kataglyphis_observant` is a library plus `main.rs`, so benches and
+  integration tests can reach its modules.
+
+- **The detector is tested with its real model** (2026-10-14). `crates/inference/tests/real_model.rs`
+  runs DEIM-D-FINE-N on a 480 px photo of two cats (`tests/fixtures/two_cats.jpg`, 85 kB):
+  both found, the front one at 0.8 or more, every box inside the photo, neither taken for a
+  dog or a person, and a class filter keeps only its class. The Linux lanes fetch the model
+  and set `KATAGLYPHIS_REQUIRE_MODEL=1`, so there it cannot skip. The inference crate was at
+  37.6 % line coverage with no test that ran a model.
+- **A coverage floor**: the `coverage` step fails below 70 % of the workspace's lines
+  (tarpaulin `--fail-under`); it measured 71.3 % before these tests. Raise it as tests land.
+
+- **`/healthz` says when ObservANT's picture is too dark** (2026-10-14). The motion gate
+  already let the model idle on a black picture; `dark` now says so, and `ok` stays, since
+  a night without IR is no outage.
+- **Two measurements, ignored by default** (replaced the same day by the Criterion benches above). On a
+  Pi 5: DEIM-D-FINE-N 420 / 258 / 265 ms at 1 / 2 / 4 threads, preprocessing 3 ms, postprocessing nil, a
+  snapshot JPEG 10.7 ms, I420 to RGBA 1.7 ms.
+
+- **Configurable classes, cats by default** (2026-10-14). `classes` (COCO names, `["cat"]`
+  unless set) replaces the hard-wired cat filter, in the settings and through
+  `POST /settings {"classes": [...]}`, checked whole (one to 80 known names, each once) and
+  kept across restarts in `settings.json`; the model's runs read them each time.
+  `/healthz` lists `classes`, each visit names its `class` and each `arrived` event too, the
+  class of the best detection. `coco.rs` holds the 80 names. `all_classes` still counts every
+  class.
+
+- **`/healthz` reports what the cat cam achieves and costs** (2026-10-14): `stats`, sampled
+  every 2 s by a thread of its own (`stats.rs`), names the frames pushed per second, the
+  model's time per run (smoothed) and runs per second, and from `/proc` and `/sys` its CPU
+  share of one core, the cores, its resident memory, the 1-minute load, the board's
+  temperature, and its uptime. A number it cannot read is `null`, so off Linux only the
+  rates show. The web app's Stats panel reads it.
+
+- **A privacy filter for showing the cat cam in public** (2026-10-14). `privacy =
+  "pixelate"` in the settings blocks out everything but the detection boxes (each grown by
+  15 %, 32-pixel blocks at 640 wide) in the stream, `/snapshot.jpg`, the arrival photos and
+  the clips; the model still sees the whole frame. Only the file sets it; `/healthz` names it
+  (`privacy`). `frame::pixelate_outside`, with tests for blocks, kept boxes, edges, the
+  capture pipeline and the arrival photo.
+
 - **A visit keeps the boxes it arrived with** (2026-10-14): `/healthz`'s `cat.recent[]` and
   `cat.json` carry `boxes` (fractions), so a page can mark a past false arrival "not a cat";
   older visits have none.
@@ -100,6 +194,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `stayed_s`, as a visit shorter than the clip's post-roll ends before the clip is written.
 
 ### Changed
+- **The default model is DEIM-D-FINE-N (Apache-2.0), fetched rather than tracked**
+  (2026-10-14, owner). The AGPL-3.0 `resources/models/yolov10m.onnx` (59 MiB) is no longer
+  tracked; `MODEL_FILE` is `deim_dfine_n_coco.onnx` (15 MiB, COCO 80, 43.0 AP), built from
+  DEIM's pinned checkpoint by [ModelANT](https://github.com/Kataglyphis/ModelANT) in the
+  same `[1, 300, 6]` layout, so the parser and the default plain-resize preprocessing stay.
+  `resources/models/models.lock` names it, its license and notice with URL and SHA-256;
+  `scripts/linux/fetch-models.sh` and `scripts/windows/Get-Models.ps1` (the Windows build's
+  *Fetch Models* step) fetch and check them, through a cache. Against YOLO26n on 12 arrival
+  pictures of three cat cams it found cats more often and more surely, at about 260 ms a
+  run instead of 190 ms on a Pi 5. The burn demo `onnx-yolov10` is `onnx-detector` (the old
+  name stays an alias). Test fixtures use generic private addresses, not the cat cams' real ones.
+- **The cat cam is ObservANT** (2026-10-14, the owner's name for it). Cats stay the default,
+  detecting is general. The crate is `crates/observant` (`kataglyphis_observant`), the Pi
+  script `scripts/linux/observant/`. `/healthz`'s `cat` object is `detection`, the visits file
+  `visits.json`, the settings `observant.toml`, the variable `KATAGLYPHIS_OBSERVANT_CONFIG`, the
+  build stamp `OBSERVANT_VERSION` and the default name `ObservANT`. An install from before
+  carries over: `catcam.toml`, `cat.json`, `KATAGLYPHIS_CATCAM_CONFIG`, `CATCAM_VERSION` and
+  Windows' `omni-accelerant-catcam` folder are still read while the new ones are absent.
 - **A cat back within a minute continues its visit** (2026-10-14). At the feeding trough
   one cat walking about had made 21 visits in an hour, 10 to 90 s apart, each with its own
   arrival event, clip and count. Being in view still ends after about 3 s without a hit (the
@@ -134,6 +246,38 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `feature-checks-per-job` brings back one job per set.
 
 ### Fixed
+
+- **`KATAGLYPHIS_SCORE_THRESHOLD` and `KATAGLYPHIS_INFER_EVERY_MS` take surrounding spaces**
+  (2026-10-15), as `KATAGLYPHIS_ORT_THREADS` already did: `" 0.4"` fell back to 0.5 without a
+  word. `crates/core`'s env readers parse through pure functions now (`parse_preprocess`,
+  `parse_or`, `parse_log_level`), so the rules have tests; the crate had none of its own.
+
+- **A missing model file says so** (2026-10-15). `PersonDetector::new` answered a wrong path
+  with "No ONNX backend available. Build with --features onnx_tract…", which sends one
+  looking for a missing runtime. It now checks the file first ("no ONNX model at <path>"),
+  and when ORT fails on a file that exists, its own reason is kept ("ORT could not load
+  <path>: …") instead of the generic line. Found by the new webcam engine test;
+  `crates/inference/tests/model_errors.rs` pins both messages.
+
+- **`list_cameras` no longer runs on the caller's thread** (2026-10-15). It was
+  `#[frb(sync)]`, and the device monitor it starts brings libcamera up: OmniAccelerANT's
+  Stream page called it as its feature probe, which held the app's first frame 0.94 s on a
+  Pi 5. It is async now, and `webcam_inference_available()` answers the probe from
+  `cfg!(all(feature = "gstreamer", onnx))`, which also stops a gstreamer-only build from
+  offering a pipeline whose start would fail.
+- **ObservANT, from the deep review of 2026-10-14:**
+  - *Reads need a local host name too.* `own_host` now runs on every request, so a page
+    that DNS rebinding pointed at the board cannot read `/snapshot.jpg`, the arrival
+    photos or the clips as its own; `own_page` adds the `Origin` check for the acting ones.
+  - *No connection flood.* At most `MAX_CONNECTIONS` (128) are served at once, a newer one
+    is closed unanswered and logged once a minute, and hyper gets a timer, so a request
+    head must arrive within 10 s (without one hyper 1.x skips its header timeout).
+  - *A failing model shows.* Three failed runs in a row make `/healthz` say `ok: false`
+    with `the model fails: …`; every failed run clears the drawn boxes, which stayed sharp
+    under the privacy filter before; the log keeps the first failure and one line a minute.
+  - *The privacy filter locks the classes.* With `privacy = "pixelate"`, `POST /settings`
+    refuses other `classes` and classes a page saved earlier give way at start, since a box
+    of `person` stays sharp; `GET /settings` names `privacy`.
 
 - **A browser that vanished frees its viewer place** (2026-10-14). The web server's
   connections carry TCP keepalive (60 s idle, then a probe every 10 s), so one whose peer

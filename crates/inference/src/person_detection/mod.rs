@@ -22,7 +22,7 @@ use kataglyphis_core::detection::Detection;
 use preprocess::{rgba_to_nchw_f32_letterboxed, rgba_to_nchw_f32_stretched};
 
 /// The model's file name, in the checkout's `resources/models/` and in every package's.
-const MODEL_FILE: &str = "yolov10m.onnx";
+pub const MODEL_FILE: &str = "deim_dfine_n_coco.onnx";
 
 /// The model to load: `explicit` when it is not blank, else `KATAGLYPHIS_ONNX_MODEL`,
 /// else the model beside the running exe, else the checkout's.
@@ -38,7 +38,7 @@ pub fn resolve_model_path(explicit: Option<&str>) -> String {
         .unwrap_or_else(default_model_path)
 }
 
-/// `<exe dir>/resources/models/yolov10m.onnx`, when that file exists.
+/// `<exe dir>/resources/models/deim_dfine_n_coco.onnx`, when that file exists.
 /// Every Windows package puts `resources\` beside the exe, so a packaged app needs nothing set.
 fn bundled_model_path() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
@@ -51,12 +51,12 @@ fn existing_model_under(root: &std::path::Path) -> Option<String> {
     path.is_file().then(|| path.to_string_lossy().into_owned())
 }
 
-/// `<root>/resources/models/yolov10m.onnx`: the checkout's layout, and every package's.
+/// `<root>/resources/models/deim_dfine_n_coco.onnx`: the checkout's layout, and every package's.
 fn model_under(root: &std::path::Path) -> std::path::PathBuf {
     root.join("resources").join("models").join(MODEL_FILE)
 }
 
-/// The dev-checkout fallback `<workspace>/resources/models/yolov10m.onnx`, from the workspace root.
+/// The dev-checkout fallback `<workspace>/resources/models/deim_dfine_n_coco.onnx` (`scripts/linux/fetch-models.sh`).
 fn default_model_path() -> String {
     // `ancestors().nth(2)` rather than `parent()` unwraps, so a moved crate cannot panic.
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -112,6 +112,10 @@ impl PersonDetector {
 
     pub fn new(model_path: &str) -> Result<Self> {
         info!("Loading ONNX model: {model_path}");
+        // Checked first: a backend that cannot open the file would report itself missing instead.
+        if !std::path::Path::new(model_path).is_file() {
+            bail!("no ONNX model at {model_path}");
+        }
 
         let preprocess = config::preprocess_mode();
         let swap_xy = config::swap_xy_enabled();
@@ -144,7 +148,7 @@ impl PersonDetector {
                 if require_ort {
                     return Err(err);
                 }
-                warn!("ORT session unavailable, falling back to tract: {err:#}");
+                warn!("ORT session unavailable: {err:#}");
                 Err(err)
             }
         }
@@ -189,27 +193,33 @@ impl PersonDetector {
             }
             None => {
                 #[cfg(feature = "onnxruntime")]
-                {
+                let ort_error = {
                     let device = config::ort_device();
                     let require_ort = device == "cuda" || device == "auto";
-
-                    if let Ok(load) = Self::try_load_ort(model_path, require_ort) {
-                        return Ok(load);
+                    match Self::try_load_ort(model_path, require_ort) {
+                        Ok(load) => return Ok(load),
+                        Err(err) => Some(err),
                     }
-                }
+                };
+                #[cfg(not(feature = "onnxruntime"))]
+                let ort_error: Option<anyhow::Error> = None;
 
                 #[cfg(feature = "onnx_tract")]
                 {
+                    let _ = ort_error;
                     Self::load_tract(model_path)
                 }
 
+                // ORT's own error says why the model did not load; the generic line hid it.
                 #[cfg(not(feature = "onnx_tract"))]
                 {
-                    bail!(
-                        "No ONNX backend available. \
-                         Build with --features onnx_tract to enable the tract fallback, \
-                         or ensure the ORT session can be created."
-                    )
+                    match ort_error {
+                        Some(err) => Err(err.context(format!("ORT could not load {model_path}"))),
+                        None => bail!(
+                            "No ONNX backend available. \
+                             Build with --features onnxruntime or onnx_tract."
+                        ),
+                    }
                 }
             }
         }
@@ -353,6 +363,6 @@ mod tests {
     #[test]
     fn the_checkout_fallback_is_the_workspace_model() {
         let path = default_model_path();
-        assert!(std::path::Path::new(&path).ends_with("resources/models/yolov10m.onnx"));
+        assert!(std::path::Path::new(&path).ends_with("resources/models/deim_dfine_n_coco.onnx"));
     }
 }
