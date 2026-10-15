@@ -33,6 +33,13 @@ protocol exists and the backlog is empty" — it was neither.
       source is the C++ engine's forward.slang; hand-editing the WGSL
       desynchronises it, which is why the instanced-normal bug above cannot be
       fixed here. Blocked on deciding who compiles tex_quad.slang.
+- [ ] The Windows lanes' real-model tests pass by skipping. `Build-Windows.ps1` runs
+      *Unit Tests* before *Fetch Models*, so `tests/real_model.rs` finds no model and
+      reports `ok` (`cargo test` hides a passing test's `SKIP:` line), and neither
+      lane sets `KATAGLYPHIS_REQUIRE_MODEL`. The Linux and riscv64 steps fetch first and
+      demand it. Moving the fetch ahead of the tests is the easy half; whether the test
+      binary then finds the chain ORT before *Stage Chain ONNX Runtime* has to be seen on
+      the Windows box first (found 2026-10-15).
 
 ## Not adopted yet
 

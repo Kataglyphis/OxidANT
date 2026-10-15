@@ -121,6 +121,9 @@ case "$step" in
         antfrastructure_source linux/scripts/02-toolchain/rust/_cargo_wrapper.sh
         antfrastructure_source linux/scripts/lib/riscv64-cross.sh
         riscv64_cross_env
+        # The detector meets its model here too: without it the real-model tests passed by skipping.
+        export KATAGLYPHIS_REQUIRE_MODEL="${KATAGLYPHIS_REQUIRE_MODEL-1}"
+        bash "${SCRIPT_DIR}/fetch-models.sh"
         if [ "${RISCV64_GPU_TESTS:-0}" = 1 ]; then
             export KATAGLYPHIS_REQUIRE_GPU=1
         else

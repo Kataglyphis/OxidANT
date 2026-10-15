@@ -15,6 +15,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Mutation testing of the capture loop, and the riscv64 lane meets the real model**
+  (2026-10-15). cargo-mutants on `capture.rs`: 87 of 124 compiling mutants caught at first, 98
+  now. The arrival photo's privacy test only checked that the filtered photo differs, so a
+  filter swapped between on and off passed; it now decodes the JPEG and wants the corner far
+  from the cat flat with the filter and sharp without. New tests for `bus_says_done` (an error
+  with its text, end of stream as done) and for the restart pause, now `sleep_unless`, which
+  fails after 5 s instead of hanging when it never ends; a zero width is not divided by. The
+  riscv64 test step fetches the model and sets `KATAGLYPHIS_REQUIRE_MODEL=1` like the Linux one:
+  its real-model tests reported `ok` having skipped. The Windows lanes do the same and are in
+  `BACKLOG.md`, since their tests run before the model is fetched.
+
 - **Mutation testing of ObservANT's frame, clip and stats code** (2026-10-15). cargo-mutants on
   `clip.rs`, `frame.rs`, `stats.rs`, `output.rs` and `precompress.rs`: 376 of 412 compiling
   mutants caught at first, 400 now. The privacy filter had the most gaps, because its tests used

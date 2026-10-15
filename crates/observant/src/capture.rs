@@ -128,7 +128,7 @@ impl Worker {
             if let Some(pause) =
                 backoff.after(started.elapsed(), result.is_err(), plan.is_stand_in())
             {
-                self.sleep(pause);
+                sleep_unless(&self.shutdown, pause);
             }
         }
         // Finish the frame in flight: an ORT session still running at process exit errors out.
@@ -137,13 +137,6 @@ impl Worker {
             let _ = handle.join();
         }
         log::info!("capture worker stopped");
-    }
-
-    fn sleep(&self, total: Duration) {
-        let until = Instant::now() + total;
-        while Instant::now() < until && !self.shutdown.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(100));
-        }
     }
 
     fn capture(
@@ -274,6 +267,14 @@ impl Worker {
             Err(gst::FlowError::Flushing) => Ok(false),
             Err(err) => Err(anyhow!("appsrc push: {err:?}")),
         }
+    }
+}
+
+/// Waits `total`, or less once `shutdown` is set: it looks every 100 ms, so a stop never waits long.
+fn sleep_unless(shutdown: &AtomicBool, total: Duration) {
+    let until = Instant::now() + total;
+    while Instant::now() < until && !shutdown.load(Ordering::Relaxed) {
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -1051,6 +1052,16 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_width_is_left_as_it_is_rather_than_divided_by() {
+        let config = Config {
+            width: 0,
+            height: 480,
+            ..Config::default()
+        };
+        assert_eq!(capture_size(true, &config, 90), (0, 480));
+    }
+
+    #[test]
     fn only_a_pi_camera_counts_as_scaling_for_free() {
         let device = |factory: &str| crate::camera::DeviceInfo {
             factory: factory.into(),
@@ -1251,12 +1262,64 @@ mod tests {
     }
 
     #[test]
-    fn the_arrival_photo_is_filtered_too() {
+    fn the_arrival_photo_is_filtered_outside_the_cat_and_only_with_the_filter_on() {
         let frame: Vec<u8> = (0..frame::size(64, 48))
             .map(|i| (i * 7 % 251) as u8)
             .collect();
-        let open = arrival_jpeg(&frame, 64, 48, &middle_cat(), Privacy::Off).unwrap();
-        let filtered = arrival_jpeg(&frame, 64, 48, &middle_cat(), Privacy::Pixelate).unwrap();
-        assert_ne!(open, filtered);
+        // The decoded photo's top-left 8 x 8 corner, far from the cat: brightest less darkest.
+        let spread = |privacy| {
+            let jpeg = arrival_jpeg(&frame, 64, 48, &middle_cat(), privacy).unwrap();
+            let gray = image::load_from_memory_with_format(&jpeg, image::ImageFormat::Jpeg)
+                .unwrap()
+                .to_luma8();
+            let corner: Vec<u8> = (0..8u32)
+                .flat_map(|y| (0..8u32).map(move |x| (x, y)))
+                .map(|(x, y)| gray.get_pixel(x, y)[0])
+                .collect();
+            corner.iter().max().unwrap() - corner.iter().min().unwrap()
+        };
+        let (open, filtered) = (spread(Privacy::Off), spread(Privacy::Pixelate));
+        assert!(
+            open > 100 && filtered < 30,
+            "open {open}, filtered {filtered}"
+        );
+    }
+
+    #[test]
+    fn the_bus_reports_an_error_with_its_text_and_an_end_of_stream_as_done() {
+        gst::init().unwrap();
+        let pipeline = gst::Pipeline::new();
+        let bus = pipeline.bus().unwrap();
+        assert!(!bus_says_done(&bus).unwrap());
+        bus.post(gst::message::Eos::new()).unwrap();
+        assert!(bus_says_done(&bus).unwrap());
+        let error = gst::message::Error::builder(gst::CoreError::Failed, "the camera went away")
+            .debug("v4l2 says ENODEV")
+            .build();
+        bus.post(error).unwrap();
+        let err = bus_says_done(&bus).unwrap_err().to_string();
+        assert!(
+            err.contains("the camera went away") && err.contains("ENODEV"),
+            "{err}"
+        );
+    }
+
+    /// How long [`sleep_unless`] took on a thread of its own; `None` while it still waits after 5 s.
+    fn timed_pause(stopping: bool, total: Duration) -> Option<Duration> {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let started = Instant::now();
+            sleep_unless(&AtomicBool::new(stopping), total);
+            let _ = tx.send(started.elapsed());
+        });
+        rx.recv_timeout(Duration::from_secs(5)).ok()
+    }
+
+    #[test]
+    fn a_pause_lasts_its_time_unless_the_service_stops() {
+        let full = timed_pause(false, Duration::from_millis(250)).expect("a 250 ms pause ended");
+        assert!(full >= Duration::from_millis(250), "{full:?}");
+        let cut = timed_pause(true, Duration::from_secs(30)).expect("a stop cut the pause short");
+        assert!(cut < Duration::from_secs(1), "{cut:?}");
     }
 }
