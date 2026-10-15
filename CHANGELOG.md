@@ -15,6 +15,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Releases** (2026-10-16, owner). Every push to `main` runs the new `release.yml`: a version
+  check against `Cargo.toml` and the CHANGELOG, all five lanes, then the tag `v<version>` and a
+  GitHub release with the Linux packages for x64 and arm64, the Windows MSI, MSIX and portable
+  zip for both arches and a `SHA256SUMS`, only when every lane is green.
+  `scripts/linux/collect-release-assets.sh` picks the files (each flatpak gets its arch, the
+  portable folder is zipped, test bundles and reports stay out; 9 checks in
+  `test-collect-release-assets.sh`, also run on a real release run's uploads), the hub's
+  `publish-github-release.sh` publishes them. `linux-x64.yml` no longer runs on pushes to `main`
+  itself, since `release.yml` calls it there.
+
 - **ObservANT's `/visits`: every visit of the last 30 days** (2026-10-15). `/healthz` lists only
   the last 20 visits, too few for statistics per day or hour. `Status` now keeps a history of
   `[arrival, stay]` pairs in `visits.json` beside `recent`, at most 30 days and 10 000 visits; a

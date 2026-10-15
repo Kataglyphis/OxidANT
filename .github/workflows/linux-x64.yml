@@ -1,10 +1,10 @@
 # Linux x64 lane: only when and which runner; every step lives in reusable-linux.yml, and only this arch publishes the docs.
 name: Linux x64 · build + test
 
-# The one lane every push to develop runs (third_party/ANTfrastructure/docs/branch-and-release-strategy.md); main keeps it until a release.yml exists.
+# The one lane every push to develop runs; release.yml calls it on main (third_party/ANTfrastructure/docs/branch-and-release-strategy.md).
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
   workflow_call:
   pull_request:
     branches: [ "main", "develop" ]

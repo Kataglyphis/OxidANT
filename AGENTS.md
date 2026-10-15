@@ -636,7 +636,7 @@ Nine workflow files: the build lanes, the gate lanes, `on-request.yml` and the r
 | Lint gates | `lint-gates.yml` (job `powershell-lint`) | same | none — the hub's reusable `python-ci-windows.yml` with `build-python-package: false`, `lint-powershell: true`, `lint-path: scripts`, and no `secrets:` block; `Invoke-Lint.ps1 -Path scripts -FailOnAnalyzer` on `windows-2025` |
 | Lint gates | `lint-gates.yml` (job `generated-artifacts`) | same | none — every suite in `scripts/windows/tests/` (the generated-artifacts check, `CargoTarget` and `OrtPayload`) under Pester 3.4.0 on `windows-2025` |
 | Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — the hub's reusable `submodule-pins.yml` (`Submodule.Pins.Tests.ps1`, Pester 3.4.0, `windows-2025`) |
-| Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push/PR to `main`/`develop`, and `workflow_dispatch` (on `main` until a `release.yml` takes it) | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
+| Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push to `develop` and PR, and `workflow_dispatch`; on `main` through `release.yml` | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
 | Linux arm64 · build + test | `linux-arm64.yml` → `reusable-linux.yml` | on request: `[ci arm64]` or `[ci linux]` in a commit message (`on-request.yml`), or `workflow_dispatch` | same image (a multi-arch index); native `ubuntu-26.04-arm`, no QEMU |
 | Linux riscv64 · cross build + test | `linux-riscv64.yml` → the hub's reusable `container-ci-riscv64.yml` (since 2026-10-01) | on request (`[ci riscv64]`), and the weekly GPU run | family Linux CI image (amd64) on `ubuntu-26.04`, plus a sysroot exported from the image's riscv64 child; the tests run under QEMU |
 | Windows x64 · build + test | `windows-x64.yml` → the hub's reusable `container-ci-windows.yml` (since 2026-09-25) | on request (`[ci windows]`, `[ci x64]`) | family Windows CI image, inherited; `windows-2025`, whose host runs the renderer tests and the packaged exe |
@@ -655,7 +655,13 @@ commit message. No lane carries an `if:`; the call in `on-request.yml` does. Fro
 2026-09-24 to 2026-10-15 every lane ran on every push; before that `[build-arm]` and
 `[build-win]` gated two of them, and nothing reads those any more. The version lives in
 `Cargo.toml`'s `[workspace.package]` alone (owner, 2026-10-15: 2.3.4, and `VERSION.txt` is
-gone); a `release.yml` on `main` that publishes it is the next step.
+gone). **Every push to `main` is a release** (`release.yml`): a version check, all five lanes
+once more, then `v<version>` with the Linux packages for both arches (each flatpak named for its
+arch), the Windows MSI, MSIX and portable zip for x64 and arm64, a `SHA256SUMS` and the version's
+`## [<version>]` CHANGELOG section, only when every lane is green.
+`scripts/linux/collect-release-assets.sh` picks the files, the hub's
+`publish-github-release.sh` publishes them. Before a merge, turn `## [Unreleased]` into
+`## [<version>] - <date>`.
 
 **The names follow the family convention of the same date:** kebab-case files, one per
 platform + arch, display names `<Platform> <Arch> · <what>` (U+00B7 middle dot).
