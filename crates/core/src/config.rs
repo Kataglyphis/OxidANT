@@ -49,17 +49,26 @@ env_cached!(
     /// `KATAGLYPHIS_PREPROCESS`: `"letterbox"` | `"stretch"` (default `"stretch"`).
     #[allow(dead_code)]
     pub fn preprocess_mode -> PreprocessMode, || {
-        let raw = std::env::var("KATAGLYPHIS_PREPROCESS").unwrap_or_else(|_| "stretch".to_string());
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "letterbox" | "boxed" | "pad" => PreprocessMode::Letterbox,
-            "stretch" | "resize" => PreprocessMode::Stretch,
-            other => {
-                warn!("Unknown preprocess mode '{other}', defaulting to stretch");
-                PreprocessMode::Stretch
-            }
-        }
+        parse_preprocess(std::env::var("KATAGLYPHIS_PREPROCESS").ok().as_deref())
     }
 );
+
+/// The preprocess mode a `KATAGLYPHIS_PREPROCESS` value names; unset or unknown is stretch.
+fn parse_preprocess(raw: Option<&str>) -> PreprocessMode {
+    match raw.map(|r| r.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("stretch" | "resize") => PreprocessMode::Stretch,
+        Some("letterbox" | "boxed" | "pad") => PreprocessMode::Letterbox,
+        Some(other) => {
+            warn!("Unknown preprocess mode '{other}', defaulting to stretch");
+            PreprocessMode::Stretch
+        }
+    }
+}
+
+/// `raw` parsed as `T` after trimming, else `default`: a typo falls back rather than failing a start.
+fn parse_or<T: std::str::FromStr>(raw: Option<&str>, default: T) -> T {
+    raw.and_then(|v| v.trim().parse().ok()).unwrap_or(default)
+}
 
 env_cached!(
     /// `KATAGLYPHIS_SWAP_XY`: set to `"1"` to swap X/Y in YOLO output coords.
@@ -91,10 +100,7 @@ env_cached!(
 env_cached!(
     /// `KATAGLYPHIS_ORT_THREADS`: ORT intra-op threads; unset or `0` keeps ORT's one per core.
     fn ort_intra_threads -> usize, || {
-        std::env::var("KATAGLYPHIS_ORT_THREADS")
-            .ok()
-            .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(0)
+        parse_or(std::env::var("KATAGLYPHIS_ORT_THREADS").ok().as_deref(), 0)
     }
 );
 
@@ -117,20 +123,14 @@ env_cached!(
 env_cached!(
     /// `KATAGLYPHIS_SCORE_THRESHOLD`: detection confidence threshold (default `0.5`).
     fn score_threshold -> f32, || {
-        std::env::var("KATAGLYPHIS_SCORE_THRESHOLD")
-            .ok()
-            .and_then(|v| v.parse::<f32>().ok())
-            .unwrap_or(0.5)
+        parse_or(std::env::var("KATAGLYPHIS_SCORE_THRESHOLD").ok().as_deref(), 0.5)
     }
 );
 
 env_cached!(
     /// `KATAGLYPHIS_INFER_EVERY_MS`: minimum interval between inference requests (default `0`).
     fn infer_every_ms -> u64, || {
-        std::env::var("KATAGLYPHIS_INFER_EVERY_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0)
+        parse_or(std::env::var("KATAGLYPHIS_INFER_EVERY_MS").ok().as_deref(), 0)
     }
 );
 
@@ -139,16 +139,65 @@ env_cached!(
 env_cached!(
     /// `KATAGLYPHIS_LOG_LEVEL`: `error` | `warn` | `info` (default) | `debug` | `trace`.
     fn log_level -> log::LevelFilter, || {
-        std::env::var("KATAGLYPHIS_LOG_LEVEL")
-            .ok()
-            .and_then(|v| match v.to_ascii_lowercase().as_str() {
-                "error" => Some(log::LevelFilter::Error),
-                "warn" | "warning" => Some(log::LevelFilter::Warn),
-                "info" => Some(log::LevelFilter::Info),
-                "debug" => Some(log::LevelFilter::Debug),
-                "trace" => Some(log::LevelFilter::Trace),
-                _ => None,
-            })
-            .unwrap_or(log::LevelFilter::Info)
+        parse_log_level(std::env::var("KATAGLYPHIS_LOG_LEVEL").ok().as_deref())
     }
 );
+
+/// The level a `KATAGLYPHIS_LOG_LEVEL` value names, any case; unset or unknown is info.
+fn parse_log_level(raw: Option<&str>) -> log::LevelFilter {
+    match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("error") => log::LevelFilter::Error,
+        Some("warn" | "warning") => log::LevelFilter::Warn,
+        Some("debug") => log::LevelFilter::Debug,
+        Some("trace") => log::LevelFilter::Trace,
+        _ => log::LevelFilter::Info,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preprocess_takes_its_synonyms_in_any_case_and_falls_back_to_stretch() {
+        assert_eq!(parse_preprocess(None), PreprocessMode::Stretch);
+        for raw in ["letterbox", " LetterBox ", "boxed", "pad"] {
+            assert_eq!(
+                parse_preprocess(Some(raw)),
+                PreprocessMode::Letterbox,
+                "{raw}"
+            );
+        }
+        for raw in ["stretch", "RESIZE", "crop", ""] {
+            assert_eq!(
+                parse_preprocess(Some(raw)),
+                PreprocessMode::Stretch,
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn numbers_are_trimmed_and_a_typo_keeps_the_default() {
+        assert_eq!(parse_or(Some(" 4 "), 0usize), 4);
+        assert_eq!(parse_or(Some("four"), 0usize), 0);
+        assert_eq!(parse_or(None, 7u64), 7);
+        assert_eq!(parse_or(Some(" 0.4"), 0.5f32), 0.4);
+        assert_eq!(
+            parse_or(Some("-1"), 0u64),
+            0,
+            "a negative interval is not a u64"
+        );
+    }
+
+    #[test]
+    fn log_levels_are_read_in_any_case_and_default_to_info() {
+        assert_eq!(parse_log_level(Some("ERROR")), log::LevelFilter::Error);
+        assert_eq!(parse_log_level(Some("warning")), log::LevelFilter::Warn);
+        assert_eq!(parse_log_level(Some(" debug ")), log::LevelFilter::Debug);
+        assert_eq!(parse_log_level(Some("trace")), log::LevelFilter::Trace);
+        assert_eq!(parse_log_level(Some("info")), log::LevelFilter::Info);
+        assert_eq!(parse_log_level(Some("loud")), log::LevelFilter::Info);
+        assert_eq!(parse_log_level(None), log::LevelFilter::Info);
+    }
+}

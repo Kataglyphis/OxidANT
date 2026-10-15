@@ -247,6 +247,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Fixed
 
+- **`KATAGLYPHIS_SCORE_THRESHOLD` and `KATAGLYPHIS_INFER_EVERY_MS` take surrounding spaces**
+  (2026-10-15), as `KATAGLYPHIS_ORT_THREADS` already did: `" 0.4"` fell back to 0.5 without a
+  word. `crates/core`'s env readers parse through pure functions now (`parse_preprocess`,
+  `parse_or`, `parse_log_level`), so the rules have tests; the crate had none of its own.
+
 - **A missing model file says so** (2026-10-15). `PersonDetector::new` answered a wrong path
   with "No ONNX backend available. Build with --features onnx_tract…", which sends one
   looking for a missing runtime. It now checks the file first ("no ONNX model at <path>"),
