@@ -46,9 +46,10 @@ impl Moving {
             index(rect[0]).saturating_sub(1),
             index(rect[1]).saturating_sub(1),
         );
+        // Saturating: an infinite coordinate is usize::MAX, and the clamp keeps the walk inside the frame.
         let (c2, r2) = (
-            (index(rect[2]) + 1).min(self.cols - 1),
-            (index(rect[3]) + 1).min(rows.saturating_sub(1)),
+            index(rect[2]).saturating_add(1).min(self.cols - 1),
+            index(rect[3]).saturating_add(1).min(rows.saturating_sub(1)),
         );
         let moving = (r1..=r2)
             .flat_map(|r| (c1..=c2).map(move |c| (r, c)))
@@ -371,6 +372,102 @@ mod tests {
         // It stays moving for a while after the square stops, then not.
         assert!(p.moving(at(20.0)).unwrap().near([0.0, 0.0, 16.0, 16.0]));
         assert!(!p.moving(at(21.5)).unwrap().near([0.0, 0.0, 16.0, 16.0]));
+    }
+
+    /// An 8x6-block grid, the 64x48 test frame's, with these (row, column) blocks moving.
+    fn moving_at(blocks: &[(usize, usize)]) -> Moving {
+        let mut grid = vec![false; 8 * 6];
+        for &(r, c) in blocks {
+            grid[r * 8 + c] = true;
+        }
+        Moving {
+            cols: 8,
+            blocks: grid,
+        }
+    }
+
+    #[test]
+    fn a_box_reaches_exactly_one_block_around_itself_and_needs_two_moving() {
+        // Block (2, 2) alone; grown by one block it spans rows and columns 1 to 3.
+        let rect = [16.0, 16.0, 23.0, 23.0];
+        assert!(moving_at(&[(1, 1), (3, 3)]).near(rect), "the grown corners");
+        assert!(
+            moving_at(&[(1, 3), (3, 1)]).near(rect),
+            "the other two corners"
+        );
+        assert!(!moving_at(&[(0, 0), (4, 4)]).near(rect), "two blocks away");
+        assert!(
+            !moving_at(&[(2, 4), (4, 2)]).near(rect),
+            "two blocks right and below"
+        );
+        assert!(!moving_at(&[(3, 3)]).near(rect), "one block is not enough");
+        assert!(moving_at(&[(2, 2), (2, 3)]).near(rect));
+    }
+
+    #[test]
+    fn a_box_at_the_right_edge_does_not_reach_into_the_next_row() {
+        // Column 7 is the last; grown past it the box must not wrap to column 0 of the row below.
+        let rect = [56.0, 0.0, 63.0, 7.0];
+        assert!(!moving_at(&[(1, 0), (2, 0)]).near(rect));
+        assert!(moving_at(&[(0, 6), (1, 7)]).near(rect));
+        // The bottom edge likewise: no row past the last.
+        assert!(moving_at(&[(5, 0), (5, 1)]).near([0.0, 40.0, 7.0, 47.0]));
+    }
+
+    #[test]
+    fn a_box_past_any_frame_is_cut_to_it_without_overflow_or_a_long_walk() {
+        let moving = moving_at(&[(5, 6), (5, 7)]);
+        let started = Instant::now();
+        assert!(moving.near([0.0, 0.0, f32::INFINITY, f32::INFINITY]));
+        assert!(moving.near([0.0, 0.0, f32::MAX, 3.0e9]));
+        assert!(
+            !moving.near([0.0, 0.0, 15.0, 3.0e9]),
+            "columns 0 to 2 hold no motion"
+        );
+        // Unclamped, the last box would walk 375 million rows.
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn motion_needs_a_block_change_over_12_in_one_block_of_200() {
+        // 640x480's 4 800 blocks: 24 changed blocks are motion, 23 are not.
+        let still = vec![100u8; 4_800];
+        let with = |n: usize, delta: u8| {
+            let mut t = still.clone();
+            for v in &mut t[..n] {
+                *v += delta;
+            }
+            t
+        };
+        assert!(moved(&still, &with(24, 13)));
+        assert!(!moved(&still, &with(23, 13)), "23 of 4 800");
+        assert!(!moved(&still, &with(4_800, 12)), "a change of 12 is noise");
+        assert!(!moved(&[], &[]), "no blocks, no motion");
+    }
+
+    #[test]
+    fn a_block_moves_on_a_change_over_12_and_motion_waits_for_the_next_look() {
+        let t = Instant::now();
+        let at = |ms: u64| t + Duration::from_millis(ms);
+        let mut p = Pacer::new(2.0, 0.2, t);
+        p.wants(t, &frame(50), W, H, false);
+        p.ran(t);
+        let quiet = at(10_500);
+        assert!(p.wants(quiet, &frame(50), W, H, false));
+        p.ran(quiet);
+        // A square appears 200 ms into the 500 ms period: not seen until the next look.
+        assert!(!p.wants(at(10_700), &with_square(50, 16, 220), W, H, false));
+        assert!(p.wants(at(11_000), &with_square(50, 16, 220), W, H, false));
+        p.ran(at(11_000));
+        // A brightening of exactly 12 marks no block; 13 marks them all.
+        p.wants(at(11_500), &with_square(62, 16, 220), W, H, false);
+        assert!(!p.moving(at(11_500)).unwrap().near([40.0, 30.0, 56.0, 46.0]));
+        p.wants(at(12_000), &with_square(75, 16, 220), W, H, false);
+        assert!(p.moving(at(12_000)).unwrap().near([40.0, 30.0, 56.0, 46.0]));
     }
 
     #[test]

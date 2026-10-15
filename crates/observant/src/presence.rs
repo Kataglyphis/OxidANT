@@ -297,6 +297,17 @@ mod tests {
     }
 
     #[test]
+    fn a_detection_exactly_half_over_an_ignored_spot_is_kept() {
+        // The spot is the frame's left half; a box over the whole frame overlaps it by exactly 0.5.
+        let spot = [0.0, 0.0, 0.5, 1.0];
+        let whole = at(0.0, 0.0, 100.0, 100.0, 0.9);
+        assert_eq!(outside(vec![whole], &[spot], 100, 100), vec![whole]);
+        // Over 0.5 it is dropped: 0.5 shared of 0.9 covered.
+        let mostly = at(0.0, 0.0, 90.0, 100.0, 0.9);
+        assert!(outside(vec![mostly], &[spot], 100, 100).is_empty());
+    }
+
+    #[test]
     fn an_arrival_takes_the_class_of_its_best_detection() {
         let t = Instant::now();
         let mut p = Presence::new(HALF);

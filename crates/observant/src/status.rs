@@ -1549,6 +1549,80 @@ mod tests {
     }
 
     #[test]
+    fn only_a_missing_visits_file_falls_back_to_the_old_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(LEGACY_VISITS_FILE), "legacy").unwrap();
+        assert_eq!(read_visits(dir.path()).unwrap(), "legacy");
+        // A visits file that cannot be read is an error, not the old file's stale count.
+        std::fs::create_dir(dir.path().join(VISITS_FILE)).unwrap();
+        assert!(read_visits(dir.path()).is_err());
+        std::fs::remove_dir(dir.path().join(VISITS_FILE)).unwrap();
+        std::fs::write(dir.path().join(VISITS_FILE), "current").unwrap();
+        assert_eq!(read_visits(dir.path()).unwrap(), "current");
+    }
+
+    #[test]
+    fn a_name_and_the_ignored_spots_may_reach_their_limits_but_not_pass_them() {
+        let named = |n: usize| Settings {
+            name: Some("x".repeat(n)),
+            ..Settings::default()
+        };
+        assert!(named(NAME_MAX).validate().is_ok());
+        assert!(named(NAME_MAX + 1).validate().is_err());
+        let spots = |n: usize| Settings {
+            ignore: Some(vec![[0.1, 0.1, 0.2, 0.2]; n]),
+            ..Settings::default()
+        };
+        assert!(spots(IGNORE_MAX).validate().is_ok());
+        assert!(spots(IGNORE_MAX + 1).validate().is_err());
+    }
+
+    #[test]
+    fn a_frame_older_than_20_s_is_a_problem_and_one_at_20_s_is_not() {
+        gst::init().unwrap();
+        let status = Status::new("Cam", true, 4, 4);
+        status.set_camera("v4l2src /dev/video0 (C920)", false);
+        let ago = |s: u64| Instant::now().checked_sub(Duration::from_secs(s));
+        *status.last_frame.lock().unwrap() = ago(20);
+        assert_eq!(status.health().1, None);
+        *status.last_frame.lock().unwrap() = ago(21);
+        assert_eq!(status.health().1.as_deref(), Some("no frame for 21 s"));
+    }
+
+    #[test]
+    fn visit_times_are_wall_clock_seconds() {
+        let wall = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(
+            unix_now().abs_diff(wall) <= 1,
+            "{} against {wall}",
+            unix_now()
+        );
+    }
+
+    #[test]
+    fn a_failing_model_counts_its_failures_in_a_row() {
+        let status = Status::new("Cam", true, 4, 4);
+        let counts: Vec<u32> = (0..3)
+            .map(|i| status.record_model_failure(format!("run {i}")))
+            .collect();
+        assert_eq!(counts, [1, 2, 3]);
+    }
+
+    #[test]
+    fn the_counters_count_every_frame_pushed() {
+        gst::init().unwrap();
+        let status = Status::new("Cam", true, 4, 4);
+        let frame = gst::Buffer::with_size(16).unwrap();
+        for _ in 0..3 {
+            status.set_frame(&frame);
+        }
+        assert_eq!(status.counters(), (3, 0));
+    }
+
+    #[test]
     fn the_watched_classes_come_from_the_settings_and_name_each_visit() {
         let status = Status::new("Cam", true, 4, 4);
         assert_eq!(status.classes(), ["cat"]);

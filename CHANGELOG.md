@@ -15,6 +15,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Mutation testing of ObservANT's arrival logic** (2026-10-15). cargo-mutants planted 393 bugs in
+  `motion.rs`, `presence.rs` and `status.rs`; the tests caught about 92 % of the 379 that compile.
+  New tests for each gap: a box reaches exactly one block around itself and needs two moving, and
+  does not wrap past the right edge; a change of 12 is noise and 24 of 4 800 blocks are motion;
+  motion within a period waits for the next look; an IoU of exactly 0.5 keeps a detection; only a
+  missing visits file falls back to the old name; a name and the ignored spots may reach their
+  limits; a frame 21 s old is a problem and 20 s not; the counters and the failure count; visit
+  times are wall-clock seconds. Now 375 of 379; the 4 left change a log line or a bound no client
+  sees.
+
 - **Telemetry tests that test it** (2026-10-15). `kataglyphis_telemetry` stood at 8.4 % with
   tests that built a struct and read it back, and one that expected the process-wide counters
   at zero, which a second recording test would have broken. Now: `tick` turns frames,
@@ -246,6 +256,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `feature-checks-per-job` brings back one job per set.
 
 ### Fixed
+
+- **An infinite box coordinate no longer overflows `Moving::near`** (2026-10-15). `index(v) + 1`
+  overflowed for `inf` (`usize::MAX`), a panic in a debug build; it saturates now, and a box far
+  past the frame is still cut to it. Found while checking the last mutant of the arrival logic.
 
 - **`KATAGLYPHIS_SCORE_THRESHOLD` and `KATAGLYPHIS_INFER_EVERY_MS` take surrounding spaces**
   (2026-10-15), as `KATAGLYPHIS_ORT_THREADS` already did: `" 0.4"` fell back to 0.5 without a
