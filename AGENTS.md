@@ -653,9 +653,9 @@ those lanes. Each lane also has *Run workflow* (`gh workflow run windows-x64.yml
 develop`). A change to Windows-, arm64- or riscv64-only code asks for its lane in its
 commit message. No lane carries an `if:`; the call in `on-request.yml` does. From
 2026-09-24 to 2026-10-15 every lane ran on every push; before that `[build-arm]` and
-`[build-win]` gated two of them, and nothing reads those any more. A `release.yml` on
-`main` waits for the owner's choice of version source (`VERSION.txt` says 2.3.4,
-`Cargo.toml` 0.1.0).
+`[build-win]` gated two of them, and nothing reads those any more. The version lives in
+`Cargo.toml`'s `[workspace.package]` alone (owner, 2026-10-15: 2.3.4, and `VERSION.txt` is
+gone); a `release.yml` on `main` that publishes it is the next step.
 
 **The names follow the family convention of the same date:** kebab-case files, one per
 platform + arch, display names `<Platform> <Arch> · <what>` (U+00B7 middle dot).
@@ -697,7 +697,8 @@ which a local container run executes too:
   update to see whether it is gone. No arm64 Windows container image exists, so that
   job is the only place an arm64 binary of this repo executes.
 
-Both lanes resolve the version from `VERSION.txt` (the lane's `version-file`). Both take
+Both lanes resolve the version from `Cargo.toml`'s `[workspace.package]` (the lane's
+`version-file`, read by the hub's `version_util.sh`); it is the only copy since 2026-10-15. Both take
 the package features and MSIX metadata from `Build-Windows.config.psd1`
 (`gui_windows,onnxruntime_directml`). Both upload `dist/windows-<x64|arm64>` whole: the
 portable bundle, the MSIX and the MSI.

@@ -12,7 +12,8 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+# The one version (owner, 2026-10-15): CI, the packages and the MSIX read it here.
+version = "2.3.4"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Kataglyphis/OxidANT"

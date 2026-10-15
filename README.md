@@ -501,7 +501,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
 
 An existing PFX works the same way, and its subject must match the publisher too.
 The package is `dist\windows-<arch>\msix\Kataglyphis.OxidANT_<VERSION>_<arch>.msix`,
-with `VERSION.txt`'s version padded to four parts (`2.3.4` becomes `2.3.4.0`).
+with `Cargo.toml`'s `[workspace.package]` version padded to four parts (`2.3.4` becomes `2.3.4.0`).
 ANTfrastructure's standalone `New-MsixPackage.ps1`, which this section used to show,
 cannot package this repo: it fills `__PACKAGE_NAME__`-style tokens, while
 `packaging/msix/AppxManifest.template.xml` carries the `__MSIX_*__` tokens that
@@ -526,7 +526,7 @@ Get-AppxPackage -Name Kataglyphis.OxidANT | Select-Object Name, PackageFullName,
 $pkg = Get-AppxPackage -Name Kataglyphis.OxidANT
 Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
 
-# update: raise VERSION.txt, rebuild and sign, then install it the same way
+# update: raise the version in Cargo.toml, rebuild and sign, then install it the same way
 Add-AppxPackage -Path dist\windows-x64\msix\Kataglyphis.OxidANT_<NEW_VERSION>_x64.msix
 
 Get-AppxPackage -Name Kataglyphis.OxidANT | Remove-AppxPackage

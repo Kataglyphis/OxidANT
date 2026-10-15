@@ -253,6 +253,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Changed
 
+- **The version lives in `Cargo.toml` alone: 2.3.4** (2026-10-15, owner). `[workspace.package]`
+  said 0.1.0 while `VERSION.txt` said 2.3.4, and CI, the packages and the MSIX read the text file.
+  `VERSION.txt` is gone; `compute-version.sh` and both Windows lanes' `version-file` hand the hub's
+  `version_util.sh` the `Cargo.toml`, and a local Windows build's MSIX version comes from it through
+  `Get-CargoMsixVersion` (`WindowsCargoTarget.Common`) instead of `Build-Windows.config.psd1`'s
+  `0.1.0.0`. Every workspace crate is 2.3.4, so ObservANT's `-dev` build reports `2.3.4-dev`.
+
 - **CI: a push to `develop` runs Linux x64 and the gates; the other build lanes run on request**
   (2026-10-15, owner rule for the family, ANTfrastructure's `docs/branch-and-release-strategy.md`).
   Linux arm64, Linux riscv64, Windows x64 and Windows arm64 lost their push and pull-request

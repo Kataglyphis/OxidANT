@@ -5160,7 +5160,7 @@ dependencies = [
 
 [[package]]
 name = "kataglyphis_cli"
-version = "0.1.0"
+version = "2.3.4"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -5175,7 +5175,7 @@ dependencies = [
 
 [[package]]
 name = "kataglyphis_core"
-version = "0.1.0"
+version = "2.3.4"
 dependencies = [
  "chrono",
  "env_logger",
@@ -5184,7 +5184,7 @@ dependencies = [
 
 [[package]]
 name = "kataglyphis_gui"
-version = "0.1.0"
+version = "2.3.4"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -5210,7 +5210,7 @@ dependencies = [
 
 [[package]]
 name = "kataglyphis_inference"
-version = "0.1.0"
+version = "2.3.4"
 dependencies = [
  "anyhow",
  "criterion",
@@ -5223,7 +5223,7 @@ dependencies = [
 
 [[package]]
 name = "kataglyphis_media"
-version = "0.1.0"
+version = "2.3.4"
 dependencies = [
  "anyhow",
  "gstreamer",
@@ -5234,7 +5234,7 @@ dependencies = [
 
 [[package]]
 name = "kataglyphis_observant"
-version = "0.1.0"
+version = "2.3.4"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5267,7 +5267,7 @@ dependencies = [
 
 [[package]]
 name = "kataglyphis_telemetry"
-version = "0.1.0"
+version = "2.3.4"
 dependencies = [
  "log",
  "serde",
@@ -5278,7 +5278,7 @@ dependencies = [
 
 [[package]]
 name = "kataglyphis_webgpu_renderer"
-version = "0.1.0"
+version = "2.3.4"
 dependencies = [
  "anyhow",
  "bevy_mikktspace",
@@ -6536,7 +6536,7 @@ checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
 
 [[package]]
 name = "oxidant"
-version = "0.1.0"
+version = "2.3.4"
 dependencies = [
  "anyhow",
  "assert_cmd",

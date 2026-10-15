@@ -33,7 +33,7 @@ jobs:
       # Package features and MSIX metadata come from Build-Windows.config.psd1, as for x64.
       container-env: |
         CARGO_TERM_COLOR=always
-      version-file: VERSION.txt
+      version-file: Cargo.toml
       artifact-name: kataglyphis_cli-windows-arm64
       artifact-dir: dist/windows-arm64
       # The exe, the VC++ runtime and the chain ONNX Runtime at the least.
