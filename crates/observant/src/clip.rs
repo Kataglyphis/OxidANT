@@ -341,6 +341,8 @@ mod tests {
 
     #[test]
     fn a_scratch_directory_is_new_and_under_the_temp_dir() {
+        // The encode tests count these directories, so they must not see ours come and go.
+        let _one = one_encode();
         let (a, b) = (tempfile_dir().unwrap(), tempfile_dir().unwrap());
         assert!(a.is_dir() && b.is_dir());
         assert_ne!(a, b);
