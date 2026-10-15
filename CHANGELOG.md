@@ -15,6 +15,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **The camera's restart backoff is tested** (2026-10-15). `Capture::run` waits 1 s doubling to 32 s
+  between failed captures, starts over after one that ran more than a minute, and re-probes at once
+  when a stand-in test pattern ran its course; the audit found none of it tested. The rule is the
+  `Backoff` type now, unchanged, with tests for each case and both boundaries.
+
 - **Mutation testing of ObservANT's arrival logic** (2026-10-15). cargo-mutants planted 393 bugs in
   `motion.rs`, `presence.rs` and `status.rs`; the tests caught about 92 % of the 379 that compile.
   New tests for each gap: a box reaches exactly one block around itself and needs two moving, and

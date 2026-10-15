@@ -26,6 +26,30 @@ use crate::status::Status;
 const REPROBE_EVERY: Duration = Duration::from_secs(30);
 /// A camera that delivers no frame for this long counts as gone.
 const STALL_AFTER: Duration = Duration::from_secs(10);
+/// A capture that ran this long was a working camera: the next failure backs off from 1 s again.
+const STABLE_AFTER: Duration = Duration::from_secs(60);
+
+/// How long to wait before capturing again: 1 s, doubling to 32 s while captures keep failing.
+#[derive(Debug, Default)]
+struct Backoff {
+    failures: u32,
+}
+
+impl Backoff {
+    /// The pause after a capture that ran `ran_for`; `None` for a stand-in that ran its course,
+    /// which probes for the camera again at once.
+    fn after(&mut self, ran_for: Duration, failed: bool, stand_in: bool) -> Option<Duration> {
+        if ran_for > STABLE_AFTER {
+            self.failures = 0;
+        }
+        if stand_in && !failed {
+            return None;
+        }
+        let pause = Duration::from_secs(1 << self.failures.min(5));
+        self.failures = self.failures.saturating_add(1);
+        Some(pause)
+    }
+}
 /// One pull's wait, which bounds how fast shutdown, errors and stalls are noticed.
 const PULL_TIMEOUT: gst::ClockTime = gst::ClockTime::from_mseconds(500);
 
@@ -76,7 +100,7 @@ impl Worker {
             )
         });
         let frames = inference.as_ref().map(|(tx, _)| tx);
-        let mut failures: u32 = 0;
+        let mut backoff = Backoff::default();
         while !self.shutdown.load(Ordering::Relaxed) {
             let found = camera::probe(&self.choice);
             let plan = camera::choose(&self.choice, &found.probe);
@@ -101,13 +125,9 @@ impl Worker {
                 Ok(_) if !plan.is_stand_in() => log::info!("capture from {label} ended"),
                 Ok(_) => {}
             }
-            if started.elapsed() > Duration::from_secs(60) {
-                failures = 0;
-            }
-            // A stand-in that ran its course re-probes at once; anything else backs off 1 s .. 32 s.
-            if result.is_err() || !plan.is_stand_in() {
-                let pause = Duration::from_secs(1 << failures.min(5));
-                failures = failures.saturating_add(1);
+            if let Some(pause) =
+                backoff.after(started.elapsed(), result.is_err(), plan.is_stand_in())
+            {
                 self.sleep(pause);
             }
         }
@@ -757,6 +777,53 @@ fn flip_method(rotate: u32) -> anyhow::Result<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failures_back_off_from_1_s_doubling_to_32() {
+        let mut backoff = Backoff::default();
+        let pauses: Vec<u64> = (0..7)
+            .map(|_| {
+                backoff
+                    .after(Duration::from_secs(2), true, false)
+                    .unwrap()
+                    .as_secs()
+            })
+            .collect();
+        assert_eq!(pauses, [1, 2, 4, 8, 16, 32, 32]);
+    }
+
+    #[test]
+    fn a_capture_that_ran_over_a_minute_starts_the_backoff_again() {
+        let mut backoff = Backoff::default();
+        for _ in 0..4 {
+            backoff.after(Duration::from_secs(1), true, false);
+        }
+        // Exactly a minute is not over it.
+        assert_eq!(
+            backoff.after(STABLE_AFTER, true, false),
+            Some(Duration::from_secs(16))
+        );
+        assert_eq!(
+            backoff.after(STABLE_AFTER + Duration::from_secs(1), true, false),
+            Some(Duration::from_secs(1))
+        );
+    }
+
+    #[test]
+    fn a_stand_in_that_ran_its_course_probes_at_once_and_counts_no_failure() {
+        let mut backoff = Backoff::default();
+        assert_eq!(backoff.after(REPROBE_EVERY, false, true), None);
+        assert_eq!(backoff.after(REPROBE_EVERY, false, true), None);
+        // A real camera's source that ended, or a stand-in that failed, waits; still from 1 s.
+        assert_eq!(
+            backoff.after(Duration::from_secs(5), false, false),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            backoff.after(Duration::from_secs(5), true, true),
+            Some(Duration::from_secs(2))
+        );
+    }
     use crate::motion::rate_period;
 
     /// Runs the capture worker on `config.camera` into an appsrc/appsink pair and returns `wanted` frames.
