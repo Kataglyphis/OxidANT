@@ -1,24 +1,22 @@
 # Cross-builds arm64 on an amd64 runner, then windows-11-arm runs it; what that skips: AGENTS.md § Continuous integration.
 name: Windows arm64 · cross build + test
 
+# On request only (third_party/ANTfrastructure/docs/branch-and-release-strategy.md): on-request.yml or by hand.
 on:
-  push:
-    branches: [ "main", "develop" ]
-  pull_request:
-    branches: [ "main", "develop" ]
   workflow_dispatch:
     inputs:
       parallel-renderer-tests:
         description: Run the renderer tests in parallel on windows-11-arm, to name the WARP crash (BACKLOG)
         type: boolean
         default: false
+  workflow_call:
 
 permissions:
   contents: read
 
-# Superseded runs off the default branch cancel; default-branch runs always finish.
+# A literal name (github.workflow is the caller's when called); superseded runs off the default branch cancel.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: windows-arm64-cross-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 jobs:

@@ -252,6 +252,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `stayed_s`, as a visit shorter than the clip's post-roll ends before the clip is written.
 
 ### Changed
+
+- **CI: a push to `develop` runs Linux x64 and the gates; the other build lanes run on request**
+  (2026-10-15, owner rule for the family, ANTfrastructure's `docs/branch-and-release-strategy.md`).
+  Linux arm64, Linux riscv64, Windows x64 and Windows arm64 lost their push and pull-request
+  triggers. A commit message asks with `[ci <lane>]` (`[ci windows]`, `[ci arm64]`,
+  `[ci riscv64]`, `[ci all]`), which the new `on-request.yml` reads through the hub's
+  `requested-lanes` action, and each lane has *Run workflow*. Each lane's concurrency group is
+  its literal name now, since `github.workflow` is the caller's inside a called workflow and
+  would put every requested lane in one group. riscv64 keeps its weekly GPU run.
 - **The default model is DEIM-D-FINE-N (Apache-2.0), fetched rather than tracked**
   (2026-10-14, owner). The AGPL-3.0 `resources/models/yolov10m.onnx` (59 MiB) is no longer
   tracked; `MODEL_FILE` is `deim_dfine_n_coco.onnx` (15 MiB, COCO 80, 43.0 AP), built from

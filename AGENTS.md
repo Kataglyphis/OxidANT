@@ -73,6 +73,7 @@ The entries this repo reaches for most:
 | Dev Drive filter setup, bind mount vs tar-pipe, container reuse | `docs/windows-container-build-performance.md` |
 | How do I run Linux containers on Windows? | `docs/rancher-desktop-linux-containers.md` |
 | Which image, which tag, which engine? | `docs/adopting-in-a-new-project.md` |
+| Which lanes run when, how to ask for one (`[ci windows]`, `[ci arm64]`, `[ci all]`), and when `main` is released | `docs/branch-and-release-strategy.md` |
 | Why did my lane not run? | `docs/ci-build-triggers.md` |
 | How do I upgrade a dependency, and what will `--apply` refuse to move? | `docs/dependency-updates.md` |
 | How long may a code comment be? One line, only the why; API docs short; gated | [the hub rule, Comments](third_party/ANTfrastructure/AGENTS.md#comments-one-line-only-the-why) |
@@ -626,7 +627,7 @@ malformed and stayed that way through several edits.
 
 ### Continuous integration
 
-Eight workflow files: seven triggered, one reusable. The five build lanes — one file per platform + arch — run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and **none of the three gate jobs is a copied job any more** — all three are one `uses:` onto ANTfrastructure, two onto a reusable workflow and one onto a composite action:
+Nine workflow files: the build lanes, the gate lanes, `on-request.yml` and the reusable `reusable-linux.yml`. The five build lanes — one file per platform + arch — run inside ANTfrastructure images rather than on the runner; the gate lanes pull no image at all, and **none of the three gate jobs is a copied job any more** — all three are one `uses:` onto ANTfrastructure, two onto a reusable workflow and one onto a composite action:
 
 | Lane (display name) | Workflow | Runs when | Image and runner |
 | --- | --- | --- | --- |
@@ -634,20 +635,26 @@ Eight workflow files: seven triggered, one reusable. The five build lanes — on
 | Lint gates | `lint-gates.yml` (job `powershell-lint`) | same | none — the hub's reusable `python-ci-windows.yml` with `build-python-package: false`, `lint-powershell: true`, `lint-path: scripts`, and no `secrets:` block; `Invoke-Lint.ps1 -Path scripts -FailOnAnalyzer` on `windows-2025` |
 | Lint gates | `lint-gates.yml` (job `generated-artifacts`) | same | none — every suite in `scripts/windows/tests/` (the generated-artifacts check, `CargoTarget` and `OrtPayload`) under Pester 3.4.0 on `windows-2025` |
 | Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — the hub's reusable `submodule-pins.yml` (`Submodule.Pins.Tests.ps1`, Pester 3.4.0, `windows-2025`) |
-| Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push/PR to `main`/`develop`, and `workflow_dispatch` | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
-| Linux arm64 · build + test | `linux-arm64.yml` → `reusable-linux.yml` | same | same image (a multi-arch index); native `ubuntu-26.04-arm`, no QEMU |
-| Linux riscv64 · cross build + test | `linux-riscv64.yml` → the hub's reusable `container-ci-riscv64.yml` (since 2026-10-01) | same | family Linux CI image (amd64) on `ubuntu-26.04`, plus a sysroot exported from the image's riscv64 child; the tests run under QEMU |
-| Windows x64 · build + test | `windows-x64.yml` → the hub's reusable `container-ci-windows.yml` (since 2026-09-25) | same | family Windows CI image, inherited; `windows-2025`, whose host runs the renderer tests and the packaged exe |
-| Windows arm64 · cross build + test | `windows-arm64-cross.yml` → the hub's reusable `container-ci-windows.yml` | same | the family image's arm64 bundle, inherited from the action's `image-arm64` default; `windows-2025` builds, `windows-11-arm` runs the product |
-| Linux x64 · build + test | `linux-x64.yml` (job `feature-matrix`) | same, since 2026-10-06 (`[build-features]` before) | family Linux CI image; `ubuntu-26.04`, one runner and image pull for every feature set since 2026-10-13 (the `feature-checks-per-job` dispatch input splits it per set) |
+| Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push/PR to `main`/`develop`, and `workflow_dispatch` (on `main` until a `release.yml` takes it) | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
+| Linux arm64 · build + test | `linux-arm64.yml` → `reusable-linux.yml` | on request: `[ci arm64]` or `[ci linux]` in a commit message (`on-request.yml`), or `workflow_dispatch` | same image (a multi-arch index); native `ubuntu-26.04-arm`, no QEMU |
+| Linux riscv64 · cross build + test | `linux-riscv64.yml` → the hub's reusable `container-ci-riscv64.yml` (since 2026-10-01) | on request (`[ci riscv64]`), and the weekly GPU run | family Linux CI image (amd64) on `ubuntu-26.04`, plus a sysroot exported from the image's riscv64 child; the tests run under QEMU |
+| Windows x64 · build + test | `windows-x64.yml` → the hub's reusable `container-ci-windows.yml` (since 2026-09-25) | on request (`[ci windows]`, `[ci x64]`) | family Windows CI image, inherited; `windows-2025`, whose host runs the renderer tests and the packaged exe |
+| Windows arm64 · cross build + test | `windows-arm64-cross.yml` → the hub's reusable `container-ci-windows.yml` | on request (`[ci windows]`, `[ci arm64]`) | the family image's arm64 bundle, inherited from the action's `image-arm64` default; `windows-2025` builds, `windows-11-arm` runs the product |
+| Linux x64 · build + test | `linux-x64.yml` (job `feature-matrix`) | with Linux x64, since 2026-10-06 (`[build-features]` before) | family Linux CI image; `ubuntu-26.04`, one runner and image pull for every feature set since 2026-10-13 (the `feature-checks-per-job` dispatch input splits it per set) |
 
-**Every platform lane runs on every push and PR, since 2026-09-24** (owner request).
-None of the five build lanes carries an `if:`, and none may be added back. Until that
-date the arm64 row needed `[build-arm]` and the Windows lane `[build-win]` in the HEAD
-commit message, so both reported `skipped` on almost every push — which a badge
-renders the same as a pass. ANTfrastructure's `docs/ci-build-triggers.md` still
-describes those markers for the family; nothing here reads them any more. The feature
-check, the last opt-in job, runs on every push too since 2026-10-06.
+**A push to `develop` runs Linux x64 and the gates; every other build lane runs on
+request** (owner rule 2026-10-15 for the whole family, [ANTfrastructure's
+`branch-and-release-strategy.md`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/branch-and-release-strategy.md)).
+A commit message asks with `[ci <lane>]`: `[ci windows]` runs both Windows lanes,
+`[ci arm64]` both arm64 ones, `[ci riscv64]` the riscv64 lane, `[ci all]` all four;
+`on-request.yml` reads the tokens through the hub's `requested-lanes` action and calls
+those lanes. Each lane also has *Run workflow* (`gh workflow run windows-x64.yml --ref
+develop`). A change to Windows-, arm64- or riscv64-only code asks for its lane in its
+commit message. No lane carries an `if:`; the call in `on-request.yml` does. From
+2026-09-24 to 2026-10-15 every lane ran on every push; before that `[build-arm]` and
+`[build-win]` gated two of them, and nothing reads those any more. A `release.yml` on
+`main` waits for the owner's choice of version source (`VERSION.txt` says 2.3.4,
+`Cargo.toml` 0.1.0).
 
 **The names follow the family convention of the same date:** kebab-case files, one per
 platform + arch, display names `<Platform> <Arch> · <what>` (U+00B7 middle dot).
@@ -655,11 +662,12 @@ Steps both architectures share live once, in `reusable-linux.yml` ("Linux · reu
 build", `workflow_call`); `linux-x64.yml` and `linux-arm64.yml` only say when they run
 and which runner, container platform and artifact suffix they want. The gate lanes
 kept their files and took plain names, "Lint gates" and "Submodule pins".
-Concurrency is per workflow: each triggered build workflow groups on
-`${{ github.workflow }}-${{ github.ref }}` and cancels a superseded run except on the
-default branch. `reusable-linux.yml` declares no group, because inside a called
-workflow `github.workflow` is the caller's name, and GitHub cancels a callee whose
-group repeats its caller's as a deadlock.
+Concurrency is per lane: each build workflow groups on its own literal name,
+`<lane>-${{ github.ref }}` (since 2026-10-15), and cancels a superseded run except on
+the default branch. Never `${{ github.workflow }}` there: inside a called workflow it is
+the caller's name, so every lane `on-request.yml` calls would share one group, and
+GitHub cancels a callee whose group repeats its caller's as a deadlock.
+`reusable-linux.yml` declares no group for the same reason.
 
 **Both Windows lanes are thin callers of the hub's `container-ci-windows.yml`** (owner
 decisions 2026-09-25). Its container half is `scripts/windows/Invoke-WindowsLane.ps1`,
