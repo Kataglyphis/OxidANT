@@ -5272,6 +5272,7 @@ dependencies = [
  "log",
  "serde",
  "sysinfo",
+ "tempfile",
  "wmi",
 ]
 

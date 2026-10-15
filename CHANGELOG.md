@@ -15,6 +15,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Telemetry tests that test it** (2026-10-15). `kataglyphis_telemetry` stood at 8.4 % with
+  tests that built a struct and read it back, and one that expected the process-wide counters
+  at zero, which a second recording test would have broken. Now: `tick` turns frames,
+  inferences and their durations into rates over the elapsed time and falls to zero when idle;
+  the GPU fields appear only when sampled; `write_line` appends; the monitor thread writes every
+  field to its log file and stops on drop.
+
 - **Mutation testing of ObservANT's network-facing code** (2026-10-15). cargo-mutants planted 163
   bugs in `web.rs` and `static_files.rs`; the tests caught about 84 % of those that compile. New
   tests for each gap: every content type, the gzip cache (once per version), route resolution

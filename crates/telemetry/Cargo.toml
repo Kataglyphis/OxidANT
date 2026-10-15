@@ -12,5 +12,8 @@ sysinfo = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 wmi = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [lints]
 workspace = true
