@@ -36,8 +36,8 @@ const ORT_THREADS_ENV: &str = "KATAGLYPHIS_ORT_THREADS";
 /// systemd's `StateDirectory=` for the unit; the cat's visits are kept there across restarts.
 const STATE_DIR_ENV: &str = "STATE_DIRECTORY";
 
-/// `inference = "auto"` skips the model on boards with less memory than this (a Pi Zero 2 W has 512 MB).
-const AUTO_INFERENCE_MIN_MIB: u64 = 1024;
+/// `inference = "auto"` skips the model below this: a 512 MB Pi Zero 2 W reports ~430 MiB, a 1 GB Pi 3 905 MiB.
+const AUTO_INFERENCE_MIN_MIB: u64 = 768;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -354,7 +354,7 @@ fn load_detector(config: &Config) -> anyhow::Result<Option<PersonDetector>> {
         Inference::On => open().map(Some),
         Inference::Auto => {
             let mib = total_memory_mib();
-            if mib < AUTO_INFERENCE_MIN_MIB {
+            if !auto_inference_fits(mib) {
                 log::info!(
                     "inference off: {mib} MiB RAM is below the {AUTO_INFERENCE_MIN_MIB} MiB auto needs"
                 );
@@ -402,6 +402,11 @@ fn state_dir() -> Option<PathBuf> {
 fn first_dir(list: &str) -> Option<PathBuf> {
     let first = list.split(':').next()?.trim();
     (!first.is_empty()).then(|| PathBuf::from(first))
+}
+
+/// The GPU keeps part of a board's RAM, so a 1 GB board reports less than 1024 MiB.
+fn auto_inference_fits(total_mib: u64) -> bool {
+    total_mib >= AUTO_INFERENCE_MIN_MIB
 }
 
 fn total_memory_mib() -> u64 {
@@ -688,6 +693,15 @@ mod tests {
         );
         config.inference = Inference::Auto;
         assert!(load_detector(&config).unwrap().is_none());
+    }
+
+    #[test]
+    fn auto_runs_the_model_on_a_1_gb_board_and_skips_a_512_mb_one() {
+        // MemTotal as measured: a Pi 3 Model B (2026-10-15), and a Pi Zero 2 W's 512 MB less the GPU's share.
+        assert!(auto_inference_fits(905), "a 1 GB Pi 3 must run the model");
+        assert!(!auto_inference_fits(427), "a 512 MB Pi Zero 2 W must not");
+        assert!(auto_inference_fits(AUTO_INFERENCE_MIN_MIB));
+        assert!(!auto_inference_fits(AUTO_INFERENCE_MIN_MIB - 1));
     }
 
     #[test]

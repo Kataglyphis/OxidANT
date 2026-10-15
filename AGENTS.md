@@ -530,7 +530,8 @@ board runs it as one service unit:
   from before the rename still reads), `--config` or `$KATAGLYPHIS_OBSERVANT_CONFIG` (or the
   older `$KATAGLYPHIS_CATCAM_CONFIG`), with the flags on top. Unknown keys are errors, and
   `--print-config` prints the effective set. Every earlier flag still works.
-  `inference = "auto"` skips the model below 1 GiB of RAM or when it does not load.
+  `inference = "auto"` skips the model below 768 MiB of RAM (a 512 MB board; a 1 GB Pi 3 reports
+  905 MiB) or when it does not load.
 - **A Windows install is one folder, and the exe finds everything in it** (`install.rs`).
   - When `lib\gstreamer-1.0` sits beside the exe, `install::adopt` sets the variables the
     folder implies, first thing in `main`: `GST_PLUGIN_PATH`, an empty

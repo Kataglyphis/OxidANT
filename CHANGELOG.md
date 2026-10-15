@@ -314,6 +314,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Fixed
 
+- **`inference = "auto"` runs the model on 1 GB boards** (2026-10-15). It skipped the model
+  below 1024 MiB of RAM to spare a 512 MB Pi Zero 2 W, but the GPU keeps part of every board's
+  RAM: a 1 GB Pi 3 Model B reports 905 MiB, so it streamed without detection. The threshold is
+  768 MiB (`auto_inference_fits`), between the two, and a test pins both boards' figures.
+
 - **An infinite box coordinate no longer overflows `Moving::near`** (2026-10-15). `index(v) + 1`
   overflowed for `inf` (`usize::MAX`), a panic in a debug build; it saturates now, and a box far
   past the frame is still cut to it. Found while checking the last mutant of the arrival logic.
