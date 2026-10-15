@@ -426,6 +426,53 @@ mod tests {
     }
 
     #[test]
+    fn validation_takes_each_limit_itself() {
+        let good = [
+            Config {
+                inference_fps: 0.0,
+                ..Config::default()
+            },
+            Config {
+                clip_seconds: 60,
+                ..Config::default()
+            },
+            Config {
+                ice_port_min: 50000,
+                ice_port_max: 50000,
+                ..Config::default()
+            },
+            Config {
+                notify_url: Some("http://homeassistant.local:8123/api/webhook/cat".into()),
+                ..Config::default()
+            },
+            Config {
+                notify_url: Some("https://hooks.example.org/cat".into()),
+                ..Config::default()
+            },
+        ];
+        for config in good {
+            assert!(config.validate().is_ok(), "refused {config:?}");
+        }
+    }
+
+    #[test]
+    fn a_packaged_install_reads_its_config_from_the_system_directory() {
+        let path = system_config();
+        let name = path.file_name().and_then(|n| n.to_str());
+        assert!(
+            matches!(name, Some("observant.toml" | "catcam.toml")),
+            "{path:?}"
+        );
+        assert!(
+            path.parent()
+                .is_some_and(|dir| dir.ends_with("omni-accelerant")),
+            "{path:?}"
+        );
+        #[cfg(not(windows))]
+        assert!(path.starts_with("/etc"), "{path:?}");
+    }
+
+    #[test]
     fn a_peer_is_an_origin_and_nothing_more() {
         let peers = |list: &[&str]| Config {
             peers: list.iter().map(|p| (*p).to_owned()).collect(),

@@ -196,7 +196,29 @@ pub fn payload(
 mod tests {
     use super::*;
     use std::io::{BufRead as _, BufReader, Read as _, Write as _};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
+
+    /// The next connection, or a failed test after `limit`: a lost event must not hang the suite.
+    fn accept_within(listener: &TcpListener, limit: Duration) -> TcpStream {
+        listener.set_nonblocking(true).unwrap();
+        let until = Instant::now() + limit;
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    // Windows hands the listener's non-blocking mode on to the accepted socket.
+                    stream.set_nonblocking(false).unwrap();
+                    stream.set_read_timeout(Some(limit)).unwrap();
+                    return stream;
+                }
+                Err(err)
+                    if err.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < until =>
+                {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => panic!("no request within {limit:?}: {err}"),
+            }
+        }
+    }
 
     #[test]
     fn the_payload_names_the_event_and_its_numbers() {
@@ -295,6 +317,22 @@ mod tests {
         );
         assert_eq!(origin("https://ntfy.sh/my-cats"), "https://ntfy.sh");
         assert_eq!(origin("http://cats.local"), "http://cats.local");
+        // A short host must not let part of the path through.
+        assert_eq!(origin("http://ha/api/webhook/x"), "http://ha");
+        assert_eq!(origin("no-scheme/secret"), "no-scheme");
+    }
+
+    #[test]
+    fn event_and_visit_times_are_wall_clock_seconds() {
+        let wall = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(
+            unix_now().abs_diff(wall) <= 1,
+            "{} against {wall}",
+            unix_now()
+        );
     }
 
     /// The lowercased request head lines and the body of the one POST a [`webhook`] took.
@@ -305,7 +343,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/api/webhook/cats", listener.local_addr().unwrap());
         let server = thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
+            let stream = accept_within(&listener, Duration::from_secs(10));
             let mut reader = BufReader::new(stream);
             let mut head = Vec::new();
             let mut line = String::new();
@@ -392,7 +430,7 @@ mod tests {
                 b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n",
                 b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n",
             ] {
-                let (stream, _) = listener.accept().unwrap();
+                let stream = accept_within(&listener, Duration::from_secs(10));
                 let mut reader = BufReader::new(stream);
                 let mut length = 0;
                 let mut line = String::new();
@@ -433,6 +471,14 @@ mod tests {
         notifier.send_clip(arrival, None);
         // The arrival twice (refused, then taken), and only then its clip: order holds.
         assert_eq!(server.join().unwrap(), ["arrived", "arrived", "clip"]);
+    }
+
+    #[test]
+    fn every_retry_falls_inside_the_age_limit() {
+        let last_try: Duration = RETRY_DELAYS.iter().sum();
+        // With a timeout per try, the last retry still starts well before the event is dropped.
+        let worst = last_try + TIMEOUT * (RETRY_DELAYS.len() as u32 + 1);
+        assert!(worst < MAX_AGE, "{worst:?} against {MAX_AGE:?}");
     }
 
     #[test]

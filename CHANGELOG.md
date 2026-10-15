@@ -15,6 +15,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Mutation testing of ObservANT's camera choice, config and webhook** (2026-10-15). cargo-mutants
+  on `camera.rs`, `config.rs` and `notify.rs` caught about 90 % of 145 compiling mutants; now 134.
+  New tests: a webcam counts by its UVC driver or its USB bus, and needs a format it can decode;
+  `rpicam-vid` without a listed sensor leaves the choice to libcamera; a configured `/dev/video`
+  path the providers list is that device; every config limit is valid itself (0 inference fps,
+  60 s clips, a one-port ICE range, http and https webhooks); the retries fit inside the 10-minute
+  age limit; a short webhook host keeps its path out of the log. The 11 left read real camera
+  devices or change a log line. Two decisions in `probe` became `probe_rpicam` and
+  `asks_providers`, so they are tested without a Pi camera, and `status.rs` uses
+  `notify::unix_now` instead of a copy of its own; the behaviour is unchanged. The webhook tests
+  fail after 10 s instead of hanging when no event comes.
+
 - **The camera's restart backoff is tested** (2026-10-15). `Capture::run` waits 1 s doubling to 32 s
   between failed captures, starts over after one that ran more than a minute, and re-probes at once
   when a stand-in test pattern ran its course; the audit found none of it tested. The rule is the

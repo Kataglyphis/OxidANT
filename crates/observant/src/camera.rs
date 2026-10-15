@@ -237,16 +237,16 @@ pub fn probe(choice: &Choice) -> Found {
         };
     }
     if matches!(choice, Choice::Auto | Choice::Rpicam) {
-        probe.rpicam_vid = find_on_path("rpicam-vid").is_some();
-        if probe.rpicam_vid && find_on_path("rpicam-hello").is_some() {
-            probe.rpicam_cameras =
+        (probe.rpicam_vid, probe.rpicam_cameras) = probe_rpicam(
+            |program| find_on_path(program).is_some(),
+            || {
                 run_with_timeout("rpicam-hello", &["--list-cameras"], Duration::from_secs(15))
                     .map(|out| parse_rpicam_list(&out))
-                    .unwrap_or_default();
-        }
+                    .unwrap_or_default()
+            },
+        );
     }
-    let rpicam_wins = probe.rpicam_vid && !probe.rpicam_cameras.is_empty();
-    if rpicam_wins || *choice == Choice::Rpicam {
+    if !asks_providers(choice, &probe) {
         return Found {
             probe,
             devices: Vec::new(),
@@ -255,6 +255,26 @@ pub fn probe(choice: &Choice) -> Found {
     let (infos, devices) = monitor_devices();
     probe.devices = infos;
     Found { probe, devices }
+}
+
+/// Whether `rpicam-vid` exists, and the sensors `rpicam-hello` lists, which is asked only when both exist.
+fn probe_rpicam(
+    on_path: impl Fn(&str) -> bool,
+    list: impl FnOnce() -> Vec<String>,
+) -> (bool, Vec<String>) {
+    let vid = on_path("rpicam-vid");
+    let cameras = if vid && on_path("rpicam-hello") {
+        list()
+    } else {
+        Vec::new()
+    };
+    (vid, cameras)
+}
+
+/// Whether the camera providers are worth asking: not once rpicam-apps found a sensor, nor for `rpicam` alone.
+fn asks_providers(choice: &Choice, probe: &Probe) -> bool {
+    let rpicam_wins = probe.rpicam_vid && !probe.rpicam_cameras.is_empty();
+    !rpicam_wins && *choice != Choice::Rpicam
 }
 
 /// The device providers that can see a camera this service captures. A device monitor would start
@@ -626,6 +646,103 @@ mod tests {
             run_with_timeout("no-such-program-kataglyphis-cat", &[], secs(1)),
             None
         );
+    }
+
+    #[test]
+    fn a_webcam_counts_by_its_driver_or_its_usb_bus_and_needs_a_format_it_can_decode() {
+        let by_driver = DeviceInfo {
+            bus: None,
+            ..uvc("/dev/video0")
+        };
+        let by_bus = DeviceInfo {
+            driver: None,
+            ..uvc("/dev/video0")
+        };
+        assert!(by_driver.is_usb_webcam() && by_bus.is_usb_webcam());
+        let with = |types: &[&str]| DeviceInfo {
+            media_types: types.iter().map(|t| (*t).to_owned()).collect(),
+            ..uvc("/dev/video0")
+        };
+        // Caps the provider did not report count as usable; Bayer or H.264 alone is not decoded here.
+        assert!(with(&[]).is_usb_webcam());
+        assert!(with(&["video/x-raw"]).is_usb_webcam());
+        assert!(!with(&["video/x-bayer"]).is_usb_webcam());
+        assert!(!with(&["video/x-h264"]).is_usb_webcam());
+    }
+
+    #[test]
+    fn rpicam_vid_without_a_listed_sensor_leaves_the_choice_to_libcamera() {
+        let probe = Probe {
+            rpicam_vid: true,
+            devices: vec![uvc("/dev/video8"), csi()],
+            ..Probe::default()
+        };
+        assert_eq!(
+            choose(&Choice::Auto, &probe),
+            Plan::Device {
+                index: 1,
+                mjpeg: false
+            }
+        );
+        assert!(choose(&Choice::Rpicam, &probe).is_stand_in());
+        // A sensor listed by an rpicam-hello without rpicam-vid streams nothing either.
+        let listed_only = Probe {
+            rpicam_cameras: parse_rpicam_list(RPICAM_LIST),
+            ..Probe::default()
+        };
+        assert!(choose(&Choice::Rpicam, &listed_only).is_stand_in());
+    }
+
+    #[test]
+    fn a_v4l2_path_the_providers_list_is_that_device() {
+        let probe = Probe {
+            devices: vec![csi(), uvc("/dev/video8")],
+            ..Probe::default()
+        };
+        assert_eq!(
+            choose(&Choice::V4l2(Some("/dev/video8".into())), &probe),
+            Plan::Device {
+                index: 1,
+                mjpeg: false
+            }
+        );
+    }
+
+    #[test]
+    fn rpicam_hello_is_asked_only_where_rpicam_vid_exists_too() {
+        let unasked = || -> Vec<String> { panic!("rpicam-hello asked") };
+        assert_eq!(probe_rpicam(|_| false, unasked), (false, vec![]));
+        assert_eq!(
+            probe_rpicam(|p| p == "rpicam-hello", unasked),
+            (false, vec![])
+        );
+        assert_eq!(probe_rpicam(|p| p == "rpicam-vid", unasked), (true, vec![]));
+        assert_eq!(
+            probe_rpicam(|_| true, || vec!["imx708".into()]),
+            (true, vec!["imx708".to_owned()])
+        );
+    }
+
+    #[test]
+    fn the_providers_are_asked_unless_rpicam_found_a_sensor_or_was_asked_for() {
+        let sensor = Probe {
+            rpicam_vid: true,
+            rpicam_cameras: vec!["imx708".into()],
+            ..Probe::default()
+        };
+        let no_sensor = Probe {
+            rpicam_vid: true,
+            ..Probe::default()
+        };
+        let listed_only = Probe {
+            rpicam_cameras: vec!["imx708".into()],
+            ..Probe::default()
+        };
+        assert!(!asks_providers(&Choice::Auto, &sensor));
+        assert!(asks_providers(&Choice::Auto, &no_sensor));
+        assert!(asks_providers(&Choice::Auto, &listed_only));
+        assert!(asks_providers(&Choice::V4l2(None), &Probe::default()));
+        assert!(!asks_providers(&Choice::Rpicam, &Probe::default()));
     }
 
     #[test]

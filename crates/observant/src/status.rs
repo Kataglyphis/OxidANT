@@ -5,12 +5,13 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use gstreamer as gst;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Privacy;
+use crate::notify::unix_now;
 use crate::presence::{Change, Zone};
 use crate::stats::Stats;
 
@@ -932,12 +933,6 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&partial, path)
 }
 
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
-
 /// RGBA to JPEG; the alpha channel is dropped, as JPEG has none.
 pub fn encode_jpeg(rgba: &[u8], width: u32, height: u32) -> anyhow::Result<Vec<u8>> {
     let pixels = (width as usize) * (height as usize);
@@ -1587,19 +1582,6 @@ mod tests {
         assert_eq!(status.health().1, None);
         *status.last_frame.lock().unwrap() = ago(21);
         assert_eq!(status.health().1.as_deref(), Some("no frame for 21 s"));
-    }
-
-    #[test]
-    fn visit_times_are_wall_clock_seconds() {
-        let wall = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        assert!(
-            unix_now().abs_diff(wall) <= 1,
-            "{} against {wall}",
-            unix_now()
-        );
     }
 
     #[test]
