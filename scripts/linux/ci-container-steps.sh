@@ -9,8 +9,8 @@ source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
 # `?/` keeps gui's optional deps off; oxidant's own two compile the webcam engine and its API, which were 6.2 % covered without.
 TEST_FEATURES='kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime'
-# Each crate's own floor, just under 2026-10-15's figures, so the renderer's 90 % cannot carry telemetry's 8 %; raise them as tests come.
-COVERAGE_FLOORS='--floor crates/observant=81 --floor crates/webgpu_renderer=89 --floor crates/inference=77 --floor crates/cli=72 --floor crates/core=62 --floor crates/telemetry=8 --floor src=5'
+# Each crate's own floor, just under its latest figure, so one well-tested crate cannot carry a weak one; raise them as tests come.
+COVERAGE_FLOORS='--floor crates/observant=81 --floor crates/webgpu_renderer=89 --floor crates/inference=77 --floor crates/cli=72 --floor crates/core=62 --floor crates/telemetry=89 --floor src=5'
 # The feature-check sets (AGENTS.md § Feature combinations): gui_windows compiles the wgpu GUI; no gui_unix, the image has no GTK 4.
 FEATURE_CHECK_SETS='gstreamer gui_linux gui_linux,gstreamer gui_windows onnxruntime burn_demos'
 
