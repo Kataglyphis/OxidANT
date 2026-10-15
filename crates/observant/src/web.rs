@@ -530,6 +530,24 @@ mod tests {
     use std::time::SystemTime;
 
     #[test]
+    fn only_a_listed_peer_gets_its_origin_echoed() {
+        let peers = vec!["http://192.168.1.20:8080/".to_owned()];
+        let origin = |v: &str| HeaderValue::from_str(v).unwrap();
+        let listed = origin("HTTP://192.168.1.20:8080");
+        assert_eq!(peer_origin(Some(&listed), &peers), Some(&listed));
+        assert_eq!(
+            peer_origin(Some(&origin("http://192.168.1.21:8080")), &peers),
+            None
+        );
+        assert_eq!(
+            peer_origin(Some(&origin("http://192.168.1.20:8081")), &peers),
+            None
+        );
+        assert_eq!(peer_origin(None, &peers), None);
+        assert_eq!(peer_origin(Some(&listed), &[]), None);
+    }
+
+    #[test]
     fn the_arrival_time_comes_from_the_query_and_nothing_else() {
         assert_eq!(query_u64(Some("t=1791763273"), "t"), Some(1_791_763_273));
         assert_eq!(query_u64(Some("visit=3&t=42"), "t"), Some(42));
@@ -1033,6 +1051,120 @@ mod tests {
             "{response}"
         );
         assert!(response.ends_with("nope"), "{response}");
+    }
+
+    /// A stand-in signalling server that reads one request head, then writes `parts` 50 ms apart and keeps the line open.
+    async fn scripted_backend(parts: Vec<Vec<u8>>) -> u16 {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = backend.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = backend.accept().await.unwrap();
+            let mut seen = Vec::new();
+            let mut chunk = [0u8; 512];
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).await.unwrap();
+                seen.extend_from_slice(&chunk[..n]);
+            }
+            for part in parts {
+                if stream.write_all(&part).await.is_err() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn bytes_the_signalling_server_sends_with_its_101_reach_the_tab() {
+        let port = scripted_backend(vec![
+            b"HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\r\nhello".to_vec(),
+        ])
+        .await;
+        let addr = start(None, port).await;
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client
+            .write_all(b"GET /webrtc-ws HTTP/1.1\r\nhost: cat.local\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-key: k\r\nsec-websocket-version: 13\r\n\r\n")
+            .await
+            .unwrap();
+        let mut seen = Vec::new();
+        let mut chunk = [0u8; 512];
+        while !seen.ends_with(b"hello") {
+            let n = tokio::time::timeout(Duration::from_secs(5), client.read(&mut chunk))
+                .await
+                .expect("the bytes after the 101 never arrived")
+                .unwrap();
+            assert!(n > 0, "closed after {:?}", String::from_utf8_lossy(&seen));
+            seen.extend_from_slice(&chunk[..n]);
+        }
+        assert!(
+            seen.starts_with(b"HTTP/1.1 101"),
+            "{}",
+            String::from_utf8_lossy(&seen)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_response_head_split_over_packets_is_put_back_together() {
+        // 4 KiB of header in two writes: more than one read, well under the 16 KiB limit.
+        let pad = "p".repeat(4096);
+        let head = format!("HTTP/1.1 403 Forbidden\r\nX-Pad: {pad}\r\nContent-Length: 2\r\n\r\nno");
+        let (first, rest) = head.as_bytes().split_at(2000);
+        let addr = start(
+            None,
+            scripted_backend(vec![first.to_vec(), rest.to_vec()]).await,
+        )
+        .await;
+        let response = get(addr, "/webrtc-ws", "upgrade: websocket\r\n").await;
+        assert!(
+            response.starts_with("HTTP/1.1 403"),
+            "{}",
+            &response[..response.len().min(80)]
+        );
+        assert!(response.contains(&pad), "the padded header was cut");
+        assert!(response.ends_with("no"));
+    }
+
+    #[tokio::test]
+    async fn a_response_head_that_never_ends_is_cut_off_at_16_kib() {
+        // 100 bytes first, so the reads never land on exactly 16 KiB.
+        let parts = vec![
+            b"HTTP/1.1 200 OK\r\nX-Long: ".to_vec(),
+            vec![b'x'; 100],
+            vec![b'x'; 20 * 1024],
+        ];
+        let addr = start(None, scripted_backend(parts).await).await;
+        let started = std::time::Instant::now();
+        let response = get(addr, "/webrtc-ws", "upgrade: websocket\r\n").await;
+        assert!(
+            response.starts_with("HTTP/1.1 502"),
+            "{}",
+            &response[..response.len().min(80)]
+        );
+        // The limit, not the 10 s handshake timeout, ends it.
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_framed_anew_without_the_upstreams_transfer_encoding() {
+        let port = scripted_backend(vec![
+            b"HTTP/1.1 404 Not Found\r\nTransfer-Encoding: chunked\r\nX-Reason: room\r\n\r\n"
+                .to_vec(),
+        ])
+        .await;
+        let addr = start(None, port).await;
+        let response = get(addr, "/webrtc-ws", "upgrade: websocket\r\n")
+            .await
+            .to_lowercase();
+        assert!(response.starts_with("http/1.1 404"), "{response}");
+        assert!(response.contains("x-reason: room"), "{response}");
+        // Its body travels as a whole here, so its own framing would be a second, wrong one.
+        assert!(!response.contains("transfer-encoding"), "{response}");
     }
 
     #[tokio::test]

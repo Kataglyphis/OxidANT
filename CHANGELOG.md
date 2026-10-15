@@ -15,6 +15,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Mutation testing of ObservANT's network-facing code** (2026-10-15). cargo-mutants planted 163
+  bugs in `web.rs` and `static_files.rs`; the tests caught about 84 % of those that compile. New
+  tests for each gap: every content type, the gzip cache (once per version), route resolution
+  (a file, a directory's index, an app route, a missing asset), the peer origin echo, bytes the
+  signalling server sends with its 101, a response head split over packets, an endless one cut
+  off at 16 KiB before the handshake timeout, and a refusal re-framed without the upstream's
+  `Transfer-Encoding`. Now 142 of 145; the 3 left are equivalent (AGENTS.md).
+
 - **Tests from the audit of 2026-10-15** (the owner asked whether the tests catch regressions):
   - *The bridged core is tested with its real features.* `TEST_FEATURES` adds
     `oxidant/gstreamer,oxidant/onnxruntime`, so `src/webcam_engine.rs` and the webcam API
