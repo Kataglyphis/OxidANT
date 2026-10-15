@@ -192,7 +192,7 @@ The suites live in:
 
 - Unit tests inside the workspace crates (`kataglyphis_telemetry`, `kataglyphis_inference`, and the renderer's own suite).
 - Integration tests: `tests/integration/integration.rs`, which run the CLI and are compiled as `kataglyphis_cli`'s `integration` test (`crates/cli/tests/integration.rs`); `crates/media/tests/capture_test.rs` (a `videotestsrc` pipeline and camera enumeration); and the renderer's 18 binaries under `crates/webgpu_renderer/tests/`.
-- Fuzz (property-based) tests: `tests/fuzz_test.rs` via [proptest](https://proptest-rs.github.io/proptest/) (256 random inputs per case by default). There is no separate `cargo-fuzz`/libFuzzer setup.
+- Property-based (fuzz) tests: [proptest](https://proptest-rs.github.io/proptest/) properties on ObservANT's network-facing parsers (Range header, query, Host/Origin check, request path, camera spec, config file), 256 random inputs per property and run, in each module's `properties` tests. There is no separate `cargo-fuzz`/libFuzzer setup.
 
 **On Windows the renderer's tests run outside the container.** Any of its test binaries links wgpu, and wgpu's `gles` backend makes the executable import `opengl32.dll` at load time; Windows Server Core does not ship that DLL, so the process dies with `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`. The loader resolves that import, so no runtime flag avoids it — and letting it run turned the entire `cargo test --workspace` into a crash with no results. The `gles` feature is kept deliberately: it is the OpenGL fallback for machines without Vulkan/DX12. Run those tests on a desktop Windows host, where the DLL exists:
 

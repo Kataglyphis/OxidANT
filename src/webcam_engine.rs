@@ -70,6 +70,21 @@ impl TexturePusher {
     }
 }
 
+/// Events per second over the kept instants: intervals over their span, 0 until two exist.
+fn rolling_fps(recent: &VecDeque<Instant>) -> f32 {
+    match (recent.front(), recent.back()) {
+        (Some(first), Some(last)) if recent.len() >= 2 => {
+            let span = last.duration_since(*first).as_secs_f32();
+            if span > 0.0 {
+                (recent.len() - 1) as f32 / span
+            } else {
+                0.0
+            }
+        }
+        _ => 0.0,
+    }
+}
+
 pub struct WebcamEngine {
     capture: CaptureSession,
     stop: Arc<AtomicBool>,
@@ -139,17 +154,7 @@ impl WebcamEngine {
                     while recent.len() > 30 {
                         recent.pop_front();
                     }
-                    let fps = match (recent.front(), recent.back()) {
-                        (Some(first), Some(last)) if recent.len() >= 2 => {
-                            let span = last.duration_since(*first).as_secs_f32();
-                            if span > 0.0 {
-                                (recent.len() - 1) as f32 / span
-                            } else {
-                                0.0
-                            }
-                        }
-                        _ => 0.0,
-                    };
+                    let fps = rolling_fps(&recent);
 
                     on_event(EngineEvent {
                         detections,
@@ -181,5 +186,136 @@ impl WebcamEngine {
 impl Drop for WebcamEngine {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use super::*;
+
+    /// The model `scripts/linux/fetch-models.sh` puts in the checkout; `None` skips, unless CI demands it.
+    fn model() -> Option<String> {
+        let path = crate::person_detection::resolve_model_path(None);
+        if std::path::Path::new(&path).is_file() {
+            return Some(path);
+        }
+        let required = std::env::var("KATAGLYPHIS_REQUIRE_MODEL").as_deref() == Ok("1");
+        assert!(
+            !required,
+            "no model at {path}: scripts/linux/fetch-models.sh fetches it"
+        );
+        eprintln!("SKIP: no model at {path}");
+        None
+    }
+
+    fn config(model_path: String, texture: Option<TextureTarget>) -> EngineConfig {
+        EngineConfig {
+            source: CameraSource::Test,
+            width: 320,
+            height: 240,
+            framerate: 15,
+            model_path,
+            score_threshold: 0.5,
+            texture,
+        }
+    }
+
+    fn start_err(config: EngineConfig) -> String {
+        match WebcamEngine::start(config, Box::new(|_| {})) {
+            Ok(_) => panic!("the engine started"),
+            Err(e) => format!("{e:#}"),
+        }
+    }
+
+    #[test]
+    fn fps_needs_two_instants_and_a_span() {
+        let t = Instant::now();
+        assert_eq!(rolling_fps(&VecDeque::new()), 0.0);
+        assert_eq!(rolling_fps(&VecDeque::from([t])), 0.0);
+        assert_eq!(rolling_fps(&VecDeque::from([t, t])), 0.0);
+    }
+
+    #[test]
+    fn fps_counts_intervals_over_the_span() {
+        let t = Instant::now();
+        let recent: VecDeque<Instant> = (0..31)
+            .map(|i| t + Duration::from_millis(100 * i))
+            .collect();
+        assert!(
+            (rolling_fps(&recent) - 10.0).abs() < 1e-3,
+            "{}",
+            rolling_fps(&recent)
+        );
+    }
+
+    #[test]
+    fn a_missing_model_fails_the_start() {
+        let err = start_err(config("/nonexistent/model.onnx".into(), None));
+        assert_eq!(err, "no ONNX model at /nonexistent/model.onnx");
+    }
+
+    #[test]
+    fn a_missing_texture_library_names_itself() {
+        let Some(model) = model() else { return };
+        let target = TextureTarget {
+            library: "/nonexistent/libplugin.so".into(),
+            texture_id: 1,
+        };
+        let err = start_err(config(model, Some(target)));
+        assert!(
+            err.contains("failed to open texture library `/nonexistent/libplugin.so`"),
+            "{err}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_library_without_the_texture_abi_is_refused() {
+        let Some(model) = model() else { return };
+        let target = TextureTarget {
+            library: "libc.so.6".into(),
+            texture_id: 1,
+        };
+        let err = start_err(config(model, Some(target)));
+        assert!(err.contains("`knt_push_frame` not exported"), "{err}");
+    }
+
+    #[test]
+    fn headless_on_the_test_source_reports_frames_in_order_until_stopped() {
+        let Some(model) = model() else { return };
+        let (tx, rx) = mpsc::channel();
+        let mut engine = WebcamEngine::start(
+            config(model, None),
+            Box::new(move |event| {
+                let _ = tx.send(event);
+            }),
+        )
+        .unwrap();
+
+        let events: Vec<EngineEvent> = (0..5)
+            .map(|_| {
+                rx.recv_timeout(Duration::from_secs(60))
+                    .expect("no event within 60 s")
+            })
+            .collect();
+        engine.stop();
+
+        for pair in events.windows(2) {
+            assert!(
+                pair[1].frame_sequence > pair[0].frame_sequence,
+                "sequence not rising"
+            );
+        }
+        assert!(events.iter().all(|e| e.inference_ms > 0.0));
+        assert!(events.last().unwrap().fps > 0.0);
+        // Joined: the worker dropped its callback, so after the backlog the channel reports closed.
+        let _backlog = rx.try_iter().count();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(1)).err(),
+            Some(mpsc::RecvTimeoutError::Disconnected),
+            "the worker outlived stop()"
+        );
     }
 }

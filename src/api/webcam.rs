@@ -188,11 +188,32 @@ mod enabled {
         }
     }
 
-    fn default_texture_library() -> String {
+    pub(super) fn default_texture_library() -> String {
         if cfg!(windows) {
             "kataglyphis_native_inference_plugin.dll".into()
         } else {
             "libkataglyphis_native_inference_plugin.so".into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_probe_answers_what_this_build_was_compiled_with() {
+        assert_eq!(
+            super::webcam_inference_available(),
+            cfg!(all(feature = "gstreamer", onnx))
+        );
+    }
+
+    #[cfg(all(feature = "gstreamer", onnx))]
+    #[test]
+    fn the_default_texture_library_is_the_native_plugin() {
+        let name = super::enabled::default_texture_library();
+        assert!(
+            name.contains("kataglyphis_native_inference_plugin"),
+            "{name}"
+        );
     }
 }

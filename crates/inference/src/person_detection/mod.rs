@@ -112,6 +112,10 @@ impl PersonDetector {
 
     pub fn new(model_path: &str) -> Result<Self> {
         info!("Loading ONNX model: {model_path}");
+        // Checked first: a backend that cannot open the file would report itself missing instead.
+        if !std::path::Path::new(model_path).is_file() {
+            bail!("no ONNX model at {model_path}");
+        }
 
         let preprocess = config::preprocess_mode();
         let swap_xy = config::swap_xy_enabled();
@@ -144,7 +148,7 @@ impl PersonDetector {
                 if require_ort {
                     return Err(err);
                 }
-                warn!("ORT session unavailable, falling back to tract: {err:#}");
+                warn!("ORT session unavailable: {err:#}");
                 Err(err)
             }
         }
@@ -189,27 +193,33 @@ impl PersonDetector {
             }
             None => {
                 #[cfg(feature = "onnxruntime")]
-                {
+                let ort_error = {
                     let device = config::ort_device();
                     let require_ort = device == "cuda" || device == "auto";
-
-                    if let Ok(load) = Self::try_load_ort(model_path, require_ort) {
-                        return Ok(load);
+                    match Self::try_load_ort(model_path, require_ort) {
+                        Ok(load) => return Ok(load),
+                        Err(err) => Some(err),
                     }
-                }
+                };
+                #[cfg(not(feature = "onnxruntime"))]
+                let ort_error: Option<anyhow::Error> = None;
 
                 #[cfg(feature = "onnx_tract")]
                 {
+                    let _ = ort_error;
                     Self::load_tract(model_path)
                 }
 
+                // ORT's own error says why the model did not load; the generic line hid it.
                 #[cfg(not(feature = "onnx_tract"))]
                 {
-                    bail!(
-                        "No ONNX backend available. \
-                         Build with --features onnx_tract to enable the tract fallback, \
-                         or ensure the ORT session can be created."
-                    )
+                    match ort_error {
+                        Some(err) => Err(err.context(format!("ORT could not load {model_path}"))),
+                        None => bail!(
+                            "No ONNX backend available. \
+                             Build with --features onnxruntime or onnx_tract."
+                        ),
+                    }
                 }
             }
         }

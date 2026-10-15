@@ -289,4 +289,29 @@ mod tests {
         assert!(!accepts("identity"));
         assert!(!accepts_gzip(&HeaderMap::new()));
     }
+
+    /// Rules for every request path, checked on random ones built from the pieces that escape a web root.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn no_path_leaves_the_web_root(path in "(/|\\.\\.|\\.|%2e|%2E|%2f|%2F|%5c|%5C|%00|%3a|a|b\\.js|\\\\|:|~|//){0,24}") {
+                if let Some(relative) = sanitize(&path) {
+                    prop_assert!(
+                        relative.components().all(|c| matches!(c, Component::Normal(_))),
+                        "{path:?} became {relative:?}"
+                    );
+                    let root = Path::new("/srv/web");
+                    prop_assert!(root.join(&relative).starts_with(root), "{path:?} left the root");
+                }
+            }
+
+            #[test]
+            fn any_text_is_sanitized_without_panic(path in "\\PC{0,80}") {
+                let _ = sanitize(&path);
+            }
+        }
+    }
 }

@@ -469,4 +469,38 @@ mod tests {
         std::fs::write(dir.path().join("observant.toml"), "").unwrap();
         assert_eq!(config_in(dir.path()), dir.path().join("observant.toml"));
     }
+
+    /// A config file is the owner's, but a typo in it must end in an error, never a panic or a value out of range.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn any_text_parses_or_fails_without_panic(text in "\\PC{0,200}") {
+                if let Ok(config) = Config::parse(&text) {
+                    let _ = config.validate();
+                }
+            }
+
+            #[test]
+            fn a_config_that_validates_keeps_its_numbers_in_range(
+                rotate in 0u32..400, width in 0u32..5000, height in 0u32..5000, fps in 0u32..120,
+                score in -1.0f64..2.0, clip_seconds in 0u32..200, ice in (0u16..70, 0u16..70),
+            ) {
+                let text = format!(
+                    "rotate = {rotate}\nwidth = {width}\nheight = {height}\nfps = {fps}\nscore = {score}\n\
+                     clip_seconds = {clip_seconds}\nice_port_min = {}\nice_port_max = {}\n",
+                    ice.0, ice.1
+                );
+                let config = Config::parse(&text).unwrap();
+                if config.validate().is_ok() {
+                    prop_assert!([0, 90, 180, 270].contains(&config.rotate));
+                    prop_assert!(width > 0 && width % 2 == 0 && height > 0 && height % 2 == 0);
+                    prop_assert!(fps > 0 && (0.0..=1.0).contains(&score) && clip_seconds <= 60);
+                    prop_assert!(ice == (0, 0) || (ice.0 > 0 && ice.0 <= ice.1));
+                }
+            }
+        }
+    }
 }

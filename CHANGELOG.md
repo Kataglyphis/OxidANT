@@ -15,6 +15,37 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **Tests from the audit of 2026-10-15** (the owner asked whether the tests catch regressions):
+  - *The bridged core is tested with its real features.* `TEST_FEATURES` adds
+    `oxidant/gstreamer,oxidant/onnxruntime`, so `src/webcam_engine.rs` and the webcam API
+    compile for tests at all; `src/` stood at 6.2 %. Eight tests: the engine on
+    `videotestsrc` with the real model, headless, delivers frames in order with an inference
+    time and a frame rate and stops its worker (the channel closes); a missing model, a
+    missing texture library and a library without `knt_push_frame` each say so; the rolling
+    frame rate; the probe and the default plugin name.
+  - *Per-crate coverage floors.* `scripts/linux/check-crate-coverage.py` grades each crate
+    and `src/` from tarpaulin's `cobertura.xml` against its own floor, so the renderer's
+    90 % no longer carries a crate at 8 %. Its suite plants a crate under its floor. The
+    floors sit just under that day's figures (observant 82.7 %, renderer 90.8 %, inference
+    79.2 %, cli 74.1 %, core 63.6 %, telemetry 8.4 %, `src/` 5.7 %), and tarpaulin gets
+    `--timeout 300`. Measuring them showed that tarpaulin 0.37.5 leaves every
+    `#[cfg(feature = …)]` module out of its report (`crates/media`, `src/webcam_engine.rs`),
+    so those modules' new tests count as tests, not as coverage (AGENTS.md).
+  - *Property tests on what ObservANT reads from the network and its config file*, in each
+    module's `mod properties`: the Range header (a served range never leaves the file, a
+    well-formed one is served as asked), the query, the Host/Origin check (a public name is
+    refused unless allowed, an address literal passes), request paths (none, however
+    encoded, leaves the web root), the camera spec and the config (a config that validates
+    keeps its numbers in range). Two planted bugs, `..` let through and an unclamped range
+    end, each fail them with a shrunk input (`..`, `bytes=0-` on one byte). They replace
+    `tests/fuzz_test.rs`, which exercised a placeholder function of its own.
+  - *`KATAGLYPHIS_REQUIRE_GST=1`* in the test and coverage steps turns the clip and
+    `webrtcsink` tests' self-skip into a failure; `cargo test` hides a passing test's skip line.
+  - *Benchmarks against the median of the last 20 runs.* `bench-report.py` warns above
+    +25 % and fails a mean from 100 µs that doubles, once 3 earlier runs exist; the cache
+    keeps a small `.bench-history/` instead of `target/criterion`. `lint-gates.yml` runs the
+    script suites (`scripts/linux/tests/`).
+
 - **Criterion benchmarks, tracked in CI** (2026-10-14, owner: benchmarks belong in each project's own
   tooling, for regression testing). `crates/observant/benches/frame_stages.rs` and
   `crates/inference/benches/detector.rs` run under the existing `cargo bench` step, which now fetches the
@@ -200,6 +231,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `feature-checks-per-job` brings back one job per set.
 
 ### Fixed
+
+- **A missing model file says so** (2026-10-15). `PersonDetector::new` answered a wrong path
+  with "No ONNX backend available. Build with --features onnx_tract…", which sends one
+  looking for a missing runtime. It now checks the file first ("no ONNX model at <path>"),
+  and when ORT fails on a file that exists, its own reason is kept ("ORT could not load
+  <path>: …") instead of the generic line. Found by the new webcam engine test;
+  `crates/inference/tests/model_errors.rs` pins both messages.
 
 - **`list_cameras` no longer runs on the caller's thread** (2026-10-15). It was
   `#[frb(sync)]`, and the device monitor it starts brings libcamera up: OmniAccelerANT's

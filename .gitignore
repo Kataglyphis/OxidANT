@@ -163,3 +163,10 @@ flake.lock
 
 # HailoRT writes its log into the working directory whenever the image loads it
 hailort.log
+
+# The benchmark report's means and the history CI restores from its cache.
+/bench-means.json
+/.bench-history/
+# tarpaulin's reports, written where the coverage step runs.
+/cobertura.xml
+/tarpaulin-report.html

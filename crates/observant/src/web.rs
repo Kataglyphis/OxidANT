@@ -1381,4 +1381,83 @@ mod tests {
             );
         }
     }
+
+    /// Rules that hold for every input, checked on random ones: what a request sends is the attacker's choice.
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn host(value: &str) -> Option<HeaderMap> {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::HOST, HeaderValue::from_str(value).ok()?);
+            Some(headers)
+        }
+
+        proptest! {
+            #[test]
+            fn a_served_range_lies_inside_the_file(value in "\\PC{0,40}", len in 0u64..10_000) {
+                if let Range::Satisfiable(a, b) = byte_range(&value, len) {
+                    prop_assert!(a <= b && b < len, "{value:?} on {len} bytes gave {a}-{b}");
+                }
+            }
+
+            #[test]
+            fn a_range_header_of_digits_and_dashes_never_overreaches(value in "bytes= ?[0-9]{0,22} ?- ?[0-9]{0,22}", len in 0u64..u64::MAX) {
+                if let Range::Satisfiable(a, b) = byte_range(&value, len) {
+                    prop_assert!(a <= b && b < len, "{value:?} on {len} bytes gave {a}-{b}");
+                }
+            }
+
+            #[test]
+            fn a_well_formed_range_is_served_as_asked(len in 1u64..1_000_000, a in 0u64..2_000_000, extra in 0u64..2_000_000) {
+                let b = a + extra;
+                let expected = if a < len { Range::Satisfiable(a, b.min(len - 1)) } else { Range::Unsatisfiable };
+                prop_assert_eq!(byte_range(&format!("bytes={a}-{b}"), len), expected);
+            }
+
+            #[test]
+            fn a_suffix_range_serves_the_last_bytes(len in 1u64..1_000_000, n in 1u64..2_000_000) {
+                prop_assert_eq!(byte_range(&format!("bytes=-{n}"), len), Range::Satisfiable(len.saturating_sub(n), len - 1));
+            }
+
+            #[test]
+            fn the_first_matching_key_wins_among_other_pairs(before in "([a-z]{1,5}=[a-z0-9]{0,5}&){0,4}", n: u64, after in "(&[a-z]{1,5}=[a-z0-9]{0,5}){0,4}") {
+                // The key is upper case, which the noise never is.
+                let query = format!("{before}T={n}{after}");
+                prop_assert_eq!(query_u64(Some(&query), "T"), Some(n));
+            }
+
+            #[test]
+            fn any_query_is_read_without_panic(query in "\\PC{0,60}", key in "[a-z]{1,3}") {
+                let _ = query_u64(Some(&query), &key);
+            }
+
+            #[test]
+            fn a_public_host_name_is_refused(label in "[a-z][a-z0-9-]{0,20}", tld in "(com|net|org|de|io|cat)", port in proptest::option::of(1u16..)) {
+                let value = match port { Some(p) => format!("{label}.{tld}:{p}"), None => format!("{label}.{tld}") };
+                let headers = host(&value).unwrap();
+                prop_assert!(own_host(&headers, &[]).is_err(), "{value} passed");
+                // Unless the owner named it.
+                prop_assert!(own_host(&headers, &[format!("{label}.{tld}")]).is_ok(), "allowed {value} refused");
+            }
+
+            #[test]
+            fn an_address_literal_is_the_board_itself(v4: [u8; 4], v6: [u16; 8], port: u16) {
+                let v4 = std::net::Ipv4Addr::from(v4);
+                let v6 = std::net::Ipv6Addr::from(v6);
+                for value in [format!("{v4}"), format!("{v4}:{port}"), format!("[{v6}]"), format!("[{v6}]:{port}")] {
+                    prop_assert!(own_host(&host(&value).unwrap(), &[]).is_ok(), "{value} refused");
+                }
+            }
+
+            #[test]
+            fn any_host_and_origin_are_judged_without_panic(host_value in "\\PC{0,60}", origin in "\\PC{0,60}") {
+                let Some(mut headers) = host(&host_value) else { return Ok(()) };
+                if let Ok(origin) = HeaderValue::from_str(&origin) {
+                    headers.insert(header::ORIGIN, origin);
+                }
+                let _ = own_page(&headers, &[]);
+            }
+        }
+    }
 }

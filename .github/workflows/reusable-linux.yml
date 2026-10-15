@@ -131,13 +131,13 @@ jobs:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh coverage'
 
-      # Criterion compares against the last results it finds, so the default branch's are kept per arch.
-      - name: Restore the benchmark baseline
+      # The means of the default branch's last 20 runs per arch; their median is the yardstick, not the run before.
+      - name: Restore the benchmark history
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: target/criterion
-          key: criterion-${{ runner.arch }}-${{ github.sha }}
-          restore-keys: criterion-${{ runner.arch }}-
+          path: .bench-history
+          key: bench-history-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: bench-history-${{ runner.arch }}-
 
       - name: Run benchmarks
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
@@ -147,14 +147,23 @@ jobs:
 
       - name: Benchmark report
         if: always()
-        run: python3 scripts/linux/bench-report.py target/criterion 0.25 >> "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/linux/bench-report.py target/criterion .bench-history --write bench-means.json >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Keep the benchmark baseline
-        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      # Not always(): a run the report failed must not pull the median towards its own slowdown.
+      - name: Add this run to the benchmark history
+        id: bench-history
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && hashFiles('bench-means.json') != ''
+        run: |
+          mkdir -p .bench-history
+          cp bench-means.json ".bench-history/$(printf '%08d' "$GITHUB_RUN_NUMBER")-${GITHUB_SHA::7}.json"
+          find .bench-history -name '*.json' | sort | head -n -20 | xargs -r rm -f
+
+      - name: Keep the benchmark history
+        if: steps.bench-history.outcome == 'success'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: target/criterion
-          key: criterion-${{ runner.arch }}-${{ github.sha }}
+          path: .bench-history
+          key: bench-history-${{ runner.arch }}-${{ github.sha }}
 
       - name: 🛠️ Build release binary
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop

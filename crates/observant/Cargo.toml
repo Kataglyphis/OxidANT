@@ -39,6 +39,7 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 criterion = { workspace = true }
+proptest = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

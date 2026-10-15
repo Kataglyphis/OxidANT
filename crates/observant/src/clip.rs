@@ -423,11 +423,7 @@ mod tests {
     #[test]
     fn an_arrival_is_encoded_on_its_own_thread_and_kept_for_that_arrival() {
         let _one = one_encode();
-        if ["openh264enc", "h264parse", "mp4mux"]
-            .iter()
-            .any(|e| gst::ElementFactory::find(e).is_none())
-        {
-            eprintln!("skipped: this GStreamer cannot encode H.264 to MP4");
+        if !crate::gst_has(&["openh264enc", "h264parse", "mp4mux"]) {
             return;
         }
         let status = Arc::new(Status::new("Cam", true, 64, 48));
@@ -476,11 +472,7 @@ mod tests {
     #[test]
     fn frames_of_an_mp4_clip_come_out_as_one_with_its_index_first() {
         let _one = one_encode();
-        if ["openh264enc", "h264parse", "mp4mux"]
-            .iter()
-            .any(|e| gst::ElementFactory::find(e).is_none())
-        {
-            eprintln!("skipped: this GStreamer cannot encode H.264 to MP4");
+        if !crate::gst_has(&["openh264enc", "h264parse", "mp4mux"]) {
             return;
         }
         let (width, height) = (64u32, 48u32);

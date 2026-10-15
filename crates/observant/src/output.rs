@@ -152,9 +152,7 @@ mod tests {
 
     #[test]
     fn the_sender_carries_the_config_and_its_signalling_server_answers() {
-        gst::init().unwrap();
-        if gst::ElementFactory::find("webrtcsink").is_none() {
-            eprintln!("skipped: this GStreamer has no webrtcsink");
+        if !crate::gst_has(&["webrtcsink"]) {
             return;
         }
         let port = TcpListener::bind("127.0.0.1:0")
