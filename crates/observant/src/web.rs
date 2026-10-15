@@ -36,6 +36,9 @@ pub const CLIP_PATH: &str = "/arrival.mp4";
 /// `GET` the settings the page can change; `POST` any of them as JSON, e.g. `{"rotate": 90}`.
 pub const SETTINGS_PATH: &str = "/settings";
 
+/// The visits of the last 30 days, for the page's statistics; kept out of `/healthz`, which is polled.
+pub const VISITS_PATH: &str = "/visits";
+
 /// How long the signalling server may take to answer the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -177,7 +180,14 @@ pub async fn serve(listener: TcpListener, site: Arc<Site>) {
 async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_owned();
     let origin = req.headers().get(header::ORIGIN).cloned();
-    let reads = [HEALTHZ_PATH, SNAPSHOT_PATH, ARRIVAL_PATH, CLIP_PATH].contains(&path.as_str());
+    let reads = [
+        HEALTHZ_PATH,
+        VISITS_PATH,
+        SNAPSHOT_PATH,
+        ARRIVAL_PATH,
+        CLIP_PATH,
+    ]
+    .contains(&path.as_str());
     let acts = path == SIGNALLING_PATH || (path == SETTINGS_PATH && req.method() == Method::POST);
     let refused = if acts {
         own_page(req.headers(), &site.allowed_hosts).err()
@@ -211,8 +221,13 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
         settings(req, &site.status).await
     } else if req.method() != Method::GET && req.method() != Method::HEAD {
         plain(StatusCode::METHOD_NOT_ALLOWED, "GET or HEAD only")
-    } else if path == HEALTHZ_PATH {
-        let mut response = Response::new(Full::new(Bytes::from(site.status.to_json())));
+    } else if path == HEALTHZ_PATH || path == VISITS_PATH {
+        let json = if path == HEALTHZ_PATH {
+            site.status.to_json()
+        } else {
+            site.status.visits_json()
+        };
+        let mut response = Response::new(Full::new(Bytes::from(json)));
         response.headers_mut().insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/json"),
@@ -1263,6 +1278,7 @@ mod tests {
         // The rebinding page asks under its own name; served, the pictures would be its own to read.
         for path in [
             HEALTHZ_PATH,
+            VISITS_PATH,
             SNAPSHOT_PATH,
             ARRIVAL_PATH,
             SETTINGS_PATH,
@@ -1358,6 +1374,31 @@ mod tests {
             max_viewers,
             peers,
         }
+    }
+
+    #[tokio::test]
+    async fn visits_lists_the_history_as_json_and_a_peer_may_read_it() {
+        let site = site(4, vec!["http://192.168.1.20:8080".into()], 9);
+        site.status.set_detection(
+            true,
+            Some(0.8),
+            Some(&crate::presence::Change::Arrived {
+                count: 1,
+                best: 0.8,
+                class: 15,
+            }),
+        );
+        let addr = start_with(site).await;
+        let reply = get(addr, VISITS_PATH, "origin: http://192.168.1.20:8080\r\n").await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains("content-type: application/json"), "{reply}");
+        assert!(
+            reply.contains("access-control-allow-origin: http://192.168.1.20:8080"),
+            "{reply}"
+        );
+        let json = body_json(&reply);
+        assert_eq!(json["visits"].as_array().unwrap().len(), 1);
+        assert!(json["visits"][0][1].is_null(), "still in view: {json}");
     }
 
     #[tokio::test]

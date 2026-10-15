@@ -15,6 +15,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added
 
+- **ObservANT's `/visits`: every visit of the last 30 days** (2026-10-15). `/healthz` lists only
+  the last 20 visits, too few for statistics per day or hour. `Status` now keeps a history of
+  `[arrival, stay]` pairs in `visits.json` beside `recent`, at most 30 days and 10 000 visits; a
+  file from before starts it from its `recent`, and a restart closes a visit it cut short at
+  `last_seen`, as it does for `recent`. `GET /visits` serves it under the same host check and peer
+  CORS as `/healthz`. Tests: counting, stays and a restart, the 30-day edge and the cap, an older
+  file, and the endpoint.
+
 - **Mutation testing of the capture loop, and the riscv64 lane meets the real model**
   (2026-10-15). cargo-mutants on `capture.rs`: 87 of 124 compiling mutants caught at first, 98
   now. The arrival photo's privacy test only checked that the filtered photo differs, so a

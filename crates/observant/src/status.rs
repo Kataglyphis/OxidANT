@@ -180,6 +180,24 @@ impl Kept {
 /// How many visits `/healthz` lists and the state directory keeps.
 const RECENT_VISITS: usize = 20;
 
+/// How far back `/visits`, the page's statistics, reaches.
+const HISTORY_DAYS: u64 = 30;
+
+/// The most visits the history keeps, whatever their age: a month of a busy feeding trough.
+const HISTORY_MAX: usize = 10_000;
+
+/// One visit for the statistics: its arrival and, once it has left, its stay in seconds.
+type Stay = (u64, Option<u64>);
+
+/// Drops the visits older than [`HISTORY_DAYS`] before `now`, and any beyond [`HISTORY_MAX`].
+fn prune(history: &mut VecDeque<Stay>, now: u64) {
+    let since = now.saturating_sub(HISTORY_DAYS * 86_400);
+    while history.back().is_some_and(|(arrived, _)| *arrived < since) {
+        history.pop_back();
+    }
+    history.truncate(HISTORY_MAX);
+}
+
 /// One visit: when the cat was confirmed, how long it stayed once it has left, and where its boxes
 /// were, which the Camera page offers to mark "not a cat" after the fact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -206,6 +224,9 @@ struct Remembered {
     /// Newest first; a cat.json from before the log has none.
     #[serde(default)]
     recent: Vec<Visit>,
+    /// Newest first, the last [`HISTORY_DAYS`] days; a file from before it starts from `recent`.
+    #[serde(default)]
+    history: Vec<Stay>,
 }
 
 #[derive(Default)]
@@ -219,6 +240,8 @@ struct Detected {
     hit: bool,
     /// Newest first, at most [`RECENT_VISITS`].
     recent: VecDeque<Visit>,
+    /// Newest first, the statistics' visits.
+    history: VecDeque<Stay>,
     /// The arrival the current clip shows.
     clip: Option<u64>,
     /// The boxes drawn into the picture now, as fractions of it.
@@ -552,12 +575,21 @@ impl Status {
                         cat.last_seen = r.last_seen;
                         cat.visits = r.visits;
                         cat.best_score = r.last_score.unwrap_or_default();
+                        cat.history = if r.history.is_empty() {
+                            r.recent.iter().map(|v| (v.arrived, v.stayed_s)).collect()
+                        } else {
+                            r.history.into()
+                        };
+                        prune(&mut cat.history, unix_now());
                         cat.recent = r.recent.into_iter().take(RECENT_VISITS).collect();
                         // The service stopped with the cat in view: it stayed at least until last_seen.
                         if let (Some(open), Some(seen)) = (cat.recent.front_mut(), cat.last_seen) {
                             if open.stayed_s.is_none() {
                                 open.stayed_s = Some(seen.saturating_sub(open.arrived));
                             }
+                        }
+                        if let (Some(open), Some(seen)) = (cat.history.front_mut(), cat.last_seen) {
+                            open.1.get_or_insert(seen.saturating_sub(open.0));
                         }
                     }
                 }
@@ -611,6 +643,7 @@ impl Status {
             visits: cat.visits,
             last_score: cat.last_seen.map(|_| cat.best_score),
             recent: cat.recent.iter().cloned().collect(),
+            history: cat.history.iter().copied().collect(),
         }) else {
             return;
         };
@@ -663,24 +696,47 @@ impl Status {
             }
             match change {
                 Some(Change::Arrived { class, .. }) => {
+                    let now = unix_now();
                     cat.visits += 1;
                     let boxes = cat.boxes.clone();
                     cat.recent.push_front(Visit {
-                        arrived: unix_now(),
+                        arrived: now,
                         stayed_s: None,
                         boxes,
                         class: crate::coco::name(*class).map(str::to_owned),
                     });
                     cat.recent.truncate(RECENT_VISITS);
+                    cat.history.push_front((now, None));
+                    prune(&mut cat.history, now);
                 }
                 Some(Change::Left { stayed }) => {
                     if let Some(open) = cat.recent.front_mut() {
                         open.stayed_s.get_or_insert(stayed.as_secs());
                     }
+                    if let Some(open) = cat.history.front_mut() {
+                        open.1.get_or_insert(stayed.as_secs());
+                    }
                 }
                 None => {}
             }
         }
+    }
+
+    /// `/visits`: the last [`HISTORY_DAYS`] days' visits, newest first, each `[arrived, stayed_s]`.
+    pub fn visits_json(&self) -> String {
+        let since = unix_now().saturating_sub(HISTORY_DAYS * 86_400);
+        let visits: Vec<Stay> = self
+            .detected
+            .lock()
+            .map(|cat| {
+                cat.history
+                    .iter()
+                    .copied()
+                    .filter(|(t, _)| *t >= since)
+                    .collect()
+            })
+            .unwrap_or_default();
+        serde_json::json!({ "days": HISTORY_DAYS, "visits": visits }).to_string()
     }
 
     /// A cat is in view, or the last run saw one that is not confirmed yet.
@@ -1032,6 +1088,67 @@ mod tests {
     }
 
     #[test]
+    fn the_history_counts_every_visit_with_its_stay_and_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        for stay in [30, 90] {
+            before.set_detection(true, Some(0.8), Some(&arrived()));
+            before.set_detection(false, None, Some(&left(stay)));
+        }
+        before.set_detection(true, Some(0.8), Some(&arrived()));
+        before.persist();
+        let visits =
+            |s: &Status| serde_json::from_str::<serde_json::Value>(&s.visits_json()).unwrap();
+        let now = visits(&before);
+        assert_eq!(now["days"], 30);
+        let stays: Vec<_> = now["visits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v[1].clone())
+            .collect();
+        assert_eq!(stays, [serde_json::Value::Null, 90.into(), 30.into()]);
+        // Stopped with the cat in view, the open visit stayed at least until it was last seen.
+        let after = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        let restored = visits(&after);
+        assert_eq!(restored["visits"].as_array().unwrap().len(), 3);
+        assert!(restored["visits"][0][1].is_u64(), "{restored}");
+        assert_eq!(restored["visits"][1], now["visits"][1]);
+    }
+
+    #[test]
+    fn an_older_visits_file_starts_the_history_and_a_visit_past_30_days_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = unix_now();
+        let old = now - 31 * 86_400;
+        let file = serde_json::json!({
+            "last_seen": now - 100,
+            "visits": 2,
+            "recent": [{"arrived": now - 200, "stayed_s": 60}, {"arrived": old, "stayed_s": 5}],
+        });
+        std::fs::write(dir.path().join(VISITS_FILE), file.to_string()).unwrap();
+        let status = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
+        let json: serde_json::Value = serde_json::from_str(&status.visits_json()).unwrap();
+        assert_eq!(json["visits"], serde_json::json!([[now - 200, 60]]));
+    }
+
+    #[test]
+    fn the_history_keeps_exactly_30_days_and_at_most_its_cap() {
+        let now = 100 * 86_400;
+        let edge = now - 30 * 86_400;
+        let mut history: VecDeque<Stay> =
+            [(now, None), (edge, Some(1)), (edge - 1, Some(2))].into();
+        prune(&mut history, now);
+        assert_eq!(history, VecDeque::from([(now, None), (edge, Some(1))]));
+        let mut many: VecDeque<Stay> = (0..HISTORY_MAX as u64 + 5)
+            .map(|i| (now - i, None))
+            .collect();
+        prune(&mut many, now);
+        assert_eq!(many.len(), HISTORY_MAX);
+        assert_eq!(many.front(), Some(&(now, None)));
+    }
+
+    #[test]
     fn a_restart_keeps_the_clip_and_the_arrival_it_shows() {
         let dir = tempfile::tempdir().unwrap();
         let before = Status::new("Cam", true, 4, 4).remember_in(dir.path().to_path_buf());
@@ -1215,6 +1332,7 @@ mod tests {
                     class: None,
                 },
             ],
+            history: Vec::new(),
         };
         std::fs::write(
             dir.path().join(VISITS_FILE),
