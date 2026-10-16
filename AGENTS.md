@@ -661,7 +661,10 @@ arch), the Windows MSI, MSIX and portable zip for x64 and arm64, a `SHA256SUMS` 
 `## [<version>]` CHANGELOG section, only when every lane is green.
 `scripts/linux/collect-release-assets.sh` picks the files, the hub's
 `publish-github-release.sh` publishes them. Before a merge, turn `## [Unreleased]` into
-`## [<version>] - <date>`.
+`## [<version>] - <date>`. **A dry run proves all of that on `develop` without publishing:**
+`gh workflow run release.yml --ref develop -f dry-run=true` runs every lane and the collector,
+writes the files the release would carry with their checksums to the run's summary, and turns
+a failed version check into a warning; it is also the full round a merge needs.
 
 **The names follow the family convention of the same date:** kebab-case files, one per
 platform + arch, display names `<Platform> <Arch> · <what>` (U+00B7 middle dot).
