@@ -23,7 +23,7 @@
 
 For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 
-> **Every platform lane runs on every push and PR** to `main`/`develop` — Linux x64, Linux arm64, Windows x64 and Windows arm64 (cross-built, then run on a real arm64 runner), one workflow each, so each badge above reports a real run. No commit-message marker is needed, the Linux x64 feature check included (since 2026-10-06). See [AGENTS.md](AGENTS.md#continuous-integration).
+> **A push to `develop` and every PR run Linux x64** (its feature check included) and the gates; Linux arm64, Linux riscv64, Windows x64 and Windows arm64 (cross-built, then run on a real arm64 runner) run on request, through a ci token in a commit message or by hand, and all five before a release from `main` ([the family's strategy](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/branch-and-release-strategy.md)). A lane's badge above shows its runs started by hand; a requested run is listed under *On request*. See [AGENTS.md](AGENTS.md#continuous-integration).
 
 <!-- [![Linux build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml)
 [![Windows build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml)
