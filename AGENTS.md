@@ -669,12 +669,15 @@ Steps both architectures share live once, in `reusable-linux.yml` ("Linux · reu
 build", `workflow_call`); `linux-x64.yml` and `linux-arm64.yml` only say when they run
 and which runner, container platform and artifact suffix they want. The gate lanes
 kept their files and took plain names, "Lint gates" and "Submodule pins".
-Concurrency is per lane: each build workflow groups on its own literal name,
-`<lane>-${{ github.ref }}` (since 2026-10-15), and cancels a superseded run except on
-the default branch. Never `${{ github.workflow }}` there: inside a called workflow it is
-the caller's name, so every lane `on-request.yml` calls would share one group, and
-GitHub cancels a callee whose group repeats its caller's as a deadlock.
-`reusable-linux.yml` declares no group for the same reason.
+Concurrency is per lane and caller: each build workflow groups on
+`<lane>-${{ github.ref }}-${{ github.workflow }}` (since 2026-10-16) and cancels a
+superseded run except on the default branch. Inside a called workflow `github.workflow`
+is the caller's name, so a push's own run, `on-request.yml`'s call and `release.yml`'s
+call each get a group of their own; the literal lane prefix keeps the lanes apart, which
+`github.workflow` alone would not (every called lane in one group, and GitHub cancels a
+callee whose group repeats its caller's as a deadlock). `reusable-linux.yml` declares no
+group for that reason. The rule and what broke without it: ANTfrastructure's
+`docs/branch-and-release-strategy.md`.
 
 **Both Windows lanes are thin callers of the hub's `container-ci-windows.yml`** (owner
 decisions 2026-09-25). Its container half is `scripts/windows/Invoke-WindowsLane.ps1`,
