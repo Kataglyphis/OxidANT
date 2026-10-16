@@ -70,7 +70,7 @@ pub struct Config {
     pub fps: u32,
     /// 0, 90, 180 or 270 degrees.
     pub rotate: u32,
-    /// Producer name shown to viewers.
+    /// Producer name shown to viewers; this machine's host name unless set.
     pub name: String,
     pub inference: Inference,
     /// ONNX model; unset means `KATAGLYPHIS_ONNX_MODEL`, then the one beside the binary.
@@ -118,6 +118,13 @@ pub struct Config {
     pub peers: Vec<String>,
 }
 
+/// A host name as a camera's default name, so two unnamed cameras still differ; "ObservANT" where there is none.
+fn name_from(host: Option<String>) -> String {
+    host.map(|h| h.trim().to_owned())
+        .filter(|h| !h.is_empty() && h != "localhost")
+        .unwrap_or_else(|| "ObservANT".into())
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -126,7 +133,11 @@ impl Default for Config {
             height: 480,
             fps: 30,
             rotate: 0,
-            name: "ObservANT".into(),
+            name: name_from(
+                std::fs::read_to_string("/proc/sys/kernel/hostname")
+                    .ok()
+                    .or_else(|| std::env::var("COMPUTERNAME").ok()),
+            ),
             inference: Inference::Auto,
             model: None,
             score: 0.25,
@@ -301,6 +312,26 @@ mod tests {
             err.contains("parse config") && err.contains("catcam.toml"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn an_unnamed_camera_takes_its_host_name() {
+        assert_eq!(
+            name_from(Some("himbeergsaelzweckle\n".into())),
+            "himbeergsaelzweckle"
+        );
+        assert_eq!(name_from(Some("DESKTOP-CAT".into())), "DESKTOP-CAT");
+        for none in [
+            None,
+            Some(String::new()),
+            Some(" \n".into()),
+            Some("localhost".into()),
+        ] {
+            assert_eq!(name_from(none), "ObservANT");
+        }
+        assert!(!Config::default().name.is_empty());
+        let named = Config::parse("name = \"Garden\"\n").unwrap();
+        assert_eq!(named.name, "Garden");
     }
 
     #[test]
