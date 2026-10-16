@@ -71,6 +71,7 @@ The entries this repo reaches for most:
 | How do I set up a Windows host for Stevedore? (services, `docker-users`, CNI nat conf, pwsh, gates) | `docs/windows-host-setup.md` |
 | Why does a layer commit fail / what is process isolation doing? wcifs, bindFlt, the `ActivateLayer 0x20` bug | `docs/windows-builds.md` |
 | Dev Drive filter setup, bind mount vs tar-pipe, container reuse | `docs/windows-container-build-performance.md` |
+| How do my builds share sccache with the other build hosts? The host's dufs plus a shared S3 bucket, the key by name on the reused container's `docker exec`, the fallback when the bucket stalls, and the bucket's server runbook | `docs/windows-build-resources.md` § *Two cache levels*, `linux/sccache-s3/README.md` |
 | How do I run Linux containers on Windows? | `docs/rancher-desktop-linux-containers.md` |
 | Which image, which tag, which engine? | `docs/adopting-in-a-new-project.md` |
 | Which lanes run when, how to ask for one (`[ci windows]`, `[ci arm64]`, `[ci all]`), and when `main` is released | `docs/branch-and-release-strategy.md` |
