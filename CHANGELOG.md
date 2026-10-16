@@ -13,6 +13,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-10-16
+
 ### Added
 
 - **Releases** (2026-10-16, owner). Every push to `main` runs the new `release.yml`: a version
