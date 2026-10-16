@@ -6,6 +6,8 @@ artifacts="${1:?usage: collect-release-assets.sh <artifacts dir> <out dir> <vers
 out="${2:?usage: collect-release-assets.sh <artifacts dir> <out dir> <version>}"
 version="${3:?usage: collect-release-assets.sh <artifacts dir> <out dir> <version>}"
 mkdir -p "$out"
+# Absolute, since the zip below runs inside each bundle folder; release.yml passes a relative one.
+out="$(cd "$out" && pwd)"
 
 # put <file> <name>: one release file; a second one of the same name would silently replace the first.
 put() {
@@ -33,7 +35,7 @@ for dir in "$artifacts"/*/; do
   if [ -d "${dir}bundle" ]; then
     zip_name="${name%-windows-*}-${version}-windows-${name##*-windows-}.zip"
     [ ! -e "${out}/${zip_name}" ] || { printf 'two artifacts carry %s\n' "$zip_name" >&2; exit 1; }
-    (cd "${dir}bundle" && zip -qr "$(cd "$out" && pwd)/${zip_name}" .)
+    (cd "${dir}bundle" && zip -qr "${out}/${zip_name}" .)
   fi
 done
 
