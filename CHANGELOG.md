@@ -13,6 +13,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed
+- **The README's hero image is an animated WebP** (2026-10-17): `images/Rust.gif` was 7.5 MiB, the same
+  136 frames as `images/Rust.webp` (ffmpeg's libwebp, quality 70) are 2.1 MiB, with no visible loss
+  side by side. A checkout and every README view load 5.4 MiB less.
+
 ## [2.3.4] - 2026-10-16
 
 ### Added

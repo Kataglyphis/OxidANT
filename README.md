@@ -10,7 +10,7 @@
 
 <div align="center">
   <a href="https://jonasheinle.de">
-    <img src="images/Rust.gif" alt="Rust" width="400" />
+    <img src="images/Rust.webp" alt="Rust" width="400" />
   </a>
 </div>
 

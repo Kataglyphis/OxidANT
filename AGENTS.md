@@ -936,7 +936,7 @@ that two other repositories pin by sha, for a saving nobody has asked for.
 
 | File | Size | Why it is tracked |
 | --- | --- | --- |
-| `images/Rust.gif` | ~7 MiB | The README hero image, rendered by GitHub. |
+| `images/Rust.webp` | ~2 MiB | The README hero image, rendered by GitHub; the 7.5 MiB GIF it replaced (2026-10-17) stays in the history. |
 
 **Models are data, not code, and are never tracked** (owner, 2026-10-14). The AGPL-3.0
 `yolov10m.onnx` (59 MiB) left the tree then; it stays in the history (D4), so a clone still
