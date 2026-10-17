@@ -1,0 +1,3 @@
+# Data files over 500 KiB this repo must track, frozen for ANTfrastructure's large-files gate:
+# https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/data-repositories.md  <path> | <KiB> | <reason>
+images/Rust.webp | 2031 | the README's animated hero image, 480x204 and 136 frames, already the size it is shown at
