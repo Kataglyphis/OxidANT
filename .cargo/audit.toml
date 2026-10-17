@@ -1,6 +1,10 @@
-# Must match deny.toml's [advisories].ignore: cargo-audit and cargo-deny each read only their own list, and both gate.
+# deny.toml's [advisories].ignore plus lockfile-only advisories: cargo-audit reads Cargo.lock, cargo-deny the built graph, and both gate.
 [advisories]
 ignore = [
   "RUSTSEC-2024-0436", # paste: unmaintained (via burn-dispatch, gemm)
   "RUSTSEC-2026-0192", # ttf-parser: unmaintained (transitive font-parsing dep); informational, not a vulnerability
+  # zip 0.6.6, lockfile-only: tch/torch-sys, optional deps of burn-dispatch no feature enables (cargo tree -i zip@0.6.6 --all-features prints nothing); tch 0.26 still needs zip 0.6
+  "RUSTSEC-2026-0367", # zip: SUID/SGID bits kept by extract()
+  "RUSTSEC-2026-0368", # zip: extract() symlinks pointing outside the destination
+  "RUSTSEC-2026-0369", # zip: extract() applies permissions through symlinks
 ]
