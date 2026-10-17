@@ -19,7 +19,7 @@ use crate::config::{Config, Privacy};
 use crate::frame;
 use crate::motion::{still_period, Moving, Pacer};
 use crate::notify::Notifier;
-use crate::presence::{best_score, outside, zone_of, Change, Presence};
+use crate::presence::{best_score, outside, smaller_than, zone_of, Change, Presence};
 use crate::status::Status;
 
 /// A stand-in test pattern runs this long before the camera is probed again.
@@ -485,6 +485,7 @@ fn spawn_inference(
         // The slowest rate the model runs at with a cat in view, so a still one's visit never lapses.
         presence: Presence::new(still_period(config.inference_fps)),
         visit: None,
+        max_box_area: config.max_box_area,
         width,
         height,
         privacy: config.privacy,
@@ -526,6 +527,7 @@ struct Visits {
     presence: Presence,
     /// The open visit's arrival, which its departure event names.
     visit: Option<Arrival>,
+    max_box_area: f32,
     width: u32,
     height: u32,
     privacy: Privacy,
@@ -559,7 +561,12 @@ impl Visits {
     ) {
         let (width, height) = (self.width, self.height);
         let status = &self.status;
-        let detections = outside(detections, &status.ignored(), width, height);
+        let detections = smaller_than(
+            outside(detections, &status.ignored(), width, height),
+            self.max_box_area,
+            width,
+            height,
+        );
         let counted = counted(&detections, self.presence.in_view(), moving);
         let change = self.presence.update(now, &counted);
         match &change {
@@ -1105,6 +1112,7 @@ mod tests {
         Visits {
             presence: Presence::new(Duration::from_millis(500)),
             visit: None,
+            max_box_area: 0.9,
             width: 64,
             height: 48,
             privacy: Privacy::Off,

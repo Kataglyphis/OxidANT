@@ -118,6 +118,23 @@ pub fn outside(
         .collect()
 }
 
+/// `detections` without those covering more than `max_area` of the frame; 1.0 keeps them all.
+/// A box over nearly the whole picture at a low score was a false alarm, never a cat (owner, 2026-10-17).
+pub fn smaller_than(
+    detections: Vec<Detection>,
+    max_area: f32,
+    width: u32,
+    height: u32,
+) -> Vec<Detection> {
+    if max_area >= 1.0 {
+        return detections;
+    }
+    detections
+        .into_iter()
+        .filter(|d| area(&zone_of(d, width, height)) <= max_area)
+        .collect()
+}
+
 /// Where `detection` lies, as fractions of the `width` x `height` frame.
 pub fn zone_of(detection: &Detection, width: u32, height: u32) -> Zone {
     let (w, h) = (width.max(1) as f32, height.max(1) as f32);
@@ -129,8 +146,11 @@ pub fn zone_of(detection: &Detection, width: u32, height: u32) -> Zone {
     ]
 }
 
+fn area(z: &Zone) -> f32 {
+    (z[2] - z[0]).max(0.0) * (z[3] - z[1]).max(0.0)
+}
+
 fn iou(a: &Zone, b: &Zone) -> f32 {
-    let area = |z: &Zone| (z[2] - z[0]).max(0.0) * (z[3] - z[1]).max(0.0);
     let overlap =
         (a[2].min(b[2]) - a[0].max(b[0])).max(0.0) * (a[3].min(b[3]) - a[1].max(b[1])).max(0.0);
     let union = area(a) + area(b) - overlap;
@@ -294,6 +314,24 @@ mod tests {
         assert_eq!(iou(&rack, &rack), 1.0);
         assert_eq!(iou(&rack, &[0.0, 0.0, 0.1, 0.1]), 0.0);
         assert_eq!(iou(&[0.5, 0.5, 0.5, 0.5], &[0.5, 0.5, 0.5, 0.5]), 0.0);
+    }
+
+    #[test]
+    fn a_box_over_nearly_the_whole_picture_is_dropped_unless_the_limit_is_one() {
+        // himbeere2's false visits of 2026-10-16/17: boxes of 0.95 to 0.99 of a 640x480 frame.
+        let whole = at(0.0, 5.0, 640.0, 476.0, 0.31);
+        let near = at(0.0, 0.0, 610.0, 470.0, 0.4);
+        // A cat close to the lens: 0.8 x 0.9 of the frame, 0.72 of it.
+        let close = at(64.0, 24.0, 576.0, 456.0, 0.8);
+        let kept = smaller_than(vec![whole, near, close], 0.9, 640, 480);
+        assert_eq!(kept, vec![close]);
+        assert_eq!(
+            smaller_than(vec![whole, close], 1.0, 640, 480),
+            vec![whole, close]
+        );
+        // Exactly at the limit is kept: half the frame against 0.5.
+        let half = at(0.0, 0.0, 320.0, 480.0, 0.6);
+        assert_eq!(smaller_than(vec![half], 0.5, 640, 480), vec![half]);
     }
 
     #[test]

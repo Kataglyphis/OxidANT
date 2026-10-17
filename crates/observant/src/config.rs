@@ -76,6 +76,8 @@ pub struct Config {
     /// ONNX model; unset means `KATAGLYPHIS_ONNX_MODEL`, then the one beside the binary.
     pub model: Option<String>,
     pub score: f32,
+    /// A box over more of the picture than this share is dropped before it counts; 1 keeps them all.
+    pub max_box_area: f32,
     /// Detections per second at most; 0 runs the model on every frame it can take.
     pub inference_fps: f32,
     /// The model's rate while nothing moves and no cat is in view; at `inference_fps` or above the motion gate is off.
@@ -141,6 +143,7 @@ impl Default for Config {
             inference: Inference::Auto,
             model: None,
             score: 0.25,
+            max_box_area: 0.9,
             // Unbounded, YOLO held a Pi 5's four cores at 380 %; two boxes a second still follow a cat.
             inference_fps: 2.0,
             idle_inference_fps: 0.2,
@@ -229,6 +232,12 @@ impl Config {
         crate::status::check_classes(&self.classes)?;
         if !(0.0..=1.0).contains(&self.score) {
             bail!("score must lie in 0..=1 (got {})", self.score);
+        }
+        if !(self.max_box_area > 0.0 && self.max_box_area <= 1.0) {
+            bail!(
+                "max_box_area must lie in (0, 1] (got {})",
+                self.max_box_area
+            );
         }
         if !self.inference_fps.is_finite() || self.inference_fps < 0.0 {
             bail!(
@@ -405,6 +414,14 @@ mod tests {
             },
             Config {
                 idle_inference_fps: 0.0,
+                ..Config::default()
+            },
+            Config {
+                max_box_area: 0.0,
+                ..Config::default()
+            },
+            Config {
+                max_box_area: 1.5,
                 ..Config::default()
             },
             Config {
