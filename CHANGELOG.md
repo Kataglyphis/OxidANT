@@ -14,6 +14,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Changed
+- **The README logo is the family's ant** (2026-10-17, owner: one icon in every repository),
+  drawn from OmniAccelerANT's `assets/icons/kataglyphis_app_icon.svg`.
 - **The README's hero image is an animated WebP** (2026-10-17): `images/Rust.gif` was 7.5 MiB, the same
   136 frames as `images/Rust.webp` (ffmpeg's libwebp, quality 70) are 2.1 MiB, with no visible loss
   side by side. A checkout and every README view load 5.4 MiB less.
