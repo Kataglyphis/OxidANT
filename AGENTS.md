@@ -929,18 +929,19 @@ so a dead link there costs more than tidiness.
 
 ### Large tracked files
 
-One large file is tracked deliberately. It is not in
-git-lfs, and **the history is not being rewritten** (decision D4 — no `filter-repo`,
-no `filter-branch`, no BFG). A rewrite would change every commit id in a repository
-that two other repositories pin by sha, for a saving nobody has asked for.
+One large file is tracked deliberately, and not in git-lfs; `large-files.allow` freezes it for
+the hub's `large-files` gate. **Decision D4, "the history is not being rewritten", is superseded**
+(owner, 2026-10-17): binary blobs of 500 KB and more that no branch tip holds leave the history
+of all ten family repositories once the pending patch releases are out. Every commit stays and
+maps to one new id, the superprojects' gitlinks move with it, and a checkout follows with the
+hub's `git-adopt-rewritten-history.sh`.
 
 | File | Size | Why it is tracked |
 | --- | --- | --- |
 | `images/Rust.webp` | ~2 MiB | The README hero image, rendered by GitHub; the 7.5 MiB GIF it replaced (2026-10-17) stays in the history. |
 
 **Models are data, not code, and are never tracked** (owner, 2026-10-14). The AGPL-3.0
-`yolov10m.onnx` (59 MiB) left the tree then; it stays in the history (D4), so a clone still
-carries it. Its successor is DEIM-D-FINE-N (Apache-2.0, 15 MiB), built from its pinned
+`yolov10m.onnx` (59 MiB) left the tree then; a clone carries it until the rewrite drops it. Its successor is DEIM-D-FINE-N (Apache-2.0, 15 MiB), built from its pinned
 upstream and released by [ModelANT](https://github.com/Kataglyphis/ModelANT).
 `resources/models/models.lock` names each file with its URL and SHA-256, and
 `scripts/linux/fetch-models.sh` (Windows: `scripts/windows/Get-Models.ps1`, the *Fetch
