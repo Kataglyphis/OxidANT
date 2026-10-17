@@ -130,7 +130,7 @@ A drifted gitlink does not degrade one job — it silently changes every gate, a
 `git submodule status` marks it with a `+` that is easy to miss in a wall of CI output.
 The images are the exception: the lanes take them from the hub's actions and reusable
 workflows at `@develop`, which read `versions.env` at that ref, not at the pin
-(6122a28, 2026-09-25).
+(009617e, 2026-09-25).
 
 Guarded by ANTfrastructure's own repo-agnostic Pester suite, run after any pin bump from
 [`.github/workflows/submodule-pins.yml`](.github/workflows/submodule-pins.yml) — which
@@ -173,7 +173,7 @@ What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/
 
 **`[lib] name` did change later, on 2026-09-05**, when the repository became OxidANT: `[package] name` and `[lib] name` are both `oxidant` now, so the artefacts are `oxidant.dll` / `liboxidant.so` / `liboxidant.a`. That is exactly the outside-this-repo break the paragraph above warns about, and it was only safe because every consumer was updated in the same commit — OmniAccelerANT's Cargokit wiring, podspecs, `Get-WindowsBuildConfig.ps1` and the committed `frb_generated.dart` loader stem, plus BeschleunigerBallett's Corrosion import. Renaming it again means finding those consumers again — they are listed under [Consumers](#consumers).
 
-`BINARY` still means different things on the two platforms. On **Windows** it is an optional environment override of `Msix.Binary`, the executable `Build-Windows.ps1` builds and packages (`kataglyphis_cli`). In the **Linux** workflow (`reusable-linux.yml`, which both Linux lanes call) it is `oxidant`, and it names every Linux package and the command each installs: `package_archive.sh` copies `target/release/$BINARY_FILE` to `oxidant` in the tar, `/opt/oxidant/oxidant` behind `/usr/bin/oxidant` in the deb, the AppImage's payload, and `org.kataglyphis.oxidant`'s command in the flatpak (hub `fbab76c8`). So `BINARY_FILE` is the cargo artefact, `BINARY` is what a user ends up invoking.
+`BINARY` still means different things on the two platforms. On **Windows** it is an optional environment override of `Msix.Binary`, the executable `Build-Windows.ps1` builds and packages (`kataglyphis_cli`). In the **Linux** workflow (`reusable-linux.yml`, which both Linux lanes call) it is `oxidant`, and it names every Linux package and the command each installs: `package_archive.sh` copies `target/release/$BINARY_FILE` to `oxidant` in the tar, `/opt/oxidant/oxidant` behind `/usr/bin/oxidant` in the deb, the AppImage's payload, and `org.kataglyphis.oxidant`'s command in the flatpak (hub `1b99f7b5`). So `BINARY_FILE` is the cargo artefact, `BINARY` is what a user ends up invoking.
 
 ### Inside the Stevedore Windows container
 
@@ -293,7 +293,7 @@ full-workspace release build confirms it. zune-jpeg's newest release is still 0.
   node-scale and instance-scale must shade the same, 987 pixels differ  (threshold: 40)
   ```
 
-  Confirmed pre-existing by re-running it against a pristine export of `a618287`: byte-identical 987. Everything else in the suite (~340 tests) passes. The failing path is the instanced normal transform — the generated `src/shaders/forward.wgsl` applies `instance_cofactor_0` to `worldNormal_0`, and the two shading paths disagree where they must agree.
+  Confirmed pre-existing by re-running it against a pristine export of `4909bd7`: byte-identical 987. Everything else in the suite (~340 tests) passes. The failing path is the instanced normal transform — the generated `src/shaders/forward.wgsl` applies `instance_cofactor_0` to `worldNormal_0`, and the two shading paths disagree where they must agree.
 
   **Fix it upstream, not here.** The `.wgsl` files in `src/shaders/` are checked-in *generated artifacts*; there is no `.slang` file in this repo, and the code comments reference the C++ engine's `forward.slang` by line number (e.g. `cascades.rs` → `forward.slang:151`). Hand-editing the generated WGSL would desynchronise it from its source.
 
@@ -750,7 +750,7 @@ component per file (`msi-payload-files.wxs`), placed with WiX v4's `Subdirectory
 device the tests run against what `Stage-CrossTests.ps1` copied beside them, not the image's
 runtime, so the cat cam's capture tests need their own: `videofilter` for the `videoflip`
 that is always in the capture since its turn became a run-time setting, `multifile` and
-`jpeg` for the image source. Its rotation commit (11d8cf4) failed arm64 alone for that,
+`jpeg` for the image source. Its rotation commit (d1d6e37) failed arm64 alone for that,
 while x64, which tests inside the image, had them all. The product bundle stays as it was.
 
 On a cross build the script also:
@@ -776,7 +776,7 @@ input and takes the container actions' default, which
 build (check A) — and check D fails this repo's lint gate if the reference is
 re-typed into a workflow, a script, or a comment.
 
-**PowerShell is graded too, and with the analyzer enforcing.** The job is a `uses:` since 2026-09-15: hub `604294e2` gave `python-ci-windows.yml` a `build-python-package` input (boolean, default true) gating its container build and made `GHCR_PAT` optional, so a Rust crate can take the family's PowerShell lint without buying a Python package build. `Invoke-Lint.ps1` makes two passes — a parse + AST-trap gate that is always fatal, and PSScriptAnalyzer. The sibling consumer this job is modelled on leaves the analyzer advisory because it has untriaged findings; this tree has none (measured 2026-09-15: 0 errors, 0 warnings over all 9 files), so `-FailOnAnalyzer` is passed and the ratchet is set at the number this repo actually has. `-Path scripts` is walked recursively, and the hub's `PSScriptAnalyzerSettings.psd1` is resolved against the *script's* own location — the ruleset is consumed by reference and nothing is copied in here.
+**PowerShell is graded too, and with the analyzer enforcing.** The job is a `uses:` since 2026-09-15: hub `d339cd52` gave `python-ci-windows.yml` a `build-python-package` input (boolean, default true) gating its container build and made `GHCR_PAT` optional, so a Rust crate can take the family's PowerShell lint without buying a Python package build. `Invoke-Lint.ps1` makes two passes — a parse + AST-trap gate that is always fatal, and PSScriptAnalyzer. The sibling consumer this job is modelled on leaves the analyzer advisory because it has untriaged findings; this tree has none (measured 2026-09-15: 0 errors, 0 warnings over all 9 files), so `-FailOnAnalyzer` is passed and the ratchet is set at the number this repo actually has. `-Path scripts` is walked recursively, and the hub's `PSScriptAnalyzerSettings.psd1` is resolved against the *script's* own location — the ruleset is consumed by reference and nothing is copied in here.
 
 **Nothing generated may be tracked.** `scripts/windows/tests/Repo.GeneratedArtifacts.Tests.ps1` runs ANTfrastructure's `Get-TrackedIgnoredFile` and `Get-TrackedGeneratedArtifact` over this root; only the root and the list of generated-output pathspecs are local. A `.gitignore` rule stops a file from being *added* and does nothing once a path is in the index, which is why `git rm --cached` has already been needed twice here (build logs under `logs\windows\`, and the flatpak repo). Note the pathspec form: `'**/__pycache__/*'` matches, `'**/__pycache__/'` matches **nothing** and would grade zero paths while reporting clean.
 
@@ -824,7 +824,7 @@ from the image's riscv64 child, the distro clang as linker, binfmt with QEMU 10.
 - **A spawned host program is not remapped.** `QEMU_LD_PREFIX` sends the test binary's own
   opens into the sysroot, but `execve` is not redirected, so a test that spawns a tool runs
   the host's. A bare `sleep` exited at once there, which made a test of
-  `camera::run_with_timeout` see output instead of a timeout (67301b0 to 10c5b73, red); the
+  `camera::run_with_timeout` see output instead of a timeout (9e0a401 to 8a5337b, red); the
   test now goes through `sh -c`, and the function returns `None` for any failed exit.
 
 Facts that cost real debugging time:
@@ -872,7 +872,7 @@ blocks no commit.
 `--apply` moves **gitlinks only**, and only for submodules that declare a
 `branch =`. Here that is the one entry in `.gitmodules` — measured on
 2026-09-09, the default report was a single row, `third_party/ANTfrastructure
-fb7d673dd383 → 6ad5d8802e78`, in about four seconds. Cargo is **report-only**:
+3ef5024cde13 → b902bdeb0781`, in about four seconds. Cargo is **report-only**:
 `--managers cargo` returned 21 rows the same day, and exactly one of them
 (`flutter_rust_bridge =2.12.0 → =2.13.0`) is a manifest edit. The rest print the
 same string twice (`wgpu 30 30`) because the declared range already covers the
@@ -930,18 +930,18 @@ so a dead link there costs more than tidiness.
 ### Large tracked files
 
 One large file is tracked deliberately, and not in git-lfs; `large-files.allow` freezes it for
-the hub's `large-files` gate. **Decision D4, "the history is not being rewritten", is superseded**
-(owner, 2026-10-17): binary blobs of 500 KB and more that no branch tip holds leave the history
-of all ten family repositories once the pending patch releases are out. Every commit stays and
-maps to one new id, the superprojects' gitlinks move with it, and a checkout follows with the
-hub's `git-adopt-rewritten-history.sh`.
+the hub's `large-files` gate. **Decision D4, "the history is not being rewritten", is superseded:**
+on 2026-10-17 (owner) binary blobs of 500 KB and more that no branch held left the history of all
+ten family repositories, and this pack went from 63 to 12 MiB. Every commit was kept and maps to
+one new id, the superprojects' gitlinks moved with it, and a checkout from before follows with
+the hub's `git-adopt-rewritten-history.sh`.
 
 | File | Size | Why it is tracked |
 | --- | --- | --- |
-| `images/Rust.webp` | ~2 MiB | The README hero image, rendered by GitHub; the 7.5 MiB GIF it replaced (2026-10-17) stays in the history. |
+| `images/Rust.webp` | ~2 MiB | The README hero image, rendered by GitHub; the 7.5 MiB GIF it replaced (2026-10-17) left the history in the rewrite. |
 
 **Models are data, not code, and are never tracked** (owner, 2026-10-14). The AGPL-3.0
-`yolov10m.onnx` (59 MiB) left the tree then; a clone carries it until the rewrite drops it. Its successor is DEIM-D-FINE-N (Apache-2.0, 15 MiB), built from its pinned
+`yolov10m.onnx` (59 MiB) left the tree then, and the history in the 2026-10-17 rewrite. Its successor is DEIM-D-FINE-N (Apache-2.0, 15 MiB), built from its pinned
 upstream and released by [ModelANT](https://github.com/Kataglyphis/ModelANT).
 `resources/models/models.lock` names each file with its URL and SHA-256, and
 `scripts/linux/fetch-models.sh` (Windows: `scripts/windows/Get-Models.ps1`, the *Fetch

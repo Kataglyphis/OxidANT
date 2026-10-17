@@ -35,9 +35,9 @@ Import-BuildModule @(
   'WindowsTargetArch.Common' # the arch facts: accepted spellings, cross or not, the Rust triple
   'WindowsCargoTarget.Common' # project-local: where each arch's build lands, what packages call it
 )
-# Chain ONNX Runtime staging and the G6 payload proof; a hub pin before ad08bc30 lacks the module.
+# Chain ONNX Runtime staging and the G6 payload proof; a hub pin before 73a8dd74 lacks the module.
 try { Import-BuildModule @('WindowsOrtPayload.Common') } catch {
-  throw "This build needs ANTfrastructure's WindowsOrtPayload.Common (hub commit ad08bc30 of 2026-09-25, third_party/ANTfrastructure/docs/onnxruntime-single-source.md § The shared Windows glue); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
+  throw "This build needs ANTfrastructure's WindowsOrtPayload.Common (hub commit 73a8dd74 of 2026-09-25, third_party/ANTfrastructure/docs/onnxruntime-single-source.md § The shared Windows glue); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
 }
 # Package arch and DLL closure; an older hub pin lacks Get-ProductDllSearchPath, named here.
 try {
@@ -136,7 +136,7 @@ try {
       Invoke-BuildStep -Context $context -StepName 'Security Checks (audit & deny)' -Script {
         # Pinned from the image env or the hub's versions.env, else fatal: unpinned, crates.io picks the verdict.
         if (-not (Get-Command -Name 'Get-ANTfrastructurePin' -ErrorAction SilentlyContinue)) {
-          throw 'Get-ANTfrastructurePin is missing: move third_party/ANTfrastructure to hub 61cb0e42 (2026-10-05) or later.'
+          throw 'Get-ANTfrastructurePin is missing: move third_party/ANTfrastructure to hub 54e7d7fc (2026-10-05) or later.'
         }
         $cargoAuditVersion = Get-ANTfrastructurePin -Name 'CARGO_AUDIT_VERSION'
         $cargoDenyVersion = Get-ANTfrastructurePin -Name 'CARGO_DENY_VERSION'

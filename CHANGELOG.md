@@ -394,9 +394,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   (2026-10-13).** `encode_mp4` made its directory before it built `openh264enc`,
   `h264parse` and `mp4mux`, and returned early when one was missing, past the cleanup at
   its end. Windows arm64's GStreamer has no `openh264enc`, so the test that a failed
-  encode leaves nothing behind failed there from 0af682f on, while x64 stayed green. The
+  encode leaves nothing behind failed there from a9e3b58 on, while x64 stayed green. The
   directory is removed on drop now, after the pipeline; a test hides `openh264enc` from
-  the registry for one encode, and fails against the old code (44dd90a).
+  the registry for one encode, and fails against the old code (939990b).
 - **The ORT loader accepts the chain ORT of the 2026-10-08 `:winamd64` (2026-10-10).** That image's
   `onnxruntime.dll` names its sources `C:/temp/onnx-src/onnxruntime/core/...`, with forward and mixed
   separators, and no longer the backslash form `verify_chain_build` looked for. So every Windows ORT
@@ -531,7 +531,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   - Coverage passes `--workspace`, the test features and `KATAGLYPHIS_REQUIRE_GPU=1` to the
     hub's `cargo_coverage.sh`. Without `--workspace`, tarpaulin measured the root package
     alone, which has no unit tests: `0.00% coverage, 0/754 lines covered`.
-  - Measured at f1f535c, which still carried a separate adapter-report test (360 without
+  - Measured at 338c4da, which still carried a separate adapter-report test (360 without
     it): Linux x64 and arm64 361 passed, 1 ignored (runs 36889465993, 36889466121), coverage
     65.23% (4994/7656 lines); Windows x64 361 passed, 1 ignored, 30 in the container and 331
     on the host (run 36889466941). The Windows arm64 run (36889467167) stopped in
@@ -540,7 +540,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
     before it create devices but draw nothing). Its renderer binaries now run one test at
     a time (`--test-threads=1`), which passes; the parallel crash is not root-caused
     (BACKLOG.md).
-  - Measured at af096e5, every lane green and the same set everywhere: Linux x64 and arm64
+  - Measured at 776685b, every lane green and the same set everywhere: Linux x64 and arm64
     360 passed, 1 ignored (runs 36907253295, 36907253309), coverage 65.26% (5000/7662);
     Windows x64 360 passed, 1 ignored, 30 in the container and 330 on the host (run
     36907253841); Windows arm64 `TESTS: passed=360 failed=0 skipped=1` on `windows-11-arm`
@@ -638,7 +638,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `InstallerVersion` is 500, which an ARM64 package requires (WIX1143).
   Verified in the arm64 bundle: 10/10 steps, 12 arm64 binaries in the bundle
   (the exe, the VC++ runtime, GStreamer/GLib), the arch gate clean with no
-  unresolved import. The hub pin moves from 20bb0026 to 948f7031, which
+  unresolved import. The hub pin moves from 2fdddbc7 to 6b576c27, which
   carries the reusable lane and `Copy-PeImportClosure`.
 - **Three gates this repo did not have.** `--ratchets` on the lint lane (the
   docs cross-reference gate plus eight measurement gates, frozen at
@@ -737,7 +737,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `--test-threads=1` from `tests.json` on the runner, so one run can name the WARP crash
   with the hub runner's exit-code and WER reporting. Push runs stay serial.
 - **The Linux lanes ship a deb, an AppImage and a flatpak beside the tar (2026-10-06, hub
-  `fbab76c8`).** `PACKAGE_TYPES` was `tar`, because the hub's `package_archive.sh` wrote the
+  `1b99f7b5`).** `PACKAGE_TYPES` was `tar`, because the hub's `package_archive.sh` wrote the
   tar and stopped. It now builds all four from the release `kataglyphis_cli`, installed as
   `oxidant`:
   - the deb as `/usr/bin/oxidant`, depending on `libc6, libgcc-s1` (the binary links
@@ -767,14 +767,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
   In `:latest`: workspace clippy with CI's features and `-D warnings` is clean, rustfmt is
   clean, and the renderer's 163 unit tests and every integration suite pass, the 38
   `headless` GPU tests on lavapipe included.
-- **The MSI step and the helper table became hub calls (2026-10-05, hub `c4052035`, CON55).**
+- **The MSI step and the helper table became hub calls (2026-10-05, hub `b9247b03`, CON55).**
   The *MSI Packaging* step of `scripts/windows/Build-Windows.ps1` calls the hub's
   `Invoke-MsiPackage`. It used to resolve `wix.exe` itself, assemble the `wix build` argv and
   write the payload fragment, about 50 lines. It still decides what the payload is: the G6-proven
   DLLs, `lib\` and `resources\`. `AGENTS.md` § 2 links the hub's
   *Reach for these before writing a helper* table instead of carrying a copy of it. With those
   two, `BACKLOG.md` § *Waiting on ANTfrastructure* is empty and gone.
-- **Five local copies became hub calls (2026-10-05, hub `61cb0e42`, CON55).** The hub's
+- **Five local copies became hub calls (2026-10-05, hub `54e7d7fc`, CON55).** The hub's
   `Get-ANTfrastructurePin` replaces `Resolve-CargoToolPin` in `scripts/windows/Build-Windows.ps1`.
   The hub's cargo drivers register `CARGO_SAFE_DIRECTORY`, so `ci-container-steps.sh` only
   exports it; `riscv64-test`, which runs cargo itself, sources the hub's `_cargo_wrapper.sh`.
@@ -788,7 +788,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   *Tests and scripts that read source text*. The line-number pins in
   `buffer_desc_single_definition.rs` follow the edit (`occlusion.rs:358`,
   `histogram.rs:102`). `cargo fmt --check`, clippy `-D warnings` and the source-reading
-  tests pass. ANTfrastructure moves to `9e9d9828` for the gate that grades every
+  tests pass. ANTfrastructure moves to `497ba711` for the gate that grades every
   language and the bootstrap templates the two local copies follow.
 - **`run-producer-pi.sh` runs through the image's entrypoint (2026-09-29).** All three
   `nerdctl run`s drop `--entrypoint bash`; `/hostlibs` is handed in as the caller's
@@ -797,7 +797,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   media paths and refuses an image older than CON23. Proven under QEMU only; a board
   run is open in BACKLOG.md.
 - **The chain ORT staging and every payload's proof are the hub's
-  `WindowsOrtPayload.Common`** (hub `ad08bc30`, 2026-09-25), which grew out of this
+  `WindowsOrtPayload.Common`** (hub `73a8dd74`, 2026-09-25), which grew out of this
   repo's own module of that name. The local copy and its Pester suite are gone;
   the cases live on in the hub's `OrtPayload.Common.Tests.ps1`. The hub's copy
   refuses an ONNX_ROOT that is not the chain install for the target arch before
@@ -868,10 +868,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **The docs publish and `cancel-in-progress` follow the repository's actual
   default branch** rather than a typed `refs/heads/main`.
 - **`AGENTS.md` was rebuilt on ANTfrastructure's six-section template.**
-- **`third_party/ANTfrastructure` moved to `604294e2`, and the `powershell-lint`
+- **`third_party/ANTfrastructure` moved to `d339cd52`, and the `powershell-lint`
   job became a `uses:`** — the retirement the job's own comment specified one
   pin earlier ("when a reusable lane carries this gate without a Python build
-  attached"). Hub `604294e2` added `build-python-package` to the reusable
+  attached"). Hub `d339cd52` added `build-python-package` to the reusable
   `python-ci-windows.yml` (boolean, `default: true`, so every caller written
   before it is byte-for-byte unaffected), gated
   `build-test-python-package-on-windows` on it, made `GHCR_PAT`
@@ -893,12 +893,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   one difference is **additive**: upstream tests for the gate script first and
   throws a message naming the submodule, where the copy here would have
   reported a bare `pwsh -File <absent>` path error. This supersedes the
-  "the job stays" decision recorded in the `49be50f0` row below. The
+  "the job stays" decision recorded in the `35960a87` row below. The
   shared-config templates did not move across this bump either, which
   `sync-shared-config.sh --repo-root . --check` confirms rather than the commit
   range being taken on trust ("Shared config in sync", both rows OK). All three
   gate jobs in `lint-gates.yml` are now one `uses:` onto ANTfrastructure.
-- **`third_party/ANTfrastructure` moved to `49be50f0`**, and nothing local was
+- **`third_party/ANTfrastructure` moved to `35960a87`**, and nothing local was
   deleted for it — deliberately, row by row. The shared-config templates are
   byte-identical across the bump, which
   `sync-shared-config.sh --repo-root . --check` confirms rather than the commit
@@ -920,7 +920,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `package_archive.sh`, which is unchanged, so the tarball-only row stays open.
   All eight "Waiting on ANTfrastructure" rows were re-checked against the new
   pin and say so.
-- **`third_party/ANTfrastructure` was pinned at `19286e9f`**, and three local
+- **`third_party/ANTfrastructure` was pinned at `3c83a5e3`**, and three local
   forks went with the bump. `scripts/linux/ci-container-steps.sh`'s `fmt-clippy`
   case delegates to `cargo_fmt_clippy.sh` now that the driver takes
   `CARGO_CLIPPY_ARGS` instead of hard-coding `--all-features`; the ~100-line
@@ -956,8 +956,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   paths follow `dist\windows-<arch>`. Needs the hub commit where `-Sign` takes
   `-SigningRoot`.
 - **The ORT payload suite follows the hub's stricter G6 fingerprint (2026-09-25).**
-  Since hub e72a9a37, the census counts a source path as an ORT fingerprint only when it
-  is a whole `__FILE__` string ending in NUL. The hub bump to 20bb0026, made for the
+  Since hub 502b9089, the census counts a source path as an ORT fingerprint only when it
+  is a whole `__FILE__` string ending in NUL. The hub bump to 2fdddbc7, made for the
   Windows sccache fix, brought that rule here. `OrtPayload.Tests.ps1`'s fake chain and
   stale DLLs wrote the path followed by a space, so the stale case read as `UNPROVEN`,
   not `STALE`, and the lint lane's Pester step failed (run 36101778073). The fixtures
