@@ -110,7 +110,7 @@ pub fn stop_webcam_inference() {
 
 #[cfg(all(feature = "gstreamer", onnx))]
 mod enabled {
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
 
     use anyhow::Result;
     use kataglyphis_media::CameraSource;
@@ -165,6 +165,7 @@ mod enabled {
                 model_path: config.model_path,
                 score_threshold: config.score_threshold,
                 texture,
+                on_detections: Some(Arc::new(crate::api::esp32::notify_detections)),
             },
             Box::new(move |event| {
                 let _ = sink.add(DetectionEvent {

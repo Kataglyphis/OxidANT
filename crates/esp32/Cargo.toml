@@ -1,0 +1,15 @@
+[package]
+name = "kataglyphis_esp32"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "USB-serial bridge to the ESP32-S3 companion board."
+
+[dependencies]
+kataglyphis_esp32_proto = { path = "../esp32-protocol" }
+anyhow = { workspace = true }
+log = { workspace = true }
+serialport = { version = "4.7", default-features = false }
+
+[lints]
+workspace = true

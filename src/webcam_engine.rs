@@ -29,6 +29,9 @@ pub struct EngineConfig {
     pub score_threshold: f32,
     /// Flutter texture to feed; `None` runs headless (container CI, tests).
     pub texture: Option<TextureTarget>,
+    /// Called with every inference result; the ESP32 bridge hooks in here, so a
+    /// detection reaches the board without a round trip through Dart.
+    pub on_detections: Option<Arc<dyn Fn(&[Detection]) + Send + Sync>>,
 }
 
 pub struct TextureTarget {
@@ -116,6 +119,7 @@ impl WebcamEngine {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_worker = stop.clone();
         let score_threshold = config.score_threshold;
+        let on_detections = config.on_detections;
 
         let worker = std::thread::Builder::new()
             .name("webcam-inference".into())
@@ -149,6 +153,10 @@ impl WebcamEngine {
                         }
                     };
                     let inference_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+                    if let Some(on_detections) = &on_detections {
+                        on_detections(&detections);
+                    }
 
                     recent.push_back(Instant::now());
                     while recent.len() > 30 {
@@ -219,6 +227,7 @@ mod tests {
             model_path,
             score_threshold: 0.5,
             texture,
+            on_detections: None,
         }
     }
 

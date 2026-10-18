@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -247470261;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 507537367;
 
 // Section: executor
 
@@ -120,6 +120,291 @@ fn wire__crate__api__onnx__detect_persons_rgba_impl(
                     api_height,
                     api_score_threshold,
                 )?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__esp32__esp32_available_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "esp32_available",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::esp32::esp32_available())?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__esp32__esp32_connect_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "esp32_connect",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_sink = <StreamSink<
+                crate::api::esp32::Esp32Event,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::esp32::esp32_connect(api_path, api_sink)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__esp32__esp32_connected_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "esp32_connected",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::esp32::esp32_connected())?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__esp32__esp32_disconnect_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "esp32_disconnect",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>({
+                        crate::api::esp32::esp32_disconnect();
+                    })?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__esp32__esp32_list_devices_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "esp32_list_devices",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::esp32::esp32_list_devices()?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__esp32__esp32_notify_detection_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "esp32_notify_detection",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_count = <u16>::sse_decode(&mut deserializer);
+            let api_score = <f32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::esp32::esp32_notify_detection(api_count, api_score)?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__esp32__esp32_ping_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "esp32_ping",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::esp32::esp32_ping()?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__esp32__esp32_set_led_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "esp32_set_led",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_red = <u8>::sse_decode(&mut deserializer);
+            let api_green = <u8>::sse_decode(&mut deserializer);
+            let api_blue = <u8>::sse_decode(&mut deserializer);
+            let api_blink_ms = <u16>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok =
+                    crate::api::esp32::esp32_set_led(api_red, api_green, api_blue, api_blink_ms)?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__esp32__esp32_set_telemetry_period_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "esp32_set_telemetry_period",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_ms = <u16>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::esp32::esp32_set_telemetry_period(api_ms)?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -397,6 +682,16 @@ impl SseDecode
     }
 }
 
+impl SseDecode
+    for StreamSink<crate::api::esp32::Esp32Event, flutter_rust_bridge::for_generated::SseCodec>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <String>::sse_decode(deserializer);
+        return StreamSink::deserialize(inner);
+    }
+}
+
 impl SseDecode for String {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -458,6 +753,60 @@ impl SseDecode for crate::api::webcam::DetectionEvent {
             pts_ms: var_ptsMs,
             inference_ms: var_inferenceMs,
             fps: var_fps,
+        };
+    }
+}
+
+impl SseDecode for crate::api::esp32::Esp32Device {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_path = <String>::sse_decode(deserializer);
+        let mut var_serialNumber = <Option<String>>::sse_decode(deserializer);
+        let mut var_product = <Option<String>>::sse_decode(deserializer);
+        let mut var_manufacturer = <Option<String>>::sse_decode(deserializer);
+        let mut var_vendorId = <u32>::sse_decode(deserializer);
+        let mut var_productId = <u32>::sse_decode(deserializer);
+        let mut var_espressif = <bool>::sse_decode(deserializer);
+        return crate::api::esp32::Esp32Device {
+            path: var_path,
+            serial_number: var_serialNumber,
+            product: var_product,
+            manufacturer: var_manufacturer,
+            vendor_id: var_vendorId,
+            product_id: var_productId,
+            espressif: var_espressif,
+        };
+    }
+}
+
+impl SseDecode for crate::api::esp32::Esp32Event {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_kind = <String>::sse_decode(deserializer);
+        let mut var_text = <Option<String>>::sse_decode(deserializer);
+        let mut var_value = <Option<u32>>::sse_decode(deserializer);
+        let mut var_flag = <Option<bool>>::sse_decode(deserializer);
+        let mut var_scorePermille = <Option<u32>>::sse_decode(deserializer);
+        let mut var_firmware = <Option<String>>::sse_decode(deserializer);
+        let mut var_protocol = <Option<u32>>::sse_decode(deserializer);
+        let mut var_mac = <Option<String>>::sse_decode(deserializer);
+        let mut var_uptimeMs = <Option<u32>>::sse_decode(deserializer);
+        let mut var_freeHeap = <Option<u32>>::sse_decode(deserializer);
+        let mut var_temperatureCentiC = <Option<i32>>::sse_decode(deserializer);
+        let mut var_detectionCount = <Option<u32>>::sse_decode(deserializer);
+        return crate::api::esp32::Esp32Event {
+            kind: var_kind,
+            text: var_text,
+            value: var_value,
+            flag: var_flag,
+            score_permille: var_scorePermille,
+            firmware: var_firmware,
+            protocol: var_protocol,
+            mac: var_mac,
+            uptime_ms: var_uptimeMs,
+            free_heap: var_freeHeap,
+            temperature_centi_c: var_temperatureCentiC,
+            detection_count: var_detectionCount,
         };
     }
 }
@@ -526,6 +875,18 @@ impl SseDecode for Vec<crate::api::webcam::DetectionBox> {
     }
 }
 
+impl SseDecode for Vec<crate::api::esp32::Esp32Device> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::esp32::Esp32Device>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<u8> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -543,6 +904,28 @@ impl SseDecode for Option<String> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<String>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<bool> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<bool>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<i32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<i32>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -568,6 +951,13 @@ impl SseDecode for Option<u64> {
         } else {
             return None;
         }
+    }
+}
+
+impl SseDecode for u16 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_u16::<NativeEndian>().unwrap()
     }
 }
 
@@ -640,9 +1030,12 @@ fn pde_ffi_dispatcher_primary_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         1 => wire__crate__api__simple__async_heavy_work_impl(port, ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__webcam__list_cameras_impl(port, ptr, rust_vec_len, data_len),
-        7 => {
+        4 => wire__crate__api__esp32__esp32_connect_impl(port, ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__esp32__esp32_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__esp32__esp32_list_devices_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__webcam__list_cameras_impl(port, ptr, rust_vec_len, data_len),
+        16 => {
             wire__crate__api__webcam__start_webcam_inference_impl(port, ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),
@@ -658,10 +1051,18 @@ fn pde_ffi_dispatcher_sync_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         2 => wire__crate__api__onnx__detect_persons_rgba_impl(ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__simple__heavy_computation_impl(ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__webcam__stop_webcam_inference_impl(ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__webcam__webcam_inference_available_impl(ptr, rust_vec_len, data_len),
+        3 => wire__crate__api__esp32__esp32_available_impl(ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__esp32__esp32_connected_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__esp32__esp32_notify_detection_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__esp32__esp32_ping_impl(ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__esp32__esp32_set_led_impl(ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__esp32__esp32_set_telemetry_period_impl(ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__simple__heavy_computation_impl(ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__webcam__stop_webcam_inference_impl(ptr, rust_vec_len, data_len),
+        18 => {
+            wire__crate__api__webcam__webcam_inference_available_impl(ptr, rust_vec_len, data_len)
+        }
         _ => unreachable!(),
     }
 }
@@ -754,6 +1155,60 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::webcam::DetectionEvent>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::esp32::Esp32Device {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.path.into_into_dart().into_dart(),
+            self.serial_number.into_into_dart().into_dart(),
+            self.product.into_into_dart().into_dart(),
+            self.manufacturer.into_into_dart().into_dart(),
+            self.vendor_id.into_into_dart().into_dart(),
+            self.product_id.into_into_dart().into_dart(),
+            self.espressif.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::esp32::Esp32Device
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::esp32::Esp32Device>
+    for crate::api::esp32::Esp32Device
+{
+    fn into_into_dart(self) -> crate::api::esp32::Esp32Device {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::esp32::Esp32Event {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.kind.into_into_dart().into_dart(),
+            self.text.into_into_dart().into_dart(),
+            self.value.into_into_dart().into_dart(),
+            self.flag.into_into_dart().into_dart(),
+            self.score_permille.into_into_dart().into_dart(),
+            self.firmware.into_into_dart().into_dart(),
+            self.protocol.into_into_dart().into_dart(),
+            self.mac.into_into_dart().into_dart(),
+            self.uptime_ms.into_into_dart().into_dart(),
+            self.free_heap.into_into_dart().into_dart(),
+            self.temperature_centi_c.into_into_dart().into_dart(),
+            self.detection_count.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::esp32::Esp32Event {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::esp32::Esp32Event>
+    for crate::api::esp32::Esp32Event
+{
+    fn into_into_dart(self) -> crate::api::esp32::Esp32Event {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::webcam::WebcamStreamConfig {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -816,6 +1271,15 @@ impl SseEncode
     }
 }
 
+impl SseEncode
+    for StreamSink<crate::api::esp32::Esp32Event, flutter_rust_bridge::for_generated::SseCodec>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        unimplemented!("")
+    }
+}
+
 impl SseEncode for String {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -858,6 +1322,37 @@ impl SseEncode for crate::api::webcam::DetectionEvent {
         <Option<u64>>::sse_encode(self.pts_ms, serializer);
         <f64>::sse_encode(self.inference_ms, serializer);
         <f32>::sse_encode(self.fps, serializer);
+    }
+}
+
+impl SseEncode for crate::api::esp32::Esp32Device {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.path, serializer);
+        <Option<String>>::sse_encode(self.serial_number, serializer);
+        <Option<String>>::sse_encode(self.product, serializer);
+        <Option<String>>::sse_encode(self.manufacturer, serializer);
+        <u32>::sse_encode(self.vendor_id, serializer);
+        <u32>::sse_encode(self.product_id, serializer);
+        <bool>::sse_encode(self.espressif, serializer);
+    }
+}
+
+impl SseEncode for crate::api::esp32::Esp32Event {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.kind, serializer);
+        <Option<String>>::sse_encode(self.text, serializer);
+        <Option<u32>>::sse_encode(self.value, serializer);
+        <Option<bool>>::sse_encode(self.flag, serializer);
+        <Option<u32>>::sse_encode(self.score_permille, serializer);
+        <Option<String>>::sse_encode(self.firmware, serializer);
+        <Option<u32>>::sse_encode(self.protocol, serializer);
+        <Option<String>>::sse_encode(self.mac, serializer);
+        <Option<u32>>::sse_encode(self.uptime_ms, serializer);
+        <Option<u32>>::sse_encode(self.free_heap, serializer);
+        <Option<i32>>::sse_encode(self.temperature_centi_c, serializer);
+        <Option<u32>>::sse_encode(self.detection_count, serializer);
     }
 }
 
@@ -919,6 +1414,16 @@ impl SseEncode for Vec<crate::api::webcam::DetectionBox> {
     }
 }
 
+impl SseEncode for Vec<crate::api::esp32::Esp32Device> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::esp32::Esp32Device>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<u8> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -935,6 +1440,26 @@ impl SseEncode for Option<String> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <String>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<bool> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <bool>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<i32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <i32>::sse_encode(value, serializer);
         }
     }
 }
@@ -956,6 +1481,13 @@ impl SseEncode for Option<u64> {
         if let Some(value) = self {
             <u64>::sse_encode(value, serializer);
         }
+    }
+}
+
+impl SseEncode for u16 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_u16::<NativeEndian>(self).unwrap();
     }
 }
 
