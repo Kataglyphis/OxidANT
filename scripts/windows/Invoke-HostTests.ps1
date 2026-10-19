@@ -28,12 +28,5 @@ if ($ContainerRoot -and ($ContainerRoot.TrimEnd('\') -ne $repoRoot.TrimEnd('\'))
 
 # The arm64 lane's runner too, so both Windows lanes count passes, failures and self-skips the same way.
 $runner = Join-Path $repoRoot 'third_party\ANTfrastructure\windows\scripts\build\Invoke-StagedTests.ps1'
-$output = @(& $runner -Manifest $manifest)
-$output | ForEach-Object { Write-Host $_ }
-$verdict = @($output | Select-String -Pattern '^TESTS: passed=(\d+) failed=(\d+) skipped=(\d+)\s*$')
-if ($verdict.Count -ne 1) {
-  throw "Invoke-StagedTests.ps1 printed $($verdict.Count) 'TESTS: passed=<n> failed=<n> skipped=<n>' lines; exactly one is the verdict."
-}
-$passed, $failed, $skipped = $verdict[0].Matches[0].Groups[1..3].Value | ForEach-Object { [int]$_ }
-if ($failed -gt 0) { throw "$failed host test(s) failed ($passed passed, $skipped skipped)." }
-if ($passed -lt 1) { throw 'No host test passed; a run with nothing tested is not a test verdict.' }
+# -AssertVerdict throws after the counts line when a test failed or none passed.
+& $runner -Manifest $manifest -AssertVerdict

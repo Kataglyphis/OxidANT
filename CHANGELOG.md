@@ -71,6 +71,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   In `:winamd64` with stub lane steps, the old and the new script leave the same trees, a failing
   step included: sccache and `registry\cache` back in `CI_COMPILER_CACHE`, `registry\src` and
   `git\checkouts` left behind. A cache that cannot move back now warns instead of failing the lane.
+- **`Invoke-HostTests.ps1` grades with `Invoke-StagedTests.ps1 -AssertVerdict`** (2026-10-19,
+  ANTfrastructure 1a174d9c) instead of parsing the `TESTS:` line itself. On the host and in
+  `:winamd64`, over synthetic manifests, the old and the new script give the same exit codes and
+  counts for a pass, a failure, a run whose one test skipped itself and a missing binary; only the
+  messages say "staged test(s)" where they said "host test(s)".
 - **AGENTS.md and the shipped texts say what is true** (2026-10-19). AGENTS.md: Renovate's
   `--apply` writes every ecosystem, not gitlinks only; the zune-core hold is gone (`Cargo.lock`
   has 0.5.3; its history is in `docs/updates.md`); the clippy, test and bench commands take the

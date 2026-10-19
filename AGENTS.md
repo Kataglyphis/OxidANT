@@ -630,7 +630,7 @@ which a local container run executes too:
   with the Linux lanes' test features, all but the WebGPU renderer's, and builds the
   renderer's lib and 18 integration test binaries into `target\host-tests\tests.json`. The
   lane's `host-command` then runs, on the runner host, those binaries
-  (`Invoke-HostTests.ps1`, through the hub's `Invoke-StagedTests.ps1`, with
+  (`Invoke-HostTests.ps1`, through the hub's `Invoke-StagedTests.ps1 -AssertVerdict`, with
   `KATAGLYPHIS_REQUIRE_GPU=1`; it fails if the list, a binary or a passing test is
   missing, so it never reports green over nothing) and the packaged exe's `onnx-runtime`
   and `media-check` (`dist/windows-x64/bundle/kataglyphis_cli.exe`).
