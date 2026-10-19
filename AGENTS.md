@@ -130,10 +130,9 @@ lint gate on one.
 Everything here is false or meaningless in another repo, so it is written out rather
 than linked.
 
-### The two traps a Windows checkout hits before anything runs
+### The trap a Windows checkout hits before anything runs
 
 - **A CRLF checkout breaks it before anything runs**: bash in the container stops at `set: pipefail\r: invalid option name`. `.gitattributes` pins `*.sh` (and the workflows and `models.lock`) to LF; an older checkout needs the one-time fix in [the hub's failure-modes.md](third_party/ANTfrastructure/docs/failure-modes.md#set-pipefailr-invalid-option-name).
-- **The image's Rust may be older than its own pin.** `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ANTfrastructure; check `rustc --version` in the container if a build fails on an MSRV floor.
 
 ### The bin was renamed, not the lib — do not undo it
 

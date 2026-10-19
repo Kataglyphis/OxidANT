@@ -60,6 +60,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and is its only reader (`--extend-css`), so every theme move left a diff in the checkout (558
   lines in, 114 out after the move to 89b098c9). It is in `.gitignore` now; the Windows bundle, MSIX
   and MSI, which copy `resources/` whole, no longer ship it.
+- **AGENTS.md drops "The image's Rust may be older than its own pin"** (2026-10-19). In `:latest`
+  (`sha256:b52f8c34…`, the registry's current tag) `rustc` is `/usr/local/cargo/bin`'s 1.99.0 in login
+  and non-login shells, the hub's `RUST_VERSION=1.99.0`; Ubuntu's 1.93.1 in `/usr/bin` sits behind it,
+  and the hub's cargo drivers hoist the pinned toolchain and log it (`rust toolchain: … rustc 1.99.0`).
+  The section is now *The trap a Windows checkout hits before anything runs*, the CRLF one.
 
 ### Fixed
 - **The Linux lanes' clippy passes again** (2026-10-19). `EngineConfig::on_detections`, added with

@@ -42,9 +42,9 @@ README). The guides in `docs/` are not on that site; read them on GitHub.
 
 ## On a Windows checkout
 
-Two traps hit before anything runs (a CRLF checkout, an image Rust older than its pin),
-and a box without the MSVC C++ build tools links nothing:
-[AGENTS.md § The two traps a Windows checkout hits before anything runs](../AGENTS.md#the-two-traps-a-windows-checkout-hits-before-anything-runs)
+A CRLF checkout breaks the container before anything runs, and a box without the MSVC C++
+build tools links nothing:
+[AGENTS.md § The trap a Windows checkout hits before anything runs](../AGENTS.md#the-trap-a-windows-checkout-hits-before-anything-runs)
 and [§ Verifying locally on a Windows box](../AGENTS.md#verifying-locally-on-a-windows-box-no-msvc-required).
 The Windows container build is [windows.md](windows.md).
 
@@ -70,7 +70,7 @@ nerdctl run --rm --platform linux/amd64 `
   `nerdctl run --rm --user root --entrypoint chown --mount type=volume,source=<vol>,target=/vol $image -R 1001:1001 /vol`.
 - **The cargo steps need no git; `run-lint-gates.sh` does.** In a submodule checkout `.git`
   points outside the mount, so run that gate in Git Bash on the host.
-- Shell scripts must be LF: [AGENTS.md § The two traps](../AGENTS.md#the-two-traps-a-windows-checkout-hits-before-anything-runs).
+- Shell scripts must be LF: [AGENTS.md § The trap](../AGENTS.md#the-trap-a-windows-checkout-hits-before-anything-runs).
 
 `nerdctl` rather than `docker`, `:latest`, Git Bash's path mangling, `-v name:/path` and an
 empty mount: ANTfrastructure's
