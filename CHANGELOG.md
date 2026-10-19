@@ -28,6 +28,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   ObservANT's default config is `observant.toml`, zune-core is no longer held at 0.5.1, the image's
   WiX is 7, Renovate's `--apply` is no longer gitlinks only, and the crate table lists the two ESP32
   crates.
+- **The release runs on the hub's `release-publish.yml`** (2026-10-19, ANTfrastructure c3fc7585):
+  `release.yml`'s version check and release job are its two stages, and the hub's
+  `collect-release-assets.sh` picks the files by `release.yml`'s `collect:` options.
+  `scripts/linux/collect-release-assets.sh` and its suite are gone; the hub's suite holds OxidANT's
+  uploads. On one fake release run in `:latest`, the old and the new collector gave the same 14
+  files, byte for byte, the zips' members included.
 - **AGENTS.md and the shipped texts say what is true** (2026-10-19). AGENTS.md: Renovate's
   `--apply` writes every ecosystem, not gitlinks only; the zune-core hold is gone (`Cargo.lock`
   has 0.5.3; its history is in `docs/updates.md`); the clippy, test and bench commands take the

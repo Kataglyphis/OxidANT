@@ -603,8 +603,9 @@ its commit message. `[build-arm]` and `[build-win]` are dead tokens.
 **Every push to `main` is a release** (`release.yml`): all five lanes once more, then
 `v<version>` with the Linux packages for both arches (each flatpak named for its arch), the
 Windows MSI, MSIX and portable zip for x64 and arm64, a `SHA256SUMS` and the version's
-`## [<version>]` CHANGELOG section. `scripts/linux/collect-release-assets.sh` picks the
-files. The version lives in `Cargo.toml`'s `[workspace.package]` alone (owner, 2026-10-15:
+`## [<version>]` CHANGELOG section. The version check and the release job are the hub's
+[`release-publish.yml`](third_party/ANTfrastructure/docs/branch-and-release-strategy.md#the-reusable-release-workflow),
+whose collector picks the files by the `collect:` options in `release.yml`. The version lives in `Cargo.toml`'s `[workspace.package]` alone (owner, 2026-10-15:
 2.3.4, and `VERSION.txt` is gone). `gh workflow run release.yml --ref develop -f
 dry-run=true` is the full round a merge needs, and publishes nothing.
 
