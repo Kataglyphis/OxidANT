@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Resolve-BuildModule.ps1')
-Import-BuildModule @('WindowsTargetArch.Common')
+Import-BuildModule @('WindowsTargetArch.Common', 'WindowsBuild.Common')
 $arch = Get-WindowsTargetArch -Arch $TargetArch
 
 function Invoke-LaneStep {
@@ -27,25 +27,9 @@ function Invoke-LaneStep {
   if ($LASTEXITCODE -ne 0) { throw "$Script failed with exit code $LASTEXITCODE" }
 }
 
-# robocopy /MOVE; exit codes below 8 are success.
-function Move-CacheTree {
-  param([Parameter(Mandatory)][string]$From, [Parameter(Mandatory)][string]$To, [string[]]$ExcludeDirs = @())
-  if (-not (Test-Path -LiteralPath $From)) { return }
-  $copyArgs = @($From, $To, '/E', '/MOVE', '/MT:16', '/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
-  if ($ExcludeDirs) { $copyArgs += @('/XD') + $ExcludeDirs }
-  & robocopy @copyArgs | Out-Host
-  if ($LASTEXITCODE -ge 8) { throw "robocopy $From -> $To failed with exit code $LASTEXITCODE" }
-  $global:LASTEXITCODE = 0
-}
-
-# sccache cannot write to the CI_COMPILER_CACHE mount, so the cache moves in for all steps and back after.
-$ciCache = $env:CI_COMPILER_CACHE
-if ($ciCache) {
-  $fastDir = if ($env:KATAGLYPHIS_FAST_BUILD_DIR) { $env:KATAGLYPHIS_FAST_BUILD_DIR } else { 'C:\kataglyphis_fast_build' }
-  $cacheRoot = Join-Path $fastDir '.cache'
-  foreach ($sub in 'sccache', 'cargo') { Move-CacheTree -From (Join-Path $ciCache $sub) -To (Join-Path $cacheRoot $sub) }
-  $env:SCCACHE_DIR = Join-Path $cacheRoot 'sccache'
-  $env:CARGO_HOME = Join-Path $cacheRoot 'cargo'
+# sccache cannot write to the CI_COMPILER_CACHE mount, so both caches move in for all steps and back after.
+$restored = Restore-CiCompilerCache -Cache sccache, cargo
+if ($restored) {
   $env:RUSTC_WRAPPER = (Get-Command sccache -ErrorAction Stop).Source
   if ($env:SCCACHE_ERROR_LOG) { New-Item -ItemType Directory -Force -Path (Split-Path $env:SCCACHE_ERROR_LOG) | Out-Null }
 }
@@ -58,11 +42,5 @@ try {
   Invoke-LaneStep -Script 'Build-Windows.ps1' -Arguments @('-SkipTests', '-TargetArch', $arch)
   if ($StageTests) { Invoke-LaneStep -Script 'Stage-CrossTests.ps1' -Arguments @('-TargetArch', $arch) }
 } finally {
-  if ($ciCache) {
-    & sccache --show-stats | Out-Host
-    & sccache --stop-server 2>&1 | Out-Null
-    $cargoHome = Join-Path $cacheRoot 'cargo'
-    Move-CacheTree -From (Join-Path $cacheRoot 'sccache') -To (Join-Path $ciCache 'sccache')
-    Move-CacheTree -From $cargoHome -To (Join-Path $ciCache 'cargo') -ExcludeDirs @((Join-Path $cargoHome 'registry\src'), (Join-Path $cargoHome 'git\checkouts'))
-  }
+  $null = Save-CiCompilerCache -Restored $restored
 }

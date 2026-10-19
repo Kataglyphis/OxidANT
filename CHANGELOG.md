@@ -65,6 +65,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   four cases in `CargoTarget.Tests.ps1` are gone; the hub's reader takes `[workspace.package]` before
   `[package]` the same way and throws on a `Cargo.toml` without a version. This tree gives `2.3.4.0`
   (MSI `2.3.4`) as before, and `MSIX_VERSION` still overrides it.
+- **`Invoke-WindowsLane.ps1` moves the CI compiler cache with the hub's `Restore-CiCompilerCache
+  -Cache sccache, cargo` and `Save-CiCompilerCache`** (2026-10-19, ANTfrastructure 1a174d9c), in place
+  of its own robocopy pair; it still sets `RUSTC_WRAPPER` and the `SCCACHE_ERROR_LOG` directory.
+  In `:winamd64` with stub lane steps, the old and the new script leave the same trees, a failing
+  step included: sccache and `registry\cache` back in `CI_COMPILER_CACHE`, `registry\src` and
+  `git\checkouts` left behind. A cache that cannot move back now warns instead of failing the lane.
 - **AGENTS.md and the shipped texts say what is true** (2026-10-19). AGENTS.md: Renovate's
   `--apply` writes every ecosystem, not gitlinks only; the zune-core hold is gone (`Cargo.lock`
   has 0.5.3; its history is in `docs/updates.md`); the clippy, test and bench commands take the
