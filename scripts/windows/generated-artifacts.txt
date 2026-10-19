@@ -1,0 +1,11 @@
+# Generated-output pathspecs for the hub's shared/windows/tests/Repo.GeneratedArtifacts.Tests.ps1; write dir/*, never a wildcard ending in /.
+target/                   # cargo build output
+target-msix/              # the MSIX staging target dir
+dist/                     # dist\windows-<arch>: bundle, msix and msi packaging output
+logs/                     # Build-Windows.ps1 / container build logs
+debug/                    # container-built binaries copied to the repo root
+profile/                  # ... by scripts/windows/container/
+release/                  # ...
+packaging/flatpak/repo/   # flatpak-builder's OSTree repo
+**/__pycache__/*
+*.profraw                 # llvm coverage

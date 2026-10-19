@@ -55,12 +55,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The suite imports WindowsRepoHygiene.Common from the submodule.
+          # The hub's suite runs from the submodule, and this repo's suites import its modules.
           submodules: true
 
       - name: Repo generated-artifact hygiene
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-pester-suite@develop
         with:
+          # Grades this checkout against scripts/windows/generated-artifacts.txt.
+          path: third_party/ANTfrastructure/shared/windows/tests/Repo.GeneratedArtifacts.Tests.ps1
+          version: '3.4.0'
+
+      - name: Windows module suites
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-pester-suite@develop
+        with:
           path: scripts/windows/tests
-          # The suite is written in Pester 3.4's dash-less assertion dialect.
+          # The suites are written in Pester 3.4's dash-less assertion dialect.
           version: '3.4.0'

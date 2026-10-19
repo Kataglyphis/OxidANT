@@ -54,6 +54,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   In `:latest` the old and the new `fetch-models.sh` wrote the same three files, `0644`, byte for
   byte; in `:winamd64`, where `python` is `C:\temp\cpython\PCbuild\amd64\python.exe` (3.15.0) and
   `python3` is not on `PATH`, the old and the new `Get-Models.ps1` did too.
+- **The generated-artifacts check is the hub's suite** (2026-10-19, ANTfrastructure 1a174d9c).
+  `scripts/windows/tests/Repo.GeneratedArtifacts.Tests.ps1` is gone; `lint-gates.yml`'s
+  `generated-artifacts` job runs the hub's `shared/windows/tests/Repo.GeneratedArtifacts.Tests.ps1`,
+  which reads the same ten pathspecs from `scripts/windows/generated-artifacts.txt`, then this repo's
+  own suites in a second step. Under Pester 3.4.0 and 6.1.0 it passes 2/2 on this tree; a `docs/*`
+  line fails it on 9 tracked files, and a `**/__pycache__/` line is refused.
 - **AGENTS.md and the shipped texts say what is true** (2026-10-19). AGENTS.md: Renovate's
   `--apply` writes every ecosystem, not gitlinks only; the zune-core hold is gone (`Cargo.lock`
   has 0.5.3; its history is in `docs/updates.md`); the clippy, test and bench commands take the
