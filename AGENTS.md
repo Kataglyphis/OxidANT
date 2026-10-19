@@ -148,37 +148,27 @@ The **bin** was renamed, not the lib, on purpose: the C++ Vulkan engine imports 
 
 Because cargo is what makes it bite:
 
-- **Every build write stays container-local**: `CARGO_TARGET_DIR=C:\ct`,
-  `CARGO_HOME=C:\ch`. Cargo's create-then-rename is the pattern a bind mount rejects,
-  so only a plain artifact copy crosses the mount at the end. That direction works; do
-  not "simplify" it into a rename or a `docker cp`.
-- **`-StageSources` is the workaround, not the cure**, for a host whose Dev Drive
-  filters were never allowed (what it does and the symptom:
-  [`docs/windows.md`](docs/windows.md#the-driver)). The cure is a host setting:
-  § *Transport B — bind mount (Dev Drive needs setup)* in the performance doc above.
-- **The mount target must not exist in the image**, hence `C:\ws-mnt`.
-- **Container plumbing comes from the modules, never inline**: `Resolve-DockerExe`,
-  `Get-ContainerIsolationArgs`, `Remove-BuildContainerSafe`, `Wait-ContainerExit`.
-  `Remove-BuildContainerSafe` returns whether the name is actually free (a bare
-  `docker rm -f` can return while teardown still holds it); on `$false` the driver
-  takes a unique name rather than let the next run inherit the held container's stale
-  exit code. `Wait-ContainerExit` replaced the driver's hand-rolled wait loop, which had
-  no timeout, tested state fail-open, and read `docker inspect` through `2>$null`; the
-  driver bounds it at `-TimeoutMinutes 60`, >10× the per-phase baselines of 2026-08-07
-  in `CHANGELOG.md`. The wait's history and contract: the submodule's
-  `docs/windows-container-build-performance.md`, § *Reusable implementation*.
-- **Run containers named and without `--rm`**, and tee important output to the mounted
-  scratch dir, so logs and state survive a dropped client. `Wait-ContainerExit` needs
-  both: `--rm` deletes the exit code with the container. A failed run's container is
-  kept for `docker logs`; the next run (or `docker rm -f`) clears it.
+- **The sources go in, and the artifacts come out, by tar-pipe** (since 2026-10-19).
+  `Invoke-StevedoreBuild.ps1` is a spec for the hub's `Invoke-RepoContainerBuild.ps1`: it
+  streams the tree into `C:\ws` of a reused, named container (`kata-rust-build`), without
+  `.git`, `target`, `dist`, `logs` and the root mirrors, and streams
+  `target\container\<profile>` and `logs` back. Nothing is bind-mounted, so a host's Dev
+  Drive filters do not matter and the old `-StageSources` and `C:\ws-mnt` are gone.
+- **cargo's trees stay outside the workspace**: `CARGO_TARGET_DIR=C:\ct`,
+  `CARGO_HOME=C:\ch`. The runner prunes `C:\ws` before each run and the container keeps
+  both, so the next run builds incrementally; `-FreshContainer` starts from nothing.
+- **Container plumbing comes from the hub, never inline**: the runner resolves docker and
+  the image, sets the isolation and memory, and with `-VerifyDirs` runs
+  `Test-BuildArtifactsDelivered`, which fails when an exe built in the container did not
+  reach the host (a green build is not proof of delivery). The in-container logs land in
+  the workspace's `logs\` and come back on a failed run too. `-WhatIf` prints the
+  in-container commands and starts nothing.
 - **Everything here is `pwsh` (PowerShell 7+).** Every script under `scripts/windows/`
   carries `#requires -Version 7.0`, so a surviving "Windows PowerShell 5.1" comment is
   wrong: those scripts would not start under it. Keep `$ErrorActionPreference` at
   `Continue` in the in-container scripts and check `$LASTEXITCODE` manually anyway.
-- **Still not adopted:** `Test-BuildArtifactsDelivered` (a green build is not proof of
-  delivery; it `docker exec`s the container, so it must run before teardown) and
-  `Test-ContainerBindMount`. Both would fit `Invoke-StevedoreBuild.ps1`; neither could be
-  exercised from the Linux verification box.
+- **Still not adopted:** `Test-ContainerBindMount`, which the runner calls only under its
+  `-UseBindMount`; the tar-pipe needs no probe.
 
 ### `cargo_fmt_clippy.sh`
 
@@ -547,10 +537,10 @@ and `gst-inspect-1.0 libcamerasrc` and `webrtcsink` load. The Pi 5 board run fol
 
 The driver, `scripts\windows\container\Invoke-StevedoreBuild.ps1`, its switches and what
 it leaves behind: [`docs/windows.md`](docs/windows.md). It runs the in-container scripts
-(`Build-RustAll.ps1`, `Test-RustAll.ps1`) in the family Windows CI image, and it mounts
-the repository, not a copy, ReFS Dev Drive or not, so `third_party/` is present inside
-the container and anything importing ANTfrastructure modules (e.g. `Build-Windows.ps1`)
-works without special staging.
+(`Build-RustAll.ps1`, `Test-RustAll.ps1`) in the family Windows CI image through the hub's
+`Invoke-RepoContainerBuild.ps1`, which streams the repository in, `third_party/` included,
+so they import ANTfrastructure modules through `Resolve-BuildModule.ps1` like every other
+script here.
 
 **No image reference is written in this repository, and that includes this file.** The
 driver's `-Image` parameter defaults to empty and is filled in by ANTfrastructure's

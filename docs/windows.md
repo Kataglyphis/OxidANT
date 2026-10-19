@@ -3,17 +3,17 @@
 The workspace builds and tests inside the [Kataglyphis ANTfrastructure](https://github.com/Kataglyphis/ANTfrastructure)
 Windows developer image, with [Stevedore](https://github.com/slonopotamus/stevedore)'s
 `docker.exe`. No file here names the image ([AGENTS.md § Build & test in the Stevedore Windows container](../AGENTS.md#build--test-in-the-stevedore-windows-container));
-the driver asks `Get-CiImageReference -Windows`, and `-Image` overrides it for a one-off.
+the hub's runner asks `Get-CiImageReference -Windows`, and `-Image` overrides it for a one-off.
 The current value:
 `pwsh -c "Import-Module third_party/ANTfrastructure/windows/scripts/modules/WindowsContainerImage.Common.psm1; Get-CiImageReference -Windows"`.
 
 ## The driver
 
-`scripts\windows\container\Invoke-StevedoreBuild.ps1` **bind-mounts this repository
-into the container** as `C:\ws-mnt`, not a copy, so artifacts land straight in your tree
-and `third_party/` is available inside. It builds all three profiles (`dev`/debug,
-`profile` = release + debuginfo, `release` = fat LTO) and optionally runs the debug test
-suite:
+`scripts\windows\container\Invoke-StevedoreBuild.ps1` hands its spec to the hub's
+`Invoke-RepoContainerBuild.ps1`, which **streams this repository into a reused container**
+(`kata-rust-build`, workspace `C:\ws`) and the artifacts back out; nothing is
+bind-mounted. It builds all three profiles (`dev`/debug, `profile` = release + debuginfo,
+`release` = fat LTO) and optionally runs the debug test suite:
 
 ```pwsh
 # build debug + profile + release in the container
@@ -22,26 +22,27 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreB
 # build AND run cargo test --workspace (unit + integration + proptest fuzz + doc)
 pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1 -Test
 
-# only if your host refuses the mount (see below)
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1 -StageSources
+# print the in-container commands, start nothing
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1 -Test -WhatIf
 ```
 
 `-TestOnly` skips the build. The test run leaves out the WebGPU renderer, whose tests
 cannot start in Server Core: [testing.md § On Windows the renderer's tests run outside the container](testing.md#on-windows-the-renderers-tests-run-outside-the-container).
-`-StageSources` restores the old robocopy-to-`%LOCALAPPDATA%\Temp` path for a host whose
-Dev Drive filters were never allowed: `docker run` then exits at once with *"Der
-Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*. The
-permanent fix is a host setting (`fsutil devdrv setFiltersAllowed`, in the hub's
-performance doc linked below). `fsutil devdrv query` needs elevation itself, so a failing
-query tells you nothing; just try the mount.
+The container keeps cargo's target (`C:\ct`) and home (`C:\ch`), so a second run is
+incremental; `-FreshContainer` discards it. Without a bind mount, a host whose Dev Drive
+filters were never allowed builds as well (the old driver needed `-StageSources` there).
 
 ## What it leaves behind
 
 Artifacts land in `target\container\{debug,profile,release}`, mirrored to the
-(gitignored) repo-root `debug\`, `profile\`, `release\` folders; each holds the CLI exe,
-cdylib (`.dll` + import lib), staticlib (`.lib`) and pdb. Last verified run (2026-08-07,
-rustc 1.97.1): all three profiles built (debug 1m35s, profile 1m32s, release 1m12s),
-straight into the repo through the mount, and the binaries run on the host:
+(gitignored) repo-root `debug\`, `profile\`, `release\` folders; each holds the CLI and
+ObservANT exes, the `oxidant` and renderer cdylibs (`.dll` + import lib), the `oxidant`
+staticlib (`.lib`) and their pdbs. The run fails when an exe built
+in the container is missing on the host. The in-container logs come back as
+`logs\in-container-build.log` and `logs\in-container-test.log`, a failed run's too.
+Last verified run (2026-10-19, rustc 1.99.0, a new container): debug 1m46s, profile
+1m50s, release 1m15s, then 325 tests in 25 binaries, 6m09s in all; a second build-only run
+in the kept container took 12 s. The binaries run on the host:
 
 ```pwsh
 .\release\kataglyphis_cli.exe stats --path .\README.md
@@ -53,8 +54,8 @@ The driver does not run the CI lane, and no local driver wraps that yet:
 
 ## The rules, and the host side
 
-The container rules this driver follows (container-local writes, named containers without
-`--rm`, the bounded `Wait-ContainerExit`, `Remove-BuildContainerSafe`):
+The container rules this driver follows (the tar-pipe, cargo's trees outside the workspace,
+the delivery check):
 [AGENTS.md § Inside the Stevedore Windows container](../AGENTS.md#inside-the-stevedore-windows-container).
 **ANTfrastructure is the authority on the host side**:
 [setting up a Windows host for Stevedore](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/windows-host-setup.md)

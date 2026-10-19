@@ -1,14 +1,23 @@
-# In-container debug/profile/release build into local C:\ct, C:\ch to dodge wcifs renames; see third_party/ANTfrastructure/docs/windows-builds.md.
+# In-container debug/profile/release build into C:\ct, C:\ch, which the reused container keeps between runs.
 #requires -Version 7.0
+[CmdletBinding()]
+param(
+    # The runner's workspace path inside the container (Invoke-RepoContainerBuild.ps1 streams the sources there).
+    [string]$Workspace = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path,
+    # Empty: <Workspace>\logs, which the driver streams back to the host.
+    [string]$LogDir = ''
+)
 
 # EAP stays 'Continue' and $LASTEXITCODE is checked by hand: native stderr handling varies by version.
 $ProgressPreference = 'SilentlyContinue'
 
-# The driver copies this hub module into scratch, since the staged sources exclude third_party.
-Import-Module 'C:\host-scratch\WindowsContainerLog.Common.psm1' -Force
+. (Join-Path $PSScriptRoot '..\Resolve-BuildModule.ps1')
+Import-BuildModule 'WindowsContainerLog.Common'
 
-# Log to scratch too: the docker CLI pipe drops output intermittently on this host.
-Start-ContainerLog -Path 'C:\host-scratch\in-container-build.log'
+# Log to a file too: the docker CLI pipe drops output intermittently on this host.
+if (-not $LogDir) { $LogDir = Join-Path $Workspace 'logs' }
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+Start-ContainerLog -Path (Join-Path $LogDir 'in-container-build.log')
 
 Write-ContainerLog "=== Rust container build: debug / profile / release ==="
 Write-ContainerLog "cpus: $env:NUMBER_OF_PROCESSORS"
@@ -19,8 +28,8 @@ New-Item -ItemType Directory -Force -Path C:\ct, C:\ch | Out-Null
 $env:CARGO_TARGET_DIR = 'C:\ct'
 $env:CARGO_HOME = 'C:\ch'
 
-Set-Location C:\ws-mnt
-if (-not (Test-Path .\Cargo.toml)) { Write-Host 'FATAL: workspace mount C:\ws-mnt has no Cargo.toml'; exit 1 }
+Set-Location $Workspace
+if (-not (Test-Path .\Cargo.toml)) { Write-Host "FATAL: workspace $Workspace has no Cargo.toml"; exit 1 }
 
 $profiles = @(
     @{ Name = 'debug';   Args = @('build', '--workspace', '--locked') },
@@ -36,19 +45,14 @@ foreach ($p in $profiles) {
     Write-Host ("<== {0} OK in {1:mm\:ss}" -f $p.Name, $sw.Elapsed)
 }
 
-# cmd copy, not Move-Item: renames fail on this host's bind mounts, plain copies work.
 foreach ($p in $profiles) {
     $src = Join-Path 'C:\ct' $p.Name
-    $dst = "C:\ws-mnt\target\container\$($p.Name)"
-    cmd /c "if not exist $dst mkdir $dst" | Out-Null
-    Get-ChildItem $src -File | Where-Object { $_.Extension -match '^\.(exe|dll|pdb|lib)$' } | ForEach-Object {
-        cmd /c "copy /y ""$($_.FullName)"" ""$dst"" >nul"
-        if ($LASTEXITCODE -ne 0) { Write-Host "WARN: copy failed for $($_.Name)" }
-    }
+    $dst = Join-Path $Workspace "target\container\$($p.Name)"
+    New-Item -ItemType Directory -Force -Path $dst | Out-Null
+    Get-ChildItem $src -File | Where-Object { $_.Extension -match '^\.(exe|dll|pdb|lib)$' } | Copy-Item -Destination $dst -Force
     Write-Host "`n$($p.Name) artifacts -> target\container\$($p.Name):"
     Get-ChildItem $dst -File | ForEach-Object { Write-Host ("  {0,14:n0}  {1}" -f $_.Length, $_.Name) }
 }
 
 Write-Host "`nALL BUILDS SUCCEEDED"
 exit 0
-

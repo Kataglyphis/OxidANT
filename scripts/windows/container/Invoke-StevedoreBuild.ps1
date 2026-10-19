@@ -6,129 +6,70 @@
 
 .DESCRIPTION
     Builds debug, profile and release into target\container\<profile>, mirrored to the gitignored repo root.
-    Host quirks: AGENTS.md § Inside the Stevedore Windows container.
+    The container plumbing is the hub's Invoke-RepoContainerBuild.ps1 (tar-pipe into a reused container); this
+    file keeps only the spec. Host quirks: AGENTS.md § Inside the Stevedore Windows container.
 
 .PARAMETER Test
     Also run the full test suite at the debug profile.
 
 .PARAMETER TestOnly
     Run only the test suite, skipping the build.
+
+.PARAMETER FreshContainer
+    Discard the reusable build container, and with it the cargo target and home it keeps, first.
 #>
+[CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$Docker = '',
-    # Empty: filled by Get-CiImageReference after the import below, which a param default would precede.
+    [string]$DockerExe = '',
+    # Empty: Invoke-RepoContainerBuild.ps1 asks Get-CiImageReference -Windows.
     [string]$Image = '',
-    # Off the Dev Drive, since the in-container scripts write their logs here constantly.
-    [string]$StagingDir = (Join-Path $env:LOCALAPPDATA 'Temp\kataglyphis-rust-container'),
-    # Mount a copy under $StagingDir\ws instead of the repo, for a host whose bindFlt refuses the volume.
-    [switch]$StageSources,
     [switch]$Test,
     [switch]$TestOnly,
     [int]$MemoryGb = 48,
-    [string]$ContainerName = 'kata-rust-build'
+    [string]$ContainerName = 'kata-rust-build',
+    [switch]$FreshContainer
 )
 
-# EAP stays 'Continue', as native stderr can terminate under 'Stop'; exit codes are checked explicitly.
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 $ProgressPreference = 'SilentlyContinue'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 
-# Container plumbing comes from the hub's modules, never inline: AGENTS.md § Inside the Stevedore Windows container.
-$antfrastructureModules = Join-Path $repoRoot 'third_party\ANTfrastructure\windows\scripts\modules'
-$reuseModule = Join-Path $antfrastructureModules 'WindowsContainerBuild.Reuse.psm1'
-if (-not (Test-Path $reuseModule)) {
-    throw "Required module not found: $reuseModule (run: git submodule update --init --recursive)"
-}
-Import-Module $reuseModule -Force
+$runner = Join-Path $repoRoot 'third_party\ANTfrastructure\windows\scripts\build\Invoke-RepoContainerBuild.ps1'
+if (-not (Test-Path -LiteralPath $runner)) { throw "Required script not found: $runner (run: git submodule update --init --recursive third_party/ANTfrastructure)" }
 
-# Get-CiImageReference lives in its own module, as Reuse.psm1 does not re-export it.
-$imageModule = Join-Path $antfrastructureModules 'WindowsContainerImage.Common.psm1'
-if (-not (Test-Path $imageModule)) {
-    throw "Required module not found: $imageModule (run: git submodule update --init --recursive)"
-}
-Import-Module $imageModule -Force
-if ([string]::IsNullOrWhiteSpace($Image)) { $Image = Get-CiImageReference -Windows }
-Write-Host "Using image: $Image"
+# Root-only build output stays out of the item list, since bsdtar's --exclude matches at every depth.
+$rootOnlyExclude = @('.git', '.vs', 'target', 'dist', 'logs', 'debug', 'profile', 'release', 'out')
+$inboundItems = @([System.IO.Directory]::GetFileSystemEntries($repoRoot) |
+    ForEach-Object { [System.IO.Path]::GetFileName($_) } |
+    Where-Object { $_ -notin $rootOnlyExclude })
+$inboundExclude = @('.git', 'third_party/ANTfrastructure/third_party/DocumANTation')
+$profiles = @('debug', 'profile', 'release')
 
-# nerdctl is deliberately not a candidate: it talks to containerd, not the Windows lane's engine.
-$Docker = Resolve-DockerExe -Override $Docker
-Write-Host "Using docker: $Docker"
-
-# Workspace: mount the repo itself; reads cross a bind mount fine, so only -StageSources hosts need a copy.
-$scratch = Join-Path $StagingDir 'scratch'
-New-Item -ItemType Directory -Force -Path $scratch | Out-Null
-
-if ($StageSources) {
-    $ws = Join-Path $StagingDir 'ws'
-    New-Item -ItemType Directory -Force -Path $ws | Out-Null
-    Write-Host "Staging sources -> $ws (-StageSources)"
-    robocopy $repoRoot $ws /MIR /XD target .git .vs out dist debug profile release /XF *.msix /NFL /NDL /NJH /NJS | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "robocopy staging failed ($LASTEXITCODE)" }
-} else {
-    $ws = $repoRoot
-    Write-Host "Mounting repository directly -> $ws"
-}
-
-Copy-Item (Join-Path $PSScriptRoot 'Build-RustAll.ps1'), (Join-Path $PSScriptRoot 'Test-RustAll.ps1') -Destination $scratch -Force
-
-# Staged into the scratch mount so the in-container scripts work alike under -StageSources, which copies no submodule.
-$containerLogModule = Join-Path $antfrastructureModules 'WindowsContainerLog.Common.psm1'
-if (-not (Test-Path $containerLogModule)) {
-    throw "Required module not found: $containerLogModule"
-}
-Copy-Item $containerLogModule -Destination $scratch -Force
-
-function Invoke-ContainerScript {
-    param([Parameter(Mandatory)][string]$Script, [Parameter(Mandatory)][string]$Label)
-    # A name the wcifs teardown still holds would hand Wait-ContainerExit the old exit code, so go unique.
-    $runName = $ContainerName
-    if (-not (Remove-BuildContainerSafe -DockerExe $Docker -Name $runName)) {
-        $runName = "$runName-$([Guid]::NewGuid().ToString('N').Substring(0, 6))"
-        Write-Warning "[$Label] falling back to '$runName' so this run cannot inherit the held container's exit code."
-    }
-    # --isolation process for the full host CPU count (Hyper-V isolation exposes 2).
-    $isolationArgs = Get-ContainerIsolationArgs -Isolation 'process' -MemoryGb $MemoryGb
-    Write-Host "`n==> [$Label] docker run $($isolationArgs -join ' ') --memory ${MemoryGb}g $Image" -ForegroundColor Cyan
-    $keep = $false
-    try {
-        & $Docker run --name $runName @isolationArgs --memory "${MemoryGb}g" `
-            --mount "type=bind,source=$ws,target=C:\ws-mnt" `
-            --mount "type=bind,source=$scratch,target=C:\host-scratch" `
-            $Image pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\host-scratch\$Script"
-        $clientExit = $LASTEXITCODE
-        # The client pipe can drop while the container runs, so trust Wait-ContainerExit; 60 min is >10x a build.
-        $exitCode = Wait-ContainerExit -DockerExe $Docker -Name $runName -Label $Label -TimeoutMinutes 60
-        if ($clientExit -ne $exitCode) {
-            Write-Warning "[$Label] docker client exited $clientExit but the container's real exit code is $exitCode (dropped client pipe). Trusting the container."
-        }
-        if ($exitCode -ne 0) { throw "[$Label] container run failed (exit $exitCode) -- see $scratch logs" }
-    } catch {
-        # Kept: Wait-ContainerExit's failure messages point the operator at `docker logs`.
-        $keep = $true
-        Write-Warning "[$Label] keeping container '$runName' for inspection: docker logs $runName (remove: docker rm -f $runName)"
-        throw
-    } finally {
-        if (-not $keep) { [void](Remove-BuildContainerSafe -DockerExe $Docker -Name $runName) }
-    }
-    Write-Host "[$Label] OK" -ForegroundColor Green
+function Invoke-ContainerPhase([string]$Script, [string[]]$OutputDirs, [string[]]$VerifyDirs = @()) {
+    # A scriptblock gets the runner's workspace path; its tokens must be space-free (docker exec -> cmd /S /C).
+    $command = { param($ws) @('pwsh', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$ws\scripts\windows\container\$Script", '-Workspace', $ws) }.GetNewClosure()
+    & $runner -RepoRoot $repoRoot -ContainerName $ContainerName -BuildCommand $command -Image $Image -DockerExe $DockerExe `
+        -Isolation 'process' -MemoryGb $MemoryGb -InboundItems $inboundItems -InboundExclude $inboundExclude `
+        -KeepDirs @('logs') -OutputDirs $OutputDirs -VerifyDirs $VerifyDirs -FreshContainer:$FreshContainer -WhatIf:$WhatIfPreference
+    # Only the first phase may discard the container: the test phase reuses what the build left.
+    $script:FreshContainer = $false
 }
 
 if (-not $TestOnly) {
-    Invoke-ContainerScript -Script 'Build-RustAll.ps1' -Label 'build'
-    # Only a staged copy needs this: robocopy refuses to /MIR a directory over itself.
-    if ($StageSources) {
-        robocopy (Join-Path $ws 'target\container') (Join-Path $repoRoot 'target\container') /MIR /NFL /NDL /NJH /NJS | Out-Null
-        if ($LASTEXITCODE -ge 8) { throw 'artifact copy-back failed' }
+    $profileDirs = @($profiles | ForEach-Object { "target\container\$_" })
+    # VerifyDirs: every exe built in the container must have reached the host, which a green build alone does not prove.
+    Invoke-ContainerPhase -Script 'Build-RustAll.ps1' -OutputDirs ($profileDirs + 'logs') -VerifyDirs $profileDirs
+    if (-not $WhatIfPreference) {
+        foreach ($p in $profiles) {
+            robocopy (Join-Path $repoRoot "target\container\$p") (Join-Path $repoRoot $p) /MIR /NFL /NDL /NJH /NJS | Out-Null
+            if ($LASTEXITCODE -ge 8) { throw "robocopy target\container\$p -> $p failed ($LASTEXITCODE)" }
+        }
+        $global:LASTEXITCODE = 0
+        Write-Host "Artifacts: $repoRoot\target\container\{debug,profile,release} (+ root mirrors)" -ForegroundColor Green
     }
-    if (-not (Test-Path (Join-Path $repoRoot 'target\container'))) {
-        throw "the build reported success but produced no target\container - nothing was delivered through the mount"
-    }
-    foreach ($p in 'debug', 'profile', 'release') {
-        robocopy (Join-Path $repoRoot "target\container\$p") (Join-Path $repoRoot $p) /MIR /NFL /NDL /NJH /NJS | Out-Null
-    }
-    Write-Host "Artifacts: $repoRoot\target\container\{debug,profile,release} (+ root mirrors)" -ForegroundColor Green
 }
 if ($Test -or $TestOnly) {
-    Invoke-ContainerScript -Script 'Test-RustAll.ps1' -Label 'test'
+    Invoke-ContainerPhase -Script 'Test-RustAll.ps1' -OutputDirs @('logs')
 }
-Write-Host "`nDone. Logs: $scratch\in-container-*.log"
-
+if (-not $WhatIfPreference) { Write-Host "`nDone. Logs: $repoRoot\logs\in-container-*.log" }

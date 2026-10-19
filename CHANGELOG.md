@@ -76,6 +76,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `:winamd64`, over synthetic manifests, the old and the new script give the same exit codes and
   counts for a pass, a failure, a run whose one test skipped itself and a missing binary; only the
   messages say "staged test(s)" where they said "host test(s)".
+- **`Invoke-StevedoreBuild.ps1` runs on the hub's `Invoke-RepoContainerBuild.ps1`** (2026-10-19,
+  ANTfrastructure 1a174d9c). The driver keeps only its spec; the hub streams the sources into a
+  reused `kata-rust-build` container by tar-pipe and `target\container\<profile>` and `logs` back,
+  and checks that every exe built there reached the host. `Build-RustAll.ps1` and `Test-RustAll.ps1`
+  take the runner's `-Workspace` and import `WindowsContainerLog.Common` through
+  `Resolve-BuildModule.ps1`, where they read `C:\ws-mnt` and `C:\host-scratch`. Gone: the bind
+  mounts, the `%LOCALAPPDATA%` scratch dir, `-StageSources`, `-StagingDir` and `-Docker` (now
+  `-DockerExe`); new: `-FreshContainer` and `-WhatIf`. `-Test` in `:winamd64` (rustc 1.99.0, a new
+  container): debug 1m46s, profile 1m50s, release 1m15s, 325 tests passed in 25 binaries, 6m09s in
+  all; 2 exes per profile verified on the host, and `release\kataglyphis_cli.exe stats` runs there. A
+  second build-only run in the kept container took 12 s.
 - **AGENTS.md and the shipped texts say what is true** (2026-10-19). AGENTS.md: Renovate's
   `--apply` writes every ecosystem, not gitlinks only; the zune-core hold is gone (`Cargo.lock`
   has 0.5.3; its history is in `docs/updates.md`); the clippy, test and bench commands take the
