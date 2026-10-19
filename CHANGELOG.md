@@ -46,6 +46,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
   facts. `doc-dupes-hub.allow` turns on the hub's `doc-dupes --against-hub` gate, with the
   owner's docs rule as its one row. Corrected: `[ci linux]` runs the riscv64 lane too, and
   `.github/renovate.json` says `branch = develop`.
+- **The docs site has its own workflow** (2026-10-19, ANTfrastructure 89b098c9). `docs.yml` calls
+  the hub's `build-docs.yml` with `builder: rustdoc`; the Linux lanes lose the `docs` input, the
+  *Create docs* and FTP steps and the `SERVER`/`USERNAME`/`PW` secrets, which `docs.yml` maps onto
+  the hub's `FTP_*`. The site documents all 11 crates (the root package alone before), carries the
+  hub's `.htaccess` and 404 page, and fails on a dead internal link; `docs/site-links.allow`
+  freezes the 20 that rustdoc copies from `tracing`'s blanket `WithSubscriber` docs. It publishes
+  on a push to `develop` or `main`, never cancelled, where the lane published from its last step
+  with `continue-on-error: true` and not at all after a red step. The site job in `:latest`: 518
+  documents, 20 findings, 20 frozen, `.htaccess` and `404.html` in `target/doc`.
 
 ### Fixed
 - **The Linux lanes' clippy passes again** (2026-10-19). `EngineConfig::on_detections`, added with

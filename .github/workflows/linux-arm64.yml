@@ -1,4 +1,4 @@
-# Linux arm64 lane: only when and which runner; every step lives in reusable-linux.yml, and linux-x64.yml owns the docs.
+# Linux arm64 lane: only when and which runner; every step lives in reusable-linux.yml.
 name: Linux arm64 · build + test
 
 # On request only (third_party/ANTfrastructure/docs/branch-and-release-strategy.md): on-request.yml or by hand.
@@ -29,7 +29,5 @@ jobs:
       platform: linux/arm64
       arch: arm64
       artifact-suffix: ubuntu-26.04-arm64
-      docs: false
-    # Only the registry token: docs is false, so no step would use the FTP secrets.
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}

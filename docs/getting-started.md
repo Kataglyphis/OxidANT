@@ -30,13 +30,15 @@ libraries they need: [crates.md § Features](crates.md#features). Running what y
 cargo doc --open
 ```
 
-The Linux x64 lane publishes them from the default branch to
-<https://rust.jonasheinle.de>: its *Create docs* step runs ANTfrastructure's
-`cargo_build_doc.sh` (`bash scripts/linux/ci-container-steps.sh docs`), which is
-`cargo doc --no-deps` for the root package plus the family theme and `images/`. The
-`oxidant` crate's front page there is `README.md` itself (`#![doc = include_str!("../README.md")]`
-in `src/lib.rs`; [AGENTS.md § 6](../AGENTS.md#6-docs-owned-by-this-repo) says what that
-demands of the README). The guides in `docs/` are not on that site; read them on GitHub.
+`docs.yml` publishes them to <https://rust.jonasheinle.de> on every push to `develop` or
+`main`, through the hub's `build-docs.yml` with `builder: rustdoc`: ANTfrastructure's
+`cargo_build_doc.sh`, which is `cargo doc --no-deps --workspace` (all 11 crates) plus the
+family theme and `images/`, then the hub's `.htaccess` and its built-site link gate, whose
+known exceptions are `docs/site-links.allow`. `bash scripts/linux/ci-container-steps.sh docs`
+builds the same site into `target/doc` locally. The `oxidant` crate's front page there is
+`README.md` itself (`#![doc = include_str!("../README.md")]` in `src/lib.rs`;
+[AGENTS.md § 6](../AGENTS.md#6-docs-owned-by-this-repo) says what that demands of the
+README). The guides in `docs/` are not on that site; read them on GitHub.
 
 ## On a Windows checkout
 

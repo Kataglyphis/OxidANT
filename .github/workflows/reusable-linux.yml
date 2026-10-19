@@ -22,24 +22,12 @@ on:
         description: Middle of the uploaded artifact's name, e.g. ubuntu-26.04-x64.
         type: string
         required: true
-      docs:
-        description: >-
-          Build rustdoc and, on a push to the default branch, publish it. Exactly
-          one caller sets this: the site is one site, not one per architecture.
-        type: boolean
-        default: false
-    # All optional for fork PRs: the image is public and the FTP publish never runs on a pull_request.
+    # Optional for fork PRs: the image is public. The docs site is docs.yml's.
     secrets:
       GHCR_PAT:
         required: false
-      SERVER:
-        required: false
-      USERNAME:
-        required: false
-      PW:
-        required: false
 
-# The GHCR pull and docs publish use their own secrets, never GITHUB_TOKEN.
+# The GHCR pull uses its own secret, never GITHUB_TOKEN.
 permissions:
   contents: read
 
@@ -216,13 +204,6 @@ jobs:
             target/release/${{ env.BINARY_FILE }}
             dist/**
 
-      - name: Create docs
-        if: inputs.docs
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
-        with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
-          script: bash -lc 'bash scripts/linux/ci-container-steps.sh docs'
-
       # registry/src and git checkouts re-extract from registry/cache in seconds, so they stay out of the archive.
       - name: Trim the cargo home
         if: always() && steps.cc.outputs.path != ''
@@ -235,15 +216,3 @@ jobs:
         uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-save@develop
         with:
           key: ${{ inputs.arch }}-cargo
-
-      - name: 📂 Sync files to domain
-        # Default branch only, read rather than typed; in a called workflow `github` is the caller's context.
-        if: inputs.docs && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
-        # Best-effort: a transient FTP timeout must not fail a lane whose build, tests and package passed.
-        continue-on-error: true
-        uses: Kataglyphis/ANTfrastructure/.github/actions/deploy-over-ftp@develop
-        with:
-          server: ${{ secrets.SERVER }}
-          username: ${{ secrets.USERNAME }}
-          password: ${{ secrets.PW }}
-          local-dir: "./target/doc/"

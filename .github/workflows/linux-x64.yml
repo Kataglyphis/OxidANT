@@ -1,4 +1,4 @@
-# Linux x64 lane: only when and which runner; every step lives in reusable-linux.yml, and only this arch publishes the docs.
+# Linux x64 lane: only when and which runner; every step lives in reusable-linux.yml, the docs site in docs.yml.
 name: Linux x64 · build + test
 
 # The one lane every push to develop runs; release.yml calls it on main (third_party/ANTfrastructure/docs/branch-and-release-strategy.md).
@@ -17,7 +17,7 @@ on:
         type: boolean
         default: false
 
-# The GHCR pull and docs publish use their own secrets; this also caps the called workflow's token.
+# The GHCR pull uses its own secret; this also caps the called workflow's token.
 permissions:
   contents: read
 
@@ -40,12 +40,8 @@ jobs:
       platform: linux/amd64
       arch: x64
       artifact-suffix: ubuntu-26.04-x64
-      docs: true
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
-      SERVER: ${{ secrets.SERVER }}
-      USERNAME: ${{ secrets.USERNAME }}
-      PW: ${{ secrets.PW }}
 
   # The only build of each optional feature, on every push like the lane (owner rule: no opt-in jobs).
   feature-matrix:
