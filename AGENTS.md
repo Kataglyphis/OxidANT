@@ -888,6 +888,9 @@ The script header covers the rest; the family rationale is
 
 ## 6. Docs owned by this repo
 
+**Write docs like a developer: short and precise** (owner, 2026-10-19). Say what a thing does,
+how to run it and what breaks; no filler, no marketing, no repetition.
+
 `AGENTS.md` (this file), `README.md`, `BACKLOG.md`, `CHANGELOG.md`, the guides in
 `docs/`, `crates/webgpu_renderer/README.md`, the renderer's design documents in
 `crates/webgpu_renderer/docs/`, and `third_party/egui-winit-0.36.2/PATCHED.md` (the
