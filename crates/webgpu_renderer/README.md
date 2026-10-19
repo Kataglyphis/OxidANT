@@ -7,8 +7,8 @@ to the C++ Vulkan engine in
 Its design documents live beside the code, in [`docs/`](docs):
 the [roadmap](docs/webgpu-renderer-roadmap.md), the [bounds
 invariant](docs/renderer-bounds-invariant.md) and the [original glTF plan](docs/webgpu-gltf-rust-plan.md). The pages that describe both
-renderers stay with the C++ engine: the [sRGB audit](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/webgpu-srgb-audit.md)
-and the [shader-sharing guide](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md).
+renderers stay with the C++ engine: the [sRGB audit](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/webgpu-srgb-audit.md)
+and the [shader-sharing guide](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/shader-sharing.md).
 
 ## Features
 

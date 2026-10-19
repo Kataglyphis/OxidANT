@@ -1,5 +1,5 @@
 //! `fs_main`'s ambient term: fallback specular, the ambient slider and the environment intensity.
-//! See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md>.
+//! See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/shader-sharing.md>.
 
 use kataglyphis_webgpu_renderer::{
     load_gltf, EquirectImage, ForwardRenderer, GpuContext, OrbitCamera,

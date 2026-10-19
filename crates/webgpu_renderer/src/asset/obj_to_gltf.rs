@@ -824,7 +824,7 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
 
 /// Copies the texture named by `uri` (as written in the .mtl) beside `gltf_path`.
 fn copy_texture_beside_gltf(uri: &str, obj_path: &Path, gltf_path: &Path) {
-    // See https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/model-loading.md
+    // See https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/model-loading.md
     let beside_mtl = obj_path.with_file_name(uri);
     let under_textures = obj_path.with_file_name(format!("textures/{uri}"));
     let source_path = if beside_mtl.exists() {

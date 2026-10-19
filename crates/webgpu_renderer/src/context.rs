@@ -141,7 +141,7 @@ impl GpuContext {
     }
 
     /// [`Self::new_headless`] for tests: `None` after a SKIP line, or a panic if `KATAGLYPHIS_REQUIRE_GPU` is set.
-    /// See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/gpu-golden-testing.md>.
+    /// See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/gpu-golden-testing.md>.
     #[doc(hidden)]
     pub fn headless_or_skip() -> Option<Self> {
         static REPORTED: std::sync::Once = std::sync::Once::new();

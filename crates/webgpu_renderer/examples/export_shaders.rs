@@ -1,5 +1,5 @@
 //! Exports the crate's WGSL shaders as SPIR-V and GLSL 450 for the C++ Vulkan engine.
-//! See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/shader-sharing.md>.
+//! See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/shader-sharing.md>.
 
 use std::path::{Path, PathBuf};
 
