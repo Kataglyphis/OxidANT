@@ -330,4 +330,45 @@ mod tests {
             "the worker outlived stop()"
         );
     }
+
+    #[derive(Debug)]
+    enum Seen {
+        Hook(Vec<Detection>),
+        Event(Vec<Detection>),
+    }
+
+    #[test]
+    fn the_detections_hook_sees_each_frames_detections_before_its_event() {
+        let Some(model) = model() else { return };
+        let (tx, rx) = mpsc::channel();
+        let hook_tx = tx.clone();
+        let hook: DetectionsHook = Arc::new(move |detections: &[Detection]| {
+            let _ = hook_tx.send(Seen::Hook(detections.to_vec()));
+        });
+        let mut engine = WebcamEngine::start(
+            EngineConfig {
+                on_detections: Some(hook),
+                ..config(model, None)
+            },
+            Box::new(move |event| {
+                let _ = tx.send(Seen::Event(event.detections));
+            }),
+        )
+        .unwrap();
+
+        let seen: Vec<Seen> = (0..6)
+            .map(|_| {
+                rx.recv_timeout(Duration::from_secs(60))
+                    .expect("nothing within 60 s")
+            })
+            .collect();
+        engine.stop();
+
+        for pair in seen.chunks(2) {
+            let [Seen::Hook(hooked), Seen::Event(reported)] = pair else {
+                panic!("the hook did not run once before each event: {seen:?}");
+            };
+            assert_eq!(hooked, reported);
+        }
+    }
 }

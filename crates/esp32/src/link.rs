@@ -48,14 +48,24 @@ impl Link {
     where
         F: Fn(LinkEvent) + Send + 'static,
     {
-        let mut port = serialport::new(path, 115_200)
+        let port = serialport::new(path, 115_200)
             .timeout(READ_TIMEOUT)
             .open()
             .with_context(|| format!("failed to open ESP32 port {path}"))?;
-        let mut reader_port = port
+        let reader = port
             .try_clone()
             .context("failed to clone the ESP32 serial port for reading")?;
+        Self::start(path, reader, port, on_event)
+    }
 
+    /// Starts the bridge over any byte stream, a test double included. `reader_port` must
+    /// time out (`TimedOut`) like a serial port, or [`Link::close`] waits for its next byte.
+    pub fn start<R, W, F>(path: &str, mut reader_port: R, mut port: W, on_event: F) -> Result<Self>
+    where
+        R: Read + Send + 'static,
+        W: Write + Send + 'static,
+        F: Fn(LinkEvent) + Send + 'static,
+    {
         let (tx, rx) = mpsc::channel::<Message>();
         let stop = Arc::new(AtomicBool::new(false));
         let connected = Arc::new(AtomicBool::new(false));
@@ -169,7 +179,7 @@ impl Drop for Link {
 }
 
 fn write_loop(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut impl Write,
     rx: &mpsc::Receiver<Message>,
     stop: &AtomicBool,
     failure: &Mutex<Option<String>>,
@@ -197,7 +207,7 @@ fn write_loop(
 }
 
 fn read_loop<F>(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut impl Read,
     tx: &mpsc::Sender<Message>,
     stop: &AtomicBool,
     connected: &AtomicBool,
@@ -345,7 +355,386 @@ impl DetectionThrottle {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+
+    use kataglyphis_esp32_proto::{Chip, Frame, COMMAND_SET_LED};
+
     use super::*;
+
+    const WAIT: Duration = Duration::from_secs(5);
+
+    /// The host's end of an in-memory serial line; a read times out like a real port.
+    struct HostReader {
+        from_board: mpsc::Receiver<Vec<u8>>,
+        pending: Vec<u8>,
+    }
+
+    impl Read for HostReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pending.is_empty() {
+                match self.from_board.recv_timeout(Duration::from_millis(10)) {
+                    Ok(bytes) => self.pending = bytes,
+                    Err(RecvTimeoutError::Timeout) => return Err(io::ErrorKind::TimedOut.into()),
+                    Err(RecvTimeoutError::Disconnected) => {
+                        return Err(io::Error::new(io::ErrorKind::BrokenPipe, "unplugged"));
+                    }
+                }
+            }
+            let n = buf.len().min(self.pending.len());
+            buf[..n].copy_from_slice(&self.pending[..n]);
+            self.pending.drain(..n);
+            Ok(n)
+        }
+    }
+
+    struct HostWriter {
+        to_board: mpsc::Sender<Vec<u8>>,
+        cable_pulled: Arc<AtomicBool>,
+    }
+
+    impl Write for HostWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.cable_pulled.load(Ordering::Acquire) {
+                return Err(io::Error::other("cable pulled"));
+            }
+            self.to_board
+                .send(buf.to_vec())
+                .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The board's end: frames out to the host, the host's frames decoded.
+    struct Board {
+        to_host: mpsc::Sender<Vec<u8>>,
+        from_host: mpsc::Receiver<Vec<u8>>,
+        cable_pulled: Arc<AtomicBool>,
+        decoder: Decoder,
+        sequence: u16,
+    }
+
+    impl Board {
+        fn send(&mut self, message: Message) {
+            let mut frame = [0u8; MAX_FRAME];
+            let len = encode(self.sequence, &message, &mut frame).unwrap();
+            self.sequence = self.sequence.wrapping_add(1);
+            self.to_host.send(frame[..len].to_vec()).unwrap();
+        }
+
+        fn frame(&mut self) -> Frame {
+            let deadline = Instant::now() + WAIT;
+            loop {
+                if let Some(frame) = self.decoder.next_frame() {
+                    return frame;
+                }
+                let left = deadline.saturating_duration_since(Instant::now());
+                let bytes = self
+                    .from_host
+                    .recv_timeout(left)
+                    .expect("no frame from the host");
+                assert!(self.decoder.push(&bytes));
+            }
+        }
+
+        /// The next frame that is not the greeting the host repeats until it hears Hello.
+        fn command(&mut self) -> Frame {
+            loop {
+                let frame = self.frame();
+                if !matches!(frame.message, Message::HostHello { .. }) {
+                    return frame;
+                }
+            }
+        }
+    }
+
+    fn info() -> DeviceInfo {
+        DeviceInfo {
+            protocol: PROTOCOL_VERSION,
+            firmware_major: 0,
+            firmware_minor: 2,
+            firmware_patch: 1,
+            chip: Chip::Esp32S3,
+            mac: [0xE8, 0x06, 0x90, 0x9D, 0x3E, 0x78],
+            uptime_ms: 1500,
+        }
+    }
+
+    fn started() -> (Link, Board, mpsc::Receiver<LinkEvent>) {
+        let (to_host, from_board) = mpsc::channel();
+        let (to_board, from_host) = mpsc::channel();
+        let (events_tx, events) = mpsc::channel();
+        let cable_pulled = Arc::new(AtomicBool::new(false));
+        let link = Link::start(
+            "fake",
+            HostReader {
+                from_board,
+                pending: Vec::new(),
+            },
+            HostWriter {
+                to_board,
+                cable_pulled: cable_pulled.clone(),
+            },
+            move |event| {
+                let _ = events_tx.send(event);
+            },
+        )
+        .unwrap();
+        let board = Board {
+            to_host,
+            from_host,
+            cable_pulled,
+            decoder: Decoder::new(),
+            sequence: 0,
+        };
+        (link, board, events)
+    }
+
+    /// Past the handshake, so the host has stopped repeating HostHello.
+    fn connected() -> (Link, Board, mpsc::Receiver<LinkEvent>) {
+        let (link, mut board, events) = started();
+        assert_eq!(
+            board.frame().message,
+            Message::HostHello {
+                version: PROTOCOL_VERSION
+            }
+        );
+        board.send(Message::Hello(info()));
+        assert_eq!(events.recv_timeout(WAIT).unwrap(), LinkEvent::Hello(info()));
+        (link, board, events)
+    }
+
+    #[test]
+    fn the_host_greets_until_the_board_says_hello() {
+        let (link, mut board, events) = started();
+        assert_eq!(link.path(), "fake");
+        let first = board.frame();
+        let second = board.frame();
+        let hello = Message::HostHello {
+            version: PROTOCOL_VERSION,
+        };
+        assert_eq!((first.sequence, first.message), (0, hello));
+        assert_eq!((second.sequence, second.message), (1, hello));
+        assert!(!link.is_connected());
+
+        board.send(Message::Hello(info()));
+        assert_eq!(events.recv_timeout(WAIT).unwrap(), LinkEvent::Hello(info()));
+        assert!(link.is_connected());
+    }
+
+    #[test]
+    fn board_messages_arrive_as_events_in_order() {
+        let (_link, mut board, events) = connected();
+        let telemetry = Telemetry {
+            uptime_ms: 2000,
+            free_heap: 4096,
+            temperature_centi_c: -150,
+            flags: 1,
+            detection_count: 2,
+        };
+        board.send(Message::Telemetry(telemetry));
+        board.send(Message::Pong { id: 7 });
+        board.send(Message::Ack {
+            command: COMMAND_SET_LED,
+        });
+        board.send(Message::Button {
+            pressed: true,
+            count: 3,
+        });
+        board.send(Message::Error { code: 9 });
+        board.send(Message::CameraDetection {
+            count: 2,
+            score_permille: 640,
+        });
+
+        let received: Vec<LinkEvent> = (0..6).map(|_| events.recv_timeout(WAIT).unwrap()).collect();
+        assert_eq!(
+            received,
+            [
+                LinkEvent::Telemetry(telemetry),
+                LinkEvent::Pong { id: 7 },
+                LinkEvent::Ack {
+                    command: COMMAND_SET_LED
+                },
+                LinkEvent::Button {
+                    pressed: true,
+                    count: 3
+                },
+                LinkEvent::Error { code: 9 },
+                LinkEvent::CameraDetection {
+                    count: 2,
+                    score_permille: 640
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn host_bound_messages_echoed_by_the_board_raise_no_event() {
+        let (_link, mut board, events) = connected();
+        board.send(Message::HostHello { version: 1 });
+        board.send(Message::Ping { id: 1 });
+        board.send(Message::SetLed {
+            red: 1,
+            green: 2,
+            blue: 3,
+            blink_ms: 0,
+        });
+        board.send(Message::Detection {
+            count: 1,
+            score_permille: 500,
+        });
+        board.send(Message::SetTelemetryPeriod { ms: 100 });
+        board.send(Message::Pong { id: 2 });
+        assert_eq!(
+            events.recv_timeout(WAIT).unwrap(),
+            LinkEvent::Pong { id: 2 }
+        );
+    }
+
+    #[test]
+    fn commands_reach_the_board_in_order_with_rising_sequence_numbers() {
+        let (link, mut board, _events) = connected();
+        assert!(link.set_led(255, 128, 0, 250));
+        assert!(link.ping(41));
+        assert!(link.set_telemetry_period(1000));
+        assert!(link.send(Message::Ping { id: 42 }));
+
+        let frames: Vec<Frame> = (0..4).map(|_| board.command()).collect();
+        assert_eq!(
+            frames.iter().map(|frame| frame.message).collect::<Vec<_>>(),
+            [
+                Message::SetLed {
+                    red: 255,
+                    green: 128,
+                    blue: 0,
+                    blink_ms: 250
+                },
+                Message::Ping { id: 41 },
+                Message::SetTelemetryPeriod { ms: 1000 },
+                Message::Ping { id: 42 },
+            ]
+        );
+        assert!(frames
+            .windows(2)
+            .all(|pair| pair[1].sequence == pair[0].sequence.wrapping_add(1)));
+    }
+
+    #[test]
+    fn a_detection_goes_out_in_per_mille_clamped_and_throttled() {
+        let (link, mut board, _events) = connected();
+        link.notify_detection(3, 0.9124);
+        link.notify_detection(3, 0.95);
+        assert!(link.ping(1));
+        assert_eq!(
+            board.command().message,
+            Message::Detection {
+                count: 3,
+                score_permille: 912
+            }
+        );
+        assert_eq!(board.command().message, Message::Ping { id: 1 });
+
+        thread::sleep(Duration::from_millis(150));
+        link.notify_detection(4, 1.7);
+        thread::sleep(Duration::from_millis(150));
+        link.notify_detection(0, -0.3);
+        assert_eq!(
+            board.command().message,
+            Message::Detection {
+                count: 4,
+                score_permille: 1000
+            }
+        );
+        assert_eq!(
+            board.command().message,
+            Message::Detection {
+                count: 0,
+                score_permille: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_failed_write_disconnects_with_its_reason_and_stops_the_writer() {
+        let (link, board, events) = connected();
+        board.cable_pulled.store(true, Ordering::Release);
+        assert!(link.ping(1));
+        assert_eq!(
+            events.recv_timeout(WAIT).unwrap(),
+            LinkEvent::Disconnected("write failed: cable pulled".into())
+        );
+        assert!(!link.is_connected());
+
+        let deadline = Instant::now() + WAIT;
+        while link.ping(2) {
+            assert!(Instant::now() < deadline, "the writer outlived its failure");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn an_unplugged_board_disconnects_with_the_read_error() {
+        let (link, board, events) = connected();
+        drop(board);
+        assert_eq!(
+            events.recv_timeout(WAIT).unwrap(),
+            LinkEvent::Disconnected("read failed: unplugged".into())
+        );
+        assert!(!link.is_connected());
+    }
+
+    #[test]
+    fn a_board_silent_for_six_seconds_is_disconnected() {
+        let (link, _board, events) = connected();
+        assert_eq!(
+            events.recv_timeout(CONNECTION_IDLE - Duration::from_secs(1)),
+            Err(RecvTimeoutError::Timeout)
+        );
+        assert_eq!(
+            events.recv_timeout(WAIT).unwrap(),
+            LinkEvent::Disconnected("no frames for 6 s; is the board still running?".into())
+        );
+        assert!(!link.is_connected());
+    }
+
+    #[test]
+    fn close_stops_both_threads_and_can_repeat() {
+        let (mut link, _board, events) = connected();
+        link.close();
+        assert!(!link.is_connected());
+        assert!(!link.ping(1), "the writer outlived close()");
+        assert_eq!(
+            events.recv_timeout(WAIT),
+            Err(RecvTimeoutError::Disconnected),
+            "the reader outlived close()"
+        );
+        link.close();
+    }
+
+    #[test]
+    fn dropping_the_link_stops_its_reader() {
+        let (link, _board, events) = connected();
+        drop(link);
+        assert_eq!(
+            events.recv_timeout(WAIT),
+            Err(RecvTimeoutError::Disconnected)
+        );
+    }
+
+    #[test]
+    fn a_missing_port_names_itself() {
+        let error = Link::open("/nonexistent/ttyESP32", |_| {})
+            .err()
+            .expect("a missing port opened");
+        assert!(
+            format!("{error:#}").contains("failed to open ESP32 port /nonexistent/ttyESP32"),
+            "{error:#}"
+        );
+    }
 
     #[test]
     fn first_detection_frame_is_sent() {

@@ -5227,6 +5227,7 @@ name = "kataglyphis_esp32_proto"
 version = "2.3.4"
 dependencies = [
  "postcard",
+ "proptest",
  "serde",
 ]
 

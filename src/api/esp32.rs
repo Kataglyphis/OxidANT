@@ -299,15 +299,23 @@ mod enabled {
     }
 
     pub(super) fn connect(path: String, sink: StreamSink<Esp32Event>) -> Result<(), String> {
-        if lock().is_some() {
+        install(&path, |path| {
+            Link::open(path, move |event| {
+                let _ = sink.add(event.into());
+            })
+        })
+    }
+
+    /// Holds the slot across the open, so two connects cannot both pass the check.
+    pub(super) fn install<O>(path: &str, open: O) -> Result<(), String>
+    where
+        O: FnOnce(&str) -> anyhow::Result<Link>,
+    {
+        let mut slot = lock();
+        if slot.is_some() {
             return Err("the ESP32 link is already open; disconnect it first".into());
         }
-
-        let mut slot = lock();
-        let link = Link::open(&path, move |event| {
-            let _ = sink.add(event.into());
-        })
-        .map_err(|error| format!("opening {path} failed: {error:#}"))?;
+        let link = open(path).map_err(|error| format!("opening {path} failed: {error:#}"))?;
         *slot = Some(link);
         Ok(())
     }
@@ -354,5 +362,424 @@ mod enabled {
         if let Some(link) = guard.as_ref() {
             link.notify_detection(count, score);
         }
+    }
+}
+
+#[cfg(all(test, desktop))]
+mod tests {
+    use std::io::{self, Read, Write};
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::sync::{Mutex, MutexGuard};
+    use std::time::{Duration, Instant};
+
+    use kataglyphis_esp32::kataglyphis_esp32_proto::{encode, Decoder, Message, MAX_FRAME};
+
+    use super::*;
+
+    const WAIT: Duration = Duration::from_secs(5);
+    const NO_LINK: &str = "no ESP32 link is open";
+
+    /// The bridge is one process-wide slot, so the tests that use it take turns.
+    fn serial() -> MutexGuard<'static, ()> {
+        static SERIAL: Mutex<()> = Mutex::new(());
+        let guard = SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        esp32_disconnect();
+        guard
+    }
+
+    /// The host's end of an in-memory serial line; a read times out like a real port.
+    struct HostReader {
+        from_board: mpsc::Receiver<Vec<u8>>,
+        pending: Vec<u8>,
+    }
+
+    impl Read for HostReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pending.is_empty() {
+                match self.from_board.recv_timeout(Duration::from_millis(10)) {
+                    Ok(bytes) => self.pending = bytes,
+                    Err(RecvTimeoutError::Timeout) => return Err(io::ErrorKind::TimedOut.into()),
+                    Err(RecvTimeoutError::Disconnected) => {
+                        return Err(io::ErrorKind::BrokenPipe.into());
+                    }
+                }
+            }
+            let n = buf.len().min(self.pending.len());
+            buf[..n].copy_from_slice(&self.pending[..n]);
+            self.pending.drain(..n);
+            Ok(n)
+        }
+    }
+
+    struct HostWriter(mpsc::Sender<Vec<u8>>);
+
+    impl Write for HostWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0
+                .send(buf.to_vec())
+                .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The board's end of the line; dropping it unplugs the board.
+    struct Board {
+        to_host: mpsc::Sender<Vec<u8>>,
+        from_host: mpsc::Receiver<Vec<u8>>,
+        decoder: Decoder,
+    }
+
+    impl Board {
+        fn send(&self, message: Message) {
+            let mut frame = [0u8; MAX_FRAME];
+            let len = encode(0, &message, &mut frame).unwrap();
+            self.to_host.send(frame[..len].to_vec()).unwrap();
+        }
+
+        /// The next frame the host wrote that is not its repeated HostHello.
+        fn command(&mut self) -> Message {
+            let deadline = Instant::now() + WAIT;
+            loop {
+                while let Some(frame) = self.decoder.next_frame() {
+                    if !matches!(frame.message, Message::HostHello { .. }) {
+                        return frame.message;
+                    }
+                }
+                let left = deadline.saturating_duration_since(Instant::now());
+                let bytes = self
+                    .from_host
+                    .recv_timeout(left)
+                    .expect("no command from the host");
+                assert!(self.decoder.push(&bytes));
+            }
+        }
+    }
+
+    fn fake_link(path: &str) -> anyhow::Result<(Link, Board)> {
+        let (to_host, from_board) = mpsc::channel();
+        let (to_board, from_host) = mpsc::channel();
+        let reader = HostReader {
+            from_board,
+            pending: Vec::new(),
+        };
+        let link = Link::start(path, reader, HostWriter(to_board), |_| {})?;
+        let board = Board {
+            to_host,
+            from_host,
+            decoder: Decoder::new(),
+        };
+        Ok((link, board))
+    }
+
+    /// Opens a fake board through the same slot `esp32_connect` fills.
+    fn plug_in() -> Board {
+        let mut board = None;
+        enabled::install("fake", |path| {
+            let (link, end) = fake_link(path)?;
+            board = Some(end);
+            Ok(link)
+        })
+        .unwrap();
+        board.unwrap()
+    }
+
+    fn info(chip: Chip) -> DeviceInfo {
+        DeviceInfo {
+            protocol: 1,
+            firmware_major: 0,
+            firmware_minor: 3,
+            firmware_patch: 12,
+            chip,
+            mac: [0xE8, 0x06, 0x90, 0x9D, 0x3E, 0x78],
+            uptime_ms: 42,
+        }
+    }
+
+    /// The optional fields an event carries; `kind` promises exactly these.
+    fn carried(event: &Esp32Event) -> Vec<&'static str> {
+        let fields = [
+            ("text", event.text.is_some()),
+            ("value", event.value.is_some()),
+            ("flag", event.flag.is_some()),
+            ("score_permille", event.score_permille.is_some()),
+            ("firmware", event.firmware.is_some()),
+            ("protocol", event.protocol.is_some()),
+            ("mac", event.mac.is_some()),
+            ("uptime_ms", event.uptime_ms.is_some()),
+            ("free_heap", event.free_heap.is_some()),
+            ("temperature_centi_c", event.temperature_centi_c.is_some()),
+            ("detection_count", event.detection_count.is_some()),
+        ];
+        fields
+            .into_iter()
+            .filter_map(|(name, set)| set.then_some(name))
+            .collect()
+    }
+
+    #[test]
+    fn hello_names_the_chip_and_formats_firmware_and_mac() {
+        let event = Esp32Event::from(LinkEvent::Hello(info(Chip::Esp32S3)));
+        assert_eq!(event.kind, "hello");
+        assert_eq!(
+            carried(&event),
+            ["text", "firmware", "protocol", "mac", "uptime_ms"]
+        );
+        assert_eq!(event.text.as_deref(), Some("ESP32-S3"));
+        assert_eq!(event.firmware.as_deref(), Some("0.3.12"));
+        assert_eq!(event.protocol, Some(1));
+        assert_eq!(event.mac.as_deref(), Some("E8:06:90:9D:3E:78"));
+        assert_eq!(event.uptime_ms, Some(42));
+
+        let other = Esp32Event::from(LinkEvent::Hello(info(Chip::Other)));
+        assert_eq!(other.text.as_deref(), Some("ESP32"));
+    }
+
+    #[test]
+    fn telemetry_carries_its_readings_and_the_button_bit_as_its_flag() {
+        let telemetry = |flags| {
+            Esp32Event::from(LinkEvent::Telemetry(Telemetry {
+                uptime_ms: 9000,
+                free_heap: 123_456,
+                temperature_centi_c: -1250,
+                flags,
+                detection_count: 4,
+            }))
+        };
+        let held = telemetry(TELEMETRY_BUTTON_DOWN);
+        assert_eq!(held.kind, "telemetry");
+        assert_eq!(
+            carried(&held),
+            [
+                "flag",
+                "uptime_ms",
+                "free_heap",
+                "temperature_centi_c",
+                "detection_count"
+            ]
+        );
+        assert_eq!(held.flag, Some(true));
+        assert_eq!(held.uptime_ms, Some(9000));
+        assert_eq!(held.free_heap, Some(123_456));
+        assert_eq!(held.temperature_centi_c, Some(-1250));
+        assert_eq!(held.detection_count, Some(4));
+
+        assert_eq!(telemetry(0).flag, Some(false));
+        assert_eq!(telemetry(!TELEMETRY_BUTTON_DOWN).flag, Some(false));
+    }
+
+    #[test]
+    fn the_small_events_carry_one_or_two_fields() {
+        let cases = [
+            (
+                LinkEvent::Pong { id: 7 },
+                "pong",
+                vec!["value"],
+                Some(7),
+                None,
+            ),
+            (
+                LinkEvent::Ack { command: 3 },
+                "ack",
+                vec!["value"],
+                Some(3),
+                None,
+            ),
+            (
+                LinkEvent::Error { code: 2 },
+                "error",
+                vec!["value"],
+                Some(2),
+                None,
+            ),
+            (
+                LinkEvent::Button {
+                    pressed: false,
+                    count: 5,
+                },
+                "button",
+                vec!["value", "flag"],
+                Some(5),
+                Some(false),
+            ),
+        ];
+        for (link_event, kind, fields, value, flag) in cases {
+            let event = Esp32Event::from(link_event);
+            assert_eq!(event.kind, kind);
+            assert_eq!(carried(&event), fields, "{kind}");
+            assert_eq!((event.value, event.flag), (value, flag), "{kind}");
+        }
+
+        let camera = Esp32Event::from(LinkEvent::CameraDetection {
+            count: 2,
+            score_permille: 875,
+        });
+        assert_eq!(camera.kind, "camera");
+        assert_eq!(carried(&camera), ["value", "score_permille"]);
+        assert_eq!((camera.value, camera.score_permille), (Some(2), Some(875)));
+
+        let gone = Esp32Event::from(LinkEvent::Disconnected("read failed".into()));
+        assert_eq!(gone.kind, "disconnected");
+        assert_eq!(carried(&gone), ["text"]);
+        assert_eq!(gone.text.as_deref(), Some("read failed"));
+    }
+
+    #[test]
+    fn a_desktop_build_has_the_bridge() {
+        assert!(esp32_available());
+    }
+
+    #[test]
+    fn the_device_list_puts_espressif_boards_first() {
+        let devices = esp32_list_devices().unwrap();
+        assert!(devices
+            .windows(2)
+            .all(|pair| pair[0].espressif >= pair[1].espressif));
+    }
+
+    #[test]
+    fn without_a_link_every_command_says_so() {
+        let _turn = serial();
+        assert!(!esp32_connected());
+        assert_eq!(esp32_set_led(1, 2, 3, 0), Err(NO_LINK.into()));
+        assert_eq!(esp32_ping(), Err(NO_LINK.into()));
+        assert_eq!(esp32_set_telemetry_period(100), Err(NO_LINK.into()));
+        assert_eq!(esp32_notify_detection(1, 0.5), Err(NO_LINK.into()));
+        esp32_disconnect();
+    }
+
+    #[test]
+    fn commands_reach_the_board_until_it_is_disconnected() {
+        let _turn = serial();
+        let mut board = plug_in();
+        assert_eq!(esp32_set_led(0, 255, 0, 500), Ok(()));
+        assert_eq!(esp32_ping(), Ok(()));
+        assert_eq!(esp32_ping(), Ok(()));
+        assert_eq!(esp32_set_telemetry_period(250), Ok(()));
+        assert_eq!(esp32_notify_detection(2, 0.5), Ok(()));
+
+        assert_eq!(
+            board.command(),
+            Message::SetLed {
+                red: 0,
+                green: 255,
+                blue: 0,
+                blink_ms: 500
+            }
+        );
+        let (Message::Ping { id: first }, Message::Ping { id: second }) =
+            (board.command(), board.command())
+        else {
+            panic!("two pings were sent");
+        };
+        assert_eq!(second, first.wrapping_add(1));
+        assert_eq!(board.command(), Message::SetTelemetryPeriod { ms: 250 });
+        assert_eq!(
+            board.command(),
+            Message::Detection {
+                count: 2,
+                score_permille: 500
+            }
+        );
+
+        esp32_disconnect();
+        assert_eq!(esp32_ping(), Err(NO_LINK.into()));
+    }
+
+    #[test]
+    fn connected_follows_the_boards_hello() {
+        let _turn = serial();
+        let board = plug_in();
+        assert!(!esp32_connected());
+        board.send(Message::Hello(info(Chip::Esp32S3)));
+        let deadline = Instant::now() + WAIT;
+        while !esp32_connected() {
+            assert!(Instant::now() < deadline, "no handshake after Hello");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        esp32_disconnect();
+        assert!(!esp32_connected());
+    }
+
+    #[test]
+    fn a_second_connect_is_refused_and_the_first_link_stays() {
+        let _turn = serial();
+        let mut board = plug_in();
+        let mut opened = false;
+        let second = enabled::install("other", |path| {
+            opened = true;
+            fake_link(path).map(|(link, _)| link)
+        });
+        assert_eq!(
+            second,
+            Err("the ESP32 link is already open; disconnect it first".into())
+        );
+        assert!(!opened, "the second port was opened anyway");
+
+        assert_eq!(esp32_ping(), Ok(()));
+        assert!(matches!(board.command(), Message::Ping { .. }));
+        esp32_disconnect();
+    }
+
+    #[test]
+    fn a_port_that_fails_to_open_leaves_no_link() {
+        let _turn = serial();
+        let error =
+            enabled::install("/nonexistent/ttyESP32", |path| Link::open(path, |_| {})).unwrap_err();
+        let expected =
+            "opening /nonexistent/ttyESP32 failed: failed to open ESP32 port /nonexistent/ttyESP32";
+        assert!(error.starts_with(expected), "{error}");
+        assert_eq!(esp32_ping(), Err(NO_LINK.into()));
+    }
+
+    #[test]
+    fn an_unplugged_board_asks_for_a_reconnect() {
+        let _turn = serial();
+        drop(plug_in());
+        let deadline = Instant::now() + WAIT;
+        let error = loop {
+            match esp32_ping() {
+                Ok(()) => assert!(Instant::now() < deadline, "the writer survived the unplug"),
+                Err(error) => break error,
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(error, "the ESP32 writer has stopped; reconnect the board");
+        esp32_disconnect();
+    }
+
+    #[cfg(all(feature = "gstreamer", onnx))]
+    #[test]
+    fn the_webcam_hook_forwards_the_count_and_the_best_score() {
+        let _turn = serial();
+        let mut board = plug_in();
+        let detection = |score| crate::Detection {
+            score,
+            ..Default::default()
+        };
+        notify_detections(&[detection(0.41), detection(0.83), detection(0.6)]);
+        assert_eq!(
+            board.command(),
+            Message::Detection {
+                count: 3,
+                score_permille: 830
+            }
+        );
+
+        std::thread::sleep(Duration::from_millis(150));
+        notify_detections(&[]);
+        assert_eq!(
+            board.command(),
+            Message::Detection {
+                count: 0,
+                score_permille: 0
+            }
+        );
+        esp32_disconnect();
     }
 }

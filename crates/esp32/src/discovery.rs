@@ -46,13 +46,18 @@ pub fn list_devices() -> Result<Vec<DeviceInfo>> {
     #[cfg(target_os = "linux")]
     add_by_id_devices(std::path::Path::new("/dev/serial/by-id"), &mut devices);
 
+    espressif_first(&mut devices);
+    Ok(devices)
+}
+
+/// Espressif boards first, each group by path, one entry per path.
+fn espressif_first(devices: &mut Vec<DeviceInfo>) {
     devices.sort_by(|a, b| {
         b.espressif
             .cmp(&a.espressif)
             .then_with(|| a.path.cmp(&b.path))
     });
     devices.dedup_by(|a, b| a.path == b.path);
-    Ok(devices)
 }
 
 fn from_port(port: SerialPortInfo) -> Option<DeviceInfo> {
@@ -134,6 +139,8 @@ fn add_by_id_devices(by_id: &std::path::Path, devices: &mut Vec<DeviceInfo>) {
 
 #[cfg(test)]
 mod tests {
+    use serialport::UsbPortInfo;
+
     use super::*;
 
     fn device(path: &str, espressif: bool) -> DeviceInfo {
@@ -146,6 +153,101 @@ mod tests {
             product_id: 0x1001,
             espressif,
         }
+    }
+
+    fn usb_port(vid: u16, product: &str, manufacturer: &str) -> SerialPortInfo {
+        SerialPortInfo {
+            port_name: "/dev/ttyACM0".into(),
+            port_type: SerialPortType::UsbPort(UsbPortInfo {
+                vid,
+                pid: 0x1001,
+                serial_number: Some("E8:06:90:9D:3E:78".into()),
+                manufacturer: Some(manufacturer.into()),
+                product: Some(product.into()),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_usb_port_keeps_its_descriptors() {
+        let device = from_port(usb_port(
+            ESPRESSIF_VID,
+            "USB JTAG/serial debug unit",
+            "Espressif",
+        ))
+        .unwrap();
+        assert_eq!(
+            device,
+            DeviceInfo {
+                path: "/dev/ttyACM0".into(),
+                serial_number: Some("E8:06:90:9D:3E:78".into()),
+                product: Some("USB JTAG/serial debug unit".into()),
+                manufacturer: Some("Espressif".into()),
+                vendor_id: ESPRESSIF_VID,
+                product_id: 0x1001,
+                espressif: true,
+            }
+        );
+        assert_eq!(device.mac().as_deref(), Some("E8:06:90:9D:3E:78"));
+    }
+
+    #[test]
+    fn an_ftdi_adapter_is_listed_but_not_as_espressif() {
+        let device = from_port(usb_port(0x0403, "FT232R USB UART", "FTDI")).unwrap();
+        assert!(!device.espressif);
+        assert_eq!(device.vendor_id, 0x0403);
+    }
+
+    #[test]
+    fn ports_that_are_not_usb_are_left_out() {
+        for port_type in [
+            SerialPortType::PciPort,
+            SerialPortType::BluetoothPort,
+            SerialPortType::Unknown,
+        ] {
+            let port = SerialPortInfo {
+                port_name: "/dev/ttyS0".into(),
+                port_type,
+            };
+            assert_eq!(from_port(port), None);
+        }
+    }
+
+    #[test]
+    fn espressif_boards_come_first_then_by_path_once_each() {
+        let mut devices = vec![
+            device("/dev/ttyUSB0", false),
+            device("/dev/ttyACM1", true),
+            device("/dev/ttyACM0", false),
+            device("/dev/ttyACM1", true),
+            device("/dev/ttyACM2", true),
+        ];
+        espressif_first(&mut devices);
+        let order: Vec<(&str, bool)> = devices
+            .iter()
+            .map(|device| (device.path.as_str(), device.espressif))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                ("/dev/ttyACM1", true),
+                ("/dev/ttyACM2", true),
+                ("/dev/ttyACM0", false),
+                ("/dev/ttyUSB0", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn this_hosts_ports_are_listed_espressif_first_once_each() {
+        let devices = list_devices().unwrap();
+        assert!(devices
+            .windows(2)
+            .all(|pair| pair[0].espressif >= pair[1].espressif));
+        let mut paths: Vec<&str> = devices.iter().map(|device| device.path.as_str()).collect();
+        paths.sort_unstable();
+        paths.dedup();
+        assert_eq!(paths.len(), devices.len());
     }
 
     #[cfg(target_os = "linux")]

@@ -57,7 +57,8 @@ without them. Since when each lane sets it, and the one test it cannot hold:
 ## Where the suites live
 
 - Unit tests inside the workspace crates (`kataglyphis_telemetry`, `kataglyphis_inference`,
-  and the renderer's own suite).
+  and the renderer's own suite). The ESP32 link's run over an in-memory serial line
+  (`Link::start`), so they need no board.
 - Integration tests: `tests/integration/integration.rs`, which run the CLI and are
   compiled as `kataglyphis_cli`'s `integration` test (`crates/cli/tests/integration.rs`);
   `crates/media/tests/capture_test.rs` (a `videotestsrc` pipeline and camera
@@ -65,7 +66,9 @@ without them. Since when each lane sets it, and the one test it cannot hold:
 - Property-based (fuzz) tests: [proptest](https://proptest-rs.github.io/proptest/)
   properties on ObservANT's network-facing parsers (Range header, query, Host/Origin
   check, request path, camera spec, config file), 256 random inputs per property and run,
-  in the `mod properties` of `web.rs`, `static_files.rs`, `camera.rs` and `config.rs`.
+  in the `mod properties` of `web.rs`, `static_files.rs`, `camera.rs` and `config.rs`;
+  and on the ESP32 frame codec (any split into reads, noise before a frame, a single bit
+  error) in `crates/esp32-protocol/tests/framing.rs`.
   There is no `cargo-fuzz`/libFuzzer target.
 
 Benchmarks and the detector's real-model test: [AGENTS.md § 5](../AGENTS.md#5-build-run-test);

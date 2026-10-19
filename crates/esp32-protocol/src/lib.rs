@@ -263,7 +263,44 @@ mod tests {
         }
     }
 
-    fn all_messages() -> [Message; 9] {
+    /// Postcard's wire tag of each variant; a new variant fails to compile here until it is listed.
+    fn wire_tag(message: &Message) -> u8 {
+        match message {
+            Message::HostHello { .. } => 0,
+            Message::Hello(_) => 1,
+            Message::Ping { .. } => 2,
+            Message::Pong { .. } => 3,
+            Message::Telemetry(_) => 4,
+            Message::SetLed { .. } => 5,
+            Message::Detection { .. } => 6,
+            Message::CameraDetection { .. } => 7,
+            Message::SetTelemetryPeriod { .. } => 8,
+            Message::Button { .. } => 9,
+            Message::Ack { .. } => 10,
+            Message::Error { .. } => 11,
+        }
+    }
+
+    fn frame(sequence: u16, message: &Message) -> ([u8; MAX_FRAME], usize) {
+        let mut buf = [0u8; MAX_FRAME];
+        let len = encode(sequence, message, &mut buf).unwrap();
+        (buf, len)
+    }
+
+    /// A frame with a correct CRC around whatever header and payload it is given.
+    fn raw_frame(version: u8, payload_len: u16, payload: &[u8], out: &mut [u8]) -> usize {
+        out[0..2].copy_from_slice(&MAGIC);
+        out[2] = version;
+        out[3..5].copy_from_slice(&0u16.to_le_bytes());
+        out[5..7].copy_from_slice(&payload_len.to_le_bytes());
+        out[HEADER_LEN..HEADER_LEN + payload.len()].copy_from_slice(payload);
+        let end = HEADER_LEN + payload.len();
+        let crc = crc16(&out[2..end]);
+        out[end..end + 2].copy_from_slice(&crc.to_le_bytes());
+        end + 2
+    }
+
+    fn all_messages() -> [Message; 12] {
         [
             Message::HostHello {
                 version: PROTOCOL_VERSION,
@@ -292,11 +329,150 @@ mod tests {
                 count: 1,
                 score_permille: 870,
             },
+            Message::SetTelemetryPeriod { ms: 250 },
             Message::Button {
                 pressed: true,
                 count: 4,
             },
+            Message::Ack {
+                command: COMMAND_SET_LED,
+            },
+            Message::Error { code: 2 },
         ]
+    }
+
+    #[test]
+    fn the_round_trip_list_names_every_variant() {
+        let mut listed = [false; 12];
+        for message in all_messages() {
+            listed[wire_tag(&message) as usize] = true;
+        }
+        assert_eq!(listed, [true; 12]);
+    }
+
+    #[test]
+    fn every_variant_keeps_its_wire_tag() {
+        for message in all_messages() {
+            let (buf, _) = frame(0, &message);
+            assert_eq!(buf[HEADER_LEN], wire_tag(&message), "{message:?}");
+        }
+    }
+
+    #[test]
+    fn a_ping_frame_matches_the_bytes_the_firmware_expects() {
+        let (buf, len) = frame(0x0102, &Message::Ping { id: 0x0304 });
+        assert_eq!(
+            buf[..len],
+            [0xA5, 0x5A, 0x01, 0x02, 0x01, 0x03, 0x00, 0x02, 0x84, 0x06, 0x86, 0x64]
+        );
+    }
+
+    #[test]
+    fn a_buffer_of_exactly_the_frame_length_is_enough() {
+        let message = Message::Pong { id: 1 };
+        let (_, len) = frame(0, &message);
+        let mut exact = [0u8; MAX_FRAME];
+        assert_eq!(encode(0, &message, &mut exact[..len]), Ok(len));
+        assert_eq!(
+            encode(0, &message, &mut exact[..len - 1]),
+            Err(EncodeError::BufferTooSmall)
+        );
+    }
+
+    #[test]
+    fn a_frame_of_another_protocol_version_is_skipped() {
+        let mut other = [0u8; MAX_FRAME];
+        let other_len = raw_frame(2, 2, &[wire_tag(&Message::Ping { id: 0 }), 5], &mut other);
+        let (next, next_len) = frame(1, &Message::Pong { id: 5 });
+
+        let mut decoder = Decoder::new();
+        assert!(decoder.push(&other[..other_len]));
+        assert!(decoder.push(&next[..next_len]));
+        assert_eq!(
+            decoder.next_frame(),
+            Some(Frame {
+                sequence: 1,
+                message: Message::Pong { id: 5 }
+            })
+        );
+        assert!(decoder.is_empty());
+    }
+
+    #[test]
+    fn a_length_over_the_maximum_is_skipped_without_waiting_for_it() {
+        let mut header = [0u8; HEADER_LEN];
+        header[0..2].copy_from_slice(&MAGIC);
+        header[2] = PROTOCOL_VERSION as u8;
+        header[5..7].copy_from_slice(&(MAX_PAYLOAD as u16 + 1).to_le_bytes());
+        let (next, next_len) = frame(2, &Message::Ping { id: 8 });
+
+        let mut decoder = Decoder::new();
+        assert!(decoder.push(&header));
+        assert!(decoder.push(&next[..next_len]));
+        assert_eq!(
+            decoder.next_frame(),
+            Some(Frame {
+                sequence: 2,
+                message: Message::Ping { id: 8 }
+            })
+        );
+    }
+
+    #[test]
+    fn a_valid_crc_around_an_unknown_variant_is_skipped() {
+        let mut unknown = [0u8; MAX_FRAME];
+        let unknown_len = raw_frame(PROTOCOL_VERSION as u8, 1, &[0x7F], &mut unknown);
+        let (next, next_len) = frame(3, &Message::Error { code: 1 });
+
+        let mut decoder = Decoder::new();
+        assert!(decoder.push(&unknown[..unknown_len]));
+        assert!(decoder.push(&next[..next_len]));
+        assert_eq!(
+            decoder.next_frame(),
+            Some(Frame {
+                sequence: 3,
+                message: Message::Error { code: 1 }
+            })
+        );
+    }
+
+    #[test]
+    fn a_magic_byte_at_the_end_of_a_push_waits_for_the_next() {
+        let (buf, len) = frame(4, &Message::Ack { command: 1 });
+        let mut decoder = Decoder::new();
+        assert!(decoder.push(&[b'o', b'k', b'\n', MAGIC[0]]));
+        assert_eq!(decoder.next_frame(), None);
+        assert!(!decoder.is_empty());
+        assert!(decoder.push(&buf[1..len]));
+        assert_eq!(
+            decoder.next_frame(),
+            Some(Frame {
+                sequence: 4,
+                message: Message::Ack { command: 1 }
+            })
+        );
+    }
+
+    #[test]
+    fn a_full_decoder_refuses_more_bytes_and_keeps_what_it_holds() {
+        let (buf, len) = frame(5, &Message::Pong { id: 6 });
+        let filler = [0u8; 1024];
+        let mut decoder = Decoder::default();
+        assert!(decoder.is_empty());
+        assert!(decoder.push(&buf[..len]));
+        assert!(decoder.push(&filler[..filler.len() - len]));
+        assert!(!decoder.push(&[0]));
+
+        assert_eq!(
+            decoder.next_frame(),
+            Some(Frame {
+                sequence: 5,
+                message: Message::Pong { id: 6 }
+            })
+        );
+        assert_eq!(decoder.next_frame(), None);
+        assert!(decoder.is_empty());
+        assert!(decoder.push(&[0]));
     }
 
     #[test]

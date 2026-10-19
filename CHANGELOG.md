@@ -47,6 +47,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
   number kept udev's interface suffix (`E8:06:90:9D:3E:78-if00`), so `DeviceInfo::mac()` was
   `None` for exactly the board the libudev-less enumeration missed. `crates/esp32/src/discovery.rs`
   cuts the suffix; the new by-id test failed on the old code with that string.
+- **The ESP32 bridge is tested, and the Linux lanes' coverage passes again** (2026-10-19). 0a4f9a7
+  added 747 measured lines, 99 of them run by a test, so run 39220063931 stopped at `70.00% coverage,
+  7468/10669 lines covered` against `--fail-under 70`. The tests check behaviour: the protocol's twelve
+  wire tags, a byte-exact Ping frame, the decoder's foreign version, oversized length, unknown variant
+  and full buffer, and three proptest properties (`crates/esp32-protocol/tests/framing.rs`); the link
+  over an in-memory serial line through the new `Link::start` (handshake retry, events in order, echoes
+  ignored, sequence numbers, the detection throttle and per-mille clamp, write and read failures, the
+  6 s idle disconnect, close and drop); discovery's port mapping and order; the frb API's event mapping
+  and every command with and without a link; the webcam engine's detections hook. The API's connect
+  checks and fills the link slot under one lock, so two connects cannot both pass. `ci-container-steps.sh
+  coverage` in `:latest`: 72.89 % (7782/10676); `crates/esp32` (92.9 %) and `crates/esp32-protocol`
+  (98.8 %) get floors of 91 and 97, `src/` (14.6 %) 13 instead of 5.
 
 ## [2.3.4] - 2026-10-16
 
