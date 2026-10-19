@@ -20,6 +20,9 @@ pub struct EngineEvent {
     pub fps: f32,
 }
 
+/// Runs on the inference worker thread, once per inferred frame.
+pub type DetectionsHook = Arc<dyn Fn(&[Detection]) + Send + Sync>;
+
 pub struct EngineConfig {
     pub source: CameraSource,
     pub width: u32,
@@ -31,7 +34,7 @@ pub struct EngineConfig {
     pub texture: Option<TextureTarget>,
     /// Called with every inference result; the ESP32 bridge hooks in here, so a
     /// detection reaches the board without a round trip through Dart.
-    pub on_detections: Option<Arc<dyn Fn(&[Detection]) + Send + Sync>>,
+    pub on_detections: Option<DetectionsHook>,
 }
 
 pub struct TextureTarget {

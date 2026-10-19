@@ -29,6 +29,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   WiX is 7, Renovate's `--apply` is no longer gitlinks only, and the crate table lists the two ESP32
   crates.
 
+### Fixed
+- **The Linux lanes' clippy passes again** (2026-10-19). `EngineConfig::on_detections`, added with
+  the ESP32 bridge in 0a4f9a7, failed `clippy -D warnings` with `type_complexity` at
+  `src/webcam_engine.rs:34`; its type is the `DetectionsHook` alias now. `ci-container-steps.sh
+  fmt-clippy` in `:latest` reproduced the error before the change and passes after it.
+
 ## [2.3.4] - 2026-10-16
 
 ### Added
