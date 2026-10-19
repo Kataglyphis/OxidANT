@@ -15,53 +15,49 @@ cargo run -p kataglyphis_cli -- read --path README.md
 
 ## Windows: GStreamer + ONNX overlay (wgpu)
 
-Build + Run (CPU via tract):
+CPU, through tract:
 
 ```bash
 cargo run -p kataglyphis_cli --features gui_windows,onnx_tract -- gui --backend dx12
 ```
 
-Every `onnxruntime*` feature loads ONNX Runtime at run time and downloads
-nothing at build time. The only ORT it may load is the family's chain build
-(owner rule 2026-09-23): inside the Windows image that is
-`$env:ONNX_ROOT\bin\onnxruntime.dll`, found automatically; anywhere else, stage
-that file (plus `DirectML.dll` and `onnxruntime_providers_shared.dll`) next to
-the exe or point `ORT_DYLIB_PATH` at it. There is no fallback to the
-`onnxruntime.dll` Windows ships in System32, and any file that is not the chain
-build (a pip wheel's, a GitHub release's) is refused at load time. The portable
-bundle (`dist\windows-<x64|arm64>\bundle`), MSIX and MSI carry the chain copy
-already.
+Every `onnxruntime*` feature loads ONNX Runtime at run time and downloads nothing at
+build time. The only ORT it may load is the family's chain build (owner rule
+2026-09-23): inside the Windows image `$env:ONNX_ROOT\bin\onnxruntime.dll`, found
+automatically; anywhere else, stage that file (plus `DirectML.dll` and
+`onnxruntime_providers_shared.dll`) next to the exe or point `ORT_DYLIB_PATH` at it.
+There is no fallback to the `onnxruntime.dll` Windows ships in System32, and a file that
+is not the chain build (a pip wheel's, a GitHub release's) is refused at load time. The
+portable bundle (`dist\windows-<x64|arm64>\bundle`), MSIX and MSI carry the chain copy.
 
-To check which ONNX Runtime an exe gets without starting the GUI, build it with an
-`onnxruntime_*` feature and run its `onnx-runtime` subcommand; it prints the path it
-loaded, or fails when no chain ORT loads. Both Windows lanes run it on the packaged
-exe:
+The `onnx-runtime` subcommand (with an `onnxruntime_*` feature) prints the path of the
+ONNX Runtime the exe loaded, without starting the GUI, or fails when no chain ORT loads.
+Both Windows lanes run it on the packaged exe:
 
 ```bash
 cargo run -p kataglyphis_cli --features onnxruntime_directml -- onnx-runtime
 ```
 
 The GUI creates its camera pipeline's GStreamer elements by name (`mfvideosrc`,
-falling back to `autovideosrc`, then `videoconvert`, `capsfilter`, `appsink`), so
-their plugins are in no import table. Every Windows package therefore carries them
-in `lib\gstreamer-1.0`, and the DLLs they import beside the exe; the list is
-`Build.GStreamerPlugins` in `scripts/windows/Build-Windows.config.psd1`.
-The `media-check` subcommand (with `gui_windows`) builds that pipeline without
-starting it, so with no camera and no window, and prints the plugin file behind each
-element; an exe that carries plugins must take every element from them. Both Windows
-lanes run it on the packaged exe:
+falling back to `autovideosrc`, then `videoconvert`, `capsfilter`, `appsink`), so every
+Windows package carries their plugins in `lib\gstreamer-1.0` (the list is
+`Build.GStreamerPlugins` in `scripts/windows/Build-Windows.config.psd1`; how:
+[AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration)). The
+`media-check` subcommand (with `gui_windows`) builds that pipeline without starting it,
+so with no camera and no window, and prints the plugin file behind each element. Both
+Windows lanes run it on the packaged exe:
 
 ```bash
 cargo run -p kataglyphis_cli --features gui_windows -- media-check
 ```
 
-Build + Run (ONNX Runtime + DirectML):
+ONNX Runtime + DirectML:
 
 ```bash
 cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- gui --backend dx12
 ```
 
-Build + Run (ONNX Runtime + CUDA, NVIDIA):
+ONNX Runtime + CUDA (NVIDIA):
 
 ```bash
 # PowerShell
@@ -85,8 +81,7 @@ Optional environment variables:
 - `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (default: `cpu`)
 - `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: `0`, one per core)
 - `KATAGLYPHIS_ORT_SPIN` – `0` stops idle ONNX Runtime threads spin-waiting for the next run
-  (default: ORT's, spinning). Worth it when inference runs at a capped rate: the cat cam sets it
-  itself
+  (default: ORT's, spinning); for inference at a capped rate, so the cat cam sets it itself
 - `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (default: `stretch`)
 - `KATAGLYPHIS_SWAP_XY` – set to `1` if the model output swaps X and Y (default: `0`)
 - `KATAGLYPHIS_SCORE_THRESHOLD` – detection score threshold (default: `0.5`)
@@ -134,7 +129,7 @@ cargo run -p kataglyphis_cli --features gui_unix -- gui
 cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-interval-ms 1000 --resource-log-gpu=true gui
 ```
 
-Optional, also write it to a file:
+Also to a file:
 
 ```bash
 cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-file .\resource.log gui
@@ -172,9 +167,9 @@ cargo +nightly check --manifest-path Cargo.toml --target wasm32-unknown-unknown 
 
 ## Cameras
 
-Raw `gst-launch-1.0` pipelines — listing a device's formats, bisecting a capture
-problem below the application, Raspberry Pi CSI and V4L2 sources, MJPEG, hardware
-encoders that under-declare their caps — are ANTfrastructure's, in
-[`docs/runtime-services.md`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/runtime-services.md),
-§ *Raw `gst-launch-1.0` pipelines (debugging below the app)*. They were once copied
-into the README as three bare commands with no explanation of when to reach for them.
+Raw `gst-launch-1.0` pipelines (listing a device's formats, bisecting a capture problem
+below the application, Raspberry Pi CSI and V4L2 sources, MJPEG, hardware encoders that
+under-declare their caps) are ANTfrastructure's:
+[`docs/runtime-services.md`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/runtime-services.md)
+§ *Raw `gst-launch-1.0` pipelines (debugging below the app)*. Three of them once sat in
+the README as bare commands, with no word on when to reach for them.

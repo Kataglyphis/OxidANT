@@ -2,14 +2,14 @@
 
 ## Prerequisites
 
-You need a Rust toolchain, a C++ compiler and the submodule. The toolchain version
-the CI images and every gate use is `RUST_VERSION` in ANTfrastructure's
+A Rust toolchain, a C++ compiler and the submodule. The toolchain version the CI images
+and every gate use is `RUST_VERSION` in ANTfrastructure's
 [`linux/scripts/01-core/versions.env`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/linux/scripts/01-core/versions.env)
-(`third_party/ANTfrastructure/linux/scripts/01-core/versions.env` in a checkout) — read
-it there rather than pinning a number here, which is how the last one went stale. The
-C++ compiler is for the root package's `build.rs`, which compiles the cxx bridge in
-`src/native_only.rs` (on Windows, the Visual Studio C++ build tools, which the MSVC Rust
-toolchain needs to link anyway). Nothing else is needed for a default-feature build.
+(`third_party/ANTfrastructure/linux/scripts/01-core/versions.env` in a checkout); read it
+there, since a number pinned here went stale. The C++ compiler is for the root package's
+`build.rs`, which compiles the cxx bridge in `src/native_only.rs` (on Windows the Visual
+Studio C++ build tools, which the MSVC Rust toolchain needs to link anyway). Nothing else
+is needed for a default-feature build.
 
 ## Build
 
@@ -19,10 +19,10 @@ cd OxidANT
 cargo build --workspace --locked
 ```
 
-The three build profiles (dev, `profile` = release + debuginfo, `release` = fat LTO) are
-in [AGENTS.md § 5](../AGENTS.md#5-build-run-test). Every optional feature and the
-system libraries it needs: [crates.md § Features](crates.md#features). Running what you
-built: [running.md](running.md); testing it: [testing.md](testing.md).
+The three build profiles (dev, `profile` = release + debuginfo, `release` = fat LTO):
+[AGENTS.md § 5](../AGENTS.md#5-build-run-test). Optional features and the system
+libraries they need: [crates.md § Features](crates.md#features). Running what you built:
+[running.md](running.md); testing it: [testing.md](testing.md).
 
 ## API docs
 
@@ -35,8 +35,8 @@ The Linux x64 lane publishes them from the default branch to
 `cargo_build_doc.sh` (`bash scripts/linux/ci-container-steps.sh docs`), which is
 `cargo doc --no-deps` for the root package plus the family theme and `images/`. The
 `oxidant` crate's front page there is `README.md` itself (`#![doc = include_str!("../README.md")]`
-in `src/lib.rs`), which is why the README links with absolute URLs. The guides in
-`docs/` are not on that site; they are read on GitHub.
+in `src/lib.rs`; [AGENTS.md § 6](../AGENTS.md#6-docs-owned-by-this-repo) says what that
+demands of the README). The guides in `docs/` are not on that site; read them on GitHub.
 
 ## On a Windows checkout
 
@@ -48,12 +48,13 @@ The Windows container build is [windows.md](windows.md).
 
 ## Linux containers locally (Rancher Desktop)
 
-The Linux image is **always** the family CI one, in CI and locally — the same reference
-the workflows inherit, printed by `bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh`
-and owned by that submodule's `versions.env`. The command below asks for it rather than
-repeating it, so it cannot go stale on a tag bump. Rancher Desktop defaults to the
-**containerd** engine, so use `nerdctl`, not `docker` — and from Git Bash disable path
-mangling or the mount argument is destroyed.
+The Linux image is **always** the family CI one, `:latest` (the old `:latest-cross` name
+is retired), in CI and locally. `bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh`
+prints the reference from that submodule's `versions.env`, so the command below asks for
+it and survives a tag bump. Rancher Desktop defaults to **containerd**, so it is
+`nerdctl --namespace default`, not `docker`. From Git Bash,
+`MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` is mandatory, or the mount argument is
+mangled.
 
 ```pwsh
 $env:MSYS_NO_PATHCONV=1; $env:MSYS2_ARG_CONV_EXCL='*'
@@ -68,10 +69,9 @@ rdctl shell nerdctl --namespace default run --rm --user root `
 The named volume keeps the cargo registry across runs. Any single CI step runs the same
 way with `bash scripts/linux/ci-container-steps.sh <step>` in place of the driver
 ([AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration)). **Shell
-scripts must be LF** (verified 2026-08-07): a checkout older than the `.gitattributes`
-rule keeps CRLF and bash dies on `set: pipefail\r: invalid option name`; the one-time
-fix is in the AGENTS.md section above.
+scripts must be LF** (verified 2026-08-07): bash dies on `set: pipefail\r: invalid option name`
+in a CRLF checkout; the one-time fix is in the AGENTS.md section above.
 
-The procedure itself is ANTfrastructure's:
+The procedure is ANTfrastructure's:
 [`rancher-desktop-linux-containers.md`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/rancher-desktop-linux-containers.md),
 its cargo cache in § *Persisting the cargo cache*.

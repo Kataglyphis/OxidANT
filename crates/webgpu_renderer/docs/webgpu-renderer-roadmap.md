@@ -1,14 +1,13 @@
 # WebGPU Renderer — Feature Roadmap
 
-*Moved here from BeschleunigerBallett's `docs/` under decision D6, which gave
-this repository the WebGPU renderer's code **and** its documentation. Paths
-below are relative to this repository (the crate is `crates/webgpu_renderer`)
-unless they name another one.*
+*From BeschleunigerBallett's `docs/` (decision D6: this repository owns the
+WebGPU renderer's code **and** its documentation). Paths are relative to this
+repository (crate `crates/webgpu_renderer`) unless they name another one.*
 
 Continuation of [webgpu-gltf-rust-plan.md](webgpu-gltf-rust-plan.md) (milestones
 1–5 shipped 2026-07-18: context + surface lifecycle, glTF meshes, textures +
 ACES tonemapping, directional shadows, wasm32 browser demo). This roadmap
-covers everything after. Crate: `crates/webgpu_renderer`.
+covers everything after.
 
 Effort: **S** ≤ half a day · **M** 1–3 days · **L** a week+ · **XL** multi-week.
 

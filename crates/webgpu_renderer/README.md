@@ -1,11 +1,10 @@
 # kataglyphis_webgpu_renderer
 
-A WebGPU (wgpu) renderer with glTF loading, written in Rust. The same code
-runs natively on Vulkan/DX12/Metal and in the browser on the WebGPU API.
-
-Companion to the C++ Vulkan engine in
+A WebGPU (wgpu) renderer with glTF loading, in Rust. The same code runs
+natively on Vulkan/DX12/Metal and in the browser on the WebGPU API; companion
+to the C++ Vulkan engine in
 [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett).
-The renderer's own design documents live beside the code, in [`docs/`](docs):
+Its design documents live beside the code, in [`docs/`](docs):
 the [roadmap](docs/webgpu-renderer-roadmap.md), the [bounds
 invariant](docs/renderer-bounds-invariant.md) and the [original glTF plan](docs/webgpu-gltf-rust-plan.md). The pages that describe both
 renderers stay with the C++ engine: the [sRGB audit](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/webgpu-srgb-audit.md)
@@ -69,15 +68,12 @@ Viewer controls: drag to orbit, wheel to zoom, **S** screenshot,
 
 GPU tests render headlessly and assert *structural* pixel properties
 (colour dominance, coverage ratios, energy deltas) rather than exact
-images, so they survive driver differences. They skip themselves when no
-adapter is present and still report as passed, unless `KATAGLYPHIS_REQUIRE_GPU=1`
-turns a missing adapter into a failure. The Linux CI lanes set it (the `test`
-step of `scripts/linux/ci-container-steps.sh`) and render on the family image's
-software Vulkan device (lavapipe), so a green Linux run has drawn them. Both
-Windows lanes set it too and run every renderer test on the runners' software
-Direct3D 12 adapter (WARP): x64 on its runner host, arm64 on `windows-11-arm`.
-Each test binary prints one `ADAPTER:` line naming the adapter when it first
-gets a device, and under the flag the BC-upload and GPU-timing tests fail
-rather than skip on an adapter without those features.
+images, so they survive driver differences. Without an adapter they skip and
+still report as passed, unless `KATAGLYPHIS_REQUIRE_GPU=1` turns that into a
+failure. The Linux x64 and arm64 lanes and both Windows lanes set it and render
+on a software adapter: lavapipe on Linux, WARP on Windows (x64 on its runner
+host, arm64 on `windows-11-arm`). The `ADAPTER:` line and the BC-upload and
+GPU-timing tests:
+[`docs/testing.md` § The GPU tests must render](../../docs/testing.md#the-gpu-tests-must-render).
 `a_non_uniform_instance_scale_shades_like_the_same_node_scale` is `#[ignore]`d:
-a known shading bug (BACKLOG.md) fails it on every adapter.
+a known shading bug ([BACKLOG.md](../../BACKLOG.md)) fails it on every adapter.

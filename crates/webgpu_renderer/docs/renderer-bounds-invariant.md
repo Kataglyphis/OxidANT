@@ -1,11 +1,10 @@
 # The bounds invariant (WebGPU renderer)
 
-*Moved here from BeschleunigerBallett's `docs/` under decision D6, which gave
-this repository the WebGPU renderer's code **and** its documentation. Paths
-below are relative to this repository (the crate is `crates/webgpu_renderer`)
-unless they name another one.*
+*From BeschleunigerBallett's `docs/` (decision D6: this repository owns the
+WebGPU renderer's code **and** its documentation). Paths are relative to this
+repository (crate `crates/webgpu_renderer`) unless they name another one.*
 
-Eight separate bugs in this renderer were the same bug. Writing the rule down so
+Eight separate bugs in this renderer were the same bug. This is the rule, so
 there is no ninth.
 
 ## The rule
@@ -13,10 +12,9 @@ there is no ninth.
 > **World bounds must cover every pose the geometry can actually reach — not the
 > pose it was authored in.**
 
-Bounds are not decoration. They are the *input* to decisions that delete
-geometry from the frame. If bounds describe a pose the GPU is not drawing, the
-renderer confidently discards things that are on screen, and the symptom appears
-nowhere near the cause.
+Bounds are the *input* to decisions that delete geometry from the frame. If
+they describe a pose the GPU is not drawing, the renderer discards things that
+are on screen, and the symptom appears nowhere near the cause.
 
 ## Why it keeps happening
 
@@ -31,9 +29,8 @@ was written before the feature existed:
 | Instancing | per-instance matrix in the shader | per-primitive AABB, scene bounds |
 | LOD | swapping the vertex buffer | drew the *un-morphed* simplified buffer |
 
-The author of each feature updated the thing they were thinking about and missed
-the other consumers, because nothing named them in one place. That is what this
-document is for.
+Each feature's author updated what they were thinking about and missed the
+other consumers, because nothing named them in one place. This document does.
 
 ## Consumers — everything that reads bounds
 

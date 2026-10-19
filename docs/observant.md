@@ -40,10 +40,15 @@ exits; a packager runs it once, and the server then sends those files as they ar
 
 ## Settings
 
-The settings come from a TOML file, `--config` or `$KATAGLYPHIS_OBSERVANT_CONFIG`, else
-`/etc/omni-accelerant/observant.toml` (Windows: `%ProgramData%\omni-accelerant\observant.toml`;
-a `catcam.toml` from before the rename is read when it is the only one there), with the
-flags on top. `--web-root` names OmniAccelerANT's web build, served on `:8080`.
+The settings come from a TOML file, `--config` or `$KATAGLYPHIS_OBSERVANT_CONFIG` (or
+the older `$KATAGLYPHIS_CATCAM_CONFIG`), else `/etc/omni-accelerant/observant.toml`
+(Windows: `%ProgramData%\omni-accelerant\observant.toml`, `config::system_config`; a
+`catcam.toml` from before the rename is read when it is the only one there), with the
+flags on top. Unknown keys are errors, `--print-config` prints the effective set, and
+every earlier flag still works. `inference = "auto"` skips the model below 768 MiB of RAM
+(a 512 MB board; a 1 GB Pi 3 reports 905 MiB) or when it does not load. `--web-root`
+names OmniAccelerANT's web build, served on `:8080`.
+
 OmniAccelerANT packages the service as a .deb, AppImage, flatpak, MSI and MSIX. How it
 picks the camera and paces the model, and the measurements behind both:
 [AGENTS.md § The cat cam service](../AGENTS.md#the-cat-cam-service); its Raspberry Pi 5

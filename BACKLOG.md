@@ -1,8 +1,8 @@
 # Backlog
 
-Consumed by the ANTfrastructure agentic loop (`shared/agentic-loop/`) when this
-repo adopts it. The file was previously zero bytes, which reads as "the
-protocol exists and the backlog is empty" — it was neither.
+For the ANTfrastructure agentic loop (`shared/agentic-loop/`), once this repo adopts it
+(see *Not adopted yet*). The file was once zero bytes, which read as "the protocol exists
+and the backlog is empty"; it was neither.
 
 ## Protocol
 
@@ -19,20 +19,19 @@ protocol exists and the backlog is empty" — it was neither.
       Blocked on that release. Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.
       Re-checked 2026-10-12: crates.io's newest `egui` and `egui-winit` are still 0.36.2, published 2026-09-08 (emilk/egui#8516 merged 2026-09-07, unreleased).
 
-- [b] Instanced normals shade differently from the equivalent node transform.
+- [b] Instanced normals shade differently from the equivalent node transform:
       `a_non_uniform_instance_scale_shades_like_the_same_node_scale` fails with
-      987 differing pixels against a threshold of 40; confirmed pre-existing and
-      deterministic. Blocked here: `src/shaders/*.wgsl` are generated artifacts
-      and the `forward.slang` source lives in the C++ engine repo.
-      Reproduced byte-for-byte on the image's lavapipe (2026-09-29), where the
-      Linux lanes now run the golden suite with `KATAGLYPHIS_REQUIRE_GPU=1`;
-      the test is `#[ignore]`d for that, so drop the attribute with the fix.
+      987 differing pixels against a threshold of 40, pre-existing and
+      deterministic, also on the image's lavapipe (2026-09-29). It is `#[ignore]`d
+      so the Linux lanes can run the golden suite with `KATAGLYPHIS_REQUIRE_GPU=1`;
+      drop the attribute with the fix. Blocked here: `src/shaders/*.wgsl` are
+      generated, and the `forward.slang` source lives in the C++ engine repo.
+      Detail: AGENTS.md § Known gaps.
 - [b] Ship the .slang sources with crates/webgpu_renderer, or add a
       slang -> wgsl step, so "there is no .slang file in this repo" stops
-      being true. src/shaders/*.wgsl are checked-in GENERATED artifacts whose
-      source is the C++ engine's forward.slang; hand-editing the WGSL
-      desynchronises it, which is why the instanced-normal bug above cannot be
-      fixed here. Blocked on deciding who compiles tex_quad.slang.
+      being true and the item above becomes fixable here (hand-editing the
+      generated WGSL desynchronises it from its source). Blocked on deciding
+      who compiles tex_quad.slang.
 - [ ] The Windows lanes' real-model tests pass by skipping. `Build-Windows.ps1` runs
       *Unit Tests* before *Fetch Models*, so `tests/real_model.rs` finds no model and
       reports `ok` (`cargo test` hides a passing test's `SKIP:` line), and neither
@@ -43,7 +42,7 @@ protocol exists and the backlog is empty" — it was neither.
 
 ## Not adopted yet
 
-The loop itself — config, runner wrappers, `scripts/agentic-loop/` — is not set
-up. Copy-and-edit templates live in ANTfrastructure's
-`shared/agentic-loop/templates/`; a consumer supplies this file, a config JSON,
-thin runner wrappers, and optionally per-engine system prompts.
+The loop itself (config, runner wrappers, `scripts/agentic-loop/`) is not set up.
+Copy-and-edit templates live in ANTfrastructure's `shared/agentic-loop/templates/`; a
+consumer supplies this file, a config JSON, thin runner wrappers, and optionally
+per-engine system prompts.
