@@ -59,6 +59,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   checks and fills the link slot under one lock, so two connects cannot both pass. `ci-container-steps.sh
   coverage` in `:latest`: 72.89 % (7782/10676); `crates/esp32` (92.9 %) and `crates/esp32-protocol`
   (98.8 %) get floors of 91 and 97, `src/` (14.6 %) 13 instead of 5.
+- **The rustdoc logo shows on every page of rust.jonasheinle.de** (2026-10-19). `html_logo_url` was
+  `../logo.png`, which reaches the site root only from `oxidant/*.html`; one level deeper
+  (`oxidant/api/…`, 60 of the 64 logo pages in today's build) it named `/oxidant/logo.png`, a 404.
+  It is `https://rust.jonasheinle.de/logo.png` now, the file `cargo_build_doc.sh` copies there from
+  `images/logo.png`.
 
 ## [2.3.4] - 2026-10-16
 

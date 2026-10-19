@@ -1,7 +1,7 @@
 //! Main entry point for Kataglyphis.
 
 #![doc = include_str!("../README.md")]
-#![doc(html_logo_url = "../logo.png")]
+#![doc(html_logo_url = "https://rust.jonasheinle.de/logo.png")]
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native_only;
