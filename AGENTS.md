@@ -867,8 +867,11 @@ Its successor is DEIM-D-FINE-N (Apache-2.0, 15 MiB), built from its pinned upstr
 released by [ModelANT](https://github.com/Kataglyphis/ModelANT).
 `resources/models/models.lock` names each file with its URL and SHA-256, and
 `scripts/linux/fetch-models.sh` (Windows: `scripts/windows/Get-Models.ps1`, the *Fetch
-Models* build step) puts them beside it, its license and notice included. A checked copy
-waits in `~/.cache/kataglyphis-models`, so only the first run needs the network. A new
+Models* build step) puts them beside it, its license and notice included. Both only run the
+hub's [`fetch-data-lock.py`](third_party/ANTfrastructure/docs/data-repositories.md#the-hubs-fetcher)
+on that lock (2026-10-19), so Windows needs `python` on `PATH`, as both Windows images have
+it. A checked copy waits in `KATAGLYPHIS_MODEL_CACHE`, else `~/.cache/kataglyphis-models`
+(Windows: `%LOCALAPPDATA%\kataglyphis-models`), so only the first run needs the network. A new
 model goes into ModelANT first, and only the lock changes here.
 
 Everything else tracked is small: the renderer's glTF/GLB/KTX2 test assets are a few

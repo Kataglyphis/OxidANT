@@ -1,5 +1,5 @@
 #requires -Version 7.0
-# Puts every file resources\models\models.lock names into -Destination and checks its SHA-256; a mismatch throws.
+# Puts every file resources\models\models.lock names into -Destination, checked by SHA-256, through a cache: the hub's fetcher.
 [CmdletBinding()]
 param(
   # Default: the lock's own directory, where the app and the packaging steps look.
@@ -10,22 +10,12 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-if (-not (Test-Path -LiteralPath $Lock -PathType Leaf)) { throw "No lock file $Lock" }
-if (-not $Destination) { $Destination = Split-Path -Parent (Resolve-Path -LiteralPath $Lock).Path }
-$null = New-Item -ItemType Directory -Force -Path $Destination
-
-foreach ($line in Get-Content -LiteralPath $Lock) {
-  if ($line -match '^\s*(#|$)') { continue }
-  $sha, $file, $url = -split $line
-  $target = Join-Path $Destination $file
-  if ((Test-Path -LiteralPath $target) -and ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -eq $sha)) { continue }
-  $part = "$target.part"
-  Invoke-WebRequest -Uri $url -OutFile $part -MaximumRetryCount 3 -RetryIntervalSec 5
-  $got = (Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash
-  if ($got -ne $sha) {
-    Remove-Item -LiteralPath $part -Force
-    throw "${url}: sha256 $got, the lock says $sha"
-  }
-  Move-Item -LiteralPath $part -Destination $target -Force
-  Write-Host "fetched $target (sha256 $($sha.Substring(0, 12)))"
+$fetcher = Join-Path $PSScriptRoot '..\..\third_party\ANTfrastructure\linux\scripts\lib\fetch-data-lock.py'
+if (-not (Test-Path -LiteralPath $fetcher -PathType Leaf)) {
+  throw "No hub fetcher at ${fetcher}: git submodule update --init third_party/ANTfrastructure"
 }
+$fetchArgs = @('-I', $fetcher, '--lock', $Lock)
+if ($Destination) { $fetchArgs += @('--dest', $Destination) }
+# Out-Host, so a caller that discards the pipeline still shows what was fetched.
+& python @fetchArgs | Out-Host
+if ($LASTEXITCODE -ne 0) { throw "fetch-data-lock.py exited $LASTEXITCODE for $Lock" }

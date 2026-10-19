@@ -47,6 +47,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   failed assertion instead of stopping at the first. `lint-gates.yml`'s `script-tests` job checks the
   hub submodule out for it. In `:latest` both pass with the old counts, and four planted bugs in
   `check-crate-coverage.py` and `bench-report.py` fail them.
+- **`fetch-models.sh` and `Get-Models.ps1` run the hub's `fetch-data-lock.py`** (2026-10-19,
+  ANTfrastructure CON98): `python3 -I` and `python -I` on `resources/models/models.lock`, the
+  callers' `--dest`/`-Destination` and `--lock`/`-Lock` passed on. Windows now keeps a cache too
+  (`%LOCALAPPDATA%\kataglyphis-models`), and the cache's old bare `<sha256>` entries still serve.
+  In `:latest` the old and the new `fetch-models.sh` wrote the same three files, `0644`, byte for
+  byte; in `:winamd64`, where `python` is `C:\temp\cpython\PCbuild\amd64\python.exe` (3.15.0) and
+  `python3` is not on `PATH`, the old and the new `Get-Models.ps1` did too.
 - **AGENTS.md and the shipped texts say what is true** (2026-10-19). AGENTS.md: Renovate's
   `--apply` writes every ecosystem, not gitlinks only; the zune-core hold is gone (`Cargo.lock`
   has 0.5.3; its history is in `docs/updates.md`); the clippy, test and bench commands take the
