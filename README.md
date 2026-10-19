@@ -4,8 +4,8 @@
   </a>
 
   <h1>OxidANT</h1>
- 
-  <h4>The Kataglyphis family's Rust crates (core, telemetry, inference, media, gui, cli, webgpu_renderer, observant) and the Rust best practices they follow. Part of the <a href="https://github.com/Kataglyphis/ANTfrastructure">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
+
+  <h4>The Kataglyphis family's Rust crates and the Rust best practices they follow.</h4>
 </div>
 
 <div align="center">
@@ -20,652 +20,64 @@
 [![Windows x64 · build + test](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-x64.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-x64.yml)
 [![Windows arm64 · cross build + test](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-arm64-cross.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-arm64-cross.yml)
 [![CodeQL](https://github.com/Kataglyphis/OxidANT/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/github-code-scanning/codeql)
-
-For **__official docs__** follow this [link](https://rust.jonasheinle.de).
-
-> **A push to `develop` and every PR run Linux x64** (its feature check included) and the gates; Linux arm64, Linux riscv64, Windows x64 and Windows arm64 (cross-built, then run on a real arm64 runner) run on request, through a ci token in a commit message or by hand, and all five before a release from `main` ([the family's strategy](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/branch-and-release-strategy.md)). A lane's badge above shows its runs started by hand; a requested run is listed under *On request*. See [AGENTS.md](AGENTS.md#continuous-integration).
-
-<!-- [![Linux build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml)
-[![Windows build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml)
--->
-[![TopLang](https://img.shields.io/github/languages/top/Kataglyphis/OxidANT)]() 
+[![TopLang](https://img.shields.io/github/languages/top/Kataglyphis/OxidANT)]()
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/paypalme/JonasHeinle)
 [![Twitter](https://img.shields.io/twitter/follow/Cataglyphis_?style=social)](https://twitter.com/Cataglyphis_)
- 
-## Table of Contents
 
-- [About The Project](#about-the-project)
-  - [The crates](#the-crates)
-  - [Dependencies](#dependencies)
-  - [Useful tools](#useful-tools)
-- [Getting Started](#getting-started)
-- [Tests](#tests)
-- [Run](#run)
-  - [The cat cam](#the-cat-cam)
-- [Analysis](#analysis)
-- [Docs](#docs)
-- [Updates](#updates)
-  - [Dependency upgrades: Renovate as a local CLI](#dependency-upgrades-renovate-as-a-local-cli)
-  - [Installed cargo binaries](#installed-cargo-binaries)
-- [Cameras](#cameras)
-- [Contributing](#contributing)
-- [License](#license)
-- [Contact](#contact)
-- [Literature](#literature)
+A push to `develop` and every PR run Linux x64; the other lanes run on request and before
+a release, so a lane's badge shows its runs started by hand and a requested run is listed
+under *On request*
+([AGENTS.md § Continuous integration](https://github.com/Kataglyphis/OxidANT/blob/develop/AGENTS.md#continuous-integration)).
 
-## About The Project
+[**Docs site**](https://rust.jonasheinle.de)
 
 OxidANT is the Kataglyphis family's **Rust workspace**: the crates two other
-repositories build as a submodule, plus the Rust practices, gates and packaging
-they all inherit. It started as a project template and that scaffolding is still
-here — CI lanes, MSIX/MSI packaging, Renovate, lint gates, a feature matrix — but
-the crates are real code with real consumers rather than placeholders.
+repositories build as a submodule, plus the Rust practices, gates and packaging they
+all inherit. [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) calls the
+root package through flutter_rust_bridge and ships ObservANT, the cat cam;
+[BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) links it
+through Corrosion and builds the WebGPU renderer. It started as a project template and
+that scaffolding is still here, but the crates are real code with real consumers.
 
-The largest of them is **`crates/webgpu_renderer`**, a WebGPU (wgpu) glTF renderer
-that runs natively (Vulkan/DX12/Metal) and in the browser (wasm32 + WebGPU): PBR
-with IBL, cascaded shadow maps, SSAO, bloom, GPU skinning, animations, LOD, hot
-shader reload, and headless golden tests. See
-[`crates/webgpu_renderer/README.md`](crates/webgpu_renderer/README.md) for the
-demos, and for how it shares its shaders with the C++ Vulkan engine in
-BeschleunigerBallett: one Slang source compiles to the engine's SPIR-V and to the
-WGSL checked in under `crates/webgpu_renderer/src/shaders/` (`histogram.wgsl` alone
-is hand-written).
+## Highlights
 
-Containers, PowerShell and CI plumbing are **not** duplicated here. They belong to
-[Kataglyphis ANTfrastructure](https://github.com/Kataglyphis/ANTfrastructure), the
-submodule under `third_party/` that every repository in the family shares — see
-[AGENTS.md](AGENTS.md) before writing a helper.
+- **ObservANT** (`crates/observant`): camera, cat detection, WebRTC stream and web page in one service.
+- **A WebGPU glTF renderer**, native and in the browser: PBR with IBL, shadows, SSAO, bloom, golden tests.
+- **ONNX inference** through tract or the family's chain-built ONNX Runtime: CPU, DirectML, CUDA.
+- **GStreamer capture** and a wgpu GUI overlay with FPS, latency and CPU.
+- **Five build lanes**: Linux x64, arm64 and riscv64, Windows x64 and arm64.
+- **Packages**: tar, deb, AppImage and flatpak on Linux; portable zip, MSI and MSIX on Windows.
 
-### The crates
-
-One Cargo workspace. The root `Cargo.toml` is both the workspace and the root
-package `oxidant` — a `cdylib`/`staticlib`/`rlib` library whose consumers are
-other repositories, so its `[lib] name` is not free to change.
-
-| Crate | Package | What it is |
-| --- | --- | --- |
-| `crates/core` | `kataglyphis_core` | Config, detection types, logging |
-| `crates/telemetry` | `kataglyphis_telemetry` | CPU/GPU/RAM resource monitoring |
-| `crates/inference` | `kataglyphis_inference` | ONNX backends, feature-gated: `onnx_tract`, `onnxruntime`, `onnxruntime_directml`, `onnxruntime_cuda` |
-| `crates/media` | `kataglyphis_media` | GStreamer capture, feature-gated (`gstreamer`) |
-| `crates/gui` | `kataglyphis_gui` | Feature-gated GUI: `gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix` |
-| `crates/webgpu_renderer` | `kataglyphis_webgpu_renderer` | wgpu glTF renderer, native and wasm32/WebGPU: PBR+IBL, cascaded shadows, SSAO, bloom, skinning, animations, LOD, headless golden tests |
-| `crates/observant` | `kataglyphis_observant` | ObservANT service (cats by default): picks the camera, YOLO cat boxes, WebRTC, and the web server for OmniAccelerANT's Stream page |
-| `crates/cli` | `kataglyphis_cli` | The CLI binary (`read` / `stats` / `gui`, plus `onnx-runtime` with an `onnxruntime_*` feature and `media-check` with `gui_windows`) |
-| `src/` | `oxidant` | The root package: the flutter_rust_bridge surface for OmniAccelerANT, plus the feature-gated `burn-demos` bin |
-
-**Default features are empty.** GUI, ONNX, GStreamer and the burn demos only
-compile with an explicit `--features` (see [Run](#run)), and each one needs system
-libraries — [AGENTS.md](AGENTS.md) has the feature/dependency table.
-
-Two repositories build this one as a submodule, so a rename has to be carried into
-both: [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) (the root
-package through flutter_rust_bridge, and `crates/observant`) and
-[BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) (the
-root package as a staticlib through Corrosion, and `crates/webgpu_renderer` through
-cargo for its wasm demo and its tests).
-
-### Dependencies
-
-Crate versions live in `Cargo.toml`/`Cargo.lock`; the `third_party/ANTfrastructure`
-gitlink is a dependency too, and the one that silently changes every gate.
-
-For the newest versions your current constraints already allow (`Cargo.lock` only,
-no manifest edit):
+## Quick start
 
 ```bash
-cargo update
-```
-
-To move the manifests as well:
-
-```bash
-cargo install cargo-edit
-cargo upgrade --dry-run --verbose
-cargo upgrade --incompatible
-```
-
-To see what is behind *before* moving anything — crates **and** the gitlink,
-which is decided by Renovate rather than by a version bound — see
-[Dependency upgrades](#dependency-upgrades-renovate-as-a-local-cli).
-
-One lockfile entry is pinned by hand: `zune-core` is held at 0.5.1 because 0.5.2
-broke `zune-jpeg` 0.5.15 in release builds. 0.5.2 has since been yanked, and 0.5.3
-compiles with zune-jpeg 0.5.15 (checked 2026-09-25), so a bare `cargo update` now
-resolves a working version. [AGENTS.md](AGENTS.md) has the detail.
-
-### Useful tools
-
-* [cargo-outdated](https://github.com/kbknapp/cargo-outdated)
-<!-- * [cppcheck](https://cppcheck.sourceforge.io/) -->
-
-<!-- GETTING STARTED -->
-## Getting Started
-
-You need a Rust toolchain, a C++ compiler and the submodule. The toolchain version
-the CI images and every gate use is `RUST_VERSION` in
-[`third_party/ANTfrastructure/linux/scripts/01-core/versions.env`](third_party/ANTfrastructure/linux/scripts/01-core/versions.env) — read it there rather than
-pinning a number here, which is how the last one went stale. The C++ compiler is for
-the root package's `build.rs`, which compiles the cxx bridge in `src/native_only.rs`
-(on Windows, the Visual Studio C++ build tools, which the MSVC Rust toolchain needs
-to link anyway). Nothing else is needed for a default-feature build.
-
-Search the tree with [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`):
-`winget install --id BurntSushi.ripgrep.MSVC -e --scope user` on Windows,
-`apt install ripgrep` on Linux.
-
-```bash
-git clone --recurse-submodules https://github.com/Kataglyphis/OxidANT.git
+git clone --recurse-submodules --branch develop https://github.com/Kataglyphis/OxidANT.git
 cd OxidANT
 cargo build --workspace --locked
 ```
 
-An existing clone without the submodule: `git submodule update --init --recursive`.
+Prerequisites, the API docs and Linux containers locally:
+[docs/getting-started.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/getting-started.md).
 
-## Tests
-
-Run the complete suite (unit + integration + proptest fuzz + doc tests) at the debug profile, as every CI lane does:
-
-```bash
-KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked \
-    --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
-```
-
-The two features reach the suites a default build compiles empty: `kataglyphis_media`'s
-capture tests are `cfg(feature = "gstreamer")` and need GStreamer installed, and the
-inference crate's ORT-loader tests are `cfg(feature = "onnxruntime")`. The `?/` form
-names each member's own feature. Plain `kataglyphis_media/gstreamer` would also switch on
-the optional `kataglyphis_media` dependency of `kataglyphis_gui` and the root package,
-because with `--workspace` cargo applies `dep/feature` to every selected package.
-
-CI additionally gates on formatting and lints, both as hard failures. Run them before pushing:
-
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked \
-    --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime' -- -D warnings
-```
-
-The `crates/webgpu_renderer` headless golden tests need a GPU adapter and **silently skip without one**. `KATAGLYPHIS_REQUIRE_GPU=1` turns a missing adapter into a failure, so a green run actually means they rendered. Every CI lane that renders sets it: the Linux lanes render on the image's software Vulkan device (lavapipe), the Windows lanes on the runners' software Direct3D 12 adapter (WARP). Each GPU test binary prints one `ADAPTER:` line to stderr when it first gets a device (`GpuContext::headless_or_skip()`), naming the adapter and whether it offers BC textures and timestamp queries; every CI adapter offers both, so under `KATAGLYPHIS_REQUIRE_GPU` the BC-upload and GPU-timing tests fail instead of skipping without them.
-
-The suites live in:
-
-- Unit tests inside the workspace crates (`kataglyphis_telemetry`, `kataglyphis_inference`, and the renderer's own suite).
-- Integration tests: `tests/integration/integration.rs`, which run the CLI and are compiled as `kataglyphis_cli`'s `integration` test (`crates/cli/tests/integration.rs`); `crates/media/tests/capture_test.rs` (a `videotestsrc` pipeline and camera enumeration); and the renderer's 18 binaries under `crates/webgpu_renderer/tests/`.
-- Property-based (fuzz) tests: [proptest](https://proptest-rs.github.io/proptest/) properties on ObservANT's network-facing parsers (Range header, query, Host/Origin check, request path, camera spec, config file), 256 random inputs per property and run, in each module's `properties` tests. There is no separate `cargo-fuzz`/libFuzzer setup.
-
-**On Windows the renderer's tests run outside the container.** Any of its test binaries links wgpu, and wgpu's `gles` backend makes the executable import `opengl32.dll` at load time; Windows Server Core does not ship that DLL, so the process dies with `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`. The loader resolves that import, so no runtime flag avoids it — and letting it run turned the entire `cargo test --workspace` into a crash with no results. The `gles` feature is kept deliberately: it is the OpenGL fallback for machines without Vulkan/DX12. Run those tests on a desktop Windows host, where the DLL exists:
-
-```pwsh
-$env:KATAGLYPHIS_REQUIRE_GPU = '1'; cargo test -p kataglyphis_webgpu_renderer --locked
-```
-
-That is the CI split too. In `windows-x64.yml` the container half (`Invoke-WindowsLane.ps1`,
-which starts with `Invoke-DebugTests.ps1`) runs the workspace tests except the renderer's,
-then **builds** the renderer's lib and integration tests and lists the executables in
-`target\host-tests\tests.json`. The lane's `host-command` runs them on the runner, a desktop
-Windows Server with `opengl32.dll`, through `Invoke-HostTests.ps1` and the hub's
-`Invoke-StagedTests.ps1`. It fails if the list, a binary or a passing test is missing, so it
-can never report green over nothing. `windows-arm64-cross.yml` builds the whole workspace's
-tests for arm64 (`Stage-CrossTests.ps1`) and runs them all on `windows-11-arm` with the same
-runner script.
-
-<!-- ROADMAP -->
-## Run
-
-The CLI is its own package, not the root one (whose only bin is `burn-demos`), so
-`cargo run` needs `-p kataglyphis_cli`:
-
-```bash
-cargo run -p kataglyphis_cli -- read --path README.md
-```
-
-### The cat cam
-
-`crates/observant` is one service: the camera, YOLO cat boxes, a WebRTC stream and the
-web page that plays it. It needs GStreamer and the chain-built ONNX Runtime, so try it
-in the family `:latest` image:
-
-```bash
-cargo build --release -p kataglyphis_observant
-target/release/kataglyphis_observant --camera test --print-config  # the settings in effect
-target/release/kataglyphis_observant --camera test                 # a test pattern, no camera
-curl localhost:8080/healthz                    # ok or the problem, the camera, the model's runs, the cat, the kept clips
-curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
-curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on
-curl -o cat.jpg 'localhost:8080/arrival.jpg?t=1791763273'  # one of the last five, by arrival time
-curl -o cat.mp4 localhost:8080/arrival.mp4     # that arrival as H.264, 3 s before it to 7 s after
-curl -o cat.mp4 'localhost:8080/arrival.mp4?t=1791763273'  # one of the last five, by arrival time
-curl localhost:8080/settings                   # what the settings page can change
-curl -X POST -H 'content-type: application/json' -d '{"rotate": 270, "score": 0.5}' localhost:8080/settings
-curl -X POST -H 'content-type: application/json' -d '{"ignore": [[0.25, 0.75, 0.75, 1.0]]}' localhost:8080/settings  # "not a cat" here
-```
-
-A cat arrives only where something moved in the last 10 s, and a detection over a spot in
-`ignore` (fractions of the picture) never counts. `/webrtc-ws` and `POST /settings` take
-only the cat cam's own page (a browser's `Origin` must match a local `Host`; a reverse
-proxy's name goes into `allowed_hosts`), at most `max_viewers` tabs watch at once (8), and
-the origins in `peers` may read this one's status and pictures for their overview.
-
-`--notify-url <http(s) URL>` (`notify_url` in the file) POSTs a JSON event there whenever
-a cat arrives or leaves, a Home Assistant webhook trigger for instance, and a `clip`
-event once the arrival's video is encoded. A departure names the arrival it ends
-(`arrived`, `best_score`), so a receiver can update what it sent for that arrival.
-`--precompress <web build>` writes a zopfli `.gz` beside each file the server gzips and
-exits; a packager runs it once, and the server then sends those files as they are. `clip_seconds` (default 10, 0 for none) sets
-that video's length; it needs `openh264enc`, `h264parse` and `mp4mux`, and without them
-the service records none and says so at start.
-
-The settings come from a TOML file (`--config`, else `/etc/omni-accelerant/catcam.toml`)
-with the flags on top; `--web-root` names OmniAccelerANT's web build, served on `:8080`.
-OmniAccelerANT packages the service as a .deb, AppImage, flatpak, MSI and MSIX. How it
-picks the camera and paces the model, and the measurements behind both:
-[AGENTS.md § The cat cam service](AGENTS.md#the-cat-cam-service).
-
-### Windows: GStreamer + ONNX Overlay (WGPU)
-
-Build + Run (CPU via tract):
-
-```bash
-cargo run -p kataglyphis_cli --features gui_windows,onnx_tract -- gui --backend dx12
-```
-
-Every `onnxruntime*` feature loads ONNX Runtime at run time and downloads
-nothing at build time. The only ORT it may load is the family's chain build
-(owner rule 2026-09-23): inside the Windows image that is
-`$env:ONNX_ROOT\bin\onnxruntime.dll`, found automatically; anywhere else, stage
-that file (plus `DirectML.dll` and `onnxruntime_providers_shared.dll`) next to
-the exe or point `ORT_DYLIB_PATH` at it. There is no fallback to the
-`onnxruntime.dll` Windows ships in System32, and any file that is not the chain
-build (a pip wheel's, a GitHub release's) is refused at load time. The portable
-bundle (`dist\windows-<x64|arm64>\bundle`), MSIX and MSI carry the chain copy
-already.
-
-To check which ONNX Runtime an exe gets without starting the GUI, build it with an
-`onnxruntime_*` feature and run its `onnx-runtime` subcommand; it prints the path it
-loaded, or fails when no chain ORT loads. Both Windows lanes run it on the packaged
-exe:
-
-```bash
-cargo run -p kataglyphis_cli --features onnxruntime_directml -- onnx-runtime
-```
-
-The GUI creates its camera pipeline's GStreamer elements by name (`mfvideosrc`,
-falling back to `autovideosrc`, then `videoconvert`, `capsfilter`, `appsink`), so
-their plugins are in no import table. Every Windows package therefore carries them
-in `lib\gstreamer-1.0`, and the DLLs they import beside the exe; the list is
-`Build.GStreamerPlugins` in `scripts/windows/Build-Windows.config.psd1`.
-The `media-check` subcommand (with `gui_windows`) builds that pipeline without
-starting it, so with no camera and no window, and prints the plugin file behind each
-element; an exe that carries plugins must take every element from them. Both Windows
-lanes run it on the packaged exe:
-
-```bash
-cargo run -p kataglyphis_cli --features gui_windows -- media-check
-```
-
-Build + Run (ONNX Runtime + DirectML):
-
-```bash
-cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- gui --backend dx12
-```
-
-Build + Run (ONNX Runtime + CUDA, NVIDIA):
-
-```bash
-# PowerShell
-$env:KATAGLYPHIS_ORT_DEVICE="cuda"
-cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --backend dx12
-
-# CMD
-set KATAGLYPHIS_ORT_DEVICE=cuda
-cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --backend dx12
-```
-
-Optional environment variables:
-
-- `KATAGLYPHIS_ONNX_MODEL` – path to the ONNX model. Unset, the app takes
-  `resources\models\deim_dfine_n_coco.onnx` beside its exe, where the portable bundle,
-  the MSIX and the MSI all put it, and otherwise the checkout's
-  `resources/models/deim_dfine_n_coco.onnx`, a path fixed at compile time. Models are
-  not tracked: `scripts/linux/fetch-models.sh` (Windows: `scripts/windows/Get-Models.ps1`)
-  downloads what `resources/models/models.lock` names and checks its SHA-256
-- `KATAGLYPHIS_ONNX_BACKEND` – `tract` or `ort` (default: automatic)
-- `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (default: `cpu`)
-- `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: `0`, one per core)
-- `KATAGLYPHIS_ORT_SPIN` – `0` stops idle ONNX Runtime threads spin-waiting for the next run
-  (default: ORT's, spinning). Worth it when inference runs at a capped rate: the cat cam sets it
-  itself
-- `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (default: `stretch`)
-- `KATAGLYPHIS_SWAP_XY` – set to `1` if the model output swaps X and Y (default: `0`)
-- `KATAGLYPHIS_SCORE_THRESHOLD` – detection score threshold (default: `0.5`)
-- `KATAGLYPHIS_INFER_EVERY_MS` – minimum interval between inference requests in ms (default: `0`: the next frame goes out as soon as the previous result is back)
-
-CUDA notes:
-
-- Needs the NVIDIA driver plus the CUDA/cuDNN runtime on the machine, and a
-  chain-built ONNX Runtime with the CUDA provider beside `onnxruntime.dll`.
-  Nothing is copied from a download cache any more.
-- If registering the CUDA provider fails, `KATAGLYPHIS_ORT_DEVICE=auto` falls back
-  to ONNX Runtime on the CPU. An ONNX Runtime built without the CUDA provider is
-  not covered by that: `auto` then gives up on ORT and uses tract if the build has
-  `onnx_tract`, and fails otherwise.
-
-The overlay shows FPS, inference latency, CPU/RSS and a CPU history, and inference
-can be toggled from it.
-
-## Analysis
-```bash
-cargo +nightly check --manifest-path Cargo.toml --target wasm32-unknown-unknown -Z build-std=std,panic_abort
-```
-
-### Resource usage logging (CPU/GPU/RAM)
-
-```bash
-cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-interval-ms 1000 --resource-log-gpu=true gui
-```
-
-Optional, also write it to a file:
-
-```bash
-cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-file .\resource.log gui
-```
-
-### Burn / PyTorch-replacement demos
-
-A separate binary, behind the `burn_demos` feature.
-
-```bash
-cargo run --features burn_demos --bin burn-demos -- --help
-```
-
-Examples:
-
-```bash
-cargo run --features burn_demos --bin burn-demos -- tensor-demo
-
-cargo run --features burn_demos --bin burn-demos -- linear-regression --epochs 50 --steps-per-epoch 50 --lr 0.02 --batch-size 256
-
-cargo run --features burn_demos --bin burn-demos -- xor --epochs 2000 --lr 0.05
-
-cargo run --features burn_demos --bin burn-demos -- two-moons --epochs 200 --steps-per-epoch 50 --lr 0.01 --batch-size 256
-
-# ONNX Runtime detector demo (default model: resources/models/deim_dfine_n_coco.onnx; fetch it first)
-scripts/linux/fetch-models.sh
-cargo run --features burn_demos --bin burn-demos -- onnx-detector --runs 1 --print-topk 3
-```
-
-### Windows
-```bash
-cargo run -p kataglyphis_cli --features gui_windows -- gui --backend dx12
-
-# Vulkan backend
-cargo run -p kataglyphis_cli --features gui_windows -- gui --backend vulkan
-
-# Auto-select (wgpu PRIMARY; also the default)
-cargo run -p kataglyphis_cli --features gui_windows -- gui --backend auto
-```
-
-### Windows: build & test in the Stevedore container
-
-The workspace builds and tests inside the [Kataglyphis ANTfrastructure](https://github.com/Kataglyphis/ANTfrastructure) Windows developer image using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`. The image reference is not written down anywhere in this repository — including here — because ANTfrastructure's `linux/scripts/01-core/versions.env` owns it; the driver asks `Get-CiImageReference -Windows` for it and `-Image` overrides for a one-off. To see the current value: `pwsh -c "Import-Module third_party/ANTfrastructure/windows/scripts/modules/WindowsContainerImage.Common.psm1; Get-CiImageReference -Windows"`.
-
-> **ANTfrastructure is the ground truth for container and PowerShell functionality.** The scripts here are thin drivers: `docker.exe` discovery, isolation flags, container teardown, SDK-tool lookup, MSIX manifest expansion, config access and build-step logging all come from its modules under `windows/scripts/modules/`. Before adding a helper to `scripts/windows/`, check whether ANTfrastructure already has it — several that were written locally turned out to exist there in a better form. Everything is `pwsh` (PowerShell 7+); nothing here runs under Windows PowerShell 5.1.
-
-The driver **bind-mounts this repository directly into the container** (as `C:\ws-mnt`) — no copy, so artifacts land straight in your tree and `third_party/` is available inside. It builds all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
-
-```pwsh
-# build debug + profile + release in the container
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1
-
-# build AND run cargo test --workspace (unit + integration + proptest fuzz + doc)
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1 -Test
-
-# only if your host refuses the mount (see below)
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1 -StageSources
-```
-
-> **Dev Drive (ReFS) is not a blocker — reading through a bind mount works.** What does not work is create-then-rename through it (`bindFlt` rejects `copySync`/`renameSync` with errno 3), which is precisely what cargo does. The driver keeps every build write container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`), so only a plain artifact copy crosses the mount. If a host really does refuse it, `docker run` fails at once with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*; fix it permanently with one elevated `fsutil devdrv setFiltersAllowed /volume D: "bindFlt,wcifs"` and a remount, or use `-StageSources` meanwhile. Note the two parts people get wrong: `/volume` is required, and the filter list is ONE quoted argument -- see third_party/ANTfrastructure/docs/windows-container-build-performance.md for the owning explanation. `fsutil devdrv query` needs elevation itself, so a failing query tells you nothing — just try the mount.
-
-Artifacts land in `target\container\{debug,profile,release}` and are mirrored to the (gitignored) repo-root `debug\`, `profile\`, `release\` folders; each contains the CLI exe, cdylib (`.dll` + import lib), staticlib (`.lib`) and pdb. Latest verified run (2026-08-07, rustc 1.97.1): all three profiles built (debug 1m35s, profile 1m32s, release 1m12s), written straight into the repo through the mount, and the binaries run on the host, e.g.:
-
-```pwsh
-.\release\kataglyphis_cli.exe stats --path .\README.md
-```
-
-Host caveats the driver handles automatically. **ANTfrastructure is the authority on all of this** — these are pointers, not a second copy:
-
-- `--isolation process` for the full host CPU count (Hyper-V isolation caps at 2), via `Get-ContainerIsolationArgs`.
-- All cargo writes stay container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`); only a plain artifact copy crosses the mount, because `bindFlt` rejects create-then-rename.
-- A dropped docker CLI pipe does **not** mean the build died — the driver waits on the actual container state with upstream's `Wait-ContainerExit` (bounded at 60 min per phase), and tears containers down with `Remove-BuildContainerSafe`. A failed run's container is kept so `docker logs` still works.
+## Documentation
 
 | Topic | Read |
 | --- | --- |
-| Setting up a Windows host for Stevedore (services, `docker-users`, CNI nat conf) | [`docs/windows-host-setup.md`](third_party/ANTfrastructure/docs/windows-host-setup.md) |
-| Windows container internals: wcifs/bindFlt, process isolation, layer-commit bug | [`docs/windows-builds.md`](third_party/ANTfrastructure/docs/windows-builds.md) |
-| Running Linux containers on Windows (Rancher Desktop) | [`docs/rancher-desktop-linux-containers.md`](third_party/ANTfrastructure/docs/rancher-desktop-linux-containers.md) |
-| Wiring a new project to all of it | [`docs/adopting-in-a-new-project.md`](third_party/ANTfrastructure/docs/adopting-in-a-new-project.md) |
+| Getting started | [docs/getting-started.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/getting-started.md) |
+| The crates, their features and consumers | [docs/crates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/crates.md) |
+| Tests, lints and the GPU tests | [docs/testing.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/testing.md) |
+| Running the CLI, the GUI and the demos | [docs/running.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/running.md) |
+| ObservANT, the cat cam | [docs/observant.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/observant.md) |
+| Windows: build and test in the Stevedore container | [docs/windows.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/windows.md) |
+| Windows packages: MSIX and MSI | [docs/packaging.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) |
+| Dependency updates | [docs/updates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/updates.md) |
+| The WebGPU renderer | [crates/webgpu_renderer/README.md](https://github.com/Kataglyphis/OxidANT/blob/develop/crates/webgpu_renderer/README.md) |
+| API docs (rustdoc) | [rust.jonasheinle.de](https://rust.jonasheinle.de) |
+| Rules for agents and contributors, CI | [AGENTS.md](https://github.com/Kataglyphis/OxidANT/blob/develop/AGENTS.md) |
+| Known work | [BACKLOG.md](https://github.com/Kataglyphis/OxidANT/blob/develop/BACKLOG.md) |
+| Changes | [CHANGELOG.md](https://github.com/Kataglyphis/OxidANT/blob/develop/CHANGELOG.md) |
 
-### Linux containers locally (Rancher Desktop)
+## Contributing and contact
 
-The Linux image is **always** the family CI one, in CI and locally — the same reference the workflows inherit, printed by `bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh` and owned by that submodule's `versions.env`. The command below asks for it rather than repeating it, so it cannot go stale on a tag bump. Rancher Desktop defaults to the **containerd** engine, so use `nerdctl`, not `docker` — and from Git Bash disable path mangling or the mount argument is destroyed. Full instructions: [`docs/rancher-desktop-linux-containers.md`](third_party/ANTfrastructure/docs/rancher-desktop-linux-containers.md).
-
-```pwsh
-$env:MSYS_NO_PATHCONV=1; $env:MSYS2_ARG_CONV_EXCL='*'
-$image = bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh
-rdctl shell nerdctl --namespace default run --rm --user root `
-  -v kata-cargo-cache:/cargo-cache `
-  -v /mnt/d/path/to/repo:/workspace -w /workspace `
-  $image `
-  bash -lc 'export CARGO_HOME=/cargo-cache; bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_release.sh'
-```
-
-Two things that will bite on a Windows checkout, both verified 2026-08-07:
-
-- **Shell scripts must be LF.** `.gitattributes` enforces it, but a checkout older than that rule keeps CRLF and bash dies on `set: pipefail\r: invalid option name`. One-time fix: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`
-- `CARGO_HOME` in the image is root-owned, so point it at a writable path (a named volume keeps the registry across runs).
-
-### Windows MSIX packaging
-
-Needs the Windows SDK (`makeappx`, `signtool`) — located by ANTfrastructure's
-`Resolve-WindowsSdkToolPath`, which honours VsDevCmd's `WindowsSdkVerBinPath` /
-`WindowsSDKVersion` — and **PowerShell 7+ (`pwsh`)**: every script here carries
-`#requires -Version 7.0` and will not start under 5.1. The pack itself is
-ANTfrastructure's `Invoke-MsixPackage`; this repo supplies only the staging
-directory (the release exe, the DLLs beside it, `resources/`) and the token map.
-
-**The normal route is `Build-Windows.ps1`.** It packages MSIX itself, as its
-**MSIX Packaging** step, taking every value from the `Msix` block of
-`scripts/windows/Build-Windows.config.psd1` and letting an environment variable
-override each one (`MSIX_PACKAGE_NAME`, `MSIX_DISPLAY_NAME`, …). `-SkipMsix`
-turns it off. The package lands in `dist\windows-<x64|arm64>\msix\`, beside the
-portable bundle and the MSI, and carries the exe's whole DLL closure.
-
-```pwsh
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
-```
-
-**The same route signs.** Its MSIX step signs with the first `*.pfx` at the
-repository root (`*.pfx` is gitignored) and `MSIX_PFX_PASSWORD`, then verifies the
-signature. With no `.pfx` there it warns and the package stays unsigned, which is
-what CI builds. ANTfrastructure's `GenerateCertificateMSIX.ps1` makes a test
-certificate. Its `-Publisher` must be the manifest's publisher, `CN=Kataglyphis` (the
-`Msix` block's `Publisher`):
-
-```pwsh
-pwsh -File .\third_party\ANTfrastructure\windows\scripts\certificates\GenerateCertificateMSIX.ps1 `
-  -Password '<TEST_CERT_PASSWORD>' -Publisher 'CN=Kataglyphis' -PfxPath .\Kataglyphis.OxidANT.testcert.pfx
-$env:MSIX_PFX_PASSWORD = '<TEST_CERT_PASSWORD>'
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
-```
-
-An existing PFX works the same way, and its subject must match the publisher too.
-The package is `dist\windows-<arch>\msix\Kataglyphis.OxidANT_<VERSION>_<arch>.msix`,
-with `Cargo.toml`'s `[workspace.package]` version padded to four parts (`2.3.4` becomes `2.3.4.0`).
-ANTfrastructure's standalone `New-MsixPackage.ps1`, which this section used to show,
-cannot package this repo: it fills `__PACKAGE_NAME__`-style tokens, while
-`packaging/msix/AppxManifest.template.xml` carries the `__MSIX_*__` tokens that
-`Build-Windows.ps1` fills.
-
-Installing a test-signed package needs its certificate trusted machine-wide first,
-in `LocalMachine\Root` **and** `LocalMachine\TrustedPeople`, from an elevated
-PowerShell. The steps and the errors they prevent (`0x800B0109`, `Access denied`,
-`Get-AppxLog`) are in
-[ANTfrastructure's certificates README](third_party/ANTfrastructure/windows/scripts/certificates/README.md#trust-it-then-install-a-test-signed-package).
-With this repo's names (repo-relative, so they hold in any checkout):
-
-```pwsh
-Add-AppxPackage -Path 'dist\windows-x64\msix\Kataglyphis.OxidANT_2.3.4.0_x64.msix'
-```
-
-Check, launch, update, remove:
-
-```pwsh
-Get-AppxPackage -Name Kataglyphis.OxidANT | Select-Object Name, PackageFullName, Status
-
-$pkg = Get-AppxPackage -Name Kataglyphis.OxidANT
-Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
-
-# update: raise the version in Cargo.toml, rebuild and sign, then install it the same way
-Add-AppxPackage -Path dist\windows-x64\msix\Kataglyphis.OxidANT_<NEW_VERSION>_x64.msix
-
-Get-AppxPackage -Name Kataglyphis.OxidANT | Remove-AppxPackage
-```
-
-**The package identity changed on 2026-09-05** from
-`Kataglyphis.RustProjectTemplate` to `Kataglyphis.OxidANT`. Windows treats the two
-as different applications, so an installation predating that date is not upgraded —
-uninstall it first.
-
-### Windows MSI packaging
-
-Runs as the **MSI Packaging** step of `Build-Windows.ps1` (disable with `-SkipMsi`,
-or `Msi.Enabled = $false` in `scripts/windows/Build-Windows.config.psd1`).
-
-Output: `dist\windows-<x64|arm64>\msi\kataglyphis_cli-<VERSION>-<x64|arm64>.msi`
-
-It installs the portable bundle's tree: the exe with every DLL of its closure
-beside it (the chain ONNX Runtime and the VC++ runtime included), the GStreamer
-plugins in `lib\gstreamer-1.0` and `resources\` with the model. `wix/main.wxs`
-holds the exe, the licence and the shortcut; the rest is a component group the
-build generates, one component per file.
-
-Built with **WiX Toolset v4** (`wix.exe build`), not `cargo-wix`: cargo-wix drives
-WiX v3's `candle.exe`/`light.exe` even in its newest release (0.3.9), while the
-container image ships WiX 4.0.6 as a single `wix.exe`. `wix/main.wxs` is therefore
-in the v4 schema and gets version, binary path and licence path as preprocessor
-variables. The `WixUI_FeatureTree` dialog set comes from `WixToolset.UI.wixext`,
-already installed in the image.
-
-### Linux
-```bash
-# WGPU (recommended). The CLI's wgpu GUI feature is gui_windows on every OS;
-# it has no gui_wgpu feature.
-cargo run -p kataglyphis_cli --features gui_windows -- gui --backend vulkan
-
-# GTK demo
-cargo run -p kataglyphis_cli --features gui_unix -- gui
-```
-
-## Docs
-```bash
-cargo doc --open
-```
-## Updates
-
-### Dependency upgrades: Renovate as a local CLI
-
-What is behind — the submodule gitlink and the workspace crates — is answered by
-Renovate run locally, not by a bot. Run it from WSL; it bootstraps a pinned,
-checksum-verified Node and Renovate on first use.
-
-```bash
-bash scripts/linux/renovate-local.sh                    # report (default: git-submodules)
-bash scripts/linux/renovate-local.sh --managers cargo   # the workspace crates
-bash scripts/linux/renovate-local.sh --apply --dry-run  # the plan
-bash scripts/linux/renovate-local.sh --apply            # move the gitlink
-```
-
-The Renovate GitHub App is installed on no repo in this family and will not be,
-so this wrapper is the only thing that ever reads `.github/renovate.json`. It is
-not a gate: no workflow runs it and it blocks no commit. `--apply` moves
-**gitlinks only** — the crates stay a `cargo upgrade` job — and it stages and
-commits nothing. Details in the script header and in
-[`third_party/ANTfrastructure/docs/dependency-updates.md`](third_party/ANTfrastructure/docs/dependency-updates.md).
-
-### Installed cargo binaries
-
-How to update all installed packages:
-
-1. Install updater:
-  ```bash
-  cargo install cargo-update
-  ```
-2. Now update all packages:
-  ```bash
-  cargo install-update -a
-  ```
-
-## Cameras
-
-Raw `gst-launch-1.0` pipelines — listing a device's formats, bisecting a capture
-problem below the application, Raspberry Pi CSI and V4L2 sources, MJPEG, hardware
-encoders that under-declare their caps — are ANTfrastructure's, in
-[`third_party/ANTfrastructure/docs/runtime-services.md`](third_party/ANTfrastructure/docs/runtime-services.md),
-§ *Raw `gst-launch-1.0` pipelines (debugging below the app)*. They were copied
-here as three bare commands with no explanation of when to reach for them.
-
-<!-- CONTRIBUTING -->
-## Contributing
-
-Contributions are what make the open source community such an amazing place to be learn, inspire, and create. Any contributions you make are **greatly appreciated**.
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-
-<!-- LICENSE -->
-## License
-
-Distributed under the MIT License. See [LICENSE](LICENSE).
-
-<!-- CONTACT -->
-## Contact
-
-Jonas Heinle - [@Cataglyphis_](https://twitter.com/Cataglyphis_) - jonasheinle@googlemail.com
-
-Project Link: [https://github.com/Kataglyphis/OxidANT](https://github.com/Kataglyphis/OxidANT)
-
-
-## Literature 
-
-Some very helpful literature, tutorials, etc. 
-
-<!-- CMake/C++
-* [Cpp best practices](https://github.com/cpp-best-practices/cppbestpractices)
-
-Vulkan
-* [Udemy course by Ben Cook](https://www.udemy.com/share/102M903@JMHgpMsdMW336k2s5Ftz9FMx769wYAEQ7p6GMAPBsFuVUbWRgq7k2uY6qBCG6UWNPQ==/)
-* [Vulkan Tutorial](https://vulkan-tutorial.com/)
-* [Vulkan Raytracing Tutorial](https://developer.nvidia.com/rtx/raytracing/vkray)
-* [Vulkan Tutorial; especially chapter about integrating imgui](https://frguthmann.github.io/posts/vulkan_imgui/)
-* [NVidia Raytracing tutorial with Vulkan](https://nvpro-samples.github.io/vk_raytracing_tutorial_KHR/)
-* [Blog from Sascha Willems](https://www.saschawillems.de/)
-
-Physically Based Shading
-* [Advanced Global Illumination by Dutre, Bala, Bekaert](https://www.oreilly.com/library/view/advanced-global-illumination/9781439864951/)
-* [The Bible: PBR book](https://pbr-book.org/3ed-2018/Reflection_Models/Microfacet_Models)
-* [Real shading in Unreal engine 4](https://blog.selfshadow.com/publications/s2013-shading-course/karis/s2013_pbs_epic_notes_v2.pdf)
-* [Physically Based Shading at Disney](https://blog.selfshadow.com/publications/s2012-shading-course/burley/s2012_pbs_disney_brdf_notes_v3.pdf)
-* [RealTimeRendering](https://www.realtimerendering.com/)
-* [Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs](https://hal.inria.fr/hal-01024289/)
-* [Sampling the GGX Distribution of Visible Normals](https://pdfs.semanticscholar.org/63bc/928467d760605cdbf77a25bb7c3ad957e40e.pdf)
-
-Path tracing
-* [NVIDIA Path tracing Tutorial](https://github.com/nvpro-samples/vk_mini_path_tracer/blob/main/vk_mini_path_tracer/main.cpp) -->
-
-<!-- MARKDOWN LINKS & IMAGES -->
-<!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
+OxidANT is one of the [Kataglyphis repositories](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/repository-family.md),
+which share one way to contribute and one contact. Licence: MIT, see [LICENSE](https://github.com/Kataglyphis/OxidANT/blob/develop/LICENSE).

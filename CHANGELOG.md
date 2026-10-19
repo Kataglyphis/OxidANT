@@ -19,6 +19,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **The README's hero image is an animated WebP** (2026-10-17): `images/Rust.gif` was 7.5 MiB, the same
   136 frames as `images/Rust.webp` (ffmpeg's libwebp, quality 70) are 2.1 MiB, with no visible loss
   side by side. A checkout and every README view load 5.4 MiB less.
+- **The README is a short overview** (2026-10-19, owner: the family's README rule, ANTfrastructure's
+  `docs/repository-family.md`). 671 lines became 83; the rest moved to eight new guides in `docs/`
+  (`getting-started`, `crates`, `testing`, `running`, `observant`, `windows`, `packaging`, `updates`),
+  and the contributing, licence and contact boilerplate to the family page. Its links are absolute,
+  since the README is also the `oxidant` crate's rustdoc front page. Corrected on the way: the test
+  and clippy commands take the lanes' four `TEST_FEATURES` and the `KATAGLYPHIS_REQUIRE_*` trio,
+  ObservANT's default config is `observant.toml`, zune-core is no longer held at 0.5.1, the image's
+  WiX is 7, Renovate's `--apply` is no longer gitlinks only, and the crate table lists the two ESP32
+  crates.
 
 ## [2.3.4] - 2026-10-16
 

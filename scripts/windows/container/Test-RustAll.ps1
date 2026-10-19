@@ -15,7 +15,7 @@ $env:CARGO_TARGET_DIR = 'C:\ct'
 $env:CARGO_HOME = 'C:\ch'
 Set-Location C:\ws-mnt
 
-# Server Core lacks the opengl32.dll that wgpu's `gles` backend imports at load; see README.md § Tests.
+# Server Core lacks the opengl32.dll that wgpu's `gles` backend imports at load; see docs/testing.md#on-windows-the-renderers-tests-run-outside-the-container
 Write-ContainerLog 'SKIPPING kataglyphis_webgpu_renderer: Server Core has no opengl32.dll (see comment in this script). Run it on a desktop Windows host.'
 
 # The CI lane's set (Invoke-DebugTests.ps1): the features reach the cfg-gated capture and ORT-loader suites.

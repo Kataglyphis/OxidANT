@@ -352,7 +352,7 @@ cargo build --workspace --locked --release            # fat LTO, codegen-units 1
 cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
 ```
 
-Every Linux lane's tests add `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime'` (`TEST_FEATURES` in `scripts/linux/ci-container-steps.sh`) and `KATAGLYPHIS_REQUIRE_GPU=1`, `KATAGLYPHIS_REQUIRE_MODEL=1`, `KATAGLYPHIS_REQUIRE_GST=1` (README § Tests). The root crate's own two features arrived on 2026-10-15: without them `src/webcam_engine.rs` and the webcam API were never compiled for a test. Each `KATAGLYPHIS_REQUIRE_*` turns the matching self-skip (no GPU, no model, a missing GStreamer element) into a failure, since `cargo test` hides a passing test's "SKIP" line.
+Every Linux lane's tests add `--features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime'` (`TEST_FEATURES` in `scripts/linux/ci-container-steps.sh`) and `KATAGLYPHIS_REQUIRE_GPU=1`, `KATAGLYPHIS_REQUIRE_MODEL=1`, `KATAGLYPHIS_REQUIRE_GST=1` ([`docs/testing.md` § *The whole suite*](docs/testing.md#the-whole-suite)). The root crate's own two features arrived on 2026-10-15: without them `src/webcam_engine.rs` and the webcam API were never compiled for a test. Each `KATAGLYPHIS_REQUIRE_*` turns the matching self-skip (no GPU, no model, a missing GStreamer element) into a failure, since `cargo test` hides a passing test's "SKIP" line.
 
 **Benchmarks are Criterion's, run by `cargo bench`** (2026-10-14). `crates/observant/benches/frame_stages.rs`
 times what a frame pays before the model (I420 to RGBA, the privacy blocks, a box, the snapshot JPEG, the
@@ -384,7 +384,7 @@ cargo clippy --all-targets --workspace --locked \
     --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime' -- -D warnings
 ```
 
-Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest properties in ObservANT's `web.rs`, `static_files.rs`, `camera.rs` and `config.rs` (`mod properties`), on every input those parse from the network or the config file; there is no cargo-fuzz/libFuzzer target.
+Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see [`docs/running.md`](docs/running.md)). "Fuzz" testing = proptest properties in ObservANT's `web.rs`, `static_files.rs`, `camera.rs` and `config.rs` (`mod properties`), on every input those parse from the network or the config file; there is no cargo-fuzz/libFuzzer target.
 
 ### The cat cam service
 
@@ -888,12 +888,25 @@ The script header covers the rest; the family rationale is
 
 ## 6. Docs owned by this repo
 
-`AGENTS.md` (this file), `README.md`, `BACKLOG.md`, `CHANGELOG.md`,
-`crates/webgpu_renderer/README.md`, the renderer's design documents in
+`AGENTS.md` (this file), `README.md`, `BACKLOG.md`, `CHANGELOG.md`, the guides in
+`docs/`, `crates/webgpu_renderer/README.md`, the renderer's design documents in
 `crates/webgpu_renderer/docs/`, and `third_party/egui-winit-0.36.2/PATCHED.md` (the
 vendored crate's provenance and removal steps). Rustdoc is published from the default
 branch to <https://rust.jonasheinle.de> by the Linux x64 lane's last step. Update the
 docs in the same change as the behaviour they describe.
+
+**The README is a short overview** (owner, 2026-10-19: the family's README rule,
+[`docs/repository-family.md` § The README rule](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/repository-family.md#the-readme-rule)).
+Everything else is a guide in `docs/`, one row each in the README's *Documentation*
+table: [`getting-started.md`](docs/getting-started.md), [`crates.md`](docs/crates.md),
+[`testing.md`](docs/testing.md), [`running.md`](docs/running.md),
+[`observant.md`](docs/observant.md), [`windows.md`](docs/windows.md),
+[`packaging.md`](docs/packaging.md) and [`updates.md`](docs/updates.md). A new guide
+gets a row there too. **The README links with absolute GitHub URLs**, because it is
+also the `oxidant` crate's rustdoc front page (`#![doc = include_str!("../README.md")]`
+in `src/lib.rs`), where a relative link resolves under rust.jonasheinle.de and is a 404.
+For the same reason every code block in it carries a language (`bash`, `pwsh`): an
+untagged one is compiled as a doc test. The rustdoc build publishes no `docs/` page.
 
 ### Where the renderer's design documents live
 
