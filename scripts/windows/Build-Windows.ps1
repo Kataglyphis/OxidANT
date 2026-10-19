@@ -74,7 +74,7 @@ $msixPublisher = Get-OrDefault $env:MSIX_PUBLISHER (Get-ConfigValue -Config $con
 $msixPublisherDisplayName = Get-OrDefault $env:MSIX_PUBLISHER_DISPLAY_NAME (Get-ConfigValue -Config $config -Path 'Msix.PublisherDisplayName')
 $msixDisplayName = Get-OrDefault $env:MSIX_DISPLAY_NAME (Get-ConfigValue -Config $config -Path 'Msix.DisplayName')
 $msixDescription = Get-OrDefault $env:MSIX_DESCRIPTION (Get-ConfigValue -Config $config -Path 'Msix.Description')
-$msixVersion = Get-OrDefault $env:MSIX_VERSION (Get-CargoMsixVersion -CargoToml (Join-Path $repoRoot 'Cargo.toml'))
+$msixVersion = Get-OrDefault $env:MSIX_VERSION (Get-PackageVersion -WorkspacePath $repoRoot -VersionFile 'Cargo.toml' -Required)
 $msixMinVersion = Get-OrDefault $env:MSIX_MIN_VERSION (Get-ConfigValue -Config $config -Path 'Msix.MinVersion')
 
 $context = New-BuildContext -Workspace $workspacePath -LogDir $logDir -StopOnError

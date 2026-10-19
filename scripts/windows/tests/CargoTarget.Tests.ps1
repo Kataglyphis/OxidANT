@@ -42,27 +42,4 @@ Describe 'WindowsCargoTarget.Common' {
         $thrown = try { Get-CargoTargetLayout -Arch 'riscv64' -TargetRoot $target -WorkspacePath $ws | Out-Null; '' } catch { "$($_.Exception.Message)" }
         $thrown | Should Match 'Unsupported Windows target architecture'
     }
-
-    It 'takes the MSIX version from Cargo.toml''s [workspace.package], in four parts' {
-        $toml = Join-Path $TestDrive 'ws.toml'
-        Set-Content -LiteralPath $toml -Value @('[package]', 'name = "oxidant"', 'version.workspace = true', '', '[workspace.package]', 'version = "2.3.4"', '', '[dependencies]', 'serde = { version = "1.0.200" }')
-        Get-CargoMsixVersion -CargoToml $toml | Should Be '2.3.4.0'
-    }
-
-    It 'falls back to [package]''s version, and never takes a dependency table''s' {
-        $toml = Join-Path $TestDrive 'one.toml'
-        Set-Content -LiteralPath $toml -Value @('[package]', 'name = "one"', 'version = "0.4.1-beta"', '', '[dependencies.serde]', 'version = "1.0.200"')
-        Get-CargoMsixVersion -CargoToml $toml | Should Be '0.4.1.0'
-    }
-
-    It 'refuses a Cargo.toml with no version of its own' {
-        $toml = Join-Path $TestDrive 'none.toml'
-        Set-Content -LiteralPath $toml -Value @('[package]', 'name = "none"', 'version.workspace = true')
-        $thrown = try { Get-CargoMsixVersion -CargoToml $toml | Out-Null; '' } catch { "$($_.Exception.Message)" }
-        $thrown | Should Match 'no \[workspace.package\] or \[package\] version'
-    }
-
-    It 'reads this repo''s own Cargo.toml, the one version source' {
-        Get-CargoMsixVersion -CargoToml (Join-Path $PSScriptRoot '..\..\..\Cargo.toml') | Should Match '^\d+\.\d+\.\d+\.0$'
-    }
 }

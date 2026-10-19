@@ -60,6 +60,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   which reads the same ten pathspecs from `scripts/windows/generated-artifacts.txt`, then this repo's
   own suites in a second step. Under Pester 3.4.0 and 6.1.0 it passes 2/2 on this tree; a `docs/*`
   line fails it on 9 tracked files, and a `**/__pycache__/` line is refused.
+- **`Build-Windows.ps1` reads the MSIX version with the hub's `Get-PackageVersion -VersionFile
+  'Cargo.toml' -Required`** (2026-10-19, ANTfrastructure 1a174d9c). `Get-CargoMsixVersion` and its
+  four cases in `CargoTarget.Tests.ps1` are gone; the hub's reader takes `[workspace.package]` before
+  `[package]` the same way and throws on a `Cargo.toml` without a version. This tree gives `2.3.4.0`
+  (MSI `2.3.4`) as before, and `MSIX_VERSION` still overrides it.
 - **AGENTS.md and the shipped texts say what is true** (2026-10-19). AGENTS.md: Renovate's
   `--apply` writes every ecosystem, not gitlinks only; the zune-core hold is gone (`Cargo.lock`
   has 0.5.3; its history is in `docs/updates.md`); the clippy, test and bench commands take the
