@@ -34,7 +34,7 @@ jobs:
       actions: write
     with:
       script: bash -lc 'bash scripts/linux/ci-container-steps.sh riscv64-test'
-      # The image's CARGO_HOME is root-owned and the container runs as uid 1001.
+      # CARGO_HOME on the cache mount (`cache-mounts`), so the registry outlives the container.
       container-args: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always -e RISCV64_GPU_TESTS=${{ (github.event_name == 'schedule' || inputs.gpu-tests) && '1' || '0' }}
       cache-lane: riscv64-cargo
       cache-mounts: 'cargo-home:/tmp/cargo-home sccache:/var/cache/sccache'

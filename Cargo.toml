@@ -56,7 +56,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows."
+description = "The Kataglyphis family's Rust core: the flutter_rust_bridge API OmniAccelerANT calls and the cxx bridge BeschleunigerBallett links."
 readme = "README.md"
 rust-version.workspace = true
 

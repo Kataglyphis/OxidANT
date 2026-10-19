@@ -46,11 +46,13 @@ same question.
 
 ## zune-core is no longer held
 
-`zune-core` was held at 0.5.1 in `Cargo.lock` because 0.5.2 broke `zune-jpeg` 0.5.15 in
-release builds. 0.5.2 has since been yanked, and 0.5.3 compiles with zune-jpeg 0.5.15
-(checked 2026-09-25), so a bare `cargo update` now resolves a working version;
-`Cargo.lock` carries 0.5.3 (2026-10-19). The history:
-[AGENTS.md § Do not let `cargo update` take zune-core to 0.5.2](../AGENTS.md#do-not-let-cargo-update-take-zune-core-to-052).
+`zune-core` was held at 0.5.1 in `Cargo.lock` from 2026-08-07: 0.5.2 changed a macro
+`zune-jpeg` 0.5.15 consumes, and a release build of the workspace failed in
+`zune-jpeg-0.5.15/src/mcu_prog.rs:463` (*macro expansion ends with an incomplete
+expression*). 0.5.2 has since been yanked, and 0.5.3 compiles with zune-jpeg 0.5.15
+(checked 2026-09-25), so a bare `cargo update` resolves a working version; `Cargo.lock`
+carries 0.5.3 (2026-10-19). Both arrive through `image` into the renderer, so only the
+lockfile names them.
 
 ## Installed cargo binaries
 

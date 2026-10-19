@@ -32,7 +32,7 @@
 
         <SummaryInformation
             Keywords='Installer'
-            Description='OxidANT — Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
+            Description='The OxidANT CLI: file tools, the wgpu camera GUI with ONNX inference, and resource monitoring.'
             Manufacturer='$(var.Manufacturer)'
             Codepage='1252'/>
 
@@ -73,7 +73,7 @@
             <Component Id='ApplicationShortcut' Bitness='always64'>
                 <Shortcut Id='ApplicationStartMenuShortcut'
                     Name='$(var.ProductName)'
-                    Description='OxidANT — Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
+                    Description='The OxidANT CLI: file tools, the wgpu camera GUI with ONNX inference, and resource monitoring.'
                     Target='[!exe0]'
                     WorkingDirectory='APPLICATIONFOLDER'/>
                 <RemoveFolder Id='CleanUpShortCut' Directory='ApplicationProgramsFolder' On='uninstall'/>

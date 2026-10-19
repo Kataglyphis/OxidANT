@@ -10,7 +10,7 @@ use kataglyphis_gui::gui_wgpu::GpuBackend;
 #[derive(Parser)]
 #[command(name = "kataglyphis")]
 #[command(
-    about = "Rust project template: CLI tools, optional GUI, ONNX inference, and resource monitoring.",
+    about = "The OxidANT CLI: file tools, the wgpu camera GUI with ONNX inference, and resource monitoring.",
     long_about = None
 )]
 pub struct Cli {

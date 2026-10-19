@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# ObservANT: a camera service publishing YOLO boxes (cats by default) over webrtcsink and serving its web client, OmniAccelerANT's Stream page.
+# ObservANT: a camera service publishing detection boxes (cats by default) over webrtcsink and serving its web client, OmniAccelerANT's Stream page.
 
 [dependencies]
 anyhow = { workspace = true }

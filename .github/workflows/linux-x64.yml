@@ -56,8 +56,8 @@ jobs:
     permissions:
       contents: read
     env:
-      # The image's CARGO_HOME is root-owned and the container runs as uid 1001.
-      CONTAINER_ENV: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always
+      # No CARGO_HOME: no cache mount here, and the image's own belongs to uid 1001.
+      CONTAINER_ENV: -e CARGO_TERM_COLOR=always
     strategy:
       fail-fast: false
       matrix:

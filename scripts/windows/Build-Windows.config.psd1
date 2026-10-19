@@ -19,7 +19,7 @@
     Publisher = 'CN=Kataglyphis'
     PublisherDisplayName = 'Kataglyphis'
     DisplayName = 'OxidANT'
-    Description = 'Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
+    Description = 'The OxidANT CLI: file tools, the wgpu camera GUI with ONNX inference, and resource monitoring.'
     MinVersion = '10.0.19041.0'
     ManifestTemplate = 'packaging/msix/AppxManifest.template.xml'
     Binary = 'kataglyphis_cli'

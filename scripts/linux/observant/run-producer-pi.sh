@@ -237,6 +237,6 @@ fi
 # A producer from an interrupted run still holds the name.
 nerdctl rm -f "${container_name}" >/dev/null 2>&1 || true
 
-printf 'starting the producer: libcamerasrc -> YOLO -> webrtcsink on port %s\n' "${port}"
+printf 'starting the producer: libcamerasrc -> detector -> webrtcsink on port %s\n' "${port}"
 printf 'stop it with: nerdctl rm -f %s\n' "${container_name}"
 exec nerdctl "${nerdctl_args[@]}"

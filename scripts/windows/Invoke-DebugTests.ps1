@@ -9,7 +9,7 @@ Set-StrictMode -Version Latest
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location $repoRoot
 
-# The Linux test step's features (scripts/linux/ci-container-steps.sh TEST_FEATURES), which Stage-CrossTests.ps1 builds too.
+# The member half of the Linux TEST_FEATURES (ci-container-steps.sh); its oxidant/* pair, the webcam engine, is tested on Linux only. Stage-CrossTests.ps1 builds the same set.
 $testFeatures = 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
 
 Write-Host '==> Workspace tests, the WebGPU renderer excluded'

@@ -42,7 +42,7 @@ const AUTO_INFERENCE_MIN_MIB: u64 = 768;
 #[derive(Parser, Debug)]
 #[command(
     name = "kataglyphis_observant",
-    about = "ObservANT: camera -> YOLO boxes (cats by default) -> WebRTC, plus the web page that plays it"
+    about = "ObservANT: camera -> detection boxes (cats by default) -> WebRTC, plus the web page that plays it"
 )]
 struct Args {
     /// TOML config (default: $KATAGLYPHIS_OBSERVANT_CONFIG, then /etc/omni-accelerant/observant.toml).

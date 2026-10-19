@@ -28,6 +28,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
   ObservANT's default config is `observant.toml`, zune-core is no longer held at 0.5.1, the image's
   WiX is 7, Renovate's `--apply` is no longer gitlinks only, and the crate table lists the two ESP32
   crates.
+- **AGENTS.md and the shipped texts say what is true** (2026-10-19). AGENTS.md: Renovate's
+  `--apply` writes every ecosystem, not gitlinks only; the zune-core hold is gone (`Cargo.lock`
+  has 0.5.3; its history is in `docs/updates.md`); the clippy, test and bench commands take the
+  lanes' four `TEST_FEATURES`; the image's `CARGO_HOME` belongs to uid 1001, so the feature job
+  drops its `-e CARGO_HOME`; the crate list names the two ESP32 crates. ObservANT's `--help`,
+  its config and COCO comments and the Pi runner's message no longer say YOLO (the model is
+  DEIM-D-FINE-N). The root package's description, the CLI's `about` and the MSI and MSIX
+  descriptions no longer call it a project template. `docs/crates.md`'s literature keeps the
+  renderer's shading references and drops the Vulkan, C++ and path-tracing ones.
 
 ### Fixed
 - **The Linux lanes' clippy passes again** (2026-10-19). `EngineConfig::on_detections`, added with

@@ -46,7 +46,7 @@ permissions:
 # No image ref here: omitting the actions' `image:` input takes the family image from versions.env.
 env:
   CARGO_TERM_COLOR: always
-  # The image's CARGO_HOME is root-owned and the container runs as uid 1001, so cargo writes need their own.
+  # CARGO_HOME on the cache mount (`cargo-home:/tmp/cargo-home` below), so the registry outlives each step's container.
   CONTAINER_ENV: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always
 
 jobs:

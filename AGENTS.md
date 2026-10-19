@@ -29,8 +29,10 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/media` — GStreamer capture, feature-gated (`gstreamer`)
 - `crates/observant` — the ObservANT service (`kataglyphis_observant`): picks the camera, burns the detection boxes (cats by default) into the frames, streams them through `webrtcsink` and serves OmniAccelerANT's web build itself; consumer: OmniAccelerANT's Stream page. Its Raspberry Pi 5 runner is `scripts/linux/observant/run-producer-pi.sh` (see [Build, run, test](#5-build-run-test))
+- `crates/esp32-protocol` — the framed USB-serial protocol OmniAccelerANT and its ESP32-S3 firmware share, `no_std` (`kataglyphis_esp32_proto`)
+- `crates/esp32` — the USB-serial bridge to the ESP32-S3 companion board: device discovery plus a threaded serial link, desktop only (`kataglyphis_esp32`)
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands, plus `onnx-runtime` when built with `onnxruntime_directml` or `onnxruntime_cuda` and `media-check` when built with `gui_windows`; `stats --path <file>`). It was renamed on 2026-08-07 from `kataglyphis_rustprojecttemplate`, the root package's name until 2026-09-05 — see the pdb note below. It is not the root package's bin, so `cargo run` needs `-p kataglyphis_cli`.
-- `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{onnx,simple,webcam}.rs`, `src/webcam_engine.rs`), the cxx bridge BeschleunigerBallett links (`src/native_only.rs`, compiled by `build.rs` with `cxx-build` on every non-wasm target) and the `burn-demos` bin
+- `src/` — the root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{esp32,onnx,simple,webcam}.rs`, `src/webcam_engine.rs`), the cxx bridge BeschleunigerBallett links (`src/native_only.rs`, compiled by `build.rs` with `cxx-build` on every non-wasm target) and the `burn-demos` bin
 - `tests/` — the CLI's integration tests (`tests/integration/integration.rs`, compiled as `kataglyphis_cli`'s `integration` test through `crates/cli/tests/integration.rs`)
 - `third_party/ANTfrastructure` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
 - `third_party/egui-winit-0.36.2` — a vendored `egui-winit` with upstream emilk/egui#8516 applied, routed in by the root `Cargo.toml`'s `[patch.crates-io]` so the renderer's wasm32 demo compiles. Temporary; `PATCHED.md` there says how to remove it once egui 0.37 is out.
@@ -248,41 +250,13 @@ On a plain Ubuntu box (e.g. the WSL recipe below) you *do* need the distro packa
 | `gui_unix` | clean |
 | `burn_demos` | clean |
 
-Worth stating plainly what CI lints of those rows. The Linux lanes lint the workspace with default features plus the test step's two (`kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime`, since 2026-10-01). Since 2026-10-01 both Windows lanes' `Build-Windows.ps1` runs `cargo clippy --workspace --all-targets --locked -- -D warnings`, as Linux does, with the CLI's features qualified (`kataglyphis_cli/gui_windows,kataglyphis_cli/onnxruntime_directml`), the set the release exe is built with, which also switches on `kataglyphis_media/gstreamer` and the inference crate's ORT. From 2026-09-25 it linted only the root package, `kataglyphis_cli` and `kataglyphis_gui`, and before that the root package alone, so `crates/cli` and the GUI's inference overlay, which only the CLI's features switch on, reached the release build unlinted. The x64 lane's config matrix also *builds*, without linting, the CLI with `gui_windows` alone and with each inference backend. `gui_linux` and the burn demos are checked by the `feature-matrix` job alone, on every push since 2026-10-06.
+Worth stating plainly what CI lints of those rows. The Linux lanes lint the workspace with default features plus the test step's four (`TEST_FEATURES`): `kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime` since 2026-10-01, and the root's own `oxidant/gstreamer,oxidant/onnxruntime`, which compile `src/webcam_engine.rs`, since 2026-10-15. Since 2026-10-01 both Windows lanes' `Build-Windows.ps1` runs `cargo clippy --workspace --all-targets --locked -- -D warnings`, as Linux does, with the CLI's features qualified (`kataglyphis_cli/gui_windows,kataglyphis_cli/onnxruntime_directml`), the set the release exe is built with, which also switches on `kataglyphis_media/gstreamer` and the inference crate's ORT. From 2026-09-25 it linted only the root package, `kataglyphis_cli` and `kataglyphis_gui`, and before that the root package alone, so `crates/cli` and the GUI's inference overlay, which only the CLI's features switch on, reached the release build unlinted. The x64 lane's config matrix also *builds*, without linting, the CLI with `gui_windows` alone and with each inference backend. `gui_linux` and the burn demos are checked by the `feature-matrix` job alone, on every push since 2026-10-06.
 
 Note the feature names belong to the **root package**. `cargo clippy --workspace --features gstreamer` fails with *"package `kataglyphis_gui` does not have feature `gstreamer`"* because `--workspace` applies the list to every member; drop `--workspace` to scope it to the root. A member's own feature takes the weak form, `kataglyphis_media?/gstreamer`: under `--workspace` the plain `kataglyphis_media/gstreamer` also switches on the optional `kataglyphis_media` dependency of every selected package that declares one (`kataglyphis_gui` and the root; `cargo tree -e features -i kataglyphis_media`, 2026-10-01).
 
-### Do not let `cargo update` take zune-core to 0.5.2
-
-`zune-core` is held at **0.5.1** in `Cargo.lock` on purpose. 0.5.2 broke `zune-jpeg` 0.5.15:
-
-```
-error: macro expansion ends with an incomplete expression: expected expression
-  --> zune-jpeg-0.5.15/src/mcu_prog.rs:463:17
-error: could not compile `zune-jpeg` (lib) due to 1 previous error
-```
-
-zune-jpeg consumes a macro from zune-core, and 0.5.2 changed it. **There was no forward fix** when this was written (2026-08-07): 0.5.15 was zune-jpeg's newest release and 0.5.2 zune-core's, so the two were incompatible at their respective tips. Both arrive transitively (via `image`, into the renderer), so nothing in a `Cargo.toml` pins them — only the lockfile does.
-
-A bare `cargo update` used to reintroduce it silently (see the re-check below), and it only showed up in a **release** build of the full workspace; `cargo test` and `cargo check -p ...` stay green because they never reach that crate. If you run `cargo update`, put it back:
-
-```bash
-cargo update -p zune-core --precise 0.5.1
-```
-
-Re-check when zune-jpeg publishes past 0.5.15.
-
-**Re-checked 2026-09-25: the upstream half is fixed.** zune-core 0.5.2 is yanked on
-crates.io, so `cargo update` no longer resolves it, and 0.5.3 (published 2026-08-07,
-the same day) is the newest release. A scratch crate pinning `zune-jpeg = "=0.5.15"`
-and `zune-core = "=0.5.3"` passes `cargo check` and `cargo build --release`. So the
-hold at 0.5.1 can move with `cargo update -p zune-core --precise 0.5.3`, once a
-full-workspace release build confirms it. zune-jpeg's newest release is still 0.5.15
-(0.5.16-rc2 is a pre-release).
-
 ### Known gaps
 
-- **Only the `feature-matrix` job builds the GUI and burn features on Linux.** Both Linux lanes build default features, plus for the tests and clippy `kataglyphis_media?/gstreamer` and `kataglyphis_inference?/onnxruntime` (since 2026-10-01). The Windows lanes build `gui_windows,onnxruntime_directml` (x64 since 2026-09-24, arm64 since 2026-09-25), and the x64 lane's config matrix adds `gui_windows` with `onnx_tract` and with `onnxruntime_cuda`. `feature-matrix` in `linux-x64.yml` runs `cargo check` for each row of the table above on every push since 2026-10-06; before that it waited for `[build-features]` and never ran, which is how the GStreamer version skew (since fixed) survived unnoticed in `crates/media`. Since 2026-10-13 one job checks every set, through `bash scripts/linux/ci-container-steps.sh feature-check`, whose `FEATURE_CHECK_SETS` is the list; each set gets its own log group and `::error` annotation, and every set runs even after one fails. Six jobs had cost six image pulls: per job a 6-9 min prologue for 1-3 min of `cargo check` (runs 38394017265, 38400294322, 38407158265). Dispatching `linux-x64.yml` with `feature-checks-per-job` brings back one job per set.
+- **Only the `feature-matrix` job builds the GUI and burn features on Linux.** Both Linux lanes build default features, plus for the tests, clippy and the benches `TEST_FEATURES` (`kataglyphis_media?/gstreamer`, `kataglyphis_inference?/onnxruntime`, `oxidant/gstreamer`, `oxidant/onnxruntime`). The Windows lanes build `gui_windows,onnxruntime_directml` (x64 since 2026-09-24, arm64 since 2026-09-25), and the x64 lane's config matrix adds `gui_windows` with `onnx_tract` and with `onnxruntime_cuda`. `feature-matrix` in `linux-x64.yml` runs `cargo check` for each row of the table above on every push since 2026-10-06; before that it waited for `[build-features]` and never ran, which is how the GStreamer version skew (since fixed) survived unnoticed in `crates/media`. Since 2026-10-13 one job checks every set, through `bash scripts/linux/ci-container-steps.sh feature-check`, whose `FEATURE_CHECK_SETS` is the list; each set gets its own log group and `::error` annotation, and every set runs even after one fails. Six jobs had cost six image pulls: per job a 6-9 min prologue for 1-3 min of `cargo check` (runs 38394017265, 38400294322, 38407158265). Dispatching `linux-x64.yml` with `feature-checks-per-job` brings back one job per set.
 
 - **On arm64 the renderer tests run llvmpipe at 128-bit vectors** (since 2026-10-06). The image sets `LP_NATIVE_VECTOR_WIDTH=256` on every arch for Mesa's BVH sort (hub CON44), and at that width LLVM's AArch64 JIT killed a renderer test binary in about one arm64 run in five: `LLVM ERROR: Do not know how to split this operator's operand!` (SIGABRT; runs 37367760093, 37382902869, 37005853556) and a SIGSEGV in `forward_ambient` (run 37428962397). Nothing here uses ray tracing or subgroups, so `scripts/linux/ci-container-steps.sh` exports 128, arm64's native width, for every step on an aarch64 host.
 - **The Linux lanes render the golden tests on a software Vulkan device, and must** (since 2026-09-29). The family image carries lavapipe (`vulkaninfo --summary`: deviceType CPU, `llvmpipe`) on amd64 and arm64 since ANTfrastructure CON19, and the `test` step of `scripts/linux/ci-container-steps.sh` exports `KATAGLYPHIS_REQUIRE_GPU=1`, so `GpuContext::headless_or_skip()` panics instead of returning `None` and a green run means the ~40 headless render tests drew something. Before that no CI lane had an adapter and every one of them reported as passed having drawn nothing. Both Windows lanes set it too since 2026-10-01 (`windows-x64.yml`'s `host-command`, `windows-arm64-cross.yml`'s `test-command`) and render on the runners' WARP. `headless_or_skip()` writes one `ADAPTER:` line per test binary straight to stderr, past libtest's capture, and every CI adapter reports `bc=true timestamps=true`, so under the flag `ktx2::uploads_bc1_when_supported` and `gpu_timing::every_pass_reports_a_finite_non_negative_duration` fail rather than skip without those features. Only the riscv64 lane leaves it unset by default (§ *The riscv64 lane*). Running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**, which the image's lavapipe reproduces byte-for-byte (987 pixels, 2026-09-29):
@@ -333,7 +307,7 @@ Then, from the repo root, with `CARGO_TARGET_DIR` pointed at a **Linux-native** 
 
 ```bash
 export CARGO_TARGET_DIR=/root/kt
-FEATURES='kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
+FEATURES='kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime'
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked --features "$FEATURES" -- -D warnings
 KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked --features "$FEATURES"
@@ -364,7 +338,7 @@ whose means the cache keeps in `.bench-history/` (2026-10-15; until then the run
 creeping in a few per cent per commit never showed). More than 25 % slower warns; a mean from 100 µs that
 doubles fails the lane once 3 earlier runs exist, and such a run never joins the history. Faster benches only
 warn, since a shared runner's caches and clocks move them that much. Locally:
-`cargo bench --workspace --benches --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'`,
+`cargo bench --workspace --benches --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime'`,
 where Criterion itself compares against your last local run. Benches need a library: `kataglyphis_observant`
 is one since that day, `main.rs` only wiring its modules into the service.
 
@@ -376,12 +350,13 @@ are, and taken for no dog or person. Without the model it skips; the `test` and 
 for the golden tests. The `coverage` step also fails below 70 % of the workspace's lines (tarpaulin
 `--fail-under`; 71.3 % measured that day); raise the floor as tests are added.
 
-Run the lint gates before pushing. CI's formatting-and-clippy step is ANTfrastructure's `cargo_fmt_clippy.sh` with `CARGO_CLIPPY_ARGS='--workspace --locked --features <those two>'`, which is the same pair of hard failures written below — reproduce the step itself with `bash scripts/linux/ci-container-steps.sh fmt-clippy` inside the image. The shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
+Run the lint gates before pushing. CI's formatting-and-clippy step is ANTfrastructure's `cargo_fmt_clippy.sh` with `CARGO_CLIPPY_ARGS='--workspace --locked --features <TEST_FEATURES>'`, which is the same pair of hard failures written below — reproduce the step itself with `bash scripts/linux/ci-container-steps.sh fmt-clippy` inside the image. The shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` (see [Continuous integration](#continuous-integration)):
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all-targets --workspace --locked \
-    --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime' -- -D warnings
+    --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime' \
+    -- -D warnings
 ```
 
 Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see [`docs/running.md`](docs/running.md)). "Fuzz" testing = proptest properties in ObservANT's `web.rs`, `static_files.rs`, `camera.rs` and `config.rs` (`mod properties`), on every input those parse from the network or the config file; there is no cargo-fuzz/libFuzzer target.
@@ -413,7 +388,7 @@ board runs it as one service unit:
   `rawvideoparse` (the `rawparse` plugin, not `videoparsersbad`) left one zombie per
   retry.
 - **Inference is capped at `inference_fps`** (default 2) frames a second. Without a
-  cap, YOLO held a Pi 5's four cores at 380 %. `0` removes the cap. The stream itself
+  cap, the detector (YOLO then) held a Pi 5's four cores at 380 %. `0` removes the cap. The stream itself
   keeps the camera's rate.
 - **Frames stay I420 from capture to output** (`frame.rs`). A Pi camera delivers I420 and
   the encoder takes it, so neither end converts. Boxes are drawn into the three planes, the
@@ -837,8 +812,8 @@ Facts that cost real debugging time:
 - **Tarpaulin leaves out every module behind `#[cfg(feature = …)]`** (measured 2026-10-15, tarpaulin 0.37.5, both engines). `crates/media`, gated whole on `gstreamer`, is absent from the report although ObservANT's tests drive it, and `src/webcam_engine.rs` is absent while its 8 tests pass under tarpaulin. The plain feature spelling that its source analysis might match makes `cargo metadata` fail (`kataglyphis_gui` has no `gstreamer`), and the `pkg/feature` spelling is not matched. So the workspace figure covers the ungated code only, and those modules' tests count as tests, not as coverage. `cargo llvm-cov` reads rustc's own coverage map and would see them; the image does not carry it (a hub decision).
 - **`cargo fmt`/`cargo clippy` run through ANTfrastructure's `cargo_fmt_clippy.sh`** like every other step — `fmt-clippy` was the one case that did not delegate, and stopped being one on 2026-09-15. Two things had to change upstream first, and both did: the driver's old first line `rustup component add rustfmt` exited 127 on an image without rustup (it probes first now — header: PROBE, DO NOT ADD), and `--all-features` was hard-coded at its line 40, which this image cannot build (GTK4/ORT, see the last bullet). The scope is `CARGO_CLIPPY_ARGS`, set to `--workspace --locked` plus the test features in `scripts/linux/ci-container-steps.sh`. That exit 127 was masked by `continue-on-error: true` for months and let an entire crate reach the default branch unformatted and with 12 clippy errors — the step gates now.
 - **The docs publish follows the repository's own default branch**, not a typed `refs/heads/main`. It asks for `format('refs/heads/{0}', github.event.repository.default_branch)`, and so does `cancel-in-progress`. The literal was wrong for as long as `main` was abandoned and `develop` carried every commit: the comment said "only publish from the default branch" while the condition matched a branch nobody pushed to, so <https://rust.jonasheinle.de> was never republished at all. A red **Security checks** step has the same effect for a different reason — the publish is the last step of that job.
-- **The container runs as uid 1001, not root.** `apt-get` fails with `Permission denied`, so a workflow step cannot install system packages — whatever the image lacks, it lacks. And `CARGO_HOME=/usr/local/cargo` is root-owned, so every writing cargo step needs `-e CARGO_HOME=/tmp/cargo-home`.
-- **The lint gate runs default features on purpose.** `--all-features` would need GTK4 headers (`gui_unix`), which the image has not got and uid 1001 cannot install.
+- **The container runs as uid 1001, not root.** `apt-get` fails with `Permission denied`, so a workflow step cannot install system packages — whatever the image lacks, it lacks. The image's `CARGO_HOME` (`/usr/local/cargo`) and `RUSTUP_HOME` belong to uid 1001, which the hub's consumer-image contract requires (row 2 of `docs/consumer-image-contract.md`): `find /usr/local/cargo /usr/local/rustup ! -uid 1001` finds nothing in `:latest`, and a feature check fills the registry there (2026-10-19). The lane jobs set `-e CARGO_HOME=/tmp/cargo-home` only because their cache mount keeps the registry there between steps; the feature job, which has no cache, uses the image's own.
+- **The lint gate runs `TEST_FEATURES`, not `--all-features`, on purpose.** `--all-features` would need GTK4 headers (`gui_unix`), which the image has not got and uid 1001 cannot install.
 - **The Windows x64 lane pins its cargo tools** (the arm64 cross build runs no audit/deny). `scripts/windows/Build-Windows.ps1` installs cargo-audit and cargo-deny with `--version`, read from `$env:CARGO_AUDIT_VERSION` / `$env:CARGO_DENY_VERSION` (baked into the image) and falling back to the submodule's `versions.env` through `ConvertFrom-VersionsEnv`; unresolvable **throws**. Unpinned, `cargo install` takes whatever crates.io serves that minute, so a new advisory-db schema turns the lane red with no commit to bisect. There is no try/catch around the install any more either — a swallowed failure left both gates running whatever was on PATH.
 - **`cargo_security_checks.sh` is a gating step, not an advisory one.** The *Security checks (cargo audit + cargo deny)* step in `reusable-linux.yml` (so in both Linux lanes) runs ANTfrastructure's `linux/scripts/02-toolchain/rust/cargo_security_checks.sh`, and a finding fails the lane — which also means the docs publish at the end of the x64 lane never runs while it is red. It reads **two** ignore lists: `.cargo/audit.toml` (cargo-audit) and `deny.toml` `[advisories].ignore` (cargo-deny). For a crate that is built they hold the same ids, since an id on one list only leaves the other tool reporting it. cargo-audit alone reads `Cargo.lock`, which also locks optional dependencies no feature enables: an advisory in such a crate (zip 0.6.6 via tch, 2026-10-17) goes on `audit.toml` only, with the `cargo tree -i <crate> --all-features` proof, because cargo-deny never sees it and calls the ignore stale. Prefer an upgrade over an ignore: `chacha20` 0.10.1 (yanked) and `stable-vec` 0.4.2 (unsound) both had one, so neither is on either list.
 
@@ -857,11 +832,14 @@ modules out of the `third_party/ANTfrastructure` pin (§ 3), so that gitlink dri
 is a silent change to every gate — and nothing watched it before this wrapper existed.
 
 ```bash
-bash scripts/linux/renovate-local.sh                    # report (default: git-submodules)
-bash scripts/linux/renovate-local.sh --managers cargo   # the workspace crates
+bash scripts/linux/renovate-local.sh                    # report: every manager the tree has
+bash scripts/linux/renovate-local.sh --managers cargo   # only the workspace crates
 bash scripts/linux/renovate-local.sh --apply --dry-run  # the plan
-bash scripts/linux/renovate-local.sh --apply            # move the gitlink
+bash scripts/linux/renovate-local.sh --apply            # gitlink, manifests and Cargo.lock
 ```
+
+**A run reports. `--apply` only when the owner asked for it in that turn** (owner
+directive 2026-09-11, a family rule the hub's `AGENTS.md` keeps).
 
 Run it from **WSL** — the wrapper bootstraps a pinned Node and there is none on
 the Windows side. Nothing runs it for you: **the Renovate GitHub App is
@@ -869,15 +847,15 @@ installed on no repo in this family and will not be**, so this CLI is the only
 thing that ever reads `.github/renovate.json`. No workflow calls it and it
 blocks no commit.
 
-`--apply` moves **gitlinks only**, and only for submodules that declare a
-`branch =`. Here that is the one entry in `.gitmodules` — measured on
-2026-09-09, the default report was a single row, `third_party/ANTfrastructure
-3ef5024cde13 → b902bdeb0781`, in about four seconds. Cargo is **report-only**:
-`--managers cargo` returned 21 rows the same day, and exactly one of them
-(`flutter_rust_bridge =2.12.0 → =2.13.0`) is a manifest edit. The rest print the
-same string twice (`wgpu 30 30`) because the declared range already covers the
-new release — a `cargo update`, not a `Cargo.toml` change. Editing manifests is
-still `cargo upgrade` and Dependabot's PRs; `.github/dependabot.yml` stays.
+`--apply` writes **every ecosystem the tree has** (the hub's script since 2026-09-11):
+the `third_party/ANTfrastructure` gitlink (the one `.gitmodules` entry; it declares
+`branch = develop`, which `--apply` requires); a `Cargo.toml` value rewritten on its line, with
+`Cargo.lock` refreshed by `cargo update`; and, through the shared preset's lock-file
+maintenance, `Cargo.lock` moved to the newest releases the manifests allow. A run that
+cannot finish puts everything back and exits 1; exit 2 means a reported update was not
+applied. It stages and commits nothing. `third_party/egui-winit-0.36.2` is skipped
+(`.github/renovate.json`). `.github/dependabot.yml` is still present; retiring it is a
+separate decision.
 
 Managers that reach `api.github.com` answer short without a token and say so.
 The variable that fixes that under `--platform=local` is `GITHUB_COM_TOKEN`, not

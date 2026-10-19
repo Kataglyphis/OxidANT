@@ -1,4 +1,4 @@
-//! The 80 COCO classes the YOLO models detect, by the class id they report; `classes` in the
+//! The 80 COCO classes the detection model (DEIM-D-FINE-N) reports, by class id; `classes` in the
 //! settings names them.
 
 /// Every class name, at its class id.

@@ -41,7 +41,7 @@ fn config_dir() -> PathBuf {
     }
 }
 
-/// Whether the YOLO model runs: `auto` skips it on a small board or when it does not load.
+/// Whether the detection model runs: `auto` skips it on a small board or when it does not load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Inference {
@@ -144,7 +144,7 @@ impl Default for Config {
             model: None,
             score: 0.25,
             max_box_area: 0.9,
-            // Unbounded, YOLO held a Pi 5's four cores at 380 %; two boxes a second still follow a cat.
+            // Unbounded, the detector (YOLO then) held a Pi 5's four cores at 380 %; two boxes a second still follow a cat.
             inference_fps: 2.0,
             idle_inference_fps: 0.2,
             // At 2 Hz a Pi 5 ran at 183 % with ORT's four spinning threads, 81 % with two that sleep (2026-10-11).

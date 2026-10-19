@@ -71,7 +71,7 @@ fn parse_or<T: std::str::FromStr>(raw: Option<&str>, default: T) -> T {
 }
 
 env_cached!(
-    /// `KATAGLYPHIS_SWAP_XY`: set to `"1"` to swap X/Y in YOLO output coords.
+    /// `KATAGLYPHIS_SWAP_XY`: set to `"1"` to swap X/Y in the detector's output coords.
     fn swap_xy_enabled -> bool, || {
         std::env::var("KATAGLYPHIS_SWAP_XY").ok().as_deref() == Some("1")
     }
