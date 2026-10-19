@@ -55,6 +55,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   on a push to `develop` or `main`, never cancelled, where the lane published from its last step
   with `continue-on-error: true` and not at all after a red step. The site job in `:latest`: 518
   documents, 20 findings, 20 frozen, `.htaccess` and `404.html` in `target/doc`.
+- **`resources/web/combined-theme.css` is no longer tracked** (2026-10-19). ANTfrastructure's
+  `cargo_build_doc.sh` writes it from the family theme and `rustdoc-mapping.css` on every docs build
+  and is its only reader (`--extend-css`), so every theme move left a diff in the checkout (558
+  lines in, 114 out after the move to 89b098c9). It is in `.gitignore` now; the Windows bundle, MSIX
+  and MSI, which copy `resources/` whole, no longer ship it.
 
 ### Fixed
 - **The Linux lanes' clippy passes again** (2026-10-19). `EngineConfig::on_detections`, added with

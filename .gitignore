@@ -166,3 +166,5 @@ hailort.log
 # tarpaulin's reports, written where the coverage step runs.
 /cobertura.xml
 /tarpaulin-report.html
+# cargo_build_doc.sh writes the rustdoc theme here on every docs build; nothing else reads it.
+/resources/web/combined-theme.css
