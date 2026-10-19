@@ -43,6 +43,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   the ESP32 bridge in 0a4f9a7, failed `clippy -D warnings` with `type_complexity` at
   `src/webcam_engine.rs:34`; its type is the `DetectionsHook` alias now. `ci-container-steps.sh
   fmt-clippy` in `:latest` reproduced the error before the change and passes after it.
+- **A board found only through `/dev/serial/by-id` reports its MAC** (2026-10-19). Its serial
+  number kept udev's interface suffix (`E8:06:90:9D:3E:78-if00`), so `DeviceInfo::mac()` was
+  `None` for exactly the board the libudev-less enumeration missed. `crates/esp32/src/discovery.rs`
+  cuts the suffix; the new by-id test failed on the old code with that string.
 
 ## [2.3.4] - 2026-10-16
 

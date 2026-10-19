@@ -11,5 +11,8 @@ anyhow = { workspace = true }
 log = { workspace = true }
 serialport = { version = "4.7", default-features = false }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [lints]
 workspace = true

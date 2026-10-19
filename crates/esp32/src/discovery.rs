@@ -44,7 +44,7 @@ pub fn list_devices() -> Result<Vec<DeviceInfo>> {
     };
 
     #[cfg(target_os = "linux")]
-    add_by_id_devices(&mut devices);
+    add_by_id_devices(std::path::Path::new("/dev/serial/by-id"), &mut devices);
 
     devices.sort_by(|a, b| {
         b.espressif
@@ -97,9 +97,8 @@ fn is_espressif(
 /// udev's `by-id` links survive a ttyACM renumbering and name the vendor even when
 /// the libudev enumeration misses a freshly attached board.
 #[cfg(target_os = "linux")]
-fn add_by_id_devices(devices: &mut Vec<DeviceInfo>) {
-    const BY_ID: &str = "/dev/serial/by-id";
-    let Ok(entries) = std::fs::read_dir(BY_ID) else {
+fn add_by_id_devices(by_id: &std::path::Path, devices: &mut Vec<DeviceInfo>) {
+    let Ok(entries) = std::fs::read_dir(by_id) else {
         return;
     };
     for entry in entries.flatten() {
@@ -115,9 +114,11 @@ fn add_by_id_devices(devices: &mut Vec<DeviceInfo>) {
         if devices.iter().any(|device| device.path == path) {
             continue;
         }
+        // udev names the link `usb-<vendor>_<model>_<serial>-if<interface>`.
         let serial = name
             .split('_')
             .find(|part| part.matches(':').count() == 5)
+            .and_then(|part| part.split('-').next())
             .map(str::to_string);
         devices.push(DeviceInfo {
             path,
@@ -134,6 +135,75 @@ fn add_by_id_devices(devices: &mut Vec<DeviceInfo>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn device(path: &str, espressif: bool) -> DeviceInfo {
+        DeviceInfo {
+            path: path.into(),
+            serial_number: None,
+            product: None,
+            manufacturer: None,
+            vendor_id: if espressif { ESPRESSIF_VID } else { 0x0403 },
+            product_id: 0x1001,
+            espressif,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn by_id_links_add_the_espressif_boards_the_enumeration_missed() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let tty = |name: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"").unwrap();
+            path
+        };
+        let (acm0, acm1, usb0) = (tty("ttyACM0"), tty("ttyACM1"), tty("ttyUSB0"));
+        let by_id = dir.path().join("by-id");
+        std::fs::create_dir(&by_id).unwrap();
+        let link =
+            |target: &std::path::Path, name: &str| symlink(target, by_id.join(name)).unwrap();
+        link(
+            &acm0,
+            "usb-Espressif_USB_JTAG_serial_debug_unit_E8:06:90:9D:3E:78-if00",
+        );
+        link(
+            &acm1,
+            "usb-Espressif_USB_JTAG_serial_debug_unit_AA:BB:CC:DD:EE:FF-if00",
+        );
+        link(&usb0, "usb-FTDI_FT232R_USB_UART_A12345-if00-port0");
+        link(
+            &dir.path().join("gone"),
+            "usb-Espressif_USB_JTAG_serial_debug_unit_11:22:33:44:55:66-if00",
+        );
+
+        let canonical = |path: &std::path::Path| {
+            std::fs::canonicalize(path)
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        };
+        let mut devices = vec![device(&canonical(&acm1), true)];
+        add_by_id_devices(&by_id, &mut devices);
+
+        assert_eq!(devices.len(), 2, "{devices:?}");
+        assert_eq!(devices[0], device(&canonical(&acm1), true));
+        let added = &devices[1];
+        assert_eq!(added.path, canonical(&acm0));
+        assert_eq!(added.serial_number.as_deref(), Some("E8:06:90:9D:3E:78"));
+        assert_eq!(added.mac().as_deref(), Some("E8:06:90:9D:3E:78"));
+        assert_eq!(added.vendor_id, ESPRESSIF_VID);
+        assert!(added.espressif);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_missing_by_id_directory_adds_nothing() {
+        let mut devices = vec![device("/dev/ttyUSB0", false)];
+        add_by_id_devices(std::path::Path::new("/nonexistent/by-id"), &mut devices);
+        assert_eq!(devices, [device("/dev/ttyUSB0", false)]);
+    }
 
     #[test]
     fn recognizes_the_espressif_vid() {

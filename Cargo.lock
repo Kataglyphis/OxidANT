@@ -5219,6 +5219,7 @@ dependencies = [
  "kataglyphis_esp32_proto",
  "log",
  "serialport",
+ "tempfile",
 ]
 
 [[package]]
