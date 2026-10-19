@@ -94,12 +94,9 @@ builds green; `git submodule update --checkout --recursive` restores it. If a dr
 submodule is what you want, move the gitlink **and** fix the fallout in the same change;
 do not fork upstream behaviour locally.
 
-**The `.gitmodules` url is `https://`, never `git@github.com:`.** An SSH url works only
-with a key loaded, and fails where it matters most: a hosted runner, which has none, and
-a recursive checkout from a superproject, which inherits this `.gitmodules`
-(OmniAccelerANT builds this repo as a submodule). `actions/checkout` installs a
-`url.<https>.insteadOf` rewrite that papers over an SSH pin; a bare
-`git submodule update` does not, and died with `Permission denied (publickey)`.
+**The `.gitmodules` url is `https://`, never `git@github.com:`**: a recursive checkout of
+either of the [Consumers](#consumers) inherits it. Why, and how to change one:
+[the hub's § *Submodule URLs are https, never `git@`*](third_party/ANTfrastructure/docs/adopting-in-a-new-project.md#submodule-urls-are-https-never-git).
 
 The one submodule, `third_party/ANTfrastructure`, supplies every gate: the
 shellcheck/actionlint/gitleaks binaries the lint lane bootstraps, the cargo, packaging
@@ -135,7 +132,7 @@ than linked.
 
 ### The two traps a Windows checkout hits before anything runs
 
-- **A CRLF checkout breaks it before anything runs.** Bash runs the scripts inside the container, and a `\r` makes it fail with `set: pipefail\r: invalid option name`, which names neither the file nor line endings. `.gitattributes` pins `*.sh` to LF in both repos, but git does not rewrite an existing checkout: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`
+- **A CRLF checkout breaks it before anything runs**: bash in the container stops at `set: pipefail\r: invalid option name`. `.gitattributes` pins `*.sh` (and the workflows and `models.lock`) to LF; an older checkout needs the one-time fix in [the hub's failure-modes.md](third_party/ANTfrastructure/docs/failure-modes.md#set-pipefailr-invalid-option-name).
 - **The image's Rust may be older than its own pin.** `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ANTfrastructure; check `rustc --version` in the container if a build fails on an MSRV floor.
 
 ### The bin was renamed, not the lib — do not undo it
@@ -589,52 +586,35 @@ ANTfrastructure, two onto a reusable workflow and one onto a composite action.
 | Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — the hub's reusable `submodule-pins.yml` (`Submodule.Pins.Tests.ps1`, Pester 3.4.0, `windows-2025`) |
 | Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push to `develop` and PR, and `workflow_dispatch`; on `main` through `release.yml` | family Linux CI image, inherited; `ubuntu-26.04`. The only lane that builds and publishes the docs |
 | Linux arm64 · build + test | `linux-arm64.yml` → `reusable-linux.yml` | on request: `[ci arm64]` or `[ci linux]` in a commit message (`on-request.yml`), or `workflow_dispatch` | same image (a multi-arch index); native `ubuntu-26.04-arm`, no QEMU |
-| Linux riscv64 · cross build + test | `linux-riscv64.yml` → the hub's reusable `container-ci-riscv64.yml` (since 2026-10-01) | on request (`[ci riscv64]`), and the weekly GPU run | family Linux CI image (amd64) on `ubuntu-26.04`, plus a sysroot exported from the image's riscv64 child; the tests run under QEMU |
+| Linux riscv64 · cross build + test | `linux-riscv64.yml` → the hub's reusable `container-ci-riscv64.yml` (since 2026-10-01) | on request (`[ci riscv64]`, `[ci linux]`), and the weekly GPU run | family Linux CI image (amd64) on `ubuntu-26.04`, plus a sysroot exported from the image's riscv64 child; the tests run under QEMU |
 | Windows x64 · build + test | `windows-x64.yml` → the hub's reusable `container-ci-windows.yml` (since 2026-09-25) | on request (`[ci windows]`, `[ci x64]`) | family Windows CI image, inherited; `windows-2025`, whose host runs the renderer tests and the packaged exe |
 | Windows arm64 · cross build + test | `windows-arm64-cross.yml` → the hub's reusable `container-ci-windows.yml` | on request (`[ci windows]`, `[ci arm64]`) | the family image's arm64 bundle, inherited from the action's `image-arm64` default; `windows-2025` builds, `windows-11-arm` runs the product |
 | Linux x64 · build + test | `linux-x64.yml` (job `feature-matrix`) | with Linux x64 | family Linux CI image; `ubuntu-26.04`, one runner and image pull for every feature set (§ *Feature combinations and their system dependencies*) |
 
 **A push to `develop` runs Linux x64 and the gates; every other build lane runs on
-request** (owner rule 2026-10-15 for the whole family, [ANTfrastructure's
-`branch-and-release-strategy.md`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/branch-and-release-strategy.md)).
-A commit message asks with `[ci <lane>]`: `[ci windows]` runs both Windows lanes,
-`[ci arm64]` both arm64 ones, `[ci riscv64]` the riscv64 lane, `[ci all]` all four;
-`on-request.yml` reads the tokens through the hub's `requested-lanes` action and calls
-those lanes. Each lane also has *Run workflow* (`gh workflow run windows-x64.yml --ref
-develop`). A change to Windows-, arm64- or riscv64-only code asks for its lane in its
-commit message. No lane carries an `if:`; the call in `on-request.yml` does. From
-2026-09-24 to 2026-10-15 every lane ran on every push; before that `[build-arm]` and
-`[build-win]` gated two of them, and nothing reads those any more.
+request** (owner rule 2026-10-15 for the whole family). Tokens, *Run workflow*, merging
+into `main` and the release:
+[the hub's `branch-and-release-strategy.md`](third_party/ANTfrastructure/docs/branch-and-release-strategy.md).
+Here `on-request.yml` offers four lanes: `[ci windows]` runs both Windows lanes, `[ci arm64]`
+both arm64 ones, `[ci linux]` arm64 and riscv64, `[ci riscv64]` and `[ci x64]` one each, and
+`[ci all]` all four. A change to Windows-, arm64- or riscv64-only code asks for its lane in
+its commit message. `[build-arm]` and `[build-win]` are dead tokens.
 
-**Every push to `main` is a release** (`release.yml`): a version check, all five lanes
-once more, then `v<version>` with the Linux packages for both arches (each flatpak named
-for its arch), the Windows MSI, MSIX and portable zip for x64 and arm64, a `SHA256SUMS`
-and the version's `## [<version>]` CHANGELOG section, only when every lane is green.
-`scripts/linux/collect-release-assets.sh` picks the files, the hub's
-`publish-github-release.sh` publishes them. The version lives in `Cargo.toml`'s
-`[workspace.package]` alone (owner, 2026-10-15: 2.3.4, and `VERSION.txt` is gone). Before
-a merge, turn `## [Unreleased]` into `## [<version>] - <date>`. **A dry run proves all of
-that on `develop` without publishing:** `gh workflow run release.yml --ref develop -f
-dry-run=true` runs every lane and the collector, writes the files the release would carry
-with their checksums to the run's summary, and turns a failed version check into a
-warning; it is also the full round a merge needs.
+**Every push to `main` is a release** (`release.yml`): all five lanes once more, then
+`v<version>` with the Linux packages for both arches (each flatpak named for its arch), the
+Windows MSI, MSIX and portable zip for x64 and arm64, a `SHA256SUMS` and the version's
+`## [<version>]` CHANGELOG section. `scripts/linux/collect-release-assets.sh` picks the
+files. The version lives in `Cargo.toml`'s `[workspace.package]` alone (owner, 2026-10-15:
+2.3.4, and `VERSION.txt` is gone). `gh workflow run release.yml --ref develop -f
+dry-run=true` is the full round a merge needs, and publishes nothing.
 
-**The names follow the family convention of the same date:** kebab-case files, one per
-platform + arch, display names `<Platform> <Arch> · <what>` (U+00B7 middle dot). Steps
-both architectures share live once, in `reusable-linux.yml` ("Linux · reusable build",
-`workflow_call`); `linux-x64.yml` and `linux-arm64.yml` only say when they run and which
-runner, container platform and artifact suffix they want. The gate lanes kept their files
-and took plain names, "Lint gates" and "Submodule pins".
-
-**Concurrency is per lane and caller.** Each build workflow groups on
-`<lane>-${{ github.ref }}-${{ github.workflow }}` (since 2026-10-16) and cancels a
-superseded run except on the default branch. Inside a called workflow `github.workflow`
-is the caller's name, so a push's own run, `on-request.yml`'s call and `release.yml`'s
-call each get a group of their own; the literal lane prefix keeps the lanes apart, which
-`github.workflow` alone would not (every called lane in one group, and GitHub cancels a
-callee whose group repeats its caller's as a deadlock). `reusable-linux.yml` declares no
-group for that reason. The rule and what broke without it: ANTfrastructure's
-`docs/branch-and-release-strategy.md`.
+**File names, display names and concurrency groups are the family's**
+([§ *Workflow file names and display names*](third_party/ANTfrastructure/docs/adopting-in-a-new-project.md#workflow-file-names-and-display-names),
+[§ *How a repository implements it*](third_party/ANTfrastructure/docs/branch-and-release-strategy.md#how-a-repository-implements-it)).
+Here the steps both Linux arches share live once, in `reusable-linux.yml` ("Linux · reusable
+build"), which declares no `concurrency:` group; each build workflow groups on
+`<lane>-${{ github.ref }}-${{ github.workflow }}` (since 2026-10-16) and cancels a superseded
+run except on the default branch. The gate lanes are "Lint gates" and "Submodule pins".
 
 **Both Windows lanes are thin callers of the hub's `container-ci-windows.yml`** (owner
 decisions 2026-09-25). Its container half is `scripts/windows/Invoke-WindowsLane.ps1`,
@@ -737,15 +717,12 @@ reference is re-typed into a workflow, a script, or a comment.
 
 ### The riscv64 lane
 
-**Cross-built on amd64, tested under QEMU** (owner decision 2026-10-01, hub CON48). An
-emulated riscv64 build is 20-30x slower than native, so `linux-riscv64.yml` builds on the
-amd64 runner and runs only the test binaries as riscv64. It is a thin caller of the hub's
-`container-ci-riscv64.yml`; the container half is `bash scripts/linux/ci-container-steps.sh
-riscv64-test`, which runs `cargo test --workspace --locked --target
-riscv64gc-unknown-linux-gnu` after the hub's `riscv64_cross_env`. The mechanism (sysroot
-from the image's riscv64 child, the distro clang as linker, binfmt with QEMU 10.2.3 at
-`rva23u64`) is the hub's:
-[`docs/riscv64-cross-test-lanes.md`](third_party/ANTfrastructure/docs/riscv64-cross-test-lanes.md).
+**Cross-built on amd64, tested under QEMU** (owner decision 2026-10-01, hub CON48); why,
+the sysroot, the wrappers and QEMU are
+[the hub's `riscv64-cross-test-lanes.md`](third_party/ANTfrastructure/docs/riscv64-cross-test-lanes.md).
+`linux-riscv64.yml` is a thin caller of the hub's `container-ci-riscv64.yml`; its container
+half, `bash scripts/linux/ci-container-steps.sh riscv64-test`, runs `cargo test --workspace
+--locked --target riscv64gc-unknown-linux-gnu` after `riscv64_cross_env`.
 
 - **What runs:** every workspace test, 358 of them (measured 2026-10-01: build 1 min 43 s,
   whole step 2 min 52 s on a warm cargo home). `observant` links the image's riscv64
@@ -769,14 +746,13 @@ from the image's riscv64 child, the distro clang as linker, binfmt with QEMU 10.
   run the same step in the family image (the hub page has the command). The step prints
   `unstable feature specified for -Ctarget-feature: v` per crate: the image's riscv64 Rust
   flags, not a fault.
-- **Not on a 16 KiB-page host.** A Raspberry Pi 5 kernel (`uname -r` ends in `16k`) cannot
-  run the lane faithfully: QEMU user mode cannot map the 4 KiB-aligned segments of
-  `liborc-0.4.so.0`, so every plugin that links ORC (`videoconvertscale` among them) fails to
-  load and the cat cam's capture tests time out waiting for a frame (2026-10-13). Everything
-  else runs; trust the capture tests only from a 4 KiB-page host such as the CI runner.
-- **A spawned host program is not remapped.** `QEMU_LD_PREFIX` sends the test binary's own
-  opens into the sysroot, but `execve` is not redirected, so a test that spawns a tool runs
-  the host's. A bare `sleep` exited at once there, which made a test of
+- **Not on a 16 KiB-page host** such as a Raspberry Pi 5: the cat cam's capture tests time
+  out there, since no ORC-linked GStreamer plugin loads (2026-10-13). Trust them only from a
+  4 KiB-page host such as the CI runner;
+  [the hub's traps](third_party/ANTfrastructure/docs/riscv64-cross-test-lanes.md#traps-each-found-by-a-failing-run)
+  say why.
+- **A spawned host program is not remapped** (`execve`, the same traps). A bare `sleep`
+  exited at once there, which made a test of
   `camera::run_with_timeout` see output instead of a timeout (9e0a401 to 8a5337b, red); the
   test now goes through `sh -c`, and the function returns `None` for any failed exit.
 
@@ -871,10 +847,10 @@ a dead link there costs more than tidiness.
 
 One large file is tracked deliberately, not in git-lfs; `large-files.allow` freezes it
 for the hub's `large-files` gate. **Decision D4, "the history is not being rewritten", is
-superseded:** on 2026-10-17 (owner) binary blobs of 500 KB and more that no branch held
-left the history of all ten family repositories, and this pack went from 63 to 12 MiB.
-Every commit was kept and maps to one new id, the superprojects' gitlinks moved with it,
-and a checkout from before follows with the hub's `git-adopt-rewritten-history.sh`.
+superseded** (owner, 2026-10-17): the family's history rewrite took this pack from 63 to
+12 MiB. What it removed: [the hub's `data-repositories.md`](third_party/ANTfrastructure/docs/data-repositories.md#what-moved-and-why);
+a checkout from before follows with
+[§ *After a history rewrite*](third_party/ANTfrastructure/docs/adopting-in-a-new-project.md#after-a-history-rewrite).
 
 | File | Size | Why it is tracked |
 | --- | --- | --- |

@@ -48,30 +48,28 @@ The Windows container build is [windows.md](windows.md).
 
 ## Linux containers locally (Rancher Desktop)
 
-The Linux image is **always** the family CI one, `:latest` (the old `:latest-cross` name
-is retired), in CI and locally. `bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh`
-prints the reference from that submodule's `versions.env`, so the command below asks for
-it and survives a tag bump. Rancher Desktop defaults to **containerd**, so it is
-`nerdctl --namespace default`, not `docker`. From Git Bash,
-`MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` is mandatory, or the mount argument is
-mangled.
+Any CI step runs as `bash scripts/linux/ci-container-steps.sh <step>` in the family Linux
+image ([AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration)). From
+PowerShell, with `target/` and the cargo home on named volumes (2026-10-19, `fmt-clippy`
+and `docs`):
 
 ```pwsh
-$env:MSYS_NO_PATHCONV=1; $env:MSYS2_ARG_CONV_EXCL='*'
 $image = bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh
-rdctl shell nerdctl --namespace default run --rm --user root `
-  -v kata-cargo-cache:/cargo-cache `
-  -v /mnt/d/path/to/repo:/workspace -w /workspace `
-  $image `
-  bash -lc 'export CARGO_HOME=/cargo-cache; bash third_party/ANTfrastructure/linux/scripts/02-toolchain/rust/cargo_release.sh'
+nerdctl run --rm --platform linux/amd64 `
+  -v "C:\path\to\OxidANT:/workspace" -w /workspace `
+  --mount type=volume,source=ox-target,target=/workspace/target `
+  --mount type=volume,source=ox-cargo-home,target=/tmp/cargo-home -e CARGO_HOME=/tmp/cargo-home `
+  $image bash -lc 'bash scripts/linux/ci-container-steps.sh fmt-clippy'
 ```
 
-The named volume keeps the cargo registry across runs. Any single CI step runs the same
-way with `bash scripts/linux/ci-container-steps.sh <step>` in place of the driver
-([AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration)). **Shell
-scripts must be LF** (verified 2026-08-07): bash dies on `set: pipefail\r: invalid option name`
-in a CRLF checkout; the one-time fix is in the AGENTS.md section above.
+- **`target/` is a volume, not a `CARGO_TARGET_DIR` elsewhere**: the `docs` step copies
+  into `./target/doc`. The volume also keeps the Linux build off the checkout's MSVC `target/`.
+- **A new volume belongs to root**; the image runs as uid 1001, so chown it once:
+  `nerdctl run --rm --user root --entrypoint chown --mount type=volume,source=<vol>,target=/vol $image -R 1001:1001 /vol`.
+- **The cargo steps need no git; `run-lint-gates.sh` does.** In a submodule checkout `.git`
+  points outside the mount, so run that gate in Git Bash on the host.
+- Shell scripts must be LF: [AGENTS.md § The two traps](../AGENTS.md#the-two-traps-a-windows-checkout-hits-before-anything-runs).
 
-The procedure is ANTfrastructure's:
-[`rancher-desktop-linux-containers.md`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/rancher-desktop-linux-containers.md),
-its cargo cache in § *Persisting the cargo cache*.
+`nerdctl` rather than `docker`, `:latest`, Git Bash's path mangling, `-v name:/path` and an
+empty mount: ANTfrastructure's
+[`rancher-desktop-linux-containers.md`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/rancher-desktop-linux-containers.md).

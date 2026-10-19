@@ -17,27 +17,14 @@ bash scripts/linux/renovate-local.sh --apply --dry-run  # the plan
 bash scripts/linux/renovate-local.sh --apply            # gitlink, manifests and Cargo.lock
 ```
 
-- **Run it from WSL.** The wrapper runs the hub's `renovate-local.sh` on this root and
-  bootstraps a pinned, checksum-verified Node and Renovate on first use; the Windows side
-  has no Node.
-- **Nothing runs it for you.** The Renovate GitHub App is installed on no repo in this
-  family and will not be, so this CLI is the only reader of `.github/renovate.json`. No
-  workflow calls it and it blocks no commit.
-- **`--apply` writes every ecosystem the tree has** (the hub's script since 2026-09-11):
-  the `third_party/ANTfrastructure` gitlink (the one `.gitmodules` entry; it declares
-  `branch = develop`, which `--apply` requires); a `Cargo.toml` value rewritten on its
-  line, with `Cargo.lock` refreshed by `cargo update`; and, through the shared preset's
-  lock-file maintenance, `Cargo.lock` moved to the newest releases the manifests allow.
-  A run that cannot finish puts everything back and exits 1; exit 2 means a reported
-  update was not applied. It stages and commits nothing.
-- `third_party/egui-winit-0.36.2` is skipped (`.github/renovate.json`).
-  `.github/dependabot.yml` is still present; retiring it is a separate decision.
-- **Managers that reach `api.github.com` answer short without a token**, and say so.
-  Under `--platform=local` the variable is `GITHUB_COM_TOKEN`, not `RENOVATE_TOKEN`:
-  `GITHUB_COM_TOKEN="$(gh auth token)" bash scripts/linux/renovate-local.sh --managers cargo`.
+Here `--apply` moves the `third_party/ANTfrastructure` gitlink (its `.gitmodules` entry
+declares `branch = develop`, which `--apply` requires), rewrites `Cargo.toml` values and
+refreshes `Cargo.lock`; it stages and commits nothing. `.github/renovate.json` skips
+`third_party/egui-winit-0.36.2`. `.github/dependabot.yml` is still present; retiring it is a
+separate decision.
 
-The script header covers the rest. Why the CLI is local, and what `--apply` writes for
-each ecosystem: ANTfrastructure's
+Run it from WSL. Why the CLI is local, what `--apply` writes per ecosystem and its exit
+codes, and `GITHUB_COM_TOKEN` for managers that ask `api.github.com`: ANTfrastructure's
 [`dependency-updates.md`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/dependency-updates.md).
 
 ## Moving the crates with cargo

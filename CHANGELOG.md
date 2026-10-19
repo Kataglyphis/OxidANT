@@ -37,6 +37,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
   DEIM-D-FINE-N). The root package's description, the CLI's `about` and the MSI and MSIX
   descriptions no longer call it a project template. `docs/crates.md`'s literature keeps the
   renderer's shading references and drops the Vulkan, C++ and path-tracing ones.
+- **The docs link the hub instead of restating it** (2026-10-19, ANTfrastructure a447ef3c).
+  AGENTS.md's CI rule, workflow names and concurrency, https submodule rule, CRLF fix, riscv64
+  mechanism and QEMU traps and history rewrite point at the hub's pages, keeping this repo's
+  tokens, release contents and exceptions. `docs/getting-started.md`'s container recipe is the
+  one measured that day (PowerShell `nerdctl`, `target/` and the cargo home on named volumes,
+  the uid 1001 chown), not a copy of the hub's; `docs/updates.md` keeps this repo's Renovate
+  facts. `doc-dupes-hub.allow` turns on the hub's `doc-dupes --against-hub` gate, with the
+  owner's docs rule as its one row. Corrected: `[ci linux]` runs the riscv64 lane too, and
+  `.github/renovate.json` says `branch = develop`.
 
 ### Fixed
 - **The Linux lanes' clippy passes again** (2026-10-19). `EngineConfig::on_detections`, added with
