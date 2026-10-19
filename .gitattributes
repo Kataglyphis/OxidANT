@@ -4,3 +4,4 @@
 # Bash in the bind-mounted Linux container dies on a trailing \r that core.autocrlf would add.
 *.sh text eol=lf
 *.bash text eol=lf
+resources/models/models.lock text eol=lf
