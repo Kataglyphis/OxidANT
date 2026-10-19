@@ -41,6 +41,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   ORT (36), the old walk and the new one hold the same SONAMEs with the same bytes; only the old
   walk's real-name copies beside its soname links (`libcamera.so.0.7.2`) are gone. A library ldd
   cannot find now stops the collection instead of being left out.
+- **The script suites run on the hub's `lib/test-harness.sh`** (2026-10-19):
+  `test-check-crate-coverage.sh` (8 assertions) and `test-bench-report.sh` (12) drop their own
+  `expect`/`check` counters for `t_assert_rc`, `t_assert_grep` and `t_summary`, and now report every
+  failed assertion instead of stopping at the first. `lint-gates.yml`'s `script-tests` job checks the
+  hub submodule out for it. In `:latest` both pass with the old counts, and four planted bugs in
+  `check-crate-coverage.py` and `bench-report.py` fail them.
 - **AGENTS.md and the shipped texts say what is true** (2026-10-19). AGENTS.md: Renovate's
   `--apply` writes every ecosystem, not gitlinks only; the zune-core hold is gone (`Cargo.lock`
   has 0.5.3; its history is in `docs/updates.md`); the clippy, test and bench commands take the

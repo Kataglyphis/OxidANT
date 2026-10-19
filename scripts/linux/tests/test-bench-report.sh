@@ -1,23 +1,19 @@
 #!/usr/bin/env bash
 # The benchmark report on synthetic Criterion output: the median of earlier runs, its warning and its failure.
-set -euo pipefail
+set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/antfrastructure.sh
+source "${SCRIPT_DIR}/../lib/antfrastructure.sh"
+antfrastructure_source linux/scripts/lib/test-harness.sh || exit 1
 report="${SCRIPT_DIR}/../bench-report.py"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
-passed=0
 # check <name> <file> <grep -E pattern> [absent]: the file holds the pattern, or with "absent" does not.
 check() {
-  local name="$1" file="$2" pattern="$3" mode="${4:-present}"
-  if { [ "$mode" = absent ] && grep -qE -- "$pattern" "$file"; } || { [ "$mode" = present ] && ! grep -qE -- "$pattern" "$file"; }; then
-    printf 'FAIL %s: /%s/ %s in\n' "$name" "$pattern" "$mode" >&2
-    sed 's/^/  | /' "$file" >&2
-    return 1
-  fi
-  passed=$((passed + 1))
-  printf 'ok   %s\n' "$name"
+  t_case "$1"
+  if [ "${4:-present}" = absent ]; then t_assert_no_grep "$2" "$3"; else t_assert_grep "$2" "$3"; fi
 }
 
 # criterion <dir> <detector ns> <draw_box ns>: Criterion's layout for two benches.
@@ -70,4 +66,4 @@ check "no history yet says so" "${work}/out" '^\| `detector` \| 53\.00 ms \| no 
 report "${work}/nothing" "${work}/history"
 check "no results say so" "${work}/out" '^No benchmark results under'
 
-printf '  %d assertion(s) passed\n' "$passed"
+t_summary

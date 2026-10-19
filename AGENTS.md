@@ -577,13 +577,14 @@ stayed that way through several edits.
 Eleven workflow files: the build lanes, the gate lanes, `docs.yml`, `on-request.yml`,
 `release.yml` and the reusable `reusable-linux.yml`. The five build lanes, one file per platform + arch,
 run inside ANTfrastructure images rather than on the runner. The gate lanes pull no
-image, and **none of the three gate jobs is a copied job**: each is one `uses:` onto
-ANTfrastructure, two onto a reusable workflow and one onto a composite action.
+image, and **three of the four gate jobs are one `uses:` onto ANTfrastructure**, two onto a
+reusable workflow and one onto a composite action; the fourth runs this repo's script suites.
 
 | Lane (display name) | Workflow | Runs when | Image and runner |
 | --- | --- | --- | --- |
 | Lint gates | `lint-gates.yml` (job `lint-gates`) | every push/PR to `main`/`develop` | none — the hub's reusable `lint-gates.yml` with `ratchets: true`; the same aggregator `bash scripts/linux/run-lint-gates.sh` runs locally |
 | Lint gates | `lint-gates.yml` (job `powershell-lint`) | same | none — the hub's reusable `python-ci-windows.yml` with `build-python-package: false`, `lint-powershell: true`, `lint-path: scripts`, and no `secrets:` block; `Invoke-Lint.ps1 -Path scripts -FailOnAnalyzer` on `windows-2025` |
+| Lint gates | `lint-gates.yml` (job `script-tests`) | same | none — every `scripts/linux/tests/test-*.sh` on `ubuntu-26.04`, on the hub's `lib/test-harness.sh` (so the checkout takes the submodule) |
 | Lint gates | `lint-gates.yml` (job `generated-artifacts`) | same | none — every suite in `scripts/windows/tests/` (the generated-artifacts check, `CargoTarget` and `OrtPayload`) under Pester 3.4.0 on `windows-2025` |
 | Submodule pins | `submodule-pins.yml` | push/PR to `main`/`develop` touching `.gitmodules`, `third_party/**` or itself | none — the hub's reusable `submodule-pins.yml` (`Submodule.Pins.Tests.ps1`, Pester 3.4.0, `windows-2025`) |
 | Linux x64 · build + test | `linux-x64.yml` → `reusable-linux.yml` | **every** push to `develop` and PR, and `workflow_dispatch`; on `main` through `release.yml` | family Linux CI image, inherited; `ubuntu-26.04` |
