@@ -34,6 +34,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `scripts/linux/collect-release-assets.sh` and its suite are gone; the hub's suite holds OxidANT's
   uploads. On one fake release run in `:latest`, the old and the new collector gave the same 14
   files, byte for byte, the zips' members included.
+- **`run-producer-pi.sh` collects the host libcamera closure with the hub's `elf-closure.sh`**
+  (2026-10-19): the four roots go in under their SONAMEs, then `--ldd --no-default-system
+  --no-runpath` with the same eight C-runtime names as `--system`. In `:latest`, over the image's
+  libcamera, libcamera-base and two IPAs (25 libraries) and over `libgstlibcamera.so` plus the chain
+  ORT (36), the old walk and the new one hold the same SONAMEs with the same bytes; only the old
+  walk's real-name copies beside its soname links (`libcamera.so.0.7.2`) are gone. A library ldd
+  cannot find now stops the collection instead of being left out.
 - **AGENTS.md and the shipped texts say what is true** (2026-10-19). AGENTS.md: Renovate's
   `--apply` writes every ecosystem, not gitlinks only; the zune-core hold is gone (`Cargo.lock`
   has 0.5.3; its history is in `docs/updates.md`); the clippy, test and bench commands take the

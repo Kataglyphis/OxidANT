@@ -88,38 +88,26 @@ collect_hostlibs() {
   mkdir -p "${hostlibs_dir}"
   printf 'collecting host libcamera libraries into %s\n' "${hostlibs_dir}"
   # The IPA is copied only for its dependencies; libcamera loads it from its own mounted directory.
-  local queue=(
-    "$(readlink -f "${libcamera_base}/libcamera.so.0.7")"
-    "$(readlink -f "${libcamera_base}/libcamera-base.so.0.7")"
-    "${pisp}"
+  hostlibs_closure "${hostlibs_dir}" \
+    "$(readlink -f "${libcamera_base}/libcamera.so.0.7")" \
+    "$(readlink -f "${libcamera_base}/libcamera-base.so.0.7")" \
+    "${pisp}" \
     "${ipa}"
-  )
-  declare -A seen=()
-  while ((${#queue[@]})); do
-    local f="${queue[0]}"; queue=("${queue[@]:1}")
-    if [ -z "$f" ] || [ ! -e "$f" ]; then
-      continue
-    fi
-    local base; base="$(basename "$f")"
-    case "$base" in
-      libc.so.6|libm.so.6|libpthread.so.0|libdl.so.2|librt.so.1|libgcc_s.so.1|libstdc++.so.6|ld-linux*) continue ;;
-    esac
-    [ -n "${seen[$base]:-}" ] && continue
-    seen[$base]=1
-    cp -L "$f" "${hostlibs_dir}/${base}"
-    while IFS= read -r dep; do
-      [ -n "$dep" ] && [ -e "$dep" ] && queue+=("$dep")
-    done < <(ldd "$f" 2>/dev/null | awk '/=> \// {print $3} /^\t\/[^ ]+ \(/ {print $1}')
+  printf 'collected %d libraries (%s)\n' "$(find "${hostlibs_dir}" -type f | wc -l)" "$(du -sh "${hostlibs_dir}" | cut -f1)"
+}
+
+# hostlibs_closure <dir> <root>...: the roots under the SONAME the loader asks for, then all they load but the C runtime.
+hostlibs_closure() {
+  local dir="$1" root soname closure
+  shift
+  for root in "$@"; do
+    soname="$(readelf -d "${root}" 2>/dev/null | awk '/SONAME/ {gsub(/[][]/,""); print $NF}')"
+    cp -L "${root}" "${dir}/${soname:-$(basename "${root}")}"
   done
-  # NEEDED names sonames, but files are named after their real paths, so link each soname.
-  local lib soname
-  for lib in "${hostlibs_dir}"/*; do
-    soname="$(readelf -d "$lib" 2>/dev/null | awk '/SONAME/ {gsub(/[][]/,""); print $NF}')"
-    if [ -n "${soname}" ] && [ ! -e "${hostlibs_dir}/${soname}" ]; then
-      ln -s "$(basename "$lib")" "${hostlibs_dir}/${soname}"
-    fi
-  done
-  printf 'collected %d libraries (%s)\n' "${#seen[@]}" "$(du -sh "${hostlibs_dir}" | cut -f1)"
+  closure="$(antfrastructure_path linux/scripts/06-packaging/elf-closure.sh)"
+  bash "${closure}" --bundle "${dir}" --lib-dir "${dir}" --ldd --no-default-system --no-runpath \
+    --system libc.so.6 --system libm.so.6 --system libpthread.so.0 --system libdl.so.2 \
+    --system librt.so.1 --system libgcc_s.so.1 --system libstdc++.so.6 --system 'ld-linux*'
 }
 
 if [ "${libs_only}" = true ]; then

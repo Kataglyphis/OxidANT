@@ -525,7 +525,10 @@ a copy here goes stale:
 
 The script's own contribution to the loader path is only `/hostlibs` (the host's
 Raspberry Pi OS libcamera closure, which must win over the image's older upstream copy)
-and the host multiarch directory, appended last.
+and the host multiarch directory, appended last. `collect_hostlibs` copies libcamera,
+libcamera-base, libpisp and the PiSP IPA under their SONAMEs and the hub's
+`elf-closure.sh --ldd` adds what they load but the C runtime (2026-10-19); a library ldd
+cannot find stops the collection, where the old walk left it out.
 
 **It runs through the image's entrypoint, not around it** (2026-09-29). Before
 ANTfrastructure CON23 the entrypoint's `libcamera-env.sh` *prepended* `/opt/libcamera`
