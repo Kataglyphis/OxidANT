@@ -8,8 +8,9 @@ and every gate use is `RUST_VERSION` in ANTfrastructure's
 (`third_party/ANTfrastructure/linux/scripts/01-core/versions.env` in a checkout); read it
 there, since a number pinned here went stale. The C++ compiler is for the root package's
 `build.rs`, which compiles the cxx bridge in `src/native_only.rs` (on Windows the Visual
-Studio C++ build tools, which the MSVC Rust toolchain needs to link anyway). Nothing else
-is needed for a default-feature build.
+Studio C++ build tools, which the MSVC Rust toolchain needs to link anyway). GStreamer's
+development files and the chain-built ONNX Runtime come from the family images; on a bare
+host: [AGENTS.md § Targets and their system dependencies](../AGENTS.md#targets-and-their-system-dependencies).
 
 ## Build
 
@@ -20,8 +21,8 @@ cargo build --workspace --locked
 ```
 
 The three build profiles (dev, `profile` = release + debuginfo, `release` = fat LTO):
-[AGENTS.md § 5](../AGENTS.md#5-build-run-test). Optional features and the system
-libraries they need: [crates.md § Features](crates.md#features). Running what you built:
+[AGENTS.md § 5](../AGENTS.md#5-build-run-test). What each target builds:
+[crates.md § No features](crates.md#no-features-the-target-decides). Running what you built:
 [running.md](running.md); testing it: [testing.md](testing.md).
 
 ## API docs
@@ -32,7 +33,7 @@ cargo doc --open
 
 `docs.yml` publishes them to <https://rust.jonasheinle.de> on every push to `develop` or
 `main`, through the hub's `build-docs.yml` with `builder: rustdoc`: ANTfrastructure's
-`cargo_build_doc.sh`, which is `cargo doc --no-deps --workspace` (all 11 crates) plus the
+`cargo_build_doc.sh`, which is `cargo doc --no-deps --workspace` (all 12 crates) plus the
 family theme and `images/`, then the hub's `.htaccess` and its built-site link gate, whose
 known exceptions are `docs/site-links.allow`. `bash scripts/linux/ci-container-steps.sh docs`
 builds the same site into `target/doc` locally. The `oxidant` crate's front page there is

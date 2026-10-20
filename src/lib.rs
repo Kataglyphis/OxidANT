@@ -18,19 +18,16 @@ pub mod utils;
 #[allow(unused_imports)]
 pub(crate) use kataglyphis_telemetry::gpu_wmi;
 
-#[cfg(feature = "onnxruntime")]
+#[cfg(any(target_os = "linux", windows))]
 pub use kataglyphis_inference::ort_ext;
-#[cfg(feature = "onnxruntime")]
+#[cfg(any(target_os = "linux", windows))]
 pub use kataglyphis_inference::ort_runtime;
 
-#[cfg(feature = "burn_demos")]
-pub mod burn_demos;
-
 mod frb_generated;
-#[cfg(onnx)]
+#[cfg(not(target_arch = "wasm32"))]
 pub use kataglyphis_inference::person_detection;
 
-#[cfg(all(feature = "gstreamer", onnx))]
+#[cfg(desktop)]
 mod webcam_engine;
 
 /// C FFI demo stub — returns a fixed integer to verify `extern "C"` linkage works.

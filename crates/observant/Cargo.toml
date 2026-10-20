@@ -11,8 +11,8 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 log = { workspace = true }
 kataglyphis_core = { path = "../core" }
-kataglyphis_inference = { path = "../inference", features = ["onnxruntime_dynamic"] }
-kataglyphis_media = { path = "../media", features = ["gstreamer"] }
+kataglyphis_inference = { path = "../inference" }
+kataglyphis_media = { path = "../media" }
 gstreamer = { workspace = true }
 gstreamer-app = { workspace = true }
 sysinfo = { workspace = true }

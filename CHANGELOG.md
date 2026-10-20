@@ -14,6 +14,59 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Changed
+- **3.0.0: no Cargo features any more; every target builds what it can run** (2026-10-20, owner:
+  "They are no longer just an opt-in feature. They will stay there forever"). Every `[features]`
+  table is gone, each dependency is unconditional or `[target.'cfg(...)'.dependencies]`, and the code
+  gates on `cfg(target_os)` and the root's `cfg(desktop)`. **Breaking for anyone passing
+  `--features`**: cargo now refuses the names, OmniAccelerANT's `KATAGLYPHIS_RUST_FEATURES` included.
+  - Linux (x64, arm64, riscv64) and Windows (x64, arm64) build the whole workspace: tract and the chain
+    ORT with CUDA registered (DirectML on Windows), GStreamer capture, the webcam engine, the ESP32
+    bridge, the wgpu GUI and the burn demos. `aarch64-linux-android` builds `oxidant` with the
+    detector on tract. `wasm32-unknown-unknown` builds it without the detector: tract built there and
+    took the release wasm from 0.66 to 15.5 MB, but the model loads from a file and the web has no file
+    system. The calls a target cannot serve answer so; no frb signature changed. The GTK4 GUI waits
+    for GTK4 in the Linux image (`BACKLOG.md` has the change).
+  - ORT first, tract as the fallback, loudly: with `KATAGLYPHIS_ONNX_BACKEND` unset the detector warns
+    `Falling back to tract: <ORT's reason>`, and a model neither loads names both reasons.
+    `PersonDetector::with_backend` and `backend_name` are new. `KATAGLYPHIS_ORT_DEVICE=auto` on an
+    ORT without the CUDA provider now runs ORT on the CPU, where it dropped to tract.
+    `model_errors.rs`, which compiled out when both backends were on, tests each backend's error and
+    the pair's; `real_model.rs` checks that ORT is the backend and that tract finds both cats too;
+    `ort_fallback.rs` (new) points `ORT_DYLIB_PATH` at nothing and checks the warning and tract's result.
+  - The burn demos are their own crate, `crates/burn_demos` (`kataglyphis_burn_demos`, bin
+    `burn-demos`), so `oxidant`, which both consumers link, carries no Burn; neither does it depend
+    on `kataglyphis_gui` any more. The demos return their results and have 19 tests (each demo, the
+    binary, the detector demo on the real model), which found `binary_cross_entropy` using `1 - pred`
+    where `1 - target` belongs. Plots use plotters' `ab_glyph` and the system's TrueType font
+    (`fc-match`, then the usual files; Lucida Console in Server Core) instead of font-kit, whose
+    pkg-config link paths put the distro's `libstdc++` ahead of GCC 16.2's under tarpaulin, where the
+    chain ORT then failed to `dlopen`.
+  - The GUI's wgpu has no GL backend, which its `GpuBackend` never picks: the `opengl32.dll` import
+    kept the CLI from loading in Server Core. The GUI crate, untested until now, has 15 tests, and the
+    CLI's integration tests run `media-check`.
+  - `kataglyphis_media::ensure_gst_initialized` sets `GST_PLUGIN_SYSTEM_PATH(_1_0)=""`,
+    `GST_REGISTRY_FORK=no` and a per-copy `GST_REGISTRY` beside the bundled `GST_PLUGIN_PATH`, each
+    only when unset (the hub's rule for a package's GStreamer).
+  - **The Linux packages carry their closure**: `scripts/linux/package-linux.sh` replaces the hub's
+    one-binary `package_archive.sh` call; the bundle has the image's GStreamer, GLib, FFmpeg and GCC
+    runtime (`elf-closure.sh`), the chain ORT unpatched, the GUI's plugins, the model and the image's
+    glibc for an older host (`bundle-loader.sh --beside`), and is proven before packing. The new
+    `clean-host` job installs and starts the `.deb`, the tarball and the AppImage on a bare runner.
+  - CI: `TEST_FEATURES`, `FEATURE_CHECK_SETS` and the `feature-check` step, `linux-x64.yml`'s
+    `feature-matrix` job and its `feature-checks-per-job` input, `Invoke-WindowsConfigMatrix.ps1`
+    (a featureless `base` and four feature builds; `Invoke-AppProfiles.ps1` now builds and runs the
+    full CLI in each profile), `Build.CargoFeatures`/`CARGO_FEATURES` and every `--features` in the
+    Windows scripts are gone, and so is `deny.toml`'s `all-features`. Coverage now measures
+    `crates/media`, `src/webcam_engine.rs`, the GUI and the burn demos, which no module hides behind
+    a feature any more: 70.98 % of 12357 lines (72.9 % of fewer lines on 2026-10-19), with new floors for
+    the three crates and `src` raised to 19 %.
+  - Proof, 2026-10-20: in `:latest` every container step of the Linux lane (720 tests passed, the
+    bench, release, docs and the packages with their closure, G6 and element checks), the riscv64 step
+    under QEMU (720 passed, 8 min 33 s), `oxidant` for `aarch64-linux-android` (the NDK's clang) and
+    `wasm32-unknown-unknown` (the web lane's nightly and flags) under `clippy -D warnings`, and the
+    packages on a bare `ubuntu:26.04` and on `debian:13` (glibc 2.41, so the bundled glibc); in
+    `:winamd64` the x64 lane's container half (381 tests, the CLI in each profile, `Build-Windows.ps1`'s
+    14 steps) and the bundle's `onnx-runtime` and `media-check` on the host.
 - **Dependabot is off** (2026-10-20, owner: dependency upgrades go only through Renovate as a local
   CLI, ANTfrastructure's `docs/dependency-updates.md`). `.github/dependabot.yml` (cargo and GitHub
   Actions) is deleted and the repository's Dependabot security-update PRs are disabled; Dependabot

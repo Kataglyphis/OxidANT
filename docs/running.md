@@ -1,72 +1,66 @@
 # Running
 
-Default features are empty, so everything below beyond `read` and `stats` needs an
-explicit `--features` and the system libraries it pulls ([crates.md § Features](crates.md#features)).
+Every build carries everything its target can run, with no features to name
+([crates.md § No features](crates.md#no-features-the-target-decides)); the system libraries:
+[AGENTS.md § Targets and their system dependencies](../AGENTS.md#targets-and-their-system-dependencies).
 ObservANT, the cat cam service, has its own page: [observant.md](observant.md).
 
 ## The CLI
 
-The CLI is its own package, not the root one (whose only bin is `burn-demos`), so
-`cargo run` needs `-p kataglyphis_cli`:
+The CLI is its own package, not the root one, so `cargo run` needs `-p kataglyphis_cli`:
 
 ```bash
 cargo run -p kataglyphis_cli -- read --path README.md
 ```
 
-## Windows: GStreamer + ONNX overlay (wgpu)
-
-CPU, through tract:
+## The camera GUI with ONNX detection (wgpu)
 
 ```bash
-cargo run -p kataglyphis_cli --features gui_windows,onnx_tract -- gui --backend dx12
+cargo run -p kataglyphis_cli -- gui
 ```
 
-Every `onnxruntime*` feature loads ONNX Runtime at run time and downloads nothing at
-build time. The only ORT it may load is the family's chain build (owner rule
-2026-09-23): inside the Windows image `$env:ONNX_ROOT\bin\onnxruntime.dll`, found
-automatically; anywhere else, stage that file (plus `DirectML.dll` and
-`onnxruntime_providers_shared.dll`) next to the exe or point `ORT_DYLIB_PATH` at it.
-There is no fallback to the `onnxruntime.dll` Windows ships in System32, and a file that
-is not the chain build (a pip wheel's, a GitHub release's) is refused at load time. The
-portable bundle (`dist\windows-<x64|arm64>\bundle`), MSIX and MSI carry the chain copy.
+The detector runs on the chain-built ONNX Runtime, loaded at run time; nothing is
+downloaded at build time. When ORT cannot load, it says why in a warning and runs on tract
+instead (`KATAGLYPHIS_ONNX_BACKEND=tract` picks tract, `ort` refuses the fallback). The only
+ORT it may load is the family's chain build (owner rule 2026-09-23): inside the images
+`$env:ONNX_ROOT\bin\onnxruntime.dll` (Windows) or `/usr/local/lib/onnxruntime-cpu/lib`
+(Linux), found automatically; anywhere else, stage it (on Windows plus `DirectML.dll` and
+`onnxruntime_providers_shared.dll`) next to the exe or in its `lib/`, or point
+`ORT_DYLIB_PATH` at it. There is no fallback to the `onnxruntime.dll` Windows ships in
+System32, and a file that is not the chain build (a pip wheel's, a GitHub release's) is
+refused at load time. Every package carries the chain copy: the Windows bundle
+(`dist\windows-<x64|arm64>\bundle`), MSIX and MSI, and the Linux tarball, `.deb`, AppImage
+and flatpak.
 
-The `onnx-runtime` subcommand (with an `onnxruntime_*` feature) prints the path of the
-ONNX Runtime the exe loaded, without starting the GUI, or fails when no chain ORT loads.
-Both Windows lanes run it on the packaged exe:
+The `onnx-runtime` subcommand (Linux and Windows) prints the path of the ONNX Runtime the
+exe loaded, without starting the GUI, or fails when no chain ORT loads. Both Windows lanes
+run it on the packaged exe, the Linux lanes on every package:
 
 ```bash
-cargo run -p kataglyphis_cli --features onnxruntime_directml -- onnx-runtime
+cargo run -p kataglyphis_cli -- onnx-runtime
 ```
 
 The GUI creates its camera pipeline's GStreamer elements by name (`mfvideosrc`,
 falling back to `autovideosrc`, then `videoconvert`, `capsfilter`, `appsink`), so every
-Windows package carries their plugins in `lib\gstreamer-1.0` (the list is
-`Build.GStreamerPlugins` in `scripts/windows/Build-Windows.config.psd1`; how:
-[AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration)). The
-`media-check` subcommand (with `gui_windows`) builds that pipeline without starting it,
-so with no camera and no window, and prints the plugin file behind each element. Both
-Windows lanes run it on the packaged exe:
+package carries their plugins in `lib/gstreamer-1.0` (Windows: `Build.GStreamerPlugins` in
+`scripts/windows/Build-Windows.config.psd1`; Linux: `plugins` in
+`scripts/linux/package-linux.sh`; how: [AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration)).
+The `media-check` subcommand builds that pipeline without starting it, so with no camera
+and no window, and prints the plugin file behind each element:
 
 ```bash
-cargo run -p kataglyphis_cli --features gui_windows -- media-check
+cargo run -p kataglyphis_cli -- media-check
 ```
 
-ONNX Runtime + DirectML:
-
-```bash
-cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- gui --backend dx12
-```
-
-ONNX Runtime + CUDA (NVIDIA):
+On Windows ORT registers DirectML; CUDA (NVIDIA) on request, on Linux and Windows:
 
 ```bash
 # PowerShell
 $env:KATAGLYPHIS_ORT_DEVICE="cuda"
-cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --backend dx12
+cargo run -p kataglyphis_cli -- gui --backend dx12
 
-# CMD
-set KATAGLYPHIS_ORT_DEVICE=cuda
-cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --backend dx12
+# bash
+KATAGLYPHIS_ORT_DEVICE=cuda cargo run -p kataglyphis_cli -- gui --backend vulkan
 ```
 
 Optional environment variables:
@@ -92,77 +86,73 @@ CUDA notes:
 - Needs the NVIDIA driver plus the CUDA/cuDNN runtime on the machine, and a
   chain-built ONNX Runtime with the CUDA provider beside `onnxruntime.dll`.
   Nothing is copied from a download cache any more.
-- If registering the CUDA provider fails, `KATAGLYPHIS_ORT_DEVICE=auto` falls back
-  to ONNX Runtime on the CPU. An ONNX Runtime built without the CUDA provider is
-  not covered by that: `auto` then gives up on ORT and uses tract if the build has
-  `onnx_tract`, and fails otherwise.
+- `KATAGLYPHIS_ORT_DEVICE=auto` takes CUDA when the loaded ONNX Runtime has the provider
+  and it registers, and otherwise runs ONNX Runtime on the CPU, with a warning.
+  `cuda` fails instead, and the detector falls back to tract.
 
 The overlay shows FPS, inference latency, CPU/RSS and a CPU history, and inference
 can be toggled from it.
 
-## The GUI's backends on Windows
+## The GUI's backends
 
 ```bash
-cargo run -p kataglyphis_cli --features gui_windows -- gui --backend dx12
+# Auto-select (wgpu PRIMARY: Vulkan, DX12 or Metal; also the default)
+cargo run -p kataglyphis_cli -- gui --backend auto
 
 # Vulkan backend
-cargo run -p kataglyphis_cli --features gui_windows -- gui --backend vulkan
+cargo run -p kataglyphis_cli -- gui --backend vulkan
 
-# Auto-select (wgpu PRIMARY; also the default)
-cargo run -p kataglyphis_cli --features gui_windows -- gui --backend auto
+# DirectX 12 (Windows only)
+cargo run -p kataglyphis_cli -- gui --backend dx12
 ```
 
-## The GUI on Linux
-
-```bash
-# WGPU (recommended). The CLI's wgpu GUI feature is gui_windows on every OS;
-# it has no gui_wgpu feature.
-cargo run -p kataglyphis_cli --features gui_windows -- gui --backend vulkan
-
-# GTK demo
-cargo run -p kataglyphis_cli --features gui_unix -- gui
-```
+The GTK4 demo GUI (`crates/gui/src/gui.rs`) is not built until the family Linux image
+carries GTK4's development files; `BACKLOG.md` holds the change that turns it on.
 
 ## Resource usage logging (CPU/GPU/RAM)
 
 ```bash
-cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-interval-ms 1000 --resource-log-gpu=true gui
+cargo run -p kataglyphis_cli -- --resource-log --resource-log-interval-ms 1000 --resource-log-gpu=true gui
 ```
 
 Also to a file:
 
 ```bash
-cargo run -p kataglyphis_cli --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-file .\resource.log gui
+cargo run -p kataglyphis_cli -- --resource-log --resource-log-file .\resource.log gui
 ```
 
 ## Burn / PyTorch-replacement demos
 
-A separate binary, behind the `burn_demos` feature.
+Their own crate and binary, `crates/burn_demos`, so the library the consumers link carries
+no Burn. The ORT detector demo exists on Linux and Windows.
 
 ```bash
-cargo run --features burn_demos --bin burn-demos -- --help
+cargo run -p kataglyphis_burn_demos -- --help
 ```
 
 Examples:
 
 ```bash
-cargo run --features burn_demos --bin burn-demos -- tensor-demo
+cargo run -p kataglyphis_burn_demos -- tensor-demo
 
-cargo run --features burn_demos --bin burn-demos -- linear-regression --epochs 50 --steps-per-epoch 50 --lr 0.02 --batch-size 256
+cargo run -p kataglyphis_burn_demos -- linear-regression --epochs 50 --steps-per-epoch 50 --lr 0.02 --batch-size 256
 
-cargo run --features burn_demos --bin burn-demos -- xor --epochs 2000 --lr 0.05
+cargo run -p kataglyphis_burn_demos -- xor --epochs 2000 --lr 0.05
 
-cargo run --features burn_demos --bin burn-demos -- two-moons --epochs 200 --steps-per-epoch 50 --lr 0.01 --batch-size 256
+cargo run -p kataglyphis_burn_demos -- two-moons --epochs 200 --steps-per-epoch 50 --lr 0.01 --batch-size 256
 
 # ONNX Runtime detector demo (default model: resources/models/deim_dfine_n_coco.onnx; fetch it first)
 scripts/linux/fetch-models.sh
-cargo run --features burn_demos --bin burn-demos -- onnx-detector --runs 1 --print-topk 3
+cargo run -p kataglyphis_burn_demos -- onnx-detector --runs 1 --print-topk 3
 ```
 
-## Checking the wasm32 build
+## Checking the wasm32 and Android builds
+
+The root package alone, as OmniAccelerANT's web build and Cargokit build it:
 
 ```bash
-cargo +nightly check --manifest-path Cargo.toml --target wasm32-unknown-unknown -Z build-std=std,panic_abort
+cargo build -p oxidant --lib --locked --target wasm32-unknown-unknown
+cargo build -p oxidant --lib --locked --target aarch64-linux-android   # with the NDK's clang as linker and CC
 ```
 
 ## Cameras

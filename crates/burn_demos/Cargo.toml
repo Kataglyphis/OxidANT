@@ -1,0 +1,36 @@
+[package]
+name = "kataglyphis_burn_demos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Burn demos of common PyTorch tasks, and the family's detector driven through ONNX Runtime."
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+kataglyphis_inference = { path = "../inference" }
+# Since 0.22 the backend is a runtime Device: Flex (NdArray's successor) plus autodiff, which `optim` implies.
+burn = { workspace = true, features = ["std", "flex", "optim"] }
+ndarray = { workspace = true }
+plotters = { workspace = true }
+tempfile = { workspace = true }
+
+# The detector demo runs the chain ORT, which the family builds for Linux and Windows only.
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+ort = { workspace = true, features = ["std", "ndarray"] }
+
+# DirectML is a Windows-only execution provider; the loaded chain dylib must carry it.
+[target.'cfg(windows)'.dependencies]
+ort = { workspace = true, features = ["directml"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "burn-demos"
+path = "src/main.rs"

@@ -2,14 +2,13 @@
 .SYNOPSIS
   Builds, lints, tests and packages the app into dist\windows-<arch> (bundle, MSIX, MSI).
 .DESCRIPTION
-  Calls cargo directly, not the hub's rust Build-Windows.ps1 (offline rustup, no --all-features).
+  Calls cargo directly, not the hub's rust Build-Windows.ps1 (offline rustup).
   -TargetArch arm64 cross-builds and leaves audit/deny, fmt and tests to the x64 lane.
 #>
 
 param(
 #requires -Version 7.0
 
-  # No -Configurations on purpose: the feature matrix is Invoke-WindowsConfigMatrix.ps1's.
   [switch]$SkipMsix,
   [switch]$SkipMsi,
   [switch]$SkipBuild,
@@ -63,7 +62,6 @@ $workspacePath = Resolve-WorkspacePath -Path $workspaceRoot
 $logDir = Get-OrDefault $env:BUILD_LOG_DIR (Get-ConfigValue -Config $config -Path 'Build.LogDir')
 
 $cargoTargetDir = Get-OrDefault $env:CARGO_TARGET_DIR (Get-ConfigValue -Config $config -Path 'Build.CargoTargetDir')
-$cargoFeatures = Get-OrDefault $env:CARGO_FEATURES ((Get-ConfigValue -Config $config -Path 'Build.CargoFeatures') -join ',')
 $gstPluginDir = Get-OrDefault $env:GSTREAMER_PLUGIN_DIR (Get-ConfigValue -Config $config -Path 'Build.GStreamerPluginDir')
 $gstPlugins = @(Get-ConfigValue -Config $config -Path 'Build.GStreamerPlugins')
 
@@ -156,12 +154,9 @@ try {
       } | Out-Null
     }
 
-    # The workspace and all targets as on Linux, with the release features: only this lane compiles gui_windows. Not --all-features (GTK4).
+    # The workspace and all targets, as on Linux: the cfg(windows) code is linted here only.
     Invoke-BuildStep -Context $context -StepName 'Linting (cargo clippy)' -Critical -Script {
       $clippyParams = @('clippy', '--workspace', '--all-targets', '--locked') + $layout.CargoArgs
-      if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
-        $clippyParams += @('--features', ((@($cargoFeatures -split ',') | ForEach-Object { "kataglyphis_cli/$($_.Trim())" }) -join ','))
-      }
       $clippyParams += @('--', '-D', 'warnings')
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $clippyParams | Out-Null
     } | Out-Null
@@ -169,18 +164,12 @@ try {
     if (-not $SkipTests -and -not $layout.IsCross) {
       Invoke-BuildStep -Context $context -StepName 'Unit Tests' -Critical -Script {
         $testParams = @('test', '--all', '--verbose')
-        if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
-          $testParams += @('--features', $cargoFeatures)
-        }
         Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $testParams | Out-Null
       } | Out-Null
     }
 
     Invoke-BuildStep -Context $context -StepName 'Release Build' -Critical -Script {
       $buildParams = @('build', '--release', '--package', 'kataglyphis_cli', '--bin', $binary) + $layout.CargoArgs
-      if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
-        $buildParams += @('--features', $cargoFeatures)
-      }
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $buildParams | Out-Null
     } | Out-Null
 

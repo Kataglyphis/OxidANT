@@ -41,6 +41,7 @@ pub struct Esp32Event {
     pub detection_count: Option<u32>,
 }
 
+#[cfg(desktop)]
 impl Esp32Event {
     fn empty(kind: &str) -> Self {
         Self {
@@ -251,12 +252,9 @@ pub fn esp32_notify_detection(count: u16, score: f32) -> Result<(), String> {
 }
 
 /// Called by the webcam engine for every inference result; throttling lives in the link.
-#[cfg(all(feature = "gstreamer", onnx))]
+#[cfg(desktop)]
 pub(crate) fn notify_detections(detections: &[crate::Detection]) {
-    #[cfg(desktop)]
     enabled::notify_detections(detections);
-    #[cfg(not(desktop))]
-    let _ = detections;
 }
 
 #[cfg(desktop)]
@@ -351,7 +349,6 @@ mod enabled {
         }
     }
 
-    #[cfg(all(feature = "gstreamer", onnx))]
     pub(super) fn notify_detections(detections: &[crate::Detection]) {
         let count = detections.len().min(u16::MAX as usize) as u16;
         let score = detections
@@ -753,7 +750,6 @@ mod tests {
         esp32_disconnect();
     }
 
-    #[cfg(all(feature = "gstreamer", onnx))]
     #[test]
     fn the_webcam_hook_forwards_the_count_and_the_best_score() {
         let _turn = serial();

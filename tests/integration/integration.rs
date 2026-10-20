@@ -41,3 +41,12 @@ fn test_stats_output() {
         .stdout(predicates::str::contains("Words: 6"))
         .stdout(predicates::str::contains("Bytes: "));
 }
+
+#[test]
+fn media_check_builds_the_camera_pipeline() {
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kataglyphis_cli");
+    cmd.arg("media-check");
+    cmd.assert()
+        .success()
+        .stdout(predicates::str::contains("appsink: "));
+}

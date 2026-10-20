@@ -3,7 +3,7 @@
 .SYNOPSIS
   Builds the test binaries the x64 lane runs, for -TargetArch, and stages them for the arm64 run job (hub CON43).
 .DESCRIPTION
-  The whole workspace with the x64 lane's test features, renderer included, as `cargo test --no-run` for the target
+  The whole workspace, renderer included, as `cargo test --no-run` for the target
   triple: the run job's windows-11-arm has the opengl32.dll the x64 container lacks. Built from the repo root (C:\ws in
   the container) like the x64 tests, so the CARGO_MANIFEST_DIR and CARGO_BIN_EXE paths they embed read C:\ws\...; the
   staged tree mirrors those paths, and the run job links C:\ws to it. Only the triple's own binaries are staged: host
@@ -28,12 +28,9 @@ if (-not $Destination) { $Destination = "$($layout.DistDir)-tests" }
 # pkg-config refuses cross builds by default; the arm64 bundle's PKG_CONFIG_PATH is the target's.
 if ($layout.IsCross) { $env:PKG_CONFIG_ALLOW_CROSS = '1' }
 
-# Invoke-DebugTests.ps1's features.
-$testFeatures = 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
-
 $archDir = $layout.ArchTargetDir.TrimEnd('\') + '\'
-Write-Host "==> cargo test --no-run --workspace --features $testFeatures $($layout.CargoArgs -join ' ')"
-$messages = & cargo test --no-run --locked --message-format=json --workspace --features $testFeatures @($layout.CargoArgs)
+Write-Host "==> cargo test --no-run --workspace $($layout.CargoArgs -join ' ')"
+$messages = & cargo test --no-run --locked --message-format=json --workspace @($layout.CargoArgs)
 if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run --workspace failed with exit code $LASTEXITCODE" }
 # Filter on `reason` first: only compiler-artifact messages carry the fields strict mode reads.
 $artifacts = @($messages | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { $_ | ConvertFrom-Json } |

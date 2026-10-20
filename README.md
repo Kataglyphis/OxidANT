@@ -43,10 +43,11 @@ that scaffolding is still here, but the crates are real code with real consumers
 
 - **ObservANT** (`crates/observant`): camera, cat detection, WebRTC stream and web page in one service.
 - **A WebGPU glTF renderer**, native and in the browser: PBR with IBL, shadows, SSAO, bloom, golden tests.
-- **ONNX inference** through tract or the family's chain-built ONNX Runtime: CPU, DirectML, CUDA.
+- **ONNX inference** on the family's chain-built ONNX Runtime (CPU, DirectML, CUDA), with tract as its fallback.
+- **No feature flags**: every build carries everything its target can run.
 - **GStreamer capture** and a wgpu GUI overlay with FPS, latency and CPU.
 - **Five build lanes**: Linux x64, arm64 and riscv64, Windows x64 and arm64.
-- **Packages**: tar, deb, AppImage and flatpak on Linux; portable zip, MSI and MSIX on Windows.
+- **Packages** that carry their own GStreamer, ONNX Runtime and model: tar, deb, AppImage and flatpak on Linux; portable zip, MSI and MSIX on Windows.
 
 ## Quick start
 
@@ -64,12 +65,12 @@ Prerequisites, the API docs and Linux containers locally:
 | Topic | Read |
 | --- | --- |
 | Getting started | [docs/getting-started.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/getting-started.md) |
-| The crates, their features and consumers | [docs/crates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/crates.md) |
+| The crates, what each target builds, and the consumers | [docs/crates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/crates.md) |
 | Tests, lints and the GPU tests | [docs/testing.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/testing.md) |
 | Running the CLI, the GUI and the demos | [docs/running.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/running.md) |
 | ObservANT, the cat cam | [docs/observant.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/observant.md) |
 | Windows: build and test in the Stevedore container | [docs/windows.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/windows.md) |
-| Windows packages: MSIX and MSI | [docs/packaging.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) |
+| Packages: Linux tar, deb, AppImage, flatpak; Windows MSIX and MSI | [docs/packaging.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) |
 | Dependency updates | [docs/updates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/updates.md) |
 | The WebGPU renderer | [crates/webgpu_renderer/README.md](https://github.com/Kataglyphis/OxidANT/blob/develop/crates/webgpu_renderer/README.md) |
 | API docs (rustdoc) | [rust.jonasheinle.de](https://rust.jonasheinle.de) |

@@ -1,12 +1,9 @@
 use std::sync::Arc;
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use std::time::Duration;
 
 use winit::window::Window;
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use super::inference::InferenceState;
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use super::inference_bridge::spawn_inference_thread;
 use super::wgpu_init::{create_quad_buffers, create_render_pipeline, init_wgpu};
 
@@ -30,7 +27,6 @@ pub(crate) struct WgpuState {
     sampler: wgpu::Sampler,
     texture: Option<FrameTexture>,
     egui: super::egui_overlay::EguiOverlay,
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
     inference: InferenceState,
     current_frame_id: Option<u64>,
 }
@@ -66,13 +62,10 @@ impl WgpuState {
             &config,
         );
 
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let (infer_tx, infer_rx, detector_error, model_path) = spawn_inference_thread();
 
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let score_threshold = kataglyphis_core::config::score_threshold();
 
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let infer_every_ms = kataglyphis_core::config::infer_every_ms();
 
         Ok(Self {
@@ -87,7 +80,6 @@ impl WgpuState {
             sampler,
             texture: None,
             egui,
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
             inference: InferenceState {
                 detector_error,
                 model_path,
@@ -125,7 +117,6 @@ impl WgpuState {
     }
 
     pub fn poll_inference(&mut self) {
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         self.inference.poll();
     }
 
@@ -202,12 +193,10 @@ impl WgpuState {
             );
         }
 
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         self.inference.maybe_infer(frame);
     }
 
     pub(crate) fn render(&mut self, window: &Window) -> anyhow::Result<()> {
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         self.inference.poll();
 
         self.egui.update_stats();
@@ -218,12 +207,9 @@ impl WgpuState {
             .map(|ft| (ft.width, ft.height))
             .unwrap_or((0, 0));
 
-        let full_output = self.egui.run_overlay(
-            window,
-            frame_dimensions,
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            &mut self.inference,
-        );
+        let full_output = self
+            .egui
+            .run_overlay(window, frame_dimensions, &mut self.inference);
 
         let shapes = full_output.shapes.clone();
         let clipped_primitives = self

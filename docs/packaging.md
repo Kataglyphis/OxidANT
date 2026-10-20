@@ -1,8 +1,11 @@
-# Windows packages: MSIX and MSI
+# Packages
 
-Both are steps of `Build-Windows.ps1`, beside the portable bundle in
-`dist\windows-<x64|arm64>\`. Each carries the exe's whole DLL closure, the GUI's
-GStreamer plugins and the model: [AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration).
+Every package carries what the CLI loads: the GStreamer libraries and the GUI's plugins,
+the chain-built ONNX Runtime, the model, and on Linux the image's C and C++ runtime. On
+Windows the MSIX and the MSI are steps of `Build-Windows.ps1`, beside the portable bundle in
+`dist\windows-<x64|arm64>\` ([AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration));
+on Linux `scripts/linux/package-linux.sh` packs one bundle four ways
+([§ Linux](#linux-tar-deb-appimage-flatpak)).
 
 ## MSIX
 
@@ -37,8 +40,8 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
 
 An existing PFX works the same way; its subject must match the publisher too. The
 package is `dist\windows-<arch>\msix\Kataglyphis.OxidANT_<VERSION>_<arch>.msix`, with
-`Cargo.toml`'s `[workspace.package]` version padded to four parts (`2.3.4` becomes
-`2.3.4.0`). ANTfrastructure's standalone `New-MsixPackage.ps1` cannot package this repo:
+`Cargo.toml`'s `[workspace.package]` version padded to four parts (`3.0.0` becomes
+`3.0.0.0`). ANTfrastructure's standalone `New-MsixPackage.ps1` cannot package this repo:
 it fills `__PACKAGE_NAME__`-style tokens, while `packaging/msix/AppxManifest.template.xml`
 carries the `__MSIX_*__` tokens that `Build-Windows.ps1` fills.
 
@@ -49,7 +52,7 @@ The steps and the errors they prevent (`0x800B0109`, `Access denied`, `Get-AppxL
 With this repo's names (repo-relative, so they hold in any checkout):
 
 ```pwsh
-Add-AppxPackage -Path 'dist\windows-x64\msix\Kataglyphis.OxidANT_2.3.4.0_x64.msix'
+Add-AppxPackage -Path 'dist\windows-x64\msix\Kataglyphis.OxidANT_3.0.0.0_x64.msix'
 ```
 
 Check, launch, update, remove:
@@ -89,3 +92,22 @@ WiX as a single `wix.exe` (`WIX_VERSION` in ANTfrastructure's `versions.env`, 7.
 2026-10-19). So `wix/main.wxs` is in the v4 schema, which WiX 7 still reads, and takes
 version, binary path and licence path as preprocessor variables. The
 `WixUI_FeatureTree` dialog set comes from `WixToolset.UI.wixext`, installed in the image.
+
+## Linux: tar, deb, AppImage, flatpak
+
+The lanes' *Create packages* step, inside the family Linux image (`--privileged`, which
+flatpak-builder needs), after the release build:
+
+```bash
+bash scripts/linux/package-linux.sh --binary-path target/release/kataglyphis_cli \
+  --version 3.0.0 --arch x64 --platform linux/amd64
+```
+
+It stages the bundle `oxidant/` (the CLI as `oxidant`, `lib/` with its closure and
+`lib/gstreamer-1.0`, `resources/models`), proves it (`elf-closure.sh --check`, the G6
+census, `gstreamer-bundle.sh check`, and the bundle's own `--help`, `onnx-runtime` and
+`media-check` in an emptied environment), then packs `dist/oxidant-<version>-linux_<arch>-<x64|arm64>.tar.gz`,
+the `.deb` (`/opt/oxidant`, `/usr/bin/oxidant`), the AppImage and the flatpak
+(`org.kataglyphis.oxidant`, with `--device=all` for the camera). The rules behind each
+part: [AGENTS.md § The bin was renamed](../AGENTS.md#the-bin-was-renamed-not-the-lib--do-not-undo-it).
+The `clean-host` job then installs, unpacks and starts them on a bare Ubuntu 26.04 runner.

@@ -1,9 +1,8 @@
 //! Machine learning and inference models.
 
-#[cfg(feature = "onnxruntime")]
+#[cfg(any(target_os = "linux", windows))]
 pub mod ort_ext;
-#[cfg(feature = "onnxruntime")]
+#[cfg(any(target_os = "linux", windows))]
 pub mod ort_runtime;
 
-#[cfg(feature = "onnx")]
 pub mod person_detection;

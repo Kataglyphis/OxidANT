@@ -6,31 +6,16 @@ license.workspace = true
 
 [dependencies]
 oxidant = { path = "../../" }
-kataglyphis_gui = { path = "../gui", optional = true }
+kataglyphis_gui = { path = "../gui" }
 clap = { version = "4", features = ["derive"] }
 log = { workspace = true }
 anyhow = { workspace = true }
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "time"] }
 
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "time"] }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-tokio = { version = "1", default-features = false, features = ["macros", "rt", "time", "sync"] }
-
-[features]
-default = []
-gui_windows = ["kataglyphis_gui/gui_windows", "oxidant/gui_windows"]
-gui_unix = ["kataglyphis_gui/gui_unix", "oxidant/gui_unix"]
-# Each backend also reaches the GUI, whose person-detection overlay compiles only under its own.
-onnx_tract = ["oxidant/onnx_tract", "kataglyphis_gui?/onnx_tract"]
-onnxruntime_directml = ["oxidant/onnxruntime", "oxidant/onnxruntime_directml", "kataglyphis_gui?/onnxruntime"]
-onnxruntime_cuda = ["oxidant/onnxruntime", "oxidant/onnxruntime_cuda", "kataglyphis_gui?/onnxruntime"]
-burn_demos = ["oxidant/burn_demos"]
 
 [[bin]]
 name = "kataglyphis_cli"

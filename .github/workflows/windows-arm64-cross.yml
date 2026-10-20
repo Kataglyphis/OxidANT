@@ -30,7 +30,7 @@ jobs:
         -TargetArch
         arm64
         -StageTests
-      # Package features and MSIX metadata come from Build-Windows.config.psd1, as for x64.
+      # MSIX metadata and the GStreamer plugins come from Build-Windows.config.psd1, as for x64.
       container-env: |
         CARGO_TERM_COLOR=always
       version-file: Cargo.toml

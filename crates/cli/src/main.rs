@@ -11,8 +11,7 @@ mod cli;
 use cli::{Cli, Commands};
 use oxidant::{logging, resource_monitor, utils};
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::main)]
-#[cfg_attr(target_arch = "wasm32", tokio::main(flavor = "current_thread"))]
+#[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     logging::init_logger();
@@ -46,31 +45,13 @@ async fn main() -> Result<()> {
             );
         }
         Commands::Gui { backend } => {
-            #[cfg(feature = "gui_windows")]
-            {
-                kataglyphis_gui::gui_wgpu::run_with_backend(&backend)?;
-            }
-
-            #[cfg(all(feature = "gui_unix", not(windows), not(feature = "gui_windows")))]
-            {
-                let _ = backend;
-                kataglyphis_gui::gui::run()?;
-            }
-
-            #[cfg(not(any(feature = "gui_windows", all(feature = "gui_unix", not(windows)))))]
-            {
-                eprintln!(
-                    "GUI feature is disabled. Enable --features gui_windows (WGPU) or gui_unix (GTK on non-Windows)."
-                );
-                let _ = backend;
-            }
+            kataglyphis_gui::gui_wgpu::run_with_backend(&backend)?;
         }
-        #[cfg(any(feature = "onnxruntime_directml", feature = "onnxruntime_cuda"))]
+        #[cfg(any(target_os = "linux", windows))]
         Commands::OnnxRuntime => {
             let path = oxidant::ort_runtime::ensure_ort_loaded()?;
             println!("ONNX Runtime: {}", path.display());
         }
-        #[cfg(feature = "gui_windows")]
         Commands::MediaCheck => {
             print!("{}", kataglyphis_gui::gui_wgpu::media_check()?);
         }

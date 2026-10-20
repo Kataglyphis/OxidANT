@@ -1,7 +1,4 @@
 //! Capture pipeline integration test, container/CI safe because it uses videotestsrc only.
-//! Run with: `cargo test -p kataglyphis_media --features gstreamer`
-
-#![cfg(feature = "gstreamer")]
 
 use std::time::{Duration, Instant};
 

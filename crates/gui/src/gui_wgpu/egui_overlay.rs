@@ -2,10 +2,8 @@ use egui::Context as EguiContext;
 use egui_wgpu::ScreenDescriptor;
 use winit::window::Window;
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use kataglyphis_core::detection::Detection;
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use super::inference::InferenceState;
 
 use super::overlay::draw_cpu_history;
@@ -63,26 +61,21 @@ impl EguiOverlay {
         &mut self,
         window: &Window,
         frame_dimensions: (u32, u32),
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))] inference: &mut InferenceState,
+        inference: &mut InferenceState,
     ) -> egui::FullOutput {
         self.screen.pixels_per_point = window.scale_factor() as f32;
         let raw_input = self.state.take_egui_input(window);
 
         let mut overlay_enabled = self.enabled;
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let mut infer_enabled = inference.infer_enabled;
 
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let detections_count = if inference.last_detections_frame_id.is_some() {
             inference.last_detections.len()
         } else {
             0
         };
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let detector_error = inference.detector_error.as_deref();
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let model_path = inference.model_path.as_deref();
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let score_threshold = inference.score_threshold;
 
         // The clone is a cheap Arc handle that dodges the self-borrow inside the closures.
@@ -95,23 +88,19 @@ impl EguiOverlay {
                     .resizable(false)
                     .show(&ctx, |ui| {
                         Self::draw_system_stats(ui, frame_dimensions, &self.stats);
-
-                        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-                        {
-                            Self::draw_detection_boxes(
-                                &ctx,
-                                frame_dimensions,
-                                &inference.last_detections,
-                            );
-                            Self::draw_onnx_panel(
-                                ui,
-                                model_path,
-                                score_threshold,
-                                detections_count,
-                                detector_error,
-                                &mut infer_enabled,
-                            );
-                        }
+                        Self::draw_detection_boxes(
+                            &ctx,
+                            frame_dimensions,
+                            &inference.last_detections,
+                        );
+                        Self::draw_onnx_panel(
+                            ui,
+                            model_path,
+                            score_threshold,
+                            detections_count,
+                            detector_error,
+                            &mut infer_enabled,
+                        );
 
                         if ui.button("Toggle overlay visibility").clicked() {
                             overlay_enabled = false;
@@ -132,10 +121,7 @@ impl EguiOverlay {
         let full_output = ctx.end_pass();
 
         self.enabled = overlay_enabled;
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        {
-            inference.infer_enabled = infer_enabled;
-        }
+        inference.infer_enabled = infer_enabled;
 
         full_output
     }
@@ -158,7 +144,6 @@ impl EguiOverlay {
         draw_cpu_history(ui, &overlay.cpu_history);
     }
 
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
     fn draw_onnx_panel(
         ui: &mut egui::Ui,
         model_path: Option<&str>,
@@ -181,7 +166,6 @@ impl EguiOverlay {
         }
     }
 
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
     fn draw_detection_boxes(
         ctx: &EguiContext,
         frame_dimensions: (u32, u32),
@@ -213,5 +197,94 @@ impl EguiOverlay {
                 egui::StrokeKind::Inside,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::epaint::{RectShape, Shape};
+
+    use super::*;
+
+    /// Every text and every detection box a headless egui pass painted; no renderer takes the textures.
+    fn painted(output: egui::FullOutput) -> (String, usize) {
+        fn walk(shape: &Shape, text: &mut String, boxes: &mut usize) {
+            match shape {
+                Shape::Text(t) => {
+                    text.push_str(t.galley.text());
+                    text.push('\n');
+                }
+                Shape::Rect(RectShape { stroke, .. })
+                    if stroke.color == egui::Color32::LIGHT_GREEN =>
+                {
+                    *boxes += 1;
+                }
+                Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, text, boxes)),
+                _ => {}
+            }
+        }
+        let (mut text, mut boxes) = (String::new(), 0);
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut text, &mut boxes);
+        }
+        output.drop_without_applying_deltas();
+        (text, boxes)
+    }
+
+    #[test]
+    fn the_panels_show_the_stats_the_model_and_the_error() {
+        let ctx = EguiContext::default();
+        let stats = OverlayStats::new();
+        let mut enabled = true;
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            EguiOverlay::draw_system_stats(ui, (640, 480), &stats);
+            EguiOverlay::draw_onnx_panel(
+                ui,
+                Some("models/deim.onnx"),
+                0.5,
+                2,
+                Some("Inference failed: boom"),
+                &mut enabled,
+            );
+        });
+        let (text, _) = painted(output);
+        for line in [
+            "Frame: 640x480",
+            "Model: models/deim.onnx",
+            "Score threshold: 0.50",
+            "Persons: 2",
+            "Inference failed: boom",
+        ] {
+            assert!(text.contains(line), "{line:?} not in {text:?}");
+        }
+    }
+
+    #[test]
+    fn each_detection_gets_a_box_and_an_empty_frame_none() {
+        let ctx = EguiContext::default();
+        let detections = [
+            Detection {
+                x1: 10.0,
+                y1: 10.0,
+                x2: 100.0,
+                y2: 200.0,
+                ..Default::default()
+            },
+            Detection {
+                x1: 300.0,
+                y1: 50.0,
+                x2: 400.0,
+                y2: 150.0,
+                ..Default::default()
+            },
+        ];
+        let boxes = |dims| {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                EguiOverlay::draw_detection_boxes(ui.ctx(), dims, &detections);
+            });
+            painted(output).1
+        };
+        assert_eq!(boxes((640, 480)), 2);
+        assert_eq!(boxes((0, 480)), 0);
     }
 }

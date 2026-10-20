@@ -1,24 +1,7 @@
-// build.rs — cfg aliases + CXX bridge (when applicable).
-
-/// Whether feature `name` is on for the crate; `cfg!()` here sees the build script's own features.
-fn has_feature(name: &str) -> bool {
-    // Cargo upper-cases the feature name and replaces `-` with `_`.
-    let var = format!("CARGO_FEATURE_{}", name.to_uppercase().replace('-', "_"));
-    std::env::var_os(&var).is_some()
-}
+// build.rs — the `desktop` cfg alias + CXX bridge (when applicable).
 
 fn main() {
-    // Cfg aliases: `onnx` means any ONNX backend.
-    if has_feature("onnx_tract") || has_feature("onnxruntime") {
-        println!("cargo:rustc-cfg=onnx");
-    }
-
-    // `gui_wgpu_backend` means either wgpu GUI feature, regardless of host OS.
-    if has_feature("gui_windows") || has_feature("gui_linux") {
-        println!("cargo:rustc-cfg=gui_wgpu_backend");
-    }
-
-    // `desktop` gates the USB-serial ESP32 bridge; Android and wasm have no serial port.
+    // `desktop` gates the ESP32 bridge and the webcam engine; Android and wasm have no serial port and no GStreamer.
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if matches!(target_os.as_str(), "linux" | "windows" | "macos") {
         println!("cargo:rustc-cfg=desktop");

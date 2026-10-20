@@ -4,22 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-default = []
-# Off by default so non-media builds never touch pkg-config or need GStreamer dev files.
-gstreamer = [
-    "dep:gstreamer",
-    "dep:gstreamer-app",
-    "dep:gstreamer-video",
-]
-
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
 
-gstreamer = { workspace = true, optional = true }
-gstreamer-app = { workspace = true, optional = true }
-gstreamer-video = { workspace = true, optional = true }
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+gstreamer-video = { workspace = true }
 
 [lints]
 workspace = true

@@ -4,8 +4,6 @@
     LogDir = 'logs/windows'
 
     CargoTargetDir = 'target'
-    # The features both Windows arches ship; CARGO_FEATURES overrides them.
-    CargoFeatures = @('gui_windows', 'onnxruntime_directml')
 
     # The GUI pipeline's by-name elements plus autovideosrc's fallbacks; GSTREAMER_PLUGIN_DIR overrides the dir.
     GStreamerPluginDir = 'C:\runtime\lib\gstreamer-1.0'

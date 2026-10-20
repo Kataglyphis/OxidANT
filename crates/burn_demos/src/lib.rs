@@ -1,7 +1,10 @@
+//! Burn demos of common PyTorch tasks, and the family's detector run through ONNX Runtime.
+
 use burn::tensor::Device;
 
 pub mod lcg;
 pub mod losses;
+#[cfg(any(target_os = "linux", windows))]
 pub mod onnx_detector;
 pub mod plot;
 pub mod simple;

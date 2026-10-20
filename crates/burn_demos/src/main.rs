@@ -76,6 +76,7 @@ enum Command {
 
     /// Loads resources/models/deim_dfine_n_coco.onnx (scripts/linux/fetch-models.sh) via ONNX Runtime and runs it;
     /// optionally trains a tiny adapter on its outputs.
+    #[cfg(any(target_os = "linux", windows))]
     #[command(alias = "onnx-yolov10")]
     OnnxDetector {
         #[arg(long, default_value_t = 0)]
@@ -100,7 +101,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::TensorDemo => oxidant::burn_demos::simple::tensor_demo(),
+        Command::TensorDemo => kataglyphis_burn_demos::simple::tensor_demo().map(drop),
 
         Command::LinearRegression {
             epochs,
@@ -108,19 +109,20 @@ fn main() -> anyhow::Result<()> {
             lr,
             batch_size,
             plot_path,
-        } => oxidant::burn_demos::simple::linear_regression_demo(
+        } => kataglyphis_burn_demos::simple::linear_regression_demo(
             epochs,
             steps_per_epoch,
             lr,
             batch_size,
             plot_path,
-        ),
+        )
+        .map(drop),
 
         Command::Xor {
             epochs,
             lr,
             plot_path,
-        } => oxidant::burn_demos::simple::xor_demo(epochs, lr, plot_path),
+        } => kataglyphis_burn_demos::simple::xor_demo(epochs, lr, plot_path).map(drop),
 
         Command::TwoMoons {
             epochs,
@@ -130,7 +132,7 @@ fn main() -> anyhow::Result<()> {
             noise,
             seed,
             plot_path,
-        } => oxidant::burn_demos::two_moons::two_moons_demo(
+        } => kataglyphis_burn_demos::two_moons::two_moons_demo(
             epochs,
             steps_per_epoch,
             lr,
@@ -138,7 +140,8 @@ fn main() -> anyhow::Result<()> {
             noise,
             seed,
             plot_path,
-        ),
+        )
+        .map(drop),
 
         Command::YoloTiny {
             height,
@@ -147,15 +150,17 @@ fn main() -> anyhow::Result<()> {
             num_anchors,
             train_steps,
             lr,
-        } => oxidant::burn_demos::simple::yolo_tiny_demo(
+        } => kataglyphis_burn_demos::simple::yolo_tiny_demo(
             height,
             width,
             num_classes,
             num_anchors,
             train_steps,
             lr,
-        ),
+        )
+        .map(drop),
 
+        #[cfg(any(target_os = "linux", windows))]
         Command::OnnxDetector {
             warmup,
             runs,
@@ -165,14 +170,11 @@ fn main() -> anyhow::Result<()> {
             model_path,
         } => {
             let model_path = model_path.unwrap_or_else(|| {
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("resources")
-                    .join("models")
-                    .join(kataglyphis_inference::person_detection::MODEL_FILE)
+                kataglyphis_inference::person_detection::resolve_model_path(None).into()
             });
 
-            let device = oxidant::burn_demos::training_device();
-            oxidant::burn_demos::onnx_detector::onnx_detector_demo(
+            let device = kataglyphis_burn_demos::training_device();
+            kataglyphis_burn_demos::onnx_detector::onnx_detector_demo(
                 &model_path,
                 warmup,
                 runs,
@@ -181,9 +183,10 @@ fn main() -> anyhow::Result<()> {
                 lr,
                 &device,
             )
+            .map(drop)
             .with_context(|| format!("onnx-detector demo failed (model={})", model_path.display()))
         }
 
-        Command::SaveLoad => oxidant::burn_demos::simple::save_load_demo(),
+        Command::SaveLoad => kataglyphis_burn_demos::simple::save_load_demo().map(drop),
     }
 }

@@ -4,26 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-default = []
-onnx_tract = ["dep:tract-onnx", "onnx"]
-# Always load-dynamic so only the chain-built ORT loads; check-ort-chain-only.sh fails on download-binaries.
-onnxruntime =["dep:ort", "ort/std", "ort/ndarray", "ort/load-dynamic", "ort/api-24", "onnx"]
-# Alias kept because OmniAccelerANT's KATAGLYPHIS_RUST_FEATURES and crates/observant name it.
-onnxruntime_dynamic = ["onnxruntime"]
-# EP features only register the provider; the loaded chain dylib must carry it.
-onnxruntime_directml = ["onnxruntime", "ort/directml"]
-onnxruntime_cuda = ["onnxruntime", "ort/cuda"]
-onnx = [] # Internal marker feature
-
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
 kataglyphis_core = { path = "../core" }
+# The fallback when ORT fails, and the only backend where the family builds no ORT (Android).
+tract-onnx = "0.23"
 
-# ONNX inference (optional)
-tract-onnx = { version = "0.23", optional = true }
-ort = { workspace = true, optional = true }
+# The chain ORT exists for Linux and Windows only; load-dynamic comes from the workspace declaration.
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+ort = { workspace = true, features = ["std", "ndarray", "cuda"] }
+
+# DirectML is a Windows-only execution provider; the loaded chain dylib must carry it.
+[target.'cfg(windows)'.dependencies]
+ort = { workspace = true, features = ["directml"] }
 
 [lints]
 workspace = true
@@ -35,4 +29,3 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 [[bench]]
 name = "detector"
 harness = false
-required-features = ["onnxruntime"]

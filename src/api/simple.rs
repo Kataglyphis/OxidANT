@@ -24,3 +24,13 @@ pub async fn async_heavy_work(input: i32) -> i32 {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     input * 2
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_demo_calls_answer() {
+        assert_eq!(super::greet("Ant".into()), "Hello, you Ant!");
+        // 2^1000 mod 10^6, by repeated doubling.
+        assert_eq!(super::heavy_computation(1), 69_376);
+    }
+}

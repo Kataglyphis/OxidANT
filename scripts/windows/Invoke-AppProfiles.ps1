@@ -2,13 +2,10 @@ param(
 #requires -Version 7.0
 
   [string[]]$Profiles = @('debug', 'profile', 'release'),
-  [string]$Features = '',
   [string[]]$AppArgs = @('stats', '--path', 'README.md'),
   [string]$Package = 'kataglyphis_cli',
   [string]$Binary = 'kataglyphis_cli',
-  [string]$TargetDir = '',
-  # Build without launching: GUI builds die at load time in the headless servercore container.
-  [switch]$BuildOnly
+  [string]$TargetDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,10 +46,9 @@ Set-Location $repoRoot
 
 $resolvedProfiles = Resolve-Profiles -RequestedProfiles $Profiles
 $resolvedTargetDir = if ([string]::IsNullOrWhiteSpace($TargetDir)) { 'target' } else { $TargetDir }
-$featureLabel = if ([string]::IsNullOrWhiteSpace($Features)) { '<none>' } else { $Features }
 
 foreach ($buildProfile in $resolvedProfiles) {
-  $buildArgs = @('build', '--package', $Package, '--bin', $Binary)
+  $buildArgs = @('build', '--locked', '--package', $Package, '--bin', $Binary)
   $profileDir = 'debug'
 
   switch ($buildProfile) {
@@ -66,14 +62,10 @@ foreach ($buildProfile in $resolvedProfiles) {
     }
   }
 
-  if (-not [string]::IsNullOrWhiteSpace($Features)) {
-    $buildArgs += @('--features', $Features)
-  }
-
-  Write-Host "==> Building $Binary [$buildProfile] with features: $featureLabel"
+  Write-Host "==> Building $Binary [$buildProfile]"
   & cargo @buildArgs
   if ($LASTEXITCODE -ne 0) {
-    throw "Build failed for profile '$buildProfile' and features '$featureLabel'."
+    throw "Build failed for profile '$buildProfile'."
   }
 
   $binaryPath = Join-Path $repoRoot "$resolvedTargetDir\$profileDir\$Binary.exe"
@@ -81,15 +73,9 @@ foreach ($buildProfile in $resolvedProfiles) {
     throw "Built binary not found: $binaryPath"
   }
 
-  if ($BuildOnly) {
-    Write-Host "==> Build-only for features '$featureLabel': skipping the app run."
-    continue
-  }
-
   Write-Host "==> Running $Binary [$buildProfile] with args: $($AppArgs -join ' ')"
   & $binaryPath @AppArgs
   if ($LASTEXITCODE -ne 0) {
-    throw "Run failed for profile '$buildProfile' and features '$featureLabel' (exit $LASTEXITCODE)."
+    throw "Run failed for profile '$buildProfile' (exit $LASTEXITCODE)."
   }
 }
-

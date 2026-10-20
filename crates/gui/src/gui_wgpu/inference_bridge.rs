@@ -1,15 +1,10 @@
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use ::std::sync::Arc;
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use ::std::time::Instant;
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use kataglyphis_core::detection::Detection;
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 pub(crate) struct InferRequest {
     pub frame_id: u64,
     pub rgba: Arc<[u8]>,
@@ -18,14 +13,12 @@ pub(crate) struct InferRequest {
     pub score_threshold: f32,
 }
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 pub(crate) struct InferResult {
     pub frame_id: u64,
     pub detections: Vec<Detection>,
     pub error: Option<String>,
 }
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 pub(crate) type InferChannels = (
     Option<SyncSender<InferRequest>>,
     Option<Receiver<InferResult>>,
@@ -33,7 +26,6 @@ pub(crate) type InferChannels = (
     Option<String>,
 );
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 pub(crate) fn spawn_inference_thread() -> InferChannels {
     use kataglyphis_inference::person_detection::{resolve_model_path, PersonDetector};
     use kataglyphis_telemetry::resource_monitor;
@@ -96,4 +88,46 @@ pub(crate) fn spawn_inference_thread() -> InferChannels {
     });
 
     (Some(req_tx), Some(res_rx), None, Some(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn the_thread_answers_a_frame_or_says_why_it_cannot() {
+        let (tx, rx, error, path) = spawn_inference_thread();
+        let (tx, rx) = (tx.unwrap(), rx.unwrap());
+        assert_eq!(error, None);
+        let path = path.unwrap();
+        if !std::path::Path::new(&path).is_file() {
+            assert!(
+                std::env::var("KATAGLYPHIS_REQUIRE_MODEL").as_deref() != Ok("1"),
+                "no model at {path}"
+            );
+            let result = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(
+                result
+                    .error
+                    .as_deref()
+                    .is_some_and(|e| e.starts_with("Failed to load model")),
+                "{:?}",
+                result.error
+            );
+            return;
+        }
+        tx.send(InferRequest {
+            frame_id: 9,
+            rgba: Arc::from(vec![0u8; 64 * 64 * 4]),
+            width: 64,
+            height: 64,
+            score_threshold: 0.5,
+        })
+        .unwrap();
+        let result = rx.recv_timeout(Duration::from_secs(120)).unwrap();
+        assert_eq!((result.frame_id, result.error), (9, None));
+        assert!(result.detections.is_empty(), "{:?}", result.detections);
+    }
 }

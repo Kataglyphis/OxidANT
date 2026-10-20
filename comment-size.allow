@@ -2,5 +2,5 @@
 # Format: <file>	<first comment line>. Two-way: a row whose block is gone or fits is STALE; delete it.
 # third_party/ANTfrastructure/docs/code-quality-tooling.md#comment-size-comment-size
 
-scripts/linux/check-ort-chain-only.sh	# Fails when any feature set of this workspace could build o
+scripts/linux/check-ort-chain-only.sh	# Fails when this workspace could build ort-sys against an O
 scripts/linux/start-docker-person-detection.sh	# Only what the image genuinely does NOT ship. This list use

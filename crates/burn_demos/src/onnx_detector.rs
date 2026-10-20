@@ -9,8 +9,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use super::lcg::Lcg;
-use crate::ort_ext::{extract_first_f32_output, OrtResultExt};
+use kataglyphis_inference::ort_ext::{extract_first_f32_output, OrtResultExt};
 
+/// Runs the detector on generated input through the chain ORT; returns output0's shape.
 pub fn onnx_detector_demo(
     model_path: &Path,
     warmup: usize,
@@ -19,12 +20,12 @@ pub fn onnx_detector_demo(
     train_adapter_steps: usize,
     lr: f64,
     train_device: &Device,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<usize>> {
     kataglyphis_inference::ort_runtime::ensure_ort_loaded()?;
     // `commit_from_file` takes `&mut self`; reassign rather than shadow, or DirectML hits `unused_mut`.
     let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
 
-    #[cfg(all(feature = "onnxruntime_directml", windows))]
+    #[cfg(windows)]
     {
         use ort::execution_providers::DirectML;
         builder = builder
@@ -73,7 +74,7 @@ pub fn onnx_detector_demo(
     }
 
     let (shape, out) = last_output.context("missing output")?;
-    println!("output0 shape: {:?}", shape);
+    println!("output0 shape: {shape:?}");
 
     // The family's detector layout: [1, N, 6]
     let out3 = out
@@ -96,7 +97,7 @@ pub fn onnx_detector_demo(
         train_adapter(&first, train_adapter_steps, lr, train_device)?;
     }
 
-    Ok(())
+    Ok(shape)
 }
 
 fn run_once(

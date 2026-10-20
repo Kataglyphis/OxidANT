@@ -1,7 +1,3 @@
-//! Graphical User Interface components.
+//! The camera GUI on wgpu; `gui.rs` holds the GTK4 one, off until the Linux image carries GTK4 (BACKLOG.md).
 
-#[cfg(all(feature = "gui_unix", not(windows)))]
-pub mod gui;
-
-#[cfg(feature = "gui_windows")]
 pub mod gui_wgpu;

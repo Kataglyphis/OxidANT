@@ -7,12 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
-# `?/` keeps gui's optional deps off; oxidant's own two compile the webcam engine and its API, which were 6.2 % covered without.
-TEST_FEATURES='kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime'
 # Each crate's own floor, just under its latest figure, so one well-tested crate cannot carry a weak one; raise them as tests come.
-COVERAGE_FLOORS='--floor crates/observant=81 --floor crates/webgpu_renderer=89 --floor crates/inference=77 --floor crates/cli=72 --floor crates/core=62 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor src=13'
-# The feature-check sets (AGENTS.md § Feature combinations): gui_windows compiles the wgpu GUI; no gui_unix, the image has no GTK 4.
-FEATURE_CHECK_SETS='gstreamer gui_linux gui_linux,gstreamer gui_windows onnxruntime burn_demos'
+COVERAGE_FLOORS='--floor crates/observant=81 --floor crates/webgpu_renderer=89 --floor crates/inference=77 --floor crates/cli=72 --floor crates/core=62 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/media=72 --floor crates/gui=27 --floor src=19'
 
 usage() {
     cat >&2 <<'USAGE'
@@ -28,42 +24,9 @@ usage: ci-container-steps.sh <step>
   docs        cargo_build_doc.sh        - rustdoc into target/doc
   ort-chain-only  check-ort-chain-only.sh - no downloaded ONNX Runtime (GATING)
   riscv64-test    the workspace tests, cross-built for riscv64 and run under QEMU
-  feature-check [all|<set>...]  cargo check --locked --features <set>, each set
-                  in its own log group; every set runs, then any failure fails
 
 Run inside the family Linux CI image, from the repository root.
 USAGE
-}
-
-# One job checks every set (one image pull, one warm target dir); a failed set must not hide the ones after it.
-feature_check() {
-    local sets=() features start failed=()
-    if [ "${1-all}" = all ]; then
-        read -r -a sets <<<"${FEATURE_CHECK_SETS}"
-    else
-        sets=("$@")
-    fi
-    for features in "${sets[@]}"; do
-        case " ${FEATURE_CHECK_SETS} " in
-            *" ${features} "*) ;;
-            *) echo "::warning title=Feature check (${features})::not in FEATURE_CHECK_SETS, the list CI checks" ;;
-        esac
-        echo "::group::cargo check --locked --features ${features}"
-        start="${SECONDS}"
-        if cargo check --locked --features "${features}"; then
-            echo "::endgroup::"
-            echo "feature-check: ${features} passed in $((SECONDS - start)) s"
-        else
-            echo "::endgroup::"
-            echo "::error title=Feature check (${features})::cargo check --locked --features ${features} failed after $((SECONDS - start)) s"
-            failed+=("${features}")
-        fi
-    done
-    if [ "${#failed[@]}" -gt 0 ]; then
-        echo "feature-check: ${#failed[@]} of ${#sets[@]} set(s) failed: ${failed[*]}"
-        return 1
-    fi
-    echo "feature-check: all ${#sets[@]} set(s) passed"
 }
 
 # The hub's cargo drivers register it as a git safe.directory (uid 1001 does not own the bind mount).
@@ -85,7 +48,7 @@ case "$step" in
         export KATAGLYPHIS_REQUIRE_MODEL="${KATAGLYPHIS_REQUIRE_MODEL-1}"
         export KATAGLYPHIS_REQUIRE_GST="${KATAGLYPHIS_REQUIRE_GST-1}"
         bash "${SCRIPT_DIR}/fetch-models.sh"
-        antfrastructure_exec "${RUST_DRIVERS}/cargo_test.sh" --features "${TEST_FEATURES}" "$@"
+        antfrastructure_exec "${RUST_DRIVERS}/cargo_test.sh" "$@"
         ;;
     # Without --workspace tarpaulin measures the root package alone, which has no unit tests: 0.00%.
     coverage)
@@ -95,23 +58,23 @@ case "$step" in
         bash "${SCRIPT_DIR}/fetch-models.sh"
         # Not antfrastructure_exec, which replaces this shell: the per-crate floors run after it. 300 s: an arm64 runner needed more than 60.
         WORKSPACE_ROOT="${WORKSPACE_ROOT:-$KATAGLYPHIS_REPO_ROOT}" bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_coverage.sh")" \
-            --workspace --features "${TEST_FEATURES}" --timeout 300 --fail-under 70 "$@"
+            --workspace --timeout 300 --fail-under 70 "$@"
         # shellcheck disable=SC2086 # COVERAGE_FLOORS is a list of --floor arguments.
         python3 "${SCRIPT_DIR}/check-crate-coverage.py" cobertura.xml ${COVERAGE_FLOORS}
         ;;
     # Every bench of the workspace, the detector's on the real model; scripts/linux/bench-report.py reads the results.
     bench)
         bash "${SCRIPT_DIR}/fetch-models.sh"
-        antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" --workspace --benches --features "${TEST_FEATURES}" "$@"
+        antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" --workspace --benches "$@"
         ;;
     release)   antfrastructure_exec "${RUST_DRIVERS}/cargo_release.sh" "$@" ;;
     docs)      antfrastructure_exec "${RUST_DRIVERS}/cargo_build_doc.sh" "$@" ;;
     # This repo's own gate, not a hub driver: the owner rule is chain-built ORT only.
     ort-chain-only) exec bash "${SCRIPT_DIR}/check-ort-chain-only.sh" "$@" ;;
 
-    # Not --all-features: gui_unix needs GTK4, which the image lacks; exported since the helper execs.
+    # The workspace, not the driver's root-package default; exported, since the helper execs.
     fmt-clippy)
-        export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked --features ${TEST_FEATURES}}"
+        export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked}"
         antfrastructure_exec "${RUST_DRIVERS}/cargo_fmt_clippy.sh" "$@"
         ;;
 
@@ -132,12 +95,6 @@ case "$step" in
             echo "riscv64-test: GPU suites excluded (no Vulkan driver); RISCV64_GPU_TESTS=1 runs them on lavapipe"
         fi
         exec cargo test --workspace --locked --target riscv64gc-unknown-linux-gnu "$@"
-        ;;
-
-    # The only Linux build of the GUI and burn features; root-package names, so no --workspace.
-    feature-check)
-        antfrastructure_source linux/scripts/02-toolchain/rust/_cargo_wrapper.sh
-        feature_check "$@"
         ;;
 
     -h|--help|help) usage; exit 0 ;;

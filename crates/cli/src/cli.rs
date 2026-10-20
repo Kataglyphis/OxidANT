@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-#[cfg(feature = "gui_windows")]
 use kataglyphis_gui::gui_wgpu::GpuBackend;
 
 #[derive(Parser)]
@@ -52,20 +51,15 @@ pub enum Commands {
         #[arg(short, long)]
         path: PathBuf,
     },
-    /// Launch the GUI (requires a gui feature).
+    /// Launch the wgpu camera GUI with ONNX detection.
     Gui {
         /// WGPU backend to use (dx12 is Windows-only).
-        #[cfg(feature = "gui_windows")]
         #[arg(long, value_enum, default_value_t = GpuBackend::Auto)]
         backend: GpuBackend,
-        #[cfg(not(feature = "gui_windows"))]
-        #[arg(long, default_value = "")]
-        backend: String,
     },
     /// Load the chain-built ONNX Runtime and print where it was found; fails when none loads.
-    #[cfg(any(feature = "onnxruntime_directml", feature = "onnxruntime_cuda"))]
+    #[cfg(any(target_os = "linux", windows))]
     OnnxRuntime,
     /// Build the GUI's camera pipeline without starting it and print each element's plugin file.
-    #[cfg(feature = "gui_windows")]
     MediaCheck,
 }

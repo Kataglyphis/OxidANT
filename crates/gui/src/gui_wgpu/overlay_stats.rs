@@ -80,3 +80,27 @@ impl OverlayStats {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(stats: &mut OverlayStats) {
+        stats.last_sample_at = Instant::now() - Duration::from_secs(1);
+        stats.update();
+    }
+
+    #[test]
+    fn a_sample_reads_this_process_and_keeps_a_bounded_history() {
+        let mut stats = OverlayStats::new();
+        stats.update();
+        assert!(stats.cpu_history.is_empty(), "sampled before 500 ms passed");
+
+        stats.cpu_history_cap = 2;
+        for _ in 0..3 {
+            sample(&mut stats);
+        }
+        assert_eq!(stats.cpu_history.len(), 2);
+        assert!(stats.proc_rss_mib > 0.0, "{}", stats.proc_rss_mib);
+    }
+}

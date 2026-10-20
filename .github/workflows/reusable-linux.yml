@@ -47,6 +47,8 @@ jobs:
       contents: read
       # compiler-cache-save deletes this key's older cache entries.
       actions: write
+    outputs:
+      artifact: ${{ steps.artifact.outputs.name }}
     env:
       PLATFORM: ${{ inputs.platform }}
       ARCH: ${{ inputs.arch }}
@@ -55,7 +57,7 @@ jobs:
       # VERSION is computed by scripts/linux/compute-version.sh into GITHUB_ENV.
       REF_NAME: ${{ github.ref_name }}
       RUN_NUMBER: ${{ github.run_number }}
-      # Each format package_archive.sh builds from the one release binary (hub 1b99f7b5).
+      # Each format scripts/linux/package-linux.sh packs from the one bundle.
       PACKAGE_TYPES: tar,deb,appimage,flatpak
     steps:
       - name: Prepare the CI host
@@ -100,7 +102,7 @@ jobs:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh security'
 
-      # Gating, never continue-on-error; the fmt-clippy step drops --all-features, which this image cannot build.
+      # Gating, never continue-on-error.
       - name: Check formatting and clippy
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
@@ -159,7 +161,7 @@ jobs:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh release'
 
-      # --privileged: flatpak-builder runs its build under bubblewrap.
+      # --privileged: flatpak-builder runs its build under bubblewrap. The CLI travels with its GStreamer, ORT, model and glibc.
       - name: 📦 Create packages (tar, deb, AppImage, flatpak)
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:
@@ -177,25 +179,25 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash third_party/ANTfrastructure/linux/scripts/06-packaging/package_archive.sh
+            bash scripts/linux/package-linux.sh
             --binary "${BINARY}"
-            --binary-file "${BINARY_FILE}"
             --binary-path "target/release/${BINARY_FILE}"
             --version "${VERSION}"
             --package-types "${PACKAGE_TYPES}"
             --platform "${PLATFORM}"
-            --arch "${ARCH}"
-            --desktop-file "packaging/linux/oxidant.desktop"
-            --icon-file "images/logo.png"
-            --archive-out-file "dist/archive_path.txt"
-            --no-github-output'
+            --arch "${ARCH}"'
 
       # Named by VERSION: a PR's ref_name is `<n>/merge` and upload-artifact refuses the `/`.
+      - name: Name the artifact
+        id: artifact
+        if: always()
+        run: echo "name=${BINARY}-${VERSION}-${{ inputs.artifact-suffix }}-all" >> "$GITHUB_OUTPUT"
+
       - name: Upload all artifacts
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ env.BINARY }}-${{ env.VERSION }}-${{ inputs.artifact-suffix }}-all
+          name: ${{ steps.artifact.outputs.name }}
           # This also runs after a failed build, which must not look delivered.
           if-no-files-found: error
           path: |
@@ -216,3 +218,24 @@ jobs:
         uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-save@develop
         with:
           key: ${{ inputs.arch }}-cargo
+
+  # Inside the image every library is present; only a bare host shows one the packages lack (hub linux-build-basics.md).
+  clean-host:
+    name: Packages on a clean Ubuntu 26.04 (${{ inputs.arch }})
+    needs: build
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Install, unpack and start the .deb, the tarball and the AppImage
+        uses: Kataglyphis/ANTfrastructure/.github/actions/clean-host-package-check@develop
+        with:
+          artifact: ${{ needs.build.outputs.artifact }}
+          subdir: dist
+          deb: '*.deb'
+          deb-command: oxidant --help && oxidant onnx-runtime && oxidant media-check
+          tarball: '*.tar.gz'
+          tarball-command: ./oxidant --help && ./oxidant onnx-runtime && ./oxidant media-check
+          appimage: '*.AppImage'
+          appimage-command: '"$APPIMAGE" onnx-runtime && "$APPIMAGE" media-check'

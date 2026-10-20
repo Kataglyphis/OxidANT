@@ -5,3 +5,6 @@
 *.sh text eol=lf
 *.bash text eol=lf
 resources/models/models.lock text eol=lf
+
+# appimagetool refuses a desktop entry with CR line ends, which a Windows checkout would give it.
+*.desktop text eol=lf

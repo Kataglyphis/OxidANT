@@ -4,51 +4,30 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-default = []
-gui = ["dep:gstreamer"]
-gui_unix = ["gui", "dep:gtk"]
-gui_linux = ["gui", "_gui_wgpu_deps"]
-gui_wgpu = ["gui_windows"]
-gui_windows = ["gui", "_gui_wgpu_deps"]
-_gui_wgpu_deps = [
-    "dep:gstreamer-app",
-    "dep:kataglyphis_media",
-    "kataglyphis_media/gstreamer",
-    "dep:winit",
-    "dep:wgpu",
-    "dep:pollster",
-    "dep:bytemuck",
-    "dep:egui",
-    "dep:egui-winit",
-    "dep:egui-wgpu",
-]
-onnx_tract = ["kataglyphis_inference/onnx_tract"]
-onnxruntime = ["kataglyphis_inference/onnxruntime"]
-
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 anyhow = { workspace = true }
 log = { workspace = true }
 kataglyphis_core = { path = "../core" }
-kataglyphis_inference = { path = "../inference", optional = true }
+kataglyphis_inference = { path = "../inference" }
 # Its GStreamer init points GST_PLUGIN_PATH at the plugins a package carries beside the exe.
-kataglyphis_media = { path = "../media", optional = true }
+kataglyphis_media = { path = "../media" }
 kataglyphis_telemetry = { path = "../telemetry" }
 tokio = { version = "1", features = ["sync", "time"] }
 chrono = { workspace = true }
 
-gtk = { version = "0.11", package = "gtk4", features = ["v4_10"], optional = true }
 # Workspace-pinned so this and crates/media never link two GStreamer versions against one libgstreamer.
-gstreamer = { workspace = true, optional = true }
-gstreamer-app = { workspace = true, optional = true }
-winit = { version = "0.30", optional = true }
-wgpu = { version = "30", optional = true }
-pollster = { version = "1.0", optional = true }
-bytemuck = { version = "1.25", features = ["derive"], optional = true }
-egui = { version = "0.36", optional = true }
-egui-winit = { version = "0.36", optional = true }
-egui-wgpu = { version = "0.36", optional = true }
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+winit = { version = "0.30" }
+# No GL backend, which GpuBackend never picks: its opengl32.dll import keeps the exe from loading in Server Core.
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+pollster = { version = "1.0" }
+bytemuck = { version = "1.25", features = ["derive"] }
+egui = { version = "0.36" }
+egui-winit = { version = "0.36" }
+# Its defaults turn wgpu's GL backend back on.
+egui-wgpu = { version = "0.36", default-features = false }
 sysinfo = { workspace = true }
 
 [lints]

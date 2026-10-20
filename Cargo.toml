@@ -11,11 +11,12 @@ members = [
     "crates/observant",
     "crates/esp32",
     "crates/esp32-protocol",
+    "crates/burn_demos",
 ]
 
 [workspace.package]
 # The one version (owner, 2026-10-15): CI, the packages and the MSIX read it here.
-version = "2.3.4"
+version = "3.0.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Kataglyphis/OxidANT"
@@ -38,7 +39,8 @@ tokio = "1"
 clap = { version = "4", features = ["derive"] }
 burn = { version = "0.22.0", default-features = false }
 ndarray = { version = "0.17" }
-plotters = { version = "0.3" }
+# ab_glyph, not font-kit: no system fontconfig or freetype to link, on any target.
+plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ab_glyph"] }
 tempfile = { version = "3" }
 # load-dynamic on the declaration so no feature set can link ORT; scripts/linux/check-ort-chain-only.sh enforces it.
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-24"] }
@@ -64,29 +66,9 @@ rust-version.workspace = true
 name = "oxidant"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
-[features]
-default = []
-gui = ["kataglyphis_gui/gui"]
-gui_unix = ["kataglyphis_gui/gui_unix"]
-gui_linux = ["kataglyphis_gui/gui_linux"]
-gui_wgpu = ["kataglyphis_gui/gui_wgpu"]
-gui_windows = ["kataglyphis_gui/gui_windows"]
-onnx_tract = ["kataglyphis_inference/onnx_tract"]
-onnxruntime = ["kataglyphis_inference/onnxruntime", "dep:ort", "ort/std"]
-# Now just an alias, kept because OmniAccelerANT's KATAGLYPHIS_RUST_FEATURES names it.
-onnxruntime_dynamic = ["onnxruntime", "kataglyphis_inference/onnxruntime_dynamic"]
-onnxruntime_directml = ["kataglyphis_inference/onnxruntime_directml"]
-onnxruntime_cuda = ["kataglyphis_inference/onnxruntime_cuda"]
-# GStreamer-backed webcam capture (crates/media) + the webcam→inference engine.
-gstreamer = ["dep:kataglyphis_media", "kataglyphis_media/gstreamer", "dep:libloading"]
-burn_demos = ["dep:burn", "dep:ndarray", "dep:plotters", "dep:tempfile", "onnxruntime"]
-
 [dependencies]
 kataglyphis_core = { path = "crates/core" }
 kataglyphis_telemetry = { path = "crates/telemetry" }
-kataglyphis_inference = { path = "crates/inference", optional = true }
-kataglyphis_media = { path = "crates/media", optional = true }
-kataglyphis_gui = { path = "crates/gui", optional = true }
 clap = { workspace = true }
 
 log = { workspace = true }
@@ -97,21 +79,17 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 sysinfo = { workspace = true }
 
-# Since 0.22 the backend is a runtime Device: Flex (NdArray's successor) plus autodiff, which `optim` implies.
-burn = { workspace = true, features = ["std", "flex", "optim"], optional = true }
-ndarray = { workspace = true, optional = true }
-plotters = { workspace = true, optional = true }
-tempfile = { workspace = true, optional = true }
-ort = { workspace = true, optional = true }
-libloading = { workspace = true, optional = true }
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cxx = "1.0"
+# tract everywhere, the chain ORT first where the family builds one; wasm32 has no file system to load a model from.
+kataglyphis_inference = { path = "crates/inference" }
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "time"] }
 
-# The ESP32-S3 companion is a desktop peripheral; Android and wasm have no serial port.
+# Desktop only: Android and wasm have no serial port for the ESP32-S3 companion and no GStreamer for the webcam engine.
 [target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
 kataglyphis_esp32 = { path = "crates/esp32" }
+kataglyphis_media = { path = "crates/media" }
+libloading = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "time", "sync"] }
@@ -123,7 +101,7 @@ serde = { version = "1", features = ["derive"] }
 wmi = { workspace = true }
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(onnx)', 'cfg(gui_wgpu_backend)', 'cfg(desktop)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(desktop)'] }
 
 [lints]
 workspace = true
@@ -155,8 +133,3 @@ strip = "none"
 
 [profile.dev.package."*"]
 opt-level = 2
-
-[[bin]]
-name = "burn-demos"
-path = "src/bin/burn_demos.rs"
-required-features = ["burn_demos"]

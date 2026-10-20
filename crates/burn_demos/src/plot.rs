@@ -1,8 +1,10 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::Context;
 use plotters::coord::Shift;
 use plotters::prelude::*;
+use plotters::style::{register_font, FontStyle};
 
 /// Convert any plotters `DrawingAreaErrorKind` into an `anyhow::Error`.
 fn plotters_err<E: std::fmt::Debug>(e: E) -> anyhow::Error {
@@ -16,8 +18,68 @@ pub fn plot_loss_curve(path: impl AsRef<Path>, losses: &[f32], title: &str) -> a
 
     let path = path.as_ref();
     ensure_parent_dir(path)?;
+    ensure_font()?;
 
     render_loss_curve(path, losses, title)
+}
+
+/// Registers this system's sans-serif TrueType font as plotters' `sans-serif`, once per process.
+fn ensure_font() -> anyhow::Result<()> {
+    static FONT: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+    FONT.get_or_init(|| {
+        let candidates = font_candidates();
+        let path = candidates.iter().find(|p| p.is_file()).ok_or_else(|| {
+            format!("no TrueType font for the plot's text; looked for {candidates:?}")
+        })?;
+        let bytes =
+            std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        // plotters keeps fonts for the process' lifetime, so the bytes are leaked on purpose.
+        register_font(
+            "sans-serif",
+            FontStyle::Normal,
+            Box::leak(bytes.into_boxed_slice()),
+        )
+        .map_err(|_| format!("{} is not a font plotters can read", path.display()))?;
+        Ok(path.clone())
+    })
+    .as_ref()
+    .map(|_| ())
+    .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Where a sans-serif TrueType font sits: fontconfig's own answer first, then the usual files.
+fn font_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(out) = std::process::Command::new("fc-match")
+        .args(["--format=%{file}", "sans-serif:fontformat=TrueType"])
+        .output()
+    {
+        if out.status.success() && !out.stdout.is_empty() {
+            candidates.push(PathBuf::from(
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+            ));
+        }
+    }
+    if cfg!(windows) {
+        let fonts = Path::new(&std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into()))
+            .join("Fonts");
+        // Lucida Console last: the only font a Server Core container ships.
+        candidates.extend(
+            ["arial.ttf", "segoeui.ttf", "calibri.ttf", "lucon.ttf"].map(|f| fonts.join(f)),
+        );
+    } else {
+        candidates.extend(
+            [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+            ]
+            .map(PathBuf::from),
+        );
+    }
+    candidates
 }
 
 fn render_loss_curve(path: &Path, losses: &[f32], title: &str) -> anyhow::Result<()> {

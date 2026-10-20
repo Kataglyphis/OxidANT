@@ -5,7 +5,7 @@ use burn::optim::{AdamConfig, GradientsParams, ModuleOptimizer};
 use burn::tensor::activation::{relu, sigmoid};
 use burn::tensor::{Device, Tensor, TensorData};
 
-use crate::burn_demos::{inference_device, lcg::Lcg, losses, plot, training_device};
+use crate::{inference_device, lcg::Lcg, losses, plot, training_device};
 
 #[derive(Module, Debug)]
 struct DeepClassifier {
@@ -188,6 +188,7 @@ fn train_two_moons_epoch(
     (model, loss_avg)
 }
 
+/// Trains a deeper MLP on two moons; returns the final accuracy on the whole set.
 pub fn two_moons_demo(
     epochs: usize,
     steps_per_epoch: usize,
@@ -196,8 +197,10 @@ pub fn two_moons_demo(
     noise: f32,
     seed: u64,
     plot_path: Option<std::path::PathBuf>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<f32> {
     let device = training_device();
+    // The seed fixes the initial weights too, so one --seed reproduces a whole run.
+    device.seed(seed);
     let dataset = TwoMoonsDataset::generate(2000, noise, seed);
 
     let mut model = DeepClassifier::new(&device, 64);
@@ -234,5 +237,5 @@ pub fn two_moons_demo(
         plot::plot_loss_curve(path, &losses, "Two Moons loss")?;
     }
 
-    Ok(())
+    Ok(acc)
 }

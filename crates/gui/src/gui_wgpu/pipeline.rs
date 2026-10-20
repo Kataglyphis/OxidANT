@@ -220,3 +220,75 @@ fn lies_under(file: &Path, dir: &Path) -> bool {
         _ => file.starts_with(dir),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_packed_frame_passes_unchanged() {
+        let src: Vec<u8> = (0..2 * 2 * 4).map(|i| i as u8).collect();
+        assert_eq!(rgba_tightly_packed(&src, 2, 2).as_deref(), Some(&src[..]));
+    }
+
+    #[test]
+    fn row_padding_is_dropped() {
+        // Two 1-pixel rows, each padded to 8 bytes.
+        let src = [1, 2, 3, 4, 0, 0, 0, 0, 5, 6, 7, 8, 0, 0, 0, 0];
+        let packed = rgba_tightly_packed(&src, 1, 2).unwrap();
+        assert_eq!(&packed[..], &[1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn an_empty_or_short_frame_is_refused() {
+        assert!(rgba_tightly_packed(&[0; 16], 0, 4).is_none());
+        assert!(rgba_tightly_packed(&[0; 16], 4, 0).is_none());
+        assert!(rgba_tightly_packed(&[0; 15], 2, 2).is_none());
+    }
+
+    #[test]
+    fn a_plugin_counts_as_bundled_only_inside_the_dir() {
+        let dir = std::env::temp_dir().join(format!("oxidant-gui-plugins-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let inside = dir.join("libgstapp.so");
+        std::fs::write(&inside, b"").unwrap();
+        let outside =
+            std::env::temp_dir().join(format!("oxidant-gui-elsewhere-{}.so", std::process::id()));
+        std::fs::write(&outside, b"").unwrap();
+        let (inside_ok, outside_ok) = (lies_under(&inside, &dir), lies_under(&outside, &dir));
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_file(&outside).unwrap();
+        assert!(inside_ok);
+        assert!(!outside_ok);
+    }
+
+    #[test]
+    fn the_report_names_each_element_and_its_plugin() {
+        let report = MediaReport {
+            version: "GStreamer 1.29.2".into(),
+            bundled_plugins: None,
+            elements: vec![
+                ("appsink".into(), Some(PathBuf::from("/p/libgstapp.so"))),
+                ("bin".into(), None),
+            ],
+        };
+        assert_eq!(
+            report.to_string(),
+            "GStreamer 1.29.2\nplugins beside the exe: none, GStreamer's own search path\n\
+             appsink: /p/libgstapp.so\nbin: built into GStreamer\n"
+        );
+    }
+
+    #[test]
+    fn the_camera_pipeline_builds_without_a_camera() {
+        let report = media_check().expect("the GUI's pipeline must build");
+        let names: Vec<&str> = report.elements.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(
+            names
+                .first()
+                .is_some_and(|n| *n == "mfvideosrc" || *n == "autovideosrc"),
+            "{names:?}"
+        );
+        assert_eq!(&names[1..], ["videoconvert", "capsfilter", "appsink"]);
+    }
+}

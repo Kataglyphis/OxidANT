@@ -1,64 +1,54 @@
-#[allow(unused_imports)]
-use anyhow::bail;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use log::info;
+use ort::session::builder::SessionBuilder;
+use ort::session::Session;
 
 use super::model_utils::validate_model_path;
 use crate::ort_ext::OrtResultExt;
-#[cfg(feature = "onnxruntime_cuda")]
 use kataglyphis_core::config;
 
 const DEFAULT_INPUT_DIMS: (u32, u32) = (640, 640);
 
-pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Session, (u32, u32))> {
-    use ort::session::Session;
+/// `KATAGLYPHIS_ORT_DEVICE=cuda` needs the CUDA EP; `auto` takes it when the loaded ORT has it, else the CPU.
+fn with_cuda(builder: SessionBuilder, device: &str) -> Result<SessionBuilder> {
+    use ort::execution_providers::{ExecutionProvider, CUDA};
 
+    let cuda = CUDA::default();
+    let enabled = match cuda.is_available() {
+        Ok(true) => builder
+            .with_execution_providers([cuda.build().error_on_failure()])
+            .with_ort_context("Failed to configure ORT CUDA execution provider"),
+        Ok(false) => Err(anyhow!(
+            "the loaded ONNX Runtime has no CUDA execution provider"
+        )),
+        Err(err) => Err(anyhow!("Failed to query CUDA EP availability: {err}")),
+    };
+    match enabled {
+        Ok(builder) => {
+            info!("ORT CUDA execution provider enabled");
+            Ok(builder)
+        }
+        Err(err) if device == "cuda" => Err(err),
+        Err(err) => {
+            log::warn!("ORT CUDA provider unavailable, running on the CPU: {err:#}");
+            Session::builder().with_ort_context("Failed to recreate ORT SessionBuilder")
+        }
+    }
+}
+
+pub(crate) fn load_ort_session(model_path: &str) -> Result<(Session, (u32, u32))> {
     let canonical_path = validate_model_path(model_path)?;
     crate::ort_runtime::ensure_ort_loaded()?;
 
     let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
 
-    #[cfg(feature = "onnxruntime_cuda")]
-    {
-        use ort::execution_providers::{ExecutionProvider, CUDA};
-        let device = config::ort_device();
-
-        info!("ORT device request: {device}");
-
-        if device == "cuda" || device == "auto" {
-            let cuda = CUDA::default();
-            match cuda.is_available() {
-                Ok(true) => {}
-                Ok(false) => {
-                    bail!("ORT was built without CUDA support (CUDA EP unavailable).");
-                }
-                Err(err) => {
-                    bail!("Failed to query CUDA EP availability: {err}");
-                }
-            }
-
-            let cuda_result = builder
-                .with_execution_providers([cuda.build().error_on_failure()])
-                .with_ort_context("Failed to configure ORT CUDA execution provider");
-
-            match cuda_result {
-                Ok(b) => {
-                    info!("ORT CUDA execution provider enabled");
-                    builder = b;
-                }
-                Err(err) => {
-                    if device == "cuda" {
-                        return Err(err);
-                    }
-                    log::warn!("ORT CUDA provider unavailable, falling back to CPU: {err:#}");
-                    builder = Session::builder()
-                        .with_ort_context("Failed to recreate ORT SessionBuilder")?;
-                }
-            }
-        }
+    let device = config::ort_device();
+    info!("ORT device request: {device}");
+    if device == "cuda" || device == "auto" {
+        builder = with_cuda(builder, device)?;
     }
 
-    #[cfg(all(feature = "onnxruntime_directml", windows))]
+    #[cfg(windows)]
     {
         use ort::execution_providers::DirectML;
         builder = builder
@@ -91,7 +81,7 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Sessio
     Ok((session, (input_w, input_h)))
 }
 
-fn extract_ort_input_dims(session: &ort::session::Session) -> (u32, u32) {
+fn extract_ort_input_dims(session: &Session) -> (u32, u32) {
     let Some(first) = session.inputs().first() else {
         return DEFAULT_INPUT_DIMS;
     };

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Fails when any feature set of this workspace could build ort-sys against an
-# ONNX Runtime that is not the family's chain build (a pyke download, a
-# pkg-config hit, or a link). (1) Cargo.lock: ort-sys has no download deps.
-# (2) cargo tree --workspace --all-features --target all: no forbidden ort-sys
-# feature, disable-linking on. (3) cargo metadata: EVERY ort declaration in the
-# graph carries load-dynamic (every ort-sys one disable-linking), so no subset
-# of features can drop it. Does NOT cover which dylib a binary loads at run
-# time (crates/inference/src/ort_runtime.rs) or which file packaging ships.
+# Fails when this workspace could build ort-sys against an ONNX Runtime that
+# is not the family's chain build (a pyke download, a pkg-config hit, or a
+# link). (1) Cargo.lock: ort-sys has no download deps. (2) cargo tree
+# --workspace --target all: no forbidden ort-sys feature, disable-linking on.
+# (3) cargo metadata: EVERY ort declaration in the graph carries load-dynamic
+# (every ort-sys one disable-linking), so none leans on another to keep it.
+# Does NOT cover which dylib a binary loads at run time
+# (crates/inference/src/ort_runtime.rs) or which file packaging ships.
 # Usage: scripts/linux/check-ort-chain-only.sh [--root DIR] [--lock-only]
 set -euo pipefail
 
@@ -77,14 +77,14 @@ done <<< "${ort_sys_deps}"
 
 if [[ "${lock_only}" -eq 0 ]]; then
   if ! tree="$(cd "${root}" && cargo tree --locked -q -e features -i ort-sys \
-      --workspace --all-features --target all)"; then
+      --workspace --target all)"; then
     printf 'FAIL cargo tree could not resolve the ort-sys feature graph\n' >&2
     exit 1
   fi
   for feature in download-binaries pkg-config __tls tls-native tls-native-vendored \
       tls-rustls tls-rustls-no-provider; do
     if grep -qF "ort-sys feature \"${feature}\"" <<< "${tree}"; then
-      printf 'FAIL ort-sys feature "%s" is enabled by some feature set:\n' "${feature}" >&2
+      printf 'FAIL ort-sys feature "%s" is enabled:\n' "${feature}" >&2
       grep -F -B0 -A3 "ort-sys feature \"${feature}\"" <<< "${tree}" >&2 || true
       failures=$((failures + 1))
     fi
@@ -94,7 +94,7 @@ if [[ "${lock_only}" -eq 0 ]]; then
     failures=$((failures + 1))
   fi
 
-  # (2) sees only the --all-features union; a subset could still link ORT without load-dynamic.
+  # (2) sees the unified graph; a declaration leaning on another's load-dynamic loses it once that one goes.
   py="$(command -v python3 || command -v python || true)"
   if [[ -z "${py}" ]]; then
     printf 'FAIL no python3 to read cargo metadata with\n' >&2

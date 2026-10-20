@@ -9,11 +9,8 @@ Set-StrictMode -Version Latest
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location $repoRoot
 
-# The member half of the Linux TEST_FEATURES (ci-container-steps.sh); its oxidant/* pair, the webcam engine, is tested on Linux only. Stage-CrossTests.ps1 builds the same set.
-$testFeatures = 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
-
 Write-Host '==> Workspace tests, the WebGPU renderer excluded'
-& cargo test --workspace --locked --exclude kataglyphis_webgpu_renderer --features $testFeatures
+& cargo test --workspace --locked --exclude kataglyphis_webgpu_renderer
 if ($LASTEXITCODE -ne 0) {
   throw "Workspace tests failed with exit code $LASTEXITCODE."
 }

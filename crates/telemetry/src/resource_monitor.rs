@@ -86,19 +86,16 @@ pub struct ResourceMonitorConfig {
 }
 
 #[inline]
-#[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
 pub fn record_inference_completion() {
     GLOBAL_COUNTERS.record_inference_completion();
 }
 
 #[inline]
-#[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
 pub fn record_camera_frame() {
     GLOBAL_COUNTERS.record_camera_frame();
 }
 
 #[inline]
-#[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
 pub fn record_inference_duration(duration: Duration) {
     GLOBAL_COUNTERS.record_inference_duration(duration);
 }

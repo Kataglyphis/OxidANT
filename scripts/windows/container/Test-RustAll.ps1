@@ -27,8 +27,8 @@ Set-Location $Workspace
 # Server Core lacks the opengl32.dll that wgpu's `gles` backend imports at load; see docs/testing.md#on-windows-the-renderers-tests-run-outside-the-container
 Write-ContainerLog 'SKIPPING kataglyphis_webgpu_renderer: Server Core has no opengl32.dll (see comment in this script). Run it on a desktop Windows host.'
 
-# The CI lane's set (Invoke-DebugTests.ps1): the features reach the cfg-gated capture and ORT-loader suites.
-$code = Invoke-ContainerLoggedCommand 'cargo test --workspace --locked --exclude kataglyphis_webgpu_renderer --features kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime'
+# The CI lane's set (Invoke-DebugTests.ps1).
+$code = Invoke-ContainerLoggedCommand 'cargo test --workspace --locked --exclude kataglyphis_webgpu_renderer'
 if ($code -ne 0) { Write-ContainerLog "TESTS FAILED (exit $code)"; exit $code }
 Write-ContainerLog 'ALL TESTS PASSED (kataglyphis_webgpu_renderer excluded -- see above)'
 exit 0

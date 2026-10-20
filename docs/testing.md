@@ -3,26 +3,27 @@
 ## The whole suite
 
 Unit + integration + proptest fuzz + doc tests at the debug profile, as every Linux lane
-runs them (`bash scripts/linux/ci-container-steps.sh test`, whose `TEST_FEATURES` these
-are):
+runs them (`bash scripts/linux/ci-container-steps.sh test`):
 
 ```bash
 scripts/linux/fetch-models.sh
 KATAGLYPHIS_REQUIRE_GPU=1 KATAGLYPHIS_REQUIRE_MODEL=1 KATAGLYPHIS_REQUIRE_GST=1 \
-  cargo test --workspace --locked \
-    --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime'
+  cargo test --workspace --locked
 ```
 
-The features reach the suites a default build compiles empty: `kataglyphis_media`'s
-capture tests are `cfg(feature = "gstreamer")` and need GStreamer installed, the
-inference crate's ORT-loader tests are `cfg(feature = "onnxruntime")`, and the root
-package's own two compile `src/webcam_engine.rs` and the webcam API, which no test
-compiled before they arrived on 2026-10-15. Why each member's feature takes the `?/`
-form: [AGENTS.md § Feature combinations and their system dependencies](../AGENTS.md#feature-combinations-and-their-system-dependencies).
+There are no features to add: the capture tests, the ORT loader, the webcam engine and the
+burn demos compile wherever the target runs them, so GStreamer's development files and the
+chain ORT must be present ([AGENTS.md § Targets and their system dependencies](../AGENTS.md#targets-and-their-system-dependencies)).
 
 Each `KATAGLYPHIS_REQUIRE_*` turns a self-skip (no GPU, no model, a missing GStreamer
 element) into a failure, since `cargo test` hides a passing test's `SKIP:` line.
 `fetch-models.sh` puts the model the real-model tests need in place.
+
+**Both ONNX backends meet the real model.** `crates/inference/tests/real_model.rs` checks that
+the chain ORT is the backend on Linux and Windows and that tract finds both cats too;
+`ort_fallback.rs` points `ORT_DYLIB_PATH` at nothing and checks that the detector warns with
+ORT's reason and falls back to tract; `model_errors.rs` checks each backend's error, and that
+a model neither loads names both reasons.
 
 ## Formatting and lints
 
@@ -30,8 +31,7 @@ CI gates on both, as hard failures. Run them before pushing:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked \
-    --features 'kataglyphis_media?/gstreamer,kataglyphis_inference?/onnxruntime,oxidant/gstreamer,oxidant/onnxruntime' -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 That is the scope of the lanes' `fmt-clippy` step (`CARGO_CLIPPY_ARGS` in
@@ -68,7 +68,9 @@ that repeats a `@location`, which naga accepts and Tint, the browsers' WGSL comp
 - Integration tests: `tests/integration/integration.rs`, which run the CLI and are
   compiled as `kataglyphis_cli`'s `integration` test (`crates/cli/tests/integration.rs`);
   `crates/media/tests/capture_test.rs` (a `videotestsrc` pipeline and camera
-  enumeration); and the renderer's 18 binaries under `crates/webgpu_renderer/tests/`.
+  enumeration); `crates/inference/tests/` (the real model on both backends, the fallback,
+  the load errors); `crates/burn_demos/tests/` (each demo's result, the detector demo on the
+  real model); and the renderer's 18 binaries under `crates/webgpu_renderer/tests/`.
 - Property-based (fuzz) tests: [proptest](https://proptest-rs.github.io/proptest/)
   properties on ObservANT's network-facing parsers (Range header, query, Host/Origin
   check, request path, camera spec, config file), 256 random inputs per property and run,
@@ -89,8 +91,10 @@ Every renderer test binary links wgpu, whose `gles` backend makes the executable
 dies with `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`. The loader resolves the
 import, so no runtime flag avoids it, and letting it run turned the whole
 `cargo test --workspace` into a crash with no results. `gles` stays on purpose: it is the
-OpenGL fallback for machines without Vulkan/DX12. Run those tests on a desktop Windows
-host, where the DLL exists:
+OpenGL fallback for machines without Vulkan/DX12. The camera GUI turns it off (its
+`GpuBackend` picks Vulkan, DX12 or Metal only), so `kataglyphis_gui` and the CLI test and run
+in Server Core as long as the renderer is not in the same build. Run the renderer's tests on
+a desktop Windows host, where the DLL exists:
 
 ```pwsh
 $env:KATAGLYPHIS_REQUIRE_GPU = '1'; cargo test -p kataglyphis_webgpu_renderer --locked

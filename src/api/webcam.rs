@@ -17,7 +17,7 @@ pub struct DetectionBox {
     pub class_id: i64,
 }
 
-#[cfg(all(feature = "gstreamer", onnx))]
+#[cfg(desktop)]
 impl From<crate::Detection> for DetectionBox {
     fn from(d: crate::Detection) -> Self {
         Self {
@@ -55,15 +55,15 @@ pub struct DetectionEvent {
     pub fps: f32,
 }
 
-/// Whether this build can run the webcam pipeline: a compile-time answer, cheap enough for a widget's build.
+/// Whether this target runs the webcam pipeline (desktop: GStreamer); compile-time, cheap enough for a widget's build.
 #[flutter_rust_bridge::frb(sync)]
 pub fn webcam_inference_available() -> bool {
-    cfg!(all(feature = "gstreamer", onnx))
+    cfg!(desktop)
 }
 
 /// Not sync on purpose: the device monitor starts libcamera, about a second the UI thread must not wait out.
 pub fn list_cameras() -> Result<Vec<CameraDesc>, String> {
-    #[cfg(feature = "gstreamer")]
+    #[cfg(desktop)]
     {
         kataglyphis_media::list_cameras()
             .map(|cams| {
@@ -76,9 +76,9 @@ pub fn list_cameras() -> Result<Vec<CameraDesc>, String> {
             })
             .map_err(|e| format!("camera enumeration failed: {e:#}"))
     }
-    #[cfg(not(feature = "gstreamer"))]
+    #[cfg(not(desktop))]
     {
-        Err("webcam capture is disabled. Build with --features gstreamer".into())
+        Err("webcam capture needs a desktop target: Android and the web have no GStreamer".into())
     }
 }
 
@@ -87,28 +87,28 @@ pub fn start_webcam_inference(
     config: WebcamStreamConfig,
     sink: StreamSink<DetectionEvent>,
 ) -> Result<(), String> {
-    #[cfg(all(feature = "gstreamer", onnx))]
+    #[cfg(desktop)]
     {
         enabled::start(config, sink).map_err(|e| {
             log::error!("start_webcam_inference failed: {e:#}");
             format!("start_webcam_inference failed: {e:#}")
         })
     }
-    #[cfg(not(all(feature = "gstreamer", onnx)))]
+    #[cfg(not(desktop))]
     {
         let (_, _) = (config, sink);
-        Err("webcam inference is disabled. Build with --features gstreamer,onnxruntime*".into())
+        Err("webcam inference needs a desktop target: Android and the web have no GStreamer".into())
     }
 }
 
 /// Stops the running session (no-op when idle).
 #[flutter_rust_bridge::frb(sync)]
 pub fn stop_webcam_inference() {
-    #[cfg(all(feature = "gstreamer", onnx))]
+    #[cfg(desktop)]
     enabled::stop();
 }
 
-#[cfg(all(feature = "gstreamer", onnx))]
+#[cfg(desktop)]
 mod enabled {
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -201,14 +201,20 @@ mod enabled {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn the_probe_answers_what_this_build_was_compiled_with() {
-        assert_eq!(
-            super::webcam_inference_available(),
-            cfg!(all(feature = "gstreamer", onnx))
-        );
+    fn the_probe_answers_for_the_target() {
+        assert_eq!(super::webcam_inference_available(), cfg!(desktop));
     }
 
-    #[cfg(all(feature = "gstreamer", onnx))]
+    #[cfg(desktop)]
+    #[test]
+    fn cameras_list_and_an_idle_stop_is_a_no_op() {
+        // A container has no camera; the enumeration must still succeed.
+        let cameras = super::list_cameras().unwrap();
+        assert!(cameras.iter().all(|c| !c.name.is_empty()));
+        super::stop_webcam_inference();
+    }
+
+    #[cfg(desktop)]
     #[test]
     fn the_default_texture_library_is_the_native_plugin() {
         let name = super::enabled::default_texture_library();

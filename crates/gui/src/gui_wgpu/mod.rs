@@ -26,8 +26,7 @@ use renderer::WgpuState;
 const REDRAW_INTERVAL_MS: u64 = 16;
 
 /// WGPU backend selection for the GUI.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "gui_windows", derive(clap::ValueEnum))]
+#[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum GpuBackend {
     /// Automatically pick the best backend for the platform.
     Auto,
@@ -270,3 +269,29 @@ fn start_window(
     Ok(())
 }
 pub(crate) mod egui_overlay;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_backend_has_its_command_line_name() {
+        let names: Vec<String> = [GpuBackend::Auto, GpuBackend::Vulkan, GpuBackend::Dx12]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(names, ["auto", "vulkan", "dx12"]);
+    }
+
+    #[test]
+    fn a_backend_picks_its_wgpu_backends() {
+        assert_eq!(backends_for(&GpuBackend::Vulkan), wgpu::Backends::VULKAN);
+        assert_eq!(backends_for(&GpuBackend::Auto), wgpu::Backends::PRIMARY);
+        let dx12 = if cfg!(windows) {
+            wgpu::Backends::DX12
+        } else {
+            wgpu::Backends::PRIMARY
+        };
+        assert_eq!(backends_for(&GpuBackend::Dx12), dx12);
+    }
+}

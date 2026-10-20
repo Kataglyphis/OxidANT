@@ -48,6 +48,18 @@ and the backlog is empty"; it was neither.
       the eight `docs/*.md` pages reach readers only on GitHub. The hub's rustdoc builder takes no
       guide list (its `builder: dartdoc` does since hub c91187a9): give it one, or render the
       guides as crate docs.
+- [b] Build the GTK4 GUI on Linux (owner 2026-10-20: both GUIs, no switch). Blocked on the
+      family Linux image: `:latest` (2026-10-11 build) has only `/opt/gstreamer`'s `gtk4.pc`,
+      which names a `graphene-gobject-1.0` it lacks, so `pkg-config --cflags gtk4` fails; the
+      hub adds GTK4's development files with its next build. Once that passes in `:latest`
+      on amd64 and arm64 and in the riscv64 sysroot, the change is:
+      `crates/gui/Cargo.toml` gets
+      `[target.'cfg(target_os = "linux")'.dependencies] gtk = { version = "0.11", package = "gtk4", features = ["v4_10"] }`,
+      `crates/gui/src/lib.rs` gets `#[cfg(target_os = "linux")] pub mod gui;` (the module,
+      `crates/gui/src/gui.rs`, is in the tree; no CI lane ever compiled it), and the CLI a `gui-gtk` subcommand under the same cfg
+      calling `kataglyphis_gui::gui::run()`. The lockfile then regains gtk4 0.11's graph,
+      pruned on 2026-10-20, and `scripts/linux/package-linux.sh` its GTK4 closure and the
+      `gtk4paintablesink` plugin, or `autovideosink` stays the sink.
 
 ## Not adopted yet
 

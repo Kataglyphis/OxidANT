@@ -2,19 +2,15 @@ mod model_utils;
 pub(crate) mod postprocess;
 mod preprocess;
 
-#[cfg(feature = "onnx_tract")]
 mod tract_backend;
 
-#[cfg(feature = "onnxruntime")]
+#[cfg(any(target_os = "linux", windows))]
 mod ort_backend;
 
 use anyhow::{bail, Context, Result};
 use log::info;
 
-#[cfg(feature = "onnxruntime")]
-use log::warn;
-
-#[cfg(feature = "onnxruntime")]
+#[cfg(any(target_os = "linux", windows))]
 use crate::ort_ext::extract_first_f32_output;
 
 use kataglyphis_core::config::{self, PreprocessMode};
@@ -66,15 +62,17 @@ fn default_model_path() -> String {
 
 enum Backend {
     // tract's `run` takes `self: &Arc<Self>`, so the plan must live in an Arc.
-    #[cfg(feature = "onnx_tract")]
-    Tract { model: std::sync::Arc<TractPlan> },
+    Tract {
+        model: std::sync::Arc<TractPlan>,
+    },
 
-    #[cfg(feature = "onnxruntime")]
-    Ort { session: ort::session::Session },
+    #[cfg(any(target_os = "linux", windows))]
+    Ort {
+        session: ort::session::Session,
+    },
 }
 
 // See tract_backend.rs: tract 0.23 renamed `SimplePlan` to `RunnableModel`.
-#[cfg(feature = "onnx_tract")]
 type TractPlan = tract_onnx::prelude::TypedRunnableModel;
 
 struct BackendLoad {
@@ -110,7 +108,13 @@ impl PersonDetector {
         }
     }
 
+    /// [`Self::with_backend`] with `KATAGLYPHIS_ONNX_BACKEND`.
     pub fn new(model_path: &str) -> Result<Self> {
+        Self::with_backend(model_path, config::onnx_backend().as_deref())
+    }
+
+    /// Loads `model_path` with `backend`: `"ort"`, `"tract"`, or `None` for ORT with tract as its fallback.
+    pub fn with_backend(model_path: &str, backend: Option<&str>) -> Result<Self> {
         info!("Loading ONNX model: {model_path}");
         // Checked first: a backend that cannot open the file would report itself missing instead.
         if !std::path::Path::new(model_path).is_file() {
@@ -121,12 +125,10 @@ impl PersonDetector {
         let swap_xy = config::swap_xy_enabled();
         log::debug!("Preprocess mode: {:?}, swap_xy: {}", preprocess, swap_xy);
 
-        let requested_backend = config::onnx_backend();
-
         let BackendLoad {
             backend,
             input_dims,
-        } = Self::load_backend(model_path, requested_backend.as_deref())?;
+        } = Self::load_backend(model_path, backend)?;
         let (input_w, input_h) = input_dims;
 
         Ok(Self::from_parts(
@@ -134,29 +136,34 @@ impl PersonDetector {
         ))
     }
 
-    #[cfg(feature = "onnxruntime")]
-    fn try_load_ort(model_path: &str, require_ort: bool) -> Result<BackendLoad> {
-        match ort_backend::load_ort_session(model_path) {
-            Ok((session, dims)) => {
-                info!("ONNX backend: ort ({}x{})", dims.0, dims.1);
-                Ok(BackendLoad {
-                    backend: Backend::Ort { session },
-                    input_dims: dims,
-                })
-            }
-            Err(err) => {
-                if require_ort {
-                    return Err(err);
-                }
-                warn!("ORT session unavailable: {err:#}");
-                Err(err)
-            }
+    /// The backend that loaded the model: `"ort"` or `"tract"`.
+    pub fn backend_name(&self) -> &'static str {
+        match self.backend {
+            Backend::Tract { .. } => "tract",
+            #[cfg(any(target_os = "linux", windows))]
+            Backend::Ort { .. } => "ort",
         }
     }
 
-    #[cfg(feature = "onnx_tract")]
+    #[cfg(any(target_os = "linux", windows))]
+    fn load_ort(model_path: &str) -> Result<BackendLoad> {
+        let (session, dims) = ort_backend::load_ort_session(model_path)
+            .with_context(|| format!("ORT could not load {model_path}"))?;
+        info!("ONNX backend: ort ({}x{})", dims.0, dims.1);
+        Ok(BackendLoad {
+            backend: Backend::Ort { session },
+            input_dims: dims,
+        })
+    }
+
+    #[cfg(not(any(target_os = "linux", windows)))]
+    fn load_ort(model_path: &str) -> Result<BackendLoad> {
+        bail!("ORT could not load {model_path}: the family builds no ONNX Runtime for this target")
+    }
+
     fn load_tract(model_path: &str) -> Result<BackendLoad> {
-        let (model, dims) = tract_backend::load_tract_model(model_path)?;
+        let (model, dims) = tract_backend::load_tract_model(model_path)
+            .with_context(|| format!("tract could not load {model_path}"))?;
         info!("ONNX backend: tract ({}x{})", dims.0, dims.1);
         Ok(BackendLoad {
             backend: Backend::Tract { model },
@@ -164,64 +171,30 @@ impl PersonDetector {
         })
     }
 
+    /// ORT first; when it fails, a warning with ORT's reason, then tract.
+    #[cfg(any(target_os = "linux", windows))]
+    fn load_ort_or_tract(model_path: &str) -> Result<BackendLoad> {
+        let ort_err = match Self::load_ort(model_path) {
+            Ok(load) => return Ok(load),
+            Err(err) => err,
+        };
+        log::warn!("Falling back to tract: {ort_err:#}");
+        Self::load_tract(model_path)
+            .map_err(|tract_err| anyhow::anyhow!("{ort_err:#}; {tract_err:#}"))
+    }
+
     fn load_backend(model_path: &str, requested: Option<&str>) -> Result<BackendLoad> {
         match requested {
-            Some("ort") | Some("onnxruntime") => {
-                #[cfg(feature = "onnxruntime")]
-                {
-                    Self::try_load_ort(model_path, true)
-                }
-                #[cfg(not(feature = "onnxruntime"))]
-                {
-                    let _ = model_path;
-                    bail!("Requested ONNX backend 'ort', but feature 'onnxruntime' is not enabled")
-                }
-            }
-            Some("tract") => {
-                #[cfg(feature = "onnx_tract")]
-                {
-                    Self::load_tract(model_path)
-                }
-                #[cfg(not(feature = "onnx_tract"))]
-                {
-                    let _ = model_path;
-                    bail!("Requested ONNX backend 'tract', but feature 'onnx_tract' is not enabled")
-                }
-            }
+            Some("ort") | Some("onnxruntime") => Self::load_ort(model_path),
+            Some("tract") => Self::load_tract(model_path),
             Some(other) => {
                 bail!("Unsupported KATAGLYPHIS_ONNX_BACKEND='{other}'. Use 'tract' or 'ort'.")
             }
-            None => {
-                #[cfg(feature = "onnxruntime")]
-                let ort_error = {
-                    let device = config::ort_device();
-                    let require_ort = device == "cuda" || device == "auto";
-                    match Self::try_load_ort(model_path, require_ort) {
-                        Ok(load) => return Ok(load),
-                        Err(err) => Some(err),
-                    }
-                };
-                #[cfg(not(feature = "onnxruntime"))]
-                let ort_error: Option<anyhow::Error> = None;
-
-                #[cfg(feature = "onnx_tract")]
-                {
-                    let _ = ort_error;
-                    Self::load_tract(model_path)
-                }
-
-                // ORT's own error says why the model did not load; the generic line hid it.
-                #[cfg(not(feature = "onnx_tract"))]
-                {
-                    match ort_error {
-                        Some(err) => Err(err.context(format!("ORT could not load {model_path}"))),
-                        None => bail!(
-                            "No ONNX backend available. \
-                             Build with --features onnxruntime or onnx_tract."
-                        ),
-                    }
-                }
-            }
+            #[cfg(any(target_os = "linux", windows))]
+            None => Self::load_ort_or_tract(model_path),
+            // No chain ORT exists here, so tract is the backend, not a fallback.
+            #[cfg(not(any(target_os = "linux", windows)))]
+            None => Self::load_tract(model_path),
         }
     }
 
@@ -294,7 +267,6 @@ impl PersonDetector {
         input_w: u32,
     ) -> Result<(Vec<usize>, Vec<f32>)> {
         match backend {
-            #[cfg(feature = "onnx_tract")]
             Backend::Tract { model } => {
                 use tract_onnx::prelude::*;
 
@@ -318,7 +290,7 @@ impl PersonDetector {
                 Ok((shape, data.to_vec()))
             }
 
-            #[cfg(feature = "onnxruntime")]
+            #[cfg(any(target_os = "linux", windows))]
             Backend::Ort { session } => {
                 // `Tensor::from_array` needs owned data; this is a single allocation.
                 let input_tensor = ort::value::Tensor::from_array((

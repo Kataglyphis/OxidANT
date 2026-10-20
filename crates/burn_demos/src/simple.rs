@@ -5,9 +5,10 @@ use burn::optim::{AdamConfig, GradientsParams};
 use burn::tensor::activation::{relu, sigmoid};
 use burn::tensor::{Device, Tensor, TensorData};
 
-use crate::burn_demos::{inference_device, lcg::Lcg, losses, plot, training_device};
+use crate::{inference_device, lcg::Lcg, losses, plot, training_device};
 
-pub fn tensor_demo() -> anyhow::Result<()> {
+/// Matmul, a broadcast add and a sum; returns the sum.
+pub fn tensor_demo() -> anyhow::Result<f32> {
     let device = inference_device();
 
     let a = Tensor::<2>::from_data(TensorData::new(vec![1.0, 2.0, 3.0, 4.0], [2, 2]), &device);
@@ -23,10 +24,10 @@ pub fn tensor_demo() -> anyhow::Result<()> {
     let d = c + v;
     println!("broadcast add=\n{}", d.to_data());
 
-    let sum = d.sum();
-    println!("sum={:?}", sum.into_scalar::<f32>());
+    let sum = d.sum().into_scalar::<f32>();
+    println!("sum={sum:?}");
 
-    Ok(())
+    Ok(sum)
 }
 
 #[derive(Module, Debug)]
@@ -68,13 +69,14 @@ fn make_regression_batch(device: &Device, batch: usize, step: usize) -> (Tensor<
     (x, y)
 }
 
+/// Fits `y = 3x + 2`; returns each epoch's mean loss.
 pub fn linear_regression_demo(
     epochs: usize,
     steps_per_epoch: usize,
     lr: f64,
     batch_size: usize,
     plot_path: Option<std::path::PathBuf>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<f32>> {
     let device = training_device();
     let mut model = LinearRegressor::new(&device);
     let mut optim = AdamConfig::new().init();
@@ -105,7 +107,7 @@ pub fn linear_regression_demo(
         plot::plot_loss_curve(path, &losses, "Linear regression loss")?;
     }
 
-    Ok(())
+    Ok(losses)
 }
 
 #[derive(Module, Debug)]
@@ -136,11 +138,12 @@ fn xor_dataset(device: &Device) -> (Tensor<2>, Tensor<2>) {
     (x, y)
 }
 
+/// Learns XOR; returns the trained net's outputs for 00, 01, 10 and 11.
 pub fn xor_demo(
     epochs: usize,
     lr: f64,
     plot_path: Option<std::path::PathBuf>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<f32>> {
     let device = training_device();
     let mut model = XorNet::new(&device);
     let mut optim = AdamConfig::new().init();
@@ -167,9 +170,16 @@ pub fn xor_demo(
         plot::plot_loss_curve(path, &losses, "XOR loss")?;
     }
 
-    Ok(())
+    let outputs = model
+        .forward(x)
+        .to_data()
+        .try_to_vec::<f32>()
+        .map_err(|e| anyhow::anyhow!("TensorData cast failed: {e:?}"))?;
+    println!("xor outputs (00, 01, 10, 11): {outputs:?}");
+    Ok(outputs)
 }
 
+/// A YOLO-like forward pass and optional train steps; returns the output's dims.
 pub fn yolo_tiny_demo(
     height: usize,
     width: usize,
@@ -177,8 +187,8 @@ pub fn yolo_tiny_demo(
     num_anchors: usize,
     train_steps: usize,
     lr: f64,
-) -> anyhow::Result<()> {
-    use crate::burn_demos::yolo::YoloTiny;
+) -> anyhow::Result<[usize; 4]> {
+    use crate::yolo::YoloTiny;
 
     let device = training_device();
     let mut model = YoloTiny::new(&device, num_classes, num_anchors);
@@ -187,8 +197,8 @@ pub fn yolo_tiny_demo(
     let x = YoloTiny::demo_input(&device, 1, height, width);
 
     // Forward pass.
-    let y = model.forward(x.clone());
-    println!("yolo_tiny output shape: {:?}", y.dims());
+    let dims = model.forward(x.clone()).dims();
+    println!("yolo_tiny output shape: {dims:?}");
 
     // Optional tiny training steps (dummy loss).
     for step in 0..train_steps {
@@ -202,10 +212,11 @@ pub fn yolo_tiny_demo(
         );
     }
 
-    Ok(())
+    Ok(dims)
 }
 
-pub fn save_load_demo() -> anyhow::Result<()> {
+/// Saves a model as burnpack and loads it into a fresh one; returns both models' output for the same input.
+pub fn save_load_demo() -> anyhow::Result<(f32, f32)> {
     let device = inference_device();
 
     // Create a tiny model, run forward, save it as burnpack (0.22 dropped the Recorder API).
@@ -225,5 +236,12 @@ pub fn save_load_demo() -> anyhow::Result<()> {
     let y1 = model2.forward(x).to_data();
 
     println!("save/load ok: before={y0} after={y1}");
-    Ok(())
+    let scalar = |data: TensorData| -> anyhow::Result<f32> {
+        data.try_to_vec::<f32>()
+            .map_err(|e| anyhow::anyhow!("TensorData cast failed: {e:?}"))?
+            .first()
+            .copied()
+            .context("empty model output")
+    };
+    Ok((scalar(y0)?, scalar(y1)?))
 }

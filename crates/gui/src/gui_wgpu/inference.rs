@@ -1,20 +1,13 @@
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use ::std::sync::Arc;
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use ::std::time::{Duration, Instant};
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use std::sync::mpsc::{Receiver, SyncSender};
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use kataglyphis_core::detection::Detection;
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use super::inference_bridge::{InferRequest, InferResult};
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use super::pipeline::Frame;
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 pub(crate) struct InferenceState {
     pub detector_error: Option<String>,
     pub model_path: Option<String>,
@@ -29,7 +22,6 @@ pub(crate) struct InferenceState {
     pub infer_enabled: bool,
 }
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 impl InferenceState {
     pub(crate) fn poll(&mut self) {
         if let Some(rx) = self.infer_rx.as_ref() {
@@ -72,5 +64,103 @@ impl InferenceState {
             self.last_infer = Instant::now();
             self.infer_in_flight = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::sync_channel;
+
+    use super::*;
+
+    fn state(
+        every: Duration,
+    ) -> (
+        InferenceState,
+        Receiver<InferRequest>,
+        SyncSender<InferResult>,
+    ) {
+        let (req_tx, req_rx) = sync_channel(1);
+        let (res_tx, res_rx) = sync_channel(1);
+        let state = InferenceState {
+            detector_error: None,
+            model_path: None,
+            score_threshold: 0.5,
+            infer_every: every,
+            last_infer: Instant::now() - Duration::from_secs(1),
+            last_detections: Vec::new(),
+            last_detections_frame_id: None,
+            infer_tx: Some(req_tx),
+            infer_rx: Some(res_rx),
+            infer_in_flight: false,
+            infer_enabled: true,
+        };
+        (state, req_rx, res_tx)
+    }
+
+    fn frame(id: u64) -> Frame {
+        Frame {
+            id,
+            data: Arc::from(vec![0u8; 4]),
+            width: 1,
+            height: 1,
+        }
+    }
+
+    #[test]
+    fn one_request_is_in_flight_at_a_time() {
+        let (mut state, req_rx, res_tx) = state(Duration::ZERO);
+        state.maybe_infer(&frame(1));
+        state.maybe_infer(&frame(2));
+        assert_eq!(req_rx.try_recv().unwrap().frame_id, 1);
+        assert!(
+            req_rx.try_recv().is_err(),
+            "a second request while one is in flight"
+        );
+
+        res_tx
+            .send(InferResult {
+                frame_id: 1,
+                detections: vec![Detection::default()],
+                error: None,
+            })
+            .unwrap();
+        state.poll();
+        assert!(!state.infer_in_flight);
+        assert_eq!(state.last_detections_frame_id, Some(1));
+        assert_eq!(state.last_detections.len(), 1);
+
+        state.maybe_infer(&frame(3));
+        assert_eq!(req_rx.try_recv().unwrap().frame_id, 3);
+    }
+
+    #[test]
+    fn nothing_is_sent_while_disabled_or_too_soon() {
+        let (mut state, req_rx, _res_tx) = state(Duration::from_secs(3600));
+        state.last_infer = Instant::now();
+        state.maybe_infer(&frame(1));
+        assert!(req_rx.try_recv().is_err(), "sent before infer_every passed");
+
+        state.infer_every = Duration::ZERO;
+        state.infer_enabled = false;
+        state.maybe_infer(&frame(2));
+        assert!(req_rx.try_recv().is_err(), "sent while disabled");
+    }
+
+    #[test]
+    fn an_error_result_is_kept_for_the_overlay() {
+        let (mut state, _req_rx, res_tx) = state(Duration::ZERO);
+        res_tx
+            .send(InferResult {
+                frame_id: 7,
+                detections: Vec::new(),
+                error: Some("Inference failed: boom".into()),
+            })
+            .unwrap();
+        state.poll();
+        assert_eq!(
+            state.detector_error.as_deref(),
+            Some("Inference failed: boom")
+        );
     }
 }
