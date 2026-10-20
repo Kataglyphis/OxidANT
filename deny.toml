@@ -9,10 +9,7 @@ targets = [
 version = 2
 yanked = "deny"
 # .cargo/audit.toml holds these plus lockfile-only ones this tool never sees; `advisory-not-detected` means an ignore is stale, so delete it.
-ignore = [
-  "RUSTSEC-2024-0436", # paste: unmaintained (via burn-dispatch, gemm)
-  "RUSTSEC-2026-0192", # ttf-parser: unmaintained (transitive font-parsing dep); informational, not a vulnerability
-]
+ignore = []
 
 [licenses]
 version = 2

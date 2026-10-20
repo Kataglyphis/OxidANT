@@ -1,10 +1,13 @@
 # deny.toml's [advisories].ignore plus lockfile-only advisories: cargo-audit reads Cargo.lock, cargo-deny the built graph, and both gate.
 [advisories]
 ignore = [
-  "RUSTSEC-2024-0436", # paste: unmaintained (via burn-dispatch, gemm)
-  "RUSTSEC-2026-0192", # ttf-parser: unmaintained (transitive font-parsing dep); informational, not a vulnerability
+  # Built, but cargo-deny 0.20.2 reports neither unmaintained notice since 2026-10-20 (advisory-not-detected), so deny.toml dropped them
+  "RUSTSEC-2024-0436", # paste: unmaintained (a proc macro of burn-dispatch)
+  "RUSTSEC-2026-0192", # ttf-parser: unmaintained (plotters' ab_glyph); informational, not a vulnerability
   # zip 0.6.6, lockfile-only: tch/torch-sys, optional deps of burn-dispatch no feature enables (cargo tree -i zip@0.6.6 --all-features prints nothing); tch 0.26 still needs zip 0.6
   "RUSTSEC-2026-0367", # zip: SUID/SGID bits kept by extract()
   "RUSTSEC-2026-0368", # zip: extract() symlinks pointing outside the destination
   "RUSTSEC-2026-0369", # zip: extract() applies permissions through symlinks
+  # webpki-roots 0.26.11, lockfile-only: torch-sys's ureq 2, also behind burn-dispatch's tch (cargo tree --workspace -i webpki-roots@0.26.11 --target all prints nothing); 0.26 has no fixed release
+  "RUSTSEC-2026-0381", # webpki-roots: the bundled roots trust distrusted emSign intermediates
 ]

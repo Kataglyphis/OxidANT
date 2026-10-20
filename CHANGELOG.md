@@ -184,6 +184,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   The section is now *The trap a Windows checkout hits before anything runs*, the CRLF one.
 
 ### Fixed
+- **rustls-webpki 0.103.16 and webpki-roots 1.0.10** (2026-10-20): RUSTSEC-2026-0382 and -0381, published
+  that day, failed both Linux lanes' security step; ObservANT's ureq takes both. webpki-roots 0.26.11,
+  lockfile-only behind torch-sys's ureq 2 and with no fixed 0.26 release, joins `.cargo/audit.toml`.
+  `deny.toml` drops the paste and ttf-parser ignores, which cargo-deny now calls stale.
 - **The WebGPU demo draws in the browser again** (2026-10-20). The docs site's demo stayed white:
   Chrome refused `forward_pipeline_layout` (`bindGroupLayoutCount (5) is larger than the maximum
   allowed (4)`), so all four forward pipelines and every forward pass were invalid, and Tint refused
