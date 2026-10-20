@@ -271,6 +271,7 @@ mod tests {
     #[test]
     fn a_missing_texture_library_names_itself() {
         let Some(model) = model() else { return };
+        let _turn = crate::model_turn();
         let target = TextureTarget {
             library: "/nonexistent/libplugin.so".into(),
             texture_id: 1,
@@ -286,6 +287,7 @@ mod tests {
     #[test]
     fn a_library_without_the_texture_abi_is_refused() {
         let Some(model) = model() else { return };
+        let _turn = crate::model_turn();
         let target = TextureTarget {
             library: "libc.so.6".into(),
             texture_id: 1,
@@ -297,6 +299,7 @@ mod tests {
     #[test]
     fn headless_on_the_test_source_reports_frames_in_order_until_stopped() {
         let Some(model) = model() else { return };
+        let _turn = crate::model_turn();
         let (tx, rx) = mpsc::channel();
         let mut engine = WebcamEngine::start(
             config(model, None),
@@ -340,6 +343,7 @@ mod tests {
     #[test]
     fn the_detections_hook_sees_each_frames_detections_before_its_event() {
         let Some(model) = model() else { return };
+        let _turn = crate::model_turn();
         let (tx, rx) = mpsc::channel();
         let hook_tx = tx.clone();
         let hook: DetectionsHook = Arc::new(move |detections: &[Detection]| {

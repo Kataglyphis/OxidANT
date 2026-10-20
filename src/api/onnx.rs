@@ -115,6 +115,7 @@ mod tests {
             eprintln!("SKIP: no model at {path}");
             return;
         }
+        let _turn = crate::model_turn();
         // The second call takes the cached detector.
         for _ in 0..2 {
             let found =
