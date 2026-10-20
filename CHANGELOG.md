@@ -34,7 +34,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
     the pair's; `real_model.rs` checks that ORT is the backend and that tract finds both cats too;
     `ort_fallback.rs` (new) points `ORT_DYLIB_PATH` at nothing and checks the warning and tract's result.
   - The burn demos are their own crate, `crates/burn_demos` (`kataglyphis_burn_demos`, bin
-    `burn-demos`), so `oxidant`, which both consumers link, carries no Burn; neither does it depend
+    `burn_demos`, no longer `burn-demos`: a hyphen in `CARGO_BIN_EXE_*` does not survive the hub's sh
+    sccache launcher), so `oxidant`, which both consumers link, carries no Burn; neither does it depend
     on `kataglyphis_gui` any more. The demos return their results and have 19 tests (each demo, the
     binary, the detector demo on the real model), which found `binary_cross_entropy` using `1 - pred`
     where `1 - target` belongs. Plots use plotters' `ab_glyph` and the system's TrueType font

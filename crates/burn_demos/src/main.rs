@@ -2,7 +2,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "burn-demos", about = "Burn demos for common PyTorch tasks")]
+#[command(name = "burn_demos", about = "Burn demos for common PyTorch tasks")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

@@ -1,10 +1,10 @@
-//! The `burn-demos` binary: each subcommand runs and prints its result.
+//! The `burn_demos` binary: each subcommand runs and prints its result.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::str::contains;
 
 fn demo(args: &[&str]) -> assert_cmd::assert::Assert {
-    cargo_bin_cmd!("burn-demos").args(args).assert()
+    cargo_bin_cmd!("burn_demos").args(args).assert()
 }
 
 #[test]

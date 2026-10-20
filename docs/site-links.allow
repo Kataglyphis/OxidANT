@@ -1,7 +1,8 @@
 # Dead links on the rustdoc site that stay: the built-site link gate's freeze, read by docs.yml (link-allow).
-# Every row has one cause: tracing's blanket `impl<T> WithSubscriber for T` is shown on each type page of
-# kataglyphis_webgpu_renderer, and its `with_current_subscriber` doc links `dispatcher#setting-the-default-subscriber`
-# relative to that page; --no-deps builds no tracing docs, so `<module>/dispatcher` exists nowhere (2026-10-19, 20 keys).
+# Two causes, both a blanket impl's relative doc link that --no-deps leaves without a target. tracing's
+# `impl<T> WithSubscriber for T`, on each type page of the renderer and, since 2026-10-20, of the GUI and the CLI,
+# links `dispatcher#setting-the-default-subscriber` (2026-10-19, 22 keys); burn's `Module`, on YoloTiny, links
+# `ModuleMapper` and `ModuleVisitor` (2026-10-20, 2 keys).
 # Format: missing<TAB><path>, as verify_site_links.py --print-keys prints it. Two-way: a key that resolves now is STALE.
 # third_party/ANTfrastructure/docs/docs-sites.md#the-built-site-link-gate
 
@@ -25,3 +26,7 @@ missing	kataglyphis_webgpu_renderer/scene/camera/dispatcher
 missing	kataglyphis_webgpu_renderer/scene/controller/dispatcher
 missing	kataglyphis_webgpu_renderer/scene/dispatcher
 missing	kataglyphis_webgpu_renderer/scene/lod/dispatcher
+missing	kataglyphis_burn_demos/yolo/ModuleMapper
+missing	kataglyphis_burn_demos/yolo/ModuleVisitor
+missing	kataglyphis_cli/cli/dispatcher
+missing	kataglyphis_gui/gui_wgpu/dispatcher

@@ -31,6 +31,7 @@ predicates = "3"
 [lints]
 workspace = true
 
+# An underscore: the hub's sh sccache launcher drops a hyphenated CARGO_BIN_EXE_* from the tests' build.
 [[bin]]
-name = "burn-demos"
+name = "burn_demos"
 path = "src/main.rs"
