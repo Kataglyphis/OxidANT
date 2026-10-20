@@ -14,6 +14,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Changed
+- **Dependabot is off** (2026-10-20, owner: dependency upgrades go only through Renovate as a local
+  CLI, ANTfrastructure's `docs/dependency-updates.md`). `.github/dependabot.yml` (cargo and GitHub
+  Actions) is deleted and the repository's Dependabot security-update PRs are disabled; Dependabot
+  alerts stay on. `renovate.json` and `docs/updates.md` no longer call it present.
 - **The README logo is the family's ant** (2026-10-17, owner: one icon in every repository),
   drawn from OmniAccelerANT's `assets/icons/kataglyphis_app_icon.svg`.
 - **The README's hero image is an animated WebP** (2026-10-17): `images/Rust.gif` was 7.5 MiB, the same

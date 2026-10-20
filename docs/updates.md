@@ -20,8 +20,8 @@ bash scripts/linux/renovate-local.sh --apply            # gitlink, manifests and
 Here `--apply` moves the `third_party/ANTfrastructure` gitlink (its `.gitmodules` entry
 declares `branch = develop`, which `--apply` requires), rewrites `Cargo.toml` values and
 refreshes `Cargo.lock`; it stages and commits nothing. `.github/renovate.json` skips
-`third_party/egui-winit-0.36.2`. `.github/dependabot.yml` is still present; retiring it is a
-separate decision.
+`third_party/egui-winit-0.36.2`. Dependabot is off (owner, 2026-10-20): this is the only
+dependency watch.
 
 Run it from WSL. Why the CLI is local, what `--apply` writes per ecosystem and its exit
 codes, and `GITHUB_COM_TOKEN` for managers that ask `api.github.com`: ANTfrastructure's
