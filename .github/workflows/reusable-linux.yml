@@ -41,8 +41,8 @@ jobs:
   build:
     name: Build, test, package (${{ inputs.arch }})
     runs-on: ${{ inputs.runner }}
-    # Room for twice a normal run plus a cold image pull.
-    timeout-minutes: 90
+    # Room for a cold-cache run (90 min on x64, 2026-10-20) plus a cold image pull.
+    timeout-minutes: 150
     permissions:
       contents: read
       # compiler-cache-save deletes this key's older cache entries.

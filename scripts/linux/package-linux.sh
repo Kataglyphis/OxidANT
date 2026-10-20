@@ -51,7 +51,12 @@ while [ $# -gt 0 ]; do
 done
 [ -x "${binary_path}" ] || { printf 'no executable --binary-path: %s\n' "${binary_path:-<empty>}" >&2; exit 2; }
 [ -n "${version}" ] || { printf -- '--version is required\n' >&2; exit 2; }
-case "${arch}" in x64|arm64) ;; *) printf -- '--arch must be x64 or arm64\n' >&2; exit 2 ;; esac
+# The image's login shell exports ARCH as uname -m spells it, so the lanes' --arch "${ARCH}" arrives that way.
+case "${arch}" in
+    x64|x86_64|amd64) arch=x64 ;;
+    arm64|aarch64) arch=arm64 ;;
+    *) printf -- '--arch must be x64 or arm64, not %s\n' "${arch:-<empty>}" >&2; exit 2 ;;
+esac
 mkdir -p "${out_dir}"
 out_dir="$(realpath "${out_dir}")"
 
