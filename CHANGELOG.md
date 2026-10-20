@@ -141,6 +141,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and `tests/shader_export.rs` fails on a `@group` past 3 and on a repeated `@location`. On the old
   tree those two tests and 57 GPU tests failed under `KATAGLYPHIS_REQUIRE_GPU=1` (lavapipe, `:latest`);
   the new one passes them all, and Chrome 155 on SwiftShader draws the demo with no WebGPU warning.
+- **A `.gltf` with `data:` images loads from memory** (2026-10-20). gltf 1.4's `import_slice` refuses
+  every image URI when it has no base path, an embedded `data:` one too, so the web demo's "PBR
+  textures" scene failed with `external reference in slice only import`. `load_gltf_slice` imports
+  the images itself after refusing an external one by name; its two new tests in `tests/headless.rs`
+  failed on the old loader with that error, and Chrome 155 now loads all five demo scenes.
 - **The Linux lanes' clippy passes again** (2026-10-19). `EngineConfig::on_detections`, added with
   the ESP32 bridge in 0a4f9a7, failed `clippy -D warnings` with `type_complexity` at
   `src/webcam_engine.rs:34`; its type is the `DetectionsHook` alias now. `ci-container-steps.sh

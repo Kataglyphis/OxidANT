@@ -838,6 +838,33 @@ fn loads_binary_glb() {
     assert_eq!(scene.triangle_count(), 12);
 }
 
+/// The web demo's "PBR textures" scene: a .gltf with a data: image, loaded from memory as the browser loads it.
+#[test]
+fn loads_gltf_with_a_data_uri_image_from_memory() {
+    let bytes = include_bytes!("assets/cube_textured.gltf");
+    let scene = kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf_slice(bytes)
+        .expect("cube_textured.gltf must load from memory");
+    let texture = &scene.primitives[0]
+        .material
+        .base_color_texture
+        .as_ref()
+        .expect("the data: image must become the base color texture")
+        .texture;
+    assert_eq!((texture.width, texture.height), (2, 2));
+    assert_eq!(&texture.rgba8[0..4], &[40, 220, 60, 255]);
+}
+
+#[test]
+fn an_external_image_is_refused_from_memory() {
+    let text = std::str::from_utf8(include_bytes!("assets/cube_textured.gltf")).expect("UTF-8");
+    let start = text.find("data:image/png").expect("the asset embeds a PNG");
+    let end = start + text[start..].find('"').expect("closing quote");
+    let external = format!("{}checker.png{}", &text[..start], &text[end..]);
+    let err = kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf_slice(external.as_bytes())
+        .expect_err("an external image cannot load from memory");
+    assert!(format!("{err:#}").contains("checker.png"), "{err:#}");
+}
+
 #[test]
 fn reads_gltf_cameras() {
     let path =

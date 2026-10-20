@@ -20,10 +20,23 @@ pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
         .with_context(|| format!("Failed to build scene from {}", path.display()))
 }
 
-/// In-memory variant for wasm32 and embedded assets; buffers must be embedded (data URIs or GLB).
+/// In-memory variant for wasm32 and embedded assets; buffers and images must be embedded (data URIs or GLB).
 pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
-    let (document, buffers, images) =
-        gltf::import_slice(bytes).context("Failed to import glTF from memory")?;
+    let gltf::Gltf { document, blob } =
+        gltf::Gltf::from_slice(bytes).context("Failed to import glTF from memory")?;
+    let buffers = gltf::import_buffers(&document, None, blob)
+        .context("Failed to import glTF buffers from memory")?;
+    if let Some(uri) = document.images().find_map(|image| match image.source() {
+        gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => Some(uri.to_owned()),
+        _ => None,
+    }) {
+        anyhow::bail!(
+            "glTF image '{uri}' is an external file, which an in-memory import cannot read"
+        );
+    }
+    // gltf 1.4's import_slice refuses a data: image too (it wants a base path); every image left is data: or GLB, so none reads the base.
+    let images = gltf::import_images(&document, Some(Path::new("")), &buffers)
+        .context("Failed to import glTF images from memory")?;
     build_scene(document, buffers, images)
 }
 
