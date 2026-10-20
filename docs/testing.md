@@ -54,6 +54,12 @@ timestamp queries. Every CI adapter reports `bc=true timestamps=true`, so under 
 without them. Since when each lane sets it, and the one test it cannot hold:
 [AGENTS.md § Known gaps](../AGENTS.md#known-gaps).
 
+**They render under the browser's limits.** `GpuContext` requests `wgpu::Limits::default()`,
+WebGPU's defaults, on native too: a browser grants no more whatever the adapter offers, so a
+layout the web demo would reject (a fifth bind group, say) fails these tests.
+`tests/shader_export.rs` checks the WGSL without a GPU: no `@group` past 3, and no struct
+that repeats a `@location`, which naga accepts and Tint, the browsers' WGSL compiler, rejects.
+
 ## Where the suites live
 
 - Unit tests inside the workspace crates (`kataglyphis_telemetry`, `kataglyphis_inference`,

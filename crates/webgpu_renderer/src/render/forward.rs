@@ -194,17 +194,14 @@ pub struct ForwardRenderer {
     #[allow(dead_code)]
     frame_bind_group_layout: wgpu::BindGroupLayout,
     frame_uniform_buffer: wgpu::Buffer,
-    /// Punctual lights (up to `MAX_PUNCTUAL_LIGHTS`), read by the forward shader at group 3.
+    /// Punctual lights (up to `MAX_PUNCTUAL_LIGHTS`), group 3 binding 0 of the forward shader.
     light_storage_buffer: wgpu::Buffer,
-    /// Like [`Self::frame_bind_group_layout`]: only read to build the pipeline layouts.
-    #[allow(dead_code)]
+    /// Group 3: the lights and the tile grid below, rebuilt when a tile buffer grows.
     light_bind_group_layout: wgpu::BindGroupLayout,
     light_bind_group: wgpu::BindGroup,
-    /// Tile-based light grid: offsets and counts for each screen tile.
+    /// Tile-based light grid: offsets and counts for each screen tile (group 3 bindings 1 and 2).
     tile_light_grid_buffer: wgpu::Buffer,
     tile_light_indices_buffer: wgpu::Buffer,
-    tile_bind_group_layout: wgpu::BindGroupLayout,
-    tile_bind_group: wgpu::BindGroup,
     tile_counts: (u32, u32),
     /// Reusable scratch for [`build_tile_light_grid`] — see its doc comment.
     tile_light_grid_scratch: TileLightGridScratch,
@@ -374,39 +371,21 @@ impl ForwardRenderer {
             }],
         });
 
-        // Group 3: punctual lights, forward pipelines only.
+        // Group 3, forward pipelines only: lights (0), per-tile offset + count (1), tile light indices (2).
         let light_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("light_bind_group_layout"),
-                entries: &[bind_layout::storage_buffer(
-                    0,
-                    wgpu::ShaderStages::FRAGMENT,
-                    true,
-                )],
+                entries: &[
+                    bind_layout::storage_buffer(0, wgpu::ShaderStages::FRAGMENT, true),
+                    bind_layout::storage_buffer(1, wgpu::ShaderStages::FRAGMENT, true),
+                    bind_layout::storage_buffer(2, wgpu::ShaderStages::FRAGMENT, true),
+                ],
             });
         let light_storage_buffer = buffer_desc::storage_dst(
             device,
             "light_storage",
             (MAX_PUNCTUAL_LIGHTS as u64) * 16 * 4, // 4 vec4 per light
         );
-        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("light_bind_group"),
-            layout: &light_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: light_storage_buffer.as_entire_binding(),
-            }],
-        });
-
-        // Group 4: per-tile offset + count into the light index list, forward pipelines only.
-        let tile_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("tile_light_bgl"),
-                entries: &[
-                    bind_layout::storage_buffer(0, wgpu::ShaderStages::FRAGMENT, true),
-                    bind_layout::storage_buffer(1, wgpu::ShaderStages::FRAGMENT, true),
-                ],
-            });
         // Initial sizes: will be rebuilt on first render if larger needed.
         let max_tiles = 192 * 128; // enough for 3072×2048 ÷ 16²
         let tile_grid_buf = buffer_desc::storage_dst(
@@ -419,20 +398,13 @@ impl ForwardRenderer {
             "tile_light_indices",
             (max_tiles as u64) * (MAX_LIGHTS_PER_TILE as u64) * 4,
         );
-        let tile_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("tile_light_bg"),
-            layout: &tile_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: tile_grid_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: tile_idx_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let light_bind_group = create_light_bind_group(
+            device,
+            &light_bind_group_layout,
+            &light_storage_buffer,
+            &tile_grid_buf,
+            &tile_idx_buf,
+        );
 
         // The shadow entry points share this module, so their layouts need group 2 as well.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -442,7 +414,6 @@ impl ForwardRenderer {
                 Some(&ibl_bind_group_layout),
                 Some(&frame_bind_group_layout),
                 Some(&light_bind_group_layout),
-                Some(&tile_bind_group_layout),
             ],
             immediate_size: 0,
         });
@@ -667,8 +638,6 @@ impl ForwardRenderer {
             light_bind_group,
             tile_light_grid_buffer: tile_grid_buf,
             tile_light_indices_buffer: tile_idx_buf,
-            tile_bind_group_layout,
-            tile_bind_group,
             tile_counts: (0, 0),
             tile_light_grid_scratch: TileLightGridScratch::default(),
             frame_bind_group,
@@ -1417,7 +1386,7 @@ impl ForwardRenderer {
             0,
             bytemuck::cast_slice(&self.punctual_lights[..]),
         );
-        // Build and upload tile light grid (group 4).
+        // Build and upload tile light grid (group 3 as well).
         {
             build_tile_light_grid(
                 &mut self.tile_light_grid_scratch,
@@ -1444,20 +1413,13 @@ impl ForwardRenderer {
                 bind_group_dirty = true;
             }
             if bind_group_dirty {
-                self.tile_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("tile_light_bg"),
-                    layout: &self.tile_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.tile_light_grid_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: self.tile_light_indices_buffer.as_entire_binding(),
-                        },
-                    ],
-                });
+                self.light_bind_group = create_light_bind_group(
+                    &gpu.device,
+                    &self.light_bind_group_layout,
+                    &self.light_storage_buffer,
+                    &self.tile_light_grid_buffer,
+                    &self.tile_light_indices_buffer,
+                );
             }
             gpu.queue.write_buffer(
                 &self.tile_light_grid_buffer,
@@ -1639,7 +1601,6 @@ impl ForwardRenderer {
             pass.set_bind_group(1, &self.ibl_bind_group, &[]);
             pass.set_bind_group(2, &self.frame_bind_group, &[]);
             pass.set_bind_group(3, &self.light_bind_group, &[]);
-            pass.set_bind_group(4, &self.tile_bind_group, &[]);
             for (i, prim) in self.primitives.iter().enumerate() {
                 // Frustum first (cheap, no dependency on last frame).
                 if prim.alpha_blend || !frustum.intersects_aabb(prim.aabb_min, prim.aabb_max) {
@@ -1693,7 +1654,6 @@ impl ForwardRenderer {
                 pass.set_bind_group(1, &self.ibl_bind_group, &[]);
                 pass.set_bind_group(2, &self.frame_bind_group, &[]);
                 pass.set_bind_group(3, &self.light_bind_group, &[]);
-                pass.set_bind_group(4, &self.tile_bind_group, &[]);
             }
             for prim in blended {
                 let pipeline = if prim.double_sided {
@@ -2227,6 +2187,33 @@ fn create_ibl_bind_group(
             wgpu::BindGroupEntry {
                 binding: 4,
                 resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
+fn create_light_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    lights: &wgpu::Buffer,
+    tile_grid: &wgpu::Buffer,
+    tile_indices: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("light_bind_group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: lights.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: tile_grid.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: tile_indices.as_entire_binding(),
             },
         ],
     })

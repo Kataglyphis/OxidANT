@@ -225,13 +225,8 @@ async fn request_device(
         required_features |= wgpu::Features::TIMESTAMP_QUERY;
     }
 
-    // forward.wgsl binds 5 groups, past the default max_bind_groups of 4; browsers cap it at 4 regardless.
-    let mut required_limits = wgpu::Limits::default();
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        // The adapter's own maximum, since anything above it fails request_device.
-        required_limits.max_bind_groups = adapter.limits().max_bind_groups;
-    }
+    // WebGPU's defaults on every target: a browser grants no more, so native tests fail where the web would.
+    let required_limits = wgpu::Limits::default();
 
     adapter
         .request_device(&wgpu::DeviceDescriptor {

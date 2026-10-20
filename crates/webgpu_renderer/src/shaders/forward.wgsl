@@ -69,9 +69,9 @@ struct FrameUniforms_std140_0
 
 @binding(2) @group(0) var shadowSampler_0 : sampler_comparison;
 
-@binding(0) @group(4) var<storage, read> tileLightGrid_0 : array<vec2<u32>>;
+@binding(1) @group(3) var<storage, read> tileLightGrid_0 : array<vec2<u32>>;
 
-@binding(1) @group(4) var<storage, read> tileLightIndices_0 : array<u32>;
+@binding(2) @group(3) var<storage, read> tileLightIndices_0 : array<u32>;
 
 @binding(0) @group(3) var<storage, read> punctualLights_0 : array<vec4<f32>>;
 

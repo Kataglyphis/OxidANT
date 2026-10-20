@@ -44,6 +44,67 @@ fn all_shaders_export_to_spirv() {
     }
 }
 
+/// A browser grants WebGPU's 4 bind groups whatever the adapter has; checked here so a lane without a GPU catches a 5th.
+#[test]
+fn no_shader_binds_past_webgpus_bind_group_limit() {
+    let max_bind_groups = wgpu::Limits::default().max_bind_groups;
+    let mut past = Vec::new();
+    for (name, source) in SHADERS {
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{name}.wgsl must parse: {e:?}"));
+        for (_, var) in module.global_variables.iter() {
+            let Some(binding) = &var.binding else {
+                continue;
+            };
+            if binding.group >= max_bind_groups {
+                past.push(format!(
+                    "{name}.wgsl: {} at @group({}) @binding({})",
+                    var.name.as_deref().unwrap_or("?"),
+                    binding.group,
+                    binding.binding
+                ));
+            }
+        }
+    }
+    assert!(
+        past.is_empty(),
+        "WebGPU allows @group(0) to @group({}); fold these into a lower group: {past:#?}",
+        max_bind_groups - 1
+    );
+}
+
+/// Tint, the browsers' WGSL compiler, rejects the whole module over one struct that repeats a `@location`; naga does not.
+#[test]
+fn no_struct_repeats_a_location() {
+    let mut repeats = Vec::new();
+    for (name, source) in SHADERS {
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{name}.wgsl must parse: {e:?}"));
+        for (_, ty) in module.types.iter() {
+            let naga::TypeInner::Struct { members, .. } = &ty.inner else {
+                continue;
+            };
+            let mut seen = std::collections::BTreeSet::new();
+            for member in members {
+                let Some(naga::Binding::Location { location, .. }) = member.binding else {
+                    continue;
+                };
+                if !seen.insert(location) {
+                    repeats.push(format!(
+                        "{name}.wgsl: struct {} repeats @location({location}) at {}",
+                        ty.name.as_deref().unwrap_or("?"),
+                        member.name.as_deref().unwrap_or("?")
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        repeats.is_empty(),
+        "a struct with a repeated @location fails CreateShaderModule in the browser: {repeats:#?}"
+    );
+}
+
 /// Every `.wgsl` in `src/shaders/` must appear in the hand-maintained `SHADERS` list.
 #[test]
 fn every_shader_file_is_covered() {

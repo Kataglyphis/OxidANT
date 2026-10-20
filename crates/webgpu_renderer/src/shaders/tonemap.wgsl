@@ -16,7 +16,7 @@ struct TonemapUniforms_std140_0
 
 struct FullscreenVsOut_0
 {
-    @location(0) svPosition_0 : vec4<f32>,
+    @builtin(position) svPosition_0 : vec4<f32>,
     @location(0) uv_0 : vec2<f32>,
 };
 
@@ -30,20 +30,10 @@ fn fullscreen_vs_0( vid_0 : u32) -> FullscreenVsOut_0
     return o_0;
 }
 
-struct VsOut_0
-{
-    @builtin(position) svPosition_1 : vec4<f32>,
-    @location(0) uv_1 : vec2<f32>,
-};
-
 @vertex
-fn vs_main(@builtin(vertex_index) vid_1 : u32) -> VsOut_0
+fn vs_main(@builtin(vertex_index) vid_1 : u32) -> FullscreenVsOut_0
 {
-    var o_1 : FullscreenVsOut_0 = fullscreen_vs_0(vid_1);
-    var r_0 : VsOut_0;
-    r_0.svPosition_1 = o_1.svPosition_0;
-    r_0.uv_1 = o_1.uv_0;
-    return r_0;
+    return fullscreen_vs_0(vid_1);
 }
 
 fn aces_tonemap_0( x_1 : vec3<f32>) -> vec3<f32>
@@ -63,13 +53,13 @@ struct pixelOutput_0
 
 struct pixelInput_0
 {
-    @location(0) uv_2 : vec2<f32>,
+    @location(0) uv_1 : vec2<f32>,
 };
 
 @fragment
-fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_2 : vec4<f32>) -> pixelOutput_0
+fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
-    var mapped_0 : vec3<f32> = aces_tonemap_0((textureSample((hdrTex_0), (hdrSampler_0), (_S1.uv_2))).xyz * vec3<f32>(mix(1.0f, (textureSample((aoTex_0), (hdrSampler_0), (_S1.uv_2))).x, tonemapUniforms_0.params_0.y)) * vec3<f32>(exp2(exposureState_0[i32(0)])) + (textureSample((bloomTex_0), (hdrSampler_0), (_S1.uv_2))).xyz * vec3<f32>(tonemapUniforms_0.params_0.x));
+    var mapped_0 : vec3<f32> = aces_tonemap_0((textureSample((hdrTex_0), (hdrSampler_0), (_S1.uv_1))).xyz * vec3<f32>(mix(1.0f, (textureSample((aoTex_0), (hdrSampler_0), (_S1.uv_1))).x, tonemapUniforms_0.params_0.y)) * vec3<f32>(exp2(exposureState_0[i32(0)])) + (textureSample((bloomTex_0), (hdrSampler_0), (_S1.uv_1))).xyz * vec3<f32>(tonemapUniforms_0.params_0.x));
     if((tonemapUniforms_0.params_0.w) > 0.5f)
     {
         var _S2 : pixelOutput_0 = pixelOutput_0( vec4<f32>(linear_to_srgb_0(mapped_0), 1.0f) );
