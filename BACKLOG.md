@@ -39,6 +39,15 @@ and the backlog is empty"; it was neither.
       demand it. Moving the fetch ahead of the tests is the easy half; whether the test
       binary then finds the chain ORT before *Stage Chain ONNX Runtime* has to be seen on
       the Windows box first (found 2026-10-15).
+- [ ] The headless renderer tests segfault now and then when their binary runs its tests on
+      parallel threads on the dev host (Ryzen 9950X, AVX-512), at the current pin and at an older
+      one; run serially they pass, and CI is green (found 2026-10-19). Unlike the arm64 WARP crash
+      (AGENTS.md § Continuous integration), no driver is named yet: check the renderer's and the test
+      fixture's thread safety first.
+- [ ] The docs site carries no guide. `docs.yml` builds rustdoc alone (`builder: rustdoc`), so
+      the eight `docs/*.md` pages reach readers only on GitHub. The hub's rustdoc builder takes no
+      guide list (its `builder: dartdoc` does since hub c91187a9): give it one, or render the
+      guides as crate docs.
 
 ## Not adopted yet
 
