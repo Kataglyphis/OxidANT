@@ -3,7 +3,7 @@
 .SYNOPSIS
   One Windows CI lane inside the family image, as windows-x64.yml and windows-arm64-cross.yml run it.
 .DESCRIPTION
-  amd64: debug tests, the CLI built and run in each profile, then Build-Windows.ps1 -SkipTests; arm64: Build-Windows.ps1 alone.
+  amd64: debug tests, the CLI built and run in debug and release, then Build-Windows.ps1 -SkipTests; arm64: Build-Windows.ps1 alone.
   Each step runs in its own pwsh and the first failure stops the lane.
 #>
 [CmdletBinding()]
@@ -37,7 +37,8 @@ if ($restored) {
 try {
   if (-not (Test-WindowsCrossTarget -Arch $arch)) {
     Invoke-LaneStep -Script 'Invoke-DebugTests.ps1'
-    Invoke-LaneStep -Script 'Invoke-AppProfiles.ps1'
+    # No profile build: fat LTO plus debuginfo of the whole CLI runs a 16 GB runner out of LLVM memory (run 39471292642).
+    Invoke-LaneStep -Script 'Invoke-AppProfiles.ps1' -Arguments @('-Profiles', 'debug,release')
   }
   Invoke-LaneStep -Script 'Build-Windows.ps1' -Arguments @('-SkipTests', '-TargetArch', $arch)
   if ($StageTests) { Invoke-LaneStep -Script 'Stage-CrossTests.ps1' -Arguments @('-TargetArch', $arch) }

@@ -624,7 +624,9 @@ decisions 2026-09-25). Its container half is `scripts/windows/Invoke-WindowsLane
 which a local container run executes too:
 
 - **x64** (`windows-x64.yml`): `Invoke-DebugTests.ps1`, `Invoke-AppProfiles.ps1` (the CLI
-  built and run in each profile), then `Build-Windows.ps1 -SkipTests`. `Invoke-DebugTests.ps1`
+  built and run in debug and release; its `profile` build, fat LTO plus debuginfo, ran the 16 GB
+  runner out of LLVM memory in run 39471292642, so `Build-RustAll.ps1` builds it locally), then
+  `Build-Windows.ps1 -SkipTests`. `Invoke-DebugTests.ps1`
   runs the workspace tests, all but the WebGPU renderer's, and builds the
   renderer's lib and 18 integration test binaries into `target\host-tests\tests.json`. The
   lane's `host-command` then runs, on the runner host, those binaries

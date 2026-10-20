@@ -56,7 +56,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   - CI: `TEST_FEATURES`, `FEATURE_CHECK_SETS` and the `feature-check` step, `linux-x64.yml`'s
     `feature-matrix` job and its `feature-checks-per-job` input, `Invoke-WindowsConfigMatrix.ps1`
     (a featureless `base` and four feature builds; `Invoke-AppProfiles.ps1` now builds and runs the
-    full CLI in each profile), `Build.CargoFeatures`/`CARGO_FEATURES` and every `--features` in the
+    full CLI in debug and release, since its `profile` build ran the 16 GB runner out of LLVM memory), `Build.CargoFeatures`/`CARGO_FEATURES` and every `--features` in the
     Windows scripts are gone, and so is `deny.toml`'s `all-features`. Coverage now measures
     `crates/media`, `src/webcam_engine.rs`, the GUI and the burn demos, which no module hides behind
     a feature any more: 70.98 % of 12357 lines (72.9 % of fewer lines on 2026-10-19), with new floors for
