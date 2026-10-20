@@ -218,10 +218,14 @@ a target `cfg` or the root's `cfg(desktop)` (Linux, Windows, macOS, set by `buil
 - **tract is the fallback, and says so.** With `KATAGLYPHIS_ONNX_BACKEND` unset the detector
   loads ORT; when that fails it warns `Falling back to tract: <ORT's reason>` and loads tract.
   `ort` refuses the fallback, `tract` skips ORT. On Android tract is the backend.
-- **The GTK4 GUI is the one thing not built yet**: the family Linux image has no GTK4
-  development files (its `gtk4.pc` names a `graphene-gobject-1.0` it lacks, measured in
-  `:latest` on 2026-10-20). `BACKLOG.md` holds the change that turns it on once the image
-  carries them.
+- **The GTK4 GUI is the one thing not built yet**: today's `:latest` has no usable GTK4
+  development files (its `/opt/gstreamer` `gtk4.pc` names a `graphene-gobject-1.0` it lacks,
+  2026-10-20). GTK 4 >= 4.10 (gtk4-rs 0.11, `v4_10`) comes with the next image, the first built
+  after hub da25fa01 (CON129): amd64 against `/opt/gstreamer`'s GTK 4.14.5, arm64 and riscv64
+  against Ubuntu's `libgtk-4-dev` 4.22.4, the riscv64 sysroot carrying it, and the consumer-image
+  contract's row 9 (`gtk4-dev`) gating every arch. Once that image is published, `BACKLOG.md`'s
+  change turns the GUI on; running it needs Xvfb (the image sets `GDK_BACKEND=x11`), and
+  `GTK_A11Y=none` silences the accessibility-bus warning.
 - **The camera GUI's wgpu has no GL backend** (`crates/gui/Cargo.toml`): its `GpuBackend`
   never picks GL, and the `opengl32.dll` import GL brings stops the CLI from loading in
   Windows Server Core ([docs/testing.md](docs/testing.md#on-windows-the-renderers-tests-run-outside-the-container)).
@@ -749,6 +753,9 @@ half, `bash scripts/linux/ci-container-steps.sh riscv64-test`, runs `cargo test 
   4 KiB-page host such as the CI runner;
   [the hub's traps](third_party/ANTfrastructure/docs/riscv64-cross-test-lanes.md#traps-each-found-by-a-failing-run)
   say why.
+- **pkg-config reads the amd64 image's `.pc` files here** (hub CON130): gstreamer-sys's link paths
+  are `/opt/riscv64-sysroot/opt/gstreamer/lib/x86_64-linux-gnu` and `.../lib`, and it links only
+  because the second holds the riscv64 libraries (2026-10-20). The fix is the hub's.
 - **A spawned host program is not remapped** (`execve`, the same traps). A bare `sleep`
   exited at once there, which made a test of
   `camera::run_with_timeout` see output instead of a timeout (9e0a401 to 8a5337b, red); the
