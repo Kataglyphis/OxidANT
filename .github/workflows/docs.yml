@@ -18,6 +18,16 @@ jobs:
     uses: Kataglyphis/ANTfrastructure/.github/workflows/build-docs.yml@develop
     with:
       builder: rustdoc
+      # Every docs/ page, rendered beside the oxidant crate's page and linked from each page's sidebar.
+      guides: |
+        docs/getting-started.md|getting-started|Getting started
+        docs/running.md|running|Running
+        docs/crates.md|crates|The crates
+        docs/testing.md|testing|Tests
+        docs/windows.md|windows|Windows
+        docs/packaging.md|packaging|Packages
+        docs/observant.md|observant|ObservANT
+        docs/updates.md|updates|Dependency updates
       link-allow: docs/site-links.allow
     secrets:
       FTP_SERVER: ${{ secrets.SERVER }}

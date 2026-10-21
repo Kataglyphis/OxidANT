@@ -14,6 +14,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Changed
+- **The docs site carries the guides** (2026-10-21, ANTfrastructure's rustdoc builder takes `guides`
+  since that day). `docs.yml` passes all eight `docs/` pages; each is rendered in rustdoc's layout
+  beside `oxidant/index.html` and listed atop every page's sidebar, and a link into the repository
+  leads to GitHub. Proof in `:latest`: 8 guides, 478 of 594 pages navigated, the sidebar check green
+  on the crate page and every guide at 1400, 700 and 400 px, the link gate 595 documents with its 24
+  frozen findings.
 - **The cxx bridge is its own crate, `crates/cxx_bridge`** (`kataglyphis_cxx_bridge`, 2026-10-21).
   BeschleunigerBallett's engine calls one function, `rusty_cxxbridge_integer`, and took it from the
   root staticlib, which since 3.0.0 links GStreamer and the ORT loader on Linux and Windows. The new

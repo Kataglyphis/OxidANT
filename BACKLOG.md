@@ -57,10 +57,10 @@ and the backlog is empty"; it was neither.
       one; run serially they pass, and CI is green (found 2026-10-19). Unlike the arm64 WARP crash
       (AGENTS.md § Continuous integration), no driver is named yet: check the renderer's and the test
       fixture's thread safety first.
-- [ ] The docs site carries no guide. `docs.yml` builds rustdoc alone (`builder: rustdoc`), so
-      the eight `docs/*.md` pages reach readers only on GitHub. The hub's rustdoc builder takes no
-      guide list (its `builder: dartdoc` does since hub c91187a9): give it one, or render the
-      guides as crate docs.
+- [x] The docs site carries the eight `docs/*.md` guides (2026-10-21): the hub's rustdoc builder
+      takes `guides` (dartdoc's renderer in a rustdoc flavor), and `docs.yml` passes them. Proof in
+      `:latest`: 8 guides beside `oxidant/index.html`, the sidebar check green on the crate page and
+      every guide at three widths, the link gate 595 documents with its 24 frozen findings.
 - [b] Build the GTK4 GUI on Linux (owner 2026-10-20: both GUIs, no switch). Blocked on the
       family Linux image: `:latest` (2026-10-11 build) has only `/opt/gstreamer`'s `gtk4.pc`,
       which names a `graphene-gobject-1.0` it lacks, so `pkg-config --cflags gtk4` fails. Hub
