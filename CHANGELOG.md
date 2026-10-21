@@ -192,6 +192,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   The section is now *The trap a Windows checkout hits before anything runs*, the CRLF one.
 
 ### Fixed
+- **The coverage figure leaves out the vendored crates** (2026-10-21). tarpaulin counts every file
+  under the workspace, so the vendored `third_party/tract-linalg-0.23.8` took the Linux lanes'
+  figure to 56.36 % against the 70 % floor (6192c6b x64 run 39560313916, 6aa85f8 arm64 run
+  39560662137). The `coverage` step passes `--exclude-files 'third_party/*'`, which drops
+  egui-winit's 30 lines too: 78.43 % (8775 of 11188 lines) in `:latest` x64, every crate floor kept.
 - **The Windows x64 build works with clang-cl as `CC`, and the lane builds that way** (2026-10-21).
   tract-linalg 0.23.8 (0.23.9 alike) renders its x86_64 kernels as MASM on the MSVC target and
   sends the AVX-512 VNNI pair through cc-rs, so clang-cl, whose GAS probe passes, got MASM text:
