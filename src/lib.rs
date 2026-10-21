@@ -3,9 +3,6 @@
 #![doc = include_str!("../README.md")]
 #![doc(html_logo_url = "https://rust.jonasheinle.de/logo.png")]
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native_only;
-
 pub mod api;
 pub use kataglyphis_core::config;
 pub use kataglyphis_core::detection::Detection;

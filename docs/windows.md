@@ -37,7 +37,7 @@ filters were never allowed builds as well (the old driver needed `-StageSources`
 Artifacts land in `target\container\{debug,profile,release}`, mirrored to the
 (gitignored) repo-root `debug\`, `profile\`, `release\` folders; each holds the CLI and
 ObservANT exes, the `oxidant` and renderer cdylibs (`.dll` + import lib), the `oxidant`
-staticlib (`.lib`) and their pdbs. The run fails when an exe built
+and `kataglyphis_cxx_bridge` staticlibs (`.lib`) and their pdbs. The run fails when an exe built
 in the container is missing on the host. The in-container logs come back as
 `logs\in-container-build.log` and `logs\in-container-test.log`, a failed run's too.
 Last verified run (2026-10-19, rustc 1.99.0, a new container): debug 1m46s, profile

@@ -12,6 +12,7 @@ members = [
     "crates/esp32",
     "crates/esp32-protocol",
     "crates/burn_demos",
+    "crates/cxx_bridge",
 ]
 
 [workspace.package]
@@ -60,7 +61,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The Kataglyphis family's Rust core: the flutter_rust_bridge API OmniAccelerANT calls and the cxx bridge BeschleunigerBallett links."
+description = "The Kataglyphis family's Rust core: the flutter_rust_bridge API OmniAccelerANT calls."
 readme = "README.md"
 rust-version.workspace = true
 
@@ -82,7 +83,6 @@ chrono = { workspace = true }
 sysinfo = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cxx = "1.0"
 # tract everywhere, the chain ORT first where the family builds one; wasm32 has no file system to load a model from.
 kataglyphis_inference = { path = "crates/inference" }
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "time"] }
@@ -112,11 +112,6 @@ workspace = true
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
-
-[build-dependencies]
-
-[target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
-cxx-build = "1.0"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-O4", "--enable-threads", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]

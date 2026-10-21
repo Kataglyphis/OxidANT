@@ -14,6 +14,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Changed
+- **The cxx bridge is its own crate, `crates/cxx_bridge`** (`kataglyphis_cxx_bridge`, 2026-10-21).
+  BeschleunigerBallett's engine calls one function, `rusty_cxxbridge_integer`, and took it from the
+  root staticlib, which since 3.0.0 links GStreamer and the ORT loader on Linux and Windows. The new
+  crate depends on `cxx` alone (native-static-libs on Linux: `-lstdc++ -lgcc_s -lutil -lrt -lpthread
+  -lm -ldl -lc`), and BeschleunigerBallett imports it with `CRATES kataglyphis_cxx_bridge`. The root
+  package loses `src/native_only.rs`, `cxx` and `cxx-build`; its `build.rs` only sets `cfg(desktop)`.
+  **Breaking for a `corrosion_add_cxxbridge` over `oxidant`'s `native_only.rs`**: BeschleunigerBallett
+  was the only one and moves with its gitlink.
 - **3.0.0: no Cargo features any more; every target builds what it can run** (2026-10-20, owner:
   "They are no longer just an opt-in feature. They will stay there forever"). Every `[features]`
   table is gone, each dependency is unconditional or `[target.'cfg(...)'.dependencies]`, and the code

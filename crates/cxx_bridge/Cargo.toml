@@ -1,0 +1,15 @@
+[package]
+name = "kataglyphis_cxx_bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The cxx bridge BeschleunigerBallett's C++ engine links through Corrosion, without the root package's GStreamer and ONNX Runtime."
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+cxx = "1.0"
+
+[lints]
+workspace = true

@@ -35,8 +35,8 @@ OxidANT is the Kataglyphis family's **Rust workspace**: the crates two other
 repositories build as a submodule, plus the Rust practices, gates and packaging they
 all inherit. [OmniAccelerANT](https://github.com/Kataglyphis/OmniAccelerANT) calls the
 root package through flutter_rust_bridge and ships ObservANT, the cat cam;
-[BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) links it
-through Corrosion and builds the WebGPU renderer. It started as a project template and
+[BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett) links the
+cxx bridge crate through Corrosion and builds the WebGPU renderer. It started as a project template and
 that scaffolding is still here, but the crates are real code with real consumers.
 
 ## Highlights

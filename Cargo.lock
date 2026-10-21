@@ -4948,6 +4948,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kataglyphis_cxx_bridge"
+version = "3.0.0"
+dependencies = [
+ "cxx",
+]
+
+[[package]]
 name = "kataglyphis_esp32"
 version = "3.0.0"
 dependencies = [
@@ -6346,8 +6353,6 @@ dependencies = [
  "assert_cmd",
  "chrono",
  "clap",
- "cxx",
- "cxx-build",
  "env_logger",
  "flutter_rust_bridge",
  "js-sys",

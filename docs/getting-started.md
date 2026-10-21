@@ -6,9 +6,9 @@ A Rust toolchain, a C++ compiler and the submodule. The toolchain version the CI
 and every gate use is `RUST_VERSION` in ANTfrastructure's
 [`linux/scripts/01-core/versions.env`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/linux/scripts/01-core/versions.env)
 (`third_party/ANTfrastructure/linux/scripts/01-core/versions.env` in a checkout); read it
-there, since a number pinned here went stale. The C++ compiler is for the root package's
-`build.rs`, which compiles the cxx bridge in `src/native_only.rs` (on Windows the Visual
-Studio C++ build tools, which the MSVC Rust toolchain needs to link anyway). GStreamer's
+there, since a number pinned here went stale. The C++ compiler is for `cxx`, which
+`crates/cxx_bridge` builds (on Windows the Visual Studio C++ build tools, which the MSVC
+Rust toolchain needs to link anyway). GStreamer's
 development files and the chain-built ONNX Runtime come from the family images; on a bare
 host: [AGENTS.md § Targets and their system dependencies](../AGENTS.md#targets-and-their-system-dependencies).
 
@@ -33,7 +33,7 @@ cargo doc --open
 
 `docs.yml` publishes them to <https://rust.jonasheinle.de> on every push to `develop` or
 `main`, through the hub's `build-docs.yml` with `builder: rustdoc`: ANTfrastructure's
-`cargo_build_doc.sh`, which is `cargo doc --no-deps --workspace` (all 12 crates) plus the
+`cargo_build_doc.sh`, which is `cargo doc --no-deps --workspace` (all 13 crates) plus the
 family theme and `images/`, then the hub's `.htaccess` and its built-site link gate, whose
 known exceptions are `docs/site-links.allow`. `bash scripts/linux/ci-container-steps.sh docs`
 builds the same site into `target/doc` locally. The `oxidant` crate's front page there is
