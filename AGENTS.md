@@ -312,12 +312,14 @@ warn, since a shared runner's caches and clocks move them that much. Locally:
 `cargo bench --workspace --benches`, where Criterion compares against your last local run. Benches need a library: `kataglyphis_observant`
 is one since that day, `main.rs` only wiring its modules into the service.
 
-**The detector meets its real model in the Linux lanes** (2026-10-14). `crates/inference/tests/real_model.rs`
+**The detector meets its real model in every lane** (Linux 2026-10-14, Windows 2026-10-21). `crates/inference/tests/real_model.rs`
 runs DEIM-D-FINE-N on `tests/fixtures/two_cats.jpg` and checks that both cats are found, where they
 are, and taken for no dog or person. Without the model it skips; the `test` and `coverage` steps of
 `scripts/linux/ci-container-steps.sh` fetch it first (`scripts/linux/fetch-models.sh`) and set
 `KATAGLYPHIS_REQUIRE_MODEL=1`, so there a missing model fails, as `KATAGLYPHIS_REQUIRE_GPU` does
-for the golden tests.
+for the golden tests. On Windows `Invoke-DebugTests.ps1`, `Test-RustAll.ps1` and `Build-Windows.ps1`'s
+*Unit Tests* fetch it (`Get-Models.ps1`) and require it, and `Stage-CrossTests.ps1` stages it for
+the arm64 device ([Continuous integration](#continuous-integration)).
 
 ### Coverage and mutation testing
 
@@ -631,17 +633,19 @@ which a local container run executes too:
   (`Invoke-HostTests.ps1`, through the hub's `Invoke-StagedTests.ps1 -AssertVerdict`, with
   `KATAGLYPHIS_REQUIRE_GPU=1`; it fails if the list, a binary or a passing test is
   missing, so it never reports green over nothing) and the packaged exe's `onnx-runtime`
-  and `media-check` (`dist/windows-x64/bundle/kataglyphis_cli.exe`). Every step compiles
-  C and C++ with the image's clang-cl: the lane script sets `CC` and `CXX` (2026-10-21).
-  Unset, cc-rs falls back to MSVC's `cl`, which hid tract-linalg's clang-cl break
-  (`third_party/tract-linalg-0.23.8/PATCHED.md`).
+  and `media-check` (`dist/windows-x64/bundle/kataglyphis_cli.exe`). `Invoke-DebugTests.ps1`
+  fetches the model first and sets `KATAGLYPHIS_REQUIRE_MODEL=1` (2026-10-21): before that the
+  real-model tests reported `ok` having skipped. They find the chain ORT through
+  `$env:ONNX_ROOT\bin`, before any staging.
 - **arm64** (`windows-arm64-cross.yml`): `Build-Windows.ps1`, in the family image's arm64
   bundle, then `Stage-CrossTests.ps1`, which builds the whole workspace's tests for arm64,
-  renderer included, and stages them with their DLL closure, the product's GStreamer
+  renderer included, and stages them with their DLL closure, the chain ORT beside the
+  binaries that load it, the model under `resources\models`, the product's GStreamer
   plugins and the renderer's fixtures. The hub's arch gate then grades `dist/windows-arm64`
   and the test tree, and `windows-11-arm` runs `kataglyphis_cli.exe --help`, `stats`,
   `onnx-runtime` and `media-check` natively, then every staged test with
-  `KATAGLYPHIS_REQUIRE_GPU=1` (hub CON43), the renderer's one test at a time. In parallel,
+  `KATAGLYPHIS_REQUIRE_GPU=1` (hub CON43) and `KATAGLYPHIS_REQUIRE_MODEL=1`, the renderer's
+  one test at a time. The real-model tests there take the DirectML fallback below. In parallel,
   WARP itself crashes: dispatch 37422053110 (2026-10-06, `parallel-renderer-tests`) stopped
   `ibl.exe` with `0xC0000005 STATUS_ACCESS_VIOLATION`, faulting module `d3d10warp.dll` at
   offset 0x80528 (WARP 10.0.26100.9278), as run 36889467167 had stopped `headless.exe`.
@@ -649,6 +653,15 @@ which a local container run executes too:
   in Microsoft's driver, not this repo; re-dispatch with the input after a runner image
   update to see whether it is gone. No arm64 Windows container image exists, so that
   job is the only place an arm64 binary of this repo executes.
+
+**Every Windows build compiles C and C++ with the image's clang-cl, never MSVC's `cl`**
+(owner rule): `Invoke-WindowsLane.ps1` sets `CC` and `CXX` for both lanes, and so do
+`Build-RustAll.ps1` and `Test-RustAll.ps1`, the local driver's (x64 lane since 2026-10-21,
+the rest since the same day). Unset, cc-rs falls back to `cl`, which hid tract-linalg's
+clang-cl break (`third_party/tract-linalg-0.23.8/PATCHED.md`). cc-rs adds `--target=<triple>`
+to every clang-cl call itself (cc 1.8: `--target=aarch64-pc-windows-msvc` on the cross
+lane) and archives with the `llvm-lib` beside it; tract-linalg calls `clang` on
+aarch64 Windows by its own choice.
 
 Both lanes resolve the version from `Cargo.toml`'s `[workspace.package]` (the lane's
 `version-file`, read by the hub's `version_util.sh`), the only copy since 2026-10-15.

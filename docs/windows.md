@@ -26,8 +26,10 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreB
 pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1 -Test -WhatIf
 ```
 
-`-TestOnly` skips the build. The test run leaves out the WebGPU renderer, whose tests
-cannot start in Server Core: [testing.md § On Windows the renderer's tests run outside the container](testing.md#on-windows-the-renderers-tests-run-outside-the-container).
+`-TestOnly` skips the build. Both phases compile C and C++ with the image's clang-cl (`CC`,
+`CXX`), as the CI lanes do. The test run fetches the model (`Get-Models.ps1`) and sets
+`KATAGLYPHIS_REQUIRE_MODEL=1`, so the real-model tests cannot pass by skipping. It leaves out
+the WebGPU renderer, whose tests cannot start in Server Core: [testing.md § On Windows the renderer's tests run outside the container](testing.md#on-windows-the-renderers-tests-run-outside-the-container).
 The container keeps cargo's target (`C:\ct`) and home (`C:\ch`), so a second run is
 incremental; `-FreshContainer` discards it. Without a bind mount, a host whose Dev Drive
 filters were never allowed builds as well (the old driver needed `-StageSources` there).
@@ -40,9 +42,9 @@ ObservANT exes, the `oxidant` and renderer cdylibs (`.dll` + import lib), the `o
 and `kataglyphis_cxx_bridge` staticlibs (`.lib`) and their pdbs. The run fails when an exe built
 in the container is missing on the host. The in-container logs come back as
 `logs\in-container-build.log` and `logs\in-container-test.log`, a failed run's too.
-Last verified run (2026-10-19, rustc 1.99.0, a new container): debug 1m46s, profile
-1m50s, release 1m15s, then 325 tests in 25 binaries, 6m09s in all; a second build-only run
-in the kept container took 12 s. The binaries run on the host:
+Last verified run (2026-10-21, rustc 1.99.0, clang-cl, a new container): debug 3m36s, profile
+14m11s, release 11m01s, then 382 tests, the real-model ones included. On 2026-10-19 a second
+build-only run in the kept container took 12 s. The binaries run on the host:
 
 ```pwsh
 .\release\kataglyphis_cli.exe stats --path .\README.md

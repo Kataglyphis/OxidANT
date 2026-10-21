@@ -28,6 +28,13 @@ New-Item -ItemType Directory -Force -Path C:\ct, C:\ch | Out-Null
 $env:CARGO_TARGET_DIR = 'C:\ct'
 $env:CARGO_HOME = 'C:\ch'
 
+# Unset, cc-rs takes MSVC's cl; every build compiles C and C++ with the image's clang-cl, as the CI lanes do.
+$clangCl = Get-Command clang-cl -ErrorAction SilentlyContinue
+if (-not $clangCl) { Write-ContainerLog 'FATAL: no clang-cl on PATH'; exit 1 }
+$env:CC = 'clang-cl'
+$env:CXX = 'clang-cl'
+Write-ContainerLog "C and C++ through $($clangCl.Source) (CC, CXX)"
+
 Set-Location $Workspace
 if (-not (Test-Path .\Cargo.toml)) { Write-Host "FATAL: workspace $Workspace has no Cargo.toml"; exit 1 }
 

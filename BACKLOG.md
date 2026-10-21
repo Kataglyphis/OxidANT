@@ -32,26 +32,25 @@ and the backlog is empty"; it was neither.
       being true and the item above becomes fixable here (hand-editing the
       generated WGSL desynchronises it from its source). Blocked on deciding
       who compiles tex_quad.slang.
-- [ ] The Windows lanes' real-model tests pass by skipping. `Build-Windows.ps1` runs
-      *Unit Tests* before *Fetch Models*, so `tests/real_model.rs` finds no model and
-      reports `ok` (`cargo test` hides a passing test's `SKIP:` line), and neither
-      lane sets `KATAGLYPHIS_REQUIRE_MODEL`. The Linux and riscv64 steps fetch first and
-      demand it. Moving the fetch ahead of the tests is the easy half; whether the test
-      binary then finds the chain ORT before *Stage Chain ONNX Runtime* has to be seen on
-      the Windows box first (found 2026-10-15). On `windows-11-arm` the same test would prove
-      the DirectML fallback in this repo's own code: no adapter matches there, so the session
-      must come up on the CPU with `ORT DirectML provider unavailable` logged (2026-10-21).
+- [x] The Windows lanes' real-model tests run instead of passing by skipping (2026-10-21):
+      `Invoke-DebugTests.ps1`, `Test-RustAll.ps1` and `Build-Windows.ps1`'s *Unit Tests* (now after
+      *Fetch Models*) fetch the model and set `KATAGLYPHIS_REQUIRE_MODEL=1`; `Stage-CrossTests.ps1`
+      stages it and the chain ORT for `windows-11-arm`, whose test command requires it, so there the
+      detector proves the DirectML fallback to the CPU. Proof in `:winamd64`: `Invoke-DebugTests.ps1`
+      382 passed, `real_model.rs` 3/3 on ORT found through `ONNX_ROOT` before any staging; the arm64
+      lane in `:winarm64` stages 42 test binaries, the model and ORT, and the arch gate passes 110.
 - [x] The Windows x64 lane builds C and C++ with clang-cl, and tract-linalg builds under it
       (2026-10-21): `third_party/tract-linalg-0.23.8` (one `build.rs` line, `PATCHED.md`) and
       `CC`/`CXX=clang-cl` in `Invoke-WindowsLane.ps1`. Proof in `:winamd64`: the lane green in
       32 min (381 tests, every `Build-Windows.ps1` step), `cargo build -p tract-linalg` 101 from
       crates.io and 0 vendored; in `:latest` the Linux steps through `test` (720 passed) and
       `release` green.
-- [ ] Two Windows builds still let cc-rs pick MSVC's `cl`: the arm64 cross lane and the local
-      Stevedore driver (`scripts/windows/container/Build-RustAll.ps1`, `Test-RustAll.ps1`).
-      The x64 lane sets `CC`/`CXX=clang-cl` since 2026-10-21 (owner rule: the image's clang-cl
-      for every build). Set them there too and prove each in its container; the cross lane
-      needs clang-cl's `--target=aarch64-pc-windows-msvc` (check what cc-rs passes).
+- [x] Every Windows build compiles C and C++ with clang-cl (2026-10-21): `Invoke-WindowsLane.ps1`
+      sets `CC`/`CXX` for the arm64 cross lane too, `Build-RustAll.ps1` and `Test-RustAll.ps1` for the
+      local driver. cc 1.8 passes `--target=aarch64-pc-windows-msvc` itself and archives with
+      `llvm-lib` (`CC_ENABLE_DEBUG_OUTPUT=1` on dart-sys; tract-linalg calls `clang` there itself).
+      Proof: the local driver in `:winamd64` (debug, profile, release, 382 tests) and the arm64 lane
+      in `:winarm64` (`Build-Windows.ps1`, 12 of 12 steps, then `Stage-CrossTests.ps1`) green.
 - [ ] The headless renderer tests segfault now and then when their binary runs its tests on
       parallel threads on the dev host (Ryzen 9950X, AVX-512), at the current pin and at an older
       one; run serially they pass, and CI is green (found 2026-10-19). Unlike the arm64 WARP crash

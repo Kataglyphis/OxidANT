@@ -24,6 +24,18 @@ $env:CARGO_TARGET_DIR = 'C:\ct'
 $env:CARGO_HOME = 'C:\ch'
 Set-Location $Workspace
 
+# Unset, cc-rs takes MSVC's cl; every build compiles C and C++ with the image's clang-cl, as the CI lanes do.
+$clangCl = Get-Command clang-cl -ErrorAction SilentlyContinue
+if (-not $clangCl) { Write-ContainerLog 'FATAL: no clang-cl on PATH'; exit 1 }
+$env:CC = 'clang-cl'
+$env:CXX = 'clang-cl'
+Write-ContainerLog "C and C++ through $($clangCl.Source) (CC, CXX)"
+
+# Without the model the real-model tests pass by skipping; 0 opts out.
+if (-not $env:KATAGLYPHIS_REQUIRE_MODEL) { $env:KATAGLYPHIS_REQUIRE_MODEL = '1' }
+& (Join-Path $Workspace 'scripts\windows\Get-Models.ps1')
+if (-not $?) { Write-ContainerLog 'FATAL: Get-Models.ps1 failed'; exit 1 }
+
 # Server Core lacks the opengl32.dll that wgpu's `gles` backend imports at load; see docs/testing.md#on-windows-the-renderers-tests-run-outside-the-container
 Write-ContainerLog 'SKIPPING kataglyphis_webgpu_renderer: Server Core has no opengl32.dll (see comment in this script). Run it on a desktop Windows host.'
 

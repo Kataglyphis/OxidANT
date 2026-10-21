@@ -125,6 +125,11 @@ try {
     } | Out-Null
   }
 
+  # Models are not tracked; the real-model tests, the bundle, the MSIX and the MSI take them from resources\models.
+  Invoke-BuildStep -Context $context -StepName 'Fetch Models' -Critical -Script {
+    & (Join-Path $workspacePath 'scripts\windows\Get-Models.ps1')
+  } | Out-Null
+
   if (-not $SkipBuild) {
     # Cross builds leave target-independent gates to the x64 lane; clippy still runs for the target.
     if ($layout.IsCross) {
@@ -163,6 +168,8 @@ try {
 
     if (-not $SkipTests -and -not $layout.IsCross) {
       Invoke-BuildStep -Context $context -StepName 'Unit Tests' -Critical -Script {
+        # The model is fetched above, so a missing one fails instead of skipping; 0 opts out.
+        if (-not $env:KATAGLYPHIS_REQUIRE_MODEL) { $env:KATAGLYPHIS_REQUIRE_MODEL = '1' }
         $testParams = @('test', '--all', '--verbose')
         Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $testParams | Out-Null
       } | Out-Null
@@ -215,11 +222,6 @@ try {
       Write-BuildLog -Context $context -Message "DLL closure staged beside $binary.exe from $($search -join ', '): $(@($copied | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
     } | Out-Null
   }
-
-  # Models are not tracked; the bundle, the MSIX and the MSI take them from resources\models.
-  Invoke-BuildStep -Context $context -StepName 'Fetch Models' -Critical -Script {
-    & (Join-Path $workspacePath 'scripts\windows\Get-Models.ps1')
-  } | Out-Null
 
   # The uploaded product: exe, DLLs, lib\ plugins and resources\, which the app expects beside it.
   Invoke-BuildStep -Context $context -StepName 'Portable Bundle' -Critical -Script {

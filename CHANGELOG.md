@@ -198,6 +198,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
   The section is now *The trap a Windows checkout hits before anything runs*, the CRLF one.
 
 ### Fixed
+- **Every Windows build compiles C and C++ with clang-cl** (2026-10-21). The arm64 cross lane and the
+  local Stevedore driver (`Build-RustAll.ps1`, `Test-RustAll.ps1`) left `CC` and `CXX` unset, so
+  cc-rs took MSVC's `cl`; they set both now, as the x64 lane does. cc-rs 1.8 adds the triple itself
+  (`--target=aarch64-pc-windows-msvc`) and archives with `llvm-lib`.
+- **The Windows real-model tests run instead of passing by skipping** (2026-10-21). Neither lane
+  fetched the model before its tests, and `Build-Windows.ps1` ran *Unit Tests* before *Fetch
+  Models*. `Invoke-DebugTests.ps1`, `Test-RustAll.ps1` and *Unit Tests* fetch it first and set
+  `KATAGLYPHIS_REQUIRE_MODEL=1`; `Stage-CrossTests.ps1` stages the model and the chain ORT for the
+  arm64 device, whose test command requires the model too, so there the detector also proves the
+  DirectML fallback to the CPU.
 - **The coverage figure leaves out the vendored crates** (2026-10-21). tarpaulin counts every file
   under the workspace, so the vendored `third_party/tract-linalg-0.23.8` took the Linux lanes'
   figure to 56.36 % against the 70 % floor (6192c6b x64 run 39560313916, 6aa85f8 arm64 run

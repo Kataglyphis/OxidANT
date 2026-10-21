@@ -46,11 +46,12 @@ jobs:
         ./bundle/kataglyphis_cli.exe media-check
       # The x64 lane's tests, the renderer's included, built for arm64 (Stage-CrossTests.ps1) and run natively (hub CON43).
       test-artifact-dir: dist/windows-arm64-tests
-      # The binaries embed C:\ws (CARGO_MANIFEST_DIR, CARGO_BIN_EXE), junctioned to the staged mirror; GPU tests may not self-skip.
+      # The binaries embed C:\ws (CARGO_MANIFEST_DIR, CARGO_BIN_EXE), junctioned to the staged mirror; GPU and model tests may not self-skip.
       test-command: |
         if (Test-Path -LiteralPath 'C:\ws') { throw 'C:\ws exists on the runner; the tests would read another tree' }
         $null = New-Item -ItemType Junction -Path 'C:\ws' -Target $PWD
         $env:KATAGLYPHIS_REQUIRE_GPU = '1'
+        $env:KATAGLYPHIS_REQUIRE_MODEL = '1'
         # Dispatch-only: drops Stage-CrossTests.ps1's --test-threads=1 so the hub runner can name the parallel crash.
         if ('${{ inputs.parallel-renderer-tests }}' -eq 'true') {
           $manifest = @(Get-Content -Raw -LiteralPath tests.json | ConvertFrom-Json)

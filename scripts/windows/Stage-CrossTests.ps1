@@ -7,7 +7,8 @@
   triple: the run job's windows-11-arm has the opengl32.dll the x64 container lacks. Built from the repo root (C:\ws in
   the container) like the x64 tests, so the CARGO_MANIFEST_DIR and CARGO_BIN_EXE paths they embed read C:\ws\...; the
   staged tree mirrors those paths, and the run job links C:\ws to it. Only the triple's own binaries are staged: host
-  build scripts and proc macros would fail the arch gate.
+  build scripts and proc macros would fail the arch gate. The chain ORT goes beside the binaries that load it, the
+  model into resources\models, so the real-model tests run there too.
 #>
 [CmdletBinding()]
 param(
@@ -19,7 +20,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Resolve-BuildModule.ps1')
-Import-BuildModule @('WindowsTargetArch.Common', 'WindowsCrossBundle.Common', 'WindowsCargoTarget.Common')
+Import-BuildModule @('WindowsTargetArch.Common', 'WindowsCrossBundle.Common', 'WindowsCargoTarget.Common', 'WindowsOrtPayload.Common')
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location $repoRoot
@@ -85,8 +86,12 @@ $closure = foreach ($dir in @($binaries | ForEach-Object { Split-Path -Parent $_
     Copy-Item -LiteralPath $plugins -Destination $pluginTarget
     $seeds = $exes + @($plugins)
   }
-  Copy-PeImportClosure -Path $seeds -SearchDirectory $search -Destination $staged -Arch $layout.Arch
+  # The device has no chain ORT and the loader looks beside the exe; no G6, which calls the loader's test fixture paths FOREIGN.
+  $ortStaged = @(if ($exes | Where-Object { Test-ExeLoadsOrt -Path $_ } | Select-Object -First 1) { Copy-ChainOrtBeside -OnnxRoot "$env:ONNX_ROOT" -Destination $staged })
+  Copy-PeImportClosure -Path (@($seeds) + $ortStaged) -SearchDirectory $search -Destination $staged -Arch $layout.Arch
 }
+# The real-model tests read the model through CARGO_MANIFEST_DIR, which the run job's C:\ws junction maps here.
+& (Join-Path $PSScriptRoot 'Get-Models.ps1') -Destination (Join-Path $Destination 'resources\models')
 # What the renderer's tests read at run time through CARGO_MANIFEST_DIR: its source tree and its fixtures.
 foreach ($rel in 'crates\webgpu_renderer\src', 'crates\webgpu_renderer\tests\assets') {
   Copy-Item -LiteralPath (Join-Path $repoRoot $rel) -Destination (Join-Path $Destination $rel) -Recurse -Force

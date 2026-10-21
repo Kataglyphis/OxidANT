@@ -9,6 +9,10 @@ Set-StrictMode -Version Latest
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location $repoRoot
 
+# Without the model the real-model tests pass by skipping; 0 opts out.
+if (-not $env:KATAGLYPHIS_REQUIRE_MODEL) { $env:KATAGLYPHIS_REQUIRE_MODEL = '1' }
+& (Join-Path $PSScriptRoot 'Get-Models.ps1')
+
 Write-Host '==> Workspace tests, the WebGPU renderer excluded'
 & cargo test --workspace --locked --exclude kataglyphis_webgpu_renderer
 if ($LASTEXITCODE -ne 0) {
