@@ -23,9 +23,11 @@ repository = "https://github.com/Kataglyphis/OxidANT"
 # The resolved graph's floor: recompute after a lockfile bump as the max `rust_version` in `cargo metadata`.
 rust-version = "1.96.0"
 
-# Until egui 0.37: no published egui-winit compiles for wasm32 (egui#8436); see third_party/egui-winit-0.36.2/PATCHED.md.
 [patch.crates-io]
+# Until egui 0.37: no published egui-winit compiles for wasm32 (egui#8436); see third_party/egui-winit-0.36.2/PATCHED.md.
 egui-winit = { path = "third_party/egui-winit-0.36.2" }
+# tract-linalg 0.23.8 (0.23.9 alike) hands clang-cl MASM for its AVX-512 VNNI kernels; see third_party/tract-linalg-0.23.8/PATCHED.md.
+tract-linalg = { path = "third_party/tract-linalg-0.23.8" }
 
 [workspace.dependencies]
 # Benches only; without plotters and rayon, which no report here needs.

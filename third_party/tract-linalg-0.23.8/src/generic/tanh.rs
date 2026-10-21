@@ -1,0 +1,105 @@
+#![allow(clippy::excessive_precision)]
+use tract_data::internal::*;
+
+/// f32 tanh, as a rational minimax fit of `tanh` over `[LOW, HIGH]`.
+///
+/// The clamp keeps the `[-1, 1]` range consumers rely on without an output clamp: the two
+/// Horner chains and the division leave a few ulps of relative error, and the largest
+/// quotient any f32 input produces stays seven f32 steps under 1. It costs the tails their
+/// last few ulps — a saturated input returns `±(1 - 6.1e-7)`, not `±1`. NaN propagates.
+///
+/// Raising the clamp voids this: `1 - tanh(8.18)` is already under the rounding error, so
+/// the quotient crosses 1 at scattered inputs from there up.
+pub fn stanh(x: f32) -> f32 {
+    const LOW: f32 = -7.5;
+    const HIGH: f32 = 7.5;
+
+    const ALPHA_13: f32 = -8.488492677e-14;
+    const ALPHA_11: f32 = 5.277853000e-11;
+    const ALPHA_9: f32 = -2.022500419e-8;
+    const ALPHA_7: f32 = 0.00001115424833;
+    const ALPHA_5: f32 = 0.003103950131;
+    const ALPHA_3: f32 = 0.1308400453;
+    const ALPHA_1: f32 = 0.9999999934;
+
+    const BETA_6: f32 = 0.0002546136580;
+    const BETA_4: f32 = 0.02449515379;
+    const BETA_2: f32 = 0.4641733162;
+    const BETA_0: f32 = 1.0;
+
+    let x = x.clamp(LOW, HIGH);
+
+    let x2 = x * x;
+
+    let p = ALPHA_13;
+    let p = x2 * p + ALPHA_11;
+    let p = x2 * p + ALPHA_9;
+    let p = x2 * p + ALPHA_7;
+    let p = x2 * p + ALPHA_5;
+    let p = x2 * p + ALPHA_3;
+    let p = x2 * p + ALPHA_1;
+    let p = p * x;
+
+    let q = BETA_6;
+    let q = x2 * q + BETA_4;
+    let q = x2 * q + BETA_2;
+    let q = x2 * q + BETA_0;
+
+    p / q
+}
+
+/// f16 tanh, as a rational minimax fit of `tanh` over `[LOW, HIGH]`.
+///
+/// Needs no output clamp, like [`stanh`]: `1 - tanh(3.84)` is `9.3e-4`, about two
+/// f16 steps below 1, so the quotient keeps its margin for every f16 input.
+pub fn htanh(x: f16) -> f16 {
+    const LOW: f16 = f16::from_f32_const(-3.84);
+    const HIGH: f16 = f16::from_f32_const(3.84);
+
+    const ALPHA_3: f16 = f16::from_f32_const(0.082654955);
+    const ALPHA_1: f16 = f16::from_f32_const(0.99963124);
+
+    const BETA_4: f16 = f16::from_f32_const(0.0065383179);
+    const BETA_2: f16 = f16::from_f32_const(0.41401828);
+    const BETA_0: f16 = f16::from_f32_const(1.0);
+
+    let x = x.clamp(LOW, HIGH);
+
+    let x2 = x * x;
+
+    let p = ALPHA_3;
+    let p = x2 * p + ALPHA_1;
+    let p = p * x;
+
+    let q = BETA_4;
+    let q = x2 * q + BETA_2;
+    let q = x2 * q + BETA_0;
+
+    p / q
+}
+
+routine_ew_rust!(generic;
+    f32,
+    generic_tanh_f32_4n,
+    4,
+    4,
+    fn run(x: &mut [f32], _: ()) {
+        debug_assert!(x.len() % Self::nr() == 0);
+        debug_assert!(x.as_ptr() as usize % Self::alignment_bytes() == 0);
+        x.iter_mut().for_each(|px| *px = stanh(*px))
+    },
+    func(Tanh)
+);
+
+routine_ew_rust!(generic;
+    f16,
+    generic_tanh_f16_8n,
+    8,
+    8,
+    fn run(x: &mut [f16], _: ()) {
+        debug_assert!(x.len() % Self::nr() == 0);
+        debug_assert!(x.as_ptr() as usize % Self::alignment_bytes() == 0);
+        x.iter_mut().for_each(|px| *px = htanh(*px))
+    },
+    func(Tanh)
+);

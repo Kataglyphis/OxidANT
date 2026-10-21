@@ -1,0 +1,120 @@
+#![allow(clippy::excessive_precision)]
+use tract_data::internal::*;
+
+/// The input clamp of the f32 sigmoid fit, shared by [`ssigmoid`] and by the SiLU kernels
+/// built on the same coefficients.
+///
+/// It alone holds the result inside `[0, 1]`, so a SiLU kernel needs it as the floor of
+/// the factor its sigmoid multiplies. See [`ssigmoid`] for what fixes its value.
+pub const LOW: f32 = -14.5;
+
+/// f32 sigmoid, as a rational minimax fit of `sigmoid(x) - 0.5` over `[LOW, HIGH]`.
+///
+/// The clamp keeps the `[0, 1]` range consumers rely on without an output clamp: on either
+/// tail `p / q` approaches ±0.5 and the `+ 0.5` cancels against it, so the cancellation
+/// has to stay above the ~6e-8 f32 rounding error of `p / q` rather than run down to zero.
+/// At `±14.5` the sum keeps six f32 steps of margin at both ends for every f32 input. It
+/// costs the tails their last few ulps — a saturated input returns `1 - 4.8e-7` or
+/// `4.8e-7`, not exactly 1 or 0. NaN propagates.
+///
+/// Raising the clamp voids this: `1 - sigmoid(16.29)` is already under the rounding error,
+/// so the sum crosses 1 at scattered inputs from there up. `14.5` rather than something
+/// nearer 16 because the value is shared, and `armv7neon_sigmoid_f32_4n` crosses from
+/// 15.92 — it refines a `vrecpe` estimate instead of dividing.
+pub fn ssigmoid(x: f32) -> f32 {
+    const HIGH: f32 = -LOW;
+
+    const ALPHA_13: f32 = -4.433153405e-18;
+    const ALPHA_11: f32 = 1.169974371e-14;
+    const ALPHA_9: f32 = -1.875289645e-11;
+    const ALPHA_7: f32 = 4.257889523e-8;
+    const ALPHA_5: f32 = 0.00004811817576;
+    const ALPHA_3: f32 = 0.008163842030;
+    const ALPHA_1: f32 = 0.2499999971;
+    const BETA_6: f32 = 3.922935744e-6;
+    const BETA_4: f32 = 0.001524872358;
+    const BETA_2: f32 = 0.1159886749;
+    const BETA_0: f32 = 1.0;
+
+    let x = x.clamp(LOW, HIGH);
+
+    let x2 = x * x;
+
+    let p = ALPHA_13;
+    let p = x2 * p + ALPHA_11;
+    let p = x2 * p + ALPHA_9;
+    let p = x2 * p + ALPHA_7;
+    let p = x2 * p + ALPHA_5;
+    let p = x2 * p + ALPHA_3;
+    let p = x2 * p + ALPHA_1;
+    let p = p * x;
+
+    let q = BETA_6;
+    let q = x2 * q + BETA_4;
+    let q = x2 * q + BETA_2;
+    let q = x2 * q + BETA_0;
+
+    p / q + 0.5
+}
+
+/// f16 sigmoid, as a rational minimax fit of `sigmoid(x) - 0.5` over `[LOW, HIGH]`.
+///
+/// Needs no output clamp, like [`ssigmoid`]: the `+ 0.5` cancellation stays inside
+/// (0, 1) for every non-NaN f16 input, whatever the clamp.
+pub fn hsigmoid(x: f16) -> f16 {
+    /*
+     * (x (0.249895 + x^2 (0.00400222 - 0.0000124702 x^2)))
+     * /
+     * (1. + 0.098734 x^2)
+     */
+
+    const LOW: f16 = f16::from_f32_const(-6.92);
+    const HIGH: f16 = f16::from_f32_const(6.92);
+
+    const ALPHA_5: f16 = f16::from_f32_const(-0.0000124702);
+    const ALPHA_3: f16 = f16::from_f32_const(0.00400222);
+    const ALPHA_1: f16 = f16::from_f32_const(0.249895);
+
+    const BETA_2: f16 = f16::from_f32_const(0.098734);
+    const BETA_0: f16 = f16::from_f32_const(1.0);
+
+    let x = x.clamp(LOW, HIGH);
+
+    let x2 = x * x;
+
+    let p = ALPHA_5;
+    let p = x2 * p + ALPHA_3;
+    let p = x2 * p + ALPHA_1;
+    let p = p * x;
+
+    let q = BETA_2;
+    let q = x2 * q + BETA_0;
+
+    p / q + f16::from_f32_const(0.5)
+}
+
+routine_ew_rust!(generic;
+    f32,
+    generic_sigmoid_f32_4n,
+    4,
+    4,
+    fn run(x: &mut [f32], _: ()) {
+        debug_assert!(x.len() % Self::nr() == 0);
+        debug_assert!(x.as_ptr() as usize % Self::alignment_bytes() == 0);
+        x.iter_mut().for_each(|px| *px = ssigmoid(*px))
+    },
+    func(Sigmoid)
+);
+
+routine_ew_rust!(generic;
+    f16,
+    generic_sigmoid_f16_8n,
+    8,
+    8,
+    fn run(x: &mut [f16], _: ()) {
+        debug_assert!(x.len() % Self::nr() == 0);
+        debug_assert!(x.as_ptr() as usize % Self::alignment_bytes() == 0);
+        x.iter_mut().for_each(|px| *px = hsigmoid(*px))
+    },
+    func(Sigmoid)
+);

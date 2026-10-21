@@ -184,6 +184,34 @@ on 2026-09-15, verbatim. Nothing was deleted.
   The section is now *The trap a Windows checkout hits before anything runs*, the CRLF one.
 
 ### Fixed
+- **The Windows x64 build works with clang-cl as `CC`, and the lane builds that way** (2026-10-21).
+  tract-linalg 0.23.8 (0.23.9 alike) renders its x86_64 kernels as MASM on the MSVC target and
+  sends the AVX-512 VNNI pair through cc-rs, so clang-cl, whose GAS probe passes, got MASM text:
+  `invalid instruction mnemonic '_text'`, then `failed to run custom build command for
+  tract-linalg`. OmniAccelerANT's clang-cl build hit it; this repo's x64 lane stayed green because
+  cc-rs fell back to MSVC's `cl` there, against the family rule. `third_party/tract-linalg-0.23.8`
+  is the published crate (sha256 `1cc37ab3…a222`, the index's and the old lock's) with one
+  `build.rs` line changed, `if !use_masm() && assembler_supports_avx512vnni() {`, routed in through
+  `[patch.crates-io]`; its `PATCHED.md` holds an upstream-ready report. The x64 lane
+  (`Invoke-WindowsLane.ps1`) sets `CC` and `CXX` to the image's clang-cl. The arm64 cross lane and
+  the local Stevedore driver still take cc-rs's default (`BACKLOG.md`).
+  - **DirectML says when it is not there.** The detector registered DirectML through
+    `with_execution_providers`, which drops a failed registration silently, and then logged
+    `ORT DirectML execution provider enabled` regardless. It registers directly now and warns
+    `ORT DirectML provider unavailable, running on the CPU: <ORT's reason>` on failure. The
+    session's fate is unchanged: the arm64 chain ORT does carry the DirectML EP (`providers:
+    ['DmlExecutionProvider', 'CPUExecutionProvider']` on `windows-11-arm`, hub run 39544745432),
+    and where no D3D12 adapter matches, ORT refuses the registration (`No devices detected that
+    match the filter criteria`) and the session runs on the CPU.
+  - Proven in `:winamd64` (2026-10-21): the x64 lane (`Invoke-WindowsLane.ps1 -TargetArch amd64`)
+    passed in 32 min with every cc-rs build on clang-cl (`CC = Some(clang-cl)` in the build
+    scripts' output), 381 workspace tests in 32 binaries, every `Build-Windows.ps1` step through MSI,
+    and the bundle's `onnx-runtime` and `media-check` on the host. With the lane's `CC`,
+    `cargo build -p tract-linalg` exits 101 (`'_text'`) from crates.io and 0 vendored. In Server Core
+    the detector logged the DirectML warning above and still built its ORT session; `real_model.rs`
+    found both cats on ORT there. In `:latest` the Linux steps `ort-chain-only`, `security`,
+    `fmt-clippy`, `test` (720 passed, the one known ignore) and `release` passed with the vendored
+    crate.
 - **rustls-webpki 0.103.16 and webpki-roots 1.0.10** (2026-10-20): RUSTSEC-2026-0382 and -0381, published
   that day, failed both Linux lanes' security step; ObservANT's ureq takes both. webpki-roots 0.26.11,
   lockfile-only behind torch-sys's ureq 2 and with no fixed 0.26 release, joins `.cargo/audit.toml`.

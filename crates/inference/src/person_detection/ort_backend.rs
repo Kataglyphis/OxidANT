@@ -48,13 +48,14 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(Session, (u32, u32))
         builder = with_cuda(builder, device)?;
     }
 
+    // A failed registration (no DML in the loaded ORT, or no matching D3D12 adapter) leaves the session on the CPU.
     #[cfg(windows)]
     {
-        use ort::execution_providers::DirectML;
-        builder = builder
-            .with_execution_providers([DirectML::default().build()])
-            .with_ort_context("Failed to configure ORT DirectML execution provider")?;
-        info!("ORT DirectML execution provider enabled");
+        use ort::execution_providers::{DirectML, ExecutionProvider};
+        match DirectML::default().register(&mut builder) {
+            Ok(()) => info!("ORT DirectML execution provider enabled"),
+            Err(err) => log::warn!("ORT DirectML provider unavailable, running on the CPU: {err}"),
+        }
     }
 
     // After the EP block, whose CUDA fallback starts a new builder; spinning suits back-to-back runs only.

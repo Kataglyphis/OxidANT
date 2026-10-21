@@ -20,6 +20,7 @@ repositories, so its `[lib] name` is not free to change.
 | `src/` | `oxidant` | The root package: the flutter_rust_bridge surface for OmniAccelerANT (`src/frb_generated.rs`, `src/api/{esp32,onnx,simple,webcam}.rs`, `src/webcam_engine.rs`), the cxx bridge BeschleunigerBallett links (`src/native_only.rs`, compiled by `build.rs` with `cxx-build` on every non-wasm target) |
 | `tests/` | | The CLI's integration tests ([testing.md](testing.md#where-the-suites-live)) |
 | `third_party/egui-winit-0.36.2` | `egui-winit` | Vendored, with upstream emilk/egui#8516 applied, routed in by the root `Cargo.toml`'s `[patch.crates-io]` so the renderer's wasm32 demo compiles. Temporary: its `PATCHED.md` says how to remove it once egui 0.37 is out |
+| `third_party/tract-linalg-0.23.8` | `tract-linalg` | Vendored, with one `build.rs` line changed so the x86_64 MSVC build works with clang-cl as `CC`, routed in the same way. Temporary: its `PATCHED.md` holds the upstream report and how to remove it |
 
 ## No features: the target decides
 

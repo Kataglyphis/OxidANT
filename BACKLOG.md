@@ -38,7 +38,20 @@ and the backlog is empty"; it was neither.
       lane sets `KATAGLYPHIS_REQUIRE_MODEL`. The Linux and riscv64 steps fetch first and
       demand it. Moving the fetch ahead of the tests is the easy half; whether the test
       binary then finds the chain ORT before *Stage Chain ONNX Runtime* has to be seen on
-      the Windows box first (found 2026-10-15).
+      the Windows box first (found 2026-10-15). On `windows-11-arm` the same test would prove
+      the DirectML fallback in this repo's own code: no adapter matches there, so the session
+      must come up on the CPU with `ORT DirectML provider unavailable` logged (2026-10-21).
+- [x] The Windows x64 lane builds C and C++ with clang-cl, and tract-linalg builds under it
+      (2026-10-21): `third_party/tract-linalg-0.23.8` (one `build.rs` line, `PATCHED.md`) and
+      `CC`/`CXX=clang-cl` in `Invoke-WindowsLane.ps1`. Proof in `:winamd64`: the lane green in
+      32 min (381 tests, every `Build-Windows.ps1` step), `cargo build -p tract-linalg` 101 from
+      crates.io and 0 vendored; in `:latest` the Linux steps through `test` (720 passed) and
+      `release` green.
+- [ ] Two Windows builds still let cc-rs pick MSVC's `cl`: the arm64 cross lane and the local
+      Stevedore driver (`scripts/windows/container/Build-RustAll.ps1`, `Test-RustAll.ps1`).
+      The x64 lane sets `CC`/`CXX=clang-cl` since 2026-10-21 (owner rule: the image's clang-cl
+      for every build). Set them there too and prove each in its container; the cross lane
+      needs clang-cl's `--target=aarch64-pc-windows-msvc` (check what cc-rs passes).
 - [ ] The headless renderer tests segfault now and then when their binary runs its tests on
       parallel threads on the dev host (Ryzen 9950X, AVX-512), at the current pin and at an older
       one; run serially they pass, and CI is green (found 2026-10-19). Unlike the arm64 WARP crash

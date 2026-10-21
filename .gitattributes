@@ -8,3 +8,6 @@ resources/models/models.lock text eol=lf
 
 # appimagetool refuses a desktop entry with CR line ends, which a Windows checkout would give it.
 *.desktop text eol=lf
+
+# The vendored crate stays byte for byte as published (its PATCHED.md), whatever core.autocrlf says.
+third_party/tract-linalg-0.23.8/** text=auto eol=lf

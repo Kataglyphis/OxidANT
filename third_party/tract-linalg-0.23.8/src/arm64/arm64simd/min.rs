@@ -1,0 +1,42 @@
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{float32x4_t, vdupq_n_f32, vgetq_lane_f32};
+
+routine_reduce_rust!(aarch64;
+    f32,
+    arm64simd_min_f32_16n,
+    16,
+    4,
+    #[inline(never)]
+    fn run(buf: &[f32], _: ()) -> f32 {
+        assert!(buf.len() % 16 == 0);
+        assert!(buf.len() > 0);
+        unsafe {
+            let len = buf.len();
+            let ptr = buf.as_ptr();
+            let mut out: float32x4_t = vdupq_n_f32(f32::MAX);
+            std::arch::asm!("
+            mov v1.16b, v0.16b
+            mov v2.16b, v0.16b
+            mov v3.16b, v0.16b
+            2:
+                ld1 {{v4.4s, v5.4s, v6.4s, v7.4s}}, [{ptr}], 64
+                fmin v0.4s, v0.4s, v4.4s
+                fmin v1.4s, v1.4s, v5.4s
+                fmin v2.4s, v2.4s, v6.4s
+                fmin v3.4s, v3.4s, v7.4s
+                subs {len}, {len}, 16
+                bne 2b
+            fmin v0.4s, v0.4s, v1.4s
+            fmin v2.4s, v2.4s, v3.4s
+            fmin v0.4s, v0.4s, v2.4s
+            fminv s0, v0.4s
+            ",
+            len = inout(reg) len => _,
+            ptr = inout(reg) ptr => _,
+            inout("v0") out, out("v1") _, out("v2") _, out("v3") _,
+            out("v4") _, out("v5") _, out("v6") _, out("v7") _,);
+            vgetq_lane_f32(out, 0)
+        }
+    },
+    op(Min)
+);

@@ -23,7 +23,7 @@ The root `Cargo.toml` is both the workspace and the root package `oxidant`: a li
 `cdylib`/`staticlib`/`rlib` crate types. **No crate has a Cargo feature** (owner,
 2026-10-20): every target builds what it can run ([§ Targets and their system
 dependencies](#targets-and-their-system-dependencies)). Every crate, what `src/` and
-`tests/` hold, and the vendored `third_party/egui-winit-0.36.2`:
+`tests/` hold, and the vendored `third_party/egui-winit-0.36.2` and `third_party/tract-linalg-0.23.8`:
 [`docs/crates.md`](docs/crates.md). The one git submodule, `third_party/ANTfrastructure`,
 is **the ground truth for every container and PowerShell concern**; read § 2 before
 writing any helper.
@@ -633,7 +633,10 @@ which a local container run executes too:
   (`Invoke-HostTests.ps1`, through the hub's `Invoke-StagedTests.ps1 -AssertVerdict`, with
   `KATAGLYPHIS_REQUIRE_GPU=1`; it fails if the list, a binary or a passing test is
   missing, so it never reports green over nothing) and the packaged exe's `onnx-runtime`
-  and `media-check` (`dist/windows-x64/bundle/kataglyphis_cli.exe`).
+  and `media-check` (`dist/windows-x64/bundle/kataglyphis_cli.exe`). Every step compiles
+  C and C++ with the image's clang-cl: the lane script sets `CC` and `CXX` (2026-10-21).
+  Unset, cc-rs falls back to MSVC's `cl`, which hid tract-linalg's clang-cl break
+  (`third_party/tract-linalg-0.23.8/PATCHED.md`).
 - **arm64** (`windows-arm64-cross.yml`): `Build-Windows.ps1`, in the family image's arm64
   bundle, then `Stage-CrossTests.ps1`, which builds the whole workspace's tests for arm64,
   renderer included, and stages them with their DLL closure, the product's GStreamer
@@ -662,6 +665,10 @@ MSIX and MSI all ship the result.
 
 **The exe loads the chain ONNX Runtime**, the GUI's detector included, with DirectML
 registered. Before 2026-09-25 nothing in the exe called ORT, and the packages shipped none.
+The chain ORT carries the DirectML EP on both arches, arm64 included (hub #113). Where no
+D3D12 adapter matches, as on the `windows-11-arm` runner (`No devices detected that match
+the filter criteria`, hub run 39544745432), the registration fails, the session runs on
+the CPU and the detector logs `ORT DirectML provider unavailable` (2026-10-21).
 The `onnx-runtime` subcommand (`ort_runtime::ensure_ort_loaded`) loads it and prints where
 it came from; both lanes run it.
 

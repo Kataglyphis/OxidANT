@@ -12,9 +12,10 @@
     {
       "description": [
         "third_party/egui-winit-0.36.2 is the published crate with one patched file (PATCHED.md), routed in through [patch.crates-io] until egui ships emilk/egui#8516 (BACKLOG.md). Its Cargo.toml and Cargo.lock are upstream's, and no build reads that lock.",
-        "Watched, it put five rows in the 2026-10-07 report (log, serde, webbrowser, smithay-clipboard, objc2), whose apply half then refused the whole run, and its lock maintenance fails because cargo will not refresh a lock inside this workspace (`current package believes it's in a workspace when it's not`, 2026-10-13). Disabled here, Renovate and renovate-local.sh's planner (packageRules with matchFileNames) both skip it; the egui family stays watched through the root Cargo.toml."
+        "Watched, it put five rows in the 2026-10-07 report (log, serde, webbrowser, smithay-clipboard, objc2), whose apply half then refused the whole run, and its lock maintenance fails because cargo will not refresh a lock inside this workspace (`current package believes it's in a workspace when it's not`, 2026-10-13). Disabled here, Renovate and renovate-local.sh's planner (packageRules with matchFileNames) both skip it; the egui family stays watched through the root Cargo.toml.",
+        "third_party/tract-linalg-0.23.8 is the same kind of copy (one build.rs line, its PATCHED.md) and is skipped for the same reasons; the tract family stays watched through crates/inference/Cargo.toml."
       ],
-      "matchFileNames": ["third_party/egui-winit-0.36.2/**"],
+      "matchFileNames": ["third_party/egui-winit-0.36.2/**", "third_party/tract-linalg-0.23.8/**"],
       "enabled": false
     }
   ]
