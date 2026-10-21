@@ -16,7 +16,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ### Changed
 - **The README header shows OxidANT's own logo, `images/logo.svg`** (2026-10-21, owner): a rusted
   ant inside a gear, from the family set DocumANTation's `scripts/make_repo_logos.py` draws.
-  `images/logo.png` stays the package icon and the rustdoc logo.
+  `images/logo.png`, the package icon and the rustdoc logo, is rendered from it at 256 px.
 - **The docs site carries the guides** (2026-10-21, ANTfrastructure's rustdoc builder takes `guides`
   since that day). `docs.yml` passes all eight `docs/` pages; each is rendered in rustdoc's layout
   beside `oxidant/index.html` and listed atop every page's sidebar, and a link into the repository
