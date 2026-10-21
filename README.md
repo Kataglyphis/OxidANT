@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://jonasheinle.de">
-    <img src="images/logo.png" alt="logo" width="200" />
+    <img src="images/logo.svg" alt="OxidANT logo: a rusted ant inside a gear" width="200" />
   </a>
 
   <h1>OxidANT</h1>
