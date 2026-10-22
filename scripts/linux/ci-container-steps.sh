@@ -51,7 +51,9 @@ case "$step" in
         export KATAGLYPHIS_REQUIRE_GST="${KATAGLYPHIS_REQUIRE_GST-1}"
         export KATAGLYPHIS_REQUIRE_GTK=1
         bash "${SCRIPT_DIR}/fetch-models.sh"
-        exec xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_test.sh")" "$@"
+        # Xvfb omits its readiness signal when xvfb-run is PID 1, so retain this parent shell.
+        xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_test.sh")" "$@"
+        exit "$?"
         ;;
     # Without --workspace tarpaulin measures the root package alone, which has no unit tests: 0.00%.
     coverage)

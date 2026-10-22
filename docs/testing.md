@@ -23,6 +23,11 @@ The Linux test step requires GTK under Xvfb. The GTK lifecycle test posts a real
 message and checks that the retained bus watch stops the pipeline, then verifies
 session shutdown. `gui-gtk --help` is covered by the CLI integration suite.
 
+The CI script keeps a parent shell while `xvfb-run` starts. Replacing that shell
+with `exec xvfb-run` can make the launcher PID 1 in the container; Xvfb then
+omits the readiness signal and the launcher waits before starting Cargo.
+The script regression checks the handoff, forwarded arguments and failure status.
+
 Inference preprocessing reads ModelANT's pinned `contracts/inference-v1.json` through
 `third_party/ModelANT`. The C++ and Python implementations use those same cases.
 The bounded model cache test deliberately replaces the cache on another thread and
