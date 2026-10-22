@@ -35,7 +35,7 @@ float4 fs_main(FullscreenVsOut In) : SV_Target
     float exposure = exp2(exposureState[0]);
     float3 mapped = aces_tonemap(hdr * ao * exposure + bloom * tonemapUniforms.params.x);
 
-    // WebGPU canvases have no sRGB surface format, so the web encodes here (docs/source/webgpu-srgb-audit.md).
+    // WebGPU canvases have no sRGB surface format, so the web encodes here (docs/shaders.md#color-space).
     if (tonemapUniforms.params.w > 0.5)
         return float4(linear_to_srgb(mapped), 1.0);
     return float4(mapped, 1.0);

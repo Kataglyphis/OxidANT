@@ -27,3 +27,12 @@ Instance vertex attributes contain matrix columns. `instance_matrix` transposes
 the Slang row constructor so instances and equivalent node transforms agree.
 `skinned_bounds::a_non_uniform_instance_scale_shades_like_the_same_node_scale`
 checks this on the GPU and stays enabled.
+
+## Color space
+
+Lighting and tonemapping operate in linear space. An sRGB render target encodes
+the result in hardware; the web canvas needs the piecewise IEC 61966-2-1 encode
+in `tonemap.slang` when `params.w` enables it. The headless regression
+`non_srgb_target_is_gamma_encoded_like_an_srgb_one` compares both target formats.
+BeschleunigerBallett retains the broader
+[texture and swapchain audit](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/webgpu-srgb-audit.md).

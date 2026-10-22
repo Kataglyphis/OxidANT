@@ -13,6 +13,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed
+- Shared shader comments now point to OxidANT's color-space guide; the migrated
+  sources no longer refer to a documentation path found only in BeschleunigerBallett.
+
 ### Changed
 - **Shared contracts and standalone shaders** (2026-10-22): preprocessing runs the
   ModelANT RGB/RGBA, stride, offset and letterbox references; each concurrent request
