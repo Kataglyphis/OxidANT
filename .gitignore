@@ -53,6 +53,7 @@ no_llvm_build
 /dist/
 /unicode-downloads
 /target
+/shaders/build/
 /target-msix
 # Container-built binaries copied to the repo root (scripts/windows/container)
 /debug/

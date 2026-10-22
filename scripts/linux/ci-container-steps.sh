@@ -49,8 +49,9 @@ case "$step" in
         export KATAGLYPHIS_REQUIRE_GPU="${KATAGLYPHIS_REQUIRE_GPU-1}"
         export KATAGLYPHIS_REQUIRE_MODEL="${KATAGLYPHIS_REQUIRE_MODEL-1}"
         export KATAGLYPHIS_REQUIRE_GST="${KATAGLYPHIS_REQUIRE_GST-1}"
+        export KATAGLYPHIS_REQUIRE_GTK=1
         bash "${SCRIPT_DIR}/fetch-models.sh"
-        antfrastructure_exec "${RUST_DRIVERS}/cargo_test.sh" "$@"
+        exec xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_test.sh")" "$@"
         ;;
     # Without --workspace tarpaulin measures the root package alone, which has no unit tests: 0.00%.
     coverage)
@@ -76,6 +77,8 @@ case "$step" in
 
     # The workspace, not the driver's root-package default; exported, since the helper execs.
     fmt-clippy)
+        bash "${SCRIPT_DIR}/compile-slang-shaders.sh" --check
+        python3 "${SCRIPT_DIR}/../generate-texture-abi.py" --check
         export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked}"
         antfrastructure_exec "${RUST_DRIVERS}/cargo_fmt_clippy.sh" "$@"
         ;;

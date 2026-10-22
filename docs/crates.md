@@ -10,7 +10,7 @@ repositories, so its `[lib] name` is not free to change.
 | `crates/telemetry` | `kataglyphis_telemetry` | CPU/GPU/RAM resource monitoring |
 | `crates/inference` | `kataglyphis_inference` | The detector: the chain-built ONNX Runtime first (Linux, Windows; CUDA and, on Windows, DirectML registered), tract when ORT fails and on Android; `ort_runtime` picks and verifies the chain-built ONNX Runtime |
 | `crates/media` | `kataglyphis_media` | GStreamer capture, and the GStreamer setup that makes a package load its own plugins only |
-| `crates/gui` | `kataglyphis_gui` | The wgpu camera GUI with the detector's overlay. The GTK4 GUI (`src/gui.rs`) is not built until the Linux image carries GTK4 (`BACKLOG.md`) |
+| `crates/gui` | `kataglyphis_gui` | The wgpu camera GUI with detector overlay and the GTK4 camera GUI on Linux (`gui-gtk`); both build wherever supported by the target |
 | `crates/burn_demos` | `kataglyphis_burn_demos` | The `burn_demos` binary: Burn versions of PyTorch tasks, and the detector driven through ORT ([running.md](running.md#burn--pytorch-replacement-demos)). Its own crate, so neither consumer links Burn |
 | `crates/webgpu_renderer` | `kataglyphis_webgpu_renderer` | wgpu glTF renderer, native and wasm32/WebGPU: PBR+IBL, cascaded shadows, SSAO, bloom, skinning, animations, LOD, headless golden tests |
 | `crates/observant` | `kataglyphis_observant` | The ObservANT service (cats by default): picks the camera, burns the detection boxes into the frames, streams them through `webrtcsink` and serves OmniAccelerANT's web build itself, for its Stream page ([observant.md](observant.md)). Raspberry Pi 5 runner: `scripts/linux/observant/run-producer-pi.sh` |
@@ -30,7 +30,7 @@ can run it, chosen by `cfg(target_os)` and the root's `cfg(desktop)` (Linux, Win
 
 | Target | Built | What it carries |
 | --- | --- | --- |
-| Linux (x64, arm64, riscv64), Windows (x64, arm64) | The whole workspace | tract and the chain ORT (CUDA registered, DirectML on Windows), GStreamer capture, the webcam engine, the wgpu GUI, the ESP32 bridge, the burn demos; the GTK4 GUI waits for the image |
+| Linux (x64, arm64, riscv64), Windows (x64, arm64) | The whole workspace | tract and the chain ORT (CUDA registered, DirectML on Windows), GStreamer capture, the webcam engine, the wgpu GUI, the ESP32 bridge, the burn demos; Linux also builds GTK4 |
 | `aarch64-linux-android` (Cargokit) | `oxidant` and what it depends on | The detector on tract; the webcam and ESP32 calls answer that the target has neither |
 | `wasm32-unknown-unknown` (the web build) | `oxidant` and what it depends on | No detector: tract builds there, but the model is loaded from a file and the web has no file system, so it would add 15 MB of wasm that cannot run. The detection, webcam and ESP32 calls answer that |
 
@@ -47,10 +47,11 @@ repository as a submodule, so a rename goes into both. What each one names, file
 
 `crates/webgpu_renderer` runs natively (Vulkan/DX12/Metal) and in the browser (wasm32 +
 WebGPU); its features, demos and tests are in its
-[README](../crates/webgpu_renderer/README.md). It shares its shaders with the C++ Vulkan
-engine in BeschleunigerBallett: one Slang source compiles to the engine's SPIR-V and to
-the WGSL checked in under `crates/webgpu_renderer/src/shaders/` (`histogram.wgsl` alone
-is hand-written).
+[README](../crates/webgpu_renderer/README.md). OxidANT owns the WebGPU Slang entry points
+and shared mathematics under `shaders/`; BeschleunigerBallett consumes the mathematics
+from its recorded OxidANT pin and owns its Vulkan-specific stages. Fresh output is
+checked against committed WGSL; `histogram.wgsl` stays hand-written. See
+[shaders.md](shaders.md) for regeneration and ownership.
 
 ## Literature
 

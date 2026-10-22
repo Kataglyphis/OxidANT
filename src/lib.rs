@@ -9,6 +9,7 @@ pub use kataglyphis_core::detection::Detection;
 pub use kataglyphis_core::logging;
 pub use kataglyphis_telemetry::resource_monitor;
 pub mod platform;
+pub mod texture_abi;
 pub mod utils;
 
 #[cfg(target_os = "windows")]

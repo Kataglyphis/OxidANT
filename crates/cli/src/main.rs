@@ -47,6 +47,11 @@ async fn main() -> Result<()> {
         Commands::Gui { backend } => {
             kataglyphis_gui::gui_wgpu::run_with_backend(&backend)?;
         }
+        #[cfg(target_os = "linux")]
+        Commands::GuiGtk => {
+            let code = kataglyphis_gui::gui::run()?;
+            anyhow::ensure!(code == 0.into(), "GTK application exited with {code:?}");
+        }
         #[cfg(any(target_os = "linux", windows))]
         Commands::OnnxRuntime => {
             let path = oxidant::ort_runtime::ensure_ort_loaded()?;

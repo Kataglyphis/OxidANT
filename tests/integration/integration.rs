@@ -50,3 +50,13 @@ fn media_check_builds_the_camera_pipeline() {
         .success()
         .stdout(predicates::str::contains("appsink: "));
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn gtk_command_is_available_on_linux() {
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kataglyphis_cli");
+    cmd.args(["gui-gtk", "--help"]);
+    cmd.assert()
+        .success()
+        .stdout(predicates::str::contains("GTK4"));
+}

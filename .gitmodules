@@ -2,3 +2,7 @@
 	path = third_party/ANTfrastructure
 	url = https://github.com/Kataglyphis/ANTfrastructure.git
 	branch = develop
+[submodule "ModelANT"]
+	path = third_party/ModelANT
+	url = https://github.com/Kataglyphis/ModelANT.git
+	branch = develop

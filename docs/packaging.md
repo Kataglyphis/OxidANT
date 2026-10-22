@@ -7,6 +7,10 @@ Windows the MSIX and the MSI are steps of `Build-Windows.ps1`, beside the portab
 on Linux `scripts/linux/package-linux.sh` packs one bundle four ways
 ([§ Linux](#linux-tar-deb-appimage-flatpak)).
 
+Linux bundles include the GTK4 library closure and `gtk4paintablesink` from the
+image's actual plugin location, which can differ from GStreamer's pkg-config directory.
+The existing bundled-element check requires that sink to load from the package itself.
+
 ## MSIX
 
 Needs the Windows SDK (`makeappx`, `signtool`), located by ANTfrastructure's

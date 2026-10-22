@@ -413,15 +413,14 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
     );
 }
 
-/// The superproject's `forward.slang`, or `None` (a skip) in a checkout of this submodule alone.
+/// The shader source is owned here, so standalone checkouts run the parity checks too.
 fn slang_source() -> Option<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../Resources/ShadersSlang/forward/forward.slang");
+        .join("../../shaders/forward/forward.slang");
     match std::fs::read_to_string(&path) {
         Ok(source) => Some(source),
         Err(err) => {
-            eprintln!("SKIP: could not read {}: {err}", path.display());
-            None
+            panic!("could not read owned shader {}: {err}", path.display());
         }
     }
 }

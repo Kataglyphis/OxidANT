@@ -1,3 +1,6 @@
-//! The camera GUI on wgpu; `gui.rs` holds the GTK4 one, off until the Linux image carries GTK4 (BACKLOG.md).
+//! Camera GUIs: wgpu on desktop targets and GTK4 on Linux.
 
 pub mod gui_wgpu;
+
+#[cfg(target_os = "linux")]
+pub mod gui;

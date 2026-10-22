@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "result_codes": {"OK": 0, "BAD_ARGUMENTS": -1, "UNKNOWN_TEXTURE": -2, "COPY_FAILED": -3},
+  "functions": [
+    {"name": "knt_push_frame", "rust_type": "PushFrameFn", "returns": "i32", "arguments": [["texture_id", "i64"], ["rgba", "const_u8_ptr"], ["width", "u32"], ["height", "u32"]]},
+    {"name": "knt_api_version", "rust_type": "ApiVersionFn", "returns": "i32", "arguments": []}
+  ]
+}

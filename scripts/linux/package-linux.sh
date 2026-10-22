@@ -73,6 +73,11 @@ install -m 0755 "${binary_path}" "${bundle}/${binary}"
 plugins=(coreelements app videoconvertscale autodetect video4linux2 videotestsrc)
 elements=(appsink autovideosrc capsfilter v4l2src videoconvert videotestsrc)
 gst_copy=(copy --dest "${bundle}/lib/gstreamer-1.0" --plugin-dir "$(pkg-config --variable=pluginsdir gstreamer-1.0)")
+gtk_plugin="$(gst-inspect-1.0 gtk4paintablesink | awk '$1 == "Filename" { print $2; exit }')"
+[ -f "${gtk_plugin}" ] || { printf 'gtk4paintablesink is missing from this image\n' >&2; exit 1; }
+gst_copy+=(--plugin-dir "$(dirname "${gtk_plugin}")")
+plugins+=(gtk4)
+elements+=(gtk4paintablesink)
 for plugin in "${plugins[@]}"; do gst_copy+=(--plugin "${plugin}"); done
 bash "$(hub gstreamer-bundle.sh)" "${gst_copy[@]}"
 
@@ -87,14 +92,14 @@ cxx_dir() { dirname "$("${CXX:-g++}" -print-file-name="$1")"; }
 closure=(--bundle "${bundle}" --lib-dir "${bundle}/lib" --relocatable --protect 'libonnxruntime*'
     --from "libonnxruntime*=${ort_dir}" --from "libstdc++.so.6=$(cxx_dir libstdc++.so.6)"
     --from "libgcc_s.so.1=$(cxx_dir libgcc_s.so.1)" --no-default-system)
-# No GTK links GLib here, so it travels too; glibc stays the system's, bundle-loader.sh carries a copy.
+# glibc stays the system's; bundle-loader.sh carries a copy for older hosts.
 glibc=(libc.so.6 libm.so.6 libmvec.so.1 libpthread.so.0 libdl.so.2 librt.so.1 libresolv.so.2 libutil.so.1
     libanl.so.1 libnsl.so.1 'libnss_*.so.2' 'ld-linux*.so*')
 for soname in "${glibc[@]}"; do
     closure+=(--system "${soname}")
 done
 # The image reaches these only through ld.so.conf, which no target has.
-for dir in "$(pkg-config --variable=libdir gstreamer-1.0)" /opt/gstreamer/lib /opt/ffmpeg/lib /opt/libcamera/lib; do
+for dir in "$(pkg-config --variable=libdir gstreamer-1.0)" "$(pkg-config --variable=libdir gtk4)" /opt/gstreamer/lib /opt/ffmpeg/lib /opt/libcamera/lib; do
     closure+=(--search "${dir}")
 done
 bash "$(hub elf-closure.sh)" "${closure[@]}" --ldconfig

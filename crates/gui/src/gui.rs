@@ -4,30 +4,56 @@ use gstreamer::prelude::*;
 use gtk::prelude::*;
 use gtk::{glib, Application, ApplicationWindow, Box, Button, Label, Picture};
 use log::{error, warn};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
-const APP_ID: &str = "com.example.GtkGstreamerDemo";
+const APP_ID: &str = "org.kataglyphis.oxidant.gtk";
 
 pub fn run() -> anyhow::Result<glib::ExitCode> {
-    gst::init().context("Failed to initialize GStreamer")?;
+    kataglyphis_media::ensure_gst_initialized()?;
 
     let app = Application::builder().application_id(APP_ID).build();
-    app.connect_activate(build_ui);
-    Ok(app.run_with_args::<&str>(&[]))
+    let session = Rc::new(RefCell::new(None::<GuiSession>));
+    let active = Rc::clone(&session);
+    let failure = Rc::new(RefCell::new(None));
+    let startup_failure = Rc::clone(&failure);
+    app.connect_activate(move |app| {
+        if let Some(session) = active.borrow().as_ref() {
+            session.window.present();
+            return;
+        }
+        match try_build_ui(app) {
+            Ok(session) => *active.borrow_mut() = Some(session),
+            Err(err) => {
+                *startup_failure.borrow_mut() = Some(err);
+                app.quit();
+            }
+        }
+    });
+    app.connect_shutdown(move |_| drop(session.borrow_mut().take()));
+    let code = app.run_with_args::<&str>(&[]);
+    if let Some(err) = failure.borrow_mut().take() {
+        return Err(err);
+    }
+    Ok(code)
 }
 
-fn build_ui(app: &Application) {
-    match try_build_ui(app) {
-        Ok(_bus_watch_guard) => {
-            // The guard drops at the end of this arm, and dropping it removes the bus watch.
-        }
-        Err(err) => {
-            error!("Failed to build UI: {err:#}");
+struct GuiSession {
+    window: ApplicationWindow,
+    pipeline: Arc<gst::Pipeline>,
+    _bus_watch: gst::bus::BusWatchGuard,
+}
+
+impl Drop for GuiSession {
+    fn drop(&mut self) {
+        if let Err(err) = self.pipeline.set_state(gst::State::Null) {
+            error!("Failed to stop GTK pipeline: {err}");
         }
     }
 }
 
-fn try_build_ui(app: &Application) -> Result<gst::bus::BusWatchGuard> {
+fn try_build_ui(app: &Application) -> Result<GuiSession> {
     let pipeline = gst::Pipeline::with_name("video-pipeline");
 
     let src = gst::ElementFactory::make("autovideosrc")
@@ -77,7 +103,6 @@ fn try_build_ui(app: &Application) -> Result<gst::bus::BusWatchGuard> {
             .build();
         main_box.append(&picture);
     } else {
-        // Native Windows sinks create their own window; inform the user.
         let info = Label::new(Some(
             "Using a native video sink window (not embedded in GTK).",
         ));
@@ -89,7 +114,7 @@ fn try_build_ui(app: &Application) -> Result<gst::bus::BusWatchGuard> {
 
     let window = ApplicationWindow::builder()
         .application(app)
-        .title("GTK4 + GStreamer Demo")
+        .title("OxidANT — GTK4 camera")
         .default_width(640)
         .default_height(540)
         .child(&main_box)
@@ -121,7 +146,6 @@ fn try_build_ui(app: &Application) -> Result<gst::bus::BusWatchGuard> {
     let bus = pipeline.bus().context("Pipeline has no bus")?;
     let pipeline_weak = pipeline.downgrade();
 
-    // Dropping this guard removes the bus watch, so it is returned to the caller.
     let bus_watch = bus
         .add_watch_local(move |_, msg| {
             use gst::MessageView;
@@ -166,30 +190,69 @@ fn try_build_ui(app: &Application) -> Result<gst::bus::BusWatchGuard> {
     });
 
     window.present();
-    Ok(bus_watch)
+    Ok(GuiSession {
+        window,
+        pipeline,
+        _bus_watch: bus_watch,
+    })
 }
 
-// Choose a sink that works on the current platform.
 fn make_video_sink() -> Result<(gst::Element, Option<gtk::gdk::Paintable>)> {
-    // Prefer GTK paintable sinks when available.
     if let Ok(sink) = gst::ElementFactory::make("gtk4paintablesink").build() {
         let paintable = sink.property::<gtk::gdk::Paintable>("paintable");
         return Ok((sink, Some(paintable)));
     }
 
-    // Windows native sinks (render in their own window, no paintable to embed)
-    #[cfg(target_os = "windows")]
-    {
-        for name in ["d3d11videosink", "direct3dsink"].iter() {
-            if let Ok(sink) = gst::ElementFactory::make(name).build() {
-                return Ok((sink, None));
-            }
-        }
-    }
-
-    // Fallback that picks a platform default.
     let sink = gst::ElementFactory::make("autovideosink")
         .build()
         .context("Failed to create a video sink")?;
     Ok((sink, None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gtk_window_keeps_bus_watch_until_session_shutdown() {
+        if std::env::var_os("DISPLAY").is_none() {
+            assert!(
+                std::env::var_os("KATAGLYPHIS_REQUIRE_GTK").is_none(),
+                "GTK test needs Xvfb"
+            );
+            eprintln!("GTK test needs DISPLAY; CI runs it under Xvfb");
+            return;
+        }
+        gtk::init().unwrap();
+        kataglyphis_media::ensure_gst_initialized().unwrap();
+        let app = Application::builder()
+            .application_id("org.kataglyphis.oxidant.gtk.test")
+            .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
+            .build();
+        app.register(None::<&gtk::gio::Cancellable>).unwrap();
+        let session = try_build_ui(&app).unwrap();
+        session.pipeline.set_state(gst::State::Ready).unwrap();
+        session
+            .pipeline
+            .post_message(gst::message::Eos::new())
+            .unwrap();
+        let context = glib::MainContext::default();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while session.pipeline.current_state() != gst::State::Null
+            && std::time::Instant::now() < deadline
+        {
+            context.iteration(false);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            session.pipeline.current_state(),
+            gst::State::Null,
+            "EOS was not observed"
+        );
+        let pipeline = Arc::clone(&session.pipeline);
+        pipeline.set_state(gst::State::Ready).unwrap();
+        session.window.close();
+        drop(session);
+        assert_eq!(pipeline.current_state(), gst::State::Null);
+    }
 }

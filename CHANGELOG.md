@@ -14,6 +14,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Changed
+- **Shared contracts and standalone shaders** (2026-10-22): preprocessing runs the
+  ModelANT RGB/RGBA, stride, offset and letterbox references; each concurrent request
+  retains its model even if another path replaces the bounded cache. Texture ABI types,
+  result codes and header are generated from one contract, and loaded plugins must
+  report the expected version before Rust resolves their frame callback.
+- **GTK4 builds on Linux** (2026-10-22): `gui-gtk` uses the image's GTK4 >= 4.10,
+  keeps its bus watch through the session and stops video on shutdown. Linux tests
+  require its lifecycle check under Xvfb; packages include GTK's closure and video sink.
 - **The README header shows OxidANT's own logo, `images/logo.svg`** (2026-10-21, owner): a rusted
   ant inside a gear, from the family set DocumANTation's `scripts/make_repo_logos.py` draws.
   `images/logo.png`, the package icon and the rustdoc logo, is rendered from it at 256 px.
