@@ -14,6 +14,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed
+- The README's shader guide uses a GitHub permalink, so its link also resolves
+  when the README is included as the crate's rustdoc front page.
 - Shared shader comments now point to OxidANT's color-space guide; the migrated
   sources no longer refer to a documentation path found only in BeschleunigerBallett.
 

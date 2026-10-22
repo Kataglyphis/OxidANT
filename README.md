@@ -73,7 +73,7 @@ Prerequisites, the API docs and Linux containers locally:
 | Packages: Linux tar, deb, AppImage, flatpak; Windows MSIX and MSI | [docs/packaging.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) |
 | Dependency updates | [docs/updates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/updates.md) |
 | The WebGPU renderer | [crates/webgpu_renderer/README.md](https://github.com/Kataglyphis/OxidANT/blob/develop/crates/webgpu_renderer/README.md) |
-| Shader ownership and regeneration | [docs/shaders.md](docs/shaders.md) |
+| Shader ownership and regeneration | [docs/shaders.md](https://github.com/Kataglyphis/OxidANT/blob/c930e59ae429748cdc81a51b6e96aaca55c79179/docs/shaders.md) |
 | API docs (rustdoc) | [rust.jonasheinle.de](https://rust.jonasheinle.de) |
 | Rules for agents and contributors, CI | [AGENTS.md](https://github.com/Kataglyphis/OxidANT/blob/develop/AGENTS.md) |
 | Known work | [BACKLOG.md](https://github.com/Kataglyphis/OxidANT/blob/develop/BACKLOG.md) |
