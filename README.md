@@ -45,7 +45,7 @@ that scaffolding is still here, but the crates are real code with real consumers
 - **A WebGPU glTF renderer**, native and in the browser: PBR with IBL, shadows, SSAO, bloom, golden tests.
 - **ONNX inference** on the family's chain-built ONNX Runtime (CPU, DirectML, CUDA), with tract as its fallback.
 - **No feature flags**: every build carries everything its target can run.
-- **GStreamer capture** and a wgpu GUI overlay with FPS, latency and CPU.
+- **GStreamer capture**, a wgpu GUI overlay with FPS, latency and CPU, and a GTK4 camera GUI on Linux.
 - **Five build lanes**: Linux x64, arm64 and riscv64, Windows x64 and arm64.
 - **Packages** that carry their own GStreamer, ONNX Runtime and model: tar, deb, AppImage and flatpak on Linux; portable zip, MSI and MSIX on Windows.
 
@@ -73,6 +73,7 @@ Prerequisites, the API docs and Linux containers locally:
 | Packages: Linux tar, deb, AppImage, flatpak; Windows MSIX and MSI | [docs/packaging.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) |
 | Dependency updates | [docs/updates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/updates.md) |
 | The WebGPU renderer | [crates/webgpu_renderer/README.md](https://github.com/Kataglyphis/OxidANT/blob/develop/crates/webgpu_renderer/README.md) |
+| Shader ownership and regeneration | [docs/shaders.md](https://github.com/Kataglyphis/OxidANT/blob/c930e59ae429748cdc81a51b6e96aaca55c79179/docs/shaders.md) |
 | API docs (rustdoc) | [rust.jonasheinle.de](https://rust.jonasheinle.de) |
 | Rules for agents and contributors, CI | [AGENTS.md](https://github.com/Kataglyphis/OxidANT/blob/develop/AGENTS.md) |
 | Known work | [BACKLOG.md](https://github.com/Kataglyphis/OxidANT/blob/develop/BACKLOG.md) |

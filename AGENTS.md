@@ -24,7 +24,7 @@ The root `Cargo.toml` is both the workspace and the root package `oxidant`: a li
 2026-10-20): every target builds what it can run ([§ Targets and their system
 dependencies](#targets-and-their-system-dependencies)). Every crate, what `src/` and
 `tests/` hold, and the vendored `third_party/egui-winit-0.36.2` and `third_party/tract-linalg-0.23.8`:
-[`docs/crates.md`](docs/crates.md). The one git submodule, `third_party/ANTfrastructure`,
+[`docs/crates.md`](docs/crates.md). The tooling submodule, `third_party/ANTfrastructure`,
 is **the ground truth for every container and PowerShell concern**; read § 2 before
 writing any helper.
 
@@ -100,7 +100,7 @@ do not fork upstream behaviour locally.
 either of the [Consumers](#consumers) inherits it. Why, and how to change one:
 [the hub's § *Submodule URLs are https, never `git@`*](third_party/ANTfrastructure/docs/adopting-in-a-new-project.md#submodule-urls-are-https-never-git).
 
-The one submodule, `third_party/ANTfrastructure`, supplies every gate: the
+The tooling submodule, `third_party/ANTfrastructure`, supplies every gate: the
 shellcheck/actionlint/gitleaks binaries the lint lane bootstraps, the cargo, packaging
 and docs drivers, the Windows modules and the ORT census (G6). A drifted gitlink silently
 changes every gate, and `git submodule status` marks it only with a `+`, easy to miss in
@@ -216,14 +216,10 @@ a target `cfg` or the root's `cfg(desktop)` (Linux, Windows, macOS, set by `buil
 - **tract is the fallback, and says so.** With `KATAGLYPHIS_ONNX_BACKEND` unset the detector
   loads ORT; when that fails it warns `Falling back to tract: <ORT's reason>` and loads tract.
   `ort` refuses the fallback, `tract` skips ORT. On Android tract is the backend.
-- **The GTK4 GUI is the one thing not built yet**: today's `:latest` has no usable GTK4
-  development files (its `/opt/gstreamer` `gtk4.pc` names a `graphene-gobject-1.0` it lacks,
-  2026-10-20). GTK 4 >= 4.10 (gtk4-rs 0.11, `v4_10`) comes with the next image, the first built
-  after hub da25fa01 (CON129): amd64 against `/opt/gstreamer`'s GTK 4.14.5, arm64 and riscv64
-  against Ubuntu's `libgtk-4-dev` 4.22.4, the riscv64 sysroot carrying it, and the consumer-image
-  contract's row 9 (`gtk4-dev`) gating every arch. Once that image is published, `BACKLOG.md`'s
-  change turns the GUI on; running it needs Xvfb (the image sets `GDK_BACKEND=x11`), and
-  `GTK_A11Y=none` silences the accessibility-bus warning.
+- **Both GUIs build on Linux.** GTK4 >= 4.10 is supplied by the family image;
+  `gui-gtk` retains its bus watch until the session ends. The Linux test step uses
+  Xvfb and requires the GTK lifecycle test; Linux packages carry the GTK closure and
+  `gtk4paintablesink`. Commands: [running.md](docs/running.md#the-gtk4-camera-gui-linux).
 - **The camera GUI's wgpu has no GL backend** (`crates/gui/Cargo.toml`): its `GpuBackend`
   never picks GL, and the `opengl32.dll` import GL brings stops the CLI from loading in
   Windows Server Core ([docs/testing.md](docs/testing.md#on-windows-the-renderers-tests-run-outside-the-container)).
@@ -233,19 +229,28 @@ A plain Ubuntu box (e.g. the WSL recipe below) *does* need the distro packages, 
 ### Known gaps
 
 - **On arm64 the renderer tests run llvmpipe at 128-bit vectors** (since 2026-10-06). The image sets `LP_NATIVE_VECTOR_WIDTH=256` on every arch for Mesa's BVH sort (hub CON44), and at that width LLVM's AArch64 JIT killed a renderer test binary in about one arm64 run in five: `LLVM ERROR: Do not know how to split this operator's operand!` (SIGABRT; runs 37367760093, 37382902869, 37005853556) and a SIGSEGV in `forward_ambient` (run 37428962397). Nothing here uses ray tracing or subgroups, so `scripts/linux/ci-container-steps.sh` exports 128, arm64's native width, for every step on an aarch64 host.
-- **The Linux lanes render the golden tests on a software Vulkan device, and must** (since 2026-09-29). The family image carries lavapipe (`vulkaninfo --summary`: deviceType CPU, `llvmpipe`) on amd64 and arm64 since ANTfrastructure CON19, and the `test` step of `scripts/linux/ci-container-steps.sh` exports `KATAGLYPHIS_REQUIRE_GPU=1`, so a green run means the ~40 headless render tests drew something. Before that no CI lane had an adapter, and every one of them reported as passed having drawn nothing. Both Windows lanes set it too since 2026-10-01 (`windows-x64.yml`'s `host-command`, `windows-arm64-cross.yml`'s `test-command`) and render on the runners' WARP. Only the riscv64 lane leaves it unset by default (§ *The riscv64 lane*). What the flag does to `GpuContext::headless_or_skip()`, the `ADAPTER:` line and the tests that fail rather than skip under it: [`docs/testing.md` § *The GPU tests must render*](docs/testing.md#the-gpu-tests-must-render). Running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**, which the image's lavapipe reproduces byte-for-byte (987 pixels, 2026-09-29):
+- **The Linux lanes render the golden tests on a software Vulkan device.** The
+  image supplies lavapipe on amd64 and arm64. `KATAGLYPHIS_REQUIRE_GPU=1` fails rather
+  than silently passing a test that found no adapter; Windows uses WARP. The formerly
+  ignored nonuniform-instance normal test is active after correcting the Slang matrix
+  orientation. Its pixel threshold is unchanged. [testing.md](docs/testing.md#the-gpu-tests-must-render).
+- **OxidANT owns `shaders/` and its checked-in generated WGSL.** Regenerate through
+  the hub compiler and run `compile-slang-shaders.sh --check`; do not hand-edit WGSL.
+  BeschleunigerBallett consumes the shared mathematics at its recorded OxidANT pin.
+  Ownership and regeneration: [shaders.md](docs/shaders.md).
 
-  ```
-  a_non_uniform_instance_scale_shades_like_the_same_node_scale
-  crates/webgpu_renderer/tests/skinned_bounds.rs
-  node-scale and instance-scale must shade the same, 987 pixels differ  (threshold: 40)
-  ```
+### Shared inference and texture contracts
 
-  Confirmed pre-existing by re-running it against a pristine export of `4909bd7`: byte-identical 987. Everything else in the suite (~340 tests) passes. The failing path is the instanced normal transform: the generated `src/shaders/forward.wgsl` applies `instance_cofactor_0` to `worldNormal_0`, and the two shading paths disagree where they must agree.
+`third_party/ModelANT` supplies test-only preprocessing references; model weights still
+come from `models.lock`. Keep its gitlink aligned with the C++ consumer when changing
+the contract. The one-entry model cache returns a stable reference for each request,
+so replacement by another model path cannot redirect an in-flight call.
 
-  **Fix it upstream, not here.** The `.wgsl` files in `src/shaders/` are checked-in *generated artifacts*; there is no `.slang` file in this repo, and the code comments cite the C++ engine's `forward.slang` by line number (e.g. `cascades.rs` → `forward.slang:151`). Hand-editing the generated WGSL would desynchronise it from its source.
-
-  **That one test is `#[ignore]`d, with the reason in the attribute**, the only scope cut on `KATAGLYPHIS_REQUIRE_GPU`: it fails on every adapter, software or not, so letting it red the lane would only have pushed the flag back out. `cargo test -p kataglyphis_webgpu_renderer --test skinned_bounds -- --ignored` still runs it; remove the attribute with the fix.
+`abi/texture.json` generates `include/kataglyphis_texture_abi.h` and
+`src/texture_abi.rs`. Run `scripts/generate-texture-abi.py --check`; a contract change
+regenerates both files and updates Omni's pinned header. Rust checks the loaded
+`knt_api_version` before resolving `knt_push_frame`. A breaking signature requires a
+version bump and coordinated consumer changes. [testing.md](docs/testing.md).
 
 ### Tests and scripts that read source text
 

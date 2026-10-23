@@ -49,17 +49,21 @@ case "$step" in
         export KATAGLYPHIS_REQUIRE_GPU="${KATAGLYPHIS_REQUIRE_GPU-1}"
         export KATAGLYPHIS_REQUIRE_MODEL="${KATAGLYPHIS_REQUIRE_MODEL-1}"
         export KATAGLYPHIS_REQUIRE_GST="${KATAGLYPHIS_REQUIRE_GST-1}"
+        export KATAGLYPHIS_REQUIRE_GTK=1
         bash "${SCRIPT_DIR}/fetch-models.sh"
-        antfrastructure_exec "${RUST_DRIVERS}/cargo_test.sh" "$@"
+        # Xvfb omits its readiness signal when xvfb-run is PID 1, so retain this parent shell.
+        xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_test.sh")" "$@"
+        exit "$?"
         ;;
     # Without --workspace tarpaulin measures the root package alone, which has no unit tests: 0.00%.
     coverage)
         export KATAGLYPHIS_REQUIRE_GPU="${KATAGLYPHIS_REQUIRE_GPU-1}"
         export KATAGLYPHIS_REQUIRE_MODEL="${KATAGLYPHIS_REQUIRE_MODEL-1}"
         export KATAGLYPHIS_REQUIRE_GST="${KATAGLYPHIS_REQUIRE_GST-1}"
+        export KATAGLYPHIS_REQUIRE_GTK=1
         bash "${SCRIPT_DIR}/fetch-models.sh"
         # Not antfrastructure_exec, which replaces this shell: the per-crate floors run after it. 300 s: an arm64 runner needed more than 60.
-        WORKSPACE_ROOT="${WORKSPACE_ROOT:-$KATAGLYPHIS_REPO_ROOT}" bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_coverage.sh")" \
+        WORKSPACE_ROOT="${WORKSPACE_ROOT:-$KATAGLYPHIS_REPO_ROOT}" xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_coverage.sh")" \
             --workspace --exclude-files "${COVERAGE_EXCLUDE}" --timeout 300 --fail-under 70 "$@"
         # shellcheck disable=SC2086 # COVERAGE_FLOORS is a list of --floor arguments.
         python3 "${SCRIPT_DIR}/check-crate-coverage.py" cobertura.xml ${COVERAGE_FLOORS}
@@ -76,6 +80,8 @@ case "$step" in
 
     # The workspace, not the driver's root-package default; exported, since the helper execs.
     fmt-clippy)
+        bash "${SCRIPT_DIR}/compile-slang-shaders.sh" --check
+        python3 "${SCRIPT_DIR}/../generate-texture-abi.py" --check
         export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked}"
         antfrastructure_exec "${RUST_DRIVERS}/cargo_fmt_clippy.sh" "$@"
         ;;

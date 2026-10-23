@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use kataglyphis_media::{CameraSource, CaptureConfig, CaptureSession};
 
 use crate::person_detection::PersonDetector;
+use crate::texture_abi::{ApiVersionFn, PushFrameFn, API_VERSION, OK};
 use crate::Detection;
 
 pub struct EngineEvent {
@@ -43,9 +44,6 @@ pub struct TextureTarget {
     pub texture_id: i64,
 }
 
-type PushFrameFn =
-    unsafe extern "C" fn(texture_id: i64, rgba: *const u8, width: u32, height: u32) -> i32;
-
 struct TexturePusher {
     /// Keeps the plugin DLL pinned while `push` is callable.
     _lib: libloading::Library,
@@ -59,6 +57,14 @@ impl TexturePusher {
         unsafe {
             let lib = libloading::Library::new(&target.library)
                 .with_context(|| format!("failed to open texture library `{}`", target.library))?;
+            let version: libloading::Symbol<ApiVersionFn> = lib
+                .get(b"knt_api_version\0")
+                .context("`knt_api_version` not exported by texture library")?;
+            let actual = version();
+            anyhow::ensure!(
+                actual == API_VERSION,
+                "texture ABI version {actual}, expected {API_VERSION}"
+            );
             let sym: libloading::Symbol<PushFrameFn> = lib
                 .get(b"knt_push_frame\0")
                 .context("`knt_push_frame` not exported by texture library")?;
@@ -72,7 +78,7 @@ impl TexturePusher {
     }
 
     fn push(&self, rgba: &[u8], width: u32, height: u32) -> bool {
-        unsafe { (self.push)(self.texture_id, rgba.as_ptr(), width, height) == 0 }
+        unsafe { (self.push)(self.texture_id, rgba.as_ptr(), width, height) == OK }
     }
 }
 
@@ -286,14 +292,63 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_library_without_the_texture_abi_is_refused() {
-        let Some(model) = model() else { return };
-        let _turn = crate::model_turn();
         let target = TextureTarget {
             library: "libc.so.6".into(),
             texture_id: 1,
         };
-        let err = start_err(config(model, Some(target)));
-        assert!(err.contains("`knt_push_frame` not exported"), "{err}");
+        let err = match TexturePusher::new(&target) {
+            Ok(_) => panic!("accepted a library without the texture ABI"),
+            Err(err) => format!("{err:#}"),
+        };
+        assert!(err.contains("`knt_api_version` not exported"), "{err}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_wrong_texture_version_is_refused_before_loading_the_callback() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("wrong_version.c");
+        let library = directory.path().join("wrong_version.so");
+        std::fs::write(
+            &source,
+            format!(
+                "int knt_api_version(void) {{ return {}; }}",
+                API_VERSION + 1
+            ),
+        )
+        .unwrap();
+        let cross_compiler = if cfg!(target_arch = "riscv64") {
+            std::env::var_os("CC_riscv64gc_unknown_linux_gnu")
+        } else {
+            None
+        };
+        let compiler = cross_compiler
+            .or_else(|| std::env::var_os("CC"))
+            .unwrap_or_else(|| "cc".into());
+        assert!(std::process::Command::new(compiler)
+            .args(["-shared", "-fPIC"])
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .status()
+            .unwrap()
+            .success());
+        let target = TextureTarget {
+            library: library.to_string_lossy().into_owned(),
+            texture_id: 1,
+        };
+        let err = match TexturePusher::new(&target) {
+            Ok(_) => panic!("accepted an incompatible texture ABI"),
+            Err(err) => format!("{err:#}"),
+        };
+        assert!(
+            err.contains(&format!(
+                "texture ABI version {}, expected {API_VERSION}",
+                API_VERSION + 1
+            )),
+            "{err}"
+        );
+        assert!(!err.contains("`knt_push_frame` not exported"), "{err}");
     }
 
     #[test]

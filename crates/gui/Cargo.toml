@@ -30,5 +30,8 @@ egui-winit = { version = "0.36" }
 egui-wgpu = { version = "0.36", default-features = false }
 sysinfo = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.11", package = "gtk4", features = ["v4_10"] }
+
 [lints]
 workspace = true

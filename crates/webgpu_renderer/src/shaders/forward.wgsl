@@ -107,7 +107,7 @@ struct VsIn_0
 
 fn instance_matrix_0( In_0 : VsIn_0) -> mat4x4<f32>
 {
-    return mat4x4<f32>(In_0.instance0_0, In_0.instance1_0, In_0.instance2_0, In_0.instance3_0);
+    return transpose(mat4x4<f32>(In_0.instance0_0, In_0.instance1_0, In_0.instance2_0, In_0.instance3_0));
 }
 
 fn skin_matrix_0( In_1 : VsIn_0) -> mat4x4<f32>

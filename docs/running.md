@@ -106,8 +106,18 @@ cargo run -p kataglyphis_cli -- gui --backend vulkan
 cargo run -p kataglyphis_cli -- gui --backend dx12
 ```
 
-The GTK4 demo GUI (`crates/gui/src/gui.rs`) is not built until the family Linux image
-carries GTK4's development files; `BACKLOG.md` holds the change that turns it on.
+## The GTK4 camera GUI (Linux)
+
+```bash
+cargo run -p kataglyphis_cli -- gui-gtk
+```
+
+GTK4 >= 4.10 is required at build time. The new family image supplies it; both GUIs
+build on Linux without a feature switch. The GTK window uses `gtk4paintablesink` when
+available, with Play, Pause and Stop controls. It retains the GStreamer bus watch for
+the window session and stops the pipeline when the window/application closes.
+The wgpu GUI above owns the detector overlay; the GTK GUI presents camera video.
+For a headless GUI check use Xvfb; set `GTK_A11Y=none` where no accessibility bus runs.
 
 ## Resource usage logging (CPU/GPU/RAM)
 

@@ -1,5 +1,47 @@
 use log::error;
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Arc, Mutex, OnceLock};
+
+#[cfg(not(target_arch = "wasm32"))]
+struct ModelCache<T> {
+    current: Mutex<Option<(String, Arc<Mutex<T>>)>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T> ModelCache<T> {
+    const fn new() -> Self {
+        Self {
+            current: Mutex::new(None),
+        }
+    }
+
+    fn get_or_load<E>(
+        &self,
+        path: &str,
+        load: impl FnOnce() -> Result<T, E>,
+    ) -> Result<Arc<Mutex<T>>, E> {
+        let lock = || self.current.lock().unwrap_or_else(|e| e.into_inner());
+        {
+            let guard = lock();
+            if let Some((cached_path, detector)) = guard.as_ref() {
+                if cached_path == path {
+                    return Ok(Arc::clone(detector));
+                }
+            }
+        }
+        let detector = Arc::new(Mutex::new(load()?));
+        let mut guard = lock();
+        if let Some((cached_path, cached)) = guard.as_ref() {
+            if cached_path == path {
+                return Ok(Arc::clone(cached));
+            }
+        }
+        *guard = Some((path.to_owned(), Arc::clone(&detector)));
+        Ok(detector)
+    }
+}
+
 pub use crate::Detection;
 
 #[flutter_rust_bridge::frb(sync)]
@@ -36,65 +78,40 @@ fn detect_persons_rgba_impl(
     height: u32,
     score_threshold: f32,
 ) -> anyhow::Result<Vec<Detection>> {
-    use std::sync::{Mutex, OnceLock};
-
     use crate::person_detection::PersonDetector;
 
     let resolved = crate::person_detection::resolve_model_path(Some(model_path));
     let model_path = resolved.as_str();
 
-    struct Cached {
-        model_path: String,
-        detector: PersonDetector,
-    }
-
-    static DETECTOR: OnceLock<Mutex<Option<Cached>>> = OnceLock::new();
-    let mutex = DETECTOR.get_or_init(|| Mutex::new(None));
-
-    let lock_guard = || {
-        mutex
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    };
-
-    // Check whether a reload is needed while holding the lock briefly.
-    let needs_reload = {
-        let guard = lock_guard();
-        guard
-            .as_ref()
-            .map(|c| c.model_path != model_path)
-            .unwrap_or(true)
-    };
-
-    // Load outside the lock so concurrent callers are not blocked for a multi-second load.
-    if needs_reload {
-        let detector = PersonDetector::new(model_path)?;
-        let mut guard = lock_guard();
-        // Re-check: another thread may have loaded the same model meanwhile.
-        let still_needs = guard
-            .as_ref()
-            .map(|c| c.model_path != model_path)
-            .unwrap_or(true);
-        if still_needs {
-            *guard = Some(Cached {
-                model_path: model_path.to_string(),
-                detector,
-            });
-        }
-    }
-
-    let mut guard = lock_guard();
-    let Some(cached) = guard.as_mut() else {
-        return Ok(Vec::new());
-    };
-    cached
-        .detector
-        .infer_persons_rgba(rgba, width, height, score_threshold)
+    static DETECTOR: OnceLock<ModelCache<PersonDetector>> = OnceLock::new();
+    // Pin this request's detector even if another request replaces the one-entry cache.
+    let detector = DETECTOR
+        .get_or_init(ModelCache::new)
+        .get_or_load(model_path, || PersonDetector::new(model_path))?;
+    let mut guard = detector.lock().unwrap_or_else(|e| e.into_inner());
+    guard.infer_persons_rgba(rgba, width, height, score_threshold)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_request_keeps_its_model_when_another_thread_replaces_the_cache() {
+        let cache = Arc::new(ModelCache::new());
+        let first = cache.get_or_load("first", || Ok::<_, ()>(1)).unwrap();
+        let other = Arc::clone(&cache);
+        std::thread::spawn(move || {
+            let second = other.get_or_load("second", || Ok::<_, ()>(2)).unwrap();
+            assert_eq!(*second.lock().unwrap(), 2);
+        })
+        .join()
+        .unwrap();
+        assert_eq!(*first.lock().unwrap(), 1);
+        let second = cache.get_or_load("second", || Err::<i32, _>(())).unwrap();
+        assert_eq!(*second.lock().unwrap(), 2);
+    }
 
     #[test]
     fn a_missing_model_is_named_in_the_error() {

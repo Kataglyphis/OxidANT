@@ -179,9 +179,7 @@ fn scene_bounds_track_instances() {
 }
 
 /// Node and instance scale must shade alike; raw instance matrices shear normals off the surface.
-/// Ignored: fails on every adapter until `forward.slang` in the C++ engine repo is fixed (BACKLOG.md).
 #[test]
-#[ignore = "known instanced-normal shading bug, 987 px differ; see BACKLOG.md"]
 fn a_non_uniform_instance_scale_shades_like_the_same_node_scale() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;

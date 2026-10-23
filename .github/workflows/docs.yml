@@ -24,6 +24,7 @@ jobs:
         docs/running.md|running|Running
         docs/crates.md|crates|The crates
         docs/testing.md|testing|Tests
+        docs/shaders.md|shaders|Shader sources
         docs/windows.md|windows|Windows
         docs/packaging.md|packaging|Packages
         docs/observant.md|observant|ObservANT

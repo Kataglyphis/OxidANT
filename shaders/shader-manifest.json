@@ -1,0 +1,371 @@
+{
+  "minSlangcVersionForWgsl": "2026.8",
+  "manifest": [
+    {
+      "_comment": "Rust/WebGPU tonemap pass (WGSL emit only).",
+      "file": "tonemap/tonemap.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tonemap/tonemap.slang",
+      "entry": "fs_main",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "Rust/WebGPU forward PBR pass (WGSL emit).",
+      "file": "forward/forward.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "forward/forward.slang",
+      "entry": "fs_main",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "forward/forward.slang",
+      "entry": "vs_shadow",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "forward/forward.slang",
+      "entry": "vs_shadow_masked",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "forward/forward.slang",
+      "entry": "fs_shadow_masked",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "Rust/WebGPU procedural sky (WGSL emit).",
+      "file": "sky/sky.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "sky/sky.slang",
+      "entry": "fs_main",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "Rust/WebGPU bloom (WGSL emit).",
+      "file": "bloom/bloom.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "bloom/bloom.slang",
+      "entry": "fs_brightpass",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "bloom/bloom.slang",
+      "entry": "fs_blur_h",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "bloom/bloom.slang",
+      "entry": "fs_blur_v",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "Rust/WebGPU SSAO (WGSL emit).",
+      "file": "ssao/ssao.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "ssao/ssao.slang",
+      "entry": "fs_ssao",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "ssao/ssao.slang",
+      "entry": "fs_blur",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "Rust/WebGPU IBL precompute (WGSL emit).",
+      "file": "ibl/ibl.slang",
+      "entry": "vs_fullscreen",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "ibl/ibl.slang",
+      "entry": "fs_equirect_to_cube",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "ibl/ibl.slang",
+      "entry": "fs_downsample_cube",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "ibl/ibl.slang",
+      "entry": "fs_irradiance",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "ibl/ibl.slang",
+      "entry": "fs_prefilter",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "ibl/ibl.slang",
+      "entry": "fs_brdf_lut",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "Rust/WebGPU GPU occlusion culling (WGSL emit).",
+      "file": "gpu_cull/gpu_cull.slang",
+      "entry": "cs_main",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "Rust/WebGPU occlusion bbox detection (WGSL emit).",
+      "file": "occlusion_bbox/occlusion_bbox.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "occlusion_bbox/occlusion_bbox.slang",
+      "entry": "fs_main",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "Rust/WebGPU depth resolve (WGSL emit).",
+      "file": "depth_resolve/depth_resolve.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "depth_resolve/depth_resolve.slang",
+      "entry": "fs_main",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "Rust/WebGPU GUI tex quad (WGSL emit).",
+      "file": "tex_quad/tex_quad.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tex_quad/tex_quad.slang",
+      "entry": "fs_main",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    }
+  ],
+  "wgslMap": [
+    {
+      "src": "forward/forward.slang",
+      "out": "forward.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "sky/sky.slang",
+      "out": "sky.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "bloom/bloom.slang",
+      "out": "bloom.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "ssao/ssao.slang",
+      "out": "ssao.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "ibl/ibl.slang",
+      "out": "ibl.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "gpu_cull/gpu_cull.slang",
+      "out": "gpu_cull.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "tonemap/tonemap.slang",
+      "out": "tonemap.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "depth_resolve/depth_resolve.slang",
+      "out": "depth_resolve.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "occlusion_bbox/occlusion_bbox.slang",
+      "out": "occlusion_bbox.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "tex_quad/tex_quad.slang",
+      "out": "tex_quad.wgsl",
+      "dst": "crates/gui/src/shaders"
+    }
+  ],
+  "depthTexturePatches": {
+    "_comment": [
+      "Slang's WGSL backend has no depth-texture resource type in HLSL syntax",
+      "(a Texture2DArray/Texture2DMS<float> sampled via SampleCmp/Load from a",
+      "depth-format image), so it always emits the sampled-float WGSL type even",
+      "where the Rust bind group layout declares TextureSampleType::Depth.",
+      "Patch the emitted declaration(s) until slangc gains a depth-texture",
+      "control (checked 2026-07-31: no such control exists yet)."
+    ],
+    "forward.wgsl": [
+      {
+        "pattern": "(var shadowMap_\\w+\\s*:\\s*)texture_2d_array<f32>",
+        "replacement": "${1}texture_depth_2d_array"
+      }
+    ],
+    "depth_resolve.wgsl": [
+      {
+        "pattern": "(var msaaDepth_\\w+\\s*:\\s*)texture_multisampled_2d<f32>",
+        "replacement": "${1}texture_depth_multisampled_2d"
+      },
+      {
+        "_comment": [
+          "textureLoad on texture_multisampled_2d<f32> returns vec4<f32> (hence",
+          "Slang's trailing .x); textureLoad on texture_depth_multisampled_2d",
+          "returns f32 directly, so the accessor becomes invalid once the type",
+          "above is patched. Drop it from this specific call."
+        ],
+        "pattern": "(textureLoad\\(\\(msaaDepth_\\w+\\), \\(\\w+\\), \\(i32\\(\\w+\\)\\)\\))\\.x",
+        "replacement": "${1}"
+      },
+      {
+        "_comment": [
+          "`fs_main` writes the depth aspect itself (SV_Depth in the Slang",
+          "source), not a colour target - the Rust pipeline declares zero",
+          "colour attachments for this pass. Slang's WGSL backend still emits",
+          "a plain `@location(0)` output struct member, so it is silently",
+          "dropped and the rasterizer's own fragment z (0.0, since the",
+          "fullscreen triangle's NDC z is hard-coded to 0.0) gets written",
+          "instead. Retarget the output at the depth builtin. Safe for this",
+          "file: the only other `@location(0)` is `uv_0 : vec2<f32>`, excluded",
+          "by the `: f32,` anchor."
+        ],
+        "pattern": "@location\\(0\\) (\\w+) : f32,",
+        "replacement": "@builtin(frag_depth) ${1} : f32,"
+      }
+    ],
+    "ssao.wgsl": [
+      {
+        "pattern": "(var depthTex_\\w+\\s*:\\s*)texture_2d<f32>",
+        "replacement": "${1}texture_depth_2d"
+      },
+      {
+        "_comment": [
+          "See the depth_resolve.wgsl comment above: textureLoad on",
+          "texture_depth_2d returns f32 directly, so the trailing .x Slang",
+          "emitted for the texture_2d<f32> case becomes invalid."
+        ],
+        "pattern": "(textureLoad\\(\\(depthTex_\\w+\\), \\(\\(\\w+\\)\\)\\.xy, \\(\\(\\w+\\)\\)\\.z\\))\\.x",
+        "replacement": "${1}"
+      }
+    ],
+    "gpu_cull.wgsl": [
+      {
+        "pattern": "(var depthTex_\\w+\\s*:\\s*)texture_2d<f32>",
+        "replacement": "${1}texture_depth_2d"
+      },
+      {
+        "pattern": "(textureLoad\\(\\(depthTex_\\w+\\), \\(\\(\\w+\\)\\)\\.xy, \\(\\(\\w+\\)\\)\\.z\\))\\.x",
+        "replacement": "${1}"
+      }
+    ]
+  }
+}

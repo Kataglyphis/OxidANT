@@ -10,6 +10,10 @@ invariant](docs/renderer-bounds-invariant.md) and the [original glTF plan](docs/
 renderers stay with the C++ engine: the [sRGB audit](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/webgpu-srgb-audit.md)
 and the [shader-sharing guide](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/shader-sharing.md).
 
+This repository owns the WebGPU Slang inputs and shared math under `shaders/`.
+Regeneration and the check for drift from committed WGSL are described in
+[`docs/shaders.md`](../../docs/shaders.md).
+
 ## Features
 
 **Assets** — glTF 2.0 and GLB: meshes (triangles, strips and fans), node

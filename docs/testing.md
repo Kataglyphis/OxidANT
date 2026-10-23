@@ -8,7 +8,7 @@ runs them (`bash scripts/linux/ci-container-steps.sh test`):
 ```bash
 scripts/linux/fetch-models.sh
 KATAGLYPHIS_REQUIRE_GPU=1 KATAGLYPHIS_REQUIRE_MODEL=1 KATAGLYPHIS_REQUIRE_GST=1 \
-  cargo test --workspace --locked
+  KATAGLYPHIS_REQUIRE_GTK=1 xvfb-run -a cargo test --workspace --locked
 ```
 
 There are no features to add: the capture tests, the ORT loader, the webcam engine and the
@@ -18,6 +18,27 @@ chain ORT must be present ([AGENTS.md § Targets and their system dependencies](
 Each `KATAGLYPHIS_REQUIRE_*` turns a self-skip (no GPU, no model, a missing GStreamer
 element) into a failure, since `cargo test` hides a passing test's `SKIP:` line.
 `fetch-models.sh` puts the model the real-model tests need in place.
+
+The Linux test and coverage steps require GTK under Xvfb. The GTK lifecycle test posts a real EOS
+message and checks that the retained bus watch stops the pipeline, then verifies
+session shutdown. `gui-gtk --help` is covered by the CLI integration suite.
+Coverage keeps the workspace's 70% floor and every per-crate floor; a missing display
+must fail rather than silently omit the GTK lifecycle from the measurement.
+
+The CI script keeps a parent shell while `xvfb-run` starts. Replacing that shell
+with `exec xvfb-run` can make the launcher PID 1 in the container; Xvfb then
+omits the readiness signal and the launcher waits before starting Cargo.
+The script regression checks both handoffs, forwarded arguments, failure status and
+the coverage report's per-crate floor check.
+
+Inference preprocessing reads ModelANT's pinned `contracts/inference-v1.json` through
+`third_party/ModelANT`. The C++ and Python implementations use those same cases.
+The bounded model cache test deliberately replaces the cache on another thread and
+asserts the first request keeps its original model reference.
+
+`scripts/generate-texture-abi.py --check` rejects drift between `abi/texture.json`,
+the generated C header and Rust types. A tiny loaded shared library with a mismatched
+ABI version must fail before `knt_push_frame` is looked up, without a model or camera.
 
 **Both ONNX backends meet the real model.** `crates/inference/tests/real_model.rs` checks that
 the chain ORT is the backend on Linux and Windows and that tract finds both cats too;

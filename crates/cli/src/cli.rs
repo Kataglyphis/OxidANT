@@ -57,6 +57,9 @@ pub enum Commands {
         #[arg(long, value_enum, default_value_t = GpuBackend::Auto)]
         backend: GpuBackend,
     },
+    /// Launch the GTK4 camera GUI.
+    #[cfg(target_os = "linux")]
+    GuiGtk,
     /// Load the chain-built ONNX Runtime and print where it was found; fails when none loads.
     #[cfg(any(target_os = "linux", windows))]
     OnnxRuntime,
