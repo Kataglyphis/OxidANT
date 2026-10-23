@@ -19,11 +19,14 @@ and the backlog is empty"; it was neither.
       Blocked on that release. Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.
       Re-checked 2026-10-12: crates.io's newest `egui` and `egui-winit` are still 0.36.2, published 2026-09-08 (emilk/egui#8516 merged 2026-09-07, unreleased).
 
-- [ ] The headless renderer tests segfault now and then when their binary runs its tests on
-      parallel threads on the dev host (Ryzen 9950X, AVX-512), at the current pin and at an older
-      one; run serially they pass, and CI is green (found 2026-10-19). Unlike the arm64 WARP crash
-      (AGENTS.md § Continuous integration), no driver is named yet: check the renderer's and the test
-      fixture's thread safety first.
+- [ ] **Diagnose the intermittent headless GPU-test SIGSEGV** (M). A full default-parallel
+      workspace run at `38b1c597` crashed in the `occlusion` test binary after 7/11 cases
+      (SIGSEGV 11, exit 101). The same ELF then passed default and serial runs and five
+      further default repeats; source CI on `920ca1b7` passed. The crash remains unexplained.
+      Next: capture the GPU backend/driver and all-thread stack or core, distinguish test
+      resource lifetime from a driver fault, then add a regression for the proven cause.
+      Do not serialize all tests or call it fixed solely because CI is green.
+
 ## Not adopted yet
 
 The loop itself (config, runner wrappers, `scripts/agentic-loop/`) is not set up.
