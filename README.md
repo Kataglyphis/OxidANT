@@ -41,6 +41,10 @@ root package through flutter_rust_bridge and ships ObservANT, the cat cam;
 cxx bridge crate through Corrosion and builds the WebGPU renderer. It started as a project template and
 that scaffolding is still here, but the crates are real code with real consumers.
 
+Dependency updates: run `bash scripts/linux/renovate-local.sh` to report, `--apply --dry-run` to plan,
+and `--apply` to update. CI checks the wrapper and config; see
+[the shared Renovate guide](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/dependency-updates.md).
+
 ## Highlights
 
 - **ObservANT** (`crates/observant`): camera, cat detection, WebRTC stream and web page in one service.

@@ -22,6 +22,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   sources no longer refer to a documentation path found only in BeschleunigerBallett.
 
 ### Changed
+- Verify the Renovate wrapper and shared config in CI without applying updates.
 - Reuse the hub's PowerShell quality workflow for automatic complexity reports and a manual
   strict limit check; keep existing strict analyzer coverage while refactoring two findings.
 - **Shared contracts and standalone shaders** (2026-10-22): preprocessing runs the

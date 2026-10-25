@@ -823,7 +823,8 @@ Renovate, run as a **local CLI** (`bash scripts/linux/renovate-local.sh`); its c
 what `--apply` writes, WSL and the token: [`docs/updates.md`](docs/updates.md). Every lane
 above runs its gates, drivers and modules out of the `third_party/ANTfrastructure` pin
 (§ 3), so that gitlink drifting is a silent change to every gate, and nothing watched it
-before this wrapper existed. No Renovate GitHub App or workflow runs it.
+before this wrapper existed. CI verifies the wrapper and config, without running upgrades;
+the Renovate GitHub App remains disabled.
 
 **A run reports. `--apply` only when the owner asked for it in that turn** (owner
 directive 2026-09-11, a family rule the hub's `AGENTS.md` keeps). The family rationale:
