@@ -1,0 +1,23 @@
+name: Windows x64 · PowerShell quality measurements
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: Fail when PowerShell complexity exceeds the shared limits
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    uses: Kataglyphis/ANTfrastructure/.github/workflows/powershell-quality.yml@develop
+    with:
+      lint-path: scripts
+      strict: ${{ inputs.strict == true }}

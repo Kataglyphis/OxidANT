@@ -28,6 +28,8 @@ A push to `develop` and every PR run Linux x64; the other lanes run on request a
 a release, so a lane's badge shows its runs started by hand and a requested run is listed
 under *On request*
 ([AGENTS.md § Continuous integration](https://github.com/Kataglyphis/OxidANT/blob/develop/AGENTS.md#continuous-integration)).
+PowerShell lint stays strict, and the separate quality workflow uploads a complexity report
+on each push and PR; its manual `strict` input tests the current complexity debt.
 
 [**Docs site**](https://rust.jonasheinle.de)
 
