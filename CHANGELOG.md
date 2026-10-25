@@ -22,6 +22,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   sources no longer refer to a documentation path found only in BeschleunigerBallett.
 
 ### Changed
+- Pin ANTfrastructure to the Renovate driver that updates both direct submodules to their
+  remote default branches and initializes missing checkouts on apply.
 - Verify the Renovate wrapper and shared config in CI without applying updates.
 - Reuse the hub's PowerShell quality workflow for automatic complexity reports and a manual
   strict limit check; keep existing strict analyzer coverage while refactoring two findings.

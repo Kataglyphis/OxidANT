@@ -17,10 +17,13 @@ bash scripts/linux/renovate-local.sh --apply --dry-run  # the plan
 bash scripts/linux/renovate-local.sh --apply            # gitlink, manifests and Cargo.lock
 ```
 
-Here `--apply` moves the `third_party/ANTfrastructure` gitlink (its `.gitmodules` entry
-declares `branch = develop`, which `--apply` requires), rewrites `Cargo.toml` values and
-refreshes `Cargo.lock`; it stages and commits nothing. `.github/renovate.json` skips
-`third_party/egui-winit-0.36.2`. Dependabot is off (owner, 2026-10-20): this is the only
+Here `--apply` moves both direct gitlinks to each remote's latest default-branch commit,
+regardless of `.gitmodules branch =`. It initializes a missing checkout, rewrites
+`Cargo.toml` values and refreshes `Cargo.lock`; it stages and commits nothing.
+Report and dry-run do not clone, so they need the hub checkout already initialized.
+`.github/renovate.json` skips Cargo scans inside the patched vendored
+`third_party/egui-winit-0.36.2` and `third_party/tract-linalg-0.23.8` trees;
+neither is a submodule. Dependabot is off (owner, 2026-10-20): this is the only
 dependency watch.
 
 Run it from WSL. Why the CLI is local, what `--apply` writes per ecosystem and its exit
