@@ -778,12 +778,13 @@ half, `bash scripts/linux/ci-container-steps.sh riscv64-test`, runs `cargo test 
   4 KiB-page host such as the CI runner;
   [the hub's traps](third_party/ANTfrastructure/docs/riscv64-cross-test-lanes.md#traps-each-found-by-a-failing-run)
   say why.
-- **pkg-config reads the amd64 image's `.pc` files here** (hub CON130): gstreamer-sys's link paths
-  are `/opt/riscv64-sysroot/opt/gstreamer/lib/x86_64-linux-gnu` and `.../lib`, and it links only
-  because the second holds the riscv64 libraries (2026-10-20). Likewise the image's
-  `GST_PLUGIN_PATH` starts with `/opt/gstreamer/lib/x86_64-linux-gnu/gstreamer-1.0`, so each test
-  process fails to load about 300 amd64 plugins (warnings) before the sysroot's riscv64 ones load.
-  Both fixes are the hub's.
+- **Keep pkg-config on the riscv64 sysroot** (hub CON130). `riscv64_cross_env` removes the
+  amd64 image's `PKG_CONFIG_PATH` before gstreamer-sys runs, and the hub's GStreamer cross smoke
+  rejects an x86_64 link path. The earlier bad path was
+  `/opt/riscv64-sysroot/opt/gstreamer/lib/x86_64-linux-gnu`, which has no riscv64 libraries.
+- **GStreamer plugin lookup still needs a hub fix.** The image's `GST_PLUGIN_PATH` starts with
+  `/opt/gstreamer/lib/x86_64-linux-gnu/gstreamer-1.0`, so each riscv64 test process warns while
+  trying about 300 amd64 plugins before the sysroot's riscv64 ones load.
 - **The root crate's real-model tests take turns** (`model_turn` in `src/lib.rs`, 2026-10-20): on
   four cores three model loads at once under QEMU kept the webcam engine's first event past its
   60 s (run 39487523314); one at a time all 25 pass in 168 s on 4 CPUs locally.

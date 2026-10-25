@@ -14,6 +14,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed
+- The shared riscv64 cross environment isolates GStreamer pkg-config from the amd64 image's
+  metadata, and its smoke rejects x86_64 link paths before the workspace tests run.
 - The README's shader guide uses a GitHub permalink, so its link also resolves
   when the README is included as the crate's rustdoc front page.
 - Shared shader comments now point to OxidANT's color-space guide; the migrated
