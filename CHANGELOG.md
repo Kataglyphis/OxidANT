@@ -14,6 +14,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed
+- Remove the unused optional Burn Torch/ZIP/Zstd dependency chain from `Cargo.lock` through a
+  documented `burn-dispatch` 0.22.1 patch; the strict cargo audit now needs four fewer exceptions.
+  A CI lock-graph mutation test and Renovate's reviewed Burn pin prevent the chain returning.
+- Fix rustdoc's README and ObservANT guide links to the shared producer helper; they now lead to
+  its source on GitHub instead of a missing path in the published site.
 - Share ANTfrastructure's Windows config selection and source-copy loop fixture with
   Ballett while preserving this repo's path validation and shader mutation assertions.
 - Stage the owned `forward.slang` source with Windows arm64 test artifacts so both native

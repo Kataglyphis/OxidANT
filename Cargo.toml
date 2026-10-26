@@ -29,6 +29,8 @@ rust-version = "1.96.0"
 egui-winit = { path = "third_party/egui-winit-0.36.2" }
 # tract-linalg 0.23.8 (0.23.9 alike) hands clang-cl MASM for its AVX-512 VNNI kernels; see third_party/tract-linalg-0.23.8/PATCHED.md.
 tract-linalg = { path = "third_party/tract-linalg-0.23.8" }
+# The unused Torch backend keeps vulnerable ZIP/Zstd crates in Cargo.lock; see third_party/burn-dispatch-0.22.1/PATCHED.md.
+burn-dispatch = { path = "third_party/burn-dispatch-0.22.1" }
 
 [workspace.dependencies]
 # Benches only; without plotters and rayon, which no report here needs.
@@ -40,7 +42,8 @@ anyhow = "1"
 chrono = "0.4"
 tokio = "1"
 clap = { version = "4", features = ["derive"] }
-burn = { version = "0.22.0", default-features = false }
+# The dispatch patch and Burn family must advance together; Renovate requires review of this pin.
+burn = { version = "=0.22.1", default-features = false }
 ndarray = { version = "0.17" }
 # ab_glyph, not font-kit: no system fontconfig or freetype to link, on any target.
 plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ab_glyph"] }

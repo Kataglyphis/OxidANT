@@ -60,6 +60,11 @@ That is the scope of the lanes' `fmt-clippy` step (`CARGO_CLIPPY_ARGS` in
 inside the image reproduces the step itself. The shell, workflow, secret and config gates
 are `bash scripts/linux/run-lint-gates.sh`.
 
+The `lint-gates.yml` script-test job also runs `test-burn-lock-graph.sh` with Python 3.11+
+`tomllib`: it checks the real `Cargo.lock` and seven synthetic Torch/ZIP/Zstd reintroductions.
+The gate is also run after local Renovate `--apply`. Cargo audit and deny remain the security
+verdicts; the lock-graph check does not exercise Burn at runtime.
+
 ## The GPU tests must render
 
 The `crates/webgpu_renderer` headless golden tests (about 40) need a GPU adapter and

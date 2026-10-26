@@ -44,10 +44,12 @@ that scaffolding is still here, but the crates are real code with real consumers
 Dependency updates: run `bash scripts/linux/renovate-local.sh` to report, `--apply --dry-run` to plan,
 and `--apply` to update. CI checks the wrapper and config; see
 [the shared Renovate guide](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/dependency-updates.md).
+The Burn demos use Flex; the [documented Burn patch](https://github.com/Kataglyphis/OxidANT/blob/develop/third_party/burn-dispatch-0.22.1/PATCHED.md)
+keeps their unused legacy Torch backend and its vulnerable ZIP/Zstd chain out of the lockfile.
 
 ## Highlights
 
-- **ObservANT** (`crates/observant`): camera, cat detection, WebRTC stream and web page in one service; its [shared producer container helper](scripts/linux/observant/lib/producer-container.sh) also serves OmniAccelerANT's bundle packager.
+- **ObservANT** (`crates/observant`): camera, cat detection, WebRTC stream and web page in one service; its [shared producer container helper](https://github.com/Kataglyphis/OxidANT/blob/develop/scripts/linux/observant/lib/producer-container.sh) also serves OmniAccelerANT's bundle packager.
 - **A WebGPU glTF renderer**, native and in the browser: PBR with IBL, shadows, SSAO, bloom, golden tests.
 - **ONNX inference** on the family's chain-built ONNX Runtime (CPU, DirectML, CUDA), with tract as its fallback.
 - **No feature flags**: every build carries everything its target can run.

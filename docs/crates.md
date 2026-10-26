@@ -3,6 +3,8 @@
 One Cargo workspace. The root `Cargo.toml` is both the workspace and the root
 package `oxidant`, a `cdylib`/`staticlib`/`rlib` library. Its consumers are other
 repositories, so its `[lib] name` is not free to change.
+The Burn demos use Flex through a [patched `burn-dispatch`](https://github.com/Kataglyphis/OxidANT/blob/develop/third_party/burn-dispatch-0.22.1/PATCHED.md)
+that excludes the unselected legacy Torch backend from the lockfile.
 
 | Path | Package | What it is |
 | --- | --- | --- |

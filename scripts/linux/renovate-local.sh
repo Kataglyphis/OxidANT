@@ -8,3 +8,7 @@ source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 # The copied bootstrap initializes the hub only for a real apply.
 antfrastructure_renovate_exec linux/scripts/renovate-local.sh "$KATAGLYPHIS_REPO_ROOT" "$@"
+# Lock maintenance can advance transitive Burn crates even when Renovate defers the direct pin.
+if antfrastructure_renovate_will_apply "$@"; then
+    python3 "${SCRIPT_DIR}/check-burn-lock-graph.py" "${KATAGLYPHIS_REPO_ROOT}/Cargo.lock"
+fi

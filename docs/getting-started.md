@@ -36,7 +36,9 @@ cargo doc --open
 `cargo_build_doc.sh`, which is `cargo doc --no-deps --workspace` (all 13 crates) plus the
 family theme and `images/`, then the hub's `.htaccess` and its built-site link gate, whose
 known exceptions are `docs/site-links.allow`. `bash scripts/linux/ci-container-steps.sh docs`
-builds its API pages into `target/doc` locally, without the guides. The `oxidant` crate's front page there is
+builds its API pages into `target/doc` locally, without the guides.
+`bash scripts/linux/check-docs-site.sh` builds those same guides and runs the built-site link
+gate locally in the family Linux image. The `oxidant` crate's front page there is
 `README.md` itself (`#![doc = include_str!("../README.md")]` in `src/lib.rs`;
 [AGENTS.md § 6](../AGENTS.md#6-docs-owned-by-this-repo) says what that demands of the
 README). The guides in `docs/` are on that site too (`docs.yml`'s `guides`), each beside the

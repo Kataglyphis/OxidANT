@@ -21,10 +21,21 @@ Here `--apply` moves both direct gitlinks to each remote's latest default-branch
 regardless of `.gitmodules branch =`. It initializes a missing checkout, rewrites
 `Cargo.toml` values and refreshes `Cargo.lock`; it stages and commits nothing.
 Report and dry-run do not clone, so they need the hub checkout already initialized.
-`.github/renovate.json` skips Cargo scans inside the patched vendored
-`third_party/egui-winit-0.36.2` and `third_party/tract-linalg-0.23.8` trees;
-neither is a submodule. Dependabot is off (owner, 2026-10-20): this is the only
+`.github/renovate.json` skips Cargo scans inside the three documented patched crates under
+`third_party/`: `egui-winit-0.36.2`, `tract-linalg-0.23.8`, and `burn-dispatch-0.22.1`.
+None is a submodule. Dependabot is off (owner, 2026-10-20): this is the only
 dependency watch.
+
+The `burn-dispatch` patch keeps the deprecated Torch backend unavailable. Burn demos use Flex;
+the old optional Torch path pulled `zip 0.6.6` and vulnerable `zstd-safe`/`zstd-sys` into
+`Cargo.lock` even though no workspace feature selected them. Cargo audit checks the entire
+lockfile. The [patch record](https://github.com/Kataglyphis/OxidANT/blob/develop/third_party/burn-dispatch-0.22.1/PATCHED.md) gives its source,
+proof and removal conditions; do not add advisory ignores for that unused branch.
+The root Burn pin is exact because cargo lock maintenance otherwise drops a versioned patch;
+Renovate reports a newer Burn but requires review before applying it. Upgrade Burn and the
+vendor copy together, then run `python3 scripts/linux/check-burn-lock-graph.py Cargo.lock`,
+`cargo audit`, and the Burn tests. The local `--apply` wrapper fails if its lock maintenance
+reintroduces the old chain; the CI script suite tests that verdict with mutated lockfiles.
 
 Run it from WSL. For a Windows Git checkout, the bootstrap uses native Git so CRLF-only
 `.gitmodules` differences do not block a clean update. Why the CLI is local, what `--apply`
