@@ -647,7 +647,9 @@ which a local container run executes too:
   bundle, then `Stage-CrossTests.ps1`, which builds the whole workspace's tests for arm64,
   renderer included, and stages them with their DLL closure, the chain ORT beside the
   binaries that load it, the model under `resources\models`, the product's GStreamer
-  plugins and the renderer's fixtures. The hub's arch gate then grades `dist/windows-arm64`
+  plugins and the renderer's fixtures. `Initialize-BuildDirectory -Empty` clears the test
+  destination before any copy and fails on a broken path; its Pester fixture runs in lint gates.
+  The hub's arch gate then grades `dist/windows-arm64`
   and the test tree, and `windows-11-arm` runs `kataglyphis_cli.exe --help`, `stats`,
   `onnx-runtime` and `media-check` natively, then every staged test with
   `KATAGLYPHIS_REQUIRE_GPU=1` (hub CON43) and `KATAGLYPHIS_REQUIRE_MODEL=1`, the renderer's

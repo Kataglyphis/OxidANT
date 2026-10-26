@@ -59,8 +59,7 @@ $withIntegrationTests = @($tests | Where-Object { @($_.target.kind) -contains 't
 $programs = @($artifacts | Where-Object { -not $_.profile.test -and @($_.target.kind) -contains 'bin' -and $withIntegrationTests -contains $_.manifest_path })
 $binaries = @(@($tests | ForEach-Object executable) + @($programs | ForEach-Object executable) | Select-Object -Unique)
 
-if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
-$null = New-Item -ItemType Directory -Force -Path $Destination
+Initialize-BuildDirectory -Path $Destination -Empty
 foreach ($exe in $binaries) {
   $target = Join-Path $Destination ([System.IO.Path]::GetRelativePath($repoRoot, $exe))
   $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target)

@@ -56,6 +56,11 @@ The driver does not run the CI lane, and no local driver wraps that yet:
 
 ## The rules, and the host side
 
+The requested arm64 lane runs `Stage-CrossTests.ps1` to collect its Cargo test binaries.
+It resets the test destination through ANTfrastructure's `Initialize-BuildDirectory -Empty`
+before copying files. `scripts/windows/tests/StageDirectoryReuse.Tests.ps1` runs in lint gates
+and checks both stale-file cleanup and failed directory creation.
+
 The container rules this driver follows (the tar-pipe, cargo's trees outside the workspace,
 the delivery check):
 [AGENTS.md § Inside the Stevedore Windows container](../AGENTS.md#inside-the-stevedore-windows-container).

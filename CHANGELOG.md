@@ -22,6 +22,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   sources no longer refer to a documentation path found only in BeschleunigerBallett.
 
 ### Changed
+- Reuse ANTfrastructure's empty-stage directory helper for Windows cross-test
+  staging; test stale cleanup and failed allocation.
+- Pin ANTfrastructure's shared Bash/PowerShell reuse scanner so CI reports
+  consumer-to-hub overlap candidates.
 - Pin ANTfrastructure to the Renovate driver that updates both direct submodules to their
   remote default branches and initializes missing checkouts on apply, including WSL over
   Windows Git checkouts.
