@@ -53,3 +53,9 @@ OmniAccelerANT packages the service as a .deb, AppImage, flatpak, MSI and MSIX. 
 picks the camera and paces the model, and the measurements behind both:
 [AGENTS.md § The cat cam service](../AGENTS.md#the-cat-cam-service); its Raspberry Pi 5
 runner: [§ The cat producer on a Raspberry Pi 5](../AGENTS.md#the-cat-producer-on-a-raspberry-pi-5).
+
+The Pi runner and OmniAccelerANT's small-board bundle packager source the same
+[container probe and Cargo build helper](../scripts/linux/observant/lib/producer-container.sh).
+The helper owns the shared `nerdctl` volumes and command boundaries; the Pi
+runner still requires `--build` for a missing binary, while the bundle packager
+builds it automatically and can select `--platform`.

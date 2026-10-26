@@ -2,6 +2,12 @@
 
 Guidance for AI agents (and humans) working in OxidANT.
 
+**Reuse before adding Bash or PowerShell code.** Search this repository and every direct
+submodule, including `third_party/ANTfrastructure`, for an existing implementation. Call or
+extend its canonical owner, passing project-specific values as arguments. For new behavior
+needed by multiple consumers, create or extend one shared owner module and call it here.
+Keep unique product logic in this repository.
+
 Laid out on ANTfrastructure's six-section template
 ([`third_party/ANTfrastructure/shared/templates/AGENTS.md.template`](third_party/ANTfrastructure/shared/templates/AGENTS.md.template)),
 the same shape as OrchestrANT, AccelerANTgine and ANThology. Where a paragraph goes:
@@ -88,6 +94,11 @@ repo.
 
 Nothing here needs Windows PowerShell 5.1 semantics: every script carries
 `#requires -Version 7.0` and CI invokes `pwsh`.
+The arm64 Cargo staging suite passes its script and reset callback to ANTfrastructure's
+shared stage-directory fixture; keep its checks for cleanup and failed allocation armed.
+Its source-copy suite also uses the hub's parsed loop and fixture helpers; keep the
+shader-path assertions and removed-shader mutant here. The Windows build driver uses
+`Get-BuildWorkspaceConfig` for config and workspace-root selection, then validates the path here.
 `Stage-CrossTests.ps1` also stages `shaders/forward` beside the mirrored renderer sources:
 the native shader-constant tests read `forward.slang` through embedded `CARGO_MANIFEST_DIR`.
 Both Windows build lanes request direct submodules to avoid the hub's cyclic
@@ -158,6 +169,7 @@ Because cargo is what makes it bite:
 
 - **The sources go in, and the artifacts come out, by tar-pipe** (since 2026-10-19).
   `Invoke-StevedoreBuild.ps1` is a spec for the hub's `Invoke-RepoContainerBuild.ps1`: it
+  passes root-only exclusions to the shared selector, never a private file enumeration;
   streams the tree into `C:\ws` of a reused, named container (`kata-rust-build`), without
   `.git`, `target`, `dist`, `logs` and the root mirrors, and streams
   `target\container\<profile>` and `logs` back. Nothing is bind-mounted, so a host's Dev
@@ -510,6 +522,11 @@ family CI image against a Pi 5 CSI camera. It moved here from OmniAccelerANT on
 2026-09-15 under decision D12, because the crate it drives is this repo's;
 OmniAccelerANT keeps a pointer and still owns the web half
 (`scripts/linux/observant/serve.sh` over there).
+The producer's container probe and Cargo build live in
+`scripts/linux/observant/lib/producer-container.sh`, which OmniAccelerANT also
+sources. This runner still requires `--build` before compiling a missing binary
+and keeps the image's entrypoint; Omni's bundle packager builds a missing binary
+automatically and overrides that entrypoint for cross-platform runs.
 
 ```bash
 scripts/linux/observant/run-producer-pi.sh --build       # first run: cargo build in the image

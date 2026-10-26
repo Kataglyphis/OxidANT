@@ -46,18 +46,9 @@ try {
   throw "This build needs ANTfrastructure's WindowsCrossBundle.Common with Get-ProductDllSearchPath (hub commit of 2026-09-25, third_party/ANTfrastructure/docs/windows-cross-builds.md); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
 }
 
-$defaultConfigPath = Join-Path $PSScriptRoot 'Build-Windows.config.psd1'
-$configPath = Get-OrDefault $env:BUILD_WINDOWS_CONFIG $defaultConfigPath
-if (-not (Test-Path $configPath)) {
-  throw "Build config not found: $configPath"
-}
-$config = Import-PowerShellDataFile -Path $configPath
-
-$workspaceRootEnvVar = Get-OrDefault $env:WORKSPACE_ROOT_ENV (Get-ConfigValue -Config $config -Path 'Build.WorkspaceRootEnv')
-$workspaceEnvItem = Get-Item -Path "Env:$workspaceRootEnvVar" -ErrorAction SilentlyContinue
-$workspaceRootFromEnv = if ($null -ne $workspaceEnvItem) { $workspaceEnvItem.Value } else { $null }
-$workspaceRoot = Get-OrDefault $workspaceRootFromEnv $repoRoot
-$workspacePath = Resolve-WorkspacePath -Path $workspaceRoot
+$buildSettings = Get-BuildWorkspaceConfig -DefaultConfigPath (Join-Path $PSScriptRoot 'Build-Windows.config.psd1') -RepoRoot $repoRoot
+$config = $buildSettings.Config
+$workspacePath = Resolve-WorkspacePath -Path $buildSettings.WorkspaceRoot
 
 $logDir = Get-OrDefault $env:BUILD_LOG_DIR (Get-ConfigValue -Config $config -Path 'Build.LogDir')
 
@@ -268,7 +259,7 @@ try {
       }
 
       $manifestTemplateRel = Get-ConfigValue -Config $config -Path 'Msix.ManifestTemplate'
-      $manifestTemplatePath = if ([System.IO.Path]::IsPathRooted($manifestTemplateRel)) { $manifestTemplateRel } else { Join-Path $workspacePath $manifestTemplateRel }
+      $manifestTemplatePath = Resolve-PathFromRoot -Root $workspacePath -Path $manifestTemplateRel
 
       $distDir = Join-Path $layout.DistDir 'msix'
       $packageFile = Join-Path $distDir "$msixName`_$resolvedVersion`_$($layout.PackageArch).msix"

@@ -6,8 +6,10 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../../.." && pwd)"
 
 # The image ref comes from versions.env, in two assignments so `set -e` sees a failed substitution.
-# shellcheck source=../lib/antfrastructure.sh
+# shellcheck source=scripts/linux/lib/antfrastructure.sh
 source "${script_dir}/../lib/antfrastructure.sh"
+# shellcheck source=scripts/linux/observant/lib/producer-container.sh
+source "${script_dir}/lib/producer-container.sh"
 _ci_image_ref_sh="$(antfrastructure_path linux/scripts/ci-image-ref.sh)"
 image="$(bash "${_ci_image_ref_sh}")"
 target_volume="kataglyphis-cat-target"
@@ -202,24 +204,15 @@ if [ -n "${rotate}" ]; then
   nerdctl_args+=(--rotate "${rotate}")
 fi
 
-producer_present() {
-  nerdctl run --rm --user 0:0 -v "${target_volume}":/cargo-target "${image}" \
-    bash -c "test -x ${producer}" >/dev/null 2>&1
-}
-
-if [ "${do_build}" = true ] || ! producer_present; then
+if [ "${do_build}" = true ] || ! observant_producer_present \
+  "${image}" "${target_volume}" "${producer}" image; then
   [ "${do_build}" = true ] || {
     printf 'producer binary missing in volume %s - rerun with --build\n' "${target_volume}" >&2
     exit 1
   }
   printf 'building kataglyphis_observant in the container (this takes a while)\n'
-  nerdctl run --rm --user 0:0 --network host \
-    -v "${repo_root}":/workspace \
-    -v "${target_volume}":/cargo-target \
-    -v "${cargo_volume}":/cargo-home \
-    -e CARGO_TARGET_DIR=/cargo-target -e CARGO_HOME=/cargo-home \
-    "${image}" \
-    bash -lc 'cd /workspace && cargo build --release --locked -p kataglyphis_observant'
+  observant_build_producer "${image}" "${repo_root}" "${target_volume}" \
+    "${cargo_volume}" /workspace image
 fi
 
 # A producer from an interrupted run still holds the name.

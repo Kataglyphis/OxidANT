@@ -15,6 +15,12 @@ The current value:
 bind-mounted. It builds all three profiles (`dev`/debug, `profile` = release + debuginfo,
 `release` = fat LTO) and optionally runs the debug test suite:
 
+The driver passes its root-only Rust output exclusions to the shared runner.
+The runner selects the top-level entries without a recursive tar pattern and
+fails before starting Docker if nothing remains to stream.
+It selects again for the test phase; the build returns only excluded `target`,
+`logs`, `debug`, `profile` and `release` roots.
+
 ```pwsh
 # build debug + profile + release in the container
 pwsh -ExecutionPolicy Bypass -File .\scripts\windows\container\Invoke-StevedoreBuild.ps1
@@ -59,11 +65,17 @@ The driver does not run the CI lane, and no local driver wraps that yet:
 The requested arm64 lane runs `Stage-CrossTests.ps1` to collect its Cargo test binaries.
 It resets the test destination through ANTfrastructure's `Initialize-BuildDirectory -Empty`
 before copying files. `scripts/windows/tests/StageDirectoryReuse.Tests.ps1` runs in lint gates
-and checks both stale-file cleanup and failed directory creation.
+and checks both stale-file cleanup and failed directory creation through the shared
+`WindowsStageDirectory.Fixture.psm1`. This repo supplies its Cargo stage script and reset
+callback; ANTfrastructure owns the common AST and filesystem checks.
 The same staging script copies `shaders/forward` into the artifact because the renderer's
 native shader-constant tests read `forward.slang` relative to the embedded `CARGO_MANIFEST_DIR`.
 `CrossTestSources.Tests.ps1` executes that source-copy loop against a small fixture and proves
 the shader is absent when its path is removed from the loop. It does not build Cargo tests.
+The suite uses ANTfrastructure's `Get-TestSourceCopyLoopText` and
+`Invoke-TestSourceCopyLoop` for parsed selection and execution; the shader list and
+assertions stay here. `Build-Windows.ps1` uses the hub's `Get-BuildWorkspaceConfig`
+for config-file and workspace-root selection, then validates the path locally.
 Both Windows build workflows request direct submodules, so their checkouts do not
 descend through ANTfrastructure's cyclic documentation subtree.
 

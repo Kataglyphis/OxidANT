@@ -14,6 +14,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed
+- Share ANTfrastructure's Windows config selection and source-copy loop fixture with
+  Ballett while preserving this repo's path validation and shader mutation assertions.
 - Stage the owned `forward.slang` source with Windows arm64 test artifacts so both native
   renderer shader-constant tests can read it through their embedded workspace path.
 - The shared riscv64 cross environment isolates GStreamer pkg-config from the amd64 image's
@@ -24,6 +26,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   sources no longer refer to a documentation path found only in BeschleunigerBallett.
 
 ### Changed
+- Pass Windows container root exclusions to ANTfrastructure's shared selector;
+  keep the existing Rust output policy and deep tar exclusions.
+- Share ObservANT's container binary probe and Cargo build transport with
+  OmniAccelerANT; keep this Pi runner's explicit `--build` policy and image entrypoint.
+- Share the arm64 stage-directory Pester assertions with OrchestrANT through an
+  ANTfrastructure fixture; keep the Cargo-specific reset command and callback here.
 - Request direct submodules in both Windows build lanes, avoiding the
   ANTfrastructure/DocumANTation recursion during checkout.
 - Reuse ANTfrastructure's empty-stage directory helper for Windows cross-test

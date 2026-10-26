@@ -47,7 +47,7 @@ and `--apply` to update. CI checks the wrapper and config; see
 
 ## Highlights
 
-- **ObservANT** (`crates/observant`): camera, cat detection, WebRTC stream and web page in one service.
+- **ObservANT** (`crates/observant`): camera, cat detection, WebRTC stream and web page in one service; its [shared producer container helper](scripts/linux/observant/lib/producer-container.sh) also serves OmniAccelerANT's bundle packager.
 - **A WebGPU glTF renderer**, native and in the browser: PBR with IBL, shadows, SSAO, bloom, golden tests.
 - **ONNX inference** on the family's chain-built ONNX Runtime (CPU, DirectML, CUDA), with tract as its fallback.
 - **No feature flags**: every build carries everything its target can run.
@@ -75,7 +75,7 @@ Prerequisites, the API docs and Linux containers locally:
 | Tests, lints and the GPU tests | [docs/testing.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/testing.md) |
 | Running the CLI, the GUI and the demos | [docs/running.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/running.md) |
 | ObservANT, the cat cam | [docs/observant.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/observant.md) |
-| Windows: build, test and arm64 test-artifact checks | [docs/windows.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/windows.md) |
+| Windows: shared source selection, config, build, test and arm64 source fixtures | [docs/windows.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/windows.md#the-driver) |
 | Packages: Linux tar, deb, AppImage, flatpak; Windows MSIX and MSI | [docs/packaging.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) |
 | Dependency updates | [docs/updates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/updates.md) |
 | The WebGPU renderer | [crates/webgpu_renderer/README.md](https://github.com/Kataglyphis/OxidANT/blob/develop/crates/webgpu_renderer/README.md) |

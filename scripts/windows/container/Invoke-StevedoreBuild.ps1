@@ -38,11 +38,6 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $runner = Join-Path $repoRoot 'third_party\ANTfrastructure\windows\scripts\build\Invoke-RepoContainerBuild.ps1'
 if (-not (Test-Path -LiteralPath $runner)) { throw "Required script not found: $runner (run: git submodule update --init --recursive third_party/ANTfrastructure)" }
 
-# Root-only build output stays out of the item list, since bsdtar's --exclude matches at every depth.
-$rootOnlyExclude = @('.git', '.vs', 'target', 'dist', 'logs', 'debug', 'profile', 'release', 'out')
-$inboundItems = @([System.IO.Directory]::GetFileSystemEntries($repoRoot) |
-    ForEach-Object { [System.IO.Path]::GetFileName($_) } |
-    Where-Object { $_ -notin $rootOnlyExclude })
 $inboundExclude = @('.git', 'third_party/ANTfrastructure/third_party/DocumANTation')
 $profiles = @('debug', 'profile', 'release')
 
@@ -50,7 +45,8 @@ function Invoke-ContainerPhase([string]$Script, [string[]]$OutputDirs, [string[]
     # A scriptblock gets the runner's workspace path; its tokens must be space-free (docker exec -> cmd /S /C).
     $command = { param($ws) @('pwsh', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$ws\scripts\windows\container\$Script", '-Workspace', $ws) }.GetNewClosure()
     & $runner -RepoRoot $repoRoot -ContainerName $ContainerName -BuildCommand $command -Image $Image -DockerExe $DockerExe `
-        -Isolation 'process' -MemoryGb $MemoryGb -InboundItems $inboundItems -InboundExclude $inboundExclude `
+        -Isolation 'process' -MemoryGb $MemoryGb `
+        -ExcludeRootEntries @('.git', '.vs', 'target', 'dist', 'logs', 'debug', 'profile', 'release', 'out') -InboundExclude $inboundExclude `
         -KeepDirs @('logs') -OutputDirs $OutputDirs -VerifyDirs $VerifyDirs -FreshContainer:$FreshContainer -WhatIf:$WhatIfPreference
     # Only the first phase may discard the container: the test phase reuses what the build left.
     $script:FreshContainer = $false
