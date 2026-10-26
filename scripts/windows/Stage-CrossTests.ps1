@@ -8,7 +8,8 @@
   the container) like the x64 tests, so the CARGO_MANIFEST_DIR and CARGO_BIN_EXE paths they embed read C:\ws\...; the
   staged tree mirrors those paths, and the run job links C:\ws to it. Only the triple's own binaries are staged: host
   build scripts and proc macros would fail the arch gate. The chain ORT goes beside the binaries that load it, the
-  model into resources\models, so the real-model tests run there too.
+  model into resources\models, and the owned forward shader into shaders\forward, so the real-model
+  and shader-constant tests run there too.
 #>
 [CmdletBinding()]
 param(
@@ -91,8 +92,8 @@ $closure = foreach ($dir in @($binaries | ForEach-Object { Split-Path -Parent $_
 }
 # The real-model tests read the model through CARGO_MANIFEST_DIR, which the run job's C:\ws junction maps here.
 & (Join-Path $PSScriptRoot 'Get-Models.ps1') -Destination (Join-Path $Destination 'resources\models')
-# What the renderer's tests read at run time through CARGO_MANIFEST_DIR: its source tree and its fixtures.
-foreach ($rel in 'crates\webgpu_renderer\src', 'crates\webgpu_renderer\tests\assets') {
+# The renderer reads these sources and fixtures through its embedded CARGO_MANIFEST_DIR.
+foreach ($rel in 'crates\webgpu_renderer\src', 'crates\webgpu_renderer\tests\assets', 'shaders\forward') {
   Copy-Item -LiteralPath (Join-Path $repoRoot $rel) -Destination (Join-Path $Destination $rel) -Recurse -Force
 }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'third_party\ANTfrastructure\windows\scripts\build\Invoke-StagedTests.ps1') -Destination $Destination

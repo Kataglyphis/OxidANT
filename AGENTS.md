@@ -88,6 +88,8 @@ repo.
 
 Nothing here needs Windows PowerShell 5.1 semantics: every script carries
 `#requires -Version 7.0` and CI invokes `pwsh`.
+`Stage-CrossTests.ps1` also stages `shaders/forward` beside the mirrored renderer sources:
+the native shader-constant tests read `forward.slang` through embedded `CARGO_MANIFEST_DIR`.
 Both Windows build lanes request direct submodules to avoid the hub's cyclic
 documentation subtree during the short-path checkout.
 
@@ -649,8 +651,10 @@ which a local container run executes too:
   bundle, then `Stage-CrossTests.ps1`, which builds the whole workspace's tests for arm64,
   renderer included, and stages them with their DLL closure, the chain ORT beside the
   binaries that load it, the model under `resources\models`, the product's GStreamer
-  plugins and the renderer's fixtures. `Initialize-BuildDirectory -Empty` clears the test
-  destination before any copy and fails on a broken path; its Pester fixture runs in lint gates.
+  plugins, the renderer's fixtures and `shaders/forward/forward.slang`.
+  `Initialize-BuildDirectory -Empty` clears the test destination before any copy and fails
+  on a broken path; its Pester fixture runs in lint gates. The source-copy fixture also
+  rejects a missing shader path.
   The hub's arch gate then grades `dist/windows-arm64`
   and the test tree, and `windows-11-arm` runs `kataglyphis_cli.exe --help`, `stats`,
   `onnx-runtime` and `media-check` natively, then every staged test with

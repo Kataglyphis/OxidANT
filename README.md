@@ -75,7 +75,7 @@ Prerequisites, the API docs and Linux containers locally:
 | Tests, lints and the GPU tests | [docs/testing.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/testing.md) |
 | Running the CLI, the GUI and the demos | [docs/running.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/running.md) |
 | ObservANT, the cat cam | [docs/observant.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/observant.md) |
-| Windows: build and test in the Stevedore container | [docs/windows.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/windows.md) |
+| Windows: build, test and arm64 test-artifact checks | [docs/windows.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/windows.md) |
 | Packages: Linux tar, deb, AppImage, flatpak; Windows MSIX and MSI | [docs/packaging.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) |
 | Dependency updates | [docs/updates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/updates.md) |
 | The WebGPU renderer | [crates/webgpu_renderer/README.md](https://github.com/Kataglyphis/OxidANT/blob/develop/crates/webgpu_renderer/README.md) |

@@ -14,6 +14,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed
+- Stage the owned `forward.slang` source with Windows arm64 test artifacts so both native
+  renderer shader-constant tests can read it through their embedded workspace path.
 - The shared riscv64 cross environment isolates GStreamer pkg-config from the amd64 image's
   metadata, and its smoke rejects x86_64 link paths before the workspace tests run.
 - The README's shader guide uses a GitHub permalink, so its link also resolves

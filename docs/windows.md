@@ -60,6 +60,10 @@ The requested arm64 lane runs `Stage-CrossTests.ps1` to collect its Cargo test b
 It resets the test destination through ANTfrastructure's `Initialize-BuildDirectory -Empty`
 before copying files. `scripts/windows/tests/StageDirectoryReuse.Tests.ps1` runs in lint gates
 and checks both stale-file cleanup and failed directory creation.
+The same staging script copies `shaders/forward` into the artifact because the renderer's
+native shader-constant tests read `forward.slang` relative to the embedded `CARGO_MANIFEST_DIR`.
+`CrossTestSources.Tests.ps1` executes that source-copy loop against a small fixture and proves
+the shader is absent when its path is removed from the loop. It does not build Cargo tests.
 Both Windows build workflows request direct submodules, so their checkouts do not
 descend through ANTfrastructure's cyclic documentation subtree.
 
