@@ -23,7 +23,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Changed
 - Pin ANTfrastructure to the Renovate driver that updates both direct submodules to their
-  remote default branches and initializes missing checkouts on apply.
+  remote default branches and initializes missing checkouts on apply, including WSL over
+  Windows Git checkouts.
 - Verify the Renovate wrapper and shared config in CI without applying updates.
 - Reuse the hub's PowerShell quality workflow for automatic complexity reports and a manual
   strict limit check; keep existing strict analyzer coverage while refactoring two findings.

@@ -26,8 +26,10 @@ Report and dry-run do not clone, so they need the hub checkout already initializ
 neither is a submodule. Dependabot is off (owner, 2026-10-20): this is the only
 dependency watch.
 
-Run it from WSL. Why the CLI is local, what `--apply` writes per ecosystem and its exit
-codes, and `GITHUB_COM_TOKEN` for managers that ask `api.github.com`: ANTfrastructure's
+Run it from WSL. For a Windows Git checkout, the bootstrap uses native Git so CRLF-only
+`.gitmodules` differences do not block a clean update. Why the CLI is local, what `--apply`
+writes per ecosystem, its exit codes, and `GITHUB_COM_TOKEN` for managers that ask
+`api.github.com`: ANTfrastructure's
 [`dependency-updates.md`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/dependency-updates.md).
 
 ## Moving the crates with cargo

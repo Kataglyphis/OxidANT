@@ -259,9 +259,10 @@ version bump and coordinated consumer changes. [testing.md](docs/testing.md).
 - `TEXTURE_2D_SHAPE_OK` must stay on the first line of its `wgpu::TextureDescriptor {` body
   (`tests/texture_desc_single_definition.rs`).
 - `scripts/linux/check-ort-chain-only.sh --help` prints lines 2-10 of the file (`sed -n '2,10p'`).
-- The two bootstrap copies (`scripts/linux/lib/antfrastructure.sh`, `scripts/windows/Resolve-BuildModule.ps1`)
-  must equal the hub templates below their header (`sync-shared-config.sh --check`). Re-copy them after an
-  upstream change; never edit them here.
+- The two bootstrap copies (`scripts/linux/lib/antfrastructure.sh`,
+  `scripts/windows/Resolve-BuildModule.ps1`) and exact Renovate Git-mode companion
+  (`scripts/linux/lib/renovate-git-mode.sh`) come from the hub. `sync-shared-config.sh --check`
+  guards all three; re-copy them after an upstream change.
 
 ### Verifying locally on a Windows box (no MSVC required)
 
