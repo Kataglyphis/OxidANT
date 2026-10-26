@@ -22,6 +22,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   sources no longer refer to a documentation path found only in BeschleunigerBallett.
 
 ### Changed
+- Request direct submodules in both Windows build lanes, avoiding the
+  ANTfrastructure/DocumANTation recursion during checkout.
 - Reuse ANTfrastructure's empty-stage directory helper for Windows cross-test
   staging; test stale cleanup and failed allocation.
 - Pin ANTfrastructure's shared Bash/PowerShell reuse scanner so CI reports

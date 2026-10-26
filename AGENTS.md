@@ -88,6 +88,8 @@ repo.
 
 Nothing here needs Windows PowerShell 5.1 semantics: every script carries
 `#requires -Version 7.0` and CI invokes `pwsh`.
+Both Windows build lanes request direct submodules to avoid the hub's cyclic
+documentation subtree during the short-path checkout.
 
 ## 3. Critical invariant: submodule pins
 

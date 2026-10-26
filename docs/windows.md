@@ -60,6 +60,8 @@ The requested arm64 lane runs `Stage-CrossTests.ps1` to collect its Cargo test b
 It resets the test destination through ANTfrastructure's `Initialize-BuildDirectory -Empty`
 before copying files. `scripts/windows/tests/StageDirectoryReuse.Tests.ps1` runs in lint gates
 and checks both stale-file cleanup and failed directory creation.
+Both Windows build workflows request direct submodules, so their checkouts do not
+descend through ANTfrastructure's cyclic documentation subtree.
 
 The container rules this driver follows (the tar-pipe, cargo's trees outside the workspace,
 the delivery check):

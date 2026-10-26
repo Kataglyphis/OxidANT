@@ -25,6 +25,7 @@ jobs:
     uses: Kataglyphis/ANTfrastructure/.github/workflows/container-ci-windows.yml@develop
     with:
       target-arch: arm64
+      submodules: 'true'
       build-script: scripts/windows/Invoke-WindowsLane.ps1
       build-args: |
         -TargetArch
