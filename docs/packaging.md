@@ -40,7 +40,8 @@ The same policy covers `kataglyphis_cxx_bridge`, whose graph BeschleunigerBallet
 stages on its own packaged targets, riscv64 included; the test stages that root too.
 Linux tar, DEB and Flatpak read back every staged crate file and the model's `LICENSE` and
 `NOTICE`; the AppImage, the Windows bundle and MSIX check the crate manifest, the CLI's own
-entry and the model license; the MSI resolves each through the generated WiX fragment,
+entry and the model license (MSIX part names percent-encode a crate directory's `@`, so
+that pattern stops before it); the MSI resolves each through the generated WiX fragment,
 because the crate trees repeat the `LICENSE` basename. A Windows payload that ships the
 chain `onnxruntime.dll` also carries the matching wheel's `LICENSE` and
 `ThirdPartyNotices.txt` (`Copy-OrtWheelLicenses`), checked in every format. The bundled

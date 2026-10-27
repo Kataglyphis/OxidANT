@@ -72,6 +72,22 @@ Describe 'Third-party licenses in Windows payloads' {
     }
   }
 
+  It 'passes an MSIX-shaped archive whose part names percent-encode the crate directory' {
+    $payload = New-Payload 'encoded'
+    $licenses = Add-ThirdPartyLicenses -Directory $payload -CargoLicenses $cargo
+    $archive = Join-Path $TestDrive 'encoded.msix'
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::Open($archive, 'Create')
+    try {
+      foreach ($file in @(Get-ChildItem -LiteralPath $payload -File -Recurse)) {
+        $name = [IO.Path]::GetRelativePath($payload, $file.FullName).Replace('\', '/').Replace('@', '%40')
+        $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $name)
+      }
+    } finally { $zip.Dispose() }
+    $rules = Get-ThirdPartyLicenseRules -Licenses $licenses -ProjectLicense $projectLicense -ModelLicense $model
+    Invoke-Verifier $archive $rules | Should Be 0
+  }
+
   It 'stages the matching wheel texts only when the payload ships the ORT DLL' {
     $payload = New-Payload 'with-ort'
     [IO.File]::WriteAllText((Join-Path $payload 'onnxruntime.dll'), 'MZ')

@@ -67,7 +67,8 @@ function Get-ThirdPartyLicenseRules {
   param([Parameter(Mandatory)]$Licenses, [Parameter(Mandatory)][string]$ProjectLicense, [Parameter(Mandatory)][string]$ModelLicense)
   @('--require', "LICENSE=$ProjectLicense",
     '--require', "licenses/cargo/manifest.json=$(Join-Path $Licenses.Cargo 'manifest.json')",
-    '--require', "licenses/cargo/kataglyphis_cli@*/workspace/LICENSE=$ProjectLicense",
+    # MSIX part names percent-encode the '@' of a crate directory, so the pattern stops before it.
+    '--require', "licenses/cargo/kataglyphis_cli*/workspace/LICENSE=$ProjectLicense",
     '--require', "resources/models/$(Split-Path $ModelLicense -Leaf)=$ModelLicense")
 }
 
