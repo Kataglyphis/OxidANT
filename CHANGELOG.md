@@ -14,6 +14,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed
+- Cover `kataglyphis_cxx_bridge`'s crate graph in the reviewed Cargo license policy so BeschleunigerBallett can ship its texts, and stop the Windows license suite leaking the verifier's expected failure status into the Pester runner.
 - Ship the original license texts of every crate the CLI links, per packaged target, in all Linux and Windows formats, using ANTfrastructure's Cargo license stager and a reviewed policy for crates whose archives lack them; Windows payloads that ship the chain ONNX Runtime also carry the matching wheel's license and notices.
 - Generate the MSI's installed RTF from the complete project license, retaining the existing installer flow.
 - Require the project logo for MSIX creation and reject missing or invisible images.

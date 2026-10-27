@@ -32,6 +32,14 @@ Describe 'Third-party licenses in Windows payloads' {
   $model = Join-Path $TestDrive 'model.LICENSE'
   [IO.File]::WriteAllText($model, "model terms`n")
 
+  # The CI runner exits with the last native status, so an expected verifier failure must not leak.
+  function Invoke-Verifier([string]$Path, [string[]]$Rules) {
+    & python $verifier $Path @Rules 2>&1 | Out-Null
+    $code = $LASTEXITCODE
+    $global:LASTEXITCODE = 0
+    return $code
+  }
+
   function New-Payload([string]$Name) {
     $payload = Join-Path $TestDrive $Name
     New-Item -ItemType Directory -Force -Path (Join-Path $payload 'licenses\cargo\stale'), (Join-Path $payload 'resources\models') | Out-Null
@@ -51,8 +59,7 @@ Describe 'Third-party licenses in Windows payloads' {
     Assert-PayloadOrtLicenses -Path $payload -Licenses $licenses
     $script:ortAssert | Should Be ''
     $rules = Get-ThirdPartyLicenseRules -Licenses $licenses -ProjectLicense $projectLicense -ModelLicense $model
-    & python $verifier $payload @rules | Out-Null
-    $LASTEXITCODE | Should Be 0
+    Invoke-Verifier $payload $rules | Should Be 0
   }
 
   It 'fails when the crate manifest, the CLI license or the model license is missing' {
@@ -61,8 +68,7 @@ Describe 'Third-party licenses in Windows payloads' {
       $licenses = Add-ThirdPartyLicenses -Directory $payload -CargoLicenses $cargo
       Remove-Item -LiteralPath (Join-Path $payload $relative)
       $rules = Get-ThirdPartyLicenseRules -Licenses $licenses -ProjectLicense $projectLicense -ModelLicense $model
-      & python $verifier $payload @rules 2>&1 | Out-Null
-      $LASTEXITCODE | Should Not Be 0
+      Invoke-Verifier $payload $rules | Should Not Be 0
     }
   }
 

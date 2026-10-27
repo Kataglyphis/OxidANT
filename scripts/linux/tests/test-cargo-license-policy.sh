@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proves the policy covers the shipped CLI's Cargo graph on every packaged target; it does not prove linkage or native-library coverage.
+# Proves the policy covers the CLI's and the C++ bridge's Cargo graphs on every packaged target; it does not prove linkage or native-library coverage.
 set -u
 tests_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "${tests_dir}/../../.." && pwd)"
@@ -13,20 +13,27 @@ python="$(command -v python3 || command -v python)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 targets=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-pc-windows-msvc)
+# BeschleunigerBallett links the bridge into its packages, riscv64 included.
+bridge_targets=("${targets[@]}" riscv64gc-unknown-linux-gnu)
 
 stage() {
-    "$python" "$stager" --workspace "$repo" --root-package kataglyphis_cli --target "$1" --policy "$2" --output-dir "$3"
+    "$python" "$stager" --workspace "$repo" --root-package "${root:-kataglyphis_cli}" --target "$1" --policy "$2" --output-dir "$3"
 }
 
 t_case 'the locked dependencies are available for every packaged target'
 fetch=(cargo fetch --locked --manifest-path "${repo}/Cargo.toml")
-for target in "${targets[@]}"; do fetch+=(--target "$target"); done
+for target in "${bridge_targets[@]}"; do fetch+=(--target "$target"); done
 t_assert_ok "${fetch[@]}"
 
 for target in "${targets[@]}"; do
     t_case "every crate the CLI ships on ${target} has reviewed original license texts"
     t_assert_ok stage "$target" "$policy" "${work}/${target}"
     t_assert_grep "${work}/${target}/manifest.json" '"name": "kataglyphis_cli"'
+done
+for target in "${bridge_targets[@]}"; do
+    t_case "every crate the C++ bridge links on ${target} has reviewed original license texts"
+    root=kataglyphis_cxx_bridge t_assert_ok stage "$target" "$policy" "${work}/bridge-${target}"
+    t_assert_grep "${work}/bridge-${target}/manifest.json" '"name": "kataglyphis_cxx_bridge"'
 done
 
 t_case 'every vendored text is named by the policy'

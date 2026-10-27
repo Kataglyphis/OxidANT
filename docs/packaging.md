@@ -36,6 +36,8 @@ from the commit in the crate's `.cargo_vcs_info.json`) or a file inside the crat
 SHA-256 and source URL. A crate without a reviewed text fails the package step, so a
 dependency bump that adds one needs a policy entry first; `scripts/linux/tests/test-cargo-license-policy.sh`
 stages all four packaged targets and fails on a missing, changed or unreferenced text.
+The same policy covers `kataglyphis_cxx_bridge`, whose graph BeschleunigerBallett links and
+stages on its own packaged targets, riscv64 included; the test stages that root too.
 Linux tar, DEB and Flatpak read back every staged crate file and the model's `LICENSE` and
 `NOTICE`; the AppImage, the Windows bundle and MSIX check the crate manifest, the CLI's own
 entry and the model license; the MSI resolves each through the generated WiX fragment,
