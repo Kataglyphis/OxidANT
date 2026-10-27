@@ -11,6 +11,26 @@ Linux bundles include the GTK4 library closure and `gtk4paintablesink` from the
 image's actual plugin location, which can differ from GStreamer's pkg-config directory.
 The existing bundled-element check requires that sink to load from the package itself.
 
+Each format includes the exact project `LICENSE`; the shared staging helpers reject a
+missing or empty source. This check does not prove coverage of every native dependency's
+license or corresponding-source obligations.
+The Linux tar, DEB, AppImage and Flatpak, the Windows bundle, MSIX and MSI are read back by the shared
+license verifier. MSI inspection requires 7-Zip and resolves the license identifier from the
+MSI file table. AppImage verification extracts only the license on a matching native host;
+cross-architecture verification fails rather than skipping the check.
+
+Linux packaging also matches every bundled `libonnxruntime*.so*` against one
+wheel, directly or after target-compatible stripping, and includes that wheel's
+original `LICENSE` and `ThirdPartyNotices.txt` in each finished format. Set
+`ORT_CHAIN_WHEEL_DIR` to override `/opt/onnxruntime-wheels` and `STRIP` to select
+the target's strip tool. Missing, changed or ambiguous matches fail the build;
+other native dependency obligations still require their own provenance checks.
+
+The MSIX uses only `images/logo.png`. The shared MSIX stager rejects a missing,
+malformed or fully transparent image instead of replacing it with another logo.
+The MSI's installed `License.rtf` is generated from the current project `LICENSE`
+by ANTfrastructure's CMake encoder; its existing installer flow is unchanged.
+
 ## MSIX
 
 Needs the Windows SDK (`makeappx`, `signtool`), located by ANTfrastructure's
@@ -89,6 +109,11 @@ It installs the portable bundle's tree: the exe with every DLL of its closure be
 `lib\gstreamer-1.0` and `resources\` with the model. `wix/main.wxs` holds the exe, the
 licence and the shortcut; the rest is a component group the build generates, one
 component per file.
+
+The shared icon helper wraps `images/logo.png` as an ICO for the Start-menu shortcut
+and Add/Remove Programs. The ICO is generated for each build from the project source.
+The CLI's Windows executable also embeds `images/logo.ico` through the hub's Rust build
+helper; the icon test checks that this checked-in ICO matches `images/logo.png`.
 
 Built with the **WiX Toolset's `wix.exe build`**, not `cargo-wix`: cargo-wix drives WiX
 v3's `candle.exe`/`light.exe` even in its newest release (0.3.9), while the image ships

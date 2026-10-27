@@ -14,6 +14,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed
+- Generate the MSI's installed RTF from the complete project license, retaining the existing installer flow.
+- Require the project logo for MSIX creation and reject missing or invisible images.
+- Match bundled Linux ONNX Runtime libraries to one wheel and verify its original license and notices in every package.
+- Stage the project license in Linux bundles and Windows portable, MSI and MSIX payloads using ANTfrastructure's shared helpers.
+- Use the project logo for the Windows MSI shortcut and Add/Remove Programs entry.
+- Embed the project icon in the Windows CLI using ANTfrastructure's shared Rust build helper.
 - Remove the unused optional Burn Torch/ZIP/Zstd dependency chain from `Cargo.lock` through a
   documented `burn-dispatch` 0.22.1 patch; the strict cargo audit now needs four fewer exceptions.
   A CI lock-graph mutation test and Renovate's reviewed Burn pin prevent the chain returning.

@@ -1,0 +1,82 @@
+[
+ {
+  "id": "consumer.oxidant-ort-stage",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "stage_ort_wheel_licenses \"${bundle}\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "Every native bundle stages wheel-verified ORT notices."
+ },
+ {
+  "id": "consumer.oxidant-ort-archive",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "verify_ort_wheel_package_licenses \"${tarball}\" \"${bundle}\" \"${binary}\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The tar output verifies both notices."
+ },
+ {
+  "id": "consumer.oxidant-ort-deb",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "verify_ort_wheel_package_licenses \"${out_dir}/${package_name}_${version#v}_${deb_arch}.deb\" \"${bundle}\" \"opt/${package_name}\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The deb output verifies both notices."
+ },
+ {
+  "id": "consumer.oxidant-ort-appimage",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "verify_ort_wheel_appimage_licenses \"${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage\" \"${bundle}\" \"${arch}\" \"usr/lib/${package_name}\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The AppImage output verifies both notices."
+ },
+ {
+  "id": "consumer.oxidant-ort-flatpak",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "verify_ort_wheel_package_licenses \"${out_dir}/${package_name}-${version#v}.flatpak\" \"${bundle}\" \"files/lib/${package_name}\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The flatpak output verifies both notices."
+ },
+ {
+  "id": "consumer.oxidant-project-stage",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "app_packaging_stage_project_license \"${REPO_ROOT}/LICENSE\" \"${bundle}\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The original project license must enter the bundle."
+ },
+ {
+  "id": "consumer.oxidant-project-tar",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "python3 \"${license_verifier}\" \"${tarball}\" --require \"${binary}/LICENSE=${REPO_ROOT}/LICENSE\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The final tar must verify the project license."
+ },
+ {
+  "id": "consumer.oxidant-project-deb",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "python3 \"${license_verifier}\" \"${out_dir}/${package_name}_${version#v}_${deb_arch}.deb\" --require \"opt/${package_name}/LICENSE=${REPO_ROOT}/LICENSE\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The final deb must verify the project license."
+ },
+ {
+  "id": "consumer.oxidant-project-flatpak",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "python3 \"${license_verifier}\" \"${out_dir}/${package_name}-${version#v}.flatpak\" --require \"files/lib/${package_name}/LICENSE=${REPO_ROOT}/LICENSE\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The final Flatpak must verify the project license."
+ },
+ {
+  "id": "consumer.oxidant-project-appimage",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "bash \"$(antfrastructure_path linux/scripts/06-packaging/verify-native-appimage-license.sh)\" \\\n                \"${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage\" \"${arch}\" \"usr/lib/${package_name}/LICENSE\" \"${REPO_ROOT}/LICENSE\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The final AppImage must verify the project license."
+ }
+]

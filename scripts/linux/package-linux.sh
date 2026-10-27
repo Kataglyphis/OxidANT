@@ -103,6 +103,10 @@ for dir in "$(pkg-config --variable=libdir gstreamer-1.0)" "$(pkg-config --varia
     closure+=(--search "${dir}")
 done
 bash "$(hub elf-closure.sh)" "${closure[@]}" --ldconfig
+# Match the delivered ORT bytes before using the wheel's original notices.
+# shellcheck source=third_party/ANTfrastructure/linux/scripts/06-packaging/ort-wheel-licenses.sh
+source "$(antfrastructure_path linux/scripts/06-packaging/ort-wheel-licenses.sh)"
+stage_ort_wheel_licenses "${bundle}"
 bash "$(hub bundle-loader.sh)" --beside "${bundle}" "${bundle}/lib" "${binary}"
 bash "${SCRIPT_DIR}/fetch-models.sh" --dest "${bundle}/resources/models"
 
@@ -128,13 +132,35 @@ export APP_PACKAGING_DEB_DEPENDS="${APP_PACKAGING_DEB_DEPENDS:-libc6}"
 export KATAGLYPHIS_FLATPAK_FINISH_ARGS="${KATAGLYPHIS_FLATPAK_FINISH_ARGS---device=all}"
 # shellcheck source=/dev/null
 source "$(antfrastructure_path linux/scripts/lib/app-packaging.sh)"
+app_packaging_stage_project_license "${REPO_ROOT}/LICENSE" "${bundle}"
+license_verifier="$(antfrastructure_path linux/scripts/verify_package_license.py)"
+package_name="$(app_packaging_sanitize_package_name "${binary}")"
 read -r -a formats <<< "${package_types//,/ }"
 for format in "${formats[@]}"; do
     case "${format}" in
-        tar) tar -C "${work}" -czf "${tarball}" "${binary}" ;;
-        deb) app_packaging_package_linux_bundle_deb "${arch}" "${binary}" ;;
-        appimage) app_packaging_package_linux_bundle_appimage "${arch}" "${binary}" ;;
-        flatpak) app_packaging_package_linux_bundle_flatpak "${arch}" "${binary}" ;;
+        tar)
+            tar -C "${work}" -czf "${tarball}" "${binary}"
+            python3 "${license_verifier}" "${tarball}" --require "${binary}/LICENSE=${REPO_ROOT}/LICENSE"
+            verify_ort_wheel_package_licenses "${tarball}" "${bundle}" "${binary}"
+            ;;
+        deb)
+            app_packaging_package_linux_bundle_deb "${arch}" "${binary}"
+            deb_arch="$(app_packaging_map_arch_to_deb "${arch}")"
+            python3 "${license_verifier}" "${out_dir}/${package_name}_${version#v}_${deb_arch}.deb" --require "opt/${package_name}/LICENSE=${REPO_ROOT}/LICENSE"
+            verify_ort_wheel_package_licenses "${out_dir}/${package_name}_${version#v}_${deb_arch}.deb" "${bundle}" "opt/${package_name}"
+            ;;
+        appimage)
+            app_packaging_package_linux_bundle_appimage "${arch}" "${binary}"
+            appimage_arch="$(app_packaging_map_arch_to_appimage "${arch}")"
+            bash "$(antfrastructure_path linux/scripts/06-packaging/verify-native-appimage-license.sh)" \
+                "${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage" "${arch}" "usr/lib/${package_name}/LICENSE" "${REPO_ROOT}/LICENSE"
+            verify_ort_wheel_appimage_licenses "${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage" "${bundle}" "${arch}" "usr/lib/${package_name}"
+            ;;
+        flatpak)
+            app_packaging_package_linux_bundle_flatpak "${arch}" "${binary}"
+            python3 "${license_verifier}" "${out_dir}/${package_name}-${version#v}.flatpak" --require "files/lib/${package_name}/LICENSE=${REPO_ROOT}/LICENSE"
+            verify_ort_wheel_package_licenses "${out_dir}/${package_name}-${version#v}.flatpak" "${bundle}" "files/lib/${package_name}"
+            ;;
         *) printf 'unknown package type: %s\n' "${format}" >&2; exit 2 ;;
     esac
 done

@@ -55,7 +55,7 @@ keeps their unused legacy Torch backend and its vulnerable ZIP/Zstd chain out of
 - **No feature flags**: every build carries everything its target can run.
 - **GStreamer capture**, a wgpu GUI overlay with FPS, latency and CPU, and a GTK4 camera GUI on Linux.
 - **Five build lanes**: Linux x64, arm64 and riscv64, Windows x64 and arm64.
-- **Packages** that carry their own GStreamer, ONNX Runtime and model: tar, deb, AppImage and flatpak on Linux; portable zip, MSI and MSIX on Windows.
+- **Packages** that carry their own GStreamer, ONNX Runtime, model and project license: tar, deb, AppImage and flatpak on Linux; portable zip, MSI and MSIX on Windows. Linux packages verify the matched ONNX wheel's license and notices; Windows uses the project icon and generates the MSI's RTF from the project license.
 
 ## Quick start
 

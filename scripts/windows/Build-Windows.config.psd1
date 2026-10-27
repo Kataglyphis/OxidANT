@@ -32,8 +32,6 @@
     Manufacturer = 'Kataglyphis'
     # Path to WiX source file (relative to workspace root)
     WxsFile = 'wix/main.wxs'
-    # Path to license file (relative to workspace root)  
-    LicenseFile = 'wix/License.rtf'
     # Output filename pattern (version will be appended)
     OutputName = 'kataglyphis_cli'
   }

@@ -163,6 +163,14 @@ The **bin** was renamed, not the lib, on purpose: the consumers name the lib (th
 
 **The Linux packages carry their runtime closure** (2026-10-20), by the hub's rules ([`linux-build-basics.md` § *Linux packages that run outside the image*](third_party/ANTfrastructure/docs/linux-build-basics.md#linux-packages-that-run-outside-the-image)), since the CLI links GStreamer and loads ORT: the hub's `elf-closure.sh` puts the image's GStreamer, GLib, FFmpeg and GCC runtime into `lib/` with `$ORIGIN` RUNPATHs, the chain ORT goes in unpatched, `gstreamer-bundle.sh` copies the GUI pipeline's plugins into `lib/gstreamer-1.0`, `bundle-loader.sh --beside` leaves the image's glibc for an older host, and the model sits in `resources/models`. Before packing, `elf-closure.sh --check`, the G6 census, `gstreamer-bundle.sh check` and the bundle's own `--help`, `onnx-runtime` and `media-check` must pass; the `clean-host` job then installs the `.deb`, unpacks the tarball and starts the AppImage on a bare runner. `kataglyphis_media::ensure_gst_initialized` sets the four GStreamer variables that keep a package to its own plugins, each only when unset.
 
+Every Linux and Windows package carries the project's `LICENSE`, staged with ANTfrastructure's shared helpers; a missing or empty source is fatal.
+The MSI verifier resolves the license's identifier from the MSI file table before checking its bytes; do not assume payload order. The AppImage verifier runs on the matching native architecture and checks the extracted license.
+The MSIX uses only `images/logo.png`; missing, malformed or transparent project logos fail the selected package step.
+The MSI's installed RTF is generated from the repository `LICENSE` through ANTfrastructure's CMake encoder; retain the existing installer flow.
+Linux packages verify every bundled ORT ELF against one wheel before shipping that wheel's original license and notices; retain the shared verifier and mutation workflow.
+MSI packaging converts `images/logo.png` with the hub icon module and passes it to WiX for the shortcut and Add/Remove Programs.
+The CLI's Windows PE resource uses the hub Rust build helper and `images/logo.ico`; the icon fixture rejects drift from `images/logo.png`.
+
 ### Inside the Stevedore Windows container
 
 Because cargo is what makes it bite:

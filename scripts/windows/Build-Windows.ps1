@@ -30,6 +30,7 @@ Import-BuildModule @(
   'WindowsBuild.Common'     # build context/log/step primitives, Sync-BuildArtifacts
   'WindowsConfig.Common'    # Get-OrDefault, Get-ConfigValue
   'WindowsMsix.Common'      # Get-PackageVersion, Invoke-MsixPackage, Invoke-MsiPackage
+  'WindowsMsiLicense.Common' # Resolve the actual MSI file ID before checking its content
   'WindowsMsix.Signing'     # Invoke-MsixSign, which Invoke-MsixPackage -Sign calls
   'WindowsTargetArch.Common' # the arch facts: accepted spellings, cross or not, the Rust triple
   'WindowsCargoTarget.Common' # project-local: where each arch's build lands, what packages call it
@@ -45,6 +46,7 @@ try {
 } catch {
   throw "This build needs ANTfrastructure's WindowsCrossBundle.Common with Get-ProductDllSearchPath (hub commit of 2026-09-25, third_party/ANTfrastructure/docs/windows-cross-builds.md); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
 }
+Import-BuildModule @('WindowsIcon.Common')
 
 $buildSettings = Get-BuildWorkspaceConfig -DefaultConfigPath (Join-Path $PSScriptRoot 'Build-Windows.config.psd1') -RepoRoot $repoRoot
 $config = $buildSettings.Config
@@ -84,6 +86,8 @@ try {
 
   $originalWorkspacePath = $workspacePath
   $workspacePath = $isolatedWorkspace
+  $projectLicense = Join-Path $workspacePath 'LICENSE'
+  $licenseVerifier = Join-Path $workspacePath 'third_party\ANTfrastructure\linux\scripts\verify_package_license.py'
   Set-Location -Path $workspacePath
 
   # CARGO_TARGET_DIR is often absolute, and Join-Path would glue it on as 'C:\a\C:\b'.
@@ -220,6 +224,8 @@ try {
     $bundle = New-OrtProvenPayload -ExePath (Join-Path $layout.ReleaseDir "$binary.exe") -Destination $bundleDir -IncludeDirectory 'lib'
     $resourcesSource = Join-Path $workspacePath 'resources'
     if (Test-Path $resourcesSource) { Copy-Item -LiteralPath $resourcesSource -Destination $bundleDir -Recurse -Force }
+    Copy-PackageLicense -Path $projectLicense -Destination $bundleDir | Out-Null
+    Invoke-BuildExternal -Context $context -File 'python' -Parameters @($licenseVerifier, $bundleDir, '--require', "LICENSE=$projectLicense") | Out-Null
     Write-BuildLogSuccess -Context $context -Message "Portable bundle: $bundleDir ($(@($bundle.Dlls).Count) DLLs beside $binary.exe)"
   } | Out-Null
 
@@ -246,17 +252,11 @@ try {
 
       # -ExtraFiles, not -ResourcesDir, which flattens resources\ into the package root.
       $extraFiles = @($payload.Dlls) + @($payload.Included)
+      $extraFiles += Copy-PackageLicense -Path $projectLicense -Destination $payload.Directory
       $resourcesSource = Join-Path $workspacePath 'resources'
       if (Test-Path $resourcesSource) { $extraFiles += $resourcesSource }
 
       $logoPath = Join-Path $workspacePath 'images\logo.png'
-      if (-not (Test-Path $logoPath)) {
-        $logoPath = Join-Path $workspacePath 'third_party\ANTfrastructure\images\logo.png'
-      }
-      if (-not (Test-Path $logoPath)) {
-        Write-BuildLogWarning -Context $context -Message "Logo file not found, generating transparent placeholders"
-        $logoPath = ''
-      }
 
       $manifestTemplateRel = Get-ConfigValue -Config $config -Path 'Msix.ManifestTemplate'
       $manifestTemplatePath = Resolve-PathFromRoot -Root $workspacePath -Path $manifestTemplateRel
@@ -291,6 +291,8 @@ try {
         } `
         -Sign -SigningRoot $workspacePath | Out-Null
 
+      Invoke-BuildExternal -Context $context -File 'python' -Parameters @($licenseVerifier, $packageFile, '--require', "LICENSE=$projectLicense") | Out-Null
+
       Write-BuildLogSuccess -Context $context -Message "MSIX package created: $packageFile"
     }
   }
@@ -323,9 +325,11 @@ try {
       }
       # The MSI installs the payload G6 just proved, exe included.
       $msiPayload = New-OrtProvenPayload -ExePath $msiExePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msi') -IncludeDirectory 'lib'
+      $projectIcon = ConvertTo-PythonAppIcon -PngPath (Join-Path $workspacePath 'images\logo.png') -Destination (Join-Path $msiPayload.Directory 'project.ico')
 
-      $licenseRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.LicenseFile') 'wix/License.rtf'
-      $licenseRtf = if ([System.IO.Path]::IsPathRooted($licenseRel)) { $licenseRel } else { Join-Path $workspacePath $licenseRel }
+      $licenseRtf = Join-Path $layout.ArchTargetDir 'project-license.rtf'
+      $licenseGenerator = Join-Path $workspacePath 'wix/GenerateLicenseRtf.cmake'
+      Invoke-BuildExternal -Context $context -File 'cmake' -Parameters @("-DLICENSE_INPUT=$projectLicense", "-DLICENSE_OUTPUT=$licenseRtf", '-P', $licenseGenerator) | Out-Null
 
       # The config owns these strings; the WXS takes them as preprocessor variables.
       $msiProductName = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.ProductName') $msixDisplayName
@@ -339,6 +343,8 @@ try {
 
       # One generated component per payload file for main.wxs's PayloadFiles, laid out like the bundle.
       $payloadFiles = [System.Collections.Generic.List[object]]::new()
+      $payloadLicense = Copy-PackageLicense -Path $projectLicense -Destination $msiPayload.Directory
+      $payloadFiles.Add([pscustomobject]@{ Source = $payloadLicense; Subdirectory = '' })
       foreach ($dll in @($msiPayload.Dlls)) { $payloadFiles.Add([pscustomobject]@{ Source = $dll; Subdirectory = '' }) }
       $trees = @($msiPayload.Included | ForEach-Object { [pscustomobject]@{ Base = $msiPayload.Directory; Dir = $_ } })
       $resourcesSource = Join-Path $workspacePath 'resources'
@@ -352,7 +358,10 @@ try {
       Invoke-MsiPackage -Context $context -WxsFile $wxsPath -LicenseFile $licenseRtf -ProductName $msiProductName `
         -Manufacturer $msiManufacturer -ExeSource $msiPayload.Exe -Version $resolvedVersion -OutFile $msiFile `
         -Arch $layout.PackageArch -PayloadFiles $payloadFiles.ToArray() `
+        -WixVariables @{ IconSource = $projectIcon } `
         -FragmentPath (Join-Path $layout.ArchTargetDir 'msi-payload-files.wxs') | Out-Null
+
+      Assert-MsiPackageLicense -Path $msiFile -FileName 'LICENSE' -LicensePath $projectLicense -VerifierPath $licenseVerifier
 
       Write-BuildLogSuccess -Context $context -Message "MSI package created: $msiFile"
     }
