@@ -50,7 +50,7 @@
  {
   "id": "consumer.oxidant-project-tar",
   "target": "scripts/linux/package-linux.sh",
-  "find": "python3 \"${license_verifier}\" \"${tarball}\" --require \"${binary}/LICENSE=${REPO_ROOT}/LICENSE\"",
+  "find": "python3 \"${license_verifier}\" \"${tarball}\" \"${rules[@]}\"",
   "replace": ":",
   "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
   "why": "The final tar must verify the project license."
@@ -58,7 +58,7 @@
  {
   "id": "consumer.oxidant-project-deb",
   "target": "scripts/linux/package-linux.sh",
-  "find": "python3 \"${license_verifier}\" \"${out_dir}/${package_name}_${version#v}_${deb_arch}.deb\" --require \"opt/${package_name}/LICENSE=${REPO_ROOT}/LICENSE\"",
+  "find": "python3 \"${license_verifier}\" \"${out_dir}/${package_name}_${version#v}_${deb_arch}.deb\" \"${rules[@]}\"",
   "replace": ":",
   "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
   "why": "The final deb must verify the project license."
@@ -66,7 +66,7 @@
  {
   "id": "consumer.oxidant-project-flatpak",
   "target": "scripts/linux/package-linux.sh",
-  "find": "python3 \"${license_verifier}\" \"${out_dir}/${package_name}-${version#v}.flatpak\" --require \"files/lib/${package_name}/LICENSE=${REPO_ROOT}/LICENSE\"",
+  "find": "python3 \"${license_verifier}\" \"${out_dir}/${package_name}-${version#v}.flatpak\" \"${rules[@]}\"",
   "replace": ":",
   "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
   "why": "The final Flatpak must verify the project license."
@@ -78,5 +78,53 @@
   "replace": ":",
   "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
   "why": "The final AppImage must verify the project license."
+ },
+ {
+  "id": "consumer.oxidant-cargo-stage",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "python3 \"$(hub stage-cargo-licenses.py)\" --workspace",
+  "replace": ": \"$(hub stage-cargo-licenses.py)\" --workspace",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "Every Linux bundle stages the CLI's reviewed crate texts."
+ },
+ {
+  "id": "consumer.oxidant-cargo-tar",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "third_party_rules \"${binary}\"",
+  "replace": "rules=()",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The tar output reads back every crate text."
+ },
+ {
+  "id": "consumer.oxidant-cargo-deb",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "third_party_rules \"opt/${package_name}\"",
+  "replace": "rules=()",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The deb output reads back every crate text."
+ },
+ {
+  "id": "consumer.oxidant-cargo-flatpak",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "third_party_rules \"files/lib/${package_name}\"",
+  "replace": "rules=()",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The flatpak output reads back every crate text."
+ },
+ {
+  "id": "consumer.oxidant-cargo-appimage",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "for text in licenses/cargo/manifest.json resources/models/deim_dfine_n_coco.LICENSE; do",
+  "replace": "for text in; do",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The AppImage output checks the crate manifest and model license."
+ },
+ {
+  "id": "consumer.oxidant-cargo-tree-rules",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "-path '*/licenses/cargo/*' -o ",
+  "replace": "",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The archive rules cover every staged crate file, not only the model notices."
  }
 ]

@@ -47,6 +47,44 @@ try {
   throw "This build needs ANTfrastructure's WindowsCrossBundle.Common with Get-ProductDllSearchPath (hub commit of 2026-09-25, third_party/ANTfrastructure/docs/windows-cross-builds.md); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
 }
 Import-BuildModule @('WindowsIcon.Common')
+Import-BuildModule @('WindowsOrtProvenance.Common', 'WindowsOrtLicense.Common')
+
+# Every payload gets the target's crate texts, and the wheel texts that match its ORT DLL when it ships one.
+function Add-ThirdPartyLicenses {
+  param([Parameter(Mandatory)][string]$Directory, [Parameter(Mandatory)][string]$CargoLicenses)
+  $cargo = Join-Path $Directory 'licenses\cargo'
+  Initialize-BuildDirectory -Path (Join-Path $Directory 'licenses') -Empty
+  Copy-Item -LiteralPath $CargoLicenses -Destination $cargo -Recurse
+  $ortDll = Join-Path $Directory 'onnxruntime.dll'
+  $ort = if (Test-Path -LiteralPath $ortDll -PathType Leaf) {
+    Copy-OrtWheelLicenses -OrtDll $ortDll -WheelDir (Get-OrtChainWheelStore) -Destination $Directory
+  } else { '' }
+  return [pscustomobject]@{ Root = Join-Path $Directory 'licenses'; Cargo = $cargo; Ort = $ort }
+}
+
+# The read-back rules for an archive or directory payload; MSI members resolve through the WiX fragment instead.
+function Get-ThirdPartyLicenseRules {
+  param([Parameter(Mandatory)]$Licenses, [Parameter(Mandatory)][string]$ProjectLicense, [Parameter(Mandatory)][string]$ModelLicense)
+  @('--require', "LICENSE=$ProjectLicense",
+    '--require', "licenses/cargo/manifest.json=$(Join-Path $Licenses.Cargo 'manifest.json')",
+    '--require', "licenses/cargo/kataglyphis_cli@*/workspace/LICENSE=$ProjectLicense",
+    '--require', "resources/models/$(Split-Path $ModelLicense -Leaf)=$ModelLicense")
+}
+
+function Assert-PayloadOrtLicenses {
+  param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Licenses, [ValidateSet('archive', 'msi')][string]$Format = 'archive', [string]$WixPath = '')
+  if (-not $Licenses.Ort) { return }
+  Assert-OrtWheelLicensesInPackage -Path $Path -LicenseDirectory $Licenses.Ort -Format $Format -WixPath $WixPath
+}
+
+# Crate trees repeat the LICENSE basename, so each MSI member resolves by its WiX source path.
+function Assert-MsiLicenseTexts {
+  param([Parameter(Mandatory)][string]$MsiPath, [Parameter(Mandatory)][string]$WixPath, [Parameter(Mandatory)][object[]]$Texts, [Parameter(Mandatory)][string]$VerifierPath)
+  foreach ($text in $Texts) {
+    $member = Get-WixSourceFileId -WixPath $WixPath -SourcePath $text[0]
+    Assert-PackageLicense -Path $MsiPath -Pattern $member -LicensePath $text[1] -VerifierPath $VerifierPath
+  }
+}
 
 $buildSettings = Get-BuildWorkspaceConfig -DefaultConfigPath (Join-Path $PSScriptRoot 'Build-Windows.config.psd1') -RepoRoot $repoRoot
 $config = $buildSettings.Config
@@ -88,6 +126,9 @@ try {
   $workspacePath = $isolatedWorkspace
   $projectLicense = Join-Path $workspacePath 'LICENSE'
   $licenseVerifier = Join-Path $workspacePath 'third_party\ANTfrastructure\linux\scripts\verify_package_license.py'
+  $cargoLicenseStager = Join-Path $workspacePath 'third_party\ANTfrastructure\linux\scripts\06-packaging\stage-cargo-licenses.py'
+  $cargoLicensePolicy = Join-Path $workspacePath 'packaging\cargo-license-policy.json'
+  $modelLicense = Join-Path $workspacePath 'resources\models\deim_dfine_n_coco.LICENSE'
   Set-Location -Path $workspacePath
 
   # CARGO_TARGET_DIR is often absolute, and Join-Path would glue it on as 'C:\a\C:\b'.
@@ -218,6 +259,17 @@ try {
     } | Out-Null
   }
 
+  # Original crate texts for the CLI's graph on this target; the hub stager fails on a missing or unreviewed source.
+  $cargoLicenseRoot = Join-Path $layout.ArchTargetDir 'cargo-licenses'
+  $cargoLicenses = Join-Path $cargoLicenseRoot 'cargo'
+  Invoke-BuildStep -Context $context -StepName 'Stage Cargo Licenses' -Critical -Script {
+    Initialize-BuildDirectory -Path $cargoLicenseRoot -Empty
+    $triple = Get-RustTargetTriple -Arch $layout.Arch
+    Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('fetch', '--locked', '--target', $triple) | Out-Null
+    Invoke-BuildExternal -Context $context -File 'python' -Parameters @($cargoLicenseStager, '--workspace', $workspacePath,
+      '--root-package', 'kataglyphis_cli', '--target', $triple, '--policy', $cargoLicensePolicy, '--output-dir', $cargoLicenses) | Out-Null
+  } | Out-Null
+
   # The uploaded product: exe, DLLs, lib\ plugins and resources\, which the app expects beside it.
   Invoke-BuildStep -Context $context -StepName 'Portable Bundle' -Critical -Script {
     $bundleDir = Join-Path $layout.DistDir 'bundle'
@@ -225,7 +277,10 @@ try {
     $resourcesSource = Join-Path $workspacePath 'resources'
     if (Test-Path $resourcesSource) { Copy-Item -LiteralPath $resourcesSource -Destination $bundleDir -Recurse -Force }
     Copy-PackageLicense -Path $projectLicense -Destination $bundleDir | Out-Null
-    Invoke-BuildExternal -Context $context -File 'python' -Parameters @($licenseVerifier, $bundleDir, '--require', "LICENSE=$projectLicense") | Out-Null
+    $bundleLicenses = Add-ThirdPartyLicenses -Directory $bundleDir -CargoLicenses $cargoLicenses
+    $bundleRules = Get-ThirdPartyLicenseRules -Licenses $bundleLicenses -ProjectLicense $projectLicense -ModelLicense $modelLicense
+    Invoke-BuildExternal -Context $context -File 'python' -Parameters (@($licenseVerifier, $bundleDir) + $bundleRules) | Out-Null
+    Assert-PayloadOrtLicenses -Path $bundleDir -Licenses $bundleLicenses
     Write-BuildLogSuccess -Context $context -Message "Portable bundle: $bundleDir ($(@($bundle.Dlls).Count) DLLs beside $binary.exe)"
   } | Out-Null
 
@@ -253,6 +308,8 @@ try {
       # -ExtraFiles, not -ResourcesDir, which flattens resources\ into the package root.
       $extraFiles = @($payload.Dlls) + @($payload.Included)
       $extraFiles += Copy-PackageLicense -Path $projectLicense -Destination $payload.Directory
+      $msixLicenses = Add-ThirdPartyLicenses -Directory $payload.Directory -CargoLicenses $cargoLicenses
+      $extraFiles += $msixLicenses.Root
       $resourcesSource = Join-Path $workspacePath 'resources'
       if (Test-Path $resourcesSource) { $extraFiles += $resourcesSource }
 
@@ -291,7 +348,9 @@ try {
         } `
         -Sign -SigningRoot $workspacePath | Out-Null
 
-      Invoke-BuildExternal -Context $context -File 'python' -Parameters @($licenseVerifier, $packageFile, '--require', "LICENSE=$projectLicense") | Out-Null
+      $msixRules = Get-ThirdPartyLicenseRules -Licenses $msixLicenses -ProjectLicense $projectLicense -ModelLicense $modelLicense
+      Invoke-BuildExternal -Context $context -File 'python' -Parameters (@($licenseVerifier, $packageFile) + $msixRules) | Out-Null
+      Assert-PayloadOrtLicenses -Path $packageFile -Licenses $msixLicenses
 
       Write-BuildLogSuccess -Context $context -Message "MSIX package created: $packageFile"
     }
@@ -346,7 +405,8 @@ try {
       $payloadLicense = Copy-PackageLicense -Path $projectLicense -Destination $msiPayload.Directory
       $payloadFiles.Add([pscustomobject]@{ Source = $payloadLicense; Subdirectory = '' })
       foreach ($dll in @($msiPayload.Dlls)) { $payloadFiles.Add([pscustomobject]@{ Source = $dll; Subdirectory = '' }) }
-      $trees = @($msiPayload.Included | ForEach-Object { [pscustomobject]@{ Base = $msiPayload.Directory; Dir = $_ } })
+      $msiLicenses = Add-ThirdPartyLicenses -Directory $msiPayload.Directory -CargoLicenses $cargoLicenses
+      $trees = @(@($msiPayload.Included) + $msiLicenses.Root | ForEach-Object { [pscustomobject]@{ Base = $msiPayload.Directory; Dir = $_ } })
       $resourcesSource = Join-Path $workspacePath 'resources'
       if (Test-Path -LiteralPath $resourcesSource) { $trees += [pscustomobject]@{ Base = $workspacePath; Dir = $resourcesSource } }
       foreach ($tree in $trees) {
@@ -361,7 +421,13 @@ try {
         -WixVariables @{ IconSource = $projectIcon } `
         -FragmentPath (Join-Path $layout.ArchTargetDir 'msi-payload-files.wxs') | Out-Null
 
-      Assert-MsiPackageLicense -Path $msiFile -FileName 'LICENSE' -LicensePath $projectLicense -VerifierPath $licenseVerifier
+      $msiFragment = Join-Path $layout.ArchTargetDir 'msi-payload-files.wxs'
+      $msiTexts = @(
+        @($payloadLicense, $projectLicense),
+        @((Join-Path $msiLicenses.Cargo 'manifest.json'), (Join-Path $cargoLicenses 'manifest.json')),
+        @($modelLicense, $modelLicense))
+      Assert-MsiLicenseTexts -MsiPath $msiFile -WixPath $msiFragment -Texts $msiTexts -VerifierPath $licenseVerifier
+      Assert-PayloadOrtLicenses -Path $msiFile -Licenses $msiLicenses -Format msi -WixPath $msiFragment
 
       Write-BuildLogSuccess -Context $context -Message "MSI package created: $msiFile"
     }

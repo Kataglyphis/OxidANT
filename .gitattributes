@@ -12,3 +12,7 @@ resources/models/models.lock text eol=lf
 # Keep the patched crates' source lines stable across Windows checkouts.
 third_party/tract-linalg-0.23.8/** text=auto eol=lf
 third_party/burn-dispatch-0.22.1/** text=auto eol=lf
+
+# Packaged license texts are pinned by SHA-256, so their bytes must not depend on the checkout.
+/LICENSE text eol=lf
+packaging/licenses/** -text

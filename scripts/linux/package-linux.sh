@@ -133,20 +133,36 @@ export KATAGLYPHIS_FLATPAK_FINISH_ARGS="${KATAGLYPHIS_FLATPAK_FINISH_ARGS---devi
 # shellcheck source=/dev/null
 source "$(antfrastructure_path linux/scripts/lib/app-packaging.sh)"
 app_packaging_stage_project_license "${REPO_ROOT}/LICENSE" "${bundle}"
+case "${arch}" in x64) rust_target=x86_64-unknown-linux-gnu ;; arm64) rust_target=aarch64-unknown-linux-gnu ;; esac
+# The packaging container may not have extracted every crate the shipped CLI's target graph names.
+cargo fetch --locked --manifest-path "${REPO_ROOT}/Cargo.toml" --target "${rust_target}"
+python3 "$(hub stage-cargo-licenses.py)" --workspace "${REPO_ROOT}" --root-package kataglyphis_cli \
+    --target "${rust_target}" --policy "${REPO_ROOT}/packaging/cargo-license-policy.json" --output-dir "${bundle}/licenses/cargo"
 license_verifier="$(antfrastructure_path linux/scripts/verify_package_license.py)"
+# Every staged crate text and model notice, read back from the finished package.
+third_party_rules() {
+    local prefix="$1" text
+    rules=(--require "${prefix}/LICENSE=${REPO_ROOT}/LICENSE")
+    while IFS= read -r -d '' text; do
+        rules+=(--require "${prefix}/${text#"${bundle}/"}=${text}")
+    done < <(find "${bundle}/licenses/cargo" "${bundle}/resources/models" -type f \
+        \( -path '*/licenses/cargo/*' -o -name '*.LICENSE' -o -name '*.NOTICE' \) -print0 | sort -z)
+}
 package_name="$(app_packaging_sanitize_package_name "${binary}")"
 read -r -a formats <<< "${package_types//,/ }"
 for format in "${formats[@]}"; do
     case "${format}" in
         tar)
             tar -C "${work}" -czf "${tarball}" "${binary}"
-            python3 "${license_verifier}" "${tarball}" --require "${binary}/LICENSE=${REPO_ROOT}/LICENSE"
+            third_party_rules "${binary}"
+            python3 "${license_verifier}" "${tarball}" "${rules[@]}"
             verify_ort_wheel_package_licenses "${tarball}" "${bundle}" "${binary}"
             ;;
         deb)
             app_packaging_package_linux_bundle_deb "${arch}" "${binary}"
             deb_arch="$(app_packaging_map_arch_to_deb "${arch}")"
-            python3 "${license_verifier}" "${out_dir}/${package_name}_${version#v}_${deb_arch}.deb" --require "opt/${package_name}/LICENSE=${REPO_ROOT}/LICENSE"
+            third_party_rules "opt/${package_name}"
+            python3 "${license_verifier}" "${out_dir}/${package_name}_${version#v}_${deb_arch}.deb" "${rules[@]}"
             verify_ort_wheel_package_licenses "${out_dir}/${package_name}_${version#v}_${deb_arch}.deb" "${bundle}" "opt/${package_name}"
             ;;
         appimage)
@@ -154,11 +170,17 @@ for format in "${formats[@]}"; do
             appimage_arch="$(app_packaging_map_arch_to_appimage "${arch}")"
             bash "$(antfrastructure_path linux/scripts/06-packaging/verify-native-appimage-license.sh)" \
                 "${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage" "${arch}" "usr/lib/${package_name}/LICENSE" "${REPO_ROOT}/LICENSE"
+            # One extraction per entry, so the crate manifest stands in for the tree the archive formats check file by file.
+            for text in licenses/cargo/manifest.json resources/models/deim_dfine_n_coco.LICENSE; do
+                bash "$(antfrastructure_path linux/scripts/06-packaging/verify-native-appimage-license.sh)" \
+                    "${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage" "${arch}" "usr/lib/${package_name}/${text}" "${bundle}/${text}"
+            done
             verify_ort_wheel_appimage_licenses "${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage" "${bundle}" "${arch}" "usr/lib/${package_name}"
             ;;
         flatpak)
             app_packaging_package_linux_bundle_flatpak "${arch}" "${binary}"
-            python3 "${license_verifier}" "${out_dir}/${package_name}-${version#v}.flatpak" --require "files/lib/${package_name}/LICENSE=${REPO_ROOT}/LICENSE"
+            third_party_rules "files/lib/${package_name}"
+            python3 "${license_verifier}" "${out_dir}/${package_name}-${version#v}.flatpak" "${rules[@]}"
             verify_ort_wheel_package_licenses "${out_dir}/${package_name}-${version#v}.flatpak" "${bundle}" "files/lib/${package_name}"
             ;;
         *) printf 'unknown package type: %s\n' "${format}" >&2; exit 2 ;;

@@ -15,8 +15,8 @@ Each format includes the exact project `LICENSE`; the shared staging helpers rej
 missing or empty source. This check does not prove coverage of every native dependency's
 license or corresponding-source obligations.
 The Linux tar, DEB, AppImage and Flatpak, the Windows bundle, MSIX and MSI are read back by the shared
-license verifier. MSI inspection requires 7-Zip and resolves the license identifier from the
-MSI file table. AppImage verification extracts only the license on a matching native host;
+license verifier. MSI inspection requires 7-Zip and resolves each license's file identifier from
+its source path in the generated WiX fragment. AppImage verification extracts only the license on a matching native host;
 cross-architecture verification fails rather than skipping the check.
 
 Linux packaging also matches every bundled `libonnxruntime*.so*` against one
@@ -25,6 +25,25 @@ original `LICENSE` and `ThirdPartyNotices.txt` in each finished format. Set
 `ORT_CHAIN_WHEEL_DIR` to override `/opt/onnxruntime-wheels` and `STRIP` to select
 the target's strip tool. Missing, changed or ambiguous matches fail the build;
 other native dependency obligations still require their own provenance checks.
+
+Every format also carries `licenses/cargo/`: the original license files of every crate in
+`kataglyphis_cli`'s normal dependency graph for that package's target, staged by
+ANTfrastructure's `stage-cargo-licenses.py` with a `manifest.json` of names, versions,
+sources and SHA-256s. A crate whose archive ships no license file, and every compound `AND`
+expression, is resolved in `packaging/cargo-license-policy.json`: each entry names an
+original text vendored under `packaging/licenses/cargo/<owner>-<repo>-<commit>/` (fetched
+from the commit in the crate's `.cargo_vcs_info.json`) or a file inside the crate, with its
+SHA-256 and source URL. A crate without a reviewed text fails the package step, so a
+dependency bump that adds one needs a policy entry first; `scripts/linux/tests/test-cargo-license-policy.sh`
+stages all four packaged targets and fails on a missing, changed or unreferenced text.
+Linux tar, DEB and Flatpak read back every staged crate file and the model's `LICENSE` and
+`NOTICE`; the AppImage, the Windows bundle and MSIX check the crate manifest, the CLI's own
+entry and the model license; the MSI resolves each through the generated WiX fragment,
+because the crate trees repeat the `LICENSE` basename. A Windows payload that ships the
+chain `onnxruntime.dll` also carries the matching wheel's `LICENSE` and
+`ThirdPartyNotices.txt` (`Copy-OrtWheelLicenses`), checked in every format. The bundled
+native libraries (GStreamer, GLib, GTK, FFmpeg, the C and C++ runtimes) are not inventoried
+yet.
 
 The MSIX uses only `images/logo.png`. The shared MSIX stager rejects a missing,
 malformed or fully transparent image instead of replacing it with another logo.
