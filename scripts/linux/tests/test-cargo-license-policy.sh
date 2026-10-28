@@ -60,23 +60,30 @@ import sys
 
 policy = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 packages = policy["packages"]
+
+
+def entry(name):
+    # By crate name, so a lock refresh that moves a version cannot turn a mutation into a KeyError.
+    return next(key for key in packages if key.split("@")[0] == name)
+
+
 if sys.argv[2] == "drop":
-    packages.pop("accesskit@0.24.1")
+    packages.pop(entry("accesskit"))
 elif sys.argv[2] == "digest":
-    packages["simd_helpers@0.1.0"]["files"][0]["sha256"] = "0" * 64
+    packages[entry("simd_helpers")]["files"][0]["sha256"] = "0" * 64
 elif sys.argv[2] == "unreviewed":
-    packages["epaint_default_fonts@0.36.2"].pop("reviewed_expression")
+    packages[entry("epaint_default_fonts")].pop("reviewed_expression")
 elif sys.argv[2] == "orphan":
-    packages["clipboard-win@5.4.1"]["files"] = []
+    packages[entry("clipboard-win")]["files"] = []
 pathlib.Path(sys.argv[3]).write_text(json.dumps(policy), encoding="utf-8")
 PY
 }
 for kind in drop digest unreviewed; do
     t_case "a policy with a ${kind} defect cannot stage"
-    mutate "$kind" "${work}/${kind}.json"
+    t_assert_ok mutate "$kind" "${work}/${kind}.json"
     t_assert_fails stage x86_64-pc-windows-msvc "${work}/${kind}.json" "${work}/mutant-${kind}"
 done
 t_case 'an unreferenced vendored text is detected'
-mutate orphan "${work}/orphan.json"
+t_assert_ok mutate orphan "${work}/orphan.json"
 t_assert_fails orphans "${work}/orphan.json"
 t_summary
