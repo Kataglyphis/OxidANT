@@ -37,6 +37,12 @@ vendor copy together, then run `python3 scripts/linux/check-burn-lock-graph.py C
 `cargo audit`, and the Burn tests. The local `--apply` wrapper fails if its lock maintenance
 reintroduces the old chain; the CI script suite tests that verdict with mutated lockfiles.
 
+Each patched copy in `third_party/` holds one exact version, and cargo only warns when lock
+maintenance moves past it: the copy silently stops building. So `tract-onnx` is pinned exactly,
+as Burn is, and `scripts/linux/check-cargo-patches-used.py` fails when any `[patch.crates-io]`
+copy is missing from `Cargo.lock`. The `--apply` wrapper runs it after every write, and the CI
+script suite proves it red on a lockfile that moved past a patched version.
+
 Run it from WSL. For a Windows Git checkout, the bootstrap uses native Git so CRLF-only
 `.gitmodules` differences do not block a clean update. Why the CLI is local, what `--apply`
 writes per ecosystem, its exit codes, and `GITHUB_COM_TOKEN` for managers that ask

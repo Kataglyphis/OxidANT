@@ -126,5 +126,21 @@
   "replace": "",
   "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
   "why": "The archive rules cover every staged crate file, not only the model notices."
+ },
+ {
+  "id": "consumer.oxidant-cargo-patch-lock-graph",
+  "target": "scripts/linux/check-cargo-patches-used.py",
+  "find": "unused = [p for p in patches if (p[0], p[1]) not in locked]",
+  "replace": "unused = []",
+  "test": "bash scripts/linux/tests/test-cargo-patches-used.sh",
+  "why": "cargo only warns when lock maintenance moves past a patched copy, so the gate must fail that lockfile."
+ },
+ {
+  "id": "consumer.oxidant-cargo-patch-path-only",
+  "target": "scripts/linux/check-cargo-patches-used.py",
+  "find": "if \"source\" not in p}",
+  "replace": "}",
+  "test": "bash scripts/linux/tests/test-cargo-patches-used.sh",
+  "why": "the registry crate at the patched version is not the patched copy."
  }
 ]

@@ -14,6 +14,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed
+- **Patched source copies stay in the lock graph.** Lock maintenance moved tract to 0.23.9, past the
+  clang-cl copy in `third_party/tract-linalg-0.23.8`, and cargo only warned. `tract-onnx` is pinned
+  to `=0.23.8` as Burn is, and `scripts/linux/check-cargo-patches-used.py` fails when any
+  `[patch.crates-io]` copy is missing from `Cargo.lock`; the `--apply` wrapper runs it, and
+  `test-cargo-patches-used.sh` proves it red.
+- `Cargo.lock` refreshed within the current versions (tokio 1.54.1, ureq 3.5.0, cc 1.10.0, ICU 2.4).
+  ort rc.15 and egui 0.37 stay deferred: ort changed its session and environment API, and
+  egui-winit 0.37.0 still lacks the wasm32 fix the vendored 0.36.2 copy carries.
 - Cover `kataglyphis_cxx_bridge`'s crate graph in the reviewed Cargo license policy so BeschleunigerBallett can ship its texts, and stop the Windows license suite leaking the verifier's expected failure status into the Pester runner.
 - Ship the original license texts of every crate the CLI links, per packaged target, in all Linux and Windows formats, using ANTfrastructure's Cargo license stager and a reviewed policy for crates whose archives lack them; Windows payloads that ship the chain ONNX Runtime also carry the matching wheel's license and notices.
 - Generate the MSI's installed RTF from the complete project license, retaining the existing installer flow.

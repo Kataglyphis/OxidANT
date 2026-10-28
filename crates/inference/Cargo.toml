@@ -8,8 +8,8 @@ license.workspace = true
 anyhow = { workspace = true }
 log = { workspace = true }
 kataglyphis_core = { path = "../core" }
-# The fallback when ORT fails, and the only backend where the family builds no ORT (Android).
-tract-onnx = "0.23"
+# The ORT fallback and Android's only backend; exact, as the patched third_party/tract-linalg-0.23.8 drops out at any other version.
+tract-onnx = "=0.23.8"
 
 # The chain ORT exists for Linux and Windows only; load-dynamic comes from the workspace declaration.
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
