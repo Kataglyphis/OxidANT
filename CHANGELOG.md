@@ -14,6 +14,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed
+- **riscv64 tests no longer try the amd64 GStreamer plugins.** ANTfrastructure is pinned at 0aef805d,
+  whose `riscv64_cross_env` drops the host-triplet entries from `GST_PLUGIN_PATH`,
+  `GI_TYPELIB_PATH` and `LD_LIBRARY_PATH`; each test process had warned about 300 times.
 - **Patched source copies stay in the lock graph.** Lock maintenance moved tract to 0.23.9, past the
   clang-cl copy in `third_party/tract-linalg-0.23.8`, and cargo only warned. `tract-onnx` is pinned
   to `=0.23.8` as Burn is, and `scripts/linux/check-cargo-patches-used.py` fails when any
