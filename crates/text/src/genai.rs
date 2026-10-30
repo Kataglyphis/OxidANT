@@ -483,6 +483,8 @@ impl TextBackend for GenaiGenerator {
     ) -> Result<GenerationResult, TextError> {
         check_request(messages, options)?;
         cancel.reset();
+        // The clock starts before the prompt goes in, so the first token's time includes the prefill.
+        let start = Instant::now();
         let api = self.api;
         let prompt = self.prompt(messages)?;
         // SAFETY: prompt is a live sequences handle holding one sequence.
@@ -505,7 +507,6 @@ impl TextBackend for GenaiGenerator {
             time_to_first_token_ms: 0.0,
             decode_tokens_per_second: 0.0,
         };
-        let start = Instant::now();
         let mut first = start;
         // SAFETY: generator is live for the whole loop.
         while !unsafe { (api.is_done)(generator.handle) } {
