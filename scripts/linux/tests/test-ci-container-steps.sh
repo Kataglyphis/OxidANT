@@ -52,7 +52,7 @@ import os
 import xml.etree.ElementTree as ET
 
 root = ET.Element("coverage")
-for area in ("observant", "webgpu_renderer", "inference", "cli", "core", "telemetry",
+for area in ("observant", "webgpu_renderer", "inference", "text", "cli", "core", "telemetry",
              "esp32", "esp32-protocol", "burn_demos", "cxx_bridge", "media", "gui", "src"):
     filename = "src/lib.rs" if area == "src" else f"crates/{area}/src/lib.rs"
     cls = ET.SubElement(root, "class", filename=filename)
