@@ -1,5 +1,5 @@
 //! Text generation for the Kataglyphis family: the chain's ONNX Runtime GenAI in process, or an OpenAI-compatible
-//! endpoint. Both follow ANTfrastructure's text contract (`docs/language-ai.md`); see `docs/text.md` here.
+//! endpoint. Both follow the text contract in `third_party/ANTfrastructure/docs/language-ai.md`; see `docs/text.md` here.
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};

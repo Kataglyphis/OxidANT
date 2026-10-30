@@ -89,7 +89,7 @@ pub fn tiny_model_generator() -> PathBuf {
         .join("../../third_party/ANTfrastructure/linux/scripts/lib/tiny-genai-model.py")
 }
 
-/// The tiny model, written once per test process; see the hub's `docs/language-ai.md` § The test model.
+/// The tiny model, written once per test process; see `third_party/ANTfrastructure/docs/language-ai.md` § The test model.
 pub fn tiny_model_dir() -> &'static Path {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
     DIR.get_or_init(|| {
