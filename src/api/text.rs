@@ -102,7 +102,7 @@ mod enabled {
         cancel_token().cancel();
     }
 
-    fn endpoint(source: &TextSource) -> Result<Endpoint, TextError> {
+    pub(super) fn endpoint(source: &TextSource) -> Result<Endpoint, TextError> {
         let mut endpoint = EndpointChoice {
             base_url: source.base_url.clone(),
             backend: source.backend.clone(),
@@ -327,6 +327,47 @@ mod tests {
             (event.prompt_tokens, event.completion_tokens),
             (Some(3), Some(1))
         );
+    }
+
+    fn endpoint_source(base_url: &str) -> TextSource {
+        TextSource {
+            model_dir: None,
+            provider: "cpu".into(),
+            base_url: Some(base_url.into()),
+            backend: None,
+            backends_path: None,
+            model: Some("m".into()),
+            api_key: Some("app-key".into()),
+        }
+    }
+
+    #[test]
+    fn an_endpoint_source_keeps_its_url_model_and_key() {
+        let endpoint = enabled::endpoint(&endpoint_source("http://127.0.0.1:18200/")).unwrap();
+        assert_eq!(endpoint.base_url, "http://127.0.0.1:18200");
+        assert_eq!(endpoint.model.as_deref(), Some("m"));
+        assert_eq!(endpoint.api_key.as_deref(), Some("app-key"));
+    }
+
+    #[test]
+    fn embedding_from_a_closed_port_is_an_error_not_an_empty_answer() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let refused = text_embed(
+            endpoint_source(&format!("http://127.0.0.1:{port}")),
+            vec!["a".into()],
+        )
+        .unwrap_err();
+        assert!(refused.contains("unreachable"), "{refused}");
+    }
+
+    #[test]
+    fn availability_and_cancel_answer_without_a_running_generation() {
+        let _ = text_local_available();
+        text_cancel();
     }
 
     #[test]

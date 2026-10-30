@@ -561,7 +561,7 @@ mod tests {
     fn no_candidate_is_a_bare_name_the_loader_would_search() {
         for candidates in [
             library_candidates(None, None),
-            library_candidates(Some(Path::new("/app")), None),
+            library_candidates(Some(&std::env::temp_dir().join("app")), None),
         ] {
             assert!(
                 candidates

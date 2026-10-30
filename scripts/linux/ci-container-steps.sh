@@ -8,7 +8,7 @@ source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
 # Each crate's own floor, just under its latest figure, so one well-tested crate cannot carry a weak one; raise them as tests come.
-COVERAGE_FLOORS='--floor crates/observant=81 --floor crates/webgpu_renderer=89 --floor crates/inference=77 --floor crates/text=80 --floor crates/cli=72 --floor crates/core=62 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/cxx_bridge=100 --floor crates/media=72 --floor crates/gui=27 --floor src=19'
+COVERAGE_FLOORS='--floor crates/observant=81 --floor crates/webgpu_renderer=89 --floor crates/inference=77 --floor crates/text=90 --floor crates/cli=72 --floor crates/core=62 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/cxx_bridge=100 --floor crates/media=72 --floor crates/gui=27 --floor src=19'
 # The vendored crates under third_party/ are upstream's code: tract-linalg's took the workspace figure from 71 % to 56 %.
 COVERAGE_EXCLUDE='third_party/*'
 
