@@ -20,6 +20,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   figures. The CLI gains `chat` and `embed`; `src/api/text.rs` streams the same to Dart. The suites
   decode the hub's tiny GenAI model, which ANTfrastructure ad6177f6 carries, and CI requires it
   through `KATAGLYPHIS_REQUIRE_GENAI=1`. See [docs/text.md](docs/text.md).
+- The Cargo license policy reviews ring 0.17.14 (`Apache-2.0 AND ISC`), which the CLI now ships through
+  the endpoint client's rustls; its five original texts, the once_cell polyfill's included, are pinned by SHA-256.
 
 ### Fixed
 - **riscv64 tests no longer try the amd64 GStreamer plugins.** ANTfrastructure is pinned at 0aef805d,

@@ -397,6 +397,41 @@
         }
       ]
     },
+    "ring@0.17.14": {
+      "reviewed_expression": "Apache-2.0 AND ISC",
+      "files": [
+        {
+          "root": "package",
+          "path": "LICENSE",
+          "sha256": "b3d734001a94efff3579978d953391aa7115f877657d25eb54037a43875d078a",
+          "provenance": "crates.io archive ring@0.17.14: ISC for ring's own code (LICENSE-other-bits), Apache-2.0 for the code from BoringSSL (LICENSE-BoringSSL), and once_cell's Apache-2.0 OR MIT for its polyfill; LICENSE says which applies where"
+        },
+        {
+          "root": "package",
+          "path": "LICENSE-BoringSSL",
+          "sha256": "005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d",
+          "provenance": "crates.io archive ring@0.17.14: ISC for ring's own code (LICENSE-other-bits), Apache-2.0 for the code from BoringSSL (LICENSE-BoringSSL), and once_cell's Apache-2.0 OR MIT for its polyfill; LICENSE says which applies where"
+        },
+        {
+          "root": "package",
+          "path": "LICENSE-other-bits",
+          "sha256": "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f",
+          "provenance": "crates.io archive ring@0.17.14: ISC for ring's own code (LICENSE-other-bits), Apache-2.0 for the code from BoringSSL (LICENSE-BoringSSL), and once_cell's Apache-2.0 OR MIT for its polyfill; LICENSE says which applies where"
+        },
+        {
+          "root": "package",
+          "path": "src/polyfill/once_cell/LICENSE-APACHE",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+          "provenance": "crates.io archive ring@0.17.14: ISC for ring's own code (LICENSE-other-bits), Apache-2.0 for the code from BoringSSL (LICENSE-BoringSSL), and once_cell's Apache-2.0 OR MIT for its polyfill; LICENSE says which applies where"
+        },
+        {
+          "root": "package",
+          "path": "src/polyfill/once_cell/LICENSE-MIT",
+          "sha256": "6ee2ed6c77710de911761acd5fc1ad1da00f476beb1a7ef27e78c2d1858deafc",
+          "provenance": "crates.io archive ring@0.17.14: ISC for ring's own code (LICENSE-other-bits), Apache-2.0 for the code from BoringSSL (LICENSE-BoringSSL), and once_cell's Apache-2.0 OR MIT for its polyfill; LICENSE says which applies where"
+        }
+      ]
+    },
     "simd_helpers@0.1.0": {
       "files": [
         {
