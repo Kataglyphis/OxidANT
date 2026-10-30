@@ -2,14 +2,14 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use kataglyphis_gui::gui_wgpu::GpuBackend;
 
 #[derive(Parser)]
 #[command(name = "kataglyphis")]
 #[command(
-    about = "The OxidANT CLI: file tools, the wgpu camera GUI with ONNX inference, and resource monitoring.",
+    about = "The OxidANT CLI: file tools, the wgpu camera GUI with ONNX inference, language models, and resource monitoring.",
     long_about = None
 )]
 pub struct Cli {
@@ -65,4 +65,59 @@ pub enum Commands {
     OnnxRuntime,
     /// Build the GUI's camera pipeline without starting it and print each element's plugin file.
     MediaCheck,
+    /// Answer a prompt with a GenAI model directory or an OpenAI-compatible endpoint; the reply streams to stdout.
+    Chat(ChatArgs),
+    /// Print one L2-normalised vector per text from an OpenAI-compatible endpoint, one JSON array per line.
+    Embed {
+        #[arg(required = true)]
+        texts: Vec<String>,
+        #[command(flatten)]
+        endpoint: EndpointArgs,
+    },
+}
+
+#[derive(Args)]
+pub struct ChatArgs {
+    /// The user's message.
+    #[arg(long)]
+    pub prompt: String,
+    /// A system message before it.
+    #[arg(long)]
+    pub system: Option<String>,
+    /// A GenAI model directory, run in this process on the chain's ONNX Runtime GenAI (Linux and Windows).
+    #[arg(long, conflicts_with_all = ["base_url", "backend"])]
+    pub model_dir: Option<PathBuf>,
+    /// The execution provider for --model-dir.
+    #[arg(long, value_enum, default_value_t = TextProvider::Cpu)]
+    pub provider: TextProvider,
+    #[command(flatten)]
+    pub endpoint: EndpointArgs,
+    #[arg(long, default_value_t = 128)]
+    pub max_new_tokens: u32,
+    /// 0 decodes greedily.
+    #[arg(long, default_value_t = 0.0)]
+    pub temperature: f64,
+}
+
+/// The endpoint: --base-url, else LLM_BASE_URL or OLLAMA_BASE_URL, else --backend or the default in backends.json.
+#[derive(Args, Clone)]
+pub struct EndpointArgs {
+    #[arg(long)]
+    pub base_url: Option<String>,
+    /// A backend named in backends.json.
+    #[arg(long)]
+    pub backend: Option<String>,
+    /// The backends.json to read; LLM_BACKENDS when absent.
+    #[arg(long)]
+    pub backends: Option<PathBuf>,
+    /// Overrides the backend's model.
+    #[arg(long)]
+    pub model: Option<String>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum TextProvider {
+    Cpu,
+    Cuda,
+    Dml,
 }

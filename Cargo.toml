@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/telemetry",
     "crates/inference",
+    "crates/text",
     "crates/media",
     "crates/gui",
     "crates/cli",
@@ -88,6 +89,7 @@ sysinfo = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # tract everywhere, the chain ORT first where the family builds one; wasm32 has no file system to load a model from.
 kataglyphis_inference = { path = "crates/inference" }
+kataglyphis_text = { path = "crates/text" }
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "time"] }
 
 # Desktop only: Android and wasm have no serial port for the ESP32-S3 companion and no GStreamer for the webcam engine.

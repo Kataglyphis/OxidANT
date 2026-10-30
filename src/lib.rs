@@ -24,6 +24,8 @@ pub use kataglyphis_inference::ort_runtime;
 mod frb_generated;
 #[cfg(not(target_arch = "wasm32"))]
 pub use kataglyphis_inference::person_detection;
+#[cfg(not(target_arch = "wasm32"))]
+pub use kataglyphis_text as text;
 
 #[cfg(desktop)]
 mod webcam_engine;

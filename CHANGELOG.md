@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added
+- **Language models (LAI-O1 to O3).** `crates/text` generates text on the chain's ONNX Runtime GenAI,
+  loaded at run time from the chain install and refused unless it embeds the chain's build tree, or on
+  an OpenAI-compatible endpoint by URL or `backends.json` name, with streaming, cancel and the speed
+  figures. The CLI gains `chat` and `embed`; `src/api/text.rs` streams the same to Dart. The suites
+  decode the hub's tiny GenAI model, which ANTfrastructure ad6177f6 carries, and CI requires it
+  through `KATAGLYPHIS_REQUIRE_GENAI=1`. See [docs/text.md](docs/text.md).
+
 ### Fixed
 - **riscv64 tests no longer try the amd64 GStreamer plugins.** ANTfrastructure is pinned at 0aef805d,
   whose `riscv64_cross_env` drops the host-triplet entries from `GST_PLUGIN_PATH`,

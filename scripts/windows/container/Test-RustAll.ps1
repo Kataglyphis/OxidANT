@@ -33,6 +33,8 @@ Write-ContainerLog "C and C++ through $($clangCl.Source) (CC, CXX)"
 
 # Without the model the real-model tests pass by skipping; 0 opts out.
 if (-not $env:KATAGLYPHIS_REQUIRE_MODEL) { $env:KATAGLYPHIS_REQUIRE_MODEL = '1' }
+# The image carries the chain GenAI under ONNX_GENAI_ROOT, so the text suites must load it rather than skip.
+if (-not $env:KATAGLYPHIS_REQUIRE_GENAI) { $env:KATAGLYPHIS_REQUIRE_GENAI = '1' }
 & (Join-Path $Workspace 'scripts\windows\Get-Models.ps1')
 if (-not $?) { Write-ContainerLog 'FATAL: Get-Models.ps1 failed'; exit 1 }
 

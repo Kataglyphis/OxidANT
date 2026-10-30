@@ -5113,6 +5113,7 @@ dependencies = [
  "log",
  "oxidant",
  "predicates",
+ "serde_json",
  "tempfile",
  "tokio",
 ]
@@ -5246,6 +5247,16 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "wmi",
+]
+
+[[package]]
+name = "kataglyphis_text"
+version = "3.0.0"
+dependencies = [
+ "libloading 0.9.0",
+ "log",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]
@@ -6526,6 +6537,7 @@ dependencies = [
  "kataglyphis_inference",
  "kataglyphis_media",
  "kataglyphis_telemetry",
+ "kataglyphis_text",
  "libloading 0.9.0",
  "log",
  "predicates",

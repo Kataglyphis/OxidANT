@@ -8,7 +8,7 @@ runs them (`bash scripts/linux/ci-container-steps.sh test`):
 ```bash
 scripts/linux/fetch-models.sh
 KATAGLYPHIS_REQUIRE_GPU=1 KATAGLYPHIS_REQUIRE_MODEL=1 KATAGLYPHIS_REQUIRE_GST=1 \
-  KATAGLYPHIS_REQUIRE_GTK=1 xvfb-run -a cargo test --workspace --locked
+  KATAGLYPHIS_REQUIRE_GTK=1 KATAGLYPHIS_REQUIRE_GENAI=1 xvfb-run -a cargo test --workspace --locked
 ```
 
 There are no features to add: the capture tests, the ORT loader, the webcam engine and the
@@ -16,7 +16,9 @@ burn demos compile wherever the target runs them, so GStreamer's development fil
 chain ORT must be present ([AGENTS.md § Targets and their system dependencies](../AGENTS.md#targets-and-their-system-dependencies)).
 
 Each `KATAGLYPHIS_REQUIRE_*` turns a self-skip (no GPU, no model, a missing GStreamer
-element) into a failure, since `cargo test` hides a passing test's `SKIP:` line.
+element, no chain GenAI) into a failure, since `cargo test` hides a passing test's `SKIP:` line.
+The Windows x64 container requires GenAI too; the riscv64 and Windows arm64 lanes do not yet, so
+the text suites' GenAI cases skip there ([text.md](text.md#tests)).
 `fetch-models.sh` puts the model the real-model tests need in place.
 
 The Linux test and coverage steps require GTK under Xvfb. The GTK lifecycle test posts a real EOS

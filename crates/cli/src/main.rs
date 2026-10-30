@@ -7,6 +7,7 @@ use clap::Parser;
 use log::info;
 
 mod cli;
+mod text;
 
 use cli::{Cli, Commands};
 use oxidant::{logging, resource_monitor, utils};
@@ -60,6 +61,8 @@ async fn main() -> Result<()> {
         Commands::MediaCheck => {
             print!("{}", kataglyphis_gui::gui_wgpu::media_check()?);
         }
+        Commands::Chat(args) => text::chat(args)?,
+        Commands::Embed { texts, endpoint } => text::embed(texts, endpoint)?,
     }
     Ok(())
 }

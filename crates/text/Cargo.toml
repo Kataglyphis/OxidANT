@@ -1,0 +1,20 @@
+[package]
+name = "kataglyphis_text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+log = { workspace = true }
+serde_json = "1"
+
+# The chain GenAI exists for Linux and Windows only, and it is loaded at run time, never linked.
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+libloading = { workspace = true }
+
+# The OpenAI-compatible endpoint; ureq, rustls and serde_json are already in the lockfile.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[lints]
+workspace = true

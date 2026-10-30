@@ -74,6 +74,7 @@ Prerequisites, the API docs and Linux containers locally:
 | --- | --- |
 | Getting started | [docs/getting-started.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/getting-started.md) |
 | The crates, what each target builds, and the consumers | [docs/crates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/crates.md) |
+| Language models: the chain GenAI or an endpoint, the CLI, the Flutter bridge | [docs/text.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/text.md) |
 | Tests, lints and the GPU tests | [docs/testing.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/testing.md) |
 | Running the CLI, the GUI and the demos | [docs/running.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/running.md) |
 | ObservANT, the cat cam | [docs/observant.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/observant.md) |
