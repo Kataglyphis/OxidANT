@@ -142,5 +142,53 @@
   "replace": "}",
   "test": "bash scripts/linux/tests/test-cargo-patches-used.sh",
   "why": "the registry crate at the patched version is not the patched copy."
+ },
+ {
+  "id": "consumer.oxidant-frb-diff",
+  "target": "scripts/linux/frb-codegen.sh",
+  "find": "git -C \"${REPO_ROOT}\" diff --exit-code -- src/frb_generated.rs",
+  "replace": "true",
+  "test": "bash scripts/linux/tests/test-frb-codegen.sh",
+  "why": "A stale committed Rust bridge must fail the fmt-clippy step."
+ },
+ {
+  "id": "consumer.oxidant-frb-stem",
+  "target": "scripts/linux/frb-codegen.sh",
+  "find": "python3 -I \"${SCRIPT_DIR}/verify-frb-bindings.py\" \"${rust_root}/Cargo.toml\" \\",
+  "replace": "true \"${rust_root}/Cargo.toml\" \\",
+  "test": "bash scripts/linux/tests/test-frb-codegen.sh",
+  "why": "An UNKNOWN or foreign Dart loader stem must fail generation."
+ },
+ {
+  "id": "consumer.oxidant-frb-locked",
+  "target": "scripts/linux/frb-codegen.sh",
+  "find": "cargo metadata --locked --manifest-path",
+  "replace": "cargo metadata --manifest-path",
+  "test": "bash scripts/linux/tests/test-frb-codegen.sh",
+  "why": "Bridge metadata must resolve the committed lockfile."
+ },
+ {
+  "id": "consumer.oxidant-frb-cross-target",
+  "target": "scripts/linux/frb-codegen.sh",
+  "find": "--format-version 1 >/dev/null",
+  "replace": "--format-version 1 --filter-platform x86_64-unknown-linux-gnu >/dev/null",
+  "test": "bash scripts/linux/tests/test-frb-codegen.sh",
+  "why": "Metadata must cover every target's dependencies, as the generator reads them."
+ },
+ {
+  "id": "consumer.oxidant-frb-codegen-pin",
+  "target": "scripts/linux/frb-codegen.sh",
+  "find": "[ \"${actual}\" = \"flutter_rust_bridge_codegen ${pinned}\" ]",
+  "replace": "true",
+  "test": "bash scripts/linux/tests/test-frb-codegen.sh",
+  "why": "Only the hub-pinned generator may write the bindings."
+ },
+ {
+  "id": "consumer.oxidant-frb-expand-pin",
+  "target": "scripts/linux/frb-codegen.sh",
+  "find": "\"${CARGO_EXPAND_SHA256}\" \"${work}/cargo-expand.crate\"",
+  "replace": "\"\" \"${work}/cargo-expand.crate\"",
+  "test": "bash scripts/linux/tests/test-frb-codegen.sh",
+  "why": "cargo-expand installs only from its checksummed crate."
  }
 ]

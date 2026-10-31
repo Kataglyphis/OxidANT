@@ -67,6 +67,34 @@ The `lint-gates.yml` script-test job also runs `test-burn-lock-graph.sh` with Py
 The gate is also run after local Renovate `--apply`. Cargo audit and deny remain the security
 verdicts; the lock-graph check does not exercise Burn at runtime.
 
+## The bridge bindings
+
+`src/frb_generated.rs` is generated code, and the `fmt-clippy` step fails when it is stale.
+`scripts/linux/frb-codegen.sh` holds the one flutter_rust_bridge input (`crate::api`) and flag
+set. OmniAccelerANT's `scripts/linux/generate-frb-bindings.sh` calls the same script with its
+own Rust root and Dart output, so neither repository carries a second copy.
+
+`frb-codegen.sh check --hub <ANTfrastructure>` is what the step runs:
+
+1. The generator must report the hub's `FLUTTER_RUST_BRIDGE_VERSION`, and the workspace's exact
+   `flutter_rust_bridge` pin must equal it.
+2. Full cross-target `cargo metadata --locked` must succeed. The generator reads every target's
+   dependencies and silently writes the Dart loader stem `UNKNOWN` when that fails.
+3. cargo-expand 1.0.127 is installed from its checksummed crate when another version is found;
+   the generator would otherwise install whatever is newest.
+4. Both sides are regenerated, the Dart side into a temporary package named `omni_accelerant`:
+   that name prefixes every exported Rust symbol.
+5. `verify-frb-bindings.py` requires the loader stem to equal `[lib] name` and both sides to carry
+   the same generator version and content hash; then `git diff --exit-code src/frb_generated.rs`
+   must pass.
+
+After a change under `src/api`, run OmniAccelerANT's `bash scripts/linux/generate-frb-bindings.sh`
+in the image: it writes both sides. Commit and push OxidANT first, then move the app's gitlink.
+In this repository alone, the check above, run in the image, rewrites `src/frb_generated.rs`.
+The first run needs the network for cargo-expand and for the crate archives full metadata reads.
+The check does not show that the Dart side compiles or that the library loads; OmniAccelerANT's
+tests do.
+
 ## The GPU tests must render
 
 The `crates/webgpu_renderer` headless golden tests (about 40) need a GPU adapter and

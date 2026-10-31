@@ -213,6 +213,9 @@ unformatted and with 12 clippy errors; the step gates now.
 - **Scope:** `scripts/linux/ci-container-steps.sh` sets `CARGO_CLIPPY_ARGS` to
   `--workspace --locked`, the whole workspace with nothing left out.
 - **Positional arguments reach `cargo fmt` only**, not both tools.
+- **The step first fails a stale `src/frb_generated.rs`.** `scripts/linux/frb-codegen.sh` is the
+  one flutter_rust_bridge input and flag set, also used by OmniAccelerANT's generator; regenerate
+  there after changing `src/api`: [the bridge bindings](docs/testing.md#the-bridge-bindings).
 
 ### Never expand a manifest template with `-replace`
 

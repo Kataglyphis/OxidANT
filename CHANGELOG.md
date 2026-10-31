@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-10-31)
+- The `fmt-clippy` step regenerates `src/frb_generated.rs` with the hub-pinned generator, after full
+  cross-target `cargo metadata --locked`, refuses a Dart loader stem other than `oxidant`, and fails
+  when the committed file differs. `scripts/linux/frb-codegen.sh` is the one bridge input and flag
+  set; OmniAccelerANT's generator calls it. cargo-expand is pinned at 1.0.127 by checksum. See
+  [docs/testing.md](docs/testing.md#the-bridge-bindings).
+
 ### Security (2026-10-31)
 - **cargo-deny checks every build target.** `deny.toml` adds `x86_64-pc-windows-msvc`,
   `aarch64-pc-windows-msvc`, `aarch64-linux-android` and `wasm32-unknown-unknown` to the three Linux

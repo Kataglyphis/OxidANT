@@ -18,7 +18,7 @@ usage: ci-container-steps.sh <step>
 
   debug       cargo_debug.sh            - dev profile build
   security    cargo_security_checks.sh  - cargo audit + cargo deny (GATING)
-  fmt-clippy  cargo_fmt_clippy.sh         - fmt --check + clippy -D warnings (GATING)
+  fmt-clippy  cargo_fmt_clippy.sh         - bridge freshness + fmt --check + clippy -D warnings (GATING)
   test        cargo_test.sh             - unit + integration + proptest + doc
   coverage    cargo_coverage.sh         - tarpaulin over the workspace
   bench       cargo_bench.sh
@@ -84,6 +84,7 @@ case "$step" in
     fmt-clippy)
         bash "${SCRIPT_DIR}/compile-slang-shaders.sh" --check
         python3 "${SCRIPT_DIR}/../generate-texture-abi.py" --check
+        bash "${SCRIPT_DIR}/frb-codegen.sh" check --hub "${ANTFRASTRUCTURE_DIR}"
         export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked}"
         antfrastructure_exec "${RUST_DRIVERS}/cargo_fmt_clippy.sh" "$@"
         ;;
