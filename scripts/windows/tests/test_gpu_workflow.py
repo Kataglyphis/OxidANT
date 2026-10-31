@@ -477,13 +477,23 @@ class GpuWorkflow(unittest.TestCase):
         self.assertIn(f"name: {consumer}", amd)
         self.assertIn("artifact_prefix: ${{ steps.name.outputs.artifact_prefix }}", amd)
 
-    def test_windows_uploads_allow_full_reruns(self) -> None:
+    def test_windows_profile_requires_the_current_attempt(self) -> None:
         windows = WORKFLOW.read_text(encoding="utf-8")
-        name = (
-            "unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64"
-        )
-        self.assertIn(f"name: {name}\n          overwrite: true", windows)
+        name = "unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64-attempt-${{ github.run_attempt }}"
+        self.assertIn(f"name: {name}\n          overwrite: false", windows)
         self.assertEqual(windows.count(f"name: {name}"), 2)
+        for provider, vendor in (("cuda", "nvidia"), ("directml", "amd")):
+            first = (
+                name.replace("${{ matrix.provider }}", provider)
+                .replace("${{ matrix.vendor }}", vendor)
+                .replace("${{ github.run_attempt }}", "1")
+            )
+            retry = (
+                name.replace("${{ matrix.provider }}", provider)
+                .replace("${{ matrix.vendor }}", vendor)
+                .replace("${{ github.run_attempt }}", "2")
+            )
+            self.assertNotEqual(first, retry)
 
 
 if __name__ == "__main__":

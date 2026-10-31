@@ -126,8 +126,8 @@ jobs:
       - name: Upload the unverified candidate
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64
-          overwrite: true
+          name: unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64-attempt-${{ github.run_attempt }}
+          overwrite: false
           path: ${{ steps.prep.outputs.workspace }}/dist/gpu-${{ matrix.vendor }}/*.zip
           if-no-files-found: error
 
@@ -155,7 +155,7 @@ jobs:
           python-version: '3.14'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64
+          name: unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/oxidant-gpu-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.vendor }}
       - name: Require model operators on the selected GPU provider
         shell: pwsh

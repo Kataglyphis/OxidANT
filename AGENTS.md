@@ -611,6 +611,7 @@ stayed that way through several edits.
 The GPU candidate workflows accept dispatch and reusable calls; keep GPU profiling default-off and their uploads unverified until separately promoted.
 Linux GPU candidate verification checks the DEB's embedded package identity, target architecture and GPU vendor version before upload.
 Linux GPU candidate uploads are immutable and scoped to the run attempt; clean-host and GPU checks must select the current attempt, not a previous one.
+Windows GPU candidate uploads are immutable and attempt-scoped; the hardware profile must select the current attempt's ZIP.
 
 Eleven workflow files: the build lanes, the gate lanes, `docs.yml`, `on-request.yml`,
 `release.yml` and the reusable `reusable-linux.yml`. The five build lanes, one file per platform + arch,

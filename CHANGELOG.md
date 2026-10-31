@@ -14,6 +14,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- Scope Windows GPU candidate uploads and hardware profiles to the current workflow attempt without overwriting prior artifacts.
 - Scope Linux GPU candidate uploads and their clean-host and GPU checks to the current workflow attempt without overwriting prior artifacts.
 - Reject Linux GPU DEBs with incorrect embedded package identity, target architecture or GPU vendor version.
 - Allow the NVIDIA Linux and Windows GPU candidate workflows to be called by other workflows while keeping hardware profiling optional and outputs unverified.

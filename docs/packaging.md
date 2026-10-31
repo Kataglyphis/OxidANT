@@ -145,6 +145,9 @@ NVIDIA driver and CUDA/cuDNN runtimes on the host; DirectML requires a compatibl
 DirectX 12 device and drivers. GPU execution is not established by packaging alone.
 These candidates are portable only; they do not produce MSI or MSIX installers and
 are not part of a release workflow.
+Uploads include the run attempt and cannot overwrite an earlier candidate. A rerun of
+only the hardware-profile job will not find an earlier attempt's ZIP; rerun the
+candidate job as well. Attempt-scoped names do not themselves prove GPU execution.
 
 To profile a candidate on hardware, dispatch with `verify-gpu` and provide Windows x64
 self-hosted runners labelled `gpu-nvidia-cuda` and `gpu-amd-directml`. Set
