@@ -57,6 +57,11 @@ keeps their unused legacy Torch backend and its vulnerable ZIP/Zstd chain out of
 - **Five build lanes**: Linux x64, arm64 and riscv64, Windows x64 and arm64.
 - **Packages** that carry their own GStreamer, ONNX Runtime, model and project license: tar, deb, AppImage and flatpak on Linux; portable zip, MSI and MSIX on Windows. Linux packages verify the matched ONNX wheel's license and notices; Windows uses the project icon and generates the MSI's RTF from the project license.
 
+## GPU package candidates
+
+On demand: [Linux NVIDIA x64/arm64](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-nvidia-gpu.yml), [Linux AMD x64](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-x64-amd-gpu.yml), and [Windows NVIDIA/AMD x64](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-gpu-candidates.yml). Open a successful run and download its matching artifact under **Artifacts**
+(sign-in required). Linux candidates contain tar, DEB and AppImage; Windows candidates are portable ZIPs. They are experimental, separate from releases and require matching host GPU drivers and runtimes. The current infrastructure pin blocks the workflows; see [packaging](docs/packaging.md) for prerequisites and verification status. CPU packages remain available through the existing lanes.
+
 ## Quick start
 
 ```bash

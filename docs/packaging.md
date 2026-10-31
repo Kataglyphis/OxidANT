@@ -51,7 +51,7 @@ overlays are not part of the pin; NVIDIA packaging remains unavailable through t
 recorded tooling until they are committed and the pin is updated. The NVIDIA workflow
 preflights the exact image wheel and shared finished-AppImage verifier before compiling,
 and checks the finished tar, DEB and AppImage payloads before upload. CPU packaging does
-not take this path. The NVIDIA arm64 build and GPU execution have not been verified.
+not take this path. An emulated local NVIDIA arm64 build with the same helper overlay produced a verified tar; the DEB and AppImage were recovered separately after packaging failed under PRoot. All three ran CPU inference in both glibc modes under QEMU. This is not a successful combined workflow run, a clean-host test, or proof of GPU execution.
 
 Linux bundles include the GTK4 library closure and `gtk4paintablesink` from the
 image's actual plugin location, which can differ from GStreamer's pkg-config directory.
