@@ -44,6 +44,34 @@ impl<T> ModelCache<T> {
 
 pub use crate::Detection;
 
+/// Run the desktop detector on a blank frame and return its completed ORT profile path.
+#[flutter_rust_bridge::frb(sync)]
+pub fn profile_person_detection(
+    model_path: String,
+    profile_prefix: String,
+) -> Result<String, String> {
+    profile_person_detection_impl(&model_path, &profile_prefix)
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[cfg(any(target_os = "linux", windows))]
+fn profile_person_detection_impl(model_path: &str, profile_prefix: &str) -> anyhow::Result<String> {
+    use crate::person_detection::{resolve_model_path, PersonDetector};
+    let model_path = resolve_model_path(Some(model_path));
+    let mut detector =
+        PersonDetector::with_ort_profiling(&model_path, std::path::Path::new(profile_prefix))?;
+    detector.infer_persons_rgba(&[0; 64 * 64 * 4], 64, 64, 0.5)?;
+    detector.end_ort_profiling()
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn profile_person_detection_impl(
+    _model_path: &str,
+    _profile_prefix: &str,
+) -> anyhow::Result<String> {
+    anyhow::bail!("ONNX Runtime profiling requires Linux or Windows")
+}
+
 #[flutter_rust_bridge::frb(sync)]
 pub fn detect_persons_rgba(
     model_path: String,
@@ -95,6 +123,21 @@ fn detect_persons_rgba_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn profiling_reports_a_missing_model_without_creating_a_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.onnx");
+        let prefix = dir.path().join("profile");
+        let error = profile_person_detection(
+            missing.to_string_lossy().into_owned(),
+            prefix.to_string_lossy().into_owned(),
+        )
+        .unwrap_err();
+        assert!(error.contains("missing.onnx"), "{error}");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]

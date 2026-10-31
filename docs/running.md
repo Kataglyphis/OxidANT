@@ -68,6 +68,14 @@ To check the selected ONNX Runtime and device without a camera, run `oxidant onn
 It loads the configured model and runs one synthetic frame. Set
 `KATAGLYPHIS_ORT_DEVICE=cpu` to check CPU inference in a GPU package.
 
+Desktop Flutter consumers can call `profile_person_detection` through the Rust
+bridge to run the same detector on a synthetic frame and receive the completed
+ORT profile path. It uses `KATAGLYPHIS_ORT_DEVICE`; inspect the profile's model
+node providers to establish where inference ran. The call requires Linux or
+Windows and propagates model and provider errors. Regenerate the matching Dart
+bindings when updating a consumer to this Rust bridge: the bridge rejects
+different Rust and Dart content hashes at startup.
+
 Optional environment variables:
 
 - `KATAGLYPHIS_ONNX_MODEL` – path to the ONNX model. Unset, the app takes
