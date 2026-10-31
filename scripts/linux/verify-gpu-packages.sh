@@ -22,6 +22,8 @@ fi
 hub="$(antfrastructure_path linux/scripts/06-packaging)"
 # shellcheck source=/dev/null
 source "${hub}/ort-runtime-bundle.sh"
+# shellcheck source=/dev/null
+source "$(antfrastructure_path linux/scripts/01-core/platform.sh)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 shopt -s nullglob
@@ -32,6 +34,16 @@ if [ "${#tarballs[@]}" -ne 1 ] || [ "${#debs[@]}" -ne 1 ] || [ "${#images[@]}" -
     echo 'Expected exactly one tarball, DEB and AppImage' >&2
     exit 1
 fi
+deb_arch="$(arch_normalize "$arch")"
+if [ "$(dpkg-deb --field "${debs[0]}" Architecture)" != "$deb_arch" ] ||
+   [ "$(dpkg-deb --field "${debs[0]}" Package)" != oxidant ]; then
+    echo 'GPU DEB package identity or architecture does not match its target' >&2
+    exit 1
+fi
+case "$(dpkg-deb --field "${debs[0]}" Version)" in
+    *"+gpu-$3") ;;
+    *) echo 'GPU DEB version does not match its vendor' >&2; exit 1 ;;
+esac
 mkdir "${work}/tar" "${work}/deb"
 tar -xzf "${tarballs[0]}" -C "${work}/tar"
 dpkg-deb -x "${debs[0]}" "${work}/deb"

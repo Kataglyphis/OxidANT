@@ -5,7 +5,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 hub="${work}/hub/linux/scripts/06-packaging"
-mkdir -p "$hub" "${work}/bin" "${work}/packages" "${work}/tree/oxidant/lib" "${work}/tree/oxidant/licenses/onnxruntime"
+mkdir -p "$hub" "${work}/hub/linux/scripts/01-core" "${work}/bin" "${work}/packages" "${work}/tree/oxidant/lib" "${work}/tree/oxidant/licenses/onnxruntime"
+cat > "${work}/hub/linux/scripts/01-core/platform.sh" <<'STUB'
+arch_normalize() { case "$1" in x64) echo amd64 ;; arm64) echo arm64 ;; *) return 1 ;; esac; }
+STUB
 cat > "${hub}/ort-runtime-bundle.sh" <<'STUB'
 ort_assert_no_bundled_host_runtime() {
     case "$2" in cuda) pattern='libcuda.so*' ;; migraphx) pattern='libamdhip64.so*' ;; *) return 1 ;; esac
@@ -39,13 +42,7 @@ mkdir -p "$destination/licenses/onnxruntime"
 printf 'license\n' > "$destination/licenses/onnxruntime/LICENSE"
 printf 'notices\n' > "$destination/licenses/onnxruntime/ThirdPartyNotices.txt"
 STUB
-cat > "${work}/bin/dpkg-deb" <<'STUB'
-#!/usr/bin/env bash
-[ "$1" = -x ]
-mkdir -p "$3/opt"
-tar -xzf "$2" -C "$3/opt"
-STUB
-chmod +x "${work}/bin/python3" "${work}/bin/dpkg-deb"
+chmod +x "${work}/bin/python3"
 export PATH="${work}/bin:${PATH}" ANTFRASTRUCTURE_DIR="${work}/hub"
 for name in libonnxruntime.so libonnxruntime.so.1 libonnxruntime_providers_shared.so; do
     printf '%s\n' "$name" > "${work}/tree/oxidant/lib/${name}"
@@ -53,10 +50,16 @@ done
 printf 'license\n' > "${work}/tree/oxidant/licenses/onnxruntime/LICENSE"
 printf 'notices\n' > "${work}/tree/oxidant/licenses/onnxruntime/ThirdPartyNotices.txt"
 printf 'verified\n' > "${work}/packages/test.AppImage"
-pack() {
-    tar -czf "${work}/packages/test.tar.gz" -C "${work}/tree" oxidant
-    cp "${work}/packages/test.tar.gz" "${work}/packages/test.deb"
+pack_deb() {
+    local root
+    root="$(mktemp -d "${work}/deb.XXXXXX")"
+    mkdir -p "$root/DEBIAN" "$root/opt/oxidant"
+    cp -a "${work}/tree/oxidant/." "$root/opt/oxidant/"
+    printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: Test <test@example.invalid>\nDescription: GPU package fixture\n' \
+        "${deb_package:-oxidant}" "${deb_version:-1.0+gpu-$vendor}" "${deb_arch:-amd64}" > "$root/DEBIAN/control"
+    dpkg-deb --root-owner-group --build "$root" "${work}/packages/test.deb" >/dev/null
 }
+pack() { tar -czf "${work}/packages/test.tar.gz" -C "${work}/tree" oxidant; pack_deb; }
 check() { bash "${here}/../verify-gpu-packages.sh" "${work}/packages" "$1" "$2" >/dev/null 2>&1; }
 for vendor in nvidia amd; do
     case "$vendor" in nvidia) kind=cuda; host=libcuda.so.1 ;; amd) kind=migraphx; host=libamdhip64.so.7 ;; esac
@@ -65,15 +68,22 @@ for vendor in nvidia amd; do
     printf 'verified\n' > "${work}/packages/test.AppImage"
     pack
     check x64 "$vendor" || { echo "valid ${vendor} candidate was rejected" >&2; exit 1; }
+    deb_arch=arm64 pack_deb
+    if check x64 "$vendor"; then echo 'wrong DEB architecture was accepted' >&2; exit 1; fi
     if [ "$vendor" = nvidia ]; then
         check arm64 "$vendor" || { echo 'valid arm64 NVIDIA candidate was rejected' >&2; exit 1; }
     elif check arm64 "$vendor"; then
         echo 'arm64 AMD candidate was accepted' >&2; exit 1
     fi
+    deb_package=other pack_deb
+    if check x64 "$vendor"; then echo 'wrong DEB identity was accepted' >&2; exit 1; fi
+    deb_version=1.0+gpu-other pack_deb
+    if check x64 "$vendor"; then echo 'wrong DEB vendor version was accepted' >&2; exit 1; fi
+    pack_deb
     printf 'changed\n' > "${work}/tree/oxidant/lib/${provider}"
     tar -czf "${work}/packages/test.tar.gz" -C "${work}/tree" oxidant
     if check x64 "$vendor"; then echo 'changed tar provider was accepted' >&2; exit 1; fi
-    cp "${work}/packages/test.tar.gz" "${work}/packages/test.deb"
+    pack_deb
     printf '%s\n' "$provider" > "${work}/tree/oxidant/lib/${provider}"
     tar -czf "${work}/packages/test.tar.gz" -C "${work}/tree" oxidant
     if check x64 "$vendor"; then echo 'changed DEB provider was accepted' >&2; exit 1; fi

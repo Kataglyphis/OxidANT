@@ -23,6 +23,8 @@ remain labelled candidates even when profiling is skipped.
 ORT and its matching provider, and appends `+gpu-nvidia` or `+gpu-amd` to the version.
 The DEBs all use the `oxidant` package identity and install the `oxidant` command;
 installing a different variant replaces the existing one rather than installing both.
+Finished GPU DEBs are checked for that embedded package identity, the requested target
+architecture and the vendor suffix in their version, independently of the filename.
 Linux GPU builds target NVIDIA on x64 and arm64, and AMD on x64; arm64 ROCm is skipped.
 Pass `--package-types tar,deb,appimage`: Flatpak is excluded because these builds
 require vendor libraries from the host. The launcher defaults to `cuda` or `migraphx`
