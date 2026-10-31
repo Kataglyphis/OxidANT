@@ -23,7 +23,7 @@ def main() -> int:
     try:
         events = json.loads(args.profile.read_text(encoding="utf-8"))
         if not isinstance(events, list):
-            raise ValueError("profile must be a list of events")
+            raise TypeError("profile must be a list of events")
         counts = collections.Counter(
             event["args"]["provider"]
             for event in events
@@ -31,13 +31,19 @@ def main() -> int:
             and event.get("cat") == "Node"
             and isinstance(event.get("args"), dict)
             and isinstance(event["args"].get("provider"), str)
+            and isinstance(event["args"].get("op_name"), str)
+            and event["args"]["op_name"].strip()
+            and not event["args"]["op_name"].strip().casefold().startswith("memcpy")
         )
-    except (OSError, ValueError, UnicodeError) as error:
+    except (OSError, TypeError, ValueError, UnicodeError) as error:
         print(f"Invalid ORT profile: {error}", file=sys.stderr)
         return 1
     provider = PROVIDERS[args.device]
     if counts[provider] == 0:
-        print(f"No model operators executed on {provider}: {dict(counts)}", file=sys.stderr)
+        print(
+            f"No model operators executed on {provider}: {dict(counts)}",
+            file=sys.stderr,
+        )
         return 1
     print(f"Profiled operators: {dict(counts)}")
     return 0
