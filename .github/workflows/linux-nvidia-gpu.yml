@@ -3,15 +3,37 @@ name: Linux NVIDIA GPU package candidates
 on:
   workflow_dispatch:
     inputs:
+      invocation-scope:
+        description: Unique lowercase scope for overlapping calls in the same run
+        type: string
+        default: default
       verify-gpu:
-        description: Profile packaged inference on self-hosted NVIDIA GPU runners for both architectures
+        description: Profile packaged inference on self-hosted NVIDIA GPU runners for the selected architectures
         type: boolean
         default: false
+      promote-verified:
+        description: Stage checked NVIDIA packages after hardware profiling on the selected architectures
+        type: boolean
+        default: false
+      architecture:
+        description: NVIDIA candidate architectures to build
+        type: choice
+        options: [both, x64, arm64]
+        default: both
   workflow_call:
     inputs:
+      invocation-scope:
+        type: string
+        default: default
       verify-gpu:
         type: boolean
         default: false
+      promote-verified:
+        type: boolean
+        default: false
+      architecture:
+        type: string
+        default: both
     secrets:
       GHCR_PAT:
         required: false
@@ -19,149 +41,96 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: linux-nvidia-gpu-${{ github.ref }}-${{ github.workflow }}
-  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
-
 jobs:
-  build:
-    name: NVIDIA candidate (${{ matrix.arch }}, host CUDA required)
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            platform: linux/amd64
-            runner: ubuntu-26.04
-          - arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-26.04-arm
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
-    env:
-      REF_NAME: ${{ github.ref_name }}
-      RUN_NUMBER: ${{ github.run_number }}
+  select:
+    runs-on: ubuntu-26.04
+    outputs:
+      architecture: ${{ steps.select.outputs.architecture }}
+      matrix: ${{ steps.select.outputs.matrix }}
+      suffix: ${{ steps.scope.outputs.suffix }}
     steps:
-      - name: Check out pinned sources
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
-      - name: Check pinned GPU verification APIs
+      - name: Validate the invocation scope
+        id: scope
+        env:
+          GPU_INVOCATION_SCOPE: ${{ inputs.invocation-scope }}
+        run: python3 -I third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py
+      - name: Validate the requested architectures
+        id: select
         shell: bash
+        env:
+          ARCHITECTURE: ${{ inputs.architecture }}
         run: |
           set -euo pipefail
-          hub=third_party/ANTfrastructure/linux/scripts/06-packaging
-          test -f "$hub/verify-ort-appimage-payload.sh" || { echo 'Pinned ANTfrastructure lacks the finished GPU AppImage verifier' >&2; exit 1; }
-          if ! test -f "$hub/ort-runtime-bundle.sh" || ! grep -q 'ort_assert_no_bundled_host_runtime' "$hub/ort-runtime-bundle.sh"; then
-            echo 'Pinned ANTfrastructure lacks the GPU host-runtime exclusion check' >&2; exit 1
-          fi
-          if ! test -f "$hub/../01-core/platform.sh" || ! grep -q '^arch_normalize()' "$hub/../01-core/platform.sh"; then
-            echo 'Pinned ANTfrastructure lacks GPU package architecture normalization' >&2; exit 1
-          fi
-          python3 "$hub/stage-ort-wheel-licenses.py" --help | grep -q -- --require-unstripped || { echo 'Pinned ANTfrastructure lacks exact GPU wheel verification' >&2; exit 1; }
-          bash scripts/linux/tests/test-verify-gpu-packages.sh
-          bash scripts/linux/tests/test-profile-gpu-bundle.sh
-          bash scripts/linux/tests/test-profile-gpu-packages.sh
-          python3 scripts/windows/tests/test_gpu_workflow.py
-      - name: Select registry image
-        id: image
-        shell: bash
-        run: |
-          cpu_image="$(bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh --linux)"
-          printf 'ref=%s:latest-nvidia\n' "${cpu_image%:*}" >> "$GITHUB_OUTPUT"
-      - name: Prepare disk and pull the GPU image
-        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
-        with:
-          image: ${{ steps.image.outputs.ref }}
-          checkout: 'false'
-          free-disk-space: 'true'
-          pull-first: 'false'
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GHCR_PAT }}
-      - name: Compute version
-        run: bash scripts/linux/compute-version.sh
-      - name: Preflight, build and verify packages
-        env:
-          IMAGE: ${{ steps.image.outputs.ref }}
-          ARCH: ${{ matrix.arch }}
-          PLATFORM: ${{ matrix.platform }}
-        shell: bash
-        run: |
-          docker run --rm --user root --platform "$PLATFORM" \
-            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
-            -e VERSION -e ARCH -e PLATFORM -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always \
-            "$IMAGE" bash -c '
-              set -euo pipefail
-              hub=third_party/ANTfrastructure/linux/scripts/06-packaging
-              test -f "$hub/verify-ort-appimage-payload.sh" || {
-                echo "Pinned ANTfrastructure lacks the finished GPU AppImage verifier" >&2; exit 1;
-              }
-              python3 "$hub/stage-ort-wheel-licenses.py" --help | grep -q -- --require-unstripped || {
-                echo "Pinned ANTfrastructure lacks exact GPU wheel verification" >&2; exit 1;
-              }
-              ort=/usr/local/lib/onnxruntime-gpu/lib
-              python3 "$hub/stage-ort-wheel-licenses.py" --require-unstripped \
-                --strip "${STRIP:-strip}" \
-                --wheel-dir /opt/onnxruntime-wheels --destination /tmp/oxidant-ort-preflight \
-                --library "$ort/libonnxruntime.so.1" \
-                --library "$ort/libonnxruntime_providers_shared.so" \
-                --library "$ort/libonnxruntime_providers_cuda.so"
-              apt-get update -qq
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgtk-4-dev
-              mkdir -p "$CARGO_HOME"
-              chown 1001:1001 "$CARGO_HOME"
-              runuser -u kataglyphis -- bash -c '\''
-                set -euo pipefail
-                cargo test --locked -p kataglyphis_inference --lib device_tests
-                cargo test --locked -p kataglyphis_inference --test gpu_request
-                python3 scripts/linux/tests/test-ort-gpu-profile.py
-                cargo build --locked --release -p kataglyphis_cli
-                KATAGLYPHIS_PACKAGING_WORKDIR=/tmp/oxidant-gpu-package-work \
-                bash scripts/linux/package-linux.sh --binary-path target/release/kataglyphis_cli \
-                  --version "$VERSION" --arch "$ARCH" --platform "$PLATFORM" \
-                  --package-types tar,deb,appimage --ort-variant nvidia
-                profile_dir="$(mktemp -d)"
-                env -u KATAGLYPHIS_ONNX_MODEL ORT_DYLIB_PATH=/tmp/oxidant-gpu-package-work/oxidant/lib/libonnxruntime.so \
-                KATAGLYPHIS_ORT_DEVICE=cpu /tmp/oxidant-gpu-package-work/oxidant/oxidant \
-                  onnx-check --profile "$profile_dir/profile"
-                mapfile -t profiles < <(find "$profile_dir" -maxdepth 1 -type f -name "profile*.json")
-                [[ ${#profiles[@]} -eq 1 ]]
-                python3 scripts/verify-ort-gpu-profile.py "${profiles[0]}" --device cpu
-                if python3 scripts/verify-ort-gpu-profile.py "${profiles[0]}" --device cuda; then
-                  echo "CPU-only profile was accepted as GPU execution" >&2; exit 1
-                fi
-                bash scripts/linux/verify-gpu-packages.sh dist "$ARCH" nvidia
-              '\''
-            '
-      - name: Upload unverified candidate
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: oxidant-linux-${{ matrix.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          overwrite: false
-          if-no-files-found: error
-          path: dist/**
+          x64='{"arch":"x64","producer":"build-x64","runner":"ubuntu-26.04","runner-arch":"X64"}'
+          arm64='{"arch":"arm64","producer":"build-arm64","runner":"ubuntu-26.04-arm","runner-arch":"ARM64"}'
+          case "$ARCHITECTURE" in
+            both) rows="$x64,$arm64" ;;
+            x64) rows="$x64" ;;
+            arm64) rows="$arm64" ;;
+            *) echo '::error::architecture must be both, x64 or arm64'; exit 1 ;;
+          esac
+          printf 'architecture=%s\nmatrix={"include":[%s]}\n' "$ARCHITECTURE" "$rows" >> "$GITHUB_OUTPUT"
+
+  build-x64:
+    needs: select
+    if: ${{ needs.select.result == 'success' && (needs.select.outputs.architecture == 'both' || needs.select.outputs.architecture == 'x64') }}
+    uses: ./.github/workflows/linux-nvidia-gpu-build.yml
+    concurrency:
+      group: linux-nvidia-gpu-${{ github.ref }}-${{ github.workflow }}-${{ needs.select.outputs.suffix }}-x64
+      cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+    with:
+      invocation-scope: ${{ inputs.invocation-scope }}
+      arch: x64
+      platform: linux/amd64
+      runner: ubuntu-26.04
+      verify-gpu: ${{ inputs.verify-gpu }}
+      promote-verified: ${{ inputs.promote-verified }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
+
+  build-arm64:
+    needs: select
+    if: ${{ needs.select.result == 'success' && (needs.select.outputs.architecture == 'both' || needs.select.outputs.architecture == 'arm64') }}
+    uses: ./.github/workflows/linux-nvidia-gpu-build.yml
+    concurrency:
+      group: linux-nvidia-gpu-${{ github.ref }}-${{ github.workflow }}-${{ needs.select.outputs.suffix }}-arm64
+      cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+    with:
+      invocation-scope: ${{ inputs.invocation-scope }}
+      arch: arm64
+      platform: linux/arm64
+      runner: ubuntu-26.04-arm
+      verify-gpu: ${{ inputs.verify-gpu }}
+      promote-verified: ${{ inputs.promote-verified }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   clean-host:
     name: Clean-host CPU inference and missing CUDA (${{ matrix.arch }})
-    needs: build
+    needs: [select, build-x64, build-arm64]
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.select.outputs.architecture == 'arm64' || needs.build-x64.result == 'success') && (needs.select.outputs.architecture == 'x64' || needs.build-arm64.result == 'success') }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: ubuntu-26.04
-          - arch: arm64
-            runner: ubuntu-26.04-arm
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
+      - name: Require a candidate from this attempt
+        if: ${{ inputs.promote-verified }}
+        env:
+          PRODUCER_ATTEMPT: ${{ needs[matrix.producer].outputs.producer_attempt }}
+        run: test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test the missing-runtime check
         run: bash scripts/linux/tests/test-check-missing-gpu-runtime.sh
       - name: Install and run CPU inference
+        if: ${{ !inputs.promote-verified }}
         uses: Kataglyphis/ANTfrastructure/.github/actions/clean-host-package-check@develop
         with:
-          artifact: oxidant-linux-${{ matrix.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          artifact: oxidant-linux-${{ matrix.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}
           scan-elves: 'false'
           deb: '*.deb'
           deb-command: env -u KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ORT_DEVICE=cpu oxidant onnx-check && oxidant media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" nvidia oxidant
@@ -170,28 +139,146 @@ jobs:
           appimage: '*.AppImage'
           appimage-command: env -u KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ORT_DEVICE=cpu "$APPIMAGE" onnx-check && "$APPIMAGE" media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" nvidia "$APPIMAGE"
 
+      - name: Check immutable packages with isolated CPU inference
+        if: ${{ inputs.promote-verified }}
+        uses: Kataglyphis/ANTfrastructure/.github/actions/clean-host-package-check@da0bdf709f491b900a9ed02c821d7cbc3a13c8be
+        with:
+          artifact: oxidant-linux-${{ matrix.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}
+          scan-elves: 'false'
+          deb: '*.deb'
+          deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia oxidant
+          tarball: '*.tar.gz'
+          tarball-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia ./oxidant
+          appimage: '*.AppImage'
+          appimage-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia "$APPIMAGE"
+          artifact-id: ${{ needs[matrix.producer].outputs.artifact_id }}
+          artifact-digest: ${{ needs[matrix.producer].outputs.artifact_digest }}
+          artifact-files: ${{ needs[matrix.producer].outputs.artifact_files }}
+          gpu-vendor: nvidia
+          gpu-arch: ${{ matrix.arch }}
+          gpu-receipt: ${{ runner.temp }}/oxidant-nvidia-clean-receipt.json
+          max-uncompressed-bytes: '42949672960'
+          max-compression-ratio: '1000'
+      - name: Upload the clean-host receipt
+        if: ${{ inputs.promote-verified }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unverified-oxidant-nvidia-${{ matrix.arch }}-clean-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}
+          path: ${{ runner.temp }}/oxidant-nvidia-clean-receipt.json
+          overwrite: false
+          if-no-files-found: error
+
   gpu-profile:
-    if: ${{ inputs.verify-gpu }}
-    needs: [build, clean-host]
+    if: ${{ !cancelled() && inputs.verify-gpu && needs.select.result == 'success' && (needs.select.outputs.architecture == 'arm64' || needs.build-x64.result == 'success') && (needs.select.outputs.architecture == 'x64' || needs.build-arm64.result == 'success') && needs.clean-host.result == 'success' }}
+    needs: [select, build-x64, build-arm64, clean-host]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner-arch: X64
-          - arch: arm64
-            runner-arch: ARM64
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     runs-on: [self-hosted, Linux, '${{ matrix.runner-arch }}', gpu-nvidia-cuda]
     timeout-minutes: 30
     steps:
+      - name: Require a candidate from this attempt
+        if: ${{ inputs.promote-verified }}
+        env:
+          PRODUCER_ATTEMPT: ${{ needs[matrix.producer].outputs.producer_attempt }}
+        run: test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: oxidant-linux-${{ matrix.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          submodules: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ !inputs.promote-verified }}
+        with:
+          name: oxidant-linux-${{ matrix.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}
+          path: ${{ runner.temp }}/oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}${{ needs.select.outputs.suffix }}
       - name: Require model operators on CUDA from every package
+        if: ${{ !inputs.promote-verified }}
         shell: bash
         env:
-          CANDIDATE_DIR: ${{ runner.temp }}/oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          CANDIDATE_DIR: ${{ runner.temp }}/oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}${{ needs.select.outputs.suffix }}
         run: |
           bash scripts/linux/profile-gpu-packages.sh "$CANDIDATE_DIR" cuda
+
+      - name: Profile immutable NVIDIA packages and record their bytes
+        if: ${{ inputs.promote-verified }}
+        uses: Kataglyphis/ANTfrastructure/.github/actions/gpu-package-check@da0bdf709f491b900a9ed02c821d7cbc3a13c8be
+        with:
+          artifact-id: ${{ needs[matrix.producer].outputs.artifact_id }}
+          artifact-digest: ${{ needs[matrix.producer].outputs.artifact_digest }}
+          artifact-files: ${{ needs[matrix.producer].outputs.artifact_files }}
+          gpu-vendor: nvidia
+          gpu-arch: ${{ matrix.arch }}
+          gpu-receipt: ${{ runner.temp }}/oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}${{ needs.select.outputs.suffix }}-gpu-receipt.json
+          max-uncompressed-bytes: '42949672960'
+          max-compression-ratio: '1000'
+          command: env ANTFRASTRUCTURE_DIR="$GITHUB_WORKSPACE/third_party/ANTfrastructure" bash scripts/linux/profile-gpu-packages.sh "$GPU_PACKAGE_DIR" cuda "$GITHUB_WORKSPACE/crates/inference/tests/fixtures/two_cats.jpg"
+      - name: Upload the GPU profile receipt
+        if: ${{ inputs.promote-verified }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unverified-oxidant-nvidia-${{ matrix.arch }}-gpu-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}
+          path: ${{ runner.temp }}/oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}${{ needs.select.outputs.suffix }}-gpu-receipt.json
+          overwrite: false
+          if-no-files-found: error
+
+  stage-verified:
+    if: ${{ !cancelled() && inputs.promote-verified && inputs.verify-gpu && needs.select.result == 'success' && (needs.select.outputs.architecture == 'arm64' || needs.build-x64.result == 'success') && (needs.select.outputs.architecture == 'x64' || needs.build-arm64.result == 'success') && needs.clean-host.result == 'success' && needs.gpu-profile.result == 'success' }}
+    needs: [select, build-x64, build-arm64, clean-host, gpu-profile]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - name: Require a candidate from this attempt
+        env:
+          PRODUCER_ATTEMPT: ${{ needs[matrix.producer].outputs.producer_attempt }}
+        run: test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"
+      - name: Download immutable candidate archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs[matrix.producer].outputs.artifact_id }}
+          path: ${{ runner.temp }}/oxidant-nvidia-promotion-archive
+          skip-decompress: true
+          digest-mismatch: error
+      - name: Select the downloaded archive
+        id: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' archives < <(find "$RUNNER_TEMP/oxidant-nvidia-promotion-archive" -mindepth 1 -maxdepth 1 -type f -print0)
+          [[ ${#archives[@]} -eq 1 && "${archives[0]}" != *$'\n'* && "${archives[0]}" != *$'\r'* ]] || { echo 'Expected exactly one artifact archive' >&2; exit 1; }
+          printf 'path=%s\n' "${archives[0]}" >> "$GITHUB_OUTPUT"
+      - name: Download clean-host receipt
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unverified-oxidant-nvidia-${{ matrix.arch }}-clean-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}
+          path: ${{ runner.temp }}/oxidant-nvidia-clean-receipt
+          digest-mismatch: error
+      - name: Download GPU profile receipt
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unverified-oxidant-nvidia-${{ matrix.arch }}-gpu-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}
+          path: ${{ runner.temp }}/oxidant-nvidia-gpu-receipt
+          digest-mismatch: error
+      - name: Stage the exact checked packages
+        uses: Kataglyphis/ANTfrastructure/.github/actions/stage-gpu-artifact@da0bdf709f491b900a9ed02c821d7cbc3a13c8be
+        with:
+          archive: ${{ steps.archive.outputs.path }}
+          clean-receipt: ${{ runner.temp }}/oxidant-nvidia-clean-receipt/oxidant-nvidia-clean-receipt.json
+          gpu-receipt: ${{ runner.temp }}/oxidant-nvidia-gpu-receipt/oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}${{ needs.select.outputs.suffix }}-gpu-receipt.json
+          output: ${{ runner.temp }}/oxidant-nvidia-verified-packages
+          artifact-id: ${{ needs[matrix.producer].outputs.artifact_id }}
+          artifact-digest: ${{ needs[matrix.producer].outputs.artifact_digest }}
+          artifact-files: ${{ needs[matrix.producer].outputs.artifact_files }}
+          gpu-platform: linux
+          gpu-vendor: nvidia
+          gpu-arch: ${{ matrix.arch }}
+          max-uncompressed-bytes: '42949672960'
+          max-compression-ratio: '1000'
+      - name: Upload the checked NVIDIA packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verified-oxidant-linux-${{ matrix.arch }}-nvidia-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}
+          path: ${{ runner.temp }}/oxidant-nvidia-verified-packages/*
+          overwrite: false
+          if-no-files-found: error

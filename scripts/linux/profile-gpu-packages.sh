@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Profile every finished Linux GPU package without installing on the runner.
 set -euo pipefail
-if [ "$#" -ne 2 ]; then
-    echo 'usage: profile-gpu-packages.sh PACKAGE_DIR cuda|migraphx' >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+    echo 'usage: profile-gpu-packages.sh PACKAGE_DIR cuda|migraphx [FIXTURE.jpg]' >&2
     exit 2
 fi
 package_dir="$(realpath -e "$1")" device="$2"
+fixture="${3:-}"
+if [ -n "${fixture}" ]; then fixture="$(realpath -e "${fixture}")"; fi
 case "${device}" in cuda|migraphx) ;; *) echo 'unsupported GPU device' >&2; exit 2 ;; esac
 command -v dpkg-deb >/dev/null || { echo 'dpkg-deb is required to inspect the DEB' >&2; exit 1; }
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,10 +25,12 @@ mkdir "${work}/tar" "${work}/deb" "${work}/appimage" "${work}/appimage-tmp"
 tar -xzf "${tarballs[0]}" -C "${work}/tar"
 echo 'Profiling the TAR launcher'
 bash "${script_dir}/profile-gpu-bundle.sh" "${work}/tar/oxidant" "${device}" "${work}/tar-profile"
+if [ -n "${fixture}" ]; then bash "${script_dir}/check-gpu-detector-parity.sh" "${work}/tar/oxidant/oxidant" "${device}" "${fixture}"; fi
 rm -rf -- "${work}/tar"
 dpkg-deb -x "${debs[0]}" "${work}/deb"
 echo 'Profiling the DEB payload launcher'
 bash "${script_dir}/profile-gpu-bundle.sh" "${work}/deb/opt/oxidant" "${device}" "${work}/deb-profile"
+if [ -n "${fixture}" ]; then bash "${script_dir}/check-gpu-detector-parity.sh" "${work}/deb/opt/oxidant/oxidant" "${device}" "${fixture}"; fi
 rm -rf -- "${work}/deb"
 # Actions drops the executable bit, so copy the AppImage into the private workspace.
 image="${work}/candidate.AppImage"
@@ -37,4 +41,8 @@ echo 'Profiling the finished AppImage launcher'
 APPIMAGE_EXTRACT_AND_RUN=1 TMPDIR="${work}/appimage-tmp" \
     bash "${script_dir}/profile-gpu-bundle.sh" "${work}/appimage/squashfs-root/usr/lib/oxidant" \
     "${device}" "${work}/appimage-profile" "${image}"
+if [ -n "${fixture}" ]; then
+    APPIMAGE_EXTRACT_AND_RUN=1 TMPDIR="${work}/appimage-tmp" \
+        bash "${script_dir}/check-gpu-detector-parity.sh" "${image}" "${device}" "${fixture}"
+fi
 echo 'All finished package launchers profiled the requested GPU provider'

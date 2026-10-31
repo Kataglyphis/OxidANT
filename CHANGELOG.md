@@ -23,7 +23,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `TextError::StreamLineTooLong` instead of buffering it. See [docs/text.md](docs/text.md).
 
 ### Added
+- Allow scoped reusable GPU workflow calls and independent Windows GPU vendor selection.
+- Allow NVIDIA Linux candidate runs to select x64, arm64 or both architectures.
+- Prepare an opt-in Linux AMD x64 and NVIDIA x64/arm64 checked-artifact stage with current-attempt receipts; promotion remains blocked until detector output parity is verified on hardware.
 - Add a real-image ONNX detector diagnostic that can repeat inference in one session.
+- Prepare CPU/GPU detection comparison for checking each finished Linux GPU package.
 - Scope Windows GPU candidate uploads and hardware profiles to the current workflow attempt without overwriting prior artifacts.
 - Scope Linux GPU candidate uploads and their clean-host and GPU checks to the current workflow attempt without overwriting prior artifacts.
 - Reject Linux GPU DEBs with incorrect embedded package identity, target architecture or GPU vendor version.

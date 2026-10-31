@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -17,6 +19,13 @@ HUB = Path(
 )
 
 
+def plain_diagnostic(text: str) -> str:
+    """Normalize PowerShell colour and wrapped diagnostic gutters."""
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    text = re.sub(r"(?m)^\s*\|\s?", " ", text)
+    return " ".join(text.split())
+
+
 def pe(machine: int, marker: int = 0) -> bytes:
     data = bytearray(512)
     struct.pack_into("<I", data, 0x3C, 128)
@@ -27,7 +36,7 @@ def pe(machine: int, marker: int = 0) -> bytes:
 
 class GpuPreflight(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp = tempfile.TemporaryDirectory(prefix="oxidant-directml-")
+        self.temp = tempfile.TemporaryDirectory(prefix="oxidant gpu fixture ")
         self.root = Path(self.temp.name)
         scripts = self.root / "scripts" / "windows"
         scripts.mkdir(parents=True)
@@ -47,6 +56,13 @@ class GpuPreflight(unittest.TestCase):
         binary.parent.mkdir(parents=True)
         shutil.copy2(HUB / "linux" / "scripts" / binary.name, binary)
         shutil.copy2(HUB / "linux/scripts/verify_package_license.py", binary.parent)
+        for relative in (
+            "shared/python/verify_locked_files.py",
+            "linux/scripts/lib/fetch-data-lock.py",
+        ):
+            target = self.hub / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(HUB / relative, target)
         self.bin = self.root / "onnx" / "bin"
         self.bin.mkdir(parents=True)
         self.lib = self.root / "onnx" / "lib"
@@ -126,12 +142,35 @@ class GpuPreflight(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("lacks same-wheel provider verification", result.stderr)
 
+    def test_missing_family_api_fails_before_image_or_archive_checks(self) -> None:
+        module = self.hub / "windows/scripts/modules/WindowsPackageBinary.Common.psm1"
+        source = module.read_text(encoding="utf-8")
+        self.assertIn("Assert-PackageOrtFamily", source)
+        module.write_text(
+            source.replace("Assert-PackageOrtFamily", "Assert-LegacyOrtFamily"),
+            encoding="utf-8",
+        )
+        result = self.run_preflight(False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "lacks complete ORT-family package verification",
+            plain_diagnostic(result.stderr),
+        )
+        bundle, archive = self.make_archive_fixture()
+        (bundle / "resources/models/deim_dfine_n_coco.onnx").unlink()
+        result = self.run_archive_check(bundle, archive)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "lacks complete ORT-family package verification",
+            plain_diagnostic(result.stderr),
+        )
+
     def test_wrong_provider_bytes_are_rejected(self) -> None:
         (self.bin / "onnxruntime_providers_shared.dll").write_bytes(pe(0x8664, 7))
         result = self.run_preflight()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "differs from the matching wheel", " ".join(result.stderr.split())
+            "differs from the matching wheel", plain_diagnostic(result.stderr)
         )
 
     def test_cuda_provider_must_match_the_same_wheel(self) -> None:
@@ -139,14 +178,16 @@ class GpuPreflight(unittest.TestCase):
         result = self.run_preflight(provider="cuda")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "differs from the matching wheel", " ".join(result.stderr.split())
+            "differs from the matching wheel", plain_diagnostic(result.stderr)
         )
 
     def test_directml_must_match_the_same_wheel(self) -> None:
         (self.bin / "DirectML.dll").write_bytes(pe(0x8664, 9))
         result = self.run_preflight(provider="directml")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("differs from the matching wheel", " ".join(result.stderr.split()))
+        self.assertIn(
+            "differs from the matching wheel", plain_diagnostic(result.stderr)
+        )
 
     def test_missing_cuda_provider_is_rejected(self) -> None:
         (self.bin / "onnxruntime_providers_cuda.dll").unlink()
@@ -204,20 +245,41 @@ class GpuPreflight(unittest.TestCase):
         source = self.root / "source"
         source.mkdir()
         (source / "kataglyphis_cli.exe").write_bytes(pe(0x8664, 4))
-        for name in ("onnxruntime.dll", "onnxruntime_providers_shared.dll", "DirectML.dll"):
+        for name in (
+            "onnxruntime.dll",
+            "onnxruntime_providers_shared.dll",
+            "DirectML.dll",
+        ):
             shutil.copy2(self.bin / name, source / name)
         for name in (
             "LICENSE",
             "resources/models/deim_dfine_n_coco.onnx",
+            "resources/models/deim_dfine_n_coco.LICENSE",
+            "resources/models/deim_dfine_n_coco.NOTICE",
             "licenses/onnxruntime/LICENSE",
             "licenses/onnxruntime/ThirdPartyNotices.txt",
         ):
             path = source / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture license", encoding="utf-8")
+        lock = self.root / "resources/models/models.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        models = source / "resources/models"
+        lock.write_text(
+            "".join(
+                f"{hashlib.sha256(path.read_bytes()).hexdigest()} {path.name} https://example.invalid/{path.name}\n"
+                for path in sorted(models.iterdir())
+            ),
+            encoding="utf-8",
+        )
         assets = self.root / "packaging/windows"
         assets.mkdir(parents=True)
-        for name in ("oxidant-cuda.cmd", "CUDA-README.txt", "oxidant-directml.cmd", "DIRECTML-README.txt"):
+        for name in (
+            "oxidant-cuda.cmd",
+            "CUDA-README.txt",
+            "oxidant-directml.cmd",
+            "DIRECTML-README.txt",
+        ):
             shutil.copy2(ROOT / "packaging/windows" / name, assets)
         return source, self.root / "candidate"
 
@@ -275,27 +337,87 @@ class GpuPreflight(unittest.TestCase):
         (source / "DirectML.dll").write_bytes(pe(0x8664, 9))
         result = self.run_cuda_candidate(source, destination, "directml")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("differs from the matching wheel", " ".join(result.stderr.split()))
+        self.assertIn(
+            "differs from the matching wheel", plain_diagnostic(result.stderr)
+        )
 
-    def make_archive_fixture(self) -> tuple[Path, Path]:
+    def test_candidate_rejects_missing_or_changed_locked_models(self) -> None:
+        source, destination = self.make_cuda_candidate_fixture()
+        for name in (
+            "deim_dfine_n_coco.onnx",
+            "deim_dfine_n_coco.LICENSE",
+            "deim_dfine_n_coco.NOTICE",
+        ):
+            model = source / "resources/models" / name
+            original = model.read_bytes()
+            for mutation in ("missing", "changed"):
+                with self.subTest(name=name, mutation=mutation):
+                    if mutation == "missing":
+                        model.unlink()
+                    else:
+                        model.write_bytes(b"changed")
+                    result = self.run_cuda_candidate(source, destination)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(destination.exists())
+                    model.write_bytes(original)
+        result = self.run_cuda_candidate(source, destination, "directml")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_candidate_fails_closed_when_lock_verification_inputs_are_missing(
+        self,
+    ) -> None:
+        source, destination = self.make_cuda_candidate_fixture()
+        for path in (
+            self.root / "resources/models/models.lock",
+            self.hub / "shared/python/verify_locked_files.py",
+            self.hub / "linux/scripts/lib/fetch-data-lock.py",
+        ):
+            with self.subTest(path=path.name):
+                saved = path.with_name(path.name + ".saved")
+                path.rename(saved)
+                try:
+                    result = self.run_cuda_candidate(source, destination)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(destination.exists())
+                finally:
+                    saved.rename(path)
+
+    def make_archive_fixture(self, provider: str = "cuda") -> tuple[Path, Path]:
         bundle = self.root / "bundle"
         bundle.mkdir()
         files = {
             "kataglyphis_cli.exe": b"application",
             "LICENSE": b"project license",
             "resources/models/deim_dfine_n_coco.onnx": b"model",
-            "oxidant-cuda.cmd": b"launcher",
-            "CUDA-README.txt": b"readme",
-            "onnxruntime.dll": b"core",
-            "onnxruntime_providers_shared.dll": b"shared",
-            "onnxruntime_providers_cuda.dll": b"cuda",
-            "licenses/onnxruntime/LICENSE": b"ort license",
-            "licenses/onnxruntime/ThirdPartyNotices.txt": b"ort notice",
+            "resources/models/deim_dfine_n_coco.LICENSE": b"model license",
+            "resources/models/deim_dfine_n_coco.NOTICE": b"model notice",
+            f"oxidant-{provider}.cmd": b"launcher",
+            f"{provider.upper()}-README.txt": b"readme",
+            "onnxruntime.dll": (self.bin / "onnxruntime.dll").read_bytes(),
+            "onnxruntime_providers_shared.dll": (
+                self.bin / "onnxruntime_providers_shared.dll"
+            ).read_bytes(),
+            "licenses/onnxruntime/LICENSE": b"fixture license",
+            "licenses/onnxruntime/ThirdPartyNotices.txt": b"fixture license",
         }
+        provider_file = (
+            "onnxruntime_providers_cuda.dll" if provider == "cuda" else "DirectML.dll"
+        )
+        files[provider_file] = (self.bin / provider_file).read_bytes()
         for name, content in files.items():
             path = bundle / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
+        lock = self.root / "resources/models/models.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        models = bundle / "resources/models"
+        lock.write_text(
+            "".join(
+                f"{hashlib.sha256(path.read_bytes()).hexdigest()} {path.name} https://example.invalid/{path.name}\n"
+                for path in sorted(models.iterdir())
+            ),
+            encoding="utf-8",
+        )
         archive = self.root / "candidate.zip"
         with zipfile.ZipFile(archive, "w") as output:
             for name, content in files.items():
@@ -303,7 +425,7 @@ class GpuPreflight(unittest.TestCase):
         return bundle, archive
 
     def run_archive_check(
-        self, bundle: Path, archive: Path
+        self, bundle: Path, archive: Path, provider: str = "cuda"
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
@@ -316,8 +438,15 @@ class GpuPreflight(unittest.TestCase):
                 "-Archive",
                 str(archive),
                 "-Provider",
-                "cuda",
+                provider,
             ],
+            env=os.environ
+            | {
+                "ONNX_ROOT": str(self.root / "onnx"),
+                "PYTHON_WHEELS": str(self.wheels),
+                "TEMP": str(self.root),
+                "TMP": str(self.root),
+            },
             text=True,
             capture_output=True,
             check=False,
@@ -327,6 +456,98 @@ class GpuPreflight(unittest.TestCase):
         bundle, archive = self.make_archive_fixture()
         result = self.run_archive_check(bundle, archive)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(list(self.root.glob("oxidant-gpu-wheel-proof-*")))
+
+    def test_bundle_and_archive_with_same_wrong_runtime_fail_wheel_proof(self) -> None:
+        bundle, archive = self.make_archive_fixture()
+        with zipfile.ZipFile(archive) as original:
+            files = {name: original.read(name) for name in original.namelist()}
+        for name in (
+            "onnxruntime.dll",
+            "onnxruntime_providers_shared.dll",
+            "onnxruntime_providers_cuda.dll",
+            "licenses/onnxruntime/LICENSE",
+            "licenses/onnxruntime/ThirdPartyNotices.txt",
+        ):
+            with self.subTest(name=name):
+                original = (bundle / name).read_bytes()
+                (bundle / name).write_bytes(b"mutated runtime payload")
+                with zipfile.ZipFile(archive, "w") as output:
+                    for entry, content in files.items():
+                        output.writestr(
+                            entry,
+                            b"mutated runtime payload" if entry == name else content,
+                        )
+                try:
+                    result = self.run_archive_check(bundle, archive)
+                    self.assertNotEqual(
+                        result.returncode, 0, result.stdout + result.stderr
+                    )
+                    self.assertFalse(list(self.root.glob("oxidant-gpu-wheel-proof-*")))
+                finally:
+                    (bundle / name).write_bytes(original)
+
+    def test_directml_archive_rechecks_matching_wheel(self) -> None:
+        bundle, archive = self.make_archive_fixture("directml")
+        result = self.run_archive_check(bundle, archive, "directml")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with zipfile.ZipFile(archive) as original:
+            files = {name: original.read(name) for name in original.namelist()}
+        (bundle / "DirectML.dll").write_bytes(b"changed DirectML")
+        with zipfile.ZipFile(archive, "w") as output:
+            for name, content in files.items():
+                output.writestr(
+                    name, b"changed DirectML" if name == "DirectML.dll" else content
+                )
+        result = self.run_archive_check(bundle, archive, "directml")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_cuda_archive_rechecks_optional_directml_against_same_wheel(self) -> None:
+        bundle, archive = self.make_archive_fixture()
+        directml = (self.bin / "DirectML.dll").read_bytes()
+        (bundle / "DirectML.dll").write_bytes(directml)
+        with zipfile.ZipFile(archive, "a") as output:
+            output.writestr("DirectML.dll", directml)
+        result = self.run_archive_check(bundle, archive)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with zipfile.ZipFile(archive) as original:
+            files = {name: original.read(name) for name in original.namelist()}
+        (bundle / "DirectML.dll").write_bytes(b"changed DirectML")
+        with zipfile.ZipFile(archive, "w") as output:
+            for name, content in files.items():
+                output.writestr(
+                    name, b"changed DirectML" if name == "DirectML.dll" else content
+                )
+        result = self.run_archive_check(bundle, archive)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_extra_or_nested_ort_family_files_are_rejected(self) -> None:
+        bundle, archive = self.make_archive_fixture()
+        with zipfile.ZipFile(archive) as original:
+            files = {name: original.read(name) for name in original.namelist()}
+        for name in (
+            "onnxruntime_genai.dll",
+            "lib/onnxruntime.dll",
+            "lib\\onnxruntime.dll",
+        ):
+            for location in ("bundle-and-archive", "archive-only", "bundle-only"):
+                with self.subTest(name=name, location=location):
+                    unexpected = bundle / name.replace("\\", "/")
+                    unexpected.parent.mkdir(parents=True, exist_ok=True)
+                    if location != "archive-only":
+                        unexpected.write_bytes(b"unproven")
+                    with zipfile.ZipFile(archive, "w") as output:
+                        for entry, content in files.items():
+                            output.writestr(entry, content)
+                        if location != "bundle-only":
+                            output.writestr(name, b"unproven")
+                    try:
+                        result = self.run_archive_check(bundle, archive)
+                        self.assertNotEqual(
+                            result.returncode, 0, result.stdout + result.stderr
+                        )
+                    finally:
+                        unexpected.unlink(missing_ok=True)
 
     def test_extra_provider_in_finished_archive_is_rejected(self) -> None:
         bundle, archive = self.make_archive_fixture()
@@ -341,6 +562,51 @@ class GpuPreflight(unittest.TestCase):
         (bundle / "onnxruntime_providers_cuda.dll").write_bytes(b"changed source")
         result = self.run_archive_check(bundle, archive)
         self.assertNotEqual(result.returncode, 0)
+
+    def test_finished_archive_rejects_missing_or_changed_model_files(self) -> None:
+        bundle, archive = self.make_archive_fixture()
+        with zipfile.ZipFile(archive) as original:
+            files = {name: original.read(name) for name in original.namelist()}
+        for name in (
+            "resources/models/deim_dfine_n_coco.onnx",
+            "resources/models/deim_dfine_n_coco.LICENSE",
+            "resources/models/deim_dfine_n_coco.NOTICE",
+        ):
+            for mutation in ("missing", "changed"):
+                with self.subTest(name=name, mutation=mutation):
+                    with zipfile.ZipFile(archive, "w") as output:
+                        for entry, content in files.items():
+                            if entry == name and mutation == "missing":
+                                continue
+                            output.writestr(
+                                entry, b"changed" if entry == name else content
+                            )
+                    result = self.run_archive_check(bundle, archive)
+                    self.assertNotEqual(
+                        result.returncode, 0, result.stdout + result.stderr
+                    )
+
+    def test_bundle_and_archive_with_same_wrong_model_fail_the_lock(self) -> None:
+        bundle, archive = self.make_archive_fixture()
+        with zipfile.ZipFile(archive) as original:
+            files = {name: original.read(name) for name in original.namelist()}
+        for name in (
+            "resources/models/deim_dfine_n_coco.onnx",
+            "resources/models/deim_dfine_n_coco.LICENSE",
+            "resources/models/deim_dfine_n_coco.NOTICE",
+        ):
+            with self.subTest(name=name):
+                path = bundle / name
+                path.write_bytes(b"changed in both")
+                with zipfile.ZipFile(archive, "w") as output:
+                    for entry, content in files.items():
+                        output.writestr(
+                            entry, b"changed in both" if entry == name else content
+                        )
+                result = self.run_archive_check(bundle, archive)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("do not match models.lock", result.stderr)
+                path.write_bytes(files[name])
 
     def test_provider_missing_from_bundle_is_rejected(self) -> None:
         bundle, archive = self.make_archive_fixture()

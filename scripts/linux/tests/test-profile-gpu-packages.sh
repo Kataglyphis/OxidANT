@@ -2,6 +2,8 @@
 # Exercise every package route and reject GPU profiles that only used CPU or copies.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "${here}/../../.." && pwd)"
+source_hub="${ANTFRASTRUCTURE_DIR:-${repo}/third_party/ANTfrastructure}"
 # shellcheck source=/dev/null
 source "${here}/../lib/ort-runtime-bundle.sh"
 work="$(mktemp -d)"
@@ -23,6 +25,25 @@ for device in cuda migraphx; do
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 test -z "${LD_PRELOAD+x}${LD_AUDIT+x}${KATAGLYPHIS_ONNX_MODEL+x}${KATAGLYPHIS_ONNX_BACKEND+x}${ORT_DYLIB_PATH+x}${ORT_LIB_LOCATION+x}"
+if [[ ${1:-} == onnx-detect ]]; then
+    [[ -z ${KATAGLYPHIS_PREPROCESS+x}${KATAGLYPHIS_SWAP_XY+x}${KATAGLYPHIS_ORT_THREADS+x}${KATAGLYPHIS_ORT_SPIN+x} ]]
+    [[ $2 == --image && -f $3 && $4 == --output && $6 == --profile ]]
+    format="$(cat "${here}/format")"
+    case "${KATAGLYPHIS_ORT_DEVICE}" in
+        cpu) [[ $# -eq 9 && $8 == --repeat-output ]]; test "${LD_LIBRARY_PATH}" = "${here}/lib"; provider=CPUExecutionProvider ;;
+        cuda) [[ $# -eq 9 && $8 == --repeat-output ]]; test "${LD_LIBRARY_PATH}" = "${here}/lib:/host/gpu-sdk"; provider=CUDAExecutionProvider ;;
+        migraphx) [[ $# -eq 9 && $8 == --repeat-output ]]; test "${LD_LIBRARY_PATH}" = "${here}/lib:/host/gpu-sdk"; provider=MIGraphXExecutionProvider ;;
+        *) exit 1 ;;
+    esac
+    printf '[{"cat":"Session","name":"model_run","ph":"X","pid":1,"ts":0,"dur":90},{"cat":"Node","ph":"X","pid":1,"ts":10,"dur":20,"args":{"provider":"%s","op_name":"Conv"}}' "${provider}" > "$7.json"
+    printf ',{"cat":"Session","name":"model_run","ph":"X","pid":1,"ts":100,"dur":90},{"cat":"Node","ph":"X","pid":1,"ts":110,"dur":20,"args":{"provider":"%s","op_name":"Conv"}}' "${provider}" >> "$7.json"
+    printf ']\n' >> "$7.json"
+    score=0.9
+    if [[ ${FAKE_PARITY_FORMAT:-} == "$format" && $KATAGLYPHIS_ORT_DEVICE != cpu ]]; then score=0.6; fi
+    printf '{"schema_version":1,"width":100,"height":100,"detections":[{"class":15,"score":%s,"box":[10,60,30,95]},{"class":15,"score":0.7,"box":[50,20,80,60]}]}' "$score" > "$5"
+    cp "$5" "$9"
+    exit 0
+fi
 test "${LD_LIBRARY_PATH}" = "${here}/lib:/host/gpu-sdk"
 test "$#" -eq 3 && test "$1" = onnx-check && test "$2" = --profile
 format="$(cat "${here}/format")"
@@ -73,7 +94,40 @@ APPIMAGE
     bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" >/dev/null
     printf 'tar\ndeb\nappimage\n' > "${work}/expected"
     cmp "${work}/expected" "${FAKE_SEEN}"
+    printf fixture > "${work}/two cats.jpg"
+    bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" "${work}/two cats.jpg" >/dev/null
+    trusted="${work}/trusted workspace"
+    poison="${work}/poison hub"
+    mkdir -p "${trusted}/third_party/ANTfrastructure/shared/python" \
+        "${trusted}/third_party/ANTfrastructure/linux/scripts/lib" \
+        "${trusted}/crates/inference/tests/fixtures" "${poison}/shared/python" "${poison}/linux/scripts/lib"
+    cp "${source_hub}/linux/scripts/lib/"{gpu-profile-env,log-bootstrap}.sh "${trusted}/third_party/ANTfrastructure/linux/scripts/lib/"
+    cp "${source_hub}/linux/scripts/lib/"{gpu-profile-env,log-bootstrap}.sh "${poison}/linux/scripts/lib/"
+    cp "${source_hub}/shared/python/compare_detector_parity.py" "${trusted}/third_party/ANTfrastructure/shared/python/"
+    cp "${source_hub}/shared/python/verify_ort_profile.py" "${trusted}/third_party/ANTfrastructure/shared/python/"
+    cp "${source_hub}/shared/python/verify_ort_profile.py" "${poison}/shared/python/"
+    cp "${work}/two cats.jpg" "${trusted}/crates/inference/tests/fixtures/two_cats.jpg"
+    printf 'raise SystemExit("poisoned comparator reached")\n' > "${poison}/shared/python/compare_detector_parity.py"
+    case "${device}" in
+        cuda) workflow="${repo}/.github/workflows/linux-nvidia-gpu.yml" ;;
+        migraphx) workflow="${repo}/.github/workflows/linux-x64-amd-gpu.yml" ;;
+    esac
+    command="$(sed -n '/^          command: env ANTFRASTRUCTURE_DIR=/s/^          command: //p' "${workflow}")"
+    [ -n "${command}" ] || { echo 'Pinned promotion command missing' >&2; exit 1; }
+    env GITHUB_WORKSPACE="${trusted}" GPU_PACKAGE_DIR="${work}/packages" ANTFRASTRUCTURE_DIR="${poison}" \
+        bash -c "${command}" >/dev/null
+    # shellcheck disable=SC2016
+    unsafe_command="$(printf '%s\n' "${command}" | sed 's|ANTFRASTRUCTURE_DIR="$GITHUB_WORKSPACE/third_party/ANTfrastructure" ||')"
+    [ "${unsafe_command}" != "${command}" ] || { echo 'Pinned hub override mutant was not created' >&2; exit 1; }
+    if env GITHUB_WORKSPACE="${trusted}" GPU_PACKAGE_DIR="${work}/packages" ANTFRASTRUCTURE_DIR="${poison}" \
+        bash -c "${unsafe_command}" >"${work}/poison.log" 2>&1; then
+        echo 'Unpinned comparator override was accepted' >&2; exit 1
+    fi
+    grep -q 'poisoned comparator reached' "${work}/poison.log"
     for format in tar deb appimage; do
+        if FAKE_PARITY_FORMAT="${format}" bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" "${work}/two cats.jpg" >/dev/null 2>&1; then
+            echo "${format} detector mismatch was accepted for ${device}" >&2; exit 1
+        fi
         if FAKE_CPU_FORMAT="${format}" bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" >/dev/null 2>&1; then
             echo "${format} CPU profile was accepted for ${device}" >&2; exit 1
         fi

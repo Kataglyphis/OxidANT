@@ -1,9 +1,12 @@
 """The Windows GPU candidate selects only the requested image/provider pairs."""
 
+import ast
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,19 +21,20 @@ def matrix_is_valid(content: str) -> bool:
     candidate = content.split("\n  candidate:\n", 1)[-1].split("\n  gpu-profile:\n", 1)[
         0
     ]
-    rows = re.findall(
-        r"(?m)^          - vendor: (\S+)\n            tag: (\S+)\n            provider: (\S+)$",
-        candidate,
-    )
+    preflight = content.split("\n  preflight:\n", 1)[-1].split("\n  candidate:\n", 1)[0]
+    profile = content.split("\n  gpu-profile:\n", 1)[-1]
     return (
-        len(rows) == 2
-        and set(rows)
-        == {
-            ("nvidia", "winamd64-nvidia", "cuda"),
-            ("amd", "winamd64-rocm", "directml"),
-        }
-        and candidate.count("- vendor:") == 2
+        "python -I scripts/windows/select_gpu_matrix.py" in preflight
+        and "if ($LASTEXITCODE -ne 0) { throw 'Invalid GPU vendor selection.' }"
+        in preflight
+        and "matrix: ${{ steps.vendors.outputs.matrix }}" in preflight
         and "needs: preflight" in candidate
+        and "matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}" in candidate
+        and "matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}" in profile
+        and "needs: [preflight, candidate]" in profile
+        and "if: ${{ !cancelled() && inputs.verify-gpu && needs.preflight.result == 'success' }}"
+        in profile
+        and "continue-on-error" not in profile
         and candidate.index("CPU inference from the finished ZIP")
         < candidate.index("Upload the unverified candidate")
         and "unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64"
@@ -105,6 +109,21 @@ def write_native_profile_stub(stage: Path) -> None:
 
 
 class GpuWorkflow(unittest.TestCase):
+    def test_linux_gpu_preflights_require_locked_file_api(self) -> None:
+        for filename in ("linux-nvidia-gpu-build.yml", "linux-x64-amd-gpu.yml"):
+            with self.subTest(filename=filename):
+                text = (ROOT / ".github/workflows" / filename).read_text(
+                    encoding="utf-8"
+                )
+                preflight = text.split("Check pinned GPU verification APIs", 1)[
+                    1
+                ].split("- name: Select", 1)[0]
+                self.assertIn("shared/python/verify_locked_files.py", preflight)
+                self.assertIn("fetch-data-lock.py", preflight)
+                self.assertIn("grep -q '^def read_lock('", preflight)
+                self.assertIn("grep -q '^def matches('", preflight)
+                self.assertIn("exit 1", preflight)
+
     def test_reusable_candidate_inputs_are_default_off(self) -> None:
         def valid(content: str, group: str, windows: bool) -> bool:
             if "  workflow_call:\n" not in content:
@@ -112,13 +131,36 @@ class GpuWorkflow(unittest.TestCase):
             call = content.split("  workflow_call:\n", 1)[1].split("\npermissions:", 1)[
                 0
             ]
+            suffix = (
+                "needs.preflight.outputs.suffix"
+                if windows
+                else "needs.select.outputs.suffix"
+                if group == "linux-nvidia-gpu"
+                else "needs.scope.outputs.suffix"
+            )
+            groups = re.findall(r"(?m)^\s+group: (.+)$", content)
             return (
                 "      verify-gpu:\n        type: boolean\n        default: false"
                 in call
                 and "      GHCR_PAT:\n        required: false" in call
-                and f"  group: {group}-${{{{ github.ref }}}}-${{{{ github.workflow }}}}"
+                and f"group: {group}-${{{{ github.ref }}}}-${{{{ github.workflow }}}}"
                 in content
-                and "if: ${{ inputs.verify-gpu }}" in content
+                and "      invocation-scope:\n        type: string\n        default: default"
+                in call
+                and "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py"
+                in content
+                and bool(groups)
+                and all(
+                    suffix in line and "inputs.invocation-scope" not in line
+                    for line in groups
+                )
+                and (
+                    "&& inputs.verify-gpu &&"
+                    in content.split("\n  gpu-profile:\n", 1)[-1]
+                    if windows or group == "linux-nvidia-gpu"
+                    else "if: ${{ inputs.verify-gpu }}"
+                    in content.split("\n  gpu-profile:\n", 1)[-1]
+                )
                 and (
                     not windows
                     or "      amd-device-index:\n        type: string\n        default: '0'"
@@ -145,7 +187,13 @@ class GpuWorkflow(unittest.TestCase):
                         "      WRONG_PAT:\n        required: false",
                     ),
                     ("${{ github.ref }}-${{ github.workflow }}", "${{ github.ref }}"),
-                    ("if: ${{ inputs.verify-gpu }}", "if: true"),
+                    ("outputs.suffix", "inputs.invocation-scope"),
+                    (
+                        "&& inputs.verify-gpu &&"
+                        if filename != "linux-x64-amd-gpu.yml"
+                        else "if: ${{ inputs.verify-gpu }}",
+                        "if: true",
+                    ),
                 ):
                     self.assertFalse(
                         valid(content.replace(original, replacement), group, windows)
@@ -271,6 +319,136 @@ class GpuWorkflow(unittest.TestCase):
     def test_supported_matrix(self) -> None:
         self.assertTrue(matrix_is_valid(WORKFLOW.read_text(encoding="utf-8")))
 
+    def test_scope_helper_rejects_unsafe_names_before_output(self) -> None:
+        hub = Path(
+            os.environ.get("ANTFRASTRUCTURE_DIR", ROOT / "third_party/ANTfrastructure")
+        )
+        helper = hub / "shared/python/gpu_invocation_scope.py"
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "output"
+            for scope, expected in (
+                ("default", ""),
+                ("release-a", "-scope-release-a"),
+                ("release-b", "-scope-release-b"),
+                ("bad/name", None),
+                ("Bad", None),
+                ("", None),
+                ("a" * 33, None),
+            ):
+                with self.subTest(scope=scope):
+                    output.write_text("sentinel\n")
+                    result = subprocess.run(
+                        [sys.executable, "-I", str(helper)],
+                        env={
+                            **os.environ,
+                            "GPU_INVOCATION_SCOPE": scope,
+                            "GITHUB_OUTPUT": str(output),
+                        },
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if expected is None:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(output.read_text(), "sentinel\n")
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(
+                            output.read_text(), f"sentinel\nsuffix={expected}\n"
+                        )
+
+    def test_windows_profile_continues_per_vendor_after_sibling_failure(self) -> None:
+        content = WORKFLOW.read_text(encoding="utf-8")
+        self.assertTrue(matrix_is_valid(content))
+        profile = content.split("\n  gpu-profile:\n", 1)[1]
+        download = profile.split("actions/download-artifact@", 1)[1].split(
+            "\n      - ", 1
+        )[0]
+        self.assertIn("name: unverified-oxidant-", download)
+        self.assertNotIn("continue-on-error", download)
+        self.assertNotIn("needs.candidate.result == 'success'", profile)
+        condition = re.search(r"(?m)^    if: \$\{\{ (.+) \}\}$", profile)
+        self.assertIsNotNone(condition)
+
+        def evaluate(cancelled, verify, preflight, candidate):
+            expression = condition.group(1)
+            expression = expression.replace("!cancelled()", repr(not cancelled))
+            expression = expression.replace("inputs.verify-gpu", repr(verify))
+            expression = expression.replace("needs.preflight.result", repr(preflight))
+            expression = expression.replace("needs.candidate.result", repr(candidate))
+            expression = expression.replace("&&", " and ").replace("||", " or ")
+            tree = ast.parse(expression, mode="eval")
+            allowed = (
+                ast.Expression,
+                ast.BoolOp,
+                ast.And,
+                ast.Or,
+                ast.Compare,
+                ast.Eq,
+                ast.Constant,
+            )
+            if any(not isinstance(node, allowed) for node in ast.walk(tree)):
+                raise ValueError("unsupported workflow condition")
+            return bool(
+                eval(
+                    compile(tree, "<gpu-profile-condition>", "eval"),
+                    {"__builtins__": {}},
+                    {},
+                )
+            )
+
+        for candidate_result in ("success", "failure", "skipped"):
+            with self.subTest(candidate_result=candidate_result):
+                self.assertTrue(evaluate(False, True, "success", candidate_result))
+        for cancelled, verify, preflight in (
+            (True, True, "success"),
+            (False, False, "success"),
+            (False, True, "failure"),
+        ):
+            self.assertFalse(evaluate(cancelled, verify, preflight, "failure"))
+
+    def test_vendor_selector_emits_only_supported_rows_and_rejects_invalid_input(
+        self,
+    ) -> None:
+        selector = ROOT / "scripts/windows/select_gpu_matrix.py"
+        expected = {
+            "nvidia": ("winamd64-nvidia", "cuda", "gpu-nvidia-cuda"),
+            "amd": ("winamd64-rocm", "directml", "gpu-amd-directml"),
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "output"
+            for vendor in ("all", "nvidia", "amd", "invalid", "AMD", ""):
+                with self.subTest(vendor=vendor):
+                    output.write_text("sentinel\n")
+                    result = subprocess.run(
+                        [sys.executable, "-I", str(selector)],
+                        env={
+                            **os.environ,
+                            "GPU_VENDOR": vendor,
+                            "GITHUB_OUTPUT": str(output),
+                        },
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if vendor not in {"all", "nvidia", "amd"}:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(output.read_text(), "sentinel\n")
+                        continue
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    lines = output.read_text().splitlines()
+                    self.assertEqual(len(lines), 2)
+                    rows = json.loads(lines[1].removeprefix("matrix="))["include"]
+                    self.assertEqual(
+                        {row["vendor"] for row in rows},
+                        set(expected) if vendor == "all" else {vendor},
+                    )
+                    for row in rows:
+                        self.assertEqual(
+                            (row["tag"], row["provider"], row["runner"]),
+                            expected[row["vendor"]],
+                        )
+
     def test_linux_clean_host_checks_missing_runtime_for_each_format(self) -> None:
         """A CPU-default TAR or AppImage must not pass as a GPU candidate."""
         for filename, vendor in (
@@ -301,10 +479,12 @@ class GpuWorkflow(unittest.TestCase):
     def test_wrong_architecture_and_provider_are_rejected(self) -> None:
         content = WORKFLOW.read_text(encoding="utf-8")
         for mutant in (
-            content.replace("winamd64-nvidia", "winarm64-nvidia"),
-            content.replace("winamd64-rocm", "winarm64-rocm"),
-            content.replace("provider: cuda", "provider: directml", 1),
             content.replace("needs: preflight", "needs: []"),
+            content.replace(
+                "fromJSON(needs.preflight.outputs.matrix)", "fromJSON('{}')"
+            ),
+            content.replace("!cancelled() && inputs.verify-gpu", "inputs.verify-gpu"),
+            content.replace("needs: [preflight, candidate]", "needs: candidate"),
         ):
             self.assertFalse(matrix_is_valid(mutant))
 
@@ -432,6 +612,9 @@ class GpuWorkflow(unittest.TestCase):
         content = (ROOT / ".github/workflows/linux-nvidia-gpu.yml").read_text(
             encoding="utf-8"
         )
+        build = (ROOT / ".github/workflows/linux-nvidia-gpu-build.yml").read_text(
+            encoding="utf-8"
+        )
         names = re.findall(
             r"(?m)^\s+(?:name|artifact): (oxidant-linux-\$\{\{ matrix\.arch \}\}-nvidia-host-runtime-candidate-[^\n]+)$",
             content,
@@ -439,12 +622,17 @@ class GpuWorkflow(unittest.TestCase):
         self.assertEqual(len(names), 3)
         self.assertEqual(len(set(names)), 1)
         self.assertIn("github.run_attempt", names[0])
-        self.assertIn(
-            "overwrite: false",
-            content.split("Upload unverified candidate", 1)[1].split(
-                "\n  clean-host:", 1
-            )[0],
+        self.assertEqual(
+            build.count(
+                "name: "
+                + names[0]
+                .replace("matrix.arch", "inputs.arch")
+                .replace("needs.select.outputs.suffix", "steps.scope.outputs.suffix")
+            ),
+            2,
         )
+        for upload in build.split("uses: actions/upload-artifact@")[1:]:
+            self.assertIn("overwrite: false", upload)
         first = {
             names[0]
             .replace("${{ matrix.arch }}", arch)
@@ -463,23 +651,37 @@ class GpuWorkflow(unittest.TestCase):
             self.assertNotIn(artifact, first)
             first[artifact] = "attempt-2"
         self.assertEqual(set(first.values()), {"attempt-1", "attempt-2"})
+        scoped = {
+            names[0]
+            .replace("${{ matrix.arch }}", "x64")
+            .replace("${{ github.run_id }}", "42")
+            .replace("${{ github.run_attempt }}", "1")
+            .replace("${{ needs.select.outputs.suffix }}", suffix)
+            for suffix in ("", "-scope-alpha", "-scope-beta")
+        }
+        self.assertEqual(len(scoped), 3)
 
     def test_amd_artifact_consumers_require_the_current_attempt(self) -> None:
         amd = (ROOT / ".github/workflows/linux-x64-amd-gpu.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn(
-            "name: ${{ format('{0}-attempt-{1}', steps.name.outputs.artifact_prefix, github.run_attempt) }}\n          overwrite: false",
+            "name: ${{ format('{0}-attempt-{1}{2}', steps.name.outputs.artifact_prefix, github.run_attempt, needs.scope.outputs.suffix) }}\n          overwrite: false",
             amd,
         )
-        consumer = "${{ format('{0}-attempt-{1}', needs.build.outputs.artifact_prefix, github.run_attempt) }}"
+        consumer = "${{ format('{0}-attempt-{1}{2}', needs.build.outputs.artifact_prefix, github.run_attempt, needs.scope.outputs.suffix) }}"
         self.assertIn(f"artifact: {consumer}", amd)
         self.assertIn(f"name: {consumer}", amd)
         self.assertIn("artifact_prefix: ${{ steps.name.outputs.artifact_prefix }}", amd)
+        scoped = {
+            f"oxidant-1-linux-x64-amd-host-runtime-candidate-attempt-1{suffix}"
+            for suffix in ("", "-scope-alpha", "-scope-beta")
+        }
+        self.assertEqual(len(scoped), 3)
 
     def test_windows_profile_requires_the_current_attempt(self) -> None:
         windows = WORKFLOW.read_text(encoding="utf-8")
-        name = "unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64-attempt-${{ github.run_attempt }}"
+        name = "unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64-attempt-${{ github.run_attempt }}${{ needs.preflight.outputs.suffix }}"
         self.assertIn(f"name: {name}\n          overwrite: false", windows)
         self.assertEqual(windows.count(f"name: {name}"), 2)
         for provider, vendor in (("cuda", "nvidia"), ("directml", "amd")):
@@ -494,6 +696,11 @@ class GpuWorkflow(unittest.TestCase):
                 .replace("${{ github.run_attempt }}", "2")
             )
             self.assertNotEqual(first, retry)
+            scoped = {
+                first.replace("${{ needs.preflight.outputs.suffix }}", suffix)
+                for suffix in ("", "-scope-alpha", "-scope-beta")
+            }
+            self.assertEqual(len(scoped), 3)
 
 
 if __name__ == "__main__":

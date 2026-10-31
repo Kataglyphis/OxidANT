@@ -11,9 +11,11 @@ Linux GPU packaging is experimental and is not part of the release workflow. The
 `Linux x64 · AMD GPU package candidate` workflow runs on request and builds a
 candidate requiring host ROCm. Its optional `verify-gpu` job runs packaged inference
 on a self-hosted `gpu-amd-rocm` runner and requires profiled MIGraphX operators.
-The dispatch-only `Linux NVIDIA GPU package candidates` workflow targets x64 and
-arm64 with the registry NVIDIA image. Its `verify-gpu` option requires both x64 and
-arm64 self-hosted runners labelled `gpu-nvidia-cuda`; each must profile a CUDA model
+The manually dispatched or reusable `Linux NVIDIA GPU package candidates` workflow uses
+the registry NVIDIA image. Its `architecture` input defaults to `both`; select `x64`
+or `arm64` to build and check only that architecture. With `both`, both builds and
+checks must succeed. The `verify-gpu` option requires a self-hosted runner labelled
+`gpu-nvidia-cuda` for each selected architecture; each must profile a CUDA model
 operator. The hardware check profiles the finished tarball, extracted DEB payload, and
 AppImage separately; it invokes the AppImage with extract-and-run, without FUSE. A GPU
 runner needs `dpkg-deb` and temporary space for those payloads as well as the host GPU
@@ -23,6 +25,32 @@ Linux GPU candidate uploads include the run attempt and cannot replace an earlie
 Their clean-host and GPU checks request the current attempt's candidate. A downstream-only
 rerun cannot reuse an earlier build; rerun the build as well. Attempt-scoped names do not
 independently prove GPU execution or make the candidate a release asset.
+For multiple calls to the same GPU workflow in one caller run, provide a distinct
+`invocation-scope` for each call. It defaults to `default` for existing callers;
+other values must start with a lowercase letter and contain at most 32 lowercase ASCII
+letters, digits or hyphens. The validated scope isolates artifact and receipt names.
+Calls using the same scope still address the same outputs and must not overlap.
+For Linux AMD x64 and NVIDIA x64/arm64, `promote-verified` currently fails before the
+build: executing GPU operators does not establish that their detector output agrees with
+CPU inference. Promotion remains blocked until repeated detector output parity is
+verified on hardware. The existing `verify-gpu` profiling and unverified candidate paths
+remain available.
+
+The parity diagnostic runs the checked-in two-cats JPEG through the packaged detector in
+separate CPU and GPU processes for each package format. It requires two spatially distinct
+cats in the CPU result and matches every detection above 0.25 by class, with box IoU at
+least 0.90 and score difference at most 0.05. It runs the GPU detector twice in the same
+session, repeats the CPU baseline in its own session, compares every result pair and
+requires model operators on the requested provider in each run. The CPU-only semantic
+oracle is applied to the original CPU baseline; pairwise comparisons retain the same
+matching tolerances. These tolerances are provisional until tested on the intended hardware; a
+successful synthetic test alone does not unblock promotion.
+
+The prepared promotion path binds clean-host and GPU checks to packages downloaded by
+immutable artifact ID, then verifies their receipts and raw archive against the current
+run attempt. It rejects missing checks, changed package bytes and downstream-only reruns
+from an older attempt. NVIDIA uses separate producers for each architecture. This path
+does not publish a release and requires trusted runners and compatible hub APIs.
 `package-linux.sh --ort-variant nvidia` or `--ort-variant amd` selects the chain GPU
 ORT and its matching provider, and appends `+gpu-nvidia` or `+gpu-amd` to the version.
 The DEBs all use the `oxidant` package identity and install the `oxidant` command;
@@ -151,9 +179,17 @@ candidate job as well. Attempt-scoped names do not themselves prove GPU executio
 
 To profile a candidate on hardware, dispatch with `verify-gpu` and provide Windows x64
 self-hosted runners labelled `gpu-nvidia-cuda` and `gpu-amd-directml`. Set
+`gpu-vendor` to `nvidia` or `amd` to run one vendor independently; it defaults to `all`.
+With `all`, each available candidate can reach its own profile job even when the other
+candidate fails; a missing selected artifact still fails its own check. Set
 `amd-device-index` to the AMD adapter's DXGI index (default `0`); the job checks that
 the same index is a physical AMD GPU before requesting it from DirectML. Each job
-requires model operators in its matching ONNX Runtime provider.
+requires model operators in its matching ONNX Runtime provider. Its opt-in ZIP check
+also compares the locked two-cats fixture on CPU and in two GPU processes, repeating
+inference within each session and requiring requested-provider operators in every run.
+The bundled model, license and notice must match the model lock. These checks leave
+the candidate unverified and do not establish parity for MSI or MSIX packages. The
+pinned hub must provide the shared locked-file, parity and per-run profile verifiers.
 
 ## MSIX
 

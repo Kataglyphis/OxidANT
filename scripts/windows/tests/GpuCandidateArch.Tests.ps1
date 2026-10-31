@@ -30,7 +30,7 @@ Export-ModuleMember -Function Test-PayloadLoadsOrt
     foreach ($name in 'kataglyphis_cli.exe', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'DirectML.dll') {
       Write-FixturePe (Join-Path $script:source $name) 0x8664
     }
-    foreach ($name in 'LICENSE', 'resources\models\deim_dfine_n_coco.onnx', 'licenses\onnxruntime\LICENSE', 'licenses\onnxruntime\ThirdPartyNotices.txt') {
+    foreach ($name in 'LICENSE', 'resources\models\deim_dfine_n_coco.onnx', 'resources\models\deim_dfine_n_coco.LICENSE', 'resources\models\deim_dfine_n_coco.NOTICE', 'licenses\onnxruntime\LICENSE', 'licenses\onnxruntime\ThirdPartyNotices.txt') {
       $path = Join-Path $script:source $name
       $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path)
       Set-Content -LiteralPath $path -Value 'fixture'

@@ -20,6 +20,8 @@ if [ "$3" = amd ] && [ "$arch" = arm64 ]; then
     exit 2
 fi
 hub="$(antfrastructure_path linux/scripts/06-packaging)"
+verify_locked_files="$(antfrastructure_path shared/python/verify_locked_files.py)"
+data_lock_fetcher="$(antfrastructure_path linux/scripts/lib/fetch-data-lock.py)"
 # shellcheck source=/dev/null
 source "${hub}/ort-runtime-bundle.sh"
 # shellcheck source=/dev/null
@@ -70,4 +72,16 @@ for bundle in "${work}/tar/oxidant" "${work}/deb/opt/oxidant"; do
 done
 bash "${hub}/verify-ort-appimage-payload.sh" "${images[0]}" "$arch" \
     usr/lib/oxidant/lib usr/lib/oxidant/licenses/onnxruntime "$3"
-printf 'Finished %s package payloads match the GPU wheel and exclude host runtimes\n' "$3"
+image="$(realpath -e "${images[0]}")"
+mkdir "${work}/appimage"
+(cd "${work}/appimage" && env -u LD_PRELOAD -u LD_AUDIT "$image" --appimage-extract 'usr/lib/oxidant/resources/models/*' >/dev/null)
+verify_model() {
+    local root="$1" bundle="$2"
+    python3 -I "$verify_locked_files" --root "$root" --directory "$bundle/resources/models" \
+        --fetcher "$data_lock_fetcher" --lock "${KATAGLYPHIS_REPO_ROOT}/resources/models/models.lock" \
+        --file deim_dfine_n_coco.onnx --file deim_dfine_n_coco.LICENSE --file deim_dfine_n_coco.NOTICE
+}
+verify_model "${work}/tar" "${work}/tar/oxidant"
+verify_model "${work}/deb" "${work}/deb/opt/oxidant"
+verify_model "${work}/appimage/squashfs-root" "${work}/appimage/squashfs-root/usr/lib/oxidant"
+printf 'Finished %s package payloads match the GPU wheel and locked model and exclude host runtimes\n' "$3"

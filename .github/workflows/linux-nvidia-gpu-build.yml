@@ -1,0 +1,234 @@
+name: Linux NVIDIA GPU candidate build
+
+on:
+  workflow_call:
+    inputs:
+      invocation-scope:
+        type: string
+        default: default
+      arch:
+        type: string
+        required: true
+      platform:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      verify-gpu:
+        type: boolean
+        default: false
+      promote-verified:
+        type: boolean
+        default: false
+    outputs:
+      producer_attempt:
+        value: ${{ jobs.build.outputs.producer_attempt }}
+      artifact_id:
+        value: ${{ jobs.build.outputs.artifact_id }}
+      artifact_digest:
+        value: ${{ jobs.build.outputs.artifact_digest }}
+      artifact_files:
+        value: ${{ jobs.build.outputs.artifact_files }}
+    secrets:
+      GHCR_PAT:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: NVIDIA candidate (${{ inputs.arch }}, host CUDA required)
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      producer_attempt: ${{ steps.name.outputs.producer_attempt }}
+      artifact_id: ${{ steps.promotion_upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.promotion_upload.outputs.artifact-digest }}
+      artifact_files: ${{ steps.promotion_files.outputs.files }}
+    timeout-minutes: 240
+    env:
+      REF_NAME: ${{ github.ref_name }}
+      RUN_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Require CPU and GPU detector parity for promotion
+        if: ${{ inputs.promote-verified }}
+        run: |
+          echo '::error::Promotion is disabled until CPU and GPU detector output parity is verified.'
+          exit 1
+      - name: Require a supported NVIDIA build tuple
+        shell: bash
+        env:
+          BUILD_TUPLE: ${{ format('{0}:{1}:{2}', inputs.arch, inputs.platform, inputs.runner) }}
+        run: |
+          case "$BUILD_TUPLE" in
+            x64:linux/amd64:ubuntu-26.04|arm64:linux/arm64:ubuntu-26.04-arm) ;;
+            *) echo '::error::Unsupported NVIDIA build tuple'; exit 1 ;;
+          esac
+      - name: Require hardware profiling for promotion
+        if: ${{ inputs.promote-verified && !inputs.verify-gpu }}
+        run: |
+          echo '::error::Promotion requires verify-gpu and the hardware profile.'
+          exit 1
+      - name: Check out pinned sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - name: Validate the invocation scope
+        id: scope
+        env:
+          GPU_INVOCATION_SCOPE: ${{ inputs.invocation-scope }}
+        run: python3 -I third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py
+      - name: Check pinned GPU verification APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          hub=third_party/ANTfrastructure/linux/scripts/06-packaging
+          model_verifier=third_party/ANTfrastructure/shared/python/verify_locked_files.py
+          model_fetcher=third_party/ANTfrastructure/linux/scripts/lib/fetch-data-lock.py
+          parity_comparator=third_party/ANTfrastructure/shared/python/compare_detector_parity.py
+          parity_tests=third_party/ANTfrastructure/shared/python/tests/test_compare_detector_parity.py
+          ort_profile=third_party/ANTfrastructure/shared/python/verify_ort_profile.py
+          profile_env=third_party/ANTfrastructure/linux/scripts/lib/gpu-profile-env.sh
+          if ! test -f "$profile_env" || ! grep -q '^gpu_without_migraphx_overrides()' "$profile_env"; then
+            echo 'Pinned ANTfrastructure lacks GPU profile environment isolation' >&2; exit 1
+          fi
+          if ! test -f "$parity_comparator" || ! test -f "$parity_tests"; then
+            echo 'Pinned ANTfrastructure lacks detector parity comparison and tests' >&2; exit 1
+          fi
+          python3 -I "$parity_comparator" --help | grep -q -- --pairwise || { echo 'Pinned ANTfrastructure lacks pairwise detector comparison' >&2; exit 1; }
+          python3 -I "$ort_profile" --help | grep -q -- --min-runs || { echo 'Pinned ANTfrastructure lacks per-run ORT profiling' >&2; exit 1; }
+          if ! test -f "$model_verifier" || ! test -f "$model_fetcher" || ! grep -q '^def read_lock(' "$model_fetcher" || ! grep -q '^def matches(' "$model_fetcher"; then
+            echo 'Pinned ANTfrastructure lacks locked-model verification APIs' >&2; exit 1
+          fi
+          test -f "$hub/verify-ort-appimage-payload.sh" || { echo 'Pinned ANTfrastructure lacks the finished GPU AppImage verifier' >&2; exit 1; }
+          if ! test -f "$hub/ort-runtime-bundle.sh" || ! grep -q 'ort_assert_no_bundled_host_runtime' "$hub/ort-runtime-bundle.sh"; then
+            echo 'Pinned ANTfrastructure lacks the GPU host-runtime exclusion check' >&2; exit 1
+          fi
+          if ! test -f "$hub/../01-core/platform.sh" || ! grep -q '^arch_normalize()' "$hub/../01-core/platform.sh"; then
+            echo 'Pinned ANTfrastructure lacks GPU package architecture normalization' >&2; exit 1
+          fi
+          python3 "$hub/stage-ort-wheel-licenses.py" --help | grep -q -- --require-unstripped || { echo 'Pinned ANTfrastructure lacks exact GPU wheel verification' >&2; exit 1; }
+          bash scripts/linux/tests/test-verify-gpu-packages.sh
+          bash scripts/linux/tests/test-profile-gpu-bundle.sh
+          bash scripts/linux/tests/test-profile-gpu-packages.sh
+          bash scripts/linux/tests/test-profile-parity-mutations.sh
+          bash scripts/linux/tests/test-check-gpu-detector-parity.sh
+          python3 -I "$parity_tests"
+          python3 scripts/linux/tests/test-detector-parity.py
+          python3 scripts/windows/tests/test_gpu_workflow.py
+          python3 scripts/linux/tests/test-nvidia-gpu-promotion.py
+          bash scripts/linux/tests/test-gpu-clean-host-env.sh
+      - name: Select registry image
+        id: image
+        shell: bash
+        run: |
+          cpu_image="$(bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh --linux)"
+          printf 'ref=%s:latest-nvidia\n' "${cpu_image%:*}" >> "$GITHUB_OUTPUT"
+      - name: Prepare disk and pull the GPU image
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
+        with:
+          image: ${{ steps.image.outputs.ref }}
+          checkout: 'false'
+          free-disk-space: 'true'
+          pull-first: 'false'
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GHCR_PAT }}
+      - name: Compute version
+        run: bash scripts/linux/compute-version.sh
+      - name: Preflight, build and verify packages
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+          ARCH: ${{ inputs.arch }}
+          PLATFORM: ${{ inputs.platform }}
+        shell: bash
+        run: |
+          docker run --rm --user root --platform "$PLATFORM" \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            -e VERSION -e ARCH -e PLATFORM -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always \
+            "$IMAGE" bash -c '
+              set -euo pipefail
+              hub=third_party/ANTfrastructure/linux/scripts/06-packaging
+              test -f "$hub/verify-ort-appimage-payload.sh" || {
+                echo "Pinned ANTfrastructure lacks the finished GPU AppImage verifier" >&2; exit 1;
+              }
+              python3 "$hub/stage-ort-wheel-licenses.py" --help | grep -q -- --require-unstripped || {
+                echo "Pinned ANTfrastructure lacks exact GPU wheel verification" >&2; exit 1;
+              }
+              ort=/usr/local/lib/onnxruntime-gpu/lib
+              python3 "$hub/stage-ort-wheel-licenses.py" --require-unstripped \
+                --strip "${STRIP:-strip}" \
+                --wheel-dir /opt/onnxruntime-wheels --destination /tmp/oxidant-ort-preflight \
+                --library "$ort/libonnxruntime.so.1" \
+                --library "$ort/libonnxruntime_providers_shared.so" \
+                --library "$ort/libonnxruntime_providers_cuda.so"
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgtk-4-dev
+              mkdir -p "$CARGO_HOME"
+              chown 1001:1001 "$CARGO_HOME"
+              runuser -u kataglyphis -- bash -c '\''
+                set -euo pipefail
+                cargo test --locked -p kataglyphis_inference --lib device_tests
+                cargo test --locked -p kataglyphis_inference --test gpu_request
+                python3 scripts/linux/tests/test-ort-gpu-profile.py
+                cargo build --locked --release -p kataglyphis_cli
+                KATAGLYPHIS_PACKAGING_WORKDIR=/tmp/oxidant-gpu-package-work \
+                bash scripts/linux/package-linux.sh --binary-path target/release/kataglyphis_cli \
+                  --version "$VERSION" --arch "$ARCH" --platform "$PLATFORM" \
+                  --package-types tar,deb,appimage --ort-variant nvidia
+                profile_dir="$(mktemp -d)"
+                env -u KATAGLYPHIS_ONNX_MODEL ORT_DYLIB_PATH=/tmp/oxidant-gpu-package-work/oxidant/lib/libonnxruntime.so \
+                KATAGLYPHIS_ORT_DEVICE=cpu /tmp/oxidant-gpu-package-work/oxidant/oxidant \
+                  onnx-check --profile "$profile_dir/profile"
+                mapfile -t profiles < <(find "$profile_dir" -maxdepth 1 -type f -name "profile*.json")
+                [[ ${#profiles[@]} -eq 1 ]]
+                python3 scripts/verify-ort-gpu-profile.py "${profiles[0]}" --device cpu
+                if python3 scripts/verify-ort-gpu-profile.py "${profiles[0]}" --device cuda; then
+                  echo "CPU-only profile was accepted as GPU execution" >&2; exit 1
+                fi
+                bash scripts/linux/verify-gpu-packages.sh dist "$ARCH" nvidia
+              '\''
+            '
+      - name: Record the producer attempt
+        id: name
+        run: printf 'producer_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - name: Select the exact promotion packages
+        if: ${{ inputs.promote-verified }}
+        id: promotion_files
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          debs=(dist/*.deb)
+          tarballs=(dist/*.tar.gz)
+          appimages=(dist/*.AppImage)
+          [[ ${#debs[@]} -eq 1 && ${#tarballs[@]} -eq 1 && ${#appimages[@]} -eq 1 ]] || { echo 'Expected exactly one DEB, tarball and AppImage' >&2; exit 1; }
+          for file in "${debs[0]}" "${tarballs[0]}" "${appimages[0]}"; do
+            [[ "$file" != *$'\n'* && "$file" != *$'\r'* ]] || { echo 'Invalid package filename' >&2; exit 1; }
+          done
+          {
+            echo 'files<<OXIDANT_PACKAGE_FILES'
+            printf '%s\n' "${debs[0]##*/}" "${tarballs[0]##*/}" "${appimages[0]##*/}"
+            echo 'OXIDANT_PACKAGE_FILES'
+          } >> "$GITHUB_OUTPUT"
+      - name: Upload unverified candidate
+        if: ${{ !inputs.promote-verified }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oxidant-linux-${{ inputs.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ steps.scope.outputs.suffix }}
+          overwrite: false
+          if-no-files-found: error
+          path: dist/**
+
+      - name: Upload exact unverified promotion input
+        if: ${{ inputs.promote-verified }}
+        id: promotion_upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oxidant-linux-${{ inputs.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ steps.scope.outputs.suffix }}
+          overwrite: false
+          if-no-files-found: error
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+            dist/*.AppImage

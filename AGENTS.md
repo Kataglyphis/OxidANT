@@ -609,6 +609,7 @@ stayed that way through several edits.
 ### Continuous integration
 
 The GPU candidate workflows accept dispatch and reusable calls; keep GPU profiling default-off and their uploads unverified until separately promoted.
+The opt-in Linux AMD checked artifact requires current-attempt immutable bytes and both clean-host and GPU receipts; it does not publish a release.
 Linux GPU candidate verification checks the DEB's embedded package identity, target architecture and GPU vendor version before upload.
 Linux GPU candidate uploads are immutable and scoped to the run attempt; clean-host and GPU checks must select the current attempt, not a previous one.
 Windows GPU candidate uploads are immutable and attempt-scoped; the hardware profile must select the current attempt's ZIP.

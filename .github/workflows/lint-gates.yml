@@ -45,6 +45,8 @@ jobs:
           submodules: true
       - name: Run every suite
         run: for suite in scripts/linux/tests/test-*.sh; do bash "$suite"; done
+      - name: Test detector parity comparison
+        run: python3 scripts/linux/tests/test-detector-parity.py
 
   # The GPU-candidate scripts run only on GPU hosts, so their suites need a lane every push reaches.
   gpu-candidate-suites:

@@ -3,6 +3,15 @@ name: Windows x64 GPU candidates
 on:
   workflow_dispatch:
     inputs:
+      invocation-scope:
+        description: Unique lowercase scope for overlapping calls in the same run
+        type: string
+        default: default
+      gpu-vendor:
+        description: GPU vendor candidates to build and profile
+        type: choice
+        options: [all, nvidia, amd]
+        default: all
       verify-gpu:
         description: Profile the candidate on vendor-labelled Windows GPU runners
         type: boolean
@@ -13,6 +22,12 @@ on:
         default: '0'
   workflow_call:
     inputs:
+      invocation-scope:
+        type: string
+        default: default
+      gpu-vendor:
+        type: string
+        default: all
       verify-gpu:
         type: boolean
         default: false
@@ -26,20 +41,34 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: windows-gpu-candidates-${{ github.ref }}-${{ github.workflow }}
-  cancel-in-progress: true
-
 jobs:
   preflight:
     runs-on: windows-2025
     timeout-minutes: 10
     outputs:
       repository: ${{ steps.image.outputs.repository }}
+      suffix: ${{ steps.scope.outputs.suffix }}
+      matrix: ${{ steps.vendors.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
+      - name: Validate invocation scope and select GPU vendors
+        id: scope
+        shell: pwsh
+        env:
+          GPU_INVOCATION_SCOPE: ${{ inputs.invocation-scope }}
+        run: |
+          python -I third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid GPU invocation scope.' }
+      - name: Select GPU vendors
+        id: vendors
+        shell: pwsh
+        env:
+          GPU_VENDOR: ${{ inputs.gpu-vendor }}
+        run: |
+          python -I scripts/windows/select_gpu_matrix.py
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid GPU vendor selection.' }
       - name: Check pinned GPU packaging APIs
         shell: pwsh
         run: |
@@ -53,6 +82,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python third_party/ANTfrastructure/windows/scripts/tests/test_dxgi_adapter.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test the optional detector parity gate
+        if: ${{ inputs.verify-gpu }}
+        shell: pwsh
+        run: |
+          python -I scripts/windows/tests/test_gpu_detector_parity.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows detector parity fixture failed' }
       - name: Test GPU launcher and architecture guards
         shell: pwsh
         run: |
@@ -73,17 +108,13 @@ jobs:
     needs: preflight
     name: Unverified ${{ matrix.provider }} candidate (${{ matrix.vendor }}, x64)
     runs-on: windows-2025
+    concurrency:
+      group: windows-gpu-candidates-${{ github.ref }}-${{ github.workflow }}-${{ needs.preflight.outputs.suffix }}-${{ matrix.vendor }}
+      cancel-in-progress: true
     timeout-minutes: 240
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - vendor: nvidia
-            tag: winamd64-nvidia
-            provider: cuda
-          - vendor: amd
-            tag: winamd64-rocm
-            provider: directml
+      matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}
     steps:
       - name: Prepare the registry image and short-path checkout
         id: prep
@@ -107,10 +138,11 @@ jobs:
           WORKSPACE: ${{ steps.prep.outputs.workspace }}
           VENDOR: ${{ matrix.vendor }}
           PROVIDER: ${{ matrix.provider }}
+          INVOCATION_SUFFIX: ${{ needs.preflight.outputs.suffix }}
         run: |
           $ErrorActionPreference = 'Stop'
           $zip = Join-Path $env:WORKSPACE "dist/gpu-$env:VENDOR/oxidant-$env:PROVIDER-$env:VENDOR-windows-x64-unverified.zip"
-          $stage = Join-Path $env:RUNNER_TEMP "oxidant-gpu-$env:VENDOR-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $stage = Join-Path $env:RUNNER_TEMP "oxidant-gpu-$env:VENDOR-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT$env:INVOCATION_SUFFIX"
           $null = New-Item -ItemType Directory -Path $stage
           & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $stage
           if ($LASTEXITCODE -ne 0) { throw 'Cannot unpack the GPU candidate' }
@@ -126,24 +158,17 @@ jobs:
       - name: Upload the unverified candidate
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64-attempt-${{ github.run_attempt }}
+          name: unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64-attempt-${{ github.run_attempt }}${{ needs.preflight.outputs.suffix }}
           overwrite: false
           path: ${{ steps.prep.outputs.workspace }}/dist/gpu-${{ matrix.vendor }}/*.zip
           if-no-files-found: error
 
   gpu-profile:
-    if: ${{ inputs.verify-gpu }}
-    needs: candidate
+    if: ${{ !cancelled() && inputs.verify-gpu && needs.preflight.result == 'success' }}
+    needs: [preflight, candidate]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - vendor: nvidia
-            provider: cuda
-            runner: gpu-nvidia-cuda
-          - vendor: amd
-            provider: directml
-            runner: gpu-amd-directml
+      matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}
     runs-on: [self-hosted, Windows, X64, '${{ matrix.runner }}']
     timeout-minutes: 30
     steps:
@@ -155,19 +180,20 @@ jobs:
           python-version: '3.14'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/oxidant-gpu-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.vendor }}
+          name: unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64-attempt-${{ github.run_attempt }}${{ needs.preflight.outputs.suffix }}
+          path: ${{ runner.temp }}/oxidant-gpu-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.vendor }}${{ needs.preflight.outputs.suffix }}
       - name: Require model operators on the selected GPU provider
         shell: pwsh
         env:
           PROVIDER: ${{ matrix.provider }}
           DIRECTML_INDEX: ${{ inputs.amd-device-index }}
-          CANDIDATE_DIR: ${{ runner.temp }}/oxidant-gpu-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.vendor }}
+          CANDIDATE_DIR: ${{ runner.temp }}/oxidant-gpu-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.vendor }}${{ needs.preflight.outputs.suffix }}
+          INVOCATION_SUFFIX: ${{ needs.preflight.outputs.suffix }}
         run: |
           $ErrorActionPreference = 'Stop'
           $zips = @(Get-ChildItem -LiteralPath $env:CANDIDATE_DIR -Filter '*.zip' -File)
           if ($zips.Count -ne 1) { throw "Expected one GPU candidate ZIP, found $($zips.Count)" }
-          $stage = Join-Path $env:RUNNER_TEMP "oxidant-gpu-profile-$env:PROVIDER-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $stage = Join-Path $env:RUNNER_TEMP "oxidant-gpu-profile-$env:PROVIDER-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT$env:INVOCATION_SUFFIX"
           $null = New-Item -ItemType Directory -Path $stage
           & "$env:SystemRoot\System32\tar.exe" -xf $zips[0].FullName -C $stage
           if ($LASTEXITCODE -ne 0) { throw 'Cannot unpack the GPU candidate' }
@@ -185,3 +211,5 @@ jobs:
           if ($profiles.Count -ne 1) { throw "Expected one ORT profile, found $($profiles.Count)" }
           python scripts/verify-ort-gpu-profile.py $profiles[0].FullName --device $env:PROVIDER
           if ($LASTEXITCODE -ne 0) { throw 'No model operator ran on the requested GPU provider' }
+          python -I scripts/windows/check_gpu_detector_parity.py $stage --device $env:PROVIDER --directml-index $env:DIRECTML_INDEX
+          if ($LASTEXITCODE -ne 0) { throw 'Windows ZIP detector parity or per-run GPU profiling failed' }

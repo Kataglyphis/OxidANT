@@ -16,20 +16,19 @@ if (-not (Test-Path -LiteralPath $binaryVerifier -PathType Leaf)) {
 }
 . (Join-Path $PSScriptRoot 'Resolve-BuildModule.ps1')
 Import-BuildModule @('WindowsTargetArch.Common', 'WindowsOrtProvenance.Common', 'WindowsOrtPayload.Common', 'WindowsOrtLicense.Common', 'WindowsPackageBinary.Common')
-if (-not (Get-Command Copy-OrtWheelLicenses).Parameters.ContainsKey('ProviderDll')) {
-  throw 'The pinned ANTfrastructure lacks same-wheel provider verification.'
-}
-if (-not (Get-Command Copy-OrtWheelLicenses).Parameters.ContainsKey('DirectMlDll')) {
-  throw 'The pinned ANTfrastructure lacks same-wheel DirectML verification.'
-}
-if (-not (Get-Command Copy-ChainOrtBeside).Parameters.ContainsKey('RequiredProvider')) {
-  throw 'The pinned ANTfrastructure lacks selected-provider staging.'
-}
-if (-not (Get-Command Get-ChainOrtRuntimeFile -ErrorAction SilentlyContinue)) {
-  throw 'The pinned ANTfrastructure lacks the chain runtime path resolver.'
-}
-if (-not (Get-Command Get-PackageOrtProviderNames -ErrorAction SilentlyContinue)) {
-  throw 'The pinned ANTfrastructure lacks finished-package provider-set verification.'
+$requirements = @(
+  @{ Name = 'Copy-OrtWheelLicenses'; Parameter = 'ProviderDll'; Message = 'The pinned ANTfrastructure lacks same-wheel provider verification.' }
+  @{ Name = 'Copy-OrtWheelLicenses'; Parameter = 'DirectMlDll'; Message = 'The pinned ANTfrastructure lacks same-wheel DirectML verification.' }
+  @{ Name = 'Copy-ChainOrtBeside'; Parameter = 'RequiredProvider'; Message = 'The pinned ANTfrastructure lacks selected-provider staging.' }
+  @{ Name = 'Get-ChainOrtRuntimeFile'; Parameter = ''; Message = 'The pinned ANTfrastructure lacks the chain runtime path resolver.' }
+  @{ Name = 'Get-PackageOrtProviderNames'; Parameter = ''; Message = 'The pinned ANTfrastructure lacks finished-package provider-set verification.' }
+  @{ Name = 'Assert-PackageOrtFamily'; Parameter = ''; Message = 'The pinned ANTfrastructure lacks complete ORT-family package verification.' }
+)
+foreach ($requirement in $requirements) {
+  $command = Get-Command -Name $requirement.Name -ErrorAction SilentlyContinue
+  if (-not $command -or ($requirement.Parameter -and -not $command.Parameters.ContainsKey($requirement.Parameter))) {
+    throw $requirement.Message
+  }
 }
 if (-not $Image) { return }
 if ([string]::IsNullOrWhiteSpace($env:ONNX_ROOT)) { throw 'ONNX_ROOT is not set in the GPU image.' }
