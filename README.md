@@ -60,7 +60,7 @@ keeps their unused legacy Torch backend and its vulnerable ZIP/Zstd chain out of
 ## GPU package candidates
 
 On demand: [Linux NVIDIA x64/arm64](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-nvidia-gpu.yml), [Linux AMD x64](https://github.com/Kataglyphis/OxidANT/actions/workflows/linux-x64-amd-gpu.yml), and [Windows NVIDIA/AMD x64](https://github.com/Kataglyphis/OxidANT/actions/workflows/windows-gpu-candidates.yml). Open a successful run and download its matching artifact under **Artifacts**
-(sign-in required). Linux candidates contain tar, DEB and AppImage; Windows candidates are portable ZIPs. They are experimental, separate from releases and require matching host GPU drivers and runtimes. The current infrastructure pin blocks the workflows; see [packaging](docs/packaging.md) for prerequisites and verification status. CPU packages remain available through the existing lanes.
+(sign-in required). Linux candidates contain tar, DEB and AppImage; Windows candidates are portable ZIPs. They are experimental, separate from releases and require matching host GPU drivers and runtimes. The current infrastructure pin blocks the workflows; see [packaging](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) for prerequisites and verification status. CPU packages remain available through the existing lanes.
 
 ## Quick start
 
