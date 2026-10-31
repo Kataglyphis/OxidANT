@@ -19,6 +19,10 @@ AppImage separately; it invokes the AppImage with extract-and-run, without FUSE.
 runner needs `dpkg-deb` and temporary space for those payloads as well as the host GPU
 runtime. The clean-host job also exercises the installed DEB command. Uploaded artifacts
 remain labelled candidates even when profiling is skipped.
+Linux GPU candidate uploads include the run attempt and cannot replace an earlier upload.
+Their clean-host and GPU checks request the current attempt's candidate. A downstream-only
+rerun cannot reuse an earlier build; rerun the build as well. Attempt-scoped names do not
+independently prove GPU execution or make the candidate a release asset.
 `package-linux.sh --ort-variant nvidia` or `--ort-variant amd` selects the chain GPU
 ORT and its matching provider, and appends `+gpu-nvidia` or `+gpu-amd` to the version.
 The DEBs all use the `oxidant` package identity and install the `oxidant` command;

@@ -428,7 +428,7 @@ class GpuWorkflow(unittest.TestCase):
             env["FIXTURE_FAIL"] = "1"
             self.assertIn("GPU inference or profiling failed", run().stderr)
 
-    def test_nvidia_artifacts_survive_partial_and_full_reruns(self) -> None:
+    def test_nvidia_artifact_consumers_require_the_current_attempt(self) -> None:
         content = (ROOT / ".github/workflows/linux-nvidia-gpu.yml").read_text(
             encoding="utf-8"
         )
@@ -438,9 +438,9 @@ class GpuWorkflow(unittest.TestCase):
         )
         self.assertEqual(len(names), 3)
         self.assertEqual(len(set(names)), 1)
-        self.assertNotIn("github.run_attempt", names[0])
+        self.assertIn("github.run_attempt", names[0])
         self.assertIn(
-            "overwrite: true",
+            "overwrite: false",
             content.split("Upload unverified candidate", 1)[1].split(
                 "\n  clean-host:", 1
             )[0],
@@ -448,7 +448,8 @@ class GpuWorkflow(unittest.TestCase):
         first = {
             names[0]
             .replace("${{ matrix.arch }}", arch)
-            .replace("${{ github.run_id }}", "42"): "attempt-1"
+            .replace("${{ github.run_id }}", "42")
+            .replace("${{ github.run_attempt }}", "1"): "attempt-1"
             for arch in ("x64", "arm64")
         }
         self.assertEqual(len(first), 2)
@@ -457,24 +458,26 @@ class GpuWorkflow(unittest.TestCase):
                 names[0]
                 .replace("${{ matrix.arch }}", arch)
                 .replace("${{ github.run_id }}", "42")
+                .replace("${{ github.run_attempt }}", "2")
             )
-            self.assertIn(
-                artifact, first
-            )  # Rerunning only a consumer retains the successful build.
-            first[artifact] = (
-                "attempt-2"  # Rerunning all jobs replaces each matrix artifact.
-            )
-        self.assertEqual(set(first.values()), {"attempt-2"})
+            self.assertNotIn(artifact, first)
+            first[artifact] = "attempt-2"
+        self.assertEqual(set(first.values()), {"attempt-1", "attempt-2"})
 
-    def test_stable_amd_and_windows_uploads_allow_full_reruns(self) -> None:
+    def test_amd_artifact_consumers_require_the_current_attempt(self) -> None:
         amd = (ROOT / ".github/workflows/linux-x64-amd-gpu.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn(
-            "name: ${{ steps.name.outputs.artifact }}\n          overwrite: true", amd
+            "name: ${{ format('{0}-attempt-{1}', steps.name.outputs.artifact_prefix, github.run_attempt) }}\n          overwrite: false",
+            amd,
         )
-        self.assertIn("artifact: ${{ needs.build.outputs.artifact }}", amd)
-        self.assertIn("name: ${{ needs.build.outputs.artifact }}", amd)
+        consumer = "${{ format('{0}-attempt-{1}', needs.build.outputs.artifact_prefix, github.run_attempt) }}"
+        self.assertIn(f"artifact: {consumer}", amd)
+        self.assertIn(f"name: {consumer}", amd)
+        self.assertIn("artifact_prefix: ${{ steps.name.outputs.artifact_prefix }}", amd)
+
+    def test_windows_uploads_allow_full_reruns(self) -> None:
         windows = WORKFLOW.read_text(encoding="utf-8")
         name = (
             "unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64"
