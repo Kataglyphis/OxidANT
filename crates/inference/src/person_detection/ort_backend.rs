@@ -1,7 +1,7 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use log::info;
-use ort::session::Session;
 use ort::session::builder::SessionBuilder;
+use ort::session::Session;
 
 use super::model_utils::validate_model_path;
 use crate::ort_ext::OrtResultExt;
@@ -246,19 +246,17 @@ fn extract_ort_input_dims(session: &Session) -> (u32, u32) {
 #[cfg(test)]
 mod device_tests {
     use super::{
-        Device, parse_directml_device_id, providers_for_device, require_provider_available,
-        try_device,
+        parse_directml_device_id, providers_for_device, require_provider_available, try_device,
+        Device,
     };
 
     #[test]
     fn unavailable_provider_or_availability_error_is_rejected() {
         assert!(require_provider_available("test", Ok(true)).is_ok());
-        assert!(
-            require_provider_available("test", Ok(false))
-                .unwrap_err()
-                .to_string()
-                .contains("absent")
-        );
+        assert!(require_provider_available("test", Ok(false))
+            .unwrap_err()
+            .to_string()
+            .contains("absent"));
         assert!(
             require_provider_available("test", Err(anyhow::anyhow!("availability failed")))
                 .unwrap_err()
