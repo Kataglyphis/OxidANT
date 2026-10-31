@@ -14,6 +14,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added (2026-10-31)
+- **Security audit lane and enforced `sha-pin`.** `security-audit.yml` calls the hub's lockfile audit on push, PR, Mondays and dispatch; the lint gates arm the hub's `sha-pin` workflow convention.
+
+### Added (2026-10-31)
 - The `fmt-clippy` step regenerates `src/frb_generated.rs` with the hub-pinned generator, after full
   cross-target `cargo metadata --locked`, refuses a Dart loader stem other than `oxidant`, and fails
   when the committed file differs. `scripts/linux/frb-codegen.sh` is the one bridge input and flag
