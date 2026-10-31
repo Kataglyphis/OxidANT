@@ -70,6 +70,22 @@ pub enum Commands {
         #[arg(long)]
         profile: Option<PathBuf>,
     },
+    /// Run packaged ONNX detection on a JPEG and write machine-readable results.
+    #[cfg(any(target_os = "linux", windows))]
+    OnnxDetect {
+        /// JPEG image to inspect.
+        #[arg(long)]
+        image: PathBuf,
+        /// New file for detection results.
+        #[arg(long)]
+        output: PathBuf,
+        /// Write an ONNX Runtime operator profile using this output prefix.
+        #[arg(long)]
+        profile: PathBuf,
+        /// Run the same image again in the same detector and write another new file.
+        #[arg(long)]
+        repeat_output: Option<PathBuf>,
+    },
     /// Build the GUI's camera pipeline without starting it and print each element's plugin file.
     MediaCheck,
     /// Answer a prompt with a GenAI model directory or an OpenAI-compatible endpoint; the reply streams to stdout.

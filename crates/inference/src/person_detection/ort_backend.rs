@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::info;
-use ort::session::builder::SessionBuilder;
 use ort::session::Session;
+use ort::session::builder::SessionBuilder;
 
 use super::model_utils::validate_model_path;
 use crate::ort_ext::OrtResultExt;
@@ -41,15 +41,65 @@ fn register_provider(
     builder: &mut SessionBuilder,
     provider: &dyn ort::execution_providers::ExecutionProvider,
 ) -> Result<()> {
-    if !provider.is_available().map_err(|err| anyhow!("{err}"))? {
-        return Err(anyhow!(
-            "{} is absent from the loaded ONNX Runtime",
-            provider.name()
-        ));
-    }
+    require_provider_available(
+        provider.name(),
+        provider.is_available().map_err(|err| anyhow!("{err}")),
+    )?;
     provider.register(builder).map_err(|err| anyhow!("{err}"))?;
     info!("ORT {} registered", provider.name());
     Ok(())
+}
+
+fn require_provider_available(name: &str, available: Result<bool>) -> Result<()> {
+    if !available? {
+        return Err(anyhow!("{name} is absent from the loaded ONNX Runtime"));
+    }
+    Ok(())
+}
+
+// The legacy MIGraphX options struct can turn an empty cache path into literal quotes.
+#[cfg(target_os = "linux")]
+struct GenericMigraphx;
+
+#[cfg(target_os = "linux")]
+fn with_migraphx_options<T>(
+    append: impl FnOnce(&std::ffi::CStr, [&std::ffi::CStr; 2], [&std::ffi::CStr; 2]) -> T,
+) -> T {
+    let limit = std::ffi::CString::new(usize::MAX.to_string())
+        .expect("a decimal memory limit cannot contain NUL");
+    append(
+        c"MIGraphX",
+        [c"device_id", c"migraphx_mem_limit"],
+        [c"0", limit.as_c_str()],
+    )
+}
+
+#[cfg(target_os = "linux")]
+impl ort::execution_providers::ExecutionProvider for GenericMigraphx {
+    fn name(&self) -> &'static str {
+        "MIGraphXExecutionProvider"
+    }
+
+    fn register(&self, builder: &mut SessionBuilder) -> ort::Result<()> {
+        use ort::AsPointer;
+
+        with_migraphx_options(|name, keys, values| {
+            let keys = keys.map(std::ffi::CStr::as_ptr);
+            let values = values.map(std::ffi::CStr::as_ptr);
+            // SAFETY: the builder and all NUL-terminated strings stay valid for the call.
+            let status = unsafe {
+                (ort::api().SessionOptionsAppendExecutionProvider)(
+                    builder.ptr_mut(),
+                    name.as_ptr(),
+                    keys.as_ptr(),
+                    values.as_ptr(),
+                    keys.len(),
+                )
+            };
+            // SAFETY: ORT returns either null or an owned status from this API call.
+            unsafe { ort::error::Error::result_from_status(status) }
+        })
+    }
 }
 
 #[cfg(any(windows, test))]
@@ -70,7 +120,7 @@ fn parse_directml_device_id(value: Option<&str>) -> Result<Option<i32>> {
 fn providers_for_device(
     device: Device,
 ) -> Result<Vec<Box<dyn ort::execution_providers::ExecutionProvider>>> {
-    use ort::execution_providers::{MIGraphX, CUDA};
+    use ort::execution_providers::CUDA;
 
     if device == Device::Directml && !cfg!(windows) {
         return Err(anyhow!("DirectML is available only on Windows"));
@@ -82,8 +132,9 @@ fn providers_for_device(
     if matches!(device, Device::Auto | Device::Cuda) {
         providers.push(Box::new(CUDA::default()));
     }
-    if cfg!(target_os = "linux") && matches!(device, Device::Auto | Device::Migraphx) {
-        providers.push(Box::new(MIGraphX::default()));
+    #[cfg(target_os = "linux")]
+    if matches!(device, Device::Auto | Device::Migraphx) {
+        providers.push(Box::new(GenericMigraphx));
     }
     #[cfg(windows)]
     if matches!(device, Device::Auto | Device::Directml) {
@@ -91,7 +142,7 @@ fn providers_for_device(
             Ok(value) => Some(value),
             Err(std::env::VarError::NotPresent) => None,
             Err(std::env::VarError::NotUnicode(_)) => {
-                return Err(anyhow!("KATAGLYPHIS_DIRECTML_DEVICE_ID must be Unicode"))
+                return Err(anyhow!("KATAGLYPHIS_DIRECTML_DEVICE_ID must be Unicode"));
             }
         };
         let mut provider = ort::execution_providers::DirectML::default();
@@ -194,7 +245,40 @@ fn extract_ort_input_dims(session: &Session) -> (u32, u32) {
 
 #[cfg(test)]
 mod device_tests {
-    use super::{parse_directml_device_id, providers_for_device, try_device, Device};
+    use super::{
+        Device, parse_directml_device_id, providers_for_device, require_provider_available,
+        try_device,
+    };
+
+    #[test]
+    fn unavailable_provider_or_availability_error_is_rejected() {
+        assert!(require_provider_available("test", Ok(true)).is_ok());
+        assert!(
+            require_provider_available("test", Ok(false))
+                .unwrap_err()
+                .to_string()
+                .contains("absent")
+        );
+        assert!(
+            require_provider_available("test", Err(anyhow::anyhow!("availability failed")))
+                .unwrap_err()
+                .to_string()
+                .contains("availability failed")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn generic_migraphx_uses_only_explicit_non_cache_options_and_propagates_errors() {
+        let result: Result<(), &str> = super::with_migraphx_options(|name, keys, values| {
+            assert_eq!(name, c"MIGraphX");
+            assert_eq!(keys, [c"device_id", c"migraphx_mem_limit"]);
+            assert_eq!(values[0], c"0");
+            assert_eq!(values[1].to_str().unwrap(), usize::MAX.to_string());
+            Err("injected provider registration failure")
+        });
+        assert_eq!(result, Err("injected provider registration failure"));
+    }
 
     #[test]
     fn selects_cpu_or_explicit_gpu_without_silent_fallback() {
@@ -297,12 +381,17 @@ mod device_tests {
         assert_eq!(attempts.last(), Some(&None));
         assert!(attempts.len() > 1);
 
-        let mut attempts = 0;
-        let result: anyhow::Result<()> = try_device(Device::Cuda, |_| {
-            attempts += 1;
-            Err(anyhow::anyhow!("session initialization failed"))
-        });
-        assert!(result.is_err());
-        assert_eq!(attempts, 1);
+        for device in [Device::Cuda, Device::Migraphx] {
+            if device == Device::Migraphx && !cfg!(target_os = "linux") {
+                continue;
+            }
+            let mut attempts = 0;
+            let result: anyhow::Result<()> = try_device(device, |_| {
+                attempts += 1;
+                Err(anyhow::anyhow!("session initialization failed"))
+            });
+            assert!(result.is_err());
+            assert_eq!(attempts, 1);
+        }
     }
 }

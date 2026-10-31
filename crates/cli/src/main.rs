@@ -7,6 +7,8 @@ use clap::Parser;
 use log::info;
 
 mod cli;
+#[cfg(any(target_os = "linux", windows))]
+mod detection_check;
 mod text;
 
 use cli::{Cli, Commands};
@@ -74,6 +76,15 @@ async fn main() -> Result<()> {
             if profile.is_some() {
                 println!("ONNX profile: {}", detector.end_ort_profiling()?);
             }
+        }
+        #[cfg(any(target_os = "linux", windows))]
+        Commands::OnnxDetect {
+            image,
+            output,
+            profile,
+            repeat_output,
+        } => {
+            detection_check::run(&image, &output, &profile, repeat_output.as_deref())?;
         }
         Commands::MediaCheck => {
             print!("{}", kataglyphis_gui::gui_wgpu::media_check()?);

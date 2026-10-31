@@ -14,6 +14,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- Add a real-image ONNX detector diagnostic that can repeat inference in one session.
 - Scope Windows GPU candidate uploads and hardware profiles to the current workflow attempt without overwriting prior artifacts.
 - Scope Linux GPU candidate uploads and their clean-host and GPU checks to the current workflow attempt without overwriting prior artifacts.
 - Reject Linux GPU DEBs with incorrect embedded package identity, target architecture or GPU vendor version.
@@ -30,6 +31,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   the endpoint client's rustls; its five original texts, the once_cell polyfill's included, are pinned by SHA-256.
 
 ### Fixed
+- Register MIGraphX through ORT's generic provider options, avoiding the legacy struct's malformed empty model-cache path.
 - **riscv64 tests no longer try the amd64 GStreamer plugins.** ANTfrastructure is pinned at 0aef805d,
   whose `riscv64_cross_env` drops the host-triplet entries from `GST_PLUGIN_PATH`,
   `GI_TYPELIB_PATH` and `LD_LIBRARY_PATH`; each test process had warned about 300 times.

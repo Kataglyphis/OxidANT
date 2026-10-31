@@ -5109,6 +5109,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "clap",
+ "image 0.25.10",
  "kataglyphis_gui",
  "log",
  "oxidant",
