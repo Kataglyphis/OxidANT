@@ -21,9 +21,11 @@ MODEL_FILES = (
 )
 
 
-def run(command: list[str], **kwargs: object) -> None:
+def run(
+    command: list[str], cwd: Path | None = None, env: dict[str, str] | None = None
+) -> None:
     """Fail immediately when an executable or verifier fails."""
-    subprocess.run(command, check=True, **kwargs)
+    subprocess.run(command, check=True, cwd=cwd, env=env)
 
 
 def detector_command(

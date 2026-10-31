@@ -97,8 +97,8 @@ class ParityWiringTest(unittest.TestCase):
                     r'(?ms)^          if ! test -f "\$parity_comparator".*?^          fi$',
                     preflight,
                 )
-                self.assertIsNotNone(assignments)
-                self.assertIsNotNone(check)
+                if assignments is None or check is None:
+                    self.fail("parity comparator guard is missing")
                 guard = assignments.group(0) + "\n" + check.group(0)
                 suite_lines = [
                     line.strip()
@@ -164,7 +164,8 @@ class ParityWiringTest(unittest.TestCase):
                 content = (ROOT / ".github/workflows" / filename).read_text()
                 job = content.split("name: Profile immutable", 1)[1]
                 match = re.search(r"(?m)^          command: (.+)$", job)
-                self.assertIsNotNone(match)
+                if match is None:
+                    self.fail("promotion command is missing")
                 command = match.group(1)
                 bin_dir = root / "bin"
                 bin_dir.mkdir()

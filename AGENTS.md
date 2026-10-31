@@ -619,6 +619,8 @@ stayed that way through several edits.
 
 **Security audit lane.** `.github/workflows/security-audit.yml` calls the hub's reusable `security-audit.yml` on push, pull request, Mondays and dispatch. It scans `Cargo.lock` with the hub-pinned osv-scanner, records `cargo_security_checks.sh` for each `Cargo.lock`, fails a push or PR that adds a HIGH or CRITICAL advisory absent from the base commit, lists every finding on the weekly and dispatched runs, and uploads `security-audit.json`. Locally: `bash third_party/ANTfrastructure/linux/scripts/security-audit.sh`. The lint gates enforce the hub's `sha-pin` workflow convention (`workflow-conventions: sha-pin`): every third-party `uses:` names a 40-hex commit SHA.
 
+**Python static analysis is strict.** `.github/workflows/python-static.yml` calls the hub's reusable `python-static.yml` with `strict: true` on push, PR and dispatch: one Ruff finding or ty diagnostic in a tracked `.py` file fails the lane. Locally: `bash third_party/ANTfrastructure/linux/scripts/python-static.sh --root "$PWD" --strict`. Fix a finding in the code; never add a suppression, and give a script with a shebang the executable mode.
+
 The GPU candidate workflows accept dispatch and reusable calls; keep GPU profiling default-off and their uploads unverified until separately promoted.
 The opt-in Linux AMD checked artifact requires current-attempt immutable bytes and both clean-host and GPU receipts; it does not publish a release.
 Linux GPU candidate verification checks the DEB's embedded package identity, target architecture and GPU vendor version before upload.

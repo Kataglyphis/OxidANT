@@ -537,7 +537,8 @@ class NvidiaPromotionTests(unittest.TestCase):
         )
         fixture_path = hub / "shared/python/tests/test_stage_gpu_artifact.py"
         spec = importlib.util.spec_from_file_location("hub_stage_fixture", fixture_path)
-        self.assertIsNotNone(spec)
+        if spec is None or spec.loader is None:
+            self.fail(f"cannot load {fixture_path}")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         identities = []

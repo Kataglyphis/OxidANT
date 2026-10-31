@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-01)
+- **Python static analysis is strict.** `python-static.yml` passes `strict: true` to the hub's
+  reusable workflow on every push, PR and dispatch, after the Ruff findings (12) and ty diagnostics
+  (16) reached 0: shebang scripts got their executable mode, regex and import-spec results are
+  narrowed before use, the detector parity runner takes explicit `cwd`/`env` parameters, and the
+  burn lock checker returns an exact three-part version and raises `TypeError` for a non-string field.
+
 ### Added (2026-10-31)
 - **`scripts/linux/quality-report.sh`** runs the hub's `quality-report.sh` on this checkout; the
   tracked `quality-report.toml` declares the docs build list, lane outputs and repo metrics it reads.

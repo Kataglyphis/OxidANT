@@ -109,6 +109,12 @@ def write_native_profile_stub(stage: Path) -> None:
 
 
 class GpuWorkflow(unittest.TestCase):
+    def search(self, pattern: str, text: str) -> re.Match[str]:
+        match = re.search(pattern, text)
+        if match is None:
+            self.fail(f"{pattern!r} has no match")
+        return match
+
     def test_linux_gpu_preflights_require_locked_file_api(self) -> None:
         for filename in ("linux-nvidia-gpu-build.yml", "linux-x64-amd-gpu.yml"):
             with self.subTest(filename=filename):
@@ -283,8 +289,8 @@ class GpuWorkflow(unittest.TestCase):
         )
         for workflow, reference, matrix_key in workflows:
             job = workflow.read_text(encoding="utf-8").split("\n  gpu-profile:\n", 1)[1]
-            destination = re.search(r"(?m)^\s+path: (.+)$", job).group(1)
-            used = re.search(r"(?m)^\s+CANDIDATE_DIR: (.+)$", job).group(1)
+            destination = self.search(r"(?m)^\s+path: (.+)$", job).group(1)
+            used = self.search(r"(?m)^\s+CANDIDATE_DIR: (.+)$", job).group(1)
             self.assertEqual(destination, used)
             self.assertIn(reference, job)
             for key in ("github.run_id", "github.run_attempt"):
@@ -367,8 +373,7 @@ class GpuWorkflow(unittest.TestCase):
         self.assertIn("name: unverified-oxidant-", download)
         self.assertNotIn("continue-on-error", download)
         self.assertNotIn("needs.candidate.result == 'success'", profile)
-        condition = re.search(r"(?m)^    if: \$\{\{ (.+) \}\}$", profile)
-        self.assertIsNotNone(condition)
+        condition = self.search(r"(?m)^    if: \$\{\{ (.+) \}\}$", profile)
 
         def evaluate(cancelled, verify, preflight, candidate):
             expression = condition.group(1)
@@ -467,8 +472,7 @@ class GpuWorkflow(unittest.TestCase):
                     ("tarball-command", "./oxidant"),
                     ("appimage-command", '"$APPIMAGE"'),
                 ):
-                    match = re.search(rf"(?m)^\s+{option}: (.+)$", clean)
-                    self.assertIsNotNone(match)
+                    match = self.search(rf"(?m)^\s+{option}: (.+)$", clean)
                     self.assertIn("env -u KATAGLYPHIS_ONNX_MODEL", match.group(1))
                     self.assertIn(
                         f'check-missing-gpu-runtime.sh" {vendor} {executable}',

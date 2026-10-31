@@ -17,6 +17,8 @@ HUB = Path(os.environ.get("PARITY_TEST_HUB", ROOT / "third_party/ANTfrastructure
 spec = importlib.util.spec_from_file_location(
     "parity", ROOT / "scripts/windows/check_gpu_detector_parity.py"
 )
+if spec is None or spec.loader is None:
+    raise ImportError("cannot load check_gpu_detector_parity.py")
 parity = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(parity)
 

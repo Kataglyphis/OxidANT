@@ -12,7 +12,8 @@ def version(value: str) -> tuple[int, int, int]:
     match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", value)
     if match is None:
         raise ValueError(f"invalid Cargo package version: {value!r}")
-    return tuple(map(int, match.groups()))
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch)
 
 
 def forbidden(name: str, value: str) -> bool:
@@ -43,7 +44,7 @@ def main() -> int:
         for package in packages:
             name, value = package["name"], package["version"]
             if not isinstance(name, str) or not isinstance(value, str):
-                raise ValueError("Cargo.lock has a package without a string name/version")
+                raise TypeError("Cargo.lock has a package without a string name/version")
             if forbidden(name, value):
                 findings.append(f"{name} {value}")
     except (OSError, KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:
