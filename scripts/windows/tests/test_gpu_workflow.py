@@ -105,6 +105,52 @@ def write_native_profile_stub(stage: Path) -> None:
 
 
 class GpuWorkflow(unittest.TestCase):
+    def test_reusable_candidate_inputs_are_default_off(self) -> None:
+        def valid(content: str, group: str, windows: bool) -> bool:
+            if "  workflow_call:\n" not in content:
+                return False
+            call = content.split("  workflow_call:\n", 1)[1].split("\npermissions:", 1)[
+                0
+            ]
+            return (
+                "      verify-gpu:\n        type: boolean\n        default: false"
+                in call
+                and "      GHCR_PAT:\n        required: false" in call
+                and f"  group: {group}-${{{{ github.ref }}}}-${{{{ github.workflow }}}}"
+                in content
+                and "if: ${{ inputs.verify-gpu }}" in content
+                and (
+                    not windows
+                    or "      amd-device-index:\n        type: string\n        default: '0'"
+                    in call
+                )
+            )
+
+        workflows = {
+            "linux-nvidia-gpu.yml": "linux-nvidia-gpu",
+            "linux-x64-amd-gpu.yml": "linux-x64-amd-gpu",
+            "windows-gpu-candidates.yml": "windows-gpu-candidates",
+        }
+        for filename, group in workflows.items():
+            content = (ROOT / ".github/workflows" / filename).read_text(
+                encoding="utf-8"
+            )
+            with self.subTest(workflow=filename):
+                windows = filename.startswith("windows-")
+                self.assertTrue(valid(content, group, windows))
+                for original, replacement in (
+                    ("  workflow_call:\n", "  workflow_disabled:\n"),
+                    (
+                        "      GHCR_PAT:\n        required: false",
+                        "      WRONG_PAT:\n        required: false",
+                    ),
+                    ("${{ github.ref }}-${{ github.workflow }}", "${{ github.ref }}"),
+                    ("if: ${{ inputs.verify-gpu }}", "if: true"),
+                ):
+                    self.assertFalse(
+                        valid(content.replace(original, replacement), group, windows)
+                    )
+
     @unittest.skipUnless(os.name == "nt", "runs a native Windows launcher fixture")
     def test_candidate_zip_smoke_requires_inference_and_media(self) -> None:
         job = (

@@ -14,6 +14,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added
+- Allow the NVIDIA Linux and Windows GPU candidate workflows to be called by other workflows while keeping hardware profiling optional and outputs unverified.
 - **Language models (LAI-O1 to O3).** `crates/text` generates text on the chain's ONNX Runtime GenAI,
   loaded at run time from the chain install and refused unless it embeds the chain's build tree, or on
   an OpenAI-compatible endpoint by URL or `backends.json` name, with streaming, cancel and the speed

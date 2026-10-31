@@ -608,6 +608,8 @@ stayed that way through several edits.
 
 ### Continuous integration
 
+The GPU candidate workflows accept dispatch and reusable calls; keep GPU profiling default-off and their uploads unverified until separately promoted.
+
 Eleven workflow files: the build lanes, the gate lanes, `docs.yml`, `on-request.yml`,
 `release.yml` and the reusable `reusable-linux.yml`. The five build lanes, one file per platform + arch,
 run inside ANTfrastructure images rather than on the runner. The gate lanes pull no

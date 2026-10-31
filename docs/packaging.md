@@ -123,7 +123,7 @@ copies the bundle, and matches the core and bridge to one wheel. CUDA additional
 stages and matches the CUDA provider from that wheel; DirectML requires DirectML.dll.
 The source bundle is left unchanged. The GPU APIs in ANTfrastructure are required.
 
-The dispatch-only `windows-gpu-candidates.yml` uses the registry's NVIDIA CUDA and AMD
+The manually dispatched or reusable `windows-gpu-candidates.yml` uses the registry's NVIDIA CUDA and AMD
 DirectML x64 GPU images to build separate unverified portable ZIPs. It checks the pinned
 packaging APIs before pulling, checks the image inputs, verifies the finished ZIP,
 and runs CPU inference and the bundled camera-pipeline check from the extracted ZIP.

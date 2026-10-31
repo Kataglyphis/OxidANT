@@ -7,12 +7,20 @@ on:
         description: Profile packaged inference on self-hosted NVIDIA GPU runners for both architectures
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      verify-gpu:
+        type: boolean
+        default: false
+    secrets:
+      GHCR_PAT:
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: linux-nvidia-gpu-${{ github.ref }}
+  group: linux-nvidia-gpu-${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 jobs:
