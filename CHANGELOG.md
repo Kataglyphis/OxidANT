@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Security (2026-10-31)
+- **cargo-deny checks every build target.** `deny.toml` adds `x86_64-pc-windows-msvc`,
+  `aarch64-pc-windows-msvc`, `aarch64-linux-android` and `wasm32-unknown-unknown` to the three Linux
+  targets; `cargo deny check advisories licenses bans sources` (0.20.2) passes on all seven with no new
+  allowance.
+
 ### Added
 - Add a real-image ONNX detector diagnostic that can repeat inference in one session.
 - Scope Windows GPU candidate uploads and hardware profiles to the current workflow attempt without overwriting prior artifacts.
