@@ -324,6 +324,12 @@ The flag is the CI lanes' ([`docs/testing.md` § *The whole suite*](docs/testing
 
 ## 5. Build, run, test
 
+`bash scripts/linux/quality-report.sh` measures this checkout into `logs/code-quality/measurements.json`
+and `queue.md`; `--compare <file>` or `--compare previous-develop` grades it (exit 0 ok, 1 regressed,
+2 incomplete). `quality-report.toml` declares this repo's lane outputs and metrics: hub
+`docs/code-quality-tooling.md` § quality-report. A regressed verdict on develop is fixed or recorded
+in `BACKLOG.md` before new feature work.
+
 ```bash
 cargo build --workspace --locked                      # dev/debug
 cargo build --workspace --locked --profile profile    # custom: release + debuginfo

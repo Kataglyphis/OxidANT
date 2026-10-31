@@ -1,0 +1,43 @@
+# Lane outputs and repo metrics for the hub's quality-report.sh, which holds no repo specifics.
+schema_version = 1
+
+[docs]
+build_list = ".github/workflows/docs.yml"
+source = "docs"
+
+[[output]]
+kind = "benchmark"
+path = "bench-means.json"
+
+[[artifact]]
+name = "linux-x64"
+kind = "coverage"
+format = "cobertura"
+path = "cobertura.xml"
+artifact = "oxidant-*-ubuntu-26.04-x64-all"
+workflow = "linux-x64.yml"
+
+[[artifact]]
+name = "ort-license"
+kind = "mutation"
+path = "logs/code-quality/mutations/report.txt"
+artifact = "mutation-gates-*"
+workflow = "ort-license-mutations.yml"
+
+# cargo doc prints its warnings to the job log only, so this is read from a local tee.
+[[artifact]]
+name = "rustdoc_warnings"
+kind = "count"
+unit = "warnings"
+path = "logs/code-quality/rustdoc.txt"
+pattern = '^warning: (?!.*generated \d+ warnings?)'
+location = '-->\s+(?P<path>[^:\s]+):(?P<line>\d+)'
+
+# The bridge file is generated, so its unsafe blocks move with the API, not with hand-written code.
+[[metric]]
+name = "unsafe_blocks"
+kind = "pattern"
+unit = "blocks"
+pattern = '\bunsafe\s*\{'
+include = ["*.rs"]
+exclude = ["third_party/*", "src/frb_generated*.rs"]

@@ -14,6 +14,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Added (2026-10-31)
+- **`scripts/linux/quality-report.sh`** runs the hub's `quality-report.sh` on this checkout; the
+  tracked `quality-report.toml` declares the docs build list, lane outputs and repo metrics it reads.
+  The code-quality-report workflow sets `quality-report: true`, so every push and PR is graded against
+  the newest successful develop record and uploads `code-quality-measurements`.
 - **Security audit lane and enforced `sha-pin`.** `security-audit.yml` calls the hub's lockfile audit on push, PR, Mondays and dispatch; the lint gates arm the hub's `sha-pin` workflow convention.
 
 ### Added (2026-10-31)
