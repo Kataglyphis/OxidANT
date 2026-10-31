@@ -60,3 +60,14 @@ fn gtk_command_is_available_on_linux() {
         .success()
         .stdout(predicates::str::contains("GTK4"));
 }
+#[cfg(any(target_os = "linux", windows))]
+#[test]
+fn onnx_check_reports_a_missing_model() {
+    let dir = tempdir().unwrap();
+    let model = dir.path().join("missing.onnx");
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kataglyphis_cli");
+    cmd.arg("onnx-check").env("KATAGLYPHIS_ONNX_MODEL", &model);
+    cmd.assert()
+        .failure()
+        .stderr(predicates::str::contains("no ONNX model at"));
+}

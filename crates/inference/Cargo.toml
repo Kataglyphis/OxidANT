@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[package.metadata.kataglyphis]
+# Consumers can check this marker before selecting a GPU device.
+ort-devices = ["cuda", "migraphx", "directml"]
+
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
@@ -13,7 +17,7 @@ tract-onnx = "=0.23.8"
 
 # The chain ORT exists for Linux and Windows only; load-dynamic comes from the workspace declaration.
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
-ort = { workspace = true, features = ["std", "ndarray", "cuda"] }
+ort = { workspace = true, features = ["std", "ndarray", "cuda", "migraphx"] }
 
 # DirectML is a Windows-only execution provider; the loaded chain dylib must carry it.
 [target.'cfg(windows)'.dependencies]

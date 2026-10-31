@@ -1,0 +1,182 @@
+name: Linux x64 · AMD GPU package candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      verify-gpu:
+        description: Profile packaged inference on a self-hosted AMD ROCm GPU runner
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      verify-gpu:
+        type: boolean
+        default: false
+    secrets:
+      GHCR_PAT:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-x64-amd-gpu-${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+jobs:
+  build:
+    name: Build AMD GPU package (host ROCm required)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 240
+    outputs:
+      artifact: ${{ steps.name.outputs.artifact }}
+    env:
+      REF_NAME: ${{ github.ref_name }}
+      RUN_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Check out the pinned sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - name: Check pinned GPU verification APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          hub=third_party/ANTfrastructure/linux/scripts/06-packaging
+          test -f "$hub/verify-ort-appimage-payload.sh" || { echo 'Pinned ANTfrastructure lacks the finished GPU AppImage verifier' >&2; exit 1; }
+          if ! test -f "$hub/ort-runtime-bundle.sh" || ! grep -q 'ort_assert_no_bundled_host_runtime' "$hub/ort-runtime-bundle.sh"; then
+            echo 'Pinned ANTfrastructure lacks the GPU host-runtime exclusion check' >&2; exit 1
+          fi
+          if ! test -f "$hub/../01-core/platform.sh" || ! grep -q '^arch_normalize()' "$hub/../01-core/platform.sh"; then
+            echo 'Pinned ANTfrastructure lacks GPU package architecture normalization' >&2; exit 1
+          fi
+          python3 "$hub/stage-ort-wheel-licenses.py" --help | grep -q -- --require-unstripped || { echo 'Pinned ANTfrastructure lacks exact GPU wheel verification' >&2; exit 1; }
+          bash scripts/linux/tests/test-verify-gpu-packages.sh
+          python3 scripts/windows/tests/test_gpu_workflow.py
+      - name: Select the AMD image
+        id: image
+        shell: bash
+        run: |
+          cpu_image="$(bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh --linux)"
+          printf 'ref=%s:latest-rocm\n' "${cpu_image%:*}" >> "$GITHUB_OUTPUT"
+      - name: Prepare disk and pull the GPU image
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
+        with:
+          image: ${{ steps.image.outputs.ref }}
+          checkout: 'false'
+          free-disk-space: 'true'
+          pull-first: 'false'
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GHCR_PAT }}
+      - name: Compute version
+        run: bash scripts/linux/compute-version.sh
+      - name: Build, test and package
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+        run: |
+          docker run --rm --user root --platform linux/amd64 \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            -e VERSION -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always \
+            "$IMAGE" bash -c '
+              set -euo pipefail
+              hub=third_party/ANTfrastructure/linux/scripts/06-packaging
+              ort=/usr/local/lib/onnxruntime-gpu/lib
+              python3 "$hub/stage-ort-wheel-licenses.py" --require-unstripped \
+                --strip "${STRIP:-strip}" \
+                --wheel-dir /opt/onnxruntime-wheels --destination /tmp/oxidant-ort-preflight \
+                --library "$ort/libonnxruntime.so.1" \
+                --library "$ort/libonnxruntime_providers_shared.so" \
+                --library "$ort/libonnxruntime_providers_migraphx.so"
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgtk-4-dev
+              mkdir -p "$CARGO_HOME"
+              chown 1001:1001 "$CARGO_HOME"
+              runuser -u kataglyphis -- bash -c '\''
+                set -euo pipefail
+                cargo test --locked -p kataglyphis_inference --lib device_tests
+                cargo test --locked -p kataglyphis_inference --test gpu_request
+                python3 scripts/linux/tests/test-ort-gpu-profile.py
+                cargo build --locked --release -p kataglyphis_cli
+                KATAGLYPHIS_PACKAGING_WORKDIR=/tmp/oxidant-gpu-package-work \
+                bash scripts/linux/package-linux.sh --binary-path target/release/kataglyphis_cli \
+                  --version "$VERSION" --arch x64 --platform linux/amd64 \
+                  --package-types tar,deb,appimage --ort-variant amd
+                profile_dir="$(mktemp -d)"
+                ORT_DYLIB_PATH=/tmp/oxidant-gpu-package-work/oxidant/lib/libonnxruntime.so \
+                KATAGLYPHIS_ORT_DEVICE=cpu /tmp/oxidant-gpu-package-work/oxidant/oxidant \
+                  onnx-check --profile "$profile_dir/profile"
+                mapfile -t profiles < <(find "$profile_dir" -maxdepth 1 -type f -name "profile*.json")
+                [[ ${#profiles[@]} -eq 1 ]]
+                python3 scripts/verify-ort-gpu-profile.py "${profiles[0]}" --device cpu
+                if python3 scripts/verify-ort-gpu-profile.py "${profiles[0]}" --device migraphx; then
+                  echo "CPU-only profile was accepted as GPU execution" >&2
+                  exit 1
+                fi
+                bash scripts/linux/verify-gpu-packages.sh dist x64 amd
+              '\''
+            '
+      - name: Name the candidate
+        id: name
+        run: printf 'artifact=oxidant-%s-linux-x64-amd-host-runtime-candidate\n' "$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Upload package candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          overwrite: true
+          if-no-files-found: error
+          path: dist/**
+
+  clean-host:
+    name: CPU inference and missing AMD runtime on clean Ubuntu
+    needs: build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - name: Install, unpack, and run packaged CPU inference
+        uses: Kataglyphis/ANTfrastructure/.github/actions/clean-host-package-check@develop
+        with:
+          artifact: ${{ needs.build.outputs.artifact }}
+          scan-elves: 'false'
+          deb: '*.deb'
+          deb-command: KATAGLYPHIS_ORT_DEVICE=cpu oxidant onnx-check && oxidant media-check
+          tarball: '*.tar.gz'
+          tarball-command: KATAGLYPHIS_ORT_DEVICE=cpu ./oxidant onnx-check && ./oxidant media-check
+          appimage: '*.AppImage'
+          appimage-command: KATAGLYPHIS_ORT_DEVICE=cpu "$APPIMAGE" onnx-check && "$APPIMAGE" media-check
+      - name: Require an error when the AMD runtime is missing
+        run: |
+          if oxidant onnx-check >"${RUNNER_TEMP}/amd-inference.log" 2>&1; then
+            echo 'AMD inference unexpectedly succeeded on a clean runner' >&2
+            exit 1
+          fi
+          cat "${RUNNER_TEMP}/amd-inference.log"
+          grep -F 'libmigraphx_c.so' "${RUNNER_TEMP}/amd-inference.log"
+
+  gpu-profile:
+    if: ${{ inputs.verify-gpu }}
+    needs: [build, clean-host]
+    runs-on: [self-hosted, Linux, X64, gpu-amd-rocm]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}/oxidant-amd-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Require model operators on MIGraphX
+        shell: bash
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}/oxidant-amd-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find "$CANDIDATE_DIR" -type f -name '*.tar.gz')
+          [[ ${#archives[@]} -eq 1 ]] || { echo 'Expected one candidate tarball' >&2; exit 1; }
+          work="$(mktemp -d "${RUNNER_TEMP}/oxidant-amd-profile.XXXXXX")"
+          trap 'rm -rf "$work"' EXIT
+          tar -xzf "${archives[0]}" -C "$work"
+          ORT_DYLIB_PATH="$work/oxidant/lib/libonnxruntime.so" KATAGLYPHIS_ORT_DEVICE=migraphx \
+            "$work/oxidant/oxidant" onnx-check --profile "$work/ort"
+          mapfile -t profiles < <(find "$work" -maxdepth 1 -type f -name 'ort*.json')
+          [[ ${#profiles[@]} -eq 1 ]] || { echo 'Expected one ONNX Runtime profile' >&2; exit 1; }
+          python3 scripts/verify-ort-gpu-profile.py "${profiles[0]}" --device migraphx

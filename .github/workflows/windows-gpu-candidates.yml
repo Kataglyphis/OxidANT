@@ -1,0 +1,170 @@
+name: Windows x64 GPU candidates
+
+on:
+  workflow_dispatch:
+    inputs:
+      verify-gpu:
+        description: Profile the candidate on vendor-labelled Windows GPU runners
+        type: boolean
+        default: false
+      amd-device-index:
+        description: DXGI adapter index for the AMD DirectML GPU runner
+        type: string
+        default: '0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-gpu-candidates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    outputs:
+      repository: ${{ steps.image.outputs.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - name: Check pinned GPU packaging APIs
+        shell: pwsh
+        run: |
+          ./scripts/windows/Test-GpuCandidateInputs.ps1
+          if (-not (Test-Path -LiteralPath third_party/ANTfrastructure/windows/scripts/diagnostics/verify-dxgi-adapter.py -PathType Leaf)) { throw 'Pinned ANTfrastructure lacks the DXGI adapter verifier.' }
+      - name: Test the image preflight
+        run: |
+          python scripts/windows/tests/test_gpu_candidate_inputs.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/windows/tests/test_gpu_workflow.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python third_party/ANTfrastructure/windows/scripts/tests/test_dxgi_adapter.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test GPU launcher and architecture guards
+        shell: pwsh
+        run: |
+          Import-Module Pester -RequiredVersion 3.4.0
+          $result = Invoke-Pester -Script @('scripts/windows/tests/GpuCandidateArch.Tests.ps1', 'scripts/windows/tests/DirectMLLauncher.Tests.ps1') -PassThru
+          if ($result.FailedCount -ne 0 -or $result.PassedCount -ne 8) { throw 'GPU candidate fixture failed or did not run all cases.' }
+      - name: Read the registry prefix
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$(bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh --windows)"
+          repository="${image%:*}"
+          [[ -n "$repository" && "$repository" != "$image" ]] || { echo 'Invalid registry image reference' >&2; exit 1; }
+          printf 'repository=%s\n' "$repository" >> "$GITHUB_OUTPUT"
+
+  candidate:
+    needs: preflight
+    name: Unverified ${{ matrix.provider }} candidate (${{ matrix.vendor }}, x64)
+    runs-on: windows-2025
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - vendor: nvidia
+            tag: winamd64-nvidia
+            provider: cuda
+          - vendor: amd
+            tag: winamd64-rocm
+            provider: directml
+    steps:
+      - name: Prepare the registry image and short-path checkout
+        id: prep
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-windows-container-host@develop
+        with:
+          image: ${{ format('{0}:{1}', needs.preflight.outputs.repository, matrix.tag) }}
+          target-arch: amd64
+          submodules: 'true'
+          registry-password: ${{ secrets.GHCR_PAT }}
+      - name: Build and verify the portable candidate
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-windows-container@develop
+        with:
+          image: ${{ steps.prep.outputs.image }}
+          file: C:\ws\scripts\windows\Build-GpuCandidate.ps1
+          file-args: |
+            -Vendor
+            ${{ matrix.vendor }}
+      - name: CPU inference from the finished ZIP
+        shell: pwsh
+        env:
+          WORKSPACE: ${{ steps.prep.outputs.workspace }}
+          VENDOR: ${{ matrix.vendor }}
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:WORKSPACE "dist/gpu-$env:VENDOR/oxidant-$env:PROVIDER-$env:VENDOR-windows-x64-unverified.zip"
+          $stage = Join-Path $env:RUNNER_TEMP "oxidant-gpu-$env:VENDOR-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $null = New-Item -ItemType Directory -Path $stage
+          & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $stage
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot unpack the GPU candidate' }
+          $env:KATAGLYPHIS_ORT_DEVICE = 'cpu'
+          $env:ORT_DYLIB_PATH = Join-Path $stage 'onnxruntime.dll'
+          & (Join-Path $stage 'kataglyphis_cli.exe') onnx-check
+          if ($LASTEXITCODE -ne 0) { throw 'CPU inference from the candidate failed' }
+      - name: Upload the unverified candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64
+          overwrite: true
+          path: ${{ steps.prep.outputs.workspace }}/dist/gpu-${{ matrix.vendor }}/*.zip
+          if-no-files-found: error
+
+  gpu-profile:
+    if: ${{ inputs.verify-gpu }}
+    needs: candidate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - vendor: nvidia
+            provider: cuda
+            runner: gpu-nvidia-cuda
+          - vendor: amd
+            provider: directml
+            runner: gpu-amd-directml
+    runs-on: [self-hosted, Windows, X64, '${{ matrix.runner }}']
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.0.0
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unverified-oxidant-${{ matrix.provider }}-${{ matrix.vendor }}-windows-x64
+          path: ${{ runner.temp }}/oxidant-gpu-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.vendor }}
+      - name: Require model operators on the selected GPU provider
+        shell: pwsh
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          DIRECTML_INDEX: ${{ inputs.amd-device-index }}
+          CANDIDATE_DIR: ${{ runner.temp }}/oxidant-gpu-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.vendor }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zips = @(Get-ChildItem -LiteralPath $env:CANDIDATE_DIR -Filter '*.zip' -File)
+          if ($zips.Count -ne 1) { throw "Expected one GPU candidate ZIP, found $($zips.Count)" }
+          $stage = Join-Path $env:RUNNER_TEMP "oxidant-gpu-profile-$env:PROVIDER-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $null = New-Item -ItemType Directory -Path $stage
+          & "$env:SystemRoot\System32\tar.exe" -xf $zips[0].FullName -C $stage
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot unpack the GPU candidate' }
+          $env:KATAGLYPHIS_ORT_DEVICE = $env:PROVIDER
+          if ($env:PROVIDER -eq 'directml') {
+            python third_party/ANTfrastructure/windows/scripts/diagnostics/verify-dxgi-adapter.py --vendor amd --index $env:DIRECTML_INDEX
+            if ($LASTEXITCODE -ne 0) { throw 'The selected DirectML adapter is not a physical AMD GPU.' }
+            $env:KATAGLYPHIS_DIRECTML_DEVICE_ID = $env:DIRECTML_INDEX
+          }
+          $env:ORT_DYLIB_PATH = Join-Path $stage 'onnxruntime.dll'
+          & (Join-Path $stage 'kataglyphis_cli.exe') onnx-check --profile (Join-Path $stage 'ort-profile')
+          if ($LASTEXITCODE -ne 0) { throw 'GPU inference or profiling failed' }
+          $profiles = @(Get-ChildItem -LiteralPath $stage -Filter 'ort-profile*.json' -File)
+          if ($profiles.Count -ne 1) { throw "Expected one ORT profile, found $($profiles.Count)" }
+          python scripts/verify-ort-gpu-profile.py $profiles[0].FullName --device $env:PROVIDER
+          if ($LASTEXITCODE -ne 0) { throw 'No model operator ran on the requested GPU provider' }

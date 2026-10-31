@@ -52,7 +52,8 @@ and no window, and prints the plugin file behind each element:
 cargo run -p kataglyphis_cli -- media-check
 ```
 
-On Windows ORT registers DirectML; CUDA (NVIDIA) on request, on Linux and Windows:
+ONNX inference uses the CPU by default. To request a GPU execution provider, set
+`KATAGLYPHIS_ORT_DEVICE` before starting the application:
 
 ```bash
 # PowerShell
@@ -63,6 +64,10 @@ cargo run -p kataglyphis_cli -- gui --backend dx12
 KATAGLYPHIS_ORT_DEVICE=cuda cargo run -p kataglyphis_cli -- gui --backend vulkan
 ```
 
+To check the selected ONNX Runtime and device without a camera, run `oxidant onnx-check`.
+It loads the configured model and runs one synthetic frame. Set
+`KATAGLYPHIS_ORT_DEVICE=cpu` to check CPU inference in a GPU package.
+
 Optional environment variables:
 
 - `KATAGLYPHIS_ONNX_MODEL` – path to the ONNX model. Unset, the app takes
@@ -72,7 +77,8 @@ Optional environment variables:
   not tracked: `scripts/linux/fetch-models.sh` (Windows: `scripts/windows/Get-Models.ps1`)
   downloads what `resources/models/models.lock` names and checks its SHA-256
 - `KATAGLYPHIS_ONNX_BACKEND` – `tract` or `ort` (default: automatic)
-- `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (default: `cpu`)
+- `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` | `migraphx` (Linux) | `directml` (Windows); default: `cpu`
+- `KATAGLYPHIS_DIRECTML_DEVICE_ID` – optional non-negative Windows DXGI adapter index for DirectML; unset uses ONNX Runtime's default GPU selection
 - `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: `0`, one per core)
 - `KATAGLYPHIS_ORT_SPIN` – `0` stops idle ONNX Runtime threads spin-waiting for the next run
   (default: ORT's, spinning); for inference at a capped rate, so the cat cam sets it itself
@@ -81,14 +87,25 @@ Optional environment variables:
 - `KATAGLYPHIS_SCORE_THRESHOLD` – detection score threshold (default: `0.5`)
 - `KATAGLYPHIS_INFER_EVERY_MS` – minimum interval between inference requests in ms (default: `0`: the next frame goes out as soon as the previous result is back)
 
-CUDA notes:
+GPU inference notes:
 
-- Needs the NVIDIA driver plus the CUDA/cuDNN runtime on the machine, and a
-  chain-built ONNX Runtime with the CUDA provider beside `onnxruntime.dll`.
-  Nothing is copied from a download cache any more.
-- `KATAGLYPHIS_ORT_DEVICE=auto` takes CUDA when the loaded ONNX Runtime has the provider
-  and it registers, and otherwise runs ONNX Runtime on the CPU, with a warning.
-  `cuda` fails instead, and the detector falls back to tract.
+- The inference crate's `[package.metadata.kataglyphis].ort-devices` lists the GPU
+  devices its source supports. Consumers can check it before enabling a device; the
+  marker does not prove that the installed ONNX Runtime or hardware supports it.
+- `cuda` requires NVIDIA drivers, compatible CUDA/cuDNN runtime libraries and a
+  chain-built ONNX Runtime with the CUDA provider. `migraphx` requires an AMD
+  GPU, ROCm/MIGraphX runtime and a chain-built ORT with the MIGraphX provider on
+  Linux. `directml` uses the DirectML provider on Windows and supports compatible
+  GPUs from multiple vendors.
+- These options select an execution provider; they do not install its libraries.
+  The current CPU packages do not include the GPU runtime closure.
+- `auto` tries CUDA, then MIGraphX on Linux or DirectML on Windows, and falls back
+  to CPU when registration or session creation fails. An explicit GPU request fails instead
+  of silently switching to tract if the provider cannot be registered. ORT may
+  still execute unsupported model operators on its CPU provider. An explicit GPU
+  request cannot be combined with `KATAGLYPHIS_ONNX_BACKEND=tract`.
+- Provider registration alone does not prove that inference ran on a GPU; verify
+  it on a supported device with the vendor's monitoring tools.
 
 The overlay shows FPS, inference latency, CPU/RSS and a CPU history, and inference
 can be toggled from it.

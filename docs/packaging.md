@@ -1,11 +1,57 @@
 # Packages
 
-Every package carries what the CLI loads: the GStreamer libraries and the GUI's plugins,
+The existing CPU packages carry the GStreamer libraries and the GUI's plugins,
 the chain-built ONNX Runtime, the model, and on Linux the image's C and C++ runtime. On
 Windows the MSIX and the MSI are steps of `Build-Windows.ps1`, beside the portable bundle in
 `dist\windows-<x64|arm64>\` ([AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration));
 on Linux `scripts/linux/package-linux.sh` packs one bundle four ways
 ([§ Linux](#linux-tar-deb-appimage-flatpak)).
+
+Linux GPU packaging is experimental and is not part of the release workflow. The
+`Linux x64 · AMD GPU package candidate` workflow runs on request and builds a
+candidate requiring host ROCm. Its optional `verify-gpu` job runs packaged inference
+on a self-hosted `gpu-amd-rocm` runner and requires profiled MIGraphX operators.
+The dispatch-only `Linux NVIDIA GPU package candidates` workflow targets x64 and
+arm64 with the registry NVIDIA image. Its `verify-gpu` option requires both x64 and
+arm64 self-hosted runners labelled `gpu-nvidia-cuda`; each must profile a CUDA model
+operator. Uploaded artifacts remain labelled candidates even when profiling is skipped.
+`package-linux.sh --ort-variant nvidia` or `--ort-variant amd` selects the chain GPU
+ORT and its matching provider, and appends `+gpu-nvidia` or `+gpu-amd` to the version.
+The DEBs all use the `oxidant` package identity and install the `oxidant` command;
+installing a different variant replaces the existing one rather than installing both.
+Linux GPU builds target NVIDIA on x64 and arm64, and AMD on x64; arm64 ROCm is skipped.
+Pass `--package-types tar,deb,appimage`: Flatpak is excluded because these builds
+require vendor libraries from the host. The launcher defaults to `cuda` or `migraphx`
+and an explicit `KATAGLYPHIS_ORT_DEVICE` overrides it. The host must install a
+compatible GPU driver and CUDA/cuDNN or ROCm/MIGraphX runtime, including its complete
+transitive libraries and dynamic-loader configuration. These packages do not bundle
+those vendor runtimes. Missing GPU support is an inference error, not a silent switch
+to tract; ORT may execute individual unsupported operators on CPU.
+
+A local AMD x64 build passed clean Ubuntu installation, CPU inference using the
+bundled ORT for the DEB, tarball and AppImage, and a missing-ROCm failure check
+for the installed DEB.
+Actual GPU inference and the hosted workflow remain unverified. The published ROCm
+image used locally lacked GTK development packages, so the workflow installs them
+in the build container. Its 74.75 GB local image size makes hosted runner disk space
+a concern, even after the shared full cleanup.
+
+To verify operator placement on a GPU host, run the packaged command with
+`onnx-check --profile /tmp/oxidant-profile` and the desired `KATAGLYPHIS_ORT_DEVICE`.
+Then run `python3 scripts/verify-ort-gpu-profile.py <generated-json> --device migraphx`
+from this checkout (use `cuda` for NVIDIA). A successful check proves at least one
+model operator used that provider, not that every operator did.
+
+The pinned ANTfrastructure wheel verifier rejects the NVIDIA provider in the current image
+because it exceeds its 256 MiB input limit, so that package currently stops at notice
+verification. A local NVIDIA x64 build with the proposed shared verifier and ELF
+closure fixes overlaid on the recorded pin passed package license checks, clean Ubuntu
+CPU inference in all three formats, and a missing-CUDA failure check for the DEB. The
+overlays are not part of the pin; NVIDIA packaging remains unavailable through the
+recorded tooling until they are committed and the pin is updated. The NVIDIA workflow
+preflights the exact image wheel and shared finished-AppImage verifier before compiling,
+and checks the finished tar, DEB and AppImage payloads before upload. CPU packaging does
+not take this path. The NVIDIA arm64 build and GPU execution have not been verified.
 
 Linux bundles include the GTK4 library closure and `gtk4paintablesink` from the
 image's actual plugin location, which can differ from GStreamer's pkg-config directory.
@@ -52,6 +98,45 @@ The MSIX uses only `images/logo.png`. The shared MSIX stager rejects a missing,
 malformed or fully transparent image instead of replacing it with another logo.
 The MSI's installed `License.rtf` is generated from the current project `LICENSE`
 by ANTfrastructure's CMake encoder; its existing installer flow is unchanged.
+
+## Windows GPU portable candidates
+
+After a Windows x64 CPU bundle has been built in the family image, create a separate
+portable candidate. GPU candidates are x64 only; Windows ARM64 CPU packages
+remain available. The destination must not already exist:
+
+```powershell
+pwsh -File scripts/windows/New-GpuCandidate.ps1 `
+  -SourceBundle dist/windows-x64/bundle -Destination dist/windows-x64-gpu/bundle `
+  -Provider cuda # or directml
+```
+
+The script requires the chain ORT, model and wheel notices; it checks ORT provenance,
+copies the bundle, and matches the core and bridge to one wheel. CUDA additionally
+stages and matches the CUDA provider from that wheel; DirectML requires DirectML.dll.
+The source bundle is left unchanged. The GPU APIs in ANTfrastructure are required.
+
+The dispatch-only `windows-gpu-candidates.yml` uses the registry's NVIDIA CUDA and AMD
+DirectML x64 GPU images to build separate unverified portable ZIPs. It checks the pinned
+packaging APIs before pulling, checks the image inputs, verifies the finished ZIP,
+and runs CPU inference from the extracted ZIP. The current hub pin lacks the new
+API and intentionally stops the lane before pulling. The GPU image's DirectML DLL
+provenance and redistribution terms remain to be checked (ANTfrastructure BACKLOG
+CON180). Neither ZIP is an installer or a verified GPU release.
+
+Run `oxidant-cuda.cmd gui` or `oxidant-directml.cmd gui` from the matching candidate;
+either launcher also accepts `onnx-check`. The launchers request their named GPU by
+default; `KATAGLYPHIS_ORT_DEVICE=cpu` selects CPU inference. CUDA requires the matching
+NVIDIA driver and CUDA/cuDNN runtimes on the host; DirectML requires a compatible
+DirectX 12 device and drivers. GPU execution is not established by packaging alone.
+These candidates are portable only; they do not produce MSI or MSIX installers and
+are not part of a release workflow.
+
+To profile a candidate on hardware, dispatch with `verify-gpu` and provide Windows x64
+self-hosted runners labelled `gpu-nvidia-cuda` and `gpu-amd-directml`. Set
+`amd-device-index` to the AMD adapter's DXGI index (default `0`); the job checks that
+the same index is a physical AMD GPU before requesting it from DirectML. Each job
+requires model operators in its matching ONNX Runtime provider.
 
 ## MSIX
 

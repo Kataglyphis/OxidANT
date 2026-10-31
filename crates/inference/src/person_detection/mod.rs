@@ -11,7 +11,7 @@ use anyhow::{bail, Context, Result};
 use log::info;
 
 #[cfg(any(target_os = "linux", windows))]
-use crate::ort_ext::extract_first_f32_output;
+use crate::ort_ext::{extract_first_f32_output, OrtResultExt};
 
 use kataglyphis_core::config::{self, PreprocessMode};
 use kataglyphis_core::detection::Detection;
@@ -136,6 +136,32 @@ impl PersonDetector {
         ))
     }
 
+    /// Load ORT with profiling enabled; call [`Self::end_ort_profiling`] after inference.
+    #[cfg(any(target_os = "linux", windows))]
+    pub fn with_ort_profiling(model_path: &str, profile_prefix: &std::path::Path) -> Result<Self> {
+        let (session, (input_w, input_h)) =
+            ort_backend::load_ort_session(model_path, Some(profile_prefix))
+                .with_context(|| format!("ORT could not load {model_path}"))?;
+        Ok(Self::from_parts(
+            Backend::Ort { session },
+            input_w,
+            input_h,
+            config::preprocess_mode(),
+            config::swap_xy_enabled(),
+        ))
+    }
+
+    /// Finish an ORT profile and return its generated JSON path.
+    #[cfg(any(target_os = "linux", windows))]
+    pub fn end_ort_profiling(&mut self) -> Result<String> {
+        match &mut self.backend {
+            Backend::Ort { session } => session
+                .end_profiling()
+                .with_ort_context("Failed to finish ORT profiling"),
+            Backend::Tract { .. } => bail!("ORT profiling requires the ORT backend"),
+        }
+    }
+
     /// The backend that loaded the model: `"ort"` or `"tract"`.
     pub fn backend_name(&self) -> &'static str {
         match self.backend {
@@ -147,7 +173,7 @@ impl PersonDetector {
 
     #[cfg(any(target_os = "linux", windows))]
     fn load_ort(model_path: &str) -> Result<BackendLoad> {
-        let (session, dims) = ort_backend::load_ort_session(model_path)
+        let (session, dims) = ort_backend::load_ort_session(model_path, None)
             .with_context(|| format!("ORT could not load {model_path}"))?;
         info!("ONNX backend: ort ({}x{})", dims.0, dims.1);
         Ok(BackendLoad {
@@ -186,12 +212,27 @@ impl PersonDetector {
     fn load_backend(model_path: &str, requested: Option<&str>) -> Result<BackendLoad> {
         match requested {
             Some("ort") | Some("onnxruntime") => Self::load_ort(model_path),
-            Some("tract") => Self::load_tract(model_path),
+            Some("tract") => {
+                #[cfg(any(target_os = "linux", windows))]
+                if ort_backend::Device::parse(config::ort_device())?.requires_gpu() {
+                    bail!(
+                        "KATAGLYPHIS_ONNX_BACKEND=tract conflicts with the requested ORT GPU device"
+                    );
+                }
+                Self::load_tract(model_path)
+            }
             Some(other) => {
                 bail!("Unsupported KATAGLYPHIS_ONNX_BACKEND='{other}'. Use 'tract' or 'ort'.")
             }
             #[cfg(any(target_os = "linux", windows))]
-            None => Self::load_ort_or_tract(model_path),
+            None => {
+                let device = ort_backend::Device::parse(config::ort_device())?;
+                if device.requires_gpu() {
+                    Self::load_ort(model_path)
+                } else {
+                    Self::load_ort_or_tract(model_path)
+                }
+            }
             // No chain ORT exists here, so tract is the backend, not a fallback.
             #[cfg(not(any(target_os = "linux", windows)))]
             None => Self::load_tract(model_path),

@@ -58,6 +58,23 @@ async fn main() -> Result<()> {
             let path = oxidant::ort_runtime::ensure_ort_loaded()?;
             println!("ONNX Runtime: {}", path.display());
         }
+        #[cfg(any(target_os = "linux", windows))]
+        Commands::OnnxCheck { profile } => {
+            let model = oxidant::person_detection::resolve_model_path(None);
+            let mut detector = match profile {
+                Some(ref prefix) => {
+                    oxidant::person_detection::PersonDetector::with_ort_profiling(&model, prefix)?
+                }
+                None => {
+                    oxidant::person_detection::PersonDetector::with_backend(&model, Some("ort"))?
+                }
+            };
+            let detections = detector.infer_rgba(&[0; 64 * 64 * 4], 64, 64, 0.5, None)?;
+            println!("ONNX inference completed ({} detections)", detections.len());
+            if profile.is_some() {
+                println!("ONNX profile: {}", detector.end_ort_profiling()?);
+            }
+        }
         Commands::MediaCheck => {
             print!("{}", kataglyphis_gui::gui_wgpu::media_check()?);
         }

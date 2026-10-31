@@ -16,3 +16,6 @@ third_party/burn-dispatch-0.22.1/** text=auto eol=lf
 # Packaged license texts are pinned by SHA-256, so their bytes must not depend on the checkout.
 /LICENSE text eol=lf
 packaging/licenses/** -text
+
+# cmd.exe launchers use Windows line endings.
+packaging/windows/*.cmd text eol=crlf

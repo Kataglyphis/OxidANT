@@ -63,6 +63,13 @@ pub enum Commands {
     /// Load the chain-built ONNX Runtime and print where it was found; fails when none loads.
     #[cfg(any(target_os = "linux", windows))]
     OnnxRuntime,
+    /// Run a synthetic image through the ONNX model using the requested ORT device.
+    #[cfg(any(target_os = "linux", windows))]
+    OnnxCheck {
+        /// Write an ONNX Runtime operator profile using this output prefix.
+        #[arg(long)]
+        profile: Option<PathBuf>,
+    },
     /// Build the GUI's camera pipeline without starting it and print each element's plugin file.
     MediaCheck,
     /// Answer a prompt with a GenAI model directory or an OpenAI-compatible endpoint; the reply streams to stdout.

@@ -89,7 +89,7 @@ env_cached!(
 );
 
 env_cached!(
-    /// `KATAGLYPHIS_ORT_DEVICE`: `"cpu"` (default) | `"cuda"` | `"auto"`.
+    /// `KATAGLYPHIS_ORT_DEVICE`: `"cpu"` (default) | `"auto"` | `"cuda"` | `"migraphx"` (Linux) | `"directml"` (Windows).
     ref fn ort_device -> String, || {
         std::env::var("KATAGLYPHIS_ORT_DEVICE")
             .unwrap_or_else(|_| "cpu".to_string())

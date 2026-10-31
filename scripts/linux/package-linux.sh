@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The CLI as a self-contained bundle (its GStreamer, ONNX Runtime, model and C library), packed as tar, deb, AppImage and flatpak.
+# The CLI with its GStreamer, ONNX Runtime, model and C library; GPU variants also need the vendor runtime on the host.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,6 +17,7 @@ usage: package-linux.sh --binary-path FILE --version V --arch x64|arm64 [options
   --arch x64|arm64       package architecture
   --platform P           only names the tarball, e.g. linux/amd64
   --package-types CSV    tar,deb,appimage,flatpak (default: all four)
+  --ort-variant NAME     cpu (default), nvidia or amd; GPU variants require host runtimes
   --desktop-file FILE    desktop entry (default: packaging/linux/oxidant.desktop)
   --icon-file FILE       icon (default: images/logo.png)
   --out DIR              where the packages land (default: dist)
@@ -31,6 +32,7 @@ version=""
 arch=""
 platform=""
 package_types="tar,deb,appimage,flatpak"
+ort_variant=cpu
 desktop_file="${REPO_ROOT}/packaging/linux/oxidant.desktop"
 icon_file="${REPO_ROOT}/images/logo.png"
 out_dir="${REPO_ROOT}/dist"
@@ -42,6 +44,7 @@ while [ $# -gt 0 ]; do
         --arch) arch="${2:?}"; shift 2 ;;
         --platform) platform="${2:?}"; shift 2 ;;
         --package-types) package_types="${2:?}"; shift 2 ;;
+        --ort-variant) ort_variant="${2:?}"; shift 2 ;;
         --desktop-file) desktop_file="$(realpath "${2:?}")"; shift 2 ;;
         --icon-file) icon_file="$(realpath "${2:?}")"; shift 2 ;;
         --out) out_dir="${2:?}"; shift 2 ;;
@@ -51,12 +54,28 @@ while [ $# -gt 0 ]; do
 done
 [ -x "${binary_path}" ] || { printf 'no executable --binary-path: %s\n' "${binary_path:-<empty>}" >&2; exit 2; }
 [ -n "${version}" ] || { printf -- '--version is required\n' >&2; exit 2; }
+case "${ort_variant}" in
+    cpu) ;;
+    nvidia|amd)
+        # Flatpak cannot be assumed to expose host CUDA/ROCm libraries.
+        read -r -a requested_formats <<< "${package_types//,/ }"
+        for format in "${requested_formats[@]}"; do
+            [ "${format}" != flatpak ] || { printf 'GPU variants do not support flatpak host runtimes\n' >&2; exit 2; }
+        done
+        version="${version}+gpu-${ort_variant}"
+        ;;
+    *) printf 'unknown --ort-variant: %s\n' "${ort_variant}" >&2; exit 2 ;;
+esac
 # The image's login shell exports ARCH as uname -m spells it, so the lanes' --arch "${ARCH}" arrives that way.
 case "${arch}" in
     x64|x86_64|amd64) arch=x64 ;;
     arm64|aarch64) arch=arm64 ;;
     *) printf -- '--arch must be x64 or arm64, not %s\n' "${arch:-<empty>}" >&2; exit 2 ;;
 esac
+if [ "${arch}" = arm64 ] && [ "${ort_variant}" = amd ]; then
+    printf 'Linux arm64 ROCm GPU packages are not supported by this build matrix\n' >&2
+    exit 2
+fi
 mkdir -p "${out_dir}"
 out_dir="$(realpath "${out_dir}")"
 
@@ -81,15 +100,18 @@ elements+=(gtk4paintablesink)
 for plugin in "${plugins[@]}"; do gst_copy+=(--plugin "${plugin}"); done
 bash "$(hub gstreamer-bundle.sh)" "${gst_copy[@]}"
 
-# The chain ONNX Runtime only (owner rule 2026-09-23), copied as is: G6 below proves the bytes.
-ort_dir="${ORT_LIB_LOCATION:-/usr/local/lib/onnxruntime-cpu/lib}"
-for soname in libonnxruntime.so libonnxruntime.so.1; do
-    cp -L "${ort_dir}/${soname}" "${bundle}/lib/${soname}"
-done
+# GPU variants carry their provider, while the driver and vendor runtime remain host prerequisites.
+# shellcheck source=lib/ort-runtime-bundle.sh
+source "${SCRIPT_DIR}/lib/ort-runtime-bundle.sh"
+case "${ort_variant}" in
+    cpu) ort_dir="${ORT_LIB_LOCATION:-/usr/local/lib/onnxruntime-cpu/lib}" ;;
+    *) ort_dir="${GPU_ORT_LIB_LOCATION:-/usr/local/lib/onnxruntime-gpu/lib}" ;;
+esac
+stage_ort_runtime "${bundle}/lib" "${ort_dir}" "${ort_variant}"
 
 # The compiler's own runtime: the image also carries an older distro libstdc++.
 cxx_dir() { dirname "$("${CXX:-g++}" -print-file-name="$1")"; }
-closure=(--bundle "${bundle}" --lib-dir "${bundle}/lib" --relocatable --protect 'libonnxruntime*'
+closure=(--bundle "${bundle}" --lib-dir "${bundle}/lib" --relocatable --protect 'lib/libonnxruntime*'
     --from "libonnxruntime*=${ort_dir}" --from "libstdc++.so.6=$(cxx_dir libstdc++.so.6)"
     --from "libgcc_s.so.1=$(cxx_dir libgcc_s.so.1)" --no-default-system)
 # glibc stays the system's; bundle-loader.sh carries a copy for older hosts.
@@ -98,6 +120,19 @@ glibc=(libc.so.6 libm.so.6 libmvec.so.1 libpthread.so.0 libdl.so.2 librt.so.1 li
 for soname in "${glibc[@]}"; do
     closure+=(--system "${soname}")
 done
+# The package must not copy a driver or silently substitute an image's SDK libraries.
+case "${ort_variant}" in
+    nvidia)
+        for soname in 'libcuda.so.*' 'libcudart.so.*' 'libcublas.so.*' 'libcublasLt.so.*' 'libcurand.so.*'; do
+            closure+=(--system "${soname}")
+        done
+        ;;
+    amd)
+        for soname in 'libamdhip64.so.*' 'libmigraphx_c.so.*'; do
+            closure+=(--system "${soname}")
+        done
+        ;;
+esac
 # The image reaches these only through ld.so.conf, which no target has.
 for dir in "$(pkg-config --variable=libdir gstreamer-1.0)" "$(pkg-config --variable=libdir gtk4)" /opt/gstreamer/lib /opt/ffmpeg/lib /opt/libcamera/lib; do
     closure+=(--search "${dir}")
@@ -108,9 +143,13 @@ bash "$(hub elf-closure.sh)" "${closure[@]}" --ldconfig
 source "$(antfrastructure_path linux/scripts/06-packaging/ort-wheel-licenses.sh)"
 stage_ort_wheel_licenses "${bundle}"
 bash "$(hub bundle-loader.sh)" --beside "${bundle}" "${bundle}/lib" "${binary}"
+if [ "${ort_variant}" != cpu ]; then
+    case "${ort_variant}" in nvidia) default_device=cuda ;; amd) default_device=migraphx ;; esac
+    configure_gpu_launcher "${bundle}/${binary}" "${default_device}"
+fi
 bash "${SCRIPT_DIR}/fetch-models.sh" --dest "${bundle}/resources/models"
 
-# Proof before packing: every ELF resolves inside, ORT is the chain's, each element loads from the bundle.
+# Proof before packing: non-system ELF dependencies resolve inside, ORT is the chain's, and each element loads from the bundle.
 bash "$(hub elf-closure.sh)" "${closure[@]}" --check
 bash "$(hub check-ort-provenance.sh)" "${bundle}"
 bash "$(hub gstreamer-bundle.sh)" check --plugins "${bundle}/lib/gstreamer-1.0" --lib-dir "${bundle}/lib" "${elements[@]}"
