@@ -44,6 +44,7 @@ permissions:
 jobs:
   select:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     outputs:
       architecture: ${{ steps.select.outputs.architecture }}
       matrix: ${{ steps.select.outputs.matrix }}

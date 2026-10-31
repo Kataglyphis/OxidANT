@@ -1,0 +1,8 @@
+# Existing GPU verification checks and their mutation fixtures; keep exact sizes ratcheted.
+# Format: <path> | <function> | <line count> | <reason>
+scripts/linux/tests/test-amd-gpu-promotion.py | PromotionTest.test_default_off_and_all_checks_bind_current_attempt | 102 | Exercises the full promotion wiring and its failure mutations together
+scripts/linux/tests/test-amd-gpu-promotion.py | valid_promotion | 127 | Checks the complete AMD promotion contract against workflow mutations
+scripts/linux/tests/test-detector-parity.py | ParityWiringTest.test_producer_preflight_fails_if_shared_suite_is_missing_or_fails | 89 | Checks missing and failing shared parity suite cases
+scripts/linux/tests/test-nvidia-gpu-promotion.py | NvidiaPromotionTests.test_wiring_and_mutations | 156 | Exercises all NVIDIA promotion wiring mutations
+scripts/linux/tests/test-nvidia-gpu-promotion.py | valid | 171 | Checks the complete NVIDIA promotion contract against workflow mutations
+scripts/windows/check_gpu_detector_parity.py | check | 86 | Validates paired CPU and GPU detector profiles and evidence
