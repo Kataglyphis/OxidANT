@@ -1,6 +1,9 @@
 """The Windows GPU candidate selects only the requested image/provider pairs."""
 
+import os
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,10 +58,49 @@ def windows_profile_uses_candidate_launcher(content: str) -> bool:
         for value in (
             "resources/models/deim_dfine_n_coco.onnx",
             "Remove-Item Env:\\KATAGLYPHIS_ONNX_MODEL, Env:\\KATAGLYPHIS_ORT_DEVICE",
+            "Env:\\KATAGLYPHIS_ONNX_BACKEND, Env:\\ORT_DYLIB_PATH",
+            "Join-Path $stage 'onnxruntime.dll'",
             'Join-Path $stage "oxidant-$env:PROVIDER.cmd"',
             "--profile (Join-Path $stage 'ort-profile')",
             "--device $env:PROVIDER",
         )
+    ) and not re.search(r"(?im)^\s*\$env:ORT_DYLIB_PATH\s*=", job)
+
+
+def write_native_profile_stub(stage: Path) -> None:
+    """Use the real launcher with a synthetic executable; no OxidANT build runs."""
+    shutil.copyfile(
+        ROOT / "packaging/windows/oxidant-cuda.cmd", stage / "oxidant-cuda.cmd"
+    )
+    source = stage / "profile-stub.cs"
+    source.write_text(
+        "using System; using System.IO; using System.Reflection;\n"
+        "class ProfileStub { static int Main() {\n"
+        'if (Environment.GetEnvironmentVariable("ORT_DYLIB_PATH") != null ||\n'
+        '    Environment.GetEnvironmentVariable("KATAGLYPHIS_ONNX_MODEL") != null ||\n'
+        '    Environment.GetEnvironmentVariable("KATAGLYPHIS_ONNX_BACKEND") != null ||\n'
+        '    Environment.GetEnvironmentVariable("KATAGLYPHIS_ORT_DEVICE") != "cuda") return 71;\n'
+        'if (Environment.GetEnvironmentVariable("FIXTURE_FAIL") != null) return 76;\n'
+        "string dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);\n"
+        'string dll = Path.Combine(dir, "onnxruntime.dll");\n'
+        "if (!File.Exists(dll)) return 75;\n"
+        'File.WriteAllText(Path.Combine(dir, "selected-runtime.txt"), dll);\n'
+        "return 0; } }\n",
+        encoding="utf-8",
+    )
+    compiler = (
+        Path(os.environ["SystemRoot"]) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+    )
+    subprocess.run(
+        [
+            str(compiler),
+            "/nologo",
+            f"/out:{stage / 'kataglyphis_cli.exe'}",
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     )
 
 
@@ -173,6 +215,9 @@ class GpuWorkflow(unittest.TestCase):
             ),
             ("Env:\\KATAGLYPHIS_ONNX_MODEL, ", ""),
             ("Env:\\KATAGLYPHIS_ORT_DEVICE", "Env:\\UNRELATED"),
+            ("Env:\\KATAGLYPHIS_ONNX_BACKEND", "Env:\\UNRELATED_BACKEND"),
+            ("Env:\\ORT_DYLIB_PATH", "Env:\\UNRELATED_RUNTIME"),
+            ("Join-Path $stage 'onnxruntime.dll'", "Join-Path $stage 'unrelated.dll'"),
         ):
             with self.subTest(original=original):
                 self.assertFalse(
@@ -180,6 +225,14 @@ class GpuWorkflow(unittest.TestCase):
                         content.replace(original, replacement)
                     )
                 )
+        self.assertFalse(
+            windows_profile_uses_candidate_launcher(
+                content.replace(
+                    '& (Join-Path $stage "oxidant-$env:PROVIDER.cmd")',
+                    '$env:ORT_DYLIB_PATH = "host.dll"\n          & (Join-Path $stage "oxidant-$env:PROVIDER.cmd")',
+                )
+            )
+        )
         for filename, device in (
             ("linux-nvidia-gpu.yml", "cuda"),
             ("linux-x64-amd-gpu.yml", "migraphx"),
@@ -193,6 +246,73 @@ class GpuWorkflow(unittest.TestCase):
                 f'scripts/linux/profile-gpu-bundle.sh "$work/oxidant" {device} "$work/ort"',
                 job,
             )
+
+    @unittest.skipUnless(os.name == "nt", "runs a native Windows launcher fixture")
+    def test_profile_preflight_isolates_overrides_and_rejects_missing_runtime(
+        self,
+    ) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8").split("\n  gpu-profile:\n", 1)[
+            1
+        ]
+        start = "          if (-not (Test-Path -LiteralPath (Join-Path $stage 'resources/models/deim_dfine_n_coco.onnx')"
+        end = "          if ($LASTEXITCODE -ne 0) { throw 'GPU inference or profiling failed' }"
+        snippet = start + workflow.split(start, 1)[1].split(end, 1)[0] + end
+        with tempfile.TemporaryDirectory() as temp:
+            stage = Path(temp) / "candidate"
+            model = stage / "resources/models/deim_dfine_n_coco.onnx"
+            model.parent.mkdir(parents=True)
+            model.touch()
+            runtime = stage / "onnxruntime.dll"
+            runtime.touch()
+            write_native_profile_stub(stage)
+            script = Path(temp) / "fixture.ps1"
+            script.write_text(
+                "$ErrorActionPreference = 'Stop'\n$stage = $env:FIXTURE_STAGE\n"
+                + snippet
+                + "\n",
+                encoding="utf-8",
+            )
+            env = dict(os.environ, FIXTURE_STAGE=str(stage), PROVIDER="cuda")
+            for key in (
+                "ORT_DYLIB_PATH",
+                "KATAGLYPHIS_ONNX_MODEL",
+                "KATAGLYPHIS_ONNX_BACKEND",
+                "KATAGLYPHIS_ORT_DEVICE",
+            ):
+                env[key] = str(Path(temp) / "host-runtime")
+            powershell = (
+                Path(os.environ["SystemRoot"])
+                / "System32/WindowsPowerShell/v1.0/powershell.exe"
+            )
+
+            def run():
+                return subprocess.run(
+                    [
+                        str(powershell),
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(script),
+                    ],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            result = run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((stage / "selected-runtime.txt").read_text(), str(runtime))
+            runtime.unlink()
+            self.assertIn("Bundled ONNX Runtime missing", run().stderr)
+            runtime.touch()
+            model.unlink()
+            self.assertIn("Bundled model missing", run().stderr)
+            model.touch()
+            env["FIXTURE_FAIL"] = "1"
+            self.assertIn("GPU inference or profiling failed", run().stderr)
 
     def test_nvidia_artifacts_survive_partial_and_full_reruns(self) -> None:
         content = (ROOT / ".github/workflows/linux-nvidia-gpu.yml").read_text(
