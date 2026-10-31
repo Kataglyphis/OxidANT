@@ -46,6 +46,25 @@ jobs:
       - name: Run every suite
         run: for suite in scripts/linux/tests/test-*.sh; do bash "$suite"; done
 
+  # The GPU-candidate scripts run only on GPU hosts, so their suites need a lane every push reaches.
+  gpu-candidate-suites:
+    name: GPU candidate suites
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.0.0
+        with:
+          python-version: '3.14'
+      - name: Run the three suites
+        run: |
+          python -m unittest -v scripts/windows/tests/test_gpu_candidate_inputs.py
+          python -m unittest -v scripts/windows/tests/test_gpu_workflow.py
+          python scripts/linux/tests/test-ort-gpu-profile.py -v
+
   # .gitignore does nothing once a path is tracked, so only this gate sees generated output reaching the index.
   generated-artifacts:
     name: No generated artifact is tracked

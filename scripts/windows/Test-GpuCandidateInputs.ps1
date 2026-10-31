@@ -52,7 +52,7 @@ try {
     -DirectMlDll $directMl -WheelDir (Get-OrtChainWheelStore) -Destination $scratch
 } finally {
   $resolved = (Resolve-Path -LiteralPath $scratch).ProviderPath
-  if (-not $resolved.StartsWith("$tempRoot\", [StringComparison]::OrdinalIgnoreCase)) {
+  if (-not $resolved.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Refusing to remove scratch outside $tempRoot`: $resolved"
   }
   Remove-Item -LiteralPath $resolved -Recurse -Force

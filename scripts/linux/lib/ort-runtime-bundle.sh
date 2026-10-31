@@ -1,24 +1,9 @@
 #!/usr/bin/env bash
-# Select the chain ORT core and the execution provider required by a GPU package.
-
-stage_ort_runtime() {
-    local dest="${1:?destination required}" dir="${2:?ORT directory required}" variant="${3:?variant required}" name provider
-    local -a files=(libonnxruntime.so libonnxruntime.so.1)
-    case "${variant}" in
-        cpu) ;;
-        nvidia) provider=libonnxruntime_providers_cuda.so ;;
-        amd) provider=libonnxruntime_providers_migraphx.so ;;
-        *) printf 'unknown ORT variant: %s\n' "${variant}" >&2; return 2 ;;
-    esac
-    if [ "${variant}" != cpu ]; then
-        files+=(libonnxruntime_providers_shared.so "${provider}")
-    fi
-    for name in "${files[@]}"; do
-        [ -f "${dir}/${name}" ] || { printf 'ORT %s variant requires %s\n' "${variant}" "${dir}/${name}" >&2; return 1; }
-    done
-    mkdir -p "${dest}"
-    for name in "${files[@]}"; do cp -L "${dir}/${name}" "${dest}/${name}"; done
-}
+# The hub stages the chain ORT core and provider; this file adds only the GPU launcher rewrite.
+# shellcheck source=antfrastructure.sh
+source "$(dirname "${BASH_SOURCE[0]}")/antfrastructure.sh" || return $?
+# shellcheck source=/dev/null
+source "$(antfrastructure_path linux/scripts/06-packaging/ort-runtime-bundle.sh)" || return $?
 
 configure_gpu_launcher() {
     local launcher="${1:?launcher required}" device="${2:?device required}" line found=0 found_here=0
