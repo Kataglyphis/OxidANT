@@ -100,6 +100,32 @@ class GpuWorkflow(unittest.TestCase):
     def test_supported_matrix(self) -> None:
         self.assertTrue(matrix_is_valid(WORKFLOW.read_text(encoding="utf-8")))
 
+    def test_linux_clean_host_checks_missing_runtime_for_each_format(self) -> None:
+        """A CPU-default TAR or AppImage must not pass as a GPU candidate."""
+        for filename, vendor in (
+            ("linux-nvidia-gpu.yml", "nvidia"),
+            ("linux-x64-amd-gpu.yml", "amd"),
+        ):
+            with self.subTest(vendor=vendor):
+                text = (ROOT / ".github/workflows" / filename).read_text(
+                    encoding="utf-8"
+                )
+                clean = text.split("\n  clean-host:\n", 1)[1].split(
+                    "\n  gpu-profile:\n", 1
+                )[0]
+                for option, executable in (
+                    ("deb-command", "oxidant"),
+                    ("tarball-command", "./oxidant"),
+                    ("appimage-command", '"$APPIMAGE"'),
+                ):
+                    match = re.search(rf"(?m)^\s+{option}: (.+)$", clean)
+                    self.assertIsNotNone(match)
+                    self.assertIn(
+                        f'check-missing-gpu-runtime.sh" {vendor} {executable}',
+                        match.group(1),
+                    )
+                self.assertIn("test-check-missing-gpu-runtime.sh", clean)
+
     def test_wrong_architecture_and_provider_are_rejected(self) -> None:
         content = WORKFLOW.read_text(encoding="utf-8")
         for mutant in (

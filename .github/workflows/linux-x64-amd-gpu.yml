@@ -133,25 +133,20 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test the missing-runtime check
+        run: bash scripts/linux/tests/test-check-missing-gpu-runtime.sh
       - name: Install, unpack, and run packaged CPU inference
         uses: Kataglyphis/ANTfrastructure/.github/actions/clean-host-package-check@develop
         with:
           artifact: ${{ needs.build.outputs.artifact }}
           scan-elves: 'false'
           deb: '*.deb'
-          deb-command: KATAGLYPHIS_ORT_DEVICE=cpu oxidant onnx-check && oxidant media-check
+          deb-command: KATAGLYPHIS_ORT_DEVICE=cpu oxidant onnx-check && oxidant media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" amd oxidant
           tarball: '*.tar.gz'
-          tarball-command: KATAGLYPHIS_ORT_DEVICE=cpu ./oxidant onnx-check && ./oxidant media-check
+          tarball-command: KATAGLYPHIS_ORT_DEVICE=cpu ./oxidant onnx-check && ./oxidant media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" amd ./oxidant
           appimage: '*.AppImage'
-          appimage-command: KATAGLYPHIS_ORT_DEVICE=cpu "$APPIMAGE" onnx-check && "$APPIMAGE" media-check
-      - name: Require an error when the AMD runtime is missing
-        run: |
-          if oxidant onnx-check >"${RUNNER_TEMP}/amd-inference.log" 2>&1; then
-            echo 'AMD inference unexpectedly succeeded on a clean runner' >&2
-            exit 1
-          fi
-          cat "${RUNNER_TEMP}/amd-inference.log"
-          grep -F 'libmigraphx_c.so' "${RUNNER_TEMP}/amd-inference.log"
+          appimage-command: KATAGLYPHIS_ORT_DEVICE=cpu "$APPIMAGE" onnx-check && "$APPIMAGE" media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" amd "$APPIMAGE"
 
   gpu-profile:
     if: ${{ inputs.verify-gpu }}

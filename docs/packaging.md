@@ -31,6 +31,9 @@ to tract; ORT may execute individual unsupported operators on CPU.
 A local AMD x64 build passed clean Ubuntu installation, CPU inference using the
 bundled ORT for the DEB, tarball and AppImage, and a missing-ROCm failure check
 for the installed DEB.
+Both GPU workflows now require each finished DEB, tarball and AppImage to select its
+vendor GPU by default and report a missing host runtime on the clean-host runner;
+that expanded check has not yet run in the hosted workflow.
 Actual GPU inference and the hosted workflow remain unverified. The published ROCm
 image used locally lacked GTK development packages, so the workflow installs them
 in the build container. Its 74.75 GB local image size makes hosted runner disk space
