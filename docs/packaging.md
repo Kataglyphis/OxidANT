@@ -122,7 +122,8 @@ The source bundle is left unchanged. The GPU APIs in ANTfrastructure are require
 The dispatch-only `windows-gpu-candidates.yml` uses the registry's NVIDIA CUDA and AMD
 DirectML x64 GPU images to build separate unverified portable ZIPs. It checks the pinned
 packaging APIs before pulling, checks the image inputs, verifies the finished ZIP,
-and runs CPU inference from the extracted ZIP. The current hub pin lacks the new
+and runs CPU inference and the bundled camera-pipeline check from the extracted ZIP.
+The current hub pin lacks the new
 API and intentionally stops the lane before pulling. The GPU image's DirectML DLL
 provenance and redistribution terms remain to be checked (ANTfrastructure BACKLOG
 CON180). Neither ZIP is an installer or a verified GPU release.

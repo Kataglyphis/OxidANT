@@ -105,6 +105,74 @@ def write_native_profile_stub(stage: Path) -> None:
 
 
 class GpuWorkflow(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "runs a native Windows launcher fixture")
+    def test_candidate_zip_smoke_requires_inference_and_media(self) -> None:
+        job = (
+            WORKFLOW.read_text(encoding="utf-8")
+            .split("CPU inference from the finished ZIP", 1)[1]
+            .split("Upload the unverified candidate", 1)[0]
+        )
+        start = "          if (-not (Test-Path -LiteralPath (Join-Path $stage 'lib/gstreamer-1.0')"
+        end = "          if ($LASTEXITCODE -ne 0) { throw 'Bundled media pipeline from the candidate failed' }"
+        snippet = start + job.split(start, 1)[1].split(end, 1)[0] + end
+        with tempfile.TemporaryDirectory() as temp:
+            stage = Path(temp) / "candidate"
+            stage.mkdir()
+            plugins = stage / "lib/gstreamer-1.0"
+            plugins.mkdir(parents=True)
+            (stage / "oxidant-cuda.cmd").write_text(
+                "@echo off\n"
+                'if "%~1"=="onnx-check" if defined FIXTURE_FAIL_INFERENCE exit /b 71\n'
+                'if "%~1"=="media-check" if defined FIXTURE_FAIL_MEDIA exit /b 72\n'
+                "exit /b 0\n",
+                encoding="ascii",
+            )
+            script = Path(temp) / "fixture.ps1"
+            script.write_text(
+                "$ErrorActionPreference = 'Stop'\n$stage = $env:FIXTURE_STAGE\n"
+                + snippet
+                + "\n",
+                encoding="utf-8",
+            )
+            env = dict(os.environ, FIXTURE_STAGE=str(stage), PROVIDER="cuda")
+            powershell = (
+                Path(os.environ["SystemRoot"])
+                / "System32/WindowsPowerShell/v1.0/powershell.exe"
+            )
+
+            def run(failure: str = "") -> subprocess.CompletedProcess[str]:
+                child = env.copy()
+                if failure:
+                    child[failure] = "1"
+                return subprocess.run(
+                    [
+                        str(powershell),
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(script),
+                    ],
+                    env=child,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            result = run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(
+                "CPU inference from the candidate failed",
+                run("FIXTURE_FAIL_INFERENCE").stderr,
+            )
+            self.assertIn(
+                "Bundled media pipeline from the candidate failed",
+                run("FIXTURE_FAIL_MEDIA").stderr,
+            )
+            plugins.rmdir()
+            self.assertIn("Bundled GStreamer plugins missing", run().stderr)
+
     def test_profile_downloads_ignore_stale_candidates(self) -> None:
         workflows = (
             (
