@@ -180,17 +180,19 @@ class GpuWorkflow(unittest.TestCase):
                         content.replace(original, replacement)
                     )
                 )
-        for filename in ("linux-nvidia-gpu.yml", "linux-x64-amd-gpu.yml"):
+        for filename, device in (
+            ("linux-nvidia-gpu.yml", "cuda"),
+            ("linux-x64-amd-gpu.yml", "migraphx"),
+        ):
             job = (
                 (ROOT / ".github/workflows" / filename)
                 .read_text(encoding="utf-8")
                 .split("\n  gpu-profile:\n", 1)[1]
             )
             self.assertIn(
-                'test -f "$work/oxidant/resources/models/deim_dfine_n_coco.onnx"',
+                f'scripts/linux/profile-gpu-bundle.sh "$work/oxidant" {device} "$work/ort"',
                 job,
             )
-            self.assertIn("env -u KATAGLYPHIS_ONNX_MODEL", job)
 
     def test_nvidia_artifacts_survive_partial_and_full_reruns(self) -> None:
         content = (ROOT / ".github/workflows/linux-nvidia-gpu.yml").read_text(

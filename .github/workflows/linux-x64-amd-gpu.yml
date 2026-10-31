@@ -52,6 +52,7 @@ jobs:
           fi
           python3 "$hub/stage-ort-wheel-licenses.py" --help | grep -q -- --require-unstripped || { echo 'Pinned ANTfrastructure lacks exact GPU wheel verification' >&2; exit 1; }
           bash scripts/linux/tests/test-verify-gpu-packages.sh
+          bash scripts/linux/tests/test-profile-gpu-bundle.sh
           python3 scripts/windows/tests/test_gpu_workflow.py
       - name: Select the AMD image
         id: image
@@ -170,9 +171,4 @@ jobs:
           work="$(mktemp -d "${RUNNER_TEMP}/oxidant-amd-profile.XXXXXX")"
           trap 'rm -rf "$work"' EXIT
           tar -xzf "${archives[0]}" -C "$work"
-          test -f "$work/oxidant/resources/models/deim_dfine_n_coco.onnx" || { echo 'Bundled model missing' >&2; exit 1; }
-          env -u KATAGLYPHIS_ONNX_MODEL ORT_DYLIB_PATH="$work/oxidant/lib/libonnxruntime.so" KATAGLYPHIS_ORT_DEVICE=migraphx \
-            "$work/oxidant/oxidant" onnx-check --profile "$work/ort"
-          mapfile -t profiles < <(find "$work" -maxdepth 1 -type f -name 'ort*.json')
-          [[ ${#profiles[@]} -eq 1 ]] || { echo 'Expected one ONNX Runtime profile' >&2; exit 1; }
-          python3 scripts/verify-ort-gpu-profile.py "${profiles[0]}" --device migraphx
+          bash scripts/linux/profile-gpu-bundle.sh "$work/oxidant" migraphx "$work/ort"
