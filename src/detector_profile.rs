@@ -16,9 +16,9 @@ pub fn run(
         .decode()?
         .to_rgba8();
     let (width, height) = image.dimensions();
-    let model = oxidant::person_detection::resolve_model_path(None);
+    let model = crate::person_detection::resolve_model_path(None);
     let mut detector =
-        oxidant::person_detection::PersonDetector::with_ort_profiling(&model, profile)?;
+        crate::person_detection::PersonDetector::with_ort_profiling(&model, profile)?;
     let found = detector.infer_rgba(image.as_raw(), width, height, 0.25, None)?;
     let repeated = repeat_output
         .map(|_| detector.infer_rgba(image.as_raw(), width, height, 0.25, None))
@@ -35,10 +35,10 @@ pub fn run(
 
 fn write_outputs(
     output: &Path,
-    repeated: Option<(&Path, &[oxidant::Detection])>,
+    repeated: Option<(&Path, &[crate::Detection])>,
     width: u32,
     height: u32,
-    found: &[oxidant::Detection],
+    found: &[crate::Detection],
 ) -> Result<()> {
     write_results(output, width, height, found)?;
     if let Some((path, results)) = repeated {
@@ -47,12 +47,7 @@ fn write_outputs(
     Ok(())
 }
 
-fn write_results(
-    output: &Path,
-    width: u32,
-    height: u32,
-    found: &[oxidant::Detection],
-) -> Result<()> {
+fn write_results(output: &Path, width: u32, height: u32, found: &[crate::Detection]) -> Result<()> {
     let detections: Vec<_> = found
         .iter()
         .map(|item| {
@@ -82,8 +77,8 @@ fn write_results(
 mod tests {
     use super::write_outputs;
 
-    fn detection(score: f32) -> oxidant::Detection {
-        oxidant::Detection {
+    fn detection(score: f32) -> crate::Detection {
+        crate::Detection {
             x1: 1.0,
             y1: 2.0,
             x2: 3.0,

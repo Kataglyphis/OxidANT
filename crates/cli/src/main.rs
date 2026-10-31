@@ -7,8 +7,6 @@ use clap::Parser;
 use log::info;
 
 mod cli;
-#[cfg(any(target_os = "linux", windows))]
-mod detection_check;
 mod text;
 
 use cli::{Cli, Commands};
@@ -84,7 +82,7 @@ async fn main() -> Result<()> {
             profile,
             repeat_output,
         } => {
-            detection_check::run(&image, &output, &profile, repeat_output.as_deref())?;
+            oxidant::detector_profile::run(&image, &output, &profile, repeat_output.as_deref())?;
         }
         Commands::MediaCheck => {
             print!("{}", kataglyphis_gui::gui_wgpu::media_check()?);

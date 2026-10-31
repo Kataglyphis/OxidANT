@@ -44,6 +44,32 @@ impl<T> ModelCache<T> {
 
 pub use crate::Detection;
 
+/// Run the packaged detector twice in one profiled session on a real image.
+#[flutter_rust_bridge::frb(sync)]
+pub fn profile_detector_image(
+    image_path: String,
+    output: String,
+    repeat_output: String,
+    profile: String,
+) -> Result<(), String> {
+    #[cfg(any(target_os = "linux", windows))]
+    {
+        use std::path::Path;
+        crate::detector_profile::run(
+            Path::new(&image_path),
+            Path::new(&output),
+            Path::new(&profile),
+            Some(Path::new(&repeat_output)),
+        )
+        .map_err(|error| format!("profile_detector_image failed: {error:#}"))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = (image_path, output, repeat_output, profile);
+        Err("Profiled image inference requires Linux or Windows".into())
+    }
+}
+
 /// Run the desktop detector on a blank frame and return its completed ORT profile path.
 #[flutter_rust_bridge::frb(sync)]
 pub fn profile_person_detection(

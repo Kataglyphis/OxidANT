@@ -98,6 +98,10 @@ kataglyphis_esp32 = { path = "crates/esp32" }
 kataglyphis_media = { path = "crates/media" }
 libloading = { workspace = true }
 
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+serde_json = "1"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "time", "sync"] }
 js-sys = "0.3"

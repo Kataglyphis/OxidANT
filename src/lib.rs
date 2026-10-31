@@ -4,6 +4,8 @@
 #![doc(html_logo_url = "https://rust.jonasheinle.de/logo.png")]
 
 pub mod api;
+#[cfg(any(target_os = "linux", windows))]
+pub mod detector_profile;
 pub use kataglyphis_core::config;
 pub use kataglyphis_core::detection::Detection;
 pub use kataglyphis_core::logging;
