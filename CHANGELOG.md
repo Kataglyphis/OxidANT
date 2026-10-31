@@ -65,6 +65,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   sources no longer refer to a documentation path found only in BeschleunigerBallett.
 
 ### Changed
+- Profile the Linux GPU tarball, DEB payload and AppImage separately on the
+  hardware runner, so each finished package must execute model operators on
+  its requested provider before the optional GPU check passes.
 - Pass Windows container root exclusions to ANTfrastructure's shared selector;
   keep the existing Rust output policy and deep tar exclusions.
 - Share ObservANT's container binary probe and Cargo build transport with

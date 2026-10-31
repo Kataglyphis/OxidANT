@@ -53,6 +53,7 @@ jobs:
           python3 "$hub/stage-ort-wheel-licenses.py" --help | grep -q -- --require-unstripped || { echo 'Pinned ANTfrastructure lacks exact GPU wheel verification' >&2; exit 1; }
           bash scripts/linux/tests/test-verify-gpu-packages.sh
           bash scripts/linux/tests/test-profile-gpu-bundle.sh
+          bash scripts/linux/tests/test-profile-gpu-packages.sh
           python3 scripts/windows/tests/test_gpu_workflow.py
       - name: Select registry image
         id: image
@@ -180,15 +181,9 @@ jobs:
         with:
           name: oxidant-linux-${{ matrix.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
-      - name: Require model operators on CUDA
+      - name: Require model operators on CUDA from every package
         shell: bash
         env:
           CANDIDATE_DIR: ${{ runner.temp }}/oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
         run: |
-          set -euo pipefail
-          mapfile -t archives < <(find "$CANDIDATE_DIR" -type f -name '*.tar.gz')
-          [[ ${#archives[@]} -eq 1 ]] || { echo 'Expected one candidate tarball' >&2; exit 1; }
-          work="$(mktemp -d "${RUNNER_TEMP}/oxidant-cuda-profile.XXXXXX")"
-          trap 'rm -rf "$work"' EXIT
-          tar -xzf "${archives[0]}" -C "$work"
-          bash scripts/linux/profile-gpu-bundle.sh "$work/oxidant" cuda "$work/ort"
+          bash scripts/linux/profile-gpu-packages.sh "$CANDIDATE_DIR" cuda

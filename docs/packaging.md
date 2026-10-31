@@ -14,7 +14,11 @@ on a self-hosted `gpu-amd-rocm` runner and requires profiled MIGraphX operators.
 The dispatch-only `Linux NVIDIA GPU package candidates` workflow targets x64 and
 arm64 with the registry NVIDIA image. Its `verify-gpu` option requires both x64 and
 arm64 self-hosted runners labelled `gpu-nvidia-cuda`; each must profile a CUDA model
-operator. Uploaded artifacts remain labelled candidates even when profiling is skipped.
+operator. The hardware check profiles the finished tarball, extracted DEB payload, and
+AppImage separately; it invokes the AppImage with extract-and-run, without FUSE. A GPU
+runner needs `dpkg-deb` and temporary space for those payloads as well as the host GPU
+runtime. The clean-host job also exercises the installed DEB command. Uploaded artifacts
+remain labelled candidates even when profiling is skipped.
 `package-linux.sh --ort-variant nvidia` or `--ort-variant amd` selects the chain GPU
 ORT and its matching provider, and appends `+gpu-nvidia` or `+gpu-amd` to the version.
 The DEBs all use the `oxidant` package identity and install the `oxidant` command;

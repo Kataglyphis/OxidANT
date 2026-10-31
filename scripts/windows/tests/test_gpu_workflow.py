@@ -311,7 +311,7 @@ class GpuWorkflow(unittest.TestCase):
                 .split("\n  gpu-profile:\n", 1)[1]
             )
             self.assertIn(
-                f'scripts/linux/profile-gpu-bundle.sh "$work/oxidant" {device} "$work/ort"',
+                f'scripts/linux/profile-gpu-packages.sh "$CANDIDATE_DIR" {device}',
                 job,
             )
 

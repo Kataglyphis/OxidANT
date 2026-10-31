@@ -53,6 +53,7 @@ jobs:
           python3 "$hub/stage-ort-wheel-licenses.py" --help | grep -q -- --require-unstripped || { echo 'Pinned ANTfrastructure lacks exact GPU wheel verification' >&2; exit 1; }
           bash scripts/linux/tests/test-verify-gpu-packages.sh
           bash scripts/linux/tests/test-profile-gpu-bundle.sh
+          bash scripts/linux/tests/test-profile-gpu-packages.sh
           python3 scripts/windows/tests/test_gpu_workflow.py
       - name: Select the AMD image
         id: image
@@ -160,15 +161,9 @@ jobs:
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}/oxidant-amd-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Require model operators on MIGraphX
+      - name: Require model operators on MIGraphX from every package
         shell: bash
         env:
           CANDIDATE_DIR: ${{ runner.temp }}/oxidant-amd-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          set -euo pipefail
-          mapfile -t archives < <(find "$CANDIDATE_DIR" -type f -name '*.tar.gz')
-          [[ ${#archives[@]} -eq 1 ]] || { echo 'Expected one candidate tarball' >&2; exit 1; }
-          work="$(mktemp -d "${RUNNER_TEMP}/oxidant-amd-profile.XXXXXX")"
-          trap 'rm -rf "$work"' EXIT
-          tar -xzf "${archives[0]}" -C "$work"
-          bash scripts/linux/profile-gpu-bundle.sh "$work/oxidant" migraphx "$work/ort"
+          bash scripts/linux/profile-gpu-packages.sh "$CANDIDATE_DIR" migraphx
