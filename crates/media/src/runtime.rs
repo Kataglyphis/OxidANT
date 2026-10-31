@@ -10,19 +10,21 @@ static GST_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 /// The only supported entry point: the plugin variables must be set before `gst::init()`.
 pub fn ensure_gst_initialized() -> anyhow::Result<()> {
     let result = GST_INIT.get_or_init(|| {
-        if std::env::var_os("GST_PLUGIN_PATH").is_none() {
-            // Runs before any GStreamer thread exists; frb init calls this before others race.
-            if let Some(dir) = bundled_plugin_dir() {
+        // Runs before any GStreamer thread exists; frb init calls this before others race.
+        if let Some(dir) = bundled_plugin_dir() {
+            if std::env::var_os("GST_PLUGIN_PATH").is_none() {
                 log::info!(
                     "GST_PLUGIN_PATH not set, using the bundled {}",
                     dir.display()
                 );
-                for (name, value) in bundled_env(&dir, cache_root().as_deref()) {
-                    if std::env::var_os(name).is_none() {
-                        std::env::set_var(name, value);
-                    }
-                }
-            } else if let Some(dir) = image_plugin_dir() {
+            }
+            for (name, value) in missing_bundle_env(&dir, cache_root().as_deref(), |name| {
+                std::env::var_os(name).is_some()
+            }) {
+                std::env::set_var(name, value);
+            }
+        } else if std::env::var_os("GST_PLUGIN_PATH").is_none() {
+            if let Some(dir) = image_plugin_dir() {
                 log::info!("GST_PLUGIN_PATH not set, using {}", dir.display());
                 std::env::set_var("GST_PLUGIN_PATH", &dir);
             }
@@ -77,6 +79,18 @@ fn bundled_env(plugin_dir: &Path, cache_root: Option<&Path>) -> Vec<(&'static st
     env
 }
 
+/// Preserve each caller-supplied setting while providing every other bundle default.
+fn missing_bundle_env(
+    plugin_dir: &Path,
+    cache_root: Option<&Path>,
+    is_set: impl Fn(&str) -> bool,
+) -> Vec<(&'static str, OsString)> {
+    bundled_env(plugin_dir, cache_root)
+        .into_iter()
+        .filter(|(name, _)| !is_set(name))
+        .collect()
+}
+
 /// The user's cache directory: `%LOCALAPPDATA%`, else `$XDG_CACHE_HOME`, else `~/.cache`.
 fn cache_root() -> Option<PathBuf> {
     let non_empty = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
@@ -126,6 +140,81 @@ mod tests {
             value(&env, "GST_REGISTRY_FORK"),
             Some(&OsString::from("no"))
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn caller_plugin_path_keeps_other_bundle_defaults() {
+        const CHILD: &str = "OXIDANT_TEST_BUNDLED_GSTREAMER_CHILD";
+        if let Some(mode) = std::env::var_os(CHILD) {
+            ensure_gst_initialized().unwrap();
+            let plugins = if mode == "empty" {
+                ""
+            } else {
+                "/caller/plugins"
+            };
+            assert_eq!(std::env::var("GST_PLUGIN_PATH").unwrap(), plugins);
+            assert_eq!(std::env::var("GST_PLUGIN_SYSTEM_PATH").unwrap(), "");
+            let expected = if mode == "explicit" {
+                "/caller/system"
+            } else {
+                ""
+            };
+            assert_eq!(
+                std::env::var("GST_PLUGIN_SYSTEM_PATH_1_0").unwrap(),
+                expected
+            );
+            assert_eq!(std::env::var("GST_REGISTRY_FORK").unwrap(), "no");
+            assert!(std::env::var_os("GST_REGISTRY").is_some());
+            return;
+        }
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("oxidant-gst-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(dir.join("lib/gstreamer-1.0")).unwrap();
+        let executable = dir.join("media-test");
+        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        for mode in ["default", "explicit", "empty"] {
+            let mut child = std::process::Command::new(&executable);
+            child
+                .args([
+                    "--exact",
+                    "runtime::tests::caller_plugin_path_keeps_other_bundle_defaults",
+                ])
+                .env_clear()
+                .env(CHILD, mode)
+                .env("HOME", &dir)
+                .env("XDG_CACHE_HOME", &dir)
+                .env("PATH", "/usr/bin:/bin")
+                .env(
+                    "GST_PLUGIN_PATH",
+                    if mode == "empty" {
+                        ""
+                    } else {
+                        "/caller/plugins"
+                    },
+                )
+                .env(
+                    "LD_LIBRARY_PATH",
+                    std::env::var_os("LD_LIBRARY_PATH").unwrap_or_default(),
+                );
+            if mode == "explicit" {
+                child.env("GST_PLUGIN_SYSTEM_PATH_1_0", "/caller/system");
+            }
+            let output = child.output().unwrap();
+            if !output.status.success() {
+                let _ = std::fs::remove_dir_all(&dir);
+                panic!(
+                    "{mode} child failed: {} {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
