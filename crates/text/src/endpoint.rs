@@ -1,5 +1,6 @@
 //! An OpenAI-compatible server, by URL or by name through the hub's `linux/llm-stack/backends.json`.
 
+use std::fmt;
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -14,7 +15,10 @@ use crate::{
 /// Error bodies are cut here, so a server's HTML page cannot flood a message.
 const ERROR_BODY_LIMIT: usize = 2000;
 
-#[derive(Debug, Clone, PartialEq)]
+/// One streamed line may hold this many bytes before its terminator, so a server cannot grow the buffer without bound.
+pub const STREAM_LINE_LIMIT: usize = 1 << 20;
+
+#[derive(Clone, PartialEq)]
 pub struct Endpoint {
     /// Without `/v1`, as `backends.json` spells it.
     pub base_url: String,
@@ -24,6 +28,28 @@ pub struct Endpoint {
     /// Body keys the caller's own keys override.
     pub request_extra: Map<String, Value>,
     pub timeout: Duration,
+}
+
+impl fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Destructured so a new field cannot be printed, or skipped, without a decision here.
+        let Self {
+            base_url,
+            model,
+            api_key,
+            headers,
+            request_extra,
+            timeout,
+        } = self;
+        f.debug_struct("Endpoint")
+            .field("base_url", base_url)
+            .field("model", model)
+            .field("api_key", &api_key.as_ref().map(|_| "<redacted>"))
+            .field("headers", headers)
+            .field("request_extra", request_extra)
+            .field("timeout", timeout)
+            .finish()
+    }
 }
 
 impl Endpoint {
@@ -196,6 +222,30 @@ impl EndpointChoice {
     }
 }
 
+/// The next streamed line without its `\n` or `\r\n`, `None` at the end; reads at most [`STREAM_LINE_LIMIT`] + 2 bytes.
+pub fn read_stream_line(reader: &mut impl BufRead) -> Result<Option<String>, TextError> {
+    let mut buffer = Vec::new();
+    let read = reader
+        .take(STREAM_LINE_LIMIT as u64 + 2)
+        .read_until(b'\n', &mut buffer)
+        .map_err(|e| TextError::EndpointUnreachable(format!("the stream broke: {e}")))?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if buffer.last() == Some(&b'\n') {
+        buffer.pop();
+        if buffer.last() == Some(&b'\r') {
+            buffer.pop();
+        }
+    }
+    if buffer.len() > STREAM_LINE_LIMIT {
+        return Err(TextError::StreamLineTooLong(STREAM_LINE_LIMIT));
+    }
+    String::from_utf8(buffer)
+        .map(Some)
+        .map_err(|e| TextError::EndpointUnreachable(format!("the stream broke: {e}")))
+}
+
 /// What one server-sent line of a streamed chat carries.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamEvent {
@@ -294,7 +344,7 @@ impl TextBackend for Endpoint {
         let body = self.chat_body(messages, options)?;
         let start = Instant::now();
         let response = self.post("/v1/chat/completions", &body)?;
-        let reader = BufReader::new(response.into_body().into_reader());
+        let mut reader = BufReader::new(response.into_body().into_reader());
         let mut result = GenerationResult {
             text: String::new(),
             tokens: Vec::new(),
@@ -305,13 +355,13 @@ impl TextBackend for Endpoint {
             decode_tokens_per_second: 0.0,
         };
         let (mut pieces, mut first, mut finished, mut usage) = (0usize, start, false, None);
-        for line in reader.lines() {
+        loop {
+            let line = read_stream_line(&mut reader);
             if cancel.is_cancelled() {
                 result.finish_reason = FinishReason::Cancelled;
                 break;
             }
-            let line =
-                line.map_err(|e| TextError::EndpointUnreachable(format!("the stream broke: {e}")))?;
+            let Some(line) = line? else { break };
             for event in parse_stream_line(&line)? {
                 match event {
                     StreamEvent::Text(text) => {
@@ -486,6 +536,44 @@ mod tests {
                 .to_string()
                 .contains("model gone")
         );
+    }
+
+    #[test]
+    fn the_debug_output_never_shows_the_api_key() {
+        let planted = "sk-planted-6f1d0c9e-never-printed";
+        let mut endpoint = Endpoint::new("https://api.example");
+        endpoint.api_key = Some(planted.into());
+        for shown in [format!("{endpoint:?}"), format!("{endpoint:#?}")] {
+            assert!(!shown.contains(planted), "{shown}");
+            assert!(shown.contains("<redacted>"), "{shown}");
+            assert!(shown.contains("https://api.example"), "{shown}");
+        }
+        endpoint.api_key = None;
+        assert!(format!("{endpoint:?}").contains("api_key: None"));
+    }
+
+    #[test]
+    fn a_streamed_line_over_the_limit_is_refused_and_one_at_it_is_read() {
+        let at_limit = "a".repeat(STREAM_LINE_LIMIT);
+        let under = "b".repeat(STREAM_LINE_LIMIT - 1);
+        let stream = format!("{at_limit}\r\n{under}\nlast");
+        let mut reader = std::io::Cursor::new(stream.into_bytes());
+        for expected in [at_limit.as_str(), under.as_str(), "last"] {
+            let line = read_stream_line(&mut reader).unwrap().unwrap();
+            assert!(line == expected, "a line of {} bytes", line.len());
+        }
+        assert_eq!(read_stream_line(&mut reader).unwrap(), None);
+        for over in [
+            format!("{}\n", "c".repeat(STREAM_LINE_LIMIT + 1)),
+            "d".repeat(4 * STREAM_LINE_LIMIT),
+        ] {
+            let mut reader = std::io::Cursor::new(over.into_bytes());
+            assert_eq!(
+                read_stream_line(&mut reader),
+                Err(TextError::StreamLineTooLong(STREAM_LINE_LIMIT))
+            );
+            assert!(reader.position() <= STREAM_LINE_LIMIT as u64 + 2);
+        }
     }
 
     #[test]

@@ -3,7 +3,7 @@
 mod common;
 
 use common::{chat_stream, FakeServer};
-use kataglyphis_text::endpoint::Endpoint;
+use kataglyphis_text::endpoint::{Endpoint, STREAM_LINE_LIMIT};
 use kataglyphis_text::{
     CancelToken, ChatMessage, FinishReason, GenerationOptions, TextBackend, TextError,
 };
@@ -117,6 +117,21 @@ fn a_stream_that_stops_without_a_finish_reason_is_an_error_not_an_answer() {
         matches!(refused, TextError::GenerationFailed(_)),
         "{refused}"
     );
+}
+
+#[test]
+fn a_streamed_line_over_the_limit_ends_the_run_with_a_typed_error() {
+    let flood = format!("data: {}\n\n", "x".repeat(2 * STREAM_LINE_LIMIT));
+    let server = FakeServer::answer(200, "text/event-stream", flood);
+    let refused = endpoint(&server)
+        .generate(
+            &[ChatMessage::user("x")],
+            &GenerationOptions::default(),
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap_err();
+    assert_eq!(refused, TextError::StreamLineTooLong(STREAM_LINE_LIMIT));
 }
 
 #[test]

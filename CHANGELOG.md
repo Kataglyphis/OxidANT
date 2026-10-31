@@ -18,6 +18,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `aarch64-pc-windows-msvc`, `aarch64-linux-android` and `wasm32-unknown-unknown` to the three Linux
   targets; `cargo deny check advisories licenses bans sources` (0.20.2) passes on all seven with no new
   allowance.
+- **The endpoint backend redacts its key and bounds stream lines.** `Endpoint`'s `Debug` prints
+  `api_key` as `<redacted>`, and its server-sent stream reader refuses a line over 1 MiB with
+  `TextError::StreamLineTooLong` instead of buffering it. See [docs/text.md](docs/text.md).
 
 ### Added
 - Add a real-image ONNX detector diagnostic that can repeat inference in one session.

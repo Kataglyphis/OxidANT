@@ -22,6 +22,14 @@ The CLI and the flutter_rust_bridge surface use it; OmniAccelerANT's AI Playgrou
   `api_key_env` names the variable that holds its key; its `request_extra` keys are sent first, so
   the caller's own win.
 
+**The key never reaches a log, and a server cannot grow memory without bound.** `Endpoint`'s
+`Debug` prints `api_key` as `Some("<redacted>")`; its implementation destructures the struct, so a
+new field fails to compile until it is printed or redacted on purpose. The streamed reader
+(`endpoint::read_stream_line`) reads at most `STREAM_LINE_LIMIT` (1 MiB) per line, its `\n` or
+`\r\n` aside, and refuses a longer one with `TextError::StreamLineTooLong(limit)` instead of
+buffering it. A chunk's JSON sits on one `data:` line, so the bound limits a single piece of text,
+not the reply.
+
 **Only the chain's GenAI loads.** As for ONNX Runtime, the loader reads the library and refuses
 it unless it embeds the chain's build tree (`/opt/onnxruntime-genai/build/` on Linux,
 `C:\temp\onnx-genai-src\build\` on Windows), which its bundled dependencies carry through
@@ -43,7 +51,8 @@ answer. A server without usage reports leaves the completion count at the number
 
 Each failure has its own `TextError`: the library, the model directory, the provider, the
 tokenizer, the chat template, the encoding, invalid options (no messages, a zero budget, a NUL
-byte), generation, an unreachable endpoint, and an endpoint HTTP status with its body.
+byte), generation, an unreachable endpoint, an endpoint HTTP status with its body, and a streamed line over
+the 1 MiB bound.
 
 Not yet: `seed`, a JSON schema for constrained output, and embeddings from GenAI. `embed` needs an
 endpoint.
@@ -89,8 +98,8 @@ local server that plays back one recorded answer and ends within 30 s on its own
 
 | Suite | What it covers |
 | --- | --- |
-| `crates/text/src/*.rs` | Option checks, the request body, stream lines, embeddings, endpoint resolution, the loader's search and its chain check |
+| `crates/text/src/*.rs` | Option checks, the request body, stream lines and their 1 MiB bound, the redacted key, embeddings, endpoint resolution, the loader's search and its chain check |
 | `crates/text/tests/genai.rs` | The tiny model: the oracle's tokens and text, the end token, a cancel from another thread, invalid requests |
-| `crates/text/tests/endpoint.rs` | Streaming, cancel, both finish reasons, HTTP errors, an unreachable port, embeddings |
+| `crates/text/tests/endpoint.rs` | Streaming, cancel, both finish reasons, HTTP errors, an over-long stream line, an unreachable port, embeddings |
 | `crates/cli/tests/text.rs` | `chat` and `embed` on both backends, a named backend, the missing-endpoint error |
 | `src/api/text.rs` | The bridge's mapping |

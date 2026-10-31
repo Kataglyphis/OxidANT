@@ -85,6 +85,8 @@ pub enum TextError {
     GenerationFailed(String),
     EndpointUnreachable(String),
     EndpointStatus(u16, String),
+    /// The byte limit one streamed line exceeded.
+    StreamLineTooLong(usize),
 }
 
 impl fmt::Display for TextError {
@@ -104,6 +106,9 @@ impl fmt::Display for TextError {
             Self::GenerationFailed(d) => write!(f, "generation failed: {d}"),
             Self::EndpointUnreachable(d) => write!(f, "the endpoint is unreachable: {d}"),
             Self::EndpointStatus(code, d) => write!(f, "the endpoint answered HTTP {code}: {d}"),
+            Self::StreamLineTooLong(limit) => {
+                write!(f, "the endpoint streamed a line longer than {limit} bytes")
+            }
         }
     }
 }
@@ -244,6 +249,7 @@ mod tests {
             TextError::GenerationFailed("x".into()),
             TextError::EndpointUnreachable("x".into()),
             TextError::EndpointStatus(503, "x".into()),
+            TextError::StreamLineTooLong(1),
         ];
         let texts: std::collections::HashSet<String> =
             errors.iter().map(ToString::to_string).collect();
