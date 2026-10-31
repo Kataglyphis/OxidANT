@@ -103,9 +103,11 @@ jobs:
           $null = New-Item -ItemType Directory -Path $stage
           & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $stage
           if ($LASTEXITCODE -ne 0) { throw 'Cannot unpack the GPU candidate' }
+          if (-not (Test-Path -LiteralPath (Join-Path $stage 'resources/models/deim_dfine_n_coco.onnx') -PathType Leaf)) { throw 'Bundled model missing' }
+          Remove-Item Env:\KATAGLYPHIS_ONNX_MODEL -ErrorAction SilentlyContinue
           $env:KATAGLYPHIS_ORT_DEVICE = 'cpu'
           $env:ORT_DYLIB_PATH = Join-Path $stage 'onnxruntime.dll'
-          & (Join-Path $stage 'kataglyphis_cli.exe') onnx-check
+          & (Join-Path $stage "oxidant-$env:PROVIDER.cmd") onnx-check
           if ($LASTEXITCODE -ne 0) { throw 'CPU inference from the candidate failed' }
       - name: Upload the unverified candidate
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -155,14 +157,15 @@ jobs:
           $null = New-Item -ItemType Directory -Path $stage
           & "$env:SystemRoot\System32\tar.exe" -xf $zips[0].FullName -C $stage
           if ($LASTEXITCODE -ne 0) { throw 'Cannot unpack the GPU candidate' }
-          $env:KATAGLYPHIS_ORT_DEVICE = $env:PROVIDER
+          if (-not (Test-Path -LiteralPath (Join-Path $stage 'resources/models/deim_dfine_n_coco.onnx') -PathType Leaf)) { throw 'Bundled model missing' }
+          Remove-Item Env:\KATAGLYPHIS_ONNX_MODEL, Env:\KATAGLYPHIS_ORT_DEVICE -ErrorAction SilentlyContinue
           if ($env:PROVIDER -eq 'directml') {
             python third_party/ANTfrastructure/windows/scripts/diagnostics/verify-dxgi-adapter.py --vendor amd --index $env:DIRECTML_INDEX
             if ($LASTEXITCODE -ne 0) { throw 'The selected DirectML adapter is not a physical AMD GPU.' }
             $env:KATAGLYPHIS_DIRECTML_DEVICE_ID = $env:DIRECTML_INDEX
           }
           $env:ORT_DYLIB_PATH = Join-Path $stage 'onnxruntime.dll'
-          & (Join-Path $stage 'kataglyphis_cli.exe') onnx-check --profile (Join-Path $stage 'ort-profile')
+          & (Join-Path $stage "oxidant-$env:PROVIDER.cmd") onnx-check --profile (Join-Path $stage 'ort-profile')
           if ($LASTEXITCODE -ne 0) { throw 'GPU inference or profiling failed' }
           $profiles = @(Get-ChildItem -LiteralPath $stage -Filter 'ort-profile*.json' -File)
           if ($profiles.Count -ne 1) { throw "Expected one ORT profile, found $($profiles.Count)" }

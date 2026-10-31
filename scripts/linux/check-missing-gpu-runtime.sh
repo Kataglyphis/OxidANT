@@ -14,7 +14,7 @@ case "${vendor}" in
 esac
 log="$(mktemp)"
 trap 'rm -f -- "${log}"' EXIT
-if env -u KATAGLYPHIS_ORT_DEVICE -u KATAGLYPHIS_ONNX_BACKEND -u ORT_DYLIB_PATH RUST_LOG=info "$@" onnx-check >"${log}" 2>&1; then
+if env -u KATAGLYPHIS_ORT_DEVICE -u KATAGLYPHIS_ONNX_BACKEND -u KATAGLYPHIS_ONNX_MODEL -u ORT_DYLIB_PATH RUST_LOG=info "$@" onnx-check >"${log}" 2>&1; then
     printf '%s GPU inference unexpectedly succeeded without the host runtime\n' "${vendor}" >&2
     exit 1
 fi

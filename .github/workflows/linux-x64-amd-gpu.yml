@@ -103,7 +103,7 @@ jobs:
                   --version "$VERSION" --arch x64 --platform linux/amd64 \
                   --package-types tar,deb,appimage --ort-variant amd
                 profile_dir="$(mktemp -d)"
-                ORT_DYLIB_PATH=/tmp/oxidant-gpu-package-work/oxidant/lib/libonnxruntime.so \
+                env -u KATAGLYPHIS_ONNX_MODEL ORT_DYLIB_PATH=/tmp/oxidant-gpu-package-work/oxidant/lib/libonnxruntime.so \
                 KATAGLYPHIS_ORT_DEVICE=cpu /tmp/oxidant-gpu-package-work/oxidant/oxidant \
                   onnx-check --profile "$profile_dir/profile"
                 mapfile -t profiles < <(find "$profile_dir" -maxdepth 1 -type f -name "profile*.json")
@@ -142,11 +142,11 @@ jobs:
           artifact: ${{ needs.build.outputs.artifact }}
           scan-elves: 'false'
           deb: '*.deb'
-          deb-command: KATAGLYPHIS_ORT_DEVICE=cpu oxidant onnx-check && oxidant media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" amd oxidant
+          deb-command: env -u KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ORT_DEVICE=cpu oxidant onnx-check && oxidant media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" amd oxidant
           tarball: '*.tar.gz'
-          tarball-command: KATAGLYPHIS_ORT_DEVICE=cpu ./oxidant onnx-check && ./oxidant media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" amd ./oxidant
+          tarball-command: env -u KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ORT_DEVICE=cpu ./oxidant onnx-check && ./oxidant media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" amd ./oxidant
           appimage: '*.AppImage'
-          appimage-command: KATAGLYPHIS_ORT_DEVICE=cpu "$APPIMAGE" onnx-check && "$APPIMAGE" media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" amd "$APPIMAGE"
+          appimage-command: env -u KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ORT_DEVICE=cpu "$APPIMAGE" onnx-check && "$APPIMAGE" media-check && bash "$GITHUB_WORKSPACE/scripts/linux/check-missing-gpu-runtime.sh" amd "$APPIMAGE"
 
   gpu-profile:
     if: ${{ inputs.verify-gpu }}
@@ -170,7 +170,8 @@ jobs:
           work="$(mktemp -d "${RUNNER_TEMP}/oxidant-amd-profile.XXXXXX")"
           trap 'rm -rf "$work"' EXIT
           tar -xzf "${archives[0]}" -C "$work"
-          ORT_DYLIB_PATH="$work/oxidant/lib/libonnxruntime.so" KATAGLYPHIS_ORT_DEVICE=migraphx \
+          test -f "$work/oxidant/resources/models/deim_dfine_n_coco.onnx" || { echo 'Bundled model missing' >&2; exit 1; }
+          env -u KATAGLYPHIS_ONNX_MODEL ORT_DYLIB_PATH="$work/oxidant/lib/libonnxruntime.so" KATAGLYPHIS_ORT_DEVICE=migraphx \
             "$work/oxidant/oxidant" onnx-check --profile "$work/ort"
           mapfile -t profiles < <(find "$work" -maxdepth 1 -type f -name 'ort*.json')
           [[ ${#profiles[@]} -eq 1 ]] || { echo 'Expected one ONNX Runtime profile' >&2; exit 1; }

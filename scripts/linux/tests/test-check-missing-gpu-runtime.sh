@@ -10,7 +10,7 @@ cat > "${work}/program with spaces" <<'PROGRAM'
 set -euo pipefail
 test "${1:-}" = "preserved argument"
 test "${2:-}" = "onnx-check"
-test -z "${KATAGLYPHIS_ORT_DEVICE+x}${KATAGLYPHIS_ONNX_BACKEND+x}${ORT_DYLIB_PATH+x}"
+test -z "${KATAGLYPHIS_ORT_DEVICE+x}${KATAGLYPHIS_ONNX_BACKEND+x}${KATAGLYPHIS_ONNX_MODEL+x}${ORT_DYLIB_PATH+x}"
 test "${RUST_LOG}" = info
 case "${SCENARIO}" in
     nvidia) echo 'ORT device request: Cuda'; echo 'libcudart.so.13: cannot open'; exit 1 ;;
@@ -23,7 +23,7 @@ case "${SCENARIO}" in
 esac
 PROGRAM
 chmod +x "${work}/program with spaces"
-export KATAGLYPHIS_ORT_DEVICE=cpu KATAGLYPHIS_ONNX_BACKEND=tract ORT_DYLIB_PATH=/wrong
+export KATAGLYPHIS_ORT_DEVICE=cpu KATAGLYPHIS_ONNX_BACKEND=tract KATAGLYPHIS_ONNX_MODEL=/wrong ORT_DYLIB_PATH=/wrong
 check() { SCENARIO="$1" bash "${script}" "$2" "${work}/program with spaces" 'preserved argument' >/dev/null 2>&1; }
 check nvidia nvidia
 check amd amd

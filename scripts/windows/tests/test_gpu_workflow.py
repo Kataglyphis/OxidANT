@@ -47,6 +47,21 @@ def directml_identity_is_checked(content: str) -> bool:
     )
 
 
+def windows_profile_uses_candidate_launcher(content: str) -> bool:
+    """Profile the package's default launcher and model, not host overrides."""
+    job = content.split("\n  gpu-profile:\n", 1)[-1]
+    return all(
+        value in job
+        for value in (
+            "resources/models/deim_dfine_n_coco.onnx",
+            "Remove-Item Env:\\KATAGLYPHIS_ONNX_MODEL, Env:\\KATAGLYPHIS_ORT_DEVICE",
+            'Join-Path $stage "oxidant-$env:PROVIDER.cmd"',
+            "--profile (Join-Path $stage 'ort-profile')",
+            "--device $env:PROVIDER",
+        )
+    )
+
+
 class GpuWorkflow(unittest.TestCase):
     def test_profile_downloads_ignore_stale_candidates(self) -> None:
         workflows = (
@@ -120,6 +135,7 @@ class GpuWorkflow(unittest.TestCase):
                 ):
                     match = re.search(rf"(?m)^\s+{option}: (.+)$", clean)
                     self.assertIsNotNone(match)
+                    self.assertIn("env -u KATAGLYPHIS_ONNX_MODEL", match.group(1))
                     self.assertIn(
                         f'check-missing-gpu-runtime.sh" {vendor} {executable}',
                         match.group(1),
@@ -146,6 +162,35 @@ class GpuWorkflow(unittest.TestCase):
                 )
             )
         )
+
+    def test_profile_uses_the_delivered_launcher_and_model(self) -> None:
+        content = WORKFLOW.read_text(encoding="utf-8")
+        self.assertTrue(windows_profile_uses_candidate_launcher(content))
+        for original, replacement in (
+            (
+                'Join-Path $stage "oxidant-$env:PROVIDER.cmd"',
+                "Join-Path $stage 'kataglyphis_cli.exe'",
+            ),
+            ("Env:\\KATAGLYPHIS_ONNX_MODEL, ", ""),
+            ("Env:\\KATAGLYPHIS_ORT_DEVICE", "Env:\\UNRELATED"),
+        ):
+            with self.subTest(original=original):
+                self.assertFalse(
+                    windows_profile_uses_candidate_launcher(
+                        content.replace(original, replacement)
+                    )
+                )
+        for filename in ("linux-nvidia-gpu.yml", "linux-x64-amd-gpu.yml"):
+            job = (
+                (ROOT / ".github/workflows" / filename)
+                .read_text(encoding="utf-8")
+                .split("\n  gpu-profile:\n", 1)[1]
+            )
+            self.assertIn(
+                'test -f "$work/oxidant/resources/models/deim_dfine_n_coco.onnx"',
+                job,
+            )
+            self.assertIn("env -u KATAGLYPHIS_ONNX_MODEL", job)
 
     def test_nvidia_artifacts_survive_partial_and_full_reruns(self) -> None:
         content = (ROOT / ".github/workflows/linux-nvidia-gpu.yml").read_text(
