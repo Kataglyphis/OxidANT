@@ -235,5 +235,77 @@
   "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "An endpoint request carries the json_schema as response_format."
+ },
+ {
+  "id": "consumer.oxidant-crate-floor-unfloored",
+  "target": "scripts/linux/check-crate-coverage.py",
+  "find": "return 1 if bad[\"BELOW\"] or bad[\"NO FLOOR\"] else 0",
+  "replace": "return 1 if bad[\"BELOW\"] else 0",
+  "test": "bash scripts/linux/tests/test-check-crate-coverage.sh",
+  "why": "A crate without a coverage floor fails the gate."
+ },
+ {
+  "id": "consumer.oxidant-crate-floor-compare",
+  "target": "scripts/linux/check-crate-coverage.py",
+  "find": "    if percent < floor:\n",
+  "replace": "    if percent < floor - 1:\n",
+  "test": "bash scripts/linux/tests/test-check-crate-coverage.sh",
+  "why": "A crate one point under its floor fails."
+ },
+ {
+  "id": "consumer.oxidant-crate-floor-empty",
+  "target": "scripts/linux/check-crate-coverage.py",
+  "find": "if total[name] else 0.0",
+  "replace": "if total[name] else 100.0",
+  "test": "bash scripts/linux/tests/test-check-crate-coverage.sh",
+  "why": "A floored crate with no measured lines counts as 0 %."
+ },
+ {
+  "id": "consumer.oxidant-crate-slack-edge",
+  "target": "scripts/linux/check-crate-coverage.py",
+  "find": "over > max_slack",
+  "replace": "over >= max_slack",
+  "test": "bash scripts/linux/tests/test-check-crate-coverage.sh",
+  "why": "A slack equal to --max-slack is not warned."
+ },
+ {
+  "id": "consumer.oxidant-crate-slack-warning",
+  "target": "scripts/linux/check-crate-coverage.py",
+  "find": "print(f\"warning: floor slack",
+  "replace": "print(f\"note: floor slack",
+  "test": "bash scripts/linux/tests/test-check-crate-coverage.sh",
+  "why": "A slack over --max-slack prints a warning naming the crate."
+ },
+ {
+  "id": "consumer.oxidant-crate-slack-advisory",
+  "target": "scripts/linux/check-crate-coverage.py",
+  "find": "return 1 if bad[\"BELOW\"] or bad[\"NO FLOOR\"] else 0",
+  "replace": "return 1 if bad[\"BELOW\"] or bad[\"NO FLOOR\"] or warnings else 0",
+  "test": "bash scripts/linux/tests/test-check-crate-coverage.sh",
+  "why": "Floor slack warns without failing the gate."
+ },
+ {
+  "id": "consumer.oxidant-ci-max-slack",
+  "target": "scripts/linux/ci-container-steps.sh",
+  "find": " --floor src=19 --max-slack 3'",
+  "replace": " --floor src=19'",
+  "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
+  "why": "The CI coverage step passes --max-slack 3."
+ },
+ {
+  "id": "consumer.oxidant-rustdoc-log-stderr",
+  "target": "scripts/linux/ci-container-steps.sh",
+  "find": "\"$@\" 2>&1 | tee logs/code-quality/rustdoc.txt",
+  "replace": "\"$@\" | tee logs/code-quality/rustdoc.txt",
+  "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
+  "why": "The rustdoc log keeps the warnings rustdoc prints on stderr."
+ },
+ {
+  "id": "consumer.oxidant-rustdoc-log-status",
+  "target": "scripts/linux/ci-container-steps.sh",
+  "find": "\"$@\" 2>&1 | tee logs/code-quality/rustdoc.txt",
+  "replace": "\"$@\" 2>&1 | tee logs/code-quality/rustdoc.txt || true",
+  "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
+  "why": "A failed rustdoc build fails the logging step."
  }
 ]

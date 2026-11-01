@@ -15,7 +15,7 @@ name = "linux-x64"
 kind = "coverage"
 format = "cobertura"
 path = "cobertura.xml"
-artifact = "oxidant-*-ubuntu-26.04-x64-all"
+artifact = "lane-reports-ubuntu-26.04-x64"
 workflow = "linux-x64.yml"
 
 [[artifact]]
@@ -31,6 +31,8 @@ name = "rustdoc_warnings"
 kind = "count"
 unit = "warnings"
 path = "logs/code-quality/rustdoc.txt"
+artifact = "lane-reports-ubuntu-26.04-x64"
+workflow = "linux-x64.yml"
 pattern = '^warning: (?!.*generated \d+ warnings?)'
 location = '-->\s+(?P<path>[^:\s]+):(?P<line>\d+)'
 

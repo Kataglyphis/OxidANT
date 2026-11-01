@@ -8,7 +8,7 @@ source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
 # Each crate's own floor, just under its latest figure, so one well-tested crate cannot carry a weak one; raise them as tests come.
-COVERAGE_FLOORS='--floor crates/observant=81 --floor crates/webgpu_renderer=89 --floor crates/inference=77 --floor crates/text=90 --floor crates/cli=72 --floor crates/core=62 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/cxx_bridge=100 --floor crates/media=72 --floor crates/gui=27 --floor src=19'
+COVERAGE_FLOORS='--floor crates/observant=83 --floor crates/webgpu_renderer=89 --floor crates/inference=82 --floor crates/text=93 --floor crates/cli=86 --floor crates/core=79 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/cxx_bridge=100 --floor crates/media=72 --floor crates/gui=29 --floor src=19 --max-slack 3'
 # The vendored crates under third_party/ are upstream's code: tract-linalg's took the workspace figure from 71 % to 56 %.
 COVERAGE_EXCLUDE='third_party/*'
 
@@ -24,6 +24,7 @@ usage: ci-container-steps.sh <step>
   bench       cargo_bench.sh
   release     cargo_release.sh          - fat LTO release build
   docs        cargo_build_doc.sh        - rustdoc into target/doc
+  rustdoc-log cargo_build_doc.sh        - docs, logged to logs/code-quality/rustdoc.txt for quality-report
   ort-chain-only  check-ort-chain-only.sh - no downloaded ONNX Runtime (GATING)
   riscv64-test    the workspace tests, cross-built for riscv64 and run under QEMU
 
@@ -79,6 +80,11 @@ case "$step" in
         ;;
     release)   antfrastructure_exec "${RUST_DRIVERS}/cargo_release.sh" "$@" ;;
     docs)      antfrastructure_exec "${RUST_DRIVERS}/cargo_build_doc.sh" "$@" ;;
+    # quality-report.toml counts rustdoc warnings from this log; pipefail keeps a rustdoc error fatal.
+    rustdoc-log)
+        mkdir -p logs/code-quality
+        bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_build_doc.sh")" "$@" 2>&1 | tee logs/code-quality/rustdoc.txt
+        ;;
     # This repo's own gate, not a hub driver: the owner rule is chain-built ORT only.
     ort-chain-only) exec bash "${SCRIPT_DIR}/check-ort-chain-only.sh" "$@" ;;
 

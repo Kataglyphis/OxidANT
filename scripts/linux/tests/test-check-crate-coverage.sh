@@ -38,14 +38,37 @@ grade() {
 grade 0 "both crates over their floors" "${work}/cobertura.xml" --floor crates/observant=90 --floor src=25
 grade 1 "the root crate under its floor" "${work}/cobertura.xml" --floor crates/observant=90 --floor src=26
 grade 1 "the good crate does not carry the bad one" "${work}/cobertura.xml" --floor crates/observant=50 --floor src=50
-grade 1 "a floor for a crate with no lines" "${work}/cobertura.xml" --floor crates/telemetry=1
+grade 1 "a floor for a crate with no lines" "${work}/cobertura.xml" --floor crates/observant=90 --floor src=25 --floor crates/telemetry=1
+grade 1 "a crate without a floor" "${work}/cobertura.xml" --floor src=25
+grade 0 "a large slack warns without failing" "${work}/cobertura.xml" --floor crates/observant=86 --floor src=23 --max-slack 3
 grade 2 "no floor at all" "${work}/cobertura.xml"
 grade 2 "a malformed floor" "${work}/cobertura.xml" --floor src=half
 
-python3 "$gate" "${work}/cobertura.xml" --floor src=0 > "${work}/out" 2>&1
+python3 "$gate" "${work}/cobertura.xml" --floor crates/observant=90 --floor src=0 > "${work}/out" 2>&1
 t_case "the table counts lines per crate"
 t_assert_grep "${work}/out" '^crates/observant +9 / +10 +90\.0 %'
 t_case "files outside the workspace are not counted"
 t_assert_no_grep "${work}/out" registry
+
+python3 "$gate" "${work}/cobertura.xml" --floor src=25 > "${work}/unfloored" 2>&1
+t_case "the crate without a floor is named"
+t_assert_grep "${work}/unfloored" '^Crate without a coverage floor: crates/observant$'
+t_assert_grep "${work}/unfloored" '^crates/observant .* NO FLOOR$'
+
+python3 "$gate" "${work}/cobertura.xml" --floor crates/observant=86 --floor src=23 --max-slack 3 > "${work}/slack" 2>&1
+t_case "a slack over the limit is a warning naming the crate"
+t_assert_grep "${work}/slack" '^warning: floor slack over 3 points: crates/observant 90\.0 % is 4\.0 points over its 86 % floor; raise the floor$'
+t_case "a slack within the limit is not warned"
+t_assert_no_grep "${work}/slack" 'warning: .* src '
+
+python3 "$gate" "${work}/cobertura.xml" --floor crates/observant=87 --floor src=21 --max-slack 3 > "${work}/edge" 2>&1
+t_case "a slack equal to the limit is not warned"
+t_assert_no_grep "${work}/edge" 'crates/observant .* points over'
+t_case "a slack just over the limit is warned"
+t_assert_grep "${work}/edge" 'src 25\.0 % is 4\.0 points'
+
+python3 "$gate" "${work}/cobertura.xml" --floor crates/observant=50 --floor src=10 > "${work}/noslack" 2>&1
+t_case "without --max-slack nothing warns"
+t_assert_no_grep "${work}/noslack" '^warning:'
 
 t_summary

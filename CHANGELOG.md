@@ -27,6 +27,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
   § Recorded probes), and **five mutation recipes** on the hosted lane: the seed and the guidance in
   `genai::configure`, greedy decoding, and the endpoint's `seed` and `response_format`.
 
+### Changed (2026-11-01, tests that can fail)
+- **Per-crate coverage floors sit within 3 points of their figures.** Raised from run 41256294473:
+  observant 83, inference 82, text 93, cli 86, core 79, gui 29; the others were already close.
+  `check-crate-coverage.py --max-slack 3` warns about a larger slack without failing, and a crate
+  without a floor now fails. Nine new recipes in `ort-license-mutations.json` prove it.
+- **The lane uploads the reports quality-report reads.** The `-all` artifact listed
+  `tarpaulin-report.xml`, which tarpaulin never writes; it now carries `cobertura.xml`. A new
+  `lane-reports-<suffix>` artifact holds `cobertura.xml` and `logs/code-quality/rustdoc.txt` from
+  the new `rustdoc-log` step, so coverage and rustdoc warnings are collected at the same SHA.
+
 ### Fixed (2026-11-01)
 - **The riscv64 media test keeps QEMU's loader and CPU settings for its isolated child.**
   The existing plugin-path isolation and explicit library-path handling are preserved.

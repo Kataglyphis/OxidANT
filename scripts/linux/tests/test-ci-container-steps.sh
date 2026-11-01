@@ -65,6 +65,12 @@ for area in ("observant", "webgpu_renderer", "inference", "text", "cli", "core",
 ET.ElementTree(root).write("cobertura.xml")
 PY
 SH
+cat > "${work}/hub/linux/scripts/02-toolchain/rust/cargo_build_doc.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'warning: missing documentation for a function\n' >&2
+printf 'DOCARG=%s\n' "$@"
+exit "${CI_DOC_RC:-0}"
+SH
 chmod +x "${work}/bin/xvfb-run"
 
 run_step() {
@@ -124,7 +130,9 @@ t_assert_grep "${work}/out" '^XVFB$'
 t_assert_grep "${work}/out" '^FETCHED$'
 t_assert_grep "${work}/out" '^FETCHED-LLM$'
 t_assert_grep "${work}/out" '^DRIVER$'
-t_assert_grep "${work}/out" '^crates/gui .*100.0 % .*floor +27 % +ok$'
+t_assert_grep "${work}/out" '^crates/gui .*100.0 % .*floor +29 % +ok$'
+t_case "coverage warns about floor slack over 3 points without failing"
+t_assert_grep "${work}/out" '^warning: floor slack over 3 points: src 100\.0 % is 81\.0 points over its 19 % floor; raise the floor$'
 t_case "coverage retains its workspace scope, vendor exclusion, timeout and aggregate floor"
 for arg in --workspace --exclude-files 'third_party/*' --timeout 300 --fail-under 70 --package 'two words' ''; do
     t_assert_grep "${work}/out" "^ARG=${arg//\*/\\*}$"
@@ -145,6 +153,17 @@ t_assert_no_grep "${work}/out" '^crates/gui '
 CI_GUI_HITS=0 run_step coverage 0
 t_case "a successful coverage driver cannot bypass the unchanged GUI floor"
 t_assert_grep "${work}/rc" '^1$'
-t_assert_grep "${work}/out" '^crates/gui .*0.0 % .*floor +27 % +BELOW$'
+t_assert_grep "${work}/out" '^crates/gui .*0.0 % .*floor +29 % +BELOW$'
 t_assert_grep "${work}/out" 'Coverage below its floor: crates/gui'
+
+rm -rf "${work}/logs"
+run_step rustdoc-log 0 --features x
+t_case "rustdoc-log keeps the docs warnings, stderr included, in the quality-report log"
+t_assert_grep "${work}/rc" '^0$'
+t_assert_grep "${work}/logs/code-quality/rustdoc.txt" '^warning: missing documentation for a function$'
+t_assert_grep "${work}/logs/code-quality/rustdoc.txt" '^DOCARG=--features$'
+
+CI_DOC_RC=9 run_step rustdoc-log 0
+t_case "a failed rustdoc build fails the logging step"
+t_assert_grep "${work}/rc" '^9$'
 t_summary

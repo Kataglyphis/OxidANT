@@ -1,4 +1,5 @@
 """Line coverage per crate from tarpaulin's cobertura.xml, each against its own floor, so one well-tested crate cannot hide another."""
+# Does not cover branch coverage, files outside crates/ and src/, or whether the tests behind a covered line assert anything.
 import argparse
 import collections
 import sys
@@ -33,6 +34,8 @@ def main():
     parser.add_argument("report", help="cobertura.xml from cargo tarpaulin --out Xml")
     parser.add_argument("--floor", action="append", default=[], metavar="AREA=PERCENT",
                         help="e.g. crates/observant=80 or src=50; repeatable")
+    parser.add_argument("--max-slack", type=float, default=None, metavar="POINTS",
+                        help="warn, without failing, when a crate beats its floor by more than POINTS")
     args = parser.parse_args()
 
     floors = {}
@@ -45,22 +48,39 @@ def main():
     if not floors:
         parser.error("no --floor given")
 
-    covered, total = measure(args.report)
-    failed = []
+    return report(*measure(args.report), floors, args.max_slack)
+
+
+def grade(percent, floor, max_slack):
+    """(verdict, slack points worth a warning or None) for one crate."""
+    if floor is None:
+        return "NO FLOOR", None
+    if percent < floor:
+        return "BELOW", None
+    over = percent - floor
+    return "ok", over if max_slack is not None and over > max_slack else None
+
+
+def report(covered, total, floors, max_slack):
+    """Print the per-crate table and the slack warnings; 1 when a crate is under or lacks its floor."""
+    bad = {"BELOW": [], "NO FLOOR": []}
+    warnings = []
     for name in sorted(set(total) | set(floors)):
-        if total[name] == 0:
-            percent = 0.0
-        else:
-            percent = 100.0 * covered[name] / total[name]
+        percent = 100.0 * covered[name] / total[name] if total[name] else 0.0
         floor = floors.get(name)
-        verdict = "-" if floor is None else ("ok" if percent >= floor else "BELOW")
+        verdict, over = grade(percent, floor, max_slack)
+        bad.get(verdict, []).append(name)
+        if over is not None:
+            warnings.append(f"{name} {percent:.1f} % is {over:.1f} points over its {floor:g} % floor")
         print(f"{name:28} {covered[name]:6} / {total[name]:6}  {percent:5.1f} %  floor {'-' if floor is None else f'{floor:g} %':>6}  {verdict}")
-        if floor is not None and percent < floor:
-            failed.append(name)
-    if failed:
-        print(f"Coverage below its floor: {', '.join(failed)}", file=sys.stderr)
-        return 1
-    return 0
+    for line in warnings:
+        print(f"warning: floor slack over {max_slack:g} points: {line}; raise the floor")
+    if bad["BELOW"]:
+        print(f"Coverage below its floor: {', '.join(bad['BELOW'])}", file=sys.stderr)
+    # A crate with no floor would let its coverage fall to zero unseen.
+    if bad["NO FLOOR"]:
+        print(f"Crate without a coverage floor: {', '.join(bad['NO FLOOR'])}", file=sys.stderr)
+    return 1 if bad["BELOW"] or bad["NO FLOOR"] else 0
 
 
 if __name__ == "__main__":
