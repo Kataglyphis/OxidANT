@@ -16,24 +16,34 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 . (Join-Path $PSScriptRoot 'Resolve-BuildModule.ps1')
 Import-BuildModule @('WindowsTargetArch.Common', 'WindowsOrtPayload.Common', 'WindowsOrtProvenance.Common', 'WindowsOrtLicense.Common')
 
+function Assert-CandidateLocation {
+  param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$DestinationPath)
+  if (-not (Test-Path -LiteralPath $Source -PathType Container)) { throw "Not a bundle directory: $Source" }
+  if (Test-Path -LiteralPath $DestinationPath) { throw "Destination already exists: $DestinationPath" }
+  $comparison = [StringComparison]::OrdinalIgnoreCase
+  if ($DestinationPath.StartsWith("$Source\", $comparison) -or $Source.StartsWith("$DestinationPath\", $comparison)) {
+    throw 'Source and destination must not contain one another.'
+  }
+}
+
+function Assert-CandidateFile {
+  param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Provider)
+  $required = @('kataglyphis_cli.exe', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll',
+      'LICENSE', 'resources\models\deim_dfine_n_coco.onnx', 'resources\models\deim_dfine_n_coco.LICENSE',
+      'resources\models\deim_dfine_n_coco.NOTICE',
+      'licenses\onnxruntime\LICENSE', 'licenses\onnxruntime\ThirdPartyNotices.txt')
+  if ($Provider -eq 'directml') { $required += 'DirectML.dll' }
+  foreach ($relative in $required) {
+    $file = Get-Item -LiteralPath (Join-Path $Source $relative) -ErrorAction Stop
+    if ($file.PSIsContainer -or $file.Length -eq 0) { throw "Missing or empty candidate file: $relative" }
+  }
+}
+
 $source = (Resolve-Path -LiteralPath $SourceBundle).Path.TrimEnd('\', '/')
 $destinationInput = if ([IO.Path]::IsPathRooted($Destination)) { $Destination } else { Join-Path (Get-Location).Path $Destination }
 $destinationPath = [IO.Path]::GetFullPath($destinationInput).TrimEnd('\', '/')
-if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "Not a bundle directory: $source" }
-if (Test-Path -LiteralPath $destinationPath) { throw "Destination already exists: $destinationPath" }
-$comparison = [StringComparison]::OrdinalIgnoreCase
-if ($destinationPath.StartsWith("$source\", $comparison) -or $source.StartsWith("$destinationPath\", $comparison)) {
-  throw 'Source and destination must not contain one another.'
-}
-$required = @('kataglyphis_cli.exe', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll',
-    'LICENSE', 'resources\models\deim_dfine_n_coco.onnx', 'resources\models\deim_dfine_n_coco.LICENSE',
-    'resources\models\deim_dfine_n_coco.NOTICE',
-    'licenses\onnxruntime\LICENSE', 'licenses\onnxruntime\ThirdPartyNotices.txt')
-if ($Provider -eq 'directml') { $required += 'DirectML.dll' }
-foreach ($relative in $required) {
-  $file = Get-Item -LiteralPath (Join-Path $source $relative) -ErrorAction Stop
-  if ($file.PSIsContainer -or $file.Length -eq 0) { throw "Missing or empty candidate file: $relative" }
-}
+Assert-CandidateLocation -Source $source -DestinationPath $destinationPath
+Assert-CandidateFile -Source $source -Provider $Provider
 $peNames = @('kataglyphis_cli.exe', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll')
 if ($Provider -eq 'directml') { $peNames += 'DirectML.dll' }
 $peFiles = $peNames |

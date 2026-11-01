@@ -14,6 +14,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Changed (2026-11-01)
+- **PowerShell complexity is strict.** `powershell-quality.yml` passes `strict: true` on push and PR
+  after the three findings reached 0: `Build-Windows.ps1` runs each build step from a named function,
+  and `New-GpuCandidate.ps1` and `Stage-CrossTests.ps1` check their inputs in helper functions. The
+  build steps, their order and their checks are unchanged.
 - **Python static analysis is strict.** `python-static.yml` passes `strict: true` to the hub's
   reusable workflow on every push, PR and dispatch, after the Ruff findings (12) and ty diagnostics
   (16) reached 0: shebang scripts got their executable mode, regex and import-spec results are

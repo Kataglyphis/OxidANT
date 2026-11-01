@@ -87,6 +87,315 @@ function Assert-MsiLicenseTexts {
   }
 }
 
+# The step functions read the script's build settings, as their step script blocks did before.
+function Initialize-CargoTargetLayout {
+  # CARGO_TARGET_DIR is often absolute, and Join-Path would glue it on as 'C:\a\C:\b'.
+  $targetRoot = if ([System.IO.Path]::IsPathRooted($cargoTargetDir)) { $cargoTargetDir } else { Join-Path $workspacePath $cargoTargetDir }
+  $layout = Get-CargoTargetLayout -Arch $TargetArch -TargetRoot $targetRoot -WorkspacePath $workspacePath
+  Write-BuildLog -Context $context -Message "Target: $($layout.Arch)$(if ($layout.IsCross) { " (cross: $($layout.CargoArgs -join ' '))" }), release dir $($layout.ReleaseDir)"
+  if ($layout.IsCross) {
+    # pkg-config refuses cross builds by default; the arm64 bundle's PKG_CONFIG_PATH is the target's.
+    $env:PKG_CONFIG_ALLOW_CROSS = '1'
+  }
+  return $layout
+}
+
+function Invoke-CleanStep {
+  Invoke-BuildStep -Context $context -StepName 'Clean Build Artifacts' -Script {
+    Write-BuildLog -Context $context -Message "Cleaning cargo build artifacts..."
+    Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('clean') | Out-Null
+
+    $flutterExe = Get-Command flutter -ErrorAction SilentlyContinue
+    if ($flutterExe) {
+      Write-BuildLog -Context $context -Message "Cleaning Flutter build artifacts..."
+      Invoke-BuildExternal -Context $context -File 'flutter' -Parameters @('clean') | Out-Null
+    } else {
+      Write-BuildLogWarning -Context $context -Message "Flutter not found, skipping Flutter clean"
+    }
+  } | Out-Null
+}
+
+function Install-PinnedCargoTool {
+  param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Version)
+  Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $Version, $Name) | Out-Null
+}
+
+function Invoke-SourceGateStep {
+  # Cross builds leave target-independent gates to the x64 lane; clippy still runs for the target.
+  if ($layout.IsCross) {
+    Write-BuildLog -Context $context -Message "Cross build: security checks, format check and unit tests are the x64 lane's."
+  }
+  if (-not $layout.IsCross) {
+    Invoke-BuildStep -Context $context -StepName 'Security Checks (audit & deny)' -Script {
+      # Pinned from the image env or the hub's versions.env, else fatal: unpinned, crates.io picks the verdict.
+      if (-not (Get-Command -Name 'Get-ANTfrastructurePin' -ErrorAction SilentlyContinue)) {
+        throw 'Get-ANTfrastructurePin is missing: move third_party/ANTfrastructure to hub 54e7d7fc (2026-10-05) or later.'
+      }
+      $cargoAuditVersion = Get-ANTfrastructurePin -Name 'CARGO_AUDIT_VERSION'
+      $cargoDenyVersion = Get-ANTfrastructurePin -Name 'CARGO_DENY_VERSION'
+      Write-BuildLog -Context $context -Message "cargo-audit $cargoAuditVersion, cargo-deny $cargoDenyVersion"
+
+      Install-PinnedCargoTool -Name 'cargo-audit' -Version $cargoAuditVersion
+      Install-PinnedCargoTool -Name 'cargo-deny' -Version $cargoDenyVersion
+
+    # No try/catch: a gate that cannot fail is not a gate; findings belong in deny.toml.
+    Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('audit') | Out-Null
+    Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('deny', 'check', 'advisories', 'licenses', 'bans', 'sources') | Out-Null
+    } | Out-Null
+
+    # Never `rustup component add`: the image's rustup is offline, and the image installs both.
+    Invoke-BuildStep -Context $context -StepName 'Format Check' -Critical -Script {
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('fmt', '--all', '--', '--check') | Out-Null
+    } | Out-Null
+  }
+}
+
+function Invoke-CargoBuildStep {
+  # The workspace and all targets, as on Linux: the cfg(windows) code is linted here only.
+  Invoke-BuildStep -Context $context -StepName 'Linting (cargo clippy)' -Critical -Script {
+    $clippyParams = @('clippy', '--workspace', '--all-targets', '--locked') + $layout.CargoArgs
+    $clippyParams += @('--', '-D', 'warnings')
+    Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $clippyParams | Out-Null
+  } | Out-Null
+
+  if (-not $SkipTests -and -not $layout.IsCross) {
+    Invoke-BuildStep -Context $context -StepName 'Unit Tests' -Critical -Script {
+      # The model is fetched above, so a missing one fails instead of skipping; 0 opts out.
+      if (-not $env:KATAGLYPHIS_REQUIRE_MODEL) { $env:KATAGLYPHIS_REQUIRE_MODEL = '1' }
+      $testParams = @('test', '--all', '--verbose')
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $testParams | Out-Null
+    } | Out-Null
+  }
+
+  Invoke-BuildStep -Context $context -StepName 'Release Build' -Critical -Script {
+    $buildParams = @('build', '--release', '--package', 'kataglyphis_cli', '--bin', $binary) + $layout.CargoArgs
+    Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $buildParams | Out-Null
+  } | Out-Null
+}
+
+function Invoke-RuntimeStagingStep {
+  # The exe loads ONNX Runtime at run time, so only the chain-built copy goes beside it.
+  Invoke-BuildStep -Context $context -StepName 'Stage Chain ONNX Runtime' -Critical -Script {
+    $releaseDir = $layout.ReleaseDir
+    $exePath = Join-Path $releaseDir "$binary.exe"
+    if (-not (Test-PayloadLoadsOrt -ExePath $exePath)) {
+      Get-OrtFamilyFile -Directory $releaseDir | Remove-Item -Force
+      Write-BuildLog -Context $context -Message "Neither $binary.exe nor a DLL beside it loads ONNX Runtime; nothing staged."
+      return
+    }
+    $null = Copy-ChainOrtBeside -OnnxRoot "$env:ONNX_ROOT" -Destination $releaseDir
+    $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\stage')
+    Write-BuildLog -Context $context -Message "Chain ONNX Runtime staged from $env:ONNX_ROOT\bin and proved by G6: $(@($payload.OrtDlls | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
+  } | Out-Null
+
+  # Plugins are loaded by name, in no import table, so the config's list is staged explicitly.
+  Invoke-BuildStep -Context $context -StepName 'Stage GStreamer Plugins' -Critical -Script {
+    $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
+    $pluginTarget = Join-Path $layout.ReleaseDir 'lib\gstreamer-1.0'
+    if (Test-Path -LiteralPath $pluginTarget) { Remove-Item -LiteralPath $pluginTarget -Recurse -Force }
+    if (@(Get-PeImportNames -Path $exePath) -notcontains 'gstreamer-1.0-0.dll') {
+      Write-BuildLog -Context $context -Message "$binary.exe does not link GStreamer; no plugins staged."
+      return
+    }
+    $missing = @($gstPlugins | Where-Object { -not (Test-Path -LiteralPath (Join-Path $gstPluginDir "$_.dll") -PathType Leaf) })
+    if ($missing.Count -gt 0) {
+      throw "GStreamer plugins missing from $gstPluginDir`: $($missing -join ', ') (Build.GStreamerPlugins in Build-Windows.config.psd1)."
+    }
+    New-Item -ItemType Directory -Force -Path $pluginTarget | Out-Null
+    foreach ($name in $gstPlugins) { Copy-Item -LiteralPath (Join-Path $gstPluginDir "$name.dll") -Destination $pluginTarget }
+    Write-BuildLog -Context $context -Message "GStreamer plugins staged in $pluginTarget from $gstPluginDir`: $($gstPlugins -join ', ')"
+  } | Out-Null
+
+  # A clean machine has no C:\runtime or VC++ redist, so the whole import closure ships.
+  Invoke-BuildStep -Context $context -StepName 'Stage DLL Closure' -Critical -Script {
+    $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
+    $seeds = @($exePath) + @(Get-ChildItem -LiteralPath $layout.ReleaseDir -Filter '*.dll' -File | ForEach-Object FullName) +
+      @(Get-ChildItem -LiteralPath (Join-Path $layout.ReleaseDir 'lib\gstreamer-1.0') -Filter '*.dll' -File -ErrorAction SilentlyContinue | ForEach-Object FullName)
+    $search = @(Get-ProductDllSearchPath -Arch $layout.Arch)
+    $copied = @(Copy-PeImportClosure -Path $seeds -SearchDirectory $search -Destination $layout.ReleaseDir -Arch $layout.Arch)
+    Write-BuildLog -Context $context -Message "DLL closure staged beside $binary.exe from $($search -join ', '): $(@($copied | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
+  } | Out-Null
+}
+
+function Invoke-PortableBundleStep {
+  # The uploaded product: exe, DLLs, lib\ plugins and resources\, which the app expects beside it.
+  Invoke-BuildStep -Context $context -StepName 'Portable Bundle' -Critical -Script {
+    $bundleDir = Join-Path $layout.DistDir 'bundle'
+    $bundle = New-OrtProvenPayload -ExePath (Join-Path $layout.ReleaseDir "$binary.exe") -Destination $bundleDir -IncludeDirectory 'lib'
+    $resourcesSource = Join-Path $workspacePath 'resources'
+    if (Test-Path $resourcesSource) { Copy-Item -LiteralPath $resourcesSource -Destination $bundleDir -Recurse -Force }
+    Copy-PackageLicense -Path $projectLicense -Destination $bundleDir | Out-Null
+    $bundleLicenses = Add-ThirdPartyLicenses -Directory $bundleDir -CargoLicenses $cargoLicenses
+    $bundleRules = Get-ThirdPartyLicenseRules -Licenses $bundleLicenses -ProjectLicense $projectLicense -ModelLicense $modelLicense
+    Invoke-BuildExternal -Context $context -File 'python' -Parameters (@($licenseVerifier, $bundleDir) + $bundleRules) | Out-Null
+    Assert-PayloadOrtLicenses -Path $bundleDir -Licenses $bundleLicenses
+    Write-BuildLogSuccess -Context $context -Message "Portable bundle: $bundleDir ($(@($bundle.Dlls).Count) DLLs beside $binary.exe)"
+  } | Out-Null
+}
+
+function Invoke-MsixPackagingStep {
+  Invoke-BuildStep -Context $context -StepName 'MSIX Packaging' -Critical -Script {
+    # Staging is this project's; Invoke-MsixPackage owns everything from the staged tree on.
+    $releaseDir = $layout.ReleaseDir
+
+    # 4 components: an AppxManifest rejects 3.
+    $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 4
+
+    $msixStaging = Join-Path $layout.ArchTargetDir 'msix-staging'
+    if (Test-Path $msixStaging) {
+      Remove-Item $msixStaging -Recurse -Force
+    }
+
+    $exePath = Join-Path $releaseDir "$binary.exe"
+    if (-not (Test-Path $exePath)) {
+      throw "Expected executable not found: $exePath"
+    }
+    # Proved again here, since -SkipBuild skips the staging step.
+    $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msix') -IncludeDirectory 'lib'
+
+    # -ExtraFiles, not -ResourcesDir, which flattens resources\ into the package root.
+    $extraFiles = @($payload.Dlls) + @($payload.Included)
+    $extraFiles += Copy-PackageLicense -Path $projectLicense -Destination $payload.Directory
+    $msixLicenses = Add-ThirdPartyLicenses -Directory $payload.Directory -CargoLicenses $cargoLicenses
+    $extraFiles += $msixLicenses.Root
+    $resourcesSource = Join-Path $workspacePath 'resources'
+    if (Test-Path $resourcesSource) { $extraFiles += $resourcesSource }
+
+    $logoPath = Join-Path $workspacePath 'images\logo.png'
+
+    $manifestTemplateRel = Get-ConfigValue -Config $config -Path 'Msix.ManifestTemplate'
+    $manifestTemplatePath = Resolve-PathFromRoot -Root $workspacePath -Path $manifestTemplateRel
+
+    $distDir = Join-Path $layout.DistDir 'msix'
+    $packageFile = Join-Path $distDir "$msixName`_$resolvedVersion`_$($layout.PackageArch).msix"
+
+    Write-BuildLog -Context $context -Message "Creating MSIX package: $packageFile"
+
+    # The module XML-escapes and replaces ordinally, unlike `-replace`, which expands `$1`.
+    Invoke-MsixPackage -Context $context `
+      -StagingDir $msixStaging `
+      -ExePath $payload.Exe `
+      -ExtraFiles $extraFiles `
+      -LogoPath $logoPath `
+      -ManifestTemplatePath $manifestTemplatePath `
+      -MakeAppxPath (Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msix.MakeAppxPath') '') `
+      -OutputPath $packageFile `
+      -TokenMap @{
+        '__MSIX_NAME__'                   = $msixName
+        '__MSIX_PUBLISHER__'              = $msixPublisher
+        '__MSIX_VERSION__'                = $resolvedVersion
+        '__MSIX_ARCH__'                   = $layout.PackageArch
+        '__MSIX_MIN_VERSION__'            = $msixMinVersion
+        '__MSIX_DISPLAY_NAME__'           = $msixDisplayName
+        '__MSIX_PUBLISHER_DISPLAY_NAME__' = $msixPublisherDisplayName
+        '__MSIX_DESCRIPTION__'            = $msixDescription
+        '__EXE_REL_PATH__'                = "$binary.exe"
+        '__STORE_LOGO_REL__'              = 'Assets/StoreLogo.png'
+        '__LOGO44_REL__'                  = 'Assets/Square44x44Logo.png'
+        '__LOGO150_REL__'                 = 'Assets/Square150x150Logo.png'
+      } `
+      -Sign -SigningRoot $workspacePath | Out-Null
+
+    $msixRules = Get-ThirdPartyLicenseRules -Licenses $msixLicenses -ProjectLicense $projectLicense -ModelLicense $modelLicense
+    Invoke-BuildExternal -Context $context -File 'python' -Parameters (@($licenseVerifier, $packageFile) + $msixRules) | Out-Null
+    Assert-PayloadOrtLicenses -Path $packageFile -Licenses $msixLicenses
+
+    Write-BuildLogSuccess -Context $context -Message "MSIX package created: $packageFile"
+  }
+}
+
+function Invoke-MsiPackagingStep {
+  Invoke-BuildStep -Context $context -StepName 'MSI Packaging' -Critical -Script {
+    # MSI ProductVersion is major.minor.build.
+    $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 3
+
+    $msiOutputName = Get-OrDefault $env:MSI_OUTPUT_NAME (Get-ConfigValue -Config $config -Path 'Msi.OutputName')
+    if ([string]::IsNullOrWhiteSpace($msiOutputName)) {
+      $msiOutputName = $binary
+    }
+
+    $msiDistDir = Join-Path $layout.DistDir 'msi'
+    New-Item -ItemType Directory -Path $msiDistDir -Force | Out-Null
+
+    $msiFile = Join-Path $msiDistDir "$msiOutputName-$resolvedVersion-$($layout.PackageArch).msi"
+
+    Write-BuildLog -Context $context -Message "Creating MSI package: $msiFile"
+
+    $wxsRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.WxsFile') 'wix/main.wxs'
+    $wxsPath = if ([System.IO.Path]::IsPathRooted($wxsRel)) { $wxsRel } else { Join-Path $workspacePath $wxsRel }
+
+    $msiExePath = Join-Path $layout.ReleaseDir "$binary.exe"
+    if (-not (Test-Path $msiExePath)) {
+      throw "Expected executable not found: $msiExePath"
+    }
+    # The MSI installs the payload G6 just proved, exe included.
+    $msiPayload = New-OrtProvenPayload -ExePath $msiExePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msi') -IncludeDirectory 'lib'
+    $projectIcon = ConvertTo-PythonAppIcon -PngPath (Join-Path $workspacePath 'images\logo.png') -Destination (Join-Path $msiPayload.Directory 'project.ico')
+
+    $licenseGenerator = Join-Path $workspacePath 'wix/GenerateLicenseRtf.cmake'
+    $licenseRtf = Join-Path $layout.ArchTargetDir 'project-license.rtf'
+    Invoke-BuildExternal -Context $context -File 'cmake' -Parameters @("-DLICENSE_INPUT=$projectLicense", "-DLICENSE_OUTPUT=$licenseRtf", '-P', $licenseGenerator) | Out-Null
+
+    # The config owns these strings; the WXS takes them as preprocessor variables.
+    $msiProductName = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.ProductName') $msixDisplayName
+    $msiManufacturer = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.Manufacturer') $msixPublisherDisplayName
+    if ([string]::IsNullOrWhiteSpace($msiProductName)) {
+      throw "Msi.ProductName is empty and Msix.DisplayName gave no fallback; $wxsPath requires it."
+    }
+    if ([string]::IsNullOrWhiteSpace($msiManufacturer)) {
+      throw "Msi.Manufacturer is empty and Msix.PublisherDisplayName gave no fallback; $wxsPath requires it."
+    }
+
+    # One generated component per payload file for main.wxs's PayloadFiles, laid out like the bundle.
+    $payloadFiles = [System.Collections.Generic.List[object]]::new()
+    $payloadLicense = Copy-PackageLicense -Path $projectLicense -Destination $msiPayload.Directory
+    $payloadFiles.Add([pscustomobject]@{ Source = $payloadLicense; Subdirectory = '' })
+    foreach ($dll in @($msiPayload.Dlls)) { $payloadFiles.Add([pscustomobject]@{ Source = $dll; Subdirectory = '' }) }
+    $msiLicenses = Add-ThirdPartyLicenses -Directory $msiPayload.Directory -CargoLicenses $cargoLicenses
+    $trees = @(@($msiPayload.Included) + $msiLicenses.Root | ForEach-Object { [pscustomobject]@{ Base = $msiPayload.Directory; Dir = $_ } })
+    $resourcesSource = Join-Path $workspacePath 'resources'
+    if (Test-Path -LiteralPath $resourcesSource) { $trees += [pscustomobject]@{ Base = $workspacePath; Dir = $resourcesSource } }
+    foreach ($tree in $trees) {
+      foreach ($file in @(Get-ChildItem -LiteralPath $tree.Dir -File -Recurse)) {
+        $payloadFiles.Add([pscustomobject]@{ Source = $file.FullName; Subdirectory = [System.IO.Path]::GetRelativePath($tree.Base, $file.DirectoryName) })
+      }
+    }
+    Write-BuildLog -Context $context -Message "MSI payload: $($payloadFiles.Count) files with $binary.exe, $(@($payloadFiles | Where-Object Subdirectory).Count) of them in subdirectories"
+    Invoke-MsiPackage -Context $context -WxsFile $wxsPath -LicenseFile $licenseRtf -ProductName $msiProductName `
+      -Manufacturer $msiManufacturer -ExeSource $msiPayload.Exe -Version $resolvedVersion -OutFile $msiFile `
+      -Arch $layout.PackageArch -PayloadFiles $payloadFiles.ToArray() `
+      -WixVariables @{ IconSource = $projectIcon } `
+      -FragmentPath (Join-Path $layout.ArchTargetDir 'msi-payload-files.wxs') | Out-Null
+
+    $msiFragment = Join-Path $layout.ArchTargetDir 'msi-payload-files.wxs'
+    $msiTexts = @(
+      @($payloadLicense, $projectLicense),
+      @((Join-Path $msiLicenses.Cargo 'manifest.json'), (Join-Path $cargoLicenses 'manifest.json')),
+      @($modelLicense, $modelLicense))
+    Assert-MsiLicenseTexts -MsiPath $msiFile -WixPath $msiFragment -Texts $msiTexts -VerifierPath $licenseVerifier
+    Assert-PayloadOrtLicenses -Path $msiFile -Licenses $msiLicenses -Format msi -WixPath $msiFragment
+
+    Write-BuildLogSuccess -Context $context -Message "MSI package created: $msiFile"
+  }
+}
+
+function Invoke-SyncArtifactsStep {
+  Invoke-BuildStep -Context $context -StepName 'Sync Artifacts' -Critical -Script {
+    $distSource = Join-Path $workspacePath 'dist'
+    $distDest = Join-Path $originalWorkspacePath 'dist'
+    if (Test-Path $distSource) {
+      Write-BuildLog -Context $context -Message "Syncing distribution artifacts to $distDest"
+      Sync-BuildArtifacts -Context $context -Source $distSource -Destination $distDest
+    }
+    $targetSource = Join-Path $workspacePath $cargoTargetDir
+    $targetDest = Join-Path $originalWorkspacePath $cargoTargetDir
+    if (Test-Path $targetSource) {
+      Write-BuildLog -Context $context -Message "Syncing cargo target directory to $targetDest"
+      Sync-BuildArtifacts -Context $context -Source $targetSource -Destination $targetDest -ExcludeCommonRustAndCppCache
+    }
+  } | Out-Null
+}
+
 $buildSettings = Get-BuildWorkspaceConfig -DefaultConfigPath (Join-Path $PSScriptRoot 'Build-Windows.config.psd1') -RepoRoot $repoRoot
 $config = $buildSettings.Config
 $workspacePath = Resolve-WorkspacePath -Path $buildSettings.WorkspaceRoot
@@ -132,14 +441,7 @@ try {
   $modelLicense = Join-Path $workspacePath 'resources\models\deim_dfine_n_coco.LICENSE'
   Set-Location -Path $workspacePath
 
-  # CARGO_TARGET_DIR is often absolute, and Join-Path would glue it on as 'C:\a\C:\b'.
-  $targetRoot = if ([System.IO.Path]::IsPathRooted($cargoTargetDir)) { $cargoTargetDir } else { Join-Path $workspacePath $cargoTargetDir }
-  $layout = Get-CargoTargetLayout -Arch $TargetArch -TargetRoot $targetRoot -WorkspacePath $workspacePath
-  Write-BuildLog -Context $context -Message "Target: $($layout.Arch)$(if ($layout.IsCross) { " (cross: $($layout.CargoArgs -join ' '))" }), release dir $($layout.ReleaseDir)"
-  if ($layout.IsCross) {
-    # pkg-config refuses cross builds by default; the arm64 bundle's PKG_CONFIG_PATH is the target's.
-    $env:PKG_CONFIG_ALLOW_CROSS = '1'
-  }
+  $layout = Initialize-CargoTargetLayout
 
   Invoke-BuildStep -Context $context -StepName 'Verify Toolchain' -Critical -Script {
     Assert-Command -Name 'cargo' -InstallHint 'Install Rust toolchain via rustup'
@@ -147,20 +449,7 @@ try {
     Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('--version') | Out-Null
   } | Out-Null
 
-  if ($Clean) {
-    Invoke-BuildStep -Context $context -StepName 'Clean Build Artifacts' -Script {
-      Write-BuildLog -Context $context -Message "Cleaning cargo build artifacts..."
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('clean') | Out-Null
-
-      $flutterExe = Get-Command flutter -ErrorAction SilentlyContinue
-      if ($flutterExe) {
-        Write-BuildLog -Context $context -Message "Cleaning Flutter build artifacts..."
-        Invoke-BuildExternal -Context $context -File 'flutter' -Parameters @('clean') | Out-Null
-      } else {
-        Write-BuildLogWarning -Context $context -Message "Flutter not found, skipping Flutter clean"
-      }
-    } | Out-Null
-  }
+  if ($Clean) { Invoke-CleanStep }
 
   # Models are not tracked; the real-model tests, the bundle, the MSIX and the MSI take them from resources\models.
   Invoke-BuildStep -Context $context -StepName 'Fetch Models' -Critical -Script {
@@ -168,96 +457,9 @@ try {
   } | Out-Null
 
   if (-not $SkipBuild) {
-    # Cross builds leave target-independent gates to the x64 lane; clippy still runs for the target.
-    if ($layout.IsCross) {
-      Write-BuildLog -Context $context -Message "Cross build: security checks, format check and unit tests are the x64 lane's."
-    }
-    if (-not $layout.IsCross) {
-      Invoke-BuildStep -Context $context -StepName 'Security Checks (audit & deny)' -Script {
-        # Pinned from the image env or the hub's versions.env, else fatal: unpinned, crates.io picks the verdict.
-        if (-not (Get-Command -Name 'Get-ANTfrastructurePin' -ErrorAction SilentlyContinue)) {
-          throw 'Get-ANTfrastructurePin is missing: move third_party/ANTfrastructure to hub 54e7d7fc (2026-10-05) or later.'
-        }
-        $cargoAuditVersion = Get-ANTfrastructurePin -Name 'CARGO_AUDIT_VERSION'
-        $cargoDenyVersion = Get-ANTfrastructurePin -Name 'CARGO_DENY_VERSION'
-        Write-BuildLog -Context $context -Message "cargo-audit $cargoAuditVersion, cargo-deny $cargoDenyVersion"
-
-        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoAuditVersion, 'cargo-audit') | Out-Null
-        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', '--version', $cargoDenyVersion, 'cargo-deny') | Out-Null
-
-      # No try/catch: a gate that cannot fail is not a gate; findings belong in deny.toml.
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('audit') | Out-Null
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('deny', 'check', 'advisories', 'licenses', 'bans', 'sources') | Out-Null
-      } | Out-Null
-
-      # Never `rustup component add`: the image's rustup is offline, and the image installs both.
-      Invoke-BuildStep -Context $context -StepName 'Format Check' -Critical -Script {
-        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('fmt', '--all', '--', '--check') | Out-Null
-      } | Out-Null
-    }
-
-    # The workspace and all targets, as on Linux: the cfg(windows) code is linted here only.
-    Invoke-BuildStep -Context $context -StepName 'Linting (cargo clippy)' -Critical -Script {
-      $clippyParams = @('clippy', '--workspace', '--all-targets', '--locked') + $layout.CargoArgs
-      $clippyParams += @('--', '-D', 'warnings')
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $clippyParams | Out-Null
-    } | Out-Null
-
-    if (-not $SkipTests -and -not $layout.IsCross) {
-      Invoke-BuildStep -Context $context -StepName 'Unit Tests' -Critical -Script {
-        # The model is fetched above, so a missing one fails instead of skipping; 0 opts out.
-        if (-not $env:KATAGLYPHIS_REQUIRE_MODEL) { $env:KATAGLYPHIS_REQUIRE_MODEL = '1' }
-        $testParams = @('test', '--all', '--verbose')
-        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $testParams | Out-Null
-      } | Out-Null
-    }
-
-    Invoke-BuildStep -Context $context -StepName 'Release Build' -Critical -Script {
-      $buildParams = @('build', '--release', '--package', 'kataglyphis_cli', '--bin', $binary) + $layout.CargoArgs
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $buildParams | Out-Null
-    } | Out-Null
-
-    # The exe loads ONNX Runtime at run time, so only the chain-built copy goes beside it.
-    Invoke-BuildStep -Context $context -StepName 'Stage Chain ONNX Runtime' -Critical -Script {
-      $releaseDir = $layout.ReleaseDir
-      $exePath = Join-Path $releaseDir "$binary.exe"
-      if (-not (Test-PayloadLoadsOrt -ExePath $exePath)) {
-        Get-OrtFamilyFile -Directory $releaseDir | Remove-Item -Force
-        Write-BuildLog -Context $context -Message "Neither $binary.exe nor a DLL beside it loads ONNX Runtime; nothing staged."
-        return
-      }
-      $null = Copy-ChainOrtBeside -OnnxRoot "$env:ONNX_ROOT" -Destination $releaseDir
-      $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\stage')
-      Write-BuildLog -Context $context -Message "Chain ONNX Runtime staged from $env:ONNX_ROOT\bin and proved by G6: $(@($payload.OrtDlls | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
-    } | Out-Null
-
-    # Plugins are loaded by name, in no import table, so the config's list is staged explicitly.
-    Invoke-BuildStep -Context $context -StepName 'Stage GStreamer Plugins' -Critical -Script {
-      $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
-      $pluginTarget = Join-Path $layout.ReleaseDir 'lib\gstreamer-1.0'
-      if (Test-Path -LiteralPath $pluginTarget) { Remove-Item -LiteralPath $pluginTarget -Recurse -Force }
-      if (@(Get-PeImportNames -Path $exePath) -notcontains 'gstreamer-1.0-0.dll') {
-        Write-BuildLog -Context $context -Message "$binary.exe does not link GStreamer; no plugins staged."
-        return
-      }
-      $missing = @($gstPlugins | Where-Object { -not (Test-Path -LiteralPath (Join-Path $gstPluginDir "$_.dll") -PathType Leaf) })
-      if ($missing.Count -gt 0) {
-        throw "GStreamer plugins missing from $gstPluginDir`: $($missing -join ', ') (Build.GStreamerPlugins in Build-Windows.config.psd1)."
-      }
-      New-Item -ItemType Directory -Force -Path $pluginTarget | Out-Null
-      foreach ($name in $gstPlugins) { Copy-Item -LiteralPath (Join-Path $gstPluginDir "$name.dll") -Destination $pluginTarget }
-      Write-BuildLog -Context $context -Message "GStreamer plugins staged in $pluginTarget from $gstPluginDir`: $($gstPlugins -join ', ')"
-    } | Out-Null
-
-    # A clean machine has no C:\runtime or VC++ redist, so the whole import closure ships.
-    Invoke-BuildStep -Context $context -StepName 'Stage DLL Closure' -Critical -Script {
-      $exePath = Join-Path $layout.ReleaseDir "$binary.exe"
-      $seeds = @($exePath) + @(Get-ChildItem -LiteralPath $layout.ReleaseDir -Filter '*.dll' -File | ForEach-Object FullName) +
-        @(Get-ChildItem -LiteralPath (Join-Path $layout.ReleaseDir 'lib\gstreamer-1.0') -Filter '*.dll' -File -ErrorAction SilentlyContinue | ForEach-Object FullName)
-      $search = @(Get-ProductDllSearchPath -Arch $layout.Arch)
-      $copied = @(Copy-PeImportClosure -Path $seeds -SearchDirectory $search -Destination $layout.ReleaseDir -Arch $layout.Arch)
-      Write-BuildLog -Context $context -Message "DLL closure staged beside $binary.exe from $($search -join ', '): $(@($copied | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
-    } | Out-Null
+    Invoke-SourceGateStep
+    Invoke-CargoBuildStep
+    Invoke-RuntimeStagingStep
   }
 
   # Original crate texts for the CLI's graph on this target; the hub stager fails on a missing or unreviewed source.
@@ -271,183 +473,20 @@ try {
       '--root-package', 'kataglyphis_cli', '--target', $triple, '--policy', $cargoLicensePolicy, '--output-dir', $cargoLicenses) | Out-Null
   } | Out-Null
 
-  # The uploaded product: exe, DLLs, lib\ plugins and resources\, which the app expects beside it.
-  Invoke-BuildStep -Context $context -StepName 'Portable Bundle' -Critical -Script {
-    $bundleDir = Join-Path $layout.DistDir 'bundle'
-    $bundle = New-OrtProvenPayload -ExePath (Join-Path $layout.ReleaseDir "$binary.exe") -Destination $bundleDir -IncludeDirectory 'lib'
-    $resourcesSource = Join-Path $workspacePath 'resources'
-    if (Test-Path $resourcesSource) { Copy-Item -LiteralPath $resourcesSource -Destination $bundleDir -Recurse -Force }
-    Copy-PackageLicense -Path $projectLicense -Destination $bundleDir | Out-Null
-    $bundleLicenses = Add-ThirdPartyLicenses -Directory $bundleDir -CargoLicenses $cargoLicenses
-    $bundleRules = Get-ThirdPartyLicenseRules -Licenses $bundleLicenses -ProjectLicense $projectLicense -ModelLicense $modelLicense
-    Invoke-BuildExternal -Context $context -File 'python' -Parameters (@($licenseVerifier, $bundleDir) + $bundleRules) | Out-Null
-    Assert-PayloadOrtLicenses -Path $bundleDir -Licenses $bundleLicenses
-    Write-BuildLogSuccess -Context $context -Message "Portable bundle: $bundleDir ($(@($bundle.Dlls).Count) DLLs beside $binary.exe)"
-  } | Out-Null
+  Invoke-PortableBundleStep
 
   # Invoke-BuildStep, not Invoke-BuildOptional, which hides failures from the summary.
   if (-not $SkipMsix) {
-    Invoke-BuildStep -Context $context -StepName 'MSIX Packaging' -Critical -Script {
-      # Staging is this project's; Invoke-MsixPackage owns everything from the staged tree on.
-      $releaseDir = $layout.ReleaseDir
-
-      # 4 components: an AppxManifest rejects 3.
-      $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 4
-
-      $msixStaging = Join-Path $layout.ArchTargetDir 'msix-staging'
-      if (Test-Path $msixStaging) {
-        Remove-Item $msixStaging -Recurse -Force
-      }
-
-      $exePath = Join-Path $releaseDir "$binary.exe"
-      if (-not (Test-Path $exePath)) {
-        throw "Expected executable not found: $exePath"
-      }
-      # Proved again here, since -SkipBuild skips the staging step.
-      $payload = New-OrtProvenPayload -ExePath $exePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msix') -IncludeDirectory 'lib'
-
-      # -ExtraFiles, not -ResourcesDir, which flattens resources\ into the package root.
-      $extraFiles = @($payload.Dlls) + @($payload.Included)
-      $extraFiles += Copy-PackageLicense -Path $projectLicense -Destination $payload.Directory
-      $msixLicenses = Add-ThirdPartyLicenses -Directory $payload.Directory -CargoLicenses $cargoLicenses
-      $extraFiles += $msixLicenses.Root
-      $resourcesSource = Join-Path $workspacePath 'resources'
-      if (Test-Path $resourcesSource) { $extraFiles += $resourcesSource }
-
-      $logoPath = Join-Path $workspacePath 'images\logo.png'
-
-      $manifestTemplateRel = Get-ConfigValue -Config $config -Path 'Msix.ManifestTemplate'
-      $manifestTemplatePath = Resolve-PathFromRoot -Root $workspacePath -Path $manifestTemplateRel
-
-      $distDir = Join-Path $layout.DistDir 'msix'
-      $packageFile = Join-Path $distDir "$msixName`_$resolvedVersion`_$($layout.PackageArch).msix"
-
-      Write-BuildLog -Context $context -Message "Creating MSIX package: $packageFile"
-
-      # The module XML-escapes and replaces ordinally, unlike `-replace`, which expands `$1`.
-      Invoke-MsixPackage -Context $context `
-        -StagingDir $msixStaging `
-        -ExePath $payload.Exe `
-        -ExtraFiles $extraFiles `
-        -LogoPath $logoPath `
-        -ManifestTemplatePath $manifestTemplatePath `
-        -MakeAppxPath (Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msix.MakeAppxPath') '') `
-        -OutputPath $packageFile `
-        -TokenMap @{
-          '__MSIX_NAME__'                   = $msixName
-          '__MSIX_PUBLISHER__'              = $msixPublisher
-          '__MSIX_VERSION__'                = $resolvedVersion
-          '__MSIX_ARCH__'                   = $layout.PackageArch
-          '__MSIX_MIN_VERSION__'            = $msixMinVersion
-          '__MSIX_DISPLAY_NAME__'           = $msixDisplayName
-          '__MSIX_PUBLISHER_DISPLAY_NAME__' = $msixPublisherDisplayName
-          '__MSIX_DESCRIPTION__'            = $msixDescription
-          '__EXE_REL_PATH__'                = "$binary.exe"
-          '__STORE_LOGO_REL__'              = 'Assets/StoreLogo.png'
-          '__LOGO44_REL__'                  = 'Assets/Square44x44Logo.png'
-          '__LOGO150_REL__'                 = 'Assets/Square150x150Logo.png'
-        } `
-        -Sign -SigningRoot $workspacePath | Out-Null
-
-      $msixRules = Get-ThirdPartyLicenseRules -Licenses $msixLicenses -ProjectLicense $projectLicense -ModelLicense $modelLicense
-      Invoke-BuildExternal -Context $context -File 'python' -Parameters (@($licenseVerifier, $packageFile) + $msixRules) | Out-Null
-      Assert-PayloadOrtLicenses -Path $packageFile -Licenses $msixLicenses
-
-      Write-BuildLogSuccess -Context $context -Message "MSIX package created: $packageFile"
-    }
+    Invoke-MsixPackagingStep
   }
 
   # wix.exe (WiX v4) directly, not cargo-wix, which needs WiX v3's candle/light.
   $msiEnabled = Get-ConfigValue -Config $config -Path 'Msi.Enabled'
   if (-not $SkipMsi -and $msiEnabled) {
-    Invoke-BuildStep -Context $context -StepName 'MSI Packaging' -Critical -Script {
-      # MSI ProductVersion is major.minor.build.
-      $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 3
-
-      $msiOutputName = Get-OrDefault $env:MSI_OUTPUT_NAME (Get-ConfigValue -Config $config -Path 'Msi.OutputName')
-      if ([string]::IsNullOrWhiteSpace($msiOutputName)) {
-        $msiOutputName = $binary
-      }
-
-      $msiDistDir = Join-Path $layout.DistDir 'msi'
-      New-Item -ItemType Directory -Path $msiDistDir -Force | Out-Null
-
-      $msiFile = Join-Path $msiDistDir "$msiOutputName-$resolvedVersion-$($layout.PackageArch).msi"
-
-      Write-BuildLog -Context $context -Message "Creating MSI package: $msiFile"
-
-      $wxsRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.WxsFile') 'wix/main.wxs'
-      $wxsPath = if ([System.IO.Path]::IsPathRooted($wxsRel)) { $wxsRel } else { Join-Path $workspacePath $wxsRel }
-
-      $msiExePath = Join-Path $layout.ReleaseDir "$binary.exe"
-      if (-not (Test-Path $msiExePath)) {
-        throw "Expected executable not found: $msiExePath"
-      }
-      # The MSI installs the payload G6 just proved, exe included.
-      $msiPayload = New-OrtProvenPayload -ExePath $msiExePath -Destination (Join-Path $layout.ArchTargetDir 'ort-payload\msi') -IncludeDirectory 'lib'
-      $projectIcon = ConvertTo-PythonAppIcon -PngPath (Join-Path $workspacePath 'images\logo.png') -Destination (Join-Path $msiPayload.Directory 'project.ico')
-
-      $licenseRtf = Join-Path $layout.ArchTargetDir 'project-license.rtf'
-      $licenseGenerator = Join-Path $workspacePath 'wix/GenerateLicenseRtf.cmake'
-      Invoke-BuildExternal -Context $context -File 'cmake' -Parameters @("-DLICENSE_INPUT=$projectLicense", "-DLICENSE_OUTPUT=$licenseRtf", '-P', $licenseGenerator) | Out-Null
-
-      # The config owns these strings; the WXS takes them as preprocessor variables.
-      $msiProductName = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.ProductName') $msixDisplayName
-      $msiManufacturer = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.Manufacturer') $msixPublisherDisplayName
-      if ([string]::IsNullOrWhiteSpace($msiProductName)) {
-        throw "Msi.ProductName is empty and Msix.DisplayName gave no fallback; $wxsPath requires it."
-      }
-      if ([string]::IsNullOrWhiteSpace($msiManufacturer)) {
-        throw "Msi.Manufacturer is empty and Msix.PublisherDisplayName gave no fallback; $wxsPath requires it."
-      }
-
-      # One generated component per payload file for main.wxs's PayloadFiles, laid out like the bundle.
-      $payloadFiles = [System.Collections.Generic.List[object]]::new()
-      $payloadLicense = Copy-PackageLicense -Path $projectLicense -Destination $msiPayload.Directory
-      $payloadFiles.Add([pscustomobject]@{ Source = $payloadLicense; Subdirectory = '' })
-      foreach ($dll in @($msiPayload.Dlls)) { $payloadFiles.Add([pscustomobject]@{ Source = $dll; Subdirectory = '' }) }
-      $msiLicenses = Add-ThirdPartyLicenses -Directory $msiPayload.Directory -CargoLicenses $cargoLicenses
-      $trees = @(@($msiPayload.Included) + $msiLicenses.Root | ForEach-Object { [pscustomobject]@{ Base = $msiPayload.Directory; Dir = $_ } })
-      $resourcesSource = Join-Path $workspacePath 'resources'
-      if (Test-Path -LiteralPath $resourcesSource) { $trees += [pscustomobject]@{ Base = $workspacePath; Dir = $resourcesSource } }
-      foreach ($tree in $trees) {
-        foreach ($file in @(Get-ChildItem -LiteralPath $tree.Dir -File -Recurse)) {
-          $payloadFiles.Add([pscustomobject]@{ Source = $file.FullName; Subdirectory = [System.IO.Path]::GetRelativePath($tree.Base, $file.DirectoryName) })
-        }
-      }
-      Write-BuildLog -Context $context -Message "MSI payload: $($payloadFiles.Count) files with $binary.exe, $(@($payloadFiles | Where-Object Subdirectory).Count) of them in subdirectories"
-      Invoke-MsiPackage -Context $context -WxsFile $wxsPath -LicenseFile $licenseRtf -ProductName $msiProductName `
-        -Manufacturer $msiManufacturer -ExeSource $msiPayload.Exe -Version $resolvedVersion -OutFile $msiFile `
-        -Arch $layout.PackageArch -PayloadFiles $payloadFiles.ToArray() `
-        -WixVariables @{ IconSource = $projectIcon } `
-        -FragmentPath (Join-Path $layout.ArchTargetDir 'msi-payload-files.wxs') | Out-Null
-
-      $msiFragment = Join-Path $layout.ArchTargetDir 'msi-payload-files.wxs'
-      $msiTexts = @(
-        @($payloadLicense, $projectLicense),
-        @((Join-Path $msiLicenses.Cargo 'manifest.json'), (Join-Path $cargoLicenses 'manifest.json')),
-        @($modelLicense, $modelLicense))
-      Assert-MsiLicenseTexts -MsiPath $msiFile -WixPath $msiFragment -Texts $msiTexts -VerifierPath $licenseVerifier
-      Assert-PayloadOrtLicenses -Path $msiFile -Licenses $msiLicenses -Format msi -WixPath $msiFragment
-
-      Write-BuildLogSuccess -Context $context -Message "MSI package created: $msiFile"
-    }
+    Invoke-MsiPackagingStep
   }
 
-  Invoke-BuildStep -Context $context -StepName 'Sync Artifacts' -Critical -Script {
-    $distSource = Join-Path $workspacePath 'dist'
-    $distDest = Join-Path $originalWorkspacePath 'dist'
-    if (Test-Path $distSource) {
-      Write-BuildLog -Context $context -Message "Syncing distribution artifacts to $distDest"
-      Sync-BuildArtifacts -Context $context -Source $distSource -Destination $distDest
-    }
-    $targetSource = Join-Path $workspacePath $cargoTargetDir
-    $targetDest = Join-Path $originalWorkspacePath $cargoTargetDir
-    if (Test-Path $targetSource) {
-      Write-BuildLog -Context $context -Message "Syncing cargo target directory to $targetDest"
-      Sync-BuildArtifacts -Context $context -Source $targetSource -Destination $targetDest -ExcludeCommonRustAndCppCache
-    }
-  } | Out-Null
+  Invoke-SyncArtifactsStep
 
   Write-BuildLogSuccess -Context $context -Message 'Windows build completed.'
 } finally {

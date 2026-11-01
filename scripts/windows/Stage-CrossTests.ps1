@@ -30,21 +30,44 @@ if (-not $Destination) { $Destination = "$($layout.DistDir)-tests" }
 # pkg-config refuses cross builds by default; the arm64 bundle's PKG_CONFIG_PATH is the target's.
 if ($layout.IsCross) { $env:PKG_CONFIG_ALLOW_CROSS = '1' }
 
-$archDir = $layout.ArchTargetDir.TrimEnd('\') + '\'
-Write-Host "==> cargo test --no-run --workspace $($layout.CargoArgs -join ' ')"
-$messages = & cargo test --no-run --locked --message-format=json --workspace @($layout.CargoArgs)
-if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run --workspace failed with exit code $LASTEXITCODE" }
-# Filter on `reason` first: only compiler-artifact messages carry the fields strict mode reads.
-$artifacts = @($messages | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { $_ | ConvertFrom-Json } |
-    Where-Object { $_.reason -eq 'compiler-artifact' -and $_.executable -and $_.executable.StartsWith($archDir, [StringComparison]::OrdinalIgnoreCase) })
-$tests = @($artifacts | Where-Object { $_.profile.test })
-if ($tests.Count -eq 0) { throw "cargo test --no-run --workspace produced no test binary under $archDir" }
-$isRenderer = { param($a) [System.IO.Path]::GetRelativePath($repoRoot, $a.manifest_path) -eq 'crates\webgpu_renderer\Cargo.toml' }
-$rendererTests = @($tests | Where-Object { & $isRenderer $_ })
-$expectedRenderer = 1 + @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'crates\webgpu_renderer\tests') -Filter '*.rs' -File).Count
-if ($rendererTests.Count -ne $expectedRenderer) {
-  throw "Expected $expectedRenderer WebGPU renderer test binaries (the lib and one per tests\*.rs); cargo reported $($rendererTests.Count)."
+function Get-CrossTestArtifact {
+  param([Parameter(Mandatory)]$Layout)
+  $archDir = $Layout.ArchTargetDir.TrimEnd('\') + '\'
+  Write-Host "==> cargo test --no-run --workspace $($Layout.CargoArgs -join ' ')"
+  $messages = & cargo test --no-run --locked --message-format=json --workspace @($Layout.CargoArgs)
+  if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run --workspace failed with exit code $LASTEXITCODE" }
+  # Filter on `reason` first: only compiler-artifact messages carry the fields strict mode reads.
+  $artifacts = @($messages | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { $_ | ConvertFrom-Json } |
+      Where-Object { $_.reason -eq 'compiler-artifact' -and $_.executable -and $_.executable.StartsWith($archDir, [StringComparison]::OrdinalIgnoreCase) })
+  $tests = @($artifacts | Where-Object { $_.profile.test })
+  if ($tests.Count -eq 0) { throw "cargo test --no-run --workspace produced no test binary under $archDir" }
+  return [pscustomobject]@{ Artifacts = $artifacts; Tests = $tests }
 }
+
+function Assert-RendererTestCount {
+  param([Parameter(Mandatory)][object[]]$Tests, [Parameter(Mandatory)][scriptblock]$IsRenderer)
+  $rendererTests = @($Tests | Where-Object { & $IsRenderer $_ })
+  $expectedRenderer = 1 + @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'crates\webgpu_renderer\tests') -Filter '*.rs' -File).Count
+  if ($rendererTests.Count -ne $expectedRenderer) {
+    throw "Expected $expectedRenderer WebGPU renderer test binaries (the lib and one per tests\*.rs); cargo reported $($rendererTests.Count)."
+  }
+}
+
+# The capture tests load their elements by name, so the product's plugins and the tests' own go where bundled_plugin_dir() looks.
+function Get-CrossTestPlugin {
+  $config = Import-PowerShellDataFile -Path (Join-Path $PSScriptRoot 'Build-Windows.config.psd1')
+  $gstPluginDir = if ($env:GSTREAMER_PLUGIN_DIR) { $env:GSTREAMER_PLUGIN_DIR } else { $config.Build.GStreamerPluginDir }
+  $plugins = @(@($config.Build.GStreamerPlugins) + @($config.Build.TestGStreamerPlugins) | ForEach-Object { Join-Path $gstPluginDir "$_.dll" })
+  $missing = @($plugins | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+  if ($missing.Count -gt 0) { throw "GStreamer plugins missing from $gstPluginDir`: $($missing -join ', ')" }
+  return $plugins
+}
+
+$cargoTests = Get-CrossTestArtifact -Layout $layout
+$artifacts = $cargoTests.Artifacts
+$tests = $cargoTests.Tests
+$isRenderer = { param($a) [System.IO.Path]::GetRelativePath($repoRoot, $a.manifest_path) -eq 'crates\webgpu_renderer\Cargo.toml' }
+Assert-RendererTestCount -Tests $tests -IsRenderer $isRenderer
 
 # The renderer's GPU skip line counts as a skip; serial, as WARP's arm64 d3d10warp.dll access-violates under parallel tests (AGENTS.md).
 $entries = foreach ($test in $tests) {
@@ -67,12 +90,7 @@ foreach ($exe in $binaries) {
   Copy-Item -LiteralPath $exe -Destination $target
 }
 
-# The capture tests load their elements by name, so the product's plugins and the tests' own go where bundled_plugin_dir() looks.
-$config = Import-PowerShellDataFile -Path (Join-Path $PSScriptRoot 'Build-Windows.config.psd1')
-$gstPluginDir = if ($env:GSTREAMER_PLUGIN_DIR) { $env:GSTREAMER_PLUGIN_DIR } else { $config.Build.GStreamerPluginDir }
-$plugins = @(@($config.Build.GStreamerPlugins) + @($config.Build.TestGStreamerPlugins) | ForEach-Object { Join-Path $gstPluginDir "$_.dll" })
-$missing = @($plugins | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
-if ($missing.Count -gt 0) { throw "GStreamer plugins missing from $gstPluginDir`: $($missing -join ', ')" }
+$plugins = @(Get-CrossTestPlugin)
 
 # Each directory gets its own closure: the loader looks beside the exe, not beside its siblings.
 $search = @(Get-ProductDllSearchPath -Arch $layout.Arch)

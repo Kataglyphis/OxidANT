@@ -791,11 +791,12 @@ reference is re-typed into a workflow, a script, or a comment.
 
 **PowerShell is graded too, with the analyzer enforcing.** The job is a `uses:` since 2026-09-15: hub `d339cd52` gave `python-ci-windows.yml` a `build-python-package` input (boolean, default true) gating its container build and made `GHCR_PAT` optional, so a Rust crate can take the family's PowerShell lint without a Python package build. `Invoke-Lint.ps1` makes two passes: a parse + AST-trap gate that is always fatal, and PSScriptAnalyzer. The sibling consumer this job is modelled on leaves the analyzer advisory because it has untriaged findings; this tree has none (measured 2026-09-15: 0 errors, 0 warnings over all 9 files), so `-FailOnAnalyzer` is passed and the ratchet is set at the number this repo actually has. `-Path scripts` is walked recursively, and the hub's `PSScriptAnalyzerSettings.psd1` is resolved against the *script's* own location: the ruleset is consumed by reference and nothing is copied in here.
 
-**PowerShell complexity is measured on every push and PR.** `powershell-quality.yml` calls the
-hub's reusable scanner over `scripts`, uploads JSON from ignored `logs/`, and keeps parser and
-analyzer failures fatal. Its complexity verdict is advisory until the two existing script-level
-cyclomatic findings in `Build-Windows.ps1` and `Stage-CrossTests.ps1` are refactored; manual
-dispatch with `strict: true` tests the shared limits without an exception list.
+**PowerShell complexity is strict on every push and PR.** `powershell-quality.yml` calls the
+hub's reusable scanner over `scripts` with `strict: true`, uploads JSON from ignored `logs/`, and
+keeps parser and analyzer failures fatal. A unit over 15 cyclomatic, 5 nesting or 80 function lines
+fails the job, with no exception list: `Build-Windows.ps1` runs each build step from a named
+function for that reason. Split code into functions; never raise a limit. A manual dispatch without
+`strict` only measures.
 
 **Nothing generated may be tracked.** The hub's `shared/windows/tests/Repo.GeneratedArtifacts.Tests.ps1` runs `Get-TrackedIgnoredFile` and `Get-TrackedGeneratedArtifact` over this root; only the generated-output pathspecs are local, one per line in `scripts/windows/generated-artifacts.txt` (since 2026-10-19; a local copy of the suite held them before). Locally, from the repo root: `Invoke-Pester -Path third_party/ANTfrastructure/shared/windows/tests/Repo.GeneratedArtifacts.Tests.ps1`. A `.gitignore` rule stops a file from being *added* and does nothing once a path is in the index, which is why `git rm --cached` has been needed twice here (build logs under `logs\windows\`, and the flatpak repo). Mind the pathspec form: `'**/__pycache__/*'` matches, `'**/__pycache__/'` matches **nothing**, and the suite refuses it.
 

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       strict:
-        description: Fail when PowerShell complexity exceeds the shared limits
+        description: Fail this dispatch when PowerShell complexity exceeds the shared limits
         type: boolean
         default: false
 
@@ -20,4 +20,5 @@ jobs:
     uses: Kataglyphis/ANTfrastructure/.github/workflows/powershell-quality.yml@develop
     with:
       lint-path: scripts
-      strict: ${{ inputs.strict == true }}
+      # Complexity is fatal on push and PR; a dispatch without strict only measures.
+      strict: ${{ github.event_name != 'workflow_dispatch' || inputs.strict == true }}
