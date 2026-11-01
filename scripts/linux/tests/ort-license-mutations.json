@@ -347,5 +347,13 @@
   "replace": "true",
   "test": "bash scripts/linux/tests/test-check-backend-parity.sh",
   "why": "Only a named ProviderUnavailable excuses a DNNL failure."
+ },
+ {
+  "id": "consumer.oxidant-rustdoc-log-color",
+  "target": "scripts/linux/ci-container-steps.sh",
+  "find": "        CARGO_TERM_COLOR=never bash \"$(antfrastructure_path \"${RUST_DRIVERS}/cargo_build_doc.sh\")\"",
+  "replace": "        bash \"$(antfrastructure_path \"${RUST_DRIVERS}/cargo_build_doc.sh\")\"",
+  "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
+  "why": "The rustdoc log is uncoloured, so quality-report's warning pattern matches."
  }
 ]

@@ -31,7 +31,8 @@ must fail rather than silently omit the GTK lifecycle from the measurement.
 Each per-crate floor in `COVERAGE_FLOORS` stays within 3 points of its printed figure:
 `check-crate-coverage.py --max-slack 3` warns about a larger slack without failing, and a crate
 that has no floor fails the step. The lane uploads `cobertura.xml` and the `rustdoc-log` step's
-`logs/code-quality/rustdoc.txt` as `lane-reports-<suffix>`, which quality-report reads.
+`logs/code-quality/rustdoc.txt`, written without colours so its `warning:` lines count, as
+`lane-reports-<suffix>`, which quality-report reads.
 
 The CI script keeps a parent shell while `xvfb-run` starts. Replacing that shell
 with `exec xvfb-run` can make the launcher PID 1 in the container; Xvfb then

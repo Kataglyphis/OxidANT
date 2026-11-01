@@ -38,14 +38,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `genai::configure`, greedy decoding, and the endpoint's `seed` and `response_format`.
 
 ### Changed (2026-11-01, tests that can fail)
-- **Per-crate coverage floors sit within 3 points of their figures.** Raised from run 41256294473:
-  observant 83, inference 82, text 93, cli 86, core 79, gui 29; the others were already close.
+- **Per-crate coverage floors sit within 3 points of their figures.** Raised from runs 41256294473
+  and 41275077677: observant 83, inference 85, text 94, cli 87, core 80, gui 29; the others were
+  already close.
   `check-crate-coverage.py --max-slack 3` warns about a larger slack without failing, and a crate
-  without a floor now fails. Nine new recipes in `ort-license-mutations.json` prove it.
+  without a floor now fails. Ten new recipes in `ort-license-mutations.json` prove both changes.
 - **The lane uploads the reports quality-report reads.** The `-all` artifact listed
   `tarpaulin-report.xml`, which tarpaulin never writes; it now carries `cobertura.xml`. A new
   `lane-reports-<suffix>` artifact holds `cobertura.xml` and `logs/code-quality/rustdoc.txt` from
-  the new `rustdoc-log` step, so coverage and rustdoc warnings are collected at the same SHA.
+  the new `rustdoc-log` step, so coverage and rustdoc warnings are collected at the same SHA. The step
+  turns cargo's colours off: the lane's `CARGO_TERM_COLOR=always` hid every warning from the count.
 
 ### Added (2026-11-01, cv)
 - **Any-class detection over the bridge.** `detect_rgba(rgba, width, height, classes)` runs the

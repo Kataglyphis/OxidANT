@@ -69,6 +69,7 @@ cat > "${work}/hub/linux/scripts/02-toolchain/rust/cargo_build_doc.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'warning: missing documentation for a function\n' >&2
 printf 'DOCARG=%s\n' "$@"
+printf 'DOCCOLOR=%s\n' "${CARGO_TERM_COLOR-unset}"
 exit "${CI_DOC_RC:-0}"
 SH
 cat > "${work}/bin/cargo" <<'SH'
@@ -180,6 +181,8 @@ t_case "rustdoc-log keeps the docs warnings, stderr included, in the quality-rep
 t_assert_grep "${work}/rc" '^0$'
 t_assert_grep "${work}/logs/code-quality/rustdoc.txt" '^warning: missing documentation for a function$'
 t_assert_grep "${work}/logs/code-quality/rustdoc.txt" '^DOCARG=--features$'
+t_case "rustdoc-log turns cargo's colours off so the warning pattern matches"
+t_assert_grep "${work}/logs/code-quality/rustdoc.txt" '^DOCCOLOR=never$'
 
 CI_DOC_RC=9 run_step rustdoc-log 0
 t_case "a failed rustdoc build fails the logging step"
