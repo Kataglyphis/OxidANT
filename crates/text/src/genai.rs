@@ -255,14 +255,14 @@ impl Provider {
 }
 
 /// What generation sets on GenAI's generator parameters; a test records the calls without the library.
-pub trait SearchParams {
+pub(crate) trait SearchParams {
     fn set_bool(&mut self, name: &'static CStr, value: bool) -> Result<(), TextError>;
     fn set_number(&mut self, name: &'static CStr, value: f64) -> Result<(), TextError>;
     fn set_guidance(&mut self, kind: &'static CStr, data: &CStr) -> Result<(), TextError>;
 }
 
 /// The search options and guidance of one generation: greedy unless the temperature is above 0.
-pub fn configure(
+pub(crate) fn configure(
     params: &mut dyn SearchParams,
     prompt_tokens: usize,
     options: &GenerationOptions,
