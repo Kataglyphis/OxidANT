@@ -79,12 +79,15 @@ pub enum Commands {
         /// New file for detection results.
         #[arg(long)]
         output: PathBuf,
-        /// Write an ONNX Runtime operator profile using this output prefix.
-        #[arg(long)]
-        profile: PathBuf,
+        /// Write an ONNX Runtime operator profile using this output prefix; ORT only, where it is required.
+        #[arg(long, required_unless_present = "tract")]
+        profile: Option<PathBuf>,
         /// Run the same image again in the same detector and write another new file.
         #[arg(long)]
         repeat_output: Option<PathBuf>,
+        /// Detect with tract instead of ONNX Runtime, for backend parity.
+        #[arg(long, conflicts_with_all = ["profile", "repeat_output"])]
+        tract: bool,
     },
     /// Build the GUI's camera pipeline without starting it and print each element's plugin file.
     MediaCheck,

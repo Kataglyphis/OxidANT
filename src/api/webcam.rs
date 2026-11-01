@@ -17,7 +17,6 @@ pub struct DetectionBox {
     pub class_id: i64,
 }
 
-#[cfg(desktop)]
 impl From<crate::Detection> for DetectionBox {
     fn from(d: crate::Detection) -> Self {
         Self {
@@ -41,6 +40,8 @@ pub struct WebcamStreamConfig {
     pub framerate: u32,
     pub model_path: String,
     pub score_threshold: f32,
+    /// Class ids to report (see `detector_labels`); empty reports every class.
+    pub classes: Vec<i64>,
     /// Texture id from the native plugin's `create` call; `0` = headless.
     pub texture_id: i64,
     /// Override for the DLL exporting `knt_push_frame`.
@@ -49,6 +50,10 @@ pub struct WebcamStreamConfig {
 
 pub struct DetectionEvent {
     pub detections: Vec<DetectionBox>,
+    /// The inference backend: `ort` or `tract`.
+    pub backend: String,
+    /// The execution provider: `cpu`, or e.g. `xnnpack` or `cuda`.
+    pub execution_provider: String,
     pub frame_sequence: u64,
     pub pts_ms: Option<u64>,
     pub inference_ms: f64,
@@ -164,12 +169,15 @@ mod enabled {
                 framerate: config.framerate,
                 model_path: config.model_path,
                 score_threshold: config.score_threshold,
+                classes: config.classes,
                 texture,
                 on_detections: Some(Arc::new(crate::api::esp32::notify_detections)),
             },
             Box::new(move |event| {
                 let _ = sink.add(DetectionEvent {
                     detections: event.detections.into_iter().map(Into::into).collect(),
+                    backend: event.backend.to_owned(),
+                    execution_provider: event.execution_provider.to_owned(),
                     frame_sequence: event.frame_sequence,
                     pts_ms: event.pts_ms,
                     inference_ms: event.inference_ms,

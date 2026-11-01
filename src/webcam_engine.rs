@@ -15,6 +15,8 @@ use crate::Detection;
 
 pub struct EngineEvent {
     pub detections: Vec<Detection>,
+    pub backend: &'static str,
+    pub execution_provider: &'static str,
     pub frame_sequence: u64,
     pub pts_ms: Option<u64>,
     pub inference_ms: f64,
@@ -31,6 +33,8 @@ pub struct EngineConfig {
     pub framerate: u32,
     pub model_path: String,
     pub score_threshold: f32,
+    /// Class ids to keep; empty keeps every class.
+    pub classes: Vec<i64>,
     /// Flutter texture to feed; `None` runs headless (container CI, tests).
     pub texture: Option<TextureTarget>,
     /// Called with every inference result; the ESP32 bridge hooks in here, so a
@@ -128,7 +132,10 @@ impl WebcamEngine {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_worker = stop.clone();
         let score_threshold = config.score_threshold;
+        let classes = config.classes;
         let on_detections = config.on_detections;
+        let (backend, execution_provider) =
+            (detector.backend_name(), detector.execution_provider());
 
         let worker = std::thread::Builder::new()
             .name("webcam-inference".into())
@@ -149,11 +156,13 @@ impl WebcamEngine {
                     }
 
                     let started = Instant::now();
-                    let detections = match detector.infer_persons_rgba(
+                    let filter = (!classes.is_empty()).then_some(classes.as_slice());
+                    let detections = match detector.infer_rgba(
                         &frame.rgba,
                         frame.width,
                         frame.height,
                         score_threshold,
+                        filter,
                     ) {
                         Ok(d) => d,
                         Err(e) => {
@@ -175,6 +184,8 @@ impl WebcamEngine {
 
                     on_event(EngineEvent {
                         detections,
+                        backend,
+                        execution_provider,
                         frame_sequence: frame.sequence,
                         pts_ms: frame.pts_ms,
                         inference_ms,
@@ -235,6 +246,7 @@ mod tests {
             framerate: 15,
             model_path,
             score_threshold: 0.5,
+            classes: vec![0],
             texture,
             on_detections: None,
         }
@@ -387,6 +399,37 @@ mod tests {
             Some(mpsc::RecvTimeoutError::Disconnected),
             "the worker outlived stop()"
         );
+    }
+
+    #[test]
+    fn events_name_the_backend_and_the_cpu_provider_and_keep_only_the_classes() {
+        let Some(model) = model() else { return };
+        let _turn = crate::model_turn();
+        let (tx, rx) = mpsc::channel();
+        let mut engine = WebcamEngine::start(
+            EngineConfig {
+                classes: vec![15, 16],
+                ..config(model, None)
+            },
+            Box::new(move |event| {
+                let _ = tx.send(event);
+            }),
+        )
+        .unwrap();
+        let event = rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("no event within 60 s");
+        engine.stop();
+        let primary = if cfg!(any(target_os = "linux", windows)) {
+            "ort"
+        } else {
+            "tract"
+        };
+        assert_eq!((event.backend, event.execution_provider), (primary, "cpu"));
+        assert!(event
+            .detections
+            .iter()
+            .all(|d| [15, 16].contains(&d.class_id)));
     }
 
     #[derive(Debug)]

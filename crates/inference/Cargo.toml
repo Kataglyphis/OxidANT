@@ -17,7 +17,7 @@ tract-onnx = "=0.23.8"
 
 # The chain ORT exists for Linux and Windows only; load-dynamic comes from the workspace declaration.
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
-ort = { workspace = true, features = ["std", "ndarray", "cuda", "migraphx"] }
+ort = { workspace = true, features = ["std", "ndarray", "cuda", "migraphx", "xnnpack", "onednn"] }
 
 # DirectML is a Windows-only execution provider; the loaded chain dylib must carry it.
 [target.'cfg(windows)'.dependencies]
@@ -27,6 +27,7 @@ ort = { workspace = true, features = ["directml"] }
 workspace = true
 
 [dev-dependencies]
+libloading = { workspace = true }
 criterion = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 serde_json = "1"

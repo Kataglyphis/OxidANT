@@ -71,7 +71,20 @@ printf 'warning: missing documentation for a function\n' >&2
 printf 'DOCARG=%s\n' "$@"
 exit "${CI_DOC_RC:-0}"
 SH
-chmod +x "${work}/bin/xvfb-run"
+cat > "${work}/bin/cargo" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+    build) printf 'CARGO-BUILD %s\n' "$*" ;;
+    metadata) printf '{"target_directory": "%s"}\n' "${CI_TARGET_DIR}" ;;
+    *) exit 94 ;;
+esac
+SH
+mkdir -p "${work}/target/debug" "${work}/hub/shared/python"
+cp "${SCRIPT_DIR}/fake-detector-cli.sh" "${work}/target/debug/kataglyphis_cli"
+for tool in compare_detector_parity.py verify_ort_profile.py; do
+    cp "$(antfrastructure_path "shared/python/${tool}")" "${work}/hub/shared/python/"
+done
+chmod +x "${work}/bin/xvfb-run" "${work}/bin/cargo" "${work}/target/debug/kataglyphis_cli"
 
 run_step() {
     local step="$1" driver_rc="$2" rc=0
@@ -79,7 +92,7 @@ run_step() {
     rm -f "${work}/cobertura.xml"
     (
         cd "${work}" || exit 1
-        CI_DRIVER_RC="${driver_rc}" CI_LAUNCHER_PID="${work}/launcher.pid" \
+        CI_DRIVER_RC="${driver_rc}" CI_LAUNCHER_PID="${work}/launcher.pid" CI_TARGET_DIR="${work}/target" \
             ANTFRASTRUCTURE_DIR="${work}/hub" PATH="${work}/bin:${PATH}" \
             bash -c 'printf "%s\n" "$$" > "$CI_LAUNCHER_PID"; exec bash "$@"' \
             launcher "$gate" "$step" "$@"
@@ -100,6 +113,10 @@ t_case "arguments, including spaces and an empty value, reach the driver"
 t_assert_grep "${work}/out" '^ARG=--package$'
 t_assert_grep "${work}/out" '^ARG=two words$'
 t_assert_grep "${work}/out" '^ARG=$'
+t_case "after the tests, the CLI is built and the backend parity check runs on ModelANT's photo"
+t_assert_grep "${work}/out" '^CARGO-BUILD build --locked -p kataglyphis_cli$'
+t_assert_grep "${work}/out" '^ORT and tract agree$'
+t_assert_grep "${work}/out" '^ORT CPU and XNNPACK agree$'
 t_case "all required services default to mandatory"
 t_assert_grep "${work}/out" '^GPU=1$'
 t_assert_grep "${work}/out" '^MODEL=1$'
@@ -111,6 +128,7 @@ export KATAGLYPHIS_REQUIRE_GST=caller-gst KATAGLYPHIS_REQUIRE_GTK=caller-gtk
 run_step test 37
 t_case "the driver's failure status reaches CI"
 t_assert_grep "${work}/rc" '^37$'
+t_assert_no_grep "${work}/out" '^CARGO-BUILD'
 t_case "caller overrides are preserved while GTK stays mandatory"
 t_assert_grep "${work}/out" '^GPU=caller-gpu$'
 t_assert_grep "${work}/out" '^MODEL=caller-model$'

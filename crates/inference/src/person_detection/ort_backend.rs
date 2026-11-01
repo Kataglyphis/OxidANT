@@ -5,6 +5,7 @@ use ort::session::Session;
 
 use super::model_utils::validate_model_path;
 use crate::ort_ext::OrtResultExt;
+use crate::provider::ProviderUnavailable;
 use kataglyphis_core::config;
 
 const DEFAULT_INPUT_DIMS: (u32, u32) = (640, 640);
@@ -16,6 +17,8 @@ pub(super) enum Device {
     Cuda,
     Migraphx,
     Directml,
+    Xnnpack,
+    Dnnl,
 }
 
 impl Device {
@@ -26,14 +29,30 @@ impl Device {
             "cuda" => Ok(Self::Cuda),
             "migraphx" if cfg!(target_os = "linux") => Ok(Self::Migraphx),
             "directml" if cfg!(windows) => Ok(Self::Directml),
+            "xnnpack" => Ok(Self::Xnnpack),
+            "dnnl" => Ok(Self::Dnnl),
             _ => Err(anyhow!(
                 "Unsupported KATAGLYPHIS_ORT_DEVICE='{value}' on this platform"
             )),
         }
     }
 
-    pub(super) fn requires_gpu(self) -> bool {
+    /// A named provider: it runs or the load fails, never a silent CPU session.
+    pub(super) fn is_explicit(self) -> bool {
         !matches!(self, Self::Cpu | Self::Auto)
+    }
+}
+
+/// The short label a session reports: `cpu` without a registered provider.
+pub(super) fn provider_label(provider: Option<&str>) -> &'static str {
+    match provider {
+        None => "cpu",
+        Some("CUDAExecutionProvider") => "cuda",
+        Some("MIGraphXExecutionProvider") => "migraphx",
+        Some("DmlExecutionProvider") => "directml",
+        Some("XnnpackExecutionProvider") => "xnnpack",
+        Some("DnnlExecutionProvider") => "dnnl",
+        Some(_) => "other",
     }
 }
 
@@ -45,14 +64,24 @@ fn register_provider(
         provider.name(),
         provider.is_available().map_err(|err| anyhow!("{err}")),
     )?;
-    provider.register(builder).map_err(|err| anyhow!("{err}"))?;
+    // A listed provider whose library cannot load (the image's DNNL without libdnnl.so.3) is unavailable too.
+    provider
+        .register(builder)
+        .map_err(|err| ProviderUnavailable {
+            provider: provider.name(),
+            reason: format!("failed to register: {err}"),
+        })?;
     info!("ORT {} registered", provider.name());
     Ok(())
 }
 
-fn require_provider_available(name: &str, available: Result<bool>) -> Result<()> {
+fn require_provider_available(name: &'static str, available: Result<bool>) -> Result<()> {
     if !available? {
-        return Err(anyhow!("{name} is absent from the loaded ONNX Runtime"));
+        return Err(ProviderUnavailable {
+            provider: name,
+            reason: "is absent from the loaded ONNX Runtime".into(),
+        }
+        .into());
     }
     Ok(())
 }
@@ -128,6 +157,14 @@ fn providers_for_device(
     if device == Device::Migraphx && !cfg!(target_os = "linux") {
         return Err(anyhow!("MIGraphX is available only on Linux"));
     }
+    // The chain ONNX Runtime builds oneDNN on x86_64 only.
+    if device == Device::Dnnl && !cfg!(target_arch = "x86_64") {
+        return Err(ProviderUnavailable {
+            provider: "DnnlExecutionProvider",
+            reason: "is built only into the x86_64 chain ONNX Runtime".into(),
+        }
+        .into());
+    }
     let mut providers: Vec<Box<dyn ort::execution_providers::ExecutionProvider>> = Vec::new();
     if matches!(device, Device::Auto | Device::Cuda) {
         providers.push(Box::new(CUDA::default()));
@@ -135,6 +172,12 @@ fn providers_for_device(
     #[cfg(target_os = "linux")]
     if matches!(device, Device::Auto | Device::Migraphx) {
         providers.push(Box::new(GenericMigraphx));
+    }
+    if device == Device::Xnnpack {
+        providers.push(Box::new(ort::execution_providers::XNNPACK::default()));
+    }
+    if device == Device::Dnnl {
+        providers.push(Box::new(ort::execution_providers::OneDNN::default()));
     }
     #[cfg(windows)]
     if matches!(device, Device::Auto | Device::Directml) {
@@ -162,7 +205,7 @@ fn try_device<T>(
     for provider in providers_for_device(device)? {
         match attempt(Some(provider.as_ref())) {
             Ok(value) => return Ok(value),
-            Err(err) if device.requires_gpu() => return Err(err),
+            Err(err) if device.is_explicit() => return Err(err),
             Err(err) => log::warn!("ORT {} failed: {err:#}", provider.name()),
         }
     }
@@ -203,26 +246,38 @@ fn create_session(
         .with_ort_context("Failed to load ONNX model (ort)")
 }
 
-pub(crate) fn load_ort_session(
+pub(super) struct OrtLoad {
+    pub(super) session: Session,
+    pub(super) input_dims: (u32, u32),
+    /// [`provider_label`] of the provider the session runs on.
+    pub(super) provider: &'static str,
+}
+
+pub(super) fn load_ort_session(
     model_path: &str,
     profile: Option<&std::path::Path>,
-) -> Result<(Session, (u32, u32))> {
+    device: Device,
+) -> Result<OrtLoad> {
     let canonical_path = validate_model_path(model_path)?;
-    let device = Device::parse(config::ort_device())?;
     crate::ort_runtime::ensure_ort_loaded()?;
 
     info!("ORT device request: {device:?}");
-    let session = try_device(device, |provider| {
-        create_session(&canonical_path, provider, profile)
+    let (session, provider) = try_device(device, |provider| {
+        let session = create_session(&canonical_path, provider, profile)?;
+        Ok((session, provider_label(provider.map(|p| p.name()))))
     })?;
     info!(
-        "ORT session created from model file: {}",
+        "ORT session created on {provider} from model file: {}",
         canonical_path.display()
     );
 
-    let (input_w, input_h) = extract_ort_input_dims(&session);
+    let input_dims = extract_ort_input_dims(&session);
 
-    Ok((session, (input_w, input_h)))
+    Ok(OrtLoad {
+        session,
+        input_dims,
+        provider,
+    })
 }
 
 fn extract_ort_input_dims(session: &Session) -> (u32, u32) {
@@ -246,17 +301,23 @@ fn extract_ort_input_dims(session: &Session) -> (u32, u32) {
 #[cfg(test)]
 mod device_tests {
     use super::{
-        parse_directml_device_id, providers_for_device, require_provider_available, try_device,
-        Device,
+        parse_directml_device_id, provider_label, providers_for_device, require_provider_available,
+        try_device, Device,
     };
+    use crate::provider::ProviderUnavailable;
 
     #[test]
     fn unavailable_provider_or_availability_error_is_rejected() {
         assert!(require_provider_available("test", Ok(true)).is_ok());
-        assert!(require_provider_available("test", Ok(false))
-            .unwrap_err()
-            .to_string()
-            .contains("absent"));
+        let absent = require_provider_available("test", Ok(false)).unwrap_err();
+        assert!(absent.to_string().contains("absent"));
+        assert_eq!(
+            absent
+                .downcast_ref::<ProviderUnavailable>()
+                .unwrap()
+                .provider,
+            "test"
+        );
         assert!(
             require_provider_available("test", Err(anyhow::anyhow!("availability failed")))
                 .unwrap_err()
@@ -282,7 +343,7 @@ mod device_tests {
     fn selects_cpu_or_explicit_gpu_without_silent_fallback() {
         assert_eq!(Device::parse("cpu").unwrap(), Device::Cpu);
         assert_eq!(Device::parse("auto").unwrap(), Device::Auto);
-        assert!(!Device::Cpu.requires_gpu());
+        assert!(!Device::Cpu.is_explicit());
         assert!(providers_for_device(Device::Cpu).unwrap().is_empty());
         assert_eq!(
             providers_for_device(Device::Cuda).unwrap()[0].name(),
@@ -302,11 +363,62 @@ mod device_tests {
         } else {
             assert!(providers_for_device(Device::Directml).is_err());
         }
-        assert!(!Device::Auto.requires_gpu());
-        assert!(Device::parse("cuda").unwrap().requires_gpu());
+        assert!(!Device::Auto.is_explicit());
+        assert!(Device::parse("cuda").unwrap().is_explicit());
         assert!(Device::parse("unknown").is_err());
         assert_eq!(Device::parse("migraphx").is_ok(), cfg!(target_os = "linux"));
         assert_eq!(Device::parse("directml").is_ok(), cfg!(windows));
+    }
+
+    #[test]
+    fn cpu_accelerators_are_explicit_and_never_fall_back() {
+        for (name, device, provider) in [
+            ("xnnpack", Device::Xnnpack, "XnnpackExecutionProvider"),
+            ("dnnl", Device::Dnnl, "DnnlExecutionProvider"),
+        ] {
+            assert_eq!(Device::parse(name).unwrap(), device);
+            assert!(device.is_explicit());
+            let mut attempts = Vec::new();
+            let result: anyhow::Result<()> = try_device(device, |p| {
+                attempts.push(p.map(|p| p.name()));
+                Err(anyhow::anyhow!("session initialization failed"))
+            });
+            assert!(result.is_err());
+            match providers_for_device(device) {
+                Ok(providers) => {
+                    assert_eq!(providers.len(), 1);
+                    assert_eq!(providers[0].name(), provider);
+                    assert_eq!(attempts, [Some(provider)], "no CPU retry for {name}");
+                }
+                Err(error) => {
+                    assert_eq!(name, "dnnl");
+                    assert_ne!(std::env::consts::ARCH, "x86_64", "{error:#}");
+                    assert_eq!(
+                        error
+                            .downcast_ref::<ProviderUnavailable>()
+                            .unwrap()
+                            .provider,
+                        provider
+                    );
+                    assert!(attempts.is_empty());
+                }
+            }
+        }
+        assert!(Device::Cuda.is_explicit() && !Device::Auto.is_explicit());
+    }
+
+    #[test]
+    fn sessions_name_their_provider_and_plain_sessions_are_cpu() {
+        assert_eq!(provider_label(None), "cpu");
+        assert_eq!(provider_label(Some("XnnpackExecutionProvider")), "xnnpack");
+        assert_eq!(provider_label(Some("DnnlExecutionProvider")), "dnnl");
+        assert_eq!(provider_label(Some("CUDAExecutionProvider")), "cuda");
+        assert_eq!(
+            provider_label(Some("MIGraphXExecutionProvider")),
+            "migraphx"
+        );
+        assert_eq!(provider_label(Some("DmlExecutionProvider")), "directml");
+        assert_eq!(provider_label(Some("TensorrtExecutionProvider")), "other");
     }
 
     #[test]
@@ -358,7 +470,7 @@ mod device_tests {
             let parsed = Device::parse(name);
             assert_eq!(parsed.is_ok(), supported, "incorrect support for {name}");
             if let Ok(device) = parsed {
-                assert!(device.requires_gpu());
+                assert!(device.is_explicit());
                 assert_eq!(providers_for_device(device).unwrap()[0].name(), provider);
             }
         }

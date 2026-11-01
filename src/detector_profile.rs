@@ -4,24 +4,59 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
+fn load_rgba(image_path: &Path) -> Result<image::RgbaImage> {
+    Ok(image::ImageReader::open(image_path)
+        .with_context(|| format!("Cannot open image {}", image_path.display()))?
+        .with_guessed_format()?
+        .decode()?
+        .to_rgba8())
+}
+
+/// Detect with tract on the image and write the results, the reference ORT is compared against.
+pub fn run_tract(image_path: &Path, output: &Path) -> Result<()> {
+    let image = load_rgba(image_path)?;
+    let (width, height) = image.dimensions();
+    let model = crate::person_detection::resolve_model_path(None);
+    let mut detector =
+        crate::person_detection::PersonDetector::with_backend(&model, Some("tract"))?;
+    let found = detector.infer_rgba(
+        image.as_raw(),
+        width,
+        height,
+        crate::api::onnx::DETECT_SCORE_FLOOR,
+        None,
+    )?;
+    write_results(output, width, height, &found)
+}
+
 pub fn run(
     image_path: &Path,
     output: &Path,
     profile: &Path,
     repeat_output: Option<&Path>,
 ) -> Result<()> {
-    let image = image::ImageReader::open(image_path)
-        .with_context(|| format!("Cannot open image {}", image_path.display()))?
-        .with_guessed_format()?
-        .decode()?
-        .to_rgba8();
+    let image = load_rgba(image_path)?;
     let (width, height) = image.dimensions();
     let model = crate::person_detection::resolve_model_path(None);
     let mut detector =
         crate::person_detection::PersonDetector::with_ort_profiling(&model, profile)?;
-    let found = detector.infer_rgba(image.as_raw(), width, height, 0.25, None)?;
+    let found = detector.infer_rgba(
+        image.as_raw(),
+        width,
+        height,
+        crate::api::onnx::DETECT_SCORE_FLOOR,
+        None,
+    )?;
     let repeated = repeat_output
-        .map(|_| detector.infer_rgba(image.as_raw(), width, height, 0.25, None))
+        .map(|_| {
+            detector.infer_rgba(
+                image.as_raw(),
+                width,
+                height,
+                crate::api::onnx::DETECT_SCORE_FLOOR,
+                None,
+            )
+        })
         .transpose()?;
     detector.end_ort_profiling()?;
     write_outputs(

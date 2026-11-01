@@ -6,3 +6,4 @@ pub mod ort_ext;
 pub mod ort_runtime;
 
 pub mod person_detection;
+pub mod provider;

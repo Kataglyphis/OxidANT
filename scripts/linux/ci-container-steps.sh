@@ -19,7 +19,7 @@ usage: ci-container-steps.sh <step>
   debug       cargo_debug.sh            - dev profile build
   security    cargo_security_checks.sh  - cargo audit + cargo deny (GATING)
   fmt-clippy  cargo_fmt_clippy.sh         - bridge freshness + fmt --check + clippy -D warnings (GATING)
-  test        cargo_test.sh             - unit + integration + proptest + doc
+  test        cargo_test.sh             - unit + integration + proptest + doc, then ORT/tract/XNNPACK/DNNL parity
   coverage    cargo_coverage.sh         - tarpaulin over the workspace
   bench       cargo_bench.sh
   release     cargo_release.sh          - fat LTO release build
@@ -55,8 +55,12 @@ case "$step" in
         bash "${SCRIPT_DIR}/fetch-models.sh"
         bash "${SCRIPT_DIR}/fetch-models.sh" --llm
         # Xvfb omits its readiness signal when xvfb-run is PID 1, so retain this parent shell.
-        xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_test.sh")" "$@"
-        exit "$?"
+        xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_test.sh")" "$@" || exit "$?"
+        cargo build --locked -p kataglyphis_cli
+        target_dir="$(cargo metadata --locked --no-deps --format-version 1 \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
+        exec bash "${SCRIPT_DIR}/check-backend-parity.sh" "${target_dir}/debug/kataglyphis_cli" \
+            "${KATAGLYPHIS_REPO_ROOT}/third_party/ModelANT/contracts/fixtures/two_cats.jpg"
         ;;
     # Without --workspace tarpaulin measures the root package alone, which has no unit tests: 0.00%.
     coverage)

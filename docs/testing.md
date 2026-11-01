@@ -54,6 +54,20 @@ the chain ORT is the backend on Linux and Windows and that tract finds both cats
 ORT's reason and falls back to tract; `model_errors.rs` checks each backend's error, and that
 a model neither loads names both reasons.
 
+**After the tests, the test step compares the backends on ModelANT's photo.**
+`scripts/linux/check-backend-parity.sh LAUNCHER FIXTURE` runs `kataglyphis_cli onnx-detect`
+on `third_party/ModelANT/contracts/fixtures/two_cats.jpg` with ORT on the CPU provider, with
+`--tract`, with `KATAGLYPHIS_ORT_DEVICE=xnnpack` and with `dnnl`, and compares each against the
+ORT CPU result with the hub's `shared/python/compare_detector_parity.py` (IoU at least 0.90,
+score difference at most 0.05). Each ORT run's profile must name its provider through the hub's
+`verify_ort_profile.py`, so an XNNPACK request that ran on the CPU provider fails. A DNNL run may
+fail only with `ProviderUnavailable: DnnlExecutionProvider` (arm64, and amd64 while `:latest`
+lacks `libdnnl.so.3`). `crates/inference/tests/cpu_accelerators.rs` checks the same providers
+in-process and that a missing GPU provider is `ProviderUnavailable`. The parity check does not
+cover GPU providers or packaged launchers. A tract-only channel swap fails it; a channel swap in
+the shared preprocessing does not, since both backends then see the same image and still find
+both cats.
+
 ## Formatting and lints
 
 CI gates on both, as hard failures. Run them before pushing:

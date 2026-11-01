@@ -307,5 +307,45 @@
   "replace": "\"$@\" 2>&1 | tee logs/code-quality/rustdoc.txt || true",
   "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
   "why": "A failed rustdoc build fails the logging step."
+ },
+ {
+  "id": "consumer.oxidant-backend-parity-wired",
+  "target": "scripts/linux/ci-container-steps.sh",
+  "find": "exec bash \"${SCRIPT_DIR}/check-backend-parity.sh\"",
+  "replace": "exit 0; : \"${SCRIPT_DIR}/check-backend-parity.sh\"",
+  "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
+  "why": "The test step runs the backend parity check after the tests."
+ },
+ {
+  "id": "consumer.oxidant-backend-parity-tract",
+  "target": "scripts/linux/check-backend-parity.sh",
+  "find": "python3 -I \"$comparator\" \"$work/cpu.json\" \"$work/tract.json\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-check-backend-parity.sh",
+  "why": "ORT and tract detections are compared within the shared tolerance."
+ },
+ {
+  "id": "consumer.oxidant-backend-parity-provider",
+  "target": "scripts/linux/check-backend-parity.sh",
+  "find": "python3 -I \"$profiler\" \"${profiles[0]}\" --device \"$device\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-check-backend-parity.sh",
+  "why": "An XNNPACK request that ran on the CPU provider fails its profile."
+ },
+ {
+  "id": "consumer.oxidant-backend-parity-xnnpack",
+  "target": "scripts/linux/check-backend-parity.sh",
+  "find": "python3 -I \"$comparator\" \"$work/cpu.json\" \"$work/xnnpack.json\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-check-backend-parity.sh",
+  "why": "XNNPACK detections are compared with the CPU provider's."
+ },
+ {
+  "id": "consumer.oxidant-backend-parity-dnnl-named",
+  "target": "scripts/linux/check-backend-parity.sh",
+  "find": "grep -q 'ProviderUnavailable: DnnlExecutionProvider' \"$work/dnnl.log\"",
+  "replace": "true",
+  "test": "bash scripts/linux/tests/test-check-backend-parity.sh",
+  "why": "Only a named ProviderUnavailable excuses a DNNL failure."
  }
 ]

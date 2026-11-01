@@ -280,6 +280,15 @@ regenerates both files and updates Omni's pinned header. Rust checks the loaded
 `knt_api_version` before resolving `knt_push_frame`. A breaking signature requires a
 version bump and coordinated consumer changes. [testing.md](docs/testing.md).
 
+**Detection API and execution providers.** `detect_rgba`, `detector_labels` and
+`WebcamStreamConfig.classes` take class ids; keep `detect_persons_rgba` and
+`start_webcam_inference` as wrappers and rename nothing named `person_*`: OmniAccelerANT binds
+them. The class names live once, in `kataglyphis_core::coco`. Every `KATAGLYPHIS_ORT_DEVICE`
+other than `cpu` and `auto` (including `xnnpack` and `dnnl`) fails with `ProviderUnavailable`
+when its provider is missing or cannot load; never add a CPU fallback for a named provider.
+The test step's `check-backend-parity.sh` compares ORT against tract, XNNPACK and DNNL on
+ModelANT's photo: [running.md](docs/running.md), [testing.md](docs/testing.md).
+
 ### Tests and scripts that read source text
 
 - `crates/webgpu_renderer/tests/buffer_desc_single_definition.rs` pins the two `BufferDescriptor` outliers by

@@ -68,6 +68,13 @@ To check the selected ONNX Runtime and device without a camera, run `oxidant onn
 It loads the configured model and runs one synthetic frame. Set
 `KATAGLYPHIS_ORT_DEVICE=cpu` to check CPU inference in a GPU package.
 
+Flutter consumers detect any class through `detect_rgba(rgba, width, height, classes)`: the
+default model, scores from 0.25, and only the given class ids (empty keeps every class).
+`detector_labels()` returns the class names at their ids. `WebcamStreamConfig.classes` filters
+the live stream the same way, and each `DetectionEvent` names its `backend` (`ort` or `tract`)
+and `execution_provider` (`cpu`, `xnnpack`, `cuda`, ...). `detect_persons_rgba` and
+`start_webcam_inference` stay; the person filter is `classes: [0]`.
+
 Desktop Flutter consumers can call `profile_person_detection` through the Rust
 bridge to run the same detector on a synthetic frame and receive the completed
 ORT profile path. It uses `KATAGLYPHIS_ORT_DEVICE`; inspect the profile's model
@@ -85,7 +92,12 @@ Optional environment variables:
   not tracked: `scripts/linux/fetch-models.sh` (Windows: `scripts/windows/Get-Models.ps1`)
   downloads what `resources/models/models.lock` names and checks its SHA-256
 - `KATAGLYPHIS_ONNX_BACKEND` – `tract` or `ort` (default: automatic)
-- `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` | `migraphx` (Linux) | `directml` (Windows); default: `cpu`
+- `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` | `migraphx` (Linux) | `directml` (Windows) |
+  `xnnpack` | `dnnl`; default: `cpu`. Every value but `cpu` and `auto` names one provider: when it
+  is missing or cannot load, the load fails with `ProviderUnavailable`, never a CPU session.
+  The chain ONNX Runtime builds XNNPACK on every arch and DNNL on x86_64 only, so `dnnl` is
+  `ProviderUnavailable` on arm64; the current `:latest` also lacks oneDNN's `libdnnl.so.3`, so
+  `dnnl` is `ProviderUnavailable` on amd64 too (BACKLOG.md).
 - `KATAGLYPHIS_DIRECTML_DEVICE_ID` – optional non-negative Windows DXGI adapter index for DirectML; unset uses ONNX Runtime's default GPU selection
 - `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: `0`, one per core)
 - `KATAGLYPHIS_ORT_SPIN` – `0` stops idle ONNX Runtime threads spin-waiting for the next run

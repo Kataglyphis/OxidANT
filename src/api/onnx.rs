@@ -44,6 +44,37 @@ impl<T> ModelCache<T> {
 
 pub use crate::Detection;
 
+use crate::api::webcam::DetectionBox;
+
+/// The lowest score [`detect_rgba`] returns; callers raise their own bar over it.
+pub const DETECT_SCORE_FLOOR: f32 = 0.25;
+
+/// The detector's class names, at their class ids.
+#[flutter_rust_bridge::frb(sync)]
+pub fn detector_labels() -> Vec<String> {
+    kataglyphis_core::coco::NAMES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect()
+}
+
+/// Detect `classes` (class ids, see [`detector_labels`]; empty keeps every class) in an RGBA frame with the default model.
+#[flutter_rust_bridge::frb(sync)]
+pub fn detect_rgba(
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    classes: Vec<i64>,
+) -> Result<Vec<DetectionBox>, String> {
+    let filter = (!classes.is_empty()).then_some(classes.as_slice());
+    detect_rgba_impl("", &rgba, width, height, DETECT_SCORE_FLOOR, filter)
+        .map(|found| found.into_iter().map(Into::into).collect())
+        .map_err(|e| {
+            error!("detect_rgba failed: {e:#}");
+            format!("detect_rgba failed: {e:#}")
+        })
+}
+
 /// Run the packaged detector twice in one profiled session on a real image.
 #[flutter_rust_bridge::frb(sync)]
 pub fn profile_detector_image(
@@ -106,7 +137,15 @@ pub fn detect_persons_rgba(
     height: u32,
     score_threshold: f32,
 ) -> Result<Vec<Detection>, String> {
-    detect_persons_rgba_impl(&model_path, &rgba, width, height, score_threshold).map_err(|e| {
+    detect_rgba_impl(
+        &model_path,
+        &rgba,
+        width,
+        height,
+        score_threshold,
+        Some(&[0]),
+    )
+    .map_err(|e| {
         error!("detect_persons_rgba failed: {e:#}");
         format!("detect_persons_rgba failed: {e:#}")
     })
@@ -114,23 +153,25 @@ pub fn detect_persons_rgba(
 
 // The detector loads its model from a file, and wasm32-unknown-unknown has no file system.
 #[cfg(target_arch = "wasm32")]
-fn detect_persons_rgba_impl(
+fn detect_rgba_impl(
     _model_path: &str,
     _rgba: &[u8],
     _width: u32,
     _height: u32,
     _score_threshold: f32,
+    _classes: Option<&[i64]>,
 ) -> anyhow::Result<Vec<Detection>> {
     anyhow::bail!("ONNX inference needs a file system for its model, which the web build lacks")
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn detect_persons_rgba_impl(
+fn detect_rgba_impl(
     model_path: &str,
     rgba: &[u8],
     width: u32,
     height: u32,
     score_threshold: f32,
+    classes: Option<&[i64]>,
 ) -> anyhow::Result<Vec<Detection>> {
     use crate::person_detection::PersonDetector;
 
@@ -143,7 +184,7 @@ fn detect_persons_rgba_impl(
         .get_or_init(ModelCache::new)
         .get_or_load(model_path, || PersonDetector::new(model_path))?;
     let mut guard = detector.lock().unwrap_or_else(|e| e.into_inner());
-    guard.infer_persons_rgba(rgba, width, height, score_threshold)
+    guard.infer_rgba(rgba, width, height, score_threshold, classes)
 }
 
 #[cfg(test)]
@@ -190,6 +231,42 @@ mod tests {
             err,
             "detect_persons_rgba failed: no ONNX model at /nonexistent/model.onnx"
         );
+    }
+
+    #[test]
+    fn labels_are_the_detector_classes_by_id() {
+        let labels = detector_labels();
+        assert_eq!(labels.len(), 80);
+        assert_eq!((labels[0].as_str(), labels[15].as_str()), ("person", "cat"));
+    }
+
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn the_class_list_picks_the_cats_and_not_a_person() {
+        let path = crate::person_detection::resolve_model_path(None);
+        if !std::path::Path::new(&path).is_file() {
+            let required = std::env::var("KATAGLYPHIS_REQUIRE_MODEL").as_deref() == Ok("1");
+            assert!(!required, "no model at {path}");
+            eprintln!("SKIP: no model at {path}");
+            return;
+        }
+        let photo = image::load_from_memory(include_bytes!(
+            "../../third_party/ModelANT/contracts/fixtures/two_cats.jpg"
+        ))
+        .unwrap()
+        .to_rgba8();
+        let (w, h) = photo.dimensions();
+        let rgba = photo.into_raw();
+        let _turn = crate::model_turn();
+        let labels = detector_labels();
+        let cats = detect_rgba(rgba.clone(), w, h, vec![15]).unwrap();
+        assert!(
+            cats.iter().all(|d| labels[d.class_id as usize] == "cat"),
+            "{:?}",
+            cats.iter().map(|d| d.class_id).collect::<Vec<_>>()
+        );
+        assert!(cats.iter().filter(|d| d.score >= 0.25).count() >= 2);
+        assert!(detect_rgba(rgba, w, h, vec![0]).unwrap().is_empty());
     }
 
     #[test]

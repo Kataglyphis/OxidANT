@@ -78,10 +78,12 @@ type TractPlan = tract_onnx::prelude::TypedRunnableModel;
 struct BackendLoad {
     backend: Backend,
     input_dims: (u32, u32),
+    provider: &'static str,
 }
 
 pub struct PersonDetector {
     backend: Backend,
+    provider: &'static str,
     input_w: u32,
     input_h: u32,
     preprocess: PreprocessMode,
@@ -90,16 +92,16 @@ pub struct PersonDetector {
 }
 
 impl PersonDetector {
-    fn from_parts(
-        backend: Backend,
-        input_w: u32,
-        input_h: u32,
-        preprocess: PreprocessMode,
-        swap_xy: bool,
-    ) -> Self {
+    fn from_parts(load: BackendLoad, preprocess: PreprocessMode, swap_xy: bool) -> Self {
+        let BackendLoad {
+            backend,
+            input_dims: (input_w, input_h),
+            provider,
+        } = load;
         let buf_len = 3 * (input_w as usize) * (input_h as usize);
         Self {
             backend,
+            provider,
             input_w,
             input_h,
             preprocess,
@@ -125,27 +127,31 @@ impl PersonDetector {
         let swap_xy = config::swap_xy_enabled();
         log::debug!("Preprocess mode: {:?}, swap_xy: {}", preprocess, swap_xy);
 
-        let BackendLoad {
-            backend,
-            input_dims,
-        } = Self::load_backend(model_path, backend)?;
-        let (input_w, input_h) = input_dims;
-
-        Ok(Self::from_parts(
-            backend, input_w, input_h, preprocess, swap_xy,
-        ))
+        let load = Self::load_backend(model_path, backend)?;
+        Ok(Self::from_parts(load, preprocess, swap_xy))
     }
 
     /// Load ORT with profiling enabled; call [`Self::end_ort_profiling`] after inference.
     #[cfg(any(target_os = "linux", windows))]
     pub fn with_ort_profiling(model_path: &str, profile_prefix: &std::path::Path) -> Result<Self> {
-        let (session, (input_w, input_h)) =
-            ort_backend::load_ort_session(model_path, Some(profile_prefix))
-                .with_context(|| format!("ORT could not load {model_path}"))?;
+        let device = ort_backend::Device::parse(config::ort_device())?;
+        let load = Self::load_ort_on(model_path, Some(profile_prefix), device)?;
         Ok(Self::from_parts(
-            Backend::Ort { session },
-            input_w,
-            input_h,
+            load,
+            config::preprocess_mode(),
+            config::swap_xy_enabled(),
+        ))
+    }
+
+    /// Load ORT on `device`, a `KATAGLYPHIS_ORT_DEVICE` value, ignoring the environment's.
+    #[cfg(any(target_os = "linux", windows))]
+    pub fn with_ort_device(model_path: &str, device: &str) -> Result<Self> {
+        if !std::path::Path::new(model_path).is_file() {
+            bail!("no ONNX model at {model_path}");
+        }
+        let load = Self::load_ort_on(model_path, None, ort_backend::Device::parse(device)?)?;
+        Ok(Self::from_parts(
+            load,
             config::preprocess_mode(),
             config::swap_xy_enabled(),
         ))
@@ -171,15 +177,40 @@ impl PersonDetector {
         }
     }
 
+    /// The execution provider the model runs on: `"cpu"` for tract and plain ORT, else e.g. `"xnnpack"` or `"cuda"`.
+    pub fn execution_provider(&self) -> &'static str {
+        self.provider
+    }
+
+    #[cfg(any(target_os = "linux", windows))]
+    fn load_ort_on(
+        model_path: &str,
+        profile: Option<&std::path::Path>,
+        device: ort_backend::Device,
+    ) -> Result<BackendLoad> {
+        let load = ort_backend::load_ort_session(model_path, profile, device)
+            .with_context(|| format!("ORT could not load {model_path}"))?;
+        let dims = load.input_dims;
+        info!(
+            "ONNX backend: ort on {} ({}x{})",
+            load.provider, dims.0, dims.1
+        );
+        Ok(BackendLoad {
+            backend: Backend::Ort {
+                session: load.session,
+            },
+            input_dims: dims,
+            provider: load.provider,
+        })
+    }
+
     #[cfg(any(target_os = "linux", windows))]
     fn load_ort(model_path: &str) -> Result<BackendLoad> {
-        let (session, dims) = ort_backend::load_ort_session(model_path, None)
-            .with_context(|| format!("ORT could not load {model_path}"))?;
-        info!("ONNX backend: ort ({}x{})", dims.0, dims.1);
-        Ok(BackendLoad {
-            backend: Backend::Ort { session },
-            input_dims: dims,
-        })
+        Self::load_ort_on(
+            model_path,
+            None,
+            ort_backend::Device::parse(config::ort_device())?,
+        )
     }
 
     #[cfg(not(any(target_os = "linux", windows)))]
@@ -194,6 +225,7 @@ impl PersonDetector {
         Ok(BackendLoad {
             backend: Backend::Tract { model },
             input_dims: dims,
+            provider: "cpu",
         })
     }
 
@@ -214,10 +246,8 @@ impl PersonDetector {
             Some("ort") | Some("onnxruntime") => Self::load_ort(model_path),
             Some("tract") => {
                 #[cfg(any(target_os = "linux", windows))]
-                if ort_backend::Device::parse(config::ort_device())?.requires_gpu() {
-                    bail!(
-                        "KATAGLYPHIS_ONNX_BACKEND=tract conflicts with the requested ORT GPU device"
-                    );
+                if ort_backend::Device::parse(config::ort_device())?.is_explicit() {
+                    bail!("KATAGLYPHIS_ONNX_BACKEND=tract conflicts with the requested ORT device");
                 }
                 Self::load_tract(model_path)
             }
@@ -227,7 +257,7 @@ impl PersonDetector {
             #[cfg(any(target_os = "linux", windows))]
             None => {
                 let device = ort_backend::Device::parse(config::ort_device())?;
-                if device.requires_gpu() {
+                if device.is_explicit() {
                     Self::load_ort(model_path)
                 } else {
                     Self::load_ort_or_tract(model_path)

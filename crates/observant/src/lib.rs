@@ -3,7 +3,7 @@
 pub mod camera;
 pub mod capture;
 pub mod clip;
-pub mod coco;
+pub use kataglyphis_core::coco;
 pub mod config;
 pub mod frame;
 pub mod install;

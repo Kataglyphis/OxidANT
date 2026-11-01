@@ -27,6 +27,12 @@ and the backlog is empty"; it was neither.
       resource lifetime from a driver fault, then add a regression for the proven cause.
       Do not serialize all tests or call it fixed solely because CI is green.
 
+- [b] **Accept DNNL on amd64 once `:latest` ships oneDNN** (S). The chain ORT's
+      `libonnxruntime_providers_dnnl.so` needs `libdnnl.so.3`, which the image lacks, so
+      `KATAGLYPHIS_ORT_DEVICE=dnnl` is `ProviderUnavailable` on amd64 too. Blocked on hub
+      BACKLOG CON191 (an image chain). Then `cpu_accelerators.rs` and `check-backend-parity.sh`
+      require DNNL to run and match the CPU provider on amd64; nothing here changes.
+
 ## Recorded probes
 
 - **llguidance accepts the hub tiny model's tokenizer** (GenAI 0.17.0 in `:latest`, index

@@ -37,6 +37,30 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `lane-reports-<suffix>` artifact holds `cobertura.xml` and `logs/code-quality/rustdoc.txt` from
   the new `rustdoc-log` step, so coverage and rustdoc warnings are collected at the same SHA.
 
+### Added (2026-11-01, cv)
+- **Any-class detection over the bridge.** `detect_rgba(rgba, width, height, classes)` runs the
+  default model and keeps the given class ids (empty keeps all), `detector_labels()` returns the class
+  names by id, and `WebcamStreamConfig.classes` filters the live stream. `detect_persons_rgba` and
+  `start_webcam_inference` stay as wrappers with their tests unchanged. `DetectionEvent` names its
+  `backend` and `execution_provider`. `src/frb_generated.rs` is regenerated; OmniAccelerANT must
+  regenerate its Dart side with this pin.
+- **XNNPACK and DNNL through `KATAGLYPHIS_ORT_DEVICE=xnnpack|dnnl`.** A named provider that is
+  missing or fails to register returns `ProviderUnavailable` (`kataglyphis_inference::provider`),
+  never a CPU session; DNNL is `ProviderUnavailable` off x86_64. `PersonDetector::with_ort_device` and
+  `execution_provider` are new; `onnx-detect --tract` writes tract's results.
+- **The test step's backend parity check.** `scripts/linux/check-backend-parity.sh` compares ORT on CPU
+  against tract, XNNPACK and DNNL on ModelANT's `two_cats.jpg` with the hub's
+  `compare_detector_parity.py` and checks each ORT profile with `verify_ort_profile.py`. Five
+  `consumer.oxidant-backend-parity-*` mutation recipes. Hand-run mutant: a channel swap in tract's
+  input fails it (`Detector parity failed: CPU and GPU detections do not match within tolerance`).
+
+### Changed (2026-11-01, cv)
+- **The COCO class names moved from `kataglyphis_observant::coco` to `kataglyphis_core::coco`**, so
+  the bridge reaches them on every target; observant re-exports the module.
+- **The `:latest` amd64 image's DNNL provider cannot load**: `libonnxruntime_providers_dnnl.so` needs
+  `libdnnl.so.3`, which the image does not ship (hub BACKLOG CON191). `dnnl` is `ProviderUnavailable`
+  there until a chain ships oneDNN; `cpu_accelerators.rs` then requires DNNL to run.
+
 ### Fixed (2026-11-01)
 - **The riscv64 media test keeps QEMU's loader and CPU settings for its isolated child.**
   The existing plugin-path isolation and explicit library-path handling are preserved.

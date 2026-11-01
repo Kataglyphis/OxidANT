@@ -24,7 +24,7 @@ fn requested_gpu_reports_missing_ort_instead_of_falling_back() {
         Err(error) => format!("{error:#}"),
     };
     assert!(
-        tract_error.contains("tract conflicts with the requested ORT GPU device"),
+        tract_error.contains("tract conflicts with the requested ORT device"),
         "{tract_error}"
     );
     std::fs::remove_dir_all(directory).unwrap();

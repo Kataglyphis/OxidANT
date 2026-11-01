@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1413895636;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 468371456;
 
 // Section: executor
 
@@ -120,6 +120,69 @@ fn wire__crate__api__onnx__detect_persons_rgba_impl(
                     api_height,
                     api_score_threshold,
                 )?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__onnx__detect_rgba_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "detect_rgba",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_rgba = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_width = <u32>::sse_decode(&mut deserializer);
+            let api_height = <u32>::sse_decode(&mut deserializer);
+            let api_classes = <Vec<i64>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok =
+                    crate::api::onnx::detect_rgba(api_rgba, api_width, api_height, api_classes)?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__onnx__detector_labels_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "detector_labels",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::onnx::detector_labels())?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -990,12 +1053,16 @@ impl SseDecode for crate::api::webcam::DetectionEvent {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_detections = <Vec<crate::api::webcam::DetectionBox>>::sse_decode(deserializer);
+        let mut var_backend = <String>::sse_decode(deserializer);
+        let mut var_executionProvider = <String>::sse_decode(deserializer);
         let mut var_frameSequence = <u64>::sse_decode(deserializer);
         let mut var_ptsMs = <Option<u64>>::sse_decode(deserializer);
         let mut var_inferenceMs = <f64>::sse_decode(deserializer);
         let mut var_fps = <f32>::sse_decode(deserializer);
         return crate::api::webcam::DetectionEvent {
             detections: var_detections,
+            backend: var_backend,
+            execution_provider: var_executionProvider,
             frame_sequence: var_frameSequence,
             pts_ms: var_ptsMs,
             inference_ms: var_inferenceMs,
@@ -1165,6 +1232,18 @@ impl SseDecode for Vec<f32> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<f32>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<i64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<i64>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -1388,6 +1467,7 @@ impl SseDecode for crate::api::webcam::WebcamStreamConfig {
         let mut var_framerate = <u32>::sse_decode(deserializer);
         let mut var_modelPath = <String>::sse_decode(deserializer);
         let mut var_scoreThreshold = <f32>::sse_decode(deserializer);
+        let mut var_classes = <Vec<i64>>::sse_decode(deserializer);
         let mut var_textureId = <i64>::sse_decode(deserializer);
         let mut var_textureLibrary = <Option<String>>::sse_decode(deserializer);
         return crate::api::webcam::WebcamStreamConfig {
@@ -1398,6 +1478,7 @@ impl SseDecode for crate::api::webcam::WebcamStreamConfig {
             framerate: var_framerate,
             model_path: var_modelPath,
             score_threshold: var_scoreThreshold,
+            classes: var_classes,
             texture_id: var_textureId,
             texture_library: var_textureLibrary,
         };
@@ -1414,16 +1495,16 @@ fn pde_ffi_dispatcher_primary_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         1 => wire__crate__api__simple__async_heavy_work_impl(port, ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__esp32__esp32_connect_impl(port, ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__esp32__esp32_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__esp32__esp32_list_devices_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__webcam__list_cameras_impl(port, ptr, rust_vec_len, data_len),
-        18 => {
+        6 => wire__crate__api__esp32__esp32_connect_impl(port, ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__esp32__esp32_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__esp32__esp32_list_devices_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__webcam__list_cameras_impl(port, ptr, rust_vec_len, data_len),
+        20 => {
             wire__crate__api__webcam__start_webcam_inference_impl(port, ptr, rust_vec_len, data_len)
         }
-        22 => wire__crate__api__text__text_embed_impl(port, ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__text__text_generate_impl(port, ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__text__text_embed_impl(port, ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__text__text_generate_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1437,21 +1518,23 @@ fn pde_ffi_dispatcher_sync_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         2 => wire__crate__api__onnx__detect_persons_rgba_impl(ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__esp32__esp32_available_impl(ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__esp32__esp32_connected_impl(ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__esp32__esp32_notify_detection_impl(ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__esp32__esp32_ping_impl(ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__esp32__esp32_set_led_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__esp32__esp32_set_telemetry_period_impl(ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__simple__heavy_computation_impl(ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__onnx__profile_detector_image_impl(ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__onnx__profile_person_detection_impl(ptr, rust_vec_len, data_len),
-        19 => wire__crate__api__webcam__stop_webcam_inference_impl(ptr, rust_vec_len, data_len),
-        20 => wire__crate__api__text__text_cancel_impl(ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__text__text_default_options_impl(ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__text__text_local_available_impl(ptr, rust_vec_len, data_len),
-        25 => {
+        3 => wire__crate__api__onnx__detect_rgba_impl(ptr, rust_vec_len, data_len),
+        4 => wire__crate__api__onnx__detector_labels_impl(ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__esp32__esp32_available_impl(ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__esp32__esp32_connected_impl(ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__esp32__esp32_notify_detection_impl(ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__esp32__esp32_ping_impl(ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__esp32__esp32_set_led_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__esp32__esp32_set_telemetry_period_impl(ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__simple__heavy_computation_impl(ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__onnx__profile_detector_image_impl(ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__onnx__profile_person_detection_impl(ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__webcam__stop_webcam_inference_impl(ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__text__text_cancel_impl(ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__text__text_default_options_impl(ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__text__text_local_available_impl(ptr, rust_vec_len, data_len),
+        27 => {
             wire__crate__api__webcam__webcam_inference_available_impl(ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),
@@ -1526,6 +1609,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::webcam::DetectionEvent {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.detections.into_into_dart().into_dart(),
+            self.backend.into_into_dart().into_dart(),
+            self.execution_provider.into_into_dart().into_dart(),
             self.frame_sequence.into_into_dart().into_dart(),
             self.pts_ms.into_into_dart().into_dart(),
             self.inference_ms.into_into_dart().into_dart(),
@@ -1697,6 +1782,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::webcam::WebcamStreamConfig {
             self.framerate.into_into_dart().into_dart(),
             self.model_path.into_into_dart().into_dart(),
             self.score_threshold.into_into_dart().into_dart(),
+            self.classes.into_into_dart().into_dart(),
             self.texture_id.into_into_dart().into_dart(),
             self.texture_library.into_into_dart().into_dart(),
         ]
@@ -1805,6 +1891,8 @@ impl SseEncode for crate::api::webcam::DetectionEvent {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Vec<crate::api::webcam::DetectionBox>>::sse_encode(self.detections, serializer);
+        <String>::sse_encode(self.backend, serializer);
+        <String>::sse_encode(self.execution_provider, serializer);
         <u64>::sse_encode(self.frame_sequence, serializer);
         <Option<u64>>::sse_encode(self.pts_ms, serializer);
         <f64>::sse_encode(self.inference_ms, serializer);
@@ -1937,6 +2025,16 @@ impl SseEncode for Vec<f32> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <f32>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<i64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <i64>::sse_encode(item, serializer);
         }
     }
 }
@@ -2121,6 +2219,7 @@ impl SseEncode for crate::api::webcam::WebcamStreamConfig {
         <u32>::sse_encode(self.framerate, serializer);
         <String>::sse_encode(self.model_path, serializer);
         <f32>::sse_encode(self.score_threshold, serializer);
+        <Vec<i64>>::sse_encode(self.classes, serializer);
         <i64>::sse_encode(self.texture_id, serializer);
         <Option<String>>::sse_encode(self.texture_library, serializer);
     }

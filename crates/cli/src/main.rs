@@ -79,10 +79,15 @@ async fn main() -> Result<()> {
         Commands::OnnxDetect {
             image,
             output,
-            profile,
+            profile: Some(profile),
             repeat_output,
+            tract: false,
         } => {
             oxidant::detector_profile::run(&image, &output, &profile, repeat_output.as_deref())?;
+        }
+        #[cfg(any(target_os = "linux", windows))]
+        Commands::OnnxDetect { image, output, .. } => {
+            oxidant::detector_profile::run_tract(&image, &output)?;
         }
         Commands::MediaCheck => {
             print!("{}", kataglyphis_gui::gui_wgpu::media_check()?);
