@@ -356,7 +356,9 @@ times what a frame pays before the model (I420 to RGBA, the privacy blocks, a bo
 motion thumbnail) and `crates/inference/benches/detector.rs` a whole detection on the real model at
 ObservANT's two threads. The Linux lanes' *Run benchmarks* step (`ci-container-steps.sh bench`) fetches the
 model and runs only the `[[bench]]` targets (`cargo bench --workspace --locked --bench '*'`; `--benches` also
-ran every library's unit tests), after the release build, whose profile and features they share. The hub's
+ran every library's unit tests) in the *Benchmarks* job, on its own runner with its own sccache key
+(`<arch>-bench`): the bench profile builds every dependency with `panic=unwind`, unlike the release
+build's `abort`, and the build job's 1.5 GB cache always evicted those entries. The hub's
 `bench-history` action then puts the table in the run's summary, each mean against the **median** of the
 default branch's last 20 runs on that arch, read from the artifacts of earlier runs. **bench-history keys:**
 `criterion-x64` and `criterion-arm64` (artifacts `bench-history-criterion-<arch>`, kept 90 days). More than

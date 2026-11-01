@@ -159,30 +159,6 @@ jobs:
             --platform "${PLATFORM}"
             --arch "${ARCH}"'
 
-      # After the release build, whose profile and features the bench targets share, so only they compile.
-      - name: Run benchmarks
-        id: bench
-        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
-        with:
-          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
-          script: bash -lc 'bash scripts/linux/ci-container-steps.sh bench'
-
-      # Means from 100 µs gate; the 1 µs draw_box is cache and clock noise on a shared runner.
-      - name: Benchmark history
-        if: always() && steps.bench.conclusion != 'skipped'
-        uses: Kataglyphis/ANTfrastructure/.github/actions/bench-history@develop
-        with:
-          key: criterion-${{ inputs.arch }}
-          format: criterion
-          result: target/criterion
-          metrics: >-
-            {"detector/*": {"direction": "lower", "gate": true},
-            "frame_640x480/i420_to_rgba": {"direction": "lower", "gate": true},
-            "frame_640x480/pixelate_outside_one_box": {"direction": "lower", "gate": true},
-            "frame_640x480/snapshot_jpeg": {"direction": "lower", "gate": true},
-            "frame_640x480/motion_thumbnail": {"direction": "lower", "gate": true},
-            "*": {"direction": "lower"}}
-
       # Named by VERSION: a PR's ref_name is `<n>/merge` and upload-artifact refuses the `/`.
       - name: Name the artifact
         id: artifact
@@ -225,6 +201,67 @@ jobs:
         uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-save@develop
         with:
           key: ${{ inputs.arch }}-cargo
+
+  # Its own runner and sccache: the bench profile builds dependencies with panic=unwind, which the build job's 1.5 GB cache always evicted.
+  bench:
+    name: Benchmarks (${{ inputs.arch }})
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # compiler-cache-save deletes this key's older cache entries.
+      actions: write
+    env:
+      PLATFORM: ${{ inputs.platform }}
+    steps:
+      - name: Prepare the CI host
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
+        with:
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GHCR_PAT }}
+
+      - name: Restore the cargo and compiler cache
+        id: cc
+        uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-restore@develop
+        with:
+          key: ${{ inputs.arch }}-bench
+          mounts: 'cargo-home:/tmp/cargo-home sccache:/var/cache/sccache'
+          env: 'SCCACHE_CACHE_SIZE=1500M RUSTC_WRAPPER=/workspace/third_party/ANTfrastructure/linux/scripts/01-core/sccache-launcher.sh'
+
+      - name: Run benchmarks
+        id: bench
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
+        with:
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh bench'
+
+      # Means from 100 µs gate; the 1 µs draw_box is cache and clock noise on a shared runner.
+      - name: Benchmark history
+        if: always() && steps.bench.conclusion != 'skipped'
+        uses: Kataglyphis/ANTfrastructure/.github/actions/bench-history@develop
+        with:
+          key: criterion-${{ inputs.arch }}
+          format: criterion
+          result: target/criterion
+          metrics: >-
+            {"detector/*": {"direction": "lower", "gate": true},
+            "frame_640x480/i420_to_rgba": {"direction": "lower", "gate": true},
+            "frame_640x480/pixelate_outside_one_box": {"direction": "lower", "gate": true},
+            "frame_640x480/snapshot_jpeg": {"direction": "lower", "gate": true},
+            "frame_640x480/motion_thumbnail": {"direction": "lower", "gate": true},
+            "*": {"direction": "lower"}}
+
+      - name: Trim the cargo home
+        if: always() && steps.cc.outputs.path != ''
+        env:
+          CACHE_PATH: ${{ steps.cc.outputs.path }}
+        run: rm -rf "${CACHE_PATH}/cargo-home/registry/src" "${CACHE_PATH}/cargo-home/git/checkouts"
+
+      - name: Save the cargo and compiler cache
+        if: always() && steps.cc.outputs.path != ''
+        uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-save@develop
+        with:
+          key: ${{ inputs.arch }}-bench
 
   # Inside the image every library is present; only a bare host shows one the packages lack (hub linux-build-basics.md).
   clean-host:

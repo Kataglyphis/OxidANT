@@ -69,7 +69,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **Benchmarks run only the `[[bench]]` targets, after the release build.** `ci-container-steps.sh bench`
   calls `cargo bench --workspace --locked --bench '*'`: `--benches` had also run all 16 library and binary
   unit-test harnesses under the bench profile, which compiled 532 crates in 23 min 24 s (job 124574433901).
-  The step now follows the release build and packaging, whose profile and features it shares.
+  It runs in its own *Benchmarks* job with its own sccache key (`<arch>-bench`): the bench profile builds
+  every dependency with `panic=unwind`, unlike the release build's `abort`, so it shares nothing with the
+  release build, and inside the build job's 1.5 GB cache its 213 crates were evicted before each run
+  (8 min 07 s and 10 min 07 s in runs 41260356146 and 41268852734).
 - **The hub's `bench-history` action grades the means** (keys `criterion-x64`, `criterion-arm64`) against
   the median of the default branch's last 20 runs, read from 90-day artifacts instead of a 7-day cache. The
   gated benches are the five from 100 µs, as before; `draw_box` only warns.
