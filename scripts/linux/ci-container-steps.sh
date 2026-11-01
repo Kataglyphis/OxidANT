@@ -70,10 +70,10 @@ case "$step" in
         # shellcheck disable=SC2086 # COVERAGE_FLOORS is a list of --floor arguments.
         python3 "${SCRIPT_DIR}/check-crate-coverage.py" cobertura.xml ${COVERAGE_FLOORS}
         ;;
-    # Every bench of the workspace, the detector's on the real model; scripts/linux/bench-report.py reads the results.
+    # Only the [[bench]] targets: --benches also runs every library's unit tests under the bench profile.
     bench)
         bash "${SCRIPT_DIR}/fetch-models.sh"
-        antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" --workspace --benches "$@"
+        antfrastructure_exec "${RUST_DRIVERS}/cargo_bench.sh" --workspace --locked --bench '*' "$@"
         ;;
     release)   antfrastructure_exec "${RUST_DRIVERS}/cargo_release.sh" "$@" ;;
     docs)      antfrastructure_exec "${RUST_DRIVERS}/cargo_build_doc.sh" "$@" ;;

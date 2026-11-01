@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-01, bench-history)
+- **Benchmarks run only the `[[bench]]` targets, after the release build.** `ci-container-steps.sh bench`
+  calls `cargo bench --workspace --locked --bench '*'`: `--benches` had also run all 16 library and binary
+  unit-test harnesses under the bench profile, which compiled 532 crates in 23 min 24 s (job 124574433901).
+  The step now follows the release build and packaging, whose profile and features it shares.
+- **The hub's `bench-history` action grades the means** (keys `criterion-x64`, `criterion-arm64`) against
+  the median of the default branch's last 20 runs, read from 90-day artifacts instead of a 7-day cache. The
+  gated benches are the five from 100 µs, as before; `draw_box` only warns.
+- **Removed `scripts/linux/bench-report.py` and `scripts/linux/tests/test-bench-report.sh`**: the hub's
+  `bench-history.py` prints the identical table on that suite's fixtures, and its own suite covers the cases.
+
 ### Changed (2026-11-01)
 - **PowerShell complexity is strict.** `powershell-quality.yml` passes `strict: true` on push and PR
   after the three findings reached 0: `Build-Windows.ps1` runs each build step from a named function,

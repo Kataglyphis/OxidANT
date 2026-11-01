@@ -135,7 +135,8 @@ that repeats a `@location`, which naga accepts and Tint, the browsers' WGSL comp
   error) in `crates/esp32-protocol/tests/framing.rs`.
   There is no `cargo-fuzz`/libFuzzer target.
 
-Benchmarks and the detector's real-model test: [AGENTS.md § 5](../AGENTS.md#5-build-run-test);
+Benchmarks (the `[[bench]]` targets only, graded by the hub's `bench-history` action under keys
+`criterion-x64` and `criterion-arm64`) and the detector's real-model test: [AGENTS.md § 5](../AGENTS.md#5-build-run-test);
 coverage floors and mutation testing:
 [§ Coverage and mutation testing](../AGENTS.md#coverage-and-mutation-testing); the riscv64
 lane's QEMU run: [§ The riscv64 lane](../AGENTS.md#the-riscv64-lane).

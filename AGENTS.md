@@ -343,13 +343,15 @@ The suite as every Linux lane runs it (`KATAGLYPHIS_REQUIRE_GPU=1`, `KATAGLYPHIS
 times what a frame pays before the model (I420 to RGBA, the privacy blocks, a box, the snapshot JPEG, the
 motion thumbnail) and `crates/inference/benches/detector.rs` a whole detection on the real model at
 ObservANT's two threads. The Linux lanes' *Run benchmarks* step (`ci-container-steps.sh bench`) fetches the
-model and runs every bench of the workspace; *Benchmark report* puts `scripts/linux/bench-report.py`'s table
-in the run's summary, each mean against the **median** of the default branch's last 20 runs on that arch,
-whose means the cache keeps in `.bench-history/` (2026-10-15; until then the run before, so a slowdown
-creeping in a few per cent per commit never showed). More than 25 % slower warns; a mean from 100 µs that
-doubles fails the lane once 3 earlier runs exist, and such a run never joins the history. Faster benches only
-warn, since a shared runner's caches and clocks move them that much. Locally:
-`cargo bench --workspace --benches`, where Criterion compares against your last local run. Benches need a library: `kataglyphis_observant`
+model and runs only the `[[bench]]` targets (`cargo bench --workspace --locked --bench '*'`; `--benches` also
+ran every library's unit tests), after the release build, whose profile and features they share. The hub's
+`bench-history` action then puts the table in the run's summary, each mean against the **median** of the
+default branch's last 20 runs on that arch, read from the artifacts of earlier runs. **bench-history keys:**
+`criterion-x64` and `criterion-arm64` (artifacts `bench-history-criterion-<arch>`, kept 90 days). More than
+25 % slower warns; a gated mean (the detector, I420 to RGBA, the privacy blocks, the snapshot JPEG, the motion
+thumbnail, all from 100 µs) that doubles fails the lane once 3 earlier runs exist, and such a run is stored as
+failed, never as a yardstick. `draw_box` (1 µs) only warns. Locally:
+`cargo bench --workspace --bench '*'`, where Criterion compares against your last local run. Benches need a library: `kataglyphis_observant`
 is one since that day, `main.rs` only wiring its modules into the service.
 
 **The detector meets its real model in every lane** (Linux 2026-10-14, Windows 2026-10-21). `crates/inference/tests/real_model.rs`
