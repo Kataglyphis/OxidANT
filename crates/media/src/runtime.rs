@@ -65,7 +65,7 @@ fn bundled_env(plugin_dir: &Path, cache_root: Option<&Path>) -> Vec<(&'static st
         // Unset, GStreamer adds the host's plugin directories, which are built against another GStreamer.
         ("GST_PLUGIN_SYSTEM_PATH", OsString::new()),
         ("GST_PLUGIN_SYSTEM_PATH_1_0", OsString::new()),
-        // No gst-plugin-scanner travels, so the scan runs in-process.
+        // Without a gst-plugin-scanner the scan must run in-process.
         ("GST_REGISTRY_FORK", OsString::from("no")),
     ];
     // One registry per installed copy: a copy never reads what another GStreamer wrote.
@@ -85,9 +85,11 @@ fn missing_bundle_env(
     cache_root: Option<&Path>,
     is_set: impl Fn(&str) -> bool,
 ) -> Vec<(&'static str, OsString)> {
+    // An in-process scan can register webrtcsink before the encoders its codec list needs.
+    let scanner = is_set("GST_PLUGIN_SCANNER") || is_set("GST_PLUGIN_SCANNER_1_0");
     bundled_env(plugin_dir, cache_root)
         .into_iter()
-        .filter(|(name, _)| !is_set(name))
+        .filter(|(name, _)| !is_set(name) && !(scanner && *name == "GST_REGISTRY_FORK"))
         .collect()
 }
 
@@ -150,6 +152,27 @@ mod tests {
         );
         assert_eq!(
             value(&env, "GST_REGISTRY_FORK"),
+            Some(&OsString::from("no"))
+        );
+    }
+
+    #[test]
+    fn a_caller_scanner_keeps_the_scan_out_of_process() {
+        let dir = Path::new("/opt/app/lib/gstreamer-1.0");
+        for scanner in ["GST_PLUGIN_SCANNER", "GST_PLUGIN_SCANNER_1_0"] {
+            let env = missing_bundle_env(dir, None, |name| {
+                name == "GST_PLUGIN_PATH" || name == scanner
+            });
+            assert_eq!(value(&env, "GST_REGISTRY_FORK"), None, "{scanner}");
+            assert_eq!(
+                value(&env, "GST_PLUGIN_SYSTEM_PATH"),
+                Some(&OsString::new())
+            );
+            assert_eq!(value(&env, "GST_PLUGIN_PATH"), None);
+        }
+        let without = missing_bundle_env(dir, None, |name| name == "GST_PLUGIN_PATH");
+        assert_eq!(
+            value(&without, "GST_REGISTRY_FORK"),
             Some(&OsString::from("no"))
         );
     }

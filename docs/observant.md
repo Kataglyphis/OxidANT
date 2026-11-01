@@ -59,3 +59,18 @@ The Pi runner and OmniAccelerANT's small-board bundle packager source the same
 The helper owns the shared `nerdctl` volumes and command boundaries; the Pi
 runner still requires `--build` for a missing binary, while the bundle packager
 builds it automatically and can select `--platform`.
+
+## A fresh registry and webrtcsink
+
+webrtcsink fills a process-wide codec list (gst-plugins-rs `CODECS` in
+`net/webrtc/src/utils.rs`) from the encoders and payloaders registered when its pad
+templates are first built. An in-process scan (`GST_REGISTRY_FORK=no`) builds them while it
+registers the plugin, and it registers plugins in directory order, so on a fresh registry
+webrtcsink can register before `vpx`, `openh264` and the RTP payloaders.
+The list then stays empty for that process, and the stream fails with
+`No codec available for encoding stream video_0`; the next start reads the finished
+registry and works. Directory order differs between filesystems, which is why one host
+passes and another fails. A package that carries `gst-plugin-scanner` names it in
+`GST_PLUGIN_SCANNER` (the Linux launcher, or `install::adopt` on Windows), and
+`kataglyphis_media::ensure_gst_initialized` then leaves `GST_REGISTRY_FORK` unset, so the
+scanner builds the registry out of process.

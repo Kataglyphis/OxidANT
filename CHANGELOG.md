@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-01, webrtcsink on a fresh registry)
+- **A supplied plugin scanner keeps the registry scan out of process.** Since c7d3593
+  `ensure_gst_initialized` added `GST_REGISTRY_FORK=no` even when the caller set
+  `GST_PLUGIN_SCANNER`, as OmniAccelerANT's Linux launcher and `install::adopt` on Windows do.
+  The in-process scan then registered webrtcsink before `vpx` and the RTP payloaders whenever the
+  filesystem listed it first, and ObservANT's first start on a fresh registry failed with
+  `No codec available for encoding stream video_0` (OmniAccelerANT runs 41275429526, 41278759760).
+  A scanner in `GST_PLUGIN_SCANNER` or `GST_PLUGIN_SCANNER_1_0` now leaves `GST_REGISTRY_FORK`
+  unset; `a_caller_scanner_keeps_the_scan_out_of_process` holds it.
+
 ### Added (2026-11-01, language AI)
 - **`seed`, `json_schema` and `stop` in `kataglyphis_text`.** `GenerationOptions` carries them to GenAI
   (`random_seed`, `OgaGeneratorParamsSetGuidance("json_schema", ...)`, stop strings in the decode loop with

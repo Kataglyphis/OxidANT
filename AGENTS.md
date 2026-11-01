@@ -542,6 +542,11 @@ board runs it as one service unit. How to run and configure it:
     `GST_PLUGIN_SYSTEM_PATH[_1_0]`, `GST_PLUGIN_SCANNER`, `GST_REGISTRY` under
     `%LOCALAPPDATA%`, `ORT_DYLIB_PATH` and `KATAGLYPHIS_ONNX_MODEL` (`models\deim_dfine_n_coco.onnx`).
   - A variable the caller already set wins.
+  - A supplied `GST_PLUGIN_SCANNER` keeps the registry scan out of process:
+    `ensure_gst_initialized` then adds no `GST_REGISTRY_FORK=no`. An in-process scan can
+    register webrtcsink before the encoders its codec list needs, and the stream dies with
+    `No codec available for encoding stream video_0` on a fresh registry
+    ([`docs/observant.md` § *A fresh registry and webrtcsink*](docs/observant.md#a-fresh-registry-and-webrtcsink)).
   - On Linux the bundle's `observant` launcher does the same job, so `adopt` is a no-op there.
   - OmniAccelerANT's `scripts/windows/observant/Package-ObservANT.ps1` builds that folder
     and the MSI around it.
