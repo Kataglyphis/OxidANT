@@ -13,6 +13,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-01)
+- **The riscv64 media test keeps QEMU's loader and CPU settings for its isolated child.**
+  The existing plugin-path isolation and explicit library-path handling are preserved.
+
 ### Changed (2026-11-01, bench-history)
 - **Benchmarks run only the `[[bench]]` targets, after the release build.** `ci-container-steps.sh bench`
   calls `cargo bench --workspace --locked --bench '*'`: `--benches` had also run all 16 library and binary

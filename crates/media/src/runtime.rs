@@ -116,6 +116,18 @@ fn fnv1a(path: &Path) -> u64 {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    fn inherit_qemu_env(
+        child: &mut std::process::Command,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) {
+        for name in ["QEMU_LD_PREFIX", "QEMU_CPU"] {
+            if let Some(value) = lookup(name) {
+                child.env(name, value);
+            }
+        }
+    }
+
     fn value<'a>(env: &'a [(&str, OsString)], name: &str) -> Option<&'a OsString> {
         env.iter().find(|(n, _)| *n == name).map(|(_, v)| v)
     }
@@ -140,6 +152,36 @@ mod tests {
             value(&env, "GST_REGISTRY_FORK"),
             Some(&OsString::from("no"))
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn qemu_child_keeps_only_the_emulator_settings() {
+        let mut child = std::process::Command::new("/bin/sh");
+        child.args([
+            "-c",
+            "test \"$QEMU_LD_PREFIX\" = /target/sysroot && test \"$QEMU_CPU\" = rva23u64",
+        ]);
+        child.env_clear();
+        inherit_qemu_env(&mut child, |name| match name {
+            "QEMU_LD_PREFIX" => Some(OsString::from("/target/sysroot")),
+            "QEMU_CPU" => Some(OsString::from("rva23u64")),
+            _ => panic!("unexpected inherited variable: {name}"),
+        });
+        let env: Vec<_> = child.get_envs().collect();
+        assert_eq!(env.len(), 2);
+        assert!(env.iter().any(|(key, value)| {
+            *key == "QEMU_LD_PREFIX" && *value == Some(std::ffi::OsStr::new("/target/sysroot"))
+        }));
+        assert!(env.iter().any(|(key, value)| {
+            *key == "QEMU_CPU" && *value == Some(std::ffi::OsStr::new("rva23u64"))
+        }));
+        assert!(child.status().unwrap().success());
+
+        let mut unset = std::process::Command::new("/bin/sh");
+        unset.env_clear();
+        inherit_qemu_env(&mut unset, |_| None);
+        assert_eq!(unset.get_envs().count(), 0);
     }
 
     #[cfg(target_os = "linux")]
@@ -201,6 +243,7 @@ mod tests {
                     "LD_LIBRARY_PATH",
                     std::env::var_os("LD_LIBRARY_PATH").unwrap_or_default(),
                 );
+            inherit_qemu_env(&mut child, |name| std::env::var_os(name));
             if mode == "explicit" {
                 child.env("GST_PLUGIN_SYSTEM_PATH_1_0", "/caller/system");
             }
