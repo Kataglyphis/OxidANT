@@ -172,3 +172,124 @@ fn a_missing_model_directory_fails_to_load() {
         "{refused}"
     );
 }
+
+/// Full-vocabulary sampling at temperature 1: the tiny model's successor keeps about 99 % of the mass.
+fn sampled(seed: u32) -> GenerationOptions {
+    GenerationOptions {
+        max_new_tokens: 24,
+        temperature: 1.0,
+        top_p: 1.0,
+        top_k: 0,
+        seed: Some(seed),
+        ..GenerationOptions::default()
+    }
+}
+
+fn tokens(generator: &mut GenaiGenerator, options: &GenerationOptions) -> Vec<i32> {
+    let (prompt, _, _) = tiny_fixture();
+    generator
+        .generate(
+            &[ChatMessage::user(&prompt)],
+            options,
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap()
+        .tokens
+}
+
+#[test]
+fn a_repeated_seed_yields_the_same_tokens() {
+    let Some(mut generator) = generator() else {
+        return;
+    };
+    let first = tokens(&mut generator, &sampled(7));
+    assert_eq!(first.len(), 24);
+    assert_eq!(tokens(&mut generator, &sampled(7)), first);
+}
+
+#[test]
+fn four_seeds_sample_at_least_two_different_answers() {
+    let Some(mut generator) = generator() else {
+        return;
+    };
+    let answers: std::collections::HashSet<Vec<i32>> = (1..=4)
+        .map(|seed| tokens(&mut generator, &sampled(seed)))
+        .inspect(|answer| assert!(answer.len() >= 16, "{answer:?}"))
+        .collect();
+    assert!(answers.len() >= 2, "{answers:?}");
+}
+
+/// Tight enough that the tiny model's successor rule ends in one valid answer.
+const SCHEMA: &str = r#"{"type":"object","properties":{"a":{"type":"string","maxLength":3}},"required":["a"],"additionalProperties":false,"x-guidance":{"whitespace_flexible":false}}"#;
+
+fn schema_run(
+    generator: &mut GenaiGenerator,
+) -> Result<kataglyphis_text::GenerationResult, TextError> {
+    let (prompt, _, _) = tiny_fixture();
+    generator.generate(
+        &[ChatMessage::user(&prompt)],
+        &GenerationOptions {
+            max_new_tokens: 40,
+            json_schema: Some(SCHEMA.into()),
+            ..GenerationOptions::default()
+        },
+        &CancelToken::default(),
+        &mut |_| {},
+    )
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_json_schema_holds_the_answer_to_a_valid_object() {
+    let Some(mut generator) = generator() else {
+        return;
+    };
+    let result = schema_run(&mut generator).unwrap();
+    let answer: serde_json::Value =
+        serde_json::from_str(&result.text).unwrap_or_else(|e| panic!("{e}: {:?}", result.text));
+    let object = answer.as_object().expect("an object");
+    assert_eq!(object.len(), 1, "{answer}");
+    let a = object["a"].as_str().expect("a string");
+    assert!(a.chars().count() <= 3, "{answer}");
+    assert_eq!(result.finish_reason, FinishReason::Stop);
+}
+
+/// The Windows chain builds GenAI without llguidance, so the schema is refused rather than ignored.
+#[cfg(windows)]
+#[test]
+fn a_json_schema_is_refused_as_unsupported_on_this_lane() {
+    let Some(mut generator) = generator() else {
+        return;
+    };
+    let refused = schema_run(&mut generator).unwrap_err();
+    assert!(
+        matches!(refused, TextError::JsonSchemaUnsupported(_)),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_stop_string_ends_the_answer_before_it() {
+    let Some(mut generator) = generator() else {
+        return;
+    };
+    let (prompt, _, _) = tiny_fixture();
+    let mut pieces = Vec::new();
+    let result = generator
+        .generate(
+            &[ChatMessage::user(&prompt)],
+            &GenerationOptions {
+                max_new_tokens: 10,
+                stop: vec!["fg".into()],
+                ..GenerationOptions::default()
+            },
+            &CancelToken::default(),
+            &mut |p| pieces.push(p.to_string()),
+        )
+        .unwrap();
+    assert_eq!(result.text, "de");
+    assert_eq!(pieces.concat(), "de");
+    assert_eq!(result.finish_reason, FinishReason::Stop);
+    assert_eq!(result.tokens, [100, 101, 102, 103]);
+}

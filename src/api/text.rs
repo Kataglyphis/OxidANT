@@ -14,6 +14,12 @@ pub struct TextOptions {
     pub temperature: f64,
     pub top_p: f64,
     pub top_k: u32,
+    /// Makes sampling repeatable on one model and execution provider.
+    pub seed: Option<u32>,
+    /// JSON schema text the answer must match; a lane without llguidance refuses it as `json_schema is unsupported`.
+    pub json_schema: Option<String>,
+    /// Generation ends before the first of these strings, which the answer leaves out.
+    pub stop: Vec<String>,
 }
 
 /// Where the answer comes from: `model_dir` runs the chain's GenAI in process (Linux and Windows); without it the
@@ -50,6 +56,9 @@ pub fn text_default_options() -> TextOptions {
         temperature: 0.0,
         top_p: 1.0,
         top_k: 50,
+        seed: None,
+        json_schema: None,
+        stop: Vec::new(),
     }
 }
 
@@ -165,6 +174,9 @@ mod enabled {
             temperature: options.temperature,
             top_p: options.top_p,
             top_k: options.top_k,
+            seed: options.seed,
+            json_schema: options.json_schema.clone(),
+            stop: options.stop.clone(),
         };
         (messages, options)
     }
@@ -307,6 +319,8 @@ mod tests {
             (options.max_new_tokens, options.temperature, options.top_k),
             (128, 0.0, 50)
         );
+        assert_eq!((options.seed, options.json_schema), (None, None));
+        assert!(options.stop.is_empty());
     }
 
     #[test]
@@ -382,6 +396,9 @@ mod tests {
                 temperature: 0.5,
                 top_p: 0.9,
                 top_k: 3,
+                seed: Some(11),
+                json_schema: Some(r#"{"type":"object"}"#.into()),
+                stop: vec!["END".into()],
             },
         );
         assert_eq!(
@@ -389,5 +406,8 @@ mod tests {
             ("system", "be brief")
         );
         assert_eq!((options.max_new_tokens, options.top_k), (7, 3));
+        assert_eq!(options.seed, Some(11));
+        assert_eq!(options.json_schema.as_deref(), Some(r#"{"type":"object"}"#));
+        assert_eq!(options.stop, ["END"]);
     }
 }

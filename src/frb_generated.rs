@@ -1301,11 +1301,17 @@ impl SseDecode for crate::api::text::TextOptions {
         let mut var_temperature = <f64>::sse_decode(deserializer);
         let mut var_topP = <f64>::sse_decode(deserializer);
         let mut var_topK = <u32>::sse_decode(deserializer);
+        let mut var_seed = <Option<u32>>::sse_decode(deserializer);
+        let mut var_jsonSchema = <Option<String>>::sse_decode(deserializer);
+        let mut var_stop = <Vec<String>>::sse_decode(deserializer);
         return crate::api::text::TextOptions {
             max_new_tokens: var_maxNewTokens,
             temperature: var_temperature,
             top_p: var_topP,
             top_k: var_topK,
+            seed: var_seed,
+            json_schema: var_jsonSchema,
+            stop: var_stop,
         };
     }
 }
@@ -1642,6 +1648,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::text::TextOptions {
             self.temperature.into_into_dart().into_dart(),
             self.top_p.into_into_dart().into_dart(),
             self.top_k.into_into_dart().into_dart(),
+            self.seed.into_into_dart().into_dart(),
+            self.json_schema.into_into_dart().into_dart(),
+            self.stop.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -2040,6 +2049,9 @@ impl SseEncode for crate::api::text::TextOptions {
         <f64>::sse_encode(self.temperature, serializer);
         <f64>::sse_encode(self.top_p, serializer);
         <u32>::sse_encode(self.top_k, serializer);
+        <Option<u32>>::sse_encode(self.seed, serializer);
+        <Option<String>>::sse_encode(self.json_schema, serializer);
+        <Vec<String>>::sse_encode(self.stop, serializer);
     }
 }
 

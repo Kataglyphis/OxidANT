@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use crate::{
-    check_request, decode_rate, messages_json, CancelToken, ChatMessage, FinishReason,
+    check_request, decode_rate, messages_json, stop_scan, CancelToken, ChatMessage, FinishReason,
     GenerationOptions, GenerationResult, TextBackend, TextError,
 };
 
@@ -24,6 +24,9 @@ const IMAGE_CHAIN_DIR: &str = "/usr/local/lib/onnxruntime-genai/lib";
 const CHAIN_BUILD_MARKER: &str = r"C:\temp\onnx-genai-src\build\";
 #[cfg(not(windows))]
 const CHAIN_BUILD_MARKER: &str = "/opt/onnxruntime-genai/build/";
+
+/// A GenAI built without llguidance accepts the guidance and refuses the generator with this message.
+const NO_GUIDANCE: &str = "Guidance is unavailable in this build";
 
 #[repr(C)]
 struct Opaque {
@@ -66,6 +69,8 @@ struct Api {
     destroy_generator_params: unsafe extern "C" fn(Handle),
     set_search_number: unsafe extern "C" fn(Handle, *const c_char, f64) -> Status,
     set_search_bool: unsafe extern "C" fn(Handle, *const c_char, bool) -> Status,
+    set_guidance:
+        Option<unsafe extern "C" fn(Handle, *const c_char, *const c_char, bool) -> Status>,
     create_generator: unsafe extern "C" fn(Handle, Handle, *mut Handle) -> Status,
     destroy_generator: unsafe extern "C" fn(Handle),
     append_token_sequences: unsafe extern "C" fn(Handle, Handle) -> Status,
@@ -111,6 +116,10 @@ impl Api {
             destroy_generator_params: bind!(library, "OgaDestroyGeneratorParams"),
             set_search_number: bind!(library, "OgaGeneratorParamsSetSearchNumber"),
             set_search_bool: bind!(library, "OgaGeneratorParamsSetSearchBool"),
+            // SAFETY: the type is the C signature ort_genai_c.h declares; an older GenAI lacks the symbol.
+            set_guidance: unsafe { library.get(b"OgaGeneratorParamsSetGuidance\0") }
+                .ok()
+                .map(|symbol| *symbol),
             create_generator: bind!(library, "OgaCreateGenerator"),
             destroy_generator: bind!(library, "OgaDestroyGenerator"),
             append_token_sequences: bind!(library, "OgaGenerator_AppendTokenSequences"),
@@ -242,6 +251,90 @@ impl Provider {
             Self::Cuda => Some(c"cuda"),
             Self::DirectMl => Some(c"dml"),
         }
+    }
+}
+
+/// What generation sets on GenAI's generator parameters; a test records the calls without the library.
+pub trait SearchParams {
+    fn set_bool(&mut self, name: &'static CStr, value: bool) -> Result<(), TextError>;
+    fn set_number(&mut self, name: &'static CStr, value: f64) -> Result<(), TextError>;
+    fn set_guidance(&mut self, kind: &'static CStr, data: &CStr) -> Result<(), TextError>;
+}
+
+/// The search options and guidance of one generation: greedy unless the temperature is above 0.
+pub fn configure(
+    params: &mut dyn SearchParams,
+    prompt_tokens: usize,
+    options: &GenerationOptions,
+) -> Result<(), TextError> {
+    let sample = options.temperature > 0.0;
+    params.set_bool(c"do_sample", sample)?;
+    params.set_number(
+        c"max_length",
+        prompt_tokens as f64 + f64::from(options.max_new_tokens),
+    )?;
+    if sample {
+        params.set_number(c"temperature", options.temperature)?;
+        params.set_number(c"top_p", options.top_p)?;
+        params.set_number(c"top_k", f64::from(options.top_k))?;
+    }
+    if let Some(seed) = options.seed {
+        params.set_number(c"random_seed", f64::from(seed))?;
+    }
+    if let Some(schema) = &options.json_schema {
+        params.set_guidance(c"json_schema", &c_string(schema, "json_schema")?)?;
+    }
+    Ok(())
+}
+
+/// The error of a refused generator: [`TextError::JsonSchemaUnsupported`] when this build has no llguidance.
+pub fn generator_error(message: String) -> TextError {
+    if message.contains(NO_GUIDANCE) {
+        TextError::JsonSchemaUnsupported(message)
+    } else {
+        TextError::GenerationFailed(message)
+    }
+}
+
+struct GenaiParams {
+    api: &'static Api,
+    handle: Handle,
+}
+
+impl SearchParams for GenaiParams {
+    fn set_bool(&mut self, name: &'static CStr, value: bool) -> Result<(), TextError> {
+        let api = self.api;
+        // SAFETY: the params handle is live and the name is a static C string.
+        api.check(
+            unsafe { (api.set_search_bool)(self.handle, name.as_ptr(), value) },
+            "search option",
+        )
+        .map_err(TextError::InvalidOptions)
+    }
+
+    fn set_number(&mut self, name: &'static CStr, value: f64) -> Result<(), TextError> {
+        let api = self.api;
+        // SAFETY: the params handle is live and the name is a static C string.
+        api.check(
+            unsafe { (api.set_search_number)(self.handle, name.as_ptr(), value) },
+            "search option",
+        )
+        .map_err(TextError::InvalidOptions)
+    }
+
+    fn set_guidance(&mut self, kind: &'static CStr, data: &CStr) -> Result<(), TextError> {
+        let api = self.api;
+        let Some(set_guidance) = api.set_guidance else {
+            return Err(TextError::JsonSchemaUnsupported(
+                "this GenAI has no OgaGeneratorParamsSetGuidance".into(),
+            ));
+        };
+        // SAFETY: the params handle is live and both strings are NUL-terminated for the call.
+        api.check(
+            unsafe { set_guidance(self.handle, kind.as_ptr(), data.as_ptr(), false) },
+            "guidance",
+        )
+        .map_err(generator_error)
     }
 }
 
@@ -387,39 +480,21 @@ impl GenaiGenerator {
         )
         .map_err(TextError::GenerationFailed)?;
         let params = Owned::new(raw, api.destroy_generator_params);
-        let sample = options.temperature > 0.0;
-        let mut numbers = vec![(
-            c"max_length",
-            prompt_tokens as f64 + f64::from(options.max_new_tokens),
-        )];
-        if sample {
-            numbers.extend([
-                (c"temperature", options.temperature),
-                (c"top_p", options.top_p),
-                (c"top_k", f64::from(options.top_k)),
-            ]);
-        }
-        // SAFETY: params is live and the name is a static C string.
-        api.check(
-            unsafe { (api.set_search_bool)(params.handle, c"do_sample".as_ptr(), sample) },
-            "do_sample",
-        )
-        .map_err(TextError::InvalidOptions)?;
-        for (name, value) in numbers {
-            // SAFETY: params is live and the name is a static C string.
-            api.check(
-                unsafe { (api.set_search_number)(params.handle, name.as_ptr(), value) },
-                "search option",
-            )
-            .map_err(TextError::InvalidOptions)?;
-        }
+        configure(
+            &mut GenaiParams {
+                api,
+                handle: params.handle,
+            },
+            prompt_tokens,
+            options,
+        )?;
         let mut raw_generator = std::ptr::null_mut();
         // SAFETY: model and params are live.
         api.check(
             unsafe { (api.create_generator)(self.model.handle, params.handle, &mut raw_generator) },
             "generator",
         )
-        .map_err(TextError::GenerationFailed)?;
+        .map_err(generator_error)?;
         let generator = Owned::new(raw_generator, api.destroy_generator);
         // SAFETY: generator and prompt are live.
         api.check(
@@ -507,7 +582,7 @@ impl TextBackend for GenaiGenerator {
             time_to_first_token_ms: 0.0,
             decode_tokens_per_second: 0.0,
         };
-        let mut first = start;
+        let (mut first, mut shown, mut stopped) = (start, 0usize, false);
         // SAFETY: generator is live for the whole loop.
         while !unsafe { (api.is_done)(generator.handle) } {
             if cancel.is_cancelled() {
@@ -519,12 +594,24 @@ impl TextBackend for GenaiGenerator {
             if result.tokens.len() == 1 {
                 first = Instant::now();
             }
-            if !piece.is_empty() {
-                result.text.push_str(&piece);
-                on_text(&piece);
+            result.text.push_str(&piece);
+            let (stop_at, safe) = stop_scan(&result.text, &options.stop);
+            if safe > shown {
+                on_text(&result.text[shown..safe]);
+                shown = safe;
+            }
+            if let Some(at) = stop_at {
+                result.text.truncate(at);
+                stopped = true;
+                break;
             }
         }
-        if result.finish_reason != FinishReason::Cancelled {
+        if !stopped && shown < result.text.len() {
+            on_text(&result.text[shown..]);
+        }
+        if stopped {
+            result.finish_reason = FinishReason::Stop;
+        } else if result.finish_reason != FinishReason::Cancelled {
             let stopped = result
                 .tokens
                 .last()
@@ -609,6 +696,98 @@ mod tests {
             .unwrap_err()
             .contains("cannot read"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Records each call as GenAI would receive it.
+    #[derive(Default)]
+    struct Recorder(Vec<String>);
+
+    impl SearchParams for Recorder {
+        fn set_bool(&mut self, name: &'static CStr, value: bool) -> Result<(), TextError> {
+            self.0.push(format!("{}={value}", name.to_string_lossy()));
+            Ok(())
+        }
+
+        fn set_number(&mut self, name: &'static CStr, value: f64) -> Result<(), TextError> {
+            self.0.push(format!("{}={value}", name.to_string_lossy()));
+            Ok(())
+        }
+
+        fn set_guidance(&mut self, kind: &'static CStr, data: &CStr) -> Result<(), TextError> {
+            self.0.push(format!(
+                "guidance {}={}",
+                kind.to_string_lossy(),
+                data.to_string_lossy()
+            ));
+            Ok(())
+        }
+    }
+
+    fn recorded(options: &GenerationOptions) -> Vec<String> {
+        let mut recorder = Recorder::default();
+        configure(&mut recorder, 3, options).unwrap();
+        recorder.0
+    }
+
+    #[test]
+    fn temperature_zero_decodes_greedily_without_sampling_options() {
+        assert_eq!(
+            recorded(&GenerationOptions {
+                max_new_tokens: 4,
+                ..GenerationOptions::default()
+            }),
+            ["do_sample=false", "max_length=7"]
+        );
+    }
+
+    #[test]
+    fn a_temperature_samples_with_the_seed_genai_reads() {
+        let options = GenerationOptions {
+            max_new_tokens: 4,
+            temperature: 1.0,
+            top_p: 0.5,
+            top_k: 0,
+            seed: Some(7),
+            ..GenerationOptions::default()
+        };
+        assert_eq!(
+            recorded(&options),
+            [
+                "do_sample=true",
+                "max_length=7",
+                "temperature=1",
+                "top_p=0.5",
+                "top_k=0",
+                "random_seed=7"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_schema_reaches_genai_as_json_schema_guidance() {
+        let options = GenerationOptions {
+            json_schema: Some(r#"{"type":"object"}"#.into()),
+            ..GenerationOptions::default()
+        };
+        assert_eq!(
+            recorded(&options).last().map(String::as_str),
+            Some(r#"guidance json_schema={"type":"object"}"#)
+        );
+    }
+
+    #[test]
+    fn a_build_without_llguidance_reports_the_schema_as_unsupported() {
+        let refused = generator_error(format!(
+            "generator: {NO_GUIDANCE} (guidance_type=\"json_schema\"). Rebuild with use_guidance=true."
+        ));
+        assert!(
+            matches!(refused, TextError::JsonSchemaUnsupported(_)),
+            "{refused}"
+        );
+        assert!(matches!(
+            generator_error("generator: out of memory".into()),
+            TextError::GenerationFailed(_)
+        ));
     }
 
     #[test]

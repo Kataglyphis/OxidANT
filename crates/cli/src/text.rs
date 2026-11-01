@@ -30,6 +30,9 @@ pub fn chat(args: ChatArgs) -> Result<()> {
     let options = GenerationOptions {
         max_new_tokens: args.max_new_tokens,
         temperature: args.temperature,
+        seed: args.seed,
+        json_schema: args.json_schema.clone(),
+        stop: args.stop.clone(),
         ..GenerationOptions::default()
     };
     let mut backend = backend(&args)?;

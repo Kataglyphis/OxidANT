@@ -157,6 +157,15 @@ impl Endpoint {
             body.insert("top_p".into(), json!(options.top_p));
             body.insert("top_k".into(), json!(options.top_k));
         }
+        if let Some(seed) = options.seed {
+            body.insert("seed".into(), json!(seed));
+        }
+        if !options.stop.is_empty() {
+            body.insert("stop".into(), json!(options.stop));
+        }
+        if let Some(schema) = options.schema_value() {
+            body.insert("response_format".into(), response_format(schema));
+        }
         Ok(Value::Object(body))
     }
 
@@ -176,6 +185,14 @@ impl Endpoint {
             .map_err(|e| TextError::GenerationFailed(format!("the embeddings answer: {e}")))?;
         parse_embeddings(&answer, texts.len())
     }
+}
+
+/// OpenAI's structured output: the answer must match `schema`.
+fn response_format(schema: Value) -> Value {
+    json!({
+        "type": "json_schema",
+        "json_schema": { "name": "response", "schema": schema, "strict": true },
+    })
 }
 
 /// Where an endpoint comes from, in the hub tools' order: a URL, `LLM_BASE_URL` or `OLLAMA_BASE_URL`, a named

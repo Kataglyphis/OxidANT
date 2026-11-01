@@ -11,7 +11,13 @@ Set-Location $repoRoot
 
 # Without the model the real-model tests pass by skipping; 0 opts out.
 if (-not $env:KATAGLYPHIS_REQUIRE_MODEL) { $env:KATAGLYPHIS_REQUIRE_MODEL = '1' }
+# The image carries the chain GenAI, so the text suites, the schema refusal included, must load it rather than skip.
+if (-not $env:KATAGLYPHIS_REQUIRE_GENAI) { $env:KATAGLYPHIS_REQUIRE_GENAI = '1' }
 & (Join-Path $PSScriptRoot 'Get-Models.ps1')
+# The text contract's model goes outside resources\, which Build-Windows.ps1 copies into the bundle.
+$llmModels = Join-Path $repoRoot 'target\llm-models'
+& (Join-Path $PSScriptRoot 'Get-Models.ps1') -Lock (Join-Path $repoRoot 'resources\models\llm.lock') -Destination $llmModels -Extract
+$env:KATAGLYPHIS_LLM_MODELS = $llmModels
 
 Write-Host '==> Workspace tests, the WebGPU renderer excluded'
 & cargo test --workspace --locked --exclude kataglyphis_webgpu_renderer

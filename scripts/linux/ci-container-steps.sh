@@ -52,6 +52,7 @@ case "$step" in
         export KATAGLYPHIS_REQUIRE_GST="${KATAGLYPHIS_REQUIRE_GST-1}"
         export KATAGLYPHIS_REQUIRE_GTK=1
         bash "${SCRIPT_DIR}/fetch-models.sh"
+        bash "${SCRIPT_DIR}/fetch-models.sh" --llm
         # Xvfb omits its readiness signal when xvfb-run is PID 1, so retain this parent shell.
         xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_test.sh")" "$@"
         exit "$?"
@@ -64,6 +65,7 @@ case "$step" in
         export KATAGLYPHIS_REQUIRE_GST="${KATAGLYPHIS_REQUIRE_GST-1}"
         export KATAGLYPHIS_REQUIRE_GTK=1
         bash "${SCRIPT_DIR}/fetch-models.sh"
+        bash "${SCRIPT_DIR}/fetch-models.sh" --llm
         # Not antfrastructure_exec, which replaces this shell: the per-crate floors run after it. 300 s: an arm64 runner needed more than 60.
         WORKSPACE_ROOT="${WORKSPACE_ROOT:-$KATAGLYPHIS_REPO_ROOT}" xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_coverage.sh")" \
             --workspace --exclude-files "${COVERAGE_EXCLUDE}" --timeout 300 --fail-under 70 "$@"

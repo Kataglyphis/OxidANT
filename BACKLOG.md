@@ -27,6 +27,20 @@ and the backlog is empty"; it was neither.
       resource lifetime from a driver fault, then add a regression for the proven cause.
       Do not serialize all tests or call it fixed solely because CI is green.
 
+## Recorded probes
+
+- **llguidance accepts the hub tiny model's tokenizer** (GenAI 0.17.0 in `:latest`, index
+  `7d4d4129`, amd64). `GeneratorParams.set_guidance("json_schema", ...)` on the tiny model decodes
+  `abc` under
+  `{"type":"object","properties":{"a":{"type":"string","maxLength":3}},"required":["a"],"additionalProperties":false,"x-guidance":{"whitespace_flexible":false}}`
+  to the ids `[123, 34, 97, 34, 58, 34, 35, 36, 37, 34, 125, 256]`, `{"a":"#$%"}` then the end
+  token 256. A schema that allows whitespace makes the successor rule loop on `\t\n` until the
+  budget ends, so the schema test keeps the tight form. No SmolLM2-135M fallback is needed for
+  schema tests; SmolLM2-135M runs the ModelANT contract (`crates/text/tests/contract.rs`).
+  Sampling at temperature 1 over the full vocabulary gives seed 1 a different 24-token answer
+  from seeds 2 to 4. The Windows chain builds GenAI without llguidance, where the generator
+  refuses a schema as `TextError::JsonSchemaUnsupported`.
+
 ## Not adopted yet
 
 The loop itself (config, runner wrappers, `scripts/agentic-loop/`) is not set up.

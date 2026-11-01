@@ -4,7 +4,9 @@
 param(
   # Default: the lock's own directory, where the app and the packaging steps look.
   [string]$Destination,
-  [string]$Lock = (Join-Path $PSScriptRoot '..\..\resources\models\models.lock')
+  [string]$Lock = (Join-Path $PSScriptRoot '..\..\resources\models\models.lock'),
+  # Each file is an archive unpacking to <name>\, as llm.lock's GenAI model directories are.
+  [switch]$Extract
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,6 +18,7 @@ if (-not (Test-Path -LiteralPath $fetcher -PathType Leaf)) {
 }
 $fetchArgs = @('-I', $fetcher, '--lock', $Lock)
 if ($Destination) { $fetchArgs += @('--dest', $Destination) }
+if ($Extract) { $fetchArgs += '--extract' }
 # Out-Host, so a caller that discards the pipeline still shows what was fetched.
 & python @fetchArgs | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "fetch-data-lock.py exited $LASTEXITCODE for $Lock" }

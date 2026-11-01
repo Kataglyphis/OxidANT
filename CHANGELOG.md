@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-01, language AI)
+- **`seed`, `json_schema` and `stop` in `kataglyphis_text`.** `GenerationOptions` carries them to GenAI
+  (`random_seed`, `OgaGeneratorParamsSetGuidance("json_schema", ...)`, stop strings in the decode loop with
+  `finish_reason` `Stop`) and to endpoints (`seed`, `response_format`, `stop`); the CLI takes `--seed`,
+  `--json-schema` and `--stop`, and the bridge's `TextOptions` the same three fields. A GenAI without
+  llguidance, the Windows chain's, refuses a schema with the new `TextError::JsonSchemaUnsupported`.
+- **`resources/models/llm.lock`** with OrchestrANT's SmolLM2-135M-Instruct row, fetched by
+  `scripts/linux/fetch-models.sh --llm` in the test and coverage steps and by `Invoke-DebugTests.ps1` into
+  `target\llm-models`, and **`crates/text/tests/contract.rs`**, which replays ModelANT's text-generation-v1
+  capital-of-france case to its exact ids and `Paris`.
+- **GenAI tests for the options** on the hub tiny model, whose tokenizer llguidance accepts (`BACKLOG.md`
+  § Recorded probes), and **five mutation recipes** on the hosted lane: the seed and the guidance in
+  `genai::configure`, greedy decoding, and the endpoint's `seed` and `response_format`.
+
 ### Fixed (2026-11-01)
 - **The riscv64 media test keeps QEMU's loader and CPU settings for its isolated child.**
   The existing plugin-path isolation and explicit library-path handling are preserved.

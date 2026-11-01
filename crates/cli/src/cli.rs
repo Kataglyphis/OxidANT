@@ -120,6 +120,15 @@ pub struct ChatArgs {
     /// 0 decodes greedily.
     #[arg(long, default_value_t = 0.0)]
     pub temperature: f64,
+    /// Makes sampling repeatable on one model and execution provider.
+    #[arg(long)]
+    pub seed: Option<u32>,
+    /// A JSON schema, as JSON text, the answer must match.
+    #[arg(long)]
+    pub json_schema: Option<String>,
+    /// Ends the answer before this string; repeatable.
+    #[arg(long)]
+    pub stop: Vec<String>,
 }
 
 /// The endpoint: --base-url, else LLM_BASE_URL or OLLAMA_BASE_URL, else --backend or the default in backends.json.

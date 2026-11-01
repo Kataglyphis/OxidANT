@@ -134,3 +134,8 @@ pub fn tiny_fixture() -> (String, String, Vec<i32>) {
 pub fn genai_required() -> bool {
     std::env::var("KATAGLYPHIS_REQUIRE_GENAI").as_deref() == Ok("1")
 }
+
+/// Whether a missing model fails the suite: the test and coverage steps set `KATAGLYPHIS_REQUIRE_MODEL=1`.
+pub fn model_required() -> bool {
+    std::env::var("KATAGLYPHIS_REQUIRE_MODEL").as_deref() == Ok("1")
+}

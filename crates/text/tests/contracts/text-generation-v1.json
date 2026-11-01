@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "semantics": "Each case runs on the model directory it names, on the CPU execution provider: the messages go through the model's own chat template with the generation prompt, then greedy decoding (do_sample false) adds at most max_new_tokens tokens. expected_ids are those new tokens as the release export produced them; the decoded text must contain must_contain.",
+  "cases": [
+    {
+      "name": "capital-of-france",
+      "model": "smollm2_135m_instruct-cpu",
+      "messages": [{"role": "user", "content": "What is the capital of France? Answer in one word."}],
+      "max_new_tokens": 8,
+      "must_contain": "Paris",
+      "expected_ids": [504, 3575, 282, 4649, 314, 7042, 30, 2]
+    }
+  ]
+}

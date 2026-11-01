@@ -1,0 +1,4 @@
+# The language models the text contract tests run, never bundled: scripts/linux/fetch-models.sh --llm unpacks each
+# beside this lock, scripts/windows/Invoke-DebugTests.ps1 into target\llm-models. Built and released by ModelANT.
+# sha256                                                          file                               url
+b3853a1cd5c0af0d604fdae0b3d495a2f3d4ec7ab0653704b4e6b896d5a27f8f  smollm2_135m_instruct-cpu.tar.xz  https://github.com/Kataglyphis/ModelANT/releases/download/smollm2_135m_instruct-v1/smollm2_135m_instruct-cpu.tar.xz

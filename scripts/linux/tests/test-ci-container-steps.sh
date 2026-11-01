@@ -16,8 +16,12 @@ import os
 import sys
 
 assert sys.argv[1] == "--lock"
-assert sys.argv[2].endswith("resources/models/models.lock")
-print("FETCHED", flush=True)
+if sys.argv[2].endswith("resources/models/llm.lock"):
+    assert sys.argv[3] == "--extract"
+    print("FETCHED-LLM", flush=True)
+else:
+    assert sys.argv[2].endswith("resources/models/models.lock")
+    print("FETCHED", flush=True)
 sys.exit(int(os.environ.get("CI_FETCH_RC", "0")))
 PY
 cat > "${work}/bin/xvfb-run" <<'SH'
@@ -84,6 +88,8 @@ t_assert_grep "${work}/rc" '^0$'
 t_assert_grep "${work}/out" '^FETCHED$'
 t_assert_grep "${work}/out" '^DRIVER$'
 t_assert_no_grep "${work}/out" 'launcher shell was replaced'
+t_case "the text contract's language model is fetched and unpacked before the tests"
+t_assert_grep "${work}/out" '^FETCHED-LLM$'
 t_case "arguments, including spaces and an empty value, reach the driver"
 t_assert_grep "${work}/out" '^ARG=--package$'
 t_assert_grep "${work}/out" '^ARG=two words$'
@@ -116,6 +122,7 @@ t_case "coverage reaches its driver through Xvfb and the real per-crate checker"
 t_assert_grep "${work}/rc" '^0$'
 t_assert_grep "${work}/out" '^XVFB$'
 t_assert_grep "${work}/out" '^FETCHED$'
+t_assert_grep "${work}/out" '^FETCHED-LLM$'
 t_assert_grep "${work}/out" '^DRIVER$'
 t_assert_grep "${work}/out" '^crates/gui .*100.0 % .*floor +27 % +ok$'
 t_case "coverage retains its workspace scope, vendor exclusion, timeout and aggregate floor"

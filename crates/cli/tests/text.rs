@@ -47,6 +47,27 @@ fn chat_streams_an_endpoint_reply_to_stdout_and_its_figures_to_stderr() {
 }
 
 #[test]
+fn chat_sends_its_seed_schema_and_stop_strings_to_the_endpoint() {
+    let server = FakeServer::answer(200, "text/event-stream", chat_stream(&["{}"], "stop", 1));
+    cli()
+        .args(["chat", "--base-url", &server.base_url, "--model", "m"])
+        .args(["--prompt", "hi", "--temperature", "1", "--seed", "5"])
+        .args(["--json-schema", r#"{"type":"object"}"#])
+        .args(["--stop", "END", "--stop", "}"])
+        .assert()
+        .success()
+        .stdout("{}\n");
+    let request = server.request();
+    assert!(request.contains(r#""seed":5"#), "{request}");
+    assert!(request.contains(r#""stop":["END","}"]"#), "{request}");
+    assert!(
+        request.contains(r#""schema":{"type":"object"}"#)
+            && request.contains(r#""type":"json_schema""#),
+        "{request}"
+    );
+}
+
+#[test]
 fn chat_reaches_a_named_backend_through_its_registry() {
     let server = FakeServer::answer(200, "text/event-stream", chat_stream(&["ok"], "stop", 1));
     let dir = tempfile::tempdir().unwrap();

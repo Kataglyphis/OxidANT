@@ -124,6 +124,7 @@ flake.lock
 *.onnx
 /resources/models/*
 !/resources/models/models.lock
+!/resources/models/llm.lock
 *.gif
 *.webp
 !images/Rust.webp

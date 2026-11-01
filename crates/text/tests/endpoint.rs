@@ -172,3 +172,57 @@ fn embeddings_come_back_normalised_in_the_order_asked() {
         "{request}"
     );
 }
+
+#[test]
+fn the_seed_the_schema_and_the_stop_strings_reach_the_request_body() {
+    let server = FakeServer::answer(
+        200,
+        "text/event-stream",
+        chat_stream(&[r#"{"a":"x"}"#], "stop", 4),
+    );
+    let schema = r#"{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]}"#;
+    let options = GenerationOptions {
+        temperature: 1.0,
+        seed: Some(42),
+        json_schema: Some(schema.into()),
+        stop: vec!["}".into(), "END".into()],
+        ..GenerationOptions::default()
+    };
+    let result = endpoint(&server)
+        .generate(
+            &[ChatMessage::user("x")],
+            &options,
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(result.finish_reason, FinishReason::Stop);
+    let request = server.request();
+    let body: serde_json::Value =
+        serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(body["seed"], 42, "{request}");
+    assert_eq!(body["stop"], serde_json::json!(["}", "END"]), "{request}");
+    assert_eq!(body["response_format"]["type"], "json_schema", "{request}");
+    assert_eq!(
+        body["response_format"]["json_schema"]["schema"],
+        serde_json::from_str::<serde_json::Value>(schema).unwrap(),
+        "{request}"
+    );
+}
+
+#[test]
+fn without_a_seed_schema_or_stop_the_body_names_none_of_them() {
+    let server = FakeServer::answer(200, "text/event-stream", chat_stream(&["x"], "stop", 1));
+    endpoint(&server)
+        .generate(
+            &[ChatMessage::user("x")],
+            &GenerationOptions::default(),
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+    let request = server.request();
+    for key in [r#""seed""#, r#""stop""#, r#""response_format""#] {
+        assert!(!request.contains(key), "{key} in {request}");
+    }
+}

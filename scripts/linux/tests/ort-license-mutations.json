@@ -190,5 +190,50 @@
   "replace": "\"\" \"${work}/cargo-expand.crate\"",
   "test": "bash scripts/linux/tests/test-frb-codegen.sh",
   "why": "cargo-expand installs only from its checksummed crate."
+ },
+ {
+  "id": "consumer.oxidant-text-seed-genai",
+  "target": "crates/text/src/genai.rs",
+  "find": "        params.set_number(c\"random_seed\", f64::from(seed))?;",
+  "replace": "        let _ = seed;",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "A seed reaches GenAI as random_seed, or a repeated seed samples differently."
+ },
+ {
+  "id": "consumer.oxidant-text-guidance-genai",
+  "target": "crates/text/src/genai.rs",
+  "find": "        params.set_guidance(c\"json_schema\", &c_string(schema, \"json_schema\")?)?;",
+  "replace": "        let _ = schema;",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "A json_schema reaches GenAI's guidance, or the answer is unconstrained."
+ },
+ {
+  "id": "consumer.oxidant-text-greedy",
+  "target": "crates/text/src/genai.rs",
+  "find": "    let sample = options.temperature > 0.0;",
+  "replace": "    let sample = true;",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "Temperature 0 decodes greedily, which the exact-token contract tests rely on."
+ },
+ {
+  "id": "consumer.oxidant-text-seed-endpoint",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "            body.insert(\"seed\".into(), json!(seed));",
+  "replace": "            let _ = seed;",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "An endpoint request carries the seed."
+ },
+ {
+  "id": "consumer.oxidant-text-guidance-endpoint",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "            body.insert(\"response_format\".into(), response_format(schema));",
+  "replace": "            let _ = response_format(schema);",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "An endpoint request carries the json_schema as response_format."
  }
 ]

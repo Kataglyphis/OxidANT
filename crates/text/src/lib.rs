@@ -37,6 +37,12 @@ pub struct GenerationOptions {
     pub temperature: f64,
     pub top_p: f64,
     pub top_k: u32,
+    /// Makes sampling repeatable: the same seed, model and options yield the same tokens.
+    pub seed: Option<u32>,
+    /// A JSON schema the answer must match, as JSON text.
+    pub json_schema: Option<String>,
+    /// Generation ends before the first of these strings, which the answer leaves out.
+    pub stop: Vec<String>,
 }
 
 impl Default for GenerationOptions {
@@ -46,7 +52,19 @@ impl Default for GenerationOptions {
             temperature: 0.0,
             top_p: 1.0,
             top_k: 50,
+            seed: None,
+            json_schema: None,
+            stop: Vec::new(),
         }
+    }
+}
+
+impl GenerationOptions {
+    /// The schema as JSON; [`check_request`] has refused one that is not an object.
+    pub(crate) fn schema_value(&self) -> Option<serde_json::Value> {
+        self.json_schema
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
     }
 }
 
@@ -87,6 +105,8 @@ pub enum TextError {
     EndpointStatus(u16, String),
     /// The byte limit one streamed line exceeded.
     StreamLineTooLong(usize),
+    /// This GenAI build has no llguidance, so it cannot hold an answer to a schema.
+    JsonSchemaUnsupported(String),
 }
 
 impl fmt::Display for TextError {
@@ -108,6 +128,9 @@ impl fmt::Display for TextError {
             Self::EndpointStatus(code, d) => write!(f, "the endpoint answered HTTP {code}: {d}"),
             Self::StreamLineTooLong(limit) => {
                 write!(f, "the endpoint streamed a line longer than {limit} bytes")
+            }
+            Self::JsonSchemaUnsupported(d) => {
+                write!(f, "json_schema is unsupported on this lane: {d}")
             }
         }
     }
@@ -156,7 +179,41 @@ pub(crate) fn check_request(
     if options.max_new_tokens == 0 {
         return Err(TextError::InvalidOptions("max_new_tokens is 0".into()));
     }
+    // GenAI reads the seed as a 32-bit signed integer and takes -1 for a random one.
+    if options.seed.is_some_and(|s| s > i32::MAX as u32) {
+        return Err(TextError::InvalidOptions(format!(
+            "seed is above {}",
+            i32::MAX
+        )));
+    }
+    if options.stop.iter().any(String::is_empty) {
+        return Err(TextError::InvalidOptions("a stop string is empty".into()));
+    }
+    if options.json_schema.is_some() && !options.schema_value().is_some_and(|v| v.is_object()) {
+        return Err(TextError::InvalidOptions(
+            "json_schema is not a JSON object".into(),
+        ));
+    }
     Ok(())
+}
+
+/// Where a stop string first starts in `text`, and how much of `text` is safe to show: the rest may begin one.
+pub(crate) fn stop_scan(text: &str, stops: &[String]) -> (Option<usize>, usize) {
+    if let Some(at) = stops.iter().filter_map(|s| text.find(s.as_str())).min() {
+        return (Some(at), at);
+    }
+    let held = stops
+        .iter()
+        .flat_map(|stop| {
+            stop.char_indices()
+                .skip(1)
+                .map(|(i, _)| &stop[..i])
+                .filter(|prefix| text.ends_with(prefix))
+                .map(str::len)
+        })
+        .max()
+        .unwrap_or(0);
+    (None, text.len() - held)
 }
 
 /// Messages as the OpenAI chat format, which GenAI's chat template reads too.
@@ -204,6 +261,59 @@ mod tests {
         let options = GenerationOptions::default();
         assert_eq!(options.max_new_tokens, 128);
         assert_eq!(options.temperature, 0.0);
+        assert_eq!((options.seed, options.json_schema), (None, None));
+        assert!(options.stop.is_empty());
+    }
+
+    #[test]
+    fn a_large_seed_an_empty_stop_and_a_schema_that_is_no_object_are_refused() {
+        let one = [ChatMessage::user("a")];
+        for options in [
+            GenerationOptions {
+                seed: Some(i32::MAX as u32 + 1),
+                ..GenerationOptions::default()
+            },
+            GenerationOptions {
+                stop: vec![String::new()],
+                ..GenerationOptions::default()
+            },
+            GenerationOptions {
+                json_schema: Some("[1]".into()),
+                ..GenerationOptions::default()
+            },
+            GenerationOptions {
+                json_schema: Some("{".into()),
+                ..GenerationOptions::default()
+            },
+        ] {
+            assert!(
+                matches!(
+                    check_request(&one, &options),
+                    Err(TextError::InvalidOptions(_))
+                ),
+                "{options:?}"
+            );
+        }
+        let fine = GenerationOptions {
+            seed: Some(i32::MAX as u32),
+            json_schema: Some(r#"{"type":"object"}"#.into()),
+            stop: vec!["x".into()],
+            ..GenerationOptions::default()
+        };
+        assert_eq!(check_request(&one, &fine), Ok(()));
+    }
+
+    #[test]
+    fn a_stop_scan_cuts_at_the_earliest_stop_and_holds_back_a_partial_one() {
+        let stops = vec!["fg".to_string(), "e".to_string()];
+        assert_eq!(stop_scan("abcdefg", &stops), (Some(4), 4));
+        assert_eq!(stop_scan("abcf", &stops), (None, 3));
+        assert_eq!(stop_scan("abc", &stops), (None, 3));
+        assert_eq!(
+            stop_scan("x\u{e9}", &["\u{e9}t\u{e9}".to_string()]),
+            (None, 1)
+        );
+        assert_eq!(stop_scan("anything", &[]), (None, 8));
     }
 
     #[test]
@@ -250,6 +360,7 @@ mod tests {
             TextError::EndpointUnreachable("x".into()),
             TextError::EndpointStatus(503, "x".into()),
             TextError::StreamLineTooLong(1),
+            TextError::JsonSchemaUnsupported("x".into()),
         ];
         let texts: std::collections::HashSet<String> =
             errors.iter().map(ToString::to_string).collect();
