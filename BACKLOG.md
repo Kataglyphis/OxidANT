@@ -22,11 +22,10 @@ and the backlog is empty"; it was neither.
       `crates/media/src/runtime.rs` falls back to the in-process scan when a bundle has no
       `gst-plugin-scanner`. Add a fresh-registry test, or make every bundle ship the scanner.
 
-- [b] Drop the vendored `third_party/egui-winit-0.36.2` and its
-      `[patch.crates-io]` entry once egui 0.37 (or any release carrying
-      emilk/egui#8516) is on crates.io, then move the egui family to it.
-      Blocked on that release. Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.
-      Re-checked 2026-10-12: crates.io's newest `egui` and `egui-winit` are still 0.36.2, published 2026-09-08 (emilk/egui#8516 merged 2026-09-07, unreleased).
+- [ ] Drop the vendored `third_party/egui-winit-0.36.2` and its
+      `[patch.crates-io]` entry, then move the egui family to 0.37.
+      Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.
+      Read 2026-11-02: crates.io's newest `egui` and `egui-winit` are 0.37.0, whose tag contains emilk/egui#8516.
 
 - [ ] **Diagnose the intermittent headless GPU-test SIGSEGV** (M). A full default-parallel
       workspace run at `38b1c597` crashed in the `occlusion` test binary after 7/11 cases
@@ -35,6 +34,24 @@ and the backlog is empty"; it was neither.
       Next: capture the GPU backend/driver and all-thread stack or core, distinguish test
       resource lifetime from a driver fault, then add a regression for the proven cause.
       Do not serialize all tests or call it fixed solely because CI is green.
+
+- [ ] **Move the detector to `deim_dfine_n_coco-v2`** (S, ★★★). On DirectML, v1 finds nothing: an RX 9070 XT ran every profiled operator on `DmlExecutionProvider` and returned no detection, where the CPU
+      finds two cats (hub CON220). v2, sha256 `0bf16e85…`, gives the CPU's detections there.
+      Until the lock moves, the Windows AMD package has no working detector, so no `main` release before it.
+      Change `resources/models/models.lock` and
+      `crates/inference/src/person_detection/model_lock.rs` with AccelerANTgine and OrchestrANT in one window, then
+      check ORT and tract parity.
+
+- [ ] **A clear failure or a CPU fallback when CUDA has no kernel for the card** (M, ★★). Seen on an RTX 2080 with the Linux x64 NVIDIA package
+      (run 41415056257).
+      `CUDAExecutionProvider` creates its session, then the first node stops with
+      `cudaErrorNoKernelImageForDevice`: no detection, no fallback. The images build `86;87;89;120`, so RTX 20xx
+      cards fail until hub CON217. Any card outside the list should get a message naming it, or the CPU.
+
+- [ ] **The NVIDIA packages have not run on a GPU they support** (S, ★★★). The Linux and Windows packages are built and
+      passed on the CPU, and hosted runners have no GPU. Done on an RTX 30xx or newer when
+      `compare_detector_parity.py` passes against the CPU and the profile shows the provider; the hub's
+      `docs/gpu-artifact-receipts.md` has the commands. DirectML on an NVIDIA card is unproven too.
 
 - [b] **RVV `MatMulNBits` segfaults on a 4-bit model in the chain's ORT 1.31.0** (M, ★★). Crash:
       `kataglyphis_text --test contract`, `signal: 11, SIGSEGV`, run 41463196239 and locally on
