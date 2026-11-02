@@ -12,29 +12,31 @@ Describe 'WindowsCargoTarget.Common' {
     $target = 'C:\ct'
     $ws = 'C:\ws'
 
-    # Returns the layout so a case can check what differs between the host and cross builds.
-    function Assert-CargoLayout([string]$Arch, [bool]$IsCross, [string]$ArchTargetDir, [string]$PackageArch) {
-        $l = Get-CargoTargetLayout -Arch $Arch -TargetRoot $target -WorkspacePath $ws
+    function Get-Layout([string]$Arch) { Get-CargoTargetLayout -Arch $Arch -TargetRoot $target -WorkspacePath $ws }
+
+    # Should writes to the pipeline in Pester 3.4, so this cannot also return the layout.
+    function Assert-CargoLayout($l, [bool]$IsCross, [string]$ArchTargetDir, [string]$PackageArch) {
         $l.IsCross | Should Be $IsCross
         $l.ArchTargetDir | Should Be $ArchTargetDir
         $l.ReleaseDir | Should Be "$ArchTargetDir\release"
         $l.PackageArch | Should Be $PackageArch
         $l.DistDir | Should Be "C:\ws\dist\windows-$PackageArch"
-        $l
     }
 
     It 'keeps the host build in target\release, and names its packages x64 under dist\windows-x64' {
-        $l = Assert-CargoLayout -Arch 'amd64' -IsCross $false -ArchTargetDir 'C:\ct' -PackageArch 'x64'
+        $l = Get-Layout 'amd64'
+        Assert-CargoLayout $l -IsCross $false -ArchTargetDir 'C:\ct' -PackageArch 'x64'
         @($l.CargoArgs).Count | Should Be 0
     }
 
     It 'builds arm64 by triple and keeps its packages apart' {
-        $l = Assert-CargoLayout -Arch 'arm64' -IsCross $true -ArchTargetDir 'C:\ct\aarch64-pc-windows-msvc' -PackageArch 'arm64'
+        $l = Get-Layout 'arm64'
+        Assert-CargoLayout $l -IsCross $true -ArchTargetDir 'C:\ct\aarch64-pc-windows-msvc' -PackageArch 'arm64'
         ($l.CargoArgs -join ' ') | Should Be '--target aarch64-pc-windows-msvc'
     }
 
     It 'takes the hub''s spellings and its environment default, and refuses an unknown arch' {
-        (Get-CargoTargetLayout -Arch 'x64' -TargetRoot $target -WorkspacePath $ws).Arch | Should Be 'amd64'
+        (Get-Layout 'x64').Arch | Should Be 'amd64'
         $saved = $env:WINDOWS_TARGET_ARCH
         try {
             $env:WINDOWS_TARGET_ARCH = 'arm64'
