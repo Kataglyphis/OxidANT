@@ -604,7 +604,9 @@ class GpuWorkflow(unittest.TestCase):
 
             result = run()
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual((stage / "selected-runtime.txt").read_text(), str(runtime))
+            # A runner's TEMP may be an 8.3 path that the launcher's %~dp0 expands.
+            selected = Path((stage / "selected-runtime.txt").read_text())
+            self.assertEqual(selected.resolve(), runtime.resolve())
             runtime.unlink()
             self.assertIn("Bundled ONNX Runtime missing", run().stderr)
             runtime.touch()
