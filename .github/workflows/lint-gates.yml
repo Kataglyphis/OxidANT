@@ -20,6 +20,7 @@ jobs:
       submodules: 'true'
       exclude: third_party
       ratchets: true
+      agents-drift: true
       # Measured clean of tag-pinned actions, so the sha-pin convention is enforced here.
       workflow-conventions: sha-pin
 

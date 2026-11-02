@@ -9,5 +9,5 @@ source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 # Matches lint-gates.yml's `workflow-conventions: sha-pin`.
 export WORKFLOW_CONVENTIONS_GATE="${WORKFLOW_CONVENTIONS_GATE:-sha-pin}"
 
-# Matches lint-gates.yml's `ratchets: true`; baselines are the <gate>.allow files, absent meaning zero.
-antfrastructure_exec linux/scripts/run-lint-gates.sh "${KATAGLYPHIS_REPO_ROOT}" --ratchets "$@"
+# Matches lint-gates.yml's `ratchets: true` and `agents-drift: true`; baselines are the <gate>.allow files, absent meaning zero.
+antfrastructure_exec linux/scripts/run-lint-gates.sh "${KATAGLYPHIS_REPO_ROOT}" --ratchets --agents-drift "$@"

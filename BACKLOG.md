@@ -62,3 +62,13 @@ The loop itself (config, runner wrappers, `scripts/agentic-loop/`) is not set up
 Copy-and-edit templates live in ANTfrastructure's `shared/agentic-loop/templates/`; a
 consumer supplies this file, a config JSON, thin runner wrappers, and optionally
 per-engine system prompts.
+
+## Quality queue
+
+The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`); re-sync when it moves.
+
+- [ ] `large-files.allow:3` budget 2031 (allow_budget_total)
+- [ ] `function-size.allow:7` budget 171 (allow_budget_total)
+- [ ] `function-size.allow:6` budget 156 (allow_budget_total)
+- [ ] `function-size.allow:4` budget 127 (allow_budget_total)
+- [ ] `function-size.allow:3` budget 102 (allow_budget_total)

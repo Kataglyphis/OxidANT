@@ -18,6 +18,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `scripts/linux/perf-host.sh`, the CLI's `detect-latency` and a tracked `perf/baseline-<cpu>.json`.
 
 ### Changed (2026-11-02, AGENTS.md back to what to do now)
+- **The lint gates hold it there.** `run-lint-gates.sh` and `lint-gates.yml` run the hub's
+  `verify_agents_drift.py`.
 - **`AGENTS.md` shrank from 1,025 to about 440 lines.** The lane detail moved to the new
   `docs/ci.md`, the cat cam to `docs/observant.md`, the Windows container to `docs/windows.md`, the
   bin rename and package closure to `docs/packaging.md`, the WSL recipe to `docs/getting-started.md`,

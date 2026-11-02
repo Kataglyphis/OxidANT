@@ -123,21 +123,12 @@ shellcheck/actionlint/gitleaks binaries the lint lane bootstraps, the cargo, pac
 and docs drivers, the Windows modules and the ORT census (G6). A drifted gitlink silently
 changes every gate, and `git submodule status` marks it only with a `+`, easy to miss in
 CI output. The images are the exception: the lanes take them from the hub's actions and
-reusable workflows at `@develop`, which read `versions.env` at that ref, not at the pin
-(009617e, 2026-09-25).
+reusable workflows at `@develop`, which read `versions.env` at that ref, not at the pin.
 
-**Guarded by ANTfrastructure's repo-agnostic Pester suite**, run after any pin bump from
-[`.github/workflows/submodule-pins.yml`](.github/workflows/submodule-pins.yml), since
-2026-09-15 one `uses:` line onto the hub's reusable `submodule-pins.yml` plus the `on:`
-filters that say when it runs. The suite,
-`third_party/ANTfrastructure/shared/windows/tests/Submodule.Pins.Tests.ps1`, asserts for
-**every** configured submodule that it is checked out, sits at its recorded commit, and
-is pinned to a commit its remote still has, so a second submodule is covered the day it
-lands. The Pester pin (`3.4.0`) and the `windows-2025` runner are the hub's choices, and
-their forty lines of rationale live upstream once
-(`third_party/ANTfrastructure/docs/windows-builds.md`). It stays a **separate workflow
-from `lint-gates.yml`** because Pester 3.4.0 is a Windows PowerShell-era module never
-released for PowerShell Core on Linux.
+**Guarded by the hub's `Submodule.Pins.Tests.ps1`**, run after any pin bump from
+[`.github/workflows/submodule-pins.yml`](.github/workflows/submodule-pins.yml): every configured
+submodule is checked out, at its recorded commit, and pinned to a commit its remote still has. It
+stays separate from `lint-gates.yml` because the Pester pin (`3.4.0`) has no Linux release.
 
 **Version couplings with the hub:** the toolchain (`RUST_VERSION`) and the two
 cargo-tool pins (`CARGO_AUDIT_VERSION`, `CARGO_DENY_VERSION`) are read from
@@ -405,6 +396,10 @@ directive 2026-09-11, a family rule the hub's `AGENTS.md` keeps). The family rat
 [`third_party/ANTfrastructure/docs/dependency-updates.md`](third_party/ANTfrastructure/docs/dependency-updates.md).
 
 ## 6. Docs owned by this repo
+
+**`run-lint-gates.sh --agents-drift` holds this file to the tree**: section 1 names every crate and
+`src` module, section 5 every workflow and binary, `docs.yml` every page in `docs/`, and `BACKLOG.md`
+every open `LAI-O` ID. A finding is fixed by naming the thing, never by an exception.
 
 **Write docs like a developer: short and precise** (owner rule). Say what a thing does,
 how to run it and what breaks; no filler, no marketing, no repetition.
