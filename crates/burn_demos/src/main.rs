@@ -74,7 +74,7 @@ enum Command {
         lr: f64,
     },
 
-    /// Loads resources/models/deim_dfine_n_coco.onnx (scripts/linux/fetch-models.sh) via ONNX Runtime and runs it;
+    /// Loads the detector models.lock names (scripts/linux/fetch-models.sh) via ONNX Runtime and runs it;
     /// optionally trains a tiny adapter on its outputs.
     #[cfg(any(target_os = "linux", windows))]
     #[command(alias = "onnx-yolov10")]

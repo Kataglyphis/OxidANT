@@ -159,15 +159,8 @@ impl Worker {
         elements.push(flip.clone());
         elements.push(make("videoscale")?);
         elements.push(capsfilter(frame::caps(config))?);
-        let sink = gst::ElementFactory::make("appsink")
-            .property("max-buffers", 1u32)
-            .property("drop", true)
-            // Only the non-live still-image loop needs the sink to pace it.
-            .property("sync", matches!(plan, Plan::Image(_)))
-            .build()
-            .context("appsink")?
-            .downcast::<gst_app::AppSink>()
-            .map_err(|_| anyhow!("appsink is not an AppSink"))?;
+        // Only the non-live still-image loop needs the sink to pace it.
+        let sink = kataglyphis_media::frame_sink(1, matches!(plan, Plan::Image(_)))?;
         elements.push(sink.clone().upcast());
         pipeline
             .add_many(&elements)
@@ -834,7 +827,7 @@ mod tests {
     }
     use crate::motion::rate_period;
 
-    /// Runs the capture worker on `config.camera` into an appsrc/appsink pair and returns `wanted` frames.
+    /// Runs the capture worker on `config.camera` into an appsrc and a frame sink and returns `wanted` frames.
     fn capture_frames(config: Config, wanted: usize) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {
         capture_frames_turning(config, wanted, None)
     }
@@ -855,12 +848,7 @@ mod tests {
         appsrc.set_do_timestamp(true);
         appsrc.set_format(gst::Format::Time);
         appsrc.set_caps(Some(&frame::caps(&config)));
-        let sink = gst::ElementFactory::make("appsink")
-            .property("sync", false)
-            .build()
-            .unwrap()
-            .downcast::<gst_app::AppSink>()
-            .unwrap();
+        let sink = kataglyphis_media::frame_sink(0, false).unwrap();
         let output = gst::Pipeline::new();
         output
             .add_many([appsrc.upcast_ref::<gst::Element>(), sink.upcast_ref()])

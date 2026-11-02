@@ -8,17 +8,38 @@ import hashlib
 import itertools
 import os
 import re
+import runpy
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 FIXTURE_SHA256 = "6d375ac20fadfd400b3033084f8b0581dcc145f7c14e3b24b97975e379c52999"
-MODEL_FILES = (
-    "deim_dfine_n_coco.onnx",
-    "deim_dfine_n_coco.LICENSE",
-    "deim_dfine_n_coco.NOTICE",
-)
+
+
+def locked_files(fetcher: Path, lock: Path) -> list[str]:
+    """Every file name the lock pins, through the hub's parser."""
+    return [name for _, name, _ in runpy.run_path(str(fetcher))["read_lock"](lock)]
+
+
+def model_check_arguments(
+    locked: Path, stage: Path, lock: Path, fetcher: Path
+) -> list[str]:
+    """Check every file the lock pins against the extracted package."""
+    command = [
+        str(locked),
+        "--root",
+        str(stage),
+        "--directory",
+        str(stage / "resources/models"),
+        "--lock",
+        str(lock),
+        "--fetcher",
+        str(fetcher),
+    ]
+    for name in locked_files(fetcher, lock):
+        command += ["--file", name]
+    return command
 
 
 def run(
@@ -79,6 +100,7 @@ def check(stage: Path, device: str, index: str, repo: Path, temp_root: Path) -> 
     comparator = hub / "shared/python/compare_detector_parity.py"
     intervals = hub / "shared/python/verify_ort_profile.py"
     fetcher = hub / "linux/scripts/lib/fetch-data-lock.py"
+    lock = repo / "resources/models/models.lock"
     dxgi = hub / "windows/scripts/diagnostics/verify-dxgi-adapter.py"
     executable = stage / "kataglyphis_cli.exe"
     runtime = stage / "onnxruntime.dll"
@@ -88,6 +110,7 @@ def check(stage: Path, device: str, index: str, repo: Path, temp_root: Path) -> 
         comparator,
         intervals,
         fetcher,
+        lock,
         executable,
         runtime,
     ):
@@ -96,20 +119,7 @@ def check(stage: Path, device: str, index: str, repo: Path, temp_root: Path) -> 
     if hashlib.sha256(fixture.read_bytes()).hexdigest() != FIXTURE_SHA256:
         raise ValueError("two-cats fixture does not match its expected digest")
     py = [sys.executable, "-I"]
-    command = py + [
-        str(locked),
-        "--root",
-        str(stage),
-        "--directory",
-        str(stage / "resources/models"),
-        "--lock",
-        str(repo / "resources/models/models.lock"),
-        "--fetcher",
-        str(fetcher),
-    ]
-    for name in MODEL_FILES:
-        command += ["--file", name]
-    run(command)
+    run(py + model_check_arguments(locked, stage, lock, fetcher))
     if device == "directml":
         if not dxgi.is_file():
             raise ValueError("pinned physical DXGI adapter verifier missing")

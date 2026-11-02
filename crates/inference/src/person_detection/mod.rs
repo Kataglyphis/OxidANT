@@ -1,3 +1,4 @@
+mod model_lock;
 mod model_utils;
 pub(crate) mod postprocess;
 mod preprocess;
@@ -18,7 +19,8 @@ use kataglyphis_core::detection::Detection;
 use preprocess::{rgba_to_nchw_f32_letterboxed, rgba_to_nchw_f32_stretched};
 
 /// The model's file name, in the checkout's `resources/models/` and in every package's.
-pub const MODEL_FILE: &str = "deim_dfine_n_coco.onnx";
+pub const MODEL_FILE: &str =
+    model_lock::onnx_row(include_str!("../../../../resources/models/models.lock"));
 
 /// The model to load: `explicit` when it is not blank, else `KATAGLYPHIS_ONNX_MODEL`,
 /// else the model beside the running exe, else the checkout's.
@@ -34,7 +36,7 @@ pub fn resolve_model_path(explicit: Option<&str>) -> String {
         .unwrap_or_else(default_model_path)
 }
 
-/// `<exe dir>/resources/models/deim_dfine_n_coco.onnx`, when that file exists.
+/// `<exe dir>/resources/models/<MODEL_FILE>`, when that file exists.
 /// Every Windows package puts `resources\` beside the exe, so a packaged app needs nothing set.
 fn bundled_model_path() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
@@ -47,12 +49,12 @@ fn existing_model_under(root: &std::path::Path) -> Option<String> {
     path.is_file().then(|| path.to_string_lossy().into_owned())
 }
 
-/// `<root>/resources/models/deim_dfine_n_coco.onnx`: the checkout's layout, and every package's.
+/// `<root>/resources/models/<MODEL_FILE>`: the checkout's layout, and every package's.
 fn model_under(root: &std::path::Path) -> std::path::PathBuf {
     root.join("resources").join("models").join(MODEL_FILE)
 }
 
-/// The dev-checkout fallback `<workspace>/resources/models/deim_dfine_n_coco.onnx` (`scripts/linux/fetch-models.sh`).
+/// The dev-checkout fallback `<workspace>/resources/models/<MODEL_FILE>` (`scripts/linux/fetch-models.sh`).
 fn default_model_path() -> String {
     // `ancestors().nth(2)` rather than `parent()` unwraps, so a moved crate cannot panic.
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -406,6 +408,7 @@ mod tests {
     #[test]
     fn the_checkout_fallback_is_the_workspace_model() {
         let path = default_model_path();
-        assert!(std::path::Path::new(&path).ends_with("resources/models/deim_dfine_n_coco.onnx"));
+        assert!(std::path::Path::new(&path)
+            .ends_with(std::path::Path::new("resources/models").join(MODEL_FILE)));
     }
 }

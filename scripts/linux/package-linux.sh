@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=lib/antfrastructure.sh
 source "${SCRIPT_DIR}/lib/antfrastructure.sh"
+# shellcheck source=lib/models-lock.sh
+source "${SCRIPT_DIR}/lib/models-lock.sh"
 
 usage() {
     cat >&2 <<'USAGE'
@@ -210,7 +212,8 @@ for format in "${formats[@]}"; do
             bash "$(antfrastructure_path linux/scripts/06-packaging/verify-native-appimage-license.sh)" \
                 "${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage" "${arch}" "usr/lib/${package_name}/LICENSE" "${REPO_ROOT}/LICENSE"
             # One extraction per entry, so the crate manifest stands in for the tree the archive formats check file by file.
-            for text in licenses/cargo/manifest.json resources/models/deim_dfine_n_coco.LICENSE; do
+            model_license="$(models_lock_file "${REPO_ROOT}/resources/models/models.lock" .LICENSE)"
+            for text in licenses/cargo/manifest.json "resources/models/${model_license}"; do
                 bash "$(antfrastructure_path linux/scripts/06-packaging/verify-native-appimage-license.sh)" \
                     "${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage" "${arch}" "usr/lib/${package_name}/${text}" "${bundle}/${text}"
             done

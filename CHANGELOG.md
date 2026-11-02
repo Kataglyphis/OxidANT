@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-02, one owner per fact)
+- **The COCO class names come from the hub.** `crates/core/src/coco-classes.txt` is the synced copy
+  of `shared/config/coco-classes.txt`, held byte-identical by the lint gates' shared-config check;
+  `coco.rs` parses it at compile time, so a short, long or CRLF copy fails the build.
+- **`models.lock` owns the model's file name.** `MODEL_FILE` compiles from its one `.onnx` row;
+  Linux packaging reads it through `scripts/linux/lib/models-lock.sh`, Windows packaging and the
+  GPU candidate workflow through `scripts/windows/Get-ModelLockFile.ps1`, and the parity check
+  through the hub's lock parser. `test-models-lock.sh` runs the GPU profile against a fixture lock
+  naming a different model and fails a second tracked owner of the name.
+- **`embeds_marker` lives in `kataglyphis_core::provenance`**; ORT and GenAI re-export it.
+- **`kataglyphis_media::frame_sink` makes every frame sink**, in the capture session, ObservANT
+  and the GUI. The GUI's sink no longer sets `emit-signals`, which only the signal API reads.
+
 ### Fixed (2026-11-01, webrtcsink on a fresh registry)
 - **A supplied plugin scanner keeps the registry scan out of process.** Since c7d3593
   `ensure_gst_initialized` added `GST_REGISTRY_FORK=no` even when the caller set

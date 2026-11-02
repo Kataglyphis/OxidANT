@@ -114,7 +114,7 @@
  {
   "id": "consumer.oxidant-cargo-appimage",
   "target": "scripts/linux/package-linux.sh",
-  "find": "for text in licenses/cargo/manifest.json resources/models/deim_dfine_n_coco.LICENSE; do",
+  "find": "for text in licenses/cargo/manifest.json \"resources/models/${model_license}\"; do",
   "replace": "for text in; do",
   "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
   "why": "The AppImage output checks the crate manifest and model license."
@@ -355,5 +355,29 @@
   "replace": "        bash \"$(antfrastructure_path \"${RUST_DRIVERS}/cargo_build_doc.sh\")\"",
   "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
   "why": "The rustdoc log is uncoloured, so quality-report's warning pattern matches."
+ },
+ {
+  "id": "consumer.oxidant-models-lock-skips-comments",
+  "target": "scripts/linux/lib/models-lock.sh",
+  "find": "!/^[[:space:]]*(#|$)/ && NF >= 3 { print $2 }",
+  "replace": "NF >= 3 { print $2 }",
+  "test": "bash scripts/linux/tests/test-models-lock.sh",
+  "why": "A commented-out row is not a pinned file."
+ },
+ {
+  "id": "consumer.oxidant-models-lock-one-match",
+  "target": "scripts/linux/lib/models-lock.sh",
+  "find": "if [ \"$count\" -ne 1 ]; then",
+  "replace": "if [ \"$count\" -lt 0 ]; then",
+  "test": "bash scripts/linux/tests/test-models-lock.sh",
+  "why": "None or several matches must fail rather than pick a name."
+ },
+ {
+  "id": "consumer.oxidant-profile-model-from-lock",
+  "target": "scripts/linux/profile-gpu-bundle.sh",
+  "find": "model=\"$(models_lock_file \"${repo}/resources/models/models.lock\" .onnx)\"",
+  "replace": "model=deim_dfine_n_coco.onnx",
+  "test": "bash scripts/linux/tests/test-models-lock.sh",
+  "why": "The profile follows a lock that names another model."
  }
 ]

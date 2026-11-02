@@ -7,9 +7,12 @@ if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
 fi
 bundle="$1" device="$2" prefix="$3" launcher="${4:-$1/oxidant}"
 case "${device}" in cuda|migraphx) ;; *) echo 'unsupported GPU device' >&2; exit 2 ;; esac
-test -f "${bundle}/resources/models/deim_dfine_n_coco.onnx" || { echo 'Bundled model missing' >&2; exit 1; }
-test -f "${bundle}/lib/libonnxruntime.so" || { echo 'Bundled ONNX Runtime missing' >&2; exit 1; }
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=lib/models-lock.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/models-lock.sh"
+model="$(models_lock_file "${repo}/resources/models/models.lock" .onnx)"
+test -f "${bundle}/resources/models/${model}" || { echo 'Bundled model missing' >&2; exit 1; }
+test -f "${bundle}/lib/libonnxruntime.so" || { echo 'Bundled ONNX Runtime missing' >&2; exit 1; }
 hub="${ANTFRASTRUCTURE_DIR:-${repo}/third_party/ANTfrastructure}"
 helper="${hub}/linux/scripts/lib/gpu-profile-env.sh"
 [[ -f "${helper}" ]] || { echo 'Pinned ANTfrastructure lacks GPU profile environment isolation' >&2; exit 1; }

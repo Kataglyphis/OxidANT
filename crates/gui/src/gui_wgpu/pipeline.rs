@@ -86,12 +86,8 @@ pub(crate) fn build_pipeline(
         .build()
         .context("Failed to create capsfilter")?;
 
-    let sink = gst::ElementFactory::make("appsink")
-        .property("emit-signals", true)
-        .property("max-buffers", 2u32)
-        .property("drop", true)
-        .build()
-        .context("Failed to create appsink")?;
+    let frames = kataglyphis_media::frame_sink(2, true)?;
+    let sink: gst::Element = frames.clone().upcast();
 
     pipeline
         .add_many([&src, &convert, &capsfilter, &sink])
@@ -99,12 +95,7 @@ pub(crate) fn build_pipeline(
     gst::Element::link_many([&src, &convert, &capsfilter, &sink])
         .context("Failed to link pipeline elements")?;
 
-    let appsink = sink
-        .clone()
-        .dynamic_cast::<gst_app::AppSink>()
-        .map_err(|_| anyhow::anyhow!("Sink element is not an AppSink"))?;
-
-    appsink.set_callbacks(
+    frames.set_callbacks(
         gst_app::AppSinkCallbacks::builder()
             .new_sample(move |sink| {
                 if let Ok(sample) = sink.pull_sample() {
@@ -268,14 +259,17 @@ mod tests {
             version: "GStreamer 1.29.2".into(),
             bundled_plugins: None,
             elements: vec![
-                ("appsink".into(), Some(PathBuf::from("/p/libgstapp.so"))),
+                (
+                    "videoconvert".into(),
+                    Some(PathBuf::from("/p/libgstvideoconvertscale.so")),
+                ),
                 ("bin".into(), None),
             ],
         };
         assert_eq!(
             report.to_string(),
             "GStreamer 1.29.2\nplugins beside the exe: none, GStreamer's own search path\n\
-             appsink: /p/libgstapp.so\nbin: built into GStreamer\n"
+             videoconvert: /p/libgstvideoconvertscale.so\nbin: built into GStreamer\n"
         );
     }
 
@@ -289,6 +283,13 @@ mod tests {
                 .is_some_and(|n| *n == "mfvideosrc" || *n == "autovideosrc"),
             "{names:?}"
         );
-        assert_eq!(&names[1..], ["videoconvert", "capsfilter", "appsink"]);
+        assert_eq!(
+            &names[1..],
+            [
+                "videoconvert",
+                "capsfilter",
+                kataglyphis_media::FRAME_SINK_FACTORY
+            ]
+        );
     }
 }

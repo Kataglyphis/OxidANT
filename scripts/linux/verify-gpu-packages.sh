@@ -4,6 +4,8 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/antfrastructure.sh
 source "${script_dir}/lib/antfrastructure.sh"
+# shellcheck source=lib/models-lock.sh
+source "${script_dir}/lib/models-lock.sh"
 if [ "$#" -ne 3 ]; then
     printf 'Usage: %s PACKAGE_DIR x64|arm64 nvidia|amd\n' "$0" >&2
     exit 2
@@ -75,11 +77,14 @@ bash "${hub}/verify-ort-appimage-payload.sh" "${images[0]}" "$arch" \
 image="$(realpath -e "${images[0]}")"
 mkdir "${work}/appimage"
 (cd "${work}/appimage" && env -u LD_PRELOAD -u LD_AUDIT "$image" --appimage-extract 'usr/lib/oxidant/resources/models/*' >/dev/null)
+model_lock="${KATAGLYPHIS_REPO_ROOT}/resources/models/models.lock"
+locked_files="$(models_lock_files "$model_lock")"
+model_file_args=()
+while IFS= read -r name; do model_file_args+=(--file "$name"); done <<< "$locked_files"
 verify_model() {
     local root="$1" bundle="$2"
     python3 -I "$verify_locked_files" --root "$root" --directory "$bundle/resources/models" \
-        --fetcher "$data_lock_fetcher" --lock "${KATAGLYPHIS_REPO_ROOT}/resources/models/models.lock" \
-        --file deim_dfine_n_coco.onnx --file deim_dfine_n_coco.LICENSE --file deim_dfine_n_coco.NOTICE
+        --fetcher "$data_lock_fetcher" --lock "$model_lock" "${model_file_args[@]}"
 }
 verify_model "${work}/tar" "${work}/tar/oxidant"
 verify_model "${work}/deb" "${work}/deb/opt/oxidant"

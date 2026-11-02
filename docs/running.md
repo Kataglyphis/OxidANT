@@ -41,7 +41,7 @@ cargo run -p kataglyphis_cli -- onnx-runtime
 ```
 
 The GUI creates its camera pipeline's GStreamer elements by name (`mfvideosrc`,
-falling back to `autovideosrc`, then `videoconvert`, `capsfilter`, `appsink`), so every
+falling back to `autovideosrc`, then `videoconvert`, `capsfilter`, the frame sink), so every
 package carries their plugins in `lib/gstreamer-1.0` (Windows: `Build.GStreamerPlugins` in
 `scripts/windows/Build-Windows.config.psd1`; Linux: `plugins` in
 `scripts/linux/package-linux.sh`; how: [AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration)).

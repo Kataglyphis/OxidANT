@@ -60,7 +60,8 @@ def windows_profile_uses_candidate_launcher(content: str) -> bool:
     return all(
         value in job
         for value in (
-            "resources/models/deim_dfine_n_coco.onnx",
+            "scripts/windows/Get-ModelLockFile.ps1 -Suffix '.onnx'",
+            'Join-Path $stage "resources/models/$model"',
             "Remove-Item Env:\\KATAGLYPHIS_ONNX_MODEL, Env:\\KATAGLYPHIS_ORT_DEVICE",
             "Env:\\KATAGLYPHIS_ONNX_BACKEND, Env:\\ORT_DYLIB_PATH",
             "Join-Path $stage 'onnxruntime.dll'",
@@ -552,7 +553,7 @@ class GpuWorkflow(unittest.TestCase):
         workflow = WORKFLOW.read_text(encoding="utf-8").split("\n  gpu-profile:\n", 1)[
             1
         ]
-        start = "          if (-not (Test-Path -LiteralPath (Join-Path $stage 'resources/models/deim_dfine_n_coco.onnx')"
+        start = '          if (-not (Test-Path -LiteralPath (Join-Path $stage "resources/models/$model")'
         end = "          if ($LASTEXITCODE -ne 0) { throw 'GPU inference or profiling failed' }"
         snippet = start + workflow.split(start, 1)[1].split(end, 1)[0] + end
         with tempfile.TemporaryDirectory() as temp:
@@ -566,6 +567,7 @@ class GpuWorkflow(unittest.TestCase):
             script = Path(temp) / "fixture.ps1"
             script.write_text(
                 "$ErrorActionPreference = 'Stop'\n$stage = $env:FIXTURE_STAGE\n"
+                f"$model = '{model.name}'\n"
                 + snippet
                 + "\n",
                 encoding="utf-8",

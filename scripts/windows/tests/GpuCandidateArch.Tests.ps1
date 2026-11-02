@@ -18,6 +18,13 @@ Describe 'Windows GPU candidate architecture' {
     $null = New-Item -ItemType Directory -Force -Path $scripts, $modules, $script:source
     Copy-Item (Join-Path $PSScriptRoot '..\New-GpuCandidate.ps1') $scripts
     Copy-Item (Join-Path $PSScriptRoot '..\Resolve-BuildModule.ps1') $scripts
+    Copy-Item (Join-Path $PSScriptRoot '..\Get-ModelLockFile.ps1') $scripts
+    $lock = Join-Path $script:fixture 'resources\models\models.lock'
+    $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lock)
+    Set-Content -LiteralPath $lock -Value @(
+      "$('0' * 64) deim_dfine_n_coco.onnx https://example.invalid/m",
+      "$('0' * 64) deim_dfine_n_coco.LICENSE https://example.invalid/l",
+      "$('0' * 64) deim_dfine_n_coco.NOTICE https://example.invalid/n")
     $hub = if ($env:ANTFRASTRUCTURE_DIR) { $env:ANTFRASTRUCTURE_DIR } else { Join-Path $PSScriptRoot '..\..\..\third_party\ANTfrastructure' }
     Copy-Item (Join-Path $hub 'windows\scripts\modules\WindowsTargetArch.Common.psm1') $modules
     Set-Content -LiteralPath (Join-Path $modules 'WindowsOrtPayload.Common.psm1') -Value @'

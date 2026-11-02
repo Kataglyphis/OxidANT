@@ -22,6 +22,12 @@ if spec is None or spec.loader is None:
 parity = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(parity)
 
+MODEL_FILES = (
+    "deim_dfine_n_coco.onnx",
+    "deim_dfine_n_coco.LICENSE",
+    "deim_dfine_n_coco.NOTICE",
+)
+
 FAKE = r"""
 import json, os, pathlib, sys
 args = sys.argv[1:]
@@ -98,7 +104,7 @@ class ParityTest(unittest.TestCase):
         models = self.stage / "resources/models"
         models.mkdir(parents=True)
         lines = []
-        for name in parity.MODEL_FILES:
+        for name in MODEL_FILES:
             data = name.encode()
             (models / name).write_bytes(data)
             lines.append(
@@ -129,6 +135,18 @@ class ParityTest(unittest.TestCase):
         )
         self.command.start()
         self.addCleanup(self.command.stop)
+
+    def test_the_lock_decides_which_model_files_are_verified(self) -> None:
+        lock = self.repo / "resources/models/models.lock"
+        data = b"renamed"
+        (self.stage / "resources/models/renamed.onnx").write_bytes(data)
+        lock.write_text(
+            f"{hashlib.sha256(data).hexdigest()} renamed.onnx https://example.invalid/m\n"
+        )
+        self.assertEqual(
+            parity.locked_files(HUB / "linux/scripts/lib/fetch-data-lock.py", lock),
+            ["renamed.onnx"],
+        )
 
     def check(self, device="directml", index="3"):
         return parity.check(self.stage, device, index, self.repo, self.root)
@@ -188,7 +206,7 @@ class ParityTest(unittest.TestCase):
                 self.check()
 
     def test_lock_fixture_helper_and_adapter_fail_closed(self):
-        for name in parity.MODEL_FILES:
+        for name in MODEL_FILES:
             path = self.stage / "resources/models" / name
             original = path.read_bytes()
             path.write_bytes(b"changed")

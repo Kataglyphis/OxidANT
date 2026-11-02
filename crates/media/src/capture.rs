@@ -61,7 +61,7 @@ struct SlotInner {
     produced: AtomicU64,
 }
 
-/// Latest-frame slot shared between the appsink thread and consumers.
+/// Latest-frame slot shared between the sink thread and consumers.
 #[derive(Clone)]
 pub struct FrameSlot {
     inner: Arc<SlotInner>,
@@ -181,25 +181,21 @@ impl CaptureSession {
             .field("height", config.height as i32)
             .build();
 
-        let appsink = gst_app::AppSink::builder()
-            .caps(&caps)
-            // Latest-frame semantics at the sink too: never queue stale video.
-            .max_buffers(1)
-            .drop(true)
-            .sync(false)
-            .build();
+        // Latest-frame semantics at the sink too: never queue stale video.
+        let sink = crate::frame_sink(1, false)?;
+        sink.set_caps(Some(&caps));
 
         let pipeline = gst::Pipeline::new();
         pipeline
-            .add_many([&source, &videoconvert, &videoscale, appsink.upcast_ref()])
+            .add_many([&source, &videoconvert, &videoscale, sink.upcast_ref()])
             .context("failed to assemble pipeline")?;
-        gst::Element::link_many([&source, &videoconvert, &videoscale, appsink.upcast_ref()])
+        gst::Element::link_many([&source, &videoconvert, &videoscale, sink.upcast_ref()])
             .context("failed to link pipeline (source may not support requested caps)")?;
 
         let frames = FrameSlot::new();
         let slot = frames.clone();
         let mut sequence: u64 = 0;
-        appsink.set_callbacks(
+        sink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
                     let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;

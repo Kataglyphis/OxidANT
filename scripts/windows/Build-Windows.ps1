@@ -438,7 +438,7 @@ try {
   $licenseVerifier = Join-Path $workspacePath 'third_party\ANTfrastructure\linux\scripts\verify_package_license.py'
   $cargoLicenseStager = Join-Path $workspacePath 'third_party\ANTfrastructure\linux\scripts\06-packaging\stage-cargo-licenses.py'
   $cargoLicensePolicy = Join-Path $workspacePath 'packaging\cargo-license-policy.json'
-  $modelLicense = Join-Path $workspacePath 'resources\models\deim_dfine_n_coco.LICENSE'
+  $modelLicense = Join-Path $workspacePath "resources\models\$(& (Join-Path $workspacePath 'scripts\windows\Get-ModelLockFile.ps1') -Suffix '.LICENSE')"
   Set-Location -Path $workspacePath
 
   $layout = Initialize-CargoTargetLayout

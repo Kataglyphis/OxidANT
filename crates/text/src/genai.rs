@@ -160,17 +160,7 @@ pub fn library_candidates(exe_dir: Option<&Path>, genai_root: Option<&Path>) -> 
     candidates
 }
 
-/// True when `haystack` contains `needle`, ignoring ASCII case and the path separator.
-pub fn embeds_marker(haystack: &[u8], needle: &str) -> bool {
-    let needle = needle.as_bytes();
-    let same = |a: u8, b: u8| {
-        a.eq_ignore_ascii_case(&b) || (matches!(a, b'/' | b'\\') && matches!(b, b'/' | b'\\'))
-    };
-    needle.is_empty()
-        || haystack
-            .windows(needle.len())
-            .any(|w| w.iter().zip(needle).all(|(a, b)| same(*a, *b)))
-}
+pub use kataglyphis_core::provenance::embeds_marker;
 
 /// Refuses a GenAI that was not built in the chain's tree: a pip, NuGet or downloaded copy.
 pub fn verify_chain_build(path: &Path) -> Result<(), String> {

@@ -29,9 +29,8 @@ function Assert-CandidateLocation {
 function Assert-CandidateFile {
   param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Provider)
   $required = @('kataglyphis_cli.exe', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll',
-      'LICENSE', 'resources\models\deim_dfine_n_coco.onnx', 'resources\models\deim_dfine_n_coco.LICENSE',
-      'resources\models\deim_dfine_n_coco.NOTICE',
-      'licenses\onnxruntime\LICENSE', 'licenses\onnxruntime\ThirdPartyNotices.txt')
+      'LICENSE', 'licenses\onnxruntime\LICENSE', 'licenses\onnxruntime\ThirdPartyNotices.txt')
+  $required += @(& (Join-Path $PSScriptRoot 'Get-ModelLockFile.ps1') | ForEach-Object { "resources\models\$_" })
   if ($Provider -eq 'directml') { $required += 'DirectML.dll' }
   foreach ($relative in $required) {
     $file = Get-Item -LiteralPath (Join-Path $Source $relative) -ErrorAction Stop
@@ -57,7 +56,7 @@ $hub = Join-Path $repoRoot 'third_party\ANTfrastructure'
 & python -I (Join-Path $hub 'shared\python\verify_locked_files.py') --root $source `
   --directory (Join-Path $source 'resources\models') --lock (Join-Path $repoRoot 'resources\models\models.lock') `
   --fetcher (Join-Path $hub 'linux\scripts\lib\fetch-data-lock.py') `
-  --file deim_dfine_n_coco.onnx --file deim_dfine_n_coco.LICENSE --file deim_dfine_n_coco.NOTICE
+  @(& (Join-Path $PSScriptRoot 'Get-ModelLockFile.ps1') | ForEach-Object { '--file', $_ })
 if ($LASTEXITCODE -ne 0) { throw 'The candidate model files do not match models.lock.' }
 & (Join-Path $PSScriptRoot 'Test-GpuCandidateInputs.ps1') -Image -Provider $Provider
 $parent = Split-Path -Parent $destinationPath

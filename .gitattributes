@@ -19,3 +19,6 @@ packaging/licenses/** -text
 
 # cmd.exe launchers use Windows line endings.
 packaging/windows/*.cmd text eol=crlf
+
+# The COCO class list is parsed at compile time, line by line, and a CR would end up in every name.
+crates/core/src/coco-classes.txt text eol=lf

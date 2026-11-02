@@ -548,7 +548,7 @@ mod tests {
     fn the_effective_config_round_trips_through_toml() {
         let config = Config {
             camera: "rpicam".into(),
-            model: Some("/opt/models/deim_dfine_n_coco.onnx".into()),
+            model: Some("/opt/models/detector.onnx".into()),
             ..Config::default()
         };
         let text = toml::to_string(&config).unwrap();

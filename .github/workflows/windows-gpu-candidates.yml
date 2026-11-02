@@ -146,7 +146,8 @@ jobs:
           $null = New-Item -ItemType Directory -Path $stage
           & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $stage
           if ($LASTEXITCODE -ne 0) { throw 'Cannot unpack the GPU candidate' }
-          if (-not (Test-Path -LiteralPath (Join-Path $stage 'resources/models/deim_dfine_n_coco.onnx') -PathType Leaf)) { throw 'Bundled model missing' }
+          $model = & (Join-Path $env:WORKSPACE 'scripts/windows/Get-ModelLockFile.ps1') -Suffix '.onnx'
+          if (-not (Test-Path -LiteralPath (Join-Path $stage "resources/models/$model") -PathType Leaf)) { throw 'Bundled model missing' }
           if (-not (Test-Path -LiteralPath (Join-Path $stage 'lib/gstreamer-1.0') -PathType Container)) { throw 'Bundled GStreamer plugins missing' }
           Remove-Item Env:\KATAGLYPHIS_ONNX_MODEL -ErrorAction SilentlyContinue
           $env:KATAGLYPHIS_ORT_DEVICE = 'cpu'
@@ -197,7 +198,8 @@ jobs:
           $null = New-Item -ItemType Directory -Path $stage
           & "$env:SystemRoot\System32\tar.exe" -xf $zips[0].FullName -C $stage
           if ($LASTEXITCODE -ne 0) { throw 'Cannot unpack the GPU candidate' }
-          if (-not (Test-Path -LiteralPath (Join-Path $stage 'resources/models/deim_dfine_n_coco.onnx') -PathType Leaf)) { throw 'Bundled model missing' }
+          $model = & scripts/windows/Get-ModelLockFile.ps1 -Suffix '.onnx'
+          if (-not (Test-Path -LiteralPath (Join-Path $stage "resources/models/$model") -PathType Leaf)) { throw 'Bundled model missing' }
           if (-not (Test-Path -LiteralPath (Join-Path $stage 'onnxruntime.dll') -PathType Leaf)) { throw 'Bundled ONNX Runtime missing' }
           Remove-Item Env:\KATAGLYPHIS_ONNX_MODEL, Env:\KATAGLYPHIS_ORT_DEVICE, Env:\KATAGLYPHIS_ONNX_BACKEND, Env:\ORT_DYLIB_PATH -ErrorAction SilentlyContinue
           if ($env:PROVIDER -eq 'directml') {

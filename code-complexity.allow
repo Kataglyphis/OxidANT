@@ -11,7 +11,6 @@
 scripts/linux/tests/test-amd-gpu-promotion.py | valid_promotion | cc | 65 | Checks all AMD promotion contract conditions and mutations
 scripts/linux/tests/test-nvidia-gpu-promotion.py | NvidiaPromotionTests.test_selected_producers_control_all_downstream_jobs | cc | 16 | Checks each selected producer and its dependent jobs
 scripts/linux/tests/test-nvidia-gpu-promotion.py | valid | cc | 21 | Checks all NVIDIA promotion contract conditions
-scripts/windows/check_gpu_detector_parity.py | check | cc | 16 | Validates independent detector profile evidence and errors
 scripts/windows/tests/test_gpu_workflow.py | GpuWorkflow.test_reusable_candidate_inputs_are_default_off.valid | cc | 16 | Checks all reusable workflow defaults and input propagation
 scripts/linux/tests/test-nvidia-gpu-promotion.py | NvidiaPromotionTests.test_both_architectures_stage_and_reject_wrong_identity | nesting | 6 | Exercises both architectures and wrong identity mutations
 scripts/linux/tests/test-nvidia-gpu-promotion.py | NvidiaPromotionTests.test_selected_producers_control_all_downstream_jobs | nesting | 6 | Exercises each producer and dependent job mutation

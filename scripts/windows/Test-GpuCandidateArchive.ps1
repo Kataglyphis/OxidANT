@@ -16,10 +16,11 @@ if (-not (Get-Command Assert-PackageOrtFamily -ErrorAction SilentlyContinue)) {
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $hub = Join-Path $repoRoot 'third_party\ANTfrastructure'
 $bundleRoot = (Resolve-Path -LiteralPath $Bundle).Path
+$modelFiles = @(& (Join-Path $PSScriptRoot 'Get-ModelLockFile.ps1'))
 & python -I (Join-Path $hub 'shared\python\verify_locked_files.py') --root $bundleRoot `
   --directory (Join-Path $bundleRoot 'resources\models') --lock (Join-Path $repoRoot 'resources\models\models.lock') `
   --fetcher (Join-Path $hub 'linux\scripts\lib\fetch-data-lock.py') `
-  --file deim_dfine_n_coco.onnx --file deim_dfine_n_coco.LICENSE --file deim_dfine_n_coco.NOTICE
+  @($modelFiles | ForEach-Object { '--file', $_ })
 if ($LASTEXITCODE -ne 0) { throw 'The finished candidate model files do not match models.lock.' }
 $expected = @('onnxruntime_providers_shared.dll')
 if ($Provider -eq 'cuda') { $expected += 'onnxruntime_providers_cuda.dll' }
@@ -36,9 +37,8 @@ if ($Provider -eq 'cuda' -and (Test-Path -LiteralPath (Join-Path $bundleRoot 'Di
 $allowed = @($required + $extra)
 Assert-PackageOrtFamily -Path $bundleRoot -Name $allowed
 Assert-PackageOrtFamily -Path $Archive -Name $allowed
-$members = @('kataglyphis_cli.exe', 'LICENSE', 'resources/models/deim_dfine_n_coco.onnx',
-    'resources/models/deim_dfine_n_coco.LICENSE', 'resources/models/deim_dfine_n_coco.NOTICE',
-    "oxidant-$Provider.cmd", "$($Provider.ToUpperInvariant())-README.txt") + $required + $extra
+$members = @('kataglyphis_cli.exe', 'LICENSE', "oxidant-$Provider.cmd", "$($Provider.ToUpperInvariant())-README.txt") +
+  @($modelFiles | ForEach-Object { "resources/models/$_" }) + $required + $extra
 $paths = @($members | ForEach-Object { Join-Path $Bundle $_ })
 Assert-PackageBinary -Path $Archive -Member $members -SourcePath $paths
 $proof = Join-Path ([IO.Path]::GetTempPath()) "oxidant-gpu-wheel-proof-$([guid]::NewGuid().ToString('N'))"

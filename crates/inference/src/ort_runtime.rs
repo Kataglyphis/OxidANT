@@ -27,22 +27,7 @@ const CHAIN_SOURCE_MARKER: Option<&str> = Some("/opt/onnxruntime/onnxruntime/cor
 #[cfg(not(any(windows, target_os = "linux")))]
 const CHAIN_SOURCE_MARKER: Option<&str> = None;
 
-/// True when `haystack` contains `needle`, ignoring ASCII case and the path separator (Windows paths).
-pub fn embeds_marker(haystack: &[u8], needle: &str) -> bool {
-    let needle = needle.as_bytes();
-    if needle.is_empty() {
-        return true;
-    }
-    haystack
-        .windows(needle.len())
-        .any(|w| w.iter().zip(needle).all(|(a, b)| same_path_byte(*a, *b)))
-}
-
-/// clang-cl writes `__FILE__` with whatever separators CMake handed it; the 2026-10-08 chain ORT has `C:/temp/...`.
-fn same_path_byte(a: u8, b: u8) -> bool {
-    let separator = |c: u8| c == b'/' || c == b'\\';
-    a.eq_ignore_ascii_case(&b) || (separator(a) && separator(b))
-}
+pub use kataglyphis_core::provenance::embeds_marker;
 
 /// Refuses `path` unless it was compiled from the chain's ORT checkout.
 pub fn verify_chain_build(path: &Path) -> Result<()> {

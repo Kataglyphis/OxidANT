@@ -68,7 +68,8 @@ check_cargo_wiring() {
         grep -Fq -- '--policy "${REPO_ROOT}/packaging/cargo-license-policy.json" --output-dir "${bundle}/licenses/cargo"' "$1" &&
         grep -Fq -- "-path '*/licenses/cargo/*' -o -name '*.LICENSE' -o -name '*.NOTICE'" "$1" &&
         [ "$(grep -Fc '"${rules[@]}"' "$1")" -eq 3 ] &&
-        grep -Fq 'for text in licenses/cargo/manifest.json resources/models/deim_dfine_n_coco.LICENSE; do' "$1"; then
+        grep -Fq 'model_license="$(models_lock_file "${REPO_ROOT}/resources/models/models.lock" .LICENSE)"' "$1" &&
+        grep -Fq 'for text in licenses/cargo/manifest.json "resources/models/${model_license}"; do' "$1"; then
         return 0
     fi
     return 1

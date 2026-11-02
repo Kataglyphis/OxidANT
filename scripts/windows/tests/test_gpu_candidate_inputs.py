@@ -45,6 +45,7 @@ class GpuPreflight(unittest.TestCase):
             "Test-GpuCandidateInputs.ps1",
             "New-GpuCandidate.ps1",
             "Test-GpuCandidateArchive.ps1",
+            "Get-ModelLockFile.ps1",
         ):
             shutil.copy2(ROOT / "scripts" / "windows" / name, scripts)
         self.hub = self.root / "third_party" / "ANTfrastructure"
@@ -339,6 +340,45 @@ class GpuPreflight(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
             "differs from the matching wheel", plain_diagnostic(result.stderr)
+        )
+
+    def run_model_lock(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "pwsh",
+                "-NoProfile",
+                "-File",
+                str(self.root / "scripts/windows/Get-ModelLockFile.ps1"),
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_the_lock_names_the_model_whatever_it_is_called(self) -> None:
+        lock = self.root / "fixture.lock"
+        sha = "0" * 64
+        lock.write_text(
+            f"# {sha} retired.onnx https://example.invalid/r\n"
+            f"{sha}  renamed.onnx  https://example.invalid/m\n"
+            f"{sha}  renamed.LICENSE  https://example.invalid/l\n",
+            encoding="utf-8",
+        )
+        everything = self.run_model_lock("-Lock", str(lock))
+        self.assertEqual(everything.stdout.split(), ["renamed.onnx", "renamed.LICENSE"])
+        model = self.run_model_lock("-Lock", str(lock), "-Suffix", ".onnx")
+        self.assertEqual(model.stdout.split(), ["renamed.onnx"])
+        self.assertNotEqual(
+            self.run_model_lock("-Lock", str(lock), "-Suffix", ".NOTICE").returncode, 0
+        )
+        with lock.open("a", encoding="utf-8") as output:
+            output.write(f"{sha} second.onnx https://example.invalid/s\n")
+        self.assertNotEqual(
+            self.run_model_lock("-Lock", str(lock), "-Suffix", ".onnx").returncode, 0
+        )
+        self.assertNotEqual(
+            self.run_model_lock("-Lock", str(self.root / "absent.lock")).returncode, 0
         )
 
     def test_candidate_rejects_missing_or_changed_locked_models(self) -> None:

@@ -994,7 +994,17 @@ hub's [`fetch-data-lock.py`](third_party/ANTfrastructure/docs/data-repositories.
 on that lock (2026-10-19), so Windows needs `python` on `PATH`, as both Windows images have
 it. A checked copy waits in `KATAGLYPHIS_MODEL_CACHE`, else `~/.cache/kataglyphis-models`
 (Windows: `%LOCALAPPDATA%\kataglyphis-models`), so only the first run needs the network. A new
-model goes into ModelANT first, and only the lock changes here.
+model goes into ModelANT first, and only the lock changes here: the Rust crate compiles the
+`.onnx` row into `MODEL_FILE`, `scripts/linux/lib/models-lock.sh` and
+`scripts/windows/Get-ModelLockFile.ps1` read it for packaging, and
+`scripts/windows/check_gpu_detector_parity.py` goes through the hub's parser.
+`test-models-lock.sh` fails a second tracked file that names the model outside tests and docs.
+
+**One owner per fact.** The 80 class names are the hub's `coco-classes.txt`, copied to
+`crates/core/src/coco-classes.txt` and held there by the lint gates' shared-config check; refresh
+the copy with `sync-shared-config.sh --write`, never by hand. `kataglyphis_core::provenance` owns
+the chain-marker search ORT and GenAI share, and only `crates/media` makes the frame sink
+(`kataglyphis_media::frame_sink`).
 
 Everything else tracked is small: the renderer's glTF/GLB/KTX2 test assets are a few
 hundred kilobytes each, and stay that way on purpose.

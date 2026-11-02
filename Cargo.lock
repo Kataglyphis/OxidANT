@@ -5254,6 +5254,7 @@ dependencies = [
 name = "kataglyphis_text"
 version = "3.0.0"
 dependencies = [
+ "kataglyphis_core",
  "libloading 0.9.0",
  "log",
  "serde_json",
