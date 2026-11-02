@@ -1,4 +1,4 @@
-# Linux riscv64 lane: cross-built on amd64, the whole workspace's tests run under QEMU; GPU suites skip (AGENTS.md § The riscv64 lane).
+# Linux riscv64 lane: cross-built on amd64, the whole workspace's tests run under QEMU; GPU suites skip (docs/ci.md § The riscv64 lane).
 name: Linux riscv64 · cross build + test
 
 # On request (third_party/ANTfrastructure/docs/branch-and-release-strategy.md), and the weekly GPU run.

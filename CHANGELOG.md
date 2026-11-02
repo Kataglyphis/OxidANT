@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-02, AGENTS.md back to what to do now)
+- **`AGENTS.md` shrank from 1,025 to about 440 lines.** The lane detail moved to the new
+  `docs/ci.md`, the cat cam to `docs/observant.md`, the Windows container to `docs/windows.md`, the
+  bin rename and package closure to `docs/packaging.md`, the WSL recipe to `docs/getting-started.md`,
+  coverage to `docs/testing.md`, the renderer's documents and large files to `docs/crates.md`.
+  Section 5 names every workflow, and `docs/text.md` and `docs/ci.md` are in `docs.yml`'s guides.
+
 ### Changed (2026-11-02, one owner per fact)
 - **The COCO class names come from the hub.** `crates/core/src/coco-classes.txt` is the synced copy
   of `shared/config/coco-classes.txt`, held byte-identical by the lint gates' shared-config check;

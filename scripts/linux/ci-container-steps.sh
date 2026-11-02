@@ -102,7 +102,7 @@ case "$step" in
         antfrastructure_exec "${RUST_DRIVERS}/cargo_fmt_clippy.sh" "$@"
         ;;
 
-    # GPU suites skip unless RISCV64_GPU_TESTS=1: lavapipe under QEMU is the long pole. See AGENTS.md § The riscv64 lane
+    # GPU suites skip unless RISCV64_GPU_TESTS=1: lavapipe under QEMU is the long pole. See docs/ci.md § The riscv64 lane
     riscv64-test)
         # Runs cargo itself, so it takes the drivers' guards (safe.directory, CARGO_HOME, toolchain) directly.
         antfrastructure_source linux/scripts/02-toolchain/rust/_cargo_wrapper.sh

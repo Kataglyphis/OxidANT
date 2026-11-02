@@ -28,6 +28,8 @@ jobs:
         docs/windows.md|windows|Windows
         docs/packaging.md|packaging|Packages
         docs/observant.md|observant|ObservANT
+        docs/text.md|text|Text generation
+        docs/ci.md|ci|Continuous integration
         docs/updates.md|updates|Dependency updates
       link-allow: docs/site-links.allow
     secrets:

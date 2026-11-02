@@ -50,7 +50,7 @@ leads to GitHub.
 A CRLF checkout breaks the container before anything runs, and a box without the MSVC C++
 build tools links nothing:
 [AGENTS.md § The trap a Windows checkout hits before anything runs](../AGENTS.md#the-trap-a-windows-checkout-hits-before-anything-runs)
-and [§ Verifying locally on a Windows box](../AGENTS.md#verifying-locally-on-a-windows-box-no-msvc-required).
+and [§ Verifying locally on a Windows box](#verifying-locally-on-a-windows-box-no-msvc-required).
 The Windows container build is [windows.md](windows.md).
 
 ## Linux containers locally (Rancher Desktop)
@@ -80,3 +80,33 @@ nerdctl run --rm --platform linux/amd64 `
 `nerdctl` rather than `docker`, `:latest`, Git Bash's path mangling, `-v name:/path` and an
 empty mount: ANTfrastructure's
 [`rancher-desktop-linux-containers.md`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/rancher-desktop-linux-containers.md).
+
+## Verifying locally on a Windows box (no MSVC required)
+
+Dev machines here often lack the MSVC "C++ build tools" workload. Without it **nothing links**, and Git Bash makes the failure baffling: `/usr/bin/link.exe` is coreutils' `link`, which shadows the MSVC linker on PATH and dies with `link: missing operand after '\377\376'` (it is handed rustc's UTF-16 response file). That is an environment fault, never a code fault.
+
+The fastest real fix is to verify in WSL against the CI's own target platform:
+
+```bash
+# once, as root inside the distro
+apt-get install -y build-essential pkg-config curl git libssl-dev \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base libgtk-4-dev
+# optional: a software Vulkan adapter so the headless golden tests actually run
+apt-get install -y mesa-vulkan-drivers vulkan-tools
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/ri.sh
+# The toolchain is the fleet's, read from the submodule rather than typed here - it
+# was pinned to a literal 1.97.1 until versions.env moved to 1.98.1 underneath it.
+RUST_VERSION="$(. third_party/ANTfrastructure/linux/scripts/01-core/versions.env; echo "$RUST_VERSION")"
+sh /tmp/ri.sh -y --profile minimal --default-toolchain "$RUST_VERSION" -c rustfmt -c clippy
+```
+
+Then, from the repo root, with `CARGO_TARGET_DIR` on a **Linux-native** path (never the 9p-mounted Windows tree, which is glacial and already holds MSVC artifacts):
+
+```bash
+export CARGO_TARGET_DIR=/root/kt
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked
+```
+
+The flag is the CI lanes' ([`docs/testing.md` § *The whole suite*](testing.md#the-whole-suite)): without it the golden-test suite "passes" having rendered nothing. The ORT tests need the chain ORT, which a WSL box lacks; the image has it.

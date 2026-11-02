@@ -24,10 +24,8 @@
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/paypalme/JonasHeinle)
 [![Twitter](https://img.shields.io/twitter/follow/Cataglyphis_?style=social)](https://twitter.com/Cataglyphis_)
 
-A push to `develop` and every PR run Linux x64; the other lanes run on request and before
-a release, so a lane's badge shows its runs started by hand and a requested run is listed
-under *On request*
-([AGENTS.md § Continuous integration](https://github.com/Kataglyphis/OxidANT/blob/develop/AGENTS.md#continuous-integration)).
+A push to `develop` and every PR run Linux x64; the other lanes run on request and before a release, so a lane's badge shows its runs started by hand and a requested run is listed under *On request*
+([docs/ci.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/ci.md)).
 PowerShell lint stays strict, and the separate quality workflow uploads a complexity report
 on each push and PR; its manual `strict` input tests the current complexity debt.
 
@@ -86,6 +84,7 @@ Prerequisites, the API docs and Linux containers locally:
 | ObservANT, the cat cam | [docs/observant.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/observant.md) |
 | Windows: shared source selection, config, build, test and arm64 source fixtures | [docs/windows.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/windows.md#the-driver) |
 | Packages: Linux tar, deb, AppImage, flatpak; Windows MSIX and MSI | [docs/packaging.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) |
+| Continuous integration, lane by lane | [docs/ci.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/ci.md) |
 | Dependency updates | [docs/updates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/updates.md) |
 | The WebGPU renderer | [crates/webgpu_renderer/README.md](https://github.com/Kataglyphis/OxidANT/blob/develop/crates/webgpu_renderer/README.md) |
 | Shader ownership and regeneration | [docs/shaders.md](https://github.com/Kataglyphis/OxidANT/blob/c930e59ae429748cdc81a51b6e96aaca55c79179/docs/shaders.md) |

@@ -159,8 +159,8 @@ that repeats a `@location`, which naga accepts and Tint, the browsers' WGSL comp
 Benchmarks (the `[[bench]]` targets only, graded by the hub's `bench-history` action under keys
 `criterion-x64` and `criterion-arm64`) and the detector's real-model test: [AGENTS.md § 5](../AGENTS.md#5-build-run-test);
 coverage floors and mutation testing:
-[§ Coverage and mutation testing](../AGENTS.md#coverage-and-mutation-testing); the riscv64
-lane's QEMU run: [§ The riscv64 lane](../AGENTS.md#the-riscv64-lane).
+[§ Coverage and mutation testing](#coverage-and-mutation-testing); the riscv64
+lane's QEMU run: [§ The riscv64 lane](ci.md#the-riscv64-lane).
 
 ## On Windows the renderer's tests run outside the container
 
@@ -184,3 +184,20 @@ runs them on the runner, a desktop Windows Server with `opengl32.dll`;
 artifact includes `shaders/forward/forward.slang` for the renderer's shader-constant tests.
 The lane's build and run sequence is in
 [AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration).
+
+## Coverage and mutation testing
+
+- **Coverage measures the workspace** (since 2026-10-01). The hub's `cargo_coverage.sh` runs tarpaulin without `--workspace`, so it measured only the root package, which has no unit tests: `0.00% coverage, 0/754 lines covered` (run 36868485805). The `coverage` step passes `--workspace`, and sets `KATAGLYPHIS_REQUIRE_GPU=1` like the `test` step. It fails below 70 % of the workspace's lines, the vendored crates under `third_party/` left out (tarpaulin `--fail-under` and `--exclude-files`; 72.9 % measured 2026-10-19, 71.0 % on 2026-10-20 once the GUI, which needs a window for most of its code, joined the figure); raise the floor as tests are added. Since 2026-10-15 it also grades each crate and `src/` against its own floor (`COVERAGE_FLOORS`, read by `scripts/linux/check-crate-coverage.py` from `cobertura.xml`), so the renderer's 90 % no longer carries telemetry's 8 %, and gives tarpaulin `--timeout 300` (its 60 s per test binary was too short on the Pi for an instrumented ObservANT). Each floor sits within 3 points of the figure the step prints; `--max-slack 3` prints a `warning: floor slack` line for a crate further above its floor, without failing, so raise that floor, and a crate with no floor fails the step.
+- **Every module counts since 2026-10-20.** Tarpaulin leaves out every module behind `#[cfg(feature = …)]` (measured 2026-10-15, tarpaulin 0.37.5), so `crates/media` and `src/webcam_engine.rs` were absent from the report while their tests passed; with no features left they, the GUI and the burn demos are in it, each with a floor of its own.
+- **A test binary must not see the distro's `libstdc++` first.** Tarpaulin puts every `rustc-link-search` path a build script prints on `LD_LIBRARY_PATH`; font-kit's fontconfig and freetype printed `/usr/lib/x86_64-linux-gnu`, its `libstdc++` (GCC 15) won over GCC 16.2's, and the chain ORT failed to `dlopen` there alone (2026-10-20), which `real_model.rs`'s backend check caught. The burn demos' plots use plotters' `ab_glyph` instead; a new system library linked through pkg-config brings the same trap back.
+- **Mutation testing measures whether the tests notice a change** (2026-10-15). `cargo mutants -p kataglyphis_observant --file crates/observant/src/web.rs --file crates/observant/src/static_files.rs --jobs 1 -- --lib` (cargo-mutants 27.1.0, installed with `cargo install --locked cargo-mutants`) plants small bugs in ObservANT's code, one at a time; that command covers its network-facing code. Run it after changing the files below. Caught, of the mutants that compile:
+
+  | Files | At first | After tests for each gap | The gaps | Left, and why |
+  | --- | --- | --- | --- | --- |
+  | `web.rs`, `static_files.rs` (163 mutants) | about 84 % | 142 of 145 | content types, the gzip cache, route resolution, peer CORS, the signalling proxy's leftover bytes, split and endless response heads, re-framing a refusal | 3 change nothing a client can see (HEAD and 304 bodies hyper drops anyway, a log line's throttle, `>` against `>=` at a 16 KiB limit) |
+  | `motion.rs`, `presence.rs`, `status.rs`, the arrival logic (393 mutants) | about 92 % of the 379 that compile | 375 | exact box margins, the change and motion thresholds, an IoU of exactly 0.5, the visits file's fallback, the settings' limits, a stale frame at 21 s, the failure count | 4 only change a log line or a bound no test can see |
+  | `camera.rs`, `config.rs`, `notify.rs` | about 90 % of 145 | 134 | a webcam by driver or bus, a format it can decode, rpicam-vid without a sensor, a configured `/dev/video` path, each config limit taken itself, a short webhook host | 11 read real camera devices, which no CI host has, or change a log line |
+  | `clip.rs`, `frame.rs`, `stats.rs`, `output.rs`, `precompress.rs` | 376 of 412 | 400 | the privacy filter's margin, block mean and chroma planes, the box outline's exact pixels, the clip's frame counts, a pixel's own luma and chroma, and the stats sampler | of the 12, 9 only widen the privacy filter's whole-block shortcut, whose per-pixel path gives the same picture, and 3 change a log line or an encoder error no test can raise |
+  | `capture.rs`, the capture loop around a real camera (the weakest) | 87 of 124 | 98 | the arrival photo's privacy filter (decoded, so a swapped filter fails too), the bus's error and end of stream, the restart pause and a zero width | needs a Pi camera, a V4L2 device or a loaded model, or changes a log line |
+
+  The webhook tests fail after 10 s instead of hanging when no event comes, which a mutant that sends nothing first showed: each one cost the run its 300 s timeout. **Keep `--jobs 1` or give each job its own target dir**: two jobs sharing `CARGO_TARGET_DIR` overwrite each other's test binary and misreport, and so do two runs at once (a check run beside a long one reported caught mutants as missed on 2026-10-15), so each run gets a target dir of its own. The three arrival files take about 75 minutes on a Pi 5, a `--re` over the changed functions minutes.
