@@ -85,6 +85,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   every dependency with `panic=unwind`, unlike the release build's `abort`, so it shares nothing with the
   release build, and inside the build job's 1.5 GB cache its 213 crates were evicted before each run
   (8 min 07 s and 10 min 07 s in runs 41260356146 and 41268852734).
+  In that job a cold cache took 11 min 08 s (job 124777515954) and a warm one 4 min 33 s (job 124793215868).
 - **The hub's `bench-history` action grades the means** (keys `criterion-x64`, `criterion-arm64`) against
   the median of the default branch's last 20 runs, read from 90-day artifacts instead of a 7-day cache. The
   gated benches are the five from 100 µs, as before; `draw_box` only warns.
