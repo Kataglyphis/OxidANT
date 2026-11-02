@@ -1,0 +1,183 @@
+{
+  "cpu_model": "AMD Ryzen 9 5950X 16-Core Processor",
+  "cpus": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "metrics": {
+    "perf.detector_cpu.p50_ms": {
+      "better": "lower",
+      "samples": [
+        50.277749,
+        50.876093999999995,
+        50.651455999999996,
+        51.012104,
+        50.393398,
+        50.369728,
+        50.806035,
+        50.617506,
+        50.664976,
+        50.619676000000005,
+        50.562936,
+        51.015694,
+        50.755116,
+        50.834614,
+        50.874254,
+        50.882974999999995,
+        50.719155,
+        50.782295,
+        50.503487,
+        50.857285000000005
+      ],
+      "unit": "ms"
+    },
+    "perf.detector_cpu.p95_ms": {
+      "better": "lower",
+      "samples": [
+        52.134257000000005,
+        51.259283,
+        51.030954,
+        51.411931,
+        50.847435000000004,
+        50.833365,
+        51.327061,
+        51.124223,
+        51.313042,
+        51.061673,
+        51.29105199999999,
+        51.411511,
+        51.207722999999994,
+        51.359061999999994,
+        51.247071999999996,
+        51.291652,
+        51.169153,
+        51.353282,
+        50.940494,
+        51.392551000000005
+      ],
+      "unit": "ms"
+    },
+    "perf.detector_dnnl.p50_ms": {
+      "reason": "ProviderUnavailable: DnnlExecutionProvider failed to register: /opt/onnxruntime/onnxruntime/core/session/provider_bridge_ort.cc:2043 onnxruntime::Provider& onnxruntime::ProviderLibrary::Get() [ONNXRuntimeError] : 1 : FAIL : Failed to load library /usr/local/lib/onnxruntime-cpu/lib/libonnxruntime_providers_dnnl.so with error: libdnnl.so.3: cannot open shared object file: No such file or directory\n",
+      "status": "not-collected"
+    },
+    "perf.detector_dnnl.p95_ms": {
+      "reason": "ProviderUnavailable: DnnlExecutionProvider failed to register: /opt/onnxruntime/onnxruntime/core/session/provider_bridge_ort.cc:2043 onnxruntime::Provider& onnxruntime::ProviderLibrary::Get() [ONNXRuntimeError] : 1 : FAIL : Failed to load library /usr/local/lib/onnxruntime-cpu/lib/libonnxruntime_providers_dnnl.so with error: libdnnl.so.3: cannot open shared object file: No such file or directory\n",
+      "status": "not-collected"
+    },
+    "perf.detector_xnnpack.p50_ms": {
+      "better": "lower",
+      "samples": [
+        187.819162,
+        187.24402500000002,
+        187.86852100000002,
+        187.816351,
+        187.19375599999998,
+        187.489714,
+        188.14896000000002,
+        186.729818,
+        187.836272,
+        187.565793,
+        187.759372,
+        187.69792199999998,
+        187.66311199999998,
+        187.114715,
+        187.62199299999997,
+        187.55190299999998,
+        188.05997,
+        187.736292,
+        187.463783,
+        187.89889100000002
+      ],
+      "unit": "ms"
+    },
+    "perf.detector_xnnpack.p95_ms": {
+      "better": "lower",
+      "samples": [
+        188.817826,
+        189.17081399999998,
+        190.434306,
+        188.416348,
+        188.982015,
+        189.498901,
+        191.773898,
+        187.876981,
+        189.089674,
+        190.058448,
+        189.314792,
+        189.514051,
+        191.093831,
+        189.115444,
+        190.446786,
+        189.235313,
+        189.172583,
+        189.607841,
+        189.486941,
+        190.652054
+      ],
+      "unit": "ms"
+    },
+    "perf.text_rust.decode_tok_s": {
+      "better": "higher",
+      "samples": [
+        312.9,
+        312.8,
+        311.4,
+        312.5,
+        311.6,
+        312.1,
+        311.9,
+        312.7,
+        311.1,
+        311.0,
+        310.5,
+        312.5,
+        313.0,
+        312.5,
+        312.0,
+        311.8,
+        312.3,
+        312.1,
+        312.3,
+        312.4
+      ],
+      "unit": "tok/s"
+    },
+    "perf.text_rust.ttft_ms": {
+      "better": "lower",
+      "samples": [
+        25.3,
+        21.6,
+        21.3,
+        21.7,
+        22.8,
+        21.5,
+        21.6,
+        22.6,
+        21.3,
+        21.5,
+        22.4,
+        21.4,
+        21.5,
+        21.5,
+        21.4,
+        21.5,
+        21.4,
+        21.4,
+        21.5,
+        21.4
+      ],
+      "unit": "ms"
+    }
+  },
+  "recorded_at": "2026-11-02T15:37:35Z",
+  "runs": 20,
+  "schema_version": 1,
+  "sha": "7193d105b6760f05ff96c66ff36271feb6bf0591"
+}
