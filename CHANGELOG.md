@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-02, riscv64 text contract)
+- **The `linux-riscv64` lane runs the text contract again.** `riscv64-test` fetches `llm.lock` and runs
+  `crates/text/tests/contract.rs` apart, on scalar MLAS with GenAI and the model required, because ORT
+  1.31.0's RVV `MatMulNBits` reads null scales on the 4-bit model (`docs/ci.md` § The riscv64 lane,
+  `BACKLOG.md`). Every other test stays on RVV. `test-ci-container-steps.sh` holds the wiring, with five
+  mutation recipes.
+
 ### Changed (2026-11-02, hub ORT package checks)
 - **`verify-gpu-packages.sh` calls the hub's `ort-package-proof.sh`** instead of carrying its ORT library and
   notice checks, with `--reject-invalid --reject-links` keeping its stricter rule. Exit statuses are unchanged.

@@ -73,9 +73,16 @@ cat > "${work}/bin/cargo" <<'SH'
 case "$1" in
     build) printf 'CARGO-BUILD %s\n' "$*" ;;
     metadata) printf '{"target_directory": "%s"}\n' "${CI_TARGET_DIR}" ;;
+    test)
+        printf 'CARGO-TEST scalar=%s genai=%s model=%s %s\n' "${ORT_MLAS_RISCV_FORCE_SCALAR-unset}" \
+            "${KATAGLYPHIS_REQUIRE_GENAI-unset}" "${KATAGLYPHIS_REQUIRE_MODEL-unset}" "$*"
+        exit "${CI_CARGO_TEST_RC:-0}"
+        ;;
     *) exit 94 ;;
 esac
 SH
+printf '#!/usr/bin/env bash\n' > "${work}/hub/linux/scripts/02-toolchain/rust/_cargo_wrapper.sh"
+printf 'riscv64_cross_env() { printf "CROSS-ENV\\n"; }\n' > "${work}/hub/linux/scripts/lib/riscv64-cross.sh"
 mkdir -p "${work}/target/debug" "${work}/hub/shared/python"
 cp "${tests_dir}/fake-detector-cli.sh" "${work}/target/debug/kataglyphis_cli"
 for tool in compare_detector_parity.py verify_ort_profile.py; do
@@ -187,4 +194,21 @@ t_assert_grep "${work}/logs/code-quality/rustdoc.txt" '^DOCCOLOR=never$'
 CI_DOC_RC=9 run_step rustdoc-log 0
 t_case "a failed rustdoc build fails the logging step"
 t_assert_grep "${work}/rc" '^9$'
+riscv_target='--locked --target riscv64gc-unknown-linux-gnu'
+contract_name=every_contract_case_decodes_to_its_expected_ids
+(unset KATAGLYPHIS_REQUIRE_MODEL KATAGLYPHIS_REQUIRE_GENAI ORT_MLAS_RISCV_FORCE_SCALAR; run_step riscv64-test 0)
+t_case "riscv64 fetches both locks and keeps every workspace test on RVV with the model required"
+t_assert_grep "${work}/rc" '^0$'
+t_assert_grep "${work}/out" '^CROSS-ENV$'
+t_assert_grep "${work}/out" '^FETCHED$'
+t_assert_grep "${work}/out" '^FETCHED-LLM$'
+t_assert_grep "${work}/out" "^CARGO-TEST scalar=unset genai=unset model=1 test --workspace ${riscv_target} -- --skip ${contract_name}\$"
+t_case "riscv64 still runs the text contract, required, on scalar MLAS alone"
+t_assert_grep "${work}/out" "^CARGO-TEST scalar=1 genai=1 model=1 test -p kataglyphis_text ${riscv_target} --test contract\$"
+
+(unset ORT_MLAS_RISCV_FORCE_SCALAR; CI_CARGO_TEST_RC=41 run_step riscv64-test 0)
+t_case "a failed riscv64 workspace run reaches CI before the contract"
+t_assert_grep "${work}/rc" '^41$'
+t_assert_no_grep "${work}/out" 'test -p kataglyphis_text'
+
 t_summary

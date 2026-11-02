@@ -290,6 +290,8 @@ cargo run --bin kataglyphis_cli -- --help             # the CLI
 cargo run -p kataglyphis_burn_demos --bin burn_demos  # the burn demos
 ```
 
+**riscv64 runs the text contract on scalar MLAS alone** ([`docs/ci.md`](docs/ci.md#the-riscv64-lane)): ORT 1.31's RVV `MatMulNBits` segfaults on the 4-bit model. Keep the detector suites on RVV, and remove the override when the chain's ORT carries the fix.
+
 **Text generation keeps its contract** ([`docs/text.md`](docs/text.md)): `seed`, `json_schema` and `stop` reach both backends; a schema on a GenAI without llguidance (Windows) fails with `TextError::JsonSchemaUnsupported`, never an unconstrained answer; the SmolLM2 contract model comes from `resources/models/llm.lock` through `fetch-models.sh --llm` only, never the default fetch packaging calls, so no installer carries it.
 
 The suite as every Linux lane runs it (`KATAGLYPHIS_REQUIRE_GPU=1`, `KATAGLYPHIS_REQUIRE_MODEL=1`, `KATAGLYPHIS_REQUIRE_GST=1`, `KATAGLYPHIS_REQUIRE_GENAI=1`), where the suites live, and the lint commands: [`docs/testing.md`](docs/testing.md). **Run the lint gates before pushing**: the fmt/clippy pair there is CI's `fmt-clippy` step (§ *`cargo_fmt_clippy.sh`*), and the shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` ([Continuous integration](#continuous-integration)).

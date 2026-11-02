@@ -111,6 +111,7 @@ case "$step" in
         # The detector meets its model here too: without it the real-model tests passed by skipping.
         export KATAGLYPHIS_REQUIRE_MODEL="${KATAGLYPHIS_REQUIRE_MODEL-1}"
         bash "${SCRIPT_DIR}/fetch-models.sh"
+        bash "${SCRIPT_DIR}/fetch-models.sh" --llm
         if [ "${RISCV64_GPU_TESTS:-0}" = 1 ]; then
             export KATAGLYPHIS_REQUIRE_GPU=1
         else
@@ -118,7 +119,9 @@ case "$step" in
             export VK_LOADER_DRIVERS_DISABLE='*'
             echo "riscv64-test: GPU suites excluded (no Vulkan driver); RISCV64_GPU_TESTS=1 runs them on lavapipe"
         fi
-        exec cargo test --workspace --locked --target riscv64gc-unknown-linux-gnu "$@"
+        cargo test --workspace --locked --target riscv64gc-unknown-linux-gnu "$@" -- --skip every_contract_case_decodes_to_its_expected_ids
+        # ORT's RVV MatMulNBits gets null scales from a 4-bit model; scalar MLAS for this one test: docs/ci.md § The riscv64 lane
+        ORT_MLAS_RISCV_FORCE_SCALAR=1 KATAGLYPHIS_REQUIRE_GENAI=1 exec cargo test -p kataglyphis_text --locked --target riscv64gc-unknown-linux-gnu --test contract
         ;;
 
     -h|--help|help) usage; exit 0 ;;

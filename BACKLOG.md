@@ -36,6 +36,21 @@ and the backlog is empty"; it was neither.
       resource lifetime from a driver fault, then add a regression for the proven cause.
       Do not serialize all tests or call it fixed solely because CI is green.
 
+- [b] **RVV `MatMulNBits` segfaults on a 4-bit model in the chain's ORT 1.31.0** (M, ★★). Crash:
+      `kataglyphis_text --test contract`, `signal: 11, SIGSEGV`, run 41463196239 and locally on
+      image `7d4d4129`. Under QEMU, intra-op workers fault in `libonnxruntime.so.1.31.0` at vaddr
+      `0x150150c`, `flw fa5, 0x0(s10)`, in stripped code matching `SQ4BitGemmKernel_CompInt8_Impl`, with
+      `si_addr = RangeStartN * 18 * 4` (for example `0x1f80`), so `QuantBScale` is null. The
+      reachable cause, from the v1.31.0 source: `UseSharedPrePackedBuffers` narrows
+      `shared_packed_b_finalized` under `MLAS_TARGET_ARM64` while `PrePack` uses
+      `!MLAS_TARGET_AMD64_IX86`, so riscv64 sets `scales_are_packed_`. ORT `main` carries the same
+      guard (checked 2026-11-02). `RUST_MIN_STACK`, `QEMU_STACK_SIZE` and `vlen=256/512` still crash;
+      `ORT_MLAS_RISCV_FORCE_SCALAR=1` passes with the exact ids. Fix: a hub ORT patch or an upstream
+      fix, which needs an image chain; then drop the scalar run from `riscv64-test`. Until then a
+      riscv64 process that loads a 4-bit `accuracy_level=4` model on RVV crashes: the override covers
+      this test, not a shipped riscv64 binary. Real silicon is untested, and the guard theory has no
+      patched-build proof yet.
+
 - [b] **Accept DNNL on amd64 once `:latest` ships oneDNN** (S). The chain ORT's
       `libonnxruntime_providers_dnnl.so` needs `libdnnl.so.3`, which the image lacks, so
       `KATAGLYPHIS_ORT_DEVICE=dnnl` is `ProviderUnavailable` on amd64 too. Blocked on hub

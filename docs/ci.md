@@ -202,6 +202,15 @@ half, `bash scripts/linux/ci-container-steps.sh riscv64-test`, runs `cargo test 
   and sets `KATAGLYPHIS_REQUIRE_MODEL=1`, as the Linux `test` step does: before that the
   real-model tests reported `ok` having skipped, since `cargo test` hides a passing test's
   `SKIP:` line.
+- **The text contract runs apart, on scalar MLAS.** The workspace run takes `-- --skip
+  every_contract_case_decodes_to_its_expected_ids`, then the step runs `--test contract` with
+  `ORT_MLAS_RISCV_FORCE_SCALAR=1` and `KATAGLYPHIS_REQUIRE_GENAI=1`. It still decodes the
+  exact token ids on riscv64 under QEMU, but it does not exercise the RVV `MatMulNBits` kernel:
+  ORT 1.31.0 segfaults there on SmolLM2's 4-bit weights. `MatMulNBits::UseSharedPrePackedBuffers`
+  guards its 4-bit exception with `MLAS_TARGET_ARM64` alone, so on riscv64 it sets
+  `scales_are_packed_` although the scales were never packed, and the kernel reads
+  `QuantBScale == nullptr`. Neither a larger stack nor another vector length helps.
+  Every other test stays on RVV. The fix and its limits: `BACKLOG.md`, **RVV `MatMulNBits`**.
 - **What skips:** the renderer's GPU rendering. The step disables every Vulkan driver
   (`VK_LOADER_DRIVERS_DISABLE='*'`) and leaves `KATAGLYPHIS_REQUIRE_GPU` unset, so
   `headless_or_skip()` returns `None` and the CPU-side assertions still run. lavapipe does

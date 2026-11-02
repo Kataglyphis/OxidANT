@@ -118,7 +118,9 @@ capital-of-france must yield exactly `[504, 3575, 282, 4649, 314, 7042, 30, 2]` 
 `Paris`. `resources/models/llm.lock` pins the archive with OrchestrANT's row;
 `scripts/linux/fetch-models.sh --llm` runs the hub's `fetch-data-lock.py --lock
 resources/models/llm.lock --extract` in the Linux test and coverage steps, and with
-`KATAGLYPHIS_REQUIRE_MODEL=1` a missing model fails. Windows CI unpacks it into
+`KATAGLYPHIS_REQUIRE_MODEL=1` a missing model fails. The riscv64 lane runs this suite on scalar
+MLAS, because ONNX Runtime's RVV path crashes on this model
+([the riscv64 lane](ci.md#the-riscv64-lane)). Windows CI unpacks it into
 `target\llm-models` and names that through `KATAGLYPHIS_LLM_MODELS`, because `Build-Windows.ps1`
 bundles `resources\`. No installer carries the model. The endpoint suites run against a
 local server that plays back one recorded answer and ends within 30 s on its own.
