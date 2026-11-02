@@ -6,6 +6,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/lib/antfrastructure.sh"
 # shellcheck source=lib/models-lock.sh
 source "${script_dir}/lib/models-lock.sh"
+# shellcheck source=lib/gpu-check-common.sh
+source "${script_dir}/lib/gpu-check-common.sh"
 if [ "$#" -ne 3 ]; then
     printf 'Usage: %s PACKAGE_DIR x64|arm64 nvidia|amd\n' "$0" >&2
     exit 2
@@ -30,27 +32,24 @@ source "${hub}/ort-runtime-bundle.sh"
 source "$(antfrastructure_path linux/scripts/01-core/platform.sh)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# The ORT library loop below globs bundle files.
 shopt -s nullglob
-tarballs=("${package_dir}"/*.tar.gz)
-debs=("${package_dir}"/*.deb)
-images=("${package_dir}"/*.AppImage)
-if [ "${#tarballs[@]}" -ne 1 ] || [ "${#debs[@]}" -ne 1 ] || [ "${#images[@]}" -ne 1 ]; then
-    echo 'Expected exactly one tarball, DEB and AppImage' >&2
-    exit 1
-fi
+tarball="$(gpu_check_one_package "${package_dir}" .tar.gz)"
+deb="$(gpu_check_one_package "${package_dir}" .deb)"
+appimage="$(gpu_check_one_package "${package_dir}" .AppImage)"
 deb_arch="$(arch_normalize "$arch")"
-if [ "$(dpkg-deb --field "${debs[0]}" Architecture)" != "$deb_arch" ] ||
-   [ "$(dpkg-deb --field "${debs[0]}" Package)" != oxidant ]; then
+if [ "$(dpkg-deb --field "${deb}" Architecture)" != "$deb_arch" ] ||
+   [ "$(dpkg-deb --field "${deb}" Package)" != oxidant ]; then
     echo 'GPU DEB package identity or architecture does not match its target' >&2
     exit 1
 fi
-case "$(dpkg-deb --field "${debs[0]}" Version)" in
+case "$(dpkg-deb --field "${deb}" Version)" in
     *"+gpu-$3") ;;
     *) echo 'GPU DEB version does not match its vendor' >&2; exit 1 ;;
 esac
 mkdir "${work}/tar" "${work}/deb"
-tar -xzf "${tarballs[0]}" -C "${work}/tar"
-dpkg-deb -x "${debs[0]}" "${work}/deb"
+tar -xzf "${tarball}" -C "${work}/tar"
+dpkg-deb -x "${deb}" "${work}/deb"
 for bundle in "${work}/tar/oxidant" "${work}/deb/opt/oxidant"; do
     ort_assert_no_bundled_host_runtime "$bundle" "$kind"
     for name in libonnxruntime.so libonnxruntime.so.1 libonnxruntime_providers_shared.so "libonnxruntime_providers_${kind}.so"; do
@@ -72,9 +71,9 @@ for bundle in "${work}/tar/oxidant" "${work}/deb/opt/oxidant"; do
         cmp "$file" "${proven}/licenses/onnxruntime/${name}"
     done
 done
-bash "${hub}/verify-ort-appimage-payload.sh" "${images[0]}" "$arch" \
+bash "${hub}/verify-ort-appimage-payload.sh" "${appimage}" "$arch" \
     usr/lib/oxidant/lib usr/lib/oxidant/licenses/onnxruntime "$3"
-image="$(realpath -e "${images[0]}")"
+image="$(realpath -e "${appimage}")"
 mkdir "${work}/appimage"
 (cd "${work}/appimage" && env -u LD_PRELOAD -u LD_AUDIT "$image" --appimage-extract 'usr/lib/oxidant/resources/models/*' >/dev/null)
 model_lock="${KATAGLYPHIS_REPO_ROOT}/resources/models/models.lock"

@@ -8,6 +8,8 @@ repo_root="$(cd -- "${script_dir}/../../.." && pwd)"
 # The image ref comes from versions.env, in two assignments so `set -e` sees a failed substitution.
 # shellcheck source=scripts/linux/lib/antfrastructure.sh
 source "${script_dir}/../lib/antfrastructure.sh"
+# shellcheck source=scripts/linux/lib/cli-args.sh
+source "${script_dir}/../lib/cli-args.sh"
 # shellcheck source=scripts/linux/observant/lib/producer-container.sh
 source "${script_dir}/lib/producer-container.sh"
 _ci_image_ref_sh="$(antfrastructure_path linux/scripts/ci-image-ref.sh)"
@@ -44,21 +46,8 @@ half. Stop the producer with `nerdctl rm -f cat-producer`.
 EOF
 }
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --build) do_build=true; shift ;;
-    --libs-only) libs_only=true; shift ;;
-    --port) port="${2:?--port needs a value}"; shift 2 ;;
-    --model) model="${2:?--model needs a value}"; shift 2 ;;
-    --width) width="${2:?--width needs a value}"; shift 2 ;;
-    --height) height="${2:?--height needs a value}"; shift 2 ;;
-    --fps) fps="${2:?--fps needs a value}"; shift 2 ;;
-    --rotate) rotate="${2:?--rotate needs a value}"; shift 2 ;;
-    --name) name="${2:?--name needs a value}"; shift 2 ;;
-    -h|--help) usage; exit 0 ;;
-    *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
-  esac
-done
+cli_args_parse 'a value' usage cli_args_unknown --port=port --model=model --width=width --height=height --fps=fps \
+  --rotate=rotate --name=name --build=do_build=true --libs-only=libs_only=true -- "$@"
 
 command -v nerdctl >/dev/null 2>&1 || {
   printf 'nerdctl not found - is containerd running?\n' >&2

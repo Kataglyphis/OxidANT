@@ -2,13 +2,9 @@
 # Replacing the launcher shell leaves PID-1 xvfb-run waiting before it can start Cargo.
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../lib/antfrastructure.sh
-source "${SCRIPT_DIR}/../lib/antfrastructure.sh"
-antfrastructure_source linux/scripts/lib/test-harness.sh || exit 1
-gate="${SCRIPT_DIR}/../ci-container-steps.sh"
-work="$(mktemp -d)"
-trap 'rm -rf "${work}"' EXIT
+# shellcheck source=scripts/linux/tests/lib-suite.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
+gate="${tests_dir}/../ci-container-steps.sh"
 
 mkdir -p "${work}/bin" "${work}/hub/linux/scripts/lib" "${work}/hub/linux/scripts/02-toolchain/rust"
 cat > "${work}/hub/linux/scripts/lib/fetch-data-lock.py" <<'PY'
@@ -81,7 +77,7 @@ case "$1" in
 esac
 SH
 mkdir -p "${work}/target/debug" "${work}/hub/shared/python"
-cp "${SCRIPT_DIR}/fake-detector-cli.sh" "${work}/target/debug/kataglyphis_cli"
+cp "${tests_dir}/fake-detector-cli.sh" "${work}/target/debug/kataglyphis_cli"
 for tool in compare_detector_parity.py verify_ort_profile.py; do
     cp "$(antfrastructure_path "shared/python/${tool}")" "${work}/hub/shared/python/"
 done
@@ -101,8 +97,13 @@ run_step() {
     printf '%s\n' "${rc}" > "${work}/rc"
 }
 
-unset KATAGLYPHIS_REQUIRE_GPU KATAGLYPHIS_REQUIRE_MODEL KATAGLYPHIS_REQUIRE_GST KATAGLYPHIS_REQUIRE_GTK
-run_step test 0 --package 'two words' ''
+# Without caller overrides, with an argument that holds a space and an empty one.
+run_step_defaults() {
+    unset KATAGLYPHIS_REQUIRE_GPU KATAGLYPHIS_REQUIRE_MODEL KATAGLYPHIS_REQUIRE_GST KATAGLYPHIS_REQUIRE_GTK
+    run_step "$1" 0 --package 'two words' ''
+}
+
+run_step_defaults test
 t_case "the actual CI entry point retains its launcher and reaches the driver"
 t_assert_grep "${work}/rc" '^0$'
 t_assert_grep "${work}/out" '^FETCHED$'
@@ -141,8 +142,7 @@ t_case "a failed fetch stops before Xvfb and the driver"
 t_assert_grep "${work}/rc" '^23$'
 t_assert_no_grep "${work}/out" '^DRIVER$'
 
-unset KATAGLYPHIS_REQUIRE_GPU KATAGLYPHIS_REQUIRE_MODEL KATAGLYPHIS_REQUIRE_GST KATAGLYPHIS_REQUIRE_GTK
-run_step coverage 0 --package 'two words' ''
+run_step_defaults coverage
 t_case "coverage reaches its driver through Xvfb and the real per-crate checker"
 t_assert_grep "${work}/rc" '^0$'
 t_assert_grep "${work}/out" '^XVFB$'

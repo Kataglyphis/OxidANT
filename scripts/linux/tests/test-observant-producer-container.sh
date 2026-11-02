@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 set -u
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=scripts/linux/lib/antfrastructure.sh
-source "${script_dir}/../lib/antfrastructure.sh"
-antfrastructure_source linux/scripts/lib/test-harness.sh || exit 1
+# shellcheck source=scripts/linux/tests/lib-suite.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
 # shellcheck source=scripts/linux/observant/lib/producer-container.sh
-source "${script_dir}/../observant/lib/producer-container.sh"
+source "${tests_dir}/../observant/lib/producer-container.sh"
 
-work="$(mktemp -d)"
-trap 'rm -rf "${work}"' EXIT
 
 nerdctl() {
   printf '%s\0' "$@" > "${work}/args"

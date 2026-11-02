@@ -1,25 +1,20 @@
 #!/usr/bin/env bash
 # No actual package, GPU runtime or host installation is exercised.
 set -euo pipefail
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-work="$(mktemp -d)"
-trap 'rm -rf -- "$work"' EXIT
-cat > "$work/oxidant fixture" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-[[ -z "${KATAGLYPHIS_ONNX_MODEL+x}${KATAGLYPHIS_ONNX_BACKEND+x}${ORT_DYLIB_PATH+x}${ORT_LIB_LOCATION+x}${LD_LIBRARY_PATH+x}${LD_PRELOAD+x}${LD_AUDIT+x}" ]]
+# shellcheck source=scripts/linux/tests/lib-fake-gpu.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib-fake-gpu.sh"
+root="$fake_gpu_repo"
+fake_gpu_workspace
+fake_gpu_write_launcher "$work/oxidant fixture" <<'STUB'
+fake_gpu_assert_unset KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ONNX_BACKEND ORT_DYLIB_PATH ORT_LIB_LOCATION LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 case "${KATAGLYPHIS_ORT_DEVICE:-}" in
   cpu) [[ "${FAIL_CPU:-0}" != 1 ]] ;;
   '') echo 'ORT device request: Migraphx'; echo 'libmigraphx_c.so: cannot open'; exit 1 ;;
   *) echo 'Unexpected inherited device' >&2; exit 1 ;;
 esac
 STUB
-chmod +x "$work/oxidant fixture"
-export GITHUB_WORKSPACE="$root" KATAGLYPHIS_ONNX_MODEL=/wrong KATAGLYPHIS_ONNX_BACKEND=tract
-export ORT_DYLIB_PATH=/wrong ORT_LIB_LOCATION=/wrong LD_LIBRARY_PATH=/wrong
-export LD_PRELOAD=/wrong LD_AUDIT=/wrong KATAGLYPHIS_ORT_DEVICE=cuda
+fake_gpu_poison_env
+export GITHUB_WORKSPACE="$root" LD_LIBRARY_PATH=/wrong LD_PRELOAD=/wrong LD_AUDIT=/wrong KATAGLYPHIS_ORT_DEVICE=cuda
 bash "$root/scripts/linux/check-gpu-clean-host.sh" amd "$work/oxidant fixture" 2>"$work/stderr"
-if FAIL_CPU=1 bash "$root/scripts/linux/check-gpu-clean-host.sh" amd "$work/oxidant fixture" >/dev/null 2>&1; then
-  echo 'A failed packaged CPU check was accepted' >&2; exit 1
-fi
+fake_gpu_refuses 'A failed packaged CPU check was accepted' /dev/null env FAIL_CPU=1 bash "$root/scripts/linux/check-gpu-clean-host.sh" amd "$work/oxidant fixture"
 echo 'Poisoned host overrides are cleared for the AMD clean-host checks'

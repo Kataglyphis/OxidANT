@@ -2,6 +2,8 @@
 # The hub stages the chain ORT core and provider; this file adds only the GPU launcher rewrite.
 # shellcheck source=antfrastructure.sh
 source "$(dirname "${BASH_SOURCE[0]}")/antfrastructure.sh" || return $?
+# shellcheck source=gpu-check-common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/gpu-check-common.sh" || return $?
 # shellcheck source=/dev/null
 source "$(antfrastructure_path linux/scripts/06-packaging/ort-runtime-bundle.sh)" || return $?
 
@@ -11,7 +13,7 @@ configure_gpu_launcher() {
     local old='--library-path "$here/lib/glibc:$here/lib"'
     # shellcheck disable=SC2016
     local new='--library-path "$here/lib/glibc:$here/lib${gpu_library_path}"'
-    case "${device}" in cuda|migraphx) ;; *) printf 'unknown GPU device: %s\n' "${device}" >&2; return 2 ;; esac
+    gpu_device_known "${device}" || { printf 'unknown GPU device: %s\n' "${device}" >&2; return 2; }
     {
         IFS= read -r line
         [ "${line}" = '#!/bin/bash' ] || { printf 'unexpected bundle launcher: %s\n' "${launcher}" >&2; return 1; }

@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
 # Checks AppImage and Flatpak verifier calls, not the resulting package bytes.
 set -u
-tests_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo="$(cd "${tests_dir}/../../.." && pwd)"
-source "${repo}/scripts/linux/lib/antfrastructure.sh"
-# shellcheck source=third_party/ANTfrastructure/linux/scripts/tests/test-harness.sh
-source "$(antfrastructure_path linux/scripts/tests/test-harness.sh)"
+# shellcheck source=scripts/linux/tests/lib-suite.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
 package_script="${tests_dir}/../package-linux.sh"
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
 has_appimage_license_wiring() {
     if grep -q 'verify-native-appimage-license.sh' "$1" &&
         grep -Fq 'usr/lib/${package_name}/LICENSE' "$1"; then

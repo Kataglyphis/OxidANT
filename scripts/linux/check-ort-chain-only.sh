@@ -11,15 +11,11 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=lib/cli-args.sh
+source "${root}/scripts/linux/lib/cli-args.sh"
 lock_only=0
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --root) root="${2:?--root needs a directory}"; shift 2 ;;
-    --lock-only) lock_only=1; shift ;;
-    -h|--help) sed -n '2,10p' "${BASH_SOURCE[0]}"; exit 0 ;;
-    *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
-  esac
-done
+print_header() { sed -n '2,10p' "${BASH_SOURCE[0]}"; }
+cli_args_parse 'a directory' print_header cli_args_unknown --root=root --lock-only=lock_only=1 -- "$@"
 
 lock="${root}/Cargo.lock"
 if [[ ! -f "${lock}" ]]; then

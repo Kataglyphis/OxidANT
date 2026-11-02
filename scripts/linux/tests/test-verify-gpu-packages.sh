@@ -15,7 +15,7 @@ mkdir -p "$hub" "${work}/hub/linux/scripts/01-core" "${work}/hub/linux/scripts/l
 cp "$shared_verify" "${work}/hub/shared/python/verify_locked_files.py"
 cp "$shared_fetcher" "${work}/hub/linux/scripts/lib/fetch-data-lock.py"
 cp "${here}/../verify-gpu-packages.sh" "${work}/source/scripts/linux/"
-cp "${here}/../lib/antfrastructure.sh" "${here}/../lib/renovate-git-mode.sh" "${here}/../lib/models-lock.sh" "${work}/source/scripts/linux/lib/"
+cp "${here}/../lib/antfrastructure.sh" "${here}/../lib/renovate-git-mode.sh" "${here}/../lib/models-lock.sh" "${here}/../lib/gpu-check-common.sh" "${work}/source/scripts/linux/lib/"
 for name in deim_dfine_n_coco.onnx deim_dfine_n_coco.LICENSE deim_dfine_n_coco.NOTICE; do
     printf 'fixture %s\n' "$name" > "${work}/tree/oxidant/resources/models/$name"
     printf '%s  %s  https://example.invalid/%s\n' \

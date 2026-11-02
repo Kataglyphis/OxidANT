@@ -8,6 +8,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 # shellcheck source=lib/models-lock.sh
 source "${SCRIPT_DIR}/lib/models-lock.sh"
+# shellcheck source=lib/cli-args.sh
+source "${SCRIPT_DIR}/lib/cli-args.sh"
 
 usage() {
     cat >&2 <<'USAGE'
@@ -38,22 +40,16 @@ ort_variant=cpu
 desktop_file="${REPO_ROOT}/packaging/linux/oxidant.desktop"
 icon_file="${REPO_ROOT}/images/logo.png"
 out_dir="${REPO_ROOT}/dist"
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --binary) binary="${2:?}"; shift 2 ;;
-        --binary-path) binary_path="${2:?}"; shift 2 ;;
-        --version) version="${2:?}"; shift 2 ;;
-        --arch) arch="${2:?}"; shift 2 ;;
-        --platform) platform="${2:?}"; shift 2 ;;
-        --package-types) package_types="${2:?}"; shift 2 ;;
-        --ort-variant) ort_variant="${2:?}"; shift 2 ;;
-        --desktop-file) desktop_file="$(realpath "${2:?}")"; shift 2 ;;
-        --icon-file) icon_file="$(realpath "${2:?}")"; shift 2 ;;
-        --out) out_dir="${2:?}"; shift 2 ;;
-        -h|--help) usage; exit 0 ;;
-        *) printf 'unknown argument: %s\n' "$1" >&2; usage; exit 2 ;;
-    esac
-done
+unknown_with_usage() {
+    printf 'unknown argument: %s\n' "$1" >&2
+    usage
+    exit 2
+}
+cli_args_parse '' usage unknown_with_usage --binary=binary --binary-path=binary_path --version=version --arch=arch \
+    --platform=platform --package-types=package_types --ort-variant=ort_variant --desktop-file=desktop_file \
+    --icon-file=icon_file --out=out_dir -- "$@"
+desktop_file="$(realpath "${desktop_file}")"
+icon_file="$(realpath "${icon_file}")"
 [ -x "${binary_path}" ] || { printf 'no executable --binary-path: %s\n' "${binary_path:-<empty>}" >&2; exit 2; }
 [ -n "${version}" ] || { printf -- '--version is required\n' >&2; exit 2; }
 case "${ort_variant}" in

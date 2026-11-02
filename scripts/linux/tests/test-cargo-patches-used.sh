@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
 set -u
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=scripts/linux/lib/antfrastructure.sh
-source "${script_dir}/../lib/antfrastructure.sh"
-antfrastructure_source linux/scripts/lib/test-harness.sh || exit 1
+# shellcheck source=scripts/linux/tests/lib-suite.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
 t_skip_unless 'Python 3.11+ with tomllib' python3 -c 'import tomllib'
-root="$(cd -- "${script_dir}/../../.." && pwd)"
-gate="${script_dir}/../check-cargo-patches-used.py"
-work="$(mktemp -d)"
-trap 'rm -rf "${work}"' EXIT
+gate="${tests_dir}/../check-cargo-patches-used.py"
 
 t_case 'every patched source copy in this workspace is in its lockfile'
-t_assert_rc 0 python3 "${gate}" "${root}"
+t_assert_rc 0 python3 "${gate}" "${repo_root}"
 
 mkdir -p "${work}/vendor/demo-1.0.0"
 printf '[package]\nname = "demo"\nversion = "1.0.0"\n' > "${work}/vendor/demo-1.0.0/Cargo.toml"

@@ -1,22 +1,16 @@
 #!/usr/bin/env bash
 # The backend parity driver against a fake CLI: each drift, CPU fallback and unnamed DNNL failure must fail it.
 set -u
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=../lib/antfrastructure.sh
-source "$here/../lib/antfrastructure.sh"
-antfrastructure_source linux/scripts/lib/test-harness.sh || exit 1
-work=$(mktemp -d)
-trap 'rm -rf -- "$work"' EXIT
+# shellcheck source=scripts/linux/tests/lib-suite.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
 printf fixture > "$work/photo.jpg"
-cp "$here/fake-detector-cli.sh" "$work/cli"
+cp "${tests_dir}/fake-detector-cli.sh" "$work/cli"
 chmod +x "$work/cli"
 export FAKE_SEEN="$work/seen" RUNNER_TEMP="$work"
 
 check() {
-  local rc=0
   : > "$FAKE_SEEN"
-  env "$@" bash "$here/../check-backend-parity.sh" "$work/cli" "$work/photo.jpg" > "$work/out" 2>&1 || rc=$?
-  printf '%s\n' "$rc" > "$work/rc"
+  suite_run env "$@" bash "${tests_dir}/../check-backend-parity.sh" "$work/cli" "$work/photo.jpg"
 }
 
 check FAKE_DNNL=run

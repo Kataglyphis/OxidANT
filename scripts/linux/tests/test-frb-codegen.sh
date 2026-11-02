@@ -2,16 +2,12 @@
 # Fake generator and Cargo around the real bridge script; the real codegen run is the fmt-clippy CI step.
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../lib/antfrastructure.sh
-source "${SCRIPT_DIR}/../lib/antfrastructure.sh"
-antfrastructure_source linux/scripts/lib/test-harness.sh || exit 1
-work="$(mktemp -d)"
-trap 'rm -rf "${work}"' EXIT
+# shellcheck source=scripts/linux/tests/lib-suite.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
 repo="${work}/repo"
 hub="${work}/hub"
 mkdir -p "${work}/bin" "${work}/tmp" "${repo}/scripts/linux" "${repo}/src" "${hub}/linux/scripts/01-core"
-cp "${SCRIPT_DIR}/../frb-codegen.sh" "${SCRIPT_DIR}/../verify-frb-bindings.py" "${repo}/scripts/linux/"
+cp "${tests_dir}/../frb-codegen.sh" "${tests_dir}/../verify-frb-bindings.py" "${repo}/scripts/linux/"
 printf 'FLUTTER_RUST_BRIDGE_VERSION=2.13.0\n' > "${hub}/linux/scripts/01-core/versions.env"
 cat > "${hub}/linux/scripts/01-core/downloads.sh" <<'SH'
 download_verified_file() {

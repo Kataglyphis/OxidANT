@@ -3,6 +3,8 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=lib/cli-args.sh
+source "${root}/scripts/linux/lib/cli-args.sh"
 package=kataglyphis_observant
 target=x86_64-pc-windows-gnu
 
@@ -11,13 +13,12 @@ usage() {
   printf 'clippy --all-targets -D warnings for %s: what the Windows lanes fail on an hour later.\n' "${target}"
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --package) package="${2:?--package needs a crate name}"; shift 2 ;;
-    -h|--help) usage; exit 0 ;;
-    *) usage >&2; exit 2 ;;
-  esac
-done
+usage_error() {
+  usage >&2
+  exit 2
+}
+
+cli_args_parse 'a crate name' usage usage_error --package=package -- "$@"
 
 # ring compiles C for the target; nothing else here needs a Windows toolchain.
 if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then

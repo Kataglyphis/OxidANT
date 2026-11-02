@@ -327,7 +327,7 @@
  {
   "id": "consumer.oxidant-backend-parity-provider",
   "target": "scripts/linux/check-backend-parity.sh",
-  "find": "python3 -I \"$profiler\" \"${profiles[0]}\" --device \"$device\"",
+  "find": "python3 -I \"$profiler\" \"$profile\" --device \"$device\"",
   "replace": ":",
   "test": "bash scripts/linux/tests/test-check-backend-parity.sh",
   "why": "An XNNPACK request that ran on the CPU provider fails its profile."

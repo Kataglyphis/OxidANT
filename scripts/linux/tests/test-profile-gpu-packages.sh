@@ -1,65 +1,53 @@
 #!/usr/bin/env bash
 # Exercise every package route and reject GPU profiles that only used CPU or copies.
 set -euo pipefail
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo="$(cd "${here}/../../.." && pwd)"
-source_hub="${ANTFRASTRUCTURE_DIR:-${repo}/third_party/ANTfrastructure}"
+# shellcheck source=scripts/linux/tests/lib-fake-gpu.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib-fake-gpu.sh"
 # shellcheck source=/dev/null
-source "${here}/../lib/ort-runtime-bundle.sh"
-work="$(mktemp -d)"
-trap 'rm -rf -- "${work}"' EXIT
+source "${fake_gpu_tests_dir}/../lib/ort-runtime-bundle.sh"
+repo="${fake_gpu_repo}"
+source_hub="${fake_gpu_hub}"
+fake_gpu_workspace
 mkdir -p "${work}/packages" "${work}/runner"
 export RUNNER_TEMP="${work}/runner" FAKE_SEEN="${work}/seen"
-export LD_PRELOAD='' LD_AUDIT=''
-export KATAGLYPHIS_ONNX_MODEL=/wrong KATAGLYPHIS_ONNX_BACKEND=tract KATAGLYPHIS_ORT_DEVICE=cpu
-export ORT_DYLIB_PATH=/wrong ORT_LIB_LOCATION=/wrong LD_LIBRARY_PATH=/host/gpu-sdk
+fake_gpu_poison_env
+export KATAGLYPHIS_ORT_DEVICE=cpu
 for device in cuda migraphx; do
     for format in tar deb appimage; do
         bundle="${work}/${format} bundle"
-        mkdir -p "${bundle}/resources/models" "${bundle}/lib"
-        printf model > "${bundle}/resources/models/deim_dfine_n_coco.onnx"
-        printf runtime > "${bundle}/lib/libonnxruntime.so"
+        fake_gpu_bundle_tree "${bundle}"
         printf '%s' "${format}" > "${bundle}/format"
-        cat > "${bundle}/oxidant" <<'LAUNCHER'
-#!/bin/bash
-set -euo pipefail
-here="$(cd "$(dirname "$0")" && pwd)"
-test -z "${LD_PRELOAD+x}${LD_AUDIT+x}${KATAGLYPHIS_ONNX_MODEL+x}${KATAGLYPHIS_ONNX_BACKEND+x}${ORT_DYLIB_PATH+x}${ORT_LIB_LOCATION+x}"
+        fake_gpu_write_launcher "${bundle}/oxidant" <<'LAUNCHER'
+fake_gpu_assert_unset LD_PRELOAD LD_AUDIT KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ONNX_BACKEND ORT_DYLIB_PATH ORT_LIB_LOCATION
 if [[ ${1:-} == onnx-detect ]]; then
-    [[ -z ${KATAGLYPHIS_PREPROCESS+x}${KATAGLYPHIS_SWAP_XY+x}${KATAGLYPHIS_ORT_THREADS+x}${KATAGLYPHIS_ORT_SPIN+x} ]]
-    [[ $2 == --image && -f $3 && $4 == --output && $6 == --profile ]]
+    fake_gpu_assert_unset KATAGLYPHIS_PREPROCESS KATAGLYPHIS_SWAP_XY KATAGLYPHIS_ORT_THREADS KATAGLYPHIS_ORT_SPIN
+    fake_gpu_detect_args "$@"
+    [[ -f $3 ]]
     format="$(cat "${here}/format")"
-    case "${KATAGLYPHIS_ORT_DEVICE}" in
-        cpu) [[ $# -eq 9 && $8 == --repeat-output ]]; test "${LD_LIBRARY_PATH}" = "${here}/lib"; provider=CPUExecutionProvider ;;
-        cuda) [[ $# -eq 9 && $8 == --repeat-output ]]; test "${LD_LIBRARY_PATH}" = "${here}/lib:/host/gpu-sdk"; provider=CUDAExecutionProvider ;;
-        migraphx) [[ $# -eq 9 && $8 == --repeat-output ]]; test "${LD_LIBRARY_PATH}" = "${here}/lib:/host/gpu-sdk"; provider=MIGraphXExecutionProvider ;;
-        *) exit 1 ;;
-    esac
-    printf '[{"cat":"Session","name":"model_run","ph":"X","pid":1,"ts":0,"dur":90},{"cat":"Node","ph":"X","pid":1,"ts":10,"dur":20,"args":{"provider":"%s","op_name":"Conv"}}' "${provider}" > "$7.json"
-    printf ',{"cat":"Session","name":"model_run","ph":"X","pid":1,"ts":100,"dur":90},{"cat":"Node","ph":"X","pid":1,"ts":110,"dur":20,"args":{"provider":"%s","op_name":"Conv"}}' "${provider}" >> "$7.json"
-    printf ']\n' >> "$7.json"
-    score=0.9
-    if [[ ${FAKE_PARITY_FORMAT:-} == "$format" && $KATAGLYPHIS_ORT_DEVICE != cpu ]]; then score=0.6; fi
-    printf '{"schema_version":1,"width":100,"height":100,"detections":[{"class":15,"score":%s,"box":[10,60,30,95]},{"class":15,"score":0.7,"box":[50,20,80,60]}]}' "$score" > "$5"
+    provider="$(fake_gpu_provider "${KATAGLYPHIS_ORT_DEVICE}")"
+    if [[ ${KATAGLYPHIS_ORT_DEVICE} == cpu ]]; then
+        test "${LD_LIBRARY_PATH}" = "${here}/lib"
+    else
+        test "${LD_LIBRARY_PATH}" = "${here}/lib:/host/gpu-sdk"
+    fi
+    fake_gpu_two_run_profile "$7.json" "${provider}" "${provider}"
+    score="$(fake_gpu_drift_score "${FAKE_PARITY_FORMAT:-}" "$format" 0.9)"
+    fake_gpu_detections "$5" "$score"
     cp "$5" "$9"
     exit 0
 fi
 test "${LD_LIBRARY_PATH}" = "${here}/lib:/host/gpu-sdk"
-test "$#" -eq 3 && test "$1" = onnx-check && test "$2" = --profile
+fake_gpu_check_args "$@"
 format="$(cat "${here}/format")"
 printf '%s\n' "${format}" >> "${FAKE_SEEN}"
-case "${KATAGLYPHIS_ORT_DEVICE}" in
-    cuda) provider=CUDAExecutionProvider ;;
-    migraphx) provider=MIGraphXExecutionProvider ;;
-    *) exit 1 ;;
-esac
+[[ ${KATAGLYPHIS_ORT_DEVICE} != cpu ]]
+provider="$(fake_gpu_provider "${KATAGLYPHIS_ORT_DEVICE}")"
 if [ "${FAKE_CPU_FORMAT:-}" = "${format}" ]; then provider=CPUExecutionProvider; fi
 operator=Conv
 if [ "${FAKE_COPY_FORMAT:-}" = "${format}" ]; then operator=MemcpyFromHost; fi
 : '--library-path "$here/lib/glibc:$here/lib"'
-printf '[{"cat":"Node","args":{"provider":"%s","op_name":"%s"}}]\n' "${provider}" "${operator}" > "$3.json"
+fake_gpu_node_profile "$3.json" "${provider}" "${operator}"
 LAUNCHER
-        chmod +x "${bundle}/oxidant"
         configure_gpu_launcher "${bundle}/oxidant" "${device}"
     done
     mkdir -p "${work}/tar-root" "${work}/deb-root/DEBIAN" "${work}/deb-root/opt"
@@ -91,11 +79,11 @@ APPIMAGE
     # Actions downloads the AppImage without the executable bit.
     chmod 0644 "${work}/packages/test.AppImage"
     : > "${FAKE_SEEN}"
-    bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" >/dev/null
+    bash "${fake_gpu_tests_dir}/../profile-gpu-packages.sh" "${work}/packages" "${device}" >/dev/null
     printf 'tar\ndeb\nappimage\n' > "${work}/expected"
     cmp "${work}/expected" "${FAKE_SEEN}"
     printf fixture > "${work}/two cats.jpg"
-    bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" "${work}/two cats.jpg" >/dev/null
+    bash "${fake_gpu_tests_dir}/../profile-gpu-packages.sh" "${work}/packages" "${device}" "${work}/two cats.jpg" >/dev/null
     trusted="${work}/trusted workspace"
     poison="${work}/poison hub"
     mkdir -p "${trusted}/third_party/ANTfrastructure/shared/python" \
@@ -119,31 +107,20 @@ APPIMAGE
     # shellcheck disable=SC2016
     unsafe_command="$(printf '%s\n' "${command}" | sed 's|ANTFRASTRUCTURE_DIR="$GITHUB_WORKSPACE/third_party/ANTfrastructure" ||')"
     [ "${unsafe_command}" != "${command}" ] || { echo 'Pinned hub override mutant was not created' >&2; exit 1; }
-    if env GITHUB_WORKSPACE="${trusted}" GPU_PACKAGE_DIR="${work}/packages" ANTFRASTRUCTURE_DIR="${poison}" \
-        bash -c "${unsafe_command}" >"${work}/poison.log" 2>&1; then
-        echo 'Unpinned comparator override was accepted' >&2; exit 1
-    fi
+    fake_gpu_refuses 'Unpinned comparator override was accepted' "${work}/poison.log" \
+        env GITHUB_WORKSPACE="${trusted}" GPU_PACKAGE_DIR="${work}/packages" ANTFRASTRUCTURE_DIR="${poison}" \
+        bash -c "${unsafe_command}"
     grep -q 'poisoned comparator reached' "${work}/poison.log"
     for format in tar deb appimage; do
-        if FAKE_PARITY_FORMAT="${format}" bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" "${work}/two cats.jpg" >/dev/null 2>&1; then
-            echo "${format} detector mismatch was accepted for ${device}" >&2; exit 1
-        fi
-        if FAKE_CPU_FORMAT="${format}" bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" >/dev/null 2>&1; then
-            echo "${format} CPU profile was accepted for ${device}" >&2; exit 1
-        fi
-        if FAKE_COPY_FORMAT="${format}" bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" >/dev/null 2>&1; then
-            echo "${format} GPU transfer was accepted as model execution" >&2; exit 1
-        fi
+        fake_gpu_refuses "${format} detector mismatch was accepted for ${device}" /dev/null env FAKE_PARITY_FORMAT="${format}" bash "${fake_gpu_tests_dir}/../profile-gpu-packages.sh" "${work}/packages" "${device}" "${work}/two cats.jpg"
+        fake_gpu_refuses "${format} CPU profile was accepted for ${device}" /dev/null env FAKE_CPU_FORMAT="${format}" bash "${fake_gpu_tests_dir}/../profile-gpu-packages.sh" "${work}/packages" "${device}"
+        fake_gpu_refuses "${format} GPU transfer was accepted as model execution" /dev/null env FAKE_COPY_FORMAT="${format}" bash "${fake_gpu_tests_dir}/../profile-gpu-packages.sh" "${work}/packages" "${device}"
     done
     mv "${work}/packages/test.deb" "${work}/missing.deb"
-    if bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" >/dev/null 2>&1; then
-        echo 'missing DEB was accepted' >&2; exit 1
-    fi
+    fake_gpu_refuses 'missing DEB was accepted' /dev/null bash "${fake_gpu_tests_dir}/../profile-gpu-packages.sh" "${work}/packages" "${device}"
     mv "${work}/missing.deb" "${work}/packages/test.deb"
     cp "${work}/packages/test.AppImage" "${work}/packages/extra.AppImage"
-    if bash "${here}/../profile-gpu-packages.sh" "${work}/packages" "${device}" >/dev/null 2>&1; then
-        echo 'multiple AppImages were accepted' >&2; exit 1
-    fi
+    fake_gpu_refuses 'multiple AppImages were accepted' /dev/null bash "${fake_gpu_tests_dir}/../profile-gpu-packages.sh" "${work}/packages" "${device}"
     rm -rf -- "${work}/tar bundle" "${work}/deb bundle" "${work}/appimage bundle" \
         "${work}/tar-root" "${work}/deb-root" "${work}/packages"/*
 done

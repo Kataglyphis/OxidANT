@@ -38,6 +38,9 @@ printf 'device=%s\n' "$KATAGLYPHIS_ORT_DEVICE"
 printf 'search=%s\n' "$LD_LIBRARY_PATH"
 printf '%s\n' '--library-path "$here/lib/glibc:$here/lib"'
 LAUNCHER
+if configure_gpu_launcher "${work}/launcher" tract 2>/dev/null; then
+    echo 'An unknown GPU device was accepted' >&2; exit 1
+fi
 configure_gpu_launcher "${work}/launcher" cuda
 env -u KATAGLYPHIS_ORT_DEVICE bash "${work}/launcher" > "${work}/out"
 grep -q '^device=cuda$' "${work}/out"
