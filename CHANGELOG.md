@@ -13,6 +13,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-02, perf-host)
+- **`quality-report.sh --perf-host` latencies** in `quality-report.toml`, with
+  `scripts/linux/perf-host.sh`, the CLI's `detect-latency` and a tracked `perf/baseline-<cpu>.json`.
+
 ### Changed (2026-11-02, AGENTS.md back to what to do now)
 - **`AGENTS.md` shrank from 1,025 to about 440 lines.** The lane detail moved to the new
   `docs/ci.md`, the cat cam to `docs/observant.md`, the Windows container to `docs/windows.md`, the

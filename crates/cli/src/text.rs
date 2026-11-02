@@ -56,7 +56,7 @@ pub fn chat(args: ChatArgs) -> Result<()> {
 
 fn figures(result: &GenerationResult) -> String {
     format!(
-        "{} tokens, {:.0} ms to the first, {:.1} tokens/s, finish {:?}",
+        "{} tokens, {:.1} ms to the first, {:.1} tokens/s, finish {:?}",
         result.completion_tokens,
         result.time_to_first_token_ms,
         result.decode_tokens_per_second,

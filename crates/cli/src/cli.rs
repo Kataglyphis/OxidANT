@@ -89,6 +89,16 @@ pub enum Commands {
         #[arg(long, conflicts_with_all = ["profile", "repeat_output"])]
         tract: bool,
     },
+    /// Print warm ONNX detection p50 and p95 on an image as one JSON line, for quality-report.sh --perf-host.
+    #[cfg(any(target_os = "linux", windows))]
+    DetectLatency {
+        /// Image to detect on.
+        #[arg(long)]
+        image: PathBuf,
+        /// Timed detections after the warm-up.
+        #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+        runs: u16,
+    },
     /// Build the GUI's camera pipeline without starting it and print each element's plugin file.
     MediaCheck,
     /// Answer a prompt with a GenAI model directory or an OpenAI-compatible endpoint; the reply streams to stdout.

@@ -89,6 +89,13 @@ async fn main() -> Result<()> {
         Commands::OnnxDetect { image, output, .. } => {
             oxidant::detector_profile::run_tract(&image, &output)?;
         }
+        #[cfg(any(target_os = "linux", windows))]
+        Commands::DetectLatency { image, runs } => {
+            println!(
+                "{}",
+                oxidant::detector_profile::latency_json(&image, usize::from(runs))?
+            );
+        }
         Commands::MediaCheck => {
             print!("{}", kataglyphis_gui::gui_wgpu::media_check()?);
         }

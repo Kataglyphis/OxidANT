@@ -44,3 +44,27 @@ unit = "blocks"
 pattern = '\bunsafe\s*\{'
 include = ["*.rs"]
 exclude = ["third_party/*", "src/frb_generated*.rs"]
+
+# quality-report.sh --perf-host, inside :latest; DNNL answers not_collected while the image lacks libdnnl.so.3.
+[perf]
+setup = "bash scripts/linux/perf-host.sh setup"
+
+[[perf.command]]
+name = "detector_cpu"
+run = "KATAGLYPHIS_ORT_DEVICE=cpu target/release/kataglyphis_cli detect-latency --image third_party/ModelANT/contracts/fixtures/two_cats.jpg --runs 30"
+metrics = [{ key = "p50_ms", unit = "ms", better = "lower" }, { key = "p95_ms", unit = "ms", better = "lower" }]
+
+[[perf.command]]
+name = "detector_xnnpack"
+run = "KATAGLYPHIS_ORT_DEVICE=xnnpack target/release/kataglyphis_cli detect-latency --image third_party/ModelANT/contracts/fixtures/two_cats.jpg --runs 30"
+metrics = [{ key = "p50_ms", unit = "ms", better = "lower" }, { key = "p95_ms", unit = "ms", better = "lower" }]
+
+[[perf.command]]
+name = "detector_dnnl"
+run = "KATAGLYPHIS_ORT_DEVICE=dnnl target/release/kataglyphis_cli detect-latency --image third_party/ModelANT/contracts/fixtures/two_cats.jpg --runs 30"
+metrics = [{ key = "p50_ms", unit = "ms", better = "lower" }, { key = "p95_ms", unit = "ms", better = "lower" }]
+
+[[perf.command]]
+name = "text_rust"
+run = "bash scripts/linux/perf-host.sh text"
+metrics = [{ key = "ttft_ms", unit = "ms", better = "lower" }, { key = "decode_tok_s", unit = "tok/s", better = "higher" }]

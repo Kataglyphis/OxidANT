@@ -68,6 +68,52 @@ pub fn run(
     )
 }
 
+/// Warm p50 and p95 of `runs` detections as one JSON line, or `not_collected` for a provider this runtime lacks.
+pub fn latency_json(image_path: &Path, runs: usize) -> Result<String> {
+    const WARM_RUNS: usize = 5;
+    let image = load_rgba(image_path)?;
+    let (width, height) = image.dimensions();
+    let model = crate::person_detection::resolve_model_path(None);
+    let mut detector =
+        match crate::person_detection::PersonDetector::with_backend(&model, Some("ort")) {
+            Ok(detector) => detector,
+            Err(error) => {
+                return match error
+                    .downcast_ref::<kataglyphis_inference::provider::ProviderUnavailable>()
+                {
+                    Some(reason) => {
+                        Ok(serde_json::json!({ "not_collected": reason.to_string() }).to_string())
+                    }
+                    None => Err(error),
+                };
+            }
+        };
+    let mut samples = Vec::with_capacity(runs);
+    for run in 0..WARM_RUNS + runs {
+        let start = std::time::Instant::now();
+        detector.infer_rgba(
+            image.as_raw(),
+            width,
+            height,
+            crate::api::onnx::DETECT_SCORE_FLOOR,
+            None,
+        )?;
+        if run >= WARM_RUNS {
+            samples.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    Ok(latency_figures(samples).to_string())
+}
+
+fn latency_figures(mut samples: Vec<f64>) -> serde_json::Value {
+    samples.sort_by(f64::total_cmp);
+    let rank = |fraction: f64| {
+        let at = (fraction * samples.len() as f64) as usize;
+        samples[at.min(samples.len() - 1)]
+    };
+    serde_json::json!({ "p50_ms": rank(0.5), "p95_ms": rank(0.95) })
+}
+
 fn write_outputs(
     output: &Path,
     repeated: Option<(&Path, &[crate::Detection])>,
@@ -110,6 +156,14 @@ fn write_results(output: &Path, width: u32, height: u32, found: &[crate::Detecti
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn latency_figures_rank_the_sorted_samples() {
+        let samples = (1..=20).rev().map(f64::from).collect();
+        let figures = super::latency_figures(samples);
+        assert_eq!(figures["p50_ms"], 11.0);
+        assert_eq!(figures["p95_ms"], 20.0);
+    }
+
     use super::write_outputs;
 
     fn detection(score: f32) -> crate::Detection {

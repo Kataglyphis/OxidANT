@@ -205,3 +205,11 @@ The lane's build and run sequence is in
   | `capture.rs`, the capture loop around a real camera (the weakest) | 87 of 124 | 98 | the arrival photo's privacy filter (decoded, so a swapped filter fails too), the bus's error and end of stream, the restart pause and a zero width | needs a Pi camera, a V4L2 device or a loaded model, or changes a log line |
 
   The webhook tests fail after 10 s instead of hanging when no event comes, which a mutant that sends nothing first showed: each one cost the run its 300 s timeout. **Keep `--jobs 1` or give each job its own target dir**: two jobs sharing `CARGO_TARGET_DIR` overwrite each other's test binary and misreport, and so do two runs at once (a check run beside a long one reported caught mutants as missed on 2026-10-15), so each run gets a target dir of its own. The three arrival files take about 75 minutes on a Pi 5, a `--re` over the changed functions minutes.
+
+## Latency on a quiet host
+
+`bash scripts/linux/quality-report.sh --perf-host` times `kataglyphis_cli detect-latency` per CPU
+provider and `chat` through `crates/text` in the CI image, against `perf/baseline-<cpu>.json`:
+hub `docs/fleet-health.md` § perf-host. `detect-latency --image FILE --runs N` prints warm p50 and p95
+as one JSON line, or `not_collected` for a provider the runtime cannot load. It is not run in CI, whose
+hosted wall time varies too much to grade.

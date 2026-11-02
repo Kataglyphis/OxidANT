@@ -285,7 +285,10 @@ rustdoc-warning ones from the x64 lane's `lane-reports-ubuntu-26.04-x64` artifac
 `docs/code-quality-tooling.md` § quality-report. A regressed verdict on develop is fixed or recorded
 in `BACKLOG.md` before new feature work. `bash scripts/linux/quality-report.sh --perf-host` runs the
 latency commands that toml declares inside `:latest` and grades them against `perf/baseline-<cpu>.json`;
-it refuses a dirty tree, a loaded host or a running image chain.
+it refuses a dirty tree, a loaded host or a running image chain. It times two-cats p50/p95 per CPU provider (CPU, XNNPACK; DNNL reports not collected while the image
+lacks `libdnnl.so.3`) through `kataglyphis_cli detect-latency`, and SmolLM2-135M time to first token and decode
+rate through `crates/text`; run it as a
+`systemd-run --user` unit, and `--update-baseline` rewrites the baseline: hub `docs/fleet-health.md` § perf-host.
 
 ```bash
 cargo build --workspace --locked                      # dev/debug
