@@ -6,7 +6,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib-fake-gpu.sh"
 # shellcheck source=/dev/null
 source "${fake_gpu_tests_dir}/../lib/ort-runtime-bundle.sh"
 repo="${fake_gpu_repo}"
-source_hub="${fake_gpu_hub}"
+source_hub="$(fake_gpu_hub_dir)"
 fake_gpu_workspace
 mkdir -p "${work}/packages" "${work}/runner"
 export RUNNER_TEMP="${work}/runner" FAKE_SEEN="${work}/seen"

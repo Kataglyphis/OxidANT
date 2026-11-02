@@ -2,9 +2,12 @@
 # Fixture parts for the GPU check suites and the fake launchers they write; it proves nothing about a real provider.
 fake_gpu_tests_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fake_gpu_repo="$(cd "${fake_gpu_tests_dir}/../../.." && pwd)"
-fake_gpu_hub="${ANTFRASTRUCTURE_DIR:-${fake_gpu_repo}/third_party/ANTfrastructure}"
 # A launcher runs with env -u on the overrides, so only this path tells it where these helpers live.
 export FAKE_GPU_LIB="${fake_gpu_tests_dir}/lib-fake-gpu.sh"
+
+fake_gpu_hub_dir() {
+    printf '%s\n' "${ANTFRASTRUCTURE_DIR:-${fake_gpu_repo}/third_party/ANTfrastructure}"
+}
 
 # Publishes work; the EXIT trap outlives this function, so the suite keeps its cleanup.
 fake_gpu_workspace() {

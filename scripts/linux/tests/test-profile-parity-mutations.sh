@@ -4,7 +4,8 @@ set -euo pipefail
 # shellcheck source=scripts/linux/tests/lib-fake-gpu.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib-fake-gpu.sh"
 repo="$fake_gpu_repo"
-export ANTFRASTRUCTURE_DIR="$fake_gpu_hub"
+ANTFRASTRUCTURE_DIR=$(fake_gpu_hub_dir)
+export ANTFRASTRUCTURE_DIR
 fake_gpu_workspace
 mkdir -p "$work/scripts/linux/tests" "$work/scripts/linux/lib" "$work/.github/workflows"
 cp "${fake_gpu_tests_dir}/test-profile-gpu-packages.sh" "${fake_gpu_tests_dir}/lib-fake-gpu.sh" "$work/scripts/linux/tests/"

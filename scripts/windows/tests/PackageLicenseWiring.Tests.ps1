@@ -32,6 +32,8 @@ Describe 'Project license in Windows package payloads' {
         foreach ($destination in $destinations) { @($Actual | Where-Object { $_ -eq $destination }).Count | Should Be 1 }
     }
 
+    function Assert-SourceHas([string]$Text) { $source.Contains($Text) | Should Be $true }
+
     function Remove-SourceText([string]$Text) { $source.Replace($Text, "Write-Output 'removed'") }
 
     It 'stages a project license for the bundle, MSIX and MSI' {
@@ -59,11 +61,11 @@ Describe 'Project license in Windows package payloads' {
         $bindings.WixPath | Should Be '$msiFragment'
         $bindings.Texts | Should Be '$msiTexts'
         $bindings.VerifierPath | Should Be '$licenseVerifier'
-        $source.Contains('@($payloadLicense, $projectLicense)') | Should Be $true
+        Assert-SourceHas '@($payloadLicense, $projectLicense)'
         $member = Get-TestCommandArguments -Command @(Get-ThirdPartyLicenseCalls $source 'Assert-PackageLicense')[0]
         $member.Path | Should Be '$MsiPath'
         $member.Pattern | Should Be '$member'
-        $source.Contains('Get-WixSourceFileId -WixPath $WixPath -SourcePath $text[0]') | Should Be $true
+        Assert-SourceHas 'Get-WixSourceFileId -WixPath $WixPath -SourcePath $text[0]'
         $source.Contains('payloadFile0=') | Should Be $false
         foreach ($check in $checks) {
             @(Get-PackageLicenseChecks (Remove-SourceText $check.Extent.Text)).Count | Should Be 2
@@ -74,9 +76,9 @@ Describe 'Project license in Windows package payloads' {
         Assert-OnePerDestination @(Get-ThirdPartyLicenseCalls $source 'Add-ThirdPartyLicenses' | ForEach-Object { (Get-TestCommandArguments -Command $_).Directory })
         @(Get-ThirdPartyLicenseCalls $source 'Get-ThirdPartyLicenseRules').Count | Should Be 2
         @(Get-ThirdPartyLicenseCalls $source 'Assert-PayloadOrtLicenses').Count | Should Be 3
-        $source.Contains('$extraFiles += $msixLicenses.Root') | Should Be $true
-        $source.Contains('@(@($msiPayload.Included) + $msiLicenses.Root') | Should Be $true
-        $source.Contains("'--policy', `$cargoLicensePolicy, '--output-dir', `$cargoLicenses") | Should Be $true
+        Assert-SourceHas '$extraFiles += $msixLicenses.Root'
+        Assert-SourceHas '@(@($msiPayload.Included) + $msiLicenses.Root'
+        Assert-SourceHas "'--policy', `$cargoLicensePolicy, '--output-dir', `$cargoLicenses"
         foreach ($name in 'Add-ThirdPartyLicenses', 'Get-ThirdPartyLicenseRules', 'Assert-PayloadOrtLicenses') {
             $mutant = Remove-SourceText (Get-ThirdPartyLicenseCalls $source $name)[0].Extent.Text
             @(Get-ThirdPartyLicenseCalls $mutant $name).Count | Should Be (@(Get-ThirdPartyLicenseCalls $source $name).Count - 1)

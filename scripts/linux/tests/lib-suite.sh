@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Sourced first by a harness suite: publishes tests_dir, repo_root and work, loads the hub harness and removes work on exit.
+# Sourced first by a harness suite: publishes tests_dir and work (antfrastructure.sh publishes KATAGLYPHIS_REPO_ROOT), loads the hub harness and removes work on exit.
 tests_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/linux/lib/antfrastructure.sh
 source "${tests_dir}/../lib/antfrastructure.sh"
-repo_root="${KATAGLYPHIS_REPO_ROOT}"
 antfrastructure_source linux/scripts/lib/test-harness.sh || exit 1
 work="$(mktemp -d)"
 trap 'rm -rf -- "${work}"' EXIT

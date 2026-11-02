@@ -37,7 +37,7 @@ t_case 'the GPU profile looks for the model the fixture lock names'
 tree="${work}/tree"
 mkdir -p "${tree}/scripts/linux/lib" "${tree}/resources/models" "${work}/bundle/resources/models"
 cp "${repo}/scripts/linux/profile-gpu-bundle.sh" "${tree}/scripts/linux/"
-cp "${repo}/scripts/linux/lib/models-lock.sh" "${tree}/scripts/linux/lib/"
+cp "${repo}/scripts/linux/lib/models-lock.sh" "${repo}/scripts/linux/lib/gpu-check-common.sh" "${tree}/scripts/linux/lib/"
 printf '%s  renamed.onnx  https://example.invalid/renamed.onnx\n' "${sha}" > "${tree}/resources/models/models.lock"
 profile() { bash "${tree}/scripts/linux/profile-gpu-bundle.sh" "${work}/bundle" cuda "${work}/profile" 2>&1 || true; }
 t_assert_contains "$(profile)" 'Bundled model missing' 'no renamed.onnx is bundled yet'

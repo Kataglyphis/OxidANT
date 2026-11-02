@@ -3,7 +3,7 @@
 set -euo pipefail
 # shellcheck source=scripts/linux/tests/lib-fake-gpu.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib-fake-gpu.sh"
-hub="$fake_gpu_hub"
+hub=$(fake_gpu_hub_dir)
 fake_gpu_workspace
 mkdir -p "$work/runner"
 export RUNNER_TEMP="$work/runner" TEST_FIXTURE="$work/two cats.jpg" TEST_SEEN="$work/seen"

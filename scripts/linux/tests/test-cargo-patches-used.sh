@@ -7,7 +7,7 @@ t_skip_unless 'Python 3.11+ with tomllib' python3 -c 'import tomllib'
 gate="${tests_dir}/../check-cargo-patches-used.py"
 
 t_case 'every patched source copy in this workspace is in its lockfile'
-t_assert_rc 0 python3 "${gate}" "${repo_root}"
+t_assert_rc 0 python3 "${gate}" "${KATAGLYPHIS_REPO_ROOT}"
 
 mkdir -p "${work}/vendor/demo-1.0.0"
 printf '[package]\nname = "demo"\nversion = "1.0.0"\n' > "${work}/vendor/demo-1.0.0/Cargo.toml"

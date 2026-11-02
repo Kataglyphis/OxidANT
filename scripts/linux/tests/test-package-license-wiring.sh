@@ -4,6 +4,14 @@ set -u
 # shellcheck source=scripts/linux/tests/lib-suite.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
 package_script="${tests_dir}/../package-linux.sh"
+has_all_literals() {
+    local file="$1" text
+    shift
+    for text in "$@"; do
+        grep -Fq -- "${text}" "${file}" || return 1
+    done
+    return 0
+}
 has_appimage_license_wiring() {
     if grep -q 'verify-native-appimage-license.sh' "$1" &&
         grep -Fq 'usr/lib/${package_name}/LICENSE' "$1"; then
@@ -12,11 +20,9 @@ has_appimage_license_wiring() {
     return 1
 }
 has_flatpak_license_wiring() {
-    if grep -Fq 'third_party_rules "files/lib/${package_name}"' "$1" &&
-        grep -Fq 'rules=(--require "${prefix}/LICENSE=${REPO_ROOT}/LICENSE")' "$1"; then
-        return 0
-    fi
-    return 1
+    has_all_literals "$1" \
+        'third_party_rules "files/lib/${package_name}"' \
+        'rules=(--require "${prefix}/LICENSE=${REPO_ROOT}/LICENSE")'
 }
 t_case 'the AppImage path and original license reach the shared verifier'
 t_assert_ok has_appimage_license_wiring "$package_script"

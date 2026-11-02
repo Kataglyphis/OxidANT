@@ -37,7 +37,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 - The Linux GPU check scripts share `scripts/linux/lib/gpu-check-common.sh`; the argument parsers of `clippy-windows.sh`, `check-ort-chain-only.sh`, `package-linux.sh` and `run-producer-pi.sh` share `scripts/linux/lib/cli-args.sh`. It stays local because the hub's `parse_cli_value_options` accepts an empty value, which these scripts refuse.
 - The Linux suites share `tests/lib-suite.sh` and the GPU fixtures `tests/lib-fake-gpu.sh`; a mirror test copies those companions beside the script it copies.
-- The renderer pages take their origin and path note from the crate README. Duplicated blocks fall from 47 to 17 without any allow row.
+- The renderer pages take their origin and path note from the crate README. Duplicated blocks fall from 47 to 16 without any allow row.
 - `frb-codegen.sh` keeps its private parser: OmniAccelerANT's tests copy that file alone, so a sourced helper would break them.
 
 ### Fixed (2026-11-01, webrtcsink on a fresh registry)

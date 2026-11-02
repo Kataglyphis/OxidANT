@@ -157,7 +157,7 @@ that repeats a `@location`, which naga accepts and Tint, the browsers' WGSL comp
   There is no `cargo-fuzz`/libFuzzer target.
 
 - Script suites: `scripts/linux/tests/test-*.sh`. A harness suite sources `lib-suite.sh`
-  (`tests_dir`, `repo_root`, `work`, `suite_run`); the GPU check suites source `lib-fake-gpu.sh`
+  (`tests_dir`, `work`, `suite_run`); the GPU check suites source `lib-fake-gpu.sh`
   for their fake launchers and refusal checks.
 
 Benchmarks (the `[[bench]]` targets only, graded by the hub's `bench-history` action under keys

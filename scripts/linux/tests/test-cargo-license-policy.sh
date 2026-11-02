@@ -5,18 +5,18 @@ set -u
 source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
 t_skip_unless 'cargo' command -v cargo
 stager="$(antfrastructure_path linux/scripts/06-packaging/stage-cargo-licenses.py)"
-policy="${repo_root}/packaging/cargo-license-policy.json"
+policy="${KATAGLYPHIS_REPO_ROOT}/packaging/cargo-license-policy.json"
 python="$(command -v python3 || command -v python)"
 targets=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-pc-windows-msvc)
 # BeschleunigerBallett links the bridge into its packages, riscv64 included.
 bridge_targets=("${targets[@]}" riscv64gc-unknown-linux-gnu)
 
 stage() {
-    "$python" "$stager" --workspace "${repo_root}" --root-package "${root:-kataglyphis_cli}" --target "$1" --policy "$2" --output-dir "$3"
+    "$python" "$stager" --workspace "${KATAGLYPHIS_REPO_ROOT}" --root-package "${root:-kataglyphis_cli}" --target "$1" --policy "$2" --output-dir "$3"
 }
 
 t_case 'the locked dependencies are available for every packaged target'
-fetch=(cargo fetch --locked --manifest-path "${repo_root}/Cargo.toml")
+fetch=(cargo fetch --locked --manifest-path "${KATAGLYPHIS_REPO_ROOT}/Cargo.toml")
 for target in "${bridge_targets[@]}"; do fetch+=(--target "$target"); done
 t_assert_ok "${fetch[@]}"
 
@@ -33,7 +33,7 @@ done
 
 t_case 'every vendored text is named by the policy'
 orphans() {
-    "$python" - "${repo_root}" "$1" <<'PY'
+    "$python" - "${KATAGLYPHIS_REPO_ROOT}" "$1" <<'PY'
 import json
 import pathlib
 import sys
