@@ -12,3 +12,4 @@
 antfrastructure-sh
 renovate-git-mode-sh
 resolve-build-module
+coco-classes crates/core/src/coco-classes.txt
