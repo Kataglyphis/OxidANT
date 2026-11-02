@@ -13,6 +13,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-02, hub ORT package checks)
+- **`verify-gpu-packages.sh` calls the hub's `ort-package-proof.sh`** instead of carrying its ORT library and
+  notice checks, with `--reject-invalid --reject-links` keeping its stricter rule. Exit statuses are unchanged.
+
 ### Added (2026-11-02, perf-host)
 - **`quality-report.sh --perf-host` latencies** in `quality-report.toml`, with
   `scripts/linux/perf-host.sh`, the CLI's `detect-latency` and a tracked `perf/baseline-<cpu>.json`.

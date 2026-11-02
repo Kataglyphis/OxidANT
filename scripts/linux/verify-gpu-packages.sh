@@ -29,6 +29,8 @@ data_lock_fetcher="$(antfrastructure_path linux/scripts/lib/fetch-data-lock.py)"
 # shellcheck source=/dev/null
 source "${hub}/ort-runtime-bundle.sh"
 # shellcheck source=/dev/null
+source "${hub}/ort-package-proof.sh"
+# shellcheck source=/dev/null
 source "$(antfrastructure_path linux/scripts/01-core/platform.sh)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -52,24 +54,14 @@ tar -xzf "${tarball}" -C "${work}/tar"
 dpkg-deb -x "${deb}" "${work}/deb"
 for bundle in "${work}/tar/oxidant" "${work}/deb/opt/oxidant"; do
     ort_assert_no_bundled_host_runtime "$bundle" "$kind"
-    for name in libonnxruntime.so libonnxruntime.so.1 libonnxruntime_providers_shared.so "libonnxruntime_providers_${kind}.so"; do
-        file="${bundle}/lib/${name}"
-        [ -f "$file" ] && [ ! -L "$file" ] || { printf 'Missing or linked ORT library: %s\n' "$file" >&2; exit 1; }
-    done
     libraries=()
-    for file in "${bundle}"/lib/libonnxruntime*.so*; do
-        [ -f "$file" ] && [ ! -L "$file" ] || { printf 'Invalid or linked ORT library: %s\n' "$file" >&2; exit 1; }
-        libraries+=(--library "$file")
-    done
+    ort_package_collect_libraries --reject-invalid --reject-links "$bundle" "${bundle}/lib" libraries \
+        libonnxruntime.so libonnxruntime.so.1 libonnxruntime_providers_shared.so "libonnxruntime_providers_${kind}.so"
     proven="$(mktemp -d "${work}/proof.XXXXXX")"
     python3 "${hub}/stage-ort-wheel-licenses.py" --require-unstripped \
         --strip "${STRIP:-strip}" \
         --wheel-dir "${ORT_CHAIN_WHEEL_DIR:-/opt/onnxruntime-wheels}" --destination "$proven" "${libraries[@]}"
-    for name in LICENSE ThirdPartyNotices.txt; do
-        file="${bundle}/licenses/onnxruntime/${name}"
-        [ -f "$file" ] && [ ! -L "$file" ] || { printf 'Missing or linked ORT notice: %s\n' "$file" >&2; exit 1; }
-        cmp "$file" "${proven}/licenses/onnxruntime/${name}"
-    done
+    ort_package_verify_notices "$bundle" "${bundle}/licenses/onnxruntime" "${proven}/licenses/onnxruntime"
 done
 bash "${hub}/verify-ort-appimage-payload.sh" "${appimage}" "$arch" \
     usr/lib/oxidant/lib usr/lib/oxidant/licenses/onnxruntime "$3"

@@ -6,6 +6,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${here}/../lib/antfrastructure.sh"
 shared_verify="$(antfrastructure_path shared/python/verify_locked_files.py)"
 shared_fetcher="$(antfrastructure_path linux/scripts/lib/fetch-data-lock.py)"
+shared_package_proof="$(antfrastructure_path linux/scripts/06-packaging/ort-package-proof.sh)"
 real_python="$(command -v python3)"
 unset KATAGLYPHIS_REPO_ROOT
 work="$(mktemp -d)"
@@ -39,6 +40,7 @@ set -e
 grep -qx '# verified' "$1"
 case "$5" in nvidia|amd) ;; *) exit 1 ;; esac
 STUB
+cp "$shared_package_proof" "${hub}/ort-package-proof.sh"
 touch "${hub}/stage-ort-wheel-licenses.py"
 cat > "${work}/bin/python3" <<'STUB'
 #!/usr/bin/env bash
