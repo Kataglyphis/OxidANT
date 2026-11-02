@@ -21,11 +21,16 @@ setup() {
   cargo build --locked --release -p kataglyphis_cli
 }
 
-# The CLI prints its figures to stderr as `<n> tokens, <ms> ms to the first, <rate> tokens/s, finish <reason>`.
+# A fresh process's first reply is noisy, so one run is the per-metric median of five; the CLI prints `<n> tokens, <ms> ms to the first, <rate> tokens/s, finish <reason>` to stderr.
 text() {
-  local figures
-  figures="$("${CLI}" chat --model-dir "${LLM_MODEL}" --prompt "${PROMPT}" --max-new-tokens "${TOKENS}" 2>&1 >/dev/null)"
-  printf '%s\n' "${figures}" | sed -nE 's/^[0-9]+ tokens, ([0-9.]+) ms to the first, ([0-9.]+) tokens\/s, .*$/{"ttft_ms": \1, "decode_tok_s": \2}/p' | tail -1
+  local figures ttft rate
+  figures="$(for _ in 1 2 3 4 5; do
+    "${CLI}" chat --model-dir "${LLM_MODEL}" --prompt "${PROMPT}" --max-new-tokens "${TOKENS}" 2>&1 >/dev/null |
+      sed -nE 's/^[0-9]+ tokens, ([0-9.]+) ms to the first, ([0-9.]+) tokens\/s, .*$/\1 \2/p' | tail -1
+  done)"
+  ttft="$(cut -d' ' -f1 <<< "${figures}" | sort -g | sed -n 3p)"
+  rate="$(cut -d' ' -f2 <<< "${figures}" | sort -g | sed -n 3p)"
+  printf '{"ttft_ms": %s, "decode_tok_s": %s}\n' "${ttft}" "${rate}"
 }
 
 case "${1:-}" in
