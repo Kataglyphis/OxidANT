@@ -152,7 +152,7 @@ def valid(workflow: str, build: str) -> bool:
         "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py" in producer,
         "GPU_INVOCATION_SCOPE: ${{ inputs.invocation-scope }}" in producer,
         producer.count(input_name) == 2,
-        clean.count(consumer_name) == 2 and gpu.count(consumer_name) == 1,
+        clean.count(consumer_name) == 3 and gpu.count(consumer_name) == 1,
         "verified-oxidant-linux-${{ matrix.arch }}-nvidia-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}"
         in stage,
         '"arch":"x64","producer":"build-x64","runner":"ubuntu-26.04","runner-arch":"X64"'
