@@ -156,6 +156,7 @@ jobs:
                 echo "Pinned ANTfrastructure lacks exact GPU wheel verification" >&2; exit 1;
               }
               ort=/usr/local/lib/onnxruntime-gpu/lib
+              mkdir -p /tmp/oxidant-ort-preflight
               python3 "$hub/stage-ort-wheel-licenses.py" --require-unstripped \
                 --strip "${STRIP:-strip}" \
                 --wheel-dir /opt/onnxruntime-wheels --destination /tmp/oxidant-ort-preflight \

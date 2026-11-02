@@ -150,6 +150,7 @@ jobs:
               set -euo pipefail
               hub=third_party/ANTfrastructure/linux/scripts/06-packaging
               ort=/usr/local/lib/onnxruntime-gpu/lib
+              mkdir -p /tmp/oxidant-ort-preflight
               python3 "$hub/stage-ort-wheel-licenses.py" --require-unstripped \
                 --strip "${STRIP:-strip}" \
                 --wheel-dir /opt/onnxruntime-wheels --destination /tmp/oxidant-ort-preflight \
