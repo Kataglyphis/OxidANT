@@ -1,8 +1,6 @@
 # The bounds invariant (WebGPU renderer)
 
-*From BeschleunigerBallett's `docs/` (decision D6: this repository owns the
-WebGPU renderer's code **and** its documentation). Paths are relative to this
-repository (crate `crates/webgpu_renderer`) unless they name another one.*
+*Origin and path convention: [the crate README](../README.md).*
 
 Eight separate bugs in this renderer were the same bug. This is the rule, so
 there is no ninth.

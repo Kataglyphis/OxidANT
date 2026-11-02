@@ -40,6 +40,10 @@ Describe 'Third-party licenses in Windows payloads' {
     return $code
   }
 
+  function Get-PayloadRules($Licenses) {
+    Get-ThirdPartyLicenseRules -Licenses $Licenses -ProjectLicense $projectLicense -ModelLicense $model
+  }
+
   function New-Payload([string]$Name) {
     $payload = Join-Path $TestDrive $Name
     New-Item -ItemType Directory -Force -Path (Join-Path $payload 'licenses\cargo\stale'), (Join-Path $payload 'resources\models') | Out-Null
@@ -58,7 +62,7 @@ Describe 'Third-party licenses in Windows payloads' {
     $script:ortAssert = ''
     Assert-PayloadOrtLicenses -Path $payload -Licenses $licenses
     $script:ortAssert | Should Be ''
-    $rules = Get-ThirdPartyLicenseRules -Licenses $licenses -ProjectLicense $projectLicense -ModelLicense $model
+    $rules = Get-PayloadRules $licenses
     Invoke-Verifier $payload $rules | Should Be 0
   }
 
@@ -67,7 +71,7 @@ Describe 'Third-party licenses in Windows payloads' {
       $payload = New-Payload ('missing-' + ($relative -replace '[\\@.]', '-'))
       $licenses = Add-ThirdPartyLicenses -Directory $payload -CargoLicenses $cargo
       Remove-Item -LiteralPath (Join-Path $payload $relative)
-      $rules = Get-ThirdPartyLicenseRules -Licenses $licenses -ProjectLicense $projectLicense -ModelLicense $model
+      $rules = Get-PayloadRules $licenses
       Invoke-Verifier $payload $rules | Should Not Be 0
     }
   }
@@ -84,7 +88,7 @@ Describe 'Third-party licenses in Windows payloads' {
         $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $name)
       }
     } finally { $zip.Dispose() }
-    $rules = Get-ThirdPartyLicenseRules -Licenses $licenses -ProjectLicense $projectLicense -ModelLicense $model
+    $rules = Get-PayloadRules $licenses
     Invoke-Verifier $archive $rules | Should Be 0
   }
 

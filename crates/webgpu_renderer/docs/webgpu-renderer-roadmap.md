@@ -1,8 +1,6 @@
 # WebGPU Renderer — Feature Roadmap
 
-*From BeschleunigerBallett's `docs/` (decision D6: this repository owns the
-WebGPU renderer's code **and** its documentation). Paths are relative to this
-repository (crate `crates/webgpu_renderer`) unless they name another one.*
+*Origin and path convention: [the crate README](../README.md).*
 
 Continuation of [webgpu-gltf-rust-plan.md](webgpu-gltf-rust-plan.md) (milestones
 1–5 shipped 2026-07-18: context + surface lifecycle, glTF meshes, textures +

@@ -1,9 +1,6 @@
 # Plan: WebGPU + glTF Renderer in Rust
 
-*Moved here from BeschleunigerBallett's `docs/` under decision D6, which gave
-this repository the WebGPU renderer's code **and** its documentation. Paths
-below are relative to this repository (the crate is `crates/webgpu_renderer`)
-unless they name another one.*
+*Origin and path convention: [the crate README](../README.md).*
 
 *Historical planning document, kept for the record — current per-feature
 status lives in [webgpu-renderer-roadmap.md](webgpu-renderer-roadmap.md).*

@@ -9,6 +9,13 @@ Describe 'Windows GPU candidate architecture' {
     [IO.File]::WriteAllBytes($Path, $bytes)
   }
 
+  # The script must stop with this message before it creates a candidate.
+  function Assert-CandidateStops([string]$Pattern, [string]$Provider = 'directml') {
+    $message = try { & $script:candidateScript -SourceBundle $script:source -Destination $script:destination -Provider $Provider; '' } catch { $_.Exception.Message }
+    $message | Should Match $Pattern
+    Test-Path -LiteralPath $script:destination | Should Be $false
+  }
+
   BeforeEach {
     $script:fixture = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
     $scripts = Join-Path $script:fixture 'scripts\windows'
@@ -46,36 +53,26 @@ Export-ModuleMember -Function Test-PayloadLoadsOrt
   }
 
   It 'accepts x64 files and reaches the provenance gate' {
-    $message = try { & $script:candidateScript -SourceBundle $script:source -Destination $script:destination; '' } catch { $_.Exception.Message }
-    $message | Should Match 'PE_ARCH_ACCEPTED'
-    Test-Path -LiteralPath $script:destination | Should Be $false
+    Assert-CandidateStops 'PE_ARCH_ACCEPTED'
   }
 
   It 'rejects an ARM64 executable before making a candidate' {
     Write-FixturePe (Join-Path $script:source 'kataglyphis_cli.exe') 0xaa64
-    $message = try { & $script:candidateScript -SourceBundle $script:source -Destination $script:destination; '' } catch { $_.Exception.Message }
-    $message | Should Match 'GPU candidates require Windows x64'
-    Test-Path -LiteralPath $script:destination | Should Be $false
+    Assert-CandidateStops 'GPU candidates require Windows x64'
   }
 
   It 'rejects an ARM64 provider even when the executable is x64' {
     Write-FixturePe (Join-Path $script:source 'DirectML.dll') 0xaa64
-    $message = try { & $script:candidateScript -SourceBundle $script:source -Destination $script:destination; '' } catch { $_.Exception.Message }
-    $message | Should Match 'GPU candidates require Windows x64'
-    Test-Path -LiteralPath $script:destination | Should Be $false
+    Assert-CandidateStops 'GPU candidates require Windows x64'
   }
 
   It 'rejects a malformed executable' {
     [IO.File]::WriteAllText((Join-Path $script:source 'kataglyphis_cli.exe'), 'not a PE')
-    $message = try { & $script:candidateScript -SourceBundle $script:source -Destination $script:destination; '' } catch { $_.Exception.Message }
-    $message | Should Match 'too small to be a PE file'
-    Test-Path -LiteralPath $script:destination | Should Be $false
+    Assert-CandidateStops 'too small to be a PE file'
   }
 
   It 'accepts a CUDA source without a DirectML DLL' {
     Remove-Item -LiteralPath (Join-Path $script:source 'DirectML.dll')
-    $message = try { & $script:candidateScript -SourceBundle $script:source -Destination $script:destination -Provider cuda; '' } catch { $_.Exception.Message }
-    $message | Should Match 'PE_ARCH_ACCEPTED'
-    Test-Path -LiteralPath $script:destination | Should Be $false
+    Assert-CandidateStops 'PE_ARCH_ACCEPTED' -Provider cuda
   }
 }

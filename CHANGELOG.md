@@ -33,6 +33,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **`kataglyphis_media::frame_sink` makes every frame sink**, in the capture session, ObservANT
   and the GUI. The GUI's sink no longer sets `emit-signals`, which only the signal API reads.
 
+### Changed (2026-11-02, shared script helpers)
+
+- The Linux GPU check scripts share `scripts/linux/lib/gpu-check-common.sh`; the argument parsers of `clippy-windows.sh`, `check-ort-chain-only.sh`, `package-linux.sh` and `run-producer-pi.sh` share `scripts/linux/lib/cli-args.sh`. It stays local because the hub's `parse_cli_value_options` accepts an empty value, which these scripts refuse.
+- The Linux suites share `tests/lib-suite.sh` and the GPU fixtures `tests/lib-fake-gpu.sh`; a mirror test copies those companions beside the script it copies.
+- The renderer pages take their origin and path note from the crate README. Duplicated blocks fall from 47 to 17 without any allow row.
+- `frb-codegen.sh` keeps its private parser: OmniAccelerANT's tests copy that file alone, so a sourced helper would break them.
+
 ### Fixed (2026-11-01, webrtcsink on a fresh registry)
 - **A supplied plugin scanner keeps the registry scan out of process.** Since c7d3593
   `ensure_gst_initialized` added `GST_REGISTRY_FORK=no` even when the caller set

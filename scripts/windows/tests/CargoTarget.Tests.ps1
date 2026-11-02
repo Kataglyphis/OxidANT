@@ -12,24 +12,25 @@ Describe 'WindowsCargoTarget.Common' {
     $target = 'C:\ct'
     $ws = 'C:\ws'
 
+    # Returns the layout so a case can check what differs between the host and cross builds.
+    function Assert-CargoLayout([string]$Arch, [bool]$IsCross, [string]$ArchTargetDir, [string]$PackageArch) {
+        $l = Get-CargoTargetLayout -Arch $Arch -TargetRoot $target -WorkspacePath $ws
+        $l.IsCross | Should Be $IsCross
+        $l.ArchTargetDir | Should Be $ArchTargetDir
+        $l.ReleaseDir | Should Be "$ArchTargetDir\release"
+        $l.PackageArch | Should Be $PackageArch
+        $l.DistDir | Should Be "C:\ws\dist\windows-$PackageArch"
+        $l
+    }
+
     It 'keeps the host build in target\release, and names its packages x64 under dist\windows-x64' {
-        $l = Get-CargoTargetLayout -Arch 'amd64' -TargetRoot $target -WorkspacePath $ws
-        $l.IsCross | Should Be $false
+        $l = Assert-CargoLayout -Arch 'amd64' -IsCross $false -ArchTargetDir 'C:\ct' -PackageArch 'x64'
         @($l.CargoArgs).Count | Should Be 0
-        $l.ArchTargetDir | Should Be 'C:\ct'
-        $l.ReleaseDir | Should Be 'C:\ct\release'
-        $l.PackageArch | Should Be 'x64'
-        $l.DistDir | Should Be 'C:\ws\dist\windows-x64'
     }
 
     It 'builds arm64 by triple and keeps its packages apart' {
-        $l = Get-CargoTargetLayout -Arch 'arm64' -TargetRoot $target -WorkspacePath $ws
-        $l.IsCross | Should Be $true
+        $l = Assert-CargoLayout -Arch 'arm64' -IsCross $true -ArchTargetDir 'C:\ct\aarch64-pc-windows-msvc' -PackageArch 'arm64'
         ($l.CargoArgs -join ' ') | Should Be '--target aarch64-pc-windows-msvc'
-        $l.ArchTargetDir | Should Be 'C:\ct\aarch64-pc-windows-msvc'
-        $l.ReleaseDir | Should Be 'C:\ct\aarch64-pc-windows-msvc\release'
-        $l.PackageArch | Should Be 'arm64'
-        $l.DistDir | Should Be 'C:\ws\dist\windows-arm64'
     }
 
     It 'takes the hub''s spellings and its environment default, and refuses an unknown arch' {

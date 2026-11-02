@@ -27,10 +27,15 @@ Describe 'Project license in Windows package payloads' {
     $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Build-Windows.ps1') -Raw
     $destinations = @('$bundleDir', '$payload.Directory', '$msiPayload.Directory')
 
+    function Assert-OnePerDestination([object[]]$Actual) {
+        $Actual.Count | Should Be 3
+        foreach ($destination in $destinations) { @($Actual | Where-Object { $_ -eq $destination }).Count | Should Be 1 }
+    }
+
+    function Remove-SourceText([string]$Text) { $source.Replace($Text, "Write-Output 'removed'") }
+
     It 'stages a project license for the bundle, MSIX and MSI' {
-        $actual = @(Get-PackageLicenseDestinations $source)
-        $actual.Count | Should Be 3
-        foreach ($destination in $destinations) { @($actual | Where-Object { $_ -eq $destination }).Count | Should Be 1 }
+        Assert-OnePerDestination @(Get-PackageLicenseDestinations $source)
     }
 
     It 'detects removing any package license call' {
@@ -61,23 +66,19 @@ Describe 'Project license in Windows package payloads' {
         $source.Contains('Get-WixSourceFileId -WixPath $WixPath -SourcePath $text[0]') | Should Be $true
         $source.Contains('payloadFile0=') | Should Be $false
         foreach ($check in $checks) {
-            $mutant = $source.Replace($check.Extent.Text, "Write-Output 'removed'")
-            @(Get-PackageLicenseChecks $mutant).Count | Should Be 2
+            @(Get-PackageLicenseChecks (Remove-SourceText $check.Extent.Text)).Count | Should Be 2
         }
     }
 
     It 'adds third-party texts to every payload and reads them back from each format' {
-        $added = @(Get-ThirdPartyLicenseCalls $source 'Add-ThirdPartyLicenses' | ForEach-Object { (Get-TestCommandArguments -Command $_).Directory })
-        $added.Count | Should Be 3
-        foreach ($destination in $destinations) { @($added | Where-Object { $_ -eq $destination }).Count | Should Be 1 }
+        Assert-OnePerDestination @(Get-ThirdPartyLicenseCalls $source 'Add-ThirdPartyLicenses' | ForEach-Object { (Get-TestCommandArguments -Command $_).Directory })
         @(Get-ThirdPartyLicenseCalls $source 'Get-ThirdPartyLicenseRules').Count | Should Be 2
         @(Get-ThirdPartyLicenseCalls $source 'Assert-PayloadOrtLicenses').Count | Should Be 3
         $source.Contains('$extraFiles += $msixLicenses.Root') | Should Be $true
         $source.Contains('@(@($msiPayload.Included) + $msiLicenses.Root') | Should Be $true
         $source.Contains("'--policy', `$cargoLicensePolicy, '--output-dir', `$cargoLicenses") | Should Be $true
         foreach ($name in 'Add-ThirdPartyLicenses', 'Get-ThirdPartyLicenseRules', 'Assert-PayloadOrtLicenses') {
-            $first = (Get-ThirdPartyLicenseCalls $source $name)[0].Extent.Text
-            $mutant = $source.Replace($first, "Write-Output 'removed'")
+            $mutant = Remove-SourceText (Get-ThirdPartyLicenseCalls $source $name)[0].Extent.Text
             @(Get-ThirdPartyLicenseCalls $mutant $name).Count | Should Be (@(Get-ThirdPartyLicenseCalls $source $name).Count - 1)
         }
     }
