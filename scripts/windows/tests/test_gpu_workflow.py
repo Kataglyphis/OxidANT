@@ -627,7 +627,7 @@ class GpuWorkflow(unittest.TestCase):
             r"(?m)^\s+(?:name|artifact): (oxidant-linux-\$\{\{ matrix\.arch \}\}-nvidia-host-runtime-candidate-[^\n]+)$",
             content,
         )
-        self.assertEqual(len(names), 3)
+        self.assertEqual(len(names), 4)
         self.assertEqual(len(set(names)), 1)
         self.assertIn("github.run_attempt", names[0])
         self.assertEqual(

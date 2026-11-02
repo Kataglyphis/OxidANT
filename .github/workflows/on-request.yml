@@ -29,7 +29,7 @@ jobs:
         id: pick
         uses: Kataglyphis/ANTfrastructure/.github/actions/requested-lanes@develop
         with:
-          lanes: linux-arm64 linux-riscv64 windows-x64 windows-arm64-cross
+          lanes: linux-arm64 linux-riscv64 windows-x64 windows-arm64-cross gpu-lin gpu-win
           request: ${{ inputs.lanes }}
 
   # Each calling job grants what its lane's jobs ask for; less makes GitHub reject the whole run.
@@ -66,4 +66,35 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/windows-arm64-cross.yml
+    secrets: inherit
+
+  # [ci gpu], [ci gpu-lin] or [ci gpu-win]: the names keep [ci windows] and [ci linux] from starting them.
+  gpu-lin-nvidia:
+    needs: request
+    if: contains(needs.request.outputs.lanes, ' gpu-lin ')
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+    uses: ./.github/workflows/linux-nvidia-gpu.yml
+    secrets: inherit
+
+  gpu-lin-amd:
+    needs: request
+    if: contains(needs.request.outputs.lanes, ' gpu-lin ')
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+    uses: ./.github/workflows/linux-x64-amd-gpu.yml
+    secrets: inherit
+
+  gpu-win:
+    needs: request
+    if: contains(needs.request.outputs.lanes, ' gpu-win ')
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+    uses: ./.github/workflows/windows-gpu-candidates.yml
     secrets: inherit

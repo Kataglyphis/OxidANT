@@ -163,6 +163,24 @@ jobs:
           overwrite: false
           path: ${{ steps.prep.outputs.workspace }}/dist/gpu-${{ matrix.vendor }}/*.zip
           if-no-files-found: error
+      # Only reached when every check above passed; release.yml collects this name.
+      - name: Name the checked package for a release
+        shell: pwsh
+        env:
+          SOURCE: ${{ steps.prep.outputs.workspace }}/dist/gpu-${{ matrix.vendor }}
+          TARGET: ${{ runner.temp }}/gpu-release-packages
+        run: |
+          $zips = @(Get-ChildItem -LiteralPath $env:SOURCE -Filter '*.zip' -File)
+          if ($zips.Count -ne 1) { throw "Expected one GPU package ZIP, found $($zips.Count)" }
+          $null = New-Item -ItemType Directory -Force -Path $env:TARGET
+          Copy-Item -LiteralPath $zips[0].FullName -Destination (Join-Path $env:TARGET 'windows-x64-gpu-${{ matrix.vendor }}.zip')
+      - name: Upload the checked GPU package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oxidant-gpu-${{ matrix.vendor }}-windows-x64${{ needs.preflight.outputs.suffix }}
+          overwrite: true
+          if-no-files-found: error
+          path: ${{ runner.temp }}/gpu-release-packages/*
 
   gpu-profile:
     if: ${{ !cancelled() && inputs.verify-gpu && needs.preflight.result == 'success' }}

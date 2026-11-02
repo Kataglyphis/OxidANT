@@ -73,9 +73,36 @@ jobs:
     uses: ./.github/workflows/windows-arm64-cross.yml
     secrets: inherit
 
+  gpu-lin-nvidia:
+    needs: version
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+    uses: ./.github/workflows/linux-nvidia-gpu.yml
+    secrets: inherit
+
+  gpu-lin-amd:
+    needs: version
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+    uses: ./.github/workflows/linux-x64-amd-gpu.yml
+    secrets: inherit
+
+  gpu-win:
+    needs: version
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+    uses: ./.github/workflows/windows-gpu-candidates.yml
+    secrets: inherit
+
   # needs: every lane, so one red or cancelled lane means no tag and no release.
   release:
-    needs: [linux-x64, linux-arm64, linux-riscv64, windows-x64, windows-arm64-cross]
+    needs: [linux-x64, linux-arm64, linux-riscv64, windows-x64, windows-arm64-cross, gpu-lin-nvidia, gpu-lin-amd, gpu-win]
     permissions:
       contents: write
     uses: Kataglyphis/ANTfrastructure/.github/workflows/release-publish.yml@develop
@@ -86,6 +113,7 @@ jobs:
       dry-run: ${{ inputs.dry-run == true }}
       # Every package by extension, each flatpak named for its arch, the portable Windows folder zipped.
       collect: |
+        --rename oxidant-gpu-*-windows-x64/*.zip=oxidant-{version}-{stem}.zip
         --include *.msix
         --include *.msi
         --include *.AppImage
