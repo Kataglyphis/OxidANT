@@ -29,6 +29,7 @@ and the backlog is empty"; it was neither.
       Next: capture the GPU backend/driver and all-thread stack or core, distinguish test
       resource lifetime from a driver fault, then add a regression for the proven cause.
       Do not serialize all tests or call it fixed solely because CI is green.
+      Attempts: 2026-11-03, 100 runs of the `occlusion` binary without a crash (5 at a time, llvmpipe, 15 min bound).
 
 - [ ] **The NVIDIA packages have not run on a GPU they support** (S, ★★★). The Linux and Windows packages are built and
       passed on the CPU, and hosted runners have no GPU. Done on an RTX 30xx or newer when
