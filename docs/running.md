@@ -64,6 +64,10 @@ cargo run -p kataglyphis_cli -- gui --backend dx12
 KATAGLYPHIS_ORT_DEVICE=cuda cargo run -p kataglyphis_cli -- gui --backend vulkan
 ```
 
+CUDA first runs one kernel on the card. On a card the images' ONNX Runtime has no kernel for
+(an RTX 20xx today), `cuda` fails naming the card and its compute capability, and `auto` moves on,
+to the CPU in the end. An NVIDIA package defaults to `cuda`, so such a card sets `cpu` or `auto`.
+
 To check the selected ONNX Runtime and device without a camera, run `oxidant onnx-check`.
 It loads the configured model and runs one synthetic frame. Set
 `KATAGLYPHIS_ORT_DEVICE=cpu` to check CPU inference in a GPU package.

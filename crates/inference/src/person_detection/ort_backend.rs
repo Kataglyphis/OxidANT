@@ -64,6 +64,9 @@ fn register_provider(
         provider.name(),
         provider.is_available().map_err(|err| anyhow!("{err}")),
     )?;
+    if provider.name() == "CUDAExecutionProvider" {
+        super::cuda_probe::require_kernel(provider.name())?;
+    }
     #[cfg(target_os = "linux")]
     if provider.name() == "MIGraphXExecutionProvider" {
         super::hip_probe::require_answer(provider.name())?;
@@ -372,6 +375,32 @@ mod device_tests {
         assert!(Device::parse("unknown").is_err());
         assert_eq!(Device::parse("migraphx").is_ok(), cfg!(target_os = "linux"));
         assert_eq!(Device::parse("directml").is_ok(), cfg!(windows));
+    }
+
+    #[test]
+    fn a_card_without_a_kernel_stops_a_named_cuda_and_leaves_auto_the_cpu() {
+        let attempt_without_a_gpu =
+            |attempts: &mut Vec<Option<&'static str>>,
+             p: Option<&dyn ort::execution_providers::ExecutionProvider>|
+             -> anyhow::Result<()> {
+                attempts.push(p.map(|p| p.name()));
+                match p {
+                    Some(p) => Err(ProviderUnavailable {
+                        provider: p.name(),
+                        reason: "has no kernel".into(),
+                    }
+                    .into()),
+                    None => Ok(()),
+                }
+            };
+        let mut attempts = Vec::new();
+        let named = try_device(Device::Cuda, |p| attempt_without_a_gpu(&mut attempts, p));
+        assert!(named.unwrap_err().to_string().contains("has no kernel"));
+        assert_eq!(attempts, [Some("CUDAExecutionProvider")]);
+        let mut attempts = Vec::new();
+        try_device(Device::Auto, |p| attempt_without_a_gpu(&mut attempts, p)).unwrap();
+        assert_eq!(attempts.first(), Some(&Some("CUDAExecutionProvider")));
+        assert_eq!(attempts.last(), Some(&None));
     }
 
     #[test]

@@ -5,6 +5,8 @@ mod preprocess;
 
 mod tract_backend;
 
+#[cfg(any(target_os = "linux", windows))]
+mod cuda_probe;
 #[cfg(target_os = "linux")]
 mod hip_probe;
 #[cfg(any(target_os = "linux", windows))]

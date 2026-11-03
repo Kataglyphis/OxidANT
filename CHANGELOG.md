@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-03, a card without a CUDA kernel)
+- **A card the NVIDIA packages have no kernel for gets a message, or the CPU.** `person_detection/cuda_probe.rs` runs a
+  one-`Relu` model on CUDA before the real session. On `cudaErrorNoKernelImageForDevice`, `cuda` fails with
+  `ProviderUnavailable` naming the card and its compute capability, and `auto` moves on. It used to create the session,
+  fail on the first node and, on `auto`, stop with no CPU run. Every other probe failure stays for the real session to
+  report. Seen on an RTX 2080 (compute capability 7.5) with the images' `86;87;89;120`.
+
 ### Fixed (2026-11-03, MIGraphX hang)
 - **A MIGraphX load no longer waits without end for an AMD GPU that does not answer.** Under WSL on an RX 9070 XT the first
   copy to the GPU never returns (hub CON202). The load now tries one copy first and fails with `ProviderUnavailable`
