@@ -13,6 +13,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-03, MIGraphX hang)
+- **A MIGraphX load no longer waits without end for an AMD GPU that does not answer.** Under WSL on an RX 9070 XT the first
+  copy to the GPU never returns (hub CON202). The load now tries one copy first and fails with `ProviderUnavailable`
+  after 30 seconds; `auto` goes on to the CPU. There is still no CPU fallback for `migraphx`.
+
 ### Changed (2026-11-03, unsafe blocks)
 - **`crates/text/src/genai.rs` has three `unsafe` blocks fewer.** The optional guidance symbol shares `bind!`'s lookup, and each
   read-then-release of a GenAI string is one block, so the repo is back at its 34 blocks.

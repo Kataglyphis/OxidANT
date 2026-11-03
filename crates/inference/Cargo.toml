@@ -19,6 +19,11 @@ tract-onnx = "=0.23.8"
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 ort = { workspace = true, features = ["std", "ndarray", "cuda", "migraphx", "xnnpack", "onednn"] }
 
+# The MIGraphX load first checks that the AMD GPU answers, through the host's HIP runtime.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+libloading = { workspace = true }
+
 # DirectML is a Windows-only execution provider; the loaded chain dylib must carry it.
 [target.'cfg(windows)'.dependencies]
 ort = { workspace = true, features = ["directml"] }

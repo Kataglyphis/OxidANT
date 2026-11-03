@@ -115,7 +115,8 @@ GPU inference notes:
 - `cuda` requires NVIDIA drivers, compatible CUDA/cuDNN runtime libraries and a
   chain-built ONNX Runtime with the CUDA provider. `migraphx` requires an AMD
   GPU, ROCm/MIGraphX runtime and a chain-built ORT with the MIGraphX provider on
-  Linux. `directml` uses the DirectML provider on Windows and supports compatible
+  Linux. Its load first copies four bytes to the GPU and fails with `ProviderUnavailable`
+  if that takes over 30 seconds, as it does under WSL on an RX 9070 XT. `directml` uses the DirectML provider on Windows and supports compatible
   GPUs from multiple vendors.
 - These options select an execution provider; they do not install its libraries.
   The current CPU packages do not include the GPU runtime closure.

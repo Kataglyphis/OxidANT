@@ -64,6 +64,10 @@ fn register_provider(
         provider.name(),
         provider.is_available().map_err(|err| anyhow!("{err}")),
     )?;
+    #[cfg(target_os = "linux")]
+    if provider.name() == "MIGraphXExecutionProvider" {
+        super::hip_probe::require_answer(provider.name())?;
+    }
     // A listed provider whose library cannot load (the image's DNNL without libdnnl.so.3) is unavailable too.
     provider
         .register(builder)

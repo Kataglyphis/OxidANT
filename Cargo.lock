@@ -5188,6 +5188,7 @@ dependencies = [
  "criterion",
  "image 0.25.10",
  "kataglyphis_core",
+ "libc",
  "libloading 0.9.0",
  "log",
  "ort",

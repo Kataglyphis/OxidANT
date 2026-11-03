@@ -45,6 +45,12 @@ and the backlog is empty"; it was neither.
       passed on the CPU, and hosted runners have no GPU. Done on an RTX 30xx or newer when
       `compare_detector_parity.py` passes against the CPU and the profile shows the provider; the hub's
       `docs/gpu-artifact-receipts.md` has the commands. DirectML on an NVIDIA card is unproven too.
+      The owner runs this on a machine with an NVIDIA GPU. No release until this and the Linux AMD check are done.
+
+- [ ] **The Linux AMD packages have not run on a GPU** (S, ★★★). They are built and passed on the CPU, and hosted runners
+      have no GPU. Under WSL on the RX 9070 XT even a plain HIP copy does not return (hub CON202), so this takes native
+      Linux: the owner runs it under Ubuntu on that machine. Done when `compare_detector_parity.py` passes against the
+      CPU and the profile shows MIGraphX; the hub's `docs/gpu-artifact-receipts.md` has the commands.
 
 - [b] **RVV `MatMulNBits` segfaults on a 4-bit model in the chain's ORT 1.31.0** (M, ★★). Crash:
       `kataglyphis_text --test contract`, `signal: 11, SIGSEGV`, run 41463196239 and locally on
