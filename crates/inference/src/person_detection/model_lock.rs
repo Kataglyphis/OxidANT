@@ -54,7 +54,7 @@ pub(super) const fn onnx_row(lock: &str) -> &str {
 mod tests {
     use super::onnx_row;
 
-    const SHA: &str = "225f612fc879d604b79a569648f274672090070a07dcbdef469796df956f8392";
+    const SHA: &str = "0bf16e851fd6471653b5f8243bac2d65db05e353cdf2a7b9181b2a58e94d09bd";
 
     #[test]
     fn the_onnx_row_names_the_model_whatever_it_is_called() {

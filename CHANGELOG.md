@@ -13,6 +13,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-03, detector model)
+- **The detector model is `deim_dfine_n_coco-v2`.** v1 finds nothing on DirectML, where MatMul of a matrix by a
+  1-D vector computes wrongly (hub CON220).
+
 ### Fixed (2026-11-02, riscv64 text contract)
 - **The `linux-riscv64` lane runs the text contract again.** `riscv64-test` fetches `llm.lock` and runs
   `crates/text/tests/contract.rs` apart, on scalar MLAS with GenAI and the model required, because ORT

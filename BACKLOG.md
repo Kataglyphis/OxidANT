@@ -35,13 +35,6 @@ and the backlog is empty"; it was neither.
       resource lifetime from a driver fault, then add a regression for the proven cause.
       Do not serialize all tests or call it fixed solely because CI is green.
 
-- [ ] **Move the detector to `deim_dfine_n_coco-v2`** (S, ★★★). On DirectML, v1 finds nothing: an RX 9070 XT ran every profiled operator on `DmlExecutionProvider` and returned no detection, where the CPU
-      finds two cats (hub CON220). v2, sha256 `0bf16e85…`, gives the CPU's detections there.
-      Until the lock moves, the Windows AMD package has no working detector, so no `main` release before it.
-      Change `resources/models/models.lock` and
-      `crates/inference/src/person_detection/model_lock.rs` with AccelerANTgine and OrchestrANT in one window, then
-      check ORT and tract parity.
-
 - [ ] **A clear failure or a CPU fallback when CUDA has no kernel for the card** (M, ★★). Seen on an RTX 2080 with the Linux x64 NVIDIA package
       (run 41415056257).
       `CUDAExecutionProvider` creates its session, then the first node stops with
