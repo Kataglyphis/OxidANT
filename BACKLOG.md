@@ -17,11 +17,6 @@ and the backlog is empty"; it was neither.
       milestone 4 (`docs/language-ai.md`).
 - [ ] **LAI-O5: embeddings in OxidANT** (M, ★★). GenAI's embeddings through `crates/text`; hub
       language-AI milestone 2.
-- [ ] **A bundle with `GST_REGISTRY_FORK=no` and no scanner can give webrtcsink an empty codec list**
-      (M, ★★). `docs/observant.md` records the race on a fresh registry, and
-      `crates/media/src/runtime.rs` falls back to the in-process scan when a bundle has no
-      `gst-plugin-scanner`. Add a fresh-registry test, or make every bundle ship the scanner.
-
 - [ ] Drop the vendored `third_party/egui-winit-0.36.2` and its
       `[patch.crates-io]` entry, then move the egui family to 0.37.
       Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.

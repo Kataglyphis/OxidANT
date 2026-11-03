@@ -74,6 +74,9 @@ passes and another fails. A package that carries `gst-plugin-scanner` names it i
 `GST_PLUGIN_SCANNER` (the Linux launcher, or `install::adopt` on Windows), and
 `kataglyphis_media::ensure_gst_initialized` then leaves `GST_REGISTRY_FORK` unset, so the
 scanner builds the registry out of process.
+OxidANT's own packages carry neither webrtcsink nor a scanner, and a unit test in
+`crates/media/src/runtime.rs` keeps it so; OmniAccelerANT's `test-observant-package.sh` forces the
+worst order on the package that carries both.
 
 ## The cat cam service
 

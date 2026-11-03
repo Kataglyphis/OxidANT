@@ -20,6 +20,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   fail on the first node and, on `auto`, stop with no CPU run. Every other probe failure stays for the real session to
   report. Seen on an RTX 2080 (compute capability 7.5) with the images' `86;87;89;120`.
 
+### Added (2026-11-03, fresh registry)
+- **A unit test keeps webrtcsink out of OxidANT's scanner-less packages**, whose in-process scan of a fresh registry could
+  leave it without codecs. OmniAccelerANT's ObservANT package carries both and proves the worst order.
+
 ### Fixed (2026-11-03, MIGraphX hang)
 - **A MIGraphX load no longer waits without end for an AMD GPU that does not answer.** Under WSL on an RX 9070 XT the first
   copy to the GPU never returns (hub CON202). The load now tries one copy first and fails with `ProviderUnavailable`

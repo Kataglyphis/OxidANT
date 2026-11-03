@@ -156,6 +156,24 @@ mod tests {
         );
     }
 
+    // bundled_env scans in process, which on a fresh registry can leave webrtcsink without codecs.
+    #[test]
+    fn a_package_without_a_scanner_carries_no_webrtcsink() {
+        for (file, list) in [
+            (
+                "package-linux.sh",
+                include_str!("../../../scripts/linux/package-linux.sh"),
+            ),
+            (
+                "Build-Windows.config.psd1",
+                include_str!("../../../scripts/windows/Build-Windows.config.psd1"),
+            ),
+        ] {
+            assert!(list.contains("videotestsrc"), "{file}: no plugin list");
+            assert!(!list.contains("rswebrtc"), "{file}");
+        }
+    }
+
     #[test]
     fn a_caller_scanner_keeps_the_scan_out_of_process() {
         let dir = Path::new("/opt/app/lib/gstreamer-1.0");
