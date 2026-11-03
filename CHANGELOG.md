@@ -13,6 +13,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-03, unsafe blocks)
+- **`crates/text/src/genai.rs` has three `unsafe` blocks fewer.** The optional guidance symbol shares `bind!`'s lookup, and each
+  read-then-release of a GenAI string is one block, so the repo is back at its 34 blocks.
+
 ### Changed (2026-11-03, detector model)
 - **The detector model is `deim_dfine_n_coco-v2`.** v1 finds nothing on DirectML, where MatMul of a matrix by a
   1-D vector computes wrongly (hub CON220).

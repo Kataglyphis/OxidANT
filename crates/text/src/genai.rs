@@ -80,10 +80,16 @@ struct Api {
     _library: libloading::Library,
 }
 
+macro_rules! lookup {
+    ($library:expr, $name:literal) => {
+        // SAFETY: each field's type is the C signature ort_genai_c.h declares for this symbol.
+        unsafe { $library.get(concat!($name, "\0").as_bytes()) }
+    };
+}
+
 macro_rules! bind {
     ($library:expr, $name:literal) => {{
-        // SAFETY: each field's type is the C signature ort_genai_c.h declares for this symbol.
-        let symbol = unsafe { $library.get(concat!($name, "\0").as_bytes()) }
+        let symbol = lookup!($library, $name)
             .map_err(|e| format!("{} is missing from the loaded library: {e}", $name))?;
         *symbol
     }};
@@ -116,8 +122,8 @@ impl Api {
             destroy_generator_params: bind!(library, "OgaDestroyGeneratorParams"),
             set_search_number: bind!(library, "OgaGeneratorParamsSetSearchNumber"),
             set_search_bool: bind!(library, "OgaGeneratorParamsSetSearchBool"),
-            // SAFETY: the type is the C signature ort_genai_c.h declares; an older GenAI lacks the symbol.
-            set_guidance: unsafe { library.get(b"OgaGeneratorParamsSetGuidance\0") }
+            // An older GenAI lacks this symbol.
+            set_guidance: lookup!(library, "OgaGeneratorParamsSetGuidance")
                 .ok()
                 .map(|symbol| *symbol),
             create_generator: bind!(library, "OgaCreateGenerator"),
@@ -135,12 +141,14 @@ impl Api {
         if status.is_null() {
             return Ok(());
         }
-        // SAFETY: a non-null status owns a NUL-terminated message until it is destroyed below.
-        let message = unsafe { CStr::from_ptr((self.result_get_error)(status)) }
-            .to_string_lossy()
-            .into_owned();
-        // SAFETY: the status came from this library and is released exactly once.
-        unsafe { (self.destroy_result)(status) };
+        // SAFETY: a non-null status owns a NUL-terminated message until it is released here, exactly once.
+        let message = unsafe {
+            let message = CStr::from_ptr((self.result_get_error)(status))
+                .to_string_lossy()
+                .into_owned();
+            (self.destroy_result)(status);
+            message
+        };
         Err(format!("{what}: {message}"))
     }
 }
@@ -435,10 +443,12 @@ impl GenaiGenerator {
             "chat template",
         )
         .map_err(TextError::ChatTemplateFailed)?;
-        // SAFETY: on success GenAI returns a NUL-terminated string this code must destroy.
-        let text = unsafe { CStr::from_ptr(templated) }.to_owned();
-        // SAFETY: the string came from apply_chat_template and is destroyed once.
-        unsafe { (api.destroy_string)(templated) };
+        // SAFETY: on success GenAI returns a NUL-terminated string this code destroys here, exactly once.
+        let text = unsafe {
+            let text = CStr::from_ptr(templated).to_owned();
+            (api.destroy_string)(templated);
+            text
+        };
         let mut raw = std::ptr::null_mut();
         // SAFETY: plain out pointer.
         api.check(unsafe { (api.create_sequences)(&mut raw) }, "sequences")
