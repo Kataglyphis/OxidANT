@@ -24,6 +24,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **A unit test keeps webrtcsink out of OxidANT's scanner-less packages**, whose in-process scan of a fresh registry could
   leave it without codecs. OmniAccelerANT's ObservANT package carries both and proves the worst order.
 
+### Changed (2026-11-03, allow debt)
+
+- **`test-detector-parity.py`'s preflight test delegates to two helpers** and leaves `function-size.allow`.
+
 ### Fixed (2026-11-03, MIGraphX hang)
 - **A MIGraphX load no longer waits without end for an AMD GPU that does not answer.** Under WSL on an RX 9070 XT the first
   copy to the GPU never returns (hub CON202). The load now tries one copy first and fails with `ProviderUnavailable`

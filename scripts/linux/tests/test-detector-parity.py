@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check the pinned shared parity comparator is required by the GPU workflows."""
 
+import functools
 import os
 import re
 import shlex
@@ -12,7 +13,43 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def _run_preflight(root, sentinel, strict, *, actual_guard, actual_suite):
+    """Run the preflight's guard and suite in Bash; the sentinel marks what would come next."""
+    sentinel.unlink(missing_ok=True)
+    program = "\n".join(
+        (strict, actual_guard, actual_suite, f"touch {shlex.quote(str(sentinel))}")
+    )
+    return subprocess.run(
+        ["bash", "-c", program], cwd=root, capture_output=True, check=False
+    )
+
+
 class ParityWiringTest(unittest.TestCase):
+    def _parity_preflight_parts(self, preflight):
+        """The comparator guard, the suite line and the strict line, each required once."""
+        assignments = re.search(
+            r"(?m)^          parity_comparator=.*\n          parity_tests=.*$",
+            preflight,
+        )
+        check = re.search(
+            r'(?ms)^          if ! test -f "\$parity_comparator".*?^          fi$',
+            preflight,
+        )
+        if assignments is None or check is None:
+            self.fail("parity comparator guard is missing")
+        suite_lines = [
+            line.strip()
+            for line in preflight.splitlines()
+            if line.strip().startswith('python3 -I "$parity_tests"')
+        ]
+        self.assertEqual(suite_lines, ['python3 -I "$parity_tests"'])
+        strict = next(
+            line.strip()
+            for line in preflight.splitlines()
+            if line.strip() == "set -euo pipefail"
+        )
+        return assignments.group(0) + "\n" + check.group(0), suite_lines[0], strict
+
     @unittest.skipIf(os.name == "nt", "the producer preflight runs in Linux Bash")
     def test_profile_interval_api_is_required_before_pull(self):
         for filename in ("linux-x64-amd-gpu.yml", "linux-nvidia-gpu-build.yml"):
@@ -89,51 +126,15 @@ class ParityWiringTest(unittest.TestCase):
                 comparator = source / "compare_detector_parity.py"
                 suite = source / "tests/test_compare_detector_parity.py"
                 sentinel = root / "pull-reached"
-                assignments = re.search(
-                    r"(?m)^          parity_comparator=.*\n          parity_tests=.*$",
-                    preflight,
-                )
-                check = re.search(
-                    r'(?ms)^          if ! test -f "\$parity_comparator".*?^          fi$',
-                    preflight,
-                )
-                if assignments is None or check is None:
-                    self.fail("parity comparator guard is missing")
-                guard = assignments.group(0) + "\n" + check.group(0)
-                suite_lines = [
-                    line.strip()
-                    for line in preflight.splitlines()
-                    if line.strip().startswith('python3 -I "$parity_tests"')
-                ]
-                self.assertEqual(suite_lines, ['python3 -I "$parity_tests"'])
-                strict = next(
-                    line.strip()
-                    for line in preflight.splitlines()
-                    if line.strip() == "set -euo pipefail"
-                )
-
-                def run(
+                guard, suite_line, strict = self._parity_preflight_parts(preflight)
+                run = functools.partial(
+                    _run_preflight,
+                    root,
+                    sentinel,
+                    strict,
                     actual_guard=guard,
-                    actual_suite=suite_lines[0],
-                    sentinel=sentinel,
-                    strict=strict,
-                    root=root,
-                ):
-                    sentinel.unlink(missing_ok=True)
-                    program = "\n".join(
-                        (
-                            strict,
-                            actual_guard,
-                            actual_suite,
-                            f"touch {shlex.quote(str(sentinel))}",
-                        )
-                    )
-                    return subprocess.run(
-                        ["bash", "-c", program],
-                        cwd=root,
-                        capture_output=True,
-                        check=False,
-                    )
+                    actual_suite=suite_line,
+                )
 
                 self.assertNotEqual(run().returncode, 0)
                 comparator.touch()
@@ -142,7 +143,7 @@ class ParityWiringTest(unittest.TestCase):
                 self.assertNotEqual(run().returncode, 0)
                 self.assertFalse(sentinel.exists())
                 self.assertEqual(
-                    run(actual_suite=suite_lines[0] + " || true").returncode, 0
+                    run(actual_suite=suite_line + " || true").returncode, 0
                 )
                 self.assertTrue(sentinel.exists())
                 suite.write_text("raise SystemExit(0)\n")
