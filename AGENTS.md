@@ -355,6 +355,7 @@ code only those lanes build asks for its lane. Lane by lane: [`docs/ci.md`](docs
 | `windows-x64.yml`, `windows-arm64-cross.yml` | Thin callers of the hub's `container-ci-windows.yml` |
 | `on-request.yml` | Reads the commit message's `[ci ...]` tokens and starts those lanes |
 | `release.yml` | Every push to `main`: all five lanes, then `v<version>` |
+| `retry-disk-refusal.yml` | Re-runs one job the hub's `prepare-linux-ci-host` refused for runner disk; never `On request`, `release.yml` or a GPU candidate lane |
 | `docs.yml` | The rustdoc site and the `docs/` guides |
 | `lint-gates.yml` | The hub's lint gates, PowerShell lint, script suites and generated-artifact checks; `bash scripts/linux/run-lint-gates.sh` is its local twin |
 | `powershell-quality.yml` | PowerShell complexity, strict on every push and PR |

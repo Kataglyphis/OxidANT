@@ -30,6 +30,7 @@ script suites.
 | Windows arm64 · cross build + test | `windows-arm64-cross.yml` → the hub's reusable `container-ci-windows.yml` | on request (`[ci windows]`, `[ci arm64]`) | the family image's arm64 bundle, inherited from the action's `image-arm64` default; `windows-2025` builds, `windows-11-arm` runs the product |
 | Linux x64 / arm64 · clean host | `reusable-linux.yml` (job `clean-host`), in both Linux lanes | after the lane's build job | none — the hub's `clean-host-package-check` on the bare `ubuntu-26.04` / `ubuntu-26.04-arm`: the `.deb` through apt, the tarball and the AppImage, each running `--help`, `onnx-runtime` and `media-check` |
 | Docs · build + publish | `docs.yml` (job `docs`) | every push/PR to `main`/`develop`, and `workflow_dispatch`; publishes on a push only | the hub's reusable `build-docs.yml` with `builder: rustdoc` and `link-allow: docs/site-links.allow`; family Linux CI image on `ubuntu-26.04` |
+| CI · retry a runner disk refusal | `retry-disk-refusal.yml` → the hub's `retry-disk-refusal` action | a named lane's failed run (`workflow_run`), never `On request`, `release.yml` or a GPU candidate lane | none — re-runs one job carrying the `runner-disk-refusal` annotation; any other failure stays failed |
 
 **A push to `develop` runs Linux x64 and the gates; every other build lane runs on
 request** (owner rule 2026-10-15 for the whole family). Tokens, *Run workflow*, merging

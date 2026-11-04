@@ -13,6 +13,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-04, a too-small runner)
+- **A job the hub's `prepare-linux-ci-host` refused for runner disk re-runs alone** (`retry-disk-refusal.yml`, hub CON216). Any other
+  failure stays failed. `On request`, `release.yml` and GPU candidate lanes are not named, so they never re-run.
+
 ### Added (2026-11-04, LAI-O4)
 - **ObservANT answers questions about its visits.** `POST /ask` gives a language model the camera's figures of the last
   seven days and returns its answer with those facts. `GET /summary` serves one local day's computed figures; `POST
