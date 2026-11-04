@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use log::info;
 use winit::window::Window;
 
 use super::inference::InferenceState;
@@ -29,6 +30,25 @@ pub(crate) struct WgpuState {
     egui: super::egui_overlay::EguiOverlay,
     inference: InferenceState,
     current_frame_id: Option<u64>,
+    first_frame_logged: bool,
+}
+
+/// Draws the camera frame; none has arrived before the first sample, and a draw without its bind group fails wgpu validation.
+fn draw_camera_quad(
+    rpass: &mut wgpu::RenderPass<'_>,
+    pipeline: &wgpu::RenderPipeline,
+    camera_frame: Option<&wgpu::BindGroup>,
+    (vertices, indices): (&wgpu::Buffer, &wgpu::Buffer),
+    num_indices: u32,
+) {
+    let Some(bind_group) = camera_frame else {
+        return;
+    };
+    rpass.set_pipeline(pipeline);
+    rpass.set_vertex_buffer(0, vertices.slice(..));
+    rpass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint16);
+    rpass.set_bind_group(0, bind_group, &[]);
+    rpass.draw_indexed(0..num_indices, 0, 0..1);
 }
 
 impl WgpuState {
@@ -94,6 +114,7 @@ impl WgpuState {
                 infer_enabled: true,
             },
             current_frame_id: None,
+            first_frame_logged: false,
         })
     }
 
@@ -197,6 +218,16 @@ impl WgpuState {
     }
 
     pub(crate) fn render(&mut self, window: &Window) -> anyhow::Result<()> {
+        self.render_overlay_frame(window)?;
+        // After the frame's FullOutput dropped: the GUI smoke test waits for this line.
+        if !self.first_frame_logged {
+            self.first_frame_logged = true;
+            info!("First GUI frame finished");
+        }
+        Ok(())
+    }
+
+    fn render_overlay_frame(&mut self, window: &Window) -> anyhow::Result<()> {
         self.inference.poll();
 
         self.egui.update_stats();
@@ -207,7 +238,7 @@ impl WgpuState {
             .map(|ft| (ft.width, ft.height))
             .unwrap_or((0, 0));
 
-        let full_output = self
+        let mut full_output = self
             .egui
             .run_overlay(window, frame_dimensions, &mut self.inference);
 
@@ -217,20 +248,22 @@ impl WgpuState {
             .ctx
             .tessellate(shapes, self.egui.screen.pixels_per_point);
 
-        // One texture id can carry several deltas per frame; apply them in order.
-        for (id, image_deltas) in &full_output.textures_delta.set {
-            for image_delta in image_deltas {
+        // Drained, because epaint's drop check counts what stays in the delta as unapplied; one id can carry several, in order.
+        for (id, image_deltas) in full_output.textures_delta.set.drain() {
+            for image_delta in &image_deltas {
                 self.egui
                     .renderer
-                    .update_texture(&self.device, &self.queue, *id, image_delta);
+                    .update_texture(&self.device, &self.queue, id, image_delta);
             }
         }
 
-        self.submit_frame(window, &clipped_primitives, &full_output)?;
+        let submitted = self.submit_frame(window, &clipped_primitives, &full_output);
 
-        for id in &full_output.textures_delta.free {
-            self.egui.renderer.free_texture(id);
+        // Also after a failed frame: egui will not ask to free these textures again.
+        for id in full_output.textures_delta.free.drain() {
+            self.egui.renderer.free_texture(&id);
         }
+        submitted?;
         self.egui
             .state
             .handle_platform_output(window, full_output.platform_output);
@@ -284,15 +317,13 @@ impl WgpuState {
                 multiview_mask: None,
             });
 
-            rpass.set_pipeline(&self.render_pipeline);
-            rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-
-            if let Some(ft) = &self.texture {
-                rpass.set_bind_group(0, &ft.bind_group, &[]);
-            }
-
-            rpass.draw_indexed(0..self.num_indices, 0, 0..1);
+            draw_camera_quad(
+                &mut rpass,
+                &self.render_pipeline,
+                self.texture.as_ref().map(|ft| &ft.bind_group),
+                (&self.vertex_buffer, &self.index_buffer),
+                self.num_indices,
+            );
         }
 
         self.egui.renderer.update_buffers(
@@ -334,5 +365,85 @@ impl WgpuState {
         // wgpu 30: presentation lives on the queue now.
         self.queue.present(frame);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No dev-dependency on the renderer's context: its wgpu features would bring the GL import into this crate's test exes.
+    fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let required = std::env::var("KATAGLYPHIS_REQUIRE_GPU").is_ok_and(|v| !v.is_empty());
+        let adapter = pollster::block_on(
+            wgpu::Instance::default().request_adapter(&wgpu::RequestAdapterOptions::default()),
+        );
+        match adapter {
+            Ok(adapter) => Some(
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                    .expect("request a device"),
+            ),
+            Err(err) => {
+                assert!(!required, "KATAGLYPHIS_REQUIRE_GPU is set: {err}");
+                eprintln!("SKIP: no GPU adapter available in this environment");
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn a_frame_before_the_first_camera_sample_passes_validation() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let device = &device;
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let view = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("gui_test_target"),
+                size: wgpu::Extent3d {
+                    width: 4,
+                    height: 4,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let pipeline = create_render_pipeline(device, format);
+        let (vertices, indices, num_indices) = create_quad_buffers(device);
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+            draw_camera_quad(
+                &mut rpass,
+                &pipeline,
+                None,
+                (&vertices, &indices),
+                num_indices,
+            );
+        }
+        // wgpu's default error handler panics on the validation error.
+        queue.submit(Some(encoder.finish()));
     }
 }

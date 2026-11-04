@@ -17,6 +17,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - The GPU lanes no longer install `libgtk-4-dev`: `cargo build -p kataglyphis_cli` links without it on the published
   `:latest-rocm` (`05518138`) and `:latest-nvidia` (`70bc45db`, amd64). The lanes themselves have not run without it yet.
 
+### Fixed (2026-11-04, debug GUI panic)
+- **Every debug `kataglyphis_cli gui` and renderer `viewer` died on their first frame.** Both applied egui's texture
+  deltas by reference and then dropped them, and epaint's debug-only drop check panics on a delta left in place
+  (`Dropped TexturesDelta with 1 unapplied deltas`). Release builds drew correctly. Both now drain the deltas, and the GUI
+  frees textures on a failed frame too. `gui_finishes_its_first_frame` runs the real window path under Xvfb, and the
+  renderer has a headless test ([testing.md](docs/testing.md#the-whole-suite)).
+- **The GUI aborted when it drew before the first camera sample, in release builds too.** It issued the camera quad's
+  draw with no bind group, and wgpu's validation error ended the process. Whether it hit depended on which came first,
+  the first redraw or the first sample. The GUI now skips that draw until a frame exists.
+
 ### Changed (2026-11-04, a too-small runner)
 - **A job the hub's `prepare-linux-ci-host` refused for runner disk re-runs alone** (`retry-disk-refusal.yml`, hub CON216). Any other
   failure stays failed. `On request`, `release.yml` and GPU candidate lanes are not named, so they never re-run.

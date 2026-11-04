@@ -59,42 +59,76 @@ impl Overlay {
             .handle_platform_output(window, output.platform_output);
 
         let clipped = self.ctx.tessellate(output.shapes, screen.pixels_per_point);
+        paint(
+            &mut self.renderer,
+            PaintTarget {
+                device,
+                queue,
+                encoder,
+                view,
+                screen,
+            },
+            &clipped,
+            output.textures_delta,
+        );
+    }
+}
 
-        // egui 0.36 can carry several deltas per texture; applying only the first drops updates.
-        for (id, image_deltas) in &output.textures_delta.set {
-            for image_delta in image_deltas {
-                self.renderer
-                    .update_texture(device, queue, *id, image_delta);
-            }
-        }
-        self.renderer
-            .update_buffers(device, queue, encoder, &clipped, &screen);
+/// Where one overlay pass paints.
+struct PaintTarget<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    encoder: &'a mut wgpu::CommandEncoder,
+    view: &'a wgpu::TextureView,
+    screen: egui_wgpu::ScreenDescriptor,
+}
 
-        {
-            let mut pass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui_overlay_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                })
-                .forget_lifetime();
-            self.renderer.render(&mut pass, &clipped, &screen);
+/// Applies the frame's texture deltas around one egui pass, which loads and never clears.
+fn paint(
+    renderer: &mut egui_wgpu::Renderer,
+    target: PaintTarget<'_>,
+    clipped: &[egui::ClippedPrimitive],
+    mut textures: egui::TexturesDelta,
+) {
+    let PaintTarget {
+        device,
+        queue,
+        encoder,
+        view,
+        screen,
+    } = target;
+    // Drained, because epaint's drop check counts what stays in the delta as unapplied; one id can carry several, in order.
+    for (id, image_deltas) in textures.set.drain() {
+        for image_delta in &image_deltas {
+            renderer.update_texture(device, queue, id, image_delta);
         }
+    }
+    renderer.update_buffers(device, queue, encoder, clipped, &screen);
 
-        for id in &output.textures_delta.free {
-            self.renderer.free_texture(id);
-        }
+    {
+        let mut pass = encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui_overlay_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            })
+            .forget_lifetime();
+        renderer.render(&mut pass, clipped, &screen);
+    }
+
+    for id in textures.free.drain() {
+        renderer.free_texture(&id);
     }
 }
 
@@ -188,5 +222,71 @@ impl OverlayControls {
                 ui.label("drag: orbit - wheel: zoom");
             });
         changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GpuContext;
+
+    #[test]
+    fn painting_takes_the_first_frames_font_texture_out_of_its_delta() {
+        let Some(gpu) = GpuContext::headless_or_skip() else {
+            return;
+        };
+        let (device, queue) = (&gpu.device, &gpu.queue);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let size = wgpu::Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        };
+        let view = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("overlay_test_target"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let mut renderer = egui_wgpu::Renderer::new(device, format, Default::default());
+
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.label("overlay");
+        });
+        assert!(
+            !output.textures_delta.is_empty(),
+            "a first frame must upload the font atlas, or this test proves nothing"
+        );
+        let font = egui::TextureId::default();
+        assert!(renderer.texture(&font).is_none());
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [size.width, size.height],
+            pixels_per_point: 1.0,
+        };
+        let clipped = ctx.tessellate(output.shapes, screen.pixels_per_point);
+        // A delta left in place panics in its Drop on this debug test profile.
+        paint(
+            &mut renderer,
+            PaintTarget {
+                device,
+                queue,
+                encoder: &mut encoder,
+                view: &view,
+                screen,
+            },
+            &clipped,
+            output.textures_delta,
+        );
+
+        assert!(renderer.texture(&font).is_some());
+        queue.submit(Some(encoder.finish()));
     }
 }

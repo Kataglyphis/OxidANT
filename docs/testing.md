@@ -34,6 +34,16 @@ that has no floor fails the step. The lane uploads `cobertura.xml` and the `rust
 `logs/code-quality/rustdoc.txt`, written without colours so its `warning:` lines count, as
 `lane-reports-<suffix>`, which quality-report reads.
 
+The CLI suite's `gui_finishes_its_first_frame` starts `kataglyphis_cli gui` under the same display with no
+model and waits for its `First GUI frame finished` line. That first frame uploads the font atlas, so a
+texture delta left undrained fails it, through epaint's debug-only drop check. With
+`KATAGLYPHIS_REQUIRE_GPU` and `KATAGLYPHIS_REQUIRE_GST` set, a GUI that cannot start fails; otherwise it
+prints `SKIP:`. It does not cover a failed surface acquire, later frames or a real camera, and proves
+nothing under a release profile, where the check is compiled out.
+
+`a_frame_before_the_first_camera_sample_passes_validation` holds the race its window test cannot force: with
+no camera frame yet the GUI must skip the quad's draw, since a draw without its bind group fails wgpu validation.
+
 The CI script keeps a parent shell while `xvfb-run` starts. Replacing that shell
 with `exec xvfb-run` can make the launcher PID 1 in the container; Xvfb then
 omits the readiness signal and the launcher waits before starting Cargo.
