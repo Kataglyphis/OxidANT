@@ -231,6 +231,11 @@ impl Config {
             .filter(|s| !s.is_empty())
     }
 
+    /// Whether `/ask` and `/summary` have a model to run.
+    pub fn names_a_language_model(&self) -> bool {
+        self.llm_model_dir.is_some() || self.llm_base_url.is_some() || self.llm_backend.is_some()
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         if ![0, 90, 180, 270].contains(&self.rotate) {
             bail!("rotate must be 0, 90, 180 or 270 (got {})", self.rotate);

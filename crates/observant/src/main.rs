@@ -210,6 +210,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         .at_fps(config.fps)
         .private(config.privacy)
         .watching(config.classes.clone(), config.all_classes)
+        .answering(config.names_a_language_model())
         .peered(config.peers.clone());
     let status = Arc::new(match state_dir() {
         Some(dir) => {

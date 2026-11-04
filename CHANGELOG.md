@@ -18,7 +18,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   seven days and returns its answer with those facts. `GET /summary` serves one local day's computed figures; `POST
   /summary` adds the model's words, and a day without visits asks no model. The model is a GenAI directory or an endpoint
   (`llm_model_dir`, `llm_base_url`, `llm_backend`), loaded at the first question. Unconfigured, both POSTs answer 503.
-  Both are refused from any page but the camera's own ([observant.md](docs/observant.md#questions-about-the-visits)).
+  Both are refused from any page but the camera's own, and `/healthz`'s `ask` says whether a model is configured
+  ([observant.md](docs/observant.md#questions-about-the-visits)).
 
 ### Added (2026-11-04, LAI-O5)
 - **GenAI embeds, through `crates/text`.** `GenaiGenerator::embed` reads a decoder's `hidden_states` output, takes the

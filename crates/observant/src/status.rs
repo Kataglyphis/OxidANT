@@ -261,6 +261,8 @@ pub struct Status {
     /// Model runs failed in a row, and the last one's error.
     model_failures: AtomicU32,
     model_error: Mutex<Option<String>>,
+    /// A language model answers `/ask`, so the page offers questions.
+    ask: bool,
     /// The COCO classes that count, and whether every class does.
     classes: Mutex<Vec<String>>,
     all_classes: bool,
@@ -310,6 +312,7 @@ impl Status {
             dark: AtomicBool::new(false),
             model_failures: AtomicU32::new(0),
             model_error: Mutex::new(None),
+            ask: false,
             classes: Mutex::new(vec!["cat".into()]),
             all_classes: false,
             width,
@@ -420,6 +423,12 @@ impl Status {
         }
         let error = self.model_error.lock().ok().and_then(|e| e.clone());
         Some(format!("the model fails: {}", error.unwrap_or_default()))
+    }
+
+    /// Says in `/healthz` that a language model answers `/ask`.
+    pub fn answering(mut self, ask: bool) -> Self {
+        self.ask = ask;
+        self
     }
 
     /// The COCO classes that count; `all` keeps every class.
@@ -922,6 +931,7 @@ impl Status {
             "classes": self.classes(),
             "all_classes": self.all_classes,
             "model_runs": runs,
+            "ask": self.ask,
             "stats": self.stats.lock().map(|s| s.clone()).unwrap_or_default(),
             "detection": {
                 "in_view": in_view,
@@ -1076,6 +1086,15 @@ mod tests {
         assert!(status.anything_seen());
         assert!(json["detection"]["last_seen"].as_u64().unwrap() > 0);
         assert!((json["detection"]["last_score"].as_f64().unwrap() - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn healthz_says_whether_a_language_model_answers() {
+        let says = |status: Status| {
+            serde_json::from_str::<serde_json::Value>(&status.to_json()).unwrap()["ask"].clone()
+        };
+        assert_eq!(says(Status::new("Cam", false, 4, 4)), false);
+        assert_eq!(says(Status::new("Cam", false, 4, 4).answering(true)), true);
     }
 
     #[test]

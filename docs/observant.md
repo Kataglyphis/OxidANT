@@ -49,7 +49,8 @@ exits; a packager runs it once, and the server then sends those files as they ar
 `dml`), `llm_base_url` or `llm_backend` (an OpenAI-compatible server; `backends.json` comes from
 `LLM_BACKENDS`), which exclude each other, and `llm_model` to override an endpoint's model.
 `llm_max_new_tokens` bounds an answer (128). Nothing loads until the first question; the model then
-stays loaded. Without one configured both answer 503 and say which keys to set.
+stays loaded. Without one configured both answer 503 and say which keys to set, and `/healthz`'s
+`ask` is false, which is what OmniAccelerANT's Stream page reads to offer questions.
 
 | Request | Answer |
 | --- | --- |

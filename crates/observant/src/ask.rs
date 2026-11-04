@@ -1,7 +1,7 @@
 //! `/ask` and `/summary`: a language model answers from the visit log, never from the picture; see `docs/observant.md`.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -95,7 +95,7 @@ impl Assistant {
             registry: None,
             model: config.llm_model.clone(),
         };
-        if model_dir.is_none() && choice.base_url.is_none() && choice.backend.is_none() {
+        if !config.names_a_language_model() {
             return None;
         }
         let provider = config.llm_provider.clone();
@@ -121,7 +121,12 @@ impl Assistant {
         messages: &[ChatMessage],
         cancel: &CancelToken,
     ) -> Result<GenerationResult, Refusal> {
-        let mut backend = self.backend.try_lock().map_err(|_| Refusal::Busy)?;
+        let mut backend = match self.backend.try_lock() {
+            Ok(backend) => backend,
+            // A panic in an earlier answer must not read as busy for the rest of the service's life.
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return Err(Refusal::Busy),
+        };
         if backend.is_none() {
             *backend = Some((self.open)().map_err(Refusal::Text)?);
         }
