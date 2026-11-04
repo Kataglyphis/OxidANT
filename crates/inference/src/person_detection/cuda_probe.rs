@@ -70,12 +70,7 @@ fn run_one_kernel(provider: Option<&dyn ExecutionProvider>) -> Result<f32, Strin
 
 /// The card's name and compute capability, as the driver reports them.
 fn card_on(driver: &str) -> Option<String> {
-    type Init = unsafe extern "C" fn(c_uint) -> c_int;
-    type DeviceGet = unsafe extern "C" fn(*mut c_int, c_int) -> c_int;
-    type DeviceName = unsafe extern "C" fn(*mut c_char, c_int, c_int) -> c_int;
-    type Capability = unsafe extern "C" fn(*mut c_int, *mut c_int, c_int) -> c_int;
-
-    // SAFETY: the signatures are those of NVIDIA's cuda.h, and the name buffer's length is passed with it.
+    // SAFETY: the signatures are those of NVIDIA's cuda.h, and the library outlives the calls.
     unsafe {
         let cuda = libloading::Library::new(driver).ok()?;
         let init = cuda.get::<Init>(b"cuInit\0").ok()?;
@@ -84,19 +79,35 @@ fn card_on(driver: &str) -> Option<String> {
         let capability = cuda
             .get::<Capability>(b"cuDeviceComputeCapability\0")
             .ok()?;
-        let mut device = 0;
-        let mut name: [c_char; 256] = [0; 256];
-        let (mut major, mut minor) = (0, 0);
-        if init(0) != 0
-            || device_get(&raw mut device, 0) != 0
-            || device_name(name.as_mut_ptr(), 256, device) != 0
-            || capability(&raw mut major, &raw mut minor, device) != 0
-        {
-            return None;
-        }
-        let name = CStr::from_ptr(name.as_ptr()).to_string_lossy();
-        Some(format!("{name} (compute capability {major}.{minor})"))
+        card_from(*init, *device_get, *device_name, *capability)
     }
+}
+
+type Init = unsafe extern "C" fn(c_uint) -> c_int;
+type DeviceGet = unsafe extern "C" fn(*mut c_int, c_int) -> c_int;
+type DeviceName = unsafe extern "C" fn(*mut c_char, c_int, c_int) -> c_int;
+type Capability = unsafe extern "C" fn(*mut c_int, *mut c_int, c_int) -> c_int;
+
+/// # Safety
+/// The functions must follow cuda.h: `device_name` writes a NUL-terminated name of at most the length it is given.
+unsafe fn card_from(
+    init: Init,
+    device_get: DeviceGet,
+    device_name: DeviceName,
+    capability: Capability,
+) -> Option<String> {
+    let mut device = 0;
+    let mut name: [c_char; 256] = [0; 256];
+    let (mut major, mut minor) = (0, 0);
+    if init(0) != 0
+        || device_get(&raw mut device, 0) != 0
+        || device_name(name.as_mut_ptr(), 256, device) != 0
+        || capability(&raw mut major, &raw mut minor, device) != 0
+    {
+        return None;
+    }
+    let name = CStr::from_ptr(name.as_ptr()).to_string_lossy();
+    Some(format!("{name} (compute capability {major}.{minor})"))
 }
 
 #[cfg(test)]
@@ -142,6 +153,52 @@ mod tests {
         assert_eq!(card_on("libnot-a-cuda-driver.so"), None);
         #[cfg(target_os = "linux")]
         assert_eq!(card_on("libc.so.6"), None);
+    }
+
+    unsafe extern "C" fn answers(_: c_uint) -> c_int {
+        0
+    }
+    unsafe extern "C" fn refuses(_: c_uint) -> c_int {
+        1
+    }
+    unsafe extern "C" fn first_device(device: *mut c_int, _: c_int) -> c_int {
+        *device = 3;
+        0
+    }
+    unsafe extern "C" fn fake_name(name: *mut c_char, _: c_int, device: c_int) -> c_int {
+        assert_eq!(device, 3);
+        std::ptr::copy_nonoverlapping(c"Fake GPU".as_ptr(), name, 9);
+        0
+    }
+    unsafe extern "C" fn fake_capability(major: *mut c_int, minor: *mut c_int, _: c_int) -> c_int {
+        *major = 12;
+        *minor = 0;
+        0
+    }
+
+    #[test]
+    fn a_driver_that_answers_names_the_card() {
+        // SAFETY: the fakes above follow cuda.h.
+        let card = unsafe { card_from(answers, first_device, fake_name, fake_capability) };
+        assert_eq!(card.as_deref(), Some("Fake GPU (compute capability 12.0)"));
+    }
+
+    #[test]
+    fn a_driver_that_refuses_names_nothing() {
+        // SAFETY: the fakes above follow cuda.h.
+        let card = unsafe { card_from(refuses, first_device, fake_name, fake_capability) };
+        assert_eq!(card, None);
+    }
+
+    #[test]
+    fn the_check_fails_only_with_the_way_out() {
+        if crate::ort_runtime::ensure_ort_loaded().is_err() {
+            return;
+        }
+        if let Err(error) = require_kernel("CUDAExecutionProvider") {
+            let message = error.to_string();
+            assert!(message.contains("KATAGLYPHIS_ORT_DEVICE=cpu"), "{message}");
+        }
     }
 
     #[test]
