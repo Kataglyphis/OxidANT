@@ -4,7 +4,8 @@
 text contract,
 [ANTfrastructure's `docs/language-ai.md` § The text contract](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/language-ai.md#the-text-contract):
 messages in, decoded text out as it is generated, a cancel from any thread, and speed figures.
-The CLI and the flutter_rust_bridge surface use it; OmniAccelerANT's AI Playground calls the latter.
+The CLI and the flutter_rust_bridge surface use it; OmniAccelerANT's AI Playground calls the latter, and
+[ObservANT's `/ask`](observant.md#questions-about-the-visits) calls it directly.
 
 ## The two backends
 

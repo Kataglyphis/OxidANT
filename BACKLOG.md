@@ -13,8 +13,6 @@ and the backlog is empty"; it was neither.
 
 ## Open
 
-- [ ] **LAI-O4: ObservANT's `/ask` and a daily summary over `/visits`** (M, ★★). Hub language-AI
-      milestone 4 (`docs/language-ai.md`).
 - [ ] Drop the vendored `third_party/egui-winit-0.36.2` and its
       `[patch.crates-io]` entry, then move the egui family to 0.37.
       Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.

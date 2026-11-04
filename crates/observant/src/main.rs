@@ -15,7 +15,8 @@ use kataglyphis_inference::person_detection::{resolve_model_path, PersonDetector
 
 use kataglyphis_observant::config::{Config, Inference};
 use kataglyphis_observant::{
-    camera, capture, clip, install, notify, output, precompress, static_files, stats, status, web,
+    ask, camera, capture, clip, install, notify, output, precompress, static_files, stats, status,
+    web,
 };
 
 /// Environment variable naming the still image looped as the demo source.
@@ -132,6 +133,18 @@ struct Args {
     /// UDP range for WebRTC media as MIN-MAX; 0-0 leaves the ports free.
     #[arg(long)]
     ice_ports: Option<String>,
+    /// A GenAI model directory for /ask and /summary, run on the chain's ONNX Runtime GenAI.
+    #[arg(long)]
+    llm_model_dir: Option<PathBuf>,
+    /// An OpenAI-compatible server for /ask and /summary.
+    #[arg(long)]
+    llm_base_url: Option<String>,
+    /// A backend named in backends.json for /ask and /summary.
+    #[arg(long)]
+    llm_backend: Option<String>,
+    /// Overrides the endpoint's or backend's model.
+    #[arg(long)]
+    llm_model: Option<String>,
     /// Write a zopfli `<file>.gz` beside each file of this web build the server gzips, and exit.
     #[arg(long, value_name = "DIR")]
     precompress: Option<PathBuf>,
@@ -329,6 +342,7 @@ fn apply_args(args: &Args, config: &mut Config) -> anyhow::Result<()> {
     if args.notify_url.is_some() {
         config.notify_url.clone_from(&args.notify_url);
     }
+    apply_language_args(args, config);
     if let Some(range) = &args.ice_ports {
         let (min, max) = range
             .split_once('-')
@@ -368,6 +382,21 @@ fn load_detector(config: &Config) -> anyhow::Result<Option<PersonDetector>> {
                 }
             }
         }
+    }
+}
+
+fn apply_language_args(args: &Args, config: &mut Config) {
+    if args.llm_model_dir.is_some() {
+        config.llm_model_dir.clone_from(&args.llm_model_dir);
+    }
+    if args.llm_base_url.is_some() {
+        config.llm_base_url.clone_from(&args.llm_base_url);
+    }
+    if args.llm_backend.is_some() {
+        config.llm_backend.clone_from(&args.llm_backend);
+    }
+    if args.llm_model.is_some() {
+        config.llm_model.clone_from(&args.llm_model);
     }
 }
 
@@ -459,6 +488,7 @@ fn start_web(
         allowed_hosts: config.allowed_hosts.clone(),
         max_viewers: config.max_viewers as usize,
         peers: config.peers.clone(),
+        assistant: ask::Assistant::from_config(config).map(Arc::new),
     });
     runtime.spawn(web::serve(listener, site));
     if config.cert.is_some() {

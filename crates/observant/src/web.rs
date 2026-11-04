@@ -17,6 +17,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::ask::{self, Assistant};
 use crate::static_files::{static_file, GzipCache};
 use crate::status::{Settings, Status, Viewer};
 
@@ -62,6 +63,8 @@ pub struct Site {
     pub max_viewers: usize,
     /// The other ObservANT cameras' origins, whose pages may read this one's status and pictures.
     pub peers: Vec<String>,
+    /// The language model behind `/ask` and `/summary`; `None` leaves their POSTs answering 503.
+    pub assistant: Option<Arc<Assistant>>,
 }
 
 /// `origin` when it is one of `peers`: a page another ObservANT serves, for the overview.
@@ -177,6 +180,11 @@ pub async fn serve(listener: TcpListener, site: Arc<Site>) {
     }
 }
 
+/// A POST here changes something or spends the board's CPU, so only the page itself may send it.
+fn acting_post(path: &str) -> bool {
+    [SETTINGS_PATH, ask::ASK_PATH, ask::SUMMARY_PATH].contains(&path)
+}
+
 async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_owned();
     let origin = req.headers().get(header::ORIGIN).cloned();
@@ -188,7 +196,7 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
         CLIP_PATH,
     ]
     .contains(&path.as_str());
-    let acts = path == SIGNALLING_PATH || (path == SETTINGS_PATH && req.method() == Method::POST);
+    let acts = path == SIGNALLING_PATH || (req.method() == Method::POST && acting_post(&path));
     let refused = if acts {
         own_page(req.headers(), &site.allowed_hosts).err()
     } else {
@@ -219,6 +227,10 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
         }
     } else if path == SETTINGS_PATH {
         settings(req, &site.status).await
+    } else if path == ask::ASK_PATH {
+        ask::ask(req, site.assistant.clone(), site.status.clone()).await
+    } else if path == ask::SUMMARY_PATH {
+        ask::summary(req, site.assistant.clone(), site.status.clone()).await
     } else if req.method() != Method::GET && req.method() != Method::HEAD {
         plain(StatusCode::METHOD_NOT_ALLOWED, "GET or HEAD only")
     } else if path == HEALTHZ_PATH || path == VISITS_PATH {
@@ -644,6 +656,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             max_viewers: 0,
             peers: Vec::new(),
+            assistant: None,
         });
         tokio::spawn(serve(listener, site));
         addr
@@ -917,6 +930,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             max_viewers: 0,
             peers: Vec::new(),
+            assistant: None,
         });
         tokio::spawn(serve(listener, site));
         assert!(get(addr, SNAPSHOT_PATH, "")
@@ -947,6 +961,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             max_viewers: 0,
             peers: Vec::new(),
+            assistant: None,
         });
         tokio::spawn(serve(listener, site));
         assert!(get(addr, ARRIVAL_PATH, "")
@@ -1373,7 +1388,211 @@ mod tests {
             allowed_hosts: Vec::new(),
             max_viewers,
             peers,
+            assistant: None,
         }
+    }
+
+    fn arrive_and_leave(status: &Status) {
+        let arrived = crate::presence::Change::Arrived {
+            count: 1,
+            best: 0.8,
+            class: 15,
+        };
+        status.set_detection(true, Some(0.8), Some(&arrived));
+        let left = crate::presence::Change::Left {
+            stayed: Duration::from_secs(42),
+        };
+        status.set_detection(false, None, Some(&left));
+    }
+
+    fn body_text(reply: &str) -> &str {
+        &reply[reply.find("\r\n\r\n").unwrap() + 4..]
+    }
+
+    #[tokio::test]
+    async fn ask_without_a_language_model_says_how_to_set_one() {
+        let addr = start_with(site(4, Vec::new(), 9)).await;
+        for (path, body) in [("/ask", r#"{"question":"hi"}"#), ("/summary", "{}")] {
+            let reply = post(addr, path, "application/json", body).await;
+            assert!(reply.starts_with("HTTP/1.1 503"), "{path}: {reply}");
+            assert!(
+                body_text(&reply).contains("llm_model_dir"),
+                "{path}: {reply}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn ask_gives_the_model_the_facts_and_the_question() {
+        let (assistant, seen) = crate::ask::tests::stub_assistant(Ok("Twice.".into()), false);
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(assistant);
+        arrive_and_leave(&with_model.status);
+        let addr = start_with(with_model).await;
+        let reply = post(
+            addr,
+            "/ask",
+            "application/json",
+            r#"{"question":"How often?","tz_offset_min":60,"language":"de"}"#,
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let json = body_json(&reply);
+        assert_eq!(json["answer"], "Twice.");
+        assert_eq!(json["finish_reason"], "stop");
+        assert_eq!(
+            (
+                json["prompt_tokens"].as_u64(),
+                json["completion_tokens"].as_u64()
+            ),
+            (Some(11), Some(2))
+        );
+        let facts = json["facts"].as_str().unwrap();
+        assert!(
+            facts.contains("1 visits") && facts.contains("total stay 42 s"),
+            "{facts}"
+        );
+        assert!(facts.contains("\"Cam\" watches for cat"), "{facts}");
+        let sent = seen.lock().unwrap().clone();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(
+            (sent[0].role.as_str(), sent[1].role.as_str()),
+            ("system", "user")
+        );
+        assert!(sent[0].content.contains(facts), "{}", sent[0].content);
+        assert!(
+            sent[0].content.ends_with("Answer in German."),
+            "{}",
+            sent[0].content
+        );
+        assert_eq!(sent[1].content, "How often?");
+    }
+
+    #[tokio::test]
+    async fn a_failing_model_is_an_error_with_its_message_never_an_empty_answer() {
+        let failure = kataglyphis_text::TextError::GenerationFailed("out of memory".into());
+        let (assistant, _) = crate::ask::tests::stub_assistant(Err(failure), false);
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(assistant);
+        let addr = start_with(with_model).await;
+        let reply = post(addr, "/ask", "application/json", r#"{"question":"hi"}"#).await;
+        assert!(reply.starts_with("HTTP/1.1 502"), "{reply}");
+        assert!(body_text(&reply).contains("out of memory"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn ask_refuses_what_is_not_a_question() {
+        let (assistant, seen) = crate::ask::tests::stub_assistant(Ok("no".into()), false);
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(assistant);
+        let addr = start_with(with_model).await;
+        let form = post(
+            addr,
+            "/ask",
+            "application/x-www-form-urlencoded",
+            "question=hi",
+        )
+        .await;
+        assert!(form.starts_with("HTTP/1.1 415"), "{form}");
+        for body in [
+            "{",
+            r#"{"question":"  "}"#,
+            r#"{"question":"hi","surprise":1}"#,
+            r#"{"question":"hi","tz_offset_min":100000}"#,
+            r#"{"question":"hi","language":"fr"}"#,
+        ] {
+            let reply = post(addr, "/ask", "application/json", body).await;
+            assert!(reply.starts_with("HTTP/1.1 400"), "{body}: {reply}");
+        }
+        let long = format!(r#"{{"question":"{}"}}"#, "x".repeat(8000));
+        let reply = post(addr, "/ask", "application/json", &long).await;
+        assert!(reply.starts_with("HTTP/1.1 400"), "{reply}");
+        let reply = get(addr, "/ask", "").await;
+        assert!(reply.starts_with("HTTP/1.1 405"), "{reply}");
+        assert!(seen.lock().unwrap().is_empty(), "the model ran");
+    }
+
+    #[tokio::test]
+    async fn only_the_cameras_own_page_may_spend_its_cpu_on_a_model() {
+        let (assistant, seen) = crate::ask::tests::stub_assistant(Ok("no".into()), false);
+        let mut with_model = site(4, vec!["http://192.168.1.20:8080".into()], 9);
+        with_model.assistant = Some(assistant);
+        arrive_and_leave(&with_model.status);
+        let addr = start_with(with_model).await;
+        for path in ["/ask", "/summary"] {
+            let mut stream = TcpStream::connect(addr).await.unwrap();
+            let body = r#"{"question":"hi"}"#;
+            let request = format!(
+                "POST {path} HTTP/1.1\r\nhost: cat.local\r\norigin: http://192.168.1.20:8080\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(request.as_bytes()).await.unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).await.unwrap();
+            let reply = String::from_utf8_lossy(&response).into_owned();
+            assert!(reply.starts_with("HTTP/1.1 403"), "{path}: {reply}");
+            assert!(
+                !reply.contains("access-control-allow-origin"),
+                "{path}: {reply}"
+            );
+        }
+        assert!(seen.lock().unwrap().is_empty(), "the model ran");
+        let figures = get(addr, "/summary", "origin: http://192.168.1.20:8080\r\n").await;
+        assert!(
+            !figures.contains("access-control-allow-origin"),
+            "{figures}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_summary_reads_figures_for_free_and_asks_the_model_only_for_a_day_with_visits() {
+        let (assistant, seen) =
+            crate::ask::tests::stub_assistant(Ok("One short visit.".into()), false);
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(assistant);
+        arrive_and_leave(&with_model.status);
+        let addr = start_with(with_model).await;
+        let figures = body_json(&get(addr, "/summary", "").await);
+        assert_eq!(
+            (figures["visits"].as_u64(), figures["total_stay_s"].as_u64()),
+            (Some(1), Some(42))
+        );
+        assert!(seen.lock().unwrap().is_empty(), "the GET ran the model");
+        let empty = post(
+            addr,
+            "/summary",
+            "application/json",
+            r#"{"day":"2020-01-01"}"#,
+        )
+        .await;
+        assert!(empty.starts_with("HTTP/1.1 200"), "{empty}");
+        let empty = body_json(&empty);
+        assert_eq!(empty["visits"], 0);
+        assert!(empty["summary"].is_null(), "{empty}");
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "an empty day ran the model"
+        );
+        let words = body_json(&post(addr, "/summary", "application/json", "{}").await);
+        assert_eq!(words["summary"], "One short visit.");
+        assert_eq!(words["visits"], 1);
+        let sent = seen.lock().unwrap().clone();
+        assert!(
+            sent[0].content.contains("total stay 42 s"),
+            "{}",
+            sent[0].content
+        );
+        assert!(sent[1].content.contains("Summarise"), "{}", sent[1].content);
+        for path in [
+            "/summary?day=soon",
+            "/summary?tz=east",
+            "/summary?tz=100000",
+        ] {
+            let reply = get(addr, path, "").await;
+            assert!(reply.starts_with("HTTP/1.1 400"), "{path}: {reply}");
+        }
+        let bad = post(addr, "/summary", "application/json", r#"{"day":"soon"}"#).await;
+        assert!(bad.starts_with("HTTP/1.1 400"), "{bad}");
     }
 
     #[tokio::test]

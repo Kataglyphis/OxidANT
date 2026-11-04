@@ -17,6 +17,9 @@ curl -o cat.mp4 'localhost:8080/arrival.mp4?t=1791763273'  # one of the last fiv
 curl localhost:8080/settings                   # what the settings page can change
 curl -X POST -H 'content-type: application/json' -d '{"rotate": 270, "score": 0.5}' localhost:8080/settings
 curl -X POST -H 'content-type: application/json' -d '{"ignore": [[0.25, 0.75, 0.75, 1.0]]}' localhost:8080/settings  # "not a cat" here
+curl localhost:8080/visits                     # every visit of the last 30 days
+curl 'localhost:8080/summary?day=2026-11-04&tz=60'  # one local day's figures; no model runs
+curl -H 'content-type: application/json' -d '{"question": "How often today?", "tz_offset_min": 60}' localhost:8080/ask
 ```
 
 ## Who may see and change it
@@ -37,6 +40,39 @@ event once the arrival's video is encoded. A departure names the arrival it ends
 exits; a packager runs it once, and the server then sends those files as they are.
 `clip_seconds` (default 10, 0 for none) sets that video's length; it needs `openh264enc`,
 `h264parse` and `mp4mux`, and without them the service records none and says so at start.
+
+## Questions about the visits
+
+`/ask` and `POST /summary` let a language model talk about the visit log, through
+[`crates/text`](text.md). Name the model in the config or with the flag of the same name:
+`llm_model_dir` (a GenAI directory on the chain's GenAI, with `llm_provider` `cpu`, `cuda` or
+`dml`), `llm_base_url` or `llm_backend` (an OpenAI-compatible server; `backends.json` comes from
+`LLM_BACKENDS`), which exclude each other, and `llm_model` to override an endpoint's model.
+`llm_max_new_tokens` bounds an answer (128). Nothing loads until the first question; the model then
+stays loaded. Without one configured both answer 503 and say which keys to set.
+
+| Request | Answer |
+| --- | --- |
+| `POST /ask` `{"question", "tz_offset_min"?, "language"?}` | `answer`, the `facts` it was given, `finish_reason`, `prompt_tokens`, `completion_tokens` |
+| `GET /summary?day=YYYY-MM-DD&tz=<minutes>` | `day`, `visits`, `first`, `last`, `longest_stay_s`, `total_stay_s`; no model runs |
+| `POST /summary` `{"day"?, "tz_offset_min"?, "language"?}` | The same figures plus `summary` and `finish_reason`; a day without visits has `summary: null` and asks no model |
+
+- **The model sees the log, not the picture.** `facts` is one line about the camera and one per day
+  with visits, at most seven, so a month of history cannot outgrow its context. An answer is
+  the model's reading of those lines and may be wrong; show `facts` beside it. The figures in
+  `GET /summary` are computed, not generated.
+- **A day is local to the caller.** `tz_offset_min` (`tz`) is minutes east of UTC, default 0, within
+  14 hours. A daylight-saving change inside a day is not modelled. `language` is `de` or `en`.
+- **One answer at a time.** A second question while one runs gets 503. A client that leaves, and
+  the 300 s limit (504), cancel the answer after its current token. A failure of the model or
+  endpoint is a 502 carrying its message, never an empty answer.
+- **Only the page itself.** Both POSTs spend the board's CPU, so `own_page` guards them like
+  `POST /settings`, and they take JSON only, up to 4 KiB and a 1000-character question. Peers read
+  neither endpoint.
+- **What is not here.** Nothing sends a summary on a schedule, and no OmniAccelerANT package carries
+  the GenAI library, so a packaged service reaches a model through an endpoint unless
+  `ONNX_GENAI_ROOT` names a chain install. The `crates/observant` tests are not on the hosted
+  mutation lane, which has no GStreamer.
 
 ## Settings
 

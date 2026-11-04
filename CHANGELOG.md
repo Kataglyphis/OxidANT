@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-04, LAI-O4)
+- **ObservANT answers questions about its visits.** `POST /ask` gives a language model the camera's figures of the last
+  seven days and returns its answer with those facts. `GET /summary` serves one local day's computed figures; `POST
+  /summary` adds the model's words, and a day without visits asks no model. The model is a GenAI directory or an endpoint
+  (`llm_model_dir`, `llm_base_url`, `llm_backend`), loaded at the first question. Unconfigured, both POSTs answer 503.
+  Both are refused from any page but the camera's own ([observant.md](docs/observant.md#questions-about-the-visits)).
+
 ### Added (2026-11-04, LAI-O5)
 - **GenAI embeds, through `crates/text`.** `GenaiGenerator::embed` reads a decoder's `hidden_states` output, takes the
   mean over the text's tokens and scales it to unit length. `kataglyphis_cli embed --model-dir DIR` and the bridge's

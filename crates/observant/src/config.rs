@@ -118,6 +118,17 @@ pub struct Config {
     /// The other ObservANT cameras, as origins (`http://192.168.1.20:8080`): their pages may read this one's
     /// status and pictures, and this one's page lists them.
     pub peers: Vec<String>,
+    /// A GenAI model directory `/ask` and `/summary` run in process on the chain's ONNX Runtime GenAI.
+    pub llm_model_dir: Option<PathBuf>,
+    /// `cpu`, `cuda` or `dml`, for `llm_model_dir`.
+    pub llm_provider: String,
+    /// An OpenAI-compatible server for `/ask` and `/summary`, instead of `llm_model_dir`.
+    pub llm_base_url: Option<String>,
+    /// A backend named in `backends.json` (`LLM_BACKENDS`), instead of `llm_model_dir`.
+    pub llm_backend: Option<String>,
+    /// Overrides the endpoint's or backend's model.
+    pub llm_model: Option<String>,
+    pub llm_max_new_tokens: u32,
 }
 
 /// A host name as a camera's default name, so two unnamed cameras still differ; "ObservANT" where there is none.
@@ -167,6 +178,12 @@ impl Default for Config {
             allowed_hosts: Vec::new(),
             max_viewers: 8,
             peers: Vec::new(),
+            llm_model_dir: None,
+            llm_provider: "cpu".into(),
+            llm_base_url: None,
+            llm_backend: None,
+            llm_model: None,
+            llm_max_new_tokens: 128,
         }
     }
 }
@@ -286,6 +303,27 @@ impl Config {
             }
         }
         crate::camera::Choice::parse(&self.camera)?;
+        self.validate_language()
+    }
+
+    fn validate_language(&self) -> anyhow::Result<()> {
+        if !["cpu", "cuda", "dml"].contains(&self.llm_provider.as_str()) {
+            bail!(
+                "llm_provider must be cpu, cuda or dml (got {:?})",
+                self.llm_provider
+            );
+        }
+        if self.llm_max_new_tokens == 0 {
+            bail!("llm_max_new_tokens must be non-zero");
+        }
+        if self.llm_model_dir.is_some()
+            && (self.llm_base_url.is_some() || self.llm_backend.is_some())
+        {
+            bail!("llm_model_dir runs in process, so it excludes llm_base_url and llm_backend");
+        }
+        if self.llm_base_url.is_some() && self.llm_backend.is_some() {
+            bail!("llm_base_url and llm_backend exclude each other");
+        }
         Ok(())
     }
 }
@@ -293,6 +331,65 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_language_settings_are_validated() {
+        let with = |config: Config| config.validate_language().map_err(|e| e.to_string());
+        assert_eq!(with(Config::default()), Ok(()));
+        let parsed = Config::parse(
+            "llm_model_dir = \"/m\"\nllm_provider = \"cuda\"\nllm_max_new_tokens = 9\n",
+        )
+        .unwrap();
+        assert_eq!(
+            (parsed.llm_model_dir.as_deref(), parsed.llm_max_new_tokens),
+            (Some(Path::new("/m")), 9)
+        );
+        assert_eq!(with(parsed), Ok(()));
+        let url = Some("http://x".to_string());
+        for (bad, says) in [
+            (
+                Config {
+                    llm_provider: "tpu".into(),
+                    ..Config::default()
+                },
+                "llm_provider",
+            ),
+            (
+                Config {
+                    llm_max_new_tokens: 0,
+                    ..Config::default()
+                },
+                "llm_max_new_tokens",
+            ),
+            (
+                Config {
+                    llm_model_dir: Some("/m".into()),
+                    llm_base_url: url.clone(),
+                    ..Config::default()
+                },
+                "excludes",
+            ),
+            (
+                Config {
+                    llm_model_dir: Some("/m".into()),
+                    llm_backend: Some("b".into()),
+                    ..Config::default()
+                },
+                "excludes",
+            ),
+            (
+                Config {
+                    llm_base_url: url.clone(),
+                    llm_backend: Some("b".into()),
+                    ..Config::default()
+                },
+                "exclude each other",
+            ),
+        ] {
+            let err = with(bad).unwrap_err();
+            assert!(err.contains(says), "{err}");
+        }
+    }
 
     #[test]
     fn an_empty_file_is_the_defaults() {

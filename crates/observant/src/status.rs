@@ -187,7 +187,7 @@ const HISTORY_DAYS: u64 = 30;
 const HISTORY_MAX: usize = 10_000;
 
 /// One visit for the statistics: its arrival and, once it has left, its stay in seconds.
-type Stay = (u64, Option<u64>);
+pub type Stay = (u64, Option<u64>);
 
 /// Drops the visits older than [`HISTORY_DAYS`] before `now`, and any beyond [`HISTORY_MAX`].
 fn prune(history: &mut VecDeque<Stay>, now: u64) {
@@ -737,6 +737,25 @@ impl Status {
             })
             .unwrap_or_default();
         serde_json::json!({ "days": HISTORY_DAYS, "visits": visits }).to_string()
+    }
+
+    /// The history `/visits` serves, newest first.
+    pub fn stays(&self) -> Vec<Stay> {
+        self.detected
+            .lock()
+            .map(|cat| cat.history.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// What a visit is of, in words: the watched classes, or every class.
+    pub fn watching_text(&self) -> String {
+        if self.all_classes {
+            return "any object".into();
+        }
+        self.classes
+            .lock()
+            .map(|classes| classes.join(", "))
+            .unwrap_or_default()
     }
 
     /// A cat is in view, or the last run saw one that is not confirmed yet.

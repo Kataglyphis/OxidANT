@@ -1,5 +1,6 @@
 //! ObservANT's parts, which `main.rs` wires into one service; benches and integration tests reach them here.
 
+pub mod ask;
 pub mod camera;
 pub mod capture;
 pub mod clip;

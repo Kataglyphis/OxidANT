@@ -13,9 +13,12 @@ log = { workspace = true }
 kataglyphis_core = { path = "../core" }
 kataglyphis_inference = { path = "../inference" }
 kataglyphis_media = { path = "../media" }
+kataglyphis_text = { path = "../text" }
 gstreamer = { workspace = true }
 gstreamer-app = { workspace = true }
 sysinfo = { workspace = true }
+# /summary's local days; already in the lockfile.
+chrono = { workspace = true }
 # The web server: all already in the lockfile but hyper's httpdate and tokio's signal-hook-registry.
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "fs", "macros", "signal", "time"] }
 hyper = { version = "1", features = ["server", "http1"] }

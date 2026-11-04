@@ -5213,6 +5213,7 @@ version = "3.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "chrono",
  "clap",
  "criterion",
  "flate2",
@@ -5226,6 +5227,7 @@ dependencies = [
  "kataglyphis_core",
  "kataglyphis_inference",
  "kataglyphis_media",
+ "kataglyphis_text",
  "log",
  "percent-encoding",
  "proptest",
