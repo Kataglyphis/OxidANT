@@ -86,7 +86,7 @@ per-engine system prompts.
 
 ## Quality queue
 
-The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`); re-sync when it moves.
+The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md; re-sync when it moves.
 
 - [ ] `large-files.allow:3` budget 2031 (allow_budget_total)
 - [ ] `function-size.allow:6` budget 171 (allow_budget_total)
