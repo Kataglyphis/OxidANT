@@ -157,8 +157,6 @@ jobs:
                 --library "$ort/libonnxruntime.so.1" \
                 --library "$ort/libonnxruntime_providers_shared.so" \
                 --library "$ort/libonnxruntime_providers_migraphx.so"
-              apt-get update -qq
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgtk-4-dev
               mkdir -p "$CARGO_HOME"
               chown 1001:1001 "$CARGO_HOME"
               runuser -u kataglyphis -- bash -c '\''

@@ -13,6 +13,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-04)
+- The GPU lanes no longer install `libgtk-4-dev`: `cargo build -p kataglyphis_cli` links without it on the published
+  `:latest-rocm` (`05518138`) and `:latest-nvidia` (`70bc45db`, amd64). The lanes themselves have not run without it yet.
+
 ### Changed (2026-11-04, a too-small runner)
 - **A job the hub's `prepare-linux-ci-host` refused for runner disk re-runs alone** (`retry-disk-refusal.yml`, hub CON216). Any other
   failure stays failed. `On request`, `release.yml` and GPU candidate lanes are not named, so they never re-run.
