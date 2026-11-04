@@ -1,12 +1,13 @@
 // src/text.rs — `chat` and `embed`: the text crate's backends on the command line.
 
 use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 use oxidant::text::endpoint::EndpointChoice;
 use oxidant::text::{CancelToken, ChatMessage, GenerationOptions, GenerationResult, TextBackend};
 
-use crate::cli::{ChatArgs, EndpointArgs};
+use crate::cli::{ChatArgs, EndpointArgs, TextProvider};
 
 impl EndpointArgs {
     fn choice(&self) -> EndpointChoice {
@@ -65,17 +66,34 @@ fn figures(result: &GenerationResult) -> String {
 }
 
 #[cfg(any(target_os = "linux", windows))]
-fn backend(args: &ChatArgs) -> Result<Box<dyn TextBackend>> {
+fn local(dir: &Path, provider: TextProvider) -> Result<oxidant::text::genai::GenaiGenerator> {
     use oxidant::text::genai::{GenaiGenerator, Provider};
+    let provider = match provider {
+        TextProvider::Cpu => Provider::Cpu,
+        TextProvider::Cuda => Provider::Cuda,
+        TextProvider::Dml => Provider::DirectMl,
+    };
+    Ok(GenaiGenerator::load(dir, provider)?)
+}
+
+#[cfg(any(target_os = "linux", windows))]
+fn backend(args: &ChatArgs) -> Result<Box<dyn TextBackend>> {
     let Some(dir) = &args.model_dir else {
         return Ok(Box::new(args.endpoint.choice().resolve()?));
     };
-    let provider = match args.provider {
-        crate::cli::TextProvider::Cpu => Provider::Cpu,
-        crate::cli::TextProvider::Cuda => Provider::Cuda,
-        crate::cli::TextProvider::Dml => Provider::DirectMl,
-    };
-    Ok(Box::new(GenaiGenerator::load(dir, provider)?))
+    Ok(Box::new(local(dir, args.provider)?))
+}
+
+#[cfg(any(target_os = "linux", windows))]
+fn local_vectors(dir: &Path, provider: TextProvider, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    Ok(local(dir, provider)?.embed(texts)?)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn local_vectors(_: &Path, _: TextProvider, _: &[String]) -> Result<Vec<Vec<f32>>> {
+    bail!(
+        "--model-dir needs the chain's ONNX Runtime GenAI, which exists for Linux and Windows only"
+    );
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
@@ -87,8 +105,16 @@ fn backend(args: &ChatArgs) -> Result<Box<dyn TextBackend>> {
 }
 
 /// One JSON array per text, in the order given.
-pub fn embed(texts: Vec<String>, endpoint: EndpointArgs) -> Result<()> {
-    let vectors = endpoint.choice().resolve()?.embed(&texts)?;
+pub fn embed(
+    texts: Vec<String>,
+    model_dir: Option<PathBuf>,
+    provider: TextProvider,
+    endpoint: EndpointArgs,
+) -> Result<()> {
+    let vectors = match model_dir {
+        Some(dir) => local_vectors(&dir, provider, &texts)?,
+        None => endpoint.choice().resolve()?.embed(&texts)?,
+    };
     let mut stdout = std::io::stdout().lock();
     for vector in vectors {
         writeln!(stdout, "{}", serde_json::to_string(&vector)?)?;

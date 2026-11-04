@@ -107,6 +107,8 @@ pub enum TextError {
     StreamLineTooLong(usize),
     /// This GenAI build has no llguidance, so it cannot hold an answer to a schema.
     JsonSchemaUnsupported(String),
+    /// This model directory was exported without the `hidden_states` output embeddings read.
+    EmbeddingsUnsupported(String),
 }
 
 impl fmt::Display for TextError {
@@ -131,6 +133,9 @@ impl fmt::Display for TextError {
             }
             Self::JsonSchemaUnsupported(d) => {
                 write!(f, "json_schema is unsupported on this lane: {d}")
+            }
+            Self::EmbeddingsUnsupported(d) => {
+                write!(f, "this model cannot embed: {d}")
             }
         }
     }
@@ -224,6 +229,12 @@ pub(crate) fn messages_json(messages: &[ChatMessage]) -> serde_json::Value {
             .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
             .collect(),
     )
+}
+
+/// `vector` scaled to length 1, or `None` when it has no direction: empty, all zero or not finite.
+pub(crate) fn unit_length(vector: Vec<f32>) -> Option<Vec<f32>> {
+    let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+    (norm.is_finite() && norm > 0.0).then(|| vector.into_iter().map(|v| v / norm).collect())
 }
 
 /// The decode rate after the first token, 0 when fewer than two arrived.
@@ -347,6 +358,19 @@ mod tests {
     }
 
     #[test]
+    fn a_vector_scales_to_unit_length_and_one_without_a_direction_is_refused() {
+        assert_eq!(unit_length(vec![3.0, 4.0]), Some(vec![0.6, 0.8]));
+        for none in [
+            vec![],
+            vec![0.0, 0.0],
+            vec![f32::NAN, 1.0],
+            vec![f32::INFINITY],
+        ] {
+            assert_eq!(unit_length(none.clone()), None, "{none:?}");
+        }
+    }
+
+    #[test]
     fn every_error_names_its_kind() {
         let errors = [
             TextError::LibraryUnavailable("x".into()),
@@ -361,6 +385,7 @@ mod tests {
             TextError::EndpointStatus(503, "x".into()),
             TextError::StreamLineTooLong(1),
             TextError::JsonSchemaUnsupported("x".into()),
+            TextError::EmbeddingsUnsupported("x".into()),
         ];
         let texts: std::collections::HashSet<String> =
             errors.iter().map(ToString::to_string).collect();

@@ -158,6 +158,53 @@ fn chat_with_a_model_directory_answers_from_the_chain_genai() {
         .stderr(contains(format!("{} tokens,", ids.len())).and(contains("finish Length")));
 }
 
+#[cfg(any(target_os = "linux", windows))]
+#[test]
+fn embed_with_a_model_directory_prints_the_chain_genais_vector() {
+    use oxidant::text::genai::GenaiGenerator;
+    if !GenaiGenerator::library_available() && !common::genai_required() {
+        eprintln!("SKIP: no chain GenAI loads here; CI sets KATAGLYPHIS_REQUIRE_GENAI=1");
+        return;
+    }
+    let (text, expected) = common::tiny_embedding_fixture();
+    let output = cli()
+        .arg("embed")
+        .arg("--model-dir")
+        .arg(common::tiny_embedding_model_dir())
+        .args([&text, "second"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let printed = String::from_utf8(output).unwrap();
+    let lines: Vec<&str> = printed.lines().collect();
+    assert_eq!(lines.len(), 2, "{printed}");
+    let first: Vec<f32> = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(first.len(), expected.len());
+    for (a, e) in first.iter().zip(&expected) {
+        assert!((a - e).abs() < 1e-6, "{first:?} is not {expected:?}");
+    }
+}
+
+#[cfg(any(target_os = "linux", windows))]
+#[test]
+fn embed_refuses_a_model_directory_without_hidden_states() {
+    use oxidant::text::genai::GenaiGenerator;
+    if !GenaiGenerator::library_available() && !common::genai_required() {
+        eprintln!("SKIP: no chain GenAI loads here; CI sets KATAGLYPHIS_REQUIRE_GENAI=1");
+        return;
+    }
+    cli()
+        .arg("embed")
+        .arg("--model-dir")
+        .arg(common::tiny_model_dir())
+        .arg("abc")
+        .assert()
+        .failure()
+        .stderr(contains("include_hidden_states=true"));
+}
+
 #[test]
 fn a_model_directory_and_an_endpoint_exclude_each_other() {
     cli()

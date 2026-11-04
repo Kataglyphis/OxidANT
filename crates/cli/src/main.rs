@@ -100,7 +100,12 @@ async fn main() -> Result<()> {
             print!("{}", kataglyphis_gui::gui_wgpu::media_check()?);
         }
         Commands::Chat(args) => text::chat(args)?,
-        Commands::Embed { texts, endpoint } => text::embed(texts, endpoint)?,
+        Commands::Embed {
+            texts,
+            model_dir,
+            provider,
+            endpoint,
+        } => text::embed(texts, model_dir, provider, endpoint)?,
     }
     Ok(())
 }

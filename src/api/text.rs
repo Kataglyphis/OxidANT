@@ -84,7 +84,7 @@ pub fn text_cancel() {
     enabled::cancel();
 }
 
-/// One L2-normalised vector per text, from the endpoint the source names.
+/// One L2-normalised vector per text, from the model directory or the endpoint the source names.
 pub fn text_embed(source: TextSource, texts: Vec<String>) -> Result<Vec<Vec<f32>>, String> {
     enabled::embed(source, texts).map_err(|e| e.to_string())
 }
@@ -129,7 +129,10 @@ mod enabled {
         source: TextSource,
         texts: Vec<String>,
     ) -> Result<Vec<Vec<f32>>, TextError> {
-        endpoint(&source)?.embed(&texts)
+        match &source.model_dir {
+            Some(dir) => local::embed(&mut turn(), dir, &source.provider, &texts),
+            None => endpoint(&source)?.embed(&texts),
+        }
     }
 
     fn piece(text: &str) -> TextEvent {
@@ -247,6 +250,15 @@ mod enabled {
             Ok(&mut cached.as_mut().expect("loaded above").generator)
         }
 
+        pub(super) fn embed(
+            cached: &mut Option<Cached>,
+            dir: &str,
+            provider_name: &str,
+            texts: &[String],
+        ) -> Result<Vec<Vec<f32>>, TextError> {
+            backend(cached, dir, provider_name)?.embed(texts)
+        }
+
         pub(super) fn available() -> bool {
             GenaiGenerator::library_available()
         }
@@ -258,15 +270,28 @@ mod enabled {
 
         pub(super) enum Cached {}
 
+        fn unavailable() -> TextError {
+            TextError::LibraryUnavailable(
+                "the chain's ONNX Runtime GenAI exists for Linux and Windows only; use an endpoint"
+                    .into(),
+            )
+        }
+
         pub(super) fn backend<'a>(
             _: &'a mut Option<Cached>,
             _: &str,
             _: &str,
         ) -> Result<&'a mut dyn TextBackend, TextError> {
-            Err(TextError::LibraryUnavailable(
-                "the chain's ONNX Runtime GenAI exists for Linux and Windows only; use an endpoint"
-                    .into(),
-            ))
+            Err(unavailable())
+        }
+
+        pub(super) fn embed(
+            _: &mut Option<Cached>,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<Vec<Vec<f32>>, TextError> {
+            Err(unavailable())
         }
 
         pub(super) fn available() -> bool {
@@ -376,6 +401,21 @@ mod tests {
         )
         .unwrap_err();
         assert!(refused.contains("unreachable"), "{refused}");
+    }
+
+    #[test]
+    fn embedding_with_a_model_directory_never_falls_back_to_the_endpoint() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let source = TextSource {
+            model_dir: Some("/absent/model".into()),
+            ..endpoint_source(&format!("http://127.0.0.1:{port}"))
+        };
+        let refused = text_embed(source, vec!["a".into()]).unwrap_err();
+        assert!(!refused.contains("unreachable"), "{refused}");
     }
 
     #[test]

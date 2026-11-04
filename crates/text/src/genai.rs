@@ -1,13 +1,13 @@
 //! The chain's ONNX Runtime GenAI through its C API, loaded at run time from the chain install and verified like ORT.
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
 
 use crate::{
-    check_request, decode_rate, messages_json, stop_scan, CancelToken, ChatMessage, FinishReason,
-    GenerationOptions, GenerationResult, TextBackend, TextError,
+    check_request, decode_rate, messages_json, stop_scan, unit_length, CancelToken, ChatMessage,
+    FinishReason, GenerationOptions, GenerationResult, TextBackend, TextError,
 };
 
 #[cfg(windows)]
@@ -27,6 +27,12 @@ const CHAIN_BUILD_MARKER: &str = "/opt/onnxruntime-genai/build/";
 
 /// A GenAI built without llguidance accepts the guidance and refuses the generator with this message.
 const NO_GUIDANCE: &str = "Guidance is unavailable in this build";
+
+/// The output GenAI's model builder adds with `include_hidden_states=true`; it has no embedding call of its own.
+const HIDDEN_STATES: &CStr = c"hidden_states";
+
+/// `OgaElementType_float32`.
+const ELEMENT_FLOAT32: i32 = 1;
 
 #[repr(C)]
 struct Opaque {
@@ -77,6 +83,12 @@ struct Api {
     is_done: unsafe extern "C" fn(Handle) -> bool,
     generate_next_token: unsafe extern "C" fn(Handle) -> Status,
     get_next_tokens: unsafe extern "C" fn(Handle, *mut *const i32, *mut usize) -> Status,
+    get_output: unsafe extern "C" fn(Handle, *const c_char, *mut Handle) -> Status,
+    destroy_tensor: unsafe extern "C" fn(Handle),
+    tensor_get_type: unsafe extern "C" fn(Handle, *mut i32) -> Status,
+    tensor_get_shape_rank: unsafe extern "C" fn(Handle, *mut usize) -> Status,
+    tensor_get_shape: unsafe extern "C" fn(Handle, *mut i64, usize) -> Status,
+    tensor_get_data: unsafe extern "C" fn(Handle, *mut *mut c_void) -> Status,
     _library: libloading::Library,
 }
 
@@ -132,6 +144,12 @@ impl Api {
             is_done: bind!(library, "OgaGenerator_IsDone"),
             generate_next_token: bind!(library, "OgaGenerator_GenerateNextToken"),
             get_next_tokens: bind!(library, "OgaGenerator_GetNextTokens"),
+            get_output: bind!(library, "OgaGenerator_GetOutput"),
+            destroy_tensor: bind!(library, "OgaDestroyTensor"),
+            tensor_get_type: bind!(library, "OgaTensorGetType"),
+            tensor_get_shape_rank: bind!(library, "OgaTensorGetShapeRank"),
+            tensor_get_shape: bind!(library, "OgaTensorGetShape"),
+            tensor_get_data: bind!(library, "OgaTensorGetData"),
             _library: library,
         })
     }
@@ -336,6 +354,49 @@ impl SearchParams for GenaiParams {
     }
 }
 
+/// One text's embedding from its `[1, tokens, hidden]` hidden states: the mean over its tokens, at unit length.
+pub fn pool_hidden_states(
+    data: &[f32],
+    shape: &[i64],
+    tokens: usize,
+) -> Result<Vec<f32>, TextError> {
+    let wrong = || {
+        TextError::GenerationFailed(format!(
+            "hidden_states of shape {shape:?} with {} values for {tokens} tokens",
+            data.len()
+        ))
+    };
+    let &[1, sequence, hidden] = shape else {
+        return Err(wrong());
+    };
+    let (Ok(sequence), Ok(hidden)) = (usize::try_from(sequence), usize::try_from(hidden)) else {
+        return Err(wrong());
+    };
+    if sequence != tokens || tokens == 0 || hidden == 0 || data.len() != tokens * hidden {
+        return Err(wrong());
+    }
+    let mut mean = vec![0.0_f32; hidden];
+    for row in data.chunks_exact(hidden) {
+        for (sum, value) in mean.iter_mut().zip(row) {
+            *sum += value;
+        }
+    }
+    unit_length(mean).ok_or_else(|| {
+        TextError::GenerationFailed("the hidden states have no direction to embed".into())
+    })
+}
+
+/// The error of a missing output: [`TextError::EmbeddingsUnsupported`] names the export option that adds it.
+pub fn hidden_states_error(message: String) -> TextError {
+    if message.contains("was not found") {
+        TextError::EmbeddingsUnsupported(format!(
+            "{message} Export the model with --extra_options include_hidden_states=true."
+        ))
+    } else {
+        TextError::GenerationFailed(message)
+    }
+}
+
 /// One GenAI model directory, loaded once; `generate` takes it exclusively.
 pub struct GenaiGenerator {
     api: &'static Api,
@@ -449,6 +510,11 @@ impl GenaiGenerator {
             (api.destroy_string)(templated);
             text
         };
+        self.encode(&text)
+    }
+
+    fn encode(&self, text: &CStr) -> Result<Owned, TextError> {
+        let api = self.api;
         let mut raw = std::ptr::null_mut();
         // SAFETY: plain out pointer.
         api.check(unsafe { (api.create_sequences)(&mut raw) }, "sequences")
@@ -463,6 +529,88 @@ impl GenaiGenerator {
         )
         .map_err(TextError::EncodeFailed)?;
         Ok(sequences)
+    }
+
+    /// One L2-normalised vector per text, in the order given; the model must have a `hidden_states` output.
+    pub fn embed(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>, TextError> {
+        if texts.is_empty() {
+            return Err(TextError::InvalidOptions("no texts".into()));
+        }
+        texts.iter().map(|text| self.embed_one(text)).collect()
+    }
+
+    fn embed_one(&self, text: &str) -> Result<Vec<f32>, TextError> {
+        let api = self.api;
+        let encoded = self.encode(&c_string(text, "a text")?)?;
+        // SAFETY: encoded is a live sequences handle holding one sequence.
+        let tokens = unsafe { (api.sequences_get_sequence_count)(encoded.handle, 0) };
+        if tokens == 0 {
+            return Err(TextError::InvalidOptions(format!(
+                "{text:?} encodes to no tokens"
+            )));
+        }
+        // Appending the tokens runs the model over all of them, so no token is ever decoded.
+        let options = GenerationOptions {
+            max_new_tokens: 1,
+            ..GenerationOptions::default()
+        };
+        let generator = self.generator(&encoded, tokens, &options)?;
+        let mut raw = std::ptr::null_mut();
+        // SAFETY: generator is live and the name is a static C string; the tensor is a copy this code owns.
+        api.check(
+            unsafe { (api.get_output)(generator.handle, HIDDEN_STATES.as_ptr(), &mut raw) },
+            "hidden states",
+        )
+        .map_err(hidden_states_error)?;
+        let tensor = Owned::new(raw, api.destroy_tensor);
+        self.pool_tensor(&tensor, tokens)
+    }
+
+    fn pool_tensor(&self, tensor: &Owned, tokens: usize) -> Result<Vec<f32>, TextError> {
+        let api = self.api;
+        let failed = TextError::GenerationFailed;
+        let (mut element, mut rank) = (0_i32, 0_usize);
+        // SAFETY: tensor is live and both out pointers are valid for the call.
+        api.check(
+            unsafe { (api.tensor_get_type)(tensor.handle, &mut element) },
+            "tensor type",
+        )
+        .and_then(|()| {
+            api.check(
+                unsafe { (api.tensor_get_shape_rank)(tensor.handle, &mut rank) },
+                "tensor rank",
+            )
+        })
+        .map_err(failed)?;
+        if element != ELEMENT_FLOAT32 {
+            return Err(TextError::EmbeddingsUnsupported(format!(
+                "hidden_states has element type {element}, not 32-bit float"
+            )));
+        }
+        let mut shape = vec![0_i64; rank];
+        let mut data = std::ptr::null_mut();
+        // SAFETY: shape holds rank values; GenAI owns data for the tensor's lifetime.
+        api.check(
+            unsafe { (api.tensor_get_shape)(tensor.handle, shape.as_mut_ptr(), rank) },
+            "tensor shape",
+        )
+        .and_then(|()| {
+            api.check(
+                unsafe { (api.tensor_get_data)(tensor.handle, &mut data) },
+                "tensor data",
+            )
+        })
+        .map_err(failed)?;
+        let values = shape
+            .iter()
+            .try_fold(1_usize, |n, &d| n.checked_mul(usize::try_from(d).ok()?))
+            .filter(|_| !data.is_null())
+            .ok_or_else(|| {
+                TextError::GenerationFailed(format!("hidden_states has shape {shape:?}"))
+            })?;
+        // SAFETY: a float32 tensor of this shape holds `values` aligned floats, alive while `tensor` is.
+        let floats = unsafe { std::slice::from_raw_parts(data.cast::<f32>(), values) };
+        pool_hidden_states(floats, &shape, tokens)
     }
 
     fn generator(
@@ -786,6 +934,47 @@ mod tests {
         );
         assert!(matches!(
             generator_error("generator: out of memory".into()),
+            TextError::GenerationFailed(_)
+        ));
+    }
+
+    #[test]
+    fn hidden_states_pool_to_the_unit_length_mean_of_their_tokens() {
+        let vector =
+            pool_hidden_states(&[1.0, 0.0, 5.0, 8.0], &[1, 2, 2], 2).expect("a valid tensor");
+        assert_eq!(vector, [0.6, 0.8]);
+    }
+
+    #[test]
+    fn hidden_states_of_any_other_shape_are_refused() {
+        for (data, shape, tokens) in [
+            (vec![1.0; 4], vec![2, 2], 2),
+            (vec![1.0; 4], vec![2, 1, 2], 1),
+            (vec![1.0; 4], vec![1, 2, 2], 3),
+            (vec![1.0; 3], vec![1, 2, 2], 2),
+            (vec![], vec![1, 0, 2], 0),
+            (vec![1.0; 2], vec![1, -1, -2], 1),
+        ] {
+            let refused = pool_hidden_states(&data, &shape, tokens).unwrap_err();
+            assert!(
+                matches!(refused, TextError::GenerationFailed(_)),
+                "{shape:?}"
+            );
+        }
+        assert!(pool_hidden_states(&[0.0; 2], &[1, 1, 2], 1).is_err());
+    }
+
+    #[test]
+    fn a_model_without_the_output_is_told_how_to_export_one() {
+        let refused = hidden_states_error(
+            "hidden states: Generator output 'hidden_states' was not found.".into(),
+        );
+        assert!(
+            matches!(&refused, TextError::EmbeddingsUnsupported(d) if d.contains("include_hidden_states=true")),
+            "{refused}"
+        );
+        assert!(matches!(
+            hidden_states_error("hidden states: out of memory".into()),
             TextError::GenerationFailed(_)
         ));
     }

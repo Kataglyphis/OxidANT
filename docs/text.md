@@ -69,7 +69,22 @@ byte, a seed above `i32::MAX`, an empty stop string, a `json_schema` that is not
 generation, an unreachable endpoint, an endpoint HTTP status with its body, a streamed line over
 the 1 MiB bound, and a `json_schema` this lane cannot hold.
 
-Not yet: embeddings from GenAI. `embed` needs an endpoint.
+## Embedding
+
+`GenaiGenerator::embed(texts)` and `Endpoint::embed(texts)` return one L2-normalised vector per
+text, in order. An endpoint answers `/v1/embeddings`. GenAI has no embedding call: the generator
+encodes each text without the chat template, appends its tokens, which runs the model over all of
+them, reads the `hidden_states` output through `OgaGenerator_GetOutput` and takes its mean over the
+tokens (`genai::pool_hidden_states`). No token is decoded, and the same generator still answers
+`generate`.
+
+The model must be a decoder exported with `--extra_options include_hidden_states=true`. Without that
+output `embed` fails with `TextError::EmbeddingsUnsupported`, naming the option. **No released
+model has it yet**, SmolLM2-135M-Instruct included, and GenAI 0.17's model builder does not export
+BERT, so the hub's multilingual-e5-small and bge-m3 reach OxidANT through an endpoint only. Other
+failures: no texts, a NUL byte and a text that encodes to no tokens are `InvalidOptions`, a text at
+the model's `context_length` is `GenerationFailed`, and a `hidden_states` output that is not 32-bit
+float (a `fp16` export) is `EmbeddingsUnsupported`.
 
 ## The CLI
 
@@ -77,12 +92,13 @@ Not yet: embeddings from GenAI. `embed` needs an endpoint.
 kataglyphis_cli chat --model-dir <genai-model-dir> --prompt "What is the capital of France?"
 kataglyphis_cli chat --backend ollama --model qwen3:4b --prompt "Hallo" --system "Answer in German."
 kataglyphis_cli embed --base-url http://localhost:11434 --model nomic-embed-text "first" "second"
+kataglyphis_cli embed --model-dir <genai-model-dir> "first" "second"
 ```
 
 `chat` streams the reply to stdout and prints the token count, the time to the first token, the
 decode rate and the finish reason to stderr. `--seed N`, `--json-schema '<schema JSON>'` and a
 repeatable `--stop TEXT` set the three options above. `--provider cuda` or `dml` selects GenAI's execution
-provider. `embed` prints one L2-normalised vector per text, one JSON array per line.
+provider, on `embed --model-dir` too. `embed` prints one L2-normalised vector per text, one JSON array per line.
 
 ## The Flutter bridge
 
@@ -92,7 +108,7 @@ provider. `embed` prints one L2-normalised vector per text, one JSON array per l
 | --- | --- |
 | `text_generate(source, messages, options, sink)` | Streams `TextEvent`s: `piece` with its text, then one `done` with the finish reason and the figures |
 | `text_cancel()` | Cancels the running generation |
-| `text_embed(source, texts)` | The endpoint's vectors |
+| `text_embed(source, texts)` | The vectors of the model directory or endpoint the source names |
 | `text_local_available()` | Whether this build loads the chain's GenAI |
 | `text_default_options()` | The contract's defaults |
 
@@ -109,7 +125,8 @@ Only the contract suite loads a released model. The GenAI suites write
 [the hub's tiny GenAI model](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/language-ai.md#the-test-model)
 with its generator, `third_party/ANTfrastructure/linux/scripts/lib/tiny-genai-model.py`, and read
 its `fixture.json` oracle. Greedy decoding of `abc` yields `defg`, and from the byte `0xBF` the
-model runs to its end token. Where no GenAI loads they print `SKIP`; CI sets
+model runs to its end token. Its `--hidden-states` form has the output `embed` reads and the oracle's
+vector. Where no GenAI loads they print `SKIP`; CI sets
 `KATAGLYPHIS_REQUIRE_GENAI=1`, which turns that into a failure.
 
 `crates/text/tests/contract.rs` replays ModelANT's `text-generation-v1` contract, a byte-identical
@@ -128,13 +145,14 @@ local server that plays back one recorded answer and ends within 30 s on its own
 | Suite | What it covers |
 | --- | --- |
 | `crates/text/src/*.rs` | Option checks, the request body, stream lines and their 1 MiB bound, the redacted key, embeddings, endpoint resolution, the loader's search and its chain check |
-| `crates/text/tests/genai.rs` | The tiny model: the oracle's tokens and text, the end token, a cancel from another thread, invalid requests, a repeated seed's identical ids, at least two different 24-token answers across seeds 1 to 4 at temperature 1, a schema answer that parses and validates on Linux and `JsonSchemaUnsupported` on Windows, a stop string ending with `Stop` |
+| `crates/text/tests/genai.rs` | The tiny model: the oracle's tokens and text, the end token, a cancel from another thread, invalid requests, a repeated seed's identical ids, at least two different 24-token answers across seeds 1 to 4 at temperature 1, a schema answer that parses and validates on Linux and `JsonSchemaUnsupported` on Windows, a stop string ending with `Stop`, the oracle's embedding, several texts in order, generation after embedding, a model without the output, texts that cannot be embedded |
 | `crates/text/tests/contract.rs` | ModelANT's text-generation-v1 on SmolLM2-135M: exact ids and `must_contain` |
 | `crates/text/tests/endpoint.rs` | Streaming, cancel, both finish reasons, HTTP errors, an over-long stream line, an unreachable port, embeddings, `seed`, `stop` and `response_format` in the request body |
 | `crates/cli/tests/text.rs` | `chat` and `embed` on both backends, a named backend, the missing-endpoint error, the `--seed`, `--json-schema` and `--stop` request body |
 | `src/api/text.rs` | The bridge's mapping |
 
-Five mutation recipes in `scripts/linux/tests/ort-license-mutations.json` run on the hosted
+Eight mutation recipes in `scripts/linux/tests/ort-license-mutations.json` run on the hosted
 mutation lane without GenAI: dropping the seed or the guidance in `genai::configure`, switching
-greedy decoding to sampling, and dropping the endpoint's `seed` or `response_format`. They do not
-cover the FFI calls that apply `configure`'s choices, which only the GenAI suites reach.
+greedy decoding to sampling, dropping the endpoint's `seed` or `response_format`, and in embedding a
+last-row vector, an unchecked hidden-states shape and a lost export hint. They do not
+cover the FFI calls that apply `configure`'s choices or read `hidden_states`, which only the GenAI suites reach.

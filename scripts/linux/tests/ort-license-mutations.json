@@ -219,6 +219,33 @@
   "why": "Temperature 0 decodes greedily, which the exact-token contract tests rely on."
  },
  {
+  "id": "consumer.oxidant-text-embed-mean",
+  "target": "crates/text/src/genai.rs",
+  "find": "            *sum += value;",
+  "replace": "            *sum = *value;",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "An embedding is the mean over every token, not its last row."
+ },
+ {
+  "id": "consumer.oxidant-text-embed-shape",
+  "target": "crates/text/src/genai.rs",
+  "find": "    if sequence != tokens || tokens == 0 || hidden == 0 || data.len() != tokens * hidden {",
+  "replace": "    if tokens == 0 || hidden == 0 {",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "Only a [1, tokens, hidden] tensor may become a vector, or a wrong output embeds silently."
+ },
+ {
+  "id": "consumer.oxidant-text-embed-hint",
+  "target": "crates/text/src/genai.rs",
+  "find": "    if message.contains(\"was not found\") {",
+  "replace": "    if message.is_empty() {",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "A model without the output must say which export option adds it."
+ },
+ {
   "id": "consumer.oxidant-text-seed-endpoint",
   "target": "crates/text/src/endpoint.rs",
   "find": "            body.insert(\"seed\".into(), json!(seed));",

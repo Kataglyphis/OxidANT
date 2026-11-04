@@ -15,8 +15,6 @@ and the backlog is empty"; it was neither.
 
 - [ ] **LAI-O4: ObservANT's `/ask` and a daily summary over `/visits`** (M, ★★). Hub language-AI
       milestone 4 (`docs/language-ai.md`).
-- [ ] **LAI-O5: embeddings in OxidANT** (M, ★★). GenAI's embeddings through `crates/text`; hub
-      language-AI milestone 2.
 - [ ] Drop the vendored `third_party/egui-winit-0.36.2` and its
       `[patch.crates-io]` entry, then move the egui family to 0.37.
       Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.

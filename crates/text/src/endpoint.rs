@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Map, Value};
 
 use crate::{
-    check_request, decode_rate, messages_json, CancelToken, ChatMessage, FinishReason,
+    check_request, decode_rate, messages_json, unit_length, CancelToken, ChatMessage, FinishReason,
     GenerationOptions, GenerationResult, TextBackend, TextError,
 };
 
@@ -333,14 +333,14 @@ pub fn parse_embeddings(answer: &Value, expected: usize) -> Result<Vec<Vec<f32>>
             .filter_map(Value::as_f64)
             .map(|v| v as f32)
             .collect();
-        let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
-        if vector.len() != values.len() || norm == 0.0 {
-            return Err(bad("has a vector that is not a nonzero list of numbers"));
-        }
+        let unit = (vector.len() == values.len())
+            .then(|| unit_length(vector))
+            .flatten()
+            .ok_or_else(|| bad("has a vector that is not a nonzero list of numbers"))?;
         let slot = vectors
             .get_mut(index)
             .ok_or_else(|| bad("has an index out of range"))?;
-        *slot = vector.into_iter().map(|v| v / norm).collect();
+        *slot = unit;
     }
     if vectors.iter().any(Vec::is_empty) {
         return Err(bad("repeats an index"));

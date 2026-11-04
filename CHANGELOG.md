@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-04, LAI-O5)
+- **GenAI embeds, through `crates/text`.** `GenaiGenerator::embed` reads a decoder's `hidden_states` output, takes the
+  mean over the text's tokens and scales it to unit length. `kataglyphis_cli embed --model-dir DIR` and the bridge's
+  `text_embed` with a `model_dir` use it. A model exported without that output fails with
+  `TextError::EmbeddingsUnsupported`, naming `include_hidden_states=true`. Proven on the hub's tiny model; no released
+  model has the output yet ([text.md](docs/text.md#embedding)).
+
 ### Fixed (2026-11-03, a card without a CUDA kernel)
 - **A card the NVIDIA packages have no kernel for gets a message, or the CPU.** `person_detection/cuda_probe.rs` runs a
   one-`Relu` model on CUDA before the real session. On `cudaErrorNoKernelImageForDevice`, `cuda` fails with

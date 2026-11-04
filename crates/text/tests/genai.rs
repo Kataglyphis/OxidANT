@@ -6,7 +6,9 @@ mod common;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use common::{genai_required, tiny_fixture, tiny_model_dir};
+use common::{
+    genai_required, tiny_embedding_fixture, tiny_embedding_model_dir, tiny_fixture, tiny_model_dir,
+};
 use kataglyphis_text::genai::{GenaiGenerator, Provider};
 use kataglyphis_text::{
     CancelToken, ChatMessage, FinishReason, GenerationOptions, TextBackend, TextError,
@@ -292,4 +294,98 @@ fn a_stop_string_ends_the_answer_before_it() {
     assert_eq!(pieces.concat(), "de");
     assert_eq!(result.finish_reason, FinishReason::Stop);
     assert_eq!(result.tokens, [100, 101, 102, 103]);
+}
+
+/// The library first, like [`generator`], for the model that has a `hidden_states` output.
+fn embedder() -> Option<GenaiGenerator> {
+    if !GenaiGenerator::library_available() && !genai_required() {
+        eprintln!("SKIP: no chain GenAI loads here; CI sets KATAGLYPHIS_REQUIRE_GENAI=1");
+        return None;
+    }
+    Some(GenaiGenerator::load(tiny_embedding_model_dir(), Provider::Cpu).unwrap())
+}
+
+fn assert_close(actual: &[f32], expected: &[f32]) {
+    assert_eq!(actual.len(), expected.len(), "{actual:?}");
+    for (a, e) in actual.iter().zip(expected) {
+        assert!((a - e).abs() < 1e-6, "{actual:?} is not {expected:?}");
+    }
+}
+
+#[test]
+fn an_embedding_is_the_oracles_unit_length_mean_of_the_hidden_states() {
+    let Some(mut embedder) = embedder() else {
+        return;
+    };
+    let (text, expected) = tiny_embedding_fixture();
+    let vectors = embedder.embed(std::slice::from_ref(&text)).unwrap();
+    assert_eq!(vectors.len(), 1);
+    assert_close(&vectors[0], &expected);
+    let norm = vectors[0].iter().map(|v| v * v).sum::<f32>().sqrt();
+    assert!((norm - 1.0).abs() < 1e-6, "{norm}");
+}
+
+#[test]
+fn several_texts_keep_their_order_and_the_same_text_repeats_its_vector() {
+    let Some(mut embedder) = embedder() else {
+        return;
+    };
+    let (text, expected) = tiny_embedding_fixture();
+    let vectors = embedder
+        .embed(&["\u{ff}\u{ff}".to_string(), text.clone(), text])
+        .unwrap();
+    assert_eq!(vectors.len(), 3);
+    assert_close(&vectors[1], &expected);
+    assert_eq!(vectors[1], vectors[2]);
+    let cosine: f32 = vectors[0].iter().zip(&vectors[1]).map(|(a, b)| a * b).sum();
+    assert!(
+        cosine < 0.999,
+        "two different texts embedded alike: {cosine}"
+    );
+}
+
+#[test]
+fn embedding_leaves_generation_working_on_the_same_model() {
+    let Some(mut embedder) = embedder() else {
+        return;
+    };
+    let (prompt, continuation, ids) = tiny_fixture();
+    embedder.embed(std::slice::from_ref(&prompt)).unwrap();
+    let result = embedder
+        .generate(
+            &[ChatMessage::user(&prompt)],
+            &budget(ids.len()),
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(result.text, continuation);
+}
+
+#[test]
+fn a_model_without_hidden_states_refuses_to_embed() {
+    let Some(mut generator) = generator() else {
+        return;
+    };
+    let refused = generator.embed(&["abc".to_string()]).unwrap_err();
+    assert!(
+        matches!(&refused, TextError::EmbeddingsUnsupported(d) if d.contains("include_hidden_states=true")),
+        "{refused}"
+    );
+}
+
+#[test]
+fn texts_that_cannot_be_embedded_are_errors_not_vectors() {
+    let Some(mut embedder) = embedder() else {
+        return;
+    };
+    for texts in [vec![], vec![String::new()], vec!["a\0b".to_string()]] {
+        let refused = embedder.embed(&texts).unwrap_err();
+        assert!(
+            matches!(refused, TextError::InvalidOptions(_)),
+            "{texts:?}: {refused}"
+        );
+    }
+    let refused = embedder.embed(&["a".repeat(600)]).unwrap_err();
+    assert!(refused.to_string().contains("context_length"), "{refused}");
 }

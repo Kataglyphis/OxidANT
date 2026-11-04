@@ -89,28 +89,52 @@ pub fn tiny_model_generator() -> PathBuf {
         .join("../../third_party/ANTfrastructure/linux/scripts/lib/tiny-genai-model.py")
 }
 
+/// Runs the generator once with `flags` and returns the directory it wrote.
+fn write_tiny_model(name: &str, flags: &[&str]) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("oxidant-{name}-{}", std::process::id()));
+    let generator = tiny_model_generator();
+    let ran = ["python3", "python"].iter().find_map(|python| {
+        std::process::Command::new(python)
+            .arg(&generator)
+            .arg("--out")
+            .arg(&dir)
+            .args(flags)
+            .status()
+            .ok()
+    });
+    assert!(
+        ran.is_some_and(|s| s.success()),
+        "{} did not write {}",
+        generator.display(),
+        dir.display()
+    );
+    dir
+}
+
 /// The tiny model, written once per test process; see `third_party/ANTfrastructure/docs/language-ai.md` § The test model.
 pub fn tiny_model_dir() -> &'static Path {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("oxidant-tiny-genai-{}", std::process::id()));
-        let generator = tiny_model_generator();
-        let ran = ["python3", "python"].iter().find_map(|python| {
-            std::process::Command::new(python)
-                .arg(&generator)
-                .arg("--out")
-                .arg(&dir)
-                .status()
-                .ok()
-        });
-        assert!(
-            ran.is_some_and(|s| s.success()),
-            "{} did not write {}",
-            generator.display(),
-            dir.display()
-        );
-        dir
-    })
+    DIR.get_or_init(|| write_tiny_model("tiny-genai", &[]))
+}
+
+/// The tiny model with the `hidden_states` output embeddings read.
+pub fn tiny_embedding_model_dir() -> &'static Path {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| write_tiny_model("tiny-genai-hidden", &["--hidden-states"]))
+}
+
+/// The oracle's text and its expected unit-length embedding.
+pub fn tiny_embedding_fixture() -> (String, Vec<f32>) {
+    let path = tiny_embedding_model_dir().join("fixture.json");
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let vector = fixture["embedding"]
+        .as_array()
+        .expect("the oracle has an embedding")
+        .iter()
+        .map(|v| v.as_f64().unwrap() as f32)
+        .collect();
+    (fixture["prompt"].as_str().unwrap().to_string(), vector)
 }
 
 /// The oracle: the prompt, its greedy continuation and that continuation's ids.

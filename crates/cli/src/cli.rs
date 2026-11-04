@@ -107,6 +107,12 @@ pub enum Commands {
     Embed {
         #[arg(required = true)]
         texts: Vec<String>,
+        /// A GenAI model directory exported with hidden states, run on the chain's ONNX Runtime GenAI (Linux and Windows).
+        #[arg(long, conflicts_with_all = ["base_url", "backend"])]
+        model_dir: Option<PathBuf>,
+        /// The execution provider for --model-dir.
+        #[arg(long, value_enum, default_value_t = TextProvider::Cpu)]
+        provider: TextProvider,
         #[command(flatten)]
         endpoint: EndpointArgs,
     },
