@@ -1,9 +1,10 @@
 //! Which camera to capture: a Raspberry Pi CSI camera when one is attached, else a USB webcam.
 //! The probes are impure; [`choose`] is a pure function over their result, so the order is testable.
 
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::bail;
 use gstreamer as gst;
@@ -356,30 +357,44 @@ pub fn find_on_path(name: &str) -> Option<PathBuf> {
 
 /// stdout of `program args`, or `None` when it fails or outlives `timeout`.
 fn run_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Option<String> {
-    let child = Command::new(program)
+    let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
+    let mut stdout = child.stdout.take()?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
+        let mut output = Vec::new();
+        let _ = tx.send(stdout.read_to_end(&mut output).map(|_| output));
     });
-    match rx.recv_timeout(timeout) {
-        Ok(Ok(output)) if output.status.success() => {
-            Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    let deadline = Instant::now() + timeout;
+    let output = rx.recv_timeout(timeout).ok().and_then(Result::ok);
+    // The child stays here, not on the reader thread: a probe that hangs is killed and reaped, or every retry leaves one more.
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if output.is_some() && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
         }
-        Ok(Ok(output)) => {
-            log::warn!("{program} failed: {}", output.status);
+    };
+    match (output, status) {
+        (Some(output), Some(status)) if status.success() => {
+            Some(String::from_utf8_lossy(&output).into_owned())
+        }
+        (_, Some(status)) => {
+            log::warn!("{program} failed: {status}");
             None
         }
-        Ok(Err(err)) => {
-            log::warn!("{program} failed: {err}");
-            None
-        }
-        Err(_) => {
+        _ => {
             log::warn!("{program} did not answer within {timeout:?}");
             None
         }
@@ -642,6 +657,19 @@ mod tests {
         // Through sh: under the riscv64 lane's QEMU a bare `sleep` exits at once instead of hanging.
         let hang = run_with_timeout("sh", &["-c", "sleep 5"], Duration::from_millis(200));
         assert_eq!(hang, None);
+        // The hung probe is gone when the call returns: `exec` keeps the pid the file names.
+        let pid_file = std::env::temp_dir().join(format!("observant-probe-{}", std::process::id()));
+        let script = format!("echo $$ > {}; exec sleep 30", pid_file.display());
+        let started = Instant::now();
+        assert_eq!(
+            run_with_timeout("sh", &["-c", &script], Duration::from_millis(500)),
+            None
+        );
+        assert!(started.elapsed() < secs(10), "waited for the hung probe");
+        let pid = std::fs::read_to_string(&pid_file).expect("the probe's pid");
+        std::fs::remove_file(&pid_file).expect("remove the pid file");
+        let alive = std::path::Path::new("/proc").join(pid.trim()).exists();
+        assert!(!alive, "probe {} outlived its timeout", pid.trim());
         assert_eq!(
             run_with_timeout("no-such-program-kataglyphis-cat", &[], secs(1)),
             None

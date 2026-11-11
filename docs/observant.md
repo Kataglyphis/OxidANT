@@ -84,7 +84,9 @@ the older `$KATAGLYPHIS_CATCAM_CONFIG`), else `/etc/omni-accelerant/observant.to
 flags on top. Unknown keys are errors, `--print-config` prints the effective set, and
 every earlier flag still works. `inference = "auto"` skips the model below 768 MiB of RAM
 (a 512 MB board; a 1 GB Pi 3 reports 905 MiB) or when it does not load. `--web-root`
-names OmniAccelerANT's web build, served on `:8080`.
+names OmniAccelerANT's web build, served on `:8080`. `width` must be a multiple of 8 and
+`height` even: GStreamer pads the rows of any other I420 width, and the service reads them
+tightly packed.
 
 OmniAccelerANT packages the service as a .deb, AppImage, flatpak, MSI and MSIX. How it
 picks the camera and paces the model, and the measurements behind both:

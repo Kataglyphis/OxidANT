@@ -248,6 +248,10 @@ impl Config {
                 self.height
             );
         }
+        // GStreamer pads I420 rows to four bytes, luma and half-width chroma alike; frame.rs reads them tightly packed.
+        if !self.width.is_multiple_of(8) {
+            bail!("width must be a multiple of 8 (got {})", self.width);
+        }
         if self.fps == 0 {
             bail!("fps must be non-zero");
         }
@@ -530,6 +534,15 @@ mod tests {
                 width: 641,
                 ..Config::default()
             },
+            // Even, but GStreamer pads its I420 rows: 854 gives 856-byte luma rows.
+            Config {
+                width: 854,
+                ..Config::default()
+            },
+            Config {
+                width: 500,
+                ..Config::default()
+            },
             Config {
                 fps: 0,
                 ..Config::default()
@@ -693,7 +706,7 @@ mod tests {
                 let config = Config::parse(&text).unwrap();
                 if config.validate().is_ok() {
                     prop_assert!([0, 90, 180, 270].contains(&config.rotate));
-                    prop_assert!(width > 0 && width % 2 == 0 && height > 0 && height % 2 == 0);
+                    prop_assert!(width > 0 && width % 8 == 0 && height > 0 && height % 2 == 0);
                     prop_assert!(fps > 0 && (0.0..=1.0).contains(&score) && clip_seconds <= 60);
                     prop_assert!(ice == (0, 0) || (ice.0 > 0 && ice.0 <= ice.1));
                 }

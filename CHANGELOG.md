@@ -38,7 +38,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - A frame nobody took lends its buffer to the next one, so a consumer slower than the camera no
   longer costs an allocation per frame.
 
-### Fixed (2026-11-11, NaN boxes, a capture that fails to start)
+### Fixed (2026-11-11, padded widths, hung probes, NaN boxes)
+- **ObservANT refuses a width GStreamer pads.** I420 rows are padded to four bytes, luma and
+  half-width chroma alike, and `frame.rs` reads them tightly packed: at 854x480 a frame is
+  616320 bytes, not the 614880 the service sliced, so picture, model input and snapshot sheared.
+  `width` must now be a multiple of 8.
+- **A camera probe that hangs is killed.** `run_with_timeout` gave up on `rpicam-hello` after its
+  timeout but left the process and its reader thread, one more with every retry.
 - A detection with a NaN or infinite corner is dropped; it passed every clamp and reached the
   overlay as a box that cannot be drawn.
 - A capture pipeline that fails to start is set to Null, and its error names the element and the
