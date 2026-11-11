@@ -49,7 +49,28 @@ const MAX_CONNECTIONS: usize = 128;
 /// A client must send its request head within this, so idle or trickling sockets cannot hold a slot.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// And its body within this: the head's limit ends with the head.
+const BODY_READ_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 10 });
+
 pub(crate) type Body = Full<Bytes>;
+
+/// A request body of at most `limit` bytes, read within [`BODY_READ_TIMEOUT`]; else the refusal to answer with.
+pub(crate) async fn read_limited(
+    body: Incoming,
+    limit: usize,
+) -> Result<Bytes, Box<Response<Body>>> {
+    match tokio::time::timeout(BODY_READ_TIMEOUT, Limited::new(body, limit).collect()).await {
+        Ok(Ok(body)) => Ok(body.to_bytes()),
+        Ok(Err(_)) => Err(Box::new(plain(
+            StatusCode::BAD_REQUEST,
+            "body too large or unreadable",
+        ))),
+        Err(_) => Err(Box::new(plain(
+            StatusCode::REQUEST_TIMEOUT,
+            "the body took too long",
+        ))),
+    }
+}
 
 pub struct Site {
     pub web_root: Option<PathBuf>,
@@ -312,10 +333,11 @@ async fn settings(req: Request<Incoming>, status: &Status) -> Response<Body> {
         if !json {
             return plain(StatusCode::UNSUPPORTED_MEDIA_TYPE, "application/json only");
         }
-        let Ok(body) = Limited::new(req.into_body(), 1024).collect().await else {
-            return plain(StatusCode::BAD_REQUEST, "body too large or unreadable");
+        let body = match read_limited(req.into_body(), 1024).await {
+            Ok(body) => body,
+            Err(refusal) => return *refusal,
         };
-        let applied = serde_json::from_slice::<Settings>(&body.to_bytes())
+        let applied = serde_json::from_slice::<Settings>(&body)
             .map_err(anyhow::Error::from)
             .and_then(|update| status.apply(update));
         if let Err(err) = applied {
@@ -1478,6 +1500,50 @@ mod tests {
         let reply = post(addr, "/ask", "application/json", r#"{"question":"hi"}"#).await;
         assert!(reply.starts_with("HTTP/1.1 502"), "{reply}");
         assert!(body_text(&reply).contains("out of memory"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn a_model_that_answers_nothing_is_an_error_not_an_empty_answer() {
+        for path in ["/ask", "/summary"] {
+            let (assistant, _) = crate::ask::tests::stub_assistant(Ok("  ".into()), false);
+            let mut with_model = site(4, Vec::new(), 9);
+            with_model.assistant = Some(assistant);
+            // A visit today, so the summary asks the model at all.
+            arrive_and_leave(&with_model.status);
+            let addr = start_with(with_model).await;
+            let body = if path == "/ask" {
+                r#"{"question":"hi"}"#
+            } else {
+                "{}"
+            };
+            let reply = post(addr, path, "application/json", body).await;
+            assert!(reply.starts_with("HTTP/1.1 502"), "{path}: {reply}");
+            assert!(
+                body_text(&reply).contains("no answer (finish_reason stop)"),
+                "{path}: {reply}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_body_that_never_comes_is_refused_and_frees_its_connection() {
+        let addr = start_with(site(4, Vec::new(), 9)).await;
+        for path in ["/ask", "/settings"] {
+            let mut stream = TcpStream::connect(addr).await.unwrap();
+            let head = format!(
+                "POST {path} HTTP/1.1\r\nhost: cat.local\r\ncontent-type: application/json\r\ncontent-length: 20\r\n\r\n"
+            );
+            stream.write_all(head.as_bytes()).await.unwrap();
+            let mut response = Vec::new();
+            let read = stream.read_to_end(&mut response);
+            // The head's limit is over once the head arrived; without a limit of its own this read never ends.
+            tokio::time::timeout(Duration::from_secs(10), read)
+                .await
+                .expect("the server gave up on the body")
+                .unwrap();
+            let reply = String::from_utf8_lossy(&response);
+            assert!(reply.starts_with("HTTP/1.1 408"), "{path}: {reply}");
+        }
     }
 
     #[tokio::test]

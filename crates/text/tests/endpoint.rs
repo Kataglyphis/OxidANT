@@ -99,6 +99,26 @@ fn an_http_error_keeps_its_status_and_body() {
 }
 
 #[test]
+fn an_error_body_cut_inside_a_character_keeps_what_came_before() {
+    // The 2000-byte limit falls between the two bytes of the "é"; read as a string, nothing of the body was kept.
+    let body = format!("{}é and the rest", "x".repeat(1999));
+    let server = FakeServer::answer(502, "text/plain", &body);
+    let refused = endpoint(&server)
+        .generate(
+            &[ChatMessage::user("x")],
+            &GenerationOptions::default(),
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap_err();
+    let TextError::EndpointStatus(502, text) = refused else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(text.chars().count(), 2000, "{text}");
+    assert!(text.starts_with(&"x".repeat(1999)), "{text}");
+}
+
+#[test]
 fn a_stream_that_stops_without_a_finish_reason_is_an_error_not_an_answer() {
     let server = FakeServer::answer(
         200,

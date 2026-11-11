@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-12, questions the model did not answer)
+- **A model that answers nothing is a 502 that says so.** A model that spent its token budget thinking returned no text,
+  and `/ask` and `POST /summary` passed that on as a 200 with an empty answer.
+- **A client that left while the model loaded is not answered.** The backend clears the cancel token as it starts, so the
+  cancel was lost and a whole answer was decoded for nobody while every other question got 503.
+- **A request body that never comes is refused after 10 s** with 408 on `/ask`, `/summary` and `/settings`. The limit on
+  the request head ends with the head, so such a client held one of the 128 connection slots for as long as it liked.
+- **An endpoint's error body is kept when it is cut inside a character or is not UTF-8.** It was read as a string, which
+  kept nothing of it, so the reply named a status and no reason.
+- **The test that crashes a child on purpose leaves no core file.** Where dumps are on it wrote 19 MB into
+  `crates/inference/`, which the large-file ratchet then refused.
+
 ### Changed (2026-11-11, webcam preview, capture errors, detector copies)
 - **The webcam preview keeps the camera's rate.** The engine pushed a frame to the Flutter texture
   only when it took one for the model, so the preview ran at the inference rate (about 6 frames a

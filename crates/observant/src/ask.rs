@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use bytes::Bytes;
 use chrono::{DateTime, Days, FixedOffset, NaiveDate, Utc};
-use http_body_util::{BodyExt as _, Full, Limited};
+use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
@@ -52,6 +52,8 @@ pub struct Assistant {
 enum Refusal {
     Busy,
     TimedOut,
+    /// The client left before the model was asked.
+    Cancelled,
     Text(TextError),
 }
 
@@ -129,6 +131,10 @@ impl Assistant {
         };
         if backend.is_none() {
             *backend = Some((self.open)().map_err(Refusal::Text)?);
+        }
+        // A backend clears the token as it starts, so a client that left while the model loaded would get a whole answer decoded for nobody.
+        if cancel.is_cancelled() {
+            return Err(Refusal::Cancelled);
         }
         let options = GenerationOptions {
             max_new_tokens: self.max_new_tokens,
@@ -322,11 +328,26 @@ fn refused(refusal: Refusal) -> Response<Body> {
             "still answering another question",
         ),
         Refusal::TimedOut => plain(StatusCode::GATEWAY_TIMEOUT, "the model took too long"),
+        Refusal::Cancelled => plain(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the question was cancelled",
+        ),
         Refusal::Text(err) => {
             log::warn!("language model: {err}");
             text_reply(StatusCode::BAD_GATEWAY, err.to_string())
         }
     }
+}
+
+/// The refusal for a reply without words: a model that spent its budget thinking answers nothing, and 200 would show it as an answer.
+fn no_words(result: &GenerationResult) -> Option<Response<Body>> {
+    result.text.trim().is_empty().then(|| {
+        let reason = finish_name(result.finish_reason);
+        text_reply(
+            StatusCode::BAD_GATEWAY,
+            format!("the model gave no answer (finish_reason {reason})"),
+        )
+    })
 }
 
 fn finish_name(reason: FinishReason) -> &'static str {
@@ -352,14 +373,8 @@ async fn read_body<T: for<'a> Deserialize<'a>>(
             "application/json only",
         )));
     }
-    let Ok(body) = Limited::new(req.into_body(), BODY_LIMIT).collect().await else {
-        return Err(Box::new(plain(
-            StatusCode::BAD_REQUEST,
-            "body too large or unreadable",
-        )));
-    };
-    serde_json::from_slice(&body.to_bytes())
-        .map_err(|err| Box::new(bad_request(&anyhow::Error::from(err))))
+    let body = crate::web::read_limited(req.into_body(), BODY_LIMIT).await?;
+    serde_json::from_slice(&body).map_err(|err| Box::new(bad_request(&anyhow::Error::from(err))))
 }
 
 fn check_question(question: &str) -> anyhow::Result<()> {
@@ -416,16 +431,18 @@ pub(crate) async fn ask(
         ChatMessage::user(body.question),
     ];
     match assistant.answer(messages).await {
-        Ok(result) => json_reply(
-            StatusCode::OK,
-            &serde_json::json!({
-                "answer": result.text,
-                "facts": facts,
-                "finish_reason": finish_name(result.finish_reason),
-                "prompt_tokens": result.prompt_tokens,
-                "completion_tokens": result.completion_tokens,
-            }),
-        ),
+        Ok(result) => no_words(&result).unwrap_or_else(|| {
+            json_reply(
+                StatusCode::OK,
+                &serde_json::json!({
+                    "answer": result.text,
+                    "facts": facts,
+                    "finish_reason": finish_name(result.finish_reason),
+                    "prompt_tokens": result.prompt_tokens,
+                    "completion_tokens": result.completion_tokens,
+                }),
+            )
+        }),
         Err(refusal) => refused(refusal),
     }
 }
@@ -491,6 +508,9 @@ async fn summary_words(
     ];
     match assistant.answer(messages).await {
         Ok(result) => {
+            if let Some(refusal) = no_words(&result) {
+                return refusal;
+            }
             reply["summary"] = result.text.into();
             reply["finish_reason"] = finish_name(result.finish_reason).into();
             json_reply(StatusCode::OK, &reply)
@@ -724,6 +744,37 @@ pub(crate) mod tests {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
         assert!(slow.backend.try_lock().is_ok());
+    }
+
+    #[test]
+    fn a_client_that_left_while_the_model_opened_is_not_answered() {
+        let (assistant, seen) = stub_assistant(Ok("an answer".into()), false);
+        let cancel = CancelToken::default();
+        cancel.cancel();
+        let refused = assistant.run(&[ChatMessage::user("hi")], &cancel);
+        assert!(matches!(refused, Err(Refusal::Cancelled)), "{refused:?}");
+        // The backend was opened and kept, but never asked.
+        assert!(seen.lock().unwrap().is_empty());
+        assert!(assistant.backend.lock().unwrap().is_some());
+        let answered = assistant.run(&[ChatMessage::user("hi")], &CancelToken::default());
+        assert_eq!(answered.unwrap().text, "an answer");
+    }
+
+    #[test]
+    fn a_reply_without_words_is_a_refusal_that_names_why_the_model_stopped() {
+        let mut result = GenerationResult {
+            text: " \n".into(),
+            tokens: Vec::new(),
+            finish_reason: FinishReason::Length,
+            prompt_tokens: 3,
+            completion_tokens: 128,
+            time_to_first_token_ms: 0.0,
+            decode_tokens_per_second: 0.0,
+        };
+        let refusal = no_words(&result).expect("a blank reply is no answer");
+        assert_eq!(refusal.status(), StatusCode::BAD_GATEWAY);
+        result.text = "Twice.".into();
+        assert!(no_words(&result).is_none());
     }
 
     #[test]

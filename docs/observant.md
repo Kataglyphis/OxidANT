@@ -66,7 +66,8 @@ stays loaded. Without one configured both answer 503 and say which keys to set, 
   14 hours. A daylight-saving change inside a day is not modelled. `language` is `de` or `en`.
 - **One answer at a time.** A second question while one runs gets 503. A client that leaves, and
   the 300 s limit (504), cancel the answer after its current token. A failure of the model or
-  endpoint is a 502 carrying its message, never an empty answer.
+  endpoint is a 502 carrying its message, never an empty answer; a model that returns no words
+  is a 502 naming its finish reason. A body that does not arrive within 10 s is a 408.
 - **Only the page itself.** Both POSTs spend the board's CPU, so `own_page` guards them like
   `POST /settings`, and they take JSON only, up to 4 KiB and a 1000-character question. Peers read
   neither endpoint.

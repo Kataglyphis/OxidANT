@@ -121,6 +121,13 @@ mod tests {
     #[test]
     fn a_child_that_crashes_counts_as_an_answer() {
         assert!(answers_within(Duration::from_secs(5), || {
+            // No core file: where dumps are on, the abort left 19 MB in the crate's directory.
+            let none = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            // SAFETY: the limit is a plain struct that lives through the call, in a child about to end.
+            unsafe { libc::setrlimit(libc::RLIMIT_CORE, &none) };
             std::process::abort()
         }));
     }

@@ -123,12 +123,14 @@ impl Endpoint {
             .map_err(|e| TextError::EndpointUnreachable(format!("{url}: {e}")))?;
         let status = response.status().as_u16();
         if status >= 400 {
-            let mut text = String::new();
+            // Bytes first: read_to_string keeps nothing of a body cut inside a character or sent in another charset.
+            let mut bytes = Vec::new();
             let _ = response
                 .body_mut()
                 .as_reader()
                 .take(ERROR_BODY_LIMIT as u64)
-                .read_to_string(&mut text);
+                .read_to_end(&mut bytes);
+            let text = String::from_utf8_lossy(&bytes).into_owned();
             return Err(TextError::EndpointStatus(status, text));
         }
         Ok(response)
