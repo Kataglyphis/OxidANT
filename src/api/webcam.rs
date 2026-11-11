@@ -8,6 +8,7 @@ pub struct CameraDesc {
 }
 
 /// A detection in source-frame pixels; a field-accessible mirror of the opaque core `Detection`.
+#[derive(Clone)]
 pub struct DetectionBox {
     pub x1: f32,
     pub y1: f32,
@@ -48,6 +49,8 @@ pub struct WebcamStreamConfig {
     pub texture_library: Option<String>,
 }
 
+// Clone: the generated `StreamSink<T>` clones only where `T` does, and a failed start reports through a second handle.
+#[derive(Clone)]
 pub struct DetectionEvent {
     pub detections: Vec<DetectionBox>,
     /// The inference backend: `ort` or `tract`.
@@ -94,10 +97,12 @@ pub fn start_webcam_inference(
 ) -> Result<(), String> {
     #[cfg(desktop)]
     {
-        enabled::start(config, sink).map_err(|e| {
+        // Through the stream, not the return value: Dart's stream is all the caller holds, and a returned error only closes it.
+        if let Err(e) = enabled::start(config, sink.clone()) {
             log::error!("start_webcam_inference failed: {e:#}");
-            format!("start_webcam_inference failed: {e:#}")
-        })
+            let _ = sink.add_error(anyhow::anyhow!("start_webcam_inference failed: {e:#}"));
+        }
+        Ok(())
     }
     #[cfg(not(desktop))]
     {
@@ -140,9 +145,11 @@ mod enabled {
         sink: StreamSink<DetectionEvent>,
     ) -> Result<()> {
         let mut slot = lock();
-        if slot.is_some() {
+        // A session whose camera or model gave up has ended; only a live one is in the way.
+        if slot.as_ref().is_some_and(|engine| !engine.is_finished()) {
             anyhow::bail!("webcam inference is already running; stop it first");
         }
+        *slot = None;
 
         let source = if config.use_test_source {
             CameraSource::Test
@@ -174,15 +181,18 @@ mod enabled {
                 on_detections: Some(Arc::new(crate::api::esp32::notify_detections)),
             },
             Box::new(move |event| {
-                let _ = sink.add(DetectionEvent {
-                    detections: event.detections.into_iter().map(Into::into).collect(),
-                    backend: event.backend.to_owned(),
-                    execution_provider: event.execution_provider.to_owned(),
-                    frame_sequence: event.frame_sequence,
-                    pts_ms: event.pts_ms,
-                    inference_ms: event.inference_ms,
-                    fps: event.fps,
-                });
+                let _ = match event {
+                    Ok(event) => sink.add(DetectionEvent {
+                        detections: event.detections.into_iter().map(Into::into).collect(),
+                        backend: event.backend.to_owned(),
+                        execution_provider: event.execution_provider.to_owned(),
+                        frame_sequence: event.frame_sequence,
+                        pts_ms: event.pts_ms,
+                        inference_ms: event.inference_ms,
+                        fps: event.fps,
+                    }),
+                    Err(reason) => sink.add_error(anyhow::anyhow!(reason)),
+                };
             }),
         )?;
 

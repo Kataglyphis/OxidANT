@@ -34,20 +34,50 @@ fn validate_rgba(rgba: &[u8], src_w: u32, src_h: u32) -> Result<()> {
     Ok(())
 }
 
-#[inline]
-fn write_pixel_chw(chw: &mut [f32], plane: usize, dst_idx: usize, r: f32, g: f32, b: f32) {
-    chw[dst_idx] = r;
-    chw[plane + dst_idx] = g;
-    chw[2 * plane + dst_idx] = b;
-}
+/// `value / 255` for every byte: a lookup gives the floats the division gave, without dividing per pixel.
+static UNIT_FLOATS: [f32; 256] = {
+    let mut table = [0.0; 256];
+    let mut value = 0;
+    while value < 256 {
+        table[value] = value as f32 / 255.0;
+        value += 1;
+    }
+    table
+};
 
-#[inline]
-fn sample_rgba_normalised(src: &[u8], sx: u32, sy: u32, src_w: u32) -> (f32, f32, f32) {
-    let idx = (sy as usize * src_w as usize + sx as usize) * 4;
-    let r = src[idx] as f32 / 255.0;
-    let g = src[idx + 1] as f32 / 255.0;
-    let b = src[idx + 2] as f32 / 255.0;
-    (r, g, b)
+/// Nearest-neighbour resize of `rgba` into the `new_w` x `new_h` block of the three planes at (`pad_x`, `pad_y`).
+fn resize_into_planes(
+    rgba: &[u8],
+    src_w: u32,
+    src_h: u32,
+    buf: &mut [f32],
+    dst_w: u32,
+    (pad_x, pad_y): (u32, u32),
+    (new_w, new_h): (u32, u32),
+) {
+    // Every row samples the same columns, so their byte offsets are divided out once per frame.
+    let columns: Vec<usize> = (0..new_w as u64)
+        .map(|dx| (dx * src_w as u64 / new_w as u64) as usize * 4)
+        .collect();
+    let plane = buf.len() / 3;
+    let (red, rest) = buf.split_at_mut(plane);
+    let (green, blue) = rest.split_at_mut(plane);
+    let row_bytes = src_w as usize * 4;
+    for dy in 0..new_h as usize {
+        let sy = (dy as u64 * src_h as u64 / new_h as u64) as usize;
+        let row = &rgba[sy * row_bytes..(sy + 1) * row_bytes];
+        let start = (dy + pad_y as usize) * dst_w as usize + pad_x as usize;
+        let end = start + new_w as usize;
+        let planes = red[start..end]
+            .iter_mut()
+            .zip(&mut green[start..end])
+            .zip(&mut blue[start..end]);
+        for (((r, g), b), &offset) in planes.zip(&columns) {
+            *r = UNIT_FLOATS[row[offset] as usize];
+            *g = UNIT_FLOATS[row[offset + 1] as usize];
+            *b = UNIT_FLOATS[row[offset + 2] as usize];
+        }
+    }
 }
 
 pub(crate) fn rgba_to_nchw_f32_letterboxed(
@@ -75,18 +105,15 @@ pub(crate) fn rgba_to_nchw_f32_letterboxed(
     buf.clear();
     buf.resize(total, LETTERBOX_FILL_VALUE);
 
-    let content_x_end = pad_x_i + new_w;
-    let content_y_end = pad_y_i + new_h;
-
-    for dy in pad_y_i..content_y_end {
-        let sy = ((dy - pad_y_i) as u64 * src_h as u64 / new_h as u64) as u32;
-        for dx in pad_x_i..content_x_end {
-            let sx = ((dx - pad_x_i) as u64 * src_w as u64 / new_w as u64) as u32;
-            let dst_idx = dy as usize * dst_w as usize + dx as usize;
-            let (r, g, b) = sample_rgba_normalised(rgba, sx, sy, src_w);
-            write_pixel_chw(buf, plane, dst_idx, r, g, b);
-        }
-    }
+    resize_into_planes(
+        rgba,
+        src_w,
+        src_h,
+        buf,
+        dst_w,
+        (pad_x_i, pad_y_i),
+        (new_w, new_h),
+    );
 
     Ok(ImageMapping {
         src_w,
@@ -114,18 +141,10 @@ pub(crate) fn rgba_to_nchw_f32_stretched(
     let plane = output_plane(dst_w, dst_h)?;
     let total = 3 * plane;
 
-    buf.clear();
+    // Every element is written below, so only a changed size touches the allocation.
     buf.resize(total, 0.0);
 
-    for dy in 0..dst_h {
-        let sy = (dy as u64 * src_h as u64 / dst_h as u64) as u32;
-        for dx in 0..dst_w {
-            let sx = (dx as u64 * src_w as u64 / dst_w as u64) as u32;
-            let dst_idx = dy as usize * dst_w as usize + dx as usize;
-            let (r, g, b) = sample_rgba_normalised(rgba, sx, sy, src_w);
-            write_pixel_chw(buf, plane, dst_idx, r, g, b);
-        }
-    }
+    resize_into_planes(rgba, src_w, src_h, buf, dst_w, (0, 0), (dst_w, dst_h));
 
     Ok(ImageMapping {
         src_w,
@@ -221,6 +240,75 @@ mod contract_tests {
                     item["name"]
                 );
             }
+        }
+    }
+
+    /// The formula the shared contract fixes, one division per pixel and channel.
+    fn reference(rgba: &[u8], src: (u32, u32), dst: (u32, u32), letterbox: bool) -> Vec<f32> {
+        let ((src_w, src_h), (dst_w, dst_h)) = (src, dst);
+        let (new_w, new_h, fill) = if letterbox {
+            let scale = f64::min(dst_w as f64 / src_w as f64, dst_h as f64 / src_h as f64);
+            let new_w = ((src_w as f64 * scale).round() as u32).clamp(1, dst_w);
+            let new_h = ((src_h as f64 * scale).round() as u32).clamp(1, dst_h);
+            (new_w, new_h, LETTERBOX_FILL_VALUE)
+        } else {
+            (dst_w, dst_h, 0.0)
+        };
+        let (pad_x, pad_y) = ((dst_w - new_w) / 2, (dst_h - new_h) / 2);
+        let plane = (dst_w * dst_h) as usize;
+        let mut out = vec![fill; 3 * plane];
+        for dy in 0..new_h {
+            let sy = (dy as u64 * src_h as u64 / new_h as u64) as usize;
+            for dx in 0..new_w {
+                let sx = (dx as u64 * src_w as u64 / new_w as u64) as usize;
+                let at = ((dy + pad_y) * dst_w + dx + pad_x) as usize;
+                for channel in 0..3 {
+                    let byte = rgba[(sy * src_w as usize + sx) * 4 + channel];
+                    out[channel * plane + at] = byte as f32 / 255.0;
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_tables_give_the_per_pixel_formulas_floats_bit_for_bit() {
+        let sizes = [
+            ((37, 23), (16, 12)),
+            ((8, 40), (32, 32)),
+            ((5, 3), (64, 48)),
+        ];
+        for (src, dst) in sizes {
+            let rgba: Vec<u8> = (0..src.0 * src.1 * 4)
+                .map(|i| (i * 37 % 256) as u8)
+                .collect();
+            // A buffer left over from a larger, other frame: nothing of it may survive.
+            let mut output = vec![9.0; 7 * (dst.0 * dst.1) as usize];
+            for letterbox in [false, true] {
+                let transform = if letterbox {
+                    rgba_to_nchw_f32_letterboxed
+                } else {
+                    rgba_to_nchw_f32_stretched
+                };
+                transform(&rgba, src.0, src.1, dst.0, dst.1, &mut output).unwrap();
+                let expected = reference(&rgba, src, dst, letterbox);
+                assert_eq!(output.len(), expected.len(), "{src:?} -> {dst:?}");
+                let same = output
+                    .iter()
+                    .zip(&expected)
+                    .all(|(a, b)| a.to_bits() == b.to_bits());
+                assert!(same, "{src:?} -> {dst:?}, letterbox {letterbox}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_byte_normalises_to_its_quotient() {
+        for value in 0..=255u8 {
+            assert_eq!(
+                UNIT_FLOATS[value as usize].to_bits(),
+                (value as f32 / 255.0).to_bits()
+            );
         }
     }
 

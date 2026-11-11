@@ -13,6 +13,9 @@ use crate::person_detection::PersonDetector;
 use crate::texture_abi::{ApiVersionFn, PushFrameFn, API_VERSION, OK};
 use crate::Detection;
 
+/// Consecutive failed runs after which the engine gives up: a model that fails every frame will not recover.
+const MAX_FAILED_RUNS: u32 = 30;
+
 pub struct EngineEvent {
     pub detections: Vec<Detection>,
     pub backend: &'static str,
@@ -84,6 +87,19 @@ impl TexturePusher {
     fn push(&self, rgba: &[u8], width: u32, height: u32) -> bool {
         unsafe { (self.push)(self.texture_id, rgba.as_ptr(), width, height) == OK }
     }
+
+    /// Pushes every captured frame, so the preview keeps the camera's rate while the model is busy with one.
+    fn into_observer(self) -> kataglyphis_media::FrameObserver {
+        let mut rejected = false;
+        Box::new(move |frame| {
+            let pushed = self.push(&frame.rgba, frame.width, frame.height);
+            // Once per streak: a texture that is gone rejects every frame.
+            if !pushed && !rejected {
+                log::warn!("texture push rejected frame {}", frame.sequence);
+            }
+            rejected = !pushed;
+        })
+    }
 }
 
 /// Events per second over the kept instants: intervals over their span, 0 until two exist.
@@ -108,9 +124,10 @@ pub struct WebcamEngine {
 }
 
 impl WebcamEngine {
+    /// Starts capture and inference; `on_event` gets every result, and once an `Err` when the session ends by itself.
     pub fn start(
         config: EngineConfig,
-        on_event: Box<dyn Fn(EngineEvent) + Send + 'static>,
+        on_event: Box<dyn Fn(Result<EngineEvent, String>) + Send + 'static>,
     ) -> Result<Self> {
         let model_path = crate::person_detection::resolve_model_path(Some(&config.model_path));
         let mut detector = PersonDetector::new(&model_path)?;
@@ -121,12 +138,15 @@ impl WebcamEngine {
             .map(TexturePusher::new)
             .transpose()?;
 
-        let capture = CaptureSession::start(CaptureConfig {
-            source: config.source,
-            width: config.width,
-            height: config.height,
-            framerate: config.framerate,
-        })?;
+        let capture = CaptureSession::start_observed(
+            CaptureConfig {
+                source: config.source,
+                width: config.width,
+                height: config.height,
+                framerate: config.framerate,
+            },
+            pusher.map(TexturePusher::into_observer),
+        )?;
         let frames = capture.frames();
 
         let stop = Arc::new(AtomicBool::new(false));
@@ -141,19 +161,21 @@ impl WebcamEngine {
             .name("webcam-inference".into())
             .spawn(move || {
                 let mut recent: VecDeque<Instant> = VecDeque::with_capacity(32);
+                let mut failed_runs = 0u32;
                 while !stop_worker.load(Ordering::Acquire) {
                     let Some(frame) = frames.take_latest(Duration::from_millis(200)) else {
                         if frames.is_closed() {
+                            // Closed by stop() there is nothing to say; closed by the pipeline, the viewer must hear why.
+                            if !stop_worker.load(Ordering::Acquire) {
+                                let reason = frames.error();
+                                on_event(Err(
+                                    reason.unwrap_or_else(|| "the camera stream ended".into())
+                                ));
+                            }
                             break;
                         }
                         continue;
                     };
-
-                    if let Some(pusher) = &pusher {
-                        if !pusher.push(&frame.rgba, frame.width, frame.height) {
-                            log::warn!("texture push rejected frame {}", frame.sequence);
-                        }
-                    }
 
                     let started = Instant::now();
                     let filter = (!classes.is_empty()).then_some(classes.as_slice());
@@ -166,10 +188,19 @@ impl WebcamEngine {
                     ) {
                         Ok(d) => d,
                         Err(e) => {
-                            log::error!("inference failed on frame {}: {e:#}", frame.sequence);
+                            failed_runs += 1;
+                            // The first of a streak: every frame of a broken model would say the same.
+                            if failed_runs == 1 {
+                                log::error!("inference failed on frame {}: {e:#}", frame.sequence);
+                            }
+                            if failed_runs >= MAX_FAILED_RUNS {
+                                on_event(Err(format!("inference keeps failing: {e:#}")));
+                                break;
+                            }
                             continue;
                         }
                     };
+                    failed_runs = 0;
                     let inference_ms = started.elapsed().as_secs_f64() * 1000.0;
 
                     if let Some(on_detections) = &on_detections {
@@ -182,7 +213,7 @@ impl WebcamEngine {
                     }
                     let fps = rolling_fps(&recent);
 
-                    on_event(EngineEvent {
+                    on_event(Ok(EngineEvent {
                         detections,
                         backend,
                         execution_provider,
@@ -190,7 +221,7 @@ impl WebcamEngine {
                         pts_ms: frame.pts_ms,
                         inference_ms,
                         fps,
-                    });
+                    }));
                 }
             })
             .context("failed to spawn webcam inference worker")?;
@@ -200,6 +231,11 @@ impl WebcamEngine {
             stop,
             worker: Some(worker),
         })
+    }
+
+    /// Whether the session ended by itself: its worker left after a capture or model failure.
+    pub fn is_finished(&self) -> bool {
+        self.worker.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
     pub fn stop(&mut self) {
@@ -315,20 +351,11 @@ mod tests {
         assert!(err.contains("`knt_api_version` not exported"), "{err}");
     }
 
+    /// `source` compiled into a shared library in `directory`: a stand-in for the native plugin.
     #[cfg(target_os = "linux")]
-    #[test]
-    fn a_wrong_texture_version_is_refused_before_loading_the_callback() {
-        let directory = tempfile::tempdir().unwrap();
-        let source = directory.path().join("wrong_version.c");
-        let library = directory.path().join("wrong_version.so");
-        std::fs::write(
-            &source,
-            format!(
-                "int knt_api_version(void) {{ return {}; }}",
-                API_VERSION + 1
-            ),
-        )
-        .unwrap();
+    fn texture_stub(directory: &std::path::Path, source: &str) -> String {
+        let (file, library) = (directory.join("stub.c"), directory.join("stub.so"));
+        std::fs::write(&file, source).unwrap();
         let cross_compiler = if cfg!(target_arch = "riscv64") {
             std::env::var_os("CC_riscv64gc_unknown_linux_gnu")
         } else {
@@ -339,14 +366,26 @@ mod tests {
             .unwrap_or_else(|| "cc".into());
         assert!(std::process::Command::new(compiler)
             .args(["-shared", "-fPIC"])
-            .arg(&source)
+            .arg(&file)
             .arg("-o")
             .arg(&library)
             .status()
             .unwrap()
             .success());
+        library.to_string_lossy().into_owned()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_wrong_texture_version_is_refused_before_loading_the_callback() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = format!(
+            "int knt_api_version(void) {{ return {}; }}",
+            API_VERSION + 1
+        );
+        let library = texture_stub(directory.path(), &source);
         let target = TextureTarget {
-            library: library.to_string_lossy().into_owned(),
+            library,
             texture_id: 1,
         };
         let err = match TexturePusher::new(&target) {
@@ -371,7 +410,7 @@ mod tests {
         let mut engine = WebcamEngine::start(
             config(model, None),
             Box::new(move |event| {
-                let _ = tx.send(event);
+                let _ = tx.send(event.expect("the session ended by itself"));
             }),
         )
         .unwrap();
@@ -412,7 +451,7 @@ mod tests {
                 ..config(model, None)
             },
             Box::new(move |event| {
-                let _ = tx.send(event);
+                let _ = tx.send(event.expect("the session ended by itself"));
             }),
         )
         .unwrap();
@@ -430,6 +469,58 @@ mod tests {
             .detections
             .iter()
             .all(|d| [15, 16].contains(&d.class_id)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_texture_gets_every_captured_frame_not_only_the_inferred_ones() {
+        let Some(model) = model() else { return };
+        let _turn = crate::model_turn();
+        let directory = tempfile::tempdir().unwrap();
+        // Counts the frames of texture 7 at the asked size; anything else is refused.
+        let source = format!(
+            "static int pushed;\n\
+             int knt_api_version(void) {{ return {API_VERSION}; }}\n\
+             int knt_push_frame(long long id, const unsigned char *rgba, unsigned w, unsigned h) {{\n\
+                 if (id != 7 || !rgba || w != 320 || h != 240) return -1;\n\
+                 pushed++;\n\
+                 return 0;\n\
+             }}\n\
+             int knt_pushed(void) {{ return pushed; }}"
+        );
+        let library = texture_stub(directory.path(), &source);
+        // The same handle the engine opens, so the counter is the one its pushes move.
+        let stub = unsafe { libloading::Library::new(&library).unwrap() };
+        let pushed: libloading::Symbol<unsafe extern "C" fn() -> i32> =
+            unsafe { stub.get(b"knt_pushed\0").unwrap() };
+
+        let (tx, rx) = mpsc::channel();
+        let target = TextureTarget {
+            library: library.clone(),
+            texture_id: 7,
+        };
+        let mut engine = WebcamEngine::start(
+            config(model, Some(target)),
+            Box::new(move |event| {
+                let _ = tx.send(event.map(|event| event.frame_sequence));
+            }),
+        )
+        .unwrap();
+        let inferred: Vec<u64> = (0..3)
+            .map(|_| {
+                rx.recv_timeout(Duration::from_secs(60))
+                    .expect("no event within 60 s")
+                    .expect("the session ended by itself")
+            })
+            .collect();
+        assert!(!engine.is_finished());
+        engine.stop();
+        assert!(engine.is_finished());
+
+        // The model skips frames while it is busy; the preview must not.
+        let last = *inferred.last().unwrap();
+        let pushed = unsafe { pushed() } as u64;
+        assert!(pushed >= last, "{pushed} pushed, frame {last} inferred");
     }
 
     #[derive(Debug)]
@@ -453,6 +544,7 @@ mod tests {
                 ..config(model, None)
             },
             Box::new(move |event| {
+                let event = event.expect("the session ended by itself");
                 let _ = tx.send(Seen::Event(event.detections));
             }),
         )

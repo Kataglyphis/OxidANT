@@ -13,6 +13,37 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-11, webcam preview, capture errors, detector copies)
+- **The webcam preview keeps the camera's rate.** The engine pushed a frame to the Flutter texture
+  only when it took one for the model, so the preview ran at the inference rate (about 6 frames a
+  second on a Pi 5). `CaptureSession::start_observed` now calls an observer for every captured
+  frame, and the texture push is that observer; the model still takes the newest frame when it is
+  free.
+- **A webcam session that ends says why.** The capture pipeline's bus was never read: an unplugged
+  camera or refused caps ended the frames in silence. A bus handler now closes the frame slot with
+  the pipeline's error (`FrameSlot::error`), the engine reports it once through its event callback
+  (`Result<EngineEvent, String>`), and `start_webcam_inference` sends that, a failed start and a
+  model that fails 30 runs in a row to Dart as stream errors. A finished session no longer blocks
+  the next start with "already running".
+- **The camera index picks the camera on Linux.** `CameraSource::Device(n)` was ignored wherever
+  the source is not Media Foundation or kernel streaming; it now builds the n-th listed device's
+  own source element.
+- **Capture caps ask for square pixels and prefer the asked frame rate.** Without the pixel aspect
+  ratio a 4:3 camera asked for 1280x720 arrived stretched; the frame rate in `CaptureConfig` was
+  never used. A camera without that rate still starts, at its own.
+- **The detector copies less per frame.** ONNX Runtime reads the preprocess buffer through a
+  `TensorRef` instead of an owned copy (4.9 MB at 640x640), and preprocessing divides each column
+  offset out once per frame and normalises through a 256-entry table. The floats are unchanged, bit
+  for bit. On a Pi 5, 640x480 to 640x640: 2.5 ms to 1.8 ms, plus 0.9 ms for the copy.
+- A frame nobody took lends its buffer to the next one, so a consumer slower than the camera no
+  longer costs an allocation per frame.
+
+### Fixed (2026-11-11, NaN boxes, a capture that fails to start)
+- A detection with a NaN or infinite corner is dropped; it passed every clamp and reached the
+  overlay as a box that cannot be drawn.
+- A capture pipeline that fails to start is set to Null, and its error names the element and the
+  bus message, not just the failed state change.
+
 ### Changed (2026-11-04)
 - The GPU lanes no longer install `libgtk-4-dev`: `cargo build -p kataglyphis_cli` links without it on the published
   `:latest-rocm` (`05518138`) and `:latest-nvidia` (`70bc45db`, amd64). The lanes themselves have not run without it yet.

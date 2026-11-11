@@ -369,10 +369,10 @@ impl PersonDetector {
 
             #[cfg(any(target_os = "linux", windows))]
             Backend::Ort { session } => {
-                // `Tensor::from_array` needs owned data; this is a single allocation.
-                let input_tensor = ort::value::Tensor::from_array((
+                // A view of the preprocess buffer: an owned tensor would copy all of it for every frame.
+                let input_tensor = ort::value::TensorRef::from_array_view((
                     [1usize, 3usize, input_h as usize, input_w as usize],
-                    input.to_vec().into_boxed_slice(),
+                    input,
                 ))
                 .context("Failed to create ORT input tensor")?;
 

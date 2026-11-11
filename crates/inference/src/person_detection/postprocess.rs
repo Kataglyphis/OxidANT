@@ -58,6 +58,10 @@ pub(crate) fn parse_yolo_like_detections(
         if !score.is_finite() || score < score_threshold {
             continue;
         }
+        // A NaN corner survives every clamp and reaches the overlay as a box that cannot be drawn.
+        if ![x1, y1, x2, y2].iter().all(|corner| corner.is_finite()) {
+            continue;
+        }
 
         if swap_xy {
             std::mem::swap(&mut x1, &mut y1);
@@ -154,6 +158,41 @@ mod tests {
         let d = &result.unwrap()[0];
         assert!((d.x1 - 20.0).abs() < 0.001); // swapped
         assert!((d.y1 - 10.0).abs() < 0.001); // swapped
+    }
+
+    #[test]
+    fn a_row_with_a_non_finite_corner_is_no_detection() {
+        let shape = vec![4usize, 6];
+        let mut data = Vec::new();
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            data.extend([10.0, bad, 30.0, 40.0, 0.9, 0.0]);
+        }
+        data.extend([10.0, 20.0, 30.0, 40.0, 0.9, 0.0]);
+        let found = parse_yolo_like_detections(&shape, &data, 0.5, make_mapping(100, 100), false);
+        let found = found.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].x1, found[0].y1), (10.0, 20.0));
+    }
+
+    #[test]
+    fn boxes_are_unmapped_through_the_letterbox_and_clamped_to_the_frame() {
+        // A 200x100 frame letterboxed into 100x100: scale 0.5, 25 rows of padding above.
+        let mapping = ImageMapping {
+            src_w: 200,
+            src_h: 100,
+            scale_x: 0.5,
+            scale_y: 0.5,
+            pad_x: 0.0,
+            pad_y: 25.0,
+        };
+        let data = vec![
+            10.0, 35.0, 60.0, 60.0, 0.9, 15.0, -5.0, 0.0, 120.0, 99.0, 0.8, 0.0,
+        ];
+        let found = parse_yolo_like_detections(&[2, 6], &data, 0.5, mapping, false).unwrap();
+        let corners = |d: &Detection| [d.x1, d.y1, d.x2, d.y2];
+        assert_eq!(corners(&found[0]), [20.0, 20.0, 120.0, 70.0]);
+        // Padding and overshoot land on the frame's edge, never outside it.
+        assert_eq!(corners(&found[1]), [0.0, 0.0, 200.0, 100.0]);
     }
 
     #[test]

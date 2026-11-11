@@ -8,15 +8,15 @@ use crate::ensure_gst_initialized;
 
 #[derive(Debug, Clone)]
 pub struct CameraInfo {
-    /// Enumeration order, matching the `device-index` the capture pipeline passes.
+    /// Enumeration order: the index `CameraSource::Device` takes.
     pub index: u32,
     pub display_name: String,
     /// Provider element class, e.g. `Source/Video`.
     pub device_class: String,
 }
 
-/// Lists video capture devices. Empty inside containers (no camera devices).
-pub fn list_cameras() -> Result<Vec<CameraInfo>> {
+/// The video sources the device monitor finds, in the order every index here refers to.
+fn video_sources() -> Result<Vec<gst::Device>> {
     ensure_gst_initialized()?;
 
     let monitor = gst::DeviceMonitor::new();
@@ -26,6 +26,23 @@ pub fn list_cameras() -> Result<Vec<CameraInfo>> {
         .context("failed to start GStreamer device monitor")?;
     let devices = monitor.devices();
     monitor.stop();
+    Ok(devices.into_iter().collect())
+}
+
+/// The source element of the `index`-th listed camera, built by the provider that listed it.
+pub(crate) fn camera_element(index: u32) -> Result<gst::Element> {
+    let devices = video_sources()?;
+    let device = devices
+        .get(index as usize)
+        .with_context(|| format!("no camera with index {index}: {} listed", devices.len()))?;
+    device
+        .create_element(None)
+        .with_context(|| format!("failed to open camera `{}`", device.display_name()))
+}
+
+/// Lists video capture devices. Empty inside containers (no camera devices).
+pub fn list_cameras() -> Result<Vec<CameraInfo>> {
+    let devices = video_sources()?;
 
     Ok(devices
         .iter()
