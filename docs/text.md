@@ -61,8 +61,8 @@ answer. A server without usage reports leaves the completion count at the number
 
 `genai::configure` decides every search option and the guidance through the `SearchParams` trait,
 so the unit tests record what GenAI would receive without loading it. Text that may begin a stop
-string is held back from `on_text` until it is decided. The Linux chain builds GenAI with
-llguidance; the Windows chain does not, and its generator refuses a schema with
+string is held back from `on_text` until it is decided. The Linux and the Windows chain both
+build GenAI with llguidance; a GenAI built without it refuses a schema with
 `TextError::JsonSchemaUnsupported` rather than answering unconstrained.
 
 Each failure has its own `TextError`: the library, the model directory, the provider, the

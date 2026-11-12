@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-12, JSON schemas on Windows)
+- **The schema test expects an answer on Windows too.** The Windows chain builds GenAI with llguidance now (hub LAI-H2),
+  so the test that asserted `JsonSchemaUnsupported` there failed on the first Windows lane run with the new image: the
+  generator answered `{"a":"#$%"}`. One test holds the answer to the schema on both lanes; the mapping of GenAI's
+  "guidance is unavailable" to `JsonSchemaUnsupported` keeps its unit test.
+
 ### Fixed (2026-11-12, an endpoint's error as plain text)
 - **A streamed `{"error": "..."}` is the generation's error.** Only OpenAI's nested `error.message` was read; Ollama
   sends the text itself, which was skipped, so the run ended with "the stream ended without a finish reason" and the

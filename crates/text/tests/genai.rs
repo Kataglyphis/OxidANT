@@ -241,7 +241,6 @@ fn schema_run(
     )
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn a_json_schema_holds_the_answer_to_a_valid_object() {
     let Some(mut generator) = generator() else {
@@ -255,20 +254,6 @@ fn a_json_schema_holds_the_answer_to_a_valid_object() {
     let a = object["a"].as_str().expect("a string");
     assert!(a.chars().count() <= 3, "{answer}");
     assert_eq!(result.finish_reason, FinishReason::Stop);
-}
-
-/// The Windows chain builds GenAI without llguidance, so the schema is refused rather than ignored.
-#[cfg(windows)]
-#[test]
-fn a_json_schema_is_refused_as_unsupported_on_this_lane() {
-    let Some(mut generator) = generator() else {
-        return;
-    };
-    let refused = schema_run(&mut generator).unwrap_err();
-    assert!(
-        matches!(refused, TextError::JsonSchemaUnsupported(_)),
-        "{refused}"
-    );
 }
 
 #[test]
