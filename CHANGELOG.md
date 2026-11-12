@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-12, the local gates see stale mutation recipes)
+- **`scripts/linux/run-lint-gates.sh` checks the mutation recipes first.** A refactor that moves a line a recipe names makes
+  the recipe stale, and only CI's mutation gate said so, after the push. The hub's `verify_mutations.py --stale-check`
+  takes a tenth of a second and runs before the gates now. `core.<pid>` and `vgcore.*` files are ignored, so a test that
+  aborts a child cannot be committed with its dump again.
+
 ### Changed (2026-11-12, JSON schemas on Windows)
 - **The schema test expects an answer on Windows too.** The Windows chain builds GenAI with llguidance now (hub LAI-H2),
   so the test that asserted `JsonSchemaUnsupported` there failed on the first Windows lane run with the new image: the
