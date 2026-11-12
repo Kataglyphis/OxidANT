@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-12, rows no detector of the family keeps)
+- **A row with no such class or with its corners swapped is no detection (owner, 2026-11-12).** AccelerANTgine
+  dropped such rows; this decoder and OrchestrANT's kept them, so a class past the 80 names reached the caller with no
+  label, swapped corners became a box of negative width, and the bare cast made a NaN class a person. The class is
+  checked as the float it is and the corners must be in order; a row whose corners are equal, a point, stays.
+
 ### Fixed (2026-11-12, thinking models on the text path)
 - **A thinking model's reasoning is counted and kept out of the answer (audit genai-native-4).** The endpoint
   parser read only `delta.content`, so the reasoning of llama-server and vLLM (`reasoning_content`) and of Ollama

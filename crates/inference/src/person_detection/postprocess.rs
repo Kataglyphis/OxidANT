@@ -1,6 +1,7 @@
 use super::preprocess;
 use super::preprocess::ImageMapping;
 use anyhow::{bail, Result};
+use kataglyphis_core::coco;
 use kataglyphis_core::detection::Detection;
 
 pub(crate) fn parse_yolo_like_detections(
@@ -53,13 +54,21 @@ pub(crate) fn parse_yolo_like_detections(
         let mut x2 = data[row + 2];
         let mut y2 = data[row + 3];
         let score = data[row + 4];
-        let class_id = data[row + 5] as i64;
+        let class = data[row + 5];
 
         if !score.is_finite() || score < score_threshold {
             continue;
         }
+        // A class without a name is no detection in any detector of the family; the bare cast would make NaN a person.
+        if class.is_nan() || class < 0.0 || class >= coco::NAMES.len() as f32 {
+            continue;
+        }
         // A NaN corner survives every clamp and reaches the overlay as a box that cannot be drawn.
         if ![x1, y1, x2, y2].iter().all(|corner| corner.is_finite()) {
+            continue;
+        }
+        // Corners in the wrong order are no box: the family's three detectors drop such a row.
+        if x2 < x1 || y2 < y1 {
             continue;
         }
 
@@ -77,7 +86,7 @@ pub(crate) fn parse_yolo_like_detections(
             x2: x2.clamp(0.0, mapping.src_w as f32),
             y2: y2.clamp(0.0, mapping.src_h as f32),
             score,
-            class_id,
+            class_id: class as i64,
         });
     }
 
@@ -172,6 +181,32 @@ mod tests {
         let found = found.unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].x1, found[0].y1), (10.0, 20.0));
+    }
+
+    #[test]
+    fn a_row_with_no_such_class_or_with_its_corners_swapped_is_no_detection() {
+        let mut data = Vec::new();
+        data.extend([10.0, 10.0, 50.0, 50.0, 0.9, 15.0]);
+        for class in [80.0, -1.0, -0.5, f32::NAN, f32::INFINITY] {
+            data.extend([10.0, 10.0, 50.0, 50.0, 0.8, class]);
+        }
+        data.extend([50.0, 10.0, 10.0, 50.0, 0.8, 15.0]);
+        data.extend([10.0, 50.0, 50.0, 10.0, 0.8, 15.0]);
+        // A point has its corners in order, so it stays, as it does in the other two detectors.
+        data.extend([20.0, 20.0, 20.0, 20.0, 0.7, 79.0]);
+        let found = parse_yolo_like_detections(&[9, 6], &data, 0.5, make_mapping(100, 100), false);
+        let found: Vec<(i64, [f32; 4])> = found
+            .unwrap()
+            .iter()
+            .map(|d| (d.class_id, [d.x1, d.y1, d.x2, d.y2]))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (15, [10.0, 10.0, 50.0, 50.0]),
+                (79, [20.0, 20.0, 20.0, 20.0])
+            ]
+        );
     }
 
     #[test]
