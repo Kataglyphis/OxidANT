@@ -67,7 +67,10 @@ for bundle in "${work}/tar/oxidant" "${work}/deb/opt/oxidant"; do
         fi
     fi
     proven="$(mktemp -d "${work}/proof.XXXXXX")"
-    python3 "${hub}/stage-ort-wheel-licenses.py" --require-unstripped \
+    # The NVIDIA prefix holds the wheel's own bytes; the CPU core an AMD package carries is the wheel's library stripped.
+    exact=(--require-unstripped)
+    [ "$kind" != migraphx ] || exact=()
+    python3 "${hub}/stage-ort-wheel-licenses.py" "${exact[@]}" \
         --strip "${STRIP:-strip}" \
         --wheel-dir "${ORT_CHAIN_WHEEL_DIR:-/opt/onnxruntime-wheels}" --destination "$proven" "${libraries[@]}"
     ort_package_verify_notices "$bundle" "${bundle}/licenses/onnxruntime" "${proven}/licenses/onnxruntime"

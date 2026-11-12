@@ -113,7 +113,6 @@ jobs:
           if ! test -f "$model_verifier" || ! test -f "$model_fetcher" || ! grep -q '^def read_lock(' "$model_fetcher" || ! grep -q '^def matches(' "$model_fetcher"; then
             echo 'Pinned ANTfrastructure lacks locked-model verification APIs' >&2; exit 1
           fi
-          python3 "$hub/stage-ort-wheel-licenses.py" --help | grep -q -- --require-unstripped || { echo 'Pinned ANTfrastructure lacks exact GPU wheel verification' >&2; exit 1; }
           bash scripts/linux/tests/test-verify-gpu-packages.sh
           bash scripts/linux/tests/test-profile-gpu-bundle.sh
           bash scripts/linux/tests/test-profile-gpu-packages.sh
@@ -155,7 +154,8 @@ jobs:
               # The rocm image has no GPU ONNX Runtime: the plugin module loads into the CPU build.
               ort=/usr/local/lib/onnxruntime-cpu/lib
               mkdir -p /tmp/oxidant-ort-preflight
-              python3 "$hub/stage-ort-wheel-licenses.py" --require-unstripped \
+              # No exact-bytes flag here: the image strips the CPU core, so it is the stripped twin of the library in the wheel.
+              python3 "$hub/stage-ort-wheel-licenses.py" \
                 --strip "${STRIP:-strip}" \
                 --wheel-dir /opt/onnxruntime-wheels --destination /tmp/oxidant-ort-preflight \
                 --library "$ort/libonnxruntime.so.1"

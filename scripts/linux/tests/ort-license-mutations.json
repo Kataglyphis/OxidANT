@@ -555,6 +555,14 @@
   "why": "A plugin text that is a link is not a text the package carries."
  },
  {
+  "id": "consumer.oxidant-amd-core-wheel-proof",
+  "target": "scripts/linux/verify-gpu-packages.sh",
+  "find": "    [ \"$kind\" != migraphx ] || exact=()",
+  "replace": "    :",
+  "test": "bash scripts/linux/tests/test-verify-gpu-packages.sh",
+  "why": "An AMD package carries the CPU core, which the image strips: demanding the wheel's exact bytes rejects every valid package."
+ },
+ {
   "id": "consumer.oxidant-gpu-checks-clear-plugin-root",
   "target": "scripts/linux/lib/gpu-check-common.sh",
   "find": "-u ORT_DYLIB_PATH -u ORT_LIB_LOCATION -u ORT_AMDGPU_EP_ROOT",

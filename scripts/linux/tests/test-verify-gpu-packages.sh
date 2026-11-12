@@ -55,17 +55,20 @@ if [ "$1" = -I ]; then exec "$REAL_PYTHON" "$@"; fi
 shift
 destination=
 strip_seen=false
+exact=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --destination) destination="$2"; shift 2 ;;
         --library) [ "$(cat "$2")" = "${2##*/}" ] || exit 1; shift 2 ;;
         --wheel-dir) shift 2 ;;
         --strip) [ -n "$2" ] || exit 1; strip_seen=true; shift 2 ;;
-        --require-unstripped) shift ;;
+        --require-unstripped) exact=true; shift ;;
         *) exit 1 ;;
     esac
 done
 [ "$strip_seen" = true ] || exit 1
+# Exact bytes hold for the NVIDIA prefix only: the image strips the CPU core an AMD package carries.
+[ "$exact" = "$FIXTURE_EXACT_WHEEL" ] || exit 1
 mkdir -p "$destination/licenses/onnxruntime"
 printf 'license\n' > "$destination/licenses/onnxruntime/LICENSE"
 printf 'notices\n' > "$destination/licenses/onnxruntime/ThirdPartyNotices.txt"
@@ -112,6 +115,7 @@ for vendor in nvidia amd; do
         nvidia) host=libcuda.so.1; provider=libonnxruntime_providers_cuda.so; printf '%s\n' "${shared_provider##*/}" > "$shared_provider" ;;
         amd) host=libamdhip64.so.7; provider=libmigraphx-ep.so; stage_notices "${work}/tree/oxidant/${notices}" ;;
     esac
+    [ "$vendor" = nvidia ] && export FIXTURE_EXACT_WHEEL=true || export FIXTURE_EXACT_WHEEL=false
     write_provider
     sed -i 's/^# changed$/# verified/' "${work}/packages/test.AppImage"
     pack

@@ -51,6 +51,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   call with the CPU provider's device. The AMD package build, the workflow and every run on a card are open
   (`BACKLOG.md`). The hub pin moves from d66d390 to da9b23a, whose `verify_ort_profile.py` expects `MIGraphX` for
   the parity run. CUDA keeps its present loading (`BACKLOG.md`).
+- **The AMD package's ONNX Runtime is proven as the stripped twin of the wheel's library.** The first run of the
+  candidate lane on `:latest-rocm` (run 43303579930) stopped in its first step, `expected one wheel matching every
+  native library; found 0`: the step and `verify-gpu-packages.sh` asked for the wheel's exact bytes, which holds for
+  the NVIDIA prefix only. The image strips the CPU core, the one an AMD package carries. Both ask for exact bytes on
+  NVIDIA alone now; the package check's test and one recipe hold it.
 
 ### Changed (2026-11-12, rows no detector of the family keeps)
 - **A row with no such class or with its corners swapped is no detection (owner, 2026-11-12).** AccelerANTgine
