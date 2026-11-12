@@ -202,16 +202,39 @@ mod enabled {
             let _ = sink.add(piece(text));
         };
         let result = match &source.model_dir {
-            Some(dir) => local::backend(&mut cached, dir, &source.provider)?.generate(
-                &messages,
-                &options,
+            Some(dir) => after_load(
                 cancel_token(),
-                &mut on_text,
+                || local::backend(&mut cached, dir, &source.provider),
+                |backend| backend.generate(&messages, &options, cancel_token(), &mut on_text),
             ),
             None => endpoint(&source)?.generate(&messages, &options, cancel_token(), &mut on_text),
         }?;
         let _ = sink.add(done(&result));
         Ok(())
+    }
+
+    /// Generates unless a cancel came while the model loaded: a backend clears the token as it starts, so that
+    /// cancel was lost and the whole answer decoded for a user who had already left.
+    pub(super) fn after_load<B>(
+        cancel: &CancelToken,
+        load: impl FnOnce() -> Result<B, TextError>,
+        generate: impl FnOnce(B) -> Result<GenerationResult, TextError>,
+    ) -> Result<GenerationResult, TextError> {
+        // A cancel from before this turn ended the turn before, or nothing.
+        cancel.reset();
+        let backend = load()?;
+        if cancel.is_cancelled() {
+            return Ok(GenerationResult {
+                text: String::new(),
+                tokens: Vec::new(),
+                finish_reason: FinishReason::Cancelled,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                time_to_first_token_ms: 0.0,
+                decode_tokens_per_second: 0.0,
+            });
+        }
+        generate(backend)
     }
 
     #[cfg(any(target_os = "linux", windows))]
@@ -346,6 +369,46 @@ mod tests {
         );
         assert_eq!((options.seed, options.json_schema), (None, None));
         assert!(options.stop.is_empty());
+    }
+
+    #[test]
+    fn a_cancel_while_the_model_loads_ends_the_turn_before_a_token_is_decoded() {
+        use kataglyphis_text::CancelToken;
+        let cancel = CancelToken::default();
+        // Left over from a press while nothing ran: it must not end this turn.
+        cancel.cancel();
+        let stale = enabled::after_load(
+            &cancel,
+            || Ok(()),
+            |()| {
+                Ok(GenerationResult {
+                    text: "x".into(),
+                    tokens: vec![1],
+                    finish_reason: FinishReason::Stop,
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    time_to_first_token_ms: 0.0,
+                    decode_tokens_per_second: 0.0,
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(stale.finish_reason, FinishReason::Stop);
+
+        let during = enabled::after_load(
+            &cancel,
+            || {
+                cancel.cancel();
+                Ok(())
+            },
+            |()| panic!("generated for a user who cancelled while the model loaded"),
+        )
+        .unwrap();
+        assert_eq!(during.finish_reason, FinishReason::Cancelled);
+        assert_eq!(
+            enabled::done(&during).finish_reason.as_deref(),
+            Some("cancelled")
+        );
     }
 
     #[test]

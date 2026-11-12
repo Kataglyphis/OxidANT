@@ -111,7 +111,7 @@ pub fn start_webcam_inference(
     }
 }
 
-/// Stops the running session (no-op when idle).
+/// Stops the running session (no-op when idle). Sync, so it only asks: the session ends on a thread of its own.
 #[flutter_rust_bridge::frb(sync)]
 pub fn stop_webcam_inference() {
     #[cfg(desktop)]
@@ -120,37 +120,25 @@ pub fn stop_webcam_inference() {
 
 #[cfg(desktop)]
 mod enabled {
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::Arc;
 
     use anyhow::Result;
     use kataglyphis_media::CameraSource;
 
     use super::{DetectionEvent, StreamSink, WebcamStreamConfig};
+    use crate::session_slot::SessionSlot;
     use crate::webcam_engine::{EngineConfig, TextureTarget, WebcamEngine};
 
-    static ENGINE: OnceLock<Mutex<Option<WebcamEngine>>> = OnceLock::new();
-
-    fn engine_slot() -> &'static Mutex<Option<WebcamEngine>> {
-        ENGINE.get_or_init(|| Mutex::new(None))
-    }
-
-    fn lock() -> std::sync::MutexGuard<'static, Option<WebcamEngine>> {
-        engine_slot()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
+    static ENGINE: SessionSlot<WebcamEngine> = SessionSlot::new();
 
     pub(super) fn start(
         config: WebcamStreamConfig,
         sink: StreamSink<DetectionEvent>,
     ) -> Result<()> {
-        let mut slot = lock();
-        // A session whose camera or model gave up has ended; only a live one is in the way.
-        if slot.as_ref().is_some_and(|engine| !engine.is_finished()) {
-            anyhow::bail!("webcam inference is already running; stop it first");
-        }
-        *slot = None;
+        ENGINE.start(|| open(config, sink))
+    }
 
+    fn open(config: WebcamStreamConfig, sink: StreamSink<DetectionEvent>) -> Result<WebcamEngine> {
         let source = if config.use_test_source {
             CameraSource::Test
         } else {
@@ -168,7 +156,7 @@ mod enabled {
             texture_id: config.texture_id,
         });
 
-        let engine = WebcamEngine::start(
+        WebcamEngine::start(
             EngineConfig {
                 source,
                 width: config.width,
@@ -194,17 +182,11 @@ mod enabled {
                     Err(reason) => sink.add_error(anyhow::anyhow!(reason)),
                 };
             }),
-        )?;
-
-        *slot = Some(engine);
-        Ok(())
+        )
     }
 
     pub(super) fn stop() {
-        let engine = lock().take();
-        if let Some(mut engine) = engine {
-            engine.stop();
-        }
+        ENGINE.stop();
     }
 
     pub(super) fn default_texture_library() -> String {

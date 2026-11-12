@@ -238,12 +238,27 @@ impl WebcamEngine {
         self.worker.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
+    /// Ends the worker after its current frame without waiting for it; `stop` and the drop wait.
+    pub fn request_stop(&self) {
+        self.stop.store(true, Ordering::Release);
+    }
+
     pub fn stop(&mut self) {
         self.stop.store(true, Ordering::Release);
         self.capture.stop();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+    }
+}
+
+impl crate::session_slot::Session for WebcamEngine {
+    fn is_finished(&self) -> bool {
+        WebcamEngine::is_finished(self)
+    }
+
+    fn request_stop(&self) {
+        WebcamEngine::request_stop(self);
     }
 }
 

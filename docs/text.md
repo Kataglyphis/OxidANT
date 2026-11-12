@@ -109,7 +109,7 @@ provider, on `embed --model-dir` too. `embed` prints one L2-normalised vector pe
 | Function | What it does |
 | --- | --- |
 | `text_generate(source, messages, options, sink)` | Streams `TextEvent`s: `piece` with its text, then one `done` with the finish reason and the figures |
-| `text_cancel()` | Cancels the running generation |
+| `text_cancel()` | Cancels the running generation, also one whose local model is still loading |
 | `text_embed(source, texts)` | The vectors of the model directory or endpoint the source names |
 | `text_local_available()` | Whether this build loads the chain's GenAI |
 | `text_default_options()` | The contract's defaults |

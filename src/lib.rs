@@ -30,6 +30,8 @@ pub use kataglyphis_inference::person_detection;
 pub use kataglyphis_text as text;
 
 #[cfg(desktop)]
+mod session_slot;
+#[cfg(desktop)]
 mod webcam_engine;
 
 /// The real model's tests take turns: under QEMU on four cores three at once outran their 60 s waits.

@@ -78,6 +78,8 @@ default model, scores from 0.25, and only the given class ids (empty keeps every
 the live stream the same way, and each `DetectionEvent` names its `backend` (`ort` or `tract`)
 and `execution_provider` (`cpu`, `xnnpack`, `cuda`, ...). `detect_persons_rgba` and
 `start_webcam_inference` stay; the person filter is `classes: [0]`.
+`stop_webcam_inference()` only asks: it returns at once on Dart's UI thread, the session ends on a
+thread of its own, and the next start waits until the camera is free.
 
 Desktop Flutter consumers can call `profile_person_detection` through the Rust
 bridge to run the same detector on a synthetic frame and receive the completed
