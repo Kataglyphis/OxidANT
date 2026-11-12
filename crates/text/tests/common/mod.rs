@@ -71,14 +71,22 @@ impl FakeServer {
 
 /// A server-sent stream of `pieces`, then a finish reason and the usage report.
 pub fn chat_stream(pieces: &[&str], finish: &str, prompt: usize) -> String {
+    let deltas: Vec<serde_json::Value> = pieces
+        .iter()
+        .map(|piece| serde_json::json!({ "content": piece }))
+        .collect();
+    delta_stream(&deltas, finish, prompt)
+}
+
+/// A server-sent stream of `deltas` as given, so a test can speak a server's own dialect; then as [`chat_stream`].
+pub fn delta_stream(deltas: &[serde_json::Value], finish: &str, prompt: usize) -> String {
     let mut body = String::new();
-    for piece in pieces {
-        let chunk =
-            serde_json::json!({"choices": [{"delta": {"content": piece}, "finish_reason": null}]});
+    for delta in deltas {
+        let chunk = serde_json::json!({"choices": [{"delta": delta, "finish_reason": null}]});
         body.push_str(&format!("data: {chunk}\n\n"));
     }
     let end = serde_json::json!({"choices": [{"delta": {}, "finish_reason": finish}],
-        "usage": {"prompt_tokens": prompt, "completion_tokens": pieces.len()}});
+        "usage": {"prompt_tokens": prompt, "completion_tokens": deltas.len()}});
     body.push_str(&format!("data: {end}\n\ndata: [DONE]\n\n"));
     body
 }

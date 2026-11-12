@@ -51,6 +51,38 @@ token or the server's `stop`, `Length` when the budget ran out, and `Cancelled` 
 clears the token as it starts. A stream that ends without a finish reason is an error, not an
 answer. A server without usage reports leaves the completion count at the number of pieces.
 
+**A thinking model's reasoning is not the answer.** It arrives in one of three ways, and
+`answer::Answer` handles all of them for both backends:
+
+| Where the thinking is | Who sends it so | What happens |
+| --- | --- | --- |
+| `delta.reasoning_content` | llama-server, vLLM | `parse_stream_line` yields `StreamEvent::Thinking`, never `Text` |
+| `delta.reasoning` | Ollama | the same |
+| `<think>...</think>` inside the text | a model in process, a server that does not split it | the block and its tags are cut out of the text |
+
+`on_text` and `result.text` hold the answer only, and the white space a model writes directly
+after `</think>` is dropped, so the answer starts with its first word. `result.thinking_chars`
+counts the characters that were thinking, the two tags included; 0 means the reply had none. A
+block that never closes
+is thinking to its end, so a reply cut inside it has an empty `text` and a count above 0: the
+caller can say that the budget went into thinking instead of showing nothing. Text that may begin
+a tag (`<thi`) is held back from `on_text` until the next piece decides it, as for a stop string,
+and is shown at the end of the reply when it was no tag. A thinking delta counts as a piece: the
+first one ends the time to the first token, and without a usage report it is in the completion
+count. Thinking still costs tokens and time; nothing here switches it off. An endpoint does that
+through its backend's `request_extra`, for example `{"chat_template_kwargs": {"enable_thinking":
+false}}` on a Qwen server; GenAI applies the chat template without arguments, so a model in
+process cannot.
+
+**A `</think>` without its `<think>`** (owner, 2026-11-12): some chat templates, Qwen3's on some
+servers, open the block in the prompt, so the reply holds only its end. Everything before that tag
+is thinking, as OrchestrANT's `answers.py` reads it: `result.text` is the text after it. `on_text`
+has shown the earlier text by then, since nothing could tell it was thinking, and a stop string in
+it ends the reply; a caller that must not show thinking reads `result.text`.
+
+Not handled: tags other than `<think>` pass through as text, and an answer that itself writes
+`<think>` or `</think>` loses what follows or what came before.
+
 `GenerationOptions` also carries three optional controls, on both backends:
 
 | Option | GenAI | Endpoint |
@@ -61,7 +93,8 @@ answer. A server without usage reports leaves the completion count at the number
 
 `genai::configure` decides every search option and the guidance through the `SearchParams` trait,
 so the unit tests record what GenAI would receive without loading it. Text that may begin a stop
-string is held back from `on_text` until it is decided. The Linux and the Windows chain both
+string is held back from `on_text` until it is decided; a stop string is looked for in the answer,
+not in the thinking. The Linux and the Windows chain both
 build GenAI with llguidance; a GenAI built without it refuses a schema with
 `TextError::JsonSchemaUnsupported` rather than answering unconstrained.
 
@@ -97,8 +130,9 @@ kataglyphis_cli embed --base-url http://localhost:11434 --model nomic-embed-text
 kataglyphis_cli embed --model-dir <genai-model-dir> "first" "second"
 ```
 
-`chat` streams the reply to stdout and prints the token count, the time to the first token, the
-decode rate and the finish reason to stderr. `--seed N`, `--json-schema '<schema JSON>'` and a
+`chat` streams the answer to stdout, without a thinking model's reasoning, and prints the token
+count, the time to the first token, the decode rate and the finish reason to stderr; that line
+does not name the thinking count yet. `--seed N`, `--json-schema '<schema JSON>'` and a
 repeatable `--stop TEXT` set the three options above. `--provider cuda` or `dml` selects GenAI's execution
 provider, on `embed --model-dir` too. `embed` prints one L2-normalised vector per text, one JSON array per line.
 
@@ -116,6 +150,8 @@ provider, on `embed --model-dir` too. `embed` prints one L2-normalised vector pe
 
 `TextOptions` carries `seed`, `json_schema` and `stop` as above. A schema on a lane without
 llguidance fails `text_generate` with a message starting `json_schema is unsupported on this lane`.
+A `piece` holds answer text only. `done` does not carry the thinking count: the generated Dart
+code mirrors `TextEvent`, so a new field needs the bindings regenerated.
 `TextSource` names either a `model_dir` with a `provider` (`cpu`, `cuda`, `dml`) or the endpoint
 fields, plus an `api_key` for platforms without the key's variable. One generation runs at a time,
 and the last local model stays loaded for the next turn. Android and macOS reach endpoints only;
@@ -146,10 +182,10 @@ local server that plays back one recorded answer and ends within 30 s on its own
 
 | Suite | What it covers |
 | --- | --- |
-| `crates/text/src/*.rs` | Option checks, the request body, stream lines and their 1 MiB bound, the redacted key, embeddings, endpoint resolution, the loader's search and its chain check |
+| `crates/text/src/*.rs` | Option checks, the request body, stream lines and their 1 MiB bound, thinking deltas under both names, `<think>` blocks (whole, split over pieces, unclosed, beside a stop string), the redacted key, embeddings, endpoint resolution, the loader's search and its chain check |
 | `crates/text/tests/genai.rs` | The tiny model: the oracle's tokens and text, the end token, a cancel from another thread, invalid requests, a repeated seed's identical ids, at least two different 24-token answers across seeds 1 to 4 at temperature 1, a schema answer that parses and validates on Linux and `JsonSchemaUnsupported` on Windows, a stop string ending with `Stop`, the oracle's embedding, several texts in order, generation after embedding, a model without the output, texts that cannot be embedded |
 | `crates/text/tests/contract.rs` | ModelANT's text-generation-v1 on SmolLM2-135M: exact ids and `must_contain` |
-| `crates/text/tests/endpoint.rs` | Streaming, cancel, both finish reasons, HTTP errors, an over-long stream line, an unreachable port, embeddings, `seed`, `stop` and `response_format` in the request body |
+| `crates/text/tests/endpoint.rs` | Streaming, cancel, both finish reasons, the three thinking dialects giving one answer, a reply cut inside its thinking, HTTP errors, an over-long stream line, an unreachable port, embeddings, `seed`, `stop` and `response_format` in the request body |
 | `crates/cli/tests/text.rs` | `chat` and `embed` on both backends, a named backend, the missing-endpoint error, the `--seed`, `--json-schema` and `--stop` request body |
 | `src/api/text.rs` | The bridge's mapping |
 

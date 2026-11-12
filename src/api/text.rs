@@ -232,6 +232,7 @@ mod enabled {
                 completion_tokens: 0,
                 time_to_first_token_ms: 0.0,
                 decode_tokens_per_second: 0.0,
+                thinking_chars: 0,
             });
         }
         generate(backend)
@@ -389,6 +390,7 @@ mod tests {
                     completion_tokens: 1,
                     time_to_first_token_ms: 0.0,
                     decode_tokens_per_second: 0.0,
+                    thinking_chars: 0,
                 })
             },
         )
@@ -421,6 +423,7 @@ mod tests {
             completion_tokens: 1,
             time_to_first_token_ms: 2.5,
             decode_tokens_per_second: 0.0,
+            thinking_chars: 0,
         };
         let event = enabled::done(&result);
         assert_eq!(event.kind, "done");

@@ -54,7 +54,7 @@ stays loaded. Without one configured both answer 503 and say which keys to set, 
 
 | Request | Answer |
 | --- | --- |
-| `POST /ask` `{"question", "tz_offset_min"?, "language"?}` | `answer`, the `facts` it was given, `finish_reason`, `prompt_tokens`, `completion_tokens` |
+| `POST /ask` `{"question", "tz_offset_min"?, "language"?}` | `answer`, the `facts` it was given, `finish_reason`, `prompt_tokens`, `completion_tokens`, `thinking_chars` |
 | `GET /summary?day=YYYY-MM-DD&tz=<minutes>` | `day`, `visits`, `first`, `last`, `longest_stay_s`, `total_stay_s`; no model runs |
 | `POST /summary` `{"day"?, "tz_offset_min"?, "language"?}` | The same figures plus `summary` and `finish_reason`; a day without visits has `summary: null` and asks no model |
 
@@ -68,6 +68,16 @@ stays loaded. Without one configured both answer 503 and say which keys to set, 
   the 300 s limit (504), cancel the answer after its current token. A failure of the model or
   endpoint is a 502 carrying its message, never an empty answer; a model that returns no words
   is a 502 naming its finish reason. A body that does not arrive within 10 s is a 408.
+- **A thinking model's reasoning is not the answer.** `answer` and `summary` leave it out, and
+  `/ask`'s `thinking_chars` says how many characters of the reply it was, 0 for none; what counts
+  as thinking, and what is not recognised: [text.md](text.md#generating). When the reply was
+  thinking only, the 502 says so: `the model gave no answer (finish_reason length): it spent its
+  budget thinking (412 characters of thinking, 128 tokens); set a larger llm_max_new_tokens or
+  switch thinking off at the endpoint`, or `it only thought (...)` without the budget advice when
+  the model ended by itself. Thinking is switched
+  off at the server, or with `llm_backend` through that backend's `request_extra`
+  (`{"chat_template_kwargs": {"enable_thinking": false}}` on a Qwen server); `llm_base_url` sends
+  no such key, and a model in `llm_model_dir` cannot switch it off.
 - **Only the page itself.** Both POSTs spend the board's CPU, so `own_page` guards them like
   `POST /settings`, and they take JSON only, up to 4 KiB and a 1000-character question. Peers read
   neither endpoint.
@@ -117,6 +127,9 @@ scanner builds the registry out of process.
 OxidANT's own packages carry neither webrtcsink nor a scanner, and a unit test in
 `crates/media/src/runtime.rs` keeps it so; OmniAccelerANT's `test-observant-package.sh` forces the
 worst order on the package that carries both.
+On Windows the service lists H.264 before the other codecs in its offer, and a viewer takes the
+first one it knows: the Windows chain's VP8 reaches a viewer's decoder and never becomes a picture.
+Other systems keep webrtcsink's own order, VP8 first.
 
 ## The cat cam service
 
@@ -125,9 +138,6 @@ board runs it as one service unit. How to run and configure it:
 [`docs/observant.md`](observant.md).
 
 - **The camera is chosen, and chosen again.** `camera = "auto"` (the default) takes a
-On Windows the service lists H.264 before the other codecs in its offer, and a viewer takes the
-first one it knows: the Windows chain's VP8 reaches a viewer's decoder and never becomes a picture.
-Other systems keep webrtcsink's own order, VP8 first.
   Raspberry Pi camera through `rpicam-vid` piping raw I420 when `rpicam-hello
   --list-cameras` lists one, which keeps the host's own libcamera whatever its ABI;
   otherwise a CSI camera libcamera lists, then a UVC webcam (`v4l2src`, MJPEG only when

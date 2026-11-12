@@ -264,6 +264,33 @@
   "why": "An endpoint request carries the json_schema as response_format."
  },
  {
+  "id": "consumer.oxidant-text-thinking-delta",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "            events.push(StreamEvent::Thinking(thinking.to_string()));",
+  "replace": "            events.push(StreamEvent::Text(thinking.to_string()));",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "A server's reasoning delta is thinking, never answer text."
+ },
+ {
+  "id": "consumer.oxidant-text-lone-think-close",
+  "target": "crates/text/src/answer.rs",
+  "find": "            if closing && !self.inside {",
+  "replace": "            if false {",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "A closing tag without its opening one makes everything before it thinking, as OrchestrANT reads it."
+ },
+ {
+  "id": "consumer.oxidant-text-space-after-think",
+  "target": "crates/text/src/answer.rs",
+  "find": "            self.after_close = closing;",
+  "replace": "            self.after_close = false;",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "The answer starts with its first word, not with the blank lines a model writes after its thinking."
+ },
+ {
   "id": "consumer.oxidant-crate-floor-unfloored",
   "target": "scripts/linux/check-crate-coverage.py",
   "find": "return 1 if bad[\"BELOW\"] or bad[\"NO FLOOR\"] else 0",

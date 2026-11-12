@@ -1522,7 +1522,49 @@ mod tests {
                 body_text(&reply).contains("no answer (finish_reason stop)"),
                 "{path}: {reply}"
             );
+            assert!(!body_text(&reply).contains("thinking"), "{path}: {reply}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_model_that_only_thinks_is_an_error_that_names_thinking_and_the_ways_out() {
+        for path in ["/ask", "/summary"] {
+            let mut with_model = site(4, Vec::new(), 9);
+            // A model in process leaves the blank lines after its closed block when the budget ends there.
+            with_model.assistant = Some(crate::ask::tests::thinking_assistant("\n\n", 412));
+            // A visit today, so the summary asks the model at all.
+            arrive_and_leave(&with_model.status);
+            let addr = start_with(with_model).await;
+            let body = if path == "/ask" {
+                r#"{"question":"hi"}"#
+            } else {
+                "{}"
+            };
+            let reply = post(addr, path, "application/json", body).await;
+            assert!(reply.starts_with("HTTP/1.1 502"), "{path}: {reply}");
+            let text = body_text(&reply);
+            // The stub's model ends by itself, so the budget is not what was missing.
+            assert!(
+                text.contains("it only thought (412 characters"),
+                "{path}: {reply}"
+            );
+            assert!(
+                text.contains("thinking off") && !text.contains("llm_max_new_tokens"),
+                "{path}: {reply}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_answer_after_thinking_is_given_with_its_thinking_count() {
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(crate::ask::tests::thinking_assistant("Twice.", 412));
+        let addr = start_with(with_model).await;
+        let reply = post(addr, "/ask", "application/json", r#"{"question":"hi"}"#).await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let json = body_json(&reply);
+        assert_eq!(json["answer"], "Twice.");
+        assert_eq!(json["thinking_chars"], 412);
     }
 
     #[tokio::test]

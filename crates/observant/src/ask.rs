@@ -343,11 +343,29 @@ fn refused(refusal: Refusal) -> Response<Body> {
 fn no_words(result: &GenerationResult) -> Option<Response<Body>> {
     result.text.trim().is_empty().then(|| {
         let reason = finish_name(result.finish_reason);
-        text_reply(
-            StatusCode::BAD_GATEWAY,
-            format!("the model gave no answer (finish_reason {reason})"),
-        )
+        let mut text = format!("the model gave no answer (finish_reason {reason})");
+        if result.thinking_chars > 0 {
+            text.push_str(&thinking_hint(result));
+        }
+        text_reply(StatusCode::BAD_GATEWAY, text)
     })
+}
+
+/// Why a reply that was only thinking has no words, and the ways out; a larger budget helps only a reply the budget cut.
+fn thinking_hint(result: &GenerationResult) -> String {
+    let (what, way_out) = match result.finish_reason {
+        FinishReason::Length => (
+            "it spent its budget thinking",
+            "set a larger llm_max_new_tokens or switch thinking off at the endpoint",
+        ),
+        FinishReason::Stop | FinishReason::Cancelled => {
+            ("it only thought", "switch thinking off at the endpoint")
+        }
+    };
+    format!(
+        ": {what} ({} characters of thinking, {} tokens); {way_out}",
+        result.thinking_chars, result.completion_tokens
+    )
 }
 
 fn finish_name(reason: FinishReason) -> &'static str {
@@ -440,6 +458,7 @@ pub(crate) async fn ask(
                     "finish_reason": finish_name(result.finish_reason),
                     "prompt_tokens": result.prompt_tokens,
                     "completion_tokens": result.completion_tokens,
+                    "thinking_chars": result.thinking_chars,
                 }),
             )
         }),
@@ -547,6 +566,8 @@ pub(crate) mod tests {
         pub(crate) seen: Arc<Mutex<Vec<ChatMessage>>>,
         pub(crate) reply: Result<String, TextError>,
         pub(crate) hold: bool,
+        /// What the reply reports as thinking, as a thinking model's backend would.
+        pub(crate) thinking_chars: usize,
     }
 
     impl TextBackend for Stub {
@@ -575,6 +596,7 @@ pub(crate) mod tests {
                 completion_tokens: 2,
                 time_to_first_token_ms: 0.0,
                 decode_tokens_per_second: 0.0,
+                thinking_chars: self.thinking_chars,
             })
         }
     }
@@ -591,9 +613,24 @@ pub(crate) mod tests {
                 seen: shared.clone(),
                 reply,
                 hold,
+                thinking_chars: 0,
             }))
         });
         (Arc::new(Assistant::with_opener(open, 16)), seen)
+    }
+
+    /// An assistant whose model thinks for `thinking_chars` characters and then answers `reply`.
+    pub(crate) fn thinking_assistant(reply: &str, thinking_chars: usize) -> Arc<Assistant> {
+        let reply = reply.to_string();
+        let open: Opener = Box::new(move || {
+            Ok(Box::new(Stub {
+                seen: Arc::default(),
+                reply: Ok(reply.clone()),
+                hold: false,
+                thinking_chars,
+            }))
+        });
+        Arc::new(Assistant::with_opener(open, 16))
     }
 
     fn utc_plus_one() -> FixedOffset {
@@ -725,6 +762,7 @@ pub(crate) mod tests {
                 seen: shared.clone(),
                 reply: Ok("late".into()),
                 hold: true,
+                thinking_chars: 0,
             }))
         });
         let mut slow = Assistant::with_opener(open, 1);
@@ -770,11 +808,47 @@ pub(crate) mod tests {
             completion_tokens: 128,
             time_to_first_token_ms: 0.0,
             decode_tokens_per_second: 0.0,
+            thinking_chars: 0,
         };
         let refusal = no_words(&result).expect("a blank reply is no answer");
         assert_eq!(refusal.status(), StatusCode::BAD_GATEWAY);
         result.text = "Twice.".into();
         assert!(no_words(&result).is_none());
+        // Thinking beside an answer is no refusal.
+        result.thinking_chars = 412;
+        assert!(no_words(&result).is_none());
+    }
+
+    #[test]
+    fn the_thinking_hint_names_the_count_the_tokens_and_both_ways_out() {
+        let mut result = GenerationResult {
+            text: String::new(),
+            tokens: Vec::new(),
+            finish_reason: FinishReason::Length,
+            prompt_tokens: 3,
+            completion_tokens: 128,
+            time_to_first_token_ms: 0.0,
+            decode_tokens_per_second: 0.0,
+            thinking_chars: 412,
+        };
+        let hint = thinking_hint(&result);
+        for part in [
+            "spent its budget thinking",
+            "412 characters of thinking, 128 tokens",
+            "llm_max_new_tokens",
+            "thinking off at the endpoint",
+        ] {
+            assert!(hint.contains(part), "{part}: {hint}");
+        }
+        // A model that ended by itself had budget left: a larger one is no way out.
+        result.finish_reason = FinishReason::Stop;
+        let hint = thinking_hint(&result);
+        assert!(
+            hint.contains("it only thought (412 characters of thinking, 128 tokens)"),
+            "{hint}"
+        );
+        assert!(hint.contains("thinking off at the endpoint"), "{hint}");
+        assert!(!hint.contains("llm_max_new_tokens"), "{hint}");
     }
 
     #[test]

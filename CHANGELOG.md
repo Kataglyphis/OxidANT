@@ -13,6 +13,25 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-12, thinking models on the text path)
+- **A thinking model's reasoning is counted and kept out of the answer (audit genai-native-4).** The endpoint
+  parser read only `delta.content`, so the reasoning of llama-server and vLLM (`reasoning_content`) and of Ollama
+  (`reasoning`) vanished without a trace, and a model in process would have given its `<think>` notes as the answer.
+  `parse_stream_line` yields them as the new `StreamEvent::Thinking`; `<think>...</think>` inside the text is cut out
+  for both backends, also a block that never closes, and a tag split over two pieces is held back the way a stop
+  string is. `GenerationResult::thinking_chars` counts what was thinking.
+- **A `</think>` without its `<think>` ends thinking, and the answer starts with its first word (owner,
+  2026-11-12).** Qwen3's template opens the block in the prompt on some servers; everything before the lone tag is
+  thinking, as OrchestrANT's `answers.py` reads it, so `result.text` is the text after it (`on_text` has shown the
+  earlier text by then). The white space a model writes directly after `</think>` is dropped.
+- **`/ask` and `POST /summary` say when the budget went into thinking.** The 502 for a reply without words names the
+  thinking count and the two ways out, a larger `llm_max_new_tokens` or thinking switched off at the endpoint; a
+  model that ended by itself gets `it only thought` without the budget advice. A successful `/ask` carries
+  `thinking_chars`.
+- **Not in this change.** No option switches thinking off, a plain `llm_base_url` still cannot send the switch, the
+  bridge's `TextEvent` and the CLI's figures do not carry the count. Nothing was run against a real thinking
+  model: the tests replay stream lines written in each server's shape.
+
 ### Changed (2026-11-12, ObservANT offers H.264 first on Windows)
 - **On Windows the camera service lists H.264 before VP8 in its offer (owner, 2026-11-12).** Since the Windows chain
   ships the VP8 plugin, viewers took VP8, the sender's default first codec, and got no picture: OmniAccelerANT's

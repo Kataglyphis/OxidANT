@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use crate::answer::Answer;
 use crate::{
-    check_request, decode_rate, messages_json, stop_scan, unit_length, CancelToken, ChatMessage,
-    FinishReason, GenerationOptions, GenerationResult, TextBackend, TextError,
+    check_request, decode_rate, messages_json, unit_length, CancelToken, ChatMessage, FinishReason,
+    GenerationOptions, GenerationResult, TextBackend, TextError,
 };
 
 #[cfg(windows)]
@@ -729,8 +730,9 @@ impl TextBackend for GenaiGenerator {
             completion_tokens: 0,
             time_to_first_token_ms: 0.0,
             decode_tokens_per_second: 0.0,
+            thinking_chars: 0,
         };
-        let (mut first, mut shown, mut stopped) = (start, 0usize, false);
+        let (mut first, mut answer) = (start, Answer::new(&options.stop));
         // SAFETY: generator is live for the whole loop.
         while !unsafe { (api.is_done)(generator.handle) } {
             if cancel.is_cancelled() {
@@ -742,22 +744,11 @@ impl TextBackend for GenaiGenerator {
             if result.tokens.len() == 1 {
                 first = Instant::now();
             }
-            result.text.push_str(&piece);
-            let (stop_at, safe) = stop_scan(&result.text, &options.stop);
-            if safe > shown {
-                on_text(&result.text[shown..safe]);
-                shown = safe;
-            }
-            if let Some(at) = stop_at {
-                result.text.truncate(at);
-                stopped = true;
+            if answer.push(&piece, on_text) {
                 break;
             }
         }
-        if !stopped && shown < result.text.len() {
-            on_text(&result.text[shown..]);
-        }
-        if stopped {
+        if answer.finish(on_text, &mut result) {
             result.finish_reason = FinishReason::Stop;
         } else if result.finish_reason != FinishReason::Cancelled {
             let stopped = result

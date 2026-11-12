@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod answer;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod endpoint;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod genai;
@@ -81,6 +83,7 @@ pub enum FinishReason {
 /// An endpoint reports no token ids, so `tokens` is empty there and `completion_tokens` comes from its usage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenerationResult {
+    /// The answer, without the model's thinking.
     pub text: String,
     pub tokens: Vec<i32>,
     pub finish_reason: FinishReason,
@@ -88,6 +91,8 @@ pub struct GenerationResult {
     pub completion_tokens: usize,
     pub time_to_first_token_ms: f64,
     pub decode_tokens_per_second: f64,
+    /// Characters of the reply that were thinking: a server's reasoning deltas, and `<think>` blocks with their tags.
+    pub thinking_chars: usize,
 }
 
 /// Each failure of the contract, never an empty answer.
@@ -221,16 +226,16 @@ pub(crate) fn check_request(
 }
 
 /// Where a stop string first starts in `text`, and how much of `text` is safe to show: the rest may begin one.
-pub(crate) fn stop_scan(text: &str, stops: &[String]) -> (Option<usize>, usize) {
-    if let Some(at) = stops.iter().filter_map(|s| text.find(s.as_str())).min() {
+pub(crate) fn stop_scan<S: AsRef<str>>(text: &str, stops: &[S]) -> (Option<usize>, usize) {
+    let each = || stops.iter().map(AsRef::<str>::as_ref);
+    if let Some(at) = each().filter_map(|stop| text.find(stop)).min() {
         return (Some(at), at);
     }
-    let held = stops
-        .iter()
+    let held = each()
         .flat_map(|stop| {
             stop.char_indices()
                 .skip(1)
-                .map(|(i, _)| &stop[..i])
+                .map(move |(i, _)| &stop[..i])
                 .filter(|prefix| text.ends_with(prefix))
                 .map(str::len)
         })
@@ -342,7 +347,7 @@ mod tests {
             stop_scan("x\u{e9}", &["\u{e9}t\u{e9}".to_string()]),
             (None, 1)
         );
-        assert_eq!(stop_scan("anything", &[]), (None, 8));
+        assert_eq!(stop_scan::<String>("anything", &[]), (None, 8));
     }
 
     #[test]

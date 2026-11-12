@@ -117,6 +117,72 @@ async fn an_endpoint_receives_the_facts_and_the_question() {
     assert!(request.contains("How often?"), "{request}");
 }
 
+/// `/ask` against an endpoint that streams `deltas` and then ends with `finish`.
+async fn ask_endpoint(deltas: &[serde_json::Value], finish: &str) -> (String, serde_json::Value) {
+    let server = common::FakeServer::answer(
+        200,
+        "text/event-stream",
+        common::delta_stream(deltas, finish, 30),
+    );
+    let addr = start(&Config {
+        llm_base_url: Some(server.base_url.clone()),
+        llm_model: Some("m".into()),
+        ..Config::default()
+    })
+    .await;
+    ask(addr, "How often?").await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_endpoint_that_only_thinks_is_a_502_that_names_thinking_in_each_dialect() {
+    use serde_json::json;
+    for deltas in [
+        vec![
+            json!({"reasoning_content": "Let me count"}),
+            json!({"reasoning_content": " the visits"}),
+        ],
+        vec![json!({"content": "", "reasoning": "Let me count the visits"})],
+        vec![
+            json!({"content": "<think>Let me count"}),
+            json!({"content": " the visits"}),
+        ],
+    ] {
+        let (reply, _) = ask_endpoint(&deltas, "length").await;
+        assert!(reply.starts_with("HTTP/1.1 502"), "{deltas:?}: {reply}");
+        assert!(
+            reply.contains("no answer (finish_reason length): it spent its budget thinking"),
+            "{deltas:?}: {reply}"
+        );
+        assert!(reply.contains("llm_max_new_tokens"), "{deltas:?}: {reply}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_endpoint_that_thinks_first_gives_its_answer_without_the_thinking() {
+    use serde_json::json;
+    for (deltas, thinking_chars) in [
+        (
+            vec![
+                json!({"reasoning_content": "One visit."}),
+                json!({"content": "Once."}),
+            ],
+            10,
+        ),
+        (
+            vec![
+                json!({"content": "<think>One visit.</th"}),
+                json!({"content": "ink>Once."}),
+            ],
+            25,
+        ),
+    ] {
+        let (reply, json) = ask_endpoint(&deltas, "stop").await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{deltas:?}: {reply}");
+        assert_eq!(json["answer"], "Once.", "{deltas:?}");
+        assert_eq!(json["thinking_chars"], thinking_chars, "{deltas:?}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unreachable_endpoint_is_the_replys_error() {
     let port = std::net::TcpListener::bind("127.0.0.1:0")

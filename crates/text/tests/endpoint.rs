@@ -67,6 +67,127 @@ fn a_cancel_from_the_callback_ends_the_stream_after_its_piece() {
     assert_eq!(result.finish_reason, FinishReason::Cancelled);
 }
 
+/// One reply in each dialect a thinking model's server speaks, with the thinking characters it holds.
+fn thinking_dialects() -> [(&'static str, Vec<serde_json::Value>, usize); 3] {
+    use serde_json::json;
+    let apart = "Two visits today.".len();
+    [
+        (
+            "reasoning_content (llama-server, vLLM)",
+            vec![
+                json!({"reasoning_content": "Two visits"}),
+                json!({"reasoning_content": " today.", "content": null}),
+                json!({"content": "Twice"}),
+                json!({"content": "."}),
+            ],
+            apart,
+        ),
+        (
+            "reasoning (Ollama)",
+            vec![
+                json!({"role": "assistant", "content": "", "reasoning": "Two visits"}),
+                json!({"role": "assistant", "content": "", "reasoning": " today."}),
+                json!({"role": "assistant", "content": "Twice"}),
+                json!({"role": "assistant", "content": "."}),
+            ],
+            apart,
+        ),
+        (
+            "<think> in content, its closing tag split over two pieces",
+            vec![
+                json!({"content": "<think>"}),
+                json!({"content": "Two visits"}),
+                json!({"content": " today.</thi"}),
+                json!({"content": "nk>Twice"}),
+                json!({"content": "."}),
+            ],
+            apart + "<think></think>".len(),
+        ),
+    ]
+}
+
+#[test]
+fn the_three_thinking_dialects_give_the_same_answer_and_count_their_thinking() {
+    for (dialect, deltas, thinking_chars) in thinking_dialects() {
+        let server = FakeServer::answer(
+            200,
+            "text/event-stream",
+            common::delta_stream(&deltas, "stop", 9),
+        );
+        let mut shown = String::new();
+        let result = endpoint(&server)
+            .generate(
+                &[ChatMessage::user("How often did the cat come?")],
+                &GenerationOptions::default(),
+                &CancelToken::default(),
+                &mut |piece| shown.push_str(piece),
+            )
+            .unwrap();
+        assert_eq!(result.text, "Twice.", "{dialect}");
+        assert_eq!(shown, "Twice.", "{dialect}");
+        assert_eq!(result.thinking_chars, thinking_chars, "{dialect}");
+        assert_eq!(result.finish_reason, FinishReason::Stop, "{dialect}");
+    }
+}
+
+#[test]
+fn a_reply_cut_inside_its_thinking_has_no_answer_and_a_thinking_count() {
+    use serde_json::json;
+    for (dialect, deltas) in [
+        (
+            "reasoning_content",
+            vec![json!({"reasoning_content": "Let me count"})],
+        ),
+        ("reasoning", vec![json!({"reasoning": "Let me count"})]),
+        (
+            "an unclosed <think>",
+            vec![
+                json!({"content": "<think>Let me"}),
+                json!({"content": " count"}),
+            ],
+        ),
+    ] {
+        let server = FakeServer::answer(
+            200,
+            "text/event-stream",
+            common::delta_stream(&deltas, "length", 9),
+        );
+        let mut shown = Vec::new();
+        let result = endpoint(&server)
+            .generate(
+                &[ChatMessage::user("x")],
+                &GenerationOptions::default(),
+                &CancelToken::default(),
+                &mut |piece| shown.push(piece.to_string()),
+            )
+            .unwrap();
+        assert_eq!(result.text, "", "{dialect}");
+        assert!(shown.is_empty(), "{dialect}: {shown:?}");
+        assert!(result.thinking_chars >= "Let me count".len(), "{dialect}");
+        assert_eq!(result.finish_reason, FinishReason::Length, "{dialect}");
+    }
+}
+
+#[test]
+fn thinking_pieces_count_as_tokens_when_the_server_reports_no_usage() {
+    let stream = concat!(
+        "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"a\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"b\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"c\"},\"finish_reason\":\"stop\"}]}\n\n",
+    );
+    let server = FakeServer::answer(200, "text/event-stream", stream);
+    let result = endpoint(&server)
+        .generate(
+            &[ChatMessage::user("x")],
+            &GenerationOptions::default(),
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!((result.text.as_str(), result.thinking_chars), ("c", 2));
+    assert_eq!(result.completion_tokens, 3);
+}
+
 /// Takes `good` writes, then fails as a closed pipe does.
 struct ClosingPipe {
     good: usize,

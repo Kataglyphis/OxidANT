@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 
+use crate::answer::Answer;
 use crate::{
     check_request, decode_rate, messages_json, unit_length, CancelToken, ChatMessage, FinishReason,
     GenerationOptions, GenerationResult, TextBackend, TextError,
@@ -307,8 +308,21 @@ pub fn read_stream_line(reader: &mut impl BufRead) -> Result<Option<String>, Tex
 pub enum StreamEvent {
     Text(String),
     Finish(FinishReason),
-    Usage { prompt: usize, completion: usize },
+    Usage {
+        prompt: usize,
+        completion: usize,
+    },
     Done,
+    /// A thinking model's reasoning, which the server sends apart from the answer text.
+    Thinking(String),
+}
+
+/// A delta's thinking: llama-server and vLLM name it `reasoning_content`, Ollama `reasoning`.
+fn delta_thinking(delta: &Value) -> Option<&str> {
+    ["reasoning_content", "reasoning"]
+        .iter()
+        .filter_map(|key| delta[*key].as_str())
+        .find(|thinking| !thinking.is_empty())
 }
 
 /// The events of one `data:` line; other lines, keep-alives and empty deltas carry none.
@@ -329,6 +343,9 @@ pub fn parse_stream_line(line: &str) -> Result<Vec<StreamEvent>, TextError> {
     }
     let mut events = Vec::new();
     if let Some(choice) = chunk["choices"].get(0) {
+        if let Some(thinking) = delta_thinking(&choice["delta"]) {
+            events.push(StreamEvent::Thinking(thinking.to_string()));
+        }
         if let Some(text) = choice["delta"]["content"]
             .as_str()
             .filter(|t| !t.is_empty())
@@ -410,7 +427,10 @@ impl TextBackend for Endpoint {
             completion_tokens: 0,
             time_to_first_token_ms: 0.0,
             decode_tokens_per_second: 0.0,
+            thinking_chars: 0,
         };
+        // The server ends the reply at a stop string itself, so none is looked for here.
+        let mut answer = Answer::new(&[]);
         let (mut pieces, mut first, mut finished, mut usage) = (0usize, start, false, None);
         loop {
             let line = incoming.recv_timeout(CANCEL_POLL);
@@ -426,17 +446,20 @@ impl TextBackend for Endpoint {
             };
             let Some(line) = line else { break };
             for event in parse_stream_line(&line)? {
+                // Thinking is a piece too: the first one ends the wait for the first token.
+                if matches!(event, StreamEvent::Text(_) | StreamEvent::Thinking(_)) {
+                    pieces += 1;
+                    if pieces == 1 {
+                        first = Instant::now();
+                        result.time_to_first_token_ms =
+                            first.duration_since(start).as_secs_f64() * 1000.0;
+                    }
+                }
                 match event {
                     StreamEvent::Text(text) => {
-                        pieces += 1;
-                        if pieces == 1 {
-                            first = Instant::now();
-                            result.time_to_first_token_ms =
-                                first.duration_since(start).as_secs_f64() * 1000.0;
-                        }
-                        result.text.push_str(&text);
-                        on_text(&text);
+                        answer.push(&text, on_text);
                     }
+                    StreamEvent::Thinking(thinking) => answer.push_thinking(&thinking),
                     StreamEvent::Finish(reason) => {
                         result.finish_reason = reason;
                         finished = true;
@@ -451,6 +474,7 @@ impl TextBackend for Endpoint {
                 "the stream ended without a finish reason".into(),
             ));
         }
+        answer.finish(on_text, &mut result);
         // A server without usage reports leaves the piece count, which undercounts merged tokens.
         let (prompt, completion) = usage.unwrap_or((0, pieces));
         result.prompt_tokens = prompt;
@@ -642,6 +666,53 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("not found")
+        );
+    }
+
+    #[test]
+    fn a_thinking_delta_is_its_own_event_under_either_name() {
+        // llama-server and vLLM.
+        assert_eq!(
+            parse_stream_line(
+                r#"data: {"choices":[{"finish_reason":null,"index":0,"delta":{"reasoning_content":"Okay"}}]}"#
+            )
+            .unwrap(),
+            vec![StreamEvent::Thinking("Okay".into())]
+        );
+        // Ollama, which sends an empty content beside it.
+        assert_eq!(
+            parse_stream_line(
+                r#"data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":"Okay"},"finish_reason":null}]}"#
+            )
+            .unwrap(),
+            vec![StreamEvent::Thinking("Okay".into())]
+        );
+        // Thinking and text in one delta: the thinking came first.
+        assert_eq!(
+            parse_stream_line(
+                r#"data: {"choices":[{"delta":{"reasoning_content":"so","content":"Yes"}}]}"#
+            )
+            .unwrap(),
+            vec![
+                StreamEvent::Thinking("so".into()),
+                StreamEvent::Text("Yes".into())
+            ]
+        );
+        // A server that sends one piece under both names means it once.
+        assert_eq!(
+            parse_stream_line(
+                r#"data: {"choices":[{"delta":{"reasoning":"Okay","reasoning_content":"Okay"}}]}"#
+            )
+            .unwrap(),
+            vec![StreamEvent::Thinking("Okay".into())]
+        );
+        // An empty or null one carries nothing.
+        assert_eq!(
+            parse_stream_line(
+                r#"data: {"choices":[{"delta":{"reasoning_content":"","reasoning":null}}]}"#
+            )
+            .unwrap(),
+            vec![]
         );
     }
 
