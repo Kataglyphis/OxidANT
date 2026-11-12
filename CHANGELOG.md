@@ -57,6 +57,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
   the NVIDIA prefix only. The image strips the CPU core, the one an AMD package carries. Both ask for exact bytes on
   NVIDIA alone now; the package check's test and one recipe hold it.
 
+### Added (2026-11-12, ModelANT's decode cases are replayed)
+- **The detector replays the decode cases of ModelANT's `inference-v1.json`.** The contract held four cases, all for
+  preprocessing; since ModelANT a6eaca1 it also holds the five rules for end-to-end rows (a finite score at least
+  the threshold, a class inside the range, finite corners in order, no overlap suppression, boxes cut to the frame)
+  as raw rows with their expected detections. `postprocess.rs` runs every case through `parse_yolo_like_detections`
+  and compares the list in row order; a case ModelANT appends is replayed without an edit here. The `ModelANT`
+  gitlink moves from 9e8ffde to that commit.
+
 ### Changed (2026-11-12, rows no detector of the family keeps)
 - **A row with no such class or with its corners swapped is no detection (owner, 2026-11-12).** AccelerANTgine
   dropped such rows; this decoder and OrchestrANT's kept them, so a class past the 80 names reached the caller with no

@@ -230,6 +230,75 @@ mod tests {
         assert_eq!(corners(&found[1]), [0.0, 0.0, 200.0, 100.0]);
     }
 
+    /// A row's number; JSON has no NaN or infinity, so the contract spells them as strings that `f32` parses.
+    fn number(value: &serde_json::Value) -> f32 {
+        match value.as_str() {
+            Some(text) => text.parse().unwrap(),
+            None => value.as_f64().unwrap() as f32,
+        }
+    }
+
+    #[test]
+    fn replays_the_decode_cases_of_the_shared_modelant_contract() {
+        let contract: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../third_party/ModelANT/contracts/inference-v1.json"
+        )))
+        .unwrap();
+        let decode = &contract["decode"];
+        assert_eq!(decode["layout"], "xyxy_score_class");
+        assert_eq!(decode["order"], "row");
+        // The cases are written for the class count this decoder checks against.
+        let last_class = contract["output"]["class_range"][1].as_u64().unwrap();
+        assert_eq!(last_class as usize + 1, coco::NAMES.len());
+        let score_tolerance = decode["score_tolerance"].as_f64().unwrap() as f32;
+        let coordinate_tolerance = decode["coordinate_tolerance"].as_f64().unwrap() as f32;
+        let cases = decode["cases"].as_array().unwrap();
+        assert!(!cases.is_empty());
+        for case in cases {
+            let name = &case["name"];
+            let size = |key: &str| case[key].as_u64().unwrap() as u32;
+            let map = |key: &str| case["mapping"][key].as_f64().unwrap() as f32;
+            let mapping = ImageMapping {
+                src_w: size("width"),
+                src_h: size("height"),
+                scale_x: map("scale_x"),
+                scale_y: map("scale_y"),
+                pad_x: map("pad_x"),
+                pad_y: map("pad_y"),
+            };
+            let rows = case["rows"].as_array().unwrap();
+            let data: Vec<f32> = rows
+                .iter()
+                .flat_map(|row| row.as_array().unwrap().iter().map(number))
+                .collect();
+            let threshold = case["score_threshold"].as_f64().unwrap() as f32;
+            let found =
+                parse_yolo_like_detections(&[1, rows.len(), 6], &data, threshold, mapping, false)
+                    .unwrap();
+            let expected = case["expected"].as_array().unwrap();
+            assert_eq!(found.len(), expected.len(), "{name}");
+            // In row order: the contract compares the list entry by entry.
+            for (found, expected) in found.iter().zip(expected) {
+                assert_eq!(
+                    found.class_id,
+                    expected["class"].as_i64().unwrap(),
+                    "{name}"
+                );
+                let score = expected["score"].as_f64().unwrap() as f32;
+                assert!((found.score - score).abs() <= score_tolerance, "{name}");
+                let corners = [found.x1, found.y1, found.x2, found.y2];
+                for (corner, expected) in corners.iter().zip(expected["box"].as_array().unwrap()) {
+                    let expected = expected.as_f64().unwrap() as f32;
+                    assert!(
+                        (corner - expected).abs() <= coordinate_tolerance,
+                        "{name}: {corners:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_parse_yolo_like_detections_invalid_shape() {
         let shape = vec![1usize, 4usize];

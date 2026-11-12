@@ -51,7 +51,9 @@ The script regression checks both handoffs, forwarded arguments, failure status 
 the coverage report's per-crate floor check.
 
 Inference preprocessing reads ModelANT's pinned `contracts/inference-v1.json` through
-`third_party/ModelANT`. The C++ and Python implementations use those same cases.
+`third_party/ModelANT`, and `postprocess.rs` replays its decode cases: raw rows in, detections out
+in row order, under the five rules for end-to-end rows. The C++ and Python implementations use
+those same cases.
 The bounded model cache test deliberately replaces the cache on another thread and
 asserts the first request keeps its original model reference.
 

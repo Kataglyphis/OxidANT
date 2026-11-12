@@ -229,7 +229,7 @@ A plain Ubuntu box (e.g. the WSL recipe below) *does* need the distro packages, 
 
 ### Shared inference and texture contracts
 
-`third_party/ModelANT` supplies test-only preprocessing references; model weights still
+`third_party/ModelANT` supplies test-only preprocessing and decode references; model weights still
 come from `models.lock`. Keep its gitlink aligned with the C++ consumer when changing
 the contract. The one-entry model cache returns a stable reference for each request,
 so replacement by another model path cannot redirect an in-flight call.
