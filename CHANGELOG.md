@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-12, hub pin)
+- **The hub moves from 62bf45f to d66d390 (159 commits).** CI already builds in the image and with the actions of the hub's
+  `develop`; the pin only decided which copy of the hub's scripts and gates this checkout runs, and it had fallen behind
+  the image (owner, 2026-11-12: move all pins). No shared file this repo takes from the hub changed, and the
+  consumer-pin, shared-config and ratchet gates pass at the new pin.
+
 ### Changed (2026-11-12, the local gates see stale mutation recipes)
 - **`scripts/linux/run-lint-gates.sh` checks the mutation recipes first.** A refactor that moves a line a recipe names makes
   the recipe stale, and only CI's mutation gate said so, after the push. The hub's `verify_mutations.py --stale-check`
