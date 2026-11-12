@@ -102,8 +102,9 @@ bash "$(hub gstreamer-bundle.sh)" "${gst_copy[@]}"
 # shellcheck source=lib/ort-runtime-bundle.sh
 source "${SCRIPT_DIR}/lib/ort-runtime-bundle.sh"
 case "${ort_variant}" in
-    cpu) ort_dir="${ORT_LIB_LOCATION:-/usr/local/lib/onnxruntime-cpu/lib}" ;;
-    *) ort_dir="${GPU_ORT_LIB_LOCATION:-/usr/local/lib/onnxruntime-gpu/lib}" ;;
+    # AMD's plugin module loads into the CPU build: the rocm image has no GPU ONNX Runtime.
+    cpu|amd) ort_dir="${ORT_LIB_LOCATION:-/usr/local/lib/onnxruntime-cpu/lib}" ;;
+    nvidia) ort_dir="${GPU_ORT_LIB_LOCATION:-/usr/local/lib/onnxruntime-gpu/lib}" ;;
 esac
 stage_ort_runtime "${bundle}/lib" "${ort_dir}" "${ort_variant}"
 
@@ -129,6 +130,8 @@ case "${ort_variant}" in
         for soname in 'libamdhip64.so.*' 'libmigraphx_c.so.*'; do
             closure+=(--system "${soname}")
         done
+        # The package check compares the module with the image's, so the closure must not patch it.
+        closure+=(--protect "lib/${ORT_AMDGPU_EP_MODULE}")
         ;;
 esac
 # The image reaches these only through ld.so.conf, which no target has.
@@ -140,6 +143,8 @@ bash "$(hub elf-closure.sh)" "${closure[@]}" --ldconfig
 # shellcheck source=third_party/ANTfrastructure/linux/scripts/06-packaging/ort-wheel-licenses.sh
 source "$(antfrastructure_path linux/scripts/06-packaging/ort-wheel-licenses.sh)"
 stage_ort_wheel_licenses "${bundle}"
+# The plugin is no wheel's: its texts come from the image's plugin tree.
+[ "${ort_variant}" != amd ] || stage_amdgpu_ep_notices "${bundle}"
 bash "$(hub bundle-loader.sh)" --beside "${bundle}" "${bundle}/lib" "${binary}"
 if [ "${ort_variant}" != cpu ]; then
     case "${ort_variant}" in nvidia) default_device=cuda ;; amd) default_device=migraphx ;; esac
@@ -179,11 +184,13 @@ license_verifier="$(antfrastructure_path linux/scripts/verify_package_license.py
 # Every staged crate text and model notice, read back from the finished package.
 third_party_rules() {
     local prefix="$1" text
+    local -a trees=("${bundle}/licenses/cargo" "${bundle}/resources/models")
+    [ "${ort_variant}" != amd ] || trees+=("${bundle}/${ORT_AMDGPU_EP_NOTICES}")
     rules=(--require "${prefix}/LICENSE=${REPO_ROOT}/LICENSE")
     while IFS= read -r -d '' text; do
         rules+=(--require "${prefix}/${text#"${bundle}/"}=${text}")
-    done < <(find "${bundle}/licenses/cargo" "${bundle}/resources/models" -type f \
-        \( -path '*/licenses/cargo/*' -o -name '*.LICENSE' -o -name '*.NOTICE' \) -print0 | sort -z)
+    done < <(find "${trees[@]}" -type f \
+        \( -path '*/licenses/cargo/*' -o -name '*.LICENSE' -o -name '*.NOTICE' -o -path "*/${ORT_AMDGPU_EP_NOTICES}/*" \) -print0 | sort -z)
 }
 package_name="$(app_packaging_sanitize_package_name "${binary}")"
 read -r -a formats <<< "${package_types//,/ }"
@@ -213,6 +220,12 @@ for format in "${formats[@]}"; do
                 bash "$(antfrastructure_path linux/scripts/06-packaging/verify-native-appimage-license.sh)" \
                     "${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage" "${arch}" "usr/lib/${package_name}/${text}" "${bundle}/${text}"
             done
+            # The provenance stands in for the plugin's tree here; verify-gpu-packages.sh compares all of it.
+            if [ "${ort_variant}" = amd ]; then
+                bash "$(antfrastructure_path linux/scripts/06-packaging/verify-native-appimage-license.sh)" \
+                    "${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage" "${arch}" \
+                    "usr/lib/${package_name}/${ORT_AMDGPU_EP_NOTICES}/provenance.txt" "${bundle}/${ORT_AMDGPU_EP_NOTICES}/provenance.txt"
+            fi
             verify_ort_wheel_appimage_licenses "${out_dir}/${package_name}-${version#v}-${appimage_arch}.AppImage" "${bundle}" "${arch}" "usr/lib/${package_name}"
             ;;
         flatpak)

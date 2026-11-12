@@ -10,7 +10,7 @@ that excludes the unselected legacy Torch backend from the lockfile.
 | --- | --- | --- |
 | `crates/core` | `kataglyphis_core` | Config, detection types, the COCO names (the synced `coco-classes.txt`), the chain-marker search, logging |
 | `crates/telemetry` | `kataglyphis_telemetry` | CPU/GPU/RAM resource monitoring |
-| `crates/inference` | `kataglyphis_inference` | The detector: the chain-built ONNX Runtime first (Linux, Windows; CUDA and, on Windows, DirectML registered), tract when ORT fails and on Android; `ort_runtime` picks and verifies the chain-built ONNX Runtime |
+| `crates/inference` | `kataglyphis_inference` | The detector: the chain-built ONNX Runtime first (Linux, Windows; CUDA and, on Windows, DirectML registered), tract when ORT fails and on Android; `ort_runtime` picks and verifies the chain-built ONNX Runtime, `ort_plugin` registers AMD's MIGraphX plugin module by path (Linux) |
 | `crates/text` | `kataglyphis_text` | Language models: the chain's ONNX Runtime GenAI in process (Linux, Windows), loaded at run time and verified like ORT, or an OpenAI-compatible endpoint by URL or `backends.json` name ([text.md](text.md)) |
 | `crates/media` | `kataglyphis_media` | GStreamer capture, the one frame sink, and the GStreamer setup that makes a package load its own plugins only |
 | `crates/gui` | `kataglyphis_gui` | The wgpu camera GUI with detector overlay and the GTK4 camera GUI on Linux (`gui-gtk`); both build wherever supported by the target |

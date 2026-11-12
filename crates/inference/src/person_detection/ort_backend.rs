@@ -48,7 +48,7 @@ pub(super) fn provider_label(provider: Option<&str>) -> &'static str {
     match provider {
         None => "cpu",
         Some("CUDAExecutionProvider") => "cuda",
-        Some("MIGraphXExecutionProvider") => "migraphx",
+        Some("MIGraphX") => "migraphx",
         Some("DmlExecutionProvider") => "directml",
         Some("XnnpackExecutionProvider") => "xnnpack",
         Some("DnnlExecutionProvider") => "dnnl",
@@ -60,15 +60,13 @@ fn register_provider(
     builder: &mut SessionBuilder,
     provider: &dyn ort::execution_providers::ExecutionProvider,
 ) -> Result<()> {
-    require_provider_available(
-        provider.name(),
-        provider.is_available().map_err(|err| anyhow!("{err}")),
-    )?;
+    require_available(provider)?;
     if provider.name() == "CUDAExecutionProvider" {
         super::cuda_probe::require_kernel(provider.name())?;
     }
+    // Registering AMD's module already asks HIP for its devices, so the probe goes first.
     #[cfg(target_os = "linux")]
-    if provider.name() == "MIGraphXExecutionProvider" {
+    if provider.name() == crate::ort_plugin::MIGRAPHX.name {
         super::hip_probe::require_answer(provider.name())?;
     }
     // A listed provider whose library cannot load (the image's DNNL without libdnnl.so.3) is unavailable too.
@@ -82,6 +80,18 @@ fn register_provider(
     Ok(())
 }
 
+fn require_available(provider: &dyn ort::execution_providers::ExecutionProvider) -> Result<()> {
+    // GetAvailableProviders never lists a plugin: its module on disk makes it available.
+    #[cfg(target_os = "linux")]
+    if let Some(plugin) = crate::ort_plugin::Plugin::named(provider.name()) {
+        return plugin.module().map(drop);
+    }
+    require_provider_available(
+        provider.name(),
+        provider.is_available().map_err(|err| anyhow!("{err}")),
+    )
+}
+
 fn require_provider_available(name: &'static str, available: Result<bool>) -> Result<()> {
     if !available? {
         return Err(ProviderUnavailable {
@@ -91,51 +101,6 @@ fn require_provider_available(name: &'static str, available: Result<bool>) -> Re
         .into());
     }
     Ok(())
-}
-
-// The legacy MIGraphX options struct can turn an empty cache path into literal quotes.
-#[cfg(target_os = "linux")]
-struct GenericMigraphx;
-
-#[cfg(target_os = "linux")]
-fn with_migraphx_options<T>(
-    append: impl FnOnce(&std::ffi::CStr, [&std::ffi::CStr; 2], [&std::ffi::CStr; 2]) -> T,
-) -> T {
-    let limit = std::ffi::CString::new(usize::MAX.to_string())
-        .expect("a decimal memory limit cannot contain NUL");
-    append(
-        c"MIGraphX",
-        [c"device_id", c"migraphx_mem_limit"],
-        [c"0", limit.as_c_str()],
-    )
-}
-
-#[cfg(target_os = "linux")]
-impl ort::execution_providers::ExecutionProvider for GenericMigraphx {
-    fn name(&self) -> &'static str {
-        "MIGraphXExecutionProvider"
-    }
-
-    fn register(&self, builder: &mut SessionBuilder) -> ort::Result<()> {
-        use ort::AsPointer;
-
-        with_migraphx_options(|name, keys, values| {
-            let keys = keys.map(std::ffi::CStr::as_ptr);
-            let values = values.map(std::ffi::CStr::as_ptr);
-            // SAFETY: the builder and all NUL-terminated strings stay valid for the call.
-            let status = unsafe {
-                (ort::api().SessionOptionsAppendExecutionProvider)(
-                    builder.ptr_mut(),
-                    name.as_ptr(),
-                    keys.as_ptr(),
-                    values.as_ptr(),
-                    keys.len(),
-                )
-            };
-            // SAFETY: ORT returns either null or an owned status from this API call.
-            unsafe { ort::error::Error::result_from_status(status) }
-        })
-    }
 }
 
 #[cfg(any(windows, test))]
@@ -178,7 +143,9 @@ fn providers_for_device(
     }
     #[cfg(target_os = "linux")]
     if matches!(device, Device::Auto | Device::Migraphx) {
-        providers.push(Box::new(GenericMigraphx));
+        providers.push(Box::new(crate::ort_plugin::PluginEp(
+            &crate::ort_plugin::MIGRAPHX,
+        )));
     }
     if device == Device::Xnnpack {
         providers.push(Box::new(ort::execution_providers::XNNPACK::default()));
@@ -224,6 +191,7 @@ fn create_session(
     provider: Option<&dyn ort::execution_providers::ExecutionProvider>,
     profile: Option<&std::path::Path>,
 ) -> Result<Session> {
+    // A new builder for each provider: a failed append leaves its options behind, and AMD's plugin refuses another provider's.
     let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
     if let Some(prefix) = profile {
         builder = builder
@@ -333,19 +301,6 @@ mod device_tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn generic_migraphx_uses_only_explicit_non_cache_options_and_propagates_errors() {
-        let result: Result<(), &str> = super::with_migraphx_options(|name, keys, values| {
-            assert_eq!(name, c"MIGraphX");
-            assert_eq!(keys, [c"device_id", c"migraphx_mem_limit"]);
-            assert_eq!(values[0], c"0");
-            assert_eq!(values[1].to_str().unwrap(), usize::MAX.to_string());
-            Err("injected provider registration failure")
-        });
-        assert_eq!(result, Err("injected provider registration failure"));
-    }
-
     #[test]
     fn selects_cpu_or_explicit_gpu_without_silent_fallback() {
         assert_eq!(Device::parse("cpu").unwrap(), Device::Cpu);
@@ -359,7 +314,7 @@ mod device_tests {
         if cfg!(target_os = "linux") {
             assert_eq!(
                 providers_for_device(Device::Migraphx).unwrap()[0].name(),
-                "MIGraphXExecutionProvider"
+                "MIGraphX"
             );
         }
         if cfg!(windows) {
@@ -446,10 +401,8 @@ mod device_tests {
         assert_eq!(provider_label(Some("XnnpackExecutionProvider")), "xnnpack");
         assert_eq!(provider_label(Some("DnnlExecutionProvider")), "dnnl");
         assert_eq!(provider_label(Some("CUDAExecutionProvider")), "cuda");
-        assert_eq!(
-            provider_label(Some("MIGraphXExecutionProvider")),
-            "migraphx"
-        );
+        assert_eq!(provider_label(Some("MIGraphX")), "migraphx");
+        assert_eq!(provider_label(Some("MIGraphXExecutionProvider")), "other");
         assert_eq!(provider_label(Some("DmlExecutionProvider")), "directml");
         assert_eq!(provider_label(Some("TensorrtExecutionProvider")), "other");
     }
@@ -493,11 +446,7 @@ mod device_tests {
         assert_eq!(devices, ["cuda", "migraphx", "directml"]);
         for (name, supported, provider) in [
             ("cuda", true, "CUDAExecutionProvider"),
-            (
-                "migraphx",
-                cfg!(target_os = "linux"),
-                "MIGraphXExecutionProvider",
-            ),
+            ("migraphx", cfg!(target_os = "linux"), "MIGraphX"),
             ("directml", cfg!(windows), "DmlExecutionProvider"),
         ] {
             let parsed = Device::parse(name);

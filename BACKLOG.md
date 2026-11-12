@@ -33,10 +33,32 @@ and the backlog is empty"; it was neither.
       `docs/gpu-artifact-receipts.md` has the commands. DirectML on an NVIDIA card is unproven too.
       The owner runs this on a machine with an NVIDIA GPU. No release until this and the Linux AMD check are done.
 
-- [ ] **The Linux AMD packages have not run on a GPU** (S, ★★★). They are built and passed on the CPU, and hosted runners
-      have no GPU. Under WSL on the RX 9070 XT even a plain HIP copy does not return (hub CON202), so this takes native
-      Linux: the owner runs it under Ubuntu on that machine. Done when `compare_detector_parity.py` passes against the
-      CPU and the profile shows MIGraphX; the hub's `docs/gpu-artifact-receipts.md` has the commands.
+- [ ] **AMD's MIGraphX plugin has not run from this repo, on a card or in its image** (S, ★★★). Hub CON231 step 2.
+      Since 2026-11-12 `migraphx` registers `libmigraphx-ep.so` by path (`crates/inference/src/ort_plugin.rs`) and the
+      AMD package carries the module and its texts. Proved on arm64 only: the search for the module, the option keys,
+      the registration guard, and that a missing or unloadable module and a module without a device fail a named request
+      and leave `auto` the CPU. Never run: the module itself, its registration, a session on it, and
+      `package-linux.sh --ort-variant amd`, which needs the amd64 `:latest-rocm` image. A risk in that script: the
+      hub's bundle census (`check-ort-provenance.sh`) looks for the module's `libonnxruntime.so.1` on the module's own
+      run path only. A stand-in module without `$ORIGIN` there fails it with `UNRESOLVED`, and the closure must not
+      patch the module, so a real module built that way needs a change in the hub. Next: dispatch
+      `linux-x64-amd-gpu.yml`; then, under native Ubuntu on the RX 9070 XT (under WSL even a plain HIP copy does not
+      return, hub CON202), run `scripts/linux/profile-gpu-packages.sh <dir> migraphx crates/inference/tests/fixtures/two_cats.jpg`.
+      The hub's `shared/python/verify_ort_profile.py`, which that parity run uses, expects `MIGraphX` since hub
+      366b8259; the pin here is past it. Done when `compare_detector_parity.py` passes against the
+      CPU for the tar, the deb and the AppImage and each run's profile has model operators on the provider `MIGraphX`;
+      the hub's `docs/gpu-artifact-receipts.md` has the commands.
+
+- [b] **CUDA still loads the old way; move it to the plugin row when the hub publishes its new NVIDIA image** (S, ★★).
+      Owner, 2026-11-12: only AMD now. The hub's contract (`docs/consumer-image-contract.md`, *The CUDA plugin EP*)
+      says a Rust consumer of the new `:latest-nvidia` registers `libonnxruntime_providers_cuda.so` by path under the
+      name `CUDAExecutionProvider`: the module there has no `GetProvider` bridge, and `ort`'s `CUDA::default()`
+      appends in the in-tree form (`SessionOptionsAppendExecutionProvider_CUDA_V2`). Not run against that image.
+      Blocked: the hub records its runtime wrappers and receipts as open. Then: one more row in
+      `crates/inference/src/ort_plugin.rs` (the name, the variable that names its root, the module's file name), that
+      row in `providers_for_device` in place of `CUDA::default()`, `cuda_probe` taking the row's provider, and `ort`'s
+      `cuda` feature dropped if nothing else needs it. The module lies beside the GPU ONNX Runtime library, in the
+      image and in the NVIDIA package, which the search's second step finds; the hub names no root variable for it.
 
 - [ ] **The capture and inference loops cannot run with a fake detector or a failing camera**
       (M, ★★★). Audit 2026-11-12: no test here runs `spawn_inference`

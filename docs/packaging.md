@@ -10,7 +10,8 @@ on Linux `scripts/linux/package-linux.sh` packs one bundle four ways
 Linux GPU packaging is experimental and is not part of the release workflow. The
 `Linux x64 · AMD GPU package candidate` workflow runs on request and builds a
 candidate requiring host ROCm. Its optional `verify-gpu` job runs packaged inference
-on a self-hosted `gpu-amd-rocm` runner and requires profiled MIGraphX operators.
+on a self-hosted `gpu-amd-rocm` runner and requires profiled operators on the provider `MIGraphX`,
+the name AMD's plugin module is registered under.
 The manually dispatched or reusable `Linux NVIDIA GPU package candidates` workflow uses
 the registry NVIDIA image. Its `architecture` input defaults to `both`; select `x64`
 or `arm64` to build and check only that architecture. With `both`, both builds and
@@ -51,8 +52,16 @@ immutable artifact ID, then verifies their receipts and raw archive against the 
 run attempt. It rejects missing checks, changed package bytes and downstream-only reruns
 from an older attempt. NVIDIA uses separate producers for each architecture. This path
 does not publish a release and requires trusted runners and compatible hub APIs.
-`package-linux.sh --ort-variant nvidia` or `--ort-variant amd` selects the chain GPU
-ORT and its matching provider, and appends `+gpu-nvidia` or `+gpu-amd` to the version.
+`package-linux.sh --ort-variant nvidia` selects the chain GPU ORT and its CUDA provider.
+`--ort-variant amd` selects the chain CPU ORT and AMD's plugin module `libmigraphx-ep.so` from
+the image's `$ORT_AMDGPU_EP_ROOT/lib`; the hub's `stage_ort_runtime` puts the module in the
+bundle's `lib/`, beside the ONNX Runtime library, where the detector looks for it
+([running.md](running.md)). The module stays byte for byte the image's, and the image's plugin
+tree of licence texts and its `provenance.txt` travel as `licenses/onnxruntime-ep-amdgpu/`: no
+wheel and no hub helper carries them, so `scripts/linux/lib/ort-runtime-bundle.sh` stages them and
+`verify-gpu-packages.sh` compares them with the image's in every format. An AMD package holds no
+`libonnxruntime_providers_*` file; the check refuses a tar or deb that does. The variants append
+`+gpu-nvidia` or `+gpu-amd` to the version.
 The DEBs all use the `oxidant` package identity and install the `oxidant` command;
 installing a different variant replaces the existing one rather than installing both.
 Finished GPU DEBs are checked for that embedded package identity, the requested target
@@ -66,22 +75,29 @@ transitive libraries and dynamic-loader configuration. These packages do not bun
 those vendor runtimes. Missing GPU support is an inference error, not a silent switch
 to tract; ORT may execute individual unsupported operators on CPU.
 
-A local AMD x64 build passed clean Ubuntu installation, CPU inference using the
-bundled ORT for the DEB, tarball and AppImage, and a missing-ROCm failure check
-for the installed DEB.
+No AMD package has been built with the plugin module: the build needs the amd64 `:latest-rocm`
+image, and the package checks have run on fixtures only. The earlier local AMD x64 build, which
+passed clean Ubuntu installation, CPU inference using the bundled ORT for the DEB, tarball and
+AppImage, and a missing-ROCm failure check for the installed DEB, carried the in-tree MIGraphX
+provider the image no longer has.
 Both GPU workflows now require each finished DEB, tarball and AppImage to select its
 vendor GPU by default and report a missing host runtime on the clean-host runner;
-that expanded check has not yet run in the hosted workflow.
-Actual GPU inference and the hosted workflow remain unverified. The published ROCm
-image used locally lacked GTK development packages, so the workflow installs them
-in the build container. Its 74.75 GB local image size makes hosted runner disk space
-a concern, even after the shared full cleanup.
+that expanded check has not yet run in the hosted workflow. The AMD build job also runs the
+packaged launcher in the image, where no card answers: `KATAGLYPHIS_ORT_DEVICE=migraphx` must
+fail with `ProviderUnavailable: MIGraphX failed to register` naming the packaged module, and
+`auto` must run on the CPU.
+Actual GPU inference and the hosted workflow remain unverified. The workflow builds on
+the image's GTK 4 and installs no package in the build container. The ROCm image's
+74.75 GB local size makes hosted runner disk space a concern, even after the shared
+full cleanup.
 
 To verify operator placement on a GPU host, run the packaged command with
 `onnx-check --profile /tmp/oxidant-profile` and the desired `KATAGLYPHIS_ORT_DEVICE`.
 Then run `python3 scripts/verify-ort-gpu-profile.py <generated-json> --device migraphx`
 from this checkout (use `cuda` for NVIDIA). A successful check proves at least one
-model operator used that provider, not that every operator did.
+model operator used that provider, not that every operator did. For `migraphx` the provider is
+`MIGraphX`. The parity diagnostic above checks each run with the hub's `verify_ort_profile.py`,
+which expects the same name since hub 366b8259; no profile from a card has been checked with it.
 
 The pinned ANTfrastructure wheel verifier rejects the NVIDIA provider in the current image
 because it exceeds its 256 MiB input limit, so that package currently stops at notice

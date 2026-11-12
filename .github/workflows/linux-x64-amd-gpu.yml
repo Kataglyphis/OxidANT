@@ -90,6 +90,9 @@ jobs:
           if ! test -f "$hub/ort-runtime-bundle.sh" || ! grep -q 'ort_assert_no_bundled_host_runtime' "$hub/ort-runtime-bundle.sh"; then
             echo 'Pinned ANTfrastructure lacks the GPU host-runtime exclusion check' >&2; exit 1
           fi
+          if ! grep -q '^ORT_AMDGPU_EP_MODULE=' "$hub/ort-runtime-bundle.sh" || ! grep -q '^ort_assert_plugin_module()' "$hub/ort-runtime-bundle.sh"; then
+            echo 'Pinned ANTfrastructure lacks the plugin MIGraphX EP package checks' >&2; exit 1
+          fi
           if ! test -f "$hub/../01-core/platform.sh" || ! grep -q '^arch_normalize()' "$hub/../01-core/platform.sh"; then
             echo 'Pinned ANTfrastructure lacks GPU package architecture normalization' >&2; exit 1
           fi
@@ -149,14 +152,16 @@ jobs:
             "$IMAGE" bash -c '
               set -euo pipefail
               hub=third_party/ANTfrastructure/linux/scripts/06-packaging
-              ort=/usr/local/lib/onnxruntime-gpu/lib
+              # The rocm image has no GPU ONNX Runtime: the plugin module loads into the CPU build.
+              ort=/usr/local/lib/onnxruntime-cpu/lib
               mkdir -p /tmp/oxidant-ort-preflight
               python3 "$hub/stage-ort-wheel-licenses.py" --require-unstripped \
                 --strip "${STRIP:-strip}" \
                 --wheel-dir /opt/onnxruntime-wheels --destination /tmp/oxidant-ort-preflight \
-                --library "$ort/libonnxruntime.so.1" \
-                --library "$ort/libonnxruntime_providers_shared.so" \
-                --library "$ort/libonnxruntime_providers_migraphx.so"
+                --library "$ort/libonnxruntime.so.1"
+              # No wheel carries the plugin; the package check compares it with this file.
+              source "$hub/ort-runtime-bundle.sh"
+              test -f "$(ort_amdgpu_ep_dir)/$ORT_AMDGPU_EP_MODULE" || { echo "This image has no MIGraphX plugin module" >&2; exit 1; }
               mkdir -p "$CARGO_HOME"
               chown 1001:1001 "$CARGO_HOME"
               runuser -u kataglyphis -- bash -c '\''
@@ -180,6 +185,16 @@ jobs:
                   echo "CPU-only profile was accepted as GPU execution" >&2
                   exit 1
                 fi
+                # No card on this runner: the packaged module must refuse a named request, and auto must go on to the CPU.
+                launcher=/tmp/oxidant-gpu-package-work/oxidant/oxidant
+                if env -u KATAGLYPHIS_ONNX_MODEL -u ORT_DYLIB_PATH -u ORT_AMDGPU_EP_ROOT KATAGLYPHIS_ORT_DEVICE=migraphx \
+                  "$launcher" onnx-check > "$profile_dir/named.log" 2>&1; then
+                  echo "MIGraphX ran on a runner without a card" >&2
+                  exit 1
+                fi
+                cat "$profile_dir/named.log"
+                grep -Fq "ProviderUnavailable: MIGraphX failed to register: ${launcher%/*}/lib/libmigraphx-ep.so" "$profile_dir/named.log"
+                env -u KATAGLYPHIS_ONNX_MODEL -u ORT_DYLIB_PATH -u ORT_AMDGPU_EP_ROOT KATAGLYPHIS_ORT_DEVICE=auto "$launcher" onnx-check
                 bash scripts/linux/verify-gpu-packages.sh dist x64 amd
               '\''
             '

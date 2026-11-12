@@ -2,7 +2,8 @@
 #![allow(dead_code)]
 
 use kataglyphis_core::detection::Detection;
-use kataglyphis_inference::person_detection::resolve_model_path;
+use kataglyphis_inference::person_detection::{resolve_model_path, PersonDetector};
+use kataglyphis_inference::provider::ProviderUnavailable;
 
 pub const CAT: i64 = 15;
 pub const PERSON: i64 = 0;
@@ -21,6 +22,17 @@ pub fn model() -> Option<String> {
     );
     eprintln!("SKIP: no model at {path} (scripts/linux/fetch-models.sh fetches it)");
     None
+}
+
+/// The `ProviderUnavailable` of a load that must not succeed.
+pub fn unavailable(result: anyhow::Result<PersonDetector>) -> ProviderUnavailable {
+    match result {
+        Ok(detector) => panic!("loaded on {}", detector.execution_provider()),
+        Err(error) => error
+            .downcast_ref::<ProviderUnavailable>()
+            .cloned()
+            .unwrap_or_else(|| panic!("not ProviderUnavailable: {error:#}")),
+    }
 }
 
 pub fn photo() -> (Vec<u8>, u32, u32) {

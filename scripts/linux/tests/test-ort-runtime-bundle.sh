@@ -4,10 +4,12 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${here}/../lib/ort-runtime-bundle.sh"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
-mkdir -p "${work}/ort" "${work}/ep/lib"
+mkdir -p "${work}/ort" "${work}/ep/lib" "${work}/ep/licenses/onnxruntime-ep-amdgpu/LICENSES" "${work}/ep/licenses/fmt"
 # The hub stages AMD's plugin module from its own prefix; the chain ORT has no in-tree MIGraphX provider.
 export ORT_AMDGPU_EP_ROOT="${work}/ep"
 printf 'plugin\n' > "${work}/ep/lib/libmigraphx-ep.so"
+printf 'plugin license\n' > "${work}/ep/licenses/onnxruntime-ep-amdgpu/LICENSES/MIT.txt"
+printf 'seed license\n' > "${work}/ep/licenses/fmt/LICENSE.rst"
 for file in libonnxruntime.so libonnxruntime.so.1 libonnxruntime_providers_shared.so libonnxruntime_providers_cuda.so; do
     printf '%s\n' "${file}" > "${work}/ort/${file}"
 done
@@ -21,6 +23,22 @@ done
 cmp "${work}/ep/lib/libmigraphx-ep.so" "${work}/amd/libmigraphx-ep.so"
 if compgen -G "${work}/amd/libonnxruntime_providers_*" > /dev/null; then
     echo 'an in-tree provider was staged for AMD' >&2; exit 1
+fi
+texts="${work}/bundle/licenses/onnxruntime-ep-amdgpu"
+if stage_amdgpu_ep_notices "${work}/bundle" 2>"${work}/error"; then
+    echo 'a plugin tree without provenance was staged' >&2; exit 1
+fi
+grep -Fq "no licence texts or provenance under ${work}/ep" "${work}/error"
+[ ! -e "${work}/bundle" ]
+printf 'onnxruntime-ep-amdgpu fixture\n' > "${work}/ep/provenance.txt"
+stage_amdgpu_ep_notices "${work}/bundle"
+cmp "${work}/ep/provenance.txt" "${texts}/provenance.txt"
+cmp "${work}/ep/licenses/fmt/LICENSE.rst" "${texts}/fmt/LICENSE.rst"
+cmp "${work}/ep/licenses/onnxruntime-ep-amdgpu/LICENSES/MIT.txt" "${texts}/onnxruntime-ep-amdgpu/LICENSES/MIT.txt"
+verify_amdgpu_ep_notices "${work}/bundle"
+printf 'extra\n' > "${texts}/fmt/NOTICE"
+if verify_amdgpu_ep_notices "${work}/bundle" 2>/dev/null; then
+    echo 'a text the image does not carry was accepted' >&2; exit 1
 fi
 rm "${work}/ort/libonnxruntime_providers_cuda.so"
 if stage_ort_runtime "${work}/missing" "${work}/ort" nvidia 2>"${work}/error"; then

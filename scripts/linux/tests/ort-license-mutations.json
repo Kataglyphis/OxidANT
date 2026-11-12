@@ -473,5 +473,109 @@
   "replace": "        export ORT_MLAS_RISCV_FORCE_SCALAR=1\n        cargo test --workspace --locked --target riscv64gc-unknown-linux-gnu \"$@\" -- --skip",
   "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
   "why": "Only the contract leaves RVV; the detector suites keep exercising the shipped kernels."
+ },
+ {
+  "id": "consumer.oxidant-amd-ort-cpu-prefix",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "    cpu|amd) ort_dir=",
+  "replace": "    cpu) ort_dir=",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The AMD package carries the CPU ONNX Runtime its plugin loads into; the rocm image has no other."
+ },
+ {
+  "id": "consumer.oxidant-amd-plugin-unpatched",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "        closure+=(--protect \"lib/${ORT_AMDGPU_EP_MODULE}\")",
+  "replace": "        :",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "A patched plugin module is no longer the image's, which the package check compares byte for byte."
+ },
+ {
+  "id": "consumer.oxidant-amd-plugin-texts-stage",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "[ \"${ort_variant}\" != amd ] || stage_amdgpu_ep_notices \"${bundle}\"",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "An AMD bundle stages the plugin's licence texts and provenance."
+ },
+ {
+  "id": "consumer.oxidant-amd-plugin-texts-archive",
+  "target": "scripts/linux/package-linux.sh",
+  "find": " -o -path \"*/${ORT_AMDGPU_EP_NOTICES}/*\"",
+  "replace": "",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The tar and deb read back every plugin text."
+ },
+ {
+  "id": "consumer.oxidant-amd-plugin-texts-appimage",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "\"usr/lib/${package_name}/${ORT_AMDGPU_EP_NOTICES}/provenance.txt\" \"${bundle}/${ORT_AMDGPU_EP_NOTICES}/provenance.txt\"",
+  "replace": "\"usr/lib/${package_name}/LICENSE\" \"${REPO_ROOT}/LICENSE\"",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The AppImage reads back the plugin's provenance."
+ },
+ {
+  "id": "consumer.oxidant-amd-plugin-is-the-images",
+  "target": "scripts/linux/verify-gpu-packages.sh",
+  "find": "        ort_assert_plugin_module \"${bundle}/lib/${ORT_AMDGPU_EP_MODULE}\"",
+  "replace": "        :",
+  "test": "bash scripts/linux/tests/test-verify-gpu-packages.sh",
+  "why": "A tar or deb whose plugin module differs from the image's is refused."
+ },
+ {
+  "id": "consumer.oxidant-amd-plugin-texts-packages",
+  "target": "scripts/linux/verify-gpu-packages.sh",
+  "find": "        verify_amdgpu_ep_notices \"$bundle\"",
+  "replace": "        :",
+  "test": "bash scripts/linux/tests/test-verify-gpu-packages.sh",
+  "why": "A tar or deb with a missing or changed plugin text is refused."
+ },
+ {
+  "id": "consumer.oxidant-amd-plugin-texts-appimage-payload",
+  "target": "scripts/linux/verify-gpu-packages.sh",
+  "find": "    verify_amdgpu_ep_notices \"${work}/appimage/squashfs-root/usr/lib/oxidant\"",
+  "replace": "    :",
+  "test": "bash scripts/linux/tests/test-verify-gpu-packages.sh",
+  "why": "An AppImage with a missing or changed plugin text is refused."
+ },
+ {
+  "id": "consumer.oxidant-amd-no-in-tree-provider",
+  "target": "scripts/linux/verify-gpu-packages.sh",
+  "find": "            echo 'An AMD package carries an in-tree ONNX Runtime provider' >&2\n            exit 1",
+  "replace": "            echo 'An AMD package carries an in-tree ONNX Runtime provider' >&2",
+  "test": "bash scripts/linux/tests/test-verify-gpu-packages.sh",
+  "why": "An AMD package with a libonnxruntime_providers_* file is the removed form."
+ },
+ {
+  "id": "consumer.oxidant-amd-plugin-texts-not-linked",
+  "target": "scripts/linux/lib/ort-runtime-bundle.sh",
+  "find": "        [ -z \"$(find \"${bundle}/${ORT_AMDGPU_EP_NOTICES}\" -type l -print -quit 2>/dev/null)\" ] &&\n",
+  "replace": "",
+  "test": "bash scripts/linux/tests/test-verify-gpu-packages.sh",
+  "why": "A plugin text that is a link is not a text the package carries."
+ },
+ {
+  "id": "consumer.oxidant-gpu-checks-clear-plugin-root",
+  "target": "scripts/linux/lib/gpu-check-common.sh",
+  "find": "-u ORT_DYLIB_PATH -u ORT_LIB_LOCATION -u ORT_AMDGPU_EP_ROOT",
+  "replace": "-u ORT_DYLIB_PATH -u ORT_LIB_LOCATION",
+  "test": "bash scripts/linux/tests/test-profile-gpu-bundle.sh",
+  "why": "A package check must load the package's own plugin module, not the one a host variable names."
+ },
+ {
+  "id": "consumer.oxidant-missing-runtime-clears-plugin-root",
+  "target": "scripts/linux/check-missing-gpu-runtime.sh",
+  "find": " -u ORT_DYLIB_PATH -u ORT_AMDGPU_EP_ROOT RUST_LOG=info",
+  "replace": " -u ORT_DYLIB_PATH RUST_LOG=info",
+  "test": "bash scripts/linux/tests/test-check-missing-gpu-runtime.sh",
+  "why": "The clean-host check runs the package's own plugin module."
+ },
+ {
+  "id": "consumer.oxidant-profile-plugin-name",
+  "target": "scripts/verify-ort-gpu-profile.py",
+  "find": "    \"migraphx\": \"MIGraphX\",",
+  "replace": "    \"migraphx\": \"CPUExecutionProvider\",",
+  "test": "python3 scripts/linux/tests/test-ort-gpu-profile.py",
+  "why": "A migraphx profile is proved by nodes under the plugin's registration name only."
  }
 ]

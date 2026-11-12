@@ -10,11 +10,11 @@ cat > "${work}/program with spaces" <<'PROGRAM'
 set -euo pipefail
 test "${1:-}" = "preserved argument"
 test "${2:-}" = "onnx-check"
-test -z "${KATAGLYPHIS_ORT_DEVICE+x}${KATAGLYPHIS_ONNX_BACKEND+x}${KATAGLYPHIS_ONNX_MODEL+x}${ORT_DYLIB_PATH+x}"
+test -z "${KATAGLYPHIS_ORT_DEVICE+x}${KATAGLYPHIS_ONNX_BACKEND+x}${KATAGLYPHIS_ONNX_MODEL+x}${ORT_DYLIB_PATH+x}${ORT_AMDGPU_EP_ROOT+x}"
 test "${RUST_LOG}" = info
 case "${SCENARIO}" in
     nvidia) echo 'ORT device request: Cuda'; echo 'libcudart.so.13: cannot open'; exit 1 ;;
-    amd) echo 'ORT device request: Migraphx'; echo 'libmigraphx_c.so.2: cannot open'; exit 1 ;;
+    amd) echo 'ORT device request: Migraphx'; echo 'ProviderUnavailable: MIGraphX failed to register: /opt/oxidant/lib/libmigraphx-ep.so: Failed to load library /opt/oxidant/lib/libmigraphx-ep.so with error: libmigraphx_c.so.3: cannot open shared object file: No such file or directory'; exit 1 ;;
     amd-hip) echo 'ORT device request: Migraphx'; echo 'libamdhip64.so.7: cannot open'; exit 1 ;;
     cpu) echo 'ORT device request: Cpu'; echo 'libcudart.so.13: cannot open'; exit 1 ;;
     unrelated) echo 'ORT device request: Cuda'; echo 'model unavailable'; exit 1 ;;
@@ -23,7 +23,7 @@ case "${SCENARIO}" in
 esac
 PROGRAM
 chmod +x "${work}/program with spaces"
-export KATAGLYPHIS_ORT_DEVICE=cpu KATAGLYPHIS_ONNX_BACKEND=tract KATAGLYPHIS_ONNX_MODEL=/wrong ORT_DYLIB_PATH=/wrong
+export KATAGLYPHIS_ORT_DEVICE=cpu KATAGLYPHIS_ONNX_BACKEND=tract KATAGLYPHIS_ONNX_MODEL=/wrong ORT_DYLIB_PATH=/wrong ORT_AMDGPU_EP_ROOT=/wrong
 check() { SCENARIO="$1" bash "${script}" "$2" "${work}/program with spaces" 'preserved argument' >/dev/null 2>&1; }
 check nvidia nvidia
 check amd amd

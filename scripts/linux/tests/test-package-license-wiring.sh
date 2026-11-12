@@ -80,4 +80,20 @@ for check in 'stage-cargo-licenses.py' 'third_party_rules "\${binary}"' 'third_p
     grep -v -e "$check" "$package_script" > "$work/mutant-cargo.sh"
     t_assert_fails check_cargo_wiring "$work/mutant-cargo.sh"
 done
+t_case "the AMD variant takes the CPU ONNX Runtime, leaves the plugin's bytes alone and carries its texts in every format"
+check_amd_plugin_wiring() {
+    has_all_literals "$1" \
+        'cpu|amd) ort_dir="${ORT_LIB_LOCATION:-/usr/local/lib/onnxruntime-cpu/lib}" ;;' \
+        'closure+=(--protect "lib/${ORT_AMDGPU_EP_MODULE}")' \
+        '[ "${ort_variant}" != amd ] || stage_amdgpu_ep_notices "${bundle}"' \
+        '[ "${ort_variant}" != amd ] || trees+=("${bundle}/${ORT_AMDGPU_EP_NOTICES}")' \
+        'find "${trees[@]}" -type f' \
+        '-o -path "*/${ORT_AMDGPU_EP_NOTICES}/*"' \
+        '"usr/lib/${package_name}/${ORT_AMDGPU_EP_NOTICES}/provenance.txt" "${bundle}/${ORT_AMDGPU_EP_NOTICES}/provenance.txt"'
+}
+t_assert_ok check_amd_plugin_wiring "$package_script"
+for check in 'cpu|amd) ort_dir=' '--protect "lib/' 'stage_amdgpu_ep_notices' 'trees+=' 'find "${trees[@]}"' '-o -path "*/${ORT_AMDGPU_EP_NOTICES}/*"' 'provenance.txt'; do
+    grep -Fv -- "$check" "$package_script" > "$work/mutant-amd.sh"
+    t_assert_fails check_amd_plugin_wiring "$work/mutant-amd.sh"
+done
 t_summary

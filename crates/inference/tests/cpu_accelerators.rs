@@ -6,19 +6,8 @@
 
 mod common;
 
-use common::{assert_both_cats, model, photo};
+use common::{assert_both_cats, model, photo, unavailable};
 use kataglyphis_inference::person_detection::PersonDetector;
-use kataglyphis_inference::provider::ProviderUnavailable;
-
-fn unavailable(result: anyhow::Result<PersonDetector>) -> ProviderUnavailable {
-    match result {
-        Ok(detector) => panic!("loaded on {}", detector.execution_provider()),
-        Err(error) => error
-            .downcast_ref::<ProviderUnavailable>()
-            .cloned()
-            .unwrap_or_else(|| panic!("not ProviderUnavailable: {error:#}")),
-    }
-}
 
 #[test]
 fn xnnpack_runs_on_every_chain_architecture() {
@@ -65,7 +54,8 @@ fn the_default_session_runs_on_the_cpu_provider() {
 
 #[test]
 fn an_absent_gpu_provider_is_unavailable_not_a_cpu_session() {
-    use ort::execution_providers::{ExecutionProvider, MIGraphX, CUDA};
+    use kataglyphis_inference::ort_plugin::{PluginEp, MIGRAPHX};
+    use ort::execution_providers::{ExecutionProvider, CUDA};
     let Some(path) = model() else { return };
     kataglyphis_inference::ort_runtime::ensure_ort_loaded().unwrap();
     let mut candidates = vec![(
@@ -73,14 +63,9 @@ fn an_absent_gpu_provider_is_unavailable_not_a_cpu_session() {
         CUDA::default().name(),
         CUDA::default().is_available(),
     )];
-    if cfg!(target_os = "linux") {
-        let migraphx = MIGraphX::default();
-        candidates.push((
-            "migraphx",
-            "MIGraphXExecutionProvider",
-            migraphx.is_available(),
-        ));
-    }
+    // A plugin is available when its module is on disk; GetAvailableProviders never lists it.
+    let migraphx = PluginEp(&MIGRAPHX);
+    candidates.push(("migraphx", migraphx.name(), migraphx.is_available()));
     let absent: Vec<_> = candidates
         .into_iter()
         .filter(|(_, _, available)| !available.as_ref().unwrap())

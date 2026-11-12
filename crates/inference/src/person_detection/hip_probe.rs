@@ -1,4 +1,4 @@
-//! One copy to the AMD GPU before MIGraphX starts. Under WSL on an RX 9070 XT the first copy never
+//! One copy to the AMD GPU before the MIGraphX plugin is registered. Under WSL on an RX 9070 XT the first copy never
 //! returns, and MIGraphX would wait for it without end: hub BACKLOG CON202. The copy runs in a child
 //! process: a hung copy would also stop this process from exiting, as the runtime's teardown waits for it.
 
@@ -15,7 +15,7 @@ const POLL: Duration = Duration::from_millis(50);
 const HIP_SUCCESS: c_int = 0;
 const HIP_MEMCPY_HOST_TO_DEVICE: c_int = 1;
 
-/// Fails when the GPU does not answer. No HIP runtime or no device passes: MIGraphX reports those.
+/// Fails when the GPU does not answer. No HIP runtime or no device passes: the registration reports those.
 pub(super) fn require_answer(provider: &'static str) -> Result<()> {
     if answers_within(ANSWER_LIMIT, || copy_to_device(HIP_RUNTIME)) {
         return Ok(());
@@ -34,7 +34,7 @@ fn no_answer(provider: &'static str) -> ProviderUnavailable {
 }
 
 /// False only when `work` outlives `limit`: a child that crashes or cannot start has answered nothing
-/// about a hang, and MIGraphX reports the rest.
+/// about a hang, and the registration reports the rest.
 fn answers_within(limit: Duration, work: impl FnOnce()) -> bool {
     // SAFETY: the child only runs `work` and leaves with `_exit`, so it runs none of this process's
     // exit handlers, and the parent reaps the pid fork returned.
@@ -94,9 +94,9 @@ mod tests {
 
     #[test]
     fn the_failure_names_the_provider_and_the_way_out() {
-        let message = no_answer("MIGraphXExecutionProvider").to_string();
+        let message = no_answer("MIGraphX").to_string();
         assert!(
-            message.contains("ProviderUnavailable: MIGraphXExecutionProvider"),
+            message.contains("ProviderUnavailable: MIGraphX cannot run"),
             "{message}"
         );
         assert!(message.contains("30 seconds"), "{message}");

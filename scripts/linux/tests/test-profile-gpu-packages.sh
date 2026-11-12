@@ -18,13 +18,13 @@ for device in cuda migraphx; do
         fake_gpu_bundle_tree "${bundle}"
         printf '%s' "${format}" > "${bundle}/format"
         fake_gpu_write_launcher "${bundle}/oxidant" <<'LAUNCHER'
-fake_gpu_assert_unset LD_PRELOAD LD_AUDIT KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ONNX_BACKEND ORT_DYLIB_PATH ORT_LIB_LOCATION
+fake_gpu_assert_unset LD_PRELOAD LD_AUDIT KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ONNX_BACKEND ORT_DYLIB_PATH ORT_LIB_LOCATION ORT_AMDGPU_EP_ROOT
 if [[ ${1:-} == onnx-detect ]]; then
     fake_gpu_assert_unset KATAGLYPHIS_PREPROCESS KATAGLYPHIS_SWAP_XY KATAGLYPHIS_ORT_THREADS KATAGLYPHIS_ORT_SPIN
     fake_gpu_detect_args "$@"
     [[ -f $3 ]]
     format="$(cat "${here}/format")"
-    provider="$(fake_gpu_provider "${KATAGLYPHIS_ORT_DEVICE}")"
+    provider="$(fake_gpu_hub_provider "${KATAGLYPHIS_ORT_DEVICE}")"
     if [[ ${KATAGLYPHIS_ORT_DEVICE} == cpu ]]; then
         test "${LD_LIBRARY_PATH}" = "${here}/lib"
     else

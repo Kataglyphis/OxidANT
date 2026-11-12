@@ -34,10 +34,10 @@ gpu_check_fixture() {
     printf '%s\n' "${fixture}"
 }
 
-# Host overrides that could redirect a packaged launcher away from its own runtime and model.
+# Host overrides that could redirect a packaged launcher away from its own runtime, plugin module and model.
 gpu_check_clean_env_args() {
     printf '%s ' env -u LD_PRELOAD -u LD_AUDIT -u KATAGLYPHIS_ONNX_MODEL -u KATAGLYPHIS_ONNX_BACKEND \
-        -u ORT_DYLIB_PATH -u ORT_LIB_LOCATION
+        -u ORT_DYLIB_PATH -u ORT_LIB_LOCATION -u ORT_AMDGPU_EP_ROOT
 }
 
 gpu_check_hub_dir() {

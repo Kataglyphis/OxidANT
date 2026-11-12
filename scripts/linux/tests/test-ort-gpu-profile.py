@@ -31,10 +31,7 @@ class ProfileTest(unittest.TestCase):
             },
             {
                 "cat": "Node",
-                "args": {
-                    "provider": "MIGraphXExecutionProvider",
-                    "op_name": "FusedGraph",
-                },
+                "args": {"provider": "MIGraphX", "op_name": "FusedGraph"},
             },
         ]
         self.assertEqual(self.run_profile(profile, "cpu").returncode, 0)
@@ -49,7 +46,7 @@ class ProfileTest(unittest.TestCase):
     def test_all_supported_gpu_providers_accept_fused_computation(self):
         for device, provider in (
             ("cuda", "CUDAExecutionProvider"),
-            ("migraphx", "MIGraphXExecutionProvider"),
+            ("migraphx", "MIGraphX"),
             ("directml", "DmlExecutionProvider"),
         ):
             with self.subTest(device=device):
@@ -79,7 +76,7 @@ class ProfileTest(unittest.TestCase):
                     "op_name": "MemcpyToHost",
                 },
             },
-            {"cat": "Node", "args": {"provider": "MIGraphXExecutionProvider"}},
+            {"cat": "Node", "args": {"provider": "MIGraphX"}},
             {
                 "cat": "Node",
                 "args": {"provider": "CPUExecutionProvider", "op_name": "Conv"},
@@ -88,6 +85,12 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual(self.run_profile(profile, "cpu").returncode, 0)
         self.assertNotEqual(self.run_profile(profile, "cuda").returncode, 0)
         self.assertNotEqual(self.run_profile(profile, "migraphx").returncode, 0)
+
+    def test_the_plugin_reports_its_registration_name(self):
+        node = {"cat": "Node", "args": {"provider": "MIGraphX", "op_name": "Conv"}}
+        self.assertEqual(self.run_profile([node], "migraphx").returncode, 0)
+        node["args"]["provider"] = "MIGraphXExecutionProvider"
+        self.assertNotEqual(self.run_profile([node], "migraphx").returncode, 0)
 
     def test_wrong_top_level_and_empty_nodes_fail(self):
         self.assertNotEqual(self.run_profile({}, "cuda").returncode, 0)

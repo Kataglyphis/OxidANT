@@ -9,12 +9,12 @@ mkdir -p "$work/runner"
 export RUNNER_TEMP="$work/runner" TEST_FIXTURE="$work/two cats.jpg" TEST_SEEN="$work/seen"
 printf fixture > "$TEST_FIXTURE"
 fake_gpu_write_launcher "$work/launcher" <<'LAUNCHER'
-fake_gpu_assert_unset LD_PRELOAD LD_AUDIT KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ONNX_BACKEND ORT_DYLIB_PATH ORT_LIB_LOCATION \
+fake_gpu_assert_unset LD_PRELOAD LD_AUDIT KATAGLYPHIS_ONNX_MODEL KATAGLYPHIS_ONNX_BACKEND ORT_DYLIB_PATH ORT_LIB_LOCATION ORT_AMDGPU_EP_ROOT \
   KATAGLYPHIS_PREPROCESS KATAGLYPHIS_SWAP_XY KATAGLYPHIS_ORT_THREADS KATAGLYPHIS_ORT_SPIN KATAGLYPHIS_SCORE_THRESHOLD
 fake_gpu_assert_no_migraphx
 [[ $1 == onnx-detect && $3 == "$TEST_FIXTURE" ]]
 fake_gpu_detect_args "$@"
-provider=$(fake_gpu_provider "$KATAGLYPHIS_ORT_DEVICE")
+provider=$(fake_gpu_hub_provider "$KATAGLYPHIS_ORT_DEVICE")
 if [[ $KATAGLYPHIS_ORT_DEVICE == cpu ]]; then
   [[ -z ${LD_LIBRARY_PATH+x} ]]
 else

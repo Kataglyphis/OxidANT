@@ -7,6 +7,7 @@ source "${here}/../lib/antfrastructure.sh"
 shared_verify="$(antfrastructure_path shared/python/verify_locked_files.py)"
 shared_fetcher="$(antfrastructure_path linux/scripts/lib/fetch-data-lock.py)"
 shared_package_proof="$(antfrastructure_path linux/scripts/06-packaging/ort-package-proof.sh)"
+shared_runtime_bundle="$(antfrastructure_path linux/scripts/06-packaging/ort-runtime-bundle.sh)"
 real_python="$(command -v python3)"
 unset KATAGLYPHIS_REPO_ROOT
 work="$(mktemp -d)"
@@ -16,7 +17,18 @@ mkdir -p "$hub" "${work}/hub/linux/scripts/01-core" "${work}/hub/linux/scripts/l
 cp "$shared_verify" "${work}/hub/shared/python/verify_locked_files.py"
 cp "$shared_fetcher" "${work}/hub/linux/scripts/lib/fetch-data-lock.py"
 cp "${here}/../verify-gpu-packages.sh" "${work}/source/scripts/linux/"
-cp "${here}/../lib/antfrastructure.sh" "${here}/../lib/renovate-git-mode.sh" "${here}/../lib/models-lock.sh" "${here}/../lib/gpu-check-common.sh" "${work}/source/scripts/linux/lib/"
+cp "${here}/../lib/antfrastructure.sh" "${here}/../lib/renovate-git-mode.sh" "${here}/../lib/models-lock.sh" "${here}/../lib/gpu-check-common.sh" \
+    "${here}/../lib/ort-runtime-bundle.sh" "${work}/source/scripts/linux/lib/"
+# The image's plugin tree: the module, its licence texts and its provenance.
+notices=licenses/onnxruntime-ep-amdgpu
+mkdir -p "${work}/ep/lib" "${work}/ep/licenses/onnxruntime-ep-amdgpu" "${work}/ep/licenses/fmt" "${work}/appimage-notices"
+printf 'plugin\n' > "${work}/ep/lib/libmigraphx-ep.so"
+printf 'plugin license\n' > "${work}/ep/licenses/onnxruntime-ep-amdgpu/LICENSE"
+printf 'seed license\n' > "${work}/ep/licenses/fmt/LICENSE.rst"
+printf 'onnxruntime-ep-amdgpu fixture\n' > "${work}/ep/provenance.txt"
+export ORT_AMDGPU_EP_ROOT="${work}/ep"
+stage_notices() { rm -rf "$1"; mkdir -p "$1"; cp -R "${work}/ep/licenses/." "$1/"; cp "${work}/ep/provenance.txt" "$1/"; }
+stage_notices "${work}/appimage-notices"
 for name in deim_dfine_n_coco.onnx deim_dfine_n_coco.LICENSE deim_dfine_n_coco.NOTICE; do
     printf 'fixture %s\n' "$name" > "${work}/tree/oxidant/resources/models/$name"
     printf '%s  %s  https://example.invalid/%s\n' \
@@ -24,16 +36,11 @@ for name in deim_dfine_n_coco.onnx deim_dfine_n_coco.LICENSE deim_dfine_n_coco.N
         >> "${work}/source/resources/models/models.lock"
 done
 cp -a "${work}/tree/oxidant/resources/models/." "${work}/appimage-models/"
-export REAL_PYTHON="$real_python" FIXTURE_APPIMAGE_MODELS="${work}/appimage-models"
+export REAL_PYTHON="$real_python" FIXTURE_APPIMAGE_MODELS="${work}/appimage-models" FIXTURE_APPIMAGE_NOTICES="${work}/appimage-notices"
 cat > "${work}/hub/linux/scripts/01-core/platform.sh" <<'STUB'
 arch_normalize() { case "$1" in x64) echo amd64 ;; arm64) echo arm64 ;; *) return 1 ;; esac; }
 STUB
-cat > "${hub}/ort-runtime-bundle.sh" <<'STUB'
-ort_assert_no_bundled_host_runtime() {
-    case "$2" in cuda) pattern='libcuda.so*' ;; migraphx) pattern='libamdhip64.so*' ;; *) return 1 ;; esac
-    ! find "$1" -name "$pattern" -print | grep -q .
-}
-STUB
+cp "$shared_runtime_bundle" "${hub}/ort-runtime-bundle.sh"
 cat > "${hub}/verify-ort-appimage-payload.sh" <<'STUB'
 #!/usr/bin/env bash
 set -e
@@ -65,7 +72,7 @@ printf 'notices\n' > "$destination/licenses/onnxruntime/ThirdPartyNotices.txt"
 STUB
 chmod +x "${work}/bin/python3"
 export PATH="${work}/bin:${PATH}" ANTFRASTRUCTURE_DIR="${work}/hub"
-for name in libonnxruntime.so libonnxruntime.so.1 libonnxruntime_providers_shared.so; do
+for name in libonnxruntime.so libonnxruntime.so.1; do
     printf '%s\n' "$name" > "${work}/tree/oxidant/lib/${name}"
 done
 printf 'license\n' > "${work}/tree/oxidant/licenses/onnxruntime/LICENSE"
@@ -74,9 +81,14 @@ cat > "${work}/packages/test.AppImage" <<'APPIMAGE'
 #!/usr/bin/env bash
 # verified
 set -euo pipefail
-[[ "$#" = 2 && "$1" = --appimage-extract && "$2" = 'usr/lib/oxidant/resources/models/*' ]]
-mkdir -p squashfs-root/usr/lib/oxidant/resources/models
-cp -a "$FIXTURE_APPIMAGE_MODELS/." squashfs-root/usr/lib/oxidant/resources/models/
+[[ "$#" = 2 && "$1" = --appimage-extract ]]
+case "$2" in
+    'usr/lib/oxidant/resources/models/*') payload="$FIXTURE_APPIMAGE_MODELS" ;;
+    'usr/lib/oxidant/licenses/onnxruntime-ep-amdgpu/*') payload="$FIXTURE_APPIMAGE_NOTICES" ;;
+    *) exit 1 ;;
+esac
+mkdir -p "squashfs-root/${2%/\*}"
+cp -a "$payload/." "squashfs-root/${2%/\*}/"
 APPIMAGE
 chmod +x "${work}/packages/test.AppImage"
 pack_deb() {
@@ -90,10 +102,17 @@ pack_deb() {
 }
 pack() { tar -czf "${work}/packages/test.tar.gz" -C "${work}/tree" oxidant; pack_deb; }
 check() { bash "${work}/source/scripts/linux/verify-gpu-packages.sh" "${work}/packages" "$1" "$2" >/dev/null 2>&1; }
+shared_provider="${work}/tree/oxidant/lib/libonnxruntime_providers_shared.so"
+# The wheel stub accepts a library whose text is its name; the plugin is compared with the image's module instead.
+write_provider() {
+    if [ "$vendor" = amd ]; then cp "${work}/ep/lib/${provider}" "${work}/tree/oxidant/lib/${provider}"; else printf '%s\n' "$provider" > "${work}/tree/oxidant/lib/${provider}"; fi
+}
 for vendor in nvidia amd; do
-    case "$vendor" in nvidia) kind=cuda; host=libcuda.so.1 ;; amd) kind=migraphx; host=libamdhip64.so.7 ;; esac
-    provider="libonnxruntime_providers_${kind}.so"
-    printf '%s\n' "$provider" > "${work}/tree/oxidant/lib/${provider}"
+    case "$vendor" in
+        nvidia) host=libcuda.so.1; provider=libonnxruntime_providers_cuda.so; printf '%s\n' "${shared_provider##*/}" > "$shared_provider" ;;
+        amd) host=libamdhip64.so.7; provider=libmigraphx-ep.so; stage_notices "${work}/tree/oxidant/${notices}" ;;
+    esac
+    write_provider
     sed -i 's/^# changed$/# verified/' "${work}/packages/test.AppImage"
     pack
     check x64 "$vendor" || { bash "${work}/source/scripts/linux/verify-gpu-packages.sh" "${work}/packages" x64 "$vendor" || true; echo "valid ${vendor} candidate was rejected" >&2; exit 1; }
@@ -133,7 +152,7 @@ for vendor in nvidia amd; do
     tar -czf "${work}/packages/test.tar.gz" -C "${work}/tree" oxidant
     if check x64 "$vendor"; then echo 'changed tar provider was accepted' >&2; exit 1; fi
     pack_deb
-    printf '%s\n' "$provider" > "${work}/tree/oxidant/lib/${provider}"
+    write_provider
     tar -czf "${work}/packages/test.tar.gz" -C "${work}/tree" oxidant
     if check x64 "$vendor"; then echo 'changed DEB provider was accepted' >&2; exit 1; fi
     printf 'changed\n' > "${work}/tree/oxidant/licenses/onnxruntime/LICENSE"
@@ -151,7 +170,38 @@ for vendor in nvidia amd; do
     pack
     sed -i 's/^# verified$/# changed/' "${work}/packages/test.AppImage"
     if check x64 "$vendor"; then echo 'invalid AppImage was accepted' >&2; exit 1; fi
+    sed -i 's/^# changed$/# verified/' "${work}/packages/test.AppImage"
     rm "${work}/tree/oxidant/lib/${provider}"
+    pack
+    if check x64 "$vendor"; then echo "a ${vendor} package without its module was accepted" >&2; exit 1; fi
+    if [ "$vendor" = nvidia ]; then rm "$shared_provider"; continue; fi
+    write_provider
+    # A provider of the old form, with the text the wheel stub accepts.
+    printf '%s\n' "${shared_provider##*/}" > "$shared_provider"
+    pack
+    if check x64 amd; then echo 'an in-tree provider in an AMD package was accepted' >&2; exit 1; fi
+    rm "$shared_provider"
+    # Each format loses one text and gets one changed; the three texts take turns.
+    for case in tar:missing:fmt/LICENSE.rst tar:changed:provenance.txt deb:missing:provenance.txt \
+        deb:changed:onnxruntime-ep-amdgpu/LICENSE appimage:missing:onnxruntime-ep-amdgpu/LICENSE appimage:changed:fmt/LICENSE.rst; do
+        IFS=: read -r format mutation text <<< "$case"
+        stage_notices "${work}/tree/oxidant/${notices}"
+        stage_notices "${work}/appimage-notices"
+        pack
+        case "$format" in appimage) target="${work}/appimage-notices/${text}" ;; *) target="${work}/tree/oxidant/${notices}/${text}" ;; esac
+        if [ "$mutation" = missing ]; then rm "$target"; else printf changed > "$target"; fi
+        case "$format" in tar) tar -czf "${work}/packages/test.tar.gz" -C "${work}/tree" oxidant ;; deb) pack_deb ;; esac
+        if check x64 amd; then echo "$mutation $format plugin text $text was accepted" >&2; exit 1; fi
+    done
+    stage_notices "${work}/tree/oxidant/${notices}"
+    stage_notices "${work}/appimage-notices"
+    ln -sf "${work}/ep/provenance.txt" "${work}/tree/oxidant/${notices}/provenance.txt"
+    pack
+    if check x64 amd; then echo 'a linked plugin text was accepted' >&2; exit 1; fi
+    stage_notices "${work}/tree/oxidant/${notices}"
+    pack
+    check x64 amd || { echo 'the restored AMD candidate was rejected' >&2; exit 1; }
+    rm -rf "${work}/tree/oxidant/lib/${provider}" "${work}/tree/oxidant/${notices}"
 done
 if check x64 invalid; then echo 'unknown GPU vendor was accepted' >&2; exit 1; fi
 printf 'GPU package verification mutation tests passed\n'

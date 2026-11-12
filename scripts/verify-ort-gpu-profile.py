@@ -10,7 +10,7 @@ from pathlib import Path
 PROVIDERS = {
     "cpu": "CPUExecutionProvider",
     "cuda": "CUDAExecutionProvider",
-    "migraphx": "MIGraphXExecutionProvider",
+    "migraphx": "MIGraphX",
     "directml": "DmlExecutionProvider",
 }
 

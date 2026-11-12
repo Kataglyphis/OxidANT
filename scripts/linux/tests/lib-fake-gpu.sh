@@ -18,6 +18,7 @@ fake_gpu_workspace() {
 # Every override the checks must clear reaches the launcher unless the check removes it.
 fake_gpu_poison_env() {
     export KATAGLYPHIS_ONNX_MODEL=/wrong KATAGLYPHIS_ONNX_BACKEND=tract ORT_DYLIB_PATH=/wrong ORT_LIB_LOCATION=/wrong
+    export ORT_AMDGPU_EP_ROOT=/wrong
     export LD_LIBRARY_PATH=/host/gpu-sdk LD_PRELOAD='' LD_AUDIT=''
 }
 
@@ -95,9 +96,15 @@ fake_gpu_provider() {
     case "$1" in
         cpu) printf CPUExecutionProvider ;;
         cuda) printf CUDAExecutionProvider ;;
-        migraphx) printf MIGraphXExecutionProvider ;;
+        migraphx) printf MIGraphX ;;
         *) return 1 ;;
     esac
+}
+
+# The name the hub's checker at this pin expects: the suites prove the drivers' wiring, the hub proves its own table.
+fake_gpu_hub_provider() {
+    python3 -I -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["PROVIDERS"][sys.argv[2]], end="")' \
+        "$(fake_gpu_hub_dir)/shared/python/verify_ort_profile.py" "$1"
 }
 
 fake_gpu_node_profile() {

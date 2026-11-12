@@ -74,7 +74,11 @@ score difference at most 0.05). Each ORT run's profile must name its provider th
 `verify_ort_profile.py`, so an XNNPACK request that ran on the CPU provider fails. A DNNL run may
 fail only with `ProviderUnavailable: DnnlExecutionProvider` (arm64, and amd64 while `:latest`
 lacks `libdnnl.so.3`). `crates/inference/tests/cpu_accelerators.rs` checks the same providers
-in-process and that a missing GPU provider is `ProviderUnavailable`. The parity check does not
+in-process and that a missing GPU provider is `ProviderUnavailable`. `plugin_ep.rs` runs AMD's
+plugin path where it cannot run, against the image's ONNX Runtime: no module, a file that does
+not load, and (on arm64, with Qualcomm's module as the stand-in) a module that registers and
+lists no device. Each makes a named `migraphx` fail with `ProviderUnavailable: MIGraphX` and
+its reason, and lets `auto` run on the CPU. No test here loads `libmigraphx-ep.so`. The parity check does not
 cover GPU providers or packaged launchers. A tract-only channel swap fails it; a channel swap in
 the shared preprocessing does not, since both backends then see the same image and still find
 both cats.

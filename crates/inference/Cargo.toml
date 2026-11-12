@@ -17,11 +17,11 @@ tract-onnx = "=0.23.8"
 
 # The chain ORT exists for Linux and Windows only; load-dynamic comes from the workspace declaration.
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
-ort = { workspace = true, features = ["std", "ndarray", "cuda", "migraphx", "xnnpack", "onednn"] }
+ort = { workspace = true, features = ["std", "ndarray", "cuda", "xnnpack", "onednn"] }
 # The GPU probes name the card through the driver, and reach the HIP runtime.
 libloading = { workspace = true }
 
-# The MIGraphX load first checks that the AMD GPU answers, in a child process.
+# Before the MIGraphX plugin is registered, a child process checks that the AMD GPU answers.
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 

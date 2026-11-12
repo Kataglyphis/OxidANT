@@ -1,11 +1,42 @@
 #!/usr/bin/env bash
-# The hub stages the chain ORT core and provider; this file adds only the GPU launcher rewrite.
+# The hub stages the chain ORT core and its GPU module; this file adds the GPU launcher rewrite and the AMD plugin's own texts.
 # shellcheck source=antfrastructure.sh
 source "$(dirname "${BASH_SOURCE[0]}")/antfrastructure.sh" || return $?
 # shellcheck source=gpu-check-common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/gpu-check-common.sh" || return $?
 # shellcheck source=/dev/null
 source "$(antfrastructure_path linux/scripts/06-packaging/ort-runtime-bundle.sh)" || return $?
+
+# The hub has no helper for the plugin's texts; they travel as one tree, so a seed's name cannot meet another notice directory.
+ORT_AMDGPU_EP_NOTICES=licenses/onnxruntime-ep-amdgpu
+
+# <bundle>: every licence text beside the image's plugin module, and its provenance.
+stage_amdgpu_ep_notices() {
+    local bundle="${1:?bundle required}" root
+    root="$(dirname "$(ort_amdgpu_ep_dir)")"
+    if [ ! -s "${root}/provenance.txt" ] || [ -z "$(find "${root}/licenses" -type f -print -quit 2>/dev/null)" ]; then
+        printf 'the MIGraphX plugin has no licence texts or provenance under %s\n' "${root}" >&2
+        return 1
+    fi
+    mkdir -p "${bundle}/${ORT_AMDGPU_EP_NOTICES}" || return
+    cp -RL "${root}/licenses/." "${bundle}/${ORT_AMDGPU_EP_NOTICES}/" || return
+    cp -L "${root}/provenance.txt" "${bundle}/${ORT_AMDGPU_EP_NOTICES}/provenance.txt"
+}
+
+# <bundle>: its plugin texts are the image's, file for file, and none is a link.
+verify_amdgpu_ep_notices() {
+    local bundle="${1:?bundle required}" expected
+    expected="$(mktemp -d)" || return 1
+    if stage_amdgpu_ep_notices "${expected}" &&
+        [ -z "$(find "${bundle}/${ORT_AMDGPU_EP_NOTICES}" -type l -print -quit 2>/dev/null)" ] &&
+        diff -r "${expected}/${ORT_AMDGPU_EP_NOTICES}" "${bundle}/${ORT_AMDGPU_EP_NOTICES}" >&2; then
+        rm -rf -- "${expected}"
+        return 0
+    fi
+    rm -rf -- "${expected}"
+    printf "the package's MIGraphX plugin texts are not the image's: %s\n" "${bundle}/${ORT_AMDGPU_EP_NOTICES}" >&2
+    return 1
+}
 
 configure_gpu_launcher() {
     local launcher="${1:?launcher required}" device="${2:?device required}" line found=0 found_here=0

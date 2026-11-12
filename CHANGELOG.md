@@ -13,6 +13,45 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-12, `migraphx` loads AMD's plugin module)
+- **`KATAGLYPHIS_ORT_DEVICE=migraphx` registers AMD's plugin module `libmigraphx-ep.so` by path (owner, 2026-11-12;
+  hub CON231 step 2).** The hub removed the in-tree MIGraphX provider from `:latest-rocm` on 2026-11-08, so the by-name
+  append had nothing to reach and the AMD path was dead (on the arm64 CPU build it answers `MIGraphX execution
+  provider is not supported in this build`).
+  `crates/inference/src/ort_plugin.rs` holds one row per plugin (the registration name, the variable that names its
+  root, the module's file name) and takes the module from `$ORT_AMDGPU_EP_ROOT/lib` when that variable is not empty and
+  the file is there, else from the directory of the loaded ONNX Runtime library, where a package carries it. It
+  registers the module once per process as `MIGraphX`, never unregisters it, and appends exactly one of the devices
+  listed under that name, with `device_id` as the only option.
+- **The provider's name is `MIGraphX`, no longer `MIGraphXExecutionProvider`.** `ProviderUnavailable` and the log say
+  `MIGraphX`. AMD's module takes the registration name as the name of its devices and of its provider (read in its
+  source), so an ONNX Runtime profile should say it too, and `scripts/verify-ort-gpu-profile.py --device migraphx`
+  expects it. The device name `migraphx` and the label `execution_provider()` returns are unchanged.
+- **`migraphx_mem_limit` is no longer passed.** The plugin has no such option and fails the creation of its provider
+  on an option it does not list.
+- **A named `migraphx` that cannot load still fails; it does not become a CPU session.** No module, a module ONNX
+  Runtime cannot register and a module that lists no device are each `ProviderUnavailable: MIGraphX`, with the paths
+  tried or ONNX Runtime's reason; `auto` logs the reason and tries the next choice. The HIP copy check runs before
+  the registration, which already asks HIP for its devices.
+- **The AMD package carries the CPU ONNX Runtime, the plugin module and the plugin's texts.**
+  `package-linux.sh --ort-variant amd` takes ONNX Runtime from the CPU prefix (the rocm image has no GPU build), keeps
+  the ELF closure from patching the module, and stages the image's plugin licence tree and `provenance.txt` as
+  `licenses/onnxruntime-ep-amdgpu/`; the hub has no helper for those texts, so
+  `scripts/linux/lib/ort-runtime-bundle.sh` has one. `verify-gpu-packages.sh` compares the module and the texts with
+  the image's in the tar, the deb and the AppImage and refuses an AMD tar or deb with a `libonnxruntime_providers_*`
+  file. The package checks clear `ORT_AMDGPU_EP_ROOT`, so they load the package's own module.
+- **`linux-x64-amd-gpu.yml` proves the CPU core against its wheel, requires the image's module, and runs the packaged
+  launcher without a card:** `migraphx` must fail with `ProviderUnavailable: MIGraphX failed to register` naming the
+  packaged module, and `auto` must run on the CPU.
+- **`ort`'s `migraphx` feature is gone from `crates/inference`**; it only built the in-tree wrapper. `Cargo.lock` is
+  unchanged.
+- **Not proved.** No line of this ran with `libmigraphx-ep.so`: this machine is arm64 without an AMD card, and the
+  rocm image is amd64. Proved here against the image's ONNX Runtime 1.31.1: the three failures above (Qualcomm's
+  plugin module stands in for a module that registers and lists no device), the registration guard, and the append
+  call with the CPU provider's device. The AMD package build, the workflow and every run on a card are open
+  (`BACKLOG.md`). The hub pin moves from d66d390 to da9b23a, whose `verify_ort_profile.py` expects `MIGraphX` for
+  the parity run. CUDA keeps its present loading (`BACKLOG.md`).
+
 ### Changed (2026-11-12, rows no detector of the family keeps)
 - **A row with no such class or with its corners swapped is no detection (owner, 2026-11-12).** AccelerANTgine
   dropped such rows; this decoder and OrchestrANT's kept them, so a class past the 80 names reached the caller with no

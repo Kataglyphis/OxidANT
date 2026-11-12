@@ -119,11 +119,19 @@ GPU inference notes:
   devices its source supports. Consumers can check it before enabling a device; the
   marker does not prove that the installed ONNX Runtime or hardware supports it.
 - `cuda` requires NVIDIA drivers, compatible CUDA/cuDNN runtime libraries and a
-  chain-built ONNX Runtime with the CUDA provider. `migraphx` requires an AMD
-  GPU, ROCm/MIGraphX runtime and a chain-built ORT with the MIGraphX provider on
-  Linux. Its load first copies four bytes to the GPU and fails with `ProviderUnavailable`
-  if that takes over 30 seconds, as it does under WSL on an RX 9070 XT. `directml` uses the DirectML provider on Windows and supports compatible
-  GPUs from multiple vendors.
+  chain-built ONNX Runtime with the CUDA provider. `directml` uses the DirectML provider on
+  Windows and supports compatible GPUs from multiple vendors.
+- `migraphx` (Linux) runs on AMD's plugin module `libmigraphx-ep.so`; the chain ONNX Runtime has
+  no MIGraphX provider of its own. It needs an AMD GPU and the ROCm/MIGraphX runtime on the host.
+  The module is taken from `$ORT_AMDGPU_EP_ROOT/lib` when that variable is not empty and the file
+  is there (the `:latest-rocm` image), else from the directory of the loaded ONNX Runtime library,
+  where an AMD package carries it. It is registered once per process under the name `MIGraphX`.
+  AMD's module takes that name as its provider name, so an ONNX Runtime profile should say
+  `MIGraphX` too (read in AMD's source, not seen on a card). A missing module, a failed
+  registration and a module that lists no device are each `ProviderUnavailable: MIGraphX` with
+  the paths tried or ONNX Runtime's reason. Before the registration four bytes are copied to the
+  GPU in a child process; the load fails with `ProviderUnavailable` if that takes over
+  30 seconds, as it does under WSL on an RX 9070 XT. Not run on a card yet: [BACKLOG.md](../BACKLOG.md).
 - These options select an execution provider; they do not install its libraries.
   The current CPU packages do not include the GPU runtime closure.
 - `auto` tries CUDA, then MIGraphX on Linux or DirectML on Windows, and falls back
