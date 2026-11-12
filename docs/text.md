@@ -46,7 +46,8 @@ In GenAI a token that ends inside a UTF-8 character yields no piece until the ch
 The result holds the text, the token ids (GenAI only), the prompt and completion token counts,
 the time to the first token and the decode rate after it. `finish_reason` is `Stop` at an end
 token or the server's `stop`, `Length` when the budget ran out, and `Cancelled` after
-`CancelToken::cancel`. A cancel ends the run after its current token or stream line, and each run
+`CancelToken::cancel`. A cancel ends the run after its current token. An endpoint's run ends within
+20 ms even while the server is silent; its connection closes at the server's next line. Each run
 clears the token as it starts. A stream that ends without a finish reason is an error, not an
 answer. A server without usage reports leaves the completion count at the number of pieces.
 

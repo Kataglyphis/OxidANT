@@ -67,6 +67,59 @@ fn a_cancel_from_the_callback_ends_the_stream_after_its_piece() {
     assert_eq!(result.finish_reason, FinishReason::Cancelled);
 }
 
+/// A server that answers `reply` and then says nothing more until the test ends.
+fn silent_after(reply: &'static str) -> (Endpoint, std::sync::mpsc::Sender<()>) {
+    use std::io::{Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut endpoint = Endpoint::new(format!("http://{}", listener.local_addr().unwrap()));
+    endpoint.timeout = std::time::Duration::from_secs(5);
+    endpoint.model = Some("tiny".into());
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 4096];
+        let _ = stream.read(&mut request);
+        let _ = stream.write_all(reply.as_bytes());
+        let _ = stream.flush();
+        let _ = held.recv();
+    });
+    (endpoint, release)
+}
+
+#[test]
+fn a_cancel_during_the_servers_silence_ends_the_run_without_waiting_for_its_next_line() {
+    const HEAD: &str =
+        "HTTP/1.1 200 X\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+    const FIRST: &str = "HTTP/1.1 200 X\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n";
+    // Silent before the status line, after the head, and after the first piece.
+    for (reply, text) in [("", ""), (HEAD, ""), (FIRST, "a")] {
+        let (mut endpoint, _release) = silent_after(reply);
+        let cancel = CancelToken::default();
+        let handle = cancel.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            handle.cancel();
+        });
+        let started = std::time::Instant::now();
+        let result = endpoint
+            .generate(
+                &[ChatMessage::user("x")],
+                &GenerationOptions::default(),
+                &cancel,
+                &mut |_| {},
+            )
+            .unwrap();
+        canceller.join().unwrap();
+        assert_eq!(result.finish_reason, FinishReason::Cancelled, "{reply:?}");
+        assert_eq!(result.text, text, "{reply:?}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{reply:?}: {:?}",
+            started.elapsed()
+        );
+    }
+}
+
 #[test]
 fn a_length_finish_is_reported_as_such() {
     let server = FakeServer::answer(200, "text/event-stream", chat_stream(&["x"], "length", 1));

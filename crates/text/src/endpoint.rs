@@ -3,6 +3,7 @@
 use std::fmt;
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
@@ -17,6 +18,14 @@ const ERROR_BODY_LIMIT: usize = 2000;
 
 /// One streamed line may hold this many bytes before its terminator, so a server cannot grow the buffer without bound.
 pub const STREAM_LINE_LIMIT: usize = 1 << 20;
+
+/// How often a generation that waits for the server looks at its cancel token.
+const CANCEL_POLL: Duration = Duration::from_millis(20);
+
+/// Lines the reader may hold ahead of a slow callback.
+const LINES_AHEAD: usize = 64;
+
+type StreamLine = Result<Option<String>, TextError>;
 
 #[derive(Clone, PartialEq)]
 pub struct Endpoint {
@@ -98,6 +107,34 @@ impl Endpoint {
             endpoint.request_extra = extra.clone();
         }
         Ok(endpoint)
+    }
+
+    /// The lines of a streamed chat, read on a thread of their own: a read cannot be interrupted, so a cancel
+    /// during a server's silence would wait for its next line. The thread ends at that line, or at the timeout.
+    fn stream_lines(&self, body: Value) -> Result<mpsc::Receiver<StreamLine>, TextError> {
+        let (lines, incoming) = mpsc::sync_channel::<StreamLine>(LINES_AHEAD);
+        let endpoint = self.clone();
+        std::thread::Builder::new()
+            .name("text-endpoint".into())
+            .spawn(move || {
+                let response = match endpoint.post("/v1/chat/completions", &body) {
+                    Ok(response) => response,
+                    Err(e) => {
+                        let _ = lines.send(Err(e));
+                        return;
+                    }
+                };
+                let mut reader = BufReader::new(response.into_body().into_reader());
+                loop {
+                    let line = read_stream_line(&mut reader);
+                    let last = !matches!(line, Ok(Some(_)));
+                    if lines.send(line).is_err() || last {
+                        return;
+                    }
+                }
+            })
+            .map_err(|e| TextError::GenerationFailed(format!("no thread for the stream: {e}")))?;
+        Ok(incoming)
     }
 
     fn post(
@@ -362,8 +399,7 @@ impl TextBackend for Endpoint {
         cancel.reset();
         let body = self.chat_body(messages, options)?;
         let start = Instant::now();
-        let response = self.post("/v1/chat/completions", &body)?;
-        let mut reader = BufReader::new(response.into_body().into_reader());
+        let incoming = self.stream_lines(body)?;
         let mut result = GenerationResult {
             text: String::new(),
             tokens: Vec::new(),
@@ -375,12 +411,18 @@ impl TextBackend for Endpoint {
         };
         let (mut pieces, mut first, mut finished, mut usage) = (0usize, start, false, None);
         loop {
-            let line = read_stream_line(&mut reader);
+            let line = incoming.recv_timeout(CANCEL_POLL);
             if cancel.is_cancelled() {
                 result.finish_reason = FinishReason::Cancelled;
                 break;
             }
-            let Some(line) = line? else { break };
+            let line = match line {
+                Ok(line) => line?,
+                Err(RecvTimeoutError::Timeout) => continue,
+                // The reader sends an end or an error before it leaves, so this is a panic there.
+                Err(RecvTimeoutError::Disconnected) => None,
+            };
+            let Some(line) = line else { break };
             for event in parse_stream_line(&line)? {
                 match event {
                     StreamEvent::Text(text) => {

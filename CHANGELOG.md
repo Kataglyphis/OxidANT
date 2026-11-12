@@ -22,6 +22,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   the request head ends with the head, so such a client held one of the 128 connection slots for as long as it liked.
 - **An endpoint's error body is kept when it is cut inside a character or is not UTF-8.** It was read as a string, which
   kept nothing of it, so the reply named a status and no reason.
+- **A cancel ends an endpoint's generation at once.** It was seen only when the server's next line arrived, so while a
+  slow server worked on its first token a client that had left kept `/ask` busy, and `text_cancel()` did nothing. The
+  stream is read on a thread of its own and the generation polls its token every 20 ms.
 - **The test that crashes a child on purpose leaves no core file.** Where dumps are on it wrote 19 MB into
   `crates/inference/`, which the large-file ratchet then refused.
 
