@@ -111,28 +111,41 @@ impl ExecutionProvider for PluginEp {
         let env = Environment::current()?;
         {
             let mut registered = REGISTERED.lock().unwrap_or_else(PoisonError::into_inner);
-            register_once(&mut registered, self.0.name, || {
+            register_once(
+                &mut registered,
+                self.0.name,
+                || lists_a_device(&env, self.0.name),
                 // The handle has no Drop: the module stays registered until the process ends.
-                env.register_ep_library(self.0.name, &module).map(drop)
-            })
+                || env.register_ep_library(self.0.name, &module).map(drop),
+            )
             .map_err(about_module)?;
         }
         append_device(builder, &env, self.0.name, FIRST_DEVICE).map_err(about_module)
     }
 }
 
-/// Runs `register` unless `name` is recorded: ONNX Runtime refuses a second registration of a name.
+/// Runs `register` unless `name` is recorded or `listed`: ONNX Runtime refuses a second registration of a name.
 fn register_once<E>(
     registered: &mut Vec<&'static str>,
     name: &'static str,
+    listed: impl FnOnce() -> bool,
     register: impl FnOnce() -> Result<(), E>,
 ) -> Result<(), E> {
     if !registered.contains(&name) {
-        // ONNX Runtime rolls a failed registration back, so the next request may try again.
-        register()?;
+        // Another library of the process may have registered the name first: AccelerANTgine beside this crate in one app.
+        if !listed() {
+            // ONNX Runtime rolls a failed registration back, so the next request may try again.
+            register()?;
+        }
         registered.push(name);
     }
     Ok(())
+}
+
+/// Whether ONNX Runtime already lists a device of the EP `name`.
+fn lists_a_device(env: &Environment, name: &str) -> bool {
+    env.devices()
+        .any(|device| device.ep().is_ok_and(|ep| ep == name))
 }
 
 /// The options a plugin gets: an option the plugin does not list fails the creation of its provider.
@@ -257,20 +270,43 @@ mod tests {
     fn a_name_is_registered_once_and_a_failure_is_not_recorded() {
         let mut registered = Vec::new();
         let mut calls = 0;
-        let failed = register_once(&mut registered, "MIGraphX", || {
-            calls += 1;
-            Err("no HIP device")
-        });
+        let failed = register_once(
+            &mut registered,
+            "MIGraphX",
+            || false,
+            || {
+                calls += 1;
+                Err("no HIP device")
+            },
+        );
         assert_eq!(failed, Err("no HIP device"));
         assert!(registered.is_empty());
         for _ in 0..2 {
-            let done: Result<(), &str> = register_once(&mut registered, "MIGraphX", || {
-                calls += 1;
-                Ok(())
-            });
+            let done: Result<(), &str> = register_once(
+                &mut registered,
+                "MIGraphX",
+                || false,
+                || {
+                    calls += 1;
+                    Ok(())
+                },
+            );
             assert_eq!(done, Ok(()));
         }
         assert_eq!((calls, registered), (2, vec!["MIGraphX"]));
+    }
+
+    #[test]
+    fn a_name_another_library_registered_is_used_and_not_registered_again() {
+        let mut registered = Vec::new();
+        let done: Result<(), &str> = register_once(
+            &mut registered,
+            "MIGraphX",
+            || true,
+            || Err("EP library is already registered under MIGraphX"),
+        );
+        assert_eq!(done, Ok(()));
+        assert_eq!(registered, vec!["MIGraphX"]);
     }
 
     #[test]

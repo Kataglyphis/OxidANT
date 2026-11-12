@@ -51,6 +51,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   call with the CPU provider's device. The AMD package build, the workflow and every run on a card are open
   (`BACKLOG.md`). The hub pin moves from d66d390 to da9b23a, whose `verify_ort_profile.py` expects `MIGraphX` for
   the parity run. CUDA keeps its present loading (`BACKLOG.md`).
+- **A registration another library of the process made is used.** AccelerANTgine and this crate can share one
+  loaded ONNX Runtime in one app, and ONNX Runtime refuses a second registration of a name. `migraphx` now takes the
+  devices that are already listed under `MIGraphX` instead of failing with `already registered` (found by
+  AccelerANTgine's review of the same move).
 - **The AMD package's ONNX Runtime is proven as the stripped twin of the wheel's library.** The first run of the
   candidate lane on `:latest-rocm` (run 43303579930) stopped in its first step, `expected one wheel matching every
   native library; found 0`: the step and `verify-gpu-packages.sh` asked for the wheel's exact bytes, which holds for
