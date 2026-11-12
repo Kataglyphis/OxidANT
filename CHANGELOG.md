@@ -13,6 +13,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-12, an endpoint's error as plain text)
+- **A streamed `{"error": "..."}` is the generation's error.** Only OpenAI's nested `error.message` was read; Ollama
+  sends the text itself, which was skipped, so the run ended with "the stream ended without a finish reason" and the
+  server's own words were lost.
+
 ### Fixed (2026-11-12, a stop that does not wait)
 - **`stop_webcam_inference()` returns at once.** It is a sync call on Dart's UI thread and joined the worker, so the app
   froze for the running inference and the camera driver's close, and for a whole model load when Stop was pressed while

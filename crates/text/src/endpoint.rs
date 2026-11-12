@@ -322,7 +322,9 @@ pub fn parse_stream_line(line: &str) -> Result<Vec<StreamEvent>, TextError> {
     let chunk: Value = serde_json::from_str(data).map_err(|e| {
         TextError::GenerationFailed(format!("an unreadable stream chunk ({e}): {data}"))
     })?;
-    if let Some(message) = chunk["error"]["message"].as_str() {
+    // OpenAI nests the message; Ollama sends the error as the text itself, which read as a stream without an end.
+    let error = &chunk["error"];
+    if let Some(message) = error["message"].as_str().or_else(|| error.as_str()) {
         return Err(TextError::GenerationFailed(message.to_string()));
     }
     let mut events = Vec::new();
@@ -596,6 +598,50 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("model gone")
+        );
+    }
+
+    #[test]
+    fn stream_lines_of_other_servers_read_the_same() {
+        // No space after the colon, as the event-stream format allows.
+        assert_eq!(
+            parse_stream_line(r#"data:{"choices":[{"delta":{"content":"a"}}]}"#).unwrap(),
+            vec![StreamEvent::Text("a".into())]
+        );
+        // The usage chunk of `include_usage` has no choice at all.
+        assert_eq!(
+            parse_stream_line(
+                r#"data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":5}}"#
+            )
+            .unwrap(),
+            vec![StreamEvent::Usage {
+                prompt: 2,
+                completion: 5
+            }]
+        );
+        // The last piece and the finish reason in one chunk, and an empty piece that is no text.
+        assert_eq!(
+            parse_stream_line(
+                r#"data: {"choices":[{"delta":{"content":"."},"finish_reason":"stop"}]}"#
+            )
+            .unwrap(),
+            vec![
+                StreamEvent::Text(".".into()),
+                StreamEvent::Finish(FinishReason::Stop)
+            ]
+        );
+        assert_eq!(
+            parse_stream_line(r#"data: {"choices":[{"delta":{"content":""}}]}"#).unwrap(),
+            vec![]
+        );
+        assert_eq!(parse_stream_line("event: message").unwrap(), vec![]);
+        assert_eq!(parse_stream_line("").unwrap(), vec![]);
+        // Ollama's error is the text itself, not an object with a message.
+        assert!(
+            parse_stream_line(r#"data: {"error":"model 'x' not found"}"#)
+                .unwrap_err()
+                .to_string()
+                .contains("not found")
         );
     }
 
