@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-12, a stop that does not wait)
+- **`stop_webcam_inference()` returns at once.** It is a sync call on Dart's UI thread and joined the worker, so the app
+  froze for the running inference and the camera driver's close, and for a whole model load when Stop was pressed while
+  a start was under way. It asks the session to end; a thread of its own waits for it, and the next start waits for that
+  thread, since the camera is free only then. A stop during a start ends the new session as soon as it exists.
+- **`text_cancel()` while the local model loads ends the turn.** The backend clears the token as it starts, so the
+  cancel was lost and the whole answer generated; the turn ends with `cancelled` and no token.
+- **`kataglyphis_cli chat` stops generating when nobody reads it.** After the first failed write (`chat | head`) it
+  decoded the rest of the answer before it reported the broken pipe.
+- **The wgpu GUI takes its boxes away when inference is switched off.** The boxes of the last inferred frame stayed over
+  the live picture, and a frame still in flight brought them back.
+
 ### Fixed (2026-11-12, questions the model did not answer)
 - **A model that answers nothing is a 502 that says so.** A model that spent its token budget thinking returned no text,
   and `/ask` and `POST /summary` passed that on as a 200 with an empty answer.

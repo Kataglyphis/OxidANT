@@ -67,6 +67,62 @@ fn a_cancel_from_the_callback_ends_the_stream_after_its_piece() {
     assert_eq!(result.finish_reason, FinishReason::Cancelled);
 }
 
+/// Takes `good` writes, then fails as a closed pipe does.
+struct ClosingPipe {
+    good: usize,
+    written: Vec<u8>,
+}
+
+impl std::io::Write for ClosingPipe {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.good == 0 {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
+        self.good -= 1;
+        self.written.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_reader_that_left_ends_the_generation_instead_of_decoding_for_nobody() {
+    let server = FakeServer::answer(
+        200,
+        "text/event-stream",
+        chat_stream(&["a", "b", "c", "d"], "stop", 1),
+    );
+    // The shape of the CLI's `chat`: a boxed backend, a writer, one token.
+    let mut backend: Box<dyn TextBackend> = Box::new(endpoint(&server));
+    let mut out = ClosingPipe {
+        good: 1,
+        written: Vec::new(),
+    };
+    let mut failed_write = None;
+    let cancel = CancelToken::default();
+    let result = {
+        let mut on_text = kataglyphis_text::write_pieces(&mut out, &cancel, &mut failed_write);
+        backend
+            .generate(
+                &[ChatMessage::user("x")],
+                &GenerationOptions::default(),
+                &cancel,
+                &mut on_text,
+            )
+            .unwrap()
+    };
+    assert_eq!(result.finish_reason, FinishReason::Cancelled);
+    assert_eq!(result.text, "ab", "decoded past the failed write");
+    assert_eq!(out.written, b"a");
+    assert_eq!(
+        failed_write.map(|e| e.kind()),
+        Some(std::io::ErrorKind::BrokenPipe)
+    );
+}
+
 /// A server that answers `reply` and then says nothing more until the test ends.
 fn silent_after(reply: &'static str) -> (Endpoint, std::sync::mpsc::Sender<()>) {
     use std::io::{Read as _, Write as _};

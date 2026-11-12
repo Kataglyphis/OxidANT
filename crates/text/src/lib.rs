@@ -162,6 +162,24 @@ impl CancelToken {
     }
 }
 
+/// An `on_text` that writes each piece to `out` and cancels the generation at the first write that fails: once the
+/// reader has left (`chat | head`), the rest of the answer would be decoded for nobody.
+pub fn write_pieces<'a, W: std::io::Write>(
+    out: &'a mut W,
+    cancel: &'a CancelToken,
+    failed: &'a mut Option<std::io::Error>,
+) -> impl FnMut(&str) + 'a {
+    move |piece| {
+        if failed.is_some() {
+            return;
+        }
+        if let Err(e) = out.write_all(piece.as_bytes()).and_then(|()| out.flush()) {
+            *failed = Some(e);
+            cancel.cancel();
+        }
+    }
+}
+
 /// What every backend offers: messages in, text through `on_text` as it is generated.
 pub trait TextBackend {
     fn generate(

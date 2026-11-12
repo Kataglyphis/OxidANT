@@ -39,14 +39,11 @@ pub fn chat(args: ChatArgs) -> Result<()> {
     let mut backend = backend(&args)?;
     let mut stdout = std::io::stdout().lock();
     let mut failed_write = None;
-    let result = backend.generate(&messages, &options, &CancelToken::default(), &mut |piece| {
-        if let Err(e) = stdout
-            .write_all(piece.as_bytes())
-            .and_then(|()| stdout.flush())
-        {
-            failed_write.get_or_insert(e);
-        }
-    })?;
+    let cancel = CancelToken::default();
+    let result = {
+        let mut on_text = oxidant::text::write_pieces(&mut stdout, &cancel, &mut failed_write);
+        backend.generate(&messages, &options, &cancel, &mut on_text)?
+    };
     if let Some(e) = failed_write {
         bail!("stdout: {e}");
     }

@@ -32,6 +32,11 @@ impl InferenceState {
                 self.detector_error = res.error;
             }
         }
+        // Switched off, the boxes of the last inferred frame would stay over the live picture.
+        if !self.infer_enabled {
+            self.last_detections.clear();
+            self.last_detections_frame_id = None;
+        }
     }
 
     pub(crate) fn maybe_infer(&mut self, frame: &Frame) {
@@ -145,6 +150,31 @@ mod tests {
         state.infer_enabled = false;
         state.maybe_infer(&frame(2));
         assert!(req_rx.try_recv().is_err(), "sent while disabled");
+    }
+
+    #[test]
+    fn switching_inference_off_takes_the_boxes_away_also_those_still_in_flight() {
+        let (mut state, _req_rx, res_tx) = state(Duration::ZERO);
+        let boxes = || InferResult {
+            frame_id: 1,
+            detections: vec![Detection::default()],
+            error: None,
+        };
+        res_tx.send(boxes()).unwrap();
+        state.poll();
+        assert_eq!(state.last_detections.len(), 1);
+
+        state.infer_enabled = false;
+        state.poll();
+        assert!(state.last_detections.is_empty());
+        assert_eq!(state.last_detections_frame_id, None);
+
+        // The frame that was being inferred when the box was unticked.
+        state.infer_in_flight = true;
+        res_tx.send(boxes()).unwrap();
+        state.poll();
+        assert!(state.last_detections.is_empty());
+        assert!(!state.infer_in_flight);
     }
 
     #[test]
