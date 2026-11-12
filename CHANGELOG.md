@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-12, ObservANT offers H.264 first on Windows)
+- **On Windows the camera service lists H.264 before VP8 in its offer (owner, 2026-11-12).** Since the Windows chain
+  ships the VP8 plugin, viewers took VP8, the sender's default first codec, and got no picture: OmniAccelerANT's
+  installer test shows the VP8 packets reaching `vp8dec`, which never outputs a frame and logs nothing. H.264 is the
+  codec that test proved before. The other codecs keep their order and stay on offer, and other systems keep the
+  sender's own order.
+
 ### Changed (2026-11-12, hub pin)
 - **The hub moves from 62bf45f to d66d390 (159 commits).** CI already builds in the image and with the actions of the hub's
   `develop`; the pin only decided which copy of the hub's scripts and gates this checkout runs, and it had fallen behind

@@ -52,6 +52,11 @@ pub fn build(config: &Config) -> anyhow::Result<(gst::Pipeline, gst_app::AppSrc)
         .field("name", config.name.as_str())
         .build();
     webrtc.set_property("meta", &meta);
+    // The Windows chain's VP8 reaches a viewer's decoder and never becomes a picture; H.264 is proven there.
+    if cfg!(windows) {
+        let offered = webrtc.property::<gst::Caps>("video-caps");
+        webrtc.set_property("video-caps", h264_first(&offered));
+    }
     if (config.ice_port_min, config.ice_port_max) != (0, 0) {
         pin_ice_ports(&webrtc, config.ice_port_min, config.ice_port_max);
     }
@@ -62,6 +67,19 @@ pub fn build(config: &Config) -> anyhow::Result<(gst::Pipeline, gst_app::AppSrc)
     gst::Element::link_many([appsrc.upcast_ref(), &queue, &convert, &webrtc])
         .context("link output pipeline")?;
     Ok((pipeline, appsrc))
+}
+
+/// The same codecs with H.264 at the front: the sender's offer lists them in this order, and a viewer takes the first it knows.
+fn h264_first(offered: &gst::Caps) -> gst::Caps {
+    let (h264, rest): (Vec<_>, Vec<_>) = offered
+        .iter()
+        .partition(|codec| codec.name() == "video/x-h264");
+    let mut ordered = gst::Caps::new_empty();
+    let codecs = ordered.get_mut().expect("a new caps has one owner");
+    for codec in h264.into_iter().chain(rest) {
+        codecs.append_structure(codec.to_owned());
+    }
+    ordered
 }
 
 /// Each viewer's webrtcbin gathers its media ports from `min..=max`, so a firewall can open exactly those.
@@ -157,6 +175,44 @@ mod tests {
             err.contains("the sink fell over") && err.contains("a debug line"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn h264_moves_to_the_front_and_the_other_codecs_keep_their_order() {
+        gst::init().unwrap();
+        let offered: gst::Caps = "video/x-vp8; video/x-h264; video/x-vp9; video/x-h265"
+            .parse()
+            .unwrap();
+        let names = |caps: &gst::Caps| -> Vec<String> {
+            caps.iter().map(|codec| codec.name().to_string()).collect()
+        };
+        assert_eq!(
+            names(&h264_first(&offered)),
+            ["video/x-h264", "video/x-vp8", "video/x-vp9", "video/x-h265"]
+        );
+        // A build without an H.264 encoder offers what it has, unchanged.
+        let without: gst::Caps = "video/x-vp8; video/x-vp9".parse().unwrap();
+        assert_eq!(h264_first(&without), without);
+    }
+
+    #[test]
+    fn the_sender_offers_h264_first_on_windows_only() {
+        if !crate::gst_has(&["webrtcsink"]) {
+            return;
+        }
+        let (pipeline, _) = build(&Config::default()).unwrap();
+        let offered = pipeline
+            .by_name("ws")
+            .unwrap()
+            .property::<gst::Caps>("video-caps");
+        let first = offered.structure(0).map(|codec| codec.name().to_string());
+        let has_h264 = offered.iter().any(|codec| codec.name() == "video/x-h264");
+        if cfg!(windows) && has_h264 {
+            assert_eq!(first.as_deref(), Some("video/x-h264"), "{offered}");
+        } else {
+            // Elsewhere the element's own order stands: VP8 streams to every browser.
+            assert_ne!(first.as_deref(), Some("video/x-h264"), "{offered}");
+        }
     }
 
     #[test]

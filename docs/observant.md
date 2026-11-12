@@ -125,6 +125,9 @@ board runs it as one service unit. How to run and configure it:
 [`docs/observant.md`](observant.md).
 
 - **The camera is chosen, and chosen again.** `camera = "auto"` (the default) takes a
+On Windows the service lists H.264 before the other codecs in its offer, and a viewer takes the
+first one it knows: the Windows chain's VP8 reaches a viewer's decoder and never becomes a picture.
+Other systems keep webrtcsink's own order, VP8 first.
   Raspberry Pi camera through `rpicam-vid` piping raw I420 when `rpicam-hello
   --list-cameras` lists one, which keeps the host's own libcamera whatever its ABI;
   otherwise a CSI camera libcamera lists, then a UVC webcam (`v4l2src`, MJPEG only when
