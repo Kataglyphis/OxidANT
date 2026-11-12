@@ -38,6 +38,291 @@ and the backlog is empty"; it was neither.
       Linux: the owner runs it under Ubuntu on that machine. Done when `compare_detector_parity.py` passes against the
       CPU and the profile shows MIGraphX; the hub's `docs/gpu-artifact-receipts.md` has the commands.
 
+- [ ] **The capture and inference loops cannot run with a fake detector or a failing camera**
+      (M, ★★★). Audit 2026-11-12: no test here runs `spawn_inference`
+      (`crates/observant/src/capture.rs`; the test helper passes `detector: None`), the engine's
+      two end reasons (`src/webcam_engine.rs`: the camera ended, 30 failed runs), the 10 s stall
+      or the 30 s re-probe. `docs/testing.md` calls `capture.rs` the weakest file, 98 of 124
+      mutants caught. Next: two tests that need nothing new (the real model on
+      `image:two_cats.jpg` opens a visit; a missing image file is retried after the backoff and
+      recovers). Then the smallest seam: each loop body takes the detector as a closure,
+      `CaptureSession` gets a `#[doc(hidden)]` launch-line constructor, and `STALL_AFTER` and
+      `REPROBE_EVERY` move into a `Timing` value on `Worker` with today's numbers as default.
+      No public trait and no dev-only crate. Guard: the new tests in the `test` step, the
+      `crates/observant` and `src` coverage floors raised to the new figures, and the new
+      `capture.rs` count of `cargo mutants` written into `docs/testing.md`.
+
+- [ ] **No git hook runs in a clone, and nothing says so** (M, ★★★). Audit 2026-11-12, measured
+      on the Pi clone only: `core.hooksPath` is unset and `.git/hooks` holds samples, so the lint
+      gates run when someone remembers them. Since `1616c79` they check stale recipes first and
+      core dumps are ignored, but nothing runs them before a commit: another large file added
+      with `git add -A` is in a commit before any gate sees it. The hub's hook template is no
+      fix yet: it calls the bare aggregator without `--ratchets`, less than
+      `scripts/linux/run-lint-gates.sh` checks.
+      Next: that wrapper prints one warning line when `core.hooksPath` is unset and `CI` is not
+      set. Once the hub template calls the repo's own wrapper and has a pre-push twin, point
+      `core.hooksPath` at it and name the install command in `AGENTS.md` § 5, with the staging
+      rule: stage files by name, never `git add -A`, which is how a core file got into a commit
+      once. Guard: the hub suite with a planted stale recipe and a staged 1 MB binary, run
+      through this wrapper.
+
+- [ ] **Detection quality has no regression set** (M, ★★★). Audit 2026-11-12
+      (not double-checked): `crates/inference/tests/fixtures` holds one photo, checked loosely
+      (two cats, one at 0.8 or more). The rules in `crates/observant/src/presence.rs` and
+      `config.rs` (2 hits, 60 s return, score 0.25) come from hand observations on the Pi,
+      written in `docs/observant.md`. Next: record what the model returned run by run for the
+      known hard cases (the drying rack, a cat behind the sofa and back, the feeding hour, a
+      dark room) as JSON lines under `crates/observant/tests/scenarios`, and replay them through
+      `counted`, `Presence` and `Visits::record`, asserting the visits and stays. Later a
+      labelled set of 20 to 50 frames as a checksum-locked fetched file like `models.lock`,
+      never tracked; the owner supplies own or free pictures. Guard: the replays in the `test`
+      step; the frame set under `KATAGLYPHIS_REQUIRE_MODEL` with a budget (cats found, false
+      boxes at 0.25) for ORT and tract, so a new model or a retuned constant passes it before
+      it reaches a camera.
+
+- [ ] **A detector run that hangs or takes minutes is not noticed** (S, ★★). Audit 2026-11-12,
+      read from the code: no such run is on record, and on the CPU a slow run is the likely
+      case. In `crates/observant/src`, `health()` in `status.rs` judges the camera, the frame
+      age and 3 failed runs, never a run in flight; `capture.rs` draws the last boxes on every
+      frame with no age, so with `privacy = "pixelate"` their area stays sharp; `main.rs` joins
+      the worker before `at_exit.persist()`. `SessionSlot::start` (`src/session_slot.rs`) waits
+      for the retiring session without a bound. Next, in this order: a pure
+      `fresh(boxes, at, now)` that treats boxes older than about two runs as none (an empty list
+      already blurs the whole frame); `run_started` in `Status` and a health branch
+      `the model has not answered for N s`; `persist()` before and after the join; a bounded
+      wait in `SessionSlot::start` that names the session still holding the camera. Leave
+      `RunOptions::terminate` until a GPU provider ships. Guard: unit tests like the stale-frame
+      rule's, added to the `cargo mutants` file list in `docs/testing.md`.
+
+- [ ] **ObservANT does not say which backend runs the model** (S, ★★). Audit 2026-11-12
+      (not double-checked): when ORT fails to load,
+      `crates/inference/src/person_detection/mod.rs` logs one warning and uses tract. `/healthz`
+      (`crates/observant/src/status.rs`) has no backend or provider field, though the app's
+      events carry both, and no tract timing on a Pi is written down. Next: add `backend` and
+      `execution_provider` to `/healthz`, taken from the detector when `Status` is built. The
+      owner decides whether the service also refuses the fall back
+      (`KATAGLYPHIS_ONNX_BACKEND=ort` in the unit) or reports a `problem` when tract runs.
+      Guard: a status test `healthz_names_the_backend_and_the_provider`.
+
+- [ ] **Measure whether ORT's default thread count costs the Rust detector half its speed**
+      (S, ★★). Audit 2026-11-12, from the recorded perf-host baselines of the four repos (same
+      host, model and photo, 8 pinned CPUs): Rust 50.7 ms p50, C++ 30.3 ms, Python 24.1 ms, and
+      Python at ORT's default 51.3 ms. `ort_backend.rs` sets intra-op threads only when
+      `KATAGLYPHIS_ORT_THREADS` is above 0. The cause is inferred, not confirmed by a Rust run,
+      and nothing shows that an unpinned host or a Pi is slower. Next, on the perf host: run
+      `KATAGLYPHIS_ORT_THREADS=7 target/release/kataglyphis_cli detect-latency --image
+      third_party/ModelANT/contracts/fixtures/two_cats.jpg --runs 30` once pinned and once
+      unpinned. Keeping ORT's default was a written choice (2026-10-11), so the owner decides on
+      the numbers. If it changes, only the unset case moves (the usable CPUs, at most 8);
+      ObservANT's 2, the bench's 2 and every override stay, and `docs/running.md` and
+      `docs/observant.md` change in the same commit. Guard: a perf-host row at ORT's default
+      beside the shipped one with a ratio check, as OrchestrANT's `quality-report.toml` has.
+
+- [ ] **The text contract is a hand copy, and the ModelANT gitlink is behind the C++
+      consumer's** (S, ★★). Audit 2026-11-12: `crates/text/tests/contract.rs` includes
+      `tests/contracts/text-generation-v1.json`, "a byte-identical copy" that nothing checks.
+      `third_party/ModelANT` is at `9e8ffde`, which has no such file; AccelerANTgine pins
+      `78d10cf`, which has. The bytes are equal today, and between the two commits `contracts/`
+      gains only that file and README lines. Next: with the next gitlink move (the detector
+      output contract needs one), `include_str!` the contract from the submodule and delete the
+      copy. The photo `crates/inference/tests/fixtures/two_cats.jpg` stays, as the original
+      ModelANT cites and the path OmniAccelerANT reads; add a test that its hash equals the
+      submodule's copy. Guard: that test, and the contract coming from the pin.
+
+- [ ] **Rust tests leave no per-test record** (S, ★★). Audit 2026-11-12: the `test` step runs the
+      hub's `cargo_test.sh`, a plain `cargo test`, and `quality-report.toml` declares coverage,
+      mutation and rustdoc artifacts but no test results. So test counts and durations are
+      recorded nowhere, and a flaky test is hunted by hand, as the SIGSEGV above was. Next: a
+      short script turns the step's `cargo test` output into JUnit (in the hub's driver if a
+      second Rust consumer wants it), declared as an artifact in `quality-report.toml`. Guard:
+      the metric in `quality-report.sh --compare`. No soak workflow and no cargo-nextest until
+      a rerun rate in the hub's fleet-health shows which lane needs them.
+
+- [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
+      nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
+      in `.github/workflows/reusable-linux.yml` fails only on a doubling. On a Pi 5 the model is
+      about 99 % of a detection (261 ms against 1.6 ms and 1.8 ms for the two conversions,
+      `CHANGELOG.md`), so frame copies are not worth chasing. The number that exists is the one
+      `/healthz` serves; keeping a history of it is hub work (Home Assistant). Next: run the
+      service one evening with `KATAGLYPHIS_ORT_DEVICE=xnnpack`, read `stats.model_ms` and write
+      the result into `CHANGELOG.md`; on x86 XNNPACK is 3.7 times slower, on ARM nobody knows.
+      A Cortex-A76 perf-host baseline only if it is still wanted: its setup builds the release
+      CLI with fat LTO in the container and refuses a load above 2, a heavy job beside a live
+      camera. Then first give the detector commands in `quality-report.toml` ObservANT's two
+      threads without spinning, and record it on a quiet night as one `systemd-run` unit. If
+      one new gated bench is wanted: preprocessing at 1280x720, the app's default size. No
+      allocation-count tests.
+
+- [ ] **The `src` coverage floor is 19 %, and Rust mutation testing is by hand** (M, ★★). Audit
+      2026-11-12: `scripts/linux/ci-container-steps.sh` holds `src` to 19 % and excludes only
+      `third_party/*`. `src/frb_generated.rs` is 2301 of the 5405 lines under `src`, but nobody
+      has read its share of the coverage report. The `cargo mutants` scores in
+      `docs/testing.md` are from 2026-10-15; no workflow runs the tool, and the image does not
+      carry it. Next: read the per-file rates in the x64 lane's `cobertura.xml`; if the
+      generated file is the drag, exclude it with a second `--exclude-files` and set the floor
+      within 3 points of the new figure. Then, if the owner accepts one more scheduled job, a
+      weekly one runs the per-file commands of `docs/testing.md` with `--jobs 1 -- --lib` on
+      the pure modules and uploads `mutants.out`. Also (not double-checked):
+      `scripts/linux/tests/ort-license-mutations.json` has no recipe for `crates/inference`; add
+      five that run `cargo test -p kataglyphis_inference --lib` (swap red and blue, ignore the
+      threshold, drop the finite check, drop the clamp, one scale for both axes). Guard: the
+      raised floor, and a `kind = "count"` artifact over `mutants.out/missed.txt` in
+      `quality-report.toml`.
+
+- [ ] **The endpoint client has one 300 s budget for everything** (M, ★★). Audit 2026-11-12, not
+      measured: `Endpoint::post` in `crates/text/src/endpoint.rs` sets only `timeout_global`, so
+      the connect, the first byte and the whole stream share one clock, and a timeout arrives
+      as `EndpointUnreachable`, like a refused port. `ANSWER_TIMEOUT` in
+      `crates/observant/src/ask.rs` is 300 s too, and no config key changes either. A client
+      that leaves still cancels within 20 ms, so the one `/ask` slot is held only while a
+      client keeps waiting. Next: `timeout_connect` (about 5 s) and `timeout_per_read`
+      (generous, about 120 s, it also covers the response head) beside the cap; the cap becomes
+      a field ObservANT sets from a new `llm_timeout_s` key; ureq's timeout maps to a new
+      `TextError` kind that `/ask` answers with 504. Guard: cases on the `silent_after` server
+      in `crates/text/tests/endpoint.rs` with short limits, asserting the kind and an upper
+      bound on the time, and one mutation recipe per timeout.
+
+- [ ] **ObservANT's in-process model has no thread cap and reports no speed** (M, ★★). Audit
+      2026-11-12, not measured: `load()` in `crates/text/src/genai.rs` sets no thread count, so
+      GenAI uses its config's (ORT's default, one per core) beside a detector held to 2 threads
+      for a measured reason (`docs/observant.md`). `/ask` drops the time to first token and the
+      decode rate its result already has (`crates/observant/src/ask.rs`). A packaged board is
+      not hit today: no package carries GenAI, so it answers through an endpoint. Next:
+      `llm_threads`, default 2, applied at load (the overlay call if the pinned `ort_genai_c.h`
+      has it, else the config rewrite the hub's `genai-model-threads.py` does); this is the
+      consumer half of hub CON218. Return and log the two figures; they are the measurement any
+      default needs. An idle unload for `llm_model_dir` waits for the owner: "the model stays
+      loaded" is a written choice, and nothing is measured on the Pi. A bridge `text_unload`
+      must land with OmniAccelerANT's regenerated bindings. Guard: a recorder test that `load()`
+      passes the thread count, and a test for the figures in the reply.
+
+- [ ] **A text failure loses its kind on the way out** (M, ★★). Audit 2026-11-12: `text_generate`
+      in `src/api/text.rs` returns `Result<(), String>`, so the app cannot tell a missing model
+      directory from a dead endpoint without matching English text. `refused` in
+      `crates/observant/src/ask.rs` answers every `TextError` with 502, also a question with a
+      NUL character, which is the caller's fault. Next: `TextError::kind()` returns a fixed
+      word, with `every_error_names_its_kind` in `crates/text/src/lib.rs` extended; ObservANT
+      maps the kind to a status (400 invalid request, 503 the model cannot load, 502 the
+      endpoint) and keeps the text body. Then the bridge puts the kind at the front of its error
+      string, so no generated binding moves, and Dart maps it to a translated sentence. A typed
+      bridge error waits for a planned regeneration, `ContextExceeded` for a measurement of how
+      often the playground hits it. Guard: the extended unit test and one ObservANT test per
+      status.
+
+- [ ] **The detector does not check what the model says about itself** (M, ★★). Audit
+      2026-11-12: the ModelANT model carries the metadata keys `kataglyphis.preprocess` and
+      `kataglyphis.output`. Rust reads neither and takes the preprocess mode from environment
+      variables (`crates/core/src/config.rs`, default stretch). All three detectors match the
+      one shipped model today; the risk is a later model that wants letterbox or another
+      layout, which would give wrong boxes without an error. Next: check, do not trust. At load
+      read the two keys when present and fail with a clear error when they contradict what the
+      detector is about to do; config and environment stay the overrides and no default
+      changes. Rust decodes corner rows (`xyxy_score_class`) only, with no overlap suppression;
+      that is the owner's decision for DEIM rows (2026-11-12: none in any of the three
+      detectors, raw YOLO heads keep theirs). So an output key that names another layout is an
+      error at load. tract may not expose custom metadata, and tract is the Android backend:
+      read the file's `metadata_props` there, or write down why not. Guard: a test with two tiny
+      generated models, one whose key says letterbox and one without keys. Open beside it:
+      `KATAGLYPHIS_SCORE_THRESHOLD` defaults to 0.5 while ObservANT and the bridge floor use
+      0.25, and nobody has decided that difference.
+
+- [ ] **ObservANT's JSON has no example files the app's tests read** (M, ★★). Audit 2026-11-12:
+      `to_json` in `crates/observant/src/status.rs` builds `/healthz` from a `json!` literal of
+      about 30 field names, and the Rust tests assert on Rust's own output. OmniAccelerANT's
+      four Dart parsers are tested on hand-typed bodies and fall back to a default for every
+      missing field, so a renamed field shows as "no cat, 0 visits". Only its on-request package
+      test checks the real fields, with `jq`. Next: `crates/observant/tests/fixtures/api/` with
+      `/healthz` (idle, a cat in view, not ok), `/visits`, `/settings`, `/ask` and `/summary`.
+      A Rust test compares its output with each file after blanking `version`, the ages and
+      `stats`, and an environment switch rewrites the files after an intended change.
+      OmniAccelerANT's Dart tests and `web-smoke-server.js` then read them from this submodule.
+      Guard: the Rust test here, and the Dart tests failing in the pin-bump commit when a field
+      moves.
+
+- [ ] **Every chat turn runs the whole conversation through the model again** (M, ★★). Audit
+      2026-11-12 (not double-checked), not measured: `generate` in `crates/text/src/genai.rs`
+      templates and encodes all messages and builds a new generator on every call, and
+      `src/api/text.rs` caches the model only. So the time to first token should grow with the
+      chat. Next: measure first. Replay a fixed five-turn chat on SmolLM2 and compare the time
+      to first token of turn 1 and turn 5. Only if it matters: keep the last generator and its
+      token ids with the cached model and append only the new tokens when the old ids are a
+      prefix, after checking that the pinned `ort_genai_c.h` can append to a live generator.
+      Guard: a `text_turns` command in `scripts/linux/perf-host.sh` under
+      `quality-report.sh --perf-host`, and a tiny-model test that a turn 2 which extends turn 1
+      gives the same ids as a fresh run.
+
+- [ ] **Three camera pipelines, each with its own failure rules** (L, ★★). Audit 2026-11-12:
+      `crates/media/src/capture.rs` (the Flutter engine), `crates/observant/src/capture.rs` and
+      `crates/gui/src/gui_wgpu/pipeline.rs` each open a camera and keep the newest frame. Only
+      ObservANT notices a stall: the engine's loop continues on a timeout
+      (`src/webcam_engine.rs`), and the wgpu GUI never reads its pipeline bus, the bug fixed in
+      `crates/media` on 2026-11-11. The three loops differ on purpose, so no shared worker.
+      Next, two steps. `kataglyphis_media` stamps the last frame time in the appsink callback
+      and fails the slot with `no frame for N s`, tested with a launch line that delivers
+      nothing. Then the wgpu GUI uses `CaptureSession` (`CaptureConfig` learns "size 0 means the
+      camera's own size"), which deletes the third pipeline and gives the GUI its errors.
+      ObservANT's pipeline stays in its crate. Guard: the media tests for end, error and stall,
+      and a source-reading test that only `crates/media` and `crates/observant` build an
+      appsink.
+
+- [ ] **A frame of the wrong size is cut or skipped without a word** (S, ★). Audit 2026-11-12:
+      `push` in `crates/observant/src/capture.rs` takes the first `frame::size(width, height)`
+      bytes, so a longer buffer (row padding, the 854-pixel shear of 2026-11-11) is cut and a
+      shorter one skipped. Only the config rule on the width stands before a padded frame.
+      Next: compare for equality and end the capture with an error that names both sizes and
+      row padding as the likely cause; the loop then logs it and backs off. Also mark the
+      640x640 default in the load log (`ort_backend.rs`, `tract_backend.rs`), make an output
+      shorter than its shape an error (`postprocess.rs`), and pass the cause to `slot.fail` in
+      the media appsink callback. Guard: a unit test with a buffer 4 bytes too long and one
+      4 bytes too short that expects both sizes, and one test per other item.
+
+- [ ] **The "cancelled while the model loaded" check is written twice** (S, ★). Audit
+      2026-11-12: a backend clears the cancel token as a run starts, so each caller that loads
+      a model first has its own guard: `Assistant::run` in `crates/observant/src/ask.rs` and
+      `after_load` in `src/api/text.rs`, both tested. No test closes a socket in the middle of
+      an answer, though the docs promise that a client that leaves cancels it. Next: move
+      `after_load` into `kataglyphis_text` as a public function both call, with its recipe in
+      `scripts/linux/tests/ort-license-mutations.json`. Add one `web.rs` test: post `/ask`
+      against the held stub, close the socket, expect the stub to see the cancel within a
+      second. A session type only when idle unload and timeouts need an owner.
+
+- [ ] **Rust's GenAI function table is typed by hand** (S, ★). Audit 2026-11-12:
+      `crates/text/src/genai.rs` writes 37 C signatures as function pointer types and binds
+      them by name at run time; nothing compares them with `ort_genai_c.h`, so a GenAI bump
+      that changes a signature still compiles. The tiny-model suites call every bound symbol
+      but `OgaConfigAppendProvider` on the CPU lanes, so the risk is narrow. Next: a script in
+      the `test` step, where the image has the header, takes the declarations of the bound
+      symbols from `ort_genai_c.h` and compares them with a committed snapshot; a difference
+      fails and prints the changed lines. Guard: that check, and one mutation recipe that
+      changes a snapshot line.
+
+- [ ] **Small text rules are retyped in each caller** (S, ★). Audit 2026-11-12
+      (not double-checked): provider names are parsed in `crates/observant/src/ask.rs` (an
+      unknown name becomes the CPU; only `config.rs` stops it), in `src/api/text.rs` (an unknown
+      name is an error) and in `crates/cli/src/text.rs`. Finish-reason names are typed in
+      `ask.rs` and `src/api/text.rs`, the default options in `crates/text/src/lib.rs` and
+      `src/api/text.rs`. Next: one `Provider` parser in `kataglyphis_text` that refuses an
+      unknown name with `ProviderUnavailable`, `FinishReason::as_str`, and
+      `text_default_options` built from `GenerationOptions::default()`. Guard: unit tests in
+      `crates/text` and one recipe (mapping an unknown provider to the CPU must fail).
+
+- [ ] **`AGENTS.md` still says the Windows GenAI has no llguidance** (S, ★). Audit 2026-11-12:
+      the Windows chain builds GenAI with llguidance now (`CHANGELOG.md`, `254b7ea`), and
+      `docs/text.md` says so, but `AGENTS.md` § 5, *Text generation keeps its contract*, still
+      names Windows as the lane without it. Next: correct that sentence. The unit test that
+      maps "guidance is unavailable" to `JsonSchemaUnsupported` stays.
+
+- [ ] **`to_json` holds one lock while it takes others** (M, ★). Audit 2026-11-12: in
+      `crates/observant/src/status.rs`, `to_json` keeps the `detected` guard while it locks
+      `clips` and, through `health()`, `last_frame`, `last_run` and `model_error`. The order is
+      right today, by convention only; nothing is broken. Next: copy the needed values out of
+      `detected` and drop the guard first, with a test that holds `clips` on another thread and
+      expects `to_json` to return. Then split only `capture.rs` into the part that needs a
+      camera and the pure part (`Visits`, `counted`, `Backoff`, geometry), which helps the
+      weakest mutation score; split `status.rs` (31 fields) when the next feature adds one.
+      Guard: the tests move unchanged, and the file names in the `cargo mutants` commands of
+      `docs/testing.md` change in the same commit.
+
 - [b] **RVV `MatMulNBits` segfaults on a 4-bit model in the chain's ORT 1.31.0** (M, ★★). Crash:
       `kataglyphis_text --test contract`, `signal: 11, SIGSEGV`, run 41463196239 and locally on
       image `7d4d4129`. Under QEMU, intra-op workers fault in `libonnxruntime.so.1.31.0` at vaddr
@@ -59,6 +344,64 @@ and the backlog is empty"; it was neither.
       BACKLOG CON191 (an image chain). Then `cpu_accelerators.rs` and `check-backend-parity.sh`
       require DNNL to run and match the CPU provider on amd64; nothing here changes.
 
+- [b] **The arm64 lane never runs by itself** (S, ★★). Audit 2026-11-12 (not double-checked):
+      `.github/workflows/linux-arm64.yml` starts on dispatch and call only, so it runs for a
+      `[ci ...]` token or a release. Of the 32 commits to `crates/observant`,
+      `crates/inference`, `crates/media` and `src/webcam_engine.rs` since 2026-10-16, 3 carried
+      `[ci arm64]`, `[ci linux]` or `[ci all]`; runs started by hand are not counted. The bench
+      gate needs 3 earlier runs on that arch. Blocked on the owner's decision: a weekly
+      `schedule:` there, as `linux-riscv64.yml` has, is an exception to the on-request rule.
+      With it the arm64 tests and the `criterion-arm64` history move every week.
+
+- [b] **The shipped ObservANT aborts on any panic** (S, ★★). Audit 2026-11-12
+      (not double-checked): `[profile.release]` in `Cargo.toml` sets `panic = "abort"`, and
+      OmniAccelerANT's `package-observant.sh` builds the service with `--release`. So the
+      poisoned-lock recovery and the failed-task reply in `crates/observant/src/ask.rs` run in
+      test builds only; in the field a panic in an answer restarts the camera through systemd
+      after 5 s. Blocked on the owner's decision: keep abort and say so in `docs/observant.md`
+      beside *One answer at a time*, or give the service its own profile that inherits release
+      and unwinds, built by name in the package script, so one bad answer costs a 502.
+
+- [b] **The same playground settings sample differently on web and native** (S, ★★). Audit
+      2026-11-12: `chat_body` in `crates/text/src/endpoint.rs` sends `top_p` and `top_k`
+      whenever the temperature is above 0. OmniAccelerANT's Dart body for the web build sends
+      neither, so a strict server may refuse `top_k` on one path only. Blocked on the owner's
+      decision: both paths or neither. The simplest is that Rust sends them only when they
+      differ from the defaults, held by the request-body test here.
+
+- [b] **Rust code is outside the size ratchets** (S, ★★). Audit 2026-11-12: `function-size.allow`
+      and `code-complexity.allow` freeze Python test functions only. The hub counts oversized
+      Rust functions on every quality-report run and does not grade them: 35 today, 7 of them
+      in detector, media, camera-service, text or bridge code (`WebcamEngine::start` 107 lines,
+      `run` in `crates/observant/src/main.rs` 108). `Cargo.toml` sets one lint and there is no
+      `clippy.toml`. The cheapest guard is the hub grading its own count. Blocked on the owner's
+      decision: whether this repo also gets a hard gate. If so: `too_many_lines` in
+      `[workspace.lints.clippy]` with the threshold in `clippy.toml`, `#[expect]` with a reason
+      on today's offenders, and a record of each frozen size, because `#[expect]` lets a frozen
+      function grow. `crates/cli/Cargo.toml` needs `[lints] workspace = true` first. Start with
+      `crates/observant`, `crates/inference`, `crates/media` and `src`; the renderer's long
+      passes later.
+
+- [b] **`/ask` shows no text until the whole answer is there** (L, ★★). Audit 2026-11-12:
+      `Assistant::run` in `crates/observant/src/ask.rs` throws the pieces away and `web.rs` has
+      `Body = Full<Bytes>`, so the Stream page waits up to 310 s behind one empty bubble.
+      Blocked on the owner's decision: streaming the reply (the facts first, then the pieces,
+      then a done line, with the JSON reply kept for clients that do not ask) changes the body
+      type of the whole web module, the Dart client and their tests. It is not part of the
+      timeout entry above.
+
+- [b] **A push type-checks Rust for the host target only** (L, ★★). Audit 2026-11-12: the
+      `fmt-clippy` step lints the host target, and no workflow or step calls
+      `scripts/linux/clippy-windows.sh`. Code that fails on Windows alone is first compiled when
+      a commit asks for the Windows lane; the recorded case is `I420Layout`, a struct nothing
+      used on Windows (run 38496162066). Of 43 commits to the Windows lane's paths since
+      2026-10-16, 24 carried no Windows token; each was built by a later commit, after about a
+      day in the median, so the cost is a late find. Blocked on the hub image: the script
+      installs mingw and adds the `x86_64-pc-windows-gnu` target as root, and the lane
+      container runs as uid 1001. Once the image carries both: one `clippy-windows` step for
+      `kataglyphis_observant`, `kataglyphis_text` and the root package, with the added minutes
+      measured (about 5 a package, `docs/observant.md`) before it runs on every push.
+
 ## Recorded probes
 
 - **llguidance accepts the hub tiny model's tokenizer** (GenAI 0.17.0 in `:latest`, index
@@ -71,7 +414,8 @@ and the backlog is empty"; it was neither.
   schema tests; SmolLM2-135M runs the ModelANT contract (`crates/text/tests/contract.rs`).
   Sampling at temperature 1 over the full vocabulary gives seed 1 a different 24-token answer
   from seeds 2 to 4. The Windows chain builds GenAI without llguidance, where the generator
-  refuses a schema as `TextError::JsonSchemaUnsupported`.
+  refuses a schema as `TextError::JsonSchemaUnsupported`. That no longer holds: the Windows
+  chain builds GenAI with llguidance now (`CHANGELOG.md`, `254b7ea`).
 
 ## Not adopted yet
 
