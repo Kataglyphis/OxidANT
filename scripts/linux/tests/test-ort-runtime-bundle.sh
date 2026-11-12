@@ -4,8 +4,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${here}/../lib/ort-runtime-bundle.sh"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
-mkdir -p "${work}/ort"
-for file in libonnxruntime.so libonnxruntime.so.1 libonnxruntime_providers_shared.so libonnxruntime_providers_cuda.so libonnxruntime_providers_migraphx.so; do
+mkdir -p "${work}/ort" "${work}/ep/lib"
+# The hub stages AMD's plugin module from its own prefix; the chain ORT has no in-tree MIGraphX provider.
+export ORT_AMDGPU_EP_ROOT="${work}/ep"
+printf 'plugin\n' > "${work}/ep/lib/libmigraphx-ep.so"
+for file in libonnxruntime.so libonnxruntime.so.1 libonnxruntime_providers_shared.so libonnxruntime_providers_cuda.so; do
     printf '%s\n' "${file}" > "${work}/ort/${file}"
 done
 for variant in cpu nvidia amd; do
@@ -14,9 +17,11 @@ for variant in cpu nvidia amd; do
 done
 [ ! -e "${work}/cpu/libonnxruntime_providers_shared.so" ]
 [ -f "${work}/nvidia/libonnxruntime_providers_cuda.so" ]
-[ ! -e "${work}/nvidia/libonnxruntime_providers_migraphx.so" ]
-[ -f "${work}/amd/libonnxruntime_providers_migraphx.so" ]
-[ ! -e "${work}/amd/libonnxruntime_providers_cuda.so" ]
+[ ! -e "${work}/nvidia/libmigraphx-ep.so" ]
+cmp "${work}/ep/lib/libmigraphx-ep.so" "${work}/amd/libmigraphx-ep.so"
+if compgen -G "${work}/amd/libonnxruntime_providers_*" > /dev/null; then
+    echo 'an in-tree provider was staged for AMD' >&2; exit 1
+fi
 rm "${work}/ort/libonnxruntime_providers_cuda.so"
 if stage_ort_runtime "${work}/missing" "${work}/ort" nvidia 2>"${work}/error"; then
     echo 'missing provider unexpectedly succeeded' >&2; exit 1
