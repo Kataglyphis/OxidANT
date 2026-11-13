@@ -108,7 +108,10 @@ Optional environment variables:
 - `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: `0`, one per core)
 - `KATAGLYPHIS_ORT_SPIN` – `0` stops idle ONNX Runtime threads spin-waiting for the next run
   (default: ORT's, spinning); for inference at a capped rate, so the cat cam sets it itself
-- `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (default: `stretch`)
+- `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (default: `stretch`). A model that names
+  the other one in its metadata (`kataglyphis.preprocess`) is refused at load, and so is one whose
+  `kataglyphis.output` is not `xyxy_score_class`, the one layout this detector decodes: either
+  would give wrong boxes on every frame. A model that carries neither key loads as before.
 - `KATAGLYPHIS_SWAP_XY` – set to `1` if the model output swaps X and Y (default: `0`)
 - `KATAGLYPHIS_SCORE_THRESHOLD` – detection score threshold (default: `0.5`)
 - `KATAGLYPHIS_INFER_EVERY_MS` – minimum interval between inference requests in ms (default: `0`: the next frame goes out as soon as the previous result is back)

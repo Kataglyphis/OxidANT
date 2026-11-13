@@ -90,3 +90,36 @@ fn an_unknown_backend_is_refused() {
         "Unsupported KATAGLYPHIS_ONNX_BACKEND='tensorrt'. Use 'tract' or 'ort'."
     );
 }
+
+/// An ONNX file that holds only the metadata entry `key = value`: enough for the detector's check, no model behind it.
+fn says(key: &str, value: &str) -> Vec<u8> {
+    let text = |tag: u8, text: &str| [&[tag, text.len() as u8], text.as_bytes()].concat();
+    let entry = [text(0x0A, key), text(0x12, value)].concat();
+    [&[0x72, entry.len() as u8], entry.as_slice()].concat()
+}
+
+#[test]
+fn a_model_that_names_another_preprocessing_or_layout_is_refused_before_any_backend_loads() {
+    let model = BrokenModel::new("says-letterbox");
+    for (key, value, expected) in [
+        (
+            "kataglyphis.preprocess",
+            "letterbox",
+            "the model names its preprocessing letterbox (kataglyphis.preprocess), the detector is set to stretch: set KATAGLYPHIS_PREPROCESS=letterbox",
+        ),
+        (
+            "kataglyphis.output",
+            "cxcywh_objectness_scores",
+            "the model names its output layout cxcywh_objectness_scores (kataglyphis.output), this detector decodes xyxy_score_class only",
+        ),
+    ] {
+        std::fs::write(&model.0, says(key, value)).unwrap();
+        for backend in [None, Some("ort"), Some("tract")] {
+            assert_eq!(load_error(model.path(), backend), expected, "{backend:?}");
+        }
+    }
+    // What the detector does anyway is no reason to refuse: the load goes on to the backend, which finds no graph.
+    std::fs::write(&model.0, says("kataglyphis.preprocess", "stretch")).unwrap();
+    let err = load_error(model.path(), Some("tract"));
+    assert!(!err.contains("kataglyphis."), "{err}");
+}

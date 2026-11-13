@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-13, the detector checks what the model says about itself)
+- **A model that names another preprocessing or another layout is refused at load.** ModelANT's models carry
+  `kataglyphis.preprocess` and `kataglyphis.output` in their ONNX metadata; the Rust detector read neither, so a
+  later model that wants letterbox, or rows in another layout, would have given wrong boxes without an error.
+  `PersonDetector` now reads both keys from the file before a backend loads
+  (`crates/inference/src/person_detection/model_says.rs`) and fails with both names when they contradict
+  `KATAGLYPHIS_PREPROCESS` or the one layout it decodes, `xyxy_score_class`. The keys come from the file's
+  `metadata_props`, so ONNX Runtime and tract, the Android backend, get the same answer. A model without the keys
+  loads as before, and no default changes. C++ and Python hold the same check.
+- Tests: three unit tests and one load test per backend with files that hold only metadata; the shipped model
+  still loads. The open question of the two default score thresholds (0.5 and 0.25) is the hub's CON235.
+
 ### Changed (2026-11-13, a tract that stands in for ONNX Runtime is a problem; owner decision)
 - **`/healthz` reports the stand-in.** When ONNX Runtime does not load and tract runs in its place, the camera goes
   on detecting and `/healthz` gives `ok: false` with

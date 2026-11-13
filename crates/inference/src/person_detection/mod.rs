@@ -1,4 +1,5 @@
 mod model_lock;
+mod model_says;
 mod model_utils;
 pub(crate) mod postprocess;
 mod preprocess;
@@ -137,6 +138,8 @@ impl PersonDetector {
         let preprocess = config::preprocess_mode();
         let swap_xy = config::swap_xy_enabled();
         log::debug!("Preprocess mode: {:?}, swap_xy: {}", preprocess, swap_xy);
+        // Before the backend loads: a model that wants another fitting must not start at all.
+        model_says::ModelSays::read(model_path).check(preprocess)?;
 
         let load = Self::load_backend(model_path, backend)?;
         Ok(Self::from_parts(load, preprocess, swap_xy))
@@ -146,6 +149,7 @@ impl PersonDetector {
     #[cfg(any(target_os = "linux", windows))]
     pub fn with_ort_profiling(model_path: &str, profile_prefix: &std::path::Path) -> Result<Self> {
         let device = ort_backend::Device::parse(config::ort_device())?;
+        model_says::ModelSays::read(model_path).check(config::preprocess_mode())?;
         let load = Self::load_ort_on(model_path, Some(profile_prefix), device)?;
         Ok(Self::from_parts(
             load,
@@ -160,6 +164,7 @@ impl PersonDetector {
         if !std::path::Path::new(model_path).is_file() {
             bail!("no ONNX model at {model_path}");
         }
+        model_says::ModelSays::read(model_path).check(config::preprocess_mode())?;
         let load = Self::load_ort_on(model_path, None, ort_backend::Device::parse(device)?)?;
         Ok(Self::from_parts(
             load,

@@ -191,23 +191,6 @@ and the backlog is empty"; it was neither.
       often the playground hits it. Guard: the extended unit test and one ObservANT test per
       status.
 
-- [ ] **The detector does not check what the model says about itself** (M, ★★). Audit
-      2026-11-12: the ModelANT model carries the metadata keys `kataglyphis.preprocess` and
-      `kataglyphis.output`. Rust reads neither and takes the preprocess mode from environment
-      variables (`crates/core/src/config.rs`, default stretch). All three detectors match the
-      one shipped model today; the risk is a later model that wants letterbox or another
-      layout, which would give wrong boxes without an error. Next: check, do not trust. At load
-      read the two keys when present and fail with a clear error when they contradict what the
-      detector is about to do; config and environment stay the overrides and no default
-      changes. Rust decodes corner rows (`xyxy_score_class`) only, with no overlap suppression;
-      that is the owner's decision for DEIM rows (2026-11-12: none in any of the three
-      detectors, raw YOLO heads keep theirs). So an output key that names another layout is an
-      error at load. tract may not expose custom metadata, and tract is the Android backend:
-      read the file's `metadata_props` there, or write down why not. Guard: a test with two tiny
-      generated models, one whose key says letterbox and one without keys. Open beside it:
-      `KATAGLYPHIS_SCORE_THRESHOLD` defaults to 0.5 while ObservANT and the bridge floor use
-      0.25, and nobody has decided that difference.
-
 - [ ] **ObservANT's JSON has no example files the app's tests read** (M, ★★). Audit 2026-11-12:
       `to_json` in `crates/observant/src/status.rs` builds `/healthz` from a `json!` literal of
       about 30 field names, and the Rust tests assert on Rust's own output. OmniAccelerANT's
