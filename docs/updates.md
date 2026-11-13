@@ -21,8 +21,8 @@ Here `--apply` moves both direct gitlinks to each remote's latest default-branch
 regardless of `.gitmodules branch =`. It initializes a missing checkout, rewrites
 `Cargo.toml` values and refreshes `Cargo.lock`; it stages and commits nothing.
 Report and dry-run do not clone, so they need the hub checkout already initialized.
-`.github/renovate.json` skips Cargo scans inside the three documented patched crates under
-`third_party/`: `egui-winit-0.36.2`, `tract-linalg-0.23.8`, and `burn-dispatch-0.22.1`.
+`.github/renovate.json` skips Cargo scans inside the two documented patched crates under
+`third_party/`: `tract-linalg-0.23.8` and `burn-dispatch-0.22.1`.
 None is a submodule. Dependabot is off (owner, 2026-10-20): this is the only
 dependency watch.
 

@@ -67,7 +67,7 @@ if sys.argv[2] == "drop":
 elif sys.argv[2] == "digest":
     packages[entry("simd_helpers")]["files"][0]["sha256"] = "0" * 64
 elif sys.argv[2] == "unreviewed":
-    packages[entry("epaint_default_fonts")].pop("reviewed_expression")
+    packages[entry("unicode-ident")].pop("reviewed_expression")
 elif sys.argv[2] == "orphan":
     packages[entry("clipboard-win")]["files"] = []
 pathlib.Path(sys.argv[3]).write_text(json.dumps(policy), encoding="utf-8")

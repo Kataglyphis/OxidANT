@@ -24,10 +24,10 @@ winit = { version = "0.30" }
 wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 pollster = { version = "1.0" }
 bytemuck = { version = "1.25", features = ["derive"] }
-egui = { version = "0.36" }
-egui-winit = { version = "0.36" }
+egui = { version = "0.37" }
+egui-winit = { version = "0.37" }
 # Its defaults turn wgpu's GL backend back on.
-egui-wgpu = { version = "0.36", default-features = false }
+egui-wgpu = { version = "0.37", default-features = false }
 sysinfo = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

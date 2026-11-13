@@ -180,7 +180,7 @@ impl EguiOverlay {
         let sy = screen.height() / frame_dimensions.1 as f32;
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
-            egui::Id::new("detections"),
+            egui::Id::unique("detections"),
         ));
 
         for d in detections {

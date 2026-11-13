@@ -22,9 +22,9 @@ glam = { version = "0.34", features = ["bytemuck"] }
 gltf = { version = "1", features = ["import", "KHR_lights_punctual", "KHR_texture_transform", "KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions"] }
 # Not the `mikktspace` crate: it pulls nalgebra 0.26, which is future-incompatible on current rustc.
 bevy_mikktspace = "1"
-egui = "0.36"
-egui-wgpu = "0.36"
-egui-winit = { version = "0.36", default-features = false }
+egui = "0.37"
+egui-wgpu = "0.37"
+egui-winit = { version = "0.37", default-features = false }
 ktx2 = "0.5"
 
 [dev-dependencies]

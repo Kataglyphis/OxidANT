@@ -1,25 +1,25 @@
 {
   "version": 1,
   "packages": {
-    "accesskit@0.24.1": {
+    "accesskit@0.25.2": {
       "files": [
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/AccessKit-accesskit-a55d3e1a18bb/LICENSE-APACHE",
+          "path": "packaging/licenses/cargo/AccessKit-accesskit-f3026222559c/LICENSE-APACHE",
           "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-          "provenance": "https://github.com/AccessKit/accesskit/blob/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-APACHE"
+          "provenance": "https://github.com/AccessKit/accesskit/blob/f3026222559c7f5f46d8f25cb7404de68eb149f0/LICENSE-APACHE"
         },
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/AccessKit-accesskit-a55d3e1a18bb/LICENSE-MIT",
+          "path": "packaging/licenses/cargo/AccessKit-accesskit-f3026222559c/LICENSE-MIT",
           "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-          "provenance": "https://github.com/AccessKit/accesskit/blob/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-MIT"
+          "provenance": "https://github.com/AccessKit/accesskit/blob/f3026222559c7f5f46d8f25cb7404de68eb149f0/LICENSE-MIT"
         },
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/AccessKit-accesskit-a55d3e1a18bb/LICENSE.chromium",
+          "path": "packaging/licenses/cargo/AccessKit-accesskit-f3026222559c/LICENSE.chromium",
           "sha256": "845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308",
-          "provenance": "https://github.com/AccessKit/accesskit/blob/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE.chromium"
+          "provenance": "https://github.com/AccessKit/accesskit/blob/f3026222559c7f5f46d8f25cb7404de68eb149f0/LICENSE.chromium"
         }
       ]
     },
@@ -88,140 +88,99 @@
         }
       ]
     },
-    "ecolor@0.36.2": {
+    "ecolor@0.37.0": {
       "files": [
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-APACHE",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-APACHE",
           "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-APACHE (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         },
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-MIT",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-MIT",
           "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-MIT (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         }
       ]
     },
-    "egui-wgpu@0.36.2": {
+    "egui-wgpu@0.37.0": {
       "files": [
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-APACHE",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-APACHE",
           "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-APACHE (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         },
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-MIT",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-MIT",
           "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-MIT (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         }
       ]
     },
-    "egui-winit@0.36.2": {
+    "egui-winit@0.37.0": {
       "files": [
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-APACHE",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-APACHE",
           "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-APACHE (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         },
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-MIT",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-MIT",
           "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-MIT (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         }
       ]
     },
-    "egui@0.36.2": {
+    "egui@0.37.0": {
       "files": [
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-APACHE",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-APACHE",
           "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-APACHE (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         },
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-MIT",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-MIT",
           "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-MIT (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         }
       ]
     },
-    "emath@0.36.2": {
+    "emath@0.37.0": {
       "files": [
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-APACHE",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-APACHE",
           "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-APACHE (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         },
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-MIT",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-MIT",
           "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-MIT (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         }
       ]
     },
-    "epaint@0.36.2": {
+    "epaint@0.37.0": {
       "files": [
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-APACHE",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-APACHE",
           "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-APACHE (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         },
         {
           "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-MIT",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-MIT",
           "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT"
-        }
-      ]
-    },
-    "epaint_default_fonts@0.36.2": {
-      "reviewed_expression": "(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0",
-      "files": [
-        {
-          "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-APACHE",
-          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE"
-        },
-        {
-          "root": "workspace",
-          "path": "packaging/licenses/cargo/emilk-egui-49682f8baa05/LICENSE-MIT",
-          "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
-          "provenance": "https://github.com/emilk/egui/blob/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT"
-        },
-        {
-          "root": "package",
-          "path": "fonts/OFL.txt",
-          "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
-          "provenance": "crates.io archive epaint_default_fonts@0.36.2: bundled font licenses"
-        },
-        {
-          "root": "package",
-          "path": "fonts/UFL.txt",
-          "sha256": "2f0015108d68627bd788d313f529c21ff4da2c2c42a5e1f3883acc83480f9002",
-          "provenance": "crates.io archive epaint_default_fonts@0.36.2: bundled font licenses"
-        },
-        {
-          "root": "package",
-          "path": "fonts/Hack-Regular.txt",
-          "sha256": "47c0cccbeec7e8614548cc485588b28149e7874188df5f41b36efebcee285c87",
-          "provenance": "crates.io archive epaint_default_fonts@0.36.2: bundled font licenses"
-        },
-        {
-          "root": "package",
-          "path": "fonts/emoji-icon-font-mit-license.txt",
-          "sha256": "b9d2c1d909aa149996fd4c91dcb92b2362a04431640c1d200959da94caf8cde1",
-          "provenance": "crates.io archive epaint_default_fonts@0.36.2: bundled font licenses"
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-MIT (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
         }
       ]
     },
@@ -504,6 +463,17 @@
           "path": "LICENSE-UNICODE",
           "sha256": "f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1",
           "provenance": "crates.io archive unicode-ident@1.0.27: Unicode data license"
+        }
+      ]
+    },
+    "unicode-properties@0.1.5": {
+      "reviewed_expression": "(MIT OR Apache-2.0) AND Unicode-3.0",
+      "files": [
+        {
+          "root": "package",
+          "path": "LICENSE-UNICODE",
+          "sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+          "provenance": "crates.io archive unicode-properties@0.1.5: Unicode data license"
         }
       ]
     },

@@ -421,8 +421,8 @@ how to run it and what breaks; no filler, no marketing, no repetition.
 
 `AGENTS.md` (this file), `README.md`, `BACKLOG.md`, `CHANGELOG.md`, the guides in
 `docs/`, `crates/webgpu_renderer/README.md`, the renderer's design documents in
-`crates/webgpu_renderer/docs/`, and `third_party/egui-winit-0.36.2/PATCHED.md` (the
-vendored crate's provenance and removal steps). Rustdoc is published to
+`crates/webgpu_renderer/docs/`, and the `PATCHED.md` of each vendored crate under
+`third_party/` (its provenance and removal steps). Rustdoc is published to
 <https://rust.jonasheinle.de> by `docs.yml` on every push to `develop` or `main`. Update
 the docs in the same change as the behaviour they describe.
 

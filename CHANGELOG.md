@@ -13,6 +13,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-13, egui 0.37; the vendored egui-winit is gone; owner request)
+- **The egui family moves from 0.36 to 0.37** (`egui`, `egui-winit`, `egui-wgpu` in `crates/gui` and
+  `crates/webgpu_renderer`); wgpu stays at 30. 0.37 carries emilk/egui#8516, so the vendored, patched
+  `third_party/egui-winit-0.36.2` and its `[patch.crates-io]` row are deleted; `cargo check -p
+  kataglyphis_webgpu_renderer --target wasm32-unknown-unknown` builds without them. `egui::Id::new` is deprecated in
+  0.37; the overlay's detection layer uses `Id::unique` with the same source. The lock gains `wl-clipboard-rs`,
+  `petgraph`, `os_pipe`, `tree_magic_mini`, `fixedbitset` and `unicode-properties` through `egui-winit`'s clipboard.
+- **The license policy follows.** `accesskit` 0.25.2 and the six egui crates at 0.37.0 publish no license file;
+  their entries in `packaging/cargo-license-policy.json` take the originals from accesskit's commit f3026222 and from
+  egui's tag 0.37.0 (the crates name commit 7c0b4040, which is not on GitHub); every text is byte for byte the one
+  reviewed before. `unicode-properties` gets its reviewed expression `(MIT OR Apache-2.0) AND Unicode-3.0`, as
+  `unicode-ident` has. All four packaged targets stage.
+- Proved on the arm64 dev host: clippy `-D warnings` on `kataglyphis_gui` and `kataglyphis_webgpu_renderer` with all
+  targets, the wasm32 check, and `kataglyphis_gui`'s tests. The renderer's GPU tests and the Windows build run in CI.
+
 ### Added (2026-11-13, a hard gate on function size; owner decision)
 - **A new function over 80 lines fails clippy in four crates.** `crates/observant`, `crates/inference`,
   `crates/media` and the root crate set `#![warn(clippy::too_many_lines)]`; `clippy.toml` sets the limit to 80.

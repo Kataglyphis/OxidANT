@@ -13,12 +13,6 @@ and the backlog is empty"; it was neither.
 
 ## Open
 
-- [ ] Drop the vendored `third_party/egui-winit-0.36.2` and its
-      `[patch.crates-io]` entry, then move the egui family to 0.37.
-      Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.
-      Owner, 2026-11-13: do the upgrade now.
-      Read 2026-11-02: crates.io's newest `egui` and `egui-winit` are 0.37.0, whose tag contains emilk/egui#8516.
-
 - [ ] **Diagnose the intermittent headless GPU-test SIGSEGV** (M). A full default-parallel
       workspace run at `38b1c597` crashed in the `occlusion` test binary after 7/11 cases
       (SIGSEGV 11, exit 101). The same ELF then passed default and serial runs and five
