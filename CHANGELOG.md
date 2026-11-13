@@ -13,6 +13,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-13, a model run that hangs or takes minutes is noticed)
+- **Boxes of a run long ago are dropped.** The capture loop drew the last boxes on every frame whatever their age,
+  so with `privacy = "pixelate"` their area stayed sharp while the model hung, and whoever walked through it was
+  shown. Boxes now count for two runs at the slowest rate a cat in view is looked at, each with the model's own
+  time, and for 2 s at least (`box_lifetime` and `fresh` in `crates/observant/src/capture.rs`); after that the
+  list is emptied, which pixelates the whole frame, and `/healthz` lists no box. This also ends a box that stayed
+  on screen after the picture went dark.
+- **`/healthz` says when the model does not answer.** A run in flight for more than 20 s gives
+  `ok: false` and `problem: "the model has not answered for N s"`; before, `health()` judged the camera, the
+  frame age and three failed runs, never a run in flight. The run's time or its failure ends the problem.
+- **A stop keeps the last sighting although the worker hangs.** `main.rs` persists before it joins the capture
+  worker, and again after.
+- **A start in the app does not wait for ever.** `SessionSlot::start` waited without a bound for the session
+  before to let go of the camera; it now gives up after 10 s with `the session before still holds the camera`,
+  keeps waiting for that session at the next start, and takes the camera once it has ended.
+- Five unit tests. Not done: ending the run itself (`RunOptions::terminate`), kept in `BACKLOG.md`; no hung run
+  was provoked on a real model.
+
 ### Added (2026-11-13, `/healthz` names the detector's backend)
 - **ObservANT's `/healthz` has `backend` (`ort` or `tract`) and `execution_provider` (`cpu`, `xnnpack`, ...).**
   Both are read from the detector once, when the service builds its `Status`, and both are `null` without a model.

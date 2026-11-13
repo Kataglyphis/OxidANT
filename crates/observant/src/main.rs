@@ -272,6 +272,8 @@ fn run(args: Args) -> anyhow::Result<()> {
     let outcome = output::run(&pipeline);
     shutdown.store(true, Ordering::Relaxed);
     let _ = pipeline.set_state(gst::State::Null);
+    // Before the join too: a model run that hangs holds the worker, and the stop must not lose the last sighting to it.
+    at_exit.persist();
     let _ = worker.join();
     // The last sighting before a stop, so the next start closes the visit the stop cut short there.
     at_exit.persist();

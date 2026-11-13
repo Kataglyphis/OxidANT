@@ -55,6 +55,20 @@ const PULL_TIMEOUT: gst::ClockTime = gst::ClockTime::from_mseconds(500);
 
 type Boxes = Arc<Mutex<Vec<Detection>>>;
 
+/// Boxes count at least this long, whatever the rates say: a fast model must not make them flicker.
+const BOX_LIFETIME_FLOOR: Duration = Duration::from_secs(2);
+
+/// How long a run's boxes count: two runs at the slowest rate a cat in view is looked at, each with the model's time.
+fn box_lifetime(still: Duration, model_ms: Option<f64>) -> Duration {
+    let run = Duration::from_secs_f64(model_ms.unwrap_or(0.0).max(0.0) / 1000.0);
+    ((still + run) * 2).max(BOX_LIFETIME_FLOOR)
+}
+
+/// Whether boxes of this age still count; a run that hangs must not leave their area sharp under the privacy filter.
+fn fresh(age: Option<Duration>, lifetime: Duration) -> bool {
+    age.is_some_and(|age| age <= lifetime)
+}
+
 /// A frame for the model, and where something moved lately; `None` with the motion gate off.
 type Look = (Vec<u8>, Option<Moving>);
 
@@ -213,6 +227,43 @@ impl Worker {
         }
     }
 
+    /// The frame with the privacy filter and the latest boxes; boxes past their lifetime are dropped first.
+    fn annotate(&self, i420: &[u8], boxes: &Boxes) -> Vec<u8> {
+        let (width, height) = (self.config.width, self.config.height);
+        let lifetime = box_lifetime(
+            still_period(self.config.inference_fps),
+            self.status.model_ms(),
+        );
+        let mut dropped = false;
+        let rects: Vec<[f32; 4]> = boxes
+            .lock()
+            .map(|mut current| {
+                // Under the lock: a run that ends now sets its time before it sets its boxes.
+                if !current.is_empty() && !fresh(self.status.run_age(), lifetime) {
+                    current.clear();
+                    dropped = true;
+                }
+                current.iter().map(|d| [d.x1, d.y1, d.x2, d.y2]).collect()
+            })
+            .unwrap_or_default();
+        if dropped {
+            self.status.set_boxes(Vec::new());
+            log::warn!(
+                "no model run for over {} s: the last boxes are dropped",
+                lifetime.as_secs()
+            );
+        }
+        let mut annotated = i420.to_vec();
+        // Before the boxes, and on the copy only: the model keeps seeing the whole picture.
+        if self.config.privacy == Privacy::Pixelate {
+            frame::pixelate_outside(&mut annotated, width, height, &rects);
+        }
+        for rect in rects {
+            frame::draw_rect(&mut annotated, width, height, rect, frame::GREEN, 4);
+        }
+        annotated
+    }
+
     /// Draws the latest boxes into the frame and pushes it; `false` once the output pipeline is gone.
     fn push(
         &self,
@@ -227,18 +278,7 @@ impl Worker {
         let Some(i420) = map.as_slice().get(..frame::size(width, height)) else {
             return Ok(true);
         };
-        let mut annotated = i420.to_vec();
-        let rects: Vec<[f32; 4]> = boxes
-            .lock()
-            .map(|current| current.iter().map(|d| [d.x1, d.y1, d.x2, d.y2]).collect())
-            .unwrap_or_default();
-        // Before the boxes, and on the copy only: the model keeps seeing the whole picture.
-        if self.config.privacy == Privacy::Pixelate {
-            frame::pixelate_outside(&mut annotated, width, height, &rects);
-        }
-        for rect in rects {
-            frame::draw_rect(&mut annotated, width, height, rect, frame::GREEN, 4);
-        }
+        let annotated = self.annotate(i420, boxes);
         // Only while the inference thread is idle: a frame of lag is fine, a backlog is not.
         if let Some(tx) = inference {
             let now = Instant::now();
@@ -496,6 +536,7 @@ fn spawn_inference(
                 let score = status.score();
                 let wanted = status.wanted_classes();
                 let started = Instant::now();
+                status.run_starts();
                 match detector.infer_rgba(&rgba, width, height, score, wanted.as_deref()) {
                     Ok(detections) => {
                         status.record_model_time(started.elapsed());
@@ -1125,6 +1166,103 @@ mod tests {
 
     fn health(status: &Status) -> serde_json::Value {
         serde_json::from_str(&status.to_json()).unwrap()
+    }
+
+    #[test]
+    fn boxes_count_for_two_slow_runs_and_never_for_less_than_the_floor() {
+        let ms = Duration::from_millis;
+        assert_eq!(box_lifetime(ms(1000), Some(300.0)), ms(2600));
+        assert_eq!(box_lifetime(ms(1000), None), ms(2000));
+        assert_eq!(box_lifetime(ms(2000), None), ms(4000));
+        // An uncapped fast model: two runs are 60 ms, less than a frame at a low rate.
+        assert_eq!(box_lifetime(ms(0), Some(30.0)), BOX_LIFETIME_FLOOR);
+        assert_eq!(box_lifetime(ms(0), Some(-1.0)), BOX_LIFETIME_FLOOR);
+        assert!(!fresh(None, ms(2000)), "no run, no boxes");
+        assert!(fresh(Some(ms(0)), ms(2000)));
+        assert!(fresh(Some(ms(2000)), ms(2000)));
+        assert!(!fresh(Some(ms(2001)), ms(2000)));
+    }
+
+    /// A worker that never captures, for the steps a frame goes through.
+    fn idle_worker(privacy: Privacy, status: &Arc<Status>) -> Worker {
+        gst::init().unwrap();
+        let config = Config {
+            camera: "test".into(),
+            width: 64,
+            height: 48,
+            privacy,
+            ..Config::default()
+        };
+        let appsrc = gst::ElementFactory::make("appsrc")
+            .build()
+            .unwrap()
+            .downcast::<gst_app::AppSrc>()
+            .unwrap();
+        Worker {
+            choice: Choice::parse(&config.camera).unwrap(),
+            config: Arc::new(config),
+            appsrc,
+            detector: None,
+            status: status.clone(),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            notifier: None,
+            clip: None,
+        }
+    }
+
+    #[test]
+    fn boxes_of_a_run_long_ago_are_dropped_and_the_filter_covers_their_area() {
+        let frame: Vec<u8> = (0..frame::size(64, 48))
+            .map(|i| (i * 7 % 251) as u8)
+            .collect();
+        // One of the filter's 8 x 8 luma blocks inside the cat: sharp it varies, filtered it holds one value.
+        let sharp_in_the_cat = |annotated: &[u8]| {
+            let block: Vec<u8> = (16..24)
+                .flat_map(|y| annotated[y * 64 + 24..y * 64 + 32].to_vec())
+                .collect();
+            block.iter().any(|&p| p != block[0])
+        };
+        for privacy in [Privacy::Pixelate, Privacy::Off] {
+            let status = Arc::new(Status::new("Cam", true, 64, 48));
+            let worker = idle_worker(privacy, &status);
+            let boxes: Boxes = Arc::new(Mutex::new(middle_cat()));
+            status.set_boxes(vec![zone_of(&middle_cat()[0], 64, 48)]);
+            // No run on record: boxes nobody timed are none.
+            assert_eq!(
+                worker.annotate(&frame, &boxes) != frame,
+                privacy == Privacy::Pixelate
+            );
+            assert!(boxes.lock().unwrap().is_empty());
+
+            *boxes.lock().unwrap() = middle_cat();
+            status.set_boxes(vec![zone_of(&middle_cat()[0], 64, 48)]);
+            status.set_detection(true, Some(0.6), None);
+            let drawn = worker.annotate(&frame, &boxes);
+            assert_ne!(drawn, frame, "the box is drawn");
+            assert!(sharp_in_the_cat(&drawn));
+            assert_eq!(boxes.lock().unwrap().len(), 1);
+            assert_eq!(
+                health(&status)["detection"]["boxes"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+
+            let lifetime = box_lifetime(still_period(worker.config.inference_fps), None);
+            status.age_last_run(lifetime + Duration::from_secs(1));
+            let stale = worker.annotate(&frame, &boxes);
+            assert!(boxes.lock().unwrap().is_empty(), "the stale box is dropped");
+            assert!(health(&status)["detection"]["boxes"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+            if privacy == Privacy::Pixelate {
+                assert!(!sharp_in_the_cat(&stale), "its area would stay sharp");
+            } else {
+                assert_eq!(stale, frame, "no box is drawn");
+            }
+        }
     }
 
     #[test]

@@ -91,19 +91,11 @@ and the backlog is empty"; it was neither.
       boxes at 0.25) for ORT and tract, so a new model or a retuned constant passes it before
       it reaches a camera.
 
-- [ ] **A detector run that hangs or takes minutes is not noticed** (S, ★★). Audit 2026-11-12,
-      read from the code: no such run is on record, and on the CPU a slow run is the likely
-      case. In `crates/observant/src`, `health()` in `status.rs` judges the camera, the frame
-      age and 3 failed runs, never a run in flight; `capture.rs` draws the last boxes on every
-      frame with no age, so with `privacy = "pixelate"` their area stays sharp; `main.rs` joins
-      the worker before `at_exit.persist()`. `SessionSlot::start` (`src/session_slot.rs`) waits
-      for the retiring session without a bound. Next, in this order: a pure
-      `fresh(boxes, at, now)` that treats boxes older than about two runs as none (an empty list
-      already blurs the whole frame); `run_started` in `Status` and a health branch
-      `the model has not answered for N s`; `persist()` before and after the join; a bounded
-      wait in `SessionSlot::start` that names the session still holding the camera. Leave
-      `RunOptions::terminate` until a GPU provider ships. Guard: unit tests like the stale-frame
-      rule's, added to the `cargo mutants` file list in `docs/testing.md`.
+- [ ] **A model run that hangs cannot be ended** (S, ★). A run in flight for over 20 s shows in `/healthz`, its
+      boxes are dropped and a start in the app gives up after 10 s, but the run itself goes on: nothing calls
+      `RunOptions::terminate`. Leave it until a GPU provider ships; on the CPU no hung run is on record. The four
+      guards of 2026-11-13 are unit tests; add `capture.rs` and `src/session_slot.rs` to the `cargo mutants` file
+      list in `docs/testing.md` at the next mutation run (75 minutes on a Pi 5, not run for this change).
 
 - [ ] **Measure whether ORT's default thread count costs the Rust detector half its speed**
       (S, ★★). Audit 2026-11-12, from the recorded perf-host baselines of the four repos (same

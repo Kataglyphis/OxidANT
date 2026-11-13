@@ -206,6 +206,11 @@ board runs it as one service unit. How to run and configure it:
   detector once, when the service starts; without a model (`inference` is false) both are
   `null`. When ONNX Runtime cannot load, the detector logs one warning and runs on tract;
   `ok` and `problem` do not change for that, so `backend` is where it shows.
+- **A model run that does not come back is a problem.** A run in flight for more than 20 s
+  gives `ok: false` and `the model has not answered for N s` until it ends. Its boxes are
+  gone long before: they count for two runs at the slowest rate a cat in view is looked at
+  (2 s at least), then the list is emptied. With `privacy = "pixelate"` that blurs the
+  whole frame, so a hung model leaves no area sharp. The run itself is not ended.
 - **A cat counts after two hits in a row** (`presence.rs`), and leaves once no hit came
   for 3 s, or 2.5 inference periods when that is longer. Until then no box is drawn and
   nothing is logged. A lone detection near `score` is mostly noise: of the 72 arrivals

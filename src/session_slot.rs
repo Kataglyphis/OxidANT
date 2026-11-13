@@ -3,8 +3,12 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, TryLockError};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
+
+/// How long a start waits for the session before; a model run that hangs holds its camera for good.
+const RETIRE_PATIENCE: Duration = Duration::from_secs(10);
 
 /// A session whose drop waits for its threads and devices.
 pub(crate) trait Session: Send + 'static {
@@ -19,6 +23,7 @@ pub(crate) struct SessionSlot<S> {
     /// The thread that drops the session before; a start waits for it, since the camera is free only then.
     retiring: Mutex<Option<JoinHandle<()>>>,
     stops: AtomicU64,
+    patience: Duration,
 }
 
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -29,11 +34,37 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl<S: Session> SessionSlot<S> {
     pub(crate) const fn new() -> Self {
+        Self::with_patience(RETIRE_PATIENCE)
+    }
+
+    const fn with_patience(patience: Duration) -> Self {
         Self {
             current: Mutex::new(None),
             retiring: Mutex::new(None),
             stops: AtomicU64::new(0),
+            patience,
         }
+    }
+
+    /// Waits for the session before to let go of the camera, and says so when it does not in time.
+    fn await_retired(&self) -> Result<()> {
+        let Some(retired) = locked(&self.retiring).take() else {
+            return Ok(());
+        };
+        let deadline = Instant::now() + self.patience;
+        while !retired.is_finished() {
+            if Instant::now() >= deadline {
+                // Kept: the next start waits for the same session again.
+                *locked(&self.retiring) = Some(retired);
+                anyhow::bail!(
+                    "the session before still holds the camera after {} s; try again once it has ended",
+                    self.patience.as_secs()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = retired.join();
+        Ok(())
     }
 
     /// Opens a session unless one runs; a stop that arrives while `open` works ends the new session at once.
@@ -48,10 +79,7 @@ impl<S: Session> SessionSlot<S> {
             anyhow::bail!("webcam inference is already running; stop it first");
         }
         *current = None;
-        let retired = locked(&self.retiring).take();
-        if let Some(retired) = retired {
-            let _ = retired.join();
-        }
+        self.await_retired()?;
         let session = open()?;
         // A stop cannot wait for this lock, so it counted itself instead.
         if self.stops.load(Ordering::Acquire) == stops {
@@ -94,12 +122,10 @@ impl<S: Session> SessionSlot<S> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
-
-    use super::*;
 
     /// A session whose drop waits until the test lets it go, as a camera driver that closes slowly.
     struct Slow {
@@ -198,6 +224,36 @@ mod tests {
         starter.join().unwrap().unwrap();
         slot.stop();
         second_handles.release.send(()).unwrap();
+    }
+
+    #[test]
+    fn a_start_gives_up_on_a_session_that_does_not_let_go_and_takes_the_camera_once_it_has() {
+        let slot = SessionSlot::with_patience(Duration::from_millis(100));
+        let (stuck, stuck_handles) = slow(false);
+        slot.start(|| Ok(stuck)).unwrap();
+        slot.stop();
+        let started = Instant::now();
+        let refused = slot.start(|| -> Result<Slow> { panic!("opened beside a held camera") });
+        let error = refused.unwrap_err().to_string();
+        assert!(
+            error.contains("still holds the camera after 0 s"),
+            "{error}"
+        );
+        assert!(started.elapsed() >= Duration::from_millis(100));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // The stuck session is still waited for: a second start is refused the same way.
+        assert!(slot
+            .start(|| -> Result<Slow> { panic!("opened beside a held camera") })
+            .is_err());
+        stuck_handles.release.send(()).unwrap();
+        assert_eq!(
+            stuck_handles.dropped.recv_timeout(Duration::from_secs(10)),
+            Ok("dropped")
+        );
+        let (next, next_handles) = slow(false);
+        next_handles.release.send(()).unwrap();
+        slot.start(|| Ok(next)).unwrap();
+        slot.stop();
     }
 
     #[test]

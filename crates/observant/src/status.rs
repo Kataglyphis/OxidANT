@@ -152,6 +152,9 @@ const CLIP_TIME_SLACK_S: u64 = 2;
 /// With no frame for this long `/healthz` says the camera is not ok; the capture restarts after 10 s.
 const STALE_FRAME_S: u64 = 20;
 
+/// A model run in flight for longer than this is a problem in `/healthz`; a run on a Pi's CPU takes about a second.
+const STALE_RUN_S: u64 = 20;
+
 /// Model runs failing in a row before `/healthz` says so; one odd frame is no outage.
 const MODEL_FAILURES_REPORTED: u32 = 3;
 
@@ -283,6 +286,8 @@ pub struct Status {
     /// When the capture last delivered a frame, and the model last ran.
     last_frame: Mutex<Option<Instant>>,
     last_run: Mutex<Option<Instant>>,
+    /// When the run in flight began; `None` between runs.
+    run_started: Mutex<Option<Instant>>,
     /// The frames the last [`CLIPS_KEPT`] arrivals were confirmed on, as JPEG, newest first.
     photos: Mutex<VecDeque<(u64, bytes::Bytes)>>,
     /// The last [`CLIPS_KEPT`] arrivals as MP4, newest first, by arrival time.
@@ -329,6 +334,7 @@ impl Status {
             snapshot: Mutex::new(None),
             last_frame: Mutex::new(None),
             last_run: Mutex::new(None),
+            run_started: Mutex::new(None),
             photos: Mutex::new(VecDeque::new()),
             clips: Mutex::new(VecDeque::new()),
             state_dir: None,
@@ -393,8 +399,44 @@ impl Status {
         }
     }
 
+    /// A model run begins; until it records its time or its failure, `/healthz` counts how long it takes.
+    pub fn run_starts(&self) {
+        self.set_run_started(Some(Instant::now()));
+    }
+
+    fn set_run_started(&self, at: Option<Instant>) {
+        if let Ok(mut started) = self.run_started.lock() {
+            *started = at;
+        }
+    }
+
+    /// Moves the last run into the past, for a test of what an old run still counts for.
+    #[cfg(test)]
+    pub(crate) fn age_last_run(&self, by: std::time::Duration) {
+        if let Ok(mut last) = self.last_run.lock() {
+            *last = last.and_then(|at| at.checked_sub(by));
+        }
+    }
+
+    /// How long ago the last run ended; `None` before the first.
+    pub fn run_age(&self) -> Option<std::time::Duration> {
+        self.last_run
+            .lock()
+            .ok()
+            .and_then(|at| *at)
+            .map(|at| at.elapsed())
+    }
+
+    /// A run that hangs or takes minutes: the camera still delivers, so nothing else would say it.
+    fn slow_run_problem(&self) -> Option<String> {
+        let started = self.run_started.lock().ok().and_then(|at| *at)?;
+        let seconds = started.elapsed().as_secs();
+        (seconds > STALE_RUN_S).then(|| format!("the model has not answered for {seconds} s"))
+    }
+
     /// One model run's time; the stats show a mean that weighs the last runs most.
     pub fn record_model_time(&self, took: std::time::Duration) {
+        self.set_run_started(None);
         self.model_failures.store(0, Ordering::Relaxed);
         let ms = took.as_secs_f64() * 1000.0;
         if let Ok(mut mean) = self.model_ms.lock() {
@@ -413,6 +455,7 @@ impl Status {
 
     /// One failed model run; returns how many failed in a row, so the caller can keep its log short.
     pub fn record_model_failure(&self, error: String) -> u32 {
+        self.set_run_started(None);
         if let Ok(mut last) = self.model_error.lock() {
             *last = Some(error);
         }
@@ -693,7 +736,7 @@ impl Status {
             match frame_age {
                 None => Some("waiting for the first frame".to_owned()),
                 Some(s) if s > STALE_FRAME_S => Some(format!("no frame for {s} s")),
-                Some(_) => self.model_problem(),
+                Some(_) => self.slow_run_problem().or_else(|| self.model_problem()),
             }
         };
         (problem.is_none(), problem, frame_age, model_age)
@@ -1097,6 +1140,44 @@ mod tests {
         assert!(status.anything_seen());
         assert!(json["detection"]["last_seen"].as_u64().unwrap() > 0);
         assert!((json["detection"]["last_score"].as_f64().unwrap() - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn healthz_says_when_a_model_run_does_not_come_back() {
+        gst::init().unwrap();
+        let status = Status::new("Cam", true, 4, 4);
+        let health = |s: &Status| serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap();
+        status.set_camera("v4l2src /dev/video0 (C920)", false);
+        status.set_frame(&gst::Buffer::from_mut_slice(vec![
+            0u8;
+            crate::frame::size(4, 4)
+        ]));
+        assert_eq!(status.run_age(), None);
+        status.run_starts();
+        assert_eq!(
+            health(&status)["ok"],
+            true,
+            "a run that just began is no problem"
+        );
+        let ago = |s| Instant::now().checked_sub(std::time::Duration::from_secs(s));
+        *status.run_started.lock().unwrap() = ago(20);
+        assert_eq!(
+            health(&status)["ok"],
+            true,
+            "20 s is the limit, not past it"
+        );
+        *status.run_started.lock().unwrap() = ago(21);
+        let hung = health(&status);
+        assert_eq!(hung["ok"], false);
+        assert_eq!(hung["problem"], "the model has not answered for 21 s");
+        // The run came back after all: its time ends the problem, and so does its failure.
+        status.record_model_time(std::time::Duration::from_secs(21));
+        assert_eq!(health(&status)["ok"], true);
+        *status.run_started.lock().unwrap() = ago(60);
+        assert_eq!(status.record_model_failure("ort: gave up".into()), 1);
+        assert_eq!(health(&status)["ok"], true);
+        status.set_detection(false, None, None);
+        assert!(status.run_age().unwrap() < std::time::Duration::from_secs(5));
     }
 
     #[test]
