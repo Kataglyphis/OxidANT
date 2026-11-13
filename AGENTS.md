@@ -300,6 +300,13 @@ cargo run -p kataglyphis_burn_demos --bin burn_demos  # the burn demos
 
 The suite as every Linux lane runs it (`KATAGLYPHIS_REQUIRE_GPU=1`, `KATAGLYPHIS_REQUIRE_MODEL=1`, `KATAGLYPHIS_REQUIRE_GST=1`, `KATAGLYPHIS_REQUIRE_GENAI=1`), where the suites live, and the lint commands: [`docs/testing.md`](docs/testing.md). **Run the lint gates before pushing**: the fmt/clippy pair there is CI's `fmt-clippy` step (§ *`cargo_fmt_clippy.sh`*), and the shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` ([Continuous integration](#continuous-integration)).
 
+**A hook runs them for you.** Once per clone: `git config core.hooksPath
+third_party/ANTfrastructure/shared/linux/templates/git-hooks`. A commit then checks what is staged (large
+files, secrets) in seconds; a push runs `scripts/linux/run-lint-gates.sh` and then
+`scripts/linux/pre-push-checks.sh`, the script suites `lint-gates.yml` runs from the same file, two to three
+minutes on a Pi 5. The gates print one warning line in a clone without the setting. Stage files by name, never
+`git add -A`: that is how a core file reached a commit once.
+
 **Benchmarks are Criterion's, run by `cargo bench`**. `crates/observant/benches/frame_stages.rs`
 times what a frame pays before the model (I420 to RGBA, the privacy blocks, a box, the snapshot JPEG, the
 motion thumbnail) and `crates/inference/benches/detector.rs` a whole detection on the real model at
@@ -361,7 +368,7 @@ code only those lanes build asks for its lane. Lane by lane: [`docs/ci.md`](docs
 | `release.yml` | Every push to `main`: all five lanes, then `v<version>` |
 | `retry-disk-refusal.yml` | Re-runs one job the hub's `prepare-linux-ci-host` refused for runner disk; never `On request`, `release.yml` or a GPU candidate lane |
 | `docs.yml` | The rustdoc site and the `docs/` guides |
-| `lint-gates.yml` | The hub's lint gates, PowerShell lint, script suites and generated-artifact checks; `bash scripts/linux/run-lint-gates.sh` is its local twin |
+| `lint-gates.yml` | The hub's lint gates, PowerShell lint, script suites and generated-artifact checks; `bash scripts/linux/run-lint-gates.sh` is its local twin, and `scripts/linux/pre-push-checks.sh` its script suites |
 | `powershell-quality.yml` | PowerShell complexity, strict on every push and PR |
 | `python-static.yml` | Strict Ruff and ty |
 | `python-refactor.yml` | On-demand refactor preview; uploads a patch and publishes nothing |

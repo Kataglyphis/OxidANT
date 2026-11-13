@@ -46,10 +46,9 @@ jobs:
         with:
           # The suites source the hub's lib/test-harness.sh.
           submodules: true
-      - name: Run every suite
-        run: for suite in scripts/linux/tests/test-*.sh; do bash "$suite"; done
-      - name: Test detector parity comparison
-        run: python3 scripts/linux/tests/test-detector-parity.py
+      # The hub's pre-push hook runs the same file, so a red suite stops the push before it reaches this job.
+      - name: Run every suite and the detector parity comparison
+        run: bash scripts/linux/pre-push-checks.sh
 
   # The GPU-candidate scripts run only on GPU hosts, so their suites need a lane every push reaches.
   gpu-candidate-suites:

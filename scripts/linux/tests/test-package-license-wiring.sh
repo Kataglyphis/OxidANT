@@ -87,12 +87,14 @@ check_amd_plugin_wiring() {
         'closure+=(--protect "lib/${ORT_AMDGPU_EP_MODULE}")' \
         '[ "${ort_variant}" != amd ] || stage_amdgpu_ep_notices "${bundle}"' \
         '[ "${ort_variant}" != amd ] || trees+=("${bundle}/${ORT_AMDGPU_EP_NOTICES}")' \
+        '[ "${ort_variant}" != amd ] || census+=(--library-path lib/glibc:lib)' \
+        'bash "$(hub check-ort-provenance.sh)" "${census[@]}" "${bundle}"' \
         'find "${trees[@]}" -type f' \
         '-o -path "*/${ORT_AMDGPU_EP_NOTICES}/*"' \
         '"usr/lib/${package_name}/${ORT_AMDGPU_EP_NOTICES}/provenance.txt" "${bundle}/${ORT_AMDGPU_EP_NOTICES}/provenance.txt"'
 }
 t_assert_ok check_amd_plugin_wiring "$package_script"
-for check in 'cpu|amd) ort_dir=' '--protect "lib/' 'stage_amdgpu_ep_notices' 'trees+=' 'find "${trees[@]}"' '-o -path "*/${ORT_AMDGPU_EP_NOTICES}/*"' 'provenance.txt'; do
+for check in 'cpu|amd) ort_dir=' '--protect "lib/' 'stage_amdgpu_ep_notices' 'trees+=' 'find "${trees[@]}"' '-o -path "*/${ORT_AMDGPU_EP_NOTICES}/*"' 'provenance.txt' 'census+=' '"${census[@]}"'; do
     grep -Fv -- "$check" "$package_script" > "$work/mutant-amd.sh"
     t_assert_fails check_amd_plugin_wiring "$work/mutant-amd.sh"
 done

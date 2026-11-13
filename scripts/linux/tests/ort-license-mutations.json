@@ -491,6 +491,14 @@
   "why": "A patched plugin module is no longer the image's, which the package check compares byte for byte."
  },
  {
+  "id": "consumer.oxidant-amd-census-library-path",
+  "target": "scripts/linux/package-linux.sh",
+  "find": "[ \"${ort_variant}\" != amd ] || census+=(--library-path lib/glibc:lib)",
+  "replace": ":",
+  "test": "bash scripts/linux/tests/test-package-license-wiring.sh",
+  "why": "The unpatched module has no run path of its own: without the launcher's library path the census calls its ONNX Runtime import unresolved and no AMD package is built."
+ },
+ {
   "id": "consumer.oxidant-amd-plugin-texts-stage",
   "target": "scripts/linux/package-linux.sh",
   "find": "[ \"${ort_variant}\" != amd ] || stage_amdgpu_ep_notices \"${bundle}\"",

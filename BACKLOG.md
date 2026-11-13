@@ -74,20 +74,6 @@ and the backlog is empty"; it was neither.
       `crates/observant` and `src` coverage floors raised to the new figures, and the new
       `capture.rs` count of `cargo mutants` written into `docs/testing.md`.
 
-- [ ] **No git hook runs in a clone, and nothing says so** (M, ★★★). Audit 2026-11-12, measured
-      on the Pi clone only: `core.hooksPath` is unset and `.git/hooks` holds samples, so the lint
-      gates run when someone remembers them. Since `1616c79` they check stale recipes first and
-      core dumps are ignored, but nothing runs them before a commit: another large file added
-      with `git add -A` is in a commit before any gate sees it. The hub's hook template is no
-      fix yet: it calls the bare aggregator without `--ratchets`, less than
-      `scripts/linux/run-lint-gates.sh` checks.
-      Next: that wrapper prints one warning line when `core.hooksPath` is unset and `CI` is not
-      set. Once the hub template calls the repo's own wrapper and has a pre-push twin, point
-      `core.hooksPath` at it and name the install command in `AGENTS.md` § 5, with the staging
-      rule: stage files by name, never `git add -A`, which is how a core file got into a commit
-      once. Guard: the hub suite with a planted stale recipe and a staged 1 MB binary, run
-      through this wrapper.
-
 - [ ] **Detection quality has no regression set** (M, ★★★). Audit 2026-11-12
       (not double-checked): `crates/inference/tests/fixtures` holds one photo, checked loosely
       (two cats, one at 0.8 or more). The rules in `crates/observant/src/presence.rs` and

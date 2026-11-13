@@ -154,7 +154,10 @@ bash "${SCRIPT_DIR}/fetch-models.sh" --dest "${bundle}/resources/models"
 
 # Proof before packing: non-system ELF dependencies resolve inside, ORT is the chain's, and each element loads from the bundle.
 bash "$(hub elf-closure.sh)" "${closure[@]}" --check
-bash "$(hub check-ort-provenance.sh)" "${bundle}"
+# AMD's module stays the image's bytes, so it has no run path: the census is told the launcher's library path instead.
+census=()
+[ "${ort_variant}" != amd ] || census+=(--library-path lib/glibc:lib)
+bash "$(hub check-ort-provenance.sh)" "${census[@]}" "${bundle}"
 bash "$(hub gstreamer-bundle.sh)" check --plugins "${bundle}/lib/gstreamer-1.0" --lib-dir "${bundle}/lib" "${elements[@]}"
 # A scrubbed environment, so nothing of the image's GStreamer or ORT setup reaches the run.
 for command in --help onnx-runtime media-check; do

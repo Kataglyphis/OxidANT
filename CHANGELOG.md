@@ -61,6 +61,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
   the NVIDIA prefix only. The image strips the CPU core, the one an AMD package carries. Both ask for exact bytes on
   NVIDIA alone now; the package check's test and one recipe hold it.
 
+### Changed (2026-11-13, the hub's hook pair and the census option)
+- **A push runs what the lint lane runs.** The hub pin moves to the commit that holds the consumer hook pair and
+  the census option. `scripts/linux/pre-push-checks.sh` is the lint lane's script suites in one file:
+  `lint-gates.yml` calls it, and the hub's pre-push hook runs it after the lint gates, so a suite a pin move turns
+  red stops the push (as it did not on 2026-11-12). The wrapper loses its own stale-recipe loop: the hub's gates
+  check staleness now. `AGENTS.md` § 5 names the one config line.
+- **The AMD package passes the hub's census the supported way.** `package-linux.sh` tells the census the
+  launcher's library path (`--library-path lib/glibc:lib`) for the AMD variant: the module must stay the image's
+  bytes and has no run path of its own, which stopped the second candidate build on `:latest-rocm` (run
+  43314831939). The wiring test and one recipe hold the call.
+
 ### Added (2026-11-12, ModelANT's decode cases are replayed)
 - **The detector replays the decode cases of ModelANT's `inference-v1.json`.** The contract held four cases, all for
   preprocessing; since ModelANT a6eaca1 it also holds the five rules for end-to-end rows (a finite score at least
