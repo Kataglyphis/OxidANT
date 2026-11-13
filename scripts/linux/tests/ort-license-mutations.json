@@ -593,5 +593,21 @@
   "replace": "    \"migraphx\": \"CPUExecutionProvider\",",
   "test": "python3 scripts/linux/tests/test-ort-gpu-profile.py",
   "why": "A migraphx profile is proved by nodes under the plugin's registration name only."
+ },
+ {
+  "id": "consumer.oxidant-rust-size-growth-allowed",
+  "target": "scripts/linux/check-rust-function-sizes.sh",
+  "find": "    elif int(lines) > budget:",
+  "replace": "    elif False:",
+  "test": "bash scripts/linux/tests/test-rust-function-sizes.sh",
+  "why": "#[expect(clippy::too_many_lines)] lets a frozen function grow; only this check stops it."
+ },
+ {
+  "id": "consumer.oxidant-rust-size-new-allowed",
+  "target": "scripts/linux/check-rust-function-sizes.sh",
+  "find": "        failed = True\n    elif int(lines) > budget:",
+  "replace": "        failed = False\n    elif int(lines) > budget:",
+  "test": "bash scripts/linux/tests/test-rust-function-sizes.sh",
+  "why": "A new function over 80 lines in a gated crate must fail, as clippy fails it."
  }
 ]

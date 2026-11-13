@@ -104,6 +104,17 @@ inside the image reproduces the step itself. The shell, workflow, secret and con
 are `bash scripts/linux/run-lint-gates.sh`; with the hub's hook pair switched on (`AGENTS.md` § 5) a push
 runs them and `scripts/linux/pre-push-checks.sh`, the script suites of the lint lane.
 
+**Function size is a hard gate in four crates.** `crates/observant`, `crates/inference`,
+`crates/media` and the root crate `src` set `#![warn(clippy::too_many_lines)]`, and `clippy.toml`
+holds the limit, 80 lines in clippy's count (code lines only), so `-D warnings` fails a new long
+function there. The four that were over it carry `#[expect(clippy::too_many_lines)]`. An
+`#[expect]` does not stop a function from growing, so `scripts/linux/check-rust-function-sizes.sh`,
+run by `pre-push-checks.sh`, holds every function over 80 lines in those crates to its row in
+`rust-function-size.allow` (the hub's count, comments included): one that grew, or a new one,
+fails. Shrink a frozen function and lower its row; split it and drop the row and the `#[expect]`.
+The renderer, the GUI and the demos are not gated yet. On a small host check one crate at a time:
+`cargo clippy -p kataglyphis_observant --all-targets -- -D warnings`.
+
 The `lint-gates.yml` script-test job also runs `test-burn-lock-graph.sh` with Python 3.11+
 `tomllib`: it checks the real `Cargo.lock` and seven synthetic Torch/ZIP/Zstd reintroductions.
 The gate is also run after local Renovate `--apply`. Cargo audit and deny remain the security

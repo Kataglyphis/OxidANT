@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-13, a hard gate on function size; owner decision)
+- **A new function over 80 lines fails clippy in four crates.** `crates/observant`, `crates/inference`,
+  `crates/media` and the root crate set `#![warn(clippy::too_many_lines)]`; `clippy.toml` sets the limit to 80.
+  The four functions over it (`encode_mp4`, `handle`, `run` in ObservANT, `WebcamEngine::start`) carry
+  `#[expect(clippy::too_many_lines)]`.
+- **A frozen function may not grow.** `scripts/linux/check-rust-function-sizes.sh`, run by `pre-push-checks.sh`
+  and so by the lint lane, holds every function over 80 lines in those crates to its row in
+  `rust-function-size.allow`; a new one or a grown one fails. Suite `test-rust-function-sizes.sh`, recipes
+  `consumer.oxidant-rust-size-*`. The renderer, the GUI and the demos follow (BACKLOG).
+
 ### Changed (2026-11-13, four owner decisions)
 - **The default score threshold is 0.25 everywhere.** `KATAGLYPHIS_SCORE_THRESHOLD` defaulted to 0.5 while
   ObservANT and the bridge floor used 0.25, the value measured at the cameras; one picture gave different results

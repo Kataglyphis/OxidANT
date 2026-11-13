@@ -317,18 +317,13 @@ and the backlog is empty"; it was neither.
       takes `target/release/kataglyphis_observant`. Done when that script builds `--profile observant` at a
       pin that has the profile, and a packaged service answers 502 to a question whose answer panics.
 
-- [ ] **Rust code is outside the size ratchets** (S, ★★). Audit 2026-11-12: `function-size.allow`
-      and `code-complexity.allow` freeze Python test functions only. The hub counts oversized
-      Rust functions on every quality-report run and does not grade them: 35 today, 7 of them
-      in detector, media, camera-service, text or bridge code (`WebcamEngine::start` 107 lines,
-      `run` in `crates/observant/src/main.rs` 108). `Cargo.toml` sets one lint and there is no
-      `clippy.toml`. The cheapest guard is the hub grading its own count. Owner decision
-      2026-11-13: this repo gets a hard gate: `too_many_lines` in
-      `[workspace.lints.clippy]` with the threshold in `clippy.toml`, `#[expect]` with a reason
-      on today's offenders, and a record of each frozen size, because `#[expect]` lets a frozen
-      function grow. `crates/cli/Cargo.toml` needs `[lints] workspace = true` first. Start with
-      `crates/observant`, `crates/inference`, `crates/media` and `src`; the renderer's long
-      passes later.
+- [ ] **The renderer, the GUI and the demos are outside the function-size gate** (S, ★). Since 2026-11-13
+      (owner decision) `crates/observant`, `crates/inference`, `crates/media` and `src` fail a new
+      function over 80 lines (`#![warn(clippy::too_many_lines)]`, `clippy.toml`) and hold today's four
+      to `rust-function-size.allow` (`docs/testing.md` § Formatting and lints). Left: the other crates,
+      about 30 functions, most of them the renderer's long passes. Next: one crate per change, its root
+      gets the attribute, its offenders an `#[expect]` and a row, and `check-rust-function-sizes.sh`
+      its directory in `scopes`.
 
 - [b] **`/ask` shows no text until the whole answer is there** (L, ★★). Audit 2026-11-12:
       `Assistant::run` in `crates/observant/src/ask.rs` throws the pieces away and `web.rs` has

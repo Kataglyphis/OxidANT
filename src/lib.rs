@@ -2,6 +2,8 @@
 
 #![doc = include_str!("../README.md")]
 #![doc(html_logo_url = "https://rust.jonasheinle.de/logo.png")]
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
 
 pub mod api;
 #[cfg(any(target_os = "linux", windows))]

@@ -1,5 +1,8 @@
 //! Webcam/video capture built on GStreamer.
 
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
+
 pub mod capture;
 pub mod devices;
 mod runtime;

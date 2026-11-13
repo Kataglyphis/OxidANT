@@ -206,6 +206,7 @@ fn acting_post(path: &str) -> bool {
     [SETTINGS_PATH, ask::ASK_PATH, ask::SUMMARY_PATH].contains(&path)
 }
 
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_owned();
     let origin = req.headers().get(header::ORIGIN).cloned();

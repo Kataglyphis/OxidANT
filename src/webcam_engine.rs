@@ -125,6 +125,7 @@ pub struct WebcamEngine {
 
 impl WebcamEngine {
     /// Starts capture and inference; `on_event` gets every result, and once an `Err` when the session ends by itself.
+    #[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
     pub fn start(
         config: EngineConfig,
         on_event: Box<dyn Fn(Result<EngineEvent, String>) + Send + 'static>,

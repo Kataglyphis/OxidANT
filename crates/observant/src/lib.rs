@@ -1,5 +1,8 @@
 //! ObservANT's parts, which `main.rs` wires into one service; benches and integration tests reach them here.
 
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
+
 pub mod ask;
 pub mod camera;
 pub mod capture;

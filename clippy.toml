@@ -1,0 +1,2 @@
+# The hub's function limit, in clippy's count: code lines only, so a commented function may be longer on screen.
+too-many-lines-threshold = 80

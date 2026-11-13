@@ -1,5 +1,8 @@
 //! Machine learning and inference models.
 
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
+
 #[cfg(any(target_os = "linux", windows))]
 pub mod ort_ext;
 #[cfg(target_os = "linux")]

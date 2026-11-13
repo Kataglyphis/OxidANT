@@ -1,6 +1,9 @@
 //! ObservANT service: picks the camera, burns the detection boxes (cats by default) into the frames, streams
 //! them over WebRTC and serves the web page that plays the stream. One process, so one service unit.
 
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
+
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -169,6 +172,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn run(args: Args) -> anyhow::Result<()> {
     if let Some(dir) = &args.precompress {
         let done = precompress::precompress(dir)?;

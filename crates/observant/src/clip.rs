@@ -190,6 +190,7 @@ fn frames_kept(seconds: u32, fps: u32) -> (u32, usize, usize) {
 }
 
 /// I420 frames at `rate` to an MP4 with its index first, so a browser plays it before the end arrives.
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 pub fn encode_mp4(
     frames: &[gst::Buffer],
     width: u32,
