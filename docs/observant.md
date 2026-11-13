@@ -204,8 +204,10 @@ board runs it as one service unit. How to run and configure it:
   `execution_provider` is `cpu`, `xnnpack` or another provider
   ([running.md](running.md#the-camera-gui-with-onnx-detection-wgpu)), both read from the
   detector once, when the service starts; without a model (`inference` is false) both are
-  `null`. When ONNX Runtime cannot load, the detector logs one warning and runs on tract;
-  `ok` and `problem` do not change for that, so `backend` is where it shows.
+  `null`. When ONNX Runtime cannot load, the detector logs one warning and runs on tract.
+  The camera goes on detecting, slower, and `/healthz` says so for as long as it lasts:
+  `ok: false` with `the model runs on tract, ONNX Runtime did not load: <ORT's reason>`.
+  A tract that was asked for (`KATAGLYPHIS_ONNX_BACKEND=tract`) is no problem.
 - **A model run that does not come back is a problem.** A run in flight for more than 20 s
   gives `ok: false` and `the model has not answered for N s` until it ends. Its boxes are
   gone long before: they count for two runs at the slowest rate a cat in view is looked at

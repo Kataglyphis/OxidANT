@@ -256,6 +256,8 @@ pub struct Status {
     inference: bool,
     /// The detector's backend and execution provider; `None` without a model.
     engine: Option<(&'static str, &'static str)>,
+    /// Why ONNX Runtime did not load, when tract runs in its place.
+    fallback: Option<String>,
     privacy: Privacy,
     /// The sampler's latest look, for `/healthz`'s `stats`.
     stats: Mutex<Stats>,
@@ -314,6 +316,7 @@ impl Status {
             name: Mutex::new(name.to_owned()),
             inference,
             engine: None,
+            fallback: None,
             privacy: Privacy::Off,
             stats: Mutex::new(Stats::default()),
             model_ms: Mutex::new(None),
@@ -475,6 +478,20 @@ impl Status {
     pub fn running_on(mut self, engine: Option<(&'static str, &'static str)>) -> Self {
         self.engine = engine;
         self
+    }
+
+    /// ONNX Runtime did not load and tract runs in its place: a problem in `/healthz` while it lasts.
+    pub fn fell_back(mut self, reason: Option<&str>) -> Self {
+        self.fallback = reason.map(str::to_owned);
+        self
+    }
+
+    /// The slower stand-in is no outage, but nobody chose it: the owner wants to see it (2026-11-13).
+    fn fallback_problem(&self) -> Option<String> {
+        let reason: String = self.fallback.as_ref()?.chars().take(200).collect();
+        Some(format!(
+            "the model runs on tract, ONNX Runtime did not load: {reason}"
+        ))
     }
 
     /// Says in `/healthz` that a language model answers `/ask`.
@@ -736,7 +753,10 @@ impl Status {
             match frame_age {
                 None => Some("waiting for the first frame".to_owned()),
                 Some(s) if s > STALE_FRAME_S => Some(format!("no frame for {s} s")),
-                Some(_) => self.slow_run_problem().or_else(|| self.model_problem()),
+                Some(_) => self
+                    .slow_run_problem()
+                    .or_else(|| self.model_problem())
+                    .or_else(|| self.fallback_problem()),
             }
         };
         (problem.is_none(), problem, frame_age, model_age)
@@ -1178,6 +1198,53 @@ mod tests {
         assert_eq!(health(&status)["ok"], true);
         status.set_detection(false, None, None);
         assert!(status.run_age().unwrap() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn healthz_calls_a_tract_that_stands_in_for_onnx_runtime_a_problem() {
+        gst::init().unwrap();
+        let health = |s: &Status| serde_json::from_str::<serde_json::Value>(&s.to_json()).unwrap();
+        let delivering = |status: Status| {
+            status.set_camera("v4l2src /dev/video0 (C920)", false);
+            status.set_frame(&gst::Buffer::from_mut_slice(vec![
+                0u8;
+                crate::frame::size(4, 4)
+            ]));
+            status
+        };
+        let reason = format!("ORT could not load m.onnx: {}", "x".repeat(300));
+        let stand_in = delivering(
+            Status::new("Cam", true, 4, 4)
+                .running_on(Some(("tract", "cpu")))
+                .fell_back(Some(&reason)),
+        );
+        let said = health(&stand_in);
+        assert_eq!(said["ok"], false);
+        assert_eq!(said["backend"], "tract");
+        let problem = said["problem"].as_str().unwrap();
+        assert!(
+            problem.starts_with(
+                "the model runs on tract, ONNX Runtime did not load: ORT could not load m.onnx: x"
+            ),
+            "{problem}"
+        );
+        assert_eq!(
+            problem.len(),
+            "the model runs on tract, ONNX Runtime did not load: ".len() + 200
+        );
+        // A model that fails outright is the more urgent word.
+        for _ in 0..MODEL_FAILURES_REPORTED {
+            stand_in.record_model_failure("tract: bad shape".into());
+        }
+        assert_eq!(
+            health(&stand_in)["problem"],
+            "the model fails: tract: bad shape"
+        );
+        // A tract that was asked for is no problem.
+        let chosen = delivering(Status::new("Cam", true, 4, 4).running_on(Some(("tract", "cpu"))));
+        assert_eq!(health(&chosen)["ok"], true);
+        let no_reason = delivering(Status::new("Cam", true, 4, 4).fell_back(None));
+        assert_eq!(health(&no_reason)["ok"], true);
     }
 
     #[test]

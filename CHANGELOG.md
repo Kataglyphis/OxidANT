@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-13, a tract that stands in for ONNX Runtime is a problem; owner decision)
+- **`/healthz` reports the stand-in.** When ONNX Runtime does not load and tract runs in its place, the camera goes
+  on detecting and `/healthz` gives `ok: false` with
+  `the model runs on tract, ONNX Runtime did not load: <ORT's reason>` (the first 200 characters). Before, only
+  `backend: "tract"` showed it. A camera without a frame, a run that hangs and a model that fails are named first.
+  A tract that was asked for by `KATAGLYPHIS_ONNX_BACKEND=tract` is no problem.
+- **The detector keeps ORT's reason.** `PersonDetector::fallback_reason()` is `Some` only for a tract that stands in.
+- Tests: `healthz_calls_a_tract_that_stands_in_for_onnx_runtime_a_problem` and one more assertion in
+  `crates/inference/tests/ort_fallback.rs`.
+
 ### Fixed (2026-11-13, a model run that hangs or takes minutes is noticed)
 - **Boxes of a run long ago are dropped.** The capture loop drew the last boxes on every frame whatever their age,
   so with `privacy = "pixelate"` their area stayed sharp while the model hung, and whoever walked through it was

@@ -85,11 +85,14 @@ struct BackendLoad {
     backend: Backend,
     input_dims: (u32, u32),
     provider: &'static str,
+    /// Why ORT did not load, when tract runs in its place.
+    fallback: Option<String>,
 }
 
 pub struct PersonDetector {
     backend: Backend,
     provider: &'static str,
+    fallback: Option<String>,
     input_w: u32,
     input_h: u32,
     preprocess: PreprocessMode,
@@ -103,11 +106,13 @@ impl PersonDetector {
             backend,
             input_dims: (input_w, input_h),
             provider,
+            fallback,
         } = load;
         let buf_len = 3 * (input_w as usize) * (input_h as usize);
         Self {
             backend,
             provider,
+            fallback,
             input_w,
             input_h,
             preprocess,
@@ -183,6 +188,11 @@ impl PersonDetector {
         }
     }
 
+    /// ORT's reason when tract runs in its place; `None` for ORT and for a tract that was asked for.
+    pub fn fallback_reason(&self) -> Option<&str> {
+        self.fallback.as_deref()
+    }
+
     /// The execution provider the model runs on: `"cpu"` for tract and plain ORT, else e.g. `"xnnpack"` or `"cuda"`.
     pub fn execution_provider(&self) -> &'static str {
         self.provider
@@ -207,6 +217,7 @@ impl PersonDetector {
             },
             input_dims: dims,
             provider: load.provider,
+            fallback: None,
         })
     }
 
@@ -232,6 +243,7 @@ impl PersonDetector {
             backend: Backend::Tract { model },
             input_dims: dims,
             provider: "cpu",
+            fallback: None,
         })
     }
 
@@ -243,8 +255,13 @@ impl PersonDetector {
             Err(err) => err,
         };
         log::warn!("Falling back to tract: {ort_err:#}");
-        Self::load_tract(model_path)
-            .map_err(|tract_err| anyhow::anyhow!("{ort_err:#}; {tract_err:#}"))
+        match Self::load_tract(model_path) {
+            Ok(load) => Ok(BackendLoad {
+                fallback: Some(format!("{ort_err:#}")),
+                ..load
+            }),
+            Err(tract_err) => Err(anyhow::anyhow!("{ort_err:#}; {tract_err:#}")),
+        }
     }
 
     fn load_backend(model_path: &str, requested: Option<&str>) -> Result<BackendLoad> {

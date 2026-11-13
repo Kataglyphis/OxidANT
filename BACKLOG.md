@@ -344,14 +344,6 @@ and the backlog is empty"; it was neither.
       beside *One answer at a time*, or give the service its own profile that inherits release
       and unwinds, built by name in the package script, so one bad answer costs a 502.
 
-- [b] **ObservANT runs on tract without calling it a problem** (S, ★★). `/healthz` names `backend`
-      and `execution_provider` (`crates/observant/src/status.rs`), but when ORT fails to load
-      and tract runs, `ok` stays true and `problem` is `null`. Blocked on the owner's decision:
-      the service unit sets `KATAGLYPHIS_ONNX_BACKEND=ort` and so refuses the fall back
-      (`inference = "on"` then stops the start, `auto` streams without the model), or
-      `health()` reports a `problem` while `backend` is `tract`. No tract timing on a Pi is
-      written down to decide it by.
-
 - [b] **The same playground settings sample differently on web and native** (S, ★★). Audit
       2026-11-12: `chat_body` in `crates/text/src/endpoint.rs` sends `top_p` and `top_k`
       whenever the temperature is above 0. OmniAccelerANT's Dart body for the web build sends

@@ -212,6 +212,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         .watching(config.classes.clone(), config.all_classes)
         .answering(config.names_a_language_model())
         .running_on(detector.as_ref().map(engine))
+        .fell_back(detector.as_ref().and_then(PersonDetector::fallback_reason))
         .peered(config.peers.clone());
     let status = Arc::new(match state_dir() {
         Some(dir) => {

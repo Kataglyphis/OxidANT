@@ -41,6 +41,8 @@ fn a_missing_onnx_runtime_falls_back_to_tract_and_says_why() {
     let (rgba, w, h) = photo();
     let mut detector = PersonDetector::with_backend(&path, None).unwrap();
     assert_eq!(detector.backend_name(), "tract");
+    let reason = detector.fallback_reason().unwrap();
+    assert!(reason.starts_with("ORT could not load "), "{reason}");
     let found = detector.infer_rgba(&rgba, w, h, 0.4, None).unwrap();
     assert_both_cats(&found, h, w);
 
