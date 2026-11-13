@@ -16,6 +16,7 @@ and the backlog is empty"; it was neither.
 - [ ] Drop the vendored `third_party/egui-winit-0.36.2` and its
       `[patch.crates-io]` entry, then move the egui family to 0.37.
       Steps: `third_party/egui-winit-0.36.2/PATCHED.md`.
+      Owner, 2026-11-13: do the upgrade now.
       Read 2026-11-02: crates.io's newest `egui` and `egui-winit` are 0.37.0, whose tag contains emilk/egui#8516.
 
 - [ ] **Diagnose the intermittent headless GPU-test SIGSEGV** (M). A full default-parallel
@@ -191,6 +192,12 @@ and the backlog is empty"; it was neither.
       often the playground hits it. Guard: the extended unit test and one ObservANT test per
       status.
 
+- [ ] **`KATAGLYPHIS_SCORE_THRESHOLD` defaults to 0.5, the family's default is 0.25** (S, ★★). Owner decision
+      2026-11-13 (hub CON235): one default score threshold for every detector, 0.25, the value measured at the
+      cameras. Here the environment variable's default moves from 0.5 to 0.25
+      (`crates/core/src/config.rs`); ObservANT and the bridge floor use 0.25 already. Guard: the config test
+      for the unset variable, and `docs/running.md`.
+
 - [ ] **ObservANT's JSON has no example files the app's tests read** (M, ★★). Audit 2026-11-12:
       `to_json` in `crates/observant/src/status.rs` builds `/healthz` from a `json!` literal of
       about 30 field names, and the Rust tests assert on Rust's own output. OmniAccelerANT's
@@ -309,38 +316,37 @@ and the backlog is empty"; it was neither.
       BACKLOG CON191 (an image chain). Then `cpu_accelerators.rs` and `check-backend-parity.sh`
       require DNNL to run and match the CPU provider on amd64; nothing here changes.
 
-- [b] **The arm64 lane never runs by itself** (S, ★★). Audit 2026-11-12 (not double-checked):
+- [ ] **The arm64 lane never runs by itself** (S, ★★). Audit 2026-11-12 (not double-checked):
       `.github/workflows/linux-arm64.yml` starts on dispatch and call only, so it runs for a
       `[ci ...]` token or a release. Of the 32 commits to `crates/observant`,
       `crates/inference`, `crates/media` and `src/webcam_engine.rs` since 2026-10-16, 3 carried
       `[ci arm64]`, `[ci linux]` or `[ci all]`; runs started by hand are not counted. The bench
-      gate needs 3 earlier runs on that arch. Blocked on the owner's decision: a weekly
-      `schedule:` there, as `linux-riscv64.yml` has, is an exception to the on-request rule.
+      gate needs 3 earlier runs on that arch. Owner decision 2026-11-13: a weekly
+      `schedule:` there, as `linux-riscv64.yml` has; it is an exception to the on-request rule.
       With it the arm64 tests and the `criterion-arm64` history move every week.
 
-- [b] **The shipped ObservANT aborts on any panic** (S, ★★). Audit 2026-11-12
+- [ ] **The shipped ObservANT aborts on any panic** (S, ★★). Audit 2026-11-12
       (not double-checked): `[profile.release]` in `Cargo.toml` sets `panic = "abort"`, and
       OmniAccelerANT's `package-observant.sh` builds the service with `--release`. So the
       poisoned-lock recovery and the failed-task reply in `crates/observant/src/ask.rs` run in
       test builds only; in the field a panic in an answer restarts the camera through systemd
-      after 5 s. Blocked on the owner's decision: keep abort and say so in `docs/observant.md`
-      beside *One answer at a time*, or give the service its own profile that inherits release
+      after 5 s. Owner decision 2026-11-13: the service gets its own profile that inherits release
       and unwinds, built by name in the package script, so one bad answer costs a 502.
 
-- [b] **The same playground settings sample differently on web and native** (S, ★★). Audit
+- [ ] **The same playground settings sample differently on web and native** (S, ★★). Audit
       2026-11-12: `chat_body` in `crates/text/src/endpoint.rs` sends `top_p` and `top_k`
       whenever the temperature is above 0. OmniAccelerANT's Dart body for the web build sends
-      neither, so a strict server may refuse `top_k` on one path only. Blocked on the owner's
-      decision: both paths or neither. The simplest is that Rust sends them only when they
-      differ from the defaults, held by the request-body test here.
+      neither, so a strict server may refuse `top_k` on one path only. Owner decision 2026-11-13:
+      both paths send each of the two only when it differs from its default, held by the
+      request-body test here and by OmniAccelerANT's for the web body.
 
-- [b] **Rust code is outside the size ratchets** (S, ★★). Audit 2026-11-12: `function-size.allow`
+- [ ] **Rust code is outside the size ratchets** (S, ★★). Audit 2026-11-12: `function-size.allow`
       and `code-complexity.allow` freeze Python test functions only. The hub counts oversized
       Rust functions on every quality-report run and does not grade them: 35 today, 7 of them
       in detector, media, camera-service, text or bridge code (`WebcamEngine::start` 107 lines,
       `run` in `crates/observant/src/main.rs` 108). `Cargo.toml` sets one lint and there is no
-      `clippy.toml`. The cheapest guard is the hub grading its own count. Blocked on the owner's
-      decision: whether this repo also gets a hard gate. If so: `too_many_lines` in
+      `clippy.toml`. The cheapest guard is the hub grading its own count. Owner decision
+      2026-11-13: this repo gets a hard gate: `too_many_lines` in
       `[workspace.lints.clippy]` with the threshold in `clippy.toml`, `#[expect]` with a reason
       on today's offenders, and a record of each frozen size, because `#[expect]` lets a frozen
       function grow. `crates/cli/Cargo.toml` needs `[lints] workspace = true` first. Start with
