@@ -8,7 +8,7 @@ try it in the family `:latest` image:
 cargo build --release -p kataglyphis_observant
 target/release/kataglyphis_observant --camera test --print-config  # the settings in effect
 target/release/kataglyphis_observant --camera test                 # a test pattern, no camera
-curl localhost:8080/healthz                    # ok or the problem, the camera, the model's runs, the cat, the kept clips
+curl localhost:8080/healthz                    # ok or the problem, the camera, the model's backend and runs, the cat, the kept clips
 curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
 curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on
 curl -o cat.jpg 'localhost:8080/arrival.jpg?t=1791763273'  # one of the last five, by arrival time
@@ -200,6 +200,12 @@ board runs it as one service unit. How to run and configure it:
 
   Every row found both cats, best score 0.72. Letterboxing (`KATAGLYPHIS_PREPROCESS`)
   scored the same photo 0.61, so the preprocessing stays the crate's default, stretch.
+- **`/healthz` names what runs the model.** `backend` is `ort` or `tract` and
+  `execution_provider` is `cpu`, `xnnpack` or another provider
+  ([running.md](running.md#the-camera-gui-with-onnx-detection-wgpu)), both read from the
+  detector once, when the service starts; without a model (`inference` is false) both are
+  `null`. When ONNX Runtime cannot load, the detector logs one warning and runs on tract;
+  `ok` and `problem` do not change for that, so `backend` is where it shows.
 - **A cat counts after two hits in a row** (`presence.rs`), and leaves once no hit came
   for 3 s, or 2.5 inference periods when that is longer. Until then no box is drawn and
   nothing is logged. A lone detection near `score` is mostly noise: of the 72 arrivals
@@ -213,7 +219,7 @@ board runs it as one service unit. How to run and configure it:
   memory while the file is unchanged, with an ETag of their own and
   `Vary: accept-encoding`. On himbeere2 (2026-10-12) the boot's main files went from 20.2 MB to
   7.5 MB; the first request for the 7 MB CanvasKit spent 614 ms compressing, later ones
-  2 ms. It also answers `/healthz` (camera, model runs, the cat's presence),
+  2 ms. It also answers `/healthz` (camera, the model's backend and runs, the cat's presence),
   serves `/snapshot.jpg` (the latest frame, boxes included, encoded on request) and forwards
   `/webrtc-ws` byte for byte to the signalling server, which listens on `127.0.0.1` by
   default now. `run-producer-pi.sh` keeps the old shape (`--signalling-host 0.0.0.0

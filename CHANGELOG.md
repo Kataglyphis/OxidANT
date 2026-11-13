@@ -13,6 +13,26 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-13, `/healthz` names the detector's backend)
+- **ObservANT's `/healthz` has `backend` (`ort` or `tract`) and `execution_provider` (`cpu`, `xnnpack`, ...).**
+  Both are read from the detector once, when the service builds its `Status`, and both are `null` without a model.
+  The two keys are new and no other key changed, so OmniAccelerANT's parsers read the body as before.
+  `healthz_names_the_backend_and_the_provider` in `crates/observant/src/status.rs` holds them.
+- **A fall back to tract is visible, and still no problem.** `ok` stays true when ONNX Runtime did not load and tract
+  runs. Whether the service unit refuses the fall back or `/healthz` reports it as a `problem` is the owner's
+  decision, kept as a blocked entry in `BACKLOG.md`.
+
+### Changed (2026-11-13, the text contract comes from the ModelANT pin)
+- **`crates/text/tests/contract.rs` compiles in `third_party/ModelANT/contracts/text-generation-v1.json`.** The hand
+  copy `crates/text/tests/contracts/text-generation-v1.json`, which nothing compared with the original, is deleted;
+  its bytes equalled the file at the recorded gitlink (`a6eaca1`). No script and no other test read the copy.
+- **The photo is held to ModelANT's copy.** `the_photo_is_byte_for_byte_the_one_modelant_holds` in
+  `crates/inference/tests/real_model.rs` compares `crates/inference/tests/fixtures/two_cats.jpg` with
+  `third_party/ModelANT/contracts/fixtures/two_cats.jpg`. The photo stays here: ModelANT cites it as the original, and
+  OmniAccelerANT reads that path.
+- **No lane stages a new file.** The contract and both photos are compiled into the test binaries, as the inference
+  contract already is, so `scripts/windows/Stage-CrossTests.ps1` and the riscv64 lane are unchanged.
+
 ### Changed (2026-11-12, `migraphx` loads AMD's plugin module)
 - **`KATAGLYPHIS_ORT_DEVICE=migraphx` registers AMD's plugin module `libmigraphx-ep.so` by path (owner, 2026-11-12;
   hub CON231 step 2).** The hub removed the in-tree MIGraphX provider from `:latest-rocm` on 2026-11-08, so the by-name

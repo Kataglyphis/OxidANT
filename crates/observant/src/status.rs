@@ -251,6 +251,8 @@ struct Detected {
 pub struct Status {
     name: Mutex<String>,
     inference: bool,
+    /// The detector's backend and execution provider; `None` without a model.
+    engine: Option<(&'static str, &'static str)>,
     privacy: Privacy,
     /// The sampler's latest look, for `/healthz`'s `stats`.
     stats: Mutex<Stats>,
@@ -306,6 +308,7 @@ impl Status {
         Self {
             name: Mutex::new(name.to_owned()),
             inference,
+            engine: None,
             privacy: Privacy::Off,
             stats: Mutex::new(Stats::default()),
             model_ms: Mutex::new(None),
@@ -423,6 +426,12 @@ impl Status {
         }
         let error = self.model_error.lock().ok().and_then(|e| e.clone());
         Some(format!("the model fails: {}", error.unwrap_or_default()))
+    }
+
+    /// Names in `/healthz` the backend and the execution provider the detector loaded with.
+    pub fn running_on(mut self, engine: Option<(&'static str, &'static str)>) -> Self {
+        self.engine = engine;
+        self
     }
 
     /// Says in `/healthz` that a language model answers `/ask`.
@@ -926,6 +935,8 @@ impl Status {
             "frame": {"width": self.width, "height": self.height, "fps": self.fps},
             "camera": camera,
             "inference": self.inference,
+            "backend": self.engine.map(|(backend, _)| backend),
+            "execution_provider": self.engine.map(|(_, provider)| provider),
             "dark": self.dark.load(Ordering::Relaxed),
             "privacy": self.privacy,
             "classes": self.classes(),
@@ -1086,6 +1097,20 @@ mod tests {
         assert!(status.anything_seen());
         assert!(json["detection"]["last_seen"].as_u64().unwrap() > 0);
         assert!((json["detection"]["last_score"].as_f64().unwrap() - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn healthz_names_the_backend_and_the_provider() {
+        let healthz =
+            |status: Status| serde_json::from_str::<serde_json::Value>(&status.to_json()).unwrap();
+        let off = healthz(Status::new("Cam", false, 4, 4));
+        assert!(off["backend"].is_null() && off["execution_provider"].is_null());
+        for (backend, provider) in [("tract", "cpu"), ("ort", "xnnpack")] {
+            let status = Status::new("Cam", true, 4, 4).running_on(Some((backend, provider)));
+            let on = healthz(status);
+            assert_eq!(on["backend"], backend);
+            assert_eq!(on["execution_provider"], provider);
+        }
     }
 
     #[test]

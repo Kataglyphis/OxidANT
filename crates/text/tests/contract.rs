@@ -9,8 +9,11 @@ use common::{genai_required, model_required};
 use kataglyphis_text::genai::{GenaiGenerator, Provider};
 use kataglyphis_text::{CancelToken, ChatMessage, FinishReason, GenerationOptions, TextBackend};
 
-/// A byte-identical copy of ModelANT's contracts/text-generation-v1.json at the release llm.lock pins.
-const CONTRACT: &str = include_str!("contracts/text-generation-v1.json");
+/// ModelANT's contracts/text-generation-v1.json at the recorded gitlink; its ids are those of the release llm.lock pins.
+const CONTRACT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../third_party/ModelANT/contracts/text-generation-v1.json"
+));
 
 /// Where `fetch-models.sh --llm` unpacks, unless `KATAGLYPHIS_LLM_MODELS` names another directory.
 fn models_dir() -> PathBuf {

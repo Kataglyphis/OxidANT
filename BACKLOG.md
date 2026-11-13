@@ -105,16 +105,6 @@ and the backlog is empty"; it was neither.
       `RunOptions::terminate` until a GPU provider ships. Guard: unit tests like the stale-frame
       rule's, added to the `cargo mutants` file list in `docs/testing.md`.
 
-- [ ] **ObservANT does not say which backend runs the model** (S, ★★). Audit 2026-11-12
-      (not double-checked): when ORT fails to load,
-      `crates/inference/src/person_detection/mod.rs` logs one warning and uses tract. `/healthz`
-      (`crates/observant/src/status.rs`) has no backend or provider field, though the app's
-      events carry both, and no tract timing on a Pi is written down. Next: add `backend` and
-      `execution_provider` to `/healthz`, taken from the detector when `Status` is built. The
-      owner decides whether the service also refuses the fall back
-      (`KATAGLYPHIS_ONNX_BACKEND=ort` in the unit) or reports a `problem` when tract runs.
-      Guard: a status test `healthz_names_the_backend_and_the_provider`.
-
 - [ ] **Measure whether ORT's default thread count costs the Rust detector half its speed**
       (S, ★★). Audit 2026-11-12, from the recorded perf-host baselines of the four repos (same
       host, model and photo, 8 pinned CPUs): Rust 50.7 ms p50, C++ 30.3 ms, Python 24.1 ms, and
@@ -128,17 +118,6 @@ and the backlog is empty"; it was neither.
       ObservANT's 2, the bench's 2 and every override stay, and `docs/running.md` and
       `docs/observant.md` change in the same commit. Guard: a perf-host row at ORT's default
       beside the shipped one with a ratio check, as OrchestrANT's `quality-report.toml` has.
-
-- [ ] **The text contract is a hand copy, and the ModelANT gitlink is behind the C++
-      consumer's** (S, ★★). Audit 2026-11-12: `crates/text/tests/contract.rs` includes
-      `tests/contracts/text-generation-v1.json`, "a byte-identical copy" that nothing checks.
-      `third_party/ModelANT` is at `9e8ffde`, which has no such file; AccelerANTgine pins
-      `78d10cf`, which has. The bytes are equal today, and between the two commits `contracts/`
-      gains only that file and README lines. Next: with the next gitlink move (the detector
-      output contract needs one), `include_str!` the contract from the submodule and delete the
-      copy. The photo `crates/inference/tests/fixtures/two_cats.jpg` stays, as the original
-      ModelANT cites and the path OmniAccelerANT reads; add a test that its hash equals the
-      submodule's copy. Guard: that test, and the contract coming from the pin.
 
 - [ ] **Rust tests leave no per-test record** (S, ★★). Audit 2026-11-12: the `test` step runs the
       hub's `cargo_test.sh`, a plain `cargo test`, and `quality-report.toml` declares coverage,
@@ -372,6 +351,14 @@ and the backlog is empty"; it was neither.
       after 5 s. Blocked on the owner's decision: keep abort and say so in `docs/observant.md`
       beside *One answer at a time*, or give the service its own profile that inherits release
       and unwinds, built by name in the package script, so one bad answer costs a 502.
+
+- [b] **ObservANT runs on tract without calling it a problem** (S, ★★). `/healthz` names `backend`
+      and `execution_provider` (`crates/observant/src/status.rs`), but when ORT fails to load
+      and tract runs, `ok` stays true and `problem` is `null`. Blocked on the owner's decision:
+      the service unit sets `KATAGLYPHIS_ONNX_BACKEND=ort` and so refuses the fall back
+      (`inference = "on"` then stops the start, `auto` streams without the model), or
+      `health()` reports a `problem` while `backend` is `tract`. No tract timing on a Pi is
+      written down to decide it by.
 
 - [b] **The same playground settings sample differently on web and native** (S, ★★). Audit
       2026-11-12: `chat_body` in `crates/text/src/endpoint.rs` sends `top_p` and `top_k`

@@ -167,10 +167,11 @@ model runs to its end token. Its `--hidden-states` form has the output `embed` r
 vector. Where no GenAI loads they print `SKIP`; CI sets
 `KATAGLYPHIS_REQUIRE_GENAI=1`, which turns that into a failure.
 
-`crates/text/tests/contract.rs` replays ModelANT's `text-generation-v1` contract, a byte-identical
-copy in `crates/text/tests/contracts/`, on SmolLM2-135M-Instruct: greedy decoding of
-capital-of-france must yield exactly `[504, 3575, 282, 4649, 314, 7042, 30, 2]` and contain
-`Paris`. `resources/models/llm.lock` pins the archive with OrchestrANT's row;
+`crates/text/tests/contract.rs` replays ModelANT's `text-generation-v1` contract, compiled in from
+`third_party/ModelANT/contracts/text-generation-v1.json` at the recorded gitlink, on
+SmolLM2-135M-Instruct: greedy decoding of capital-of-france must yield exactly
+`[504, 3575, 282, 4649, 314, 7042, 30, 2]` and contain `Paris`. No lane stages the file: the
+test binary carries it. `resources/models/llm.lock` pins the archive with OrchestrANT's row;
 `scripts/linux/fetch-models.sh --llm` runs the hub's `fetch-data-lock.py --lock
 resources/models/llm.lock --extract` in the Linux test and coverage steps, and with
 `KATAGLYPHIS_REQUIRE_MODEL=1` a missing model fails. The riscv64 lane runs this suite on scalar

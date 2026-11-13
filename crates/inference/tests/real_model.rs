@@ -6,6 +6,22 @@ use common::{assert_both_cats, model, photo, CAT, PERSON};
 use kataglyphis_inference::person_detection::PersonDetector;
 
 #[test]
+fn the_photo_is_byte_for_byte_the_one_modelant_holds() {
+    let ours: &[u8] = include_bytes!("fixtures/two_cats.jpg");
+    let theirs: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../third_party/ModelANT/contracts/fixtures/two_cats.jpg"
+    ));
+    // Not assert_eq: a failure would print both files byte by byte.
+    assert!(
+        ours == theirs,
+        "tests/fixtures/two_cats.jpg ({} bytes) is not third_party/ModelANT's contracts/fixtures/two_cats.jpg ({} bytes)",
+        ours.len(),
+        theirs.len()
+    );
+}
+
+#[test]
 fn the_real_model_finds_both_cats_in_the_photo() {
     let Some(path) = model() else { return };
     let (rgba, w, h) = photo();

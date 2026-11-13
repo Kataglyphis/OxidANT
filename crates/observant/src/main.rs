@@ -211,6 +211,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         .private(config.privacy)
         .watching(config.classes.clone(), config.all_classes)
         .answering(config.names_a_language_model())
+        .running_on(detector.as_ref().map(engine))
         .peered(config.peers.clone());
     let status = Arc::new(match state_dir() {
         Some(dir) => {
@@ -384,6 +385,11 @@ fn load_detector(config: &Config) -> anyhow::Result<Option<PersonDetector>> {
             }
         }
     }
+}
+
+/// The backend and the execution provider the detector loaded with, as `/healthz` names them.
+fn engine(detector: &PersonDetector) -> (&'static str, &'static str) {
+    (detector.backend_name(), detector.execution_provider())
 }
 
 fn apply_language_args(args: &Args, config: &mut Config) {
