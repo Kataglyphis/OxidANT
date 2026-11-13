@@ -70,7 +70,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **The AMD package passes the hub's census the supported way.** `package-linux.sh` tells the census the
   launcher's library path (`--library-path lib/glibc:lib`) for the AMD variant: the module must stay the image's
   bytes and has no run path of its own, which stopped the second candidate build on `:latest-rocm` (run
-  43314831939). The wiring test and one recipe hold the call.
+  43314831939). The wiring test and one recipe hold the call. The next run (43345664993) passed the census, showed
+  the packaged module refusing a request by name without a card (`HIP failure 100`) while `auto` took the CPU, and
+  stopped at the hub's AppImage verifier, which still asks an AMD AppImage for exact wheel bytes (`BACKLOG.md`).
 
 ### Added (2026-11-12, ModelANT's decode cases are replayed)
 - **The detector replays the decode cases of ModelANT's `inference-v1.json`.** The contract held four cases, all for

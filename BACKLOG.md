@@ -37,13 +37,16 @@ and the backlog is empty"; it was neither.
       Since 2026-11-12 `migraphx` registers `libmigraphx-ep.so` by path (`crates/inference/src/ort_plugin.rs`) and the
       AMD package carries the module and its texts. Proved on arm64 only: the search for the module, the option keys,
       the registration guard, and that a missing or unloadable module and a module without a device fail a named request
-      and leave `auto` the CPU. Never run: the module itself, its registration, a session on it, and
-      `package-linux.sh --ort-variant amd`, which needs the amd64 `:latest-rocm` image. A risk in that script: the
-      hub's bundle census (`check-ort-provenance.sh`) looks for the module's `libonnxruntime.so.1` on the module's own
-      run path only. A stand-in module without `$ORIGIN` there fails it with `UNRESOLVED`, and the closure must not
-      patch the module, so a real module built that way needs a change in the hub. Next: dispatch
-      `linux-x64-amd-gpu.yml`; then, under native Ubuntu on the RX 9070 XT (under WSL even a plain HIP copy does not
-      return, hub CON202), run `scripts/linux/profile-gpu-packages.sh <dir> migraphx crates/inference/tests/fixtures/two_cats.jpg`.
+      and leave `auto` the CPU. Seen in `:latest-rocm` on a runner without a card (candidate run 43345664993,
+      2026-11-13): the package builds, the census passes with the launcher's library path, the packaged module is
+      found beside the packaged ONNX Runtime and registered, AMD's factory answers `HIP failure 100: no ROCm-capable
+      device is detected`, the request by name is refused with that text and `auto` runs on the CPU; the tarball and
+      the DEB pass the package check. The run stops at the AppImage: the hub's `verify-ort-appimage-payload.sh` asks
+      an AMD AppImage for the wheel's exact bytes, and the image strips its CPU core (hub CON256 i; the fix needs an
+      x86-64 host). Never run: a session on the module, and anything on a card. Next: when the hub's verifier is
+      fixed, move the pin and dispatch `linux-x64-amd-gpu.yml` again for the clean-host job; then, under native
+      Ubuntu on the RX 9070 XT (under WSL even a plain HIP copy does not return, hub CON202), run
+      `scripts/linux/profile-gpu-packages.sh <dir> migraphx crates/inference/tests/fixtures/two_cats.jpg`.
       The hub's `shared/python/verify_ort_profile.py`, which that parity run uses, expects `MIGraphX` since hub
       366b8259; the pin here is past it. Done when `compare_detector_parity.py` passes against the
       CPU for the tar, the deb and the AppImage and each run's profile has model operators on the provider `MIGraphX`;
