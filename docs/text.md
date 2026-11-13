@@ -40,7 +40,9 @@ it unless it embeds the chain's build tree (`/opt/onnxruntime-genai/build/` on L
 
 `TextBackend::generate(messages, options, cancel, on_text)` applies the model's own chat template,
 then decodes at most `max_new_tokens` tokens. Temperature 0, the default, decodes greedily; the
-endpoint then sends no `top_p` or `top_k`. `on_text` receives each piece on the generating thread.
+endpoint then sends no `top_p` or `top_k`. Above 0 it sends each of the two only when the caller
+moved it from its default (1.0 and 50), so a strict server is not handed a knob nobody set, and
+OmniAccelerANT's web client sends the same body. `on_text` receives each piece on the generating thread.
 In GenAI a token that ends inside a UTF-8 character yields no piece until the character completes.
 
 The result holds the text, the token ids (GenAI only), the prompt and completion token counts,

@@ -289,6 +289,7 @@ rate through `crates/text`; run it as a
 cargo build --workspace --locked                      # dev/debug
 cargo build --workspace --locked --profile profile    # custom: release + debuginfo
 cargo build --workspace --locked --release            # fat LTO, codegen-units 1, panic=abort, stripped
+cargo build --locked --profile observant -p kataglyphis_observant  # the camera service: release, but a panic unwinds
 cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
 cargo run --bin kataglyphis_cli -- --help             # the CLI
 cargo run -p kataglyphis_burn_demos --bin burn_demos  # the burn demos

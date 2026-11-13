@@ -194,8 +194,14 @@ impl Endpoint {
         body.insert("stream".into(), json!(true));
         body.insert("stream_options".into(), json!({ "include_usage": true }));
         if options.temperature > 0.0 {
-            body.insert("top_p".into(), json!(options.top_p));
-            body.insert("top_k".into(), json!(options.top_k));
+            // Only what the caller moved: a strict server refuses a knob it does not know, and the web client sends the same.
+            let defaults = GenerationOptions::default();
+            if (options.top_p - defaults.top_p).abs() > f64::EPSILON {
+                body.insert("top_p".into(), json!(options.top_p));
+            }
+            if options.top_k != defaults.top_k {
+                body.insert("top_k".into(), json!(options.top_k));
+            }
         }
         if let Some(seed) = options.seed {
             body.insert("seed".into(), json!(seed));
@@ -534,12 +540,37 @@ mod tests {
             temperature: 0.7,
             ..GenerationOptions::default()
         };
-        assert_eq!(
-            endpoint
-                .chat_body(&[ChatMessage::user("hi")], &sampled)
-                .unwrap()["top_k"],
-            50
+        let untouched = endpoint
+            .chat_body(&[ChatMessage::user("hi")], &sampled)
+            .unwrap();
+        assert!(
+            untouched.get("top_k").is_none() && untouched.get("top_p").is_none(),
+            "knobs left at their defaults are the server's to choose"
         );
+        let moved = |options: GenerationOptions| {
+            endpoint
+                .chat_body(&[ChatMessage::user("hi")], &options)
+                .unwrap()
+        };
+        let narrower = moved(GenerationOptions {
+            top_k: 40,
+            ..sampled.clone()
+        });
+        assert_eq!(narrower["top_k"], 40);
+        assert!(narrower.get("top_p").is_none());
+        let nucleus = moved(GenerationOptions {
+            top_p: 0.9,
+            ..sampled.clone()
+        });
+        assert_eq!(nucleus["top_p"], 0.9);
+        assert!(nucleus.get("top_k").is_none());
+        // Greedy sends neither, moved or not.
+        let greedy = moved(GenerationOptions {
+            top_k: 40,
+            top_p: 0.9,
+            ..GenerationOptions::default()
+        });
+        assert!(greedy.get("top_k").is_none() && greedy.get("top_p").is_none());
         endpoint.model = None;
         assert!(matches!(
             endpoint.chat_body(&[ChatMessage::user("hi")], &sampled),

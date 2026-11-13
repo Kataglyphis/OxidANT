@@ -68,6 +68,9 @@ stays loaded. Without one configured both answer 503 and say which keys to set, 
   the 300 s limit (504), cancel the answer after its current token. A failure of the model or
   endpoint is a 502 carrying its message, never an empty answer; a model that returns no words
   is a 502 naming its finish reason. A body that does not arrive within 10 s is a 408.
+  A panic inside an answer is a 502 as well when the service is built with its own profile,
+  `cargo build --profile observant -p kataglyphis_observant` (release with `panic = "unwind"`);
+  a plain `--release` build aborts on any panic, and systemd restarts the camera after 5 s.
 - **A thinking model's reasoning is not the answer.** `answer` and `summary` leave it out, and
   `/ask`'s `thinking_chars` says how many characters of the reply it was, 0 for none; what counts
   as thinking, and what is not recognised: [text.md](text.md#generating). When the reply was

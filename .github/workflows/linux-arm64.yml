@@ -1,10 +1,12 @@
 # Linux arm64 lane: only when and which runner; every step lives in reusable-linux.yml.
 name: Linux arm64 · build + test
 
-# On request only (third_party/ANTfrastructure/docs/branch-and-release-strategy.md): on-request.yml or by hand.
+# On request, and weekly (owner, 2026-11-13): without it the Pi's architecture ran for 3 of 32 camera commits.
 on:
   workflow_dispatch:
   workflow_call:
+  schedule:
+    - cron: '43 3 * * 0'
 
 # Nothing here writes through GITHUB_TOKEN; the GHCR pull uses its own secret.
 permissions:

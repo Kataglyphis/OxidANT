@@ -120,10 +120,16 @@ env_cached!(
     }
 );
 
+/// The family's one default score threshold, measured at the cameras; ModelANT's contract states it.
+pub const DEFAULT_SCORE_THRESHOLD: f32 = 0.25;
+
 env_cached!(
-    /// `KATAGLYPHIS_SCORE_THRESHOLD`: detection confidence threshold (default `0.5`).
+    /// `KATAGLYPHIS_SCORE_THRESHOLD`: detection confidence threshold (default `0.25`).
     fn score_threshold -> f32, || {
-        parse_or(std::env::var("KATAGLYPHIS_SCORE_THRESHOLD").ok().as_deref(), 0.5)
+        parse_or(
+            std::env::var("KATAGLYPHIS_SCORE_THRESHOLD").ok().as_deref(),
+            DEFAULT_SCORE_THRESHOLD,
+        )
     }
 );
 
@@ -183,6 +189,9 @@ mod tests {
         assert_eq!(parse_or(Some("four"), 0usize), 0);
         assert_eq!(parse_or(None, 7u64), 7);
         assert_eq!(parse_or(Some(" 0.4"), 0.5f32), 0.4);
+        // Unset or unreadable, the threshold is the family's 0.25, not the 0.5 this variable once had.
+        assert_eq!(parse_or(None, DEFAULT_SCORE_THRESHOLD), 0.25);
+        assert_eq!(parse_or(Some("high"), DEFAULT_SCORE_THRESHOLD), 0.25);
         assert_eq!(
             parse_or(Some("-1"), 0u64),
             0,

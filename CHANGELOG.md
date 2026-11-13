@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-13, four owner decisions)
+- **The default score threshold is 0.25 everywhere.** `KATAGLYPHIS_SCORE_THRESHOLD` defaulted to 0.5 while
+  ObservANT and the bridge floor used 0.25, the value measured at the cameras; one picture gave different results
+  per product. The variable's default is now `DEFAULT_SCORE_THRESHOLD`, 0.25 (hub CON235). **A caller that relied
+  on 0.5 sets the variable.**
+- **The endpoint sends `top_p` and `top_k` only when the caller moved them.** `chat_body` sent both with every
+  sampled request, OmniAccelerANT's web client neither, so a strict server could refuse `top_k` on one path only.
+  Each is now sent only when it differs from its default (1.0 and 50); the server chooses otherwise.
+- **ObservANT has a build profile of its own.** `[profile.observant]` inherits release and sets
+  `panic = "unwind"`, so a panic in one answer costs a 502 and not the camera. Nothing builds with it yet:
+  OmniAccelerANT's package script is the next step (BACKLOG).
+- **The arm64 lane runs once a week.** `linux-arm64.yml` gets a `schedule` (Sundays 03:43 UTC), an exception to
+  the on-request rule as `linux-riscv64.yml` has one: it had run for 3 of 32 commits to the camera code.
+
 ### Added (2026-11-13, the detector checks what the model says about itself)
 - **A model that names another preprocessing or another layout is refused at load.** ModelANT's models carry
   `kataglyphis.preprocess` and `kataglyphis.output` in their ONNX metadata; the Rust detector read neither, so a

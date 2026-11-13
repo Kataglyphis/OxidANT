@@ -113,7 +113,7 @@ Optional environment variables:
   `kataglyphis.output` is not `xyxy_score_class`, the one layout this detector decodes: either
   would give wrong boxes on every frame. A model that carries neither key loads as before.
 - `KATAGLYPHIS_SWAP_XY` – set to `1` if the model output swaps X and Y (default: `0`)
-- `KATAGLYPHIS_SCORE_THRESHOLD` – detection score threshold (default: `0.5`)
+- `KATAGLYPHIS_SCORE_THRESHOLD` – detection score threshold (default: `0.25`, the family's one default)
 - `KATAGLYPHIS_INFER_EVERY_MS` – minimum interval between inference requests in ms (default: `0`: the next frame goes out as soon as the previous result is back)
 
 GPU inference notes:

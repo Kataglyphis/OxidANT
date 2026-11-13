@@ -132,6 +132,11 @@ codegen-units = 1
 strip = "symbols"
 panic = "abort"
 
+# ObservANT's own: a panic in one answer costs that answer, not the camera (owner decision 2026-11-13).
+[profile.observant]
+inherits = "release"
+panic = "unwind"
+
 [profile.profile]
 inherits = "release"
 debug = true
