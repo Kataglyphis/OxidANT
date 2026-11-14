@@ -106,15 +106,6 @@ and the backlog is empty"; it was neither.
       `docs/observant.md` change in the same commit. Guard: a perf-host row at ORT's default
       beside the shipped one with a ratio check, as OrchestrANT's `quality-report.toml` has.
 
-- [ ] **Rust tests leave no per-test record** (S, ★★). Audit 2026-11-12: the `test` step runs the
-      hub's `cargo_test.sh`, a plain `cargo test`, and `quality-report.toml` declares coverage,
-      mutation and rustdoc artifacts but no test results. So test counts and durations are
-      recorded nowhere, and a flaky test is hunted by hand, as the SIGSEGV above was. Next: a
-      short script turns the step's `cargo test` output into JUnit (in the hub's driver if a
-      second Rust consumer wants it), declared as an artifact in `quality-report.toml`. Guard:
-      the metric in `quality-report.sh --compare`. No soak workflow and no cargo-nextest until
-      a rerun rate in the hub's fleet-health shows which lane needs them.
-
 - [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
       nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
       in `.github/workflows/reusable-linux.yml` fails only on a doubling. On a Pi 5 the model is

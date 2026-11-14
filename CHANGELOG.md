@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-14, a per-test record of the Rust tests)
+- **The Linux test step writes `logs/test-results/cargo-test.xml`.** `scripts/linux/cargo-test-junit.py` turns the
+  step's `cargo test` log into JUnit, also after a failed run: one case per test with its outcome, an ignored test's
+  reason, a failed test's captured output, and one failed case `(binary ended early)` naming the signal for a binary
+  that died before its summary, as the golden suite's SIGSEGV did. The lane uploads it in
+  `lane-reports-<suffix>`, and `quality-report.toml` declares it (`cargo-test`), so `quality-report.sh --compare`
+  grades tests passed and skipped. Stable libtest prints no per-test time; each suite carries its binary's total.
+- Tests: `test-cargo-test-junit.sh` over two recorded logs (verbose with a failure, a crash and doc-tests; plain with
+  colour codes and the slow-test notice) and the step suite; recipes `consumer.oxidant-junit-crash-dropped` and
+  `consumer.oxidant-junit-failure-unrecorded`.
+
 ### Changed (2026-11-13, egui 0.37; the vendored egui-winit is gone; owner request)
 - **The egui family moves from 0.36 to 0.37** (`egui`, `egui-winit`, `egui-wgpu` in `crates/gui` and
   `crates/webgpu_renderer`); wgpu stays at 30. 0.37 carries emilk/egui#8516, so the vendored, patched

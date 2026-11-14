@@ -30,9 +30,13 @@ Coverage keeps the workspace's 70% floor and every per-crate floor; a missing di
 must fail rather than silently omit the GTK lifecycle from the measurement.
 Each per-crate floor in `COVERAGE_FLOORS` stays within 3 points of its printed figure:
 `check-crate-coverage.py --max-slack 3` warns about a larger slack without failing, and a crate
-that has no floor fails the step. The lane uploads `cobertura.xml` and the `rustdoc-log` step's
-`logs/code-quality/rustdoc.txt`, written without colours so its `warning:` lines count, as
-`lane-reports-<suffix>`, which quality-report reads.
+that has no floor fails the step. The lane uploads `cobertura.xml`, the `rustdoc-log` step's
+`logs/code-quality/rustdoc.txt`, written without colours so its `warning:` lines count, and the
+`test` step's `logs/test-results/cargo-test.xml` as `lane-reports-<suffix>`, which quality-report reads.
+`scripts/linux/cargo-test-junit.py` writes that JUnit from the step's log, also after a failed run:
+one case per test with its outcome, an ignored test's reason and a failed test's captured output, and
+one failed case `(binary ended early)` with the signal for a binary that died before its summary.
+Stable libtest prints no per-test time, so each suite carries its binary's total only.
 
 The CLI suite's `gui_finishes_its_first_frame` starts `kataglyphis_cli gui` under the same display with no
 model and waits for its `First GUI frame finished` line. That first frame uploads the font atlas, so a

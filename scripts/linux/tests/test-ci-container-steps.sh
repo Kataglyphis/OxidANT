@@ -35,6 +35,8 @@ SH
 cat > "${work}/hub/linux/scripts/02-toolchain/rust/cargo_test.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'DRIVER\n'
+printf '\nrunning 2 tests\ntest a::passes ... ok\ntest a::fails ... FAILED\n\n'
+printf 'test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n' >&2
 printf 'ARG=%s\n' "$@"
 printf 'GPU=%s\nMODEL=%s\nGST=%s\nGTK=%s\n' \
     "${KATAGLYPHIS_REQUIRE_GPU}" "${KATAGLYPHIS_REQUIRE_MODEL}" \
@@ -110,6 +112,7 @@ run_step_defaults() {
     run_step "$1" 0 --package 'two words' ''
 }
 
+rm -rf "${work}/logs"
 run_step_defaults test
 t_case "the actual CI entry point retains its launcher and reaches the driver"
 t_assert_grep "${work}/rc" '^0$'
@@ -126,6 +129,9 @@ t_case "after the tests, the CLI is built and the backend parity check runs on M
 t_assert_grep "${work}/out" '^CARGO-BUILD build --locked -p kataglyphis_cli$'
 t_assert_grep "${work}/out" '^ORT and tract agree$'
 t_assert_grep "${work}/out" '^ORT CPU and XNNPACK agree$'
+t_case "the test log, stderr included, becomes the JUnit record the quality report reads"
+t_assert_grep "${work}/logs/test-results/cargo-test.txt" '^test result: FAILED'
+t_assert_grep "${work}/logs/test-results/cargo-test.xml" '<testsuites name="cargo test" tests="2" failures="1" skipped="0">'
 t_case "all required services default to mandatory"
 t_assert_grep "${work}/out" '^GPU=1$'
 t_assert_grep "${work}/out" '^MODEL=1$'
@@ -134,10 +140,13 @@ t_assert_grep "${work}/out" '^GTK=1$'
 
 export KATAGLYPHIS_REQUIRE_GPU=caller-gpu KATAGLYPHIS_REQUIRE_MODEL=caller-model
 export KATAGLYPHIS_REQUIRE_GST=caller-gst KATAGLYPHIS_REQUIRE_GTK=caller-gtk
+rm -rf "${work}/logs"
 run_step test 37
 t_case "the driver's failure status reaches CI"
 t_assert_grep "${work}/rc" '^37$'
 t_assert_no_grep "${work}/out" '^CARGO-BUILD'
+t_case "a failed run still leaves its JUnit record"
+t_assert_grep "${work}/logs/test-results/cargo-test.xml" 'name="a::fails"'
 t_case "caller overrides are preserved while GTK stays mandatory"
 t_assert_grep "${work}/out" '^GPU=caller-gpu$'
 t_assert_grep "${work}/out" '^MODEL=caller-model$'

@@ -1,0 +1,14 @@
+     Running unittests src/lib.rs (target/debug/deps/kataglyphis_text-0123456789abcdef)
+
+running 1 test
+test [32mtokenizer::tests::splits[0m ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/contract.rs (target/debug/deps/contract-fedcba9876543210)
+
+running 1 test
+test every_contract_case_decodes has been running for over 60 seconds
+test every_contract_case_decodes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 64.31s

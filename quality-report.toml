@@ -36,6 +36,14 @@ workflow = "linux-x64.yml"
 pattern = '^warning: (?!.*generated \d+ warnings?)'
 location = '-->\s+(?P<path>[^:\s]+):(?P<line>\d+)'
 
+# scripts/linux/cargo-test-junit.py writes it from the test step's log; libtest prints no per-test time.
+[[artifact]]
+name = "cargo-test"
+kind = "junit"
+path = "logs/test-results/cargo-test.xml"
+artifact = "lane-reports-ubuntu-26.04-x64"
+workflow = "linux-x64.yml"
+
 # The bridge file is generated, so its unsafe blocks move with the API, not with hand-written code.
 [[metric]]
 name = "unsafe_blocks"

@@ -276,7 +276,8 @@ environment fault. Verify in WSL instead:
 `bash scripts/linux/quality-report.sh` measures this checkout into `logs/code-quality/measurements.json`
 and `queue.md`; `--compare <file>` or `--compare previous-develop` grades it (exit 0 ok, 1 regressed,
 2 incomplete). `quality-report.toml` declares this repo's lane outputs and metrics, the coverage and
-rustdoc-warning ones from the x64 lane's `lane-reports-ubuntu-26.04-x64` artifact: hub
+rustdoc-warning ones and the tests passed and skipped (`cargo-test`, a JUnit) from the x64 lane's
+`lane-reports-ubuntu-26.04-x64` artifact: hub
 `docs/code-quality-tooling.md` § quality-report. A regressed verdict on develop is fixed or recorded
 in `BACKLOG.md` before new feature work. `bash scripts/linux/quality-report.sh --perf-host` runs the
 latency commands that toml declares inside `:latest` and grades them against `perf/baseline-<cpu>.json`;

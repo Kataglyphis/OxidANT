@@ -55,7 +55,16 @@ case "$step" in
         bash "${SCRIPT_DIR}/fetch-models.sh"
         bash "${SCRIPT_DIR}/fetch-models.sh" --llm
         # Xvfb omits its readiness signal when xvfb-run is PID 1, so retain this parent shell.
-        xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_test.sh")" "$@" || exit "$?"
+        mkdir -p logs/test-results
+        rc=0
+        xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_test.sh")" "$@" 2>&1 \
+            | tee logs/test-results/cargo-test.txt || rc=$?
+        # A failed run's record matters most, so the JUnit is written before its status ends the step.
+        junit_rc=0
+        python3 "${SCRIPT_DIR}/cargo-test-junit.py" logs/test-results/cargo-test.txt logs/test-results/cargo-test.xml \
+            || junit_rc=$?
+        [ "${rc}" != 0 ] || rc="${junit_rc}"
+        [ "${rc}" = 0 ] || exit "${rc}"
         cargo build --locked -p kataglyphis_cli
         target_dir="$(cargo metadata --locked --no-deps --format-version 1 \
             | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"

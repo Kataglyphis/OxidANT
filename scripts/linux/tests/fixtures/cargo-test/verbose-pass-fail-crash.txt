@@ -1,0 +1,45 @@
+   Compiling kataglyphis_core v0.1.0 (/workspace/crates/core)
+     Running `/usr/local/rustup/toolchains/stable/bin/rustc --crate-name kataglyphis_core --edition=2024 crates/core/src/lib.rs --out-dir /workspace/target/debug/deps -L dependency=/workspace/target/debug/deps`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 41.20s
+     Running `CARGO=/usr/local/cargo/bin/cargo CARGO_MANIFEST_DIR=/workspace/crates/core CARGO_PKG_NAME=kataglyphis_core /workspace/target/debug/deps/kataglyphis_core-0f9e8d7c6b5a4f3e`
+
+running 4 tests
+test config::tests::reads_defaults ... ok
+test config::tests::needs_a_gpu ... ignored, needs a Vulkan device
+test config::tests::rejects_zero ... FAILED
+test frame::tests::round_trips ... ok
+
+failures:
+
+---- config::tests::rejects_zero stdout ----
+
+thread 'config::tests::rejects_zero' panicked at crates/core/src/config.rs:88:9:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    config::tests::rejects_zero
+
+test result: FAILED. 2 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+     Running `CARGO=/usr/local/cargo/bin/cargo CARGO_MANIFEST_DIR=/workspace/crates/gui CARGO_PKG_NAME=kataglyphis_gui /workspace/target/debug/deps/golden-1a2b3c4d5e6f7a8b`
+
+running 3 tests
+test renders_the_overlay ... ok
+test renders_two_boxes ... ok
+error: test failed, to rerun pass `-p kataglyphis_gui --test golden`
+
+Caused by:
+  process didn't exit successfully: `/workspace/target/debug/deps/golden-1a2b3c4d5e6f7a8b` (signal: 11, SIGSEGV: invalid memory reference)
+   Doc-tests kataglyphis_core
+     Running `rustdoc --edition=2024 --crate-type lib --test crates/core/src/lib.rs --crate-name kataglyphis_core`
+
+running 2 tests
+test crates/core/src/lib.rs - Config::new (line 12) ... ok
+test crates/core/src/lib.rs - Frame (line 40) ... ignored
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.05s
+

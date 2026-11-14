@@ -609,5 +609,21 @@
   "replace": "        failed = False\n    elif int(lines) > budget:",
   "test": "bash scripts/linux/tests/test-rust-function-sizes.sh",
   "why": "A new function over 80 lines in a gated crate must fail, as clippy fails it."
+ },
+ {
+  "id": "consumer.oxidant-junit-crash-dropped",
+  "target": "scripts/linux/cargo-test-junit.py",
+  "find": "        if not suite.finished:\n",
+  "replace": "        if False:\n",
+  "test": "bash scripts/linux/tests/test-cargo-test-junit.sh",
+  "why": "A test binary that died mid-run, as the SIGSEGV did, is a failure in the record, not a short green suite."
+ },
+ {
+  "id": "consumer.oxidant-junit-failure-unrecorded",
+  "target": "scripts/linux/ci-container-steps.sh",
+  "find": "            | tee logs/test-results/cargo-test.txt || rc=$?\n",
+  "replace": "            | tee logs/test-results/cargo-test.txt || exit \"$?\"\n",
+  "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
+  "why": "A failed test run still writes its JUnit record before its status ends the step."
  }
 ]
