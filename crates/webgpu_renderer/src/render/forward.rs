@@ -294,6 +294,7 @@ pub struct ForwardRenderer {
 }
 
 impl ForwardRenderer {
+    #[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
     pub fn new(gpu: &GpuContext, width: u32, height: u32) -> Self {
         let device = &gpu.device;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -917,6 +918,7 @@ impl ForwardRenderer {
     }
 
     /// Uploads a CPU scene, replacing any previously uploaded one.
+    #[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
         let device = &gpu.device;
         self.primitives.clear();
@@ -1258,6 +1260,7 @@ impl ForwardRenderer {
     }
 
     /// Renders the scene HDR->tonemap into `output_view`, which must be `width` x `height`.
+    #[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
     pub fn render_tonemapped(
         &mut self,
         gpu: &GpuContext,
@@ -1979,6 +1982,7 @@ impl ForwardRenderer {
     }
 
     /// Samples every animation at `time` (s) and retargets transforms, bounds and blend centres.
+    #[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
     pub fn set_animation_time(&mut self, time: f32) {
         if self.animations.is_empty() || self.nodes.is_empty() {
             return;

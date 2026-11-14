@@ -10,3 +10,25 @@ crates/gui/src/gui.rs | try_build_ui | 143 | the GTK window, its widgets and the
 crates/gui/src/gui_wgpu/renderer.rs | submit_frame | 95 | one egui frame from input to present; clippy counts it under 80 without comments, the hub counts them
 crates/burn_demos/src/main.rs | main | 93 | the demo subcommand dispatch; #[expect] in the source
 crates/burn_demos/src/onnx_detector.rs | onnx_detector_demo | 87 | one detector run from model to output shape; clippy counts it under 80 without comments, the hub counts them
+crates/webgpu_renderer/examples/viewer.rs | redraw | 83 | the example viewer's whole frame; a row only: clippy counts it under 80, or it is outside the crate root's lint
+crates/webgpu_renderer/src/asset/gltf_loader.rs | build_scene | 143 | one glTF document into the scene graph; #[expect] in the source
+crates/webgpu_renderer/src/asset/gltf_loader.rs | load_primitive | 236 | one glTF primitive, every attribute and its fallbacks; #[expect] in the source
+crates/webgpu_renderer/src/asset/gltf_loader.rs | generate_tangents_mikktspace | 84 | MikkTSpace's callbacks in one place; a row only: clippy counts it under 80, or it is outside the crate root's lint
+crates/webgpu_renderer/src/asset/hdr.rs | every_malformed_input_is_a_typed_error_not_a_panic | 108 | one table of malformed HDR files; a row only: clippy counts it under 80, or it is outside the crate root's lint
+crates/webgpu_renderer/src/asset/obj_to_gltf.rs | parse_mtl | 103 | the MTL keywords in one match; #[expect] in the source
+crates/webgpu_renderer/src/asset/obj_to_gltf.rs | parse_obj_with_materials | 171 | the OBJ keywords in one match; #[expect] in the source
+crates/webgpu_renderer/src/asset/obj_to_gltf.rs | to_gltf | 285 | one OBJ model into a glTF document; #[expect] in the source
+crates/webgpu_renderer/src/render/forward.rs | new | 405 | the forward renderer's pipelines and bind groups; #[expect] in the source
+crates/webgpu_renderer/src/render/forward.rs | upload_scene | 339 | the scene's buffers and textures in one pass; #[expect] in the source
+crates/webgpu_renderer/src/render/forward.rs | render_tonemapped | 520 | the frame's passes in their order; #[expect] in the source
+crates/webgpu_renderer/src/render/forward.rs | render_to_pixels_with_format | 83 | one offscreen frame read back; a row only: clippy counts it under 80, or it is outside the crate root's lint
+crates/webgpu_renderer/src/render/forward.rs | set_animation_time | 99 | every channel of an animation at one time; #[expect] in the source
+crates/webgpu_renderer/src/render/gpu_occlusion.rs | cull | 94 | the occlusion pass and its readback; a row only: clippy counts it under 80, or it is outside the crate root's lint
+crates/webgpu_renderer/src/render/ibl.rs | bake | 109 | the IBL bake's three passes; #[expect] in the source
+crates/webgpu_renderer/src/render/tile_grid.rs | build_tile_light_grid | 87 | the light grid in one sweep; a row only: clippy counts it under 80, or it is outside the crate root's lint
+crates/webgpu_renderer/src/scene/lod.rs | simplify_primitive | 111 | one LOD level of a primitive; #[expect] in the source
+crates/webgpu_renderer/src/wasm_demo.rs | window_event | 146 | the web demo's event match; a row only: clippy counts it under 80, or it is outside the crate root's lint
+crates/webgpu_renderer/tests/headless.rs | morph_weight_lifts_the_silhouette | 90 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint
+crates/webgpu_renderer/tests/headless.rs | masked_card_casts_half_the_shadow_of_an_opaque_one | 135 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint
+crates/webgpu_renderer/tests/headless.rs | vertex_colors_tint_the_surface | 88 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint
+crates/webgpu_renderer/tests/headless.rs | texture_slot_samples_its_declared_uv_set | 107 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint

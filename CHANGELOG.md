@@ -23,6 +23,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   in clippy's count).
 - `crates/burn_demos` too: its `main` (`#[expect]` and a row) and `onnx_detector_demo` (a row only).
 - `crates/cxx_bridge` too, with no function over the limit.
+- `crates/webgpu_renderer` too: eleven of its long passes are over 80 in clippy's count and carry an `#[expect]`
+  and a row; eleven more (shorter in clippy's count, or in its integration tests, example and wasm demo) a row
+  only. Only the ESP32 firmware crate is left, since it builds for the board.
 
 ### Changed (2026-11-14, one guard for a cancel while the model loads; a client that leaves is tested)
 - `kataglyphis_text::after_load` runs a generation on what a loader opened, or gives `None` when the cancel fired

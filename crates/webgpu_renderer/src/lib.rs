@@ -1,5 +1,8 @@
 //! WebGPU renderer with glTF loading; the plan it implements is `../docs/webgpu-gltf-rust-plan.md`.
 
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
+
 pub mod asset;
 pub mod context;
 pub mod render;

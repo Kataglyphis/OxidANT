@@ -40,6 +40,7 @@ pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
     build_scene(document, buffers, images)
 }
 
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn build_scene(
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
@@ -454,6 +455,7 @@ fn visit_node(
     Ok(())
 }
 
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn load_primitive(
     primitive: &gltf::Primitive,
     transform: Mat4,

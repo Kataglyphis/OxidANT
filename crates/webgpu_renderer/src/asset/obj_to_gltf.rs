@@ -91,6 +91,7 @@ impl ObjMesh {
 }
 
 /// Parses the `.mtl` subset glTF can represent; unknown Phong-era directives are ignored, not rejected.
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
     let mut materials: Vec<ObjMaterial> = Vec::new();
 
@@ -211,6 +212,7 @@ pub fn parse_obj(source: &str) -> Result<ObjMesh> {
 }
 
 /// As [`parse_obj`], with materials already loaded from the companion `.mtl`.
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Result<ObjMesh> {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
@@ -476,6 +478,7 @@ fn resolve(index: i64, available: usize, line: usize, what: &str) -> Result<usiz
 }
 
 /// Serialises a mesh as `(gltf_json, bin)`; the JSON references `bin_uri`, so the caller picks the layout.
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     let mut bin: Vec<u8> = Vec::new();
 

@@ -381,6 +381,7 @@ pub struct IblEnvironment {
 
 impl IblEnvironment {
     /// Bakes every environment-dependent map from `equirect`, in one submit.
+    #[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
     pub fn bake(gpu: &GpuContext, equirect: &EquirectImage) -> Self {
         let device = &gpu.device;
         let precompute = Precompute::new(device);

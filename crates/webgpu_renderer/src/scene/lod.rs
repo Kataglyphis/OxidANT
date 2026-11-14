@@ -16,6 +16,7 @@ pub struct Lod {
 }
 
 /// Clusters vertices onto a grid whose cell is `cell_ratio` of the bbox diagonal.
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
