@@ -2018,4 +2018,80 @@ mod tests {
         status.persist();
         assert!(dir.path().join(VISITS_FILE).is_file());
     }
+
+    /// One camera delivering frames to an ONNX Runtime model, as the goldens describe it.
+    fn golden_camera() -> Status {
+        let status = Status::new("Cat Cam", true, 640, 480)
+            .running_on(Some(("onnxruntime", "cpu")))
+            .watching(vec!["cat".to_owned()], false)
+            .at_fps(30);
+        status.set_camera("v4l2src /dev/video0 (C920)", false);
+        status.set_frame(&gst::Buffer::from_mut_slice(vec![
+            0u8;
+            crate::frame::size(640, 480)
+        ]));
+        status.set_stats(Stats {
+            capture_fps: Some(30.0),
+            model_runs_per_s: Some(4.0),
+            model_ms: Some(212.5),
+            cpu_percent: Some(180.0),
+            cores: 4,
+            rss_mb: Some(310.0),
+            load_1m: Some(1.5),
+            temperature_c: Some(52.0),
+            uptime_s: 3600,
+        });
+        status
+    }
+
+    /// `/healthz` with the fields that move with the clock or the build set to fixed values.
+    fn golden_text(status: &Status) -> String {
+        let mut json: serde_json::Value = serde_json::from_str(&status.to_json()).unwrap();
+        json["version"] = "golden".into();
+        for age in ["frame_age_s", "model_age_s"] {
+            if json[age].is_number() {
+                json[age] = 0.into();
+            }
+        }
+        let detection = &mut json["detection"];
+        if detection["last_seen"].is_number() {
+            detection["last_seen"] = 1_767_225_600_u64.into();
+        }
+        for visit in detection["recent"].as_array_mut().into_iter().flatten() {
+            visit["arrived"] = 1_767_225_600_u64.into();
+        }
+        serde_json::to_string_pretty(&json).unwrap() + "\n"
+    }
+
+    /// OmniAccelerANT parses these files, so a key renamed here fails at once; OBSERVANT_UPDATE_GOLDEN=1 rewrites them.
+    #[test]
+    fn healthz_matches_its_goldens() {
+        gst::init().unwrap();
+        let idle = golden_camera();
+        idle.set_detection(false, None, None);
+        let visit = golden_camera();
+        visit.set_boxes(vec![[0.25, 0.3, 0.6, 0.9]]);
+        visit.set_detection(true, Some(0.75), Some(&arrived()));
+        visit.set_clip(b"mp4".to_vec(), 1_767_225_600);
+        let problem = golden_camera();
+        *problem.run_started.lock().unwrap() =
+            Instant::now().checked_sub(Duration::from_secs(30));
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/healthz");
+        for (name, status) in [("idle", idle), ("visit", visit), ("problem", problem)] {
+            let path = dir.join(format!("{name}.json"));
+            let text = golden_text(&status);
+            if std::env::var_os("OBSERVANT_UPDATE_GOLDEN").is_some() {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&path, &text).unwrap();
+                continue;
+            }
+            let golden = std::fs::read_to_string(&path).unwrap_or_default();
+            assert_eq!(
+                golden,
+                text,
+                "{} differs; OBSERVANT_UPDATE_GOLDEN=1 rewrites it",
+                path.display()
+            );
+        }
+    }
 }

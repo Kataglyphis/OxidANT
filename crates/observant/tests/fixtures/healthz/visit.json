@@ -1,0 +1,73 @@
+{
+  "all_classes": false,
+  "ask": false,
+  "backend": "onnxruntime",
+  "camera": "v4l2src /dev/video0 (C920)",
+  "classes": [
+    "cat"
+  ],
+  "dark": false,
+  "detection": {
+    "boxes": [
+      [
+        0.25,
+        0.3,
+        0.6,
+        0.9
+      ]
+    ],
+    "clip": 1767225600,
+    "clips": [
+      1767225600
+    ],
+    "in_view": true,
+    "last_score": 0.75,
+    "last_seen": 1767225600,
+    "recent": [
+      {
+        "arrived": 1767225600,
+        "boxes": [
+          [
+            0.25,
+            0.3,
+            0.6,
+            0.9
+          ]
+        ],
+        "class": "cat",
+        "stayed_s": null
+      }
+    ],
+    "visits": 1
+  },
+  "execution_provider": "cpu",
+  "frame": {
+    "fps": 30,
+    "height": 480,
+    "width": 640
+  },
+  "frame_age_s": 0,
+  "inference": true,
+  "model_age_s": 0,
+  "model_runs": 1,
+  "name": "Cat Cam",
+  "ok": true,
+  "peers": [],
+  "privacy": "off",
+  "problem": null,
+  "rotate": 0,
+  "score": 0.25,
+  "stats": {
+    "capture_fps": 30.0,
+    "cores": 4,
+    "cpu_percent": 180.0,
+    "load_1m": 1.5,
+    "model_ms": 212.5,
+    "model_runs_per_s": 4.0,
+    "rss_mb": 310.0,
+    "temperature_c": 52.0,
+    "uptime_s": 3600
+  },
+  "version": "golden",
+  "viewers": 0
+}

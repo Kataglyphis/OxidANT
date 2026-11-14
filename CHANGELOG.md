@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-14, `/healthz` has goldens OmniAccelerANT can read)
+- `crates/observant/tests/fixtures/healthz/{idle,visit,problem}.json`: what `/healthz` answers for a camera with an
+  ONNX Runtime model, idle, during a visit (boxes, a kept clip, the stats) and with a model run that has not come
+  back for 30 s. `healthz_matches_its_goldens` in `status.rs` fails when `to_json` differs from them, with the clock
+  and build fields set to fixed values; `OBSERVANT_UPDATE_GOLDEN=1` rewrites them. OmniAccelerANT parses these files
+  instead of its copy of one answer. A renamed key fails the test (proven by a mutation in the image; no manifest
+  recipe, since this repository's mutation lane runs without GStreamer).
+
 ### Changed (2026-11-14, ObservANT's own builds use its profile)
 - `observant_build_producer` (`scripts/linux/observant/lib/producer-container.sh`) builds
   `cargo build --profile observant`, and `run-producer-pi.sh` runs `target/observant/kataglyphis_observant`, so

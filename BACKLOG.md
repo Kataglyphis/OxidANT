@@ -268,13 +268,11 @@ and the backlog is empty"; it was neither.
       BACKLOG CON191 (an image chain). Then `cpu_accelerators.rs` and `check-backend-parity.sh`
       require DNNL to run and match the CPU provider on amd64; nothing here changes.
 
-- [ ] **OmniAccelerANT still packages ObservANT with `--release`** (S, ★★). The service has its own profile
-      since 2026-11-13 (`[profile.observant]`: release with `panic = "unwind"`, owner decision), so the
-      poisoned-lock recovery and the failed-task reply in `crates/observant/src/ask.rs` can run in the field.
-      Nothing builds with it yet: OmniAccelerANT's `package-observant.sh` runs `cargo build --release` and
-      takes `target/release/kataglyphis_observant`. Done when that script builds `--profile observant` at a
-      pin that has the profile, and a packaged service answers 502 to a question whose answer panics.
-
+- [ ] **No packaged ObservANT has answered 502 to a panicking question yet** (S, ★★). Since 2026-11-14 every
+      ObservANT build uses its own profile (`[profile.observant]`, release with `panic = "unwind"`, owner decision of
+      2026-11-13): OxidANT's producer helper (790f8bb) and OmniAccelerANT's three package paths (8108bd6). Left: the
+      proof in the field. Done when a packaged service answers 502 to a question whose answer panics and keeps
+      streaming (`crates/observant/src/ask.rs`, the poisoned-lock recovery and the failed-task reply).
 - [ ] **The renderer, the GUI and the demos are outside the function-size gate** (S, ★). Since 2026-11-13
       (owner decision) `crates/observant`, `crates/inference`, `crates/media` and `src` fail a new
       function over 80 lines (`#![warn(clippy::too_many_lines)]`, `clippy.toml`) and hold today's four
