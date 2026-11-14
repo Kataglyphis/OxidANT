@@ -1,5 +1,8 @@
 //! Burn demos of common PyTorch tasks, and the family's detector run through ONNX Runtime.
 
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
+
 use burn::tensor::Device;
 
 pub mod lcg;

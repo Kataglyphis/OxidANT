@@ -1,3 +1,6 @@
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
+
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 
@@ -97,6 +100,7 @@ enum Command {
     SaveLoad,
 }
 
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
