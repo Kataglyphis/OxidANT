@@ -2086,7 +2086,10 @@ mod tests {
                 std::fs::write(&path, &text).unwrap();
                 continue;
             }
-            let golden = std::fs::read_to_string(&path).unwrap_or_default();
+            // A Windows checkout may hand the file over with CRLF; the bytes ObservANT sends are LF.
+            let golden = std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .replace("\r\n", "\n");
             assert_eq!(
                 golden,
                 text,

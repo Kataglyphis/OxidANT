@@ -13,6 +13,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-14, the healthz golden test on a Windows checkout)
+- `healthz_matches_its_goldens` compares the golden with its line ends made LF: a Windows checkout hands the JSON
+  over with CRLF, so the test failed on both Windows lanes while ObservANT's answer was right.
+
 ### Fixed (2026-11-14, a text recipe ran the other mirror's binary)
 - The 13 `consumer.oxidant-text-*` recipes build into `${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-<mirror>`, one
   target directory per mirror. They shared one: cargo names a workspace member's artefacts without its absolute
