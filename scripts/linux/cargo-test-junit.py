@@ -134,10 +134,10 @@ def main(argv: list[str] | None = None) -> int:
     if not suites:
         print(f"cargo-test-junit: no test binary ran in {args.log}", file=sys.stderr)
         return 1
-    tree = ET.ElementTree(to_xml(suites))
+    root = to_xml(suites)
+    tree = ET.ElementTree(root)
     ET.indent(tree)
     tree.write(args.output, encoding="utf-8", xml_declaration=True)
-    root = tree.getroot()
     print(
         f"cargo-test-junit: {root.get('tests')} tests, {root.get('failures')} failed, "
         f"{root.get('skipped')} skipped in {len(suites)} binaries -> {args.output}"
