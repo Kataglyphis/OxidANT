@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-14, five more crates under the function-size gate)
+- `crates/text`, `crates/core`, `crates/esp32-protocol`, `crates/cli` and `crates/telemetry` set
+  `#![warn(clippy::too_many_lines)]`, and `check-rust-function-sizes.sh` scans them. Two functions were over 80 lines
+  in the hub's count: the CLI's `main` (92 in clippy's count, `#[expect]` and a row) and telemetry's
+  `run_monitor_loop` (a row only: clippy counts it under 80 without its comments). Left out: the GUI, the demos,
+  the ESP32 firmware crate, the C++ bridge and the renderer (`BACKLOG.md`).
+
 ### Changed (2026-11-14, one guard for a cancel while the model loads; a client that leaves is tested)
 - `kataglyphis_text::after_load` runs a generation on what a loader opened, or gives `None` when the cancel fired
   while it loaded (a backend clears the token as a run starts, so that cancel would be lost). ObservANT's

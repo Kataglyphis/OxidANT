@@ -254,13 +254,13 @@ and the backlog is empty"; it was neither.
       proof in the field. Done when a packaged service answers 502 to a question whose answer panics and keeps
       streaming (`crates/observant/src/ask.rs`, the poisoned-lock recovery and the failed-task reply).
 - [ ] **The renderer, the GUI and the demos are outside the function-size gate** (S, ★). Since 2026-11-13
-      (owner decision) `crates/observant`, `crates/inference`, `crates/media` and `src` fail a new
-      function over 80 lines (`#![warn(clippy::too_many_lines)]`, `clippy.toml`) and hold today's four
-      to `rust-function-size.allow` (`docs/testing.md` § Formatting and lints). Left: the other crates,
-      about 30 functions, most of them the renderer's long passes. Next: one crate per change, its root
-      gets the attribute, its offenders an `#[expect]` and a row, and `check-rust-function-sizes.sh`
-      its directory in `scopes`.
-
+      (owner decision) a function over 80 lines fails in the gated crates (`#![warn(clippy::too_many_lines)]`,
+      `clippy.toml`, `rust-function-size.allow`; `docs/testing.md` § Formatting and lints): `crates/observant`,
+      `crates/inference`, `crates/media` and `src`, and since 2026-11-14 `crates/text`, `crates/core`,
+      `crates/esp32-protocol`, `crates/cli` (its `main`, frozen) and `crates/telemetry`. Left: `crates/gui` (2 over
+      80), `crates/burn_demos` (2), `crates/esp32` (1, builds for the board), `crates/cxx_bridge` (none, builds C++)
+      and `crates/webgpu_renderer` (22, its long passes). Next: one crate per change, its root gets the attribute,
+      its offenders an `#[expect]` and a row, and `check-rust-function-sizes.sh` its directory in `scopes`.
 - [b] **`/ask` shows no text until the whole answer is there** (L, ★★). Audit 2026-11-12:
       `Assistant::run` in `crates/observant/src/ask.rs` throws the pieces away and `web.rs` has
       `Body = Full<Bytes>`, so the Stream page waits up to 310 s behind one empty bubble.

@@ -4,6 +4,8 @@
 //! The CRC covers version, sequence, length and payload. It is shared verbatim by the
 //! firmware (`firmware/esp32-s3`), which is why this crate is `no_std`.
 
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
 #![no_std]
 
 use serde::{Deserialize, Serialize};

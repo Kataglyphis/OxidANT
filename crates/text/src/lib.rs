@@ -1,6 +1,9 @@
 //! Text generation for the Kataglyphis family: the chain's ONNX Runtime GenAI in process, or an OpenAI-compatible
 //! endpoint. Both follow the text contract in `third_party/ANTfrastructure/docs/language-ai.md`; see `docs/text.md` here.
 
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
+
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

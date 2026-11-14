@@ -14,7 +14,7 @@ done
 hub="${hub:-${root}/third_party/ANTfrastructure}"
 allow="${root}/rust-function-size.allow"
 # The crates whose roots carry #![warn(clippy::too_many_lines)].
-scopes=(crates/observant crates/inference crates/media src)
+scopes=(crates/observant crates/inference crates/media src crates/text crates/core crates/esp32-protocol crates/cli crates/telemetry)
 
 scan_args=()
 for scope in "${scopes[@]}"; do [ -d "${root}/${scope}" ] && scan_args+=(--scan "${scope}"); done

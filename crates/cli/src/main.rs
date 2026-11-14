@@ -1,3 +1,6 @@
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
+
 // src/main.rs — Thin CLI driver.  All logic lives in the library crate.
 
 /// Floor for the resource logging interval in milliseconds, against excessive logging overhead.
@@ -13,6 +16,7 @@ use cli::{Cli, Commands};
 use oxidant::{logging, resource_monitor, utils};
 
 #[tokio::main]
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     logging::init_logger();
