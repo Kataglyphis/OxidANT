@@ -196,7 +196,7 @@
   "target": "crates/text/src/genai.rs",
   "find": "        params.set_number(c\"random_seed\", f64::from(seed))?;",
   "replace": "        let _ = seed;",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "A seed reaches GenAI as random_seed, or a repeated seed samples differently."
  },
@@ -205,7 +205,7 @@
   "target": "crates/text/src/genai.rs",
   "find": "            other => Err(TextError::ProviderUnavailable(format!(\n                \"'{other}' is not cpu, cuda or dml\"\n            ))),",
   "replace": "            _ => Ok(Self::Cpu),",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib genai",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib genai",
   "timeout": 900,
   "why": "An unknown provider name is refused once, in kataglyphis_text, never run on the CPU instead."
  },
@@ -214,7 +214,7 @@
   "target": "crates/text/src/lib.rs",
   "find": "    let backend = load()?;\n    if cancel.is_cancelled() {\n        return Ok(None);\n    }\n",
   "replace": "    let backend = load()?;\n",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib after_load",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib after_load",
   "timeout": 900,
   "why": "A cancel that came while the model loaded ends the turn; a backend clears the token as it starts, so it would be lost."
  },
@@ -223,7 +223,7 @@
   "target": "crates/text/src/genai.rs",
   "find": "        params.set_guidance(c\"json_schema\", &c_string(schema, \"json_schema\")?)?;",
   "replace": "        let _ = schema;",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "A json_schema reaches GenAI's guidance, or the answer is unconstrained."
  },
@@ -232,7 +232,7 @@
   "target": "crates/text/src/genai.rs",
   "find": "    let sample = options.temperature > 0.0;",
   "replace": "    let sample = true;",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "Temperature 0 decodes greedily, which the exact-token contract tests rely on."
  },
@@ -241,7 +241,7 @@
   "target": "crates/text/src/genai.rs",
   "find": "            *sum += value;",
   "replace": "            *sum = *value;",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "An embedding is the mean over every token, not its last row."
  },
@@ -250,7 +250,7 @@
   "target": "crates/text/src/genai.rs",
   "find": "    if sequence != tokens || tokens == 0 || hidden == 0 || data.len() != tokens * hidden {",
   "replace": "    if tokens == 0 || hidden == 0 {",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "Only a [1, tokens, hidden] tensor may become a vector, or a wrong output embeds silently."
  },
@@ -259,7 +259,7 @@
   "target": "crates/text/src/genai.rs",
   "find": "    if message.contains(\"was not found\") {",
   "replace": "    if message.is_empty() {",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "A model without the output must say which export option adds it."
  },
@@ -268,7 +268,7 @@
   "target": "crates/text/src/endpoint.rs",
   "find": "            body.insert(\"seed\".into(), json!(seed));",
   "replace": "            let _ = seed;",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "An endpoint request carries the seed."
  },
@@ -277,7 +277,7 @@
   "target": "crates/text/src/endpoint.rs",
   "find": "            body.insert(\"response_format\".into(), response_format(schema));",
   "replace": "            let _ = response_format(schema);",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "An endpoint request carries the json_schema as response_format."
  },
@@ -286,7 +286,7 @@
   "target": "crates/text/src/endpoint.rs",
   "find": "            events.push(StreamEvent::Thinking(thinking.to_string()));",
   "replace": "            events.push(StreamEvent::Text(thinking.to_string()));",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "A server's reasoning delta is thinking, never answer text."
  },
@@ -295,7 +295,7 @@
   "target": "crates/text/src/answer.rs",
   "find": "            if closing && !self.inside {",
   "replace": "            if false {",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "A closing tag without its opening one makes everything before it thinking, as OrchestrANT reads it."
  },
@@ -304,7 +304,7 @@
   "target": "crates/text/src/answer.rs",
   "find": "            self.after_close = closing;",
   "replace": "            self.after_close = false;",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
   "timeout": 900,
   "why": "The answer starts with its first word, not with the blank lines a model writes after its thinking."
  },

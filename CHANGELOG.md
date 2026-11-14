@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-14, a text recipe ran the other mirror's binary)
+- The 13 `consumer.oxidant-text-*` recipes build into `${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-<mirror>`, one
+  target directory per mirror. They shared one: cargo names a workspace member's artefacts without its absolute
+  path, so two mirrors running in parallel overwrote each other's fingerprints and a mutant could run the other
+  mirror's unmutated test binary. `consumer.oxidant-text-unknown-provider-on-cpu` survived that way in CI, and bites
+  with two jobs now.
+
 ### Changed (2026-11-14, five more crates under the function-size gate)
 - `crates/text`, `crates/core`, `crates/esp32-protocol`, `crates/cli` and `crates/telemetry` set
   `#![warn(clippy::too_many_lines)]`, and `check-rust-function-sizes.sh` scans them. Two functions were over 80 lines
