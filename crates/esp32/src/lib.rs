@@ -1,5 +1,6 @@
 //! Bridge to the ESP32-S3 companion: USB discovery plus a framed, threaded serial link.
 //! Desktop only; the parent crate gates it out of Android and wasm builds.
+#![warn(clippy::too_many_lines)]
 
 pub mod discovery;
 pub mod link;

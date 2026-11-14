@@ -206,6 +206,31 @@ fn write_loop(
     }
 }
 
+/// What a board-sent message tells the app; none for a host-bound one.
+fn device_event(message: Message) -> Option<LinkEvent> {
+    Some(match message {
+        Message::Hello(info) => LinkEvent::Hello(info),
+        Message::Telemetry(telemetry) => LinkEvent::Telemetry(telemetry),
+        Message::Pong { id } => LinkEvent::Pong { id },
+        Message::Ack { command } => LinkEvent::Ack { command },
+        Message::Button { pressed, count } => LinkEvent::Button { pressed, count },
+        Message::Error { code } => LinkEvent::Error { code },
+        Message::CameraDetection {
+            count,
+            score_permille,
+        } => LinkEvent::CameraDetection {
+            count,
+            score_permille,
+        },
+        // Host-bound messages echoed by a confused device are ignored.
+        Message::HostHello { .. }
+        | Message::Ping { .. }
+        | Message::SetLed { .. }
+        | Message::Detection { .. }
+        | Message::SetTelemetryPeriod { .. } => return None,
+    })
+}
+
 fn read_loop<F>(
     port: &mut impl Read,
     tx: &mpsc::Sender<Message>,
@@ -231,34 +256,13 @@ fn read_loop<F>(
                 }
                 while let Some(frame) = decoder.next_frame() {
                     last_frame = Instant::now();
-                    match frame.message {
-                        Message::Hello(info) => {
-                            connected.store(true, Ordering::Release);
-                            emit.emit(LinkEvent::Hello(info));
-                        }
-                        Message::Telemetry(telemetry) => {
-                            emit.emit(LinkEvent::Telemetry(telemetry));
-                        }
-                        Message::Pong { id } => emit.emit(LinkEvent::Pong { id }),
-                        Message::Ack { command } => emit.emit(LinkEvent::Ack { command }),
-                        Message::Button { pressed, count } => {
-                            emit.emit(LinkEvent::Button { pressed, count });
-                        }
-                        Message::Error { code } => emit.emit(LinkEvent::Error { code }),
-                        Message::CameraDetection {
-                            count,
-                            score_permille,
-                        } => emit.emit(LinkEvent::CameraDetection {
-                            count,
-                            score_permille,
-                        }),
-                        // Host-bound messages echoed by a confused device are ignored.
-                        Message::HostHello { .. }
-                        | Message::Ping { .. }
-                        | Message::SetLed { .. }
-                        | Message::Detection { .. }
-                        | Message::SetTelemetryPeriod { .. } => {}
+                    let Some(event) = device_event(frame.message) else {
+                        continue;
+                    };
+                    if matches!(event, LinkEvent::Hello(_)) {
+                        connected.store(true, Ordering::Release);
                     }
+                    emit.emit(event);
                 }
             }
             Err(error)

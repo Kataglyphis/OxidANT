@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the healthz goldens on the Windows arm64 runner)
+- `healthz_matches_its_goldens` embeds the three goldens with `include_str!`; it read them at run time, and the
+  cross-built test on `windows-11-arm` runs where no checkout of the fixtures sits, so it compared against an empty
+  text (run 43645553880). `OBSERVANT_UPDATE_GOLDEN=1` still rewrites the files.
+
+### Changed (2026-11-14, crates/esp32 under the function-size gate)
+- `crates/esp32` is the host's USB-serial bridge, not firmware, so clippy checks it like any crate: its root sets
+  `#![warn(clippy::too_many_lines)]` and `check-rust-function-sizes.sh` scans it. `read_loop` (89 lines) hands
+  each board message to the new `device_event`, so no row and no `#[expect]` are needed.
+
 ### Fixed (2026-11-14, the healthz golden test on a Windows checkout)
 - `healthz_matches_its_goldens` compares the golden with its line ends made LF: a Windows checkout hands the JSON
   over with CRLF, so the test failed on both Windows lanes while ObservANT's answer was right.

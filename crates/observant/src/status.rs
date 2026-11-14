@@ -2078,7 +2078,25 @@ mod tests {
         let problem = golden_camera();
         *problem.run_started.lock().unwrap() = Instant::now().checked_sub(Duration::from_secs(30));
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/healthz");
-        for (name, status) in [("idle", idle), ("visit", visit), ("problem", problem)] {
+        // Embedded at build time: a cross-built test runs where no checkout sits beside it.
+        let goldens = [
+            (
+                "idle",
+                idle,
+                include_str!("../tests/fixtures/healthz/idle.json"),
+            ),
+            (
+                "visit",
+                visit,
+                include_str!("../tests/fixtures/healthz/visit.json"),
+            ),
+            (
+                "problem",
+                problem,
+                include_str!("../tests/fixtures/healthz/problem.json"),
+            ),
+        ];
+        for (name, status, embedded) in goldens {
             let path = dir.join(format!("{name}.json"));
             let text = golden_text(&status);
             if std::env::var_os("OBSERVANT_UPDATE_GOLDEN").is_some() {
@@ -2087,9 +2105,7 @@ mod tests {
                 continue;
             }
             // A Windows checkout may hand the file over with CRLF; the bytes ObservANT sends are LF.
-            let golden = std::fs::read_to_string(&path)
-                .unwrap_or_default()
-                .replace("\r\n", "\n");
+            let golden = embedded.replace("\r\n", "\n");
             assert_eq!(
                 golden,
                 text,

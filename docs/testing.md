@@ -112,8 +112,8 @@ inside the image reproduces the step itself. The shell, workflow, secret and con
 are `bash scripts/linux/run-lint-gates.sh`; with the hub's hook pair switched on (`AGENTS.md` § 5) a push
 runs them and `scripts/linux/pre-push-checks.sh`, the script suites of the lint lane.
 
-**Function size is a hard gate in every crate but the ESP32 firmware.** `crates/observant`, `crates/inference`,
-`crates/media`, the root crate `src` and, since 2026-11-14, `crates/text`, `crates/core`, `crates/esp32-protocol`,
+**Function size is a hard gate in every crate.** `crates/observant`, `crates/inference`,
+`crates/media`, the root crate `src` and, since 2026-11-14, `crates/text`, `crates/core`, `crates/esp32`, `crates/esp32-protocol`,
 `crates/cli`, `crates/telemetry`, `crates/gui`, `crates/burn_demos`, `crates/cxx_bridge` and `crates/webgpu_renderer` set `#![warn(clippy::too_many_lines)]`, and `clippy.toml`
 holds the limit, 80 lines in clippy's count (code lines only), so `-D warnings` fails a new long
 function there. Those over it carry `#[expect(clippy::too_many_lines)]` where clippy's count passes 80. An
@@ -121,7 +121,7 @@ function there. Those over it carry `#[expect(clippy::too_many_lines)]` where cl
 run by `pre-push-checks.sh`, holds every function over 80 lines in those crates to its row in
 `rust-function-size.allow` (the hub's count, comments included): one that grew, or a new one,
 fails. Shrink a frozen function and lower its row; split it and drop the row and the `#[expect]`.
-`crates/esp32` is not gated yet: it builds for the board, which clippy here does not target. On a small host check one crate at a time:
+On a small host check one crate at a time:
 `cargo clippy -p kataglyphis_observant --all-targets -- -D warnings`.
 
 The `lint-gates.yml` script-test job also runs `test-burn-lock-graph.sh` with Python 3.11+
