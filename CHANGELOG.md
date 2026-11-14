@@ -22,6 +22,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - `crates/gui` too: `try_build_ui` (the GTK window, `#[expect]` and a row) and `submit_frame` (a row only, under 80
   in clippy's count).
 - `crates/burn_demos` too: its `main` (`#[expect]` and a row) and `onnx_detector_demo` (a row only).
+- `crates/cxx_bridge` too, with no function over the limit.
 
 ### Changed (2026-11-14, one guard for a cancel while the model loads; a client that leaves is tested)
 - `kataglyphis_text::after_load` runs a generation on what a loader opened, or gives `None` when the cancel fired

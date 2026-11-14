@@ -1,5 +1,8 @@
 //! The cxx bridge BeschleunigerBallett's C++ engine calls; Corrosion's `corrosion_add_cxxbridge` generates its C++ half.
 
+// The owner's hard gate on function size; clippy.toml holds the limit.
+#![warn(clippy::too_many_lines)]
+
 #[cxx::bridge]
 mod ffi {
     extern "Rust" {
