@@ -80,6 +80,20 @@ pub enum FinishReason {
     Cancelled,
 }
 
+/// Runs `run` on what `load` opened, or gives `None` when `cancel` fired while it loaded: a backend clears the
+/// token as a run starts, so that cancel would be lost and a whole answer decoded for a caller who had left.
+pub fn after_load<B, T>(
+    cancel: &CancelToken,
+    load: impl FnOnce() -> Result<B, TextError>,
+    run: impl FnOnce(B) -> Result<T, TextError>,
+) -> Result<Option<T>, TextError> {
+    let backend = load()?;
+    if cancel.is_cancelled() {
+        return Ok(None);
+    }
+    run(backend).map(Some)
+}
+
 impl FinishReason {
     /// The name every surface reports: `stop`, `length` or `cancelled`.
     pub fn as_str(self) -> &'static str {
@@ -427,6 +441,25 @@ mod tests {
         assert!(TextError::EndpointStatus(503, "busy".into())
             .to_string()
             .contains("HTTP 503"));
+    }
+
+    #[test]
+    fn after_load_skips_the_run_on_a_cancel_while_the_model_loads() {
+        let cancel = CancelToken::default();
+        let ran = std::cell::Cell::new(false);
+        let load = || {
+            cancel.cancel();
+            Ok(())
+        };
+        let answered = after_load(&cancel, load, |()| {
+            ran.set(true);
+            Ok(1)
+        });
+        assert_eq!((answered.unwrap(), ran.get()), (None, false));
+        assert_eq!(
+            after_load(&CancelToken::default(), || Ok(()), |()| Ok(2)).unwrap(),
+            Some(2)
+        );
     }
 
     #[test]

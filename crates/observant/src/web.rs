@@ -1492,6 +1492,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_client_that_leaves_cancels_its_answer() {
+        let (assistant, saw_cancel) = crate::ask::tests::held_assistant();
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(assistant);
+        let addr = start_with(with_model).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let body = r#"{"question":"hi"}"#;
+        let request = format!(
+            "POST /ask HTTP/1.1\r\nhost: cat.local\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        // Long enough for the held model to start its answer, far shorter than its 10 s hold.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        drop(stream);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while !saw_cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the model still decodes for a client that left"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
     async fn a_failing_model_is_an_error_with_its_message_never_an_empty_answer() {
         let failure = kataglyphis_text::TextError::GenerationFailed("out of memory".into());
         let (assistant, _) = crate::ask::tests::stub_assistant(Err(failure), false);

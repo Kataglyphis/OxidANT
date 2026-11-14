@@ -125,22 +125,26 @@ impl Assistant {
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
             Err(TryLockError::WouldBlock) => return Err(Refusal::Busy),
         };
-        if backend.is_none() {
-            *backend = Some((self.open)().map_err(Refusal::Text)?);
-        }
-        // A backend clears the token as it starts, so a client that left while the model loaded would get a whole answer decoded for nobody.
-        if cancel.is_cancelled() {
-            return Err(Refusal::Cancelled);
-        }
         let options = GenerationOptions {
             max_new_tokens: self.max_new_tokens,
             ..GenerationOptions::default()
         };
-        backend
-            .as_mut()
-            .expect("opened above")
-            .generate(messages, &options, cancel, &mut |_| {})
-            .map_err(Refusal::Text)
+        let slot = &mut *backend;
+        let open = &self.open;
+        let answered = kataglyphis_text::after_load(
+            cancel,
+            move || {
+                let slot = slot;
+                if slot.is_none() {
+                    *slot = Some(open()?);
+                }
+                Ok(slot.as_mut().expect("opened above"))
+            },
+            |model| model.generate(messages, &options, cancel, &mut |_| {}),
+        )
+        .map_err(Refusal::Text)?;
+        // A client that left while the model loaded gets no answer decoded for nobody.
+        answered.ok_or(Refusal::Cancelled)
     }
 
     async fn answer(
@@ -556,6 +560,8 @@ pub(crate) mod tests {
         pub(crate) hold: bool,
         /// What the reply reports as thinking, as a thinking model's backend would.
         pub(crate) thinking_chars: usize,
+        /// Set once a held run ended because its cancel came.
+        pub(crate) saw_cancel: Arc<std::sync::atomic::AtomicBool>,
     }
 
     impl TextBackend for Stub {
@@ -572,6 +578,7 @@ pub(crate) mod tests {
                 std::thread::sleep(Duration::from_millis(2));
             }
             let finish_reason = if cancel.is_cancelled() {
+                self.saw_cancel.store(true, Ordering::SeqCst);
                 FinishReason::Cancelled
             } else {
                 FinishReason::Stop
@@ -602,9 +609,26 @@ pub(crate) mod tests {
                 reply,
                 hold,
                 thinking_chars: 0,
+                saw_cancel: Arc::default(),
             }))
         });
         (Arc::new(Assistant::with_opener(open, 16)), seen)
+    }
+
+    /// An assistant whose model holds its answer until a cancel comes, and the flag it sets then.
+    pub(crate) fn held_assistant() -> (Arc<Assistant>, Arc<std::sync::atomic::AtomicBool>) {
+        let saw_cancel: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+        let flag = saw_cancel.clone();
+        let open: Opener = Box::new(move || {
+            Ok(Box::new(Stub {
+                seen: Arc::default(),
+                reply: Ok("never".into()),
+                hold: true,
+                thinking_chars: 0,
+                saw_cancel: flag.clone(),
+            }))
+        });
+        (Arc::new(Assistant::with_opener(open, 16)), saw_cancel)
     }
 
     /// An assistant whose model thinks for `thinking_chars` characters and then answers `reply`.
@@ -616,6 +640,7 @@ pub(crate) mod tests {
                 reply: Ok(reply.clone()),
                 hold: false,
                 thinking_chars,
+                saw_cancel: Arc::default(),
             }))
         });
         Arc::new(Assistant::with_opener(open, 16))
@@ -751,6 +776,7 @@ pub(crate) mod tests {
                 reply: Ok("late".into()),
                 hold: true,
                 thinking_chars: 0,
+                saw_cancel: Arc::default(),
             }))
         });
         let mut slow = Assistant::with_opener(open, 1);

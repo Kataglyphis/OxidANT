@@ -219,20 +219,17 @@ mod enabled {
     ) -> Result<GenerationResult, TextError> {
         // A cancel from before this turn ended the turn before, or nothing.
         cancel.reset();
-        let backend = load()?;
-        if cancel.is_cancelled() {
-            return Ok(GenerationResult {
-                text: String::new(),
-                tokens: Vec::new(),
-                finish_reason: FinishReason::Cancelled,
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                time_to_first_token_ms: 0.0,
-                decode_tokens_per_second: 0.0,
-                thinking_chars: 0,
-            });
-        }
-        generate(backend)
+        let answered = kataglyphis_text::after_load(cancel, load, generate)?;
+        Ok(answered.unwrap_or(GenerationResult {
+            text: String::new(),
+            tokens: Vec::new(),
+            finish_reason: FinishReason::Cancelled,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            time_to_first_token_ms: 0.0,
+            decode_tokens_per_second: 0.0,
+            thinking_chars: 0,
+        }))
     }
 
     #[cfg(any(target_os = "linux", windows))]

@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-14, one guard for a cancel while the model loads; a client that leaves is tested)
+- `kataglyphis_text::after_load` runs a generation on what a loader opened, or gives `None` when the cancel fired
+  while it loaded (a backend clears the token as a run starts, so that cancel would be lost). ObservANT's
+  `Assistant::run` and the app's `src/api/text.rs` each had their own copy; both call it now, the app still
+  clearing its shared token first and answering an empty cancelled turn, ObservANT refusing the question.
+- `web.rs` test `a_client_that_leaves_cancels_its_answer`: a held model gets the cancel within a second of the
+  client closing its socket mid-answer, as the docs promise. Unit test in `crates/text`; recipe
+  `consumer.oxidant-text-cancel-while-loading-lost`.
+
 ### Changed (2026-11-14, the small text rules live once, in `kataglyphis_text`)
 - **`Provider` parses its own name** (`impl FromStr`): `cpu` or nothing, `cuda`, `dml`; any other name is
   `ProviderUnavailable`. ObservANT's `ask.rs` took an unknown name for the CPU (only `config.rs` stood in the way)

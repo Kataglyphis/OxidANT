@@ -210,6 +210,15 @@
   "why": "An unknown provider name is refused once, in kataglyphis_text, never run on the CPU instead."
  },
  {
+  "id": "consumer.oxidant-text-cancel-while-loading-lost",
+  "target": "crates/text/src/lib.rs",
+  "find": "    let backend = load()?;\n    if cancel.is_cancelled() {\n        return Ok(None);\n    }\n",
+  "replace": "    let backend = load()?;\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib after_load",
+  "timeout": 900,
+  "why": "A cancel that came while the model loaded ends the turn; a backend clears the token as it starts, so it would be lost."
+ },
+ {
   "id": "consumer.oxidant-text-guidance-genai",
   "target": "crates/text/src/genai.rs",
   "find": "        params.set_guidance(c\"json_schema\", &c_string(schema, \"json_schema\")?)?;",

@@ -216,16 +216,6 @@ and the backlog is empty"; it was neither.
       and a source-reading test that only `crates/media` and `crates/observant` build an
       appsink.
 
-- [ ] **The "cancelled while the model loaded" check is written twice** (S, ★). Audit
-      2026-11-12: a backend clears the cancel token as a run starts, so each caller that loads
-      a model first has its own guard: `Assistant::run` in `crates/observant/src/ask.rs` and
-      `after_load` in `src/api/text.rs`, both tested. No test closes a socket in the middle of
-      an answer, though the docs promise that a client that leaves cancels it. Next: move
-      `after_load` into `kataglyphis_text` as a public function both call, with its recipe in
-      `scripts/linux/tests/ort-license-mutations.json`. Add one `web.rs` test: post `/ask`
-      against the held stub, close the socket, expect the stub to see the cancel within a
-      second. A session type only when idle unload and timeouts need an owner.
-
 - [ ] **`to_json` holds one lock while it takes others** (M, ★). Audit 2026-11-12: in
       `crates/observant/src/status.rs`, `to_json` keeps the `detected` guard while it locks
       `clips` and, through `health()`, `last_frame`, `last_run` and `model_error`. The order is
