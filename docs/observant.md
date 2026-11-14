@@ -5,9 +5,9 @@ and the web page that plays it. It needs GStreamer and the chain-built ONNX Runt
 try it in the family `:latest` image:
 
 ```bash
-cargo build --release -p kataglyphis_observant
-target/release/kataglyphis_observant --camera test --print-config  # the settings in effect
-target/release/kataglyphis_observant --camera test                 # a test pattern, no camera
+cargo build --profile observant -p kataglyphis_observant
+target/observant/kataglyphis_observant --camera test --print-config  # the settings in effect
+target/observant/kataglyphis_observant --camera test                 # a test pattern, no camera
 curl localhost:8080/healthz                    # ok or the problem, the camera, the model's backend and runs, the cat, the kept clips
 curl -o frame.jpg localhost:8080/snapshot.jpg  # the current picture, boxes included
 curl -o cat.jpg localhost:8080/arrival.jpg     # the frame the last cat arrival was seen on

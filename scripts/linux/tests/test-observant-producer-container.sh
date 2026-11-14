@@ -44,7 +44,7 @@ t_assert_contains "${logged}" "$(expected_args -v target-vol:/cargo-target -v ca
 t_assert_contains "${logged}" "$(expected_args -e CARGO_TARGET_DIR=/cargo-target -e CARGO_HOME=/cargo-home)"
 t_assert_contains "${logged}" "$(expected_args family:latest bash -lc)"
 t_assert_contains "${logged}" "$(expected_args observant-build /workspace)"
-t_assert_contains "${logged}" kataglyphis_observant
+t_assert_contains "${logged}" 'cargo\ build\ --profile\ observant\ --locked'
 
 t_case 'Omni build keeps its platform, entrypoint and nested source directory'
 t_assert_ok observant_build_producer family:latest '/host/Omni AccelerANT' target-vol cargo-vol \

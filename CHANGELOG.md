@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-14, ObservANT's own builds use its profile)
+- `observant_build_producer` (`scripts/linux/observant/lib/producer-container.sh`) builds
+  `cargo build --profile observant`, and `run-producer-pi.sh` runs `target/observant/kataglyphis_observant`, so
+  the camera service built here is release with `panic = "unwind"` (owner decision of 2026-11-13): a panic in one
+  answer costs a 502, not the camera. Built once in the arm64 image: the profile compiles and the binary prints its
+  config. `docs/observant.md` shows the profile's path; `test-observant-producer-container.sh` holds the command.
+  OmniAccelerANT's packages take it at their next pin of this repository.
+
 ### Fixed (2026-11-14, ObservANT names a frame of the wrong size)
 - `push` in `crates/observant/src/capture.rs` took the first `frame::size(width, height)` bytes of a sample, so a
   longer buffer (row padding, the 854-pixel shear of 2026-11-11) was cut and a shorter one skipped, without a word.

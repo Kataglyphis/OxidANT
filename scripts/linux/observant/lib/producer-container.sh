@@ -27,7 +27,7 @@ _observant_producer_run() {
         -v "${cargo_volume}":/cargo-home \
         -e CARGO_TARGET_DIR=/cargo-target -e CARGO_HOME=/cargo-home \
         "${entrypoint[@]}" "${image}" "${shell[@]}" -lc \
-        "cd \"\$1\" && cargo build --release --locked -p kataglyphis_observant" \
+        "cd \"\$1\" && cargo build --profile observant --locked -p kataglyphis_observant" \
         observant-build "${source_dir}"
       ;;
     *) printf 'unknown producer action: %s\n' "${action}" >&2; return 2 ;;
