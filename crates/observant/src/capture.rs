@@ -275,9 +275,7 @@ impl Worker {
         let (width, height) = (self.config.width, self.config.height);
         let buffer = sample.buffer().context("sample without buffer")?;
         let map = buffer.map_readable().context("map frame")?;
-        let Some(i420) = map.as_slice().get(..frame::size(width, height)) else {
-            return Ok(true);
-        };
+        let i420 = exact_frame(map.as_slice(), width, height)?;
         let annotated = self.annotate(i420, boxes);
         // Only while the inference thread is idle: a frame of lag is fine, a backlog is not.
         if let Some(tx) = inference {
@@ -816,9 +814,35 @@ fn flip_method(rotate: u32) -> anyhow::Result<&'static str> {
     })
 }
 
+/// The sample's bytes when they are exactly one I420 frame of the configured size.
+fn exact_frame(data: &[u8], width: u32, height: u32) -> anyhow::Result<&[u8]> {
+    let expected = frame::size(width, height);
+    // A longer buffer used to be cut and a shorter one skipped, without a word; both mean caps and bytes disagree.
+    anyhow::ensure!(
+        data.len() == expected,
+        "the camera sent a frame of {} bytes where {width}x{height} I420 needs {expected}; \
+         row padding (a stride wider than the width) is the likely cause",
+        data.len()
+    );
+    Ok(data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_frame_of_exactly_its_size_passes_and_a_padded_or_short_one_names_both_sizes() {
+        let (w, h) = (64, 48);
+        let size = frame::size(w, h);
+        assert_eq!(exact_frame(&vec![0; size], w, h).unwrap().len(), size);
+        for wrong in [size + 4, size - 4] {
+            let err = exact_frame(&vec![0; wrong], w, h).unwrap_err().to_string();
+            assert!(err.contains(&format!("{wrong} bytes")), "{err}");
+            assert!(err.contains(&format!("64x48 I420 needs {size}")), "{err}");
+            assert!(err.contains("row padding"), "{err}");
+        }
+    }
 
     #[test]
     fn failures_back_off_from_1_s_doubling_to_32() {

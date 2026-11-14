@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-14, ObservANT names a frame of the wrong size)
+- `push` in `crates/observant/src/capture.rs` took the first `frame::size(width, height)` bytes of a sample, so a
+  longer buffer (row padding, the 854-pixel shear of 2026-11-11) was cut and a shorter one skipped, without a word.
+  `exact_frame` now ends the capture with an error that names both sizes and row padding as the likely cause; the
+  loop logs it and backs off. Unit test with a buffer 4 bytes too long and one 4 bytes too short.
+
 ### Added (2026-11-14, genai.rs's hand-typed GenAI signatures are checked against the header)
 - `scripts/linux/check-genai-signatures.py` takes the declarations of the 37 symbols `crates/text/src/genai.rs`
   binds (its optional `OgaGeneratorParamsSetGuidance` lookup included) from the image's `ort_genai_c.h` and compares

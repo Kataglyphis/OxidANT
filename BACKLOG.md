@@ -216,16 +216,11 @@ and the backlog is empty"; it was neither.
       and a source-reading test that only `crates/media` and `crates/observant` build an
       appsink.
 
-- [ ] **A frame of the wrong size is cut or skipped without a word** (S, ★). Audit 2026-11-12:
-      `push` in `crates/observant/src/capture.rs` takes the first `frame::size(width, height)`
-      bytes, so a longer buffer (row padding, the 854-pixel shear of 2026-11-11) is cut and a
-      shorter one skipped. Only the config rule on the width stands before a padded frame.
-      Next: compare for equality and end the capture with an error that names both sizes and
-      row padding as the likely cause; the loop then logs it and backs off. Also mark the
-      640x640 default in the load log (`ort_backend.rs`, `tract_backend.rs`), make an output
-      shorter than its shape an error (`postprocess.rs`), and pass the cause to `slot.fail` in
-      the media appsink callback. Guard: a unit test with a buffer 4 bytes too long and one
-      4 bytes too short that expects both sizes, and one test per other item.
+- [ ] **Three small silent fallbacks around a frame's size** (S, ★). Audit 2026-11-12. The capture's own case
+      is done (2026-11-14: `exact_frame` in `crates/observant/src/capture.rs` ends the capture with both sizes
+      when the bytes are not one frame). Left: mark the 640x640 default in the load log (`ort_backend.rs`,
+      `tract_backend.rs`), make an output shorter than its shape an error (`postprocess.rs`), and pass the cause
+      to `slot.fail` in the media appsink callback. Guard: one unit test per item.
 
 - [ ] **The "cancelled while the model loaded" check is written twice** (S, ★). Audit
       2026-11-12: a backend clears the cancel token as a run starts, so each caller that loads
