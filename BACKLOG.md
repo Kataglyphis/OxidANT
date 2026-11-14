@@ -226,16 +226,6 @@ and the backlog is empty"; it was neither.
       against the held stub, close the socket, expect the stub to see the cancel within a
       second. A session type only when idle unload and timeouts need an owner.
 
-- [ ] **Small text rules are retyped in each caller** (S, ★). Audit 2026-11-12
-      (not double-checked): provider names are parsed in `crates/observant/src/ask.rs` (an
-      unknown name becomes the CPU; only `config.rs` stops it), in `src/api/text.rs` (an unknown
-      name is an error) and in `crates/cli/src/text.rs`. Finish-reason names are typed in
-      `ask.rs` and `src/api/text.rs`, the default options in `crates/text/src/lib.rs` and
-      `src/api/text.rs`. Next: one `Provider` parser in `kataglyphis_text` that refuses an
-      unknown name with `ProviderUnavailable`, `FinishReason::as_str`, and
-      `text_default_options` built from `GenerationOptions::default()`. Guard: unit tests in
-      `crates/text` and one recipe (mapping an unknown provider to the CPU must fail).
-
 - [ ] **`to_json` holds one lock while it takes others** (M, ★). Audit 2026-11-12: in
       `crates/observant/src/status.rs`, `to_json` keeps the `detected` guard while it locks
       `clips` and, through `health()`, `last_frame`, `last_run` and `model_error`. The order is

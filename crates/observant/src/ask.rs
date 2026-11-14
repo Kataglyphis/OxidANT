@@ -72,11 +72,7 @@ fn local_backend(
     provider: &str,
 ) -> Result<Box<dyn TextBackend + Send>, TextError> {
     use kataglyphis_text::genai::{GenaiGenerator, Provider};
-    let provider = match provider {
-        "cuda" => Provider::Cuda,
-        "dml" => Provider::DirectMl,
-        _ => Provider::Cpu,
-    };
+    let provider: Provider = provider.parse()?;
     Ok(Box::new(GenaiGenerator::load(dir, provider)?))
 }
 
@@ -342,7 +338,7 @@ fn refused(refusal: Refusal) -> Response<Body> {
 /// The refusal for a reply without words: a model that spent its budget thinking answers nothing, and 200 would show it as an answer.
 fn no_words(result: &GenerationResult) -> Option<Response<Body>> {
     result.text.trim().is_empty().then(|| {
-        let reason = finish_name(result.finish_reason);
+        let reason = result.finish_reason.as_str();
         let mut text = format!("the model gave no answer (finish_reason {reason})");
         if result.thinking_chars > 0 {
             text.push_str(&thinking_hint(result));
@@ -366,14 +362,6 @@ fn thinking_hint(result: &GenerationResult) -> String {
         ": {what} ({} characters of thinking, {} tokens); {way_out}",
         result.thinking_chars, result.completion_tokens
     )
-}
-
-fn finish_name(reason: FinishReason) -> &'static str {
-    match reason {
-        FinishReason::Stop => "stop",
-        FinishReason::Length => "length",
-        FinishReason::Cancelled => "cancelled",
-    }
 }
 
 /// A POST body as `T`: JSON only, for the reason `/settings` gives, and small.
@@ -455,7 +443,7 @@ pub(crate) async fn ask(
                 &serde_json::json!({
                     "answer": result.text,
                     "facts": facts,
-                    "finish_reason": finish_name(result.finish_reason),
+                    "finish_reason": result.finish_reason.as_str(),
                     "prompt_tokens": result.prompt_tokens,
                     "completion_tokens": result.completion_tokens,
                     "thinking_chars": result.thinking_chars,
@@ -531,7 +519,7 @@ async fn summary_words(
                 return refusal;
             }
             reply["summary"] = result.text.into();
-            reply["finish_reason"] = finish_name(result.finish_reason).into();
+            reply["finish_reason"] = result.finish_reason.as_str().into();
             json_reply(StatusCode::OK, &reply)
         }
         Err(refusal) => refused(refusal),

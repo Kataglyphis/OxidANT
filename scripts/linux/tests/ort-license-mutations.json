@@ -201,6 +201,15 @@
   "why": "A seed reaches GenAI as random_seed, or a repeated seed samples differently."
  },
  {
+  "id": "consumer.oxidant-text-unknown-provider-on-cpu",
+  "target": "crates/text/src/genai.rs",
+  "find": "            other => Err(TextError::ProviderUnavailable(format!(\n                \"'{other}' is not cpu, cuda or dml\"\n            ))),",
+  "replace": "            _ => Ok(Self::Cpu),",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations\" cargo test --locked -p kataglyphis_text --lib genai",
+  "timeout": 900,
+  "why": "An unknown provider name is refused once, in kataglyphis_text, never run on the CPU instead."
+ },
+ {
   "id": "consumer.oxidant-text-guidance-genai",
   "target": "crates/text/src/genai.rs",
   "find": "        params.set_guidance(c\"json_schema\", &c_string(schema, \"json_schema\")?)?;",

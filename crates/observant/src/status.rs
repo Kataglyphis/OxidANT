@@ -2028,7 +2028,9 @@ mod tests {
         status.set_camera("v4l2src /dev/video0 (C920)", false);
         status.set_frame(&gst::Buffer::from_mut_slice(vec![
             0u8;
-            crate::frame::size(640, 480)
+            crate::frame::size(
+                640, 480
+            )
         ]));
         status.set_stats(Stats {
             capture_fps: Some(30.0),
@@ -2074,8 +2076,7 @@ mod tests {
         visit.set_detection(true, Some(0.75), Some(&arrived()));
         visit.set_clip(b"mp4".to_vec(), 1_767_225_600);
         let problem = golden_camera();
-        *problem.run_started.lock().unwrap() =
-            Instant::now().checked_sub(Duration::from_secs(30));
+        *problem.run_started.lock().unwrap() = Instant::now().checked_sub(Duration::from_secs(30));
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/healthz");
         for (name, status) in [("idle", idle), ("visit", visit), ("problem", problem)] {
             let path = dir.join(format!("{name}.json"));

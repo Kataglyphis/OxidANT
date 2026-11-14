@@ -80,6 +80,17 @@ pub enum FinishReason {
     Cancelled,
 }
 
+impl FinishReason {
+    /// The name every surface reports: `stop`, `length` or `cancelled`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stop => "stop",
+            Self::Length => "length",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
 /// An endpoint reports no token ids, so `tokens` is empty there and `completion_tokens` comes from its usage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenerationResult {
@@ -416,5 +427,18 @@ mod tests {
         assert!(TextError::EndpointStatus(503, "busy".into())
             .to_string()
             .contains("HTTP 503"));
+    }
+
+    #[test]
+    fn each_finish_reason_has_the_name_every_surface_reports() {
+        assert_eq!(
+            [
+                FinishReason::Stop,
+                FinishReason::Length,
+                FinishReason::Cancelled
+            ]
+            .map(FinishReason::as_str),
+            ["stop", "length", "cancelled"]
+        );
     }
 }

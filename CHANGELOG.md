@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-14, the small text rules live once, in `kataglyphis_text`)
+- **`Provider` parses its own name** (`impl FromStr`): `cpu` or nothing, `cuda`, `dml`; any other name is
+  `ProviderUnavailable`. ObservANT's `ask.rs` took an unknown name for the CPU (only `config.rs` stood in the way)
+  and `src/api/text.rs` refused it with its own copy of the match; both parse through it now. The CLI keeps its
+  typed `--provider` values.
+- **`FinishReason::as_str`** gives `stop`, `length` or `cancelled`, where `ask.rs` and `src/api/text.rs` each
+  spelled them out. **`text_default_options`** is built from `GenerationOptions::default()`, not a second list of
+  the same numbers.
+- Unit tests in `crates/text` (every name, three refused ones, the three reasons); recipe
+  `consumer.oxidant-text-unknown-provider-on-cpu`.
+
 ### Added (2026-11-14, `/healthz` has goldens OmniAccelerANT can read)
 - `crates/observant/tests/fixtures/healthz/{idle,visit,problem}.json`: what `/healthz` answers for a camera with an
   ONNX Runtime model, idle, during a visit (boxes, a kept clip, the stats) and with a model run that has not come

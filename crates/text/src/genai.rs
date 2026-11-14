@@ -261,6 +261,22 @@ pub enum Provider {
     DirectMl,
 }
 
+impl std::str::FromStr for Provider {
+    type Err = TextError;
+
+    /// `cpu` (or nothing), `cuda` or `dml`; any other name is refused, never taken for the CPU.
+    fn from_str(name: &str) -> Result<Self, TextError> {
+        match name {
+            "" | "cpu" => Ok(Self::Cpu),
+            "cuda" => Ok(Self::Cuda),
+            "dml" => Ok(Self::DirectMl),
+            other => Err(TextError::ProviderUnavailable(format!(
+                "'{other}' is not cpu, cuda or dml"
+            ))),
+        }
+    }
+}
+
 impl Provider {
     fn name(self) -> Option<&'static CStr> {
         match self {
@@ -975,5 +991,25 @@ mod tests {
         assert_eq!(Provider::Cpu.name(), None);
         assert_eq!(Provider::Cuda.name(), Some(c"cuda"));
         assert_eq!(Provider::DirectMl.name(), Some(c"dml"));
+    }
+
+    #[test]
+    fn a_provider_name_is_parsed_once_and_an_unknown_one_is_refused() {
+        for (name, provider) in [
+            ("", Provider::Cpu),
+            ("cpu", Provider::Cpu),
+            ("cuda", Provider::Cuda),
+            ("dml", Provider::DirectMl),
+        ] {
+            assert_eq!(name.parse::<Provider>().unwrap(), provider, "{name}");
+        }
+        // Taken for the CPU before, in ObservANT's ask: a typo ran a CUDA request on the CPU.
+        for name in ["gpu", "CUDA", "directml"] {
+            let err = name.parse::<Provider>().unwrap_err();
+            assert!(
+                matches!(err, TextError::ProviderUnavailable(_)),
+                "{name}: {err}"
+            );
+        }
     }
 }

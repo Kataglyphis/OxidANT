@@ -51,14 +51,15 @@ pub struct TextEvent {
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn text_default_options() -> TextOptions {
+    let defaults = kataglyphis_text::GenerationOptions::default();
     TextOptions {
-        max_new_tokens: 128,
-        temperature: 0.0,
-        top_p: 1.0,
-        top_k: 50,
-        seed: None,
-        json_schema: None,
-        stop: Vec::new(),
+        max_new_tokens: defaults.max_new_tokens,
+        temperature: defaults.temperature,
+        top_p: defaults.top_p,
+        top_k: defaults.top_k,
+        seed: defaults.seed,
+        json_schema: defaults.json_schema,
+        stop: defaults.stop,
     }
 }
 
@@ -148,11 +149,7 @@ mod enabled {
     }
 
     pub(super) fn done(result: &GenerationResult) -> TextEvent {
-        let reason = match result.finish_reason {
-            FinishReason::Stop => "stop",
-            FinishReason::Length => "length",
-            FinishReason::Cancelled => "cancelled",
-        };
+        let reason = result.finish_reason.as_str();
         TextEvent {
             kind: "done".into(),
             text: None,
@@ -250,14 +247,7 @@ mod enabled {
         }
 
         pub(super) fn provider(name: &str) -> Result<Provider, TextError> {
-            match name {
-                "" | "cpu" => Ok(Provider::Cpu),
-                "cuda" => Ok(Provider::Cuda),
-                "dml" => Ok(Provider::DirectMl),
-                other => Err(TextError::ProviderUnavailable(format!(
-                    "'{other}' is not cpu, cuda or dml"
-                ))),
-            }
+            name.parse()
         }
 
         pub(super) fn backend<'a>(
