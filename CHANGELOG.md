@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-14, genai.rs's hand-typed GenAI signatures are checked against the header)
+- `scripts/linux/check-genai-signatures.py` takes the declarations of the 37 symbols `crates/text/src/genai.rs`
+  binds (its optional `OgaGeneratorParamsSetGuidance` lookup included) from the image's `ort_genai_c.h` and compares
+  them with `crates/text/genai-signatures.txt`. The Linux `test` step runs it first, so a GenAI bump that changes a
+  signature fails before the build and prints the old and the new line; `--write` renews the snapshot.
+- Tests: `test-genai-signatures.sh` (a declaration over two lines, a commented-out one, a changed and a vanished
+  signature, no header) and the step suite; recipes `consumer.oxidant-genai-signatures-unchecked`,
+  `consumer.oxidant-genai-lookup-uncounted` and `consumer.oxidant-genai-check-not-in-test-step`.
+
 ### Changed (2026-11-14, AGENTS.md knows the Windows GenAI has llguidance)
 - `AGENTS.md` § 5 still named Windows as the lane whose GenAI lacks llguidance; both chains build it since 254b7ea,
   as `docs/text.md` says. The sentence now says so; a GenAI built without it still refuses a schema with

@@ -37,6 +37,10 @@ that has no floor fails the step. The lane uploads `cobertura.xml`, the `rustdoc
 one case per test with its outcome, an ignored test's reason and a failed test's captured output, and
 one failed case `(binary ended early)` with the signal for a binary that died before its summary.
 Stable libtest prints no per-test time, so each suite carries its binary's total only.
+Before it fetches anything, the `test` step runs `scripts/linux/check-genai-signatures.py`: `crates/text/src/genai.rs`
+types GenAI's C functions by hand, so the declarations of the 37 symbols it binds are taken from the image's
+`ort_genai_c.h` and compared with `crates/text/genai-signatures.txt`; a GenAI bump that changes one fails the step and
+prints the changed lines. After checking `genai.rs` against the header, `--write` in the image renews the snapshot.
 
 The CLI suite's `gui_finishes_its_first_frame` starts `kataglyphis_cli gui` under the same display with no
 model and waits for its `First GUI frame finished` line. That first frame uploads the font atlas, so a

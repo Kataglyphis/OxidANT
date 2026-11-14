@@ -52,6 +52,9 @@ case "$step" in
         export KATAGLYPHIS_REQUIRE_GENAI="${KATAGLYPHIS_REQUIRE_GENAI-1}"
         export KATAGLYPHIS_REQUIRE_GST="${KATAGLYPHIS_REQUIRE_GST-1}"
         export KATAGLYPHIS_REQUIRE_GTK=1
+        # The image has GenAI's header: genai.rs's hand-typed signatures are checked against it before any build.
+        python3 "${SCRIPT_DIR}/check-genai-signatures.py" \
+            --header "${KATAGLYPHIS_GENAI_HEADER:-/usr/local/lib/onnxruntime-genai/include/ort_genai_c.h}"
         bash "${SCRIPT_DIR}/fetch-models.sh"
         bash "${SCRIPT_DIR}/fetch-models.sh" --llm
         # Xvfb omits its readiness signal when xvfb-run is PID 1, so retain this parent shell.

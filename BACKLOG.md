@@ -237,16 +237,6 @@ and the backlog is empty"; it was neither.
       against the held stub, close the socket, expect the stub to see the cancel within a
       second. A session type only when idle unload and timeouts need an owner.
 
-- [ ] **Rust's GenAI function table is typed by hand** (S, ★). Audit 2026-11-12:
-      `crates/text/src/genai.rs` writes 37 C signatures as function pointer types and binds
-      them by name at run time; nothing compares them with `ort_genai_c.h`, so a GenAI bump
-      that changes a signature still compiles. The tiny-model suites call every bound symbol
-      but `OgaConfigAppendProvider` on the CPU lanes, so the risk is narrow. Next: a script in
-      the `test` step, where the image has the header, takes the declarations of the bound
-      symbols from `ort_genai_c.h` and compares them with a committed snapshot; a difference
-      fails and prints the changed lines. Guard: that check, and one mutation recipe that
-      changes a snapshot line.
-
 - [ ] **Small text rules are retyped in each caller** (S, ★). Audit 2026-11-12
       (not double-checked): provider names are parsed in `crates/observant/src/ask.rs` (an
       unknown name becomes the CPU; only `config.rs` stops it), in `src/api/text.rs` (an unknown

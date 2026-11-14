@@ -92,6 +92,21 @@ for tool in compare_detector_parity.py verify_ort_profile.py; do
 done
 chmod +x "${work}/bin/xvfb-run" "${work}/bin/cargo" "${work}/target/debug/kataglyphis_cli"
 
+# The image's GenAI header, rebuilt from the committed snapshot so the signature check passes here.
+python3 - "${tests_dir}/../../../crates/text/genai-signatures.txt" "${work}/ort_genai_c.h" <<'PY'
+import pathlib
+import sys
+
+lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+declared = []
+for line in lines:
+    name, rest = line.split(": ", 1)
+    returns, params = rest.split(" (", 1)
+    declared.append(f"OGA_EXPORT {returns} OGA_API_CALL {name}({params[:-1]});")
+pathlib.Path(sys.argv[2]).write_text("\n".join(declared) + "\n", encoding="utf-8")
+PY
+export KATAGLYPHIS_GENAI_HEADER="${work}/ort_genai_c.h"
+
 run_step() {
     local step="$1" driver_rc="$2" rc=0
     shift 2
@@ -119,6 +134,8 @@ t_assert_grep "${work}/rc" '^0$'
 t_assert_grep "${work}/out" '^FETCHED$'
 t_assert_grep "${work}/out" '^DRIVER$'
 t_assert_no_grep "${work}/out" 'launcher shell was replaced'
+t_case "genai.rs's GenAI signatures are checked against the header before the tests"
+t_assert_grep "${work}/out" '^check-genai-signatures: OK, [0-9]+ bound GenAI signatures match'
 t_case "the text contract's language model is fetched and unpacked before the tests"
 t_assert_grep "${work}/out" '^FETCHED-LLM$'
 t_case "arguments, including spaces and an empty value, reach the driver"
@@ -152,6 +169,13 @@ t_assert_grep "${work}/out" '^GPU=caller-gpu$'
 t_assert_grep "${work}/out" '^MODEL=caller-model$'
 t_assert_grep "${work}/out" '^GST=caller-gst$'
 t_assert_grep "${work}/out" '^GTK=1$'
+
+sed 's/OgaCreateConfig(const char\* config_path/OgaCreateConfig(const char* path, int flags/' "${work}/ort_genai_c.h" > "${work}/bumped.h"
+KATAGLYPHIS_GENAI_HEADER="${work}/bumped.h" run_step test 0
+t_case "a GenAI bump that changes a bound signature fails the test step before the build, showing the line"
+t_assert_grep "${work}/rc" '^1$'
+t_assert_grep "${work}/out" '^\+OgaCreateConfig: OgaResult\* \(const char\* path, int flags'
+t_assert_no_grep "${work}/out" '^DRIVER$'
 
 CI_FETCH_RC=23 run_step test 0
 t_case "a failed fetch stops before Xvfb and the driver"

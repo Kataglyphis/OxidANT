@@ -625,5 +625,29 @@
   "replace": "            | tee logs/test-results/cargo-test.txt || exit \"$?\"\n",
   "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
   "why": "A failed test run still writes its JUnit record before its status ends the step."
+ },
+ {
+  "id": "consumer.oxidant-genai-signatures-unchecked",
+  "target": "scripts/linux/check-genai-signatures.py",
+  "find": "    if committed == lines:\n",
+  "replace": "    if True:\n",
+  "test": "bash scripts/linux/tests/test-genai-signatures.sh",
+  "why": "A GenAI signature that changed under genai.rs's hand-typed function pointers fails the check."
+ },
+ {
+  "id": "consumer.oxidant-genai-lookup-uncounted",
+  "target": "scripts/linux/check-genai-signatures.py",
+  "find": "BOUND = re.compile(r'(?:bind|lookup)!",
+  "replace": "BOUND = re.compile(r'bind!",
+  "test": "bash scripts/linux/tests/test-genai-signatures.sh",
+  "why": "The optional lookup of OgaGeneratorParamsSetGuidance is a bound signature too."
+ },
+ {
+  "id": "consumer.oxidant-genai-check-not-in-test-step",
+  "target": "scripts/linux/ci-container-steps.sh",
+  "find": "        python3 \"${SCRIPT_DIR}/check-genai-signatures.py\" \\\n",
+  "replace": "        : \\\n",
+  "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
+  "why": "The test step checks genai.rs's GenAI signatures against the image's header before any build."
  }
 ]
