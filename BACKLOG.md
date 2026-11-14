@@ -257,12 +257,6 @@ and the backlog is empty"; it was neither.
       `text_default_options` built from `GenerationOptions::default()`. Guard: unit tests in
       `crates/text` and one recipe (mapping an unknown provider to the CPU must fail).
 
-- [ ] **`AGENTS.md` still says the Windows GenAI has no llguidance** (S, ★). Audit 2026-11-12:
-      the Windows chain builds GenAI with llguidance now (`CHANGELOG.md`, `254b7ea`), and
-      `docs/text.md` says so, but `AGENTS.md` § 5, *Text generation keeps its contract*, still
-      names Windows as the lane without it. Next: correct that sentence. The unit test that
-      maps "guidance is unavailable" to `JsonSchemaUnsupported` stays.
-
 - [ ] **`to_json` holds one lock while it takes others** (M, ★). Audit 2026-11-12: in
       `crates/observant/src/status.rs`, `to_json` keeps the `detected` guard while it locks
       `clips` and, through `health()`, `last_frame`, `last_run` and `model_error`. The order is

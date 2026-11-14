@@ -13,6 +13,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-14, AGENTS.md knows the Windows GenAI has llguidance)
+- `AGENTS.md` § 5 still named Windows as the lane whose GenAI lacks llguidance; both chains build it since 254b7ea,
+  as `docs/text.md` says. The sentence now says so; a GenAI built without it still refuses a schema with
+  `TextError::JsonSchemaUnsupported`, and that unit test stays.
+
 ### Added (2026-11-14, a per-test record of the Rust tests)
 - **The Linux test step writes `logs/test-results/cargo-test.xml`.** `scripts/linux/cargo-test-junit.py` turns the
   step's `cargo test` log into JUnit, also after a failed run: one case per test with its outcome, an ignored test's
