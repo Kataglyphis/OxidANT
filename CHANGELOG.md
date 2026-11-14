@@ -19,6 +19,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   in the hub's count: the CLI's `main` (92 in clippy's count, `#[expect]` and a row) and telemetry's
   `run_monitor_loop` (a row only: clippy counts it under 80 without its comments). Left out: the GUI, the demos,
   the ESP32 firmware crate, the C++ bridge and the renderer (`BACKLOG.md`).
+- `crates/gui` too: `try_build_ui` (the GTK window, `#[expect]` and a row) and `submit_frame` (a row only, under 80
+  in clippy's count).
 
 ### Changed (2026-11-14, one guard for a cancel while the model loads; a client that leaves is tested)
 - `kataglyphis_text::after_load` runs a generation on what a loader opened, or gives `None` when the cancel fired

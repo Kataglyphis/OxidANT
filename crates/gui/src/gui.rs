@@ -53,6 +53,7 @@ impl Drop for GuiSession {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn try_build_ui(app: &Application) -> Result<GuiSession> {
     let pipeline = gst::Pipeline::with_name("video-pipeline");
 
