@@ -216,12 +216,6 @@ and the backlog is empty"; it was neither.
       and a source-reading test that only `crates/media` and `crates/observant` build an
       appsink.
 
-- [ ] **Three small silent fallbacks around a frame's size** (S, ★). Audit 2026-11-12. The capture's own case
-      is done (2026-11-14: `exact_frame` in `crates/observant/src/capture.rs` ends the capture with both sizes
-      when the bytes are not one frame). Left: mark the 640x640 default in the load log (`ort_backend.rs`,
-      `tract_backend.rs`), make an output shorter than its shape an error (`postprocess.rs`), and pass the cause
-      to `slot.fail` in the media appsink callback. Guard: one unit test per item.
-
 - [ ] **The "cancelled while the model loaded" check is written twice** (S, ★). Audit
       2026-11-12: a backend clears the cancel token as a run starts, so each caller that loads
       a model first has its own guard: `Assistant::run` in `crates/observant/src/ask.rs` and

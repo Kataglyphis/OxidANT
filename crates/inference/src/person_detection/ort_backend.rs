@@ -246,7 +246,14 @@ pub(super) fn load_ort_session(
         canonical_path.display()
     );
 
-    let input_dims = extract_ort_input_dims(&session);
+    let input_dims = extract_ort_input_dims(&session).unwrap_or_else(|| {
+        log::warn!(
+            "the model names no fixed input size; {}x{} assumed",
+            DEFAULT_INPUT_DIMS.0,
+            DEFAULT_INPUT_DIMS.1
+        );
+        DEFAULT_INPUT_DIMS
+    });
 
     Ok(OrtLoad {
         session,
@@ -255,22 +262,33 @@ pub(super) fn load_ort_session(
     })
 }
 
-fn extract_ort_input_dims(session: &Session) -> (u32, u32) {
-    let Some(first) = session.inputs().first() else {
-        return DEFAULT_INPUT_DIMS;
+/// The model's fixed input size as (width, height), or `None` when its first input names none.
+fn extract_ort_input_dims(session: &Session) -> Option<(u32, u32)> {
+    let shape = session.inputs().first()?.dtype().tensor_shape()?;
+    dims_from_nchw(shape)
+}
+
+/// Width and height of a fixed NCHW shape; a dynamic (-1) or missing side is `None`.
+fn dims_from_nchw(shape: &[i64]) -> Option<(u32, u32)> {
+    let [_, _, h, w] = shape else {
+        return None;
     };
-    let Some(shape) = first.dtype().tensor_shape() else {
-        return DEFAULT_INPUT_DIMS;
-    };
-    if shape.len() != 4 {
-        return DEFAULT_INPUT_DIMS;
+    let (h, w) = (u32::try_from(*h).ok()?, u32::try_from(*w).ok()?);
+    (h > 0 && w > 0).then_some((w, h))
+}
+
+#[cfg(test)]
+mod dims_tests {
+    use super::dims_from_nchw;
+
+    #[test]
+    fn a_fixed_nchw_shape_gives_its_size_and_a_dynamic_or_odd_one_none() {
+        assert_eq!(dims_from_nchw(&[1, 3, 480, 640]), Some((640, 480)));
+        // None makes the load log say that 640x640 was assumed.
+        assert_eq!(dims_from_nchw(&[1, 3, -1, -1]), None);
+        assert_eq!(dims_from_nchw(&[1, 3, 0, 640]), None);
+        assert_eq!(dims_from_nchw(&[3, 640, 640]), None);
     }
-    let h = shape[2];
-    let w = shape[3];
-    if h <= 0 || w <= 0 {
-        return DEFAULT_INPUT_DIMS;
-    }
-    (w as u32, h as u32)
 }
 
 #[cfg(test)]

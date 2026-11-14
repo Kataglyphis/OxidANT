@@ -1,7 +1,5 @@
 # Rust functions over 80 lines in the gated crates, frozen at today's size (the hub's count, comments included).
 # path | function | lines | why it is not split yet
-crates/inference/src/person_detection/postprocess.rs | parse_yolo_like_detections | 88 | the decode rules of ModelANT's contract in one place; clippy counts 80 code lines or fewer
-crates/media/src/capture.rs | from_source | 85 | the source's GStreamer chain per platform; clippy counts 80 code lines or fewer
 crates/observant/src/clip.rs | encode_mp4 | 97 | one encoder pipeline from appsrc to the file; #[expect] in the source
 crates/observant/src/main.rs | run | 112 | the service's start order; #[expect] in the source
 crates/observant/src/web.rs | handle | 114 | the route table of ObservANT's web server; #[expect] in the source

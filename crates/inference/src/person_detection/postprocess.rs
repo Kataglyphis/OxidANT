@@ -4,13 +4,8 @@ use anyhow::{bail, Result};
 use kataglyphis_core::coco;
 use kataglyphis_core::detection::Detection;
 
-pub(crate) fn parse_yolo_like_detections(
-    output_shape: &[usize],
-    data: &[f32],
-    score_threshold: f32,
-    mapping: ImageMapping,
-    swap_xy: bool,
-) -> Result<Vec<Detection>> {
+/// Rows and values per row of a `[n, s]` or `[1, n, s]` output, checked against how many values arrived.
+fn rows_and_stride(output_shape: &[usize], values: usize) -> Result<(usize, usize)> {
     let (n, stride) = match output_shape.len() {
         2 => {
             let (n, s) = (output_shape[0], output_shape[1]);
@@ -41,13 +36,27 @@ pub(crate) fn parse_yolo_like_detections(
         _ => bail!("Unsupported output rank: {:?}", output_shape),
     };
 
+    // A shorter buffer used to end the rows early without a word; the shape and the data must agree.
+    anyhow::ensure!(
+        values >= n * stride,
+        "the output holds {values} values where its shape {output_shape:?} needs {}",
+        n * stride
+    );
+    Ok((n, stride))
+}
+
+pub(crate) fn parse_yolo_like_detections(
+    output_shape: &[usize],
+    data: &[f32],
+    score_threshold: f32,
+    mapping: ImageMapping,
+    swap_xy: bool,
+) -> Result<Vec<Detection>> {
+    let (n, stride) = rows_and_stride(output_shape, data.len())?;
     let mut detections = Vec::with_capacity(n.min(64));
 
     for i in 0..n {
         let row = i * stride;
-        if row + 6 > data.len() {
-            break;
-        }
 
         let mut x1 = data[row];
         let mut y1 = data[row + 1];
@@ -106,6 +115,16 @@ mod tests {
             pad_x: 0.0,
             pad_y: 0.0,
         }
+    }
+
+    #[test]
+    fn an_output_shorter_than_its_shape_is_an_error_not_fewer_rows() {
+        let err =
+            parse_yolo_like_detections(&[2, 6], &[0.0; 6], 0.5, make_mapping(640, 640), false)
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("holds 6 values"), "{err}");
+        assert!(err.contains("needs 12"), "{err}");
     }
 
     #[test]

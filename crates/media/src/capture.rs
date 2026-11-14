@@ -271,21 +271,13 @@ impl CaptureSession {
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
                     let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                    let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
-                    let caps = sample.caps().ok_or(gst::FlowError::Error)?;
-                    let info = gstreamer_video::VideoInfo::from_caps(caps)
-                        .map_err(|_| gst::FlowError::Error)?;
-                    let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
                     sequence += 1;
-                    let mut rgba = slot.recycled_buffer();
-                    rgba.extend_from_slice(map.as_slice());
-                    let frame = VideoFrame {
-                        rgba,
-                        width: info.width(),
-                        height: info.height(),
-                        pts_ms: buffer.pts().map(|t| t.mseconds()),
-                        sequence,
-                    };
+                    // The bus only says "internal data stream error"; the slot keeps what was wrong with the sample.
+                    let frame = frame_from_sample(&sample, slot.recycled_buffer(), sequence)
+                        .map_err(|reason| {
+                            slot.fail(format!("appsink: {reason}"));
+                            gst::FlowError::Error
+                        })?;
                     if let Some(observer) = observer.as_mut() {
                         observer(&frame);
                     }
@@ -349,11 +341,50 @@ impl Drop for CaptureSession {
     }
 }
 
+/// One appsink sample as its frame, or why it is none.
+fn frame_from_sample(
+    sample: &gst::Sample,
+    mut rgba: Vec<u8>,
+    sequence: u64,
+) -> Result<VideoFrame, String> {
+    let buffer = sample.buffer().ok_or("a sample without a buffer")?;
+    let caps = sample.caps().ok_or("a sample without caps")?;
+    let info = gstreamer_video::VideoInfo::from_caps(caps)
+        .map_err(|error| format!("caps it cannot read as video ({caps}): {error}"))?;
+    let map = buffer
+        .map_readable()
+        .map_err(|error| format!("a buffer it cannot map: {error}"))?;
+    rgba.extend_from_slice(map.as_slice());
+    Ok(VideoFrame {
+        rgba,
+        width: info.width(),
+        height: info.height(),
+        pts_ms: buffer.pts().map(|t| t.mseconds()),
+        sequence,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
 
     use super::*;
+
+    #[test]
+    fn a_sample_that_is_no_frame_says_why() {
+        ensure_gst_initialized().unwrap();
+        let buffer = gst::Buffer::with_size(4).unwrap();
+        let bare = gst::Sample::builder().buffer(&buffer).build();
+        let reason = frame_from_sample(&bare, Vec::new(), 1).unwrap_err();
+        assert_eq!(reason, "a sample without caps");
+        let audio = gst::Caps::builder("audio/x-raw").build();
+        let sound = gst::Sample::builder().buffer(&buffer).caps(&audio).build();
+        let reason = frame_from_sample(&sound, Vec::new(), 1).unwrap_err();
+        assert!(
+            reason.starts_with("caps it cannot read as video (audio/x-raw)"),
+            "{reason}"
+        );
+    }
 
     fn config(framerate: u32) -> CaptureConfig {
         CaptureConfig {

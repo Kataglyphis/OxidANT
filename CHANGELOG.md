@@ -18,6 +18,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   longer buffer (row padding, the 854-pixel shear of 2026-11-11) was cut and a shorter one skipped, without a word.
   `exact_frame` now ends the capture with an error that names both sizes and row padding as the likely cause; the
   loop logs it and backs off. Unit test with a buffer 4 bytes too long and one 4 bytes too short.
+- **The other three silent fallbacks around a size are said or refused.** A model that names no fixed input size
+  logs "640x640 assumed" in both backends (`dims_from_nchw` in `ort_backend.rs` and `tract_backend.rs`); an output
+  shorter than its shape is an error in `postprocess.rs` instead of fewer rows; and the media appsink keeps why a
+  sample is no frame (no buffer, no caps, caps that are no video, a buffer it cannot map) as the capture's end,
+  where the bus said only "internal data stream error". One unit test each.
 
 ### Added (2026-11-14, genai.rs's hand-typed GenAI signatures are checked against the header)
 - `scripts/linux/check-genai-signatures.py` takes the declarations of the 37 symbols `crates/text/src/genai.rs`
