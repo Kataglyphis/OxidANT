@@ -227,3 +227,105 @@ fn animation_channels_with_bad_keyframes_are_dropped() {
     );
     assert_eq!(kept[0].times, vec![0.0, 1.0]);
 }
+
+/// The 8 corners of a unit cube, index = x + 2y + 4z, and its 12 triangles.
+fn indexed_cube() -> (Vec<[f32; 3]>, Vec<u32>) {
+    let corners = (0..8)
+        .map(|i| {
+            let bit = |b: u32| if i & b != 0 { 0.5 } else { -0.5 };
+            [bit(1), bit(2), bit(4)]
+        })
+        .collect();
+    let quads = [
+        [0, 4, 6, 2],
+        [1, 3, 7, 5],
+        [0, 1, 5, 4],
+        [2, 6, 7, 3],
+        [0, 2, 3, 1],
+        [4, 5, 7, 6],
+    ];
+    let indices = quads
+        .iter()
+        .flat_map(|[a, b, c, d]| [*a, *b, *c, *a, *c, *d])
+        .collect();
+    (corners, indices)
+}
+
+fn face_normal(prim: &kataglyphis_webgpu_renderer::CpuPrimitive, tri: &[u32; 3]) -> glam::Vec3 {
+    let p = |i: u32| glam::Vec3::from_array(prim.vertices[i as usize].position);
+    (p(tri[1]) - p(tri[0]))
+        .cross(p(tri[2]) - p(tri[0]))
+        .normalize()
+}
+
+/// glTF: without NORMAL a client MUST use flat normals, which shared corners cannot carry.
+#[test]
+fn an_indexed_mesh_without_normals_is_flat_shaded() {
+    let (corners, indices) = indexed_cube();
+    let deltas: Vec<[f32; 3]> = corners.iter().map(|p| p.map(|c| 2.0 * c)).collect();
+    let mut bin = Bin::default();
+    let pos = bin.vec3(&corners);
+    let idx = bin.indices(&indices);
+    let target = bin.vec3(&deltas);
+    let glb = bin.glb(&one_mesh(&[format!(
+        r#"{{"attributes":{{"POSITION":{pos}}},"indices":{idx},"targets":[{{"POSITION":{target}}}]}}"#
+    )]));
+    let scene = load_gltf_slice(&glb).expect("cube must load");
+    let prim = &scene.primitives[0];
+    for tri in prim.indices.as_chunks::<3>().0 {
+        let face = face_normal(prim, tri);
+        for &corner in tri {
+            let n = glam::Vec3::from_array(prim.vertices[corner as usize].normal);
+            assert!(
+                n.dot(face) > 0.999,
+                "corner normal {n:?} is not its face's {face:?}"
+            );
+        }
+    }
+    // Rebuilding the vertices must carry every morph delta with its vertex.
+    let target = &prim.morph_targets[0].position_deltas;
+    assert_eq!(target.len(), prim.vertices.len());
+    for (vertex, delta) in prim.vertices.iter().zip(target) {
+        assert_eq!(delta.to_array(), vertex.position.map(|c| 2.0 * c));
+    }
+}
+
+/// `normalize(0)` is NaN in the shader, and it spreads over every triangle touching the vertex.
+#[test]
+fn degenerate_faces_and_zero_normals_leave_no_vertex_without_a_unit_frame() {
+    let strip = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [2.0, 0.0, 0.0],
+        [2.0, 1.0, 0.0],
+        [3.0, 0.0, 0.0],
+    ];
+    let mut bin = Bin::default();
+    let strip_pos = bin.vec3(&strip);
+    let stitched = bin.indices(&[0, 1, 2, 3, 3, 4, 4, 5, 6]);
+    let tri_pos = bin.vec3(&TRIANGLE);
+    let zero_normal = bin.vec3(&[[0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]]);
+    let glb = bin.glb(&one_mesh(&[
+        format!(r#"{{"attributes":{{"POSITION":{strip_pos}}},"indices":{stitched},"mode":5}}"#),
+        format!(r#"{{"attributes":{{"POSITION":{tri_pos},"NORMAL":{zero_normal}}}}}"#),
+    ]));
+    let scene = load_gltf_slice(&glb).expect("both primitives must load");
+    assert_eq!(scene.primitives.len(), 2);
+    for (p, prim) in scene.primitives.iter().enumerate() {
+        for (i, v) in prim.vertices.iter().enumerate() {
+            let n = glam::Vec3::from_array(v.normal);
+            let t = glam::Vec3::new(v.tangent[0], v.tangent[1], v.tangent[2]);
+            assert!(
+                (n.length() - 1.0).abs() < 1e-3,
+                "primitive {p} vertex {i}: normal {n:?} is not unit"
+            );
+            assert!(
+                t.is_finite() && (t.length() - 1.0).abs() < 1e-3,
+                "primitive {p} vertex {i}: tangent {t:?} is not unit"
+            );
+            assert!(v.tangent[3] == 1.0 || v.tangent[3] == -1.0);
+        }
+    }
+}

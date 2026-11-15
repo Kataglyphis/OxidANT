@@ -46,6 +46,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **A node hidden with scale 0 reappeared at full size once animation ran**: `compute_world_transforms` turned an
   all-zero scale into 1. The singular matrix is finite, the normal matrix already guards its inverse, and zero
   scale is how exporters hide a node, so it stays; only non-finite inputs are replaced.
+- **An indexed glTF without NORMAL was not flat-shaded**: each shared vertex kept the normal of its last face (24
+  of 36 corners on an 8-vertex cube). Such a primitive is un-indexed first, one vertex per corner with its morph
+  deltas, as glTF's flat normals need. A zero-area face no longer overwrites a corner's normal with zero, and a
+  zero or non-finite normal or tangent, from a degenerate face or from the file, is repaired (face normal or +Y, a
+  perpendicular tangent, `w` a sign), since the shader's `normalize` turned it into NaN shading.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

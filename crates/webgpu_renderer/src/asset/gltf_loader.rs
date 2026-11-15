@@ -9,7 +9,7 @@ use glam::{Mat4, Vec2, Vec3};
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuCamera, CpuCameraProjection,
     CpuLight, CpuLightKind, CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin,
-    CpuTexture, CpuTextureRef, CpuWrap, Interpolation, Vertex,
+    CpuTexture, CpuTextureRef, CpuWrap, Interpolation, MorphTarget, Vertex,
 };
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
@@ -559,45 +559,110 @@ fn load_primitive(
     textures: &[Arc<CpuTexture>],
 ) -> anyhow::Result<Option<CpuPrimitive>> {
     let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
-    let Some(mut vertices) = read_vertices(primitive, buffers)? else {
+    let Some(vertices) = read_vertices(primitive, buffers)? else {
         return Ok(None);
     };
-    let had_tangents = reader.read_tangents().is_some();
     let Some(indices) = read_triangles(primitive, buffers, vertices.len()) else {
         return Ok(None);
     };
-
-    // Missing normals: derive flat face normals so lighting stays sane.
-    if reader.read_normals().is_none() {
-        compute_flat_normals(&mut vertices, &indices);
-    }
-    if !had_tangents {
-        compute_tangents(&mut vertices, &indices);
-    }
-    // Opt-in MikkTSpace replaces only tangents we generated; a file's own tangents are kept.
-    let (vertices, indices) = if !had_tangents && mikktspace_tangents_enabled() {
-        match generate_tangents_mikktspace(&vertices, &indices) {
-            Some(rebuilt) => rebuilt,
-            None => (vertices, indices),
-        }
-    } else {
-        (vertices, indices)
+    let options = GeometryOptions {
+        has_normals: reader.read_normals().is_some(),
+        has_tangents: reader.read_tangents().is_some(),
+        mikktspace: mikktspace_tangents_enabled(),
     };
-
-    let morph_targets = read_morph_targets(primitive, buffers);
+    let geometry = finish_geometry(
+        Geometry {
+            vertices,
+            indices,
+            morph_targets: read_morph_targets(primitive, buffers),
+        },
+        &options,
+    );
     // Weights start at zero: the caller applies mesh/node defaults, and animation drives them.
-    let morph_weights = vec![0.0f32; morph_targets.len()];
+    let morph_weights = vec![0.0f32; geometry.morph_targets.len()];
 
     Ok(Some(CpuPrimitive {
-        vertices,
-        indices,
+        vertices: geometry.vertices,
+        indices: geometry.indices,
         transform,
         node_index: None,
         skin_index: None,
         material: load_material(&primitive.material(), textures),
-        morph_targets,
+        morph_targets: geometry.morph_targets,
         morph_weights,
     }))
+}
+
+/// A primitive's vertices, triangle list and morph targets, kept together while vertices are rebuilt.
+struct Geometry {
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
+    morph_targets: Vec<MorphTarget>,
+}
+
+/// Which attributes the file supplied, and whether tangents come from MikkTSpace.
+struct GeometryOptions {
+    has_normals: bool,
+    has_tangents: bool,
+    mikktspace: bool,
+}
+
+/// Generates what the file left out (flat normals, tangents) and repairs what NaNs the shader.
+fn finish_geometry(mut geometry: Geometry, options: &GeometryOptions) -> Geometry {
+    if !options.has_normals {
+        // Flat shading needs a vertex per corner: a shared vertex kept its last face's normal.
+        geometry = unindexed(geometry);
+        compute_flat_normals(&mut geometry.vertices, &geometry.indices);
+    }
+    repair_normals(&mut geometry.vertices, &geometry.indices);
+    if !options.has_tangents {
+        compute_tangents(&mut geometry.vertices, &geometry.indices);
+        // Opt-in MikkTSpace replaces only tangents we generated; a file's own tangents are kept.
+        if options.mikktspace {
+            if let Some((vertices, indices)) =
+                generate_tangents_mikktspace(&geometry.vertices, &geometry.indices)
+            {
+                geometry.vertices = vertices;
+                geometry.indices = indices;
+            }
+        }
+    }
+    repair_tangents(&mut geometry.vertices);
+    geometry
+}
+
+/// One vertex per triangle corner, with each morph target's deltas gathered alongside.
+fn unindexed(geometry: Geometry) -> Geometry {
+    Geometry {
+        vertices: geometry
+            .indices
+            .iter()
+            .map(|&i| geometry.vertices[i as usize])
+            .collect(),
+        morph_targets: gather_morph_targets(&geometry.morph_targets, &geometry.indices),
+        indices: (0..geometry.indices.len() as u32).collect(),
+    }
+}
+
+/// Re-indexes each target so new vertex `i` carries the deltas of old vertex `source[i]`.
+fn gather_morph_targets(targets: &[MorphTarget], source: &[u32]) -> Vec<MorphTarget> {
+    let gather = |deltas: &Vec<Vec3>| -> Vec<Vec3> {
+        if deltas.is_empty() {
+            return Vec::new();
+        }
+        source
+            .iter()
+            .map(|&i| deltas.get(i as usize).copied().unwrap_or(Vec3::ZERO))
+            .collect()
+    };
+    targets
+        .iter()
+        .map(|target| MorphTarget {
+            position_deltas: gather(&target.position_deltas),
+            normal_deltas: gather(&target.normal_deltas),
+            tangent_deltas: gather(&target.tangent_deltas),
+        })
+        .collect()
 }
 
 /// Every vertex attribute with its glTF fallback; `None` without POSITION.
@@ -700,11 +765,11 @@ fn read_triangles(
 fn read_morph_targets(
     primitive: &gltf::Primitive,
     buffers: &[gltf::buffer::Data],
-) -> Vec<crate::scene::MorphTarget> {
+) -> Vec<MorphTarget> {
     let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
     reader
         .read_morph_targets()
-        .map(|(pos, norm, tan)| crate::scene::MorphTarget {
+        .map(|(pos, norm, tan)| MorphTarget {
             position_deltas: pos
                 .map(|it| it.map(Vec3::from_array).collect())
                 .unwrap_or_default(),
@@ -831,11 +896,61 @@ fn compute_flat_normals(vertices: &mut [Vertex], indices: &[u32]) {
         let p0 = Vec3::from_array(vertices[i0].position);
         let p1 = Vec3::from_array(vertices[i1].position);
         let p2 = Vec3::from_array(vertices[i2].position);
-        let n = (p1 - p0).cross(p2 - p0).normalize_or_zero().to_array();
+        // A zero-area face has no normal; writing its zero would erase a shared corner's real one.
+        let Some(n) = (p1 - p0).cross(p2 - p0).try_normalize() else {
+            continue;
+        };
         for i in [i0, i1, i2] {
-            vertices[i].normal = n;
+            vertices[i].normal = n.to_array();
         }
     }
+}
+
+/// Replaces zero or non-finite normals, which the shader's `normalize` turns into NaN shading.
+/// The replacement is the corner's area-weighted face normal, else +Y.
+fn repair_normals(vertices: &mut [Vertex], indices: &[u32]) {
+    let broken = |n: [f32; 3]| Vec3::from_array(n).try_normalize().is_none();
+    if !vertices.iter().any(|v| broken(v.normal)) {
+        return;
+    }
+    let mut face_sums = vec![Vec3::ZERO; vertices.len()];
+    for tri in indices.as_chunks::<3>().0 {
+        let [a, b, c] = tri.map(|i| Vec3::from_array(vertices[i as usize].position));
+        let face = (b - a).cross(c - a);
+        if face.is_finite() {
+            for &i in tri {
+                face_sums[i as usize] += face;
+            }
+        }
+    }
+    for (vertex, sum) in vertices.iter_mut().zip(face_sums) {
+        if broken(vertex.normal) {
+            vertex.normal = sum.try_normalize().unwrap_or(Vec3::Y).to_array();
+        }
+    }
+}
+
+/// A zero or non-finite tangent NaNs the shader's TBN even without a normal map; `w` must be a sign.
+fn repair_tangents(vertices: &mut [Vertex]) {
+    for vertex in vertices {
+        let t = Vec3::new(vertex.tangent[0], vertex.tangent[1], vertex.tangent[2]);
+        if t.try_normalize().is_none() {
+            let p = any_perpendicular(Vec3::from_array(vertex.normal));
+            vertex.tangent[..3].copy_from_slice(&p.to_array());
+        }
+        let w = vertex.tangent[3];
+        if w != 1.0 && w != -1.0 {
+            vertex.tangent[3] = if w < 0.0 { -1.0 } else { 1.0 };
+        }
+    }
+}
+
+/// Any unit vector perpendicular to the unit `n`, for a tangent with no UV gradient to follow.
+fn any_perpendicular(n: Vec3) -> Vec3 {
+    n.cross(Vec3::Y)
+        .try_normalize()
+        .or_else(|| n.cross(Vec3::X).try_normalize())
+        .unwrap_or(Vec3::X)
 }
 
 /// Per-vertex tangent frame from triangle UV gradients (Lengyel), with glTF handedness in `.w`.
@@ -874,13 +989,9 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
     for ((vertex, tangent), bitangent) in vertices.iter_mut().zip(tan_accum).zip(bitan_accum) {
         let n = Vec3::from_array(vertex.normal);
         // Gram-Schmidt against the normal; any perpendicular axis for degenerate UVs.
-        let mut t = (tangent - n * n.dot(tangent)).normalize_or_zero();
-        if t == Vec3::ZERO {
-            t = n.cross(Vec3::Y).normalize_or_zero();
-            if t == Vec3::ZERO {
-                t = n.cross(Vec3::X).normalize_or_zero();
-            }
-        }
+        let t = (tangent - n * n.dot(tangent))
+            .try_normalize()
+            .unwrap_or_else(|| any_perpendicular(n));
         // Degenerate accumulation gets +1, since 0 would zero the shader's bitangent.
         let w = if n.cross(t).dot(bitangent) < 0.0 {
             -1.0
