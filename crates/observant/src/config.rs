@@ -131,6 +131,8 @@ pub struct Config {
     pub llm_max_new_tokens: u32,
     /// Intra-op threads of `llm_model_dir`'s decoder, beside the detector's two; 0 leaves GenAI's own count.
     pub llm_threads: u32,
+    /// Seconds without a question after which `llm_model_dir`'s model is unloaded; 0 keeps it loaded.
+    pub llm_idle_unload_s: u32,
 }
 
 /// A host name as a camera's default name, so two unnamed cameras still differ; "ObservANT" where there is none.
@@ -187,6 +189,7 @@ impl Default for Config {
             llm_model: None,
             llm_max_new_tokens: 128,
             llm_threads: 2,
+            llm_idle_unload_s: 600,
         }
     }
 }

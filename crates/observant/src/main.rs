@@ -491,6 +491,7 @@ fn start_web(
         web::SIGNALLING_PATH,
         config.signalling_port
     );
+    let assistant = ask::Assistant::from_config(config).map(Arc::new);
     let site = Arc::new(web::Site {
         web_root,
         signalling: (
@@ -502,8 +503,11 @@ fn start_web(
         allowed_hosts: config.allowed_hosts.clone(),
         max_viewers: config.max_viewers as usize,
         peers: config.peers.clone(),
-        assistant: ask::Assistant::from_config(config).map(Arc::new),
+        assistant: assistant.clone(),
     });
+    if let Some(assistant) = &assistant {
+        runtime.spawn(ask::unload_when_idle(Arc::downgrade(assistant)));
+    }
     runtime.spawn(web::serve(listener, site));
     if config.cert.is_some() {
         log::warn!(

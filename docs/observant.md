@@ -50,7 +50,10 @@ exits; a packager runs it once, and the server then sends those files as they ar
 `LLM_BACKENDS`), which exclude each other, and `llm_model` to override an endpoint's model.
 `llm_max_new_tokens` bounds an answer (128). `llm_threads` (2) holds `llm_model_dir`'s decoder to that many
 intra-op threads beside the detector's two, laid over the model's `genai_config.json` at load; 0 leaves GenAI's
-own count, one per core. Nothing loads until the first question; the model then stays loaded. Without one configured both answer 503 and say which keys to set, and `/healthz`'s
+own count, one per core. Nothing loads until the first question. `llm_idle_unload_s` (600) unloads
+`llm_model_dir`'s model after that many seconds without a question and the next question loads it again
+(about 0.6 s for SmolLM2-135M on a Pi 5); 0 keeps it loaded, and an endpoint holds nothing here (owner
+decision 2026-11-15). Without one configured both answer 503 and say which keys to set, and `/healthz`'s
 `ask` is false, which is what OmniAccelerANT's Stream page reads to offer questions.
 
 | Request | Answer |

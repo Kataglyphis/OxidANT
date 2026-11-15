@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, ObservANT unloads an idle language model)
+- `llm_idle_unload_s` (default 600; 0 keeps it) unloads `llm_model_dir`'s model after that many seconds without a
+  question, and the next question loads it again (owner decision). A task started beside the web server asks the
+  `Assistant` every quarter of that time, at most a minute; a running answer holds the model, and an endpoint has
+  nothing to unload. Tests: an idle model unloads and reloads, a running answer and an endpoint keep theirs, and
+  only an in-process model with a non-zero setting unloads.
+
 ### Changed (2026-11-15, the Rust detector follows the family's ORT thread rule)
 - Without `KATAGLYPHIS_ORT_THREADS` the detector's session takes the usable CPUs but one, 1 to 8
   (`kataglyphis_core::config::family_threads`, from `available_parallelism`), as OrchestrANT and AccelerANTgine
