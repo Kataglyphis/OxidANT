@@ -26,4 +26,5 @@ pub use scene::lod::{
     Lod, Simplifier,
 };
 pub use scene::qem::simplify_primitive_qem;
+pub use scene::viewport::SceneViewport;
 pub use scene::{CpuMaterial, CpuPrimitive, CpuScene, CpuTexture};

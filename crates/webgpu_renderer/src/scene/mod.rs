@@ -4,6 +4,7 @@ pub mod camera;
 pub mod controller;
 pub mod lod;
 pub mod qem;
+pub mod viewport;
 
 use std::sync::Arc;
 

@@ -26,6 +26,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ### Added (2026-11-15, the Studio Pro foundation)
 - `src/ui/{palette,theme,fonts}.rs`: the C++ editor's palette, style and type scale in egui points.
+- `SceneViewport` and `OrbitCamera::viewport`: the C++ `makeViewportRemap` lens shift, Y negated for WebGPU clip
+  space, so the camera centres on the rect the docks leave free while every pass stays full-frame. A full-frame
+  camera's projection is bit for bit what it was.
 
 ### Fixed (2026-11-15, the healthz goldens on the Windows arm64 runner)
 - `healthz_matches_its_goldens` embeds the three goldens with `include_str!`; it read them at run time, and the
