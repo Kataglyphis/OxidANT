@@ -85,6 +85,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   into box-filtered averages and LINEAR got trilinear 16x anisotropic filtering. `CpuSampler::mipmaps` is false
   for them, and such a slot samples a one-level view of the texture (a zero LOD clamp would not do: Vulkan counts
   a clamped LOD of 0 as magnified and switches to the mag filter); the upload stays shared.
+- **An image URI with an uppercase extension, or the common wrong MIME type `image/jpg`, failed the whole glTF
+  load**: the importer matches `png`, `jpg` and `jpeg` exactly. The renderer enables `gltf`'s `guess_mime_type`,
+  which decides by the PNG or JPEG bytes. `obj2gltf` writes a `mimeType` for every image and refuses a texture
+  that is neither PNG nor JPEG, which converted fine and then failed to load.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

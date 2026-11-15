@@ -481,3 +481,19 @@ fn mipmap_less_min_filters_load_as_mipmap_less_samplers() {
         assert_eq!(sampler.mipmaps, mipmaps, "minFilter {filter}");
     }
 }
+
+/// `image/jpg` is a common wrong MIME type; the bytes say PNG, and the loader must listen to them.
+#[test]
+fn an_embedded_image_with_a_wrong_mime_type_loads_by_its_bytes() {
+    let mut bin = Bin::default();
+    let pos = bin.vec3(&TRIANGLE);
+    let png = bin.view(&flat_normal_png());
+    let glb = bin.glb(&format!(
+        r#"{},"materials":[{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0}}}}}}],"textures":[{{"source":0}}],"images":[{{"bufferView":{png},"mimeType":"image/jpg"}}]"#,
+        one_mesh(&[format!(
+            r#"{{"attributes":{{"POSITION":{pos}}},"material":0}}"#
+        )])
+    ));
+    let scene = load_gltf_slice(&glb).expect("the PNG bytes decide");
+    assert!(scene.primitives[0].material.base_color_texture.is_some());
+}
