@@ -1445,6 +1445,72 @@ mod tests {
         }
     }
 
+    /// Wall-clock values replaced by fixed ones: the app's parsers read the keys and their types.
+    fn steady(path: &str, mut json: serde_json::Value) -> serde_json::Value {
+        const NOON: u64 = 1_767_268_800;
+        // get_mut, not indexing: a mutable index adds the key to an answer that has none.
+        if let Some(visits) = json
+            .get_mut("visits")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            // A stay is [arrived, seconds stayed]; only the arrival is wall-clock.
+            for stay in visits.iter_mut().filter(|stay| stay.is_array()) {
+                stay[0] = NOON.into();
+            }
+        }
+        if path == "/summary" {
+            json["day"] = "2026-01-01".into();
+            for time in ["first", "last"] {
+                if json[time].is_string() {
+                    json[time] = "12:00".into();
+                }
+            }
+        }
+        if json["facts"].is_string() {
+            json["facts"] = "<the facts the model was given>".into();
+        }
+        json
+    }
+
+    /// OmniAccelerANT's parsers read these files; `OBSERVANT_UPDATE_GOLDEN=1` rewrites them.
+    #[tokio::test]
+    async fn the_api_answers_match_their_goldens() {
+        let (assistant, _) = crate::ask::tests::stub_assistant(Ok("Twice.".into()), false);
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(assistant);
+        arrive_and_leave(&with_model.status);
+        let addr = start_with(with_model).await;
+        let ask = r#"{"question":"How often?","tz_offset_min":0}"#;
+        let answers = [
+            ("settings", get(addr, "/settings", "").await, "/settings"),
+            ("visits", get(addr, "/visits", "").await, "/visits"),
+            ("summary", get(addr, "/summary", "").await, "/summary"),
+            (
+                "summary_words",
+                post(addr, "/summary", "application/json", "{}").await,
+                "/summary",
+            ),
+            (
+                "ask",
+                post(addr, "/ask", "application/json", ask).await,
+                "/ask",
+            ),
+        ];
+        // Embedded at build time: a cross-built test runs where no checkout sits beside it.
+        let goldens = [
+            include_str!("../tests/fixtures/api/settings.json"),
+            include_str!("../tests/fixtures/api/visits.json"),
+            include_str!("../tests/fixtures/api/summary.json"),
+            include_str!("../tests/fixtures/api/summary_words.json"),
+            include_str!("../tests/fixtures/api/ask.json"),
+        ];
+        for ((name, reply, path), embedded) in answers.into_iter().zip(goldens) {
+            assert!(reply.starts_with("HTTP/1.1 200"), "{name}: {reply}");
+            let json = steady(path, body_json(&reply));
+            crate::golden::check("api", name, &crate::golden::pretty(&json), embedded);
+        }
+    }
+
     #[tokio::test]
     async fn ask_gives_the_model_the_facts_and_the_question() {
         let (assistant, seen) = crate::ask::tests::stub_assistant(Ok("Twice.".into()), false);

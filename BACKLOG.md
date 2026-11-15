@@ -177,18 +177,12 @@ and the backlog is empty"; it was neither.
       often the playground hits it. Guard: the extended unit test and one ObservANT test per
       status.
 
-- [ ] **ObservANT's JSON has no example files the app's tests read** (M, ★★). Audit 2026-11-12:
-      `to_json` in `crates/observant/src/status.rs` builds `/healthz` from a `json!` literal of
-      about 30 field names, and the Rust tests assert on Rust's own output. OmniAccelerANT's
-      four Dart parsers are tested on hand-typed bodies and fall back to a default for every
-      missing field, so a renamed field shows as "no cat, 0 visits". Only its on-request package
-      test checks the real fields, with `jq`. Next: `crates/observant/tests/fixtures/api/` with
-      `/healthz` (idle, a cat in view, not ok), `/visits`, `/settings`, `/ask` and `/summary`.
-      A Rust test compares its output with each file after blanking `version`, the ages and
-      `stats`, and an environment switch rewrites the files after an intended change.
-      OmniAccelerANT's Dart tests and `web-smoke-server.js` then read them from this submodule.
-      Guard: the Rust test here, and the Dart tests failing in the pin-bump commit when a field
-      moves.
+- [ ] **OmniAccelerANT's Dart tests do not read ObservANT's API goldens yet** (S, ★★). Since 2026-11-14
+      `/healthz` (`tests/fixtures/healthz/`) and since 2026-11-15 `/settings`, `/visits`, `/summary` (GET and POST)
+      and `/ask` (`tests/fixtures/api/`) have goldens that `the_api_answers_match_their_goldens` in `web.rs`
+      compares, wall-clock values fixed; `OBSERVANT_UPDATE_GOLDEN=1` rewrites them. OmniAccelerANT's `/healthz`
+      test reads its goldens; left: its parsers of the other four read `tests/fixtures/api/` at the next pin bump
+      instead of hand-typed bodies.
 
 - [ ] **Every chat turn runs the whole conversation through the model again** (M, ★★). Audit
       2026-11-12 (not double-checked), not measured: `generate` in `crates/text/src/genai.rs`

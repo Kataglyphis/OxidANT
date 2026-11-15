@@ -1,0 +1,8 @@
+{
+  "answer": "Twice.",
+  "completion_tokens": 2,
+  "facts": "<the facts the model was given>",
+  "finish_reason": "stop",
+  "prompt_tokens": 11,
+  "thinking_chars": 0
+}

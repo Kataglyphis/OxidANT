@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, goldens for the rest of ObservANT's JSON)
+- `tests/fixtures/api/{settings,visits,summary,summary_words,ask}.json`: what `/settings`, `/visits`, `GET` and
+  `POST /summary` and `/ask` answer for a camera with one visit and a stub model, arrival, day and times fixed.
+  `the_api_answers_match_their_goldens` in `web.rs` compares them; `OBSERVANT_UPDATE_GOLDEN=1` rewrites them.
+  A renamed settings key fails it (proven by hand in the image). The `/healthz` test shares the new
+  `golden` test module.
+
 ### Fixed (2026-11-15, the healthz goldens on the Windows arm64 runner)
 - `healthz_matches_its_goldens` embeds the three goldens with `include_str!`; it read them at run time, and the
   cross-built test on `windows-11-arm` runs where no checkout of the fixtures sits, so it compared against an empty

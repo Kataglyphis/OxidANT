@@ -2062,7 +2062,7 @@ mod tests {
         for visit in detection["recent"].as_array_mut().into_iter().flatten() {
             visit["arrived"] = 1_767_225_600_u64.into();
         }
-        serde_json::to_string_pretty(&json).unwrap() + "\n"
+        crate::golden::pretty(&json)
     }
 
     /// OmniAccelerANT parses these files, so a key renamed here fails at once; OBSERVANT_UPDATE_GOLDEN=1 rewrites them.
@@ -2077,7 +2077,6 @@ mod tests {
         visit.set_clip(b"mp4".to_vec(), 1_767_225_600);
         let problem = golden_camera();
         *problem.run_started.lock().unwrap() = Instant::now().checked_sub(Duration::from_secs(30));
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/healthz");
         // Embedded at build time: a cross-built test runs where no checkout sits beside it.
         let goldens = [
             (
@@ -2097,21 +2096,7 @@ mod tests {
             ),
         ];
         for (name, status, embedded) in goldens {
-            let path = dir.join(format!("{name}.json"));
-            let text = golden_text(&status);
-            if std::env::var_os("OBSERVANT_UPDATE_GOLDEN").is_some() {
-                std::fs::create_dir_all(&dir).unwrap();
-                std::fs::write(&path, &text).unwrap();
-                continue;
-            }
-            // A Windows checkout may hand the file over with CRLF; the bytes ObservANT sends are LF.
-            let golden = embedded.replace("\r\n", "\n");
-            assert_eq!(
-                golden,
-                text,
-                "{} differs; OBSERVANT_UPDATE_GOLDEN=1 rewrites it",
-                path.display()
-            );
+            crate::golden::check("healthz", name, &golden_text(&status), embedded);
         }
     }
 }
