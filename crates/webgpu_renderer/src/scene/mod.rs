@@ -455,14 +455,15 @@ impl CpuScene {
     }
 }
 
-/// A node's local matrix; non-finite or zero-scale inputs would NaN every descendant through the product.
+/// A node's local matrix; non-finite inputs would NaN every descendant through the product.
+/// Zero scale stays: it is how exporters hide a node, and the singular product is still finite.
 fn local_transform(node: &CpuNode) -> Mat4 {
     let translation = if node.translation.is_finite() {
         node.translation
     } else {
         Vec3::ZERO
     };
-    let scale = if node.scale.is_finite() && node.scale != Vec3::ZERO {
+    let scale = if node.scale.is_finite() {
         node.scale
     } else {
         Vec3::ONE
@@ -604,24 +605,33 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_scale_node_produces_a_finite_identity_transform() {
-        // Blender's Hide sets scale 0; the degenerate matrix must not NaN the scene graph.
-        let nodes = vec![CpuNode {
-            parent: None,
-            translation: Vec3::new(1.0, 2.0, 3.0),
-            rotation: Quat::IDENTITY,
-            scale: Vec3::ZERO,
-        }];
+    fn a_zero_scale_node_stays_hidden_and_finite() {
+        // Blender's Hide sets scale 0; the degenerate matrix must stay finite and keep its children hidden.
+        let nodes = vec![
+            CpuNode {
+                parent: None,
+                translation: Vec3::new(1.0, 2.0, 3.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ZERO,
+            },
+            node(Some(0), Vec3::new(5.0, 0.0, 0.0)),
+        ];
         let world = CpuScene::compute_world_transforms(&nodes);
-        assert!(
-            world[0].is_finite(),
-            "zero-scale transform must be finite, got {:?}",
-            world[0]
+        for (i, m) in world.iter().enumerate() {
+            assert!(m.is_finite(), "node {i} must stay finite, got {m:?}");
+        }
+        assert_eq!(
+            world[0].x_axis.length(),
+            0.0,
+            "a zero scale must not become 1"
         );
-        // The node is treated as scale=1 since zero scale is degenerate.
-        assert!(
-            (world[0].x_axis.length() - 1.0).abs() < 1e-5,
-            "axis length should be identity-like"
+        // The child collapses onto the hidden parent's origin: X and the origin land on one point.
+        let child_origin = world[1].transform_point3(Vec3::ZERO);
+        let child_x = world[1].transform_point3(Vec3::X);
+        assert_eq!(child_origin, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(
+            child_x, child_origin,
+            "a hidden parent's child must collapse too"
         );
     }
 

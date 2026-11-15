@@ -43,6 +43,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   panicked with `capacity overflow` instead of returning an error. The width has a cap of its own (65 536), the
   pixel cap is 8192 x 4096 on 32-bit targets (a compile-time check keeps twice the image allocatable), and the
   output grows with `try_reserve`, so a failed allocation is `HdrError::BadDimensions`.
+- **A node hidden with scale 0 reappeared at full size once animation ran**: `compute_world_transforms` turned an
+  all-zero scale into 1. The singular matrix is finite, the normal matrix already guards its inverse, and zero
+  scale is how exporters hide a node, so it stays; only non-finite inputs are replaced.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
