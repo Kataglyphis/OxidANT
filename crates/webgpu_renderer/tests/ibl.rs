@@ -496,3 +496,34 @@ fn the_brdf_table_is_baked_once_and_shared_across_environments() {
         "the BRDF LUT must not depend on the environment"
     );
 }
+
+/// A small sun moved by a quarter cube texel must give the same irradiance: the bake must not alias it.
+#[test]
+fn a_small_sun_gives_the_same_irradiance_at_any_sub_texel_offset() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    // Four panorama texels per cube texel; the panorama's centre is +X, the irradiance face 0.
+    let (width, height) = (2048u32, 1024u32);
+    let irradiance_toward_the_sun = |shift: u32| -> f32 {
+        let mut rgba32f = vec![0.0f32; (width * height * 4) as usize];
+        for v in height / 2 - 1..height / 2 + 1 {
+            for u in width / 2 + shift..width / 2 + shift + 2 {
+                let i = ((v * width + u) * 4) as usize;
+                rgba32f[i..i + 3].copy_from_slice(&[1.0e4; 3]);
+            }
+        }
+        let image = EquirectImage::new(width, height, rgba32f).expect("well formed");
+        let face = IblEnvironment::bake(&gpu, &image).read_irradiance_face(&gpu, 0);
+        let centre = IRRADIANCE_SIZE / 2;
+        face[(centre * IRRADIANCE_SIZE + centre) as usize][0]
+    };
+    let values: Vec<f32> = (0..4).map(irradiance_toward_the_sun).collect();
+    let low = values.iter().copied().fold(f32::INFINITY, f32::min);
+    let high = values.iter().copied().fold(0.0, f32::max);
+    eprintln!("sun irradiance per quarter-texel shift: {values:?}");
+    assert!(
+        high > 0.0 && (high - low) < 0.1 * high,
+        "a 2x2-texel sun shifted by quarter cube texels gives irradiance {values:?}: the bake aliases it"
+    );
+}

@@ -90,45 +90,47 @@ fn cs_main(@builtin(global_invocation_id) gid_0 : vec3<u32>)
     var w_0 : u32;
     var h_0 : u32;
     {var dim = textureDimensions((depthTex_0));((w_0)) = dim.x;((h_0)) = dim.y;};
-    var _S11 : vec2<i32> = vec2<i32>(i32(w_0) - i32(1), i32(h_0) - i32(1));
-    var maxSampled_0 : f32 = 0.0f;
-    var ty_0 : u32 = u32(0);
+    var maxCoord_0 : vec2<i32> = vec2<i32>(i32(w_0) - i32(1), i32(h_0) - i32(1));
+    var size_0 : vec2<f32> = vec2<f32>(f32(w_0), f32(h_0));
+    var lo_0 : vec2<i32> = clamp(vec2<i32>(floor(uvMin_1 * size_0)), vec2<i32>(i32(0), i32(0)), maxCoord_0);
+    var hi_0 : vec2<i32> = clamp(vec2<i32>(ceil(uvMax_1 * size_0)) - vec2<i32>(i32(1), i32(1)), lo_0, maxCoord_0);
+    var extent_0 : vec2<u32> = vec2<u32>(hi_0 - lo_0) + vec2<u32>(u32(1), u32(1));
+    if((extent_0.x * extent_0.y) > u32(4096))
+    {
+        visibility_0[idx_0] = u32(1);
+        return;
+    }
+    var y_0 : i32 = lo_0.y;
     for(;;)
     {
-        if(ty_0 < u32(8))
+        if(y_0 <= (hi_0.y))
         {
         }
         else
         {
             break;
         }
-        var tx_0 : u32 = u32(0);
+        var x_0 : i32 = lo_0.x;
         for(;;)
         {
-            if(tx_0 < u32(8))
+            if(x_0 <= (hi_0.x))
             {
             }
             else
             {
                 break;
             }
-            var _S12 : vec3<i32> = vec3<i32>(clamp(vec2<i32>(mix(uvMin_1, uvMax_1, (vec2<f32>(f32(tx_0), f32(ty_0)) + vec2<f32>(0.5f)) / vec2<f32>(8.0f)) * vec2<f32>(f32(w_0), f32(h_0))), vec2<i32>(i32(0), i32(0)), _S11), i32(0));
-            var _S13 : f32 = max(maxSampled_0, (textureLoad((depthTex_0), ((_S12)).xy, ((_S12)).z)));
-            var tx_1 : u32 = tx_0 + u32(1);
-            maxSampled_0 = _S13;
-            tx_0 = tx_1;
+            var coords_0 : vec3<i32> = vec3<i32>(x_0, y_0, i32(0));
+            if((textureLoad((depthTex_0), ((coords_0)).xy, ((coords_0)).z)) >= aabbNear_0)
+            {
+                visibility_0[idx_0] = u32(1);
+                return;
+            }
+            x_0 = x_0 + i32(1);
         }
-        ty_0 = ty_0 + u32(1);
+        y_0 = y_0 + i32(1);
     }
-    if(aabbNear_0 > maxSampled_0)
-    {
-        i_0 = u32(0);
-    }
-    else
-    {
-        i_0 = u32(1);
-    }
-    visibility_0[idx_0] = i_0;
+    visibility_0[idx_0] = u32(0);
     return;
 }
 

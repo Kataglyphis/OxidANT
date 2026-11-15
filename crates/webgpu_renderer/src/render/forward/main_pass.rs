@@ -10,14 +10,34 @@ use crate::render::bounds::aabb_contains_point;
 use crate::render::gpu_timing::TimedPass;
 use crate::scene::{InstanceRaw, Vertex};
 
-/// The four forward pipelines (back-culled or double-sided, opaque or blended) and their layouts.
+/// One winding's four forward pipelines: back-culled or double-sided, opaque or blended.
+pub(super) struct ForwardPipelineSet {
+    opaque: wgpu::RenderPipeline,
+    double_sided: wgpu::RenderPipeline,
+    blend: wgpu::RenderPipeline,
+    blend_double_sided: wgpu::RenderPipeline,
+}
+
+impl ForwardPipelineSet {
+    /// The pipeline for a material's sidedness and blending.
+    fn pick(&self, double_sided: bool, blend: bool) -> &wgpu::RenderPipeline {
+        match (double_sided, blend) {
+            (false, false) => &self.opaque,
+            (true, false) => &self.double_sided,
+            (false, true) => &self.blend,
+            (true, true) => &self.blend_double_sided,
+        }
+    }
+}
+
+/// The forward pipelines for both windings, and their layouts.
 pub(super) struct MainPipelines {
-    pub(super) opaque: wgpu::RenderPipeline,
-    pub(super) double_sided: wgpu::RenderPipeline,
-    pub(super) blend: wgpu::RenderPipeline,
-    pub(super) blend_double_sided: wgpu::RenderPipeline,
-    // Read only by the native shader hot-reload path, so unread on wasm32.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// Counter-clockwise front faces, glTF's default.
+    pub(super) upright: ForwardPipelineSet,
+    /// Clockwise front faces, for mirrored transforms; built the first frame one is drawn.
+    pub(super) mirrored: Option<ForwardPipelineSet>,
+    /// The module every pipeline here was built from, kept for the lazily built mirrored set.
+    pub(super) shader: wgpu::ShaderModule,
     pub(super) layout: wgpu::PipelineLayout,
     /// Group 0: per-primitive uniforms, the shadow map, five material slots and the joints.
     pub(super) material_layout: wgpu::BindGroupLayout,
@@ -26,7 +46,7 @@ pub(super) struct MainPipelines {
 impl MainPipelines {
     pub(super) fn new(
         device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
+        shader: wgpu::ShaderModule,
         ibl_layout: &wgpu::BindGroupLayout,
         frame_layout: &wgpu::BindGroupLayout,
         light_layout: &wgpu::BindGroupLayout,
@@ -43,16 +63,26 @@ impl MainPipelines {
             ],
             immediate_size: 0,
         });
-        let (opaque, double_sided, blend, blend_double_sided) =
-            create_forward_pipeline_set(device, shader, &layout);
+        let upright = create_forward_pipeline_set(device, &shader, &layout, wgpu::FrontFace::Ccw);
         Self {
-            opaque,
-            double_sided,
-            blend,
-            blend_double_sided,
+            upright,
+            mirrored: None,
+            shader,
             layout,
             material_layout,
         }
+    }
+
+    /// The set whose front faces wind clockwise when `clockwise`, else counter-clockwise.
+    fn for_winding(&self, clockwise: bool) -> &ForwardPipelineSet {
+        if !clockwise {
+            return &self.upright;
+        }
+        debug_assert!(
+            self.mirrored.is_some(),
+            "ensure_mirrored_pipelines must run first"
+        );
+        self.mirrored.as_ref().unwrap_or(&self.upright)
     }
 }
 
@@ -64,6 +94,26 @@ pub(super) fn create_forward_shader(device: &wgpu::Device) -> wgpu::ShaderModule
 }
 
 impl ForwardRenderer {
+    /// Builds the clockwise-front pipelines the first frame a mirrored transform is drawn.
+    pub(super) fn ensure_mirrored_pipelines(&mut self, device: &wgpu::Device) {
+        if !self.primitives.iter().any(GpuPrimitive::needs_clockwise) {
+            return;
+        }
+        if self.main.mirrored.is_none() {
+            self.main.mirrored = Some(create_forward_pipeline_set(
+                device,
+                &self.main.shader,
+                &self.main.layout,
+                wgpu::FrontFace::Cw,
+            ));
+        }
+        self.shadow.pipelines.ensure_mirrored(
+            device,
+            &self.main.shader,
+            &self.shadow.pipeline_layout,
+        );
+    }
+
     /// Opaque geometry, the sky and blended geometry in one render pass, resolved into `hdr_view`.
     pub(super) fn encode_forward_pass(
         &mut self,
@@ -140,12 +190,7 @@ impl ForwardRenderer {
                 continue;
             }
             occ_drawn += 1;
-            let pipeline = if prim.double_sided {
-                &self.main.double_sided
-            } else {
-                &self.main.opaque
-            };
-            draw_primitive(pass, pipeline, prim, view.eye);
+            draw_primitive(pass, &self.main, prim, view.eye);
         }
         (occ_drawn, occ_considered)
     }
@@ -167,30 +212,28 @@ impl ForwardRenderer {
             self.bind_frame_groups(pass);
         }
         for prim in blended {
-            let pipeline = if prim.double_sided {
-                &self.main.blend_double_sided
-            } else {
-                &self.main.blend
-            };
-            draw_primitive(pass, pipeline, prim, eye);
+            draw_primitive(pass, &self.main, prim, eye);
         }
     }
 }
 
-/// Binds `prim`'s group 0 and its LOD-selected geometry, then draws every instance.
+/// Binds `prim`'s group 0 and its LOD-selected geometry, then draws each winding's instances.
 fn draw_primitive(
     pass: &mut wgpu::RenderPass<'_>,
-    pipeline: &wgpu::RenderPipeline,
+    pipelines: &MainPipelines,
     prim: &GpuPrimitive,
     eye: Vec3,
 ) {
     let (vertex_buffer, index_buffer, index_count) = prim.geometry_for(eye);
-    pass.set_pipeline(pipeline);
     pass.set_bind_group(0, &prim.bind_group, &[]);
     pass.set_vertex_buffer(0, vertex_buffer.slice(..));
     pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
     pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-    pass.draw_indexed(0..index_count, 0, 0..prim.instance_count);
+    for (instances, clockwise) in prim.instance_runs() {
+        let set = pipelines.for_winding(clockwise);
+        pass.set_pipeline(set.pick(prim.double_sided, prim.alpha_blend));
+        pass.draw_indexed(0..index_count, 0, instances);
+    }
 }
 
 /// Bindings 0-2 sample the shadow map, 3..=12 are the material slot pairs and 13 the joints.
@@ -236,17 +279,11 @@ fn create_material_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLa
     })
 }
 
-type ForwardPipelineSet = (
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-);
-
 pub(super) fn create_forward_pipeline_set(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     pipeline_layout: &wgpu::PipelineLayout,
+    front_face: wgpu::FrontFace,
 ) -> ForwardPipelineSet {
     let make = |cull_mode: Option<wgpu::Face>, blend: bool, label: &str| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -273,6 +310,7 @@ pub(super) fn create_forward_pipeline_set(
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
+                front_face,
                 cull_mode,
                 ..Default::default()
             },
@@ -292,10 +330,10 @@ pub(super) fn create_forward_pipeline_set(
             cache: None,
         })
     };
-    (
-        make(Some(wgpu::Face::Back), false, "forward_pipeline"),
-        make(None, false, "forward_pipeline_double_sided"),
-        make(Some(wgpu::Face::Back), true, "forward_pipeline_blend"),
-        make(None, true, "forward_pipeline_blend_double_sided"),
-    )
+    ForwardPipelineSet {
+        opaque: make(Some(wgpu::Face::Back), false, "forward_pipeline"),
+        double_sided: make(None, false, "forward_pipeline_double_sided"),
+        blend: make(Some(wgpu::Face::Back), true, "forward_pipeline_blend"),
+        blend_double_sided: make(None, true, "forward_pipeline_blend_double_sided"),
+    }
 }

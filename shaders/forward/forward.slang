@@ -9,6 +9,9 @@ static const int CASCADE_COUNT = 3;
 // Must match render::tile_grid::TILE_SIZE, the CPU's light-binning tile size.
 static const uint TILE_SIZE = 16;
 
+// Below fp16's 65504: a larger radiance stores as +Inf in the Rgba16Float target, and ACES turns Inf into NaN.
+static const float HDR_MAX = 65000.0;
+
 struct FrameUniforms
 {
     float4x4 view_proj;
@@ -155,13 +158,19 @@ float4x4 instance_matrix(VsIn In)
     return transpose(float4x4(In.instance0, In.instance1, In.instance2, In.instance3));
 }
 
-float3x3 instance_cofactor(VsIn In)
+// Sign of the upper 3x3's determinant: -1 where m mirrors space.
+float mirror_sign(float4x4 m)
 {
-    float4x4 m = instance_matrix(In);
-    float3 c0 = m[0].xyz;
-    float3 c1 = m[1].xyz;
-    float3 c2 = m[2].xyz;
-    return float3x3(cross(c1, c2), cross(c2, c0), cross(c0, c1));
+    return dot(m[0].xyz, cross(m[1].xyz, m[2].xyz)) < 0.0 ? -1.0 : 1.0;
+}
+
+// Cofactor of m's upper 3x3 times mirror_sign: |det| m^-T, the normal transform up to scale.
+float3x3 normal_transform(float4x4 m)
+{
+    float3 r0 = m[0].xyz;
+    float3 r1 = m[1].xyz;
+    float3 r2 = m[2].xyz;
+    return float3x3(cross(r1, r2), cross(r2, r0), cross(r0, r1)) * mirror_sign(m);
 }
 
 float4x4 skin_matrix(VsIn In)
@@ -185,7 +194,6 @@ struct VsOut
     float4 lightSpacePos : TEXCOORD2;
     float4 worldTangent : TEXCOORD3;
     float3 worldPosition : TEXCOORD4;
-    float viewDepth : TEXCOORD5;
     float4 vertexColor : TEXCOORD6;
     float2 uv1 : TEXCOORD7;
 };
@@ -199,18 +207,19 @@ VsOut vs_main(VsIn In)
     o.svPosition = mul(frame.view_proj, worldPos);
     if (In.weights.x + In.weights.y + In.weights.z + In.weights.w > 0.0001)
     {
-        o.worldNormal = normalize(mul(model, float4(In.normal, 0.0)).xyz);
+        o.worldNormal = normalize(mul(normal_transform(model), In.normal));
     }
     else
     {
         float3 nModel = mul(prim.normal_matrix, float4(In.normal, 0.0)).xyz;
-        o.worldNormal = normalize(mul(instance_cofactor(In), nModel));
+        o.worldNormal = normalize(mul(normal_transform(instance_matrix(In)), nModel));
     }
-    o.worldTangent = float4(normalize(mul(model, float4(In.tangent.xyz, 0.0)).xyz), In.tangent.w);
+    // A mirroring transform reverses the tangent frame's handedness, so the bitangent sign follows.
+    float handedness = In.tangent.w * mirror_sign(model);
+    o.worldTangent = float4(normalize(mul(model, float4(In.tangent.xyz, 0.0)).xyz), handedness);
     o.uv = In.uv;
     o.lightSpacePos = mul(frame.light_space, worldPos);
     o.worldPosition = worldPos.xyz;
-    o.viewDepth = distance(worldPos.xyz, frame.camera_position.xyz);
     o.vertexColor = In.color;
     o.uv1 = In.uv1;
     return o;
@@ -348,7 +357,7 @@ float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
         uint2 gridEntry = tileLightGrid[tileIndex];
         count = int(gridEntry.x);
         tileOffset = gridEntry.y;
-        // An empty tile falls back to all lights: tile_rect_for_light is not yet fully conservative.
+        // An empty tile shades every light: binning is not fully conservative, and an overflowing tile lists none.
         if (count > 0) tileCount = count;
     }
 
@@ -415,14 +424,16 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float3 emissive = prim.emissive_factor.rgb * emissiveSample.rgb;
 
     float3 nGeom = normalize(In.worldNormal);
-    // Only doubleSided materials disable culling; flip before deriving t and b so the handedness follows.
-    if (!isFrontFace) nGeom = -nGeom;
     float3 t = normalize(In.worldTangent.xyz - nGeom * dot(nGeom, In.worldTangent.xyz));
     float3 b = cross(nGeom, t) * In.worldTangent.w;
     float3 nTs = normalSample.xyz * 2.0 - 1.0;
+    // A two-channel map (BC5) samples blue as 0; glTF normals are unit length, so z is rebuilt from xy.
+    if (normalSample.b == 0.0) nTs.z = sqrt(saturate(1.0 - dot(nTs.xy, nTs.xy)));
     nTs = float3(nTs.xy * prim.material_factors.w, nTs.z);
     // Row-multiply mul(v, M), as in common/normal_map.slang's apply_normal_map().
     float3 n = normalize(mul(nTs, float3x3(t, b, nGeom)));
+    // A doubleSided back face reverses the whole tangent frame (glTF 3.9.2), so the mapped normal flips.
+    if (!isFrontFace) n = -n;
 
     float3 l = normalize(frame.light_dir_ambient.xyz);
     float3 v = normalize(frame.camera_position.xyz - In.worldPosition);
@@ -432,7 +443,9 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float nDotL = max(dot(n, l), 0.0);
 
     float3 directLight = brdf_direct(n, v, l, albedo.rgb, metallic, roughness, f0, radiance);
-    float visibility = shadow_visibility(In.viewDepth, In.worldPosition, nDotL);
+    // Per fragment: a per-vertex distance interpolates too far inside big triangles, picking coarse cascades.
+    float eyeDistance = distance(In.worldPosition, frame.camera_position.xyz);
+    float visibility = shadow_visibility(eyeDistance, In.worldPosition, nDotL);
     directLight *= visibility;
 
     float3 punctual = punctual_lighting(In.worldPosition, n, v, albedo.rgb, metallic, roughness, f0, In.svPosition);
@@ -460,5 +473,5 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float3 ambient = iblStrength * occlusion * (diffuseIbl + specularIbl);
 
     float3 color = directLight + punctual + ambient + emissive;
-    return float4(color, albedo.a);
+    return float4(clamp(color, float3(0.0), float3(HDR_MAX)), albedo.a);
 }

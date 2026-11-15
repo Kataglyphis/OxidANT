@@ -30,7 +30,7 @@ impl GpuContext {
     pub async fn new_windowed_async(window: Arc<Window>) -> anyhow::Result<Self> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: requested_backends(),
             flags: wgpu::InstanceFlags::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             backend_options: wgpu::BackendOptions::default(),
@@ -68,13 +68,18 @@ impl GpuContext {
             .copied()
             .context("Surface reports no supported alpha modes")?;
 
+        let (width, height) = clamp_surface_extent(
+            size.width.max(1),
+            size.height.max(1),
+            device.limits().max_texture_dimension_2d,
+        );
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             // `Auto` is the only colour space guaranteed for every format; an HDR space needs a capability check.
             color_space: wgpu::SurfaceColorSpace::Auto,
-            width: size.width.max(1),
-            height: size.height.max(1),
+            width,
+            height,
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode,
             view_formats: vec![],
@@ -100,7 +105,7 @@ impl GpuContext {
 
     async fn new_headless_async() -> anyhow::Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: requested_backends(),
             flags: wgpu::InstanceFlags::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             backend_options: wgpu::BackendOptions::default(),
@@ -188,14 +193,15 @@ impl GpuContext {
     }
 
     /// Reconfigures the surface for a new size; zero sizes (minimized windows) are ignored.
+    /// A side past the device's texture limit scales the surface down, aspect kept.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
+        let max_side = self.device.limits().max_texture_dimension_2d;
         if let (Some(surface), Some(config)) = (self.surface.as_ref(), self.surface_config.as_mut())
         {
-            config.width = width;
-            config.height = height;
+            (config.width, config.height) = clamp_surface_extent(width, height, max_side);
             surface.configure(&self.device, config);
         }
     }
@@ -207,6 +213,31 @@ impl GpuContext {
             surface.configure(&self.device, config);
         }
     }
+}
+
+/// The backends an instance may pick: never GL natively, as GLSL cannot `textureLoad` a depth texture
+/// (the depth resolve and SSAO do), and a GL adapter can outrank lavapipe in adapter selection.
+fn requested_backends() -> wgpu::Backends {
+    if cfg!(target_arch = "wasm32") {
+        wgpu::Backends::all()
+    } else {
+        wgpu::Backends::all().difference(wgpu::Backends::GL)
+    }
+}
+
+/// `width` x `height` scaled to fit `max_side` with its aspect kept: under WebGPU's default limits a
+/// window over 8192 px fails surface and target validation, and the platform stretches the result.
+fn clamp_surface_extent(width: u32, height: u32, max_side: u32) -> (u32, u32) {
+    let longest = width.max(height);
+    if longest <= max_side {
+        return (width, height);
+    }
+    log::warn!(
+        "surface {width}x{height} exceeds the {max_side} px texture limit; rendering scaled"
+    );
+    let scale = f64::from(max_side) / f64::from(longest);
+    let fit = |side: u32| ((f64::from(side) * scale).round() as u32).clamp(1, max_side);
+    (fit(width), fit(height))
 }
 
 async fn request_device(
@@ -240,4 +271,25 @@ async fn request_device(
         .await
         .map(|(device, queue)| (device, queue, supports_bc, supports_timestamps))
         .context("Failed to create device")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_contexts_never_request_the_gl_backend() {
+        let backends = requested_backends();
+        assert!(!backends.contains(wgpu::Backends::GL), "{backends:?}");
+        assert!(backends.contains(wgpu::Backends::VULKAN), "{backends:?}");
+    }
+
+    #[test]
+    fn a_surface_past_the_texture_limit_scales_down_with_its_aspect() {
+        assert_eq!(clamp_surface_extent(10240, 1440, 8192), (8192, 1152));
+        assert_eq!(clamp_surface_extent(1440, 10240, 8192), (1152, 8192));
+        assert_eq!(clamp_surface_extent(20000, 1, 8192), (8192, 1));
+        assert_eq!(clamp_surface_extent(8192, 4096, 8192), (8192, 4096));
+        assert_eq!(clamp_surface_extent(1920, 1080, 8192), (1920, 1080));
+    }
 }

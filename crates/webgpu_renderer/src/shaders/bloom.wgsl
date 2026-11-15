@@ -39,8 +39,9 @@ struct pixelInput_0
 @fragment
 fn fs_brightpass( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
-    var _S2 : pixelOutput_0 = pixelOutput_0( vec4<f32>(max((textureSample((srcTex_0), (srcSampler_0), (_S1.uv_1))).xyz * vec3<f32>(exp2(exposureState_0[i32(0)])) - vec3<f32>(1.0f), vec3<f32>(0.0f)), 1.0f) );
-    return _S2;
+    var _S2 : vec3<f32> = vec3<f32>(65000.0f);
+    var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(clamp(min((textureSample((srcTex_0), (srcSampler_0), (_S1.uv_1))).xyz, _S2) * vec3<f32>(exp2(exposureState_0[i32(0)])) - vec3<f32>(1.0f), vec3<f32>(0.0f), _S2), 1.0f) );
+    return _S3;
 }
 
 fn blur_0( uv_2 : vec2<f32>,  dir_0 : vec2<f32>) -> vec3<f32>
@@ -49,14 +50,14 @@ fn blur_0( uv_2 : vec2<f32>,  dir_0 : vec2<f32>) -> vec3<f32>
     var h_0 : u32;
     {var dim = textureDimensions((srcTex_0));((w_0)) = dim.x;((h_0)) = dim.y;};
     var texel_0 : vec2<f32> = dir_0 / vec2<f32>(f32(w_0), f32(h_0));
-    var _S3 : vec3<f32> = vec3<f32>(0.194594606757164f);
-    var _S4 : vec2<f32> = texel_0 * vec2<f32>(2.0f);
-    var _S5 : vec3<f32> = vec3<f32>(0.12162160128355026f);
-    var _S6 : vec2<f32> = texel_0 * vec2<f32>(3.0f);
-    var _S7 : vec3<f32> = vec3<f32>(0.05405399948358536f);
-    var _S8 : vec2<f32> = texel_0 * vec2<f32>(4.0f);
-    var _S9 : vec3<f32> = vec3<f32>(0.01621600054204464f);
-    return (textureSample((srcTex_0), (srcSampler_0), (uv_2))).xyz * vec3<f32>(0.22702699899673462f) + (textureSample((srcTex_0), (srcSampler_0), (uv_2 + texel_0))).xyz * _S3 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 - texel_0))).xyz * _S3 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 + _S4))).xyz * _S5 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 - _S4))).xyz * _S5 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 + _S6))).xyz * _S7 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 - _S6))).xyz * _S7 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 + _S8))).xyz * _S9 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 - _S8))).xyz * _S9;
+    var _S4 : vec3<f32> = vec3<f32>(0.194594606757164f);
+    var _S5 : vec2<f32> = texel_0 * vec2<f32>(2.0f);
+    var _S6 : vec3<f32> = vec3<f32>(0.12162160128355026f);
+    var _S7 : vec2<f32> = texel_0 * vec2<f32>(3.0f);
+    var _S8 : vec3<f32> = vec3<f32>(0.05405399948358536f);
+    var _S9 : vec2<f32> = texel_0 * vec2<f32>(4.0f);
+    var _S10 : vec3<f32> = vec3<f32>(0.01621600054204464f);
+    return (textureSample((srcTex_0), (srcSampler_0), (uv_2))).xyz * vec3<f32>(0.22702699899673462f) + (textureSample((srcTex_0), (srcSampler_0), (uv_2 + texel_0))).xyz * _S4 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 - texel_0))).xyz * _S4 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 + _S5))).xyz * _S6 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 - _S5))).xyz * _S6 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 + _S7))).xyz * _S8 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 - _S7))).xyz * _S8 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 + _S9))).xyz * _S10 + (textureSample((srcTex_0), (srcSampler_0), (uv_2 - _S9))).xyz * _S10;
 }
 
 struct pixelOutput_1
@@ -70,10 +71,10 @@ struct pixelInput_1
 };
 
 @fragment
-fn fs_blur_h( _S10 : pixelInput_1, @builtin(position) svPosition_2 : vec4<f32>) -> pixelOutput_1
+fn fs_blur_h( _S11 : pixelInput_1, @builtin(position) svPosition_2 : vec4<f32>) -> pixelOutput_1
 {
-    var _S11 : pixelOutput_1 = pixelOutput_1( vec4<f32>(blur_0(_S10.uv_3, vec2<f32>(1.0f, 0.0f)), 1.0f) );
-    return _S11;
+    var _S12 : pixelOutput_1 = pixelOutput_1( vec4<f32>(blur_0(_S11.uv_3, vec2<f32>(1.0f, 0.0f)), 1.0f) );
+    return _S12;
 }
 
 struct pixelOutput_2
@@ -87,9 +88,9 @@ struct pixelInput_2
 };
 
 @fragment
-fn fs_blur_v( _S12 : pixelInput_2, @builtin(position) svPosition_3 : vec4<f32>) -> pixelOutput_2
+fn fs_blur_v( _S13 : pixelInput_2, @builtin(position) svPosition_3 : vec4<f32>) -> pixelOutput_2
 {
-    var _S13 : pixelOutput_2 = pixelOutput_2( vec4<f32>(blur_0(_S12.uv_4, vec2<f32>(0.0f, 1.0f)), 1.0f) );
-    return _S13;
+    var _S14 : pixelOutput_2 = pixelOutput_2( vec4<f32>(blur_0(_S13.uv_4, vec2<f32>(0.0f, 1.0f)), 1.0f) );
+    return _S14;
 }
 

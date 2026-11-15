@@ -63,7 +63,7 @@ fn environment_intensity_scales_the_ambient_term() {
 
     let scene = load_gltf(cube_path()).expect("cube.gltf must load");
 
-    // `set_environment` bakes `ibl_intensity` at call time, so set it first.
+    // Set before the bake here; `ibl_intensity_takes_effect_after_set_environment` covers after.
     let mut dim = ForwardRenderer::new(&gpu, 128, 128);
     dim.upload_scene(&gpu, &scene);
     dim.ibl_intensity = 1.0;
@@ -107,5 +107,28 @@ fn ambient_strength_scales_the_ambient_term() {
     assert!(
         bright_luma > dim_luma + 5.0,
         "raising light_dir_ambient.w should brighten the ambient term: {dim_luma:.2} -> {bright_luma:.2}"
+    );
+}
+
+/// `ibl_intensity` is a live knob: changing it after the bake must change the next frame.
+#[test]
+fn ibl_intensity_takes_effect_after_set_environment() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.set_environment(&gpu, &EquirectImage::constant(64, 32, [3.0, 3.0, 3.0]));
+    let before = cube_luma(&render(&mut renderer, &gpu));
+    renderer.ibl_intensity = 2.0;
+    let after = cube_luma(&render(&mut renderer, &gpu));
+
+    eprintln!("cube mean luma: ibl_intensity 1.0 -> {before:.2}, then 2.0 -> {after:.2}");
+    assert!(
+        after > before + 5.0,
+        "raising ibl_intensity after set_environment must brighten the ambient term: \
+         {before:.2} -> {after:.2}"
     );
 }

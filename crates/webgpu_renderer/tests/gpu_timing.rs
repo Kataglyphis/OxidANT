@@ -93,3 +93,71 @@ fn a_disabled_subsystem_needs_no_device() {
     assert!(!timing.is_available());
     assert!(timing.timings_ms().is_empty());
 }
+
+/// A pass that stops running stops reporting; a resolve of its unwritten queries is a stale frame.
+#[test]
+fn a_pass_that_stops_running_drops_out_of_the_timings() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    if !gpu.supports_timestamps {
+        assert!(
+            !GpuContext::gpu_required(),
+            "KATAGLYPHIS_REQUIRE_GPU is set but the adapter lacks TIMESTAMP_QUERY"
+        );
+        return;
+    }
+    let (width, height) = (64u32, 64u32);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    assert!(renderer.enable_gpu_timing(&gpu));
+    renderer.upload_scene(&gpu, &load_gltf(cube_path()).expect("cube.gltf must load"));
+    renderer.auto_exposure = true;
+    let camera = OrbitCamera::default();
+    let mut tonemap = TonemapPass::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("gpu_timing_target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut render_frames = |renderer: &mut ForwardRenderer| {
+        for _ in 0..64 {
+            renderer.render_tonemapped(&gpu, &mut tonemap, &view, width, height, &camera);
+            let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        }
+    };
+    let reported = |renderer: &ForwardRenderer, name: &str| {
+        renderer
+            .gpu_timings_ms()
+            .iter()
+            .any(|(pass, _)| *pass == name)
+    };
+
+    render_frames(&mut renderer);
+    assert!(
+        reported(&renderer, "Bloom") && reported(&renderer, "Histogram"),
+        "precondition: bloom and the histogram must report while they run: {:?}",
+        renderer.gpu_timings_ms()
+    );
+    renderer.bloom_strength = 0.0;
+    renderer.auto_exposure = false;
+    render_frames(&mut renderer);
+    let timings = renderer.gpu_timings_ms();
+    assert!(
+        !reported(&renderer, "Bloom") && !reported(&renderer, "Histogram"),
+        "bloom and the histogram stopped running but still report: {timings:?}"
+    );
+    assert!(
+        reported(&renderer, "Forward"),
+        "a pass that keeps running keeps reporting: {timings:?}"
+    );
+}

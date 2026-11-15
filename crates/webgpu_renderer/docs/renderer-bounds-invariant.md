@@ -36,8 +36,9 @@ Change any of these and you inherit the invariant:
 
 - **Frustum culling** (`Frustum::intersects_aabb`) — wrong bounds delete a
   visible object outright.
-- **Shadow-caster culling** (`intersects_aabb_as_caster`) — wrong bounds delete
-  its *shadow*, which looks like a lighting bug, not a culling bug.
+- **Shadow-caster culling** (`intersects_aabb_as_caster`) — not wired in: the
+  cascade passes replay cached bundles that draw every caster. Once it is, wrong
+  bounds delete a *shadow*, which looks like a lighting bug, not a culling bug.
 - **Cascade fitting** (`update_cascades` via `scene_bounds`) — this one is
   scene-wide: bad bounds misfit *all three* cascades, so unrelated objects lose
   their shadows.
@@ -93,6 +94,11 @@ points mixing lateral and depth offsets, so the true footprint is wider by up to
 `D / sqrt(D² - r²)`. Until a projection-aware sphere bound replaces it (Mara &
 McGuire, *2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere*), the
 shader's per-tile `count <= 0` fallback that iterates every light must stay.
+
+Two cases bypass the footprint on purpose. A light without a finite positive `range`
+(glTF's unbounded light, Blender's default export) is binned into every tile, as a
+directional one is. A tile more than `MAX_LIGHTS_PER_TILE` lights overlap lists none,
+so the same fallback shades every light there instead of a truncated list.
 
 ## Non-finite input
 

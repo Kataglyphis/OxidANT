@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt as _;
 
-use super::primitive::{GpuPrimitive, LodLevel, PrimMaterial, PrimUniforms};
+use super::primitive::{is_mirrored, GpuPrimitive, LodLevel, PrimMaterial, PrimUniforms};
 use super::{ForwardRenderer, MAX_JOINTS, MAX_PUNCTUAL_LIGHTS};
 use crate::context::GpuContext;
 use crate::render::bounds::{
@@ -197,7 +197,7 @@ impl ForwardRenderer {
     pub(super) fn reset_scene_state(&mut self, scene: &CpuScene) {
         self.primitives.clear();
         // A cached bundle references buffers that are about to be dropped.
-        self.shadow.caster_bundle = None;
+        self.shadow.caster_bundles = None;
         // Visibility is per primitive index, so a new scene must not inherit stale culls.
         self.culling.occlusion.reset();
         if let Some(gpu_cull) = self.culling.gpu_culling.as_mut() {
@@ -264,7 +264,7 @@ impl ForwardRenderer {
         )
     }
 
-    /// Forward group 0, the shadow group and, for textured MASK casters, the alpha-testing one.
+    /// Forward group 0, the shadow group and, for MASK casters, the alpha-testing one.
     fn create_primitive_bind_groups(
         &self,
         device: &wgpu::Device,
@@ -289,9 +289,8 @@ impl ForwardRenderer {
                 },
             ],
         });
-        // Textured MASK casters alpha-test with the forward pass's own slot-0 view/sampler.
-        let alpha_masked = matches!(material.alpha_mode, AlphaMode::Mask(_))
-            && material.base_color_texture.is_some();
+        // Every MASK caster alpha-tests with slot 0's view, white when untextured: vertex alpha cuts too.
+        let alpha_masked = matches!(material.alpha_mode, AlphaMode::Mask(_));
         let shadow_masked = if alpha_masked {
             Some(self.create_masked_shadow_bind_group(
                 device,
@@ -450,6 +449,8 @@ fn assemble_primitive(prim: &CpuPrimitive, parts: PrimitiveParts) -> GpuPrimitiv
         shadow_masked_bind_group: parts.groups.shadow_masked,
         instance_buffer: parts.instance_buffer,
         instance_count: 1,
+        mirrored_instances_from: 1,
+        mirrored: is_mirrored(&prim.transform),
         instance_transforms: Vec::new(),
         pre_instance_aabb: parts.prim_bounds,
         model: prim.transform,

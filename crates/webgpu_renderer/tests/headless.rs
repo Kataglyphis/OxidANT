@@ -413,6 +413,61 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
     );
 }
 
+/// Each cascade's depth layer holds the casters through its own light matrix, not cascade 0's.
+#[test]
+fn every_cascade_layer_is_rendered_with_its_own_light_matrix() {
+    use kataglyphis_webgpu_renderer::render::forward::{CASCADE_COUNT, SHADOW_MAP_SIZE};
+
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    renderer
+        .render_to_pixels(&gpu, 64, 64, &camera)
+        .expect("headless render must succeed");
+
+    let depths = renderer
+        .read_shadow_map(&gpu)
+        .expect("shadow map readback must succeed");
+    let size = SHADOW_MAP_SIZE as usize;
+    assert_eq!(depths.len(), CASCADE_COUNT * size * size);
+    // The cube's top centre and a plane point on the lit side: every cascade's light sees both.
+    let probes = [
+        glam::Vec3::new(0.0, 1.4, 0.0),
+        glam::Vec3::new(-1.5, 0.0, -1.5),
+    ];
+    for (cascade, matrix) in renderer.shadow_cascade_matrices().iter().enumerate() {
+        for probe in probes {
+            let clip = *matrix * probe.extend(1.0);
+            let ndc = clip.truncate() / clip.w;
+            let (u, v) = (ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+            assert!(
+                (0.0..1.0).contains(&u) && (0.0..1.0).contains(&v) && (0.0..1.0).contains(&ndc.z),
+                "precondition: {probe} must lie inside cascade {cascade}'s box, got {ndc:?}"
+            );
+            let (x, y) = ((u * size as f32) as usize, (v * size as f32) as usize);
+            let stored = depths[cascade * size * size + y * size + x];
+            assert!(
+                (stored - ndc.z).abs() < 2e-3,
+                "cascade {cascade}: its layer holds depth {stored} at {probe}'s texel, \
+                 but its own light matrix puts that point at {}",
+                ndc.z
+            );
+        }
+    }
+}
+
 /// The shader source is owned here, so standalone checkouts run the parity checks too.
 fn slang_source() -> Option<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1082,6 +1137,74 @@ fn manual_exposure_still_controls_brightness() {
     );
 }
 
+/// A new scene starts at the manual EV, not at the exposure the previous scene adapted to.
+#[test]
+fn uploading_a_scene_resets_the_adapted_exposure() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.auto_exposure = true;
+    renderer.auto_exposure_speed = 50.0;
+    renderer.light_color_intensity.w = 200.0;
+    for _ in 0..16 {
+        renderer
+            .render_to_pixels(&gpu, 64, 64, &OrbitCamera::default())
+            .expect("render must succeed");
+    }
+    let (adapted, _) = renderer.read_exposure(&gpu);
+    assert!(
+        adapted < -1.0,
+        "precondition: the bright scene must adapt the exposure down, got EV {adapted}"
+    );
+
+    renderer.upload_scene(&gpu, &scene);
+    let manual = renderer.exposure_ev;
+    assert_eq!(
+        renderer.read_exposure(&gpu),
+        (manual, manual),
+        "a new scene inherited the previous scene's adapted exposure"
+    );
+}
+
+/// Bloom thresholds at the frame's own exposure, so a fresh renderer's first frame is already steady.
+#[test]
+fn the_first_frame_blooms_at_its_own_manual_exposure() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 96, 96);
+    renderer.upload_scene(&gpu, &scene);
+    // A sunlit plane near HDR 3 blooms at EV 0, not at EV -3, where it exposes to about 0.4.
+    renderer.light_color_intensity.w = 20.0;
+    renderer.exposure_ev = -3.0;
+    renderer.bloom_strength = 2.0;
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    let first = renderer
+        .render_to_pixels(&gpu, 96, 96, &camera)
+        .expect("first frame must render");
+    let second = renderer
+        .render_to_pixels(&gpu, 96, 96, &camera)
+        .expect("second frame must render");
+    let differing = differing_pixels(&first, &second, 1);
+    assert!(
+        differing < 5,
+        "{differing} pixels differ between the first and second frame of a static scene: \
+         the first frame's bloom thresholded at the previous (EV 0) exposure"
+    );
+}
+
 /// Instances must land at their own transforms, not stack invisibly on the original.
 #[test]
 fn instances_appear_at_their_own_transforms() {
@@ -1209,10 +1332,10 @@ fn growing_the_instance_count_reallocates_correctly() {
     }
 }
 
-/// Shadows survive caster culling; `drawn < considered` is unchecked while one cached bundle
-/// serves every cascade, which leaves per-cascade culling off.
+/// A caster far outside every cascade's box refits them all; the near shadow must survive it.
+/// No caster is culled: the cascade bundles draw every caster, so drawn == considered.
 #[test]
-fn caster_culling_engages_and_shadows_survive() {
+fn a_far_extra_caster_leaves_the_near_shadow_intact() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -1240,8 +1363,12 @@ fn caster_culling_engages_and_shadows_survive() {
         .render_to_pixels(&gpu, width, height, &camera)
         .expect("headless render must succeed");
 
-    let (_drawn, considered) = renderer.shadow_caster_stats();
+    let (drawn, considered) = renderer.shadow_caster_stats();
     assert!(considered > 0, "no casters considered - did the pass run?");
+    assert_eq!(
+        drawn, considered,
+        "no shadow-caster culling exists to skip any"
+    );
 
     // As in shadow_darkens_plane_under_cube: the shadow is blue-tinted, never neutral dark.
     let mut lit_plane = 0usize;
@@ -1298,6 +1425,268 @@ fn shadow_caster_bundle_is_cached_across_frames() {
         "set_animation_time only rewrites buffer contents, not identity - \
          the cached bundle must survive it"
     );
+}
+
+/// Pixels where any channel of `a` and `b` differs by more than `tolerance`.
+fn differing_pixels(a: &[u8], b: &[u8], tolerance: u8) -> usize {
+    a.as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.as_chunks::<4>().0)
+        .filter(|(p, q)| {
+            p.iter()
+                .zip(q.iter())
+                .any(|(x, y)| x.abs_diff(*y) > tolerance)
+        })
+        .count()
+}
+
+/// Renders one frame through `tonemap` into a fresh RGBA8 target, as a window frame would, and reads it.
+fn render_through(
+    gpu: &GpuContext,
+    renderer: &mut ForwardRenderer,
+    tonemap: &mut kataglyphis_webgpu_renderer::TonemapPass,
+    size: u32,
+    camera: &OrbitCamera,
+) -> Vec<u8> {
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("window_stand_in"),
+        size: wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    renderer.render_tonemapped(gpu, tonemap, &view, size, size, camera);
+
+    let row = (size * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("window_stand_in_readback"),
+        size: u64::from(row * size),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(size),
+            },
+        },
+        texture.size(),
+    );
+    gpu.queue.submit(Some(encoder.finish()));
+    buffer.slice(..).map_async(wgpu::MapMode::Read, |result| {
+        result.expect("readback must map");
+    });
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll must succeed");
+    let data = buffer
+        .slice(..)
+        .get_mapped_range()
+        .expect("the buffer is mapped");
+    data.chunks(row as usize)
+        .flat_map(|r| &r[..(size * 4) as usize])
+        .copied()
+        .collect()
+}
+
+/// A screenshot at the window's size must leave the window's bloom and AO following the scene.
+#[test]
+fn a_screenshot_at_the_window_size_leaves_the_window_post_inputs_live() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let size = 128;
+    let mut renderer = ForwardRenderer::new(&gpu, size, size);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.35);
+    renderer.bloom_strength = 1.5;
+    let mut window =
+        kataglyphis_webgpu_renderer::TonemapPass::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let before = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    let after = OrbitCamera {
+        yaw_deg: 160.0,
+        ..before.clone()
+    };
+
+    render_through(&gpu, &mut renderer, &mut window, size, &before);
+    renderer
+        .render_to_pixels(&gpu, size, size, &before)
+        .expect("the screenshot must render");
+    let live = render_through(&gpu, &mut renderer, &mut window, size, &after);
+    let reference = renderer
+        .render_to_pixels(&gpu, size, size, &after)
+        .expect("the reference must render");
+
+    let differing = differing_pixels(&live, &reference, 2);
+    assert!(
+        differing < 20,
+        "after a same-size screenshot the window frame differs from a fresh one in {differing} \
+         pixels: its tonemap still samples the bloom and AO of the frame before the screenshot"
+    );
+}
+
+/// Radiance past fp16's 65504 stores +Inf on most GPUs, and ACES turns Inf into NaN: a black hot spot.
+/// Lavapipe rounds that overflow to 65504, so the second scene feeds a true +Inf: an emissive
+/// strength past f32's range, which a glTF's `emissiveStrength: 1e39` loads as.
+#[test]
+fn a_hot_spot_past_the_half_float_range_saturates_instead_of_turning_black() {
+    use kataglyphis_webgpu_renderer::scene::{CpuLight, CpuLightKind};
+
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let mut plane_only = load_gltf(path).expect("cube_on_plane.gltf must load");
+    plane_only.primitives.retain(|p| p.vertices.len() == 4);
+    // A lamp 2 cm above the plane: about 7e9 at the plane under it.
+    let mut lamp = plane_only.clone();
+    lamp.lights = vec![CpuLight {
+        kind: CpuLightKind::Point,
+        color: [1.0, 1.0, 1.0],
+        intensity: 1.0e7,
+        range: 0.0,
+        position: [0.0, 0.02, 0.0],
+        direction: [0.0, -1.0, 0.0],
+    }];
+    let mut glowing = plane_only;
+    glowing.primitives[0].material.emissive_factor = [f32::INFINITY; 3];
+
+    for (label, scene) in [("lamp", lamp), ("infinite emissive", glowing)] {
+        let size = 96u32;
+        let mut renderer = ForwardRenderer::new(&gpu, size, size);
+        renderer.upload_scene(&gpu, &scene);
+        let camera = OrbitCamera {
+            radius: 3.0,
+            pitch_deg: 89.0,
+            ..OrbitCamera::default()
+        };
+        let pixels = renderer
+            .render_to_pixels(&gpu, size, size, &camera)
+            .expect("headless render must succeed");
+        // A half float with every exponent bit set is +-Inf or NaN.
+        let hdr = renderer
+            .read_hdr_target(&gpu)
+            .expect("HDR readback must succeed");
+        let non_finite = hdr.iter().filter(|h| *h & 0x7c00 == 0x7c00).count();
+        assert_eq!(
+            non_finite, 0,
+            "{label}: {non_finite} HDR channels hold Inf or NaN, which bloom spreads and ACES blackens"
+        );
+        let i = (((size / 2) * size + size / 2) * 4) as usize;
+        let centre = [pixels[i], pixels[i + 1], pixels[i + 2]];
+        assert!(
+            centre.iter().all(|c| *c > 240),
+            "{label}: the overexposed centre must saturate to white, got {centre:?}"
+        );
+    }
+}
+
+/// Fewer instances within the buffer's capacity must take their shadows with them.
+#[test]
+fn shrinking_or_clearing_instances_removes_their_shadows() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let (width, height) = (128, 128);
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    let new_renderer = || {
+        let mut renderer = ForwardRenderer::new(&gpu, width, height);
+        renderer.upload_scene(&gpu, &scene);
+        renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+        renderer
+    };
+    let reference = new_renderer()
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("reference render must succeed");
+
+    let three = [
+        glam::Mat4::IDENTITY,
+        glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 1.5)),
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, -2.0)),
+    ];
+    let mut renderer = new_renderer();
+    for shrink_to in [&[glam::Mat4::IDENTITY][..], &[]] {
+        renderer.set_instances(&gpu, 0, &three);
+        renderer
+            .render_to_pixels(&gpu, width, height, &camera)
+            .expect("three-instance render must succeed");
+        renderer.set_instances(&gpu, 0, shrink_to);
+        let shrunk = renderer
+            .render_to_pixels(&gpu, width, height, &camera)
+            .expect("one-instance render must succeed");
+        let differing = differing_pixels(&shrunk, &reference, 2);
+        assert!(
+            differing < 20,
+            "after set_instances({} transforms) {differing} pixels differ from a renderer that \
+             only ever had one instance: the removed instances still cast shadows",
+            shrink_to.len()
+        );
+    }
+}
+
+/// A shader reload replaces the shadow pipelines, so the bundles that hold the old ones go.
+#[test]
+fn reloading_shaders_rerecords_the_shadow_bundles() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
+    renderer.upload_scene(&gpu, &scene);
+    renderer
+        .render_to_pixels(&gpu, 64, 64, &OrbitCamera::default())
+        .expect("first render must succeed");
+    assert!(renderer.shadow_caster_bundle_is_cached());
+
+    renderer
+        .reload_shaders(
+            &gpu,
+            include_str!("../src/shaders/forward.wgsl"),
+            include_str!("../src/shaders/sky.wgsl"),
+        )
+        .expect("the shipped shaders must reload");
+    assert!(
+        !renderer.shadow_caster_bundle_is_cached(),
+        "the cached shadow bundles still draw with the replaced pipelines"
+    );
+    renderer
+        .render_to_pixels(&gpu, 64, 64, &OrbitCamera::default())
+        .expect("render after the reload must succeed");
+    assert!(renderer.shadow_caster_bundle_is_cached());
 }
 
 #[test]
@@ -1548,6 +1937,252 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
 }
 
 /// COLOR_0 multiplies the base colour: green vertices on a white unlit material render green.
+/// A horizontal card at the cube-top height of `cube_on_plane.gltf`, over `x` by `[-1, 1]` in z.
+fn horizontal_card(
+    x: (f32, f32),
+    alpha: f32,
+    facing_up: bool,
+) -> (Vec<kataglyphis_webgpu_renderer::scene::Vertex>, Vec<u32>) {
+    let vertices = [[x.0, -1.0], [x.1, -1.0], [x.1, 1.0], [x.0, 1.0]]
+        .iter()
+        .map(|[px, pz]| kataglyphis_webgpu_renderer::scene::Vertex {
+            position: [*px, 1.4, *pz],
+            normal: [0.0, if facing_up { 1.0 } else { -1.0 }, 0.0],
+            uv: [0.0, 0.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            joints: [0.0; 4],
+            weights: [0.0; 4],
+            color: [1.0, 1.0, 1.0, alpha],
+            uv1: [0.0, 0.0],
+        })
+        .collect();
+    // (b - a) x (c - a) of [0, 1, 2] points down, so the up-facing winding is reversed.
+    let indices = if facing_up {
+        vec![0, 2, 1, 0, 3, 2]
+    } else {
+        vec![0, 1, 2, 0, 2, 3]
+    };
+    (vertices, indices)
+}
+
+/// Near-black pixels that `primitives` darken on `cube_on_plane.gltf`'s bare ground plane.
+fn ground_shadow_pixels(
+    gpu: &GpuContext,
+    primitives: Vec<kataglyphis_webgpu_renderer::CpuPrimitive>,
+) -> usize {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let base = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let plane = base
+        .primitives
+        .iter()
+        .find(|p| p.vertices.len() == 4)
+        .expect("the ground plane is the 4-vertex primitive")
+        .clone();
+    let render = |primitives: Vec<kataglyphis_webgpu_renderer::CpuPrimitive>| -> Vec<u8> {
+        let scene = kataglyphis_webgpu_renderer::CpuScene {
+            primitives,
+            ..base.clone()
+        };
+        let mut renderer = ForwardRenderer::new(gpu, 256, 256);
+        renderer.upload_scene(gpu, &scene);
+        renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+        renderer.ssao_strength = 0.0;
+        let camera = OrbitCamera {
+            radius: 6.0,
+            pitch_deg: 55.0,
+            ..OrbitCamera::default()
+        };
+        renderer
+            .render_to_pixels(gpu, 256, 256, &camera)
+            .expect("headless render must succeed")
+    };
+    let baseline = render(vec![plane.clone()]);
+    let mut with_casters = vec![plane];
+    with_casters.extend(primitives);
+    let shadowed = render(with_casters);
+    let luma = |p: &[u8; 4]| (p[0] as i32 * 3 + p[1] as i32 * 6 + p[2] as i32) / 10;
+    baseline
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(shadowed.as_chunks::<4>().0)
+        .filter(|(b, w)| luma(b) - luma(w) > 40 && luma(w) < 30)
+        .count()
+}
+
+/// An up-facing horizontal quad at height `y` over `[x0, x1] x [z0, z1]`.
+fn up_facing_quad(
+    y: f32,
+    (x0, x1): (f32, f32),
+    (z0, z1): (f32, f32),
+) -> kataglyphis_webgpu_renderer::CpuPrimitive {
+    use kataglyphis_webgpu_renderer::scene::{CpuMaterial, CpuPrimitive, Vertex};
+    let vertices = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]
+        .iter()
+        .map(|[x, z]| Vertex {
+            position: [*x, y, *z],
+            normal: [0.0, 1.0, 0.0],
+            uv: [0.0, 0.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            joints: [0.0; 4],
+            weights: [0.0; 4],
+            color: [1.0; 4],
+            uv1: [0.0, 0.0],
+        })
+        .collect();
+    CpuPrimitive {
+        vertices,
+        indices: vec![0, 2, 1, 0, 3, 2],
+        transform: glam::Mat4::IDENTITY,
+        node_index: None,
+        skin_index: None,
+        material: CpuMaterial {
+            base_color: [0.8, 0.8, 0.8, 1.0],
+            metallic_factor: 0.0,
+            roughness_factor: 0.9,
+            ..CpuMaterial::default()
+        },
+        morph_targets: Vec::new(),
+        morph_weights: Vec::new(),
+    }
+}
+
+/// The cascade comes from each fragment's own eye distance: interpolated per vertex across a huge
+/// floor it reads about 420 m right under the camera and picks cascade 1, whose depth bias, twice
+/// cascade 0's in world units, lets a card 1.6 m above the floor cast no shadow.
+#[test]
+fn a_huge_floor_takes_its_cascade_from_each_fragment_distance() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let floor = up_facing_quad(0.0, (-300.0, 300.0), (-300.0, 300.0));
+    let card = up_facing_quad(1.6, (-1.0, 1.0), (-1.0, 1.0));
+    let camera = OrbitCamera {
+        target: glam::Vec3::new(-1.6, 0.0, 0.0),
+        radius: 6.0,
+        yaw_deg: 180.0,
+        pitch_deg: 50.0,
+        ..OrbitCamera::default()
+    };
+    let render = |primitives| {
+        let scene = kataglyphis_webgpu_renderer::CpuScene {
+            primitives,
+            ..Default::default()
+        };
+        let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+        renderer.upload_scene(&gpu, &scene);
+        // From +x at 45 degrees: the card's shadow falls 1.6 m towards -x, where the camera looks.
+        renderer.light_dir_ambient = glam::Vec4::new(1.0, 1.0, 0.0, 0.15);
+        renderer.ssao_strength = 0.0;
+        renderer
+            .render_to_pixels(&gpu, 128, 128, &camera)
+            .expect("headless render must succeed")
+    };
+    let bare = render(vec![floor.clone()]);
+    let with_card = render(vec![floor, card]);
+    let luma = |p: &[u8; 4]| (p[0] as i32 * 3 + p[1] as i32 * 6 + p[2] as i32) / 10;
+    let shadowed = bare
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(with_card.as_chunks::<4>().0)
+        .filter(|(b, w)| luma(b) - luma(w) > 40)
+        .count();
+    assert!(
+        shadowed > 500,
+        "the card shadowed only {shadowed} floor pixels: the fragments under it picked a cascade \
+         by a distance interpolated from the floor's far corners"
+    );
+}
+
+/// A double-sided sheet shadows the ground from either side, as the camera pass draws both.
+#[test]
+fn a_double_sided_sheet_casts_a_shadow_with_its_back_to_the_light() {
+    use kataglyphis_webgpu_renderer::scene::{CpuMaterial, CpuPrimitive};
+
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let card = |facing_up: bool, double_sided: bool| {
+        let (vertices, indices) = horizontal_card((-1.0, 1.0), 1.0, facing_up);
+        CpuPrimitive {
+            vertices,
+            indices,
+            transform: glam::Mat4::IDENTITY,
+            node_index: None,
+            skin_index: None,
+            material: CpuMaterial {
+                double_sided,
+                ..CpuMaterial::default()
+            },
+            morph_targets: Vec::new(),
+            morph_weights: Vec::new(),
+        }
+    };
+
+    let facing_light = ground_shadow_pixels(&gpu, vec![card(true, false)]);
+    let back_to_light = ground_shadow_pixels(&gpu, vec![card(false, true)]);
+    eprintln!(
+        "sheet shadows: front to the light {facing_light}, back to the light {back_to_light}"
+    );
+    assert!(
+        facing_light > 300,
+        "precondition: a card facing the light must shadow the ground, got {facing_light} px"
+    );
+    assert!(
+        back_to_light * 10 > facing_light * 7,
+        "a double-sided card with its back to the light cast {back_to_light} px of shadow, \
+         against {facing_light} px facing it: the shadow pass culled it"
+    );
+}
+
+/// An untextured MASK primitive cut out by vertex alpha casts no shadow from the cut-out part.
+#[test]
+fn vertex_alpha_cut_outs_of_an_untextured_mask_cast_no_shadow() {
+    use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial, CpuPrimitive};
+
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let masked = |cards: &[((f32, f32), f32)]| {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        for &(x, alpha) in cards {
+            let (v, i) = horizontal_card(x, alpha, true);
+            let base = vertices.len() as u32;
+            vertices.extend(v);
+            indices.extend(i.into_iter().map(|index| index + base));
+        }
+        CpuPrimitive {
+            vertices,
+            indices,
+            transform: glam::Mat4::IDENTITY,
+            node_index: None,
+            skin_index: None,
+            material: CpuMaterial {
+                alpha_mode: AlphaMode::Mask(0.5),
+                ..CpuMaterial::default()
+            },
+            morph_targets: Vec::new(),
+            morph_weights: Vec::new(),
+        }
+    };
+
+    let left_only = ground_shadow_pixels(&gpu, vec![masked(&[((-1.0, 0.0), 1.0)])]);
+    let with_cut_out =
+        ground_shadow_pixels(&gpu, vec![masked(&[((-1.0, 0.0), 1.0), ((0.0, 1.0), 0.0)])]);
+    eprintln!("mask shadows: left card {left_only}, left card + cut-out card {with_cut_out}");
+    assert!(
+        left_only > 150,
+        "precondition: the kept card must shadow the ground, got {left_only} px"
+    );
+    assert!(
+        with_cut_out.abs_diff(left_only) * 10 < left_only,
+        "the cut-out card (vertex alpha 0) added shadow: {with_cut_out} px against {left_only} px"
+    );
+}
+
 #[test]
 fn vertex_colors_tint_the_surface() {
     use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial, CpuPrimitive, Vertex};
@@ -1746,4 +2381,37 @@ fn texture_slot_samples_its_declared_uv_set() {
         l0r > l0b + 40 && r0r > r0b + 40,
         "on UV0 the whole quad is red (l r={l0r} b={l0b}, r r={r0r} b={r0b})"
     );
+}
+
+/// The readback returns RGBA8 bytes, so a format whose texels differ must be refused, not mislabelled.
+#[test]
+fn render_to_pixels_refuses_formats_that_are_not_rgba8() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 32, 32);
+    renderer.upload_scene(&gpu, &scene);
+    let camera = OrbitCamera::default();
+    for format in [
+        wgpu::TextureFormat::Bgra8Unorm,
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+        wgpu::TextureFormat::Rgba16Float,
+    ] {
+        assert!(
+            renderer
+                .render_to_pixels_with_format(&gpu, 32, 32, &camera, format)
+                .is_err(),
+            "{format:?} is not RGBA8, so render_to_pixels_with_format must return an error"
+        );
+    }
+    for format in [
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    ] {
+        let pixels = renderer
+            .render_to_pixels_with_format(&gpu, 32, 32, &camera, format)
+            .expect("the RGBA8 formats must render");
+        assert_eq!(pixels.len(), 32 * 32 * 4);
+    }
 }

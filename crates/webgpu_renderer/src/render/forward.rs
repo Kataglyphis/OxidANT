@@ -16,10 +16,8 @@ mod targets;
 mod upload;
 
 use glam::{Mat4, Vec3, Vec4};
-use wgpu::util::DeviceExt as _;
 
 use crate::context::GpuContext;
-use crate::render::bounds::instanced_bounds;
 use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::GpuTiming;
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
@@ -27,11 +25,11 @@ pub use crate::render::lights::MAX_PUNCTUAL_LIGHTS;
 use crate::render::texture::create_2d_texture;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
-use crate::scene::{CpuScene, InstanceRaw};
+use crate::scene::CpuScene;
 
 use animate::SceneAnimation;
 use culling::Culling;
-use environment::{create_ibl_bind_group, IblBinding, IblUniforms};
+use environment::{create_ibl_bind_group, IblBinding};
 use frame::FrameBinding;
 use light_grid::LightResources;
 use main_pass::MainPipelines;
@@ -48,8 +46,13 @@ pub const MAX_JOINTS: usize = 256;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// MSAA sample count of the forward HDR and depth targets (1 disables MSAA).
+/// MSAA sample count of the forward HDR and depth targets. Never 1: the forward pass always
+/// resolves colour, and the depth-resolve shader and layout read a multisampled depth texture.
 const MSAA_SAMPLE_COUNT: u32 = 4;
+const _: () = assert!(
+    MSAA_SAMPLE_COUNT > 1,
+    "the forward pass resolves MSAA colour and depth, so it needs more than one sample"
+);
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 /// Cascaded shadow map layers (split by view distance).
 pub const CASCADE_COUNT: usize = 3;
@@ -95,7 +98,7 @@ pub struct ForwardRenderer {
     /// Build and draw per-primitive LOD chains; off by default.
     /// Read only by `upload_scene`, so set it (and `lod_switch_distances`) before uploading.
     pub lod_enabled: bool,
-    /// Multiplier on the environment's radiance; the ambient slider is `light_dir_ambient.w`.
+    /// Multiplier on the environment's radiance, read every frame; `light_dir_ambient.w` is the ambient.
     pub ibl_intensity: f32,
     /// Per-pass GPU timestamps. Inert until [`Self::enable_gpu_timing`].
     gpu_timing: GpuTiming,
@@ -116,8 +119,8 @@ impl ForwardRenderer {
         let frame = FrameBinding::new(device);
         let lights = LightResources::new(device);
         let ibl = IblBinding::new(device);
-        let main = MainPipelines::new(device, &shader, &ibl.layout, &frame.layout, &lights.layout);
         let shadow = ShadowResources::new(device, &shader, &frame.layout);
+        let main = MainPipelines::new(device, shader, &ibl.layout, &frame.layout, &lights.layout);
         let targets = RenderTargets::new(device, width, height);
         let depth_resolve = DepthResolve::new(device, &targets.depth_msaa);
         let post = PostChain::new(gpu, &targets.hdr_view);
@@ -160,52 +163,10 @@ impl ForwardRenderer {
         let Some(primitive) = self.primitives.get_mut(primitive_index) else {
             return;
         };
-
-        if transforms.is_empty() {
-            gpu.queue.write_buffer(
-                &primitive.instance_buffer,
-                0,
-                bytemuck::bytes_of(&InstanceRaw::IDENTITY),
-            );
-            primitive.instance_count = 1;
-            // Single identity instance again: bounds collapse to the posed box.
-            primitive.instance_transforms.clear();
-            let (min, max) = primitive.pre_instance_aabb;
-            primitive.aabb_min = min;
-            primitive.aabb_max = max;
-            primitive.world_center = (min + max) * 0.5;
-            self.recompute_scene_bounds();
-            return;
+        // The bundles bake each draw's instance buffer, range and winding.
+        if primitive.write_instances(gpu, transforms) {
+            self.shadow.caster_bundles = None;
         }
-
-        let raw: Vec<InstanceRaw> = transforms
-            .iter()
-            .map(|m| InstanceRaw {
-                model: m.to_cols_array_2d(),
-            })
-            .collect();
-        let bytes = bytemuck::cast_slice(&raw);
-
-        if (bytes.len() as u64) <= primitive.instance_buffer.size() {
-            gpu.queue.write_buffer(&primitive.instance_buffer, 0, bytes);
-        } else {
-            primitive.instance_buffer =
-                gpu.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("instances"),
-                        contents: bytes,
-                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    });
-            // The bundle captured the old buffer by reference, and this replaced it.
-            self.shadow.caster_bundle = None;
-        }
-        primitive.instance_count = raw.len() as u32;
-        // Culling bounds must span every instance, not just the base position.
-        primitive.instance_transforms = transforms.to_vec();
-        let (min, max) = instanced_bounds(primitive.pre_instance_aabb, transforms);
-        primitive.aabb_min = min;
-        primitive.aabb_max = max;
-        primitive.world_center = (min + max) * 0.5;
         self.recompute_scene_bounds();
     }
 
@@ -269,9 +230,9 @@ impl ForwardRenderer {
         (self.shadow.casters_drawn, self.shadow.casters_considered)
     }
 
-    /// Whether the shadow-caster bundle is cached, so tests can pin the cache/invalidate contract.
+    /// Whether the per-cascade shadow-caster bundles are cached, for the cache-contract tests.
     pub fn shadow_caster_bundle_is_cached(&self) -> bool {
-        self.shadow.caster_bundle.is_some()
+        self.shadow.caster_bundles.is_some()
     }
 
     /// Opaque primitives drawn / considered by the camera pass last frame (equal with culling off).
@@ -318,15 +279,6 @@ impl ForwardRenderer {
         // The BRDF table never touches the environment, so it is baked once and reused.
         let brdf_lut = ibl.brdf_lut.get_or_insert_with(|| BrdfLut::new(gpu));
         let environment = IblEnvironment::bake(gpu, equirect);
-
-        gpu.queue.write_buffer(
-            &ibl.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&IblUniforms::enabled(
-                environment.max_prefiltered_mip(),
-                self.ibl_intensity,
-            )),
-        );
         ibl.bind_group = create_ibl_bind_group(
             &gpu.device,
             &ibl.layout,
@@ -337,18 +289,15 @@ impl ForwardRenderer {
             &ibl.fallback.sampler,
         );
         ibl.environment = Some(environment);
+        self.write_ibl_uniforms(gpu);
     }
 
     /// Drops the environment and returns to the analytic hemisphere path.
     pub fn clear_environment(&mut self, gpu: &GpuContext) {
         let ibl = &mut self.ibl;
         ibl.environment = None;
-        gpu.queue.write_buffer(
-            &ibl.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&IblUniforms::disabled()),
-        );
         ibl.bind_group = ibl.fallback_bind_group(&gpu.device);
+        self.write_ibl_uniforms(gpu);
     }
 
     /// True when a baked environment is lighting the scene.
@@ -369,6 +318,8 @@ impl ForwardRenderer {
     /// Uploads a CPU scene, replacing any previously uploaded one.
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
         self.reset_scene_state(scene);
+        // A new scene must not inherit the last one's adapted exposure.
+        self.reset_exposure(gpu);
         // Skinned primitives need the joint nodes' world matrices to size their bounds.
         let upload_node_world = CpuScene::compute_world_transforms(&scene.nodes);
         let mut textures = MaterialTextureCache::default();
@@ -405,9 +356,10 @@ impl ForwardRenderer {
         self.encode_forward_pass(&mut encoder, &view);
         self.encode_depth_resolve(&mut encoder);
         self.encode_occlusion(gpu, &mut encoder, &view);
+        // Before bloom: its bright pass thresholds at this frame's exposure, as the tonemap exposes.
+        self.encode_exposure(&mut encoder, view.width, view.height);
         self.encode_bloom(&mut encoder);
         self.encode_ssao(&mut encoder);
-        self.encode_exposure(&mut encoder, view.width, view.height);
         self.encode_tonemap(&mut encoder, tonemap, output_view);
         self.finish_frame(gpu, encoder);
     }
@@ -430,6 +382,7 @@ impl ForwardRenderer {
     }
 
     /// As [`Self::render_to_pixels`] with an explicit format, for the non-sRGB path browsers use.
+    /// Only `Rgba8Unorm` and `Rgba8UnormSrgb` match the RGBA8 bytes it returns; others are an error.
     pub fn render_to_pixels_with_format(
         &mut self,
         gpu: &GpuContext,
@@ -438,6 +391,15 @@ impl ForwardRenderer {
         camera: &OrbitCamera,
         format: wgpu::TextureFormat,
     ) -> anyhow::Result<Vec<u8>> {
+        // BGRA would come back channel-swapped, and wider texels overrun the 4-byte row pitch.
+        anyhow::ensure!(
+            matches!(
+                format,
+                wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb
+            ),
+            "render_to_pixels returns RGBA8 bytes, so it renders only to Rgba8Unorm or \
+             Rgba8UnormSrgb, not {format:?}"
+        );
         let mut tonemap = TonemapPass::new(gpu, format);
 
         let texture = create_2d_texture(
@@ -451,9 +413,7 @@ impl ForwardRenderer {
             1,
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Force a rebind: this pass instance has never seen the HDR view.
-        self.post.rebound_needed = true;
+        // The fresh pass binds the live bloom and AO outputs; nothing is rebuilt under the window's pass.
         self.render_tonemapped(gpu, &mut tonemap, &view, width, height, camera);
 
         readback::read_rgba8(gpu, &texture, width, height)
@@ -477,25 +437,29 @@ impl ForwardRenderer {
             label: Some("sky_shader_reloaded"),
             source: wgpu::ShaderSource::Wgsl(sky_wgsl.into()),
         });
-        let set = main_pass::create_forward_pipeline_set(device, &shader, &self.main.layout);
-        let shadow = shadow::create_shadow_pipeline(device, &shader, &self.shadow.pipeline_layout);
-        let shadow_masked = shadow::create_masked_shadow_pipeline(
+        let set = main_pass::create_forward_pipeline_set(
             device,
             &shader,
+            &self.main.layout,
+            wgpu::FrontFace::Ccw,
+        );
+        let shadow = shadow::ShadowPipelines::new(
+            device,
+            &shader,
+            &self.shadow.pipeline_layout,
             &self.shadow.masked_pipeline_layout,
         );
         let sky = sky::create_sky_pipeline(device, &sky_shader, &self.sky.pipeline_layout);
         if let Some(err) = pollster::block_on(error_scope.pop()) {
             anyhow::bail!("shader reload rejected: {err}");
         }
-        (
-            self.main.opaque,
-            self.main.double_sided,
-            self.main.blend,
-            self.main.blend_double_sided,
-        ) = set;
-        self.shadow.pipeline = shadow;
-        self.shadow.masked_pipeline = shadow_masked;
+        self.main.upright = set;
+        // The mirrored sets are rebuilt from the new module the next frame one is drawn.
+        self.main.mirrored = None;
+        self.main.shader = shader;
+        self.shadow.pipelines = shadow;
+        // The cached bundles still hold the old shadow pipelines.
+        self.shadow.caster_bundles = None;
         self.sky.pipeline = sky;
         Ok(())
     }

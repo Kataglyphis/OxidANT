@@ -13,6 +13,135 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the renderer's frame, lighting and post core)
+- **Every shadow cascade rendered with cascade 0's light matrix** (since 2026-07-24): a render bundle sees only the
+  bind groups it sets itself, so the one cached caster bundle's cascade index 0 beat each pass's own, and layers 1
+  and 2 held cascade 0's projection. Every fragment past the first split, most of a typical view, got a misplaced,
+  mis-scaled shadow. Each cascade records its own bundle now; `every_cascade_layer_is_rendered_with_its_own_light_matrix`
+  reads the layers back (`read_shadow_map`) and checks two points' depths against each cascade's matrix.
+- **Removed instances kept casting shadows, and a shader reload left shadows on the old shaders**: the bundles bake
+  each draw's instance count and pipelines, but only a reallocated instance buffer or a new scene re-recorded them.
+  `set_instances` re-records them whenever a count changes (the clearing path too), `reload_shaders` after every
+  successful reload. Tests: `shrinking_or_clearing_instances_removes_their_shadows`,
+  `reloading_shaders_rerecords_the_shadow_bundles`.
+- **Point and spot lights without a glTF `range` lit one 16×16 tile** (Blender's default export): range 0 means
+  unbounded, but the tile binning collapsed its footprint to the tile under the light's centre, or none behind the
+  camera, and a KHR directional light leaves no tile empty for the all-lights fallback. Such a light is binned into
+  every tile now. A tile more than 32 lights overlap dropped the rest without a trace; it lists none now, so the
+  shader shades every light there. Tests in `tile_grid.rs`.
+- **The occlusion-culling checkbox panicked on scenes past 4096 primitives**, and below it whenever doubling the
+  query set overshot (2100 primitives, then 2200, asked for 4200): one query set holds at most
+  `wgpu::QUERY_SET_MAX_QUERIES`. Growth stops at the limit and only the first 4096 boxes are queried; the rest stay
+  visible. `occlusion.rs:358` is `:396` for `buffer_desc_single_definition.rs` now. Tests:
+  `query_capacity_never_grows_past_the_query_set_limit`,
+  `more_boxes_than_the_query_set_limit_record_without_a_validation_error`.
+- **Double-sided sheets cast no shadow with their back to the light, and vertex-alpha cut-outs cast solid shadows**:
+  every caster but a textured MASK one went through the back-culled shadow pipeline, although the camera pass draws
+  double-sided materials from both sides and discards MASK fragments by vertex alpha too. Double-sided casters use
+  an unculled pipeline now, and every MASK caster the alpha-testing one (with the white fallback when untextured).
+  Tests: `a_double_sided_sheet_casts_a_shadow_with_its_back_to_the_light`,
+  `vertex_alpha_cut_outs_of_an_untextured_mask_cast_no_shadow`.
+- **Mirrored nodes and instances rendered inside out** (Khronos NegativeScaleTest, a part mirrored with scale -1):
+  glTF reverses a primitive's winding under a negative determinant, but every pipeline culled clockwise faces, and
+  the instance normal transform (the bare cofactor, det·A⁻ᵀ) pointed mirrored normals inward. A primitive whose node
+  mirrors space, and each mirrored instance (stored after the upright ones and drawn separately), use clockwise-front
+  pipelines, built the first frame one is drawn; the cofactor carries the determinant's sign and the bitangent sign
+  follows the mirror, so normal maps keep their relief. Skinned normals took the forward matrix and sheared under a
+  non-uniform joint or instance scale; they take the same sign-corrected cofactor. A double-sided back face flipped
+  the normal and bitangent but not the tangent, mirroring a normal map's X relief; the whole mapped normal flips
+  now. Tests: `tests/mirrored.rs`,
+  `a_non_uniform_instance_scale_shades_a_skinned_mesh_like_an_unskinned_one`.
+- **A screenshot at the window's own size froze the window's bloom and AO** until the next resize (the viewer's S at
+  a 1920×1080 surface): `render_to_pixels` forced bloom and SSAO to rebuild, and only its own temporary tonemap
+  pass was rebound to the new textures. Each rebuild now names its input set, every `TonemapPass` remembers the set
+  it samples and rebinds when they differ, and a screenshot rebuilds nothing. Test:
+  `a_screenshot_at_the_window_size_leaves_the_window_post_inputs_live`.
+- **Radiance past the half-float range blackened hot spots**: the Rgba16Float HDR target stores anything above
+  65504 as +Inf on most GPUs (lavapipe rounds it to 65504), bloom spread the Inf and ACES turned it into NaN, so a
+  lamp inside a fixture or a strong emitter drew a black block. The forward and sky passes clamp their output to
+  65000, the bloom bright pass clamps after its exposure scale, and the tonemap caps its input at 1e4, where ACES
+  has long saturated. Test: `a_hot_spot_past_the_half_float_range_saturates_instead_of_turning_black`, whose
+  infinite-emissive scene (a glTF `emissiveStrength` past f32's range) fails on lavapipe without the clamps; it
+  reads the target back through the doc-hidden `read_hdr_target`.
+- **The shared GGX NDF clipped every specular peak below roughness 0.154** (`shaders/common/brdf.slang`, which
+  BeschleunigerBallett's C++ renderer compiles too): its `max(PI * denom², 1e-6)` guard engaged at the peak, so a
+  0.045-roughness lobe kept 1.45% of its energy and highlights dimmed as surfaces got smoother. The guard now only
+  keeps a rounding error off zero, and the NDF raises roughness below 0.045 to that floor itself, so every caller,
+  the C++ ones whose textured roughness reaches 0 included, gets a finite lobe. BeschleunigerBallett's goldens need
+  a re-run with the next OxidANT pin. Tests: `tests/brdf.rs` evaluates the emitted WGSL on the GPU; the peak is
+  1/(πr⁴) and the projected lobe integrates to one from roughness 0.045 to 1.
+- **Bloom thresholded at the previous frame's exposure**: its bright pass multiplies by the exposure the reduce pass
+  writes, but ran before it, so a fresh renderer at EV -3 bloomed its first frame at EV 0 and an auto-exposure step
+  reached bloom a frame late. The histogram and the reduce run before bloom now, the render graph declares bloom's
+  `Exposure` read (`forward_graph_is_valid` fails on the old order), and `TimedPass::ALL` follows the new record
+  order. The roadmap's "validated in debug builds" was never true: the unit test validates the graph. Test:
+  `the_first_frame_blooms_at_its_own_manual_exposure`.
+- **A new scene inherited the last one's adapted exposure**, so with auto exposure on a dark model dropped after a
+  bright one started 32× underexposed; `HistogramPass::reset_exposure` existed but nothing outside the tests could
+  call it. `upload_scene` resets the exposure to `exposure_ev`, and `ForwardRenderer::reset_exposure` does it on
+  demand. Test: `uploading_a_scene_resets_the_adapted_exposure` (through the doc-hidden `read_exposure`).
+- **`ibl_intensity` was ignored after `set_environment`**: the bake was the only write of it into the IBL uniforms,
+  unlike every other public knob. They are written every frame now. Test:
+  `ibl_intensity_takes_effect_after_set_environment`.
+- **Re-enabling occlusion or compute culling culled with visibility from an old camera**: both readback paths kept
+  their last result while switched off, and the compute path's unread slots drained after the switch back, so
+  objects revealed in between popped in for a few frames. Any change of the two culling flags now resets both
+  paths. Test: `re_enabling_culling_forgets_the_visibility_from_before`.
+- `MSAA_SAMPLE_COUNT`'s "(1 disables MSAA)" was false: the forward pass always sets a resolve target and the depth
+  resolve reads a multisampled texture, so 1 fails validation. A const assertion now refuses it at compile time.
+- **`render_to_pixels_with_format` mislabelled BGRA and panicked on wider formats**: it promises RGBA8 bytes, so
+  `Bgra8Unorm` (the browser's preferred canvas format) came back channel-swapped and `Rgba16Float` overran the
+  4-byte row pitch in a validation panic. It returns an error for anything but `Rgba8Unorm` and `Rgba8UnormSrgb`.
+  Test: `render_to_pixels_refuses_formats_that_are_not_rgba8`.
+- The docs claimed shadow-caster culling that does not exist: `bounds.rs` said the cascade pass culls casters, and
+  the bounds invariant listed it as a consumer, but the cached bundles draw every caster. Both say so now, and
+  `caster_culling_engages_and_shadows_survive` is `a_far_extra_caster_leaves_the_near_shadow_intact`, which pins
+  drawn == considered.
+- **An older occlusion readback could overwrite a newer one**: both readback rings drained their ready slots in
+  index order, which after a wrap is not age order, so frame 3 in slot 2 could land after frame 4 in slot 0 and
+  culling lagged an extra frame. Each slot records a sequence number and only a readback newer than the last applied
+  one is applied (`occlusion::newer_readback`, shared by `gpu_occlusion.rs`). Test:
+  `a_late_older_readback_never_overwrites_a_newer_one`.
+- **GPU timings kept reporting a pass after it stopped running** (bloom or SSAO at strength 0, auto exposure off,
+  culling off): each frame resolved its slot's whole query range, and an unwritten query resolves the stamps an
+  earlier frame left there, which passed the plausibility filter. Each `PassScope` now marks the stamps it hands
+  out, a frame samples only the passes it stamped, and a pass missing for a full averaging window drops out of
+  `gpu_timings_ms`. Test: `a_pass_that_stops_running_drops_out_of_the_timings`.
+- **Large triangles picked coarse shadow cascades**: the cascade came from an eye distance computed per vertex and
+  interpolated, which overestimates inside a big triangle, so a floor under the camera read its far corners'
+  distance and took cascade 1 or 2, with their coarser texels and larger world-space bias. `fs_main` measures each
+  fragment's own distance now; the `viewDepth` varying is gone. Test:
+  `a_huge_floor_takes_its_cascade_from_each_fragment_distance`.
+- **A cascade clipped casters between the light and its box**: each cascade's depth range was a fixed ±4r band
+  around its centre, so with the focus off the scene centre and a low sun a tall caster's top fell before cascade
+  0's near plane and its shadow tip vanished near the camera. The near plane now also reaches the scene box's corner
+  nearest the light; ranges that already reached it are unchanged. Test:
+  `no_cascade_clips_a_caster_between_the_light_and_its_box`.
+- **BC5 normal maps shaded inside out**: BC5 stores a normal map's x and y and samples blue as 0, so the shader's
+  `normal.z = 2b - 1` was -1 and a flat texel turned the normal around. A normal sample with blue exactly 0 now
+  rebuilds z from the unit length glTF requires; RGB maps never sample blue 0 for a valid normal, so they shade as
+  before. Test: `a_bc5_normal_map_shades_like_a_flat_one`.
+- **A GL adapter could win adapter selection natively**: both contexts asked for every backend, and wgpu ranks a
+  GL adapter (an integrated or unknown GPU) above lavapipe, so headless tests skipped on hosts where Vulkan worked,
+  and a windowed host whose best adapter was GL (a Windows VM) panicked building the depth-resolve and SSAO
+  pipelines, whose depth `textureLoad` has no GLSL form. Native contexts no longer request GL; the web keeps every
+  backend. Test: `native_contexts_never_request_the_gl_backend`.
+- **A window wider or taller than 8192 px panicked**: the device asks for WebGPU's default limits, but the surface
+  took any size, so a window across two 5K monitors failed surface validation. The surface now scales down to the
+  device's largest texture side with its aspect kept, and the scene renders at that size. Test:
+  `a_surface_past_the_texture_limit_scales_down_with_its_aspect`.
+- **The IBL bake dropped small bright sources**: the panorama-to-cube pass took one bilinear tap per cube texel
+  although a 2048-wide panorama holds about five texels per face-centre cube texel, and the irradiance pass read
+  mip 0 on a 128x64 grid, so a sun a few texels wide was lit or missed by its sub-texel position (a 2x2-texel sun
+  vanished entirely). The cube pass now averages a tap grid sized to the panorama's texels (up to 16 per side), and
+  each irradiance tap reads the mip whose texels match its patch of the hemisphere. Test:
+  `a_small_sun_gives_the_same_irradiance_at_any_sub_texel_offset` (within 3% of the analytic irradiance).
+- **Compute occlusion culling culled boxes seen through narrow gaps**: it tested 8×8 point taps across each box's
+  screen rect, so a box visible only through a gap between taps (a slit, a colonnade) was culled, and stayed culled
+  since it never re-entered the depth buffer; the roadmap called the path conservative. A rect of up to 4096 texels
+  now has every texel tested (early out at the first one at or behind the box), and a larger rect is drawn. Test:
+  `a_box_seen_through_a_two_pixel_slit_is_never_gpu_culled`.
+
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
   on, so every glyph was a box in the renderer's overlay and in `crates/gui`. The renderer embeds the C++ editor's

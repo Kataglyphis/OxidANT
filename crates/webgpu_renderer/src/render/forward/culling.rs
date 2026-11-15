@@ -17,6 +17,8 @@ pub(super) struct Culling {
     /// Opaque primitives drawn / considered by the camera pass last frame, after all culling.
     pub(super) drawn: u32,
     pub(super) considered: u32,
+    /// (`occlusion_queries_enabled`, `gpu_culling_enabled`) as the last frame saw them.
+    modes: (bool, bool),
 }
 
 impl Culling {
@@ -26,11 +28,25 @@ impl Culling {
             gpu_culling: None,
             drawn: 0,
             considered: 0,
+            modes: (false, false),
         }
     }
 }
 
 impl ForwardRenderer {
+    /// A switched culling mode forgets every readback: they describe a camera from before the switch.
+    pub(super) fn reset_culling_on_mode_change(&mut self) {
+        let modes = (self.occlusion_queries_enabled, self.gpu_culling_enabled);
+        if modes == self.culling.modes {
+            return;
+        }
+        self.culling.modes = modes;
+        self.culling.occlusion.reset();
+        if let Some(gpu_cull) = self.culling.gpu_culling.as_mut() {
+            gpu_cull.reset();
+        }
+    }
+
     /// Last frame's result; unmeasured primitives count as visible, so nothing pops.
     pub(super) fn occluded_last_frame(&self, primitive_index: usize) -> bool {
         if self.gpu_culling_enabled {

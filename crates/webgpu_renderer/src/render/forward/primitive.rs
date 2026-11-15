@@ -1,8 +1,16 @@
 //! One uploaded primitive: its buffers, bind groups, bounds, material, LOD chain and morph state.
 
 use glam::{Mat4, Vec3};
+use wgpu::util::DeviceExt as _;
 
-use crate::scene::{AlphaMode, CpuMaterial, MorphTarget, Vertex};
+use crate::context::GpuContext;
+use crate::render::bounds::instanced_bounds;
+use crate::scene::{AlphaMode, CpuMaterial, InstanceRaw, MorphTarget, Vertex};
+
+/// True when `m` mirrors space (negative determinant), which reverses its triangles' winding.
+pub(super) fn is_mirrored(m: &Mat4) -> bool {
+    glam::Mat3::from_mat4(*m).determinant() < 0.0
+}
 
 /// Group 0 binding 0 of the forward and shadow pipelines.
 #[repr(C)]
@@ -89,12 +97,16 @@ pub(super) struct GpuPrimitive {
     pub(super) bind_group: wgpu::BindGroup,
     /// Uniforms-only group: the full group samples the shadow map the shadow pass writes.
     pub(super) shadow_bind_group: wgpu::BindGroup,
-    /// MASK material with a base-color texture: shadows through the alpha-testing pipeline.
+    /// MASK material: shadows through the alpha-testing pipeline, which also reads vertex alpha.
     pub(super) alpha_masked: bool,
     pub(super) shadow_masked_bind_group: Option<wgpu::BindGroup>,
     /// Per-instance transforms; always at least one, so every draw binds slot 1.
     pub(super) instance_buffer: wgpu::Buffer,
     pub(super) instance_count: u32,
+    /// The buffer holds unmirrored instances first; those from this index on mirror space.
+    pub(super) mirrored_instances_from: u32,
+    /// `model` mirrors space, so its front faces wind clockwise (glTF 3.7.4).
+    pub(super) mirrored: bool,
     /// Last-set instance transforms (empty = identity); bounds recompose when either side moves.
     pub(super) instance_transforms: Vec<Mat4>,
     /// World bounds before instancing, so recomposition never re-derives the skinned/morphed pose.
@@ -131,6 +143,62 @@ pub(super) struct GpuPrimitive {
 }
 
 impl GpuPrimitive {
+    /// The instance ranges to draw and whether each one's front faces wind clockwise.
+    pub(super) fn instance_runs(&self) -> impl Iterator<Item = (std::ops::Range<u32>, bool)> {
+        let split = self.mirrored_instances_from;
+        [
+            (0..split, self.mirrored),
+            (split..self.instance_count, !self.mirrored),
+        ]
+        .into_iter()
+        .filter(|(range, _)| !range.is_empty())
+    }
+
+    /// Whether any draw of this primitive needs the clockwise-front pipelines.
+    pub(super) fn needs_clockwise(&self) -> bool {
+        self.instance_runs().any(|(_, clockwise)| clockwise)
+    }
+
+    /// Stores `transforms` (none: one identity), unmirrored first, and re-derives the bounds.
+    /// Returns true when the recorded draws went stale: a new buffer, count or winding split.
+    pub(super) fn write_instances(&mut self, gpu: &GpuContext, transforms: &[Mat4]) -> bool {
+        let before = (self.instance_count, self.mirrored_instances_from);
+        let (upright, mirrored): (Vec<Mat4>, Vec<Mat4>) =
+            transforms.iter().copied().partition(|m| !is_mirrored(m));
+        let mut raw: Vec<InstanceRaw> = upright
+            .iter()
+            .chain(&mirrored)
+            .map(|m| InstanceRaw {
+                model: m.to_cols_array_2d(),
+            })
+            .collect();
+        if raw.is_empty() {
+            raw.push(InstanceRaw::IDENTITY);
+        }
+        let bytes = bytemuck::cast_slice(&raw);
+        let replaced = (bytes.len() as u64) > self.instance_buffer.size();
+        if replaced {
+            self.instance_buffer =
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("instances"),
+                        contents: bytes,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    });
+        } else {
+            gpu.queue.write_buffer(&self.instance_buffer, 0, bytes);
+        }
+        self.instance_count = raw.len() as u32;
+        self.mirrored_instances_from = self.instance_count - mirrored.len() as u32;
+        // Culling bounds must span every instance; no instances collapse them to the posed box.
+        self.instance_transforms = transforms.to_vec();
+        let (min, max) = instanced_bounds(self.pre_instance_aabb, transforms);
+        self.aabb_min = min;
+        self.aabb_max = max;
+        self.world_center = (min + max) * 0.5;
+        replaced || before != (self.instance_count, self.mirrored_instances_from)
+    }
+
     /// Buffers and index count to draw from `eye`, by `world_center` distance like the blend sort.
     pub(super) fn geometry_for(&self, eye: Vec3) -> (&wgpu::Buffer, &wgpu::Buffer, u32) {
         let distance = self.world_center.distance(eye);

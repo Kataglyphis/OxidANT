@@ -1,14 +1,17 @@
 //! The size-dependent render targets and the pass that resolves MSAA depth to single-sample.
 
-use super::{ForwardRenderer, DEPTH_FORMAT, MSAA_SAMPLE_COUNT};
+use super::readback::{read_texture, TextureRegion};
+use super::{ForwardRenderer, DEPTH_FORMAT, HDR_FORMAT, MSAA_SAMPLE_COUNT};
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::pipeline_desc;
-use crate::render::texture::{create_depth_texture, create_hdr_texture};
+use crate::render::texture::{create_2d_texture, create_depth_texture, create_hdr_texture};
 
 /// The forward pass's MSAA targets and the single-sample ones the later passes read.
 pub(super) struct RenderTargets {
     pub(super) depth: wgpu::TextureView,
+    /// The resolved HDR colour; `hdr_view` samples it, and only tests copy it out.
+    hdr: wgpu::Texture,
     pub(super) hdr_view: wgpu::TextureView,
     /// MSAA depth of the forward pass, resolved into `depth` by the depth-resolve pass.
     pub(super) depth_msaa: wgpu::TextureView,
@@ -19,9 +22,22 @@ pub(super) struct RenderTargets {
 
 impl RenderTargets {
     pub(super) fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        let hdr = create_2d_texture(
+            device,
+            Some("hdr_color"),
+            width,
+            height,
+            HDR_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            1,
+            1,
+        );
         Self {
             depth: create_depth_texture(device, width, height, 1),
-            hdr_view: create_hdr_texture(device, width, height, 1),
+            hdr_view: hdr.create_view(&wgpu::TextureViewDescriptor::default()),
+            hdr,
             depth_msaa: create_depth_texture(device, width, height, MSAA_SAMPLE_COUNT),
             hdr_msaa: create_hdr_texture(device, width, height, MSAA_SAMPLE_COUNT),
             size: (width.max(1), height.max(1)),
@@ -62,7 +78,26 @@ impl ForwardRenderer {
         );
         // A stale view here reads a destroyed texture.
         self.post.histogram.set_input(gpu, &self.targets.hdr_view);
-        self.post.rebound_needed = true;
+        self.post.rebuild_needed = true;
+    }
+
+    /// The last frame's resolved HDR colour as raw half-float bits, RGBA and row-major.
+    /// Stalls on a readback, so tests and diagnostics only.
+    #[doc(hidden)]
+    pub fn read_hdr_target(&self, gpu: &GpuContext) -> anyhow::Result<Vec<u16>> {
+        let (width, height) = self.targets.size;
+        let bytes = read_texture(
+            gpu,
+            &self.targets.hdr,
+            &TextureRegion {
+                aspect: wgpu::TextureAspect::All,
+                width,
+                height,
+                layers: 1,
+                texel_bytes: 8,
+            },
+        )?;
+        Ok(bytemuck::pod_collect_to_vec(&bytes))
     }
 
     /// Depth resolve: MSAA depth to single-sample (min over samples) for SSAO and occlusion.

@@ -7,7 +7,7 @@ use crate::render::forward::MAX_PUNCTUAL_LIGHTS;
 
 /// Tile edge in pixels; each fragment iterates only its tile's lights.
 pub const TILE_SIZE: u32 = 16;
-/// Maximum number of lights that can overlap a single tile (conservative).
+/// Most lights one tile lists; a tile more lights overlap lists none, so the shader takes them all.
 pub const MAX_LIGHTS_PER_TILE: u32 = 32;
 
 /// Scratch for [`build_tile_light_grid`], kept on `ForwardRenderer` to avoid per-frame allocations.
@@ -17,6 +17,30 @@ pub(crate) struct TileLightGridScratch {
     pub(crate) grid: Vec<u32>,
     pub(crate) indices: Vec<u32>,
     pub(crate) write_positions: Vec<u32>,
+    /// Each light's inclusive tile rect, `None` when it reaches no tile.
+    rects: Vec<Option<(u32, u32, u32, u32)>>,
+}
+
+/// Tiles across and down for a `width` x `height` target.
+#[derive(Copy, Clone)]
+struct TileGrid {
+    tiles_x: u32,
+    tiles_y: u32,
+}
+
+impl TileGrid {
+    fn total(self) -> usize {
+        (self.tiles_x * self.tiles_y) as usize
+    }
+
+    /// Flat tile indices inside the inclusive rect `(min_tx, min_ty, max_tx, max_ty)`.
+    fn tiles_in(
+        self,
+        (min_tx, min_ty, max_tx, max_ty): (u32, u32, u32, u32),
+    ) -> impl Iterator<Item = usize> {
+        (min_ty..=max_ty)
+            .flat_map(move |ty| (min_tx..=max_tx).map(move |tx| (ty * self.tiles_x + tx) as usize))
+    }
 }
 
 /// Inclusive tile rect a light's footprint covers, or `None` when it is entirely behind the camera.
@@ -33,7 +57,8 @@ fn tile_rect_for_light(
     height: u32,
     view_proj: &Mat4,
 ) -> Option<(u32, u32, u32, u32)> {
-    if kind == 3.0 {
+    // Range 0 is glTF's "unbounded" (Blender exports it by default), so it reaches every tile.
+    if kind == 3.0 || !(range > 0.0 && range.is_finite()) {
         return Some((0, 0, tile_x.saturating_sub(1), tile_y.saturating_sub(1)));
     }
 
@@ -102,13 +127,11 @@ pub(crate) fn build_tile_light_grid(
     height: u32,
     view_proj: &Mat4,
 ) {
-    let tile_x = width.div_ceil(TILE_SIZE);
-    let tile_y = height.div_ceil(TILE_SIZE);
-    let total_tiles = (tile_x * tile_y) as usize;
-
-    scratch.per_tile_counts.clear();
-    scratch.per_tile_counts.resize(total_tiles, 0);
-
+    let grid = TileGrid {
+        tiles_x: width.div_ceil(TILE_SIZE),
+        tiles_y: height.div_ceil(TILE_SIZE),
+    };
+    scratch.rects.clear();
     for i in 0..light_count as usize {
         let base = i * 4;
         let pos = glam::Vec3::new(
@@ -116,67 +139,73 @@ pub(crate) fn build_tile_light_grid(
             packed_lights[base][1],
             packed_lights[base][2],
         );
-        let kind = packed_lights[base][3];
-        let range = packed_lights[base + 1][3];
-        let Some((min_tx, min_ty, max_tx, max_ty)) =
-            tile_rect_for_light(pos, range, kind, tile_x, tile_y, width, height, view_proj)
-        else {
-            continue;
-        };
-        for ty in min_ty..=max_ty {
-            let row = ty * tile_x;
-            for tx in min_tx..=max_tx {
-                let idx = (row + tx) as usize;
-                scratch.per_tile_counts[idx] = scratch.per_tile_counts[idx].saturating_add(1);
-            }
+        let (kind, range) = (packed_lights[base][3], packed_lights[base + 1][3]);
+        scratch.rects.push(tile_rect_for_light(
+            pos,
+            range,
+            kind,
+            grid.tiles_x,
+            grid.tiles_y,
+            width,
+            height,
+            view_proj,
+        ));
+    }
+    count_lights_per_tile(scratch, grid);
+    assign_tile_offsets(scratch, grid);
+    write_tile_indices(scratch, grid);
+}
+
+fn count_lights_per_tile(scratch: &mut TileLightGridScratch, grid: TileGrid) {
+    scratch.per_tile_counts.clear();
+    scratch.per_tile_counts.resize(grid.total(), 0);
+    for rect in scratch.rects.iter().flatten() {
+        for idx in grid.tiles_in(*rect) {
+            scratch.per_tile_counts[idx] = scratch.per_tile_counts[idx].saturating_add(1);
         }
     }
+}
 
-    // Prefix sum to compute offsets.
+/// Prefix-sums the per-tile counts into `[count, offset]` pairs.
+fn assign_tile_offsets(scratch: &mut TileLightGridScratch, grid: TileGrid) {
     scratch.grid.clear();
-    scratch.grid.resize(total_tiles * 2, 0);
+    scratch.grid.resize(grid.total() * 2, 0);
     let mut running_offset = 0u32;
-    for t in 0..total_tiles {
-        let cnt = scratch.per_tile_counts[t].min(MAX_LIGHTS_PER_TILE);
-        scratch.grid[t * 2] = cnt; // count
-        scratch.grid[t * 2 + 1] = running_offset; // offset
+    for t in 0..grid.total() {
+        // An overflowing tile lists nothing: the shader's empty-tile path then shades every light.
+        let cnt = match scratch.per_tile_counts[t] {
+            n if n > MAX_LIGHTS_PER_TILE => 0,
+            n => n,
+        };
+        scratch.grid[t * 2] = cnt;
+        scratch.grid[t * 2 + 1] = running_offset;
         running_offset += cnt;
     }
-
-    // Each tile writes only within [offset, offset + count), so an over-cap tile cannot spill.
-    let max_indices = running_offset as usize;
     scratch.indices.clear();
-    scratch.indices.resize(max_indices.max(1), 0);
-    scratch.write_positions.clear();
-    scratch.write_positions.resize(total_tiles, 0);
-    for t in 0..total_tiles {
-        scratch.write_positions[t] = scratch.grid[t * 2 + 1];
-    }
+    scratch.indices.resize((running_offset as usize).max(1), 0);
+}
 
-    for i in 0..light_count as usize {
-        let base = i * 4;
-        let pos = glam::Vec3::new(
-            packed_lights[base][0],
-            packed_lights[base][1],
-            packed_lights[base][2],
-        );
-        let kind = packed_lights[base][3];
-        let range = packed_lights[base + 1][3];
-        let Some((min_tx, min_ty, max_tx, max_ty)) =
-            tile_rect_for_light(pos, range, kind, tile_x, tile_y, width, height, view_proj)
-        else {
+fn write_tile_indices(scratch: &mut TileLightGridScratch, grid: TileGrid) {
+    scratch.write_positions.clear();
+    scratch.write_positions.extend(
+        scratch
+            .grid
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|[_, offset]| *offset),
+    );
+    for (i, rect) in scratch.rects.iter().enumerate() {
+        let Some(rect) = rect else {
             continue;
         };
-        for ty in min_ty..=max_ty {
-            let row = ty * tile_x;
-            for tx in min_tx..=max_tx {
-                let idx = (row + tx) as usize;
-                let end = scratch.grid[idx * 2 + 1] + scratch.grid[idx * 2];
-                let wp = scratch.write_positions[idx];
-                if wp < end {
-                    scratch.indices[wp as usize] = i as u32;
-                    scratch.write_positions[idx] = wp + 1;
-                }
+        for idx in grid.tiles_in(*rect) {
+            // Each tile writes only within [offset, offset + count), so an overflowing tile writes nothing.
+            let end = scratch.grid[idx * 2 + 1] + scratch.grid[idx * 2];
+            let wp = scratch.write_positions[idx];
+            if wp < end {
+                scratch.indices[wp as usize] = i as u32;
+                scratch.write_positions[idx] = wp + 1;
             }
         }
     }
@@ -436,6 +465,80 @@ mod tests {
         assert!(
             any_lit,
             "a light whose range reaches the screen must light at least one tile even though its centre is off-screen"
+        );
+    }
+
+    /// The light indices `scratch` lists for tile (`tx`, `ty`) of a `tile_w`-wide grid.
+    fn tile_lights(scratch: &TileLightGridScratch, tile_w: u32, tx: u32, ty: u32) -> &[u32] {
+        let idx = (ty * tile_w + tx) as usize;
+        let count = scratch.grid[idx * 2] as usize;
+        let offset = scratch.grid[idx * 2 + 1] as usize;
+        &scratch.indices[offset..offset + count]
+    }
+
+    #[test]
+    fn a_range_less_point_light_reaches_every_tile_beside_a_directional_one() {
+        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let vp = proj * view;
+
+        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
+        packed[0] = [0.0, -1.0, 0.0, 3.0]; // directional
+        packed[1] = [1.0, 1.0, 1.0, 0.0];
+        packed[4] = [0.0, 0.0, 0.0, 1.0]; // point in front of the camera
+        packed[5] = [1.0, 1.0, 1.0, 0.0]; // range 0: unbounded
+        packed[8] = [0.0, 0.0, 9.0, 1.0]; // point behind the camera
+        packed[9] = [1.0, 1.0, 1.0, 0.0];
+
+        let mut scratch = TileLightGridScratch::default();
+        build_tile_light_grid(&mut scratch, &packed, 3, 256, 256, &vp);
+
+        let tile_w = 256 / TILE_SIZE;
+        for ty in 0..tile_w {
+            for tx in 0..tile_w {
+                let lights = tile_lights(&scratch, tile_w, tx, ty);
+                assert!(
+                    lights.contains(&1) && lights.contains(&2),
+                    "tile ({tx}, {ty}) lists {lights:?}: both unbounded point lights reach it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_overflowing_tile_falls_back_to_every_light_instead_of_dropping_some() {
+        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let vp = proj * view;
+
+        // 40 small lights around the centre plus one far off to the side, which few tiles see.
+        let light_count = MAX_LIGHTS_PER_TILE as usize + 9;
+        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
+        for i in 0..light_count - 1 {
+            packed[i * 4] = [(i % 5) as f32 * 0.01, (i / 5) as f32 * 0.01, 0.0, 1.0];
+            packed[i * 4 + 1] = [1.0, 1.0, 1.0, 0.2];
+        }
+        packed[(light_count - 1) * 4] = [1.4, 1.4, 0.0, 1.0];
+        packed[(light_count - 1) * 4 + 1] = [1.0, 1.0, 1.0, 0.1];
+
+        let mut scratch = TileLightGridScratch::default();
+        build_tile_light_grid(&mut scratch, &packed, light_count as u32, 256, 256, &vp);
+
+        let tile_w = 256 / TILE_SIZE;
+        let centre = tile_lights(&scratch, tile_w, 8, 8);
+        assert!(
+            centre.is_empty(),
+            "the centre tile, which {} lights overlap, must fall back to every light, \
+             not list a truncated {centre:?}",
+            light_count - 1
+        );
+        let corner_light = (light_count - 1) as u32;
+        let lit_by_corner_light = (0..tile_w)
+            .flat_map(|ty| (0..tile_w).map(move |tx| (tx, ty)))
+            .any(|(tx, ty)| tile_lights(&scratch, tile_w, tx, ty) == [corner_light]);
+        assert!(
+            lit_by_corner_light,
+            "a tile only the side light overlaps must still list it alone"
         );
     }
 

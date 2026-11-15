@@ -4,6 +4,7 @@ use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt as _;
 
 use super::primitive::GpuPrimitive;
+use super::readback::{read_texture, TextureRegion};
 use super::{ForwardRenderer, CASCADE_COUNT, DEPTH_FORMAT, SHADOW_MAP_SIZE};
 use crate::context::GpuContext;
 use crate::render::bind_layout;
@@ -11,26 +12,102 @@ use crate::render::gpu_timing::TimedPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{InstanceRaw, Vertex};
 
+/// The caster pipelines: back-culled, unculled for double-sided materials, alpha-tested for MASK.
+pub(super) struct ShadowPipelines {
+    opaque: wgpu::RenderPipeline,
+    /// `opaque` with clockwise front faces, for mirrored transforms; built when first needed.
+    opaque_mirrored: Option<wgpu::RenderPipeline>,
+    double_sided: wgpu::RenderPipeline,
+    masked: wgpu::RenderPipeline,
+}
+
+impl ShadowPipelines {
+    pub(super) fn new(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        layout: &wgpu::PipelineLayout,
+        masked_layout: &wgpu::PipelineLayout,
+    ) -> Self {
+        Self {
+            opaque: create_shadow_pipeline(
+                device,
+                shader,
+                layout,
+                "shadow_pipeline",
+                back_culled(wgpu::FrontFace::Ccw),
+            ),
+            opaque_mirrored: None,
+            // Unculled: a double-sided sheet must shadow whichever side faces the light.
+            double_sided: create_shadow_pipeline(
+                device,
+                shader,
+                layout,
+                "shadow_pipeline_double_sided",
+                wgpu::PrimitiveState::default(),
+            ),
+            masked: create_masked_shadow_pipeline(device, shader, masked_layout),
+        }
+    }
+
+    /// Builds the clockwise-front opaque pipeline once a mirrored caster exists.
+    pub(super) fn ensure_mirrored(
+        &mut self,
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        layout: &wgpu::PipelineLayout,
+    ) {
+        if self.opaque_mirrored.is_none() {
+            self.opaque_mirrored = Some(create_shadow_pipeline(
+                device,
+                shader,
+                layout,
+                "shadow_pipeline_mirrored",
+                back_culled(wgpu::FrontFace::Cw),
+            ));
+        }
+    }
+
+    /// The opaque caster pipeline whose front faces wind clockwise when `clockwise`.
+    fn opaque_for(&self, clockwise: bool) -> &wgpu::RenderPipeline {
+        if !clockwise {
+            return &self.opaque;
+        }
+        debug_assert!(
+            self.opaque_mirrored.is_some(),
+            "ensure_mirrored must run first"
+        );
+        self.opaque_mirrored.as_ref().unwrap_or(&self.opaque)
+    }
+}
+
+fn back_culled(front_face: wgpu::FrontFace) -> wgpu::PrimitiveState {
+    wgpu::PrimitiveState {
+        front_face,
+        cull_mode: Some(wgpu::Face::Back),
+        ..Default::default()
+    }
+}
+
 pub(super) struct ShadowResources {
-    pub(super) pipeline: wgpu::RenderPipeline,
-    pub(super) masked_pipeline: wgpu::RenderPipeline,
-    // Read only by the native shader hot-reload path, so unread on wasm32.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(super) pipelines: ShadowPipelines,
     pub(super) pipeline_layout: wgpu::PipelineLayout,
+    // Read only by the native shader hot-reload path, so unread on wasm32.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(super) masked_pipeline_layout: wgpu::PipelineLayout,
     pub(super) bind_group_layout: wgpu::BindGroupLayout,
     pub(super) masked_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) sampler: wgpu::Sampler,
+    /// The cascade depth array; read back only by tests.
+    texture: wgpu::Texture,
     pub(super) view: wgpu::TextureView,
     layer_views: Vec<wgpu::TextureView>,
     cascade_index_bind_groups: Vec<wgpu::BindGroup>,
     pub(super) cascade_matrices: [Mat4; CASCADE_COUNT],
     pub(super) cascade_splits: [f32; 4],
-    /// Shadow-caster draw list, recorded once and replayed per cascade; `None` re-records it.
-    /// Only a new draw set or buffer identity invalidates it, not buffer writes or LOD switches.
-    pub(super) caster_bundle: Option<wgpu::RenderBundle>,
-    /// Caster count baked into the bundle, so the stats stay right on frames that reuse it.
+    /// One caster bundle per cascade, recorded once and replayed every frame; `None` re-records.
+    /// Only a new draw set or buffer identity invalidates them, not buffer writes or LOD switches.
+    pub(super) caster_bundles: Option<[wgpu::RenderBundle; CASCADE_COUNT]>,
+    /// Caster count baked into the bundles, so the stats stay right on frames that reuse them.
     caster_count: u32,
     /// Caster draws submitted / considered last frame, summed over cascades.
     pub(super) casters_drawn: u32,
@@ -67,65 +144,74 @@ impl ShadowResources {
         let pipeline_layout = pipeline_layout_for("shadow_pipeline_layout", &bind_group_layout);
         let masked_pipeline_layout =
             pipeline_layout_for("shadow_masked_pipeline_layout", &masked_bind_group_layout);
-        let (view, layer_views) = create_shadow_map(device);
+        let (texture, view, layer_views) = create_shadow_map(device);
         Self {
-            pipeline: create_shadow_pipeline(device, shader, &pipeline_layout),
-            masked_pipeline: create_masked_shadow_pipeline(device, shader, &masked_pipeline_layout),
+            pipelines: ShadowPipelines::new(
+                device,
+                shader,
+                &pipeline_layout,
+                &masked_pipeline_layout,
+            ),
             pipeline_layout,
             masked_pipeline_layout,
             bind_group_layout,
             masked_bind_group_layout,
             sampler: create_shadow_sampler(device),
+            texture,
             view,
             layer_views,
             cascade_index_bind_groups,
             cascade_matrices: [Mat4::IDENTITY; CASCADE_COUNT],
             // z, w (tile counts) are written per frame by `write_frame_uniforms`.
             cascade_splits: [10.0, 30.0, 0.0, 0.0],
-            caster_bundle: None,
+            caster_bundles: None,
             caster_count: 0,
             casters_drawn: 0,
             casters_considered: 0,
         }
     }
 
-    /// One caster's draw; textured MASK casters go through the alpha-testing pipeline.
+    /// One caster's draws: MASK casters alpha-test, double-sided ones are not culled.
     fn record_caster<'a>(
         &'a self,
         bundle: &mut wgpu::RenderBundleEncoder<'a>,
         prim: &'a GpuPrimitive,
     ) {
-        if let (true, Some(masked_group)) =
-            (prim.alpha_masked, prim.shadow_masked_bind_group.as_ref())
-        {
-            bundle.set_pipeline(&self.masked_pipeline);
-            bundle.set_bind_group(0, masked_group, &[]);
-        } else {
-            bundle.set_pipeline(&self.pipeline);
-            bundle.set_bind_group(0, &prim.shadow_bind_group, &[]);
-        }
+        let pipelines = &self.pipelines;
+        let masked_group = prim
+            .shadow_masked_bind_group
+            .as_ref()
+            .filter(|_| prim.alpha_masked);
+        bundle.set_bind_group(0, masked_group.unwrap_or(&prim.shadow_bind_group), &[]);
         bundle.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
         bundle.set_vertex_buffer(1, prim.instance_buffer.slice(..));
         bundle.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        bundle.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
+        for (instances, clockwise) in prim.instance_runs() {
+            bundle.set_pipeline(match (masked_group.is_some(), prim.double_sided) {
+                (true, _) => &pipelines.masked,
+                (false, true) => &pipelines.double_sided,
+                (false, false) => pipelines.opaque_for(clockwise),
+            });
+            bundle.draw_indexed(0..prim.index_count, 0, instances);
+        }
     }
 }
 
 impl ForwardRenderer {
-    /// One depth pass per cascade, each replaying the cached caster bundle.
+    /// One depth pass per cascade, each replaying that cascade's cached caster bundle.
     pub(super) fn encode_shadow_cascades(
         &mut self,
         gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        self.ensure_shadow_caster_bundle(gpu);
+        self.ensure_shadow_caster_bundles(gpu);
         let shadow = &self.shadow;
-        let caster_bundle = shadow
-            .caster_bundle
+        let caster_bundles = shadow
+            .caster_bundles
             .as_ref()
             .expect("just built above when absent");
         let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
-        for cascade in 0..CASCADE_COUNT {
+        for (cascade, caster_bundle) in caster_bundles.iter().enumerate() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow_pass"),
                 color_attachments: &[],
@@ -141,8 +227,6 @@ impl ForwardRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_bind_group(1, &shadow.cascade_index_bind_groups[cascade], &[]);
-            pass.set_bind_group(2, &self.frame.bind_group, &[]);
             pass.execute_bundles(std::iter::once(caster_bundle));
         }
         // No per-cascade culling, so drawn == considered by construction.
@@ -150,36 +234,63 @@ impl ForwardRenderer {
         self.shadow.casters_considered = self.shadow.caster_count;
     }
 
-    /// A cached bundle replayed per cascade; the baked draw list rules out per-cascade culling.
-    fn ensure_shadow_caster_bundle(&mut self, gpu: &GpuContext) {
-        if self.shadow.caster_bundle.is_some() {
+    /// Cached bundles replayed per frame; the baked draw lists rule out per-cascade culling.
+    fn ensure_shadow_caster_bundles(&mut self, gpu: &GpuContext) {
+        if self.shadow.caster_bundles.is_some() {
             return;
         }
+        let bundles =
+            std::array::from_fn(|cascade| self.record_caster_bundle(&gpu.device, cascade));
+        self.shadow.caster_bundles = Some(bundles);
+        self.shadow.caster_count = self.primitives.iter().filter(|p| p.casts_shadow).count() as u32;
+    }
+
+    /// Cascade `cascade`'s caster draws; a bundle never inherits the pass's bind groups.
+    fn record_caster_bundle(&self, device: &wgpu::Device, cascade: usize) -> wgpu::RenderBundle {
         let mut bundle_encoder =
-            gpu.device
-                .create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-                    label: Some("shadow_casters"),
-                    color_formats: &[],
-                    depth_stencil: Some(wgpu::RenderBundleDepthStencil {
-                        format: wgpu::TextureFormat::Depth32Float,
-                        depth_read_only: false,
-                        stencil_read_only: true,
-                    }),
-                    sample_count: 1,
-                    multiview: None,
-                });
-        // Groups 1/2 only satisfy layout validation; the parent pass sets the real ones.
-        bundle_encoder.set_bind_group(1, &self.shadow.cascade_index_bind_groups[0], &[]);
+            device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+                label: Some("shadow_casters"),
+                color_formats: &[],
+                depth_stencil: Some(wgpu::RenderBundleDepthStencil {
+                    format: DEPTH_FORMAT,
+                    depth_read_only: false,
+                    stencil_read_only: true,
+                }),
+                sample_count: 1,
+                multiview: None,
+            });
+        bundle_encoder.set_bind_group(1, &self.shadow.cascade_index_bind_groups[cascade], &[]);
         bundle_encoder.set_bind_group(2, &self.frame.bind_group, &[]);
-        let mut caster_count = 0u32;
         for prim in self.primitives.iter().filter(|p| p.casts_shadow) {
-            caster_count += 1;
             self.shadow.record_caster(&mut bundle_encoder, prim);
         }
-        self.shadow.caster_bundle = Some(bundle_encoder.finish(&wgpu::RenderBundleDescriptor {
+        bundle_encoder.finish(&wgpu::RenderBundleDescriptor {
             label: Some("shadow_caster_bundle"),
-        }));
-        self.shadow.caster_count = caster_count;
+        })
+    }
+
+    /// Every cascade's depth layer, layer-major then row-major, as the last frame left it.
+    /// Stalls on a readback, so tests and diagnostics only.
+    #[doc(hidden)]
+    pub fn read_shadow_map(&self, gpu: &GpuContext) -> anyhow::Result<Vec<f32>> {
+        let bytes = read_texture(
+            gpu,
+            &self.shadow.texture,
+            &TextureRegion {
+                aspect: wgpu::TextureAspect::DepthOnly,
+                width: SHADOW_MAP_SIZE,
+                height: SHADOW_MAP_SIZE,
+                layers: CASCADE_COUNT as u32,
+                texel_bytes: 4,
+            },
+        )?;
+        Ok(bytemuck::pod_collect_to_vec(&bytes))
+    }
+
+    /// The light view-projection each cascade's shadow pass used last frame.
+    #[doc(hidden)]
+    pub fn shadow_cascade_matrices(&self) -> [Mat4; CASCADE_COUNT] {
+        self.shadow.cascade_matrices
     }
 
     /// Fits one light matrix per cascade; see `render::cascades` for why splits track the camera.
@@ -241,8 +352,10 @@ fn create_cascade_index_groups(
     (cascade_index_layout, cascade_index_bind_groups)
 }
 
-/// The cascade depth array: its sampled array view and one attachment view per layer.
-fn create_shadow_map(device: &wgpu::Device) -> (wgpu::TextureView, Vec<wgpu::TextureView>) {
+/// The cascade depth array, its sampled array view and one attachment view per layer.
+fn create_shadow_map(
+    device: &wgpu::Device,
+) -> (wgpu::Texture, wgpu::TextureView, Vec<wgpu::TextureView>) {
     let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
         // TEXTURE_2D_SHAPE_OK: depth array, not single-layer 2D
         label: Some("shadow_map_array"),
@@ -255,7 +368,10 @@ fn create_shadow_map(device: &wgpu::Device) -> (wgpu::TextureView, Vec<wgpu::Tex
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        // COPY_SRC only for `read_shadow_map`.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor {
@@ -274,7 +390,7 @@ fn create_shadow_map(device: &wgpu::Device) -> (wgpu::TextureView, Vec<wgpu::Tex
             })
         })
         .collect();
-    (shadow_view, shadow_layer_views)
+    (shadow_texture, shadow_view, shadow_layer_views)
 }
 
 fn create_shadow_sampler(device: &wgpu::Device) -> wgpu::Sampler {
@@ -289,7 +405,7 @@ fn create_shadow_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     })
 }
 
-pub(super) fn create_masked_shadow_pipeline(
+fn create_masked_shadow_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
@@ -332,13 +448,15 @@ pub(super) fn create_masked_shadow_pipeline(
     })
 }
 
-pub(super) fn create_shadow_pipeline(
+fn create_shadow_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
+    label: &str,
+    primitive: wgpu::PrimitiveState,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("shadow_pipeline"),
+        label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
@@ -347,10 +465,7 @@ pub(super) fn create_shadow_pipeline(
             compilation_options: Default::default(),
         },
         fragment: None,
-        primitive: wgpu::PrimitiveState {
-            cull_mode: Some(wgpu::Face::Back),
-            ..Default::default()
-        },
+        primitive,
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
             depth_write_enabled: Some(true),

@@ -115,16 +115,6 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
             writes: &[Resource::Visibility],
         },
         PassDesc {
-            name: "bloom",
-            reads: &[Resource::HdrColor],
-            writes: &[Resource::Bloom],
-        },
-        PassDesc {
-            name: "ssao",
-            reads: &[Resource::Depth],
-            writes: &[Resource::Ambient],
-        },
-        PassDesc {
             name: "histogram",
             reads: &[Resource::HdrColor],
             writes: &[Resource::Histogram],
@@ -133,6 +123,16 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
             name: "exposure_reduce",
             reads: &[Resource::Histogram],
             writes: &[Resource::Exposure],
+        },
+        PassDesc {
+            name: "bloom",
+            reads: &[Resource::HdrColor, Resource::Exposure],
+            writes: &[Resource::Bloom],
+        },
+        PassDesc {
+            name: "ssao",
+            reads: &[Resource::Depth],
+            writes: &[Resource::Ambient],
         },
         PassDesc {
             name: "tonemap",

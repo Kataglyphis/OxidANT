@@ -2,6 +2,8 @@
 
 use wgpu::util::DeviceExt as _;
 
+use super::ForwardRenderer;
+use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::ibl::{BrdfLut, IblEnvironment, IblFallback};
 
@@ -79,6 +81,20 @@ impl IblBinding {
             &self.fallback.brdf_lut,
             &self.fallback.sampler,
         )
+    }
+}
+
+impl ForwardRenderer {
+    /// The IBL uniforms for the bound environment; per frame, since `ibl_intensity` is a live knob.
+    pub(super) fn write_ibl_uniforms(&self, gpu: &GpuContext) {
+        let uniforms = match &self.ibl.environment {
+            Some(environment) => {
+                IblUniforms::enabled(environment.max_prefiltered_mip(), self.ibl_intensity)
+            }
+            None => IblUniforms::disabled(),
+        };
+        gpu.queue
+            .write_buffer(&self.ibl.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 }
 

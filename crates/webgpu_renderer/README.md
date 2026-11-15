@@ -88,5 +88,5 @@ on a software adapter: lavapipe on Linux, WARP on Windows (x64 on its runner
 host, arm64 on `windows-11-arm`). The `ADAPTER:` line and the BC-upload and
 GPU-timing tests:
 [`docs/testing.md` § The GPU tests must render](../../docs/testing.md#the-gpu-tests-must-render).
-`a_non_uniform_instance_scale_shades_like_the_same_node_scale` is `#[ignore]`d:
-a known shading bug ([BACKLOG.md](../../BACKLOG.md)) fails it on every adapter.
+`tests/mirrored.rs` holds mirrored (negative-determinant) nodes and instances, and
+double-sided back faces, to the shading of their unmirrored originals.

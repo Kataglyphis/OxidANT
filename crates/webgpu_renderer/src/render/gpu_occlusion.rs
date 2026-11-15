@@ -4,6 +4,7 @@
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::buffer_desc;
+use crate::render::occlusion::newer_readback;
 use crate::render::pipeline_desc;
 use bytemuck::{Pod, Zeroable};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -47,6 +48,8 @@ struct Slot {
     count: u32,
     /// Scene generation this slot was recorded under; see `GpuCulling::generation`.
     generation: u64,
+    /// When the slot was recorded; see `occlusion::newer_readback`.
+    sequence: u64,
 }
 
 pub struct GpuCulling {
@@ -65,6 +68,9 @@ pub struct GpuCulling {
     generation: u64,
     /// Latest completed readback, `true` where the primitive's centre passed the depth test.
     visibility: Vec<bool>,
+    /// Sequence of the last recorded slot, and of the newest readback applied to `visibility`.
+    sequence: u64,
+    applied_sequence: u64,
 }
 
 impl GpuCulling {
@@ -136,6 +142,8 @@ impl GpuCulling {
             recording: false,
             generation: 0,
             visibility: Vec::new(),
+            sequence: 0,
+            applied_sequence: 0,
         }
     }
 
@@ -254,8 +262,11 @@ impl GpuCulling {
                     callback_state.store(code, Ordering::Release);
                 },
             );
-            self.slots[self.current].map_state = Some(state);
-            self.slots[self.current].generation = self.generation;
+            self.sequence += 1;
+            let slot = &mut self.slots[self.current];
+            slot.map_state = Some(state);
+            slot.generation = self.generation;
+            slot.sequence = self.sequence;
             self.current = (self.current + 1) % SLOT_COUNT;
             self.recording = false;
         }
@@ -282,7 +293,9 @@ impl GpuCulling {
                     self.slots[index].readback.unmap();
                     self.slots[index].map_state = None;
                     // A stale generation is the old scene's; never cull the new one with it.
-                    if self.slots[index].generation == self.generation {
+                    if self.slots[index].generation == self.generation
+                        && newer_readback(self.slots[index].sequence, &mut self.applied_sequence)
+                    {
                         self.visibility = visibility;
                     }
                 }
@@ -328,6 +341,7 @@ fn create_slots(device: &wgpu::Device, max_primitives: usize) -> Vec<Slot> {
             map_state: None,
             count: 0,
             generation: 0,
+            sequence: 0,
         })
         .collect()
 }

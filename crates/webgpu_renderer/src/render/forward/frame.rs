@@ -80,11 +80,15 @@ impl ForwardRenderer {
     ) -> FrameView {
         let (width, height) = (width.max(1), height.max(1));
         self.resize_targets(gpu, width, height);
-        self.rebind_post_inputs(gpu, tonemap, width, height);
+        self.rebuild_post_inputs(gpu, width, height);
+        self.bind_tonemap_inputs(gpu, tonemap);
         self.write_post_settings(gpu, tonemap);
+        self.write_ibl_uniforms(gpu);
 
         self.update_joint_matrices(gpu);
         self.apply_morph_targets(gpu);
+        self.ensure_mirrored_pipelines(&gpu.device);
+        self.reset_culling_on_mode_change();
 
         let view = self.prepare_view(gpu, camera, width, height);
         self.write_sky_uniforms(gpu, &view);

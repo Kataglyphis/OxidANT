@@ -442,3 +442,174 @@ fn gpu_culling_is_off_by_default() {
         "no primitive should be culled while gpu_culling_enabled is off"
     );
 }
+
+/// More boxes than one query set holds: the excess stays visible instead of a validation error.
+#[test]
+fn more_boxes_than_the_query_set_limit_record_without_a_validation_error() {
+    use kataglyphis_webgpu_renderer::render::gpu_timing::PassScope;
+    use kataglyphis_webgpu_renderer::render::occlusion::OcclusionQueries;
+
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let device = &gpu.device;
+    let depth = device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("occlusion_limit_depth"),
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+        .create_view(&wgpu::TextureViewDescriptor::default());
+    let box_count = wgpu::QUERY_SET_MAX_QUERIES as usize + 904;
+    let aabbs: Vec<(Vec3, Vec3)> = (0..box_count)
+        .map(|i| {
+            let x = (i % 64) as f32 * 0.1 - 3.2;
+            (Vec3::new(x, -0.05, -2.0), Vec3::new(x + 0.05, 0.05, -1.9))
+        })
+        .collect();
+    let view_proj = OrbitCamera::default().view_projection(1.0);
+
+    let mut queries = OcclusionQueries::new(device);
+    let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    for _ in 0..8 {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        queries.record(
+            device,
+            &gpu.queue,
+            &mut encoder,
+            &depth,
+            view_proj,
+            &aabbs,
+            Vec3::new(0.0, 0.0, 8.0),
+            PassScope::disabled(),
+        );
+        gpu.queue.submit(Some(encoder.finish()));
+        queries.end_frame(device);
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    }
+    let error = pollster::block_on(error_scope.pop());
+    assert!(
+        error.is_none(),
+        "{box_count} boxes must record within the query-set limit, got {error:?}"
+    );
+    assert_eq!(
+        queries.visibility().len(),
+        wgpu::QUERY_SET_MAX_QUERIES as usize,
+        "the readback must cover exactly the queried boxes"
+    );
+    assert!(
+        queries.visible(box_count - 1),
+        "a box past the query limit is unmeasured, so it must stay visible"
+    );
+}
+
+/// Re-enabling a culling mode must not cull with visibility measured from an earlier camera.
+#[test]
+fn re_enabling_culling_forgets_the_visibility_from_before() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let occluder = cube_with_transform(
+        Mat4::from_translation(Vec3::new(0.0, 0.0, 2.0)) * Mat4::from_scale(Vec3::splat(4.0)),
+    );
+    let hidden = cube_with_transform(Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0)));
+    let scene = CpuScene {
+        primitives: vec![occluder, hidden],
+        ..Default::default()
+    };
+    // From -Z the small cube stands in front of the occluder, so both are visible.
+    let from_behind = OrbitCamera {
+        radius: 8.0,
+        yaw_deg: -90.0,
+        pitch_deg: 0.0,
+        ..OrbitCamera::default()
+    };
+
+    for gpu_path in [false, true] {
+        let set_culling = |renderer: &mut ForwardRenderer, on: bool| {
+            if gpu_path {
+                renderer.gpu_culling_enabled = on;
+            } else {
+                renderer.occlusion_queries_enabled = on;
+            }
+        };
+        let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+        renderer.upload_scene(&gpu, &scene);
+        set_culling(&mut renderer, true);
+        render_until_readback_lands(&mut renderer, &gpu, &looking_down_neg_z());
+        assert_eq!(
+            renderer.occlusion_cull_stats(),
+            (1, 2),
+            "precondition (gpu path: {gpu_path}): the hidden cube must be culled"
+        );
+
+        set_culling(&mut renderer, false);
+        renderer
+            .render_to_pixels(&gpu, 256, 256, &from_behind)
+            .expect("render");
+        set_culling(&mut renderer, true);
+        renderer
+            .render_to_pixels(&gpu, 256, 256, &from_behind)
+            .expect("render");
+        assert_eq!(
+            renderer.occlusion_cull_stats(),
+            (2, 2),
+            "gpu path: {gpu_path}: the first re-enabled frame culled with visibility \
+             measured from the camera before culling was switched off"
+        );
+    }
+}
+
+/// A box seen only through a slit narrower than any sparse tap spacing must stay drawn.
+#[test]
+fn a_box_seen_through_a_two_pixel_slit_is_never_gpu_culled() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    // At z = 0 one pixel is 2 * 8 * tan(22.5 deg) / 256 world units, so the walls leave columns 127-128.
+    let pixel = 2.0 * 8.0 * 22.5f32.to_radians().tan() / 256.0;
+    let wall = |side: f32| {
+        cube_with_transform(
+            Mat4::from_translation(Vec3::new(side * (pixel + 1.0), 0.0, 0.0))
+                * Mat4::from_scale(Vec3::new(2.0, 4.0, 0.2)),
+        )
+    };
+    // Turned 45 degrees, so the faces either side of its front edge recede behind the box's nearest point.
+    let behind = cube_with_transform(
+        Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0))
+            * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_4),
+    );
+    let scene = CpuScene {
+        primitives: vec![wall(-1.0), wall(1.0), behind],
+        ..Default::default()
+    };
+    let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.gpu_culling_enabled = true;
+    render_until_readback_lands(&mut renderer, &gpu, &looking_down_neg_z());
+
+    let visibility = renderer.gpu_culling_visibility();
+    assert_eq!(
+        visibility.len(),
+        3,
+        "one entry per primitive: {visibility:?}"
+    );
+    assert!(
+        visibility[2],
+        "the box behind the slit is visible through it, yet the compute cull marked it occluded"
+    );
+    assert_eq!(
+        renderer.occlusion_cull_stats(),
+        (3, 3),
+        "every primitive must draw"
+    );
+}

@@ -56,6 +56,8 @@ struct Slot {
     count: u32,
     /// Scene generation at record time; a stale one is drained without touching visibility.
     generation: u64,
+    /// When the slot was recorded, so a late drain never applies an older frame over a newer one.
+    sequence: u64,
     /// "Eye inside this AABB" flags from this slot's own eye, since the readback lands late.
     forced_visible: Vec<bool>,
 }
@@ -81,6 +83,19 @@ pub struct OcclusionQueries {
     visibility: Vec<bool>,
     /// Bumped by [`Self::reset`] so readbacks from a replaced scene are discarded.
     generation: u64,
+    /// Sequence of the last recorded slot, and of the newest readback applied to `visibility`.
+    sequence: u64,
+    applied_sequence: u64,
+}
+
+/// Whether a drained readback recorded at `sequence` is newer than the last applied one; if so
+/// it becomes that one. Slots drain in index order, which after a wrap is not age order.
+pub(crate) fn newer_readback(sequence: u64, applied: &mut u64) -> bool {
+    let newer = sequence > *applied;
+    if newer {
+        *applied = sequence;
+    }
+    newer
 }
 
 impl OcclusionQueries {
@@ -163,11 +178,14 @@ impl OcclusionQueries {
             samples: Vec::new(),
             visibility: Vec::new(),
             generation: 0,
+            sequence: 0,
+            applied_sequence: 0,
         }
     }
 
     /// Records and resolves the pass in the forward encoder; call [`Self::end_frame`] after submit.
     /// A box containing `eye` reads 0 samples, so it is forced visible, with the mask kept per slot.
+    /// Only the first `QUERY_SET_MAX_QUERIES` boxes are queried; the rest stay visible.
     // Eight distinct inputs; a wrapper struct would be artificial.
     #[allow(clippy::too_many_arguments)]
     pub fn record(
@@ -182,6 +200,8 @@ impl OcclusionQueries {
         timing: crate::render::gpu_timing::PassScope<'_>,
     ) {
         self.recording = false;
+        // One query set holds at most QUERY_SET_MAX_QUERIES; a larger one is a validation error.
+        let aabbs = &aabbs[..aabbs.len().min(wgpu::QUERY_SET_MAX_QUERIES as usize)];
         let count = aabbs.len() as u32;
         if count == 0 {
             return;
@@ -212,34 +232,7 @@ impl OcclusionQueries {
             })
             .collect();
         queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
-
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("occlusion_pass"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    // Store only preserves the untouched forward depth for SSAO.
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: timing.render_writes(0, 1),
-                occlusion_query_set: Some(&self.query_set),
-                multiview_mask: None,
-            });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.view_proj_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-            // One draw per query, indices dense in 0..count, all in this one pass.
-            for i in 0..count {
-                pass.begin_occlusion_query(i);
-                pass.draw(0..36, i..i + 1);
-                pass.end_occlusion_query();
-            }
-        }
+        self.encode_queries(encoder, depth_view, count, timing);
 
         let slot = &mut self.slots[slot_index];
         slot.count = count;
@@ -248,6 +241,40 @@ impl OcclusionQueries {
         encoder.resolve_query_set(&self.query_set, 0..count, &slot.resolve, 0);
         encoder.copy_buffer_to_buffer(&slot.resolve, 0, &slot.readback, 0, bytes);
         self.recording = true;
+    }
+
+    /// One box draw per query, indices dense in `0..count`, all in one pass over `depth_view`.
+    fn encode_queries(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        depth_view: &wgpu::TextureView,
+        count: u32,
+        timing: crate::render::gpu_timing::PassScope<'_>,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("occlusion_pass"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                // Store only preserves the untouched forward depth for SSAO.
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: timing.render_writes(0, 1),
+            occlusion_query_set: Some(&self.query_set),
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.view_proj_bind_group, &[]);
+        pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+        for i in 0..count {
+            pass.begin_occlusion_query(i);
+            pass.draw(0..36, i..i + 1);
+            pass.end_occlusion_query();
+        }
     }
 
     /// Starts this frame's readback and consumes completed slots; never blocks, call after submit.
@@ -267,8 +294,11 @@ impl OcclusionQueries {
                     callback_state.store(code, Ordering::Release);
                 },
             );
-            self.slots[self.current].map_state = Some(state);
-            self.slots[self.current].generation = self.generation;
+            self.sequence += 1;
+            let slot = &mut self.slots[self.current];
+            slot.map_state = Some(state);
+            slot.generation = self.generation;
+            slot.sequence = self.sequence;
             self.current = (self.current + 1) % SLOT_COUNT;
             self.recording = false;
         }
@@ -287,7 +317,9 @@ impl OcclusionQueries {
                     self.slots[index].readback.unmap();
                     self.slots[index].map_state = None;
                     // A stale generation is drained but must not cull the new scene.
-                    if self.slots[index].generation == self.generation {
+                    if self.slots[index].generation == self.generation
+                        && newer_readback(self.slots[index].sequence, &mut self.applied_sequence)
+                    {
                         let forced = &self.slots[index].forced_visible;
                         self.visibility = samples
                             .iter()
@@ -343,8 +375,7 @@ impl OcclusionQueries {
         if count <= self.capacity {
             return;
         }
-        // Double, so a slowly growing scene does not reallocate every frame.
-        let capacity = count.max(self.capacity * 2);
+        let capacity = next_capacity(self.capacity, count);
         self.instance_buffer = create_instance_buffer(device, capacity);
         self.query_set = create_query_set(device, capacity);
         self.slots = create_slots(device, capacity);
@@ -352,6 +383,13 @@ impl OcclusionQueries {
         self.current = 0;
         self.recording = false;
     }
+}
+
+/// Doubled so a slowly growing scene does not reallocate every frame, but never past the query limit.
+fn next_capacity(current: u32, needed: u32) -> u32 {
+    needed
+        .max(current.saturating_mul(2))
+        .min(wgpu::QUERY_SET_MAX_QUERIES)
 }
 
 fn create_instance_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
@@ -380,6 +418,7 @@ fn create_slots(device: &wgpu::Device, capacity: u32) -> Vec<Slot> {
             map_state: None,
             count: 0,
             generation: 0,
+            sequence: 0,
             forced_visible: Vec::new(),
         })
         .collect()
@@ -405,6 +444,44 @@ fn read_samples(buffer: &wgpu::Buffer, count: usize) -> Vec<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_late_older_readback_never_overwrites_a_newer_one() {
+        // After a wrap, slot 0 holds frame 4 and slot 2 frame 3; index order drains 4 first.
+        let mut applied = 2;
+        let drained_in_index_order = [4, 3];
+        let applied_frames: Vec<u64> = drained_in_index_order
+            .into_iter()
+            .filter(|&sequence| newer_readback(sequence, &mut applied))
+            .collect();
+        assert_eq!(
+            applied_frames,
+            [4],
+            "frame 3 must be skipped once frame 4 applied"
+        );
+        assert_eq!(applied, 4);
+        assert!(
+            !newer_readback(4, &mut applied),
+            "the same frame never applies twice"
+        );
+    }
+
+    #[test]
+    fn query_capacity_never_grows_past_the_query_set_limit() {
+        let limit = wgpu::QUERY_SET_MAX_QUERIES;
+        for (current, needed) in [(2100, 2200), (3900, 4000), (32, limit), (limit, limit)] {
+            let capacity = next_capacity(current, needed);
+            assert!(
+                capacity >= needed && capacity <= limit,
+                "{current} -> {needed} grew to {capacity}, outside [{needed}, {limit}]"
+            );
+        }
+        assert_eq!(
+            next_capacity(32, 40),
+            64,
+            "growth still doubles below the limit"
+        );
+    }
 
     #[test]
     fn aabb_contains_point_strictly_inside() {
