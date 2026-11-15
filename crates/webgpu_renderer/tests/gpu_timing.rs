@@ -61,12 +61,17 @@ fn every_pass_reports_a_finite_non_negative_duration() {
     }
 
     let timings = renderer.gpu_timings_ms();
+    // A raster frame records every pass but the traced modes' own.
+    let raster: Vec<TimedPass> = TimedPass::ALL
+        .into_iter()
+        .filter(|pass| !pass.is_traced())
+        .collect();
     assert_eq!(
         timings.len(),
-        TimedPass::ALL.len(),
+        raster.len(),
         "not every pass reported: {timings:?}"
     );
-    for (expected, (name, ms)) in TimedPass::ALL.iter().zip(&timings) {
+    for (expected, (name, ms)) in raster.iter().zip(&timings) {
         assert_eq!(*name, expected.name(), "passes must report in record order");
         assert!(ms.is_finite(), "{name} reported a non-finite duration");
         assert!(*ms >= 0.0, "{name} reported a negative duration {ms}");

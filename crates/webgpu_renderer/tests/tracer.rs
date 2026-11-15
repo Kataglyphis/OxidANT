@@ -166,3 +166,50 @@ fn a_scene_upload_without_a_trace_source_leaves_the_traced_modes_idle() {
         .tracer_mut()
         .finish_build(&gpu, Duration::from_secs(1)));
 }
+
+/// Member offsets and size of the struct `global` is declared with in `wgsl`, as naga lays them out.
+fn wgsl_layout(wgsl: &str, global: &str) -> (Vec<u32>, u32) {
+    let module = naga::front::wgsl::parse_str(wgsl).expect("parses");
+    let (_, var) = module
+        .global_variables
+        .iter()
+        .find(|(_, var)| var.name.as_deref() == Some(global))
+        .unwrap_or_else(|| panic!("no global {global}"));
+    let naga::TypeInner::Struct { members, span } = &module.types[var.ty].inner else {
+        panic!("{global} is no struct");
+    };
+    (members.iter().map(|m| m.offset).collect(), *span)
+}
+
+#[test]
+fn the_traced_kernels_read_the_rust_uniforms_and_workgroups() {
+    use kataglyphis_webgpu_renderer::render::tracer::modes::{
+        TraceFrameUniforms, TraceTileUniforms, KERNEL_GROUP_SIZE,
+    };
+    use std::mem::{offset_of, size_of};
+    let traced = include_str!("../src/shaders/traced.wgsl");
+    let frame = (
+        vec![
+            offset_of!(TraceFrameUniforms, size) as u32,
+            offset_of!(TraceFrameUniforms, inv_view_proj) as u32,
+            offset_of!(TraceFrameUniforms, light_dir) as u32,
+            offset_of!(TraceFrameUniforms, light_radiance) as u32,
+            offset_of!(TraceFrameUniforms, furnace) as u32,
+        ],
+        size_of::<TraceFrameUniforms>() as u32,
+    );
+    assert_eq!(wgsl_layout(traced, "traceFrame_0"), frame);
+    assert_eq!(
+        wgsl_layout(traced, "traceTile_0"),
+        (vec![0, 16], size_of::<TraceTileUniforms>() as u32)
+    );
+    // The resolve binds the frame's buffer and reads its first field only.
+    let resolve = include_str!("../src/shaders/trace_resolve.wgsl");
+    assert_eq!(wgsl_layout(resolve, "resolveParams_0"), (vec![0], 16));
+    let group = format!("@workgroup_size({KERNEL_GROUP_SIZE}, {KERNEL_GROUP_SIZE}, 1)");
+    assert_eq!(
+        traced.matches(&group).count(),
+        2,
+        "both kernels are {group}"
+    );
+}

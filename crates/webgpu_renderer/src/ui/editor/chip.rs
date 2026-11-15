@@ -2,19 +2,17 @@
 
 use egui::{pos2, Rect, Stroke, TextStyle, Ui};
 
+use super::{render_mode, EditorContext};
 use crate::ui::palette as pal;
 use crate::ui::theme;
 use crate::ui::widgets::{frame_height, galley, line_height};
 
-/// What the WebGPU renderer draws; the C++ chip also names ray and path tracing.
-pub(super) const MODE: &str = "Raster  ·  Forward";
-
 /// Painted on the root's background layer and never allocated, so the scene under it stays the camera's.
-pub(super) fn paint(ui: &Ui, scene: Rect) {
+pub(super) fn paint(ui: &Ui, scene: Rect, cx: &EditorContext<'_>) {
     let pixels = scene.size() * ui.ctx().pixels_per_point();
     let extent = format!("{} × {}", pixels.x.round() as u32, pixels.y.round() as u32);
     let font = TextStyle::Body.resolve(ui.style());
-    let label = galley(ui, MODE, font.clone(), pal::TEXT);
+    let label = galley(ui, render_mode::chip_label(cx), font.clone(), pal::TEXT);
     let size = galley(ui, &extent, font, pal::TEXT_MUTED);
     let dot = line_height(ui) * 0.5;
     let spacing = ui.spacing().item_spacing.x;

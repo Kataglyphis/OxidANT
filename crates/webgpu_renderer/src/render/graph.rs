@@ -28,6 +28,8 @@ pub enum Resource {
     Exposure,
     /// Final display target (swapchain frame or readback texture).
     Output,
+    /// The traced modes' per-pixel running mean.
+    Accumulation,
 }
 
 /// A declared pass: its name and the resources it reads and writes.
@@ -147,6 +149,52 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
     ]
 }
 
+/// A traced frame: `kernel` (`ray_trace` or `path_trace`) and the resolve replace every raster pass before exposure.
+pub fn traced_frame_graph(kernel: &'static str) -> Vec<PassDesc<'static>> {
+    vec![
+        PassDesc {
+            name: kernel,
+            reads: &[],
+            writes: &[Resource::Accumulation],
+        },
+        PassDesc {
+            name: "trace_resolve",
+            reads: &[Resource::Accumulation],
+            writes: &[Resource::HdrColor],
+        },
+        PassDesc {
+            name: "histogram",
+            reads: &[Resource::HdrColor],
+            writes: &[Resource::Histogram],
+        },
+        PassDesc {
+            name: "exposure_reduce",
+            reads: &[Resource::Histogram],
+            writes: &[Resource::Exposure],
+        },
+        PassDesc {
+            name: "bloom",
+            reads: &[Resource::HdrColor, Resource::Exposure],
+            writes: &[Resource::Bloom],
+        },
+        PassDesc {
+            name: "tonemap",
+            reads: &[Resource::HdrColor, Resource::Bloom, Resource::Exposure],
+            writes: &[Resource::Output],
+        },
+    ]
+}
+
+/// Every frame the renderer records: raster, ray traced, path traced.
+#[cfg(test)]
+fn every_frame_graph() -> [Vec<PassDesc<'static>>; 3] {
+    [
+        forward_frame_graph(),
+        traced_frame_graph("ray_trace"),
+        traced_frame_graph("path_trace"),
+    ]
+}
+
 /// Graph row of a timed pass; a `match` so a new `TimedPass` variant fails to compile here.
 #[cfg(test)]
 fn graph_pass_name(pass: TimedPass) -> &'static str {
@@ -159,6 +207,9 @@ fn graph_pass_name(pass: TimedPass) -> &'static str {
         TimedPass::Histogram => "histogram",
         TimedPass::ExposureReduce => "exposure_reduce",
         TimedPass::Tonemap => "tonemap",
+        TimedPass::RayTrace => "ray_trace",
+        TimedPass::PathTrace => "path_trace",
+        TimedPass::TraceResolve => "trace_resolve",
     }
 }
 
@@ -176,22 +227,31 @@ mod tests {
     }
 
     #[test]
+    fn the_traced_graphs_are_valid() {
+        for kernel in ["ray_trace", "path_trace"] {
+            validate(&traced_frame_graph(kernel), &[]).expect("a traced frame graph must validate");
+        }
+    }
+
+    #[test]
     fn every_timed_pass_has_a_graph_row() {
-        let graph = forward_frame_graph();
+        let graphs = every_frame_graph();
         for pass in TimedPass::ALL {
             let expected = graph_pass_name(pass);
+            let in_graph = |graph: &Vec<PassDesc>| graph.iter().any(|p| p.name == expected);
             assert!(
-                graph.iter().any(|p| p.name == expected),
-                "TimedPass::{pass:?} maps to graph row '{expected}', but no such row exists"
+                graphs.iter().any(in_graph),
+                "TimedPass::{pass:?} maps to graph row '{expected}', but no frame has such a row"
             );
+            let traced_only = !in_graph(&graphs[0]);
+            assert_eq!(pass.is_traced(), traced_only, "{pass:?}");
         }
     }
 
     #[test]
     fn every_graph_row_is_timed_or_explicitly_untimed() {
-        let graph = forward_frame_graph();
         let timed_names: Vec<&str> = TimedPass::ALL.iter().map(|&p| graph_pass_name(p)).collect();
-        for pass in &graph {
+        for pass in every_frame_graph().iter().flatten() {
             assert!(
                 timed_names.contains(&pass.name) || UNTIMED_ROWS.contains(&pass.name),
                 "graph row '{}' is neither timed by any TimedPass nor listed in UNTIMED_ROWS",

@@ -44,12 +44,14 @@ cubemaps + a BRDF LUT).
 Gaussian), SSAO (depth reconstruction), manual or histogram auto-exposure, ACES
 tonemapping.
 
-**Tracing** — the ray-traced and path-traced modes' core: a CPU-built, binned-SAH BVH in two
-levels (repeated and moving meshes instanced), traversed by a compute kernel natively and in
-the browser, with closest- and any-hit queries that alpha-test MASK materials; the scene's
-materials and textures as one table and two texture arrays. Built the first time a traced
-mode is picked, off the frame (the full 6 M-triangle Colosseum in about 2 s natively):
-[`docs/tracer.md`](docs/tracer.md). The modes' shading follows.
+**Tracing** — the C++ engine's ray-traced mode (a primary ray, the sun through a traced
+shadow ray, emission) and path-traced mode (NEE to the sun, GGX and Lambert lobes, Russian
+roulette, a jittered, accumulated running mean, 1-64 samples and 1-16 bounces, a white
+furnace), over a CPU-built, binned-SAH BVH in two levels (repeated and moving meshes
+instanced) that compute kernels traverse natively and in the browser, alpha-testing MASK
+materials; the scene's materials and textures as one table and two texture arrays. Built the
+first time a traced mode is picked, off the frame (the full 6 M-triangle Colosseum in about
+2 s natively); the frame rasters meanwhile: [`docs/tracer.md`](docs/tracer.md).
 
 **Runtime** — GPU skinning, morph-target and TRS animation playback, GPU
 instancing, frustum plus occlusion culling (hardware queries, or an opt-in
@@ -84,8 +86,9 @@ cargo run -p kataglyphis_webgpu_renderer --example export_shaders -- out_dir
 # The tracer's build of a glTF: times per stage, buffer sizes, the browser's limits
 cargo run --release -p kataglyphis_webgpu_renderer --example trace_build -- model.gltf
 
-# The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe)
-cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir [1600x900@1.5,sun,about,web ...]
+# The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe);
+# rt and pt render the ray- or path-traced mode
+cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir [1600x900@1.5,sun,about,web,pt ...]
 
 # Browser demo (drop a self-contained .glb onto the page to load it)
 cargo build -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown --release
@@ -112,4 +115,5 @@ host, arm64 on `windows-11-arm`). The `ADAPTER:` line and the BC-upload and
 GPU-timing tests:
 [`docs/testing.md` § The GPU tests must render](../../docs/testing.md#the-gpu-tests-must-render).
 `tests/mirrored.rs` holds mirrored (negative-determinant) nodes and instances, and
-double-sided back faces, to the shading of their unmirrored originals.
+double-sided back faces, to the shading of their unmirrored originals. `tests/traced_modes.rs`
+holds the traced modes to the C++ goldens and the path tracer's white furnace to analytic values.

@@ -13,6 +13,32 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, the ray-traced and path-traced modes)
+- The C++ engine's ray-traced mode on the tracer core: one ray through each pixel centre, the forward pass's
+  GGX and Lambert BRDF lit by the sun through a traced shadow ray (any-hit, MASK alpha-tested), emission, unlit
+  albedo, no ambient term; a miss shows the raster sky. `shaders/tracer/traced.slang` (`cs_ray_trace`).
+- Its path tracer (`cs_path_trace`, the estimator of BeschleunigerBallett's `path_tracing.slang` in
+  `path_estimator.slang`): a jittered primary ray, NEE to the sun, a one-sample mix of the GGX (visible normals) and
+  cosine lobes, Russian roulette, 1-64 samples a frame and 1-16 bounces (`ForwardRenderer::trace_settings`), a
+  running mean a pixel in a storage buffer that starts over when the camera, viewport, output size, sun, sky light,
+  settings or traced scene change, and a white-furnace mode (`TraceSettings::furnace`). The untextured metallic factor
+  counts. A bounce that misses gets the sky's light at the raster's ambient strength.
+- `trace_resolve.slang` copies the accumulation into the HDR target, so exposure, bloom and the tonemap apply as
+  after raster. Dispatches cover 256 x 256 tiles with at most 4 M path segments each, short for a browser's GPU
+  watchdog. Each kernel compiles the first time its mode draws.
+- `ForwardRenderer::drawn_mode`, `accumulated_samples` and `reset_accumulation`; GPU timing for `RayTrace`,
+  `PathTrace` and `TraceResolve`; the render graph's traced frames.
+- The editor: the menu bar's switch, the Render menu, the outliner, the inspector title and the viewport chip name the
+  drawn mode, raster while the BVH builds, with the build's progress in the chip and the switch's tooltip; the
+  Renderer tab's PATH TRACING rows (samples, bounces, white furnace, accumulated samples, restart).
+- `editor_snapshot` takes `rt` and `pt`; `tests/traced_modes.rs` ports the C++ PT and RT goldens to lavapipe.
+
+### Changed (2026-11-15, the ray-traced and path-traced modes)
+- A ray- or path-traced frame skips the shadow cascades, the forward pass, the depth resolve, occlusion culling and
+  SSAO, and reports no drawn primitives or shadow casters, as the C++ engine's traced frames do.
+- Picking the path-traced mode stops the viewer's idle camera spin, which would restart its accumulation every frame.
+- The traced scene follows rigid animated nodes; `Tracer::generation` counts its changes.
+
 ### Added (2026-11-15, the compute-shader tracer core)
 - `render::tracer`, the core of the ray-traced and path-traced modes: a binned-SAH BVH the CPU builds (16 bins on
   three axes, sampled above 16 K boxes, leaves of 4, depth capped at the traversal stack) in two levels, repeated

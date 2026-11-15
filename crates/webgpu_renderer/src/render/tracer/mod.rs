@@ -10,6 +10,7 @@ pub mod job;
 pub mod layers;
 pub mod limits;
 pub mod material;
+pub mod modes;
 pub mod query;
 pub mod scene;
 
@@ -18,6 +19,7 @@ pub use debug::{DebugHit, TraceDebugPass};
 pub use gpu::{TraceGpuScene, TraceSceneInfo, TRACE_SCENE_GROUP};
 pub use job::{RenderMode, TraceStatus, Tracer};
 pub use limits::TraceLimitError;
+pub use modes::{FurnaceSettings, TraceSettings};
 pub use query::{TraceHit, TraceRay, NO_HIT};
 pub use scene::{TraceScene, TraceStats};
 

@@ -25,7 +25,7 @@ use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
 pub use crate::render::lights::MAX_PUNCTUAL_LIGHTS;
 use crate::render::texture::create_2d_texture;
 use crate::render::tonemap::TonemapPass;
-use crate::render::tracer::{RenderMode, Tracer};
+use crate::render::tracer::{RenderMode, TraceSettings, Tracer};
 use crate::scene::camera::OrbitCamera;
 use crate::scene::CpuScene;
 
@@ -40,6 +40,7 @@ use primitive::GpuPrimitive;
 use shadow::ShadowResources;
 use sky::SkyResources;
 use targets::{DepthResolve, RenderTargets};
+use traced::TracedState;
 use upload::{MaterialDefaults, MaterialTextureCache};
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -112,6 +113,9 @@ pub struct ForwardRenderer {
     /// A traced mode builds the traced scene on first use; until it is ready the frame rasters.
     pub render_mode: RenderMode,
     tracer: Tracer,
+    /// The path-traced mode's samples, bounces and white furnace.
+    pub trace_settings: TraceSettings,
+    traced: TracedState,
 }
 
 impl ForwardRenderer {
@@ -159,6 +163,8 @@ impl ForwardRenderer {
             lod_switch_distances: vec![8.0, 24.0],
             render_mode: RenderMode::Raster,
             tracer: Tracer::default(),
+            trace_settings: TraceSettings::default(),
+            traced: TracedState::default(),
         }
     }
 
@@ -359,15 +365,20 @@ impl ForwardRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("forward_encoder"),
             });
-        // Pass wiring is validated once by `graph::tests::forward_graph_is_valid`, not per frame.
-        self.encode_shadow_cascades(gpu, &mut encoder);
-        self.encode_forward_pass(&mut encoder, &view);
-        self.encode_depth_resolve(&mut encoder);
-        self.encode_occlusion(gpu, &mut encoder, &view);
+        // Pass wiring is validated once by the `graph` tests, per mode, not per frame.
+        let traced = self.encode_traced(gpu, &mut encoder, &view);
+        if !traced {
+            self.encode_shadow_cascades(gpu, &mut encoder);
+            self.encode_forward_pass(&mut encoder, &view);
+            self.encode_depth_resolve(&mut encoder);
+            self.encode_occlusion(gpu, &mut encoder, &view);
+        }
         // Before bloom: its bright pass thresholds at this frame's exposure, as the tonemap exposes.
         self.encode_exposure(&mut encoder, view.width, view.height);
         self.encode_bloom(&mut encoder);
-        self.encode_ssao(&mut encoder);
+        if !traced {
+            self.encode_ssao(&mut encoder);
+        }
         self.encode_tonemap(&mut encoder, tonemap, output_view);
         self.finish_frame(gpu, encoder);
     }

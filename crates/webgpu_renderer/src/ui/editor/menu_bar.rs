@@ -3,6 +3,7 @@
 use egui::{pos2, vec2, Align2, Button, Margin, MenuBar, Rect, Style, TextStyle, Ui, UiBuilder};
 
 use super::docks::{self, Side};
+use super::render_mode::mode_switch;
 use super::{Editor, EditorAction, EditorContext, SceneObject, BRAND, FRAME_RATE_WINDOW};
 use crate::render::tracer::RenderMode;
 use crate::ui::icons::{self, StudioIcon};
@@ -41,7 +42,7 @@ pub(super) fn show(ui: &mut Ui, editor: &mut Editor, cx: &mut EditorContext<'_>)
                     .inner
             })
             .inner;
-        let switch_right = renderer_switch(ui, bar, menus_right, &mut cx.settings.render_mode);
+        let switch_right = renderer_switch(ui, bar, menus_right, cx);
         frame_rate(ui, bar, switch_right.unwrap_or(menus_right), cx);
     });
 }
@@ -66,7 +67,7 @@ fn brand(ui: &mut Ui) {
 fn menus(ui: &mut Ui, editor: &mut Editor, cx: &mut EditorContext<'_>) -> f32 {
     ui.menu_button("File", |ui| file_menu(ui, cx, &mut editor.actions));
     ui.menu_button("View", |ui| view_menu(ui, editor));
-    ui.menu_button("Render", |ui| render_menu(ui, &mut cx.settings.render_mode));
+    ui.menu_button("Render", |ui| render_menu(ui, cx));
     let help = ui.menu_button("Help", |ui| {
         if ui.button("Key bindings").clicked() {
             editor.select(SceneObject::Camera);
@@ -124,10 +125,12 @@ fn view_menu(ui: &mut Ui, editor: &mut Editor) {
     ui.checkbox(&mut editor.windows.inspection, "egui inspection");
 }
 
-/// The C++ Render menu; what the renderer lacks shows disabled.
-fn render_menu(ui: &mut Ui, mode: &mut RenderMode) {
+/// The C++ Render menu, its radio on the drawn mode; what the renderer lacks shows disabled.
+fn render_menu(ui: &mut Ui, cx: &mut EditorContext<'_>) {
     for (option, label) in RenderMode::ALL.into_iter().zip(RENDER_MODES) {
-        ui.radio_value(mode, option, label);
+        if ui.radio(cx.stats.drawn_mode == option, label).clicked() {
+            cx.settings.render_mode = option;
+        }
     }
     ui.separator();
     ui.add(egui::RadioButton::new(true, "Forward"));
@@ -139,7 +142,12 @@ fn render_menu(ui: &mut Ui, mode: &mut RenderMode) {
 }
 
 /// The centred mode switch, dropped when it would touch the menus; returns its right edge.
-fn renderer_switch(ui: &mut Ui, bar: Rect, menus_right: f32, mode: &mut RenderMode) -> Option<f32> {
+fn renderer_switch(
+    ui: &mut Ui,
+    bar: Rect,
+    menus_right: f32,
+    cx: &mut EditorContext<'_>,
+) -> Option<f32> {
     let segmented = Segmented::new(&RENDER_MODES);
     let font = TextStyle::Body.resolve(ui.style());
     let widest = RENDER_MODES
@@ -157,9 +165,7 @@ fn renderer_switch(ui: &mut Ui, bar: Rect, menus_right: f32, mode: &mut RenderMo
         vec2(width, height),
     );
     let mut slot = ui.new_child(UiBuilder::new().max_rect(rect).id_salt("renderer_switch"));
-    let mut index = mode.index();
-    segmented.width(width).show(&mut slot, &mut index);
-    *mode = RenderMode::from_index(index);
+    mode_switch(&mut slot, segmented.width(width), cx);
     Some(rect.right())
 }
 

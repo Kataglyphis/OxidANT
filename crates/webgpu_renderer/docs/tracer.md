@@ -5,8 +5,8 @@
 The ray-traced and path-traced modes trace a BVH that the CPU builds and a compute kernel
 walks (`shaders/tracer/bvh_traverse.slang`, emitted to WGSL by Slang). It runs wherever
 wgpu runs, natively and in the browser; there is no hardware ray-query backend (owner
-decision, 2026-11-15). This page is the core the modes build on: the build, the GPU data,
-the limits and the kernel API. Code: `src/render/tracer/`.
+decision, 2026-11-15). This page is the core the modes build on (the build, the GPU data,
+the limits and the kernel API) and then [the modes](#the-modes). Code: `src/render/tracer/`.
 
 | Module | Holds |
 | --- | --- |
@@ -21,6 +21,7 @@ the limits and the kernel API. Code: `src/render/tracer/`.
 | `limits` | Buffer sizes against device limits; the limits the device requests |
 | `query` | The traversal on the CPU, step for step as the shader runs it |
 | `debug` | `TraceDebugPass`: traces a ray buffer on the GPU (`trace_debug.slang`), for tests |
+| `modes` | The ray- and path-traced modes: settings, accumulation, dispatch plan, the kernels and the resolve |
 
 ## Build
 
@@ -148,3 +149,88 @@ in triangle and within 1e-4 in distance on every ray rounding cannot flip; the a
 on both; decoded surfaces; a stepped build equals a threaded one; the root transform; a
 build-time budget. `tests/tracer.rs` pins the Slang constants and bindings and the lazy
 build through `ForwardRenderer`; `limits.rs` the browser and native limits.
+
+## The modes
+
+`ForwardRenderer::render_mode` picks Raster, RayTraced or PathTraced; `drawn_mode()` says what
+a frame draws: the pick once the traced scene is on the GPU, raster until then. A traced frame
+runs its kernel (`shaders/tracer/traced.slang`) over 256 x 256 tiles into a per-pixel
+accumulation buffer, then `trace_resolve.slang` copies that into the HDR target, so exposure,
+bloom and the tonemap run as after raster. The shadow cascades, the forward pass, the depth
+resolve, occlusion culling and SSAO do not run (the tonemap's SSAO weight is 0), and the
+primitive and shadow-caster counts read 0, as in the C++ engine's traced frames. Camera rays run
+from the near to the far plane through `inverse(view_proj)`: the raster camera, the docked
+viewport's lens shift included. Code: `src/render/tracer/modes/`, `src/render/forward/traced.rs`;
+shading shared by both kernels: `trace_shading.slang`; the estimator: `path_estimator.slang`.
+
+**Ray traced**, the C++ mode: one ray through each pixel centre; base colour times texture
+times vertex colour, the metallic-roughness and normal maps at level 0, the forward pass's
+`brdf_direct` (GGX and Lambert) lit by the sun through one shadow ray (any-hit, MASK
+alpha-tested), plus emission. An unlit material returns its albedo. No ambient term and no
+punctual lights, as the C++ engine has neither. A miss shows the raster sky with its sun disk.
+
+**Path traced**, the estimator of BeschleunigerBallett's `path_tracing.slang`: `samples_per_pixel`
+(1-64, default 8) paths a pixel and frame of at most `max_bounces` (1-16, default 8) segments; a
+primary ray jittered inside the pixel; NEE to the sun on every segment through the same BRDF; a
+bounce that samples the GGX lobe (visible normals) or the cosine lobe by the lobe's Fresnel share
+and divides by the mixture's density; Russian roulette from the fourth segment, survival in
+0.05-0.95; an unlit surface ends its path at its albedo; emission is added before the surface
+absorbs. Metallic is the factor times the texture, so an untextured factor counts (the C++
+kernel once applied it with a texture only). A camera ray that misses sees the raster sky, sun
+disk included. A bounce that misses gets the sky's light as the raster's ambient term does: the
+gradient times the ambient strength (`light_dir_ambient.w`) and the environment's intensity,
+without the disk, which NEE brings. So the path tracer lights a scene as raster does, plus the
+bounces and the sky's occlusion.
+
+**Accumulation.** One running mean a pixel in `array<vec4<f32>>`, 16 bytes a pixel: WebGPU has
+no read-write `rgba32f` storage texture. It starts over when `AccumulationKey` changes (the
+view-projection, eye and output size; the sun's direction, colour and intensity; the sky's light;
+the settings; the tracer's generation, which a build and every instance move bump), on `reset_accumulation()`,
+and after any frame that is not path traced. A material changes only with a new scene, which
+rebuilds the traced one. The RNG stream of a dispatch is its pixel index plus the samples
+accumulated before it times 2654435769, the C++ seed with samples for frames.
+
+**White furnace.** `TraceSettings::furnace` (sky radiance, metallic, roughness) makes every
+surface white with that metallic and roughness, without emission or sun, under a uniform sky. A
+pixel converges to the radiance times the surface's directional albedo E(mu): 0.99-1.0 for the
+default white dielectric (roughness 0.5), less for a metal. The C++ kernel keeps NEE in its
+furnace, whose test zeroes the light instead.
+
+**Dispatch budget.** A frame's samples are split into chunks so a dispatch traces at most
+`DISPATCH_SEGMENTS` (4 M) path segments over one tile: milliseconds on a desktop GPU, far inside a
+browser's GPU watchdog. Each dispatch binds its tile and samples at a dynamic uniform offset.
+Each kernel compiles the first time its mode draws: SwiftShader, which backs WebGPU in a
+GPU-less Chrome, takes about two minutes for the path-tracing kernel and three seconds for the
+ray-tracing one; lavapipe takes about a second.
+
+**Animation.** The renderer moves the traced instances of rigid animated nodes to the raster's
+poses each frame (`set_primitive_transforms`), which restarts the mean; skins and morph targets
+trace at their first pose.
+
+**On purpose unlike the C++ engine:** misses see the Rust procedural sky (C++: the skybox in the
+ray-traced mode, an RTIOW gradient at half intensity in the path-traced one, whose raster has no
+ambient term to match); offsets and side tests take the triangle's face normal (C++: the
+interpolated one); camera rays clip to the near and far planes as raster does (C++: 0.001-10000
+from the eye, which bounces keep). The whole frame is traced, docks included, as in C++.
+
+Measured on lavapipe, the 8-core arm64 host under WSL, shared with other builds:
+
+| Scene, output | Mode | A frame |
+| --- | --- | --- |
+| `cube_on_plane`, 1600 x 900 | ray traced | 0.27-0.36 s on the GPU (`RayTrace`) |
+| `cube_on_plane`, 800 x 600 | path traced, 8 spp, 8 bounces | 0.38 s on the GPU (`PathTrace`) |
+| Colosseum-web, 1.45 M triangles, 960 x 540 | ray traced | 0.47 s |
+| Colosseum-web, 960 x 540 | path traced, 4 spp, 4 bounces | 5.2 s |
+
+The first frame of a mode adds its kernel's compile: 1-2 s for either on lavapipe.
+
+Tests: `tests/traced_modes.rs` (lavapipe; the C++ goldens' ports): the white furnace through the
+post chain (a sky of 2 at -1 EV must give the C++ 231.6 within 3 levels, 98 % of pixels within
+6), a white metal card against a quadrature of `brdf_direct` (within 0.03; measured within
+0.001), accumulation that settles, every reset premise, a MASK card's half shadow in both modes,
+the untextured metallic factor, unlit albedo in every mode, the traced shadow against the
+cascades' (IoU over 0.75; measured 0.98) and black, the lens shift, the raster round trip, and
+that no raster pass runs or is timed. The modes' pure parts are unit-tested in place; the Slang
+uniforms and workgroup size are pinned in `tests/tracer.rs`. Tint (headless Chrome 157 on
+SwiftShader) compiles every traced kernel and the resolve; no browser has rendered a traced
+frame yet.

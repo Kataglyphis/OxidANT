@@ -1,8 +1,10 @@
-//! The Studio editor over a glTF, rendered headless into PNGs: `cargo run --example editor_snapshot -- [out_dir] [WxH@scale[,tab][,about][,hidden][,web] ...]`.
+//! The Studio editor over a glTF, rendered headless into PNGs: `cargo run --example editor_snapshot -- [out_dir] [WxH@scale[,tab][,about][,hidden][,web][,rt|pt] ...]`.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Context as _;
+use kataglyphis_webgpu_renderer::render::tracer::RenderMode;
 use kataglyphis_webgpu_renderer::ui::{ModelSource, SceneObject};
 use kataglyphis_webgpu_renderer::{
     load_gltf, GpuContext, HostCaps, OffscreenFrame, OrbitCamera, StudioApp,
@@ -18,6 +20,8 @@ const DEFAULT_SHOTS: &[&str] = &[
 const MODEL: &str = "tests/assets/cube_on_plane.gltf";
 /// Frames before the shot: egui lays a new window out in an unseen first pass, and the FPS needs two ticks.
 const WARM_UP_FRAMES: u32 = 4;
+/// A path-traced shot's frames, so its accumulation holds 128 samples at the default 8 a frame.
+const PATH_TRACED_FRAMES: u32 = 16;
 
 /// One PNG: the frame's size in pixels, its scale, the inspector tab, About open, the editor hidden, the browser's host.
 struct Shot {
@@ -27,6 +31,7 @@ struct Shot {
     about: bool,
     hidden: bool,
     web: bool,
+    mode: RenderMode,
 }
 
 fn parse(spec: &str) -> anyhow::Result<Shot> {
@@ -41,12 +46,15 @@ fn parse(spec: &str) -> anyhow::Result<Shot> {
         about: false,
         hidden: false,
         web: false,
+        mode: RenderMode::Raster,
     };
     for option in parts {
         match option {
             "about" => shot.about = true,
             "hidden" => shot.hidden = true,
             "web" => shot.web = true,
+            "rt" => shot.mode = RenderMode::RayTraced,
+            "pt" => shot.mode = RenderMode::PathTraced,
             name => {
                 shot.object = SceneObject::ALL
                     .into_iter()
@@ -81,8 +89,22 @@ fn render(app: &mut StudioApp, shot: &Shot, path: &Path, now_s: &mut f64) -> any
     } else {
         app.editor_mut().hide_about();
     }
+    app.renderer.render_mode = shot.mode;
+    if shot.mode.is_traced() {
+        // The shot shows the traced mode, not raster standing in while the BVH builds.
+        let built = app
+            .renderer
+            .tracer_mut()
+            .finish_build(&app.gpu, Duration::from_secs(600));
+        anyhow::ensure!(built, "the tracer did not build: {:?}", app.trace_status());
+    }
+    let frames = if shot.mode == RenderMode::PathTraced {
+        PATH_TRACED_FRAMES
+    } else {
+        WARM_UP_FRAMES
+    };
     let mut pixels = Vec::new();
-    for _ in 0..=WARM_UP_FRAMES {
+    for _ in 0..=frames {
         let frame = OffscreenFrame {
             size_px: shot.size,
             pixels_per_point: shot.scale,

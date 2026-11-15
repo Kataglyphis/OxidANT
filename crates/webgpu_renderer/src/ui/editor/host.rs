@@ -3,7 +3,7 @@
 use glam::Vec4;
 
 use crate::render::forward::ForwardRenderer;
-use crate::render::tracer::{RenderMode, TraceStatus};
+use crate::render::tracer::{RenderMode, TraceSettings, TraceStatus};
 
 /// The renderer's editable settings: read before the egui pass, written back after it.
 #[derive(Clone, Debug, PartialEq)]
@@ -20,7 +20,11 @@ pub struct RendererSettings {
     pub auto_exposure_speed: f32,
     pub occlusion_queries_enabled: bool,
     pub gpu_culling_enabled: bool,
+    /// The user's pick; [`SceneStats::drawn_mode`] is what the frame draws.
     pub render_mode: RenderMode,
+    pub trace: TraceSettings,
+    /// Set by the Renderer tab's Reset; `apply` starts the path tracer's mean over.
+    pub reset_accumulation: bool,
 }
 
 impl Default for RendererSettings {
@@ -38,6 +42,8 @@ impl Default for RendererSettings {
             occlusion_queries_enabled: false,
             gpu_culling_enabled: false,
             render_mode: RenderMode::Raster,
+            trace: TraceSettings::default(),
+            reset_accumulation: false,
         }
     }
 }
@@ -56,6 +62,8 @@ impl RendererSettings {
             occlusion_queries_enabled: renderer.occlusion_queries_enabled,
             gpu_culling_enabled: renderer.gpu_culling_enabled,
             render_mode: renderer.render_mode,
+            trace: renderer.trace_settings,
+            reset_accumulation: false,
         }
     }
 
@@ -71,6 +79,10 @@ impl RendererSettings {
         renderer.occlusion_queries_enabled = self.occlusion_queries_enabled;
         renderer.gpu_culling_enabled = self.gpu_culling_enabled;
         renderer.render_mode = self.render_mode;
+        renderer.trace_settings = self.trace.clamped();
+        if self.reset_accumulation {
+            renderer.reset_accumulation();
+        }
     }
 }
 
@@ -86,6 +98,10 @@ pub struct SceneStats {
     pub gpu_timing: bool,
     /// Where the traced modes' scene is.
     pub trace: TraceStatus,
+    /// What the frame draws: raster while a traced pick waits for its scene.
+    pub drawn_mode: RenderMode,
+    /// Samples per pixel in the path tracer's running mean.
+    pub accumulated_samples: u64,
 }
 
 impl SceneStats {
@@ -96,6 +112,8 @@ impl SceneStats {
             gpu_passes: renderer.gpu_timings_ms(),
             gpu_timing: renderer.gpu_timing_available(),
             trace: renderer.trace_status(),
+            drawn_mode: renderer.drawn_mode(),
+            accumulated_samples: renderer.accumulated_samples(),
         }
     }
 }

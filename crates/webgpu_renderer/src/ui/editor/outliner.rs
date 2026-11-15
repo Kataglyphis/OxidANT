@@ -40,7 +40,7 @@ pub(super) fn detail(object: SceneObject, cx: &EditorContext<'_>) -> String {
             .map_or_else(|| "none".to_owned(), |m| m.name.clone()),
         SceneObject::Sun => format!("{CASCADE_COUNT} cascades"),
         SceneObject::Camera => format!("{:.0}°", cx.camera.fov_y_deg),
-        SceneObject::Renderer => "Raster".to_owned(),
+        SceneObject::Renderer => super::render_mode::drawn_label(cx).to_owned(),
         SceneObject::Skybox | SceneObject::Clouds => String::new(),
     }
 }

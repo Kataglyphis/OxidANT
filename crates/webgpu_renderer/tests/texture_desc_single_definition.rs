@@ -89,6 +89,16 @@ const SOURCES: &[(&str, &str, bool)] = &[
         false,
     ),
     (
+        "render/tracer/modes/passes.rs",
+        include_str!("../src/render/tracer/modes/passes.rs"),
+        false,
+    ),
+    (
+        "render/forward/traced.rs",
+        include_str!("../src/render/forward/traced.rs"),
+        false,
+    ),
+    (
         "render/texture.rs",
         include_str!("../src/render/texture.rs"),
         true,

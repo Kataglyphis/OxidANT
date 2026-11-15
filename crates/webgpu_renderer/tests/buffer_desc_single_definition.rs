@@ -99,6 +99,14 @@ const SOURCES: &[(&str, &str)] = &[
         "render/tracer/debug.rs",
         include_str!("../src/render/tracer/debug.rs"),
     ),
+    (
+        "render/tracer/modes/passes.rs",
+        include_str!("../src/render/tracer/modes/passes.rs"),
+    ),
+    (
+        "render/forward/traced.rs",
+        include_str!("../src/render/forward/traced.rs"),
+    ),
 ];
 
 #[test]

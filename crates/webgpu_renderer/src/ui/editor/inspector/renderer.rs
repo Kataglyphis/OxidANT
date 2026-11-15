@@ -1,36 +1,92 @@
-//! The Renderer tab: the C++ mode switch and raster path, then the WebGPU renderer's post and culling settings.
+//! The Renderer tab: the C++ mode switch, raster path and path-tracing controls, then the WebGPU renderer's post and culling settings.
 
 use egui::{vec2, Button, Ui};
 
 use super::super::menu_bar::RENDER_MODES;
+use super::super::render_mode::{mode_switch, pending_note};
 use super::super::{EditorAction, EditorContext};
+use crate::render::tracer::modes::{MAX_BOUNCES, SAMPLES_PER_PIXEL};
 use crate::render::tracer::RenderMode;
 use crate::ui::widgets::{
-    enabled_ui, frame_height, muted_wrapped, property_row, section_header, toggle, FillSlider,
-    Segmented,
+    enabled_ui, frame_height, muted, muted_wrapped, property_row, section_header, toggle,
+    FillSlider, Segmented,
 };
 
 pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>, actions: &mut Vec<EditorAction>) {
-    let mut mode = cx.settings.render_mode.index();
-    Segmented::new(&RENDER_MODES).show(ui, &mut mode);
-    cx.settings.render_mode = RenderMode::from_index(mode);
-    muted_wrapped(ui, cx.stats.trace.text());
+    mode_switch(ui, Segmented::new(&RENDER_MODES), cx);
+    let note = pending_note(cx).unwrap_or_else(|| cx.stats.trace.text());
+    muted_wrapped(ui, note);
     let mut path = 0;
-    property_row(
-        ui,
-        "Raster path",
-        Some("Forward shades while drawing; deferred shades a G-buffer afterwards"),
-        |ui| {
-            Segmented::new(&["Forward", "Deferred"])
-                .enabled(&[true, false])
-                .show(ui, &mut path)
-        },
-    );
+    enabled_ui(ui, cx.stats.drawn_mode == RenderMode::Raster, |ui| {
+        property_row(
+            ui,
+            "Raster path",
+            Some("Forward shades while drawing; deferred shades a G-buffer afterwards"),
+            |ui| {
+                Segmented::new(&["Forward", "Deferred"])
+                    .enabled(&[true, false])
+                    .show(ui, &mut path)
+            },
+        );
+    });
+    path_tracing(ui, cx);
     post(ui, cx);
     culling(ui, cx);
     if shaders(ui, cx) {
         actions.push(EditorAction::ReloadShaders);
     }
+}
+
+/// The C++ PATH TRACING rows, live while the path tracer draws, then the white furnace and the accumulation.
+fn path_tracing(ui: &mut Ui, cx: &mut EditorContext<'_>) {
+    section_header(ui, "PATH TRACING", None);
+    let samples = cx.stats.accumulated_samples;
+    let settings = &mut *cx.settings;
+    enabled_ui(ui, cx.stats.drawn_mode == RenderMode::PathTraced, |ui| {
+        property_row(
+            ui,
+            "Samples / pixel",
+            Some("Paths per pixel and frame; a change restarts the accumulation"),
+            |ui| {
+                ui.add(FillSlider::new(
+                    &mut settings.trace.samples_per_pixel,
+                    SAMPLES_PER_PIXEL,
+                ))
+            },
+        );
+        property_row(
+            ui,
+            "Max bounces",
+            Some("Segments per path; a change restarts the accumulation"),
+            |ui| {
+                ui.add(FillSlider::new(
+                    &mut settings.trace.max_bounces,
+                    MAX_BOUNCES,
+                ))
+            },
+        );
+        let mut furnace = settings.trace.furnace.is_some();
+        property_row(
+            ui,
+            "White furnace",
+            Some("A white surface everywhere under a uniform sky of radiance 1, without the sun"),
+            |ui| toggle(ui, &mut furnace),
+        );
+        settings.trace.furnace = furnace.then(|| settings.trace.furnace.unwrap_or_default());
+        property_row(
+            ui,
+            "Accumulated",
+            Some("Samples per pixel in the running mean"),
+            |ui| muted(ui, format!("{samples} samples")),
+        );
+        let size = vec2(ui.available_width(), frame_height(ui));
+        if ui
+            .add_sized(size, Button::new("Restart accumulation"))
+            .clicked()
+        {
+            settings.reset_accumulation = true;
+        }
+    });
 }
 
 fn post(ui: &mut Ui, cx: &mut EditorContext<'_>) {

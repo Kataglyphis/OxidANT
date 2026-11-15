@@ -158,6 +158,8 @@ pub struct Tracer {
     source: Option<Arc<CpuScene>>,
     state: State,
     pub options: TraceBuildOptions,
+    /// Counts every change of the uploaded scene, so a path tracer's history knows when it went stale.
+    generation: u64,
 }
 
 impl Default for Tracer {
@@ -166,6 +168,7 @@ impl Default for Tracer {
             source: None,
             state: State::Idle,
             options: TraceBuildOptions::default(),
+            generation: 0,
         }
     }
 }
@@ -210,6 +213,7 @@ impl Tracer {
     fn finish(&mut self, gpu: &GpuContext, result: Result<TraceScene, String>) {
         // Built or refused, the CPU scene is not read again; its memory goes back now.
         self.source = None;
+        self.generation += 1;
         self.state = match result.and_then(|scene| upload(gpu, scene)) {
             Ok(ready) => State::Ready(Box::new(ready)),
             Err(why) => {
@@ -276,7 +280,13 @@ impl Tracer {
             let (scene, uploaded) = &mut **ready;
             change(scene);
             uploaded.write_instances(gpu, scene);
+            self.generation += 1;
         }
+    }
+
+    /// Changes with every upload and every instance move; equal values mean the same traced scene.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 }
 
