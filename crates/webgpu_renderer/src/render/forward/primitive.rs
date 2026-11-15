@@ -89,7 +89,7 @@ pub(super) struct GpuPrimitive {
     pub(super) bind_group: wgpu::BindGroup,
     /// Uniforms-only group: the full group samples the shadow map the shadow pass writes.
     pub(super) shadow_bind_group: wgpu::BindGroup,
-    /// MASK material with a base-color texture: shadows through the alpha-testing pipeline.
+    /// MASK material: shadows through the alpha-testing pipeline, which also reads vertex alpha.
     pub(super) alpha_masked: bool,
     pub(super) shadow_masked_bind_group: Option<wgpu::BindGroup>,
     /// Per-instance transforms; always at least one, so every draw binds slot 1.

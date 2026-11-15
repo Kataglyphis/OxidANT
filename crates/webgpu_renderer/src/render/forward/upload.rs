@@ -264,7 +264,7 @@ impl ForwardRenderer {
         )
     }
 
-    /// Forward group 0, the shadow group and, for textured MASK casters, the alpha-testing one.
+    /// Forward group 0, the shadow group and, for MASK casters, the alpha-testing one.
     fn create_primitive_bind_groups(
         &self,
         device: &wgpu::Device,
@@ -289,9 +289,8 @@ impl ForwardRenderer {
                 },
             ],
         });
-        // Textured MASK casters alpha-test with the forward pass's own slot-0 view/sampler.
-        let alpha_masked = matches!(material.alpha_mode, AlphaMode::Mask(_))
-            && material.base_color_texture.is_some();
+        // Every MASK caster alpha-tests with slot 0's view, white when untextured: vertex alpha cuts too.
+        let alpha_masked = matches!(material.alpha_mode, AlphaMode::Mask(_));
         let shadow_masked = if alpha_masked {
             Some(self.create_masked_shadow_bind_group(
                 device,

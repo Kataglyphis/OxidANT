@@ -486,10 +486,10 @@ impl ForwardRenderer {
             source: wgpu::ShaderSource::Wgsl(sky_wgsl.into()),
         });
         let set = main_pass::create_forward_pipeline_set(device, &shader, &self.main.layout);
-        let shadow = shadow::create_shadow_pipeline(device, &shader, &self.shadow.pipeline_layout);
-        let shadow_masked = shadow::create_masked_shadow_pipeline(
+        let shadow = shadow::ShadowPipelines::new(
             device,
             &shader,
+            &self.shadow.pipeline_layout,
             &self.shadow.masked_pipeline_layout,
         );
         let sky = sky::create_sky_pipeline(device, &sky_shader, &self.sky.pipeline_layout);
@@ -502,8 +502,7 @@ impl ForwardRenderer {
             self.main.blend,
             self.main.blend_double_sided,
         ) = set;
-        self.shadow.pipeline = shadow;
-        self.shadow.masked_pipeline = shadow_masked;
+        self.shadow.pipelines = shadow;
         // The cached bundles still hold the old shadow pipelines.
         self.shadow.caster_bundles = None;
         self.sky.pipeline = sky;

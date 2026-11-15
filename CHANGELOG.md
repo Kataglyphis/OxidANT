@@ -35,6 +35,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   visible. `occlusion.rs:358` is `:374` for `buffer_desc_single_definition.rs` now. Tests:
   `query_capacity_never_grows_past_the_query_set_limit`,
   `more_boxes_than_the_query_set_limit_record_without_a_validation_error`.
+- **Double-sided sheets cast no shadow with their back to the light, and vertex-alpha cut-outs cast solid shadows**:
+  every caster but a textured MASK one went through the back-culled shadow pipeline, although the camera pass draws
+  double-sided materials from both sides and discards MASK fragments by vertex alpha too. Double-sided casters use
+  an unculled pipeline now, and every MASK caster the alpha-testing one (with the white fallback when untextured).
+  Tests: `a_double_sided_sheet_casts_a_shadow_with_its_back_to_the_light`,
+  `vertex_alpha_cut_outs_of_an_untextured_mask_cast_no_shadow`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

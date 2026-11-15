@@ -12,9 +12,43 @@ use crate::render::gpu_timing::TimedPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{InstanceRaw, Vertex};
 
+/// The caster pipelines: back-culled, unculled for double-sided materials, alpha-tested for MASK.
+pub(super) struct ShadowPipelines {
+    opaque: wgpu::RenderPipeline,
+    double_sided: wgpu::RenderPipeline,
+    masked: wgpu::RenderPipeline,
+}
+
+impl ShadowPipelines {
+    pub(super) fn new(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        layout: &wgpu::PipelineLayout,
+        masked_layout: &wgpu::PipelineLayout,
+    ) -> Self {
+        Self {
+            opaque: create_shadow_pipeline(
+                device,
+                shader,
+                layout,
+                "shadow_pipeline",
+                Some(wgpu::Face::Back),
+            ),
+            // Unculled: a double-sided sheet must shadow whichever side faces the light.
+            double_sided: create_shadow_pipeline(
+                device,
+                shader,
+                layout,
+                "shadow_pipeline_double_sided",
+                None,
+            ),
+            masked: create_masked_shadow_pipeline(device, shader, masked_layout),
+        }
+    }
+}
+
 pub(super) struct ShadowResources {
-    pub(super) pipeline: wgpu::RenderPipeline,
-    pub(super) masked_pipeline: wgpu::RenderPipeline,
+    pub(super) pipelines: ShadowPipelines,
     // Read only by the native shader hot-reload path, so unread on wasm32.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(super) pipeline_layout: wgpu::PipelineLayout,
@@ -72,8 +106,12 @@ impl ShadowResources {
             pipeline_layout_for("shadow_masked_pipeline_layout", &masked_bind_group_layout);
         let (texture, view, layer_views) = create_shadow_map(device);
         Self {
-            pipeline: create_shadow_pipeline(device, shader, &pipeline_layout),
-            masked_pipeline: create_masked_shadow_pipeline(device, shader, &masked_pipeline_layout),
+            pipelines: ShadowPipelines::new(
+                device,
+                shader,
+                &pipeline_layout,
+                &masked_pipeline_layout,
+            ),
             pipeline_layout,
             masked_pipeline_layout,
             bind_group_layout,
@@ -93,19 +131,24 @@ impl ShadowResources {
         }
     }
 
-    /// One caster's draw; textured MASK casters go through the alpha-testing pipeline.
+    /// One caster's draw: MASK casters alpha-test, double-sided ones are not culled.
     fn record_caster<'a>(
         &'a self,
         bundle: &mut wgpu::RenderBundleEncoder<'a>,
         prim: &'a GpuPrimitive,
     ) {
+        let pipelines = &self.pipelines;
         if let (true, Some(masked_group)) =
             (prim.alpha_masked, prim.shadow_masked_bind_group.as_ref())
         {
-            bundle.set_pipeline(&self.masked_pipeline);
+            bundle.set_pipeline(&pipelines.masked);
             bundle.set_bind_group(0, masked_group, &[]);
         } else {
-            bundle.set_pipeline(&self.pipeline);
+            bundle.set_pipeline(if prim.double_sided {
+                &pipelines.double_sided
+            } else {
+                &pipelines.opaque
+            });
             bundle.set_bind_group(0, &prim.shadow_bind_group, &[]);
         }
         bundle.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
@@ -323,7 +366,7 @@ fn create_shadow_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     })
 }
 
-pub(super) fn create_masked_shadow_pipeline(
+fn create_masked_shadow_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
@@ -366,13 +409,15 @@ pub(super) fn create_masked_shadow_pipeline(
     })
 }
 
-pub(super) fn create_shadow_pipeline(
+fn create_shadow_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
+    label: &str,
+    cull_mode: Option<wgpu::Face>,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("shadow_pipeline"),
+        label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
@@ -382,7 +427,7 @@ pub(super) fn create_shadow_pipeline(
         },
         fragment: None,
         primitive: wgpu::PrimitiveState {
-            cull_mode: Some(wgpu::Face::Back),
+            cull_mode,
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {

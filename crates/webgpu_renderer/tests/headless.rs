@@ -1700,6 +1700,167 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
 }
 
 /// COLOR_0 multiplies the base colour: green vertices on a white unlit material render green.
+/// A horizontal card at the cube-top height of `cube_on_plane.gltf`, over `x` by `[-1, 1]` in z.
+fn horizontal_card(
+    x: (f32, f32),
+    alpha: f32,
+    facing_up: bool,
+) -> (Vec<kataglyphis_webgpu_renderer::scene::Vertex>, Vec<u32>) {
+    let vertices = [[x.0, -1.0], [x.1, -1.0], [x.1, 1.0], [x.0, 1.0]]
+        .iter()
+        .map(|[px, pz]| kataglyphis_webgpu_renderer::scene::Vertex {
+            position: [*px, 1.4, *pz],
+            normal: [0.0, if facing_up { 1.0 } else { -1.0 }, 0.0],
+            uv: [0.0, 0.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            joints: [0.0; 4],
+            weights: [0.0; 4],
+            color: [1.0, 1.0, 1.0, alpha],
+            uv1: [0.0, 0.0],
+        })
+        .collect();
+    // (b - a) x (c - a) of [0, 1, 2] points down, so the up-facing winding is reversed.
+    let indices = if facing_up {
+        vec![0, 2, 1, 0, 3, 2]
+    } else {
+        vec![0, 1, 2, 0, 2, 3]
+    };
+    (vertices, indices)
+}
+
+/// Near-black pixels that `primitives` darken on `cube_on_plane.gltf`'s bare ground plane.
+fn ground_shadow_pixels(
+    gpu: &GpuContext,
+    primitives: Vec<kataglyphis_webgpu_renderer::CpuPrimitive>,
+) -> usize {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let base = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let plane = base
+        .primitives
+        .iter()
+        .find(|p| p.vertices.len() == 4)
+        .expect("the ground plane is the 4-vertex primitive")
+        .clone();
+    let render = |primitives: Vec<kataglyphis_webgpu_renderer::CpuPrimitive>| -> Vec<u8> {
+        let scene = kataglyphis_webgpu_renderer::CpuScene {
+            primitives,
+            ..base.clone()
+        };
+        let mut renderer = ForwardRenderer::new(gpu, 256, 256);
+        renderer.upload_scene(gpu, &scene);
+        renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+        renderer.ssao_strength = 0.0;
+        let camera = OrbitCamera {
+            radius: 6.0,
+            pitch_deg: 55.0,
+            ..OrbitCamera::default()
+        };
+        renderer
+            .render_to_pixels(gpu, 256, 256, &camera)
+            .expect("headless render must succeed")
+    };
+    let baseline = render(vec![plane.clone()]);
+    let mut with_casters = vec![plane];
+    with_casters.extend(primitives);
+    let shadowed = render(with_casters);
+    let luma = |p: &[u8; 4]| (p[0] as i32 * 3 + p[1] as i32 * 6 + p[2] as i32) / 10;
+    baseline
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(shadowed.as_chunks::<4>().0)
+        .filter(|(b, w)| luma(b) - luma(w) > 40 && luma(w) < 30)
+        .count()
+}
+
+/// A double-sided sheet shadows the ground from either side, as the camera pass draws both.
+#[test]
+fn a_double_sided_sheet_casts_a_shadow_with_its_back_to_the_light() {
+    use kataglyphis_webgpu_renderer::scene::{CpuMaterial, CpuPrimitive};
+
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let card = |facing_up: bool, double_sided: bool| {
+        let (vertices, indices) = horizontal_card((-1.0, 1.0), 1.0, facing_up);
+        CpuPrimitive {
+            vertices,
+            indices,
+            transform: glam::Mat4::IDENTITY,
+            node_index: None,
+            skin_index: None,
+            material: CpuMaterial {
+                double_sided,
+                ..CpuMaterial::default()
+            },
+            morph_targets: Vec::new(),
+            morph_weights: Vec::new(),
+        }
+    };
+
+    let facing_light = ground_shadow_pixels(&gpu, vec![card(true, false)]);
+    let back_to_light = ground_shadow_pixels(&gpu, vec![card(false, true)]);
+    eprintln!(
+        "sheet shadows: front to the light {facing_light}, back to the light {back_to_light}"
+    );
+    assert!(
+        facing_light > 300,
+        "precondition: a card facing the light must shadow the ground, got {facing_light} px"
+    );
+    assert!(
+        back_to_light * 10 > facing_light * 7,
+        "a double-sided card with its back to the light cast {back_to_light} px of shadow, \
+         against {facing_light} px facing it: the shadow pass culled it"
+    );
+}
+
+/// An untextured MASK primitive cut out by vertex alpha casts no shadow from the cut-out part.
+#[test]
+fn vertex_alpha_cut_outs_of_an_untextured_mask_cast_no_shadow() {
+    use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial, CpuPrimitive};
+
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let masked = |cards: &[((f32, f32), f32)]| {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        for &(x, alpha) in cards {
+            let (v, i) = horizontal_card(x, alpha, true);
+            let base = vertices.len() as u32;
+            vertices.extend(v);
+            indices.extend(i.into_iter().map(|index| index + base));
+        }
+        CpuPrimitive {
+            vertices,
+            indices,
+            transform: glam::Mat4::IDENTITY,
+            node_index: None,
+            skin_index: None,
+            material: CpuMaterial {
+                alpha_mode: AlphaMode::Mask(0.5),
+                ..CpuMaterial::default()
+            },
+            morph_targets: Vec::new(),
+            morph_weights: Vec::new(),
+        }
+    };
+
+    let left_only = ground_shadow_pixels(&gpu, vec![masked(&[((-1.0, 0.0), 1.0)])]);
+    let with_cut_out =
+        ground_shadow_pixels(&gpu, vec![masked(&[((-1.0, 0.0), 1.0), ((0.0, 1.0), 0.0)])]);
+    eprintln!("mask shadows: left card {left_only}, left card + cut-out card {with_cut_out}");
+    assert!(
+        left_only > 150,
+        "precondition: the kept card must shadow the ground, got {left_only} px"
+    );
+    assert!(
+        with_cut_out.abs_diff(left_only) * 10 < left_only,
+        "the cut-out card (vertex alpha 0) added shadow: {with_cut_out} px against {left_only} px"
+    );
+}
+
 #[test]
 fn vertex_colors_tint_the_surface() {
     use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial, CpuPrimitive, Vertex};
