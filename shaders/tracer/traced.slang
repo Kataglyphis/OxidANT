@@ -6,8 +6,7 @@ import trace_shading;
 
 // The ray- and path-traced modes' kernels: each dispatch shades one tile into the accumulation, which trace_resolve.slang copies into the HDR target.
 
-// The C++ ray-traced mode: one ray through the pixel centre, lit by the sun and its emission alone, without an ambient term.
-// Alpha is the hit's NDC depth, as raytrace.rgen.slang writes it for the clouds; a miss leaves the sky pass its pixel.
+// The C++ ray-traced mode, no ambient term; alpha is the hit's NDC depth for the clouds, as raytrace.rgen.slang writes it.
 float4 ray_trace_pixel(uint2 pixel)
 {
     TraceRay ray = camera_ray(float2(pixel) + 0.5);

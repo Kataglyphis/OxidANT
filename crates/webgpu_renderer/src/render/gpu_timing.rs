@@ -42,22 +42,23 @@ pub enum TimedPass {
 }
 
 impl TimedPass {
-    /// Every pass: the raster frame's in record order, then the traced modes'. Iteration order is the reporting order.
+    /// Every pass in record order: a raster frame's skip the traced passes, a traced frame's skip shadows to SSAO.
+    /// Iteration order is the reporting order, so either kind of frame lists its passes as it records them.
     pub const ALL: [TimedPass; 14] = [
         TimedPass::ShadowCascades,
         TimedPass::Forward,
         TimedPass::GBuffer,
         TimedPass::DeferredLighting,
         TimedPass::OcclusionCull,
+        TimedPass::RayTrace,
+        TimedPass::PathTrace,
+        TimedPass::TraceResolve,
         TimedPass::Histogram,
         TimedPass::ExposureReduce,
         TimedPass::Bloom,
         TimedPass::Ssao,
         TimedPass::Clouds,
         TimedPass::Tonemap,
-        TimedPass::RayTrace,
-        TimedPass::PathTrace,
-        TimedPass::TraceResolve,
     ];
 
     /// Stable identifier for reports and for matching against the C++ engine.
@@ -404,6 +405,21 @@ impl GpuTiming {
                     .map(|ms| (pass.name(), ms))
             })
             .collect()
+    }
+
+    /// Drops every pass `keep` rejects: its average, and its stamps in readbacks still in flight, so a pass the
+    /// frame stopped running leaves the report now rather than a full window later.
+    pub fn forget(&mut self, keep: impl Fn(TimedPass) -> bool) {
+        for pass in TimedPass::ALL.into_iter().filter(|pass| !keep(*pass)) {
+            let i = pass.index();
+            self.averages[i].clear();
+            self.frames_without[i] = AVERAGE_WINDOW;
+            if let Some(resources) = self.resources.as_mut() {
+                for slot in &mut resources.slots {
+                    slot.written &= !(0b11 << (i * 2));
+                }
+            }
+        }
     }
 
     /// Opens the frame: claims a slot if one is free.

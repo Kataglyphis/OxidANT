@@ -34,6 +34,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **F5 rebuilds the traced kernels.** `ShaderSources` gains `traced` and `trace_resolve` (six files);
   `reload_shaders` builds both kernels, the resolve and the ray tracer's sky inside its error scope, though they
   otherwise compile lazily, so a module the device refuses keeps the old ones.
+- **The profiler shows a traced frame's own passes.** A pass kept its average for 32 measured frames after it stopped
+  running, and the traced rows came last, so a traced frame's profiler listed the raster rows above the fold for 32
+  frames (minutes on lavapipe). A switch of drawn mode or raster path now drops the passes the new frames do not record
+  (`GpuTiming::forget`, their stamps in readbacks still in flight too), and the rows follow record order; a test
+  switches forward, ray, path, deferred, ray and forward and reads each frame's exact pass list after four frames.
 - **A traced frame reads 0 / 0 in the Visibility tab** (`primitive_stats` too, as the C++ engine zeroes its meshes).
 - **The traced shadow golden compares at full shadow strength**, as the other shadow goldens do since the C++
   default became 0.65 (IoU 0.935 against the view-fitted cascades).
@@ -52,14 +57,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
   compiled, keeps the frame, draws an edited kernel and comes back with the shipped one.
 - `app::frame`: across a switch to path tracing the scene rect stays put for 40 frames while the profiler drops the
   raster rows, and the mean grows by one sample each frame (the scrolling pass list already keeps the dock's height).
+- Editor: with a traced frame drawn, clicking the Renderer tab's or the Render menu's Deferred leaves the raster path
+  alone; the profiler's value column fits a five-digit millisecond time (a path-traced Colosseum frame on lavapipe).
 - `ForwardRenderer::read_depth_target` (tests and diagnostics), `traced_kernel_compiled`; `Tracer::set_instances`,
   `root_transform`, `instances_current`; `TraceScene::set_instance_extras`; `editor_snapshot` takes `spp=N` and
   `frames=N`.
 
 ### Changed (2026-11-15, the tracer with the raster settings, deferred path and clouds)
-- `TimedPass::ALL` lists 14 passes, the raster frame's in record order, then `RayTrace`, `PathTrace` and
-  `TraceResolve` (indices 11 to 13, profiler labels "Ray trace", "Path trace", "Trace resolve"); `name()` stays first
-  and unchanged. BeschleunigerBallett's `Compare-RendererTimings.ps1` must treat `GBuffer`, `DeferredLighting`,
+- `TimedPass::ALL` lists 14 passes in record order for either kind of frame: `RayTrace`, `PathTrace` and
+  `TraceResolve` (indices 11 to 13, profiler labels "Ray trace", "Path trace", "Trace resolve") sit after
+  `OcclusionCull`, where a traced frame records them; `name()` stays first and unchanged. BeschleunigerBallett's `Compare-RendererTimings.ps1` must treat `GBuffer`, `DeferredLighting`,
   `Clouds`, `RayTrace`, `PathTrace` and `TraceResolve` as optional, as it does `OcclusionCull`.
 - `RendererSettings` carries `render_mode`, `trace` and `reset_accumulation` through `Default`, `of` and `apply`;
   `TraceFrameUniforms` gains `view_proj`; the render graph's traced frames keep the cloud rows.

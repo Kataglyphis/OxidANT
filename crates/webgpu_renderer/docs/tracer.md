@@ -160,7 +160,8 @@ the HDR target, so exposure, bloom, the clouds and the tonemap run as after rast
 cascades, either raster path (the forward pass and depth resolve, or the G-buffer and deferred
 lighting), occlusion culling and SSAO do not run (the tonemap's SSAO weight is 0), and the
 primitive, frustum-culling and shadow-caster counts read 0 / 0, as in the C++ engine's traced
-frames. Camera rays run
+frames. The profiler lists the kernel, the resolve and the post passes in record order; a switch of
+mode or raster path drops the rows of passes the new frames do not record at once. Camera rays run
 from the near to the far plane through `inverse(view_proj)`: the raster camera, the docked
 viewport's lens shift included. Code: `src/render/tracer/modes/`, `src/render/forward/traced.rs`;
 shading shared by both kernels: `trace_shading.slang`; the estimator: `path_estimator.slang`.

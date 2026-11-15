@@ -441,6 +441,7 @@ impl ForwardRenderer {
     ) {
         self.tracer.advance(gpu, self.render_mode.is_traced());
         let view = self.prepare_frame(gpu, tonemap, width, height, camera);
+        self.forget_timings_of_another_frame();
 
         // Before any scope: begin_frame picks the ring slot every scope below writes into.
         self.gpu_timing.begin_frame();

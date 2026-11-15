@@ -6,6 +6,7 @@ use super::settings::switch_of;
 use super::*;
 use crate::render::forward::RasterPath;
 use crate::render::gpu_timing::TimedPass;
+use crate::render::tracer::RenderMode;
 
 /// Where a pass paints `text`, and the clip rect it is painted inside.
 fn text_and_clip(studio: &mut Harness, text: &str) -> Option<(Rect, Rect)> {
@@ -156,4 +157,32 @@ fn the_profiler_scrolls_every_timed_pass_and_keeps_the_culling_counts() {
             .is_some(),
         "the Visibility tab keeps the culled counts"
     );
+}
+
+/// A traced frame shades neither way, so the raster path's rows are off in the Renderer tab and the Render menu.
+#[test]
+fn a_traced_frame_disables_the_raster_path_rows() {
+    let drawing = |drawn: RenderMode, object: SceneObject| {
+        let mut studio = Harness::new((1600.0, 900.0), 1.0);
+        studio.settings.render_mode = drawn;
+        studio.stats.drawn_mode = drawn;
+        studio.editor.select(object);
+        studio.frame(Vec::new());
+        studio
+    };
+    for drawn in [RenderMode::Raster, RenderMode::PathTraced] {
+        let mut tab = drawing(drawn, SceneObject::Renderer);
+        click_text(&mut tab, "Deferred");
+        // The Model tab has no "Deferred" of its own, so the click lands on the menu's radio.
+        let mut menu = drawing(drawn, SceneObject::Model);
+        click_text(&mut menu, "Render");
+        click_text(&mut menu, "Deferred");
+        let expected = if drawn.is_traced() {
+            RasterPath::Forward
+        } else {
+            RasterPath::Deferred
+        };
+        let picked = (tab.settings.raster_path, menu.settings.raster_path);
+        assert_eq!(picked, (expected, expected), "drawing {drawn:?}");
+    }
 }

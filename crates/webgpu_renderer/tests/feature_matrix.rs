@@ -695,6 +695,11 @@ fn each_path_and_mode_reports_exactly_the_passes_it_runs_with_every_feature_on()
 
 /// The pass names `renderer` reports after enough frames for the timestamp readback.
 fn timed(gpu: &GpuContext, renderer: &mut ForwardRenderer) -> Vec<&'static str> {
+    timed_after(gpu, renderer, 16)
+}
+
+/// The pass names `renderer` reports after `frames` frames, each waited for so its readback lands.
+fn timed_after(gpu: &GpuContext, renderer: &mut ForwardRenderer, frames: u32) -> Vec<&'static str> {
     let mut tonemap = TonemapPass::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("feature_matrix_target"),
@@ -711,7 +716,7 @@ fn timed(gpu: &GpuContext, renderer: &mut ForwardRenderer) -> Vec<&'static str> 
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    for _ in 0..16 {
+    for _ in 0..frames {
         renderer.render_tonemapped(gpu, &mut tonemap, &view, SIZE, SIZE, &top_down());
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
     }
@@ -1018,4 +1023,34 @@ fn set_instances_reaches_the_traced_scene_in_place_or_says_it_waits() {
         kept.distance(right) < 0.5,
         "the traced scene changed: {kept}"
     );
+}
+
+/// A switch of mode or raster path drops the passes the new frames do not record at once, so a traced frame lists its
+/// kernel and resolve in record order instead of the raster rows a 32-frame average would keep.
+#[test]
+fn the_timings_follow_every_switch_of_mode_and_path_within_four_frames() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    if !gpu.supports_timestamps {
+        assert!(
+            !GpuContext::gpu_required(),
+            "the CI adapters offer timestamps"
+        );
+        return;
+    }
+    let scene = scene("cube_on_plane.gltf");
+    let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
+    renderer.upload_scene(&gpu, &scene);
+    trace(&mut renderer, &scene);
+    build(&gpu, &mut renderer);
+    assert!(renderer.enable_gpu_timing(&gpu));
+    renderer.occlusion_queries_enabled = true;
+    renderer.auto_exposure = true;
+    renderer.clouds.enabled = true;
+    for mode in [MODES[0], MODES[2], MODES[3], MODES[1], MODES[2], MODES[0]] {
+        (renderer.raster_path, renderer.render_mode) = mode;
+        let reported = timed_after(&gpu, &mut renderer, 4);
+        assert_eq!(reported, passes_in(mode), "after switching to {mode:?}");
+    }
 }

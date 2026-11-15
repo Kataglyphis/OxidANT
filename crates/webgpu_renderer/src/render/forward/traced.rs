@@ -5,7 +5,7 @@ use std::sync::Arc;
 use glam::{Mat4, Vec3};
 
 use super::frame::FrameView;
-use super::{sky, ForwardRenderer};
+use super::{sky, ForwardRenderer, RasterPath};
 use crate::context::GpuContext;
 use crate::render::gpu_timing::TimedPass;
 use crate::render::tracer::modes::{
@@ -26,6 +26,30 @@ pub(super) struct TracedState {
     synced: (u64, Vec<Mat4>),
     /// The output an accumulation was refused for, so the refusal is logged once.
     refused: Option<(u32, u32)>,
+    /// The kind of frame the timings last measured: the drawn mode, and the raster path while it rasters.
+    timed_as: Option<(RenderMode, RasterPath)>,
+}
+
+/// Whether a frame of `mode` over `path` records `pass` (with its optional passes on).
+fn records(pass: TimedPass, mode: RenderMode, path: RasterPath) -> bool {
+    match (mode, pass) {
+        (RenderMode::Raster, TimedPass::Forward) => path == RasterPath::Forward,
+        (RenderMode::Raster, TimedPass::GBuffer | TimedPass::DeferredLighting) => {
+            path == RasterPath::Deferred
+        }
+        (RenderMode::Raster, pass) => !pass.is_traced(),
+        (_, TimedPass::RayTrace) => mode == RenderMode::RayTraced,
+        (_, TimedPass::PathTrace) => mode == RenderMode::PathTraced,
+        (_, pass) => matches!(
+            pass,
+            TimedPass::TraceResolve
+                | TimedPass::Histogram
+                | TimedPass::ExposureReduce
+                | TimedPass::Bloom
+                | TimedPass::Clouds
+                | TimedPass::Tonemap
+        ),
+    }
 }
 
 impl ForwardRenderer {
@@ -83,6 +107,20 @@ impl ForwardRenderer {
             .passes
             .as_ref()
             .is_some_and(|passes| passes.is_compiled(kernel))
+    }
+
+    /// On a switch of mode or raster path, the profiler drops the passes the new frames do not record, at once.
+    pub(super) fn forget_timings_of_another_frame(&mut self) {
+        let mode = self.drawn_mode();
+        let path = if mode.is_traced() {
+            RasterPath::Forward
+        } else {
+            self.raster_path
+        };
+        if self.traced.timed_as.replace((mode, path)) == Some((mode, path)) {
+            return;
+        }
+        self.gpu_timing.forget(|pass| records(pass, mode, path));
     }
 
     /// Starts the path tracer's mean over: the hook for anything that changes what it traces in place.

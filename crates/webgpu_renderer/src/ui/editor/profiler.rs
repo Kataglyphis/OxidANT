@@ -107,7 +107,7 @@ fn gpu_passes(ui: &mut Ui, cx: &EditorContext<'_>) {
         .iter()
         .map(|(name, _)| galley(ui, *name, font.clone(), pal::TEXT).size().x)
         .fold(0.0, f32::max);
-    let value_width = galley(ui, "0000.00 ms", font, pal::TEXT).size().x;
+    let value_width = galley(ui, "00000.00 ms", font, pal::TEXT).size().x;
     ui.spacing_mut().item_spacing.y = 2.0;
     // More passes than the C++ five outgrow the dock's default height, so the rows scroll.
     ScrollArea::vertical()
