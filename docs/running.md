@@ -40,9 +40,11 @@ run it on the packaged exe, the Linux lanes on every package:
 cargo run -p kataglyphis_cli -- onnx-runtime
 ```
 
-The GUI creates its camera pipeline's GStreamer elements by name (`mfvideosrc`,
-falling back to `autovideosrc`, then `videoconvert`, `capsfilter`, the frame sink), so every
-package carries their plugins in `lib/gstreamer-1.0` (Windows: `Build.GStreamerPlugins` in
+The GUI captures through `kataglyphis_media`'s session, as the app's engine does, at the camera's own size: its
+GStreamer elements are created by name (`mfvideosrc`, else `ksvideosrc`, `autovideosrc` or `v4l2src`, then
+`videoconvert`, `videoscale`, the frame sink), and a camera that ends, fails or sends nothing for 10 s ends the
+window with that reason. Every package carries their plugins in `lib/gstreamer-1.0` (Windows:
+`Build.GStreamerPlugins` in
 `scripts/windows/Build-Windows.config.psd1`; Linux: `plugins` in
 `scripts/linux/package-linux.sh`; how: [AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration)).
 The `media-check` subcommand builds that pipeline without starting it, so with no camera

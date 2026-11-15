@@ -113,17 +113,6 @@ and the backlog is empty"; it was neither.
       file, the stall, the re-probe, the engine's two end reasons): the first run after CON238 writes
       `capture.rs`'s new count into `docs/testing.md` and adds `src/session_slot.rs` to its file list.
 
-- [ ] **Three camera pipelines, each with its own failure rules** (L, ★★). Audit 2026-11-12:
-      `crates/media/src/capture.rs` (the Flutter engine), `crates/observant/src/capture.rs` and
-      `crates/gui/src/gui_wgpu/pipeline.rs` each open a camera and keep the newest frame. The three loops differ on
-      purpose, so no shared worker. Step 1 is done (2026-11-15): `kataglyphis_media`'s frame slot stamps each frame
-      and closes with `no frame for 10.0 s` when the source goes silent, so the app's engine ends with that reason
-      instead of waiting (tests with a launch line that never sends and one whose valve closes). Left: the wgpu GUI
-      never reads its pipeline bus, the bug fixed in `crates/media` on 2026-11-11. Next: the wgpu GUI uses
-      `CaptureSession` (`CaptureConfig` learns "size 0 means the camera's own size"), which deletes the third
-      pipeline and gives the GUI its errors. ObservANT's pipeline stays in its crate. Guard: a source-reading test
-      that only `crates/media` and `crates/observant` build an appsink.
-
 - [ ] **`capture.rs` mixes the camera with pure logic** (M, ★). Audit 2026-11-12; its first half, `to_json` holding
       `detected` while it took other locks, is done (2026-11-15, a test that deadlocked on the old order). Left:
       split `crates/observant/src/capture.rs` into the part that needs a camera and the pure part (`Visits`,

@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-15, the wgpu GUI captures through the media crate; two camera pipelines left)
+- `crates/gui` drops its own pipeline (`build_pipeline`, which never read its bus) and runs a
+  `kataglyphis_media::CaptureSession` at the camera's own size: `CaptureConfig` takes width or height 0 for the
+  camera's own size and framerate 0 for any. A camera that ends, fails or goes silent for 10 s now ends the window
+  with that reason. `media-check` builds the same session unstarted (`CaptureSession::unstarted_pipeline`), so it
+  reports `videoconvert`, `videoscale` and the frame sink, and the Linux package checks `videoscale` instead of
+  `capsfilter`. `crates/media/tests/one_camera_pipeline.rs` fails when a crate other than `crates/media` or
+  ObservANT builds an appsink. `gstreamer-app` left the GUI's dependencies.
+
 ### Fixed (2026-11-15, the app's camera session ends when the camera goes silent)
 - `kataglyphis_media`'s frame slot stamps the session's start and each frame; `take_latest` closes it with
   `no frame for 10.0 s` (`capture::STALL_AFTER`, the same 10 s as ObservANT) once nothing came for that long. The app

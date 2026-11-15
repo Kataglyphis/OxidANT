@@ -1,14 +1,10 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use gstreamer_app as gst_app;
-use log::warn;
-
-use kataglyphis_telemetry::resource_monitor;
+use kataglyphis_media::{CameraSource, CaptureConfig, CaptureSession, VideoFrame};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Frame {
@@ -18,128 +14,25 @@ pub(crate) struct Frame {
     pub height: u32,
 }
 
-/// Convert a (possibly stride-padded) RGBA buffer into a tightly-packed one.
-pub(crate) fn rgba_tightly_packed(src: &[u8], width: u32, height: u32) -> Option<Arc<[u8]>> {
-    if width == 0 || height == 0 {
-        return None;
-    }
-
-    let row_bytes = (width as usize).saturating_mul(4);
-    let expected_len = row_bytes.saturating_mul(height as usize);
-
-    // Fast path: already tightly packed — copy straight into Arc.
-    if src.len() == expected_len {
-        return Some(Arc::from(src));
-    }
-
-    // GStreamer often pads rows; assume a single RGBA plane with a constant stride.
-    if src.len() < expected_len {
-        return None;
-    }
-
-    let h = height as usize;
-    // Integer division guarantees `stride * h <= src.len()`.
-    let stride = src.len() / h;
-    if stride < row_bytes {
-        return None;
-    }
-
-    let mut out = vec![0u8; expected_len];
-    for y in 0..h {
-        let src_start = y.saturating_mul(stride);
-        let src_end = src_start.saturating_add(row_bytes).min(src.len());
-        let dst_start = y.saturating_mul(row_bytes);
-        let dst_end = dst_start.saturating_add(row_bytes).min(out.len());
-
-        if src_end <= src_start || dst_end <= dst_start {
-            return None;
+impl From<VideoFrame> for Frame {
+    fn from(frame: VideoFrame) -> Self {
+        Self {
+            id: frame.sequence,
+            data: Arc::from(frame.rgba),
+            width: frame.width,
+            height: frame.height,
         }
-
-        out[dst_start..dst_end].copy_from_slice(&src[src_start..src_end]);
     }
-
-    Some(Arc::from(out))
 }
 
-pub(crate) fn build_pipeline(
-    frame_tx: std::sync::mpsc::SyncSender<Frame>,
-) -> Result<gst::Pipeline> {
-    let pipeline = gst::Pipeline::new();
-
-    let frame_id = AtomicU64::new(1);
-
-    let src = gst::ElementFactory::make("mfvideosrc")
-        .build()
-        .or_else(|_| gst::ElementFactory::make("autovideosrc").build())
-        .context("Failed to create a video source")?;
-
-    let convert = gst::ElementFactory::make("videoconvert")
-        .build()
-        .context("Failed to create videoconvert")?;
-
-    let caps = gst::Caps::builder("video/x-raw")
-        .field("format", "RGBA")
-        .build();
-
-    let capsfilter = gst::ElementFactory::make("capsfilter")
-        .property("caps", &caps)
-        .build()
-        .context("Failed to create capsfilter")?;
-
-    let frames = kataglyphis_media::frame_sink(2, true)?;
-    let sink: gst::Element = frames.clone().upcast();
-
-    pipeline
-        .add_many([&src, &convert, &capsfilter, &sink])
-        .context("Failed to add elements to pipeline")?;
-    gst::Element::link_many([&src, &convert, &capsfilter, &sink])
-        .context("Failed to link pipeline elements")?;
-
-    frames.set_callbacks(
-        gst_app::AppSinkCallbacks::builder()
-            .new_sample(move |sink| {
-                if let Ok(sample) = sink.pull_sample() {
-                    if let Some(buffer) = sample.buffer() {
-                        let caps = sample
-                            .caps()
-                            .and_then(|c| c.structure(0))
-                            .map(|s| s.to_owned());
-                        if let Some(structure) = caps {
-                            let width = structure.get::<i32>("width").unwrap_or_else(|_| {
-                                warn!("GStreamer caps missing 'width'; defaulting to 640");
-                                640
-                            }) as u32;
-                            let height = structure.get::<i32>("height").unwrap_or_else(|_| {
-                                warn!("GStreamer caps missing 'height'; defaulting to 480");
-                                480
-                            }) as u32;
-                            if let Ok(map) = buffer.map_readable() {
-                                if let Some(data) =
-                                    rgba_tightly_packed(map.as_slice(), width, height)
-                                {
-                                    resource_monitor::record_camera_frame();
-
-                                    let id = frame_id.fetch_add(1, Ordering::Relaxed);
-
-                                    if let Err(e) = frame_tx.try_send(Frame {
-                                        id,
-                                        data,
-                                        width,
-                                        height,
-                                    }) {
-                                        warn!("Frame channel full, dropping frame {id}: {e}");
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(gst::FlowSuccess::Ok)
-            })
-            .build(),
-    );
-
-    Ok(pipeline)
+/// The GUI's camera: the first webcam at its own size and rate, through the media crate's session.
+pub(crate) fn camera_config() -> CaptureConfig {
+    CaptureConfig {
+        source: CameraSource::Auto,
+        width: 0,
+        height: 0,
+        framerate: 0,
+    }
 }
 
 /// What [`media_check`] found: GStreamer version, bundled plugin dir, each element's plugin.
@@ -172,9 +65,8 @@ impl std::fmt::Display for MediaReport {
 /// Builds the camera pipeline without starting it and names the plugin file behind each element.
 /// Fails when a bundled exe takes an element from elsewhere, so a package gap cannot hide.
 pub fn media_check() -> Result<MediaReport> {
-    kataglyphis_media::ensure_gst_initialized()?;
-    let (frame_tx, _frame_rx) = std::sync::mpsc::sync_channel::<Frame>(1);
-    let pipeline = build_pipeline(frame_tx).context("Failed to build the camera pipeline")?;
+    let pipeline = CaptureSession::unstarted_pipeline(&camera_config())
+        .context("Failed to build the camera pipeline")?;
     let bundled_plugins = kataglyphis_media::bundled_plugin_dir();
     // A bin prepends each child it adds, so reversed the list reads source first.
     let mut children = pipeline.children();
@@ -217,24 +109,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_packed_frame_passes_unchanged() {
-        let src: Vec<u8> = (0..2 * 2 * 4).map(|i| i as u8).collect();
-        assert_eq!(rgba_tightly_packed(&src, 2, 2).as_deref(), Some(&src[..]));
-    }
-
-    #[test]
-    fn row_padding_is_dropped() {
-        // Two 1-pixel rows, each padded to 8 bytes.
-        let src = [1, 2, 3, 4, 0, 0, 0, 0, 5, 6, 7, 8, 0, 0, 0, 0];
-        let packed = rgba_tightly_packed(&src, 1, 2).unwrap();
-        assert_eq!(&packed[..], &[1, 2, 3, 4, 5, 6, 7, 8]);
-    }
-
-    #[test]
-    fn an_empty_or_short_frame_is_refused() {
-        assert!(rgba_tightly_packed(&[0; 16], 0, 4).is_none());
-        assert!(rgba_tightly_packed(&[0; 16], 4, 0).is_none());
-        assert!(rgba_tightly_packed(&[0; 15], 2, 2).is_none());
+    fn a_session_frame_keeps_its_number_size_and_pixels() {
+        let frame = Frame::from(VideoFrame {
+            rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            width: 2,
+            height: 1,
+            pts_ms: Some(40),
+            sequence: 7,
+        });
+        assert_eq!((frame.id, frame.width, frame.height), (7, 2, 1));
+        assert_eq!(&frame.data[..], &[1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
@@ -277,17 +161,18 @@ mod tests {
     fn the_camera_pipeline_builds_without_a_camera() {
         let report = media_check().expect("the GUI's pipeline must build");
         let names: Vec<&str> = report.elements.iter().map(|(n, _)| n.as_str()).collect();
+        // The media crate's session, which reads its bus and notices a stall: no third camera pipeline.
         assert!(
-            names
-                .first()
-                .is_some_and(|n| *n == "mfvideosrc" || *n == "autovideosrc"),
+            names.first().is_some_and(|n| {
+                ["mfvideosrc", "ksvideosrc", "autovideosrc", "v4l2src"].contains(n)
+            }),
             "{names:?}"
         );
         assert_eq!(
             &names[1..],
             [
                 "videoconvert",
-                "capsfilter",
+                "videoscale",
                 kataglyphis_media::FRAME_SINK_FACTORY
             ]
         );

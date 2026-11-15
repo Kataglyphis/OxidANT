@@ -18,7 +18,6 @@ chrono = { workspace = true }
 
 # Workspace-pinned so this and crates/media never link two GStreamer versions against one libgstreamer.
 gstreamer = { workspace = true }
-gstreamer-app = { workspace = true }
 winit = { version = "0.30" }
 # No GL backend, which GpuBackend never picks: its opengl32.dll import keeps the exe from loading in Server Core.
 wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }

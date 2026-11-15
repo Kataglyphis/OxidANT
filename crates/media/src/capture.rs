@@ -26,8 +26,10 @@ pub enum CameraSource {
 #[derive(Debug, Clone, Copy)]
 pub struct CaptureConfig {
     pub source: CameraSource,
+    /// With `height`, the frame size; 0 for either keeps the camera's own.
     pub width: u32,
     pub height: u32,
+    /// 0 takes any rate the source offers.
     pub framerate: u32,
 }
 
@@ -213,15 +215,44 @@ pub struct CaptureSession {
     frames: FrameSlot,
 }
 
-/// RGBA at the asked size with square pixels, at the asked rate where the source has it, else at any.
+/// The source element `config` names; a listed device builds its own, Windows' sources take an index.
+fn source_element(config: &CaptureConfig) -> Result<gst::Element> {
+    let factory = match config.source {
+        CameraSource::Test => {
+            return gst::ElementFactory::make("videotestsrc")
+                .property_from_str("pattern", "smpte")
+                .property("is-live", true)
+                .build()
+                .context("failed to create videotestsrc")
+        }
+        CameraSource::Auto | CameraSource::Device(_) => webcam_source_factory()?,
+    };
+    log::info!("using webcam source element `{factory}`");
+    match config.source {
+        // Only these two have `device-index`; setting it on a fallback would panic.
+        CameraSource::Device(index) if matches!(factory, "mfvideosrc" | "ksvideosrc") => {
+            gst::ElementFactory::make(factory)
+                .property("device-index", index as i32)
+                .build()
+        }
+        // Elsewhere the listed device builds its own source, so the index picks the camera it names.
+        CameraSource::Device(index) => return crate::devices::camera_element(index),
+        _ => gst::ElementFactory::make(factory).build(),
+    }
+    .with_context(|| format!("failed to create `{factory}`"))
+}
+
+/// RGBA at the asked size with square pixels, or the camera's own size for 0, at the asked rate where the source has it.
 fn frame_caps(config: &CaptureConfig) -> gst::Caps {
     // Without the pixel aspect ratio `videoscale` keeps a 4:3 camera's shape with non-square pixels, which no texture honours.
-    let any_rate = gst::Structure::builder("video/x-raw")
+    let mut any_rate = gst::Structure::builder("video/x-raw")
         .field("format", "RGBA")
-        .field("width", config.width as i32)
-        .field("height", config.height as i32)
         .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
         .build();
+    if config.width > 0 && config.height > 0 {
+        any_rate.set("width", config.width as i32);
+        any_rate.set("height", config.height as i32);
+    }
     let mut caps = gst::Caps::builder_full();
     if config.framerate > 0 {
         let mut exact = any_rate.clone();
@@ -240,39 +271,13 @@ impl CaptureSession {
     /// [`Self::start`], with `observer` called for every frame the camera delivers.
     pub fn start_observed(config: CaptureConfig, observer: Option<FrameObserver>) -> Result<Self> {
         ensure_gst_initialized()?;
+        Self::from_source(source_element(&config)?, &config, observer)
+    }
 
-        let source = match config.source {
-            CameraSource::Test => gst::ElementFactory::make("videotestsrc")
-                .property_from_str("pattern", "smpte")
-                .property("is-live", true)
-                .build()
-                .context("failed to create videotestsrc")?,
-            CameraSource::Auto | CameraSource::Device(_) => {
-                let factory = webcam_source_factory()?;
-                log::info!("using webcam source element `{factory}`");
-                match config.source {
-                    // Only these two have `device-index`; setting it on a fallback would panic.
-                    CameraSource::Device(index)
-                        if matches!(factory, "mfvideosrc" | "ksvideosrc") =>
-                    {
-                        gst::ElementFactory::make(factory)
-                            .property("device-index", index as i32)
-                            .build()
-                    }
-                    // Elsewhere the listed device builds its own source, so the index picks the camera it names.
-                    CameraSource::Device(index) => {
-                        return Self::from_source(
-                            crate::devices::camera_element(index)?,
-                            &config,
-                            observer,
-                        )
-                    }
-                    _ => gst::ElementFactory::make(factory).build(),
-                }
-                .with_context(|| format!("failed to create `{factory}`"))?
-            }
-        };
-        Self::from_source(source, &config, observer)
+    /// The pipeline a session on `config` runs, built and not started, so a package check needs no camera.
+    pub fn unstarted_pipeline(config: &CaptureConfig) -> Result<gst::Pipeline> {
+        ensure_gst_initialized()?;
+        Ok(Self::assemble(source_element(config)?, config, None)?.0)
     }
 
     /// A session whose source is a launch line, so a test can end or break the stream at a chosen frame; not a camera API.
@@ -288,12 +293,31 @@ impl CaptureSession {
         Self::from_source(source.upcast(), config, observer)
     }
 
-    /// The pipeline behind `source`: convert, scale, and an appsink feeding the frame slot.
+    /// The session behind `source`, started.
     fn from_source(
         source: gst::Element,
         config: &CaptureConfig,
-        mut observer: Option<FrameObserver>,
+        observer: Option<FrameObserver>,
     ) -> Result<Self> {
+        let (pipeline, frames) = Self::assemble(source, config, observer)?;
+        if let Err(error) = pipeline.set_state(gst::State::Playing) {
+            // A half-started pipeline keeps the camera open until it reaches Null.
+            let _ = pipeline.set_state(gst::State::Null);
+            if let Some(bus) = pipeline.bus() {
+                bus.unset_sync_handler();
+            }
+            let reason = frames.error().unwrap_or_else(|| error.to_string());
+            anyhow::bail!("failed to set pipeline to Playing: {reason}");
+        }
+        Ok(Self { pipeline, frames })
+    }
+
+    /// The pipeline behind `source`: convert, scale, and an appsink feeding the frame slot.
+    fn assemble(
+        source: gst::Element,
+        config: &CaptureConfig,
+        mut observer: Option<FrameObserver>,
+    ) -> Result<(gst::Pipeline, FrameSlot)> {
         let videoconvert = gst::ElementFactory::make("videoconvert")
             .build()
             .context("failed to create videoconvert")?;
@@ -355,16 +379,7 @@ impl CaptureSession {
             }
             gst::BusSyncReply::Drop
         });
-
-        if let Err(error) = pipeline.set_state(gst::State::Playing) {
-            // A half-started pipeline keeps the camera open until it reaches Null.
-            let _ = pipeline.set_state(gst::State::Null);
-            bus.unset_sync_handler();
-            let reason = frames.error().unwrap_or_else(|| error.to_string());
-            anyhow::bail!("failed to set pipeline to Playing: {reason}");
-        }
-
-        Ok(Self { pipeline, frames })
+        Ok((pipeline, frames))
     }
 
     /// Shared handle for pulling frames; stays valid until [`stop`](Self::stop).
@@ -542,6 +557,23 @@ mod tests {
             );
             session.stop();
         }
+    }
+
+    #[test]
+    fn a_size_of_zero_keeps_the_cameras_own() {
+        let own = CaptureConfig {
+            source: CameraSource::Test,
+            width: 0,
+            height: 0,
+            framerate: 0,
+        };
+        let launch = "videotestsrc is-live=true ! capsfilter caps=video/x-raw,width=320,height=240";
+        let session = CaptureSession::from_launch(launch, &own, None).unwrap();
+        let frame = session.frames().take_latest(Duration::from_secs(20));
+        session.stop();
+        let frame = frame.expect("a frame within 20 s");
+        assert_eq!((frame.width, frame.height), (320, 240));
+        assert_eq!(frame.rgba.len(), 320 * 240 * 4);
     }
 
     #[test]
