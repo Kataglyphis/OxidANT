@@ -33,8 +33,22 @@ text() {
   printf '{"ttft_ms": %s, "decode_tok_s": %s}\n' "${ttft}" "${rate}"
 }
 
+# A five-turn chat in one process, the median of three: turn 5's first token stays near turn 1's while the generator continues.
+text_turns() {
+  local figures
+  figures="$(for _ in 1 2 3; do
+    "${CLI}" chat --model-dir "${LLM_MODEL}" --prompt "${PROMPT}" --max-new-tokens "${TOKENS}" \
+      --then "Give the grey cat a name." --then "What does the black cat do when the grey one sleeps?" \
+      --then "Where do they go when it rains?" --then "End the story in one sentence." 2>&1 >/dev/null |
+      sed -nE 's/^[0-9]+ tokens, ([0-9.]+) ms to the first, .*$/\1/p' | sed -n '1p;5p' | paste -sd' ' -
+  done)"
+  printf '{"turn1_ttft_ms": %s, "turn5_ttft_ms": %s}\n' \
+    "$(cut -d' ' -f1 <<< "${figures}" | sort -g | sed -n 2p)" "$(cut -d' ' -f2 <<< "${figures}" | sort -g | sed -n 2p)"
+}
+
 case "${1:-}" in
   setup) setup ;;
   text) text ;;
-  *) echo "usage: perf-host.sh setup|text" >&2; exit 2 ;;
+  text-turns) text_turns ;;
+  *) echo "usage: perf-host.sh setup|text|text-turns" >&2; exit 2 ;;
 esac

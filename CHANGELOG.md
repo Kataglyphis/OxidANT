@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-15, a greedy GenAI turn continues the last generator)
+- `GenaiGenerator` keeps the generator of a greedy turn without `json_schema` and every token it holds; the next
+  prompt rewinds it to the start the two share (`OgaGenerator_RewindTo`) and appends only the rest
+  (`OgaGenerator_AppendTokens`). Room: prompt, budget and 1024 more tokens, capped at `genai_config.json`'s
+  `context_length`; the decode loop now ends at `max_new_tokens` itself. Sampling, a schema, a prompt sharing
+  nothing, one that does not fit or a GenAI without the five symbols (bound optionally) start a fresh generator.
+  New test `a_continued_generator_gives_the_tokens_of_a_fresh_one`. On a Pi 5, turn 5 of a five-turn chat reaches
+  its first token after 48-52 ms instead of 539-540 ms (release CLI, two runs each).
+- `kataglyphis_cli chat --then TEXT` (repeatable) asks each text as one more turn of the same conversation;
+  `perf-host.sh text-turns` and `quality-report.toml`'s `text_turns_rust` time turn 1 and turn 5.
+
 ### Added (2026-11-15, goldens for the rest of ObservANT's JSON)
 - `tests/fixtures/api/{settings,visits,summary,summary_words,ask}.json`: what `/settings`, `/visits`, `GET` and
   `POST /summary` and `/ask` answer for a camera with one visit and a stub model, arrival, day and times fixed.

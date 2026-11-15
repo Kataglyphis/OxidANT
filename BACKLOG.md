@@ -116,7 +116,10 @@ and the backlog is empty"; it was neither.
       the result into `CHANGELOG.md`; on x86 XNNPACK is 3.7 times slower, on ARM nobody knows.
       A Cortex-A76 perf-host baseline only if it is still wanted: its setup builds the release
       CLI with fat LTO in the container and refuses a load above 2, a heavy job beside a live
-      camera. Then first give the detector commands in `quality-report.toml` ObservANT's two
+      camera. On himbeere2 that link does not fit `pi-ci`'s 5 GB at all: rustc was killed linking
+      `kataglyphis_cli` on 2026-11-15, and `CARGO_PROFILE_RELEASE_LTO=false
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16` built it; the setup needs that override, or a larger
+      `PI_CI_MEMORY`, before a Pi baseline. Then first give the detector commands in `quality-report.toml` ObservANT's two
       threads without spinning, and record it on a quiet night as one `systemd-run` unit. If
       one new gated bench is wanted: preprocessing at 1280x720, the app's default size. No
       allocation-count tests.
@@ -176,18 +179,6 @@ and the backlog is empty"; it was neither.
       bridge error waits for a planned regeneration, `ContextExceeded` for a measurement of how
       often the playground hits it. Guard: the extended unit test and one ObservANT test per
       status.
-
-- [ ] **Every chat turn runs the whole conversation through the model again** (M, ★★). Audit
-      2026-11-12 (not double-checked), not measured: `generate` in `crates/text/src/genai.rs`
-      templates and encodes all messages and builds a new generator on every call, and
-      `src/api/text.rs` caches the model only. So the time to first token should grow with the
-      chat. Next: measure first. Replay a fixed five-turn chat on SmolLM2 and compare the time
-      to first token of turn 1 and turn 5. Only if it matters: keep the last generator and its
-      token ids with the cached model and append only the new tokens when the old ids are a
-      prefix, after checking that the pinned `ort_genai_c.h` can append to a live generator.
-      Guard: a `text_turns` command in `scripts/linux/perf-host.sh` under
-      `quality-report.sh --perf-host`, and a tiny-model test that a turn 2 which extends turn 1
-      gives the same ids as a fresh run.
 
 - [ ] **Three camera pipelines, each with its own failure rules** (L, ★★). Audit 2026-11-12:
       `crates/media/src/capture.rs` (the Flutter engine), `crates/observant/src/capture.rs` and

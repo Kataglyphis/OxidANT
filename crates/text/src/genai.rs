@@ -90,8 +90,23 @@ struct Api {
     tensor_get_shape_rank: unsafe extern "C" fn(Handle, *mut usize) -> Status,
     tensor_get_shape: unsafe extern "C" fn(Handle, *mut i64, usize) -> Status,
     tensor_get_data: unsafe extern "C" fn(Handle, *mut *mut c_void) -> Status,
+    /// `None` on a GenAI without these symbols: then every turn takes a fresh generator.
+    continuation: Option<Continuation>,
     _library: libloading::Library,
 }
+
+/// What a greedy turn needs to continue the last generator instead of starting over.
+#[derive(Clone, Copy)]
+struct Continuation {
+    sequence_data: unsafe extern "C" fn(Handle, usize) -> *const i32,
+    append_tokens: unsafe extern "C" fn(Handle, *const i32, usize) -> Status,
+    rewind_to: unsafe extern "C" fn(Handle, usize) -> Status,
+    held_count: unsafe extern "C" fn(Handle, usize) -> usize,
+    held_data: unsafe extern "C" fn(Handle, usize) -> *const i32,
+}
+
+/// Room a greedy generator keeps for the turns after this one; its KV buffer is as long (45 KB a token for SmolLM2-135M).
+const TURN_HEADROOM: usize = 1024;
 
 macro_rules! lookup {
     ($library:expr, $name:literal) => {
@@ -151,6 +166,15 @@ impl Api {
             tensor_get_shape_rank: bind!(library, "OgaTensorGetShapeRank"),
             tensor_get_shape: bind!(library, "OgaTensorGetShape"),
             tensor_get_data: bind!(library, "OgaTensorGetData"),
+            continuation: (|| {
+                Some(Continuation {
+                    sequence_data: *lookup!(library, "OgaSequencesGetSequenceData").ok()?,
+                    append_tokens: *lookup!(library, "OgaGenerator_AppendTokens").ok()?,
+                    rewind_to: *lookup!(library, "OgaGenerator_RewindTo").ok()?,
+                    held_count: *lookup!(library, "OgaGenerator_GetSequenceCount").ok()?,
+                    held_data: *lookup!(library, "OgaGenerator_GetSequenceData").ok()?,
+                })
+            })(),
             _library: library,
         })
     }
@@ -297,15 +321,12 @@ pub(crate) trait SearchParams {
 /// The search options and guidance of one generation: greedy unless the temperature is above 0.
 pub(crate) fn configure(
     params: &mut dyn SearchParams,
-    prompt_tokens: usize,
+    max_length: usize,
     options: &GenerationOptions,
 ) -> Result<(), TextError> {
     let sample = options.temperature > 0.0;
     params.set_bool(c"do_sample", sample)?;
-    params.set_number(
-        c"max_length",
-        prompt_tokens as f64 + f64::from(options.max_new_tokens),
-    )?;
+    params.set_number(c"max_length", max_length as f64)?;
     if sample {
         params.set_number(c"temperature", options.temperature)?;
         params.set_number(c"top_p", options.top_p)?;
@@ -420,6 +441,37 @@ pub struct GenaiGenerator {
     tokenizer: Owned,
     model: Owned,
     eos_tokens: Vec<i32>,
+    /// `genai_config.json`'s `context_length`, 0 when it names none.
+    context_tokens: usize,
+    /// The last greedy generator; a turn that extends what it holds appends only the rest.
+    live: Option<Live>,
+}
+
+/// A generator kept between greedy turns, every token it holds and the length it was made for.
+struct Live {
+    generator: Owned,
+    ids: Vec<i32>,
+    room: usize,
+}
+
+/// Sampling and guidance carry state a continued generator would not reset, so only a greedy turn continues one.
+fn continues(options: &GenerationOptions) -> bool {
+    options.temperature <= 0.0 && options.json_schema.is_none()
+}
+
+/// The turn's token budget as a length.
+fn budget(options: &GenerationOptions) -> usize {
+    usize::try_from(options.max_new_tokens).unwrap_or(usize::MAX)
+}
+
+/// `genai_config.json`'s `model.context_length`, or 0: then a greedy generator is not capped by it.
+fn context_length(model_dir: &Path) -> usize {
+    std::fs::read_to_string(model_dir.join("genai_config.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|config| config.pointer("/model/context_length")?.as_u64())
+        .and_then(|length| usize::try_from(length).ok())
+        .unwrap_or(0)
 }
 
 // SAFETY: the handles are only touched through &mut self, and GenAI's model and tokenizer are not tied to a thread.
@@ -490,6 +542,8 @@ impl GenaiGenerator {
             tokenizer,
             model,
             eos_tokens,
+            context_tokens: context_length(model_dir),
+            live: None,
         })
     }
 
@@ -633,7 +687,7 @@ impl GenaiGenerator {
     fn generator(
         &self,
         prompt: &Owned,
-        prompt_tokens: usize,
+        max_length: usize,
         options: &GenerationOptions,
     ) -> Result<Owned, TextError> {
         let api = self.api;
@@ -650,7 +704,7 @@ impl GenaiGenerator {
                 api,
                 handle: params.handle,
             },
-            prompt_tokens,
+            max_length,
             options,
         )?;
         let mut raw_generator = std::ptr::null_mut();
@@ -672,7 +726,7 @@ impl GenaiGenerator {
 
     fn next_token(
         &self,
-        generator: &Owned,
+        generator: Handle,
         stream: &Owned,
         result: &mut GenerationResult,
     ) -> Result<String, TextError> {
@@ -680,12 +734,12 @@ impl GenaiGenerator {
         let (mut next, mut count) = (std::ptr::null(), 0usize);
         // SAFETY: generator is live.
         api.check(
-            unsafe { (api.generate_next_token)(generator.handle) },
+            unsafe { (api.generate_next_token)(generator) },
             "next token",
         )
         .and_then(|()| {
             api.check(
-                unsafe { (api.get_next_tokens)(generator.handle, &mut next, &mut count) },
+                unsafe { (api.get_next_tokens)(generator, &mut next, &mut count) },
                 "next tokens",
             )
         })
@@ -713,23 +767,102 @@ impl GenaiGenerator {
     }
 }
 
-impl TextBackend for GenaiGenerator {
-    fn generate(
+impl GenaiGenerator {
+    /// The live generator, rewound to what it shares with `ids` and fed the rest; `None` when it cannot take them.
+    fn continue_live(&mut self, c: Continuation, ids: &[i32], needed: usize) -> Option<Handle> {
+        let (handle, common, held) = {
+            let live = self.live.as_ref()?;
+            if ids.is_empty() || needed > live.room {
+                return None;
+            }
+            // The last prompt token goes in again at least: the generator needs a new token to give its next logits.
+            let common = live
+                .ids
+                .iter()
+                .zip(&ids[..ids.len() - 1])
+                .take_while(|(held, new)| held == new)
+                .count();
+            (live.generator.handle, common, live.ids.len())
+        };
+        let rest = &ids[common..];
+        let api = self.api;
+        // SAFETY: handle is the live generator, which holds `held` tokens; rest points to rest.len() ids.
+        let fed = common > 0
+            && (common == held
+                || api
+                    .check(unsafe { (c.rewind_to)(handle, common) }, "rewind")
+                    .is_ok())
+            && api
+                .check(
+                    unsafe { (c.append_tokens)(handle, rest.as_ptr(), rest.len()) },
+                    "append",
+                )
+                .is_ok();
+        if !fed {
+            self.live = None;
+            return None;
+        }
+        Some(handle)
+    }
+
+    /// The live generator continued, or a fresh one with room for this turn and [`TURN_HEADROOM`] more.
+    fn greedy_generator(
         &mut self,
-        messages: &[ChatMessage],
+        c: Continuation,
+        prompt: &Owned,
+        prompt_tokens: usize,
+        options: &GenerationOptions,
+    ) -> Result<Handle, TextError> {
+        // SAFETY: prompt is a live sequences handle; GenAI owns its ids until the handle goes.
+        let data = unsafe { (c.sequence_data)(prompt.handle, 0) };
+        let needed = prompt_tokens + budget(options);
+        if !data.is_null() {
+            // SAFETY: data points to the prompt's prompt_tokens ids.
+            let ids = unsafe { std::slice::from_raw_parts(data, prompt_tokens) };
+            if let Some(handle) = self.continue_live(c, ids, needed) {
+                return Ok(handle);
+            }
+        }
+        let mut room = needed + TURN_HEADROOM;
+        if self.context_tokens > 0 {
+            room = room.min(self.context_tokens.max(needed));
+        }
+        let generator = self.generator(prompt, room, options)?;
+        let handle = generator.handle;
+        self.live = Some(Live {
+            generator,
+            ids: Vec::new(),
+            room,
+        });
+        Ok(handle)
+    }
+
+    /// Keeps every token the live generator now holds, the prompt and the reply.
+    fn remember(&mut self, c: Continuation) {
+        let held = self.live.as_ref().and_then(|live| {
+            // SAFETY: the live generator is live; GenAI owns its ids until its next call.
+            let data = unsafe { (c.held_data)(live.generator.handle, 0) };
+            let count = unsafe { (c.held_count)(live.generator.handle, 0) };
+            // SAFETY: a non-null data points to count ids.
+            (!data.is_null()).then(|| unsafe { std::slice::from_raw_parts(data, count) }.to_vec())
+        });
+        match (held, self.live.as_mut()) {
+            (Some(ids), Some(live)) => live.ids = ids,
+            _ => self.live = None,
+        }
+    }
+
+    /// Decodes up to the budget into `result` and sets its finish reason; the first token's moment.
+    fn decode(
+        &self,
+        generator: Handle,
         options: &GenerationOptions,
         cancel: &CancelToken,
         on_text: &mut dyn FnMut(&str),
-    ) -> Result<GenerationResult, TextError> {
-        check_request(messages, options)?;
-        cancel.reset();
-        // The clock starts before the prompt goes in, so the first token's time includes the prefill.
-        let start = Instant::now();
+        start: Instant,
+        result: &mut GenerationResult,
+    ) -> Result<Instant, TextError> {
         let api = self.api;
-        let prompt = self.prompt(messages)?;
-        // SAFETY: prompt is a live sequences handle holding one sequence.
-        let prompt_tokens = unsafe { (api.sequences_get_sequence_count)(prompt.handle, 0) };
-        let generator = self.generator(&prompt, prompt_tokens, options)?;
         let mut raw = std::ptr::null_mut();
         // SAFETY: tokenizer is live.
         api.check(
@@ -738,25 +871,16 @@ impl TextBackend for GenaiGenerator {
         )
         .map_err(TextError::TokenizerFailed)?;
         let stream = Owned::new(raw, api.destroy_tokenizer_stream);
-        let mut result = GenerationResult {
-            text: String::new(),
-            tokens: Vec::new(),
-            finish_reason: FinishReason::Length,
-            prompt_tokens,
-            completion_tokens: 0,
-            time_to_first_token_ms: 0.0,
-            decode_tokens_per_second: 0.0,
-            thinking_chars: 0,
-        };
         let (mut first, mut answer) = (start, Answer::new(&options.stop));
+        // A greedy generator has room past this turn's budget, so the budget ends the turn, not only the generator.
         // SAFETY: generator is live for the whole loop.
-        while !unsafe { (api.is_done)(generator.handle) } {
+        while result.tokens.len() < budget(options) && !unsafe { (api.is_done)(generator) } {
             if cancel.is_cancelled() {
                 result.finish_reason = FinishReason::Cancelled;
                 break;
             }
             // A piece that ends inside a UTF-8 character stays in the stream until it is complete.
-            let piece = self.next_token(&generator, &stream, &mut result)?;
+            let piece = self.next_token(generator, &stream, result)?;
             if result.tokens.len() == 1 {
                 first = Instant::now();
             }
@@ -764,7 +888,7 @@ impl TextBackend for GenaiGenerator {
                 break;
             }
         }
-        if answer.finish(on_text, &mut result) {
+        if answer.finish(on_text, result) {
             result.finish_reason = FinishReason::Stop;
         } else if result.finish_reason != FinishReason::Cancelled {
             let stopped = result
@@ -777,6 +901,54 @@ impl TextBackend for GenaiGenerator {
                 FinishReason::Length
             };
         }
+        Ok(first)
+    }
+}
+
+impl TextBackend for GenaiGenerator {
+    fn generate(
+        &mut self,
+        messages: &[ChatMessage],
+        options: &GenerationOptions,
+        cancel: &CancelToken,
+        on_text: &mut dyn FnMut(&str),
+    ) -> Result<GenerationResult, TextError> {
+        check_request(messages, options)?;
+        cancel.reset();
+        // The clock starts before the prompt goes in, so the first token's time includes the prefill.
+        let start = Instant::now();
+        let prompt = self.prompt(messages)?;
+        // SAFETY: prompt is a live sequences handle holding one sequence.
+        let prompt_tokens = unsafe { (self.api.sequences_get_sequence_count)(prompt.handle, 0) };
+        let continuation = self.api.continuation.filter(|_| continues(options));
+        let mut fresh = None;
+        let generator = if let Some(c) = continuation {
+            self.greedy_generator(c, &prompt, prompt_tokens, options)?
+        } else {
+            let max_length = prompt_tokens + budget(options);
+            fresh
+                .insert(self.generator(&prompt, max_length, options)?)
+                .handle
+        };
+        let mut result = GenerationResult {
+            text: String::new(),
+            tokens: Vec::new(),
+            finish_reason: FinishReason::Length,
+            prompt_tokens,
+            completion_tokens: 0,
+            time_to_first_token_ms: 0.0,
+            decode_tokens_per_second: 0.0,
+            thinking_chars: 0,
+        };
+        let decoded = self.decode(generator, options, cancel, on_text, start, &mut result);
+        if let Some(c) = continuation {
+            if decoded.is_ok() {
+                self.remember(c);
+            } else {
+                self.live = None;
+            }
+        }
+        let first = decoded?;
         result.completion_tokens = result.tokens.len();
         if !result.tokens.is_empty() {
             result.time_to_first_token_ms = first.duration_since(start).as_secs_f64() * 1000.0;
@@ -880,7 +1052,7 @@ mod tests {
 
     fn recorded(options: &GenerationOptions) -> Vec<String> {
         let mut recorder = Recorder::default();
-        configure(&mut recorder, 3, options).unwrap();
+        configure(&mut recorder, 3 + budget(options), options).unwrap();
         recorder.0
     }
 

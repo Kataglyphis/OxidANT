@@ -76,3 +76,9 @@ metrics = [{ key = "p50_ms", unit = "ms", better = "lower" }, { key = "p95_ms", 
 name = "text_rust"
 run = "bash scripts/linux/perf-host.sh text"
 metrics = [{ key = "ttft_ms", unit = "ms", better = "lower" }, { key = "decode_tok_s", unit = "tok/s", better = "higher" }]
+
+# A five-turn chat continues its generator: turn 5's first token stays near turn 1's.
+[[perf.command]]
+name = "text_turns_rust"
+run = "bash scripts/linux/perf-host.sh text-turns"
+metrics = [{ key = "turn1_ttft_ms", unit = "ms", better = "lower" }, { key = "turn5_ttft_ms", unit = "ms", better = "lower" }]

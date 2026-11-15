@@ -53,6 +53,16 @@ token or the server's `stop`, `Length` when the budget ran out, and `Cancelled` 
 clears the token as it starts. A stream that ends without a finish reason is an error, not an
 answer. A server without usage reports leaves the completion count at the number of pieces.
 
+**A greedy GenAI turn continues the last generator.** Without sampling and without `json_schema`,
+`GenaiGenerator` keeps its GenAI generator and every token it holds. The next prompt rewinds it to
+the start the two share (`OgaGenerator_RewindTo`) and appends only the rest
+(`OgaGenerator_AppendTokens`), so a chat turn no longer runs the whole conversation through the
+model; its tokens are those of a fresh generator, which `a_continued_generator_gives_the_tokens_of_a_fresh_one`
+asserts on the tiny model. The kept generator has room for the prompt, the budget and 1024 more
+tokens, capped at `genai_config.json`'s `context_length`, and costs that much KV cache (about 45 KB
+a token for SmolLM2-135M). A turn that does not fit, sampling, a schema, a prompt that shares nothing
+or a GenAI without those symbols starts a fresh one.
+
 **A thinking model's reasoning is not the answer.** It arrives in one of three ways, and
 `answer::Answer` handles all of them for both backends:
 
@@ -135,7 +145,8 @@ kataglyphis_cli embed --model-dir <genai-model-dir> "first" "second"
 `chat` streams the answer to stdout, without a thinking model's reasoning, and prints the token
 count, the time to the first token, the decode rate and the finish reason to stderr; that line
 does not name the thinking count yet. `--seed N`, `--json-schema '<schema JSON>'` and a
-repeatable `--stop TEXT` set the three options above. `--provider cuda` or `dml` selects GenAI's execution
+repeatable `--stop TEXT` set the three options above, and a repeatable `--then TEXT` asks each text
+as one more turn of the same conversation, which `perf-host.sh text-turns` times. `--provider cuda` or `dml` selects GenAI's execution
 provider, on `embed --model-dir` too. `embed` prints one L2-normalised vector per text, one JSON array per line.
 
 ## The Flutter bridge
