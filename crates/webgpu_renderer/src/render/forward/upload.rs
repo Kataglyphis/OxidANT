@@ -155,13 +155,13 @@ impl PrimitiveBuffers {
             vertex: init_buffer(
                 device,
                 &format!("vertices_{i}"),
-                bytemuck::cast_slice(&prim.vertices),
+                &non_empty_contents(&prim.vertices),
                 vertex_usage,
             ),
             index: init_buffer(
                 device,
                 &format!("indices_{i}"),
-                bytemuck::cast_slice(&prim.indices),
+                &non_empty_contents(&prim.indices),
                 wgpu::BufferUsages::INDEX,
             ),
             uniform: buffer_desc::uniform(
@@ -530,6 +530,15 @@ fn create_joint_buffer(
         bytemuck::cast_slice(&identity),
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     )
+}
+
+/// `items` as bytes, or one zeroed item: wgpu panics slicing an empty buffer, and draws use the real count.
+fn non_empty_contents<T: bytemuck::Pod>(items: &[T]) -> std::borrow::Cow<'_, [u8]> {
+    if items.is_empty() {
+        std::borrow::Cow::Owned(vec![0; std::mem::size_of::<T>()])
+    } else {
+        std::borrow::Cow::Borrowed(bytemuck::cast_slice(items))
+    }
 }
 
 fn init_buffer(

@@ -489,7 +489,9 @@ fn load_primitive(
         return Ok(None);
     };
     let had_tangents = reader.read_tangents().is_some();
-    let indices = read_triangles(primitive, buffers, vertices.len());
+    let Some(indices) = read_triangles(primitive, buffers, vertices.len()) else {
+        return Ok(None);
+    };
 
     // Missing normals: derive flat face normals so lighting stays sane.
     if reader.read_normals().is_none() {
@@ -588,11 +590,12 @@ fn read_vertices(
 }
 
 /// The primitive as a triangle list whose every index addresses one of its `vertex_count` vertices.
+/// `None` when no triangle survives: an empty index buffer panics wgpu's `slice(..)` on the first frame.
 fn read_triangles(
     primitive: &gltf::Primitive,
     buffers: &[gltf::buffer::Data],
     vertex_count: usize,
-) -> Vec<u32> {
+) -> Option<Vec<u32>> {
     let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
     let raw_indices: Vec<u32> = match reader.read_indices() {
         Some(iter) => iter.into_u32().collect(),
@@ -610,7 +613,14 @@ fn read_triangles(
             vertex_count
         );
     }
-    indices
+    if indices.is_empty() {
+        log::warn!(
+            "glTF primitive {}: skipped, no triangle survives triangulation and the index checks",
+            primitive.index()
+        );
+        return None;
+    }
+    Some(indices)
 }
 
 fn read_morph_targets(

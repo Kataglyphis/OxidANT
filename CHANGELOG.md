@@ -23,6 +23,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   whole 4x4 blocks (6x6, 1000x750), which WebGPU cannot create, is refused by `load_ktx2`, and a payload built in
   code that wgpu would reject falls back to white with a warning. `tests/ktx2.rs` uploads through a material now;
   its old upload test drew a scene without primitives, so the texture was never created.
+- **A glTF primitive whose triangles were all dropped panicked the first frame** (`buffer slice can not be
+  empty`, also on the web demo's drag-and-drop): every index out of range, or a strip of two indices, left an
+  empty index buffer. The loader skips such a primitive with a warning, and `upload_scene` never creates an empty
+  vertex or index buffer, so a scene built in code with an empty primitive draws nothing for it instead.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
