@@ -568,6 +568,11 @@ fn load_primitive(
     let options = GeometryOptions {
         has_normals: reader.read_normals().is_some(),
         has_tangents: reader.read_tangents().is_some(),
+        // glTF generates tangents from the UV set the normal texture samples.
+        tangent_uv_set: primitive
+            .material()
+            .normal_texture()
+            .map_or(0, |info| info.tex_coord()),
         mikktspace: mikktspace_tangents_enabled(),
     };
     let geometry = finish_geometry(
@@ -600,10 +605,12 @@ struct Geometry {
     morph_targets: Vec<MorphTarget>,
 }
 
-/// Which attributes the file supplied, and whether tangents come from MikkTSpace.
+/// Which attributes the file supplied, and how missing tangents are generated.
 struct GeometryOptions {
     has_normals: bool,
     has_tangents: bool,
+    /// The normal texture's `texCoord`; 1 means TEXCOORD_1, anything else UV0, as the shader samples it.
+    tangent_uv_set: u32,
     mikktspace: bool,
 }
 
@@ -616,11 +623,12 @@ fn finish_geometry(mut geometry: Geometry, options: &GeometryOptions) -> Geometr
     }
     repair_normals(&mut geometry.vertices, &geometry.indices);
     if !options.has_tangents {
-        compute_tangents(&mut geometry.vertices, &geometry.indices);
+        let uv_set = options.tangent_uv_set;
+        compute_tangents(&mut geometry.vertices, &geometry.indices, uv_set);
         // Opt-in MikkTSpace replaces only tangents we generated; a file's own tangents are kept.
         if options.mikktspace {
             if let Some((vertices, indices)) =
-                generate_tangents_mikktspace(&geometry.vertices, &geometry.indices)
+                generate_tangents_mikktspace(&geometry.vertices, &geometry.indices, uv_set)
             {
                 geometry.vertices = vertices;
                 geometry.indices = indices;
@@ -953,9 +961,18 @@ fn any_perpendicular(n: Vec3) -> Vec3 {
         .unwrap_or(Vec3::X)
 }
 
-/// Per-vertex tangent frame from triangle UV gradients (Lengyel), with glTF handedness in `.w`.
+/// The UV set `uv_set` names: TEXCOORD_1 for 1, else TEXCOORD_0.
+fn tangent_uv(vertex: &Vertex, uv_set: u32) -> [f32; 2] {
+    if uv_set == 1 {
+        vertex.uv1
+    } else {
+        vertex.uv
+    }
+}
+
+/// Per-vertex tangent frame from the UV gradients of `uv_set` (Lengyel), with glTF handedness in `.w`.
 /// Never splits vertices at UV seams; [`generate_tangents_mikktspace`] does.
-pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
+pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32], uv_set: u32) {
     let mut tan_accum = vec![Vec3::ZERO; vertices.len()];
     let mut bitan_accum = vec![Vec3::ZERO; vertices.len()];
 
@@ -964,9 +981,9 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
         let p0 = Vec3::from_array(vertices[i0].position);
         let p1 = Vec3::from_array(vertices[i1].position);
         let p2 = Vec3::from_array(vertices[i2].position);
-        let u0 = Vec2::from_array(vertices[i0].uv);
-        let u1 = Vec2::from_array(vertices[i1].uv);
-        let u2 = Vec2::from_array(vertices[i2].uv);
+        let u0 = Vec2::from_array(tangent_uv(&vertices[i0], uv_set));
+        let u1 = Vec2::from_array(tangent_uv(&vertices[i1], uv_set));
+        let u2 = Vec2::from_array(tangent_uv(&vertices[i2], uv_set));
 
         let e1 = p1 - p0;
         let e2 = p2 - p0;
@@ -1007,61 +1024,65 @@ fn mikktspace_tangents_enabled() -> bool {
     std::env::var_os("KATAGLYPHIS_MIKKTSPACE_TANGENTS").is_some()
 }
 
-/// MikkTSpace tangents, the basis DCC tools bake normal maps against (opt-in; [`compute_tangents`] is the default).
+/// The mesh as `bevy_mikktspace` reads it, collecting one tangent per triangle corner.
+struct MikkMesh<'a> {
+    vertices: &'a [Vertex],
+    indices: &'a [u32],
+    uv_set: u32,
+    /// Per-corner tangent, length `num_faces * 3`, filled by the algorithm.
+    tangents: Vec<[f32; 4]>,
+}
+
+impl MikkMesh<'_> {
+    fn corner(&self, face: usize, vert: usize) -> usize {
+        self.indices[face * 3 + vert] as usize
+    }
+}
+
+impl bevy_mikktspace::Geometry for MikkMesh<'_> {
+    fn num_faces(&self) -> usize {
+        self.indices.len() / 3
+    }
+    fn num_vertices_of_face(&self, _face: usize) -> usize {
+        3
+    }
+    fn position(&self, face: usize, vert: usize) -> [f32; 3] {
+        self.vertices[self.corner(face, vert)].position
+    }
+    fn normal(&self, face: usize, vert: usize) -> [f32; 3] {
+        self.vertices[self.corner(face, vert)].normal
+    }
+    fn tex_coord(&self, face: usize, vert: usize) -> [f32; 2] {
+        tangent_uv(&self.vertices[self.corner(face, vert)], self.uv_set)
+    }
+    fn set_tangent(
+        &mut self,
+        tangent_space: Option<bevy_mikktspace::TangentSpace>,
+        face: usize,
+        vert: usize,
+    ) {
+        // A `None` space (degenerate corner) keeps the initialized default.
+        if let Some(ts) = tangent_space {
+            self.tangents[face * 3 + vert] = ts.tangent_encoded();
+        }
+    }
+}
+
+/// MikkTSpace tangents from `uv_set`, the basis DCC tools bake normal maps against (opt-in; [`compute_tangents`] is the default).
 /// Splits vertices at seams, so it returns fresh buffers; `None` on failure keeps the caller's.
 pub(crate) fn generate_tangents_mikktspace(
     vertices: &[Vertex],
     indices: &[u32],
+    uv_set: u32,
 ) -> Option<(Vec<Vertex>, Vec<u32>)> {
     if indices.len() < 3 || !indices.len().is_multiple_of(3) {
         return None;
     }
-
-    struct MikkMesh<'a> {
-        vertices: &'a [Vertex],
-        indices: &'a [u32],
-        /// Per-corner tangent, length `num_faces * 3`, filled by the algorithm.
-        tangents: Vec<[f32; 4]>,
-    }
-    impl MikkMesh<'_> {
-        fn corner(&self, face: usize, vert: usize) -> usize {
-            self.indices[face * 3 + vert] as usize
-        }
-    }
-    impl bevy_mikktspace::Geometry for MikkMesh<'_> {
-        fn num_faces(&self) -> usize {
-            self.indices.len() / 3
-        }
-        fn num_vertices_of_face(&self, _face: usize) -> usize {
-            3
-        }
-        fn position(&self, face: usize, vert: usize) -> [f32; 3] {
-            self.vertices[self.corner(face, vert)].position
-        }
-        fn normal(&self, face: usize, vert: usize) -> [f32; 3] {
-            self.vertices[self.corner(face, vert)].normal
-        }
-        fn tex_coord(&self, face: usize, vert: usize) -> [f32; 2] {
-            self.vertices[self.corner(face, vert)].uv
-        }
-        fn set_tangent(
-            &mut self,
-            tangent_space: Option<bevy_mikktspace::TangentSpace>,
-            face: usize,
-            vert: usize,
-        ) {
-            // A `None` space (degenerate corner) keeps the initialized default.
-            if let Some(ts) = tangent_space {
-                self.tangents[face * 3 + vert] = ts.tangent_encoded();
-            }
-        }
-    }
-
-    let num_corners = indices.len();
     let mut mesh = MikkMesh {
         vertices,
         indices,
-        tangents: vec![[0.0, 0.0, 0.0, 1.0]; num_corners],
+        uv_set,
+        tangents: vec![[0.0, 0.0, 0.0, 1.0]; indices.len()],
     };
     if bevy_mikktspace::generate_tangents(&mut mesh).is_err() {
         return None;
@@ -1074,15 +1095,7 @@ pub(crate) fn generate_tangents_mikktspace(
     let mut out_indices: Vec<u32> = Vec::with_capacity(indices.len());
     for (corner, &orig) in indices.iter().enumerate() {
         let tangent = mesh.tangents[corner];
-        let key = (
-            orig,
-            [
-                tangent[0].to_bits(),
-                tangent[1].to_bits(),
-                tangent[2].to_bits(),
-                tangent[3].to_bits(),
-            ],
-        );
+        let key = (orig, tangent.map(f32::to_bits));
         let new_index = *remap.entry(key).or_insert_with(|| {
             let mut v = vertices[orig as usize];
             v.tangent = tangent;
@@ -1155,7 +1168,7 @@ mod tests {
             drop_out_of_range_triangles(vec![0, 1, 2, 3, 4, 5], vertices.len());
         assert_eq!(dropped, 1);
         compute_flat_normals(&mut vertices, &filtered);
-        compute_tangents(&mut vertices, &filtered);
+        compute_tangents(&mut vertices, &filtered, 0);
 
         // A trailing partial triangle is truncated but not counted as dropped.
         assert_eq!(drop_out_of_range_triangles(vec![], 3), (vec![], 0));
@@ -1224,7 +1237,7 @@ mod tests {
         .collect();
         let indices = [0u32, 1, 2, 0, 2, 3];
 
-        compute_tangents(&mut vertices, &indices);
+        compute_tangents(&mut vertices, &indices, 0);
 
         for vertex in &vertices {
             assert!(
@@ -1267,10 +1280,10 @@ mod tests {
     fn mirrored_uvs_flip_handedness() {
         // Mirroring V keeps the +X tangent but makes the chart left-handed, so w must flip to -1.
         let (mut normal, idx) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-        compute_tangents(&mut normal, &idx);
+        compute_tangents(&mut normal, &idx, 0);
 
         let (mut mirrored, idx) = quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
-        compute_tangents(&mut mirrored, &idx);
+        compute_tangents(&mut mirrored, &idx, 0);
 
         for v in &normal {
             assert_eq!(v.tangent[3], 1.0, "unmirrored chart is right-handed");
@@ -1288,8 +1301,8 @@ mod tests {
     fn mikktspace_quad_tangent_is_x() {
         // Aligned UVs have no seam, so the corners must weld back to the original 4 vertices.
         let (vertices, indices) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-        let (out_v, out_i) =
-            generate_tangents_mikktspace(&vertices, &indices).expect("mikktspace should succeed");
+        let (out_v, out_i) = generate_tangents_mikktspace(&vertices, &indices, 0)
+            .expect("mikktspace should succeed");
         assert_eq!(out_i.len(), indices.len(), "index count is preserved");
         assert_eq!(
             out_v.len(),
@@ -1316,8 +1329,8 @@ mod tests {
     fn mikktspace_mirrored_uvs_flip_handedness() {
         // V mirrored: handedness must flip to -1, as on the Lengyel path.
         let (vertices, indices) = quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
-        let (out_v, _) =
-            generate_tangents_mikktspace(&vertices, &indices).expect("mikktspace should succeed");
+        let (out_v, _) = generate_tangents_mikktspace(&vertices, &indices, 0)
+            .expect("mikktspace should succeed");
         for v in &out_v {
             assert_eq!(
                 v.tangent[3], -1.0,
@@ -1331,8 +1344,8 @@ mod tests {
     fn mikktspace_rejects_degenerate_input() {
         // None, so the caller keeps its buffers instead of getting empty geometry.
         let (vertices, _) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-        assert!(generate_tangents_mikktspace(&vertices, &[0, 1]).is_none());
-        assert!(generate_tangents_mikktspace(&vertices, &[]).is_none());
-        assert!(generate_tangents_mikktspace(&vertices, &[0, 1, 2, 3]).is_none());
+        assert!(generate_tangents_mikktspace(&vertices, &[0, 1], 0).is_none());
+        assert!(generate_tangents_mikktspace(&vertices, &[], 0).is_none());
+        assert!(generate_tangents_mikktspace(&vertices, &[0, 1, 2, 3], 0).is_none());
     }
 }

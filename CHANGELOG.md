@@ -51,6 +51,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   deltas, as glTF's flat normals need. A zero-area face no longer overwrites a corner's normal with zero, and a
   zero or non-finite normal or tangent, from a degenerate face or from the file, is repaired (face normal or +Y, a
   perpendicular tangent, `w` a sign), since the shader's `normalize` turned it into NaN shading.
+- **Generated tangents always followed TEXCOORD_0**, so a normal map on TEXCOORD_1 was lit along the wrong axes.
+  The Lengyel and MikkTSpace generators read the UV set the normal texture samples, as glTF specifies.
+  `generate_tangents_mikktspace`'s callbacks moved out of its body, which leaves its `rust-function-size.allow` row.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

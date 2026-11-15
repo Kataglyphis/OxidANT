@@ -22,15 +22,8 @@ struct Bin {
 }
 
 impl Bin {
-    /// Appends one accessor over `data` in its own buffer view; returns the accessor index.
-    fn accessor(
-        &mut self,
-        data: &[u8],
-        component: u32,
-        count: usize,
-        kind: &str,
-        extra: &str,
-    ) -> usize {
+    /// Appends `data` as its own buffer view (an embedded image); returns the view index.
+    fn view(&mut self, data: &[u8]) -> usize {
         while !self.bytes.len().is_multiple_of(4) {
             self.bytes.push(0);
         }
@@ -40,9 +33,21 @@ impl Bin {
             data.len()
         ));
         self.bytes.extend_from_slice(data);
+        self.views.len() - 1
+    }
+
+    /// Appends one accessor over `data` in its own buffer view; returns the accessor index.
+    fn accessor(
+        &mut self,
+        data: &[u8],
+        component: u32,
+        count: usize,
+        kind: &str,
+        extra: &str,
+    ) -> usize {
+        let view = self.view(data);
         self.accessors.push(format!(
-            r#"{{"bufferView":{},"componentType":{component},"count":{count},"type":"{kind}"{extra}}}"#,
-            self.views.len() - 1
+            r#"{{"bufferView":{view},"componentType":{component},"count":{count},"type":"{kind}"{extra}}}"#
         ));
         self.accessors.len() - 1
     }
@@ -66,6 +71,16 @@ impl Bin {
             values.len(),
             "VEC3",
             &bounds,
+        )
+    }
+
+    fn vec2(&mut self, values: &[[f32; 2]]) -> usize {
+        self.accessor(
+            &f32_bytes(values.as_flattened()),
+            5126,
+            values.len(),
+            "VEC2",
+            "",
         )
     }
 
@@ -327,5 +342,51 @@ fn degenerate_faces_and_zero_normals_leave_no_vertex_without_a_unit_frame() {
             );
             assert!(v.tangent[3] == 1.0 || v.tangent[3] == -1.0);
         }
+    }
+}
+
+/// A 1x1 flat-normal PNG, so a material can name a normal texture.
+fn flat_normal_png() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 128, 255, 255]))
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("a 1x1 PNG encodes");
+    bytes
+}
+
+/// glTF generates tangents from the normal texture's UV set, here TEXCOORD_1.
+#[test]
+fn generated_tangents_follow_the_normal_textures_uv_set() {
+    let quad = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ];
+    // UV1's u runs along +X; UV0 is it turned a quarter, so its u runs along +Y.
+    let uv1: Vec<[f32; 2]> = quad.iter().map(|p| [p[0], p[1]]).collect();
+    let uv0: Vec<[f32; 2]> = quad.iter().map(|p| [p[1], 1.0 - p[0]]).collect();
+    let mut bin = Bin::default();
+    let pos = bin.vec3(&quad);
+    let normal = bin.vec3(&[[0.0, 0.0, 1.0]; 4]);
+    let (t0, t1) = (bin.vec2(&uv0), bin.vec2(&uv1));
+    let idx = bin.indices(&[0, 1, 2, 0, 2, 3]);
+    let png = bin.view(&flat_normal_png());
+    let glb = bin.glb(&format!(
+        r#"{},"materials":[{{"normalTexture":{{"index":0,"texCoord":1}}}}],"textures":[{{"source":0}}],"images":[{{"bufferView":{png},"mimeType":"image/png"}}]"#,
+        one_mesh(&[format!(
+            r#"{{"attributes":{{"POSITION":{pos},"NORMAL":{normal},"TEXCOORD_0":{t0},"TEXCOORD_1":{t1}}},"indices":{idx},"material":0}}"#
+        )])
+    ));
+    let scene = load_gltf_slice(&glb).expect("quad must load");
+    for v in &scene.primitives[0].vertices {
+        assert!(
+            v.tangent[0] > 0.999,
+            "the tangent must follow UV1's u (+X), got {:?}",
+            v.tangent
+        );
     }
 }
