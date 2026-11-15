@@ -3,6 +3,7 @@
 
 use glam::{Mat4, Quat, Vec3};
 use kataglyphis_webgpu_renderer::render::clouds::{CloudSettings, NOISE_VOLUME_EXTENT};
+use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
@@ -630,4 +631,143 @@ fn clouds_keep_rendering_across_many_frames_and_resizes() {
             .count();
         assert!(moved > 0, "at {width}x{height} the clouds stopped drawing");
     }
+}
+
+/// Half-float bits of 0.25, which the edited noise and march shaders below write into every texel.
+const QUARTER: u16 = 0x3400;
+
+/// `source` with `old` replaced by `new`; fails when the generated WGSL no longer has `old`.
+fn edited(source: &str, old: &str, new: &str) -> String {
+    let edited = source.replace(old, new);
+    assert_ne!(
+        edited, source,
+        "the generated WGSL no longer contains `{old}`"
+    );
+    edited
+}
+
+/// The shipped cloud shaders with every noise texel and every march output set to 0.25.
+fn flat_cloud_shaders() -> (String, String) {
+    let shipped = ShaderSources::shipped();
+    let noise = edited(
+        shipped.cloud_noise,
+        "(noise_volume_texel_0(tid_0))",
+        "(vec4<f32>(0.25f))",
+    );
+    let march = edited(
+        shipped.cloud_march,
+        "pixelOutput_0( march_clouds_0(",
+        "pixelOutput_0( vec4<f32>(0.25f) + 0.0f * march_clouds_0(",
+    );
+    (noise, march)
+}
+
+fn noise_volume(gpu: &GpuContext, renderer: &ForwardRenderer) -> Vec<u16> {
+    renderer
+        .read_noise_volume(gpu)
+        .expect("noise readback must succeed")
+        .expect("clouds ran, so the volume exists")
+}
+
+/// F5 rebuilds the march and refills the noise inside the reload's error scope; a refused reload keeps both.
+#[test]
+fn a_shader_reload_rebuilds_the_cloud_pipelines_or_keeps_them() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let shipped = ShaderSources::shipped();
+    let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
+    let camera = facing_minus_z(20.0);
+    renderer.clouds = clouds_in_box(Vec3::new(0.0, 0.0, -10.0), Vec3::new(6.0, 4.0, 4.0), 1.0);
+    let before = render(&gpu, &mut renderer, &camera);
+    let noise = noise_volume(&gpu, &renderer);
+    let no_march = edited(shipped.cloud_march, "fn fs_main(", "fn fs_main_gone(");
+    let no_noise = edited(shipped.cloud_noise, "fn cs_noise(", "fn cs_noise_gone(");
+    for broken in [
+        ShaderSources {
+            cloud_march: &no_march,
+            ..shipped
+        },
+        ShaderSources {
+            cloud_noise: &no_noise,
+            ..shipped
+        },
+    ] {
+        assert!(
+            renderer.reload_shaders(&gpu, &broken).is_err(),
+            "a cloud shader without its entry point must be refused"
+        );
+        let kept = render(&gpu, &mut renderer, &camera);
+        assert!(kept == before, "the refused reload changed the clouds");
+    }
+    assert!(
+        noise_volume(&gpu, &renderer) == noise,
+        "the refused reload refilled the volume"
+    );
+
+    let (flat_noise, flat_march) = flat_cloud_shaders();
+    let flat = ShaderSources {
+        cloud_march: &flat_march,
+        cloud_noise: &flat_noise,
+        ..shipped
+    };
+    renderer
+        .reload_shaders(&gpu, &flat)
+        .expect("valid cloud shaders must reload");
+    render(&gpu, &mut renderer, &camera);
+    let refilled = noise_volume(&gpu, &renderer);
+    assert!(
+        refilled.iter().all(|&h| h == QUARTER),
+        "the reload did not refill the volume"
+    );
+    let marched = renderer
+        .read_cloud_target(&gpu)
+        .expect("cloud readback must succeed")
+        .expect("clouds ran");
+    assert!(
+        marched.iter().all(|&h| h == QUARTER),
+        "the reload did not replace the march"
+    );
+
+    renderer
+        .reload_shaders(&gpu, &shipped)
+        .expect("the shipped shaders must reload");
+    let again = render(&gpu, &mut renderer, &camera);
+    assert!(
+        again == before,
+        "the shipped shaders did not bring the clouds back"
+    );
+    assert!(
+        noise_volume(&gpu, &renderer) == noise,
+        "the volume did not refill with the shipped noise"
+    );
+}
+
+/// A reload before clouds ever ran is what their first frame builds on, not the WGSL the crate was built with.
+#[test]
+fn the_first_cloud_frame_after_a_reload_builds_on_the_reloaded_shaders() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let (flat_noise, _) = flat_cloud_shaders();
+    let mut renderer = ForwardRenderer::new(&gpu, 16, 16);
+    let reload = ShaderSources {
+        cloud_noise: &flat_noise,
+        ..ShaderSources::shipped()
+    };
+    renderer
+        .reload_shaders(&gpu, &reload)
+        .expect("valid cloud shaders must reload");
+    assert!(
+        renderer
+            .read_noise_volume(&gpu)
+            .expect("readback")
+            .is_none(),
+        "a reload with clouds off makes no volume"
+    );
+    renderer.clouds.enabled = true;
+    renderer
+        .render_to_pixels(&gpu, 16, 16, &facing_minus_z(20.0))
+        .expect("render");
+    assert!(noise_volume(&gpu, &renderer).iter().all(|&h| h == QUARTER));
 }

@@ -1,5 +1,6 @@
 //! Headless golden tests asserting structural pixel properties, which survive driver differences.
 
+use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
 fn cube_path() -> std::path::PathBuf {
@@ -1630,11 +1631,7 @@ fn reloading_shaders_rerecords_the_shadow_bundles() {
     assert!(renderer.shadow_caster_bundle_is_cached());
 
     renderer
-        .reload_shaders(
-            &gpu,
-            include_str!("../src/shaders/forward.wgsl"),
-            include_str!("../src/shaders/sky.wgsl"),
-        )
+        .reload_shaders(&gpu, &ShaderSources::shipped())
         .expect("the shipped shaders must reload");
     assert!(
         !renderer.shadow_caster_bundle_is_cached(),

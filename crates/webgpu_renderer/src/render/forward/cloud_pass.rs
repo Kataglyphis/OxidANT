@@ -29,12 +29,22 @@ struct CloudFrameUniforms {
     params: CloudParams,
 }
 
+/// The march's render pipeline and the noise's compute pipeline with their layouts, from one pair of WGSL modules.
+pub(super) struct CloudPipelines {
+    march: wgpu::RenderPipeline,
+    march_layout: wgpu::BindGroupLayout,
+    noise: wgpu::ComputePipeline,
+    noise_layout: wgpu::BindGroupLayout,
+}
+
 /// The noise volume, made the first frame clouds are on and kept, as the C++ engine keeps it.
 struct NoiseVolume {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
-    /// The one-shot dispatch, until a frame has recorded it.
-    generator: Option<(wgpu::ComputePipeline, wgpu::BindGroup)>,
+    /// The write-only storage binding the noise pipeline fills the volume through.
+    bind_group: wgpu::BindGroup,
+    /// Until a frame has recorded the fill; a shader reload sets it again.
+    pending: bool,
 }
 
 /// The march's output at the frame's size, and its bind group over the depth it was made for.
@@ -53,12 +63,13 @@ pub(super) struct CloudPass {
     target: Option<CloudTarget>,
     /// What the tonemap binds until clouds first run: one transparent texel.
     placeholder: wgpu::TextureView,
+    /// A shader reload's pipelines from before clouds first ran, which that first frame then builds on.
+    reloaded: Option<CloudPipelines>,
 }
 
-/// The march's pipeline and inputs, and the noise volume it samples.
+/// The pipelines, the march's inputs and the noise volume it samples.
 struct March {
-    pipeline: wgpu::RenderPipeline,
-    layout: wgpu::BindGroupLayout,
+    pipelines: CloudPipelines,
     uniform_buffer: wgpu::Buffer,
     sampler: wgpu::Sampler,
     noise: NoiseVolume,
@@ -80,6 +91,7 @@ impl CloudPass {
                 1,
             )
             .create_view(&wgpu::TextureViewDescriptor::default()),
+            reloaded: None,
         }
     }
 
@@ -89,57 +101,104 @@ impl CloudPass {
             .as_ref()
             .map_or(&self.placeholder, |target| &target.view)
     }
+
+    /// A reload's pipelines: the target rebinds and the volume refills from them on the next cloud frame.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn replace_pipelines(&mut self, device: &wgpu::Device, pipelines: CloudPipelines) {
+        let Some(march) = self.march.as_mut() else {
+            self.reloaded = Some(pipelines);
+            return;
+        };
+        march.noise.bind_group =
+            noise_bind_group(device, &pipelines.noise_layout, &march.noise.view);
+        march.noise.pending = true;
+        march.pipelines = pipelines;
+        if let Some(target) = self.target.as_mut() {
+            target.bind_group = march_bind_group(device, march, &target.depth);
+        }
+    }
+}
+
+impl CloudPipelines {
+    /// Both pipelines from `march_wgsl` and `noise_wgsl`; a shader reload builds them inside its error scope.
+    pub(super) fn new(device: &wgpu::Device, march_wgsl: &str, noise_wgsl: &str) -> Self {
+        let (march, march_layout) = march_pipeline(device, march_wgsl);
+        let (noise, noise_layout) = noise_pipeline(device, noise_wgsl);
+        Self {
+            march,
+            march_layout,
+            noise,
+            noise_layout,
+        }
+    }
+
+    /// From the WGSL this crate was built with.
+    fn shipped(device: &wgpu::Device) -> Self {
+        Self::new(
+            device,
+            include_str!("../../shaders/cloud_march.wgsl"),
+            include_str!("../../shaders/cloud_noise.wgsl"),
+        )
+    }
 }
 
 impl March {
-    fn new(device: &wgpu::Device) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cloud_march_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/cloud_march.wgsl").into()),
-        });
-        let fragment = wgpu::ShaderStages::FRAGMENT;
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("cloud_march_bind_group_layout"),
-            entries: &[
-                bind_layout::uniform(0, fragment),
-                bind_layout::texture(
-                    1,
-                    fragment,
-                    wgpu::TextureSampleType::Float { filterable: true },
-                    wgpu::TextureViewDimension::D3,
-                    false,
-                ),
-                bind_layout::sampler(2, fragment, wgpu::SamplerBindingType::Filtering),
-                // Unfilterable float: a depth texture binds so without a depth-texture patch of the WGSL.
-                bind_layout::texture_2d(3, fragment, false),
-            ],
-        });
-        let pipeline_layout =
-            pipeline_desc::single_layout(device, "cloud_march_pipeline_layout", &layout);
-        let pipeline = pipeline_desc::create_fullscreen_pipeline(
-            device,
-            FullscreenPipeline {
-                label: "cloud_march_pipeline",
-                layout: &pipeline_layout,
-                module: &shader,
-                vs_entry: "vs_main",
-                fs_entry: "fs_main",
-                format: CLOUD_FORMAT,
-                blend: None,
-            },
-        );
+    fn new(device: &wgpu::Device, pipelines: CloudPipelines) -> Self {
+        let noise = NoiseVolume::new(device, &pipelines.noise_layout);
         Self {
-            pipeline,
-            layout,
+            pipelines,
             uniform_buffer: buffer_desc::uniform(
                 device,
                 "cloud_frame_uniforms",
                 std::mem::size_of::<CloudFrameUniforms>() as wgpu::BufferAddress,
             ),
             sampler: noise_sampler(device),
-            noise: NoiseVolume::new(device),
+            noise,
         }
     }
+}
+
+/// `fs_main` over the uniforms, the noise volume and its sampler, and the scene depth.
+fn march_pipeline(
+    device: &wgpu::Device,
+    wgsl: &str,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("cloud_march_shader"),
+        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+    });
+    let fragment = wgpu::ShaderStages::FRAGMENT;
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("cloud_march_bind_group_layout"),
+        entries: &[
+            bind_layout::uniform(0, fragment),
+            bind_layout::texture(
+                1,
+                fragment,
+                wgpu::TextureSampleType::Float { filterable: true },
+                wgpu::TextureViewDimension::D3,
+                false,
+            ),
+            bind_layout::sampler(2, fragment, wgpu::SamplerBindingType::Filtering),
+            // Unfilterable float: a depth texture binds so without a depth-texture patch of the WGSL.
+            bind_layout::texture_2d(3, fragment, false),
+        ],
+    });
+    let pipeline_layout =
+        pipeline_desc::single_layout(device, "cloud_march_pipeline_layout", &layout);
+    let pipeline = pipeline_desc::create_fullscreen_pipeline(
+        device,
+        FullscreenPipeline {
+            label: "cloud_march_pipeline",
+            layout: &pipeline_layout,
+            module: &shader,
+            vs_entry: "vs_main",
+            fs_entry: "fs_main",
+            format: CLOUD_FORMAT,
+            blend: None,
+        },
+    );
+    (pipeline, layout)
 }
 
 /// Trilinear and wrapping, as the C++ engine samples its volume: the march wraps positions with `frac`.
@@ -156,7 +215,7 @@ fn noise_sampler(device: &wgpu::Device) -> wgpu::Sampler {
 }
 
 impl NoiseVolume {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
         let extent = NOISE_VOLUME_EXTENT;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             // TEXTURE_2D_SHAPE_OK: the 3D noise volume the march samples.
@@ -176,38 +235,39 @@ impl NoiseVolume {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let generator = noise_generator(device, &view);
+        let bind_group = noise_bind_group(device, layout, &view);
         Self {
             texture,
             view,
-            generator: Some(generator),
+            bind_group,
+            pending: true,
         }
     }
 
-    /// Records the dispatch that fills the volume, the first time only.
-    fn generate(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let Some((pipeline, bind_group)) = self.generator.take() else {
+    /// Records the dispatch that fills the volume, once after it is made and once after each reload.
+    fn generate(&mut self, encoder: &mut wgpu::CommandEncoder, pipeline: &wgpu::ComputePipeline) {
+        if !std::mem::take(&mut self.pending) {
             return;
-        };
+        }
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("cloud_noise_pass"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
         let [x, y, z] = NOISE_WORKGROUP_SIZE.map(|size| NOISE_VOLUME_EXTENT / size);
         pass.dispatch_workgroups(x, y, z);
     }
 }
 
 /// `cs_noise` over a write-only storage view of the volume.
-fn noise_generator(
+fn noise_pipeline(
     device: &wgpu::Device,
-    view: &wgpu::TextureView,
-) -> (wgpu::ComputePipeline, wgpu::BindGroup) {
+    wgsl: &str,
+) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("cloud_noise_shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/cloud_noise.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
     });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("cloud_noise_bind_group_layout"),
@@ -229,15 +289,22 @@ fn noise_generator(
         compilation_options: Default::default(),
         cache: None,
     });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    (pipeline, layout)
+}
+
+fn noise_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("cloud_noise_bind_group"),
-        layout: &layout,
+        layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
             resource: wgpu::BindingResource::TextureView(view),
         }],
-    });
-    (pipeline, bind_group)
+    })
 }
 
 impl CloudTarget {
@@ -277,7 +344,7 @@ fn march_bind_group(
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("cloud_march_bind_group"),
-        layout: &march.layout,
+        layout: &march.pipelines.march_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -306,7 +373,10 @@ impl ForwardRenderer {
             return;
         }
         let pass = &mut self.cloud_pass;
-        let march = pass.march.get_or_insert_with(|| March::new(&gpu.device));
+        let march = pass.march.get_or_insert_with(|| {
+            let shipped = || CloudPipelines::shipped(&gpu.device);
+            March::new(&gpu.device, pass.reloaded.take().unwrap_or_else(shipped))
+        });
         let depth = &self.targets.depth;
         let current = pass
             .target
@@ -336,7 +406,7 @@ impl ForwardRenderer {
         };
         gpu.queue
             .write_buffer(&march.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-        march.noise.generate(encoder);
+        march.noise.generate(encoder, &march.pipelines.noise);
         let scope = self.gpu_timing.scope(TimedPass::Clouds);
         let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("cloud_march_pass"),
@@ -354,7 +424,7 @@ impl ForwardRenderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        render.set_pipeline(&march.pipeline);
+        render.set_pipeline(&march.pipelines.march);
         render.set_bind_group(0, &target.bind_group, &[]);
         render.draw(0..3, 0..1);
     }

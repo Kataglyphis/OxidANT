@@ -12,6 +12,7 @@ use winit::window::{Window, WindowId};
 use kataglyphis_webgpu_renderer::app::discovery::{native_startup, skybox_dir};
 use kataglyphis_webgpu_renderer::app::library::EMBEDDED_SCENES;
 use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf_slice;
+use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
 use kataglyphis_webgpu_renderer::ui::ModelSource;
 use kataglyphis_webgpu_renderer::{
     AppSignal, GpuContext, HostCaps, Notice, OrbitCamera, StudioApp,
@@ -32,7 +33,7 @@ struct Viewer {
 
 fn shader_paths() -> Vec<PathBuf> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaders");
-    vec![dir.join("forward.wgsl"), dir.join("sky.wgsl")]
+    ShaderSources::FILES.map(|file| dir.join(file)).to_vec()
 }
 
 fn shader_mtimes() -> Vec<(PathBuf, std::time::SystemTime)> {
@@ -62,18 +63,22 @@ impl Viewer {
         let Some(app) = self.app.as_mut() else {
             return;
         };
-        let paths = shader_paths();
-        let (Ok(forward_src), Ok(sky_src)) = (
-            std::fs::read_to_string(&paths[0]),
-            std::fs::read_to_string(&paths[1]),
-        ) else {
+        let read: Result<Vec<String>, _> =
+            shader_paths().iter().map(std::fs::read_to_string).collect();
+        let files = read
+            .ok()
+            .and_then(|files| <[String; 4]>::try_from(files).ok());
+        let Some([forward, sky, cloud_march, cloud_noise]) = files else {
             log::error!("Failed to read shader sources for reload");
             return;
         };
-        match app
-            .renderer
-            .reload_shaders(&app.gpu, &forward_src, &sky_src)
-        {
+        let sources = ShaderSources {
+            forward: &forward,
+            sky: &sky,
+            cloud_march: &cloud_march,
+            cloud_noise: &cloud_noise,
+        };
+        match app.renderer.reload_shaders(&app.gpu, &sources) {
             Ok(()) => log::info!("Shaders reloaded"),
             Err(err) => log::error!("{err:#}"),
         }

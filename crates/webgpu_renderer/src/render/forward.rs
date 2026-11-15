@@ -36,6 +36,8 @@ use crate::scene::CpuScene;
 
 use animate::SceneAnimation;
 use cloud_pass::CloudPass;
+#[cfg(not(target_arch = "wasm32"))]
+use cloud_pass::CloudPipelines;
 use culling::Culling;
 use deferred::DeferredResources;
 pub use deferred::RasterPath;
@@ -65,6 +67,37 @@ const _: () = assert!(
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 /// The most cascades, the C++ `MAX_CASCADES`; [`ShadowSettings::cascade_count`] renders 1 to this many.
 pub const CASCADE_COUNT: usize = 3;
+
+/// The WGSL a shader reload rebuilds every pipeline from, one module per generated file in `src/shaders`.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug)]
+pub struct ShaderSources<'a> {
+    pub forward: &'a str,
+    pub sky: &'a str,
+    pub cloud_march: &'a str,
+    pub cloud_noise: &'a str,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ShaderSources<'static> {
+    /// The generated files, in field order, as a hot reload watches them.
+    pub const FILES: [&'static str; 4] = [
+        "forward.wgsl",
+        "sky.wgsl",
+        "cloud_march.wgsl",
+        "cloud_noise.wgsl",
+    ];
+
+    /// The WGSL this crate was built with.
+    pub fn shipped() -> Self {
+        Self {
+            forward: include_str!("../shaders/forward.wgsl"),
+            sky: include_str!("../shaders/sky.wgsl"),
+            cloud_march: include_str!("../shaders/cloud_march.wgsl"),
+            cloud_noise: include_str!("../shaders/cloud_noise.wgsl"),
+        }
+    }
+}
 
 pub struct ForwardRenderer {
     /// The forward pass's four pipelines and its group 0 layout.
@@ -461,23 +494,22 @@ impl ForwardRenderer {
         readback::read_rgba8(gpu, &texture, width, height)
     }
 
-    /// Rebuilds the scene/shadow/sky pipelines from new WGSL; invalid shaders keep the old ones.
+    /// Rebuilds the scene, shadow, sky, deferred and cloud pipelines from new WGSL; invalid shaders keep the old ones.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn reload_shaders(
         &mut self,
         gpu: &GpuContext,
-        forward_wgsl: &str,
-        sky_wgsl: &str,
+        sources: &ShaderSources<'_>,
     ) -> anyhow::Result<()> {
         let device = &gpu.device;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("forward_shader_reloaded"),
-            source: wgpu::ShaderSource::Wgsl(forward_wgsl.into()),
+            source: wgpu::ShaderSource::Wgsl(sources.forward.into()),
         });
         let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sky_shader_reloaded"),
-            source: wgpu::ShaderSource::Wgsl(sky_wgsl.into()),
+            source: wgpu::ShaderSource::Wgsl(sources.sky.into()),
         });
         let set = main_pass::create_forward_pipeline_set(
             device,
@@ -495,6 +527,8 @@ impl ForwardRenderer {
         // In the scope too, so a broken deferred entry point keeps the old pipelines as well.
         let deferred =
             (self.deferred.as_ref()).map(|_| self.build_deferred(device, &shader, &sky_shader));
+        // Even with clouds off: a cloud shader that cannot build is refused now, not on the first cloud frame.
+        let clouds = CloudPipelines::new(device, sources.cloud_march, sources.cloud_noise);
         if let Some(err) = pollster::block_on(error_scope.pop()) {
             anyhow::bail!("shader reload rejected: {err}");
         }
@@ -508,6 +542,7 @@ impl ForwardRenderer {
         self.sky.pipeline = sky;
         self.sky.shader = sky_shader;
         self.deferred = deferred;
+        self.cloud_pass.replace_pipelines(device, clouds);
         Ok(())
     }
 

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use glam::Vec4;
-use kataglyphis_webgpu_renderer::render::forward::RasterPath;
+use kataglyphis_webgpu_renderer::render::forward::{RasterPath, ShaderSources};
 use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuSampler, CpuTextureRef, Vertex};
 use kataglyphis_webgpu_renderer::{
     load_gltf, CpuMaterial, CpuPrimitive, CpuScene, CpuTexture, EquirectImage, ForwardRenderer,
@@ -762,30 +762,32 @@ fn a_shader_reload_rebuilds_the_deferred_pipelines_or_keeps_them() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let (forward_wgsl, sky_wgsl) = (
-        include_str!("../src/shaders/forward.wgsl"),
-        include_str!("../src/shaders/sky.wgsl"),
-    );
+    let shipped = ShaderSources::shipped();
     let mut renderer = ForwardRenderer::new(&gpu, W, H);
     renderer.upload_scene(&gpu, &scene("cube_on_plane.gltf"));
     low_sun(&gpu, &mut renderer);
     let camera = top_down(6.0, 55.0);
     let before = frame(&gpu, &mut renderer, RasterPath::Deferred, &camera);
     renderer
-        .reload_shaders(&gpu, forward_wgsl, sky_wgsl)
+        .reload_shaders(&gpu, &shipped)
         .expect("the shipped shaders must reload");
     let reloaded = frame(&gpu, &mut renderer, RasterPath::Deferred, &camera);
     assert!(
         max_frame_diff(&before, &reloaded) <= 1,
         "the reload changed the frame"
     );
-    let renamed = forward_wgsl.replace("fn fs_deferred_lighting(", "fn fs_deferred_lighting_gone(");
+    let renamed =
+        (shipped.forward).replace("fn fs_deferred_lighting(", "fn fs_deferred_lighting_gone(");
     assert_ne!(
-        renamed, forward_wgsl,
+        renamed, shipped.forward,
         "the lighting entry point is no longer named so"
     );
+    let broken = ShaderSources {
+        forward: &renamed,
+        ..shipped
+    };
     assert!(
-        renderer.reload_shaders(&gpu, &renamed, sky_wgsl).is_err(),
+        renderer.reload_shaders(&gpu, &broken).is_err(),
         "a module without the deferred lighting entry point must be refused"
     );
     let kept = frame(&gpu, &mut renderer, RasterPath::Deferred, &camera);

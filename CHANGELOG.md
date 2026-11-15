@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the raster settings, deferred path and clouds together)
+- **F5 rebuilds the cloud pipelines.** `ForwardRenderer::reload_shaders` takes `ShaderSources` (forward, sky, cloud
+  march and cloud noise WGSL; `ShaderSources::shipped()`, `ShaderSources::FILES`) and builds the march and noise
+  pipelines inside the same error scope as the others, even with clouds off, so a cloud shader that cannot build is
+  refused and every old pipeline stays. Accepted, the march rebinds its target and the noise volume refills from the
+  new shader on the next cloud frame; before clouds first run, that frame builds on the reloaded pipelines. The
+  viewer watches and reloads all four files. Tests: a refused reload of either cloud shader leaves the frame and the
+  volume byte-identical, an edited noise and march land in every texel, the shipped shaders bring the frame back
+  exactly, and a reload with clouds off is what their first frame uses.
+
 ### Added (2026-11-15, the volumetric clouds)
 - The C++ engine's volumetric clouds in the WebGPU renderer, with the C++ bugs fixed rather than copied:
   `ForwardRenderer::clouds` (`render::clouds::CloudSettings`, the C++ ten controls, defaults and clamps), off by
