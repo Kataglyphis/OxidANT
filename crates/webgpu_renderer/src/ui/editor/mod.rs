@@ -16,11 +16,12 @@ mod windows;
 use egui::{Context, Rect, Ui};
 
 pub use host::{
-    DeviceInfo, FrameHistory, ModelSource, RendererSettings, SceneStats, FRAME_HISTORY,
-    FRAME_RATE_WINDOW,
+    DeviceInfo, FrameHistory, ModelSource, RendererSettings, SceneStats, SceneStatus,
+    FRAME_HISTORY, FRAME_RATE_WINDOW,
 };
 pub use keys::{KeyBinding, Shortcut, KEY_BINDINGS};
-pub use layout::{DockPlan, DockPrefs, SplitterDrag};
+pub use layout::{DockPlan, DockPrefs, DropOrder, SplitterDrag};
+pub use library::LibraryState;
 
 use crate::app::HostCaps;
 use crate::scene::camera::OrbitCamera;
@@ -132,6 +133,10 @@ pub enum EditorAction {
     Quit,
     Screenshot,
     ReloadShaders,
+    /// Load this library row; the scene on screen stays until it is ready.
+    LoadModel(usize),
+    /// Back to the loaded scene's start view.
+    FrameScene,
 }
 
 /// One pass's result: where the scene shows through, and what to do.
@@ -150,6 +155,7 @@ pub struct EditorContext<'a> {
     pub frames: &'a FrameHistory,
     pub device: &'a DeviceInfo,
     pub model: Option<&'a ModelSource>,
+    pub scene: SceneStatus<'a>,
     pub caps: HostCaps,
     /// The output's size in physical pixels.
     pub surface_px: [u32; 2],
@@ -173,7 +179,9 @@ pub struct Editor {
     selection: SceneObject,
     windows: Windows,
     profiler_tab: usize,
-    library_filter: String,
+    library: LibraryState,
+    /// The layout Reset layout returns to: the C++ one natively, [`DockPrefs::web`] in a browser.
+    default_prefs: DockPrefs,
     /// What this pass asks of the host, handed out with its output.
     actions: Vec<EditorAction>,
 }
@@ -187,7 +195,8 @@ impl Default for Editor {
             selection: SceneObject::Model,
             windows: Windows::default(),
             profiler_tab: 0,
-            library_filter: String::new(),
+            library: LibraryState::default(),
+            default_prefs: DockPrefs::default(),
             actions: Vec::new(),
         }
     }
@@ -199,7 +208,16 @@ impl Editor {
     }
 
     pub fn set_visible(&mut self, visible: bool) {
+        if visible && !self.visible {
+            self.library.scroll_to_loaded();
+        }
         self.visible = visible;
+    }
+
+    /// Makes `prefs` the layout and what Reset layout returns to.
+    pub fn set_layout(&mut self, prefs: DockPrefs) {
+        self.default_prefs = prefs.clone();
+        self.prefs = prefs;
     }
 
     pub fn selection(&self) -> SceneObject {
@@ -231,7 +249,7 @@ impl Editor {
 
     /// The default dock sizes, every dock shown, the UI at 100 %.
     pub fn reset_layout(&mut self, ctx: &Context) {
-        self.prefs = DockPrefs::default();
+        self.prefs = self.default_prefs.clone();
         ctx.set_zoom_factor(1.0);
     }
 
@@ -242,7 +260,11 @@ impl Editor {
         cx: &mut EditorContext<'_>,
         esc_armed: bool,
     ) -> EditorOutput {
+        let was_visible = self.visible;
         self.actions = keys::shortcuts(ui.ctx(), esc_armed, cx.caps, &mut self.visible);
+        if self.visible && !was_visible {
+            self.library.scroll_to_loaded();
+        }
         let frame = ui.ctx().viewport_rect();
         if !self.visible || ui.available_rect_before_wrap().area() <= 0.0 {
             self.hidden(ui.ctx());
@@ -254,7 +276,7 @@ impl Editor {
         menu_bar::show(ui, self, cx);
         status_bar::show(ui, cx);
         let scene = self.docks(ui, cx);
-        chip::paint(ui, scene);
+        chip::paint(ui, scene, cx.scene.loading);
         windows::show(ui.ctx(), self, cx);
         EditorOutput {
             viewport: layout::viewport_of(scene, frame),

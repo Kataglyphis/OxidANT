@@ -1,9 +1,12 @@
-//! The Studio editor over a glTF, rendered headless into PNGs: `cargo run --example editor_snapshot -- [out_dir] [WxH@scale[,tab][,about][,hidden][,web] ...]`.
+//! The Studio editor rendered headless into PNGs: `editor_snapshot -- [out_dir] [--model=PATH] [--web-model=PATH] [WxH@scale[,tab][,about][,hidden][,web] ...]`.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Context as _;
-use kataglyphis_webgpu_renderer::ui::{ModelSource, SceneObject};
+use kataglyphis_webgpu_renderer::app::discovery::native_startup;
+use kataglyphis_webgpu_renderer::app::library::{ModelLibrary, SceneSource, WEB_COLOSSEUM};
+use kataglyphis_webgpu_renderer::ui::{DockPrefs, ModelSource, SceneObject};
 use kataglyphis_webgpu_renderer::{
     load_gltf, GpuContext, HostCaps, OffscreenFrame, OrbitCamera, StudioApp,
 };
@@ -18,6 +21,8 @@ const DEFAULT_SHOTS: &[&str] = &[
 const MODEL: &str = "tests/assets/cube_on_plane.gltf";
 /// Frames before the shot: egui lays a new window out in an unseen first pass, and the FPS needs two ticks.
 const WARM_UP_FRAMES: u32 = 4;
+/// Lavapipe parses and uploads the 5.9 M-triangle Colosseum in minutes, not seconds.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(1800);
 
 /// One PNG: the frame's size in pixels, its scale, the inspector tab, About open, the editor hidden, the browser's host.
 struct Shot {
@@ -102,11 +107,28 @@ fn render(app: &mut StudioApp, shot: &Shot, path: &Path, now_s: &mut f64) -> any
     Ok(())
 }
 
+/// The scenes the two hosts open before their first shot: the viewer's model and the browser's Colosseum file.
+#[derive(Default)]
+struct Models {
+    native: Option<PathBuf>,
+    web: Option<PathBuf>,
+}
+
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     let mut args = std::env::args().skip(1);
     let out_dir = PathBuf::from(args.next().unwrap_or_else(|| "snapshots".into()));
-    let specs: Vec<String> = args.collect();
+    let mut models = Models::default();
+    let mut specs: Vec<String> = Vec::new();
+    for arg in args {
+        if let Some(path) = arg.strip_prefix("--model=") {
+            models.native = Some(PathBuf::from(path));
+        } else if let Some(path) = arg.strip_prefix("--web-model=") {
+            models.web = Some(PathBuf::from(path));
+        } else {
+            specs.push(arg);
+        }
+    }
     let specs: Vec<&str> = if specs.is_empty() {
         DEFAULT_SHOTS.to_vec()
     } else {
@@ -119,7 +141,7 @@ fn main() -> anyhow::Result<()> {
         let shot = parse(spec)?;
         let host = &mut hosts[usize::from(shot.web)];
         if host.is_none() {
-            *host = Some((studio(shot.web)?, 0.0));
+            *host = Some((studio(shot.web, &models)?, 0.0));
         }
         let (app, now_s) = host.as_mut().expect("built above");
         render(app, &shot, &out_dir.join(file_name(spec)), now_s)?;
@@ -128,7 +150,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// Native: an sRGB surface, every shell action live; web: a plain canvas format (egui blends in gamma space), none.
-fn studio(web: bool) -> anyhow::Result<StudioApp> {
+fn studio(web: bool, models: &Models) -> anyhow::Result<StudioApp> {
     let model = Path::new(env!("CARGO_MANIFEST_DIR")).join(MODEL);
     let gpu = GpuContext::new_headless()?;
     let scene = load_gltf(&model)?;
@@ -145,5 +167,43 @@ fn studio(web: bool) -> anyhow::Result<StudioApp> {
     let mut app = StudioApp::headless(gpu, &scene, OrbitCamera::default(), caps, format);
     // Named relative to the crate, as the C++ editor names a model relative to its resources.
     app.model = Some(ModelSource::from_path(Path::new(MODEL)));
+    if web {
+        app.editor_mut().set_layout(DockPrefs::web());
+        open_web(&mut app, models.web.as_deref());
+    } else if let Some(path) = &models.native {
+        let (library, _) = native_startup(Some(path));
+        app.set_library(library, None);
+        app.open_path(path);
+    }
+    if !app.finish_loading(LOAD_TIMEOUT) {
+        anyhow::bail!("the scene did not load within {LOAD_TIMEOUT:?}");
+    }
+    if let Some(notice) = app.notice() {
+        eprintln!("{notice:?}");
+    }
     Ok(app)
+}
+
+/// The browser's library, its Colosseum read from `path` as the page would fetch it, and opened when given.
+fn open_web(app: &mut StudioApp, path: Option<&Path>) {
+    let entries = ModelLibrary::web("")
+        .entries()
+        .iter()
+        .cloned()
+        .map(|mut entry| {
+            if let (SceneSource::Url(_), Some(path)) = (&entry.source, path) {
+                entry.source = SceneSource::File(path.to_path_buf());
+            }
+            entry
+        })
+        .collect();
+    app.set_library(ModelLibrary::new(entries), Some(0));
+    let colosseum = app
+        .library()
+        .entries()
+        .iter()
+        .position(|entry| entry.display == WEB_COLOSSEUM.0);
+    if let (Some(row), Some(_)) = (colosseum, path) {
+        app.open_entry(row);
+    }
 }

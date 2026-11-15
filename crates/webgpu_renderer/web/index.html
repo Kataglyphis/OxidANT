@@ -119,6 +119,7 @@
       <option>Animation</option>
       <option>Morph targets</option>
       <option>Unlit</option>
+      <option>Colosseum (fetches 58 MiB)</option>
     </select>
     <span id="status">checking WebGPU support&#8230;</span>
   </header>
@@ -157,9 +158,7 @@
       const module = await import('./pkg/kataglyphis_webgpu_renderer.js');
       const init = module.default;
       init().then(() => {
-        // The wasm is up: let the header dropdown feed embedded showcase
-        // scenes through the same swap path drag-and-drop uses. Option order
-        // matches the DEMO_SCENES array in wasm_demo.rs by index.
+        // Option order is the editor library's: the showcase scenes, then the Colosseum.
         const select = document.getElementById('scene');
         select.disabled = false;
         select.addEventListener('change', () => {

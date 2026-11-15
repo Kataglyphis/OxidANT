@@ -53,6 +53,12 @@ web-sys = { version = "0.3", features = [
     "FileList",
     "File",
     "Performance",
+    # The library's URL scenes: a streamed fetch with progress, and the page's ?scene-base=.
+    "Location",
+    "Response",
+    "Headers",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
 ] }
 
 [lints]

@@ -211,6 +211,44 @@ scripts/linux/fetch-models.sh
 cargo run -p kataglyphis_burn_demos -- onnx-detector --runs 1 --print-topk 3
 ```
 
+## The WebGPU viewer and its scenes
+
+The native viewer opens AssetANT's Colosseum by default (CC BY 4.0, Sulo456). Scenes are data,
+never tracked: `resources/scenes/scenes.lock` pins each archive by SHA-256, and the fetch unpacks
+it into `resources/scenes/<name>/` through the hub's `KATAGLYPHIS_ASSET_CACHE`, the cache
+BeschleunigerBallett's scene fetch uses too. No package and no CI step fetches them.
+
+```bash
+scripts/linux/fetch-models.sh --scenes   # Windows: scripts\windows\Get-Models.ps1 -Scenes
+cargo run -p kataglyphis_webgpu_renderer --example viewer [scene.gltf|scene.glb|model.obj]
+```
+
+The startup scene is the first that exists of:
+
+1. the command line's file;
+2. `KATAGLYPHIS_MODEL_OVERRIDE`, the C++ engine's variable: a path under BeschleunigerBallett's
+   `Resources/`, absolute, or from the working directory;
+3. `resources/scenes/Colosseum-gltf/`, then BeschleunigerBallett's `Resources/Models/Colosseum-gltf/`
+   when run from that checkout;
+4. the embedded cube, with the fetch command in the status bar.
+
+A missing or broken file never stops the viewer: the status bar says why, and the scene on screen
+stays. The library lists `.gltf`, `.glb` and `.obj` (converted in memory) under BeschleunigerBallett's
+`Resources/Models` (found from the working directory up, as the C++ finds it), under
+`resources/scenes`, and in the command line file's folder. A load parses on a worker thread and
+uploads when it is done; the status bar and the viewport chip show it. A scene starts at the camera
+its glTF names in `scenes[0].extras.active_camera`, else at its first camera, else fitted to its
+bounds, with near and far planes from its size. Its first directional light becomes the Sun: its
+direction and colour, at the Sun's own intensity, since glTF gives lux and the renderer has no
+exposure for it (the Colosseum's sun is 4098 lx). A scene's `asset.copyright` shows in the status bar
+and in About while it is loaded.
+
+The browser demo starts on its embedded cube. The library's `Colosseum` row fetches
+`Colosseum-web.glb` beside the page, or from `?scene-base=<folder URL>`: GitHub release downloads
+send no CORS header, so the site that serves the demo must serve the file. In the browser the
+profiler starts hidden, and a narrow canvas gives up the inspector before the scene dock, the
+reverse of the C++ order, so the docs site's iframe (about 800 px) keeps the library.
+
 ## Checking the wasm32 and Android builds
 
 The root package alone, as OmniAccelerANT's web build and Cargokit build it:

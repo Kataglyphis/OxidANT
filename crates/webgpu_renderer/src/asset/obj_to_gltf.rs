@@ -765,8 +765,8 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     (json, bin)
 }
 
-/// Converts `obj_path` to `gltf_path`, writing the binary buffer alongside it.
-pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
+/// Parses `obj_path` with the materials of every `mtllib` it names.
+pub fn read_obj(obj_path: &Path) -> Result<ObjMesh> {
     let source = std::fs::read_to_string(obj_path)
         .with_context(|| format!("reading {}", obj_path.display()))?;
 
@@ -787,9 +787,13 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
         }
     }
 
-    let mesh = parse_obj_with_materials(&source, materials)
-        .with_context(|| format!("parsing {}", obj_path.display()))?;
+    parse_obj_with_materials(&source, materials)
+        .with_context(|| format!("parsing {}", obj_path.display()))
+}
 
+/// Converts `obj_path` to `gltf_path`, writing the binary buffer alongside it.
+pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
+    let mesh = read_obj(obj_path)?;
     let bin_name = gltf_path
         .file_stem()
         .map(|stem| format!("{}.bin", stem.to_string_lossy()))
@@ -825,18 +829,23 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     Ok(mesh)
 }
 
-/// Copies the texture named by `uri` (as written in the .mtl) beside `gltf_path`.
-fn copy_texture_beside_gltf(uri: &str, obj_path: &Path, gltf_path: &Path) {
+/// Where the texture a .mtl names as `uri` lives: beside the .obj, else in its `textures/` folder.
+pub fn texture_source(uri: &str, obj_path: &Path) -> std::path::PathBuf {
     // See https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/model-loading.md
     let beside_mtl = obj_path.with_file_name(uri);
     let under_textures = obj_path.with_file_name(format!("textures/{uri}"));
-    let source_path = if beside_mtl.exists() {
-        beside_mtl.clone()
-    } else if under_textures.exists() {
-        under_textures.clone()
+    if !beside_mtl.exists() && under_textures.exists() {
+        under_textures
     } else {
-        beside_mtl.clone()
-    };
+        beside_mtl
+    }
+}
+
+/// Copies the texture named by `uri` (as written in the .mtl) beside `gltf_path`.
+fn copy_texture_beside_gltf(uri: &str, obj_path: &Path, gltf_path: &Path) {
+    let source_path = texture_source(uri, obj_path);
+    let beside_mtl = obj_path.with_file_name(uri);
+    let under_textures = obj_path.with_file_name(format!("textures/{uri}"));
     let destination = gltf_path.with_file_name(uri);
     if source_path == destination {
         return;

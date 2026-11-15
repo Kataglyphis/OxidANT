@@ -31,6 +31,9 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
                 .monospace()
                 .color(pal::TEXT_MUTED);
             ui.add(Label::new(path).wrap());
+            if let Some(credit) = cx.scene.credit {
+                muted_wrapped(ui, credit);
+            }
         }
         None => {
             muted_wrapped(ui, "Pick a model in the scene library.");

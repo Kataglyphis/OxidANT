@@ -3,6 +3,9 @@
 use egui::{pos2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
 
 use super::*;
+use crate::app::library::{LibraryEntry, ModelLibrary, SceneSource};
+use crate::app::loader::{LoadProgress, LoadStage};
+use crate::app::Notice;
 use crate::ui::widgets::test_support::{button, click, input, moved};
 
 const NATIVE: HostCaps = HostCaps {
@@ -21,6 +24,11 @@ struct Harness {
     frames: FrameHistory,
     device: DeviceInfo,
     model: ModelSource,
+    library: ModelLibrary,
+    loaded: Option<usize>,
+    progress: Option<LoadProgress>,
+    notice: Option<Notice>,
+    credit: Option<String>,
     caps: HostCaps,
     /// The window in points, and its pixels per point.
     size: (f32, f32),
@@ -53,6 +61,11 @@ impl Harness {
                 cpu: true,
             },
             model: ModelSource::from_path(std::path::Path::new("Models/Dinosaurs/dinosaurs.glb")),
+            library: library(),
+            loaded: Some(0),
+            progress: None,
+            notice: None,
+            credit: None,
             caps: NATIVE,
             size,
             ppp,
@@ -61,6 +74,12 @@ impl Harness {
 
     /// One pass; Esc is armed before it, as the host does.
     fn frame(&mut self, events: Vec<Event>) -> EditorOutput {
+        let (output, full) = self.pass(events);
+        full.drop_without_applying_deltas();
+        output
+    }
+
+    fn pass(&mut self, events: Vec<Event>) -> (EditorOutput, egui::FullOutput) {
         let armed = self.editor.esc_armed(&self.ctx);
         let raw = input(self.size, self.ppp, events);
         let surface_px = [
@@ -76,13 +95,19 @@ impl Harness {
                 frames: &self.frames,
                 device: &self.device,
                 model: Some(&self.model),
+                scene: SceneStatus {
+                    library: &self.library,
+                    loaded: self.loaded,
+                    loading: self.progress.as_ref(),
+                    notice: self.notice.as_ref(),
+                    credit: self.credit.as_deref(),
+                },
                 caps: self.caps,
                 surface_px,
             };
             output = self.editor.show(ui, &mut cx, armed);
         });
-        full.drop_without_applying_deltas();
-        output
+        (output, full)
     }
 
     fn scene_rect(&self, viewport: SceneViewport) -> Rect {
@@ -92,6 +117,23 @@ impl Harness {
             pos2(viewport.x1 * w, viewport.y1 * h),
         )
     }
+}
+
+/// A BeschleunigerBallett-like library: a loaded scene, a folder of two and a loose file.
+fn library() -> ModelLibrary {
+    let entries = [
+        "Dinosaurs/dinosaurs",
+        "GltfTest/cube",
+        "GltfTest/card",
+        "suzanne",
+    ]
+    .map(|display| LibraryEntry {
+        display: display.to_owned(),
+        location: format!("Resources/Models/{display}.obj"),
+        source: SceneSource::Url(display.to_owned()),
+        credit: None,
+    });
+    ModelLibrary::new(entries.to_vec())
 }
 
 fn tap(key: Key) -> Vec<Event> {
@@ -305,7 +347,95 @@ fn every_character_the_editor_writes_has_a_glyph() {
     }
     studio.caps = HostCaps::default();
     studio.device.cpu = false;
+    studio.credit = Some(COLOSSEUM_CREDIT.to_owned());
+    studio.progress = Some(LoadProgress {
+        name: "Colosseum".to_owned(),
+        stage: LoadStage::Fetching,
+        fraction: Some(0.42),
+    });
     studio.frame(Vec::new());
+    studio.progress = None;
+    studio.notice = Some(Notice::Hint(crate::app::discovery::FETCH_HINT.to_owned()));
+    studio.frame(Vec::new());
+    studio.notice = Some(Notice::Error(
+        "Could not load Colosseum: HTTP 404".to_owned(),
+    ));
+    studio.frame(Vec::new());
+}
+
+/// AssetANT's `asset.copyright` in both Colosseum glTFs.
+const COLOSSEUM_CREDIT: &str =
+    "Colosseum by Sulo456 (https://github.com/Sulo456), CC BY 4.0; converted to glTF by AssetANT";
+
+#[test]
+fn the_status_bar_keeps_the_credit_and_a_load_over_the_frame_text() {
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.credit = Some(COLOSSEUM_CREDIT.to_owned());
+    let progress = LoadProgress {
+        name: "Colosseum-gltf".to_owned(),
+        stage: LoadStage::Parsing,
+        fraction: None,
+    };
+    studio.progress = Some(progress.clone());
+    let texts = painted_texts(&mut studio);
+    let whole = |texts: &[(String, bool)], wanted: &str| {
+        texts.iter().any(|(text, elided)| text == wanted && !elided)
+    };
+    assert!(whole(&texts, COLOSSEUM_CREDIT), "{texts:?}");
+    assert!(
+        whole(&texts, &status_bar::frame_text_of([1600, 900])),
+        "{texts:?}"
+    );
+    let loads = texts.iter().filter(|(text, _)| *text == progress.text());
+    assert!(loads.count() >= 2, "status bar and chip: {texts:?}");
+    // The docs iframe: the frame text goes and the device keeps its API alone, so the credit stays whole.
+    let mut narrow = Harness::new((800.0, 600.0), 1.0);
+    narrow.credit = Some(COLOSSEUM_CREDIT.to_owned());
+    let texts = painted_texts(&mut narrow);
+    assert!(whole(&texts, COLOSSEUM_CREDIT), "{texts:?}");
+    assert!(whole(&texts, "Vulkan"), "{texts:?}");
+    let frame_text = texts
+        .iter()
+        .any(|(text, _)| text.contains("F1 hides the editor"));
+    assert!(!frame_text, "{texts:?}");
+}
+
+/// Every text shape the editor painted in its second pass, and whether it was cut short.
+fn painted_texts(studio: &mut Harness) -> Vec<(String, bool)> {
+    studio.frame(Vec::new());
+    let (_, full) = studio.pass(Vec::new());
+    let mut texts = Vec::new();
+    for clipped in &full.shapes {
+        collect_texts(&clipped.shape, &mut texts);
+    }
+    full.drop_without_applying_deltas();
+    texts
+}
+
+fn collect_texts(shape: &egui::Shape, texts: &mut Vec<(String, bool)>) {
+    match shape {
+        egui::Shape::Text(text) => texts.push((text.galley.text().to_owned(), text.galley.elided)),
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_texts(shape, texts)),
+        _ => {}
+    }
+}
+
+#[test]
+fn the_browser_layout_keeps_the_library_in_a_docs_iframe_and_resets_to_it() {
+    let mut studio = Harness::new((800.0, 600.0), 1.0);
+    studio.editor.set_layout(DockPrefs::web());
+    studio.frame(Vec::new());
+    let viewport = studio.frame(Vec::new()).viewport;
+    // No profiler; the scene dock at its 30 % cap; the inspector dropped.
+    let expected = Rect::from_min_max(pos2(240.0, 29.0), pos2(800.0, 600.0 - 23.0));
+    assert_near(studio.scene_rect(viewport), expected);
+    assert!(
+        studio.ctx.read_response(library::filter_id()).is_some(),
+        "the library shows"
+    );
+    studio.editor.prefs.show_profiler = true;
+    studio.editor.reset_layout(&studio.ctx);
+    assert_eq!(studio.editor.prefs, DockPrefs::web());
 }
 
 #[test]
@@ -320,6 +450,7 @@ fn the_status_bar_names_the_device_the_frame_and_the_build() {
         frames: &studio.frames,
         device: &studio.device,
         model: None,
+        scene: SceneStatus::empty(),
         caps: NATIVE,
         surface_px: [1600, 900],
     };

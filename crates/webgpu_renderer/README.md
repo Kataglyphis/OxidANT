@@ -57,14 +57,22 @@ take the C++ sizes, caps and drop order, and custom splitters inside the scene's
 edge resize them. The native viewer and the browser demo run one host,
 `app::StudioApp`; its camera centres on the rect the docks leave free
 (`SceneViewport`, the C++ `makeViewportRemap`) while every pass stays full-frame.
-The library and the profiler show their C++ layout over what the renderer has
-today; their full versions, the remaining inspector rows and the fly camera follow.
+The library lists the scenes on disk (BeschleunigerBallett's `Resources/Models`,
+`resources/scenes`, the command line file's folder; `.gltf`, `.glb` and `.obj`), or in
+the browser the showcase scenes and the Colosseum, grouped by folder as in the C++
+editor: a click picks, a double-click, Enter or Load loads off the frame, and the
+scene on screen stays until the new one is ready. A scene starts at the camera its
+glTF left active, else its first, else fitted to its bounds, and its
+`asset.copyright` shows in the status bar and About. In the browser the profiler
+starts hidden and a narrow canvas drops the inspector first, so the docs iframe
+keeps the library. The remaining inspector rows and the fly camera follow.
 
 ## Running
 
 ```bash
-# Native viewer (drop a .gltf/.glb on the window to load it)
-cargo run -p kataglyphis_webgpu_renderer --example viewer [model.gltf]
+# Native viewer: the fetched Colosseum, or a .gltf, .glb or .obj (drop one on the window to load it)
+scripts/linux/fetch-models.sh --scenes
+cargo run -p kataglyphis_webgpu_renderer --example viewer [model]
 
 # Headless + unit tests (GPU tests self-skip without an adapter)
 cargo test -p kataglyphis_webgpu_renderer
@@ -74,9 +82,10 @@ cargo test -p kataglyphis_webgpu_renderer
 cargo run -p kataglyphis_webgpu_renderer --example export_shaders -- out_dir
 
 # The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe)
-cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir [1600x900@1.5,sun,about,web ...]
+cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir \
+  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web ...]
 
-# Browser demo (drop a self-contained .glb onto the page to load it)
+# Browser demo (drop a self-contained .glb onto the page; the Colosseum row fetches Colosseum-web.glb beside it)
 cargo build -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown --release
 wasm-bindgen target/wasm32-unknown-unknown/release/kataglyphis_webgpu_renderer.wasm \
   --out-dir crates/webgpu_renderer/web/pkg --target web

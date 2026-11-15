@@ -109,6 +109,7 @@ impl StudioApp {
     ) -> (egui::FullOutput, Vec<AppSignal>) {
         // Recorded before the pass, so the editor is a pure function of what it is handed.
         self.frames.tick(now_s);
+        self.poll_scene();
         let ctx = self.overlay.context();
         let delay = self.frames.double_click_delay_s();
         // A click's down, up and down reach egui a frame apart, so at software-rendering rates 0.3 s is never a double-click.
@@ -123,6 +124,7 @@ impl StudioApp {
             frames: &self.frames,
             device: &self.device,
             model: self.model.as_ref(),
+            scene: self.scene.status(),
             caps: self.caps,
             surface_px,
         };
@@ -132,9 +134,24 @@ impl StudioApp {
             .run(raw, |ui| editor.show(ui, &mut cx, esc_armed));
         settings.apply(&mut self.renderer);
         self.camera.viewport = editor_output.viewport;
+        let signals = self.act(editor_output.actions);
         self.advance(now_s);
-        let signals = editor_output.actions.into_iter().map(signal).collect();
         (output, signals)
+    }
+
+    /// Does what the app does itself and hands the rest to the shell.
+    pub(super) fn act(&mut self, actions: Vec<EditorAction>) -> Vec<AppSignal> {
+        let mut signals = Vec::new();
+        for action in actions {
+            match action {
+                EditorAction::LoadModel(row) => self.open_entry(row),
+                EditorAction::FrameScene => self.frame_scene(),
+                EditorAction::Quit => signals.push(AppSignal::Quit),
+                EditorAction::Screenshot => signals.push(AppSignal::Screenshot),
+                EditorAction::ReloadShaders => signals.push(AppSignal::ReloadShaders),
+            }
+        }
+        signals
     }
 
     fn advance(&mut self, now_s: f64) {
@@ -171,15 +188,6 @@ impl StudioApp {
         self.overlay
             .paint(&self.gpu, &mut encoder, view, [width, height], output);
         self.gpu.queue.submit(Some(encoder.finish()));
-    }
-}
-
-/// What the shell does for an editor action.
-fn signal(action: EditorAction) -> AppSignal {
-    match action {
-        EditorAction::Quit => AppSignal::Quit,
-        EditorAction::Screenshot => AppSignal::Screenshot,
-        EditorAction::ReloadShaders => AppSignal::ReloadShaders,
     }
 }
 
