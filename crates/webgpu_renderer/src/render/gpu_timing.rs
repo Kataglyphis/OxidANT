@@ -56,6 +56,20 @@ impl TimedPass {
         }
     }
 
+    /// What the profiler shows; [`Self::name`] stays the identifier reports and scripts parse.
+    pub fn label(self) -> &'static str {
+        match self {
+            TimedPass::ShadowCascades => "Shadow cascades",
+            TimedPass::Forward => "Forward + sky",
+            TimedPass::OcclusionCull => "Occlusion cull",
+            TimedPass::Bloom => "Bloom",
+            TimedPass::Ssao => "SSAO",
+            TimedPass::Histogram => "Histogram",
+            TimedPass::ExposureReduce => "Exposure",
+            TimedPass::Tonemap => "Tonemap",
+        }
+    }
+
     fn index(self) -> usize {
         match self {
             TimedPass::ShadowCascades => 0,

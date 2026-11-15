@@ -18,6 +18,16 @@ const MAX_PROFILER_SHARE: f32 = 0.45;
 pub const MIN_SCENE_VIEW: Vec2 = Vec2::new(320.0, 180.0);
 pub const SPLITTER_THICKNESS: f32 = 6.0;
 
+/// Which side dock a narrow window gives up first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DropOrder {
+    /// The C++ order: the scene dock first, then the inspector.
+    #[default]
+    SceneFirst,
+    /// The inspector first, so a docs iframe keeps the library.
+    InspectorFirst,
+}
+
 /// What the user asked for: each dock's size and whether it is shown; the window decides what it gets.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DockPrefs {
@@ -27,6 +37,7 @@ pub struct DockPrefs {
     pub show_scene: bool,
     pub show_inspector: bool,
     pub show_profiler: bool,
+    pub drop_order: DropOrder,
 }
 
 impl Default for DockPrefs {
@@ -38,6 +49,18 @@ impl Default for DockPrefs {
             show_scene: true,
             show_inspector: true,
             show_profiler: true,
+            drop_order: DropOrder::SceneFirst,
+        }
+    }
+}
+
+impl DockPrefs {
+    /// The browser's: no profiler at first, and the library outlasting the inspector in a narrow canvas.
+    pub fn web() -> Self {
+        Self {
+            show_profiler: false,
+            drop_order: DropOrder::InspectorFirst,
+            ..Self::default()
         }
     }
 }
@@ -89,9 +112,20 @@ impl DockPlan {
         );
         // Extents are whole pixels, so a dock dragged to its stop may round half a pixel past the limit.
         let room = inner + Vec2::splat(0.5);
-        let show_inspector = prefs.show_inspector && inspector + MIN_SCENE_VIEW.x <= room.x;
+        let fits = |kept: f32, extent: f32| extent + kept + MIN_SCENE_VIEW.x <= room.x;
+        let (show_scene, show_inspector) = match prefs.drop_order {
+            DropOrder::SceneFirst => {
+                let inspector_kept = prefs.show_inspector && fits(0.0, inspector);
+                let kept = if inspector_kept { inspector } else { 0.0 };
+                (prefs.show_scene && fits(kept, scene), inspector_kept)
+            }
+            DropOrder::InspectorFirst => {
+                let scene_kept = prefs.show_scene && fits(0.0, scene);
+                let kept = if scene_kept { scene } else { 0.0 };
+                (scene_kept, prefs.show_inspector && fits(kept, inspector))
+            }
+        };
         let inspector_share = if show_inspector { inspector } else { 0.0 };
-        let show_scene = prefs.show_scene && scene + inspector_share + MIN_SCENE_VIEW.x <= room.x;
         let scene_share = if show_scene { scene } else { 0.0 };
         let show_profiler = prefs.show_profiler && profiler + MIN_SCENE_VIEW.y <= room.y;
         Self {
@@ -281,6 +315,27 @@ mod tests {
         assert_eq!(scaled.profiler, Some(235.0 / 1.5));
         let low = DockPlan::new(inner(1600.0, 360.0), &DockPrefs::default(), 1.0);
         assert_eq!(low.profiler, None, "a low window drops the profiler");
+    }
+
+    #[test]
+    fn the_browser_drops_the_inspector_first_and_starts_without_the_profiler() {
+        // The docs iframe: the library stays where the C++ order would keep the inspector.
+        let iframe = DockPlan::new(inner(800.0, 600.0), &DockPrefs::web(), 1.0);
+        assert_eq!(
+            (iframe.scene, iframe.inspector, iframe.profiler),
+            (Some(240.0), None, None)
+        );
+        let wide = DockPlan::new(inner(1600.0, 900.0), &DockPrefs::web(), 1.0);
+        assert_eq!((wide.scene, wide.inspector), (Some(248.0), Some(336.0)));
+        // Too narrow for the scene dock beside a 320-point view: then the inspector gets its chance.
+        let phone = DockPlan::new(inner(480.0, 800.0), &DockPrefs::web(), 1.0);
+        assert_eq!((phone.scene, phone.inspector), (None, None));
+        let no_library = DockPrefs {
+            show_scene: false,
+            ..DockPrefs::web()
+        };
+        let plan = DockPlan::new(inner(800.0, 600.0), &no_library, 1.0);
+        assert_eq!((plan.scene, plan.inspector), (None, Some(320.0)));
     }
 
     #[test]

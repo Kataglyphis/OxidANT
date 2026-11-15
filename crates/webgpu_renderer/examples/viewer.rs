@@ -1,6 +1,6 @@
-//! The Studio editor over a glTF: `cargo run -p kataglyphis_webgpu_renderer --example viewer [model.gltf]`; keys in the Camera tab.
+//! The Studio editor: `cargo run -p kataglyphis_webgpu_renderer --example viewer [model]`; without one the fetched Colosseum.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -9,16 +9,20 @@ use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
+use kataglyphis_webgpu_renderer::app::discovery::native_startup;
+use kataglyphis_webgpu_renderer::app::library::EMBEDDED_SCENES;
+use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf_slice;
 use kataglyphis_webgpu_renderer::ui::ModelSource;
 use kataglyphis_webgpu_renderer::{
-    load_gltf, AppSignal, GpuContext, HostCaps, OrbitCamera, StudioApp,
+    AppSignal, GpuContext, HostCaps, Notice, OrbitCamera, StudioApp,
 };
 
 /// The C++ editor's start size, in logical pixels.
 const WINDOW_SIZE: winit::dpi::LogicalSize<u32> = winit::dpi::LogicalSize::new(1600, 900);
 
 struct Viewer {
-    model_path: PathBuf,
+    /// The command line's model, first in the startup chain.
+    model_path: Option<PathBuf>,
     window: Option<Arc<Window>>,
     app: Option<StudioApp>,
     started: Instant,
@@ -42,7 +46,7 @@ fn shader_mtimes() -> Vec<(PathBuf, std::time::SystemTime)> {
 }
 
 impl Viewer {
-    fn new(model_path: PathBuf) -> Self {
+    fn new(model_path: Option<PathBuf>) -> Self {
         Self {
             model_path,
             window: None,
@@ -50,27 +54,6 @@ impl Viewer {
             started: Instant::now(),
             frame: 0,
             shader_mtimes: shader_mtimes(),
-        }
-    }
-
-    /// Loads a different model at runtime (drag & drop).
-    fn load_model(&mut self, path: PathBuf) {
-        let Some(app) = self.app.as_mut() else {
-            return;
-        };
-        match load_gltf(&path) {
-            Ok(scene) => {
-                log::info!(
-                    "Loaded {}: {} primitives, {} triangles",
-                    path.display(),
-                    scene.primitives.len(),
-                    scene.triangle_count()
-                );
-                app.load_scene(&scene);
-                app.model = Some(ModelSource::from_path(&path));
-                self.model_path = path;
-            }
-            Err(err) => log::error!("Failed to load {}: {err:#}", path.display()),
         }
     }
 
@@ -166,28 +149,29 @@ impl ApplicationHandler for Viewer {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("BeschleunigerBallett WebGPU (drop a .gltf/.glb to load)")
+                        .with_title(
+                            "BeschleunigerBallett WebGPU (drop a .gltf, .glb or .obj to load)",
+                        )
                         .with_inner_size(WINDOW_SIZE),
                 )
                 .expect("failed to create window"),
         );
         let gpu = GpuContext::new_windowed(Arc::clone(&window)).expect("failed to init wgpu");
-        let scene = load_gltf(&self.model_path)
-            .unwrap_or_else(|err| panic!("failed to load {}: {err:#}", self.model_path.display()));
-        log::info!(
-            "Loaded {}: {} primitives, {} triangles",
-            self.model_path.display(),
-            scene.primitives.len(),
-            scene.triangle_count()
-        );
         let caps = HostCaps {
             quit: true,
             screenshot: true,
             hot_reload: true,
         };
+        // The embedded cube shows at once; the startup scene replaces it when its load is done.
+        let (name, cube) = EMBEDDED_SCENES[0];
+        let scene = load_gltf_slice(cube).unwrap_or_default();
         let mut app = StudioApp::new(&window, gpu, &scene, OrbitCamera::default(), caps)
             .expect("failed to set up the renderer");
-        app.model = Some(ModelSource::from_path(&self.model_path));
+        app.model = Some(ModelSource {
+            name: name.to_owned(),
+            path: format!("{name}.gltf (embedded)"),
+        });
+        start_scene(&mut app, self.model_path.as_deref());
         self.app = Some(app);
         self.window = Some(window);
     }
@@ -198,7 +182,11 @@ impl ApplicationHandler for Viewer {
         }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::DroppedFile(path) => self.load_model(path),
+            WindowEvent::DroppedFile(path) => {
+                if let Some(app) = self.app.as_mut() {
+                    app.open_path(&path);
+                }
+            }
             WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
         }
@@ -212,15 +200,22 @@ impl ApplicationHandler for Viewer {
     }
 }
 
+/// The library and the startup chain: the command line, `KATAGLYPHIS_MODEL_OVERRIDE`, the fetched Colosseum.
+fn start_scene(app: &mut StudioApp, model_path: Option<&Path>) {
+    let (library, startup) = native_startup(model_path);
+    app.set_library(library, None);
+    if let Some(path) = &startup.path {
+        app.open_path(path);
+    }
+    if !startup.notes.is_empty() {
+        app.set_notice(Some(Notice::Hint(startup.notes.join("  ·  "))));
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let model_path = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf")
-        });
+    let model_path = std::env::args().nth(1).map(PathBuf::from);
 
     let event_loop = EventLoop::new()?;
     let mut viewer = Viewer::new(model_path);

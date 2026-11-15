@@ -119,6 +119,13 @@ fn view_menu(ui: &mut Ui, editor: &mut Editor) {
     if ui.button("Reset layout").clicked() {
         editor.reset_layout(ui.ctx());
     }
+    if ui
+        .button("Frame scene")
+        .on_hover_text("Back to the scene's start view: its active camera, else its bounds")
+        .clicked()
+    {
+        editor.actions.push(EditorAction::FrameScene);
+    }
     ui.separator();
     ui.checkbox(&mut editor.windows.style, "Style editor");
     ui.checkbox(&mut editor.windows.inspection, "egui inspection");

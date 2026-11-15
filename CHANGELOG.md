@@ -13,6 +13,43 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, the editor's model library and the Colosseum)
+- `resources/scenes/scenes.lock` pins AssetANT's `Colosseum-gltf` and `Colosseum-web` archives;
+  `scripts/linux/fetch-models.sh --scenes` (Windows: `Get-Models.ps1 -Scenes`) unpacks them into
+  `resources/scenes/<name>/` through the hub's fetcher. Nothing packages or fetches them in CI.
+- The native viewer's startup chain: the command line, `KATAGLYPHIS_MODEL_OVERRIDE` (the C++ engine's variable),
+  the fetched Colosseum (OxidANT's `resources/scenes`, then BeschleunigerBallett's `Resources/Models`), then the
+  embedded cube with the fetch command in the status bar (`app::discovery`).
+- The model library (`app::library`, `ui/editor/library.rs`): BeschleunigerBallett's `Resources/Models`, OxidANT's
+  `resources/scenes` and the command line file's folder, `.gltf`, `.glb` and `.obj` (converted in memory,
+  `app::obj_glb`); the C++ folder groups, order and filter; a click picks, a double-click on the pick, Enter while
+  the pick holds it, or Load loads; the mark is the row the host loaded; tooltips with the path and the scene's credit.
+  The browser lists its showcase scenes and a `Colosseum` row that fetches `Colosseum-web.glb` beside the page or
+  from `?scene-base=`, with streaming progress; the page's `<select>` gains it.
+- Loads off the frame (`app::loader`): a worker thread parses natively, the main thread uploads; the scene on
+  screen stays until the new one is ready, a failure shows in the status bar instead of panicking, and the status
+  bar and the viewport chip show the progress.
+- Start views (`app::framing`): a load starts at `scenes[0].extras.active_camera`, else the first glTF camera,
+  else a fit of the bounds; near and far follow the scene's size, so the 8 km Colosseum ground neither clips nor
+  z-fights at the arena. `EditorAction::FrameScene` (View › Frame scene) returns there.
+- A loaded scene's `asset.copyright` in the status bar, the Model tab and About, which CC BY 4.0 asks for; a
+  narrow status bar shortens the device to its API before it cuts the credit.
+- A loaded scene's first directional light becomes the Sun (direction and colour; the Sun keeps its intensity and
+  its cascaded shadows). Added as a punctual light at its 4098 lx, the Colosseum's sun drew the frame white.
+- `TimedPass::label()`, the profiler's readable pass names; `name()` stays first and unchanged for
+  BeschleunigerBallett's timing script.
+- `DockPrefs::web()`: the browser starts without the profiler and drops the inspector before the scene dock, so the
+  docs iframe keeps the library; Reset layout returns to it.
+
+### Changed (2026-11-15, the editor's model library and the Colosseum)
+- `StudioApp::load_scene` frames the scene as a load does; `editor_snapshot` takes `--model=` and `--web-model=`.
+- `obj_to_gltf::read_obj` and `texture_source`, split out of `convert_file`, which keeps its behaviour.
+
+### Fixed (2026-11-15, the editor's model library and the Colosseum)
+- **The viewer panicked on a missing or broken model**; it shows the error and keeps the scene on screen.
+- **A new scene was never framed**: both shells reset to a 4 m orbit at the origin, so a large scene showed from
+  inside or not at all.
+
 ### Added (2026-11-15, the Studio Pro fly camera and Camera tab)
 - `scene::fly`, the C++ engine's fly camera: W A S D move along the view and its right vector, Q and E turn
   90°/s, the held right button looks around at 0.25°/px with the pointer held (winit's `Locked`, `Confined` where
@@ -20,13 +57,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
   within ±89° and a step integrates at most 0.1 s. It drives the same `OrbitCamera` as the orbit controller:
   flying moves eye and target together and turns about the eye, orbiting turns about the target, so an orbit after
   a flight circles the point ahead. The speed starts at a quarter of the scene's diagonal per second, the C++
-  10 units/s in a 40-unit Sponza, so a 1 m cube and an 8 km city both take four seconds to cross.
+  10 units/s in a 40-unit Sponza, so a 1 m cube and an 8 km city both take four seconds to cross; a start view
+  closer to its target caps it at half that distance per second (`app::framing`).
 - Input routing: a press egui consumes never reaches the fly camera, a release always does, losing the window's
   focus releases every key and ends the look, and winit's synthetic presses on focus gain are ignored. While
   looking egui sees no pointer moves; the pointer comes back where the look began, as GLFW's does.
 - The Camera tab: field of view, near and far planes on log scales (far stays twice near), the fly speed, and
-  *Frame the scene*, which emits `EditorAction::FrameScene`: the home view, the fly speed refitted. CONTROLS lists
-  W A S D, Q E and the right mouse; a test keeps every fly key in it and off every shortcut.
+  *Frame the scene*, which emits `EditorAction::FrameScene`: back to the scene's start view (`app::framing`) at
+  its fly speed. CONTROLS lists W A S D, Q E and the right mouse; a test keeps every fly key in it and off every
+  shortcut.
 
 ### Changed (2026-11-15, the Studio Pro fly camera and Camera tab)
 - The screenshot key moved from S to F12: S flies back.

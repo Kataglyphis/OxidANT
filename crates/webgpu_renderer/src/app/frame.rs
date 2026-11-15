@@ -102,6 +102,7 @@ impl StudioApp {
     ) -> (egui::FullOutput, Vec<AppSignal>) {
         // Recorded before the pass, so the editor is a pure function of what it is handed.
         self.frames.tick(now_s);
+        self.poll_scene();
         let ctx = self.overlay.context();
         let delay = self.frames.double_click_delay_s();
         // A click's down, up and down reach egui a frame apart, so at software-rendering rates 0.3 s is never a double-click.
@@ -117,6 +118,7 @@ impl StudioApp {
             frames: &self.frames,
             device: &self.device,
             model: self.model.as_ref(),
+            scene: self.scene.status(),
             caps: self.caps,
             surface_px,
         };
@@ -131,16 +133,14 @@ impl StudioApp {
         (output, signals)
     }
 
-    /// Does what the app can itself and hands the rest to the shell.
-    fn act(&mut self, actions: Vec<EditorAction>) -> Vec<AppSignal> {
+    /// Does what the app does itself and hands the rest to the shell.
+    pub(super) fn act(&mut self, actions: Vec<EditorAction>) -> Vec<AppSignal> {
         let mut signals = Vec::new();
         for action in actions {
             match action {
-                EditorAction::FrameScene => {
-                    // A frame the user asked for is an interaction: the idle spin must not turn it away.
-                    self.controller.auto_orbit = false;
-                    self.frame_scene();
-                }
+                EditorAction::LoadModel(row) => self.open_entry(row),
+                // A frame the user asked for is an interaction: frame_scene ends the idle spin.
+                EditorAction::FrameScene => self.frame_scene(),
                 EditorAction::Quit => signals.push(AppSignal::Quit),
                 EditorAction::Screenshot => signals.push(AppSignal::Screenshot),
                 EditorAction::ReloadShaders => signals.push(AppSignal::ReloadShaders),
@@ -350,11 +350,17 @@ mod tests {
         let Some(mut app) = studio() else {
             return;
         };
-        let expected = crate::scene::fly::speed_for_bounds(app.renderer.scene_bounds());
+        let framing = app.scene_framing().cloned().expect("the cube is framed");
+        let expected = framing.fly_speed;
         assert_eq!(
             app.fly_speed(),
             expected,
             "the speed fits the scene from the start"
+        );
+        assert_eq!(
+            expected,
+            crate::scene::fly::speed_for_bounds(app.renderer.scene_bounds()),
+            "a bounds fit flies a quarter of the diagonal per second"
         );
         assert_ne!(expected, crate::scene::fly::DEFAULT_SPEED);
         app.fly.speed = 123.0;
@@ -375,7 +381,7 @@ mod tests {
             AppSignal::ReloadShaders,
         ];
         assert_eq!(signals, shell);
-        assert_eq!(app.camera.target, OrbitCamera::default().target);
+        assert_eq!(app.camera.target, framing.camera.target);
         assert_eq!(
             app.camera.viewport.x0, 0.2,
             "the docks still frame the view"

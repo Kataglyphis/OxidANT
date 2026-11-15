@@ -11,37 +11,21 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys};
 use winit::window::{Window, WindowId};
 
+use crate::app::library::{ModelLibrary, EMBEDDED_SCENES};
 use crate::app::{web, HostCaps, StudioApp};
 use crate::asset::gltf_loader::load_gltf_slice;
 use crate::context::GpuContext;
 use crate::scene::camera::OrbitCamera;
-use crate::ui::editor::ModelSource;
+use crate::ui::editor::{DockPrefs, ModelSource};
 
-const DEMO_SCENE: &[u8] = include_bytes!("../tests/assets/cube_on_plane.gltf");
+/// What the page asked to load, parked until the render loop takes it: a dropped file, or a library row.
+enum PageRequest {
+    Bytes(String, Vec<u8>),
+    Row(usize),
+}
 
-/// Self-contained showcase scenes, indexed like web/index.html's `<option>`s; 0 is the startup scene.
-const DEMO_SCENES: &[(&str, &[u8])] = &[
-    ("cube_on_plane (shadows)", DEMO_SCENE),
-    (
-        "cube_textured (PBR textures)",
-        include_bytes!("../tests/assets/cube_textured.gltf"),
-    ),
-    (
-        "cube_animated (animation)",
-        include_bytes!("../tests/assets/cube_animated.gltf"),
-    ),
-    (
-        "cube_morph (morph targets)",
-        include_bytes!("../tests/assets/cube_morph.gltf"),
-    ),
-    (
-        "cube_unlit (KHR_materials_unlit)",
-        include_bytes!("../tests/assets/cube_unlit.gltf"),
-    ),
-];
-
-/// A dropped model parked until the render loop takes it; the read is async and GPU state may lag.
-type DroppedScene = Rc<RefCell<Option<(String, Vec<u8>)>>>;
+/// The slot the drop zone and the page's scene picker fill.
+type DroppedScene = Rc<RefCell<Option<PageRequest>>>;
 
 thread_local! {
     /// The drag-drop slot, shared so [`select_demo_scene`] reuses the dropped-file path.
@@ -75,7 +59,7 @@ fn install_drop_zone(document: &web_sys::Document, slot: DroppedScene) {
                 match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
                     Ok(buffer) => {
                         let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-                        slot.borrow_mut().replace((name, bytes));
+                        slot.borrow_mut().replace(PageRequest::Bytes(name, bytes));
                     }
                     Err(err) => log::error!("Reading the dropped file failed: {err:?}"),
                 }
@@ -140,6 +124,25 @@ fn create_canvas_window(
     window
 }
 
+/// Where the browser fetches the Colosseum from: `?scene-base=<folder URL>`, else beside the page.
+fn scene_base() -> String {
+    let search = web_sys::window()
+        .and_then(|window| window.location().search().ok())
+        .unwrap_or_default();
+    let value = search
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("scene-base="))
+        .and_then(|value| js_sys::decode_uri_component(value).ok())
+        .and_then(|value| value.as_string())
+        .unwrap_or_default();
+    if value.is_empty() || value.ends_with('/') {
+        value
+    } else {
+        format!("{value}/")
+    }
+}
+
 /// WebGPU init is async-only in browsers: the app lands in `slot` once the device resolves.
 fn spawn_app_init(slot: Rc<RefCell<Option<StudioApp>>>, window: Arc<Window>, size: (u32, u32)) {
     wasm_bindgen_futures::spawn_local(async move {
@@ -150,44 +153,29 @@ fn spawn_app_init(slot: Rc<RefCell<Option<StudioApp>>>, window: Arc<Window>, siz
         };
         // The context read inner_size before the canvas size propagated through winit.
         gpu.resize(size.0, size.1);
-        let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
+        let (name, bytes) = EMBEDDED_SCENES[0];
+        let scene = load_gltf_slice(bytes).expect("embedded demo scene must load");
         // No quit, screenshot or shader files in a browser tab.
         let mut app = StudioApp::new(&window, gpu, &scene, home_camera(), HostCaps::default())
             .expect("failed to set up the renderer");
-        app.model = Some(scene_source(DEMO_SCENES[0].0));
+        app.editor_mut().set_layout(DockPrefs::web());
+        app.set_library(ModelLibrary::web(&scene_base()), Some(0));
+        app.model = Some(ModelSource {
+            name: name.to_owned(),
+            path: format!("{name}.gltf (embedded)"),
+        });
         slot.borrow_mut().replace(app);
         web::notify_page(web::PAGE_READY, "");
         window.request_redraw();
     });
 }
 
-/// Swaps in a dropped or picked scene, keeping the current one on a parse error.
-fn load_dropped_scene(app: &mut StudioApp, dropped: &DroppedScene) {
-    let Some((name, bytes)) = dropped.borrow_mut().take() else {
-        return;
-    };
-    match load_gltf_slice(&bytes) {
-        Ok(scene) => {
-            log::info!(
-                "Loaded {name}: {} primitives, {} triangles",
-                scene.primitives.len(),
-                scene.triangle_count()
-            );
-            app.load_scene(&scene);
-            app.model = Some(scene_source(&name));
-        }
-        Err(err) => log::error!(
-            "Failed to load {name}: {err:#} (external .bin/textures cannot \
-             be resolved from a drop - use a self-contained .glb)"
-        ),
-    }
-}
-
-/// A browser scene has no path; its name serves as both.
-fn scene_source(name: &str) -> ModelSource {
-    ModelSource {
-        name: name.to_owned(),
-        path: name.to_owned(),
+/// Hands what the page asked for to the app's loader; the scene on screen stays until the new one is ready.
+fn take_page_request(app: &mut StudioApp, dropped: &DroppedScene) {
+    match dropped.borrow_mut().take() {
+        Some(PageRequest::Bytes(name, bytes)) => app.open_bytes(&name, bytes),
+        Some(PageRequest::Row(row)) => app.open_entry(row),
+        None => {}
     }
 }
 
@@ -242,7 +230,7 @@ impl ApplicationHandler for DemoApp {
         };
         app.window_event(window, &event);
         if matches!(event, WindowEvent::RedrawRequested) {
-            load_dropped_scene(app, &self.dropped_scene);
+            take_page_request(app, &self.dropped_scene);
             follow_canvas_size(window, &mut app.gpu);
             // A browser tab never quits and has no file shortcuts, so a frame asks nothing of this shell.
             let _ = app.frame(window, performance_now_seconds());
@@ -258,19 +246,19 @@ impl ApplicationHandler for DemoApp {
     }
 }
 
-/// Switches the demo to a bundled scene through the drag-drop slot; bad or early calls are ignored.
+/// Loads row `index` of the web library, as the page's `<select>` orders it: the showcase scenes, then the Colosseum.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn select_demo_scene(index: u32) {
-    let Some(&(name, bytes)) = DEMO_SCENES.get(index as usize) else {
+    if index as usize > EMBEDDED_SCENES.len() {
         log::warn!("select_demo_scene: scene index {index} out of range - ignored");
         return;
-    };
+    }
     SCENE_SLOT.with(|slot| match slot.borrow().as_ref() {
         Some(scene_slot) => {
             scene_slot
                 .borrow_mut()
-                .replace((name.to_string(), bytes.to_vec()));
+                .replace(PageRequest::Row(index as usize));
         }
         None => log::warn!("select_demo_scene: called before the demo initialized - ignored"),
     });

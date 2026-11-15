@@ -12,7 +12,7 @@ pub mod ui;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_demo;
 
-pub use app::{AppSignal, HostCaps, OffscreenFrame, StudioApp};
+pub use app::{AppSignal, HostCaps, Notice, OffscreenFrame, StudioApp};
 pub use asset::gltf_loader::load_gltf;
 pub use asset::hdr::{decode_hdr, HdrError};
 pub use context::GpuContext;

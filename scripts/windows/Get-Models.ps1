@@ -1,12 +1,14 @@
 #requires -Version 7.0
-# Puts every file resources\models\models.lock names into -Destination, checked by SHA-256, through a cache: the hub's fetcher.
+# Puts every file resources\models\models.lock (-Scenes: resources\scenes\scenes.lock) names into -Destination, checked by SHA-256, through a cache: the hub's fetcher.
 [CmdletBinding()]
 param(
   # Default: the lock's own directory, where the app and the packaging steps look.
   [string]$Destination,
   [string]$Lock = (Join-Path $PSScriptRoot '..\..\resources\models\models.lock'),
   # Each file is an archive unpacking to <name>\, as llm.lock's GenAI model directories are.
-  [switch]$Extract
+  [switch]$Extract,
+  # The WebGPU viewer's scenes, unpacked beside scenes.lock; never part of a package.
+  [switch]$Scenes
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,6 +17,10 @@ Set-StrictMode -Version Latest
 $fetcher = Join-Path $PSScriptRoot '..\..\third_party\ANTfrastructure\linux\scripts\lib\fetch-data-lock.py'
 if (-not (Test-Path -LiteralPath $fetcher -PathType Leaf)) {
   throw "No hub fetcher at ${fetcher}: git submodule update --init third_party/ANTfrastructure"
+}
+if ($Scenes) {
+  $Lock = Join-Path $PSScriptRoot '..\..\resources\scenes\scenes.lock'
+  $Extract = $true
 }
 $fetchArgs = @('-I', $fetcher, '--lock', $Lock)
 if ($Destination) { $fetchArgs += @('--dest', $Destination) }

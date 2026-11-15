@@ -1,7 +1,16 @@
 //! The app both shells run, the native viewer example and the browser demo: one frame order and one input path.
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod discovery;
 mod frame;
+pub mod framing;
 mod input;
+pub mod library;
+pub mod loader;
+#[cfg(not(target_arch = "wasm32"))]
+mod obj_glb;
+pub mod scene_meta;
+mod scenes;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod web;
 
@@ -9,6 +18,7 @@ use anyhow::Context as _;
 use winit::window::Window;
 
 pub use frame::OffscreenFrame;
+pub use scenes::Notice;
 
 use crate::context::GpuContext;
 use crate::render::forward::ForwardRenderer;
@@ -18,10 +28,11 @@ use crate::render::overlay::Overlay;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::controller::OrbitController;
-use crate::scene::fly::{self, FlyController};
+use crate::scene::fly::FlyController;
 use crate::scene::viewport::SceneViewport;
 use crate::scene::CpuScene;
 use crate::ui::editor::{DeviceInfo, Editor, FrameHistory, ModelSource};
+use scene_meta::SceneMeta;
 
 /// What the shell can do for the app; each is off where the target cannot do it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -61,6 +72,7 @@ pub struct StudioApp {
     clock: FrameClock,
     /// When the scene's animation and auto-orbit started, in the shell's seconds.
     epoch_s: Option<f64>,
+    scene: scenes::SceneState,
 }
 
 impl StudioApp {
@@ -108,19 +120,18 @@ impl StudioApp {
     ) -> Self {
         let mut renderer = ForwardRenderer::new(&gpu, size[0], size[1]);
         renderer.enable_gpu_timing(&gpu);
-        renderer.upload_scene(&gpu, scene);
         // IBL baked from the background's own sky; 256x128 suffices for low-frequency lighting.
         renderer.set_environment(&gpu, &EquirectImage::sky(256, 128));
-        let fly = FlyController::with_speed(fly::speed_for_bounds(renderer.scene_bounds()));
-        Self {
+        let mut app = Self {
             tonemap: TonemapPass::new(&gpu, format),
             device: DeviceInfo::of(&gpu.adapter_info),
             controller: OrbitController::default(),
-            fly,
+            fly: FlyController::default(),
             camera: home.clone(),
             model: None,
             editor: Editor::default(),
             frames: FrameHistory::default(),
+            scene: scenes::SceneState::new(home.clone()),
             home,
             caps,
             format,
@@ -129,24 +140,9 @@ impl StudioApp {
             gpu,
             renderer,
             overlay,
-        }
-    }
-
-    /// Swaps in `scene` and starts its camera and animation clock over.
-    pub fn load_scene(&mut self, scene: &CpuScene) {
-        self.renderer.upload_scene(&self.gpu, scene);
-        self.controller = OrbitController::default();
-        self.epoch_s = None;
-        self.frame_scene();
-    }
-
-    /// The camera back at its home view, and a fly speed that crosses the scene in a few seconds.
-    pub fn frame_scene(&mut self) {
-        self.camera = OrbitCamera {
-            viewport: self.camera.viewport,
-            ..self.home.clone()
         };
-        self.fly.speed = fly::speed_for_bounds(self.renderer.scene_bounds());
+        app.upload(scene, SceneMeta::default());
+        app
     }
 
     /// World units per second for W A S D.

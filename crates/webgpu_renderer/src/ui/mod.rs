@@ -8,8 +8,8 @@ pub mod theme;
 pub mod widgets;
 
 pub use editor::{
-    DeviceInfo, Editor, EditorAction, EditorContext, EditorOutput, FrameHistory, InspectorTab,
-    ModelSource, RendererSettings, SceneObject, SceneStats,
+    DeviceInfo, DockPrefs, Editor, EditorAction, EditorContext, EditorOutput, FrameHistory,
+    InspectorTab, ModelSource, RendererSettings, SceneObject, SceneStats, SceneStatus,
 };
 
 /// Gives `ctx` the studio fonts, style and options; without the fonts egui 0.37 draws no text at all.

@@ -55,6 +55,12 @@ web-sys = { version = "0.3", features = [
     "File",
     "Performance",
     "KeyboardEvent",
+    # The library's URL scenes: a streamed fetch with progress, and the page's ?scene-base=.
+    "Location",
+    "Response",
+    "Headers",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
 ] }
 
 # Its JSON schema has unit tests, which `cargo test` runs only for an example marked so.

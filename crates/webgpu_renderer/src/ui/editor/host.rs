@@ -2,7 +2,11 @@
 
 use glam::Vec4;
 
+use crate::app::library::ModelLibrary;
+use crate::app::loader::LoadProgress;
+use crate::app::Notice;
 use crate::render::forward::ForwardRenderer;
+use crate::render::gpu_timing::TimedPass;
 
 /// The renderer's editable settings: read before the egui pass, written back after it.
 #[derive(Clone, Debug, PartialEq)]
@@ -76,7 +80,7 @@ pub struct SceneStats {
     pub occlusion: (u32, u32),
     /// Shadow casters drawn and considered, over every cascade.
     pub shadow_casters: (u32, u32),
-    /// Smoothed GPU milliseconds per timed pass; a pass without a sample is absent, not zero.
+    /// Smoothed GPU milliseconds per timed pass, by its label; a pass without a sample is absent, not zero.
     pub gpu_passes: Vec<(&'static str, f32)>,
     pub gpu_timing: bool,
 }
@@ -86,8 +90,45 @@ impl SceneStats {
         Self {
             occlusion: renderer.occlusion_cull_stats(),
             shadow_casters: renderer.shadow_caster_stats(),
-            gpu_passes: renderer.gpu_timings_ms(),
+            gpu_passes: labelled(renderer.gpu_timings_ms()),
             gpu_timing: renderer.gpu_timing_available(),
+        }
+    }
+}
+
+/// The profiler's readable pass names for the renderer's identifiers.
+fn labelled(passes: Vec<(&'static str, f32)>) -> Vec<(&'static str, f32)> {
+    passes
+        .into_iter()
+        .map(|(name, ms)| {
+            let pass = TimedPass::ALL.into_iter().find(|pass| pass.name() == name);
+            (pass.map_or(name, TimedPass::label), ms)
+        })
+        .collect()
+}
+
+/// The scenes as the scene dock, the status bar, the viewport chip and About show them.
+#[derive(Clone, Copy, Debug)]
+pub struct SceneStatus<'a> {
+    pub library: &'a ModelLibrary,
+    /// The row the host actually loaded, which the library marks.
+    pub loaded: Option<usize>,
+    pub loading: Option<&'a LoadProgress>,
+    pub notice: Option<&'a Notice>,
+    /// The loaded scene's `asset.copyright`, which CC BY asks to show.
+    pub credit: Option<&'a str>,
+}
+
+impl SceneStatus<'static> {
+    /// No library, nothing loaded or loading.
+    pub fn empty() -> Self {
+        static EMPTY: ModelLibrary = ModelLibrary::empty();
+        Self {
+            library: &EMPTY,
+            loaded: None,
+            loading: None,
+            notice: None,
+            credit: None,
         }
     }
 }
@@ -255,6 +296,30 @@ mod tests {
             Some(900.0),
             "a clock that steps back records nothing"
         );
+    }
+
+    #[test]
+    fn the_profiler_shows_labels_and_keeps_a_name_it_does_not_know() {
+        let passes = labelled(vec![
+            ("ShadowCascades", 0.5),
+            ("Forward", 1.0),
+            ("Gui", 0.1),
+        ]);
+        assert_eq!(
+            passes,
+            [
+                ("Shadow cascades", 0.5),
+                ("Forward + sky", 1.0),
+                ("Gui", 0.1)
+            ]
+        );
+        let labels: std::collections::HashSet<&str> =
+            TimedPass::ALL.into_iter().map(TimedPass::label).collect();
+        assert_eq!(labels.len(), TimedPass::ALL.len());
+        // BeschleunigerBallett's timing script reads the arms of the first `fn name(self)`.
+        let source = include_str!("../../render/gpu_timing.rs");
+        let name = source.find("fn name(self)").expect("name() exists");
+        assert!(name < source.find("fn label(self)").expect("label() exists"));
     }
 
     #[test]

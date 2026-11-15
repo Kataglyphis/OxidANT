@@ -57,11 +57,30 @@ fn about(ui: &mut Ui, cx: &EditorContext<'_>) -> bool {
     });
     ui.add_space(ui.spacing().item_spacing.y);
     facts(ui, cx, font);
+    if let Some(credit) = cx.scene.credit {
+        scene_credit(ui, credit, font);
+    }
     ui.add_space(ui.spacing().item_spacing.y);
     ui.hyperlink_to("github.com/Kataglyphis/BeschleunigerBallett", REPOSITORY);
     ui.add_space(ui.spacing().item_spacing.y);
     ui.add_sized(vec2(font * 8.0, frame_height(ui)), Button::new("Close"))
         .clicked()
+}
+
+/// The loaded scene's credit under the facts, wrapped at the value column, as CC BY asks.
+fn scene_credit(ui: &mut Ui, credit: &str, font: f32) {
+    ui.add_space(ui.spacing().item_spacing.y);
+    ui.horizontal_top(|ui| {
+        let (rect, _) = ui.allocate_exact_size(vec2(font * 6.5, font), egui::Sense::hover());
+        let body = egui::TextStyle::Body.resolve(ui.style());
+        let anchor = egui::Align2::LEFT_CENTER;
+        ui.painter()
+            .text(rect.left_center(), anchor, "Scene", body, pal::TEXT_MUTED);
+        ui.vertical(|ui| {
+            ui.set_max_width(font * 22.0);
+            ui.add(egui::Label::new(RichText::new(credit).color(pal::TEXT)).wrap());
+        });
+    });
 }
 
 /// The C++ About rows: a muted name in a 6.5-line column, then the value, one text line each.
