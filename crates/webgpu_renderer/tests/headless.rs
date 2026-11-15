@@ -1137,6 +1137,40 @@ fn manual_exposure_still_controls_brightness() {
     );
 }
 
+/// Bloom thresholds at the frame's own exposure, so a fresh renderer's first frame is already steady.
+#[test]
+fn the_first_frame_blooms_at_its_own_manual_exposure() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 96, 96);
+    renderer.upload_scene(&gpu, &scene);
+    // A sunlit plane near HDR 3 blooms at EV 0, not at EV -3, where it exposes to about 0.4.
+    renderer.light_color_intensity.w = 20.0;
+    renderer.exposure_ev = -3.0;
+    renderer.bloom_strength = 2.0;
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    let first = renderer
+        .render_to_pixels(&gpu, 96, 96, &camera)
+        .expect("first frame must render");
+    let second = renderer
+        .render_to_pixels(&gpu, 96, 96, &camera)
+        .expect("second frame must render");
+    let differing = differing_pixels(&first, &second, 1);
+    assert!(
+        differing < 5,
+        "{differing} pixels differ between the first and second frame of a static scene: \
+         the first frame's bloom thresholded at the previous (EV 0) exposure"
+    );
+}
+
 /// Instances must land at their own transforms, not stack invisibly on the original.
 #[test]
 fn instances_appear_at_their_own_transforms() {

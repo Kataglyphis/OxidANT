@@ -107,7 +107,7 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | --- | --- | --- |
 | ✅ egui overlay (plan milestone 6) | M | Done 2026-07-18: FPS/frametime + light azimuth/elevation/intensity/ambient sliders, native + web. 2026-11-15: the C++ editor's Studio Pro palette, style and fonts (`src/ui/`), so text renders again under egui 0.37; one egui pass per frame, painted at egui's own scale; both shells run `app::StudioApp`, whose camera centres on the free rect (`SceneViewport`). The docked editor itself is open |
 | ✅ Hot shader reload | M | Done 2026-07-18: mtime polling + R key, validation-scoped rebuild keeps old pipelines on bad WGSL |
-| ✅ Render graph (v1) | XL | Done 2026-07-18: passes declare read/write resources, validated in debug builds; explicit order retained. Auto-scheduling/aliasing still open |
+| ✅ Render graph (v1) | XL | Done 2026-07-18: passes declare read/write resources, validated by the unit test `graph::tests::forward_graph_is_valid` (not at run time); explicit order retained. Auto-scheduling/aliasing still open |
 | ✅ Screenshot capture | S | Done 2026-07-18: viewer S key → 1080p PNG via offscreen readback (turntable video later) |
 | Golden-image CI on Linux | M | lavapipe/llvmpipe software Vulkan on the Ubuntu runner so the GPU tests stop skipping in CI |
 | Error telemetry | S | Route `log` + panic reports through `kataglyphis_telemetry` |

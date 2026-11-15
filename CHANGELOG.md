@@ -70,6 +70,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   the C++ ones whose textured roughness reaches 0 included, gets a finite lobe. BeschleunigerBallett's goldens need
   a re-run with the next OxidANT pin. Tests: `tests/brdf.rs` evaluates the emitted WGSL on the GPU; the peak is
   1/(πr⁴) and the projected lobe integrates to one from roughness 0.045 to 1.
+- **Bloom thresholded at the previous frame's exposure**: its bright pass multiplies by the exposure the reduce pass
+  writes, but ran before it, so a fresh renderer at EV -3 bloomed its first frame at EV 0 and an auto-exposure step
+  reached bloom a frame late. The histogram and the reduce run before bloom now, the render graph declares bloom's
+  `Exposure` read (`forward_graph_is_valid` fails on the old order), and `TimedPass::ALL` follows the new record
+  order. The roadmap's "validated in debug builds" was never true: the unit test validates the graph. Test:
+  `the_first_frame_blooms_at_its_own_manual_exposure`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

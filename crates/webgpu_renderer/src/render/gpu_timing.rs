@@ -16,14 +16,14 @@ pub enum TimedPass {
     Forward,
     /// The occlusion-query box pass (only with culling on); its cost is what the cull must beat.
     OcclusionCull,
-    /// Brightpass plus separable blur (three render passes).
-    Bloom,
-    /// Occlusion plus blur (two render passes).
-    Ssao,
     /// Histogram clear plus build (two compute passes).
     Histogram,
     /// Histogram -> adapted exposure reduction (one compute pass).
     ExposureReduce,
+    /// Brightpass plus separable blur (three render passes).
+    Bloom,
+    /// Occlusion plus blur (two render passes).
+    Ssao,
     /// ACES tonemap and composite to the output target.
     Tonemap,
 }
@@ -34,10 +34,10 @@ impl TimedPass {
         TimedPass::ShadowCascades,
         TimedPass::Forward,
         TimedPass::OcclusionCull,
-        TimedPass::Bloom,
-        TimedPass::Ssao,
         TimedPass::Histogram,
         TimedPass::ExposureReduce,
+        TimedPass::Bloom,
+        TimedPass::Ssao,
         TimedPass::Tonemap,
     ];
 

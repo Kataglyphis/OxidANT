@@ -361,9 +361,10 @@ impl ForwardRenderer {
         self.encode_forward_pass(&mut encoder, &view);
         self.encode_depth_resolve(&mut encoder);
         self.encode_occlusion(gpu, &mut encoder, &view);
+        // Before bloom: its bright pass thresholds at this frame's exposure, as the tonemap exposes.
+        self.encode_exposure(&mut encoder, view.width, view.height);
         self.encode_bloom(&mut encoder);
         self.encode_ssao(&mut encoder);
-        self.encode_exposure(&mut encoder, view.width, view.height);
         self.encode_tonemap(&mut encoder, tonemap, output_view);
         self.finish_frame(gpu, encoder);
     }
