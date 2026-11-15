@@ -1595,6 +1595,32 @@ mod tests {
         assert!(body_text(&reply).contains("out of memory"), "{reply}");
     }
 
+    /// The caller's mistake, a model that cannot load and a dead endpoint each get their own status and keep the text.
+    #[tokio::test]
+    async fn each_kind_of_text_failure_has_its_status() {
+        use kataglyphis_text::TextError;
+        for (failure, status) in [
+            (TextError::InvalidOptions("a NUL byte".into()), "400"),
+            (
+                TextError::ModelLoadFailed("no genai_config.json".into()),
+                "503",
+            ),
+            (
+                TextError::EndpointUnreachable("connection refused".into()),
+                "502",
+            ),
+        ] {
+            let said = failure.to_string();
+            let (assistant, _) = crate::ask::tests::stub_assistant(Err(failure), false);
+            let mut with_model = site(4, Vec::new(), 9);
+            with_model.assistant = Some(assistant);
+            let addr = start_with(with_model).await;
+            let reply = post(addr, "/ask", "application/json", r#"{"question":"hi"}"#).await;
+            assert!(reply.starts_with(&format!("HTTP/1.1 {status}")), "{reply}");
+            assert_eq!(body_text(&reply), said, "{reply}");
+        }
+    }
+
     #[tokio::test]
     async fn a_model_that_answers_nothing_is_an_error_not_an_empty_answer() {
         for path in ["/ask", "/summary"] {

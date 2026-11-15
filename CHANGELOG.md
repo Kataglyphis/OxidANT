@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-15, a text failure keeps its kind)
+- `TextError::kind()` names each variant with a fixed snake_case word (`invalid_options`, `model_load_failed`,
+  `endpoint_unreachable`, ...), and `every_error_names_its_kind` asserts them distinct. ObservANT maps it: the
+  caller's `InvalidOptions` is 400, a library, model or provider that cannot load 503, everything past it 502, each
+  with the text body as before (`each_kind_of_text_failure_has_its_status`). The bridge's `text_generate` and
+  `text_embed` errors start with `kind: `, so no generated binding moved; the web build says
+  `library_unavailable: `.
+
+### Fixed (2026-11-15, the wasm32 build)
+- `text_default_options` has read `kataglyphis_text`'s defaults since dc3916e, which wasm32 did not depend on, so
+  `cargo check --target wasm32-unknown-unknown -p oxidant` failed; no lane builds it. The root crate depends on the
+  text crate there too (its endpoint and GenAI stay native), and six native-only helpers are gated off wasm32, so
+  clippy passes for both targets.
+
 ### Added (2026-11-15, ObservANT's in-process model is capped and reports its speed)
 - `llm_threads` (default 2; 0 leaves GenAI's own count) holds `llm_model_dir`'s decoder to that many intra-op
   threads beside the detector's two: `GenaiGenerator::load_with` lays `thread_overlay(n)` over the model's

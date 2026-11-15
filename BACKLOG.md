@@ -158,19 +158,6 @@ and the backlog is empty"; it was neither.
       for the owner: an idle unload for `llm_model_dir`, since "the model stays loaded" is a written choice and
       nothing is measured on the Pi; a bridge `text_unload` must land with OmniAccelerANT's regenerated bindings.
 
-- [ ] **A text failure loses its kind on the way out** (M, ★★). Audit 2026-11-12: `text_generate`
-      in `src/api/text.rs` returns `Result<(), String>`, so the app cannot tell a missing model
-      directory from a dead endpoint without matching English text. `refused` in
-      `crates/observant/src/ask.rs` answers every `TextError` with 502, also a question with a
-      NUL character, which is the caller's fault. Next: `TextError::kind()` returns a fixed
-      word, with `every_error_names_its_kind` in `crates/text/src/lib.rs` extended; ObservANT
-      maps the kind to a status (400 invalid request, 503 the model cannot load, 502 the
-      endpoint) and keeps the text body. Then the bridge puts the kind at the front of its error
-      string, so no generated binding moves, and Dart maps it to a translated sentence. A typed
-      bridge error waits for a planned regeneration, `ContextExceeded` for a measurement of how
-      often the playground hits it. Guard: the extended unit test and one ObservANT test per
-      status.
-
 - [ ] **Three camera pipelines, each with its own failure rules** (L, ★★). Audit 2026-11-12:
       `crates/media/src/capture.rs` (the Flutter engine), `crates/observant/src/capture.rs` and
       `crates/gui/src/gui_wgpu/pipeline.rs` each open a camera and keep the newest frame. Only

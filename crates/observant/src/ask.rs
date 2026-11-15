@@ -349,9 +349,20 @@ fn refused(refusal: Refusal) -> Response<Body> {
             "the question was cancelled",
         ),
         Refusal::Text(err) => {
-            log::warn!("language model: {err}");
-            text_reply(StatusCode::BAD_GATEWAY, err.to_string())
+            log::warn!("language model ({}): {err}", err.kind());
+            text_reply(status_of(&err), err.to_string())
         }
+    }
+}
+
+/// The caller's mistake is 400, a model that cannot load 503, and everything past it, the endpoint included, 502.
+fn status_of(err: &TextError) -> StatusCode {
+    match err {
+        TextError::InvalidOptions(_) => StatusCode::BAD_REQUEST,
+        TextError::LibraryUnavailable(_)
+        | TextError::ModelLoadFailed(_)
+        | TextError::ProviderUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+        _ => StatusCode::BAD_GATEWAY,
     }
 }
 

@@ -76,7 +76,7 @@ pub fn text_generate(
     options: TextOptions,
     sink: StreamSink<TextEvent>,
 ) -> Result<(), String> {
-    enabled::generate(source, messages, options, sink).map_err(|e| e.to_string())
+    enabled::generate(source, messages, options, sink).map_err(enabled::describe)
 }
 
 /// Ends the running generation after its current token; its `done` event says `cancelled`.
@@ -87,7 +87,7 @@ pub fn text_cancel() {
 
 /// One L2-normalised vector per text, from the model directory or the endpoint the source names.
 pub fn text_embed(source: TextSource, texts: Vec<String>) -> Result<Vec<Vec<f32>>, String> {
-    enabled::embed(source, texts).map_err(|e| e.to_string())
+    enabled::embed(source, texts).map_err(enabled::describe)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -102,6 +102,11 @@ mod enabled {
 
     use super::{TextEvent, TextMessage, TextOptions, TextSource};
     use crate::frb_generated::StreamSink;
+
+    /// `kind: text`: the app reads the kind before the colon instead of matching English (`TextError::kind`).
+    pub(super) fn describe(err: TextError) -> String {
+        format!("{}: {err}", err.kind())
+    }
 
     fn cancel_token() -> &'static CancelToken {
         static TOKEN: OnceLock<CancelToken> = OnceLock::new();
@@ -322,6 +327,11 @@ mod enabled {
     use crate::frb_generated::StreamSink;
 
     const WEB: &str = "the web build reaches language models from Dart, not through this bridge";
+
+    /// The native build's `kind: text` form; this build has no library to run one.
+    pub(super) fn describe(err: String) -> String {
+        format!("library_unavailable: {err}")
+    }
 
     pub(super) fn cancel() {}
 
