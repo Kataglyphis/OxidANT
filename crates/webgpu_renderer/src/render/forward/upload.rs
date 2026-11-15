@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt as _;
 
+use super::animate::JOINT_MATRIX_BYTES;
 use super::primitive::{GpuPrimitive, LodLevel, PrimMaterial, PrimUniforms};
-use super::{ForwardRenderer, MAX_JOINTS, MAX_PUNCTUAL_LIGHTS};
+use super::{ForwardRenderer, MAX_PUNCTUAL_LIGHTS};
 use crate::context::GpuContext;
 use crate::render::bounds::{
     compute_world_bounds, normal_matrix_of, primitive_local_aabb, primitive_world_aabb,
@@ -511,18 +512,25 @@ fn posed_world_bounds(
     prim_bounds
 }
 
-/// Joint matrices: sized to the skin (identity when unskinned).
+/// Joint matrices: sized to the skin (identity when unskinned), within the device's binding limit.
 fn create_joint_buffer(
     device: &wgpu::Device,
     scene: &CpuScene,
     prim: &CpuPrimitive,
     i: usize,
 ) -> wgpu::Buffer {
-    let joint_count = prim
+    let skin_joints = prim
         .skin_index
         .and_then(|s| scene.skins.get(s))
-        .map(|s| s.joints.len().clamp(1, MAX_JOINTS))
-        .unwrap_or(1);
+        .map_or(1, |s| s.joints.len());
+    let max_joints =
+        (device.limits().max_storage_buffer_binding_size / JOINT_MATRIX_BYTES) as usize;
+    if skin_joints > max_joints {
+        log::warn!(
+            "primitive {i}: its skin has {skin_joints} joints; the device binds {max_joints}"
+        );
+    }
+    let joint_count = skin_joints.clamp(1, max_joints);
     let identity = vec![Mat4::IDENTITY.to_cols_array_2d(); joint_count];
     init_buffer(
         device,

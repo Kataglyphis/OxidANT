@@ -74,6 +74,25 @@ impl Bin {
         )
     }
 
+    fn vec4(&mut self, values: &[[f32; 4]]) -> usize {
+        self.accessor(
+            &f32_bytes(values.as_flattened()),
+            5126,
+            values.len(),
+            "VEC4",
+            "",
+        )
+    }
+
+    fn joints(&mut self, values: &[[u16; 4]]) -> usize {
+        let bytes: Vec<u8> = values
+            .as_flattened()
+            .iter()
+            .flat_map(|j| j.to_le_bytes())
+            .collect();
+        self.accessor(&bytes, 5123, values.len(), "VEC4", "")
+    }
+
     fn vec2(&mut self, values: &[[f32; 2]]) -> usize {
         self.accessor(
             &f32_bytes(values.as_flattened()),
@@ -387,6 +406,39 @@ fn generated_tangents_follow_the_normal_textures_uv_set() {
             v.tangent[0] > 0.999,
             "the tangent must follow UV1's u (+X), got {:?}",
             v.tangent
+        );
+    }
+}
+
+/// The shader skins any weighted vertex and then ignores the node transform.
+#[test]
+fn skin_influences_without_a_joint_to_resolve_are_dropped() {
+    let mut bin = Bin::default();
+    let pos = bin.vec3(&TRIANGLE);
+    let joints = bin.joints(&[[5, 1, 0, 0]; 3]);
+    let weights = bin.vec4(&[[0.5, 0.5, 0.0, 0.0]; 3]);
+    let primitive = format!(
+        r#"{{"attributes":{{"POSITION":{pos},"JOINTS_0":{joints},"WEIGHTS_0":{weights}}}}}"#
+    );
+    // Node 0 draws the mesh without a skin; node 1 through a skin of two joints, nodes 2 and 3.
+    let glb = bin.glb(&format!(
+        r#""meshes":[{{"primitives":[{primitive}]}}],"nodes":[{{"mesh":0,"translation":[5,0,0]}},{{"mesh":0,"skin":0}},{{}},{{}}],"skins":[{{"joints":[2,3]}}],"scenes":[{{"nodes":[0,1,2,3]}}],"scene":0"#
+    ));
+    let scene = load_gltf_slice(&glb).expect("both copies must load");
+    let (unskinned, skinned) = (&scene.primitives[0], &scene.primitives[1]);
+    assert_eq!(unskinned.skin_index, None);
+    for v in &unskinned.vertices {
+        assert_eq!(
+            v.weights, [0.0; 4],
+            "a skinless node must draw through its transform"
+        );
+    }
+    assert_eq!(skinned.skin_index, Some(0));
+    for v in &skinned.vertices {
+        assert_eq!(
+            v.weights,
+            [0.0, 0.5, 0.0, 0.0],
+            "a two-joint skin has no joint 5"
         );
     }
 }

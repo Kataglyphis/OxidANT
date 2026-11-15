@@ -537,6 +537,8 @@ fn visit_node(
             if let Some(mut cpu) = load_primitive(&primitive, world, buffers, textures)? {
                 cpu.node_index = Some(node.index());
                 cpu.skin_index = node.skin().map(|s| s.index());
+                let joint_count = node.skin().map(|skin| skin.joints().count());
+                bind_influences(&mut cpu.vertices, joint_count, primitive.index());
                 // Node weights override mesh weights (glTF spec); kept only when the count matches.
                 if !cpu.morph_targets.is_empty() {
                     if let Some(weights) = node.weights().or_else(|| mesh.weights()) {
@@ -550,6 +552,27 @@ fn visit_node(
         }
     }
     Ok(())
+}
+
+/// Drops skin influences the shader cannot resolve: every one without a skin, and joints past its end.
+/// A weighted vertex skips the node transform, so a skinless node's copy drew at the mesh origin.
+fn bind_influences(vertices: &mut [Vertex], joint_count: Option<usize>, primitive: usize) {
+    let mut dropped = 0usize;
+    for vertex in vertices.iter_mut() {
+        for k in 0..4 {
+            if joint_count.is_some_and(|count| (vertex.joints[k] as usize) < count) {
+                continue;
+            }
+            dropped += usize::from(vertex.weights[k] != 0.0);
+            vertex.weights[k] = 0.0;
+            vertex.joints[k] = 0.0;
+        }
+    }
+    if dropped > 0 {
+        log::warn!(
+            "glTF primitive {primitive}: dropped {dropped} skin influence(s) without a joint in its node's skin"
+        );
+    }
 }
 
 fn load_primitive(

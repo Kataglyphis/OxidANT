@@ -2,7 +2,7 @@
 
 use glam::Mat4;
 
-use super::{ForwardRenderer, MAX_JOINTS};
+use super::ForwardRenderer;
 use crate::context::GpuContext;
 use crate::render::animation::{
     keyframe_lerp_indices, sample_morph_weights, sample_quat, sample_vec3,
@@ -11,6 +11,9 @@ use crate::render::bounds::{
     instanced_bounds, normal_matrix_of, transform_aabb, widen_bounds_for_skin,
 };
 use crate::scene::{ChannelValues, CpuAnimation, CpuNode, CpuScene, CpuSkin};
+
+/// Bytes per joint in a joint buffer: one column-major mat4.
+pub(super) const JOINT_MATRIX_BYTES: u64 = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
 
 /// The uploaded scene's node graph, clips and skins, plus the pose the next frame uploads.
 #[derive(Default)]
@@ -149,10 +152,12 @@ impl ForwardRenderer {
             let Some(skin) = self.animation.skins.get(skin_index) else {
                 continue;
             };
+            // The device's binding limit may have clamped the buffer below the skin's joint count.
+            let capacity = (prim.joint_buffer.size() / JOINT_MATRIX_BYTES) as usize;
             let matrices: Vec<[[f32; 4]; 4]> = skin
                 .joints
                 .iter()
-                .take(MAX_JOINTS)
+                .take(capacity)
                 .enumerate()
                 .map(|(i, &node)| {
                     let joint_world = world.get(node).copied().unwrap_or(Mat4::IDENTITY);

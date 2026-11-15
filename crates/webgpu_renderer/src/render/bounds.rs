@@ -3,7 +3,6 @@
 
 use glam::{Mat4, Vec3};
 
-use crate::render::forward::MAX_JOINTS;
 use crate::scene::{CpuScene, CpuSkin};
 
 /// View frustum from a wgpu (0..1 depth) view-projection; Gribb-Hartmann planes, normals inward.
@@ -105,7 +104,7 @@ pub(crate) fn widen_bounds_for_skin(
     world: &[Mat4],
 ) -> (Vec3, Vec3) {
     let (mut min, mut max) = bounds;
-    for (i, &joint_node) in skin.joints.iter().take(MAX_JOINTS).enumerate() {
+    for (i, &joint_node) in skin.joints.iter().enumerate() {
         let jw = world.get(joint_node).copied().unwrap_or(Mat4::IDENTITY);
         let ib = skin
             .inverse_bind_matrices

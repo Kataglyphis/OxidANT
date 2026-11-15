@@ -57,6 +57,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **With `KATAGLYPHIS_MIKKTSPACE_TANGENTS`, morph deltas landed on the wrong vertices**: MikkTSpace renumbers
   vertices in first-use order and splits them at seams, and the deltas kept the file's numbering. It returns each
   new vertex's source, and every target's deltas are gathered through it, split copies included.
+- **Skins over 256 joints were truncated silently**, so vertices on joint 256 and up read a clamped or zero matrix
+  and their bounds ignored those joints. `MAX_JOINTS` is gone: the joint buffer holds the whole skin, within the
+  device's storage-binding limit. The loader drops influences on joints the node's skin does not have, and every
+  influence of a weighted mesh on a node without a skin, which the shader skinned with no palette and drew at the
+  mesh origin instead of the node transform.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

@@ -42,9 +42,6 @@ use sky::SkyResources;
 use targets::{DepthResolve, RenderTargets};
 use upload::{MaterialDefaults, MaterialTextureCache};
 
-/// Upper bound on joints per skin (storage buffer is sized to the skin).
-pub const MAX_JOINTS: usize = 256;
-
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 

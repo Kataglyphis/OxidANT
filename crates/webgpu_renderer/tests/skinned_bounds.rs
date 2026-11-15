@@ -130,6 +130,50 @@ fn scene_bounds_after_upload_cover_the_joint_pose() {
     );
 }
 
+/// The cube fully on joint 299 of a 300-joint skin, that joint at `lift`.
+fn cube_on_joint_299(lift: Vec3) -> kataglyphis_webgpu_renderer::CpuScene {
+    let mut scene = skinned_cube_scene(Vec3::ZERO);
+    let first = scene.nodes.len();
+    for j in 0..300 {
+        scene.nodes.push(CpuNode {
+            parent: None,
+            translation: if j == 299 { lift } else { Vec3::ZERO },
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        });
+    }
+    scene.skins = vec![CpuSkin {
+        joints: (first..first + 300).collect(),
+        inverse_bind_matrices: vec![Mat4::IDENTITY; 300],
+    }];
+    for v in &mut scene.primitives[0].vertices {
+        v.joints = [299.0, 0.0, 0.0, 0.0];
+    }
+    scene
+}
+
+/// A 256-joint cap truncated the buffer and the bounds; VRM and game rigs exceed it.
+#[test]
+fn a_skin_over_256_joints_poses_and_bounds_its_last_joint() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = cube_on_joint_299(Vec3::new(0.0, 10.0, 0.0));
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(&gpu, &scene);
+    let (_, max) = renderer.primitive_world_aabb(0).expect("primitive 0");
+    assert!(
+        max.y >= 9.5,
+        "bounds must cover joint 299's pose, got max.y={}",
+        max.y
+    );
+    let at_joint = red_pixels_around(&mut renderer, &gpu, Vec3::new(0.0, 10.0, 0.0));
+    assert!(
+        at_joint > 200,
+        "joint 299 must pose the cube, found {at_joint} red pixels"
+    );
+}
+
 #[test]
 fn an_identity_joint_leaves_bounds_at_the_bind_pose() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
