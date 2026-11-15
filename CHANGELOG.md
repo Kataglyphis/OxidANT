@@ -89,6 +89,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   paths. Test: `re_enabling_culling_forgets_the_visibility_from_before`.
 - `MSAA_SAMPLE_COUNT`'s "(1 disables MSAA)" was false: the forward pass always sets a resolve target and the depth
   resolve reads a multisampled texture, so 1 fails validation. A const assertion now refuses it at compile time.
+- **`render_to_pixels_with_format` mislabelled BGRA and panicked on wider formats**: it promises RGBA8 bytes, so
+  `Bgra8Unorm` (the browser's preferred canvas format) came back channel-swapped and `Rgba16Float` overran the
+  4-byte row pitch in a validation panic. It returns an error for anything but `Rgba8Unorm` and `Rgba8UnormSrgb`.
+  Test: `render_to_pixels_refuses_formats_that_are_not_rgba8`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

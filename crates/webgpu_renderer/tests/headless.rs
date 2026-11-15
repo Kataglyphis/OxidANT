@@ -2293,3 +2293,36 @@ fn texture_slot_samples_its_declared_uv_set() {
         "on UV0 the whole quad is red (l r={l0r} b={l0b}, r r={r0r} b={r0b})"
     );
 }
+
+/// The readback returns RGBA8 bytes, so a format whose texels differ must be refused, not mislabelled.
+#[test]
+fn render_to_pixels_refuses_formats_that_are_not_rgba8() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 32, 32);
+    renderer.upload_scene(&gpu, &scene);
+    let camera = OrbitCamera::default();
+    for format in [
+        wgpu::TextureFormat::Bgra8Unorm,
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+        wgpu::TextureFormat::Rgba16Float,
+    ] {
+        assert!(
+            renderer
+                .render_to_pixels_with_format(&gpu, 32, 32, &camera, format)
+                .is_err(),
+            "{format:?} is not RGBA8, so render_to_pixels_with_format must return an error"
+        );
+    }
+    for format in [
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    ] {
+        let pixels = renderer
+            .render_to_pixels_with_format(&gpu, 32, 32, &camera, format)
+            .expect("the RGBA8 formats must render");
+        assert_eq!(pixels.len(), 32 * 32 * 4);
+    }
+}

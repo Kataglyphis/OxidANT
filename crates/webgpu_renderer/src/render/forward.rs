@@ -382,6 +382,7 @@ impl ForwardRenderer {
     }
 
     /// As [`Self::render_to_pixels`] with an explicit format, for the non-sRGB path browsers use.
+    /// Only `Rgba8Unorm` and `Rgba8UnormSrgb` match the RGBA8 bytes it returns; others are an error.
     pub fn render_to_pixels_with_format(
         &mut self,
         gpu: &GpuContext,
@@ -390,6 +391,15 @@ impl ForwardRenderer {
         camera: &OrbitCamera,
         format: wgpu::TextureFormat,
     ) -> anyhow::Result<Vec<u8>> {
+        // BGRA would come back channel-swapped, and wider texels overrun the 4-byte row pitch.
+        anyhow::ensure!(
+            matches!(
+                format,
+                wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb
+            ),
+            "render_to_pixels returns RGBA8 bytes, so it renders only to Rgba8Unorm or \
+             Rgba8UnormSrgb, not {format:?}"
+        );
         let mut tonemap = TonemapPass::new(gpu, format);
 
         let texture = create_2d_texture(
