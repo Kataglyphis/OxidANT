@@ -31,21 +31,29 @@ base color / metallic-roughness / normal / emissive / occlusion maps,
 `KHR_materials_unlit`, alpha OPAQUE/MASK/BLEND, double-sided materials,
 CPU-generated mip chains.
 
-**Lighting** — directional sun with 3-cascade shadow maps (3×3 PCF) and
+**Lighting** — directional sun with the C++ engine's cascaded shadow maps
+(`render::shadow_settings`: 1 to 3 cascades fitted to slices of the view frustum by
+the practical split scheme and texel-stabilised, 512 to 4096 texels, PCF radius 0 to 5,
+strength, distance and split lambda, its bias formula, casters culled per cascade) and
 per-pixel alpha-tested shadows for cut-out (MASK) materials, up to 256
 `KHR_lights_punctual` point/spot lights binned per 16×16-pixel screen tile,
-procedural sky with an analytic sun, and image-based lighting: analytic
+the C++ DOOM2016 cube-map skybox natively (from BeschleunigerBallett's
+`Resources/Textures/Skybox`, shown untonemapped as the C++ draws it) or a procedural sky
+with an analytic sun elsewhere and in the browser, and image-based lighting: analytic
 (hemisphere irradiance + sky reflections via the split-sum approximation), or
 from a Radiance `.hdr` environment map (irradiance and prefiltered specular
-cubemaps + a BRDF LUT).
+cubemaps + a BRDF LUT). The skybox faces carry no licence in BeschleunigerBallett's
+`licenses/`, so the web demo does not ship them; shipping them beside the page needs a
+licence from their rights holder and a row there first.
 
 **Post** — 4× MSAA, HDR `Rgba16Float` target, bloom (bright-pass + separable
 Gaussian), SSAO (depth reconstruction), manual or histogram auto-exposure, ACES
 tonemapping.
 
 **Runtime** — GPU skinning, morph-target and TRS animation playback, GPU
-instancing, frustum plus occlusion culling (hardware queries, or an opt-in
-compute pass), LOD simplification, a validated render graph, hot shader reload
+instancing, a model transform over the whole scene (the C++ Model tab's), frustum
+culling that can be switched off plus occlusion culling (hardware queries, or an
+opt-in compute pass), LOD simplification, a validated render graph, hot shader reload
 and screenshot capture.
 
 **Editor** — BeschleunigerBallett's docked C++ editor ("Studio Pro") in egui
@@ -65,7 +73,11 @@ scene on screen stays until the new one is ready. A scene starts at the camera i
 glTF left active, else its first, else fitted to its bounds, and its
 `asset.copyright` shows in the status bar and About. In the browser the profiler
 starts hidden and a narrow canvas drops the inspector first, so the docs iframe
-keeps the library. The remaining inspector rows follow.
+keeps the library. The inspector's C++ rows are live: the Sun's SHADOWS section, the
+Model tab's transform, the skybox switch (also the outliner's eye) and frustum culling
+(also in the Render menu and the profiler's Visibility tab, with the C++ counts); a
+scene's start view sets the shadow distance to twice its distance to the target, never
+under the C++ 60 m. Clouds, the deferred path and ray and path tracing follow.
 
 **Camera** — the C++ engine's fly camera (`scene::fly`) and the orbit controller
 share one `OrbitCamera`: flying moves eye and target together and turns about the

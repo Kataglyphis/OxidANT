@@ -74,8 +74,13 @@ fn post(ui: &mut Ui, cx: &mut EditorContext<'_>) {
 }
 
 fn culling(ui: &mut Ui, cx: &mut EditorContext<'_>) {
-    section_header(ui, "CULLING", None);
     let settings = &mut *cx.settings;
+    section_header(ui, "FRUSTUM CULLING", Some(&mut settings.frustum_culling));
+    muted_wrapped(
+        ui,
+        "Off draws every mesh and shadow caster. The profiler's Visibility tab counts both.",
+    );
+    section_header(ui, "OCCLUSION CULLING", None);
     property_row(
         ui,
         "Occlusion",
@@ -93,11 +98,9 @@ fn culling(ui: &mut Ui, cx: &mut EditorContext<'_>) {
     let (drawn, considered) = cx.stats.occlusion;
     let culled = considered.saturating_sub(drawn);
     let text = if settings.occlusion_queries_enabled {
-        format!(
-            "Drew {drawn} of {considered} primitives, {culled} culled. The frustum always culls."
-        )
+        format!("Drew {drawn} of {considered} primitives in the frustum, {culled} occluded.")
     } else {
-        "The frustum always culls; occlusion culling is off.".to_owned()
+        "Off: every primitive in the frustum is drawn.".to_owned()
     };
     muted_wrapped(ui, text);
 }

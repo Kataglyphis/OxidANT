@@ -62,6 +62,14 @@ pub fn resources_models(cwd: &Path) -> Option<PathBuf> {
         .find(|dir| dir.is_dir())
 }
 
+/// BeschleunigerBallett's DOOM2016 skybox, searched like `Resources/Models`; elsewhere the procedural sky stays.
+pub fn skybox_dir(cwd: &Path) -> Option<PathBuf> {
+    cwd.ancestors()
+        .take(RESOURCE_SEARCH_DEPTH)
+        .map(|dir| dir.join(crate::asset::skybox::DOOM2016_DIR))
+        .find(|dir| dir.is_dir())
+}
+
 /// The startup scene, and a note for every candidate the chain could not use.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Startup {

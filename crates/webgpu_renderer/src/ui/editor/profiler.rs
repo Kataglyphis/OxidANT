@@ -4,7 +4,9 @@ use egui::{pos2, vec2, Align, Layout, Rect, RichText, Sense, Shape, Stroke, Ui};
 
 use super::{Editor, EditorContext, FRAME_RATE_WINDOW};
 use crate::ui::palette as pal;
-use crate::ui::widgets::{caption, frame_height, galley, metric_row, muted, tab_bar, MetricRow};
+use crate::ui::widgets::{
+    caption, frame_height, galley, metric_row, muted, tab_bar, toggle, MetricRow,
+};
 use crate::ui::{fonts, theme};
 
 const TABS: [&str; 2] = ["Performance", "Visibility"];
@@ -120,7 +122,12 @@ fn gpu_passes(ui: &mut Ui, cx: &EditorContext<'_>) {
     }
 }
 
-fn visibility(ui: &mut Ui, cx: &EditorContext<'_>) {
+/// The C++ Visibility tab: the frustum-culling switch, what the camera pass and the cascades drew, and what they culled.
+fn visibility(ui: &mut Ui, cx: &mut EditorContext<'_>) {
+    ui.horizontal(|ui| {
+        ui.label("Frustum culling");
+        toggle(ui, &mut cx.settings.frustum_culling);
+    });
     let font = egui::TextStyle::Body.resolve(ui.style());
     let names = ["Primitives drawn", "Shadow casters drawn"];
     let name_width = names
@@ -128,11 +135,8 @@ fn visibility(ui: &mut Ui, cx: &EditorContext<'_>) {
         .map(|name| galley(ui, *name, font.clone(), pal::TEXT).size().x)
         .fold(0.0, f32::max);
     let value_width = galley(ui, "00000 / 00000", font, pal::TEXT).size().x;
-    ui.add_space(ui.spacing().item_spacing.y);
-    for (name, (drawn, total)) in names
-        .into_iter()
-        .zip([cx.stats.occlusion, cx.stats.shadow_casters])
-    {
+    let counts = [cx.stats.primitives, cx.stats.shadow_casters];
+    for (name, (drawn, total)) in names.into_iter().zip(counts) {
         let value = format!("{drawn} / {total}");
         let fraction = if total > 0 {
             drawn as f32 / total as f32
@@ -147,4 +151,23 @@ fn visibility(ui: &mut Ui, cx: &EditorContext<'_>) {
         };
         metric_row(ui, (name_width, value_width), &row);
     }
+    let [(primitives, primitive_share), (casters, caster_share)] = counts.map(culled);
+    muted(
+        ui,
+        format!(
+            "Culled: {primitives} primitives ({primitive_share:.1} %), \
+             {casters} shadow casters ({caster_share:.1} %)"
+        ),
+    );
+}
+
+/// How many of `total` were not drawn, and their share in percent.
+fn culled((drawn, total): (u32, u32)) -> (u32, f32) {
+    let culled = total.saturating_sub(drawn);
+    let share = if total > 0 {
+        100.0 * culled as f32 / total as f32
+    } else {
+        0.0
+    };
+    (culled, share)
 }

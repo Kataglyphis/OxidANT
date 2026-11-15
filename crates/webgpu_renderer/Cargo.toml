@@ -23,13 +23,14 @@ glam = { version = "0.34", features = ["bytemuck"] }
 gltf = { version = "1", features = ["import", "guess_mime_type", "KHR_lights_punctual", "KHR_texture_transform", "KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions"] }
 # Not the `mikktspace` crate: it pulls nalgebra 0.26, which is future-incompatible on current rustc.
 bevy_mikktspace = "1"
+# The skybox's PNG faces; gltf already builds this crate, so it adds none.
+image = { version = "0.25", default-features = false, features = ["png"] }
 egui = "0.37"
 egui-wgpu = "0.37"
 egui-winit = { version = "0.37", default-features = false }
 ktx2 = "0.5"
 
 [dev-dependencies]
-image = { version = "0.25", default-features = false, features = ["png"] }
 # Shader interop with the C++ Vulkan engine: WGSL -> SPIR-V / GLSL.
 naga = { version = "30", features = ["wgsl-in", "spv-out", "glsl-out"] }
 # Pins the embedded fonts and their licence texts to BeschleunigerBallett's copies.

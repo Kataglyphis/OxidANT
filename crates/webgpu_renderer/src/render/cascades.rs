@@ -1,82 +1,158 @@
-//! Pure-CPU shadow-cascade fitting, texel-stabilized like `CascadedShadowMapMath.cpp`.
-//! Splits are eye distances: `forward.slang`'s `fs_main` selects by each fragment's own distance.
+//! Pure-CPU shadow-cascade fitting: the C++ `computeCascadeDataInto`, one texel-stabilized box per view-frustum slice.
+//! Splits are view depths along the camera's forward axis, which `forward.slang`'s `shadow_visibility` selects by.
 
 // glam's `directx` clip convention is NDC Z in [0,1] with Y up, the same as wgpu's.
 use glam::camera::rh::proj::directx as clip;
 use glam::camera::rh::view::look_at_mat4;
 use glam::{Mat4, Vec3};
 
-use crate::render::forward::{CASCADE_COUNT, SHADOW_MAP_SIZE};
+use crate::render::forward::CASCADE_COUNT;
+use crate::render::shadow_settings::ShadowSettings;
 use crate::scene::camera::OrbitCamera;
 
-pub(crate) struct CascadeFit {
-    pub splits: [f32; 2],
-    pub matrices: [Mat4; CASCADE_COUNT],
+/// The C++ `snapZPadding`: room along the light in front of and behind every slice.
+pub(crate) const Z_PADDING: f32 = 10.0;
+
+/// The camera as the fit reads it: the lens of the free rect, never the docks' remap.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CascadeLens {
+    /// World to view.
+    pub view: Mat4,
+    pub fov_y_deg: f32,
+    /// The free rect's width over height.
+    pub aspect: f32,
+    pub near: f32,
+    pub far: f32,
 }
 
-/// Fits one ortho light matrix per cascade: camera focus, orbit target, whole scene.
+impl CascadeLens {
+    /// `camera` drawn into a frame of `frame_aspect`, as the C++ fits its scene rect.
+    pub(crate) fn of(camera: &OrbitCamera, frame_aspect: f32) -> Self {
+        Self {
+            view: camera.view(),
+            fov_y_deg: camera.fov_y_deg,
+            aspect: camera.viewport.sanitized().aspect(frame_aspect),
+            near: camera.near,
+            far: camera.far,
+        }
+    }
+}
+
+/// One entry per cascade; past the settings' count the last fitted one repeats.
+pub(crate) struct CascadeFit {
+    /// Each cascade's far end as a view depth.
+    pub splits: [f32; CASCADE_COUNT],
+    pub matrices: [Mat4; CASCADE_COUNT],
+    /// The C++ box's depth range over this one's, so a bias in its NDC keeps its world size here.
+    pub bias_scales: [f32; CASCADE_COUNT],
+    /// The camera's forward axis, along which `splits` are measured.
+    pub view_dir: Vec3,
+}
+
+/// One light matrix per slice of the camera frustum up to the shadow distance.
 pub(crate) fn fit_cascades(
-    camera: &OrbitCamera,
-    scene_min: Vec3,
-    scene_max: Vec3,
+    lens: &CascadeLens,
     light_dir: Vec3,
+    settings: &ShadowSettings,
+    scene_bounds: Option<(Vec3, Vec3)>,
 ) -> CascadeFit {
-    let scene_center = (scene_min + scene_max) * 0.5;
-    let mut scene_radius = ((scene_max - scene_min).length() * 0.5).max(1e-3);
-    if !scene_radius.is_finite() {
-        scene_radius = 1.0;
-    }
-
-    // Floored at the scene radius: a camera inside the scene sizes the cascades by the scene.
-    let mut raw_dist = (scene_center - camera.eye()).length().max(scene_radius);
-    if !raw_dist.is_finite() {
-        raw_dist = scene_radius;
-    }
-    // Quantized: a continuous size re-scales the texel grid every dolly, defeating the snap.
-    let mut steps = (raw_dist / scene_radius).log2().ceil().max(0.0);
-    if !steps.is_finite() {
-        steps = 0.0;
-    }
-    let dist_to_center = scene_radius * steps.exp2();
-
-    let near_radius = (dist_to_center * 0.35).max(0.5);
-    let mid_radius = (dist_to_center * 0.7).max(1.0);
-    let splits = [near_radius * 2.0, mid_radius * 2.0];
-
-    let focus_near = camera.target.lerp(camera.eye(), 0.15);
-    let cascades = [
-        (focus_near, near_radius),
-        (camera.target, mid_radius),
-        (scene_center, scene_radius),
-    ];
-
-    let light_dir = light_dir.normalize_or_zero();
-    let light_dir = if light_dir == Vec3::ZERO {
-        Vec3::Y
-    } else {
-        light_dir
+    let settings = settings.sanitized();
+    let count = settings.cascade_count as usize;
+    let edges = split_distances(
+        count,
+        (lens.near, lens.far),
+        settings.distance,
+        settings.split_lambda,
+    );
+    let camera_to_world = lens.view.inverse();
+    let basis = light_basis(light_dir);
+    // Every caster lies in the scene box, so its corner nearest the light bounds them all.
+    let nearest_caster = scene_bounds.map_or(f32::INFINITY, |(min, max)| {
+        nearest_light_depth(basis, min, max)
+    });
+    let tan_half = (lens.fov_y_deg.clamp(1.0, 179.0).to_radians() * 0.5).tan();
+    let mut fit = CascadeFit {
+        splits: [edges[count]; CASCADE_COUNT],
+        matrices: [Mat4::IDENTITY; CASCADE_COUNT],
+        bias_scales: [1.0; CASCADE_COUNT],
+        view_dir: camera_to_world
+            .transform_vector3(Vec3::NEG_Z)
+            .normalize_or(Vec3::NEG_Z),
     };
-    let up = if light_dir.dot(Vec3::Y).abs() > 0.99 {
+    for cascade in 0..CASCADE_COUNT {
+        let slice = cascade.min(count - 1);
+        let corners = slice_corners(
+            camera_to_world,
+            (tan_half, lens.aspect.max(1e-6)),
+            edges[slice],
+            edges[slice + 1],
+        );
+        let (matrix, bias_scale) =
+            stabilized_light_matrix(basis, &corners, settings.resolution, nearest_caster);
+        fit.splits[cascade] = edges[slice + 1];
+        fit.matrices[cascade] = matrix;
+        fit.bias_scales[cascade] = bias_scale;
+    }
+    fit
+}
+
+/// The C++ `cascadeSplit(i)` for i in 0..=count: both ends exact, lambda blending log and uniform between.
+pub(crate) fn split_distances(
+    count: usize,
+    (near, far): (f32, f32),
+    distance: f32,
+    lambda: f32,
+) -> [f32; CASCADE_COUNT + 1] {
+    let far = if far.is_finite() && far > 0.0 {
+        far
+    } else {
+        1.0
+    };
+    let shadow_far = if distance > 0.0 {
+        distance.min(far)
+    } else {
+        far
+    };
+    let shadow_near = near.min(shadow_far * 0.5).max(shadow_far * 1e-6);
+    let lambda = lambda.clamp(0.0, 1.0);
+    let mut edges = [shadow_far; CASCADE_COUNT + 1];
+    edges[0] = shadow_near;
+    for (i, edge) in edges.iter_mut().enumerate().take(count).skip(1) {
+        let p = i as f32 / count as f32;
+        let log_split = shadow_near * (shadow_far / shadow_near).powf(p);
+        let uniform_split = shadow_near + (shadow_far - shadow_near) * p;
+        *edge = lambda * log_split + (1.0 - lambda) * uniform_split;
+    }
+    edges
+}
+
+/// The eight world-space corners of the camera frustum between view depths `near` and `far`.
+fn slice_corners(
+    camera_to_world: Mat4,
+    (tan_half, aspect): (f32, f32),
+    near: f32,
+    far: f32,
+) -> [Vec3; 8] {
+    std::array::from_fn(|corner| {
+        let depth = if corner & 4 == 0 { near } else { far };
+        let x = if corner & 1 == 0 { -1.0 } else { 1.0 };
+        let y = if corner & 2 == 0 { -1.0 } else { 1.0 };
+        let half_height = depth * tan_half;
+        let in_view = Vec3::new(x * half_height * aspect, y * half_height, -depth);
+        camera_to_world.transform_point3(in_view)
+    })
+}
+
+/// A world-fixed light view: anchored at the origin, so camera motion moves boxes by whole texels.
+fn light_basis(light_dir: Vec3) -> Mat4 {
+    let toward_light = light_dir.normalize_or(Vec3::Y);
+    let up = if toward_light.dot(Vec3::Y).abs() > 0.99 {
         Vec3::Z
     } else {
         Vec3::Y
     };
     // Eye at +light_dir, not -: ours points toward the light, the C++ `lightDir` along the ray.
-    let light_basis = look_at_mat4(light_dir, Vec3::ZERO, up);
-    let nearest_caster = nearest_light_depth(light_basis, scene_min, scene_max);
-
-    let mut matrices = [Mat4::IDENTITY; CASCADE_COUNT];
-    for (i, (center, radius)) in cascades.into_iter().enumerate() {
-        matrices[i] = stabilized_light_matrix_for(
-            light_basis,
-            center,
-            radius,
-            SHADOW_MAP_SIZE,
-            nearest_caster,
-        );
-    }
-
-    CascadeFit { splits, matrices }
+    look_at_mat4(toward_light, Vec3::ZERO, up)
 }
 
 /// The smallest light-view depth over the scene box's corners: the scene's point nearest the light.
@@ -93,384 +169,61 @@ fn nearest_light_depth(light_basis: Mat4, scene_min: Vec3, scene_max: Vec3) -> f
         .fold(f32::INFINITY, f32::min)
 }
 
-/// One cascade's ortho light matrix for a sphere, snapped to whole texels in `light_basis`.
-/// The basis must be world-fixed: one anchored at a moving center absorbs motion no snap undoes.
-/// `nearest_caster` is the light-view depth the near plane must reach so no caster is clipped.
-fn stabilized_light_matrix_for(
+/// The slice's bounding sphere as an ortho box snapped to whole texels, and its bias scale.
+fn stabilized_light_matrix(
     light_basis: Mat4,
-    center: Vec3,
-    radius: f32,
-    shadow_map_size: u32,
+    corners: &[Vec3; 8],
+    resolution: u32,
     nearest_caster: f32,
-) -> Mat4 {
-    // Pad by one projected texel so snap and projection share a grid; size <= 2 cannot be padded.
-    let (half_extent, texel_world) = if shadow_map_size > 2 {
-        let half_extent = radius * shadow_map_size as f32 / (shadow_map_size as f32 - 2.0);
-        let texel_world = (2.0 * half_extent) / shadow_map_size as f32;
-        (half_extent, texel_world)
+) -> (Mat4, f32) {
+    let center = corners.iter().copied().sum::<Vec3>() / corners.len() as f32;
+    let radius = corners
+        .iter()
+        .map(|corner| corner.distance(center))
+        .fold(1e-4, f32::max);
+    // One texel of padding, so the snap and the projection share a grid; size <= 2 cannot be padded.
+    let (half_extent, texel_world) = if resolution > 2 {
+        let half_extent = radius * resolution as f32 / (resolution as f32 - 2.0);
+        (half_extent, 2.0 * half_extent / resolution as f32)
     } else {
         (radius, 0.0)
     };
     let center_ls = light_basis.transform_point3(center);
-    let (snapped_x, snapped_y) = if texel_world > 0.0 {
-        (
-            (center_ls.x / texel_world).floor() * texel_world,
-            (center_ls.y / texel_world).floor() * texel_world,
-        )
-    } else {
-        (center_ls.x, center_ls.y)
+    let snap = |value: f32| {
+        if texel_world > 0.0 {
+            (value / texel_world).floor() * texel_world
+        } else {
+            value
+        }
     };
-
-    // Every caster reaches every cascade's pass, so the near plane also reaches the nearest one.
-    let depth_pad = radius * 4.0;
-    let mut near = -center_ls.z - depth_pad;
-    if nearest_caster.is_finite() {
-        near = near.min(nearest_caster - radius * 0.01);
-    }
-    let mut far = -center_ls.z + depth_pad;
+    let (snapped_x, snapped_y) = (snap(center_ls.x), snap(center_ls.y));
+    let (min_z, max_z) = corners
+        .iter()
+        .map(|corner| light_basis.transform_point3(*corner).z)
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), z| {
+            (lo.min(z), hi.max(z))
+        });
+    let near = -max_z - Z_PADDING;
+    let mut far = -min_z + Z_PADDING;
     if far <= near {
         far = near + 1.0;
     }
-
+    // WebGPU core has no depth clamp to pancake casters in front of the box, so the near plane reaches them.
+    let reach = if nearest_caster.is_finite() {
+        near.min(nearest_caster - Z_PADDING)
+    } else {
+        near
+    };
     let projection = clip::orthographic(
         snapped_x - half_extent,
         snapped_x + half_extent,
         snapped_y - half_extent,
         snapped_y + half_extent,
-        near,
+        reach,
         far,
     );
-    projection * light_basis
+    (projection * light_basis, (far - near) / (far - reach))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn zoomed_out_camera() -> OrbitCamera {
-        OrbitCamera {
-            radius: 200.0,
-            ..OrbitCamera::default()
-        }
-    }
-
-    #[test]
-    fn splits_track_the_camera_instead_of_staying_scene_fixed() {
-        // Scene-fixed splits leave a far camera's every fragment in the last cascade.
-        let scene_min = Vec3::splat(-1.0);
-        let scene_max = Vec3::splat(1.0);
-        let light_dir = Vec3::Y;
-
-        let near_fit = fit_cascades(&OrbitCamera::default(), scene_min, scene_max, light_dir);
-        let far_fit = fit_cascades(&zoomed_out_camera(), scene_min, scene_max, light_dir);
-
-        assert!(
-            far_fit.splits[0] > near_fit.splits[0] * 10.0,
-            "far camera's first split ({}) must grow with eye distance, not stay near the close camera's ({})",
-            far_fit.splits[0],
-            near_fit.splits[0]
-        );
-        assert!(
-            far_fit.splits[1] > far_fit.splits[0],
-            "splits must stay ordered: {:?}",
-            far_fit.splits
-        );
-    }
-
-    #[test]
-    fn a_camera_inside_the_scene_radius_matches_the_original_scene_radius_derived_split() {
-        // The GPU golden tests' cameras sit inside the scene radius and rely on this exact sizing.
-        let scene_min = Vec3::new(-4.0, 0.0, -4.0);
-        let scene_max = Vec3::new(4.0, 1.4, 4.0);
-        let camera = OrbitCamera {
-            radius: 6.0,
-            pitch_deg: 55.0,
-            ..OrbitCamera::default()
-        };
-        let scene_center = (scene_min + scene_max) * 0.5;
-        let scene_radius = (scene_max - scene_min).length() * 0.5;
-        assert!(
-            (scene_center - camera.eye()).length() < scene_radius,
-            "precondition: this camera must sit inside the scene's own radius"
-        );
-
-        let fit = fit_cascades(&camera, scene_min, scene_max, Vec3::new(-1.0, 0.7, -0.3));
-
-        let expected_near = (scene_radius * 0.35).max(0.5);
-        let expected_mid = (scene_radius * 0.7).max(1.0);
-        assert!(
-            (fit.splits[0] - expected_near * 2.0).abs() < 1e-3,
-            "got {}, expected {}",
-            fit.splits[0],
-            expected_near * 2.0
-        );
-        assert!(
-            (fit.splits[1] - expected_mid * 2.0).abs() < 1e-3,
-            "got {}, expected {}",
-            fit.splits[1],
-            expected_mid * 2.0
-        );
-    }
-
-    #[test]
-    fn cascade_matrices_stay_finite_and_non_degenerate() {
-        let scene_min = Vec3::splat(-1.0);
-        let scene_max = Vec3::splat(1.0);
-        for camera in [OrbitCamera::default(), zoomed_out_camera()] {
-            let fit = fit_cascades(&camera, scene_min, scene_max, Vec3::new(-0.55, -1.0, -0.35));
-            for (i, m) in fit.matrices.iter().enumerate() {
-                assert!(m.is_finite(), "cascade {i} matrix is not finite: {m:?}");
-                assert!(
-                    m.determinant().abs() > 1e-12,
-                    "cascade {i} matrix collapsed"
-                );
-            }
-        }
-    }
-
-    /// `world` in `view_proj`'s texel space, where one shadow-map texel is exactly 1.0.
-    fn texel_space(view_proj: Mat4, world: Vec3) -> (f32, f32) {
-        let clip = view_proj * world.extend(1.0);
-        (
-            (clip.x / clip.w) * (SHADOW_MAP_SIZE as f32 / 2.0),
-            (clip.y / clip.w) * (SHADOW_MAP_SIZE as f32 / 2.0),
-        )
-    }
-
-    #[test]
-    fn cascades_shift_by_whole_texels_under_camera_motion() {
-        // Shimmer guard: a static point may only shift by whole texels as the camera moves.
-        let scene_min = Vec3::splat(-1.0);
-        let scene_max = Vec3::splat(1.0);
-        let light_dir = Vec3::new(-0.4, -1.0, -0.2);
-        let probe = Vec3::new(0.2, 0.3, 0.1);
-
-        let camera_a = OrbitCamera::default();
-        // Well under one near-cascade texel (~1.4e-3 world units here).
-        let camera_b = OrbitCamera {
-            target: camera_a.target + Vec3::new(4e-4, 0.0, 0.0),
-            ..camera_a.clone()
-        };
-
-        let fit_a = fit_cascades(&camera_a, scene_min, scene_max, light_dir);
-        let fit_b = fit_cascades(&camera_b, scene_min, scene_max, light_dir);
-
-        let (ax, ay) = texel_space(fit_a.matrices[0], probe);
-        let (bx, by) = texel_space(fit_b.matrices[0], probe);
-        let (dx, dy) = (ax - bx, ay - by);
-        assert!(
-            (dx - dx.round()).abs() < 5e-2,
-            "x moved by a fractional texel: {dx}"
-        );
-        assert!(
-            (dy - dy.round()).abs() < 5e-2,
-            "y moved by a fractional texel: {dy}"
-        );
-    }
-
-    #[test]
-    fn cascades_stay_texel_aligned_over_long_camera_travel() {
-        // Far travel at fixed radius: an unpadded texel_world would drift past the tolerance.
-        let light_dir = Vec3::new(-0.4, -1.0, -0.2).normalize();
-        let up = if light_dir.dot(Vec3::Y).abs() > 0.99 {
-            Vec3::Z
-        } else {
-            Vec3::Y
-        };
-        let light_basis = look_at_mat4(light_dir, Vec3::ZERO, up);
-        let radius = 1.4_f32;
-        let probe = Vec3::new(0.2, 0.3, 0.1);
-
-        let center_a = Vec3::ZERO;
-        let center_b = center_a + Vec3::new(0.5, 0.0, 0.0);
-
-        let no_caster = f32::INFINITY;
-        let matrix_a =
-            stabilized_light_matrix_for(light_basis, center_a, radius, SHADOW_MAP_SIZE, no_caster);
-        let matrix_b =
-            stabilized_light_matrix_for(light_basis, center_b, radius, SHADOW_MAP_SIZE, no_caster);
-
-        let (ax, ay) = texel_space(matrix_a, probe);
-        let (bx, by) = texel_space(matrix_b, probe);
-        let (dx, dy) = (ax - bx, ay - by);
-        assert!(
-            (dx - dx.round()).abs() < 5e-2,
-            "x drifted off whole-texel alignment: {dx}"
-        );
-        assert!(
-            (dy - dy.round()).abs() < 5e-2,
-            "y drifted off whole-texel alignment: {dy}"
-        );
-    }
-
-    /// Whether `world` lands inside the box, per `forward.slang:212`'s `uv`/`proj.z` check.
-    fn shader_covers(view_proj: Mat4, world: Vec3) -> bool {
-        let clip = view_proj * world.extend(1.0);
-        if clip.w.abs() < 1e-6 {
-            return false;
-        }
-        let proj = clip.truncate() / clip.w;
-        let u = proj.x * 0.5 + 0.5;
-        let v = 0.5 - proj.y * 0.5;
-        (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v) && (0.0..=1.0).contains(&proj.z)
-    }
-
-    /// `forward.slang:198-203`'s cascade selection rule, in isolation.
-    fn select_cascade(eye_distance: f32, splits: [f32; 2]) -> usize {
-        let mut cascade = 0usize;
-        if eye_distance > splits[0] {
-            cascade = 1;
-        }
-        if eye_distance > splits[1] {
-            cascade = 2;
-        }
-        cascade.min(CASCADE_COUNT - 1)
-    }
-
-    #[test]
-    fn every_selectable_eye_distance_lands_inside_the_cascade_it_selects() {
-        // Near-eye points can miss cascade 0 (it hugs the focus); the shader retries coarser ones.
-        let scene_min = Vec3::new(-4.0, 0.0, -4.0);
-        let scene_max = Vec3::new(4.0, 1.4, 4.0);
-        let light_dir = Vec3::new(-1.0, -0.3, -1.0);
-        let camera = OrbitCamera {
-            radius: 6.0,
-            pitch_deg: 5.0,
-            ..OrbitCamera::default()
-        };
-
-        let fit = fit_cascades(&camera, scene_min, scene_max, light_dir);
-        let eye = camera.eye();
-        let view_dir = (camera.target - eye).normalize();
-
-        let lo = 0.05 * fit.splits[0];
-        let hi = 1.5 * fit.splits[1];
-        const STEPS: u32 = 64;
-
-        let mut uncovered = Vec::new();
-        for i in 0..=STEPS {
-            let t = i as f32 / STEPS as f32;
-            let eye_distance = lo + t * (hi - lo);
-            let world = eye + view_dir * eye_distance;
-            let selected = select_cascade(eye_distance, fit.splits);
-
-            let covered_by_fallback =
-                (selected..CASCADE_COUNT).any(|c| shader_covers(fit.matrices[c], world));
-            if !covered_by_fallback {
-                uncovered.push((eye_distance, selected));
-            }
-        }
-
-        assert!(
-            uncovered.is_empty(),
-            "no cascade from the selected one through {} covers the fragment for {} of {} \
-             sampled eye distances (eye_distance, selected cascade): {:?}",
-            CASCADE_COUNT - 1,
-            uncovered.len(),
-            STEPS + 1,
-            uncovered
-        );
-    }
-
-    #[test]
-    fn no_cascade_clips_a_caster_between_the_light_and_its_box() {
-        // A 30-unit tower far from the focus under a low sun: its top was before cascade 0's near plane.
-        let scene_min = Vec3::new(-20.0, 0.0, -20.0);
-        let scene_max = Vec3::new(20.0, 30.0, 20.0);
-        let camera = OrbitCamera {
-            target: Vec3::new(15.0, 0.0, 15.0),
-            radius: 6.0,
-            pitch_deg: 30.0,
-            ..OrbitCamera::default()
-        };
-        let fit = fit_cascades(&camera, scene_min, scene_max, Vec3::new(-1.0, 0.88, -1.0));
-        for (i, m) in fit.matrices.iter().enumerate() {
-            for corner in 0..8u32 {
-                let p = Vec3::select(
-                    glam::BVec3::new(corner & 1 != 0, corner & 2 != 0, corner & 4 != 0),
-                    scene_max,
-                    scene_min,
-                );
-                let clip = *m * p.extend(1.0);
-                let z = clip.z / clip.w;
-                assert!(
-                    z >= 0.0,
-                    "cascade {i} clips the scene corner {p} at NDC z {z}: casters there cast nothing"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn cascade_box_size_is_invariant_under_camera_motion() {
-        // Turning inside the scene radius must not resize the box, or the texel size breathes.
-        let scene_min = Vec3::splat(-50.0);
-        let scene_max = Vec3::splat(50.0);
-        let light_dir = Vec3::new(-0.3, -1.0, 0.2);
-
-        let camera_a = OrbitCamera {
-            radius: 5.0,
-            yaw_deg: 10.0,
-            pitch_deg: 15.0,
-            ..OrbitCamera::default()
-        };
-        let camera_b = OrbitCamera {
-            radius: 5.0,
-            yaw_deg: 200.0,
-            pitch_deg: 60.0,
-            ..OrbitCamera::default()
-        };
-
-        let fit_a = fit_cascades(&camera_a, scene_min, scene_max, light_dir);
-        let fit_b = fit_cascades(&camera_b, scene_min, scene_max, light_dir);
-
-        // Upper-3x3 row norms are the ortho scales, since light_basis is a pure rotation.
-        let row_norm =
-            |m: &Mat4, row: usize| Vec3::new(m.x_axis[row], m.y_axis[row], m.z_axis[row]).length();
-
-        for i in 0..CASCADE_COUNT {
-            for row in 0..2 {
-                let a = row_norm(&fit_a.matrices[i], row);
-                let b = row_norm(&fit_b.matrices[i], row);
-                assert!(
-                    (a - b).abs() < 1e-4,
-                    "cascade {i} row {row} scale breathes with camera motion: {a} vs {b}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn cascade_box_size_is_invariant_under_small_camera_dolly() {
-        // A small dolly outside the floor must stay on one quantized zoom step.
-        let scene_min = Vec3::splat(-1.0);
-        let scene_max = Vec3::splat(1.0);
-        let light_dir = Vec3::new(-0.3, -1.0, 0.2);
-
-        let camera_a = OrbitCamera {
-            radius: 50.0,
-            ..OrbitCamera::default()
-        };
-        let camera_b = OrbitCamera {
-            radius: 50.3,
-            ..OrbitCamera::default()
-        };
-
-        let fit_a = fit_cascades(&camera_a, scene_min, scene_max, light_dir);
-        let fit_b = fit_cascades(&camera_b, scene_min, scene_max, light_dir);
-
-        let row_norm =
-            |m: &Mat4, row: usize| Vec3::new(m.x_axis[row], m.y_axis[row], m.z_axis[row]).length();
-
-        for i in 0..CASCADE_COUNT {
-            for row in 0..2 {
-                let a = row_norm(&fit_a.matrices[i], row);
-                let b = row_norm(&fit_b.matrices[i], row);
-                assert!(
-                    (a - b).abs() < 1e-4,
-                    "cascade {i} row {row} scale breathes with a small camera dolly: {a} vs {b}"
-                );
-            }
-        }
-    }
-}
+mod tests;

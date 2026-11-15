@@ -3,6 +3,7 @@
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt as _;
 
+use super::upload::MaterialSlots;
 use crate::context::GpuContext;
 use crate::render::bounds::instanced_bounds;
 use crate::scene::{AlphaMode, CpuMaterial, InstanceRaw, MorphTarget, Vertex};
@@ -95,6 +96,8 @@ pub(super) struct GpuPrimitive {
     pub(super) index_count: u32,
     pub(super) uniform_buffer: wgpu::Buffer,
     pub(super) bind_group: wgpu::BindGroup,
+    /// The views and samplers `bind_group` binds, kept to rebuild it around a reallocated shadow map.
+    pub(super) material_slots: MaterialSlots,
     /// Uniforms-only group: the full group samples the shadow map the shadow pass writes.
     pub(super) shadow_bind_group: wgpu::BindGroup,
     /// MASK material: shadows through the alpha-testing pipeline, which also reads vertex alpha.
@@ -109,6 +112,8 @@ pub(super) struct GpuPrimitive {
     pub(super) mirrored: bool,
     /// Last-set instance transforms (empty = identity); bounds recompose when either side moves.
     pub(super) instance_transforms: Vec<Mat4>,
+    /// The Model tab's transform, left of every instance.
+    pub(super) root: Mat4,
     /// World bounds before instancing, so recomposition never re-derives the skinned/morphed pose.
     pub(super) pre_instance_aabb: (Vec3, Vec3),
     pub(super) model: Mat4,
@@ -163,8 +168,9 @@ impl GpuPrimitive {
     /// Returns true when the recorded draws went stale: a new buffer, count or winding split.
     pub(super) fn write_instances(&mut self, gpu: &GpuContext, transforms: &[Mat4]) -> bool {
         let before = (self.instance_count, self.mirrored_instances_from);
+        let placed = placed(self.root, transforms);
         let (upright, mirrored): (Vec<Mat4>, Vec<Mat4>) =
-            transforms.iter().copied().partition(|m| !is_mirrored(m));
+            placed.iter().copied().partition(|m| !is_mirrored(m));
         let mut raw: Vec<InstanceRaw> = upright
             .iter()
             .chain(&mirrored)
@@ -192,11 +198,16 @@ impl GpuPrimitive {
         self.mirrored_instances_from = self.instance_count - mirrored.len() as u32;
         // Culling bounds must span every instance; no instances collapse them to the posed box.
         self.instance_transforms = transforms.to_vec();
-        let (min, max) = instanced_bounds(self.pre_instance_aabb, transforms);
+        let (min, max) = instanced_bounds(self.pre_instance_aabb, &placed);
         self.aabb_min = min;
         self.aabb_max = max;
         self.world_center = (min + max) * 0.5;
         replaced || before != (self.instance_count, self.mirrored_instances_from)
+    }
+
+    /// The instances as drawn: the user's transforms, each placed by the Model tab's root.
+    pub(super) fn placed_instances(&self) -> Vec<Mat4> {
+        placed(self.root, &self.instance_transforms)
     }
 
     /// Buffers and index count to draw from `eye`, by `world_center` distance like the blend sort.
@@ -242,6 +253,17 @@ impl GpuPrimitive {
                 0.0,
             ],
         }
+    }
+}
+
+/// `transforms` placed by `root`; empty stays empty (one identity instance) only while the root is too.
+fn placed(root: Mat4, transforms: &[Mat4]) -> Vec<Mat4> {
+    if root == Mat4::IDENTITY {
+        transforms.to_vec()
+    } else if transforms.is_empty() {
+        vec![root]
+    } else {
+        transforms.iter().map(|m| root * *m).collect()
     }
 }
 

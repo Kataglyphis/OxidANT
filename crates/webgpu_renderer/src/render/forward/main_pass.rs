@@ -125,9 +125,15 @@ impl ForwardRenderer {
         self.bind_frame_groups(&mut pass);
         let (drawn, considered) = self.draw_opaque(&mut pass, view);
         self.sky.draw(&mut pass);
-        self.draw_blended(&mut pass, view);
+        let blended = self.draw_blended(&mut pass, view);
         self.culling.drawn = drawn;
         self.culling.considered = considered;
+        self.culling.primitives = (drawn + blended, self.primitives.len() as u32);
+    }
+
+    /// Outside the camera frustum, unless frustum culling is off.
+    fn frustum_culls(&self, prim: &GpuPrimitive, view: &FrameView) -> bool {
+        self.frustum_culling && !view.frustum.intersects_aabb(prim.aabb_min, prim.aabb_max)
     }
 
     fn begin_forward_pass<'e>(
@@ -180,7 +186,7 @@ impl ForwardRenderer {
         let mut occ_considered = 0u32;
         for (i, prim) in self.primitives.iter().enumerate() {
             // Frustum first (cheap, no dependency on last frame).
-            if prim.alpha_blend || !view.frustum.intersects_aabb(prim.aabb_min, prim.aabb_max) {
+            if prim.alpha_blend || self.frustum_culls(prim, view) {
                 continue;
             }
             occ_considered += 1;
@@ -195,13 +201,13 @@ impl ForwardRenderer {
         (occ_drawn, occ_considered)
     }
 
-    /// Transparents last, farthest first, no depth writes.
-    fn draw_blended(&self, pass: &mut wgpu::RenderPass<'_>, view: &FrameView) {
+    /// Transparents last, farthest first, no depth writes; returns how many it drew.
+    fn draw_blended(&self, pass: &mut wgpu::RenderPass<'_>, view: &FrameView) -> u32 {
         let eye = view.eye;
         let mut blended: Vec<&GpuPrimitive> = self
             .primitives
             .iter()
-            .filter(|p| p.alpha_blend && view.frustum.intersects_aabb(p.aabb_min, p.aabb_max))
+            .filter(|p| p.alpha_blend && !self.frustum_culls(p, view))
             .collect();
         blended.sort_by(|a, b| {
             let da = a.world_center.distance_squared(eye);
@@ -211,9 +217,10 @@ impl ForwardRenderer {
         if !blended.is_empty() {
             self.bind_frame_groups(pass);
         }
-        for prim in blended {
+        for prim in &blended {
             draw_primitive(pass, &self.main, prim, eye);
         }
+        blended.len() as u32
     }
 }
 

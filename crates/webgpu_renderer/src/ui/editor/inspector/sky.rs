@@ -1,12 +1,16 @@
-//! The Sky tab: the procedural sky's image-based light; the C++ skybox and cloud switches follow with the renderer.
+//! The Sky tab: the C++ SKYBOX switch, then the image-based light the sky gives the scene.
 
 use egui::Ui;
 
 use super::super::EditorContext;
-use crate::ui::widgets::{caption_line, property_row, FillSlider};
+use crate::ui::widgets::{caption_line, muted_wrapped, property_row, section_header, FillSlider};
 
 pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
-    caption_line(ui, "ENVIRONMENT", None);
+    caption_line(ui, "SKYBOX", Some(&mut cx.settings.skybox_enabled));
+    if !cx.stats.cubemap {
+        muted_wrapped(ui, "No cube map loaded, so the procedural sky stands in.");
+    }
+    section_header(ui, "ENVIRONMENT", None);
     let ambient = &mut cx.settings.light_dir_ambient.w;
     property_row(
         ui,

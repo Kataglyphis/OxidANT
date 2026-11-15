@@ -48,6 +48,7 @@ pub(super) fn subtitle(object: SceneObject, cx: &EditorContext<'_>) -> String {
             .map_or_else(|| "No model".to_owned(), |m| m.name.clone()),
         SceneObject::Sun => "Directional light".to_owned(),
         SceneObject::Camera => "Perspective".to_owned(),
+        SceneObject::Skybox if cx.stats.cubemap => "Cube map".to_owned(),
         SceneObject::Skybox => "Procedural".to_owned(),
         SceneObject::Clouds => "Volumetric".to_owned(),
         SceneObject::Renderer => "Raster".to_owned(),

@@ -6,6 +6,9 @@ import sky_model;
 // Must match CASCADE_COUNT in forward.rs (one light_space* matrix each).
 static const int CASCADE_COUNT = 3;
 
+// Must match render::shadow_settings::MAX_PCF_RADIUS, the C++ MAX_PCF_RADIUS.
+static const int MAX_PCF_RADIUS = 5;
+
 // Must match render::tile_grid::TILE_SIZE, the CPU's light-binning tile size.
 static const uint TILE_SIZE = 16;
 
@@ -22,6 +25,9 @@ struct FrameUniforms
     float4 light_color_intensity; // rgb: color, w: intensity
     float4 camera_position;    // xyz: pos, w: punctual light count
     float4 cascade_splits;     // x,y: splits, z: tile_w, w: tile_h
+    float4 shadow_params;      // x: cascades (0 = off), y: PCF radius, z: strength
+    float4 shadow_view_dir;    // xyz: camera forward, the axis the splits are measured on
+    float4 shadow_bias_scale;  // xyz: per cascade, the C++ box's depth range over this one's
 };
 
 struct PrimUniforms
@@ -278,25 +284,40 @@ float4x4 light_space_for(int cascade)
     return frame.light_space;
 }
 
-// Visibility (1 = lit), the inverse of cascaded_shadow.slang's calc_cascaded_shadow.
-float shadow_visibility(float viewDepth, float3 worldPos, float nDotL)
+float bias_scale_for(int cascade)
+{
+    if (cascade == 1) return frame.shadow_bias_scale.y;
+    if (cascade == 2) return frame.shadow_bias_scale.z;
+    return frame.shadow_bias_scale.x;
+}
+
+// The first cascade whose split lies beyond the view depth, else the last, as cascaded_shadow.slang selects.
+int select_cascade(float viewDepth, int count)
 {
     int selected = 0;
-    if (viewDepth > frame.cascade_splits.x) selected = 1;
-    if (viewDepth > frame.cascade_splits.y) selected = 2;
-    if (selected > CASCADE_COUNT - 1) selected = CASCADE_COUNT - 1;
+    if (viewDepth >= frame.cascade_splits.x) selected = 1;
+    if (viewDepth >= frame.cascade_splits.y) selected = 2;
+    return min(selected, count - 1);
+}
 
-    // Cascade 0 hugs the focus point, not the camera: a near fragment retries coarser cascades before counting as lit.
+// Visibility (1 = lit), the inverse of cascaded_shadow.slang's calc_cascaded_shadow, with its bias and (2r+1)^2 taps.
+float shadow_visibility(float3 worldPos, float nDotL)
+{
+    int count = clamp(int(frame.shadow_params.x), 0, CASCADE_COUNT);
+    if (count == 0) return 1.0;
+    float viewDepth = dot(worldPos - frame.camera_position.xyz, frame.shadow_view_dir.xyz);
+
+    // A fragment the selected box misses retries coarser cascades before counting as lit.
     float3 proj = float3(0.0, 0.0, 0.0);
     float2 uv = float2(0.0, 0.0);
-    int cascade = selected;
+    int cascade = select_cascade(viewDepth, count);
     bool inBounds = false;
-    for (; cascade < CASCADE_COUNT; cascade++)
+    for (; cascade < count; cascade++)
     {
         float4 lightSpacePos = mul(light_space_for(cascade), float4(worldPos, 1.0));
         proj = lightSpacePos.xyz / lightSpacePos.w;
         uv = float2(proj.x * 0.5 + 0.5, 0.5 - proj.y * 0.5);
-        if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 && proj.z <= 1.0)
+        if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 && proj.z >= 0.0 && proj.z <= 1.0)
         {
             inBounds = true;
             break;
@@ -304,25 +325,26 @@ float shadow_visibility(float viewDepth, float3 worldPos, float nDotL)
     }
     if (!inBounds) return 1.0;
 
-    float bias = clamp(0.002 * (1.0 - nDotL) + 0.0005, 0.0005, 0.004);
+    float bias = max(0.002 * (1.0 - nDotL), 0.0005) * bias_scale_for(cascade);
+    int radius = clamp(int(frame.shadow_params.y), 0, MAX_PCF_RADIUS);
 
     uint shadowWidth, shadowHeight, shadowLayers;
     shadowMap.GetDimensions(shadowWidth, shadowHeight, shadowLayers);
     float texel = 1.0 / float(shadowWidth);
     float sum = 0.0;
     // Out-of-map taps count as lit here: the web target has no ClampToBorder, and ClampToEdge would shadow them.
-    for (int y = -1; y <= 1; y++)
+    for (int y = -radius; y <= radius; y++)
     {
-        for (int x = -1; x <= 1; x++)
+        for (int x = -radius; x <= radius; x++)
         {
-            float2 offset = float2(float(x), float(y)) * texel;
-            float2 tapUV = uv + offset;
+            float2 tapUV = uv + float2(float(x), float(y)) * texel;
             sum += (tapUV.x >= 0.0 && tapUV.x <= 1.0 && tapUV.y >= 0.0 && tapUV.y <= 1.0)
               ? shadowMap.SampleCmpLevelZero(shadowSampler, float3(tapUV, float(cascade)), proj.z - bias)
               : 1.0;
         }
     }
-    return sum / 9.0;
+    float taps = float((2 * radius + 1) * (2 * radius + 1));
+    return sum / taps;
 }
 
 // Local wrapper: this pass's light comes from FrameUniforms, not sky.slang's SkyUniforms.
@@ -451,10 +473,10 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float nDotL = max(dot(n, l), 0.0);
 
     float3 directLight = brdf_direct(n, v, l, albedo.rgb, metallic, roughness, f0, radiance);
-    // Per fragment: a per-vertex distance interpolates too far inside big triangles, picking coarse cascades.
-    float eyeDistance = distance(In.worldPosition, frame.camera_position.xyz);
-    float visibility = shadow_visibility(eyeDistance, In.worldPosition, nDotL);
-    directLight *= visibility;
+    // Per fragment: a per-vertex depth interpolates too far inside big triangles, picking coarse cascades.
+    float visibility = shadow_visibility(In.worldPosition, nDotL);
+    // The C++ color *= 1 - shadow * strength, on the sun alone.
+    directLight *= lerp(1.0, visibility, frame.shadow_params.z);
 
     float3 punctual = punctual_lighting(In.worldPosition, n, v, albedo.rgb, metallic, roughness, f0, In.svPosition);
 

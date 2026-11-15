@@ -42,6 +42,10 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../src/render/forward/main_pass.rs"),
     ),
     (
+        "render/forward/placement.rs",
+        include_str!("../src/render/forward/placement.rs"),
+    ),
+    (
         "render/forward/post.rs",
         include_str!("../src/render/forward/post.rs"),
     ),
@@ -56,6 +60,10 @@ const SOURCES: &[(&str, &str)] = &[
     (
         "render/forward/shadow.rs",
         include_str!("../src/render/forward/shadow.rs"),
+    ),
+    (
+        "render/forward/shadow_casters.rs",
+        include_str!("../src/render/forward/shadow_casters.rs"),
     ),
     (
         "render/forward/sky.rs",

@@ -1,7 +1,8 @@
-//! The procedural sky: a fullscreen triangle at far depth, drawn inside the forward pass.
+//! The sky: a fullscreen triangle at far depth inside the forward pass; the C++ cube map, the procedural sky or navy.
 
 use super::frame::FrameView;
 use super::{ForwardRenderer, DEPTH_FORMAT, HDR_FORMAT, MSAA_SAMPLE_COUNT};
+use crate::asset::skybox::CubemapFaces;
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::buffer_desc;
@@ -12,6 +13,16 @@ use crate::render::pipeline_desc;
 struct SkyUniforms {
     inv_view_proj: [[f32; 4]; 4],
     light_dir_intensity: [f32; 4],
+    /// x: 0 procedural, 1 cube map, 2 switched off.
+    mode: [f32; 4],
+}
+
+/// What the sky pass draws, `sky.slang`'s `mode.x`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkyMode {
+    Procedural = 0,
+    Cubemap = 1,
+    Off = 2,
 }
 
 pub(super) struct SkyResources {
@@ -19,44 +30,70 @@ pub(super) struct SkyResources {
     // Read only by the native shader hot-reload path, so unread on wasm32.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(super) pipeline_layout: wgpu::PipelineLayout,
+    bind_group_layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    sampler: wgpu::Sampler,
+    /// A black cube bound while no faces are loaded, so the layout never changes.
+    placeholder: wgpu::TextureView,
+    /// The loaded skybox.
+    cubemap: Option<wgpu::TextureView>,
 }
 
 impl SkyResources {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
+    pub(super) fn new(gpu: &GpuContext) -> Self {
+        let device = &gpu.device;
         // Sky: fullscreen triangle at far depth, drawn only where depth is still the cleared 1.0.
         let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sky_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/sky.wgsl").into()),
         });
-        let sky_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("sky_bind_group_layout"),
-                entries: &[bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
-            });
+        let bind_group_layout = create_sky_bind_group_layout(device);
         let pipeline_layout =
-            pipeline_desc::single_layout(device, "sky_pipeline_layout", &sky_bind_group_layout);
+            pipeline_desc::single_layout(device, "sky_pipeline_layout", &bind_group_layout);
         let pipeline = create_sky_pipeline(device, &sky_shader, &pipeline_layout);
         let uniform_buffer = buffer_desc::uniform(
             device,
             "sky_uniforms",
             std::mem::size_of::<SkyUniforms>() as wgpu::BufferAddress,
         );
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("sky_bind_group"),
-            layout: &sky_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("skybox_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
+        let placeholder = create_cube_view(gpu, &CubemapFaces::solid([[0, 0, 0, 255]; 6]));
+        let bind_group = create_sky_bind_group(
+            device,
+            &bind_group_layout,
+            &uniform_buffer,
+            &placeholder,
+            &sampler,
+        );
         Self {
             pipeline,
             pipeline_layout,
+            bind_group_layout,
             uniform_buffer,
             bind_group,
+            sampler,
+            placeholder,
+            cubemap: None,
         }
+    }
+
+    /// Binds `cubemap`, or the placeholder for none.
+    fn bind(&mut self, device: &wgpu::Device, cubemap: Option<wgpu::TextureView>) {
+        self.cubemap = cubemap;
+        let view = self.cubemap.as_ref().unwrap_or(&self.placeholder);
+        self.bind_group = create_sky_bind_group(
+            device,
+            &self.bind_group_layout,
+            &self.uniform_buffer,
+            view,
+            &self.sampler,
+        );
     }
 
     /// Sky fills every pixel geometry left untouched.
@@ -68,7 +105,32 @@ impl SkyResources {
 }
 
 impl ForwardRenderer {
-    /// The sky's inverse view-projection and its sun direction and intensity.
+    /// Shows `faces` as the skybox from the next frame on, the C++ DOOM2016 cube map.
+    pub fn set_skybox(&mut self, gpu: &GpuContext, faces: &CubemapFaces) {
+        let view = create_cube_view(gpu, faces);
+        self.sky.bind(&gpu.device, Some(view));
+    }
+
+    /// Back to the procedural sky.
+    pub fn clear_skybox(&mut self, gpu: &GpuContext) {
+        self.sky.bind(&gpu.device, None);
+    }
+
+    /// A cube map is loaded; without one the skybox is the procedural sky.
+    pub fn skybox_loaded(&self) -> bool {
+        self.sky.cubemap.is_some()
+    }
+
+    /// What the sky pass draws this frame.
+    pub fn sky_mode(&self) -> SkyMode {
+        match (self.skybox_enabled, self.sky.cubemap.is_some()) {
+            (false, _) => SkyMode::Off,
+            (true, true) => SkyMode::Cubemap,
+            (true, false) => SkyMode::Procedural,
+        }
+    }
+
+    /// The sky's inverse view-projection, its sun direction and intensity, and what it draws.
     pub(super) fn write_sky_uniforms(&self, gpu: &GpuContext, view: &FrameView) {
         let sky_uniforms = SkyUniforms {
             inv_view_proj: view.view_proj.inverse().to_cols_array_2d(),
@@ -78,6 +140,7 @@ impl ForwardRenderer {
                 self.light_dir_ambient.z,
                 self.light_color_intensity.w,
             ],
+            mode: [self.sky_mode() as u32 as f32, 0.0, 0.0, 0.0],
         };
         gpu.queue.write_buffer(
             &self.sky.uniform_buffer,
@@ -85,6 +148,89 @@ impl ForwardRenderer {
             bytemuck::bytes_of(&sky_uniforms),
         );
     }
+}
+
+fn create_sky_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("sky_bind_group_layout"),
+        entries: &[
+            bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+            bind_layout::texture(
+                1,
+                wgpu::ShaderStages::FRAGMENT,
+                wgpu::TextureSampleType::Float { filterable: true },
+                wgpu::TextureViewDimension::Cube,
+                false,
+            ),
+            bind_layout::sampler(
+                2,
+                wgpu::ShaderStages::FRAGMENT,
+                wgpu::SamplerBindingType::Filtering,
+            ),
+        ],
+    })
+}
+
+fn create_sky_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform_buffer: &wgpu::Buffer,
+    cubemap: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sky_bind_group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(cubemap),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
+/// Uploads six sRGB faces as one cube, a single mip level as the C++ uploads them.
+fn create_cube_view(gpu: &GpuContext, faces: &CubemapFaces) -> wgpu::TextureView {
+    let size = wgpu::Extent3d {
+        width: faces.size,
+        height: faces.size,
+        depth_or_array_layers: 6,
+    };
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        // TEXTURE_2D_SHAPE_OK: the skybox cube, six layers
+        label: Some("skybox_cube"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    gpu.queue.write_texture(
+        texture.as_image_copy(),
+        &faces.rgba8,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * faces.size),
+            rows_per_image: Some(faces.size),
+        },
+        size,
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("skybox_cube_view"),
+        dimension: Some(wgpu::TextureViewDimension::Cube),
+        ..Default::default()
+    })
 }
 
 pub(super) fn create_sky_pipeline(

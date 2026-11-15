@@ -13,6 +13,52 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, the C++ inspector's raster settings in the WebGPU renderer)
+- **Shadow controls with BeschleunigerBallett's ranges and defaults** (`render::shadow_settings`,
+  `ForwardRenderer::shadows`), bound in the Sun tab's SHADOWS section: the switch, resolution 512 to 4096, 1 to 3
+  cascades, PCF radius 0 to 5 ((2r+1)² comparison taps, each a bilinear 2×2 PCF), strength (0.65, on the sun term
+  alone), distance 5 to 500 (60) and the split lambda (0). A new resolution or cascade count reallocates the depth
+  array and rebuilds every primitive's group 0 (`sync_shadow_map`); the outliner's Sun row says `N cascades` or
+  `no shadows`. Shadows off skips the cascade passes and zeroes the caster counts.
+- **Cascades fitted to the view frustum**, the C++ `computeCascadeDataInto` (`render::cascades::fit_cascades`): the
+  practical split scheme up to the shadow distance, each slice's bounding sphere as a texel-snapped ortho box in a
+  world-fixed light basis, splits and selection by view depth. They were fitted to the scene, so the Colosseum's 8 km
+  ground got metre-sized texels and a bias of metres. WebGPU core has no depth clamp to pancake casters, so a box's
+  near plane reaches the scene's point nearest the light and the shader scales the bias by the C++ box's depth range
+  over this one's: the bias keeps the C++ size in metres.
+- **One shadow-bias formula in both renderers**: `forward.slang` takes `cascaded_shadow.slang`'s
+  `max(0.002 * (1 - N·L), 0.0005)` (BeschleunigerBallett's backlog idea; the old `clamp(... + 0.0005, ..., 0.004)` is
+  gone). Shared shaders under `shaders/common/` are unchanged.
+- **Shadow casters culled per cascade** against the cascade's box without its near plane, as the C++ multiview pass
+  culls; each cascade's bundle is re-recorded only when its caster set changes, and `shadow_caster_stats` counts
+  draws over the cascades.
+- **The C++ cube-map skybox and its switch** (`asset::skybox`, `ForwardRenderer::set_skybox`, `skybox_enabled`): the
+  native viewer and `editor_snapshot` load BeschleunigerBallett's `Resources/Textures/Skybox/DOOM2016` (six PNG faces,
+  found in the working directory or an ancestor like `Resources/Models`); elsewhere, and in the browser, the
+  procedural sky stays. The sky enters the HDR target inverse-tonemapped, so at 0 EV it shows the faces' own colours as
+  the untonemapped C++ sky pass does; switched off it shows the C++ navy. The outliner's eye and the Sky tab's SKYBOX
+  switch toggle it. The faces carry no licence in BeschleunigerBallett's `licenses/` or `LICENSES-README.md`, so the
+  web demo does not ship them.
+- **The Model tab's transform** (`render::model_transform`, `ForwardRenderer::model_transform`): position and XYZ
+  rotation (T·Rz·Ry·Rx, the C++ `makeGuiModelTransform`) and Reset transform. It is one root matrix left of every
+  primitive's instances, so bounds, culling, cascades and shadows follow, and it moves the scene's punctual lights; a
+  load resets it, as the fixed C++ editor does.
+- **The frustum-culling switch** (`ForwardRenderer::frustum_culling`) in Render › Frustum culling, the Renderer tab's
+  FRUSTUM CULLING header and the profiler's Visibility tab, which counts the primitives drawn
+  (`primitive_stats`) and casters drawn and what both culled, as the C++ tab does.
+- A scene's start view fits the shadow distance: twice its distance to the target, never under the C++ 60 m, so
+  the Colosseum's arena is shadowed from `Kamera_Arena` (`Framing::shadow_distance`).
+- `image` is a normal dependency for the skybox's PNG faces; `gltf` already built it, so `Cargo.lock` is unchanged.
+- Tests: `tests/shadow_controls.rs` (the penumbra grows with the PCF radius, every resolution reallocates and matches a
+  fresh renderer, 1 to 3 cascades each shadow from their own layers, strength scales the shadow and the switch removes
+  it and its casters, a card 50 m away on an 8 km ground keeps its shadow), `tests/scene_controls.rs` (each cube face
+  along its axis, the switch's navy, the model transform moving the model and its shadow, frustum culling counts,
+  the light colour), CPU tests for the split scheme, frustum coverage, texel stabilisation, the bias scale and the
+  fitted distance, and editor tests for every bound row. The existing shadow tests measure at strength 1, as the C++
+  goldens do; `a_far_extra_caster_leaves_the_near_shadow_intact` now checks that caster culling engages, and
+  `every_cascade_layer_is_rendered_with_its_own_light_matrix` and the orbit-fit tests of `render::cascades` gave way
+  to the frustum-slice ones, since their probes assumed every cascade covers the whole scene.
+
 ### Fixed (2026-11-15, the app host after the two editor merges)
 - **The animation clock got f32 seconds**: `StudioApp::advance` narrowed its elapsed time before
   `set_animation_time`, which takes f64 since the scene fixes, so a clip stepped by 1/64 s after 36 hours and by

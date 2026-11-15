@@ -1,13 +1,15 @@
-//! Cascaded shadow maps: the depth array, the caster pipelines and bundle, and one pass per cascade.
+//! Cascaded shadow maps: the depth array, the caster pipelines, and one pass per active cascade.
 
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt as _;
 
 use super::primitive::GpuPrimitive;
 use super::readback::{read_texture, TextureRegion};
+use super::shadow_casters::CasterBundles;
 use super::{ForwardRenderer, CASCADE_COUNT, DEPTH_FORMAT, SHADOW_MAP_SIZE};
 use crate::context::GpuContext;
 use crate::render::bind_layout;
+use crate::render::cascades::{fit_cascades, CascadeLens};
 use crate::render::gpu_timing::TimedPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{InstanceRaw, Vertex};
@@ -97,18 +99,20 @@ pub(super) struct ShadowResources {
     pub(super) bind_group_layout: wgpu::BindGroupLayout,
     pub(super) masked_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) sampler: wgpu::Sampler,
-    /// The cascade depth array; read back only by tests.
+    /// The cascade depth array, one layer per cascade the settings ask for; read back only by tests.
     texture: wgpu::Texture,
     pub(super) view: wgpu::TextureView,
-    layer_views: Vec<wgpu::TextureView>,
-    cascade_index_bind_groups: Vec<wgpu::BindGroup>,
+    pub(super) layer_views: Vec<wgpu::TextureView>,
+    /// Texels per side of `texture`.
+    resolution: u32,
+    pub(super) cascade_index_bind_groups: Vec<wgpu::BindGroup>,
     pub(super) cascade_matrices: [Mat4; CASCADE_COUNT],
     pub(super) cascade_splits: [f32; 4],
-    /// One caster bundle per cascade, recorded once and replayed every frame; `None` re-records.
-    /// Only a new draw set or buffer identity invalidates them, not buffer writes or LOD switches.
-    pub(super) caster_bundles: Option<[wgpu::RenderBundle; CASCADE_COUNT]>,
-    /// Caster count baked into the bundles, so the stats stay right on frames that reuse them.
-    caster_count: u32,
+    pub(super) bias_scales: [f32; CASCADE_COUNT],
+    /// The camera's forward axis the splits are measured on.
+    pub(super) view_dir: Vec3,
+    /// One caster bundle per cascade over the casters inside it, replayed while that set holds; `None` re-records all.
+    pub(super) caster_bundles: Option<CasterBundles>,
     /// Caster draws submitted / considered last frame, summed over cascades.
     pub(super) casters_drawn: u32,
     pub(super) casters_considered: u32,
@@ -144,7 +148,8 @@ impl ShadowResources {
         let pipeline_layout = pipeline_layout_for("shadow_pipeline_layout", &bind_group_layout);
         let masked_pipeline_layout =
             pipeline_layout_for("shadow_masked_pipeline_layout", &masked_bind_group_layout);
-        let (texture, view, layer_views) = create_shadow_map(device);
+        let (texture, view, layer_views) =
+            create_shadow_map(device, SHADOW_MAP_SIZE, CASCADE_COUNT as u32);
         Self {
             pipelines: ShadowPipelines::new(
                 device,
@@ -160,19 +165,21 @@ impl ShadowResources {
             texture,
             view,
             layer_views,
+            resolution: SHADOW_MAP_SIZE,
             cascade_index_bind_groups,
             cascade_matrices: [Mat4::IDENTITY; CASCADE_COUNT],
             // z, w (tile counts) are written per frame by `write_frame_uniforms`.
             cascade_splits: [10.0, 30.0, 0.0, 0.0],
+            bias_scales: [1.0; CASCADE_COUNT],
+            view_dir: Vec3::NEG_Z,
             caster_bundles: None,
-            caster_count: 0,
             casters_drawn: 0,
             casters_considered: 0,
         }
     }
 
     /// One caster's draws: MASK casters alpha-test, double-sided ones are not culled.
-    fn record_caster<'a>(
+    pub(super) fn record_caster<'a>(
         &'a self,
         bundle: &mut wgpu::RenderBundleEncoder<'a>,
         prim: &'a GpuPrimitive,
@@ -198,20 +205,29 @@ impl ShadowResources {
 }
 
 impl ForwardRenderer {
-    /// One depth pass per cascade, each replaying that cascade's cached caster bundle.
+    /// One depth pass per active cascade, each replaying that cascade's caster bundle; none with shadows off.
     pub(super) fn encode_shadow_cascades(
         &mut self,
         gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        self.ensure_shadow_caster_bundles(gpu);
+        let count = self
+            .shadows
+            .active_cascades()
+            .min(self.shadow.layer_views.len());
+        if count == 0 {
+            self.shadow.casters_drawn = 0;
+            self.shadow.casters_considered = 0;
+            return;
+        }
+        self.ensure_shadow_caster_bundles(&gpu.device, count);
         let shadow = &self.shadow;
         let caster_bundles = shadow
             .caster_bundles
             .as_ref()
             .expect("just built above when absent");
         let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
-        for (cascade, caster_bundle) in caster_bundles.iter().enumerate() {
+        for cascade in 0..count {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow_pass"),
                 color_attachments: &[],
@@ -223,50 +239,41 @@ impl ForwardRenderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: shadow_scope.render_writes(cascade, CASCADE_COUNT),
+                timestamp_writes: shadow_scope.render_writes(cascade, count),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.execute_bundles(std::iter::once(caster_bundle));
+            if let Some(bundle) = caster_bundles.bundle(cascade) {
+                pass.execute_bundles(std::iter::once(bundle));
+            }
         }
-        // No per-cascade culling, so drawn == considered by construction.
-        self.shadow.casters_drawn = self.shadow.caster_count;
-        self.shadow.casters_considered = self.shadow.caster_count;
     }
 
-    /// Cached bundles replayed per frame; the baked draw lists rule out per-cascade culling.
-    fn ensure_shadow_caster_bundles(&mut self, gpu: &GpuContext) {
-        if self.shadow.caster_bundles.is_some() {
+    /// Reallocates the cascade array when the resolution or the cascade count changed, then rebinds group 0.
+    pub(super) fn sync_shadow_map(&mut self, device: &wgpu::Device) {
+        let settings = self.shadows.sanitized();
+        let layers = settings.cascade_count as usize;
+        if self.shadow.resolution == settings.resolution && self.shadow.layer_views.len() == layers
+        {
             return;
         }
-        let bundles =
-            std::array::from_fn(|cascade| self.record_caster_bundle(&gpu.device, cascade));
-        self.shadow.caster_bundles = Some(bundles);
-        self.shadow.caster_count = self.primitives.iter().filter(|p| p.casts_shadow).count() as u32;
+        let (texture, view, layer_views) =
+            create_shadow_map(device, settings.resolution, layers as u32);
+        self.shadow.texture = texture;
+        self.shadow.view = view;
+        self.shadow.layer_views = layer_views;
+        self.shadow.resolution = settings.resolution;
+        self.rebuild_material_bind_groups(device);
     }
 
-    /// Cascade `cascade`'s caster draws; a bundle never inherits the pass's bind groups.
-    fn record_caster_bundle(&self, device: &wgpu::Device, cascade: usize) -> wgpu::RenderBundle {
-        let mut bundle_encoder =
-            device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-                label: Some("shadow_casters"),
-                color_formats: &[],
-                depth_stencil: Some(wgpu::RenderBundleDepthStencil {
-                    format: DEPTH_FORMAT,
-                    depth_read_only: false,
-                    stencil_read_only: true,
-                }),
-                sample_count: 1,
-                multiview: None,
-            });
-        bundle_encoder.set_bind_group(1, &self.shadow.cascade_index_bind_groups[cascade], &[]);
-        bundle_encoder.set_bind_group(2, &self.frame.bind_group, &[]);
-        for prim in self.primitives.iter().filter(|p| p.casts_shadow) {
-            self.shadow.record_caster(&mut bundle_encoder, prim);
-        }
-        bundle_encoder.finish(&wgpu::RenderBundleDescriptor {
-            label: Some("shadow_caster_bundle"),
-        })
+    /// Texels per side of each cascade's map as allocated now.
+    pub fn shadow_map_resolution(&self) -> u32 {
+        self.shadow.resolution
+    }
+
+    /// Cascade layers allocated now; the frame renders them all unless shadows are off.
+    pub fn shadow_map_layers(&self) -> usize {
+        self.shadow.layer_views.len()
     }
 
     /// Every cascade's depth layer, layer-major then row-major, as the last frame left it.
@@ -278,9 +285,9 @@ impl ForwardRenderer {
             &self.shadow.texture,
             &TextureRegion {
                 aspect: wgpu::TextureAspect::DepthOnly,
-                width: SHADOW_MAP_SIZE,
-                height: SHADOW_MAP_SIZE,
-                layers: CASCADE_COUNT as u32,
+                width: self.shadow.resolution,
+                height: self.shadow.resolution,
+                layers: self.shadow.layer_views.len() as u32,
                 texel_bytes: 4,
             },
         )?;
@@ -293,17 +300,16 @@ impl ForwardRenderer {
         self.shadow.cascade_matrices
     }
 
-    /// Fits one light matrix per cascade; see `render::cascades` for why splits track the camera.
-    pub(super) fn update_cascades(&mut self, camera: &OrbitCamera) {
-        let (min, max) = self
-            .scene_bounds
-            .unwrap_or((Vec3::splat(-1.0), Vec3::splat(1.0)));
-        let light_dir = self.light_dir_ambient.truncate().normalize_or_zero();
-
-        let fit = crate::render::cascades::fit_cascades(camera, min, max, light_dir);
+    /// Fits one light matrix per slice of the camera frustum; see `render::cascades`.
+    pub(super) fn update_cascades(&mut self, camera: &OrbitCamera, frame_aspect: f32) {
+        let light_dir = self.light_dir_ambient.truncate();
+        let lens = CascadeLens::of(camera, frame_aspect);
+        let fit = fit_cascades(&lens, light_dir, &self.shadows, self.scene_bounds);
         // z, w (tile counts) are written per frame by `write_frame_uniforms`.
         self.shadow.cascade_splits = [fit.splits[0], fit.splits[1], 0.0, 0.0];
         self.shadow.cascade_matrices = fit.matrices;
+        self.shadow.bias_scales = fit.bias_scales;
+        self.shadow.view_dir = fit.view_dir;
     }
 }
 
@@ -355,14 +361,16 @@ fn create_cascade_index_groups(
 /// The cascade depth array, its sampled array view and one attachment view per layer.
 fn create_shadow_map(
     device: &wgpu::Device,
+    resolution: u32,
+    layers: u32,
 ) -> (wgpu::Texture, wgpu::TextureView, Vec<wgpu::TextureView>) {
     let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
         // TEXTURE_2D_SHAPE_OK: depth array, not single-layer 2D
         label: Some("shadow_map_array"),
         size: wgpu::Extent3d {
-            width: SHADOW_MAP_SIZE,
-            height: SHADOW_MAP_SIZE,
-            depth_or_array_layers: CASCADE_COUNT as u32,
+            width: resolution,
+            height: resolution,
+            depth_or_array_layers: layers,
         },
         mip_level_count: 1,
         sample_count: 1,
@@ -379,7 +387,7 @@ fn create_shadow_map(
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
     });
-    let shadow_layer_views: Vec<wgpu::TextureView> = (0..CASCADE_COUNT as u32)
+    let shadow_layer_views: Vec<wgpu::TextureView> = (0..layers)
         .map(|layer| {
             shadow_texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some("shadow_map_layer"),

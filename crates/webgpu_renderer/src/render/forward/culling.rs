@@ -17,6 +17,8 @@ pub(super) struct Culling {
     /// Opaque primitives drawn / considered by the camera pass last frame, after all culling.
     pub(super) drawn: u32,
     pub(super) considered: u32,
+    /// Every primitive the camera pass drew last frame, and every one uploaded.
+    pub(super) primitives: (u32, u32),
     /// (`occlusion_queries_enabled`, `gpu_culling_enabled`) as the last frame saw them.
     modes: (bool, bool),
 }
@@ -28,12 +30,18 @@ impl Culling {
             gpu_culling: None,
             drawn: 0,
             considered: 0,
+            primitives: (0, 0),
             modes: (false, false),
         }
     }
 }
 
 impl ForwardRenderer {
+    /// Primitives the camera pass drew last frame and primitives uploaded: the C++ Visibility tab's meshes.
+    pub fn primitive_stats(&self) -> (u32, u32) {
+        self.culling.primitives
+    }
+
     /// A switched culling mode forgets every readback: they describe a camera from before the switch.
     pub(super) fn reset_culling_on_mode_change(&mut self) {
         let modes = (self.occlusion_queries_enabled, self.gpu_culling_enabled);

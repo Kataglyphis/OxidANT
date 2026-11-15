@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
-use kataglyphis_webgpu_renderer::app::discovery::native_startup;
+use kataglyphis_webgpu_renderer::app::discovery::{native_startup, skybox_dir};
 use kataglyphis_webgpu_renderer::app::library::{ModelLibrary, SceneSource, WEB_COLOSSEUM};
 use kataglyphis_webgpu_renderer::ui::{DockPrefs, ModelSource, SceneObject};
 use kataglyphis_webgpu_renderer::{
@@ -170,10 +170,16 @@ fn studio(web: bool, models: &Models) -> anyhow::Result<StudioApp> {
     if web {
         app.editor_mut().set_layout(DockPrefs::web());
         open_web(&mut app, models.web.as_deref());
-    } else if let Some(path) = &models.native {
-        let (library, _) = native_startup(Some(path));
-        app.set_library(library, None);
-        app.open_path(path);
+    } else {
+        // As the viewer: the C++ skybox where a BeschleunigerBallett checkout holds it.
+        if let Some(dir) = skybox_dir(&std::env::current_dir()?) {
+            app.load_skybox(&dir);
+        }
+        if let Some(path) = &models.native {
+            let (library, _) = native_startup(Some(path));
+            app.set_library(library, None);
+            app.open_path(path);
+        }
     }
     if !app.finish_loading(LOAD_TIMEOUT) {
         anyhow::bail!("the scene did not load within {LOAD_TIMEOUT:?}");

@@ -48,6 +48,11 @@ const SOURCES: &[(&str, &str, bool)] = &[
         false,
     ),
     (
+        "render/forward/placement.rs",
+        include_str!("../src/render/forward/placement.rs"),
+        false,
+    ),
+    (
         "render/forward/post.rs",
         include_str!("../src/render/forward/post.rs"),
         false,
@@ -65,6 +70,11 @@ const SOURCES: &[(&str, &str, bool)] = &[
     (
         "render/forward/shadow.rs",
         include_str!("../src/render/forward/shadow.rs"),
+        false,
+    ),
+    (
+        "render/forward/shadow_casters.rs",
+        include_str!("../src/render/forward/shadow_casters.rs"),
         false,
     ),
     (
@@ -129,8 +139,8 @@ fn texture_descriptor_literals_are_the_single_definition_or_marked_non_goals() {
         unmarked.join("\n")
     );
     assert_eq!(
-        marked_count, 3,
-        "expected exactly 3 marked non-goal TextureDescriptor literals (two cube \
+        marked_count, 4,
+        "expected exactly 4 marked non-goal TextureDescriptor literals (three cube \
          textures, one depth array); found {marked_count} - update this count if a \
          new non-goal shape is added, or investigate if one disappeared"
     );
