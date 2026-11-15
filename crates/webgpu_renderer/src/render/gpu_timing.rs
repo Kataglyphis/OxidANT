@@ -15,6 +15,10 @@ pub enum TimedPass {
     ShadowCascades,
     /// Opaque geometry, sky, and blended geometry in one render pass.
     Forward,
+    /// The deferred path's opaque geometry into the G-buffer, in place of `Forward`.
+    GBuffer,
+    /// The deferred path's full-screen lighting, then its sky and blended geometry in the same pass.
+    DeferredLighting,
     /// The occlusion-query box pass (only with culling on); its cost is what the cull must beat.
     OcclusionCull,
     /// Histogram clear plus build (two compute passes).
@@ -31,9 +35,11 @@ pub enum TimedPass {
 
 impl TimedPass {
     /// Every pass, in record order. Iteration order is the reporting order.
-    pub const ALL: [TimedPass; 8] = [
+    pub const ALL: [TimedPass; 10] = [
         TimedPass::ShadowCascades,
         TimedPass::Forward,
+        TimedPass::GBuffer,
+        TimedPass::DeferredLighting,
         TimedPass::OcclusionCull,
         TimedPass::Histogram,
         TimedPass::ExposureReduce,
@@ -53,6 +59,8 @@ impl TimedPass {
             TimedPass::Histogram => "Histogram",
             TimedPass::ExposureReduce => "ExposureReduce",
             TimedPass::Tonemap => "Tonemap",
+            TimedPass::GBuffer => "GBuffer",
+            TimedPass::DeferredLighting => "DeferredLighting",
         }
     }
 
@@ -67,6 +75,8 @@ impl TimedPass {
             TimedPass::Histogram => "Histogram",
             TimedPass::ExposureReduce => "Exposure",
             TimedPass::Tonemap => "Tonemap",
+            TimedPass::GBuffer => "G-buffer",
+            TimedPass::DeferredLighting => "Lighting + sky",
         }
     }
 
@@ -80,6 +90,8 @@ impl TimedPass {
             TimedPass::Histogram => 5,
             TimedPass::ExposureReduce => 6,
             TimedPass::Tonemap => 7,
+            TimedPass::GBuffer => 8,
+            TimedPass::DeferredLighting => 9,
         }
     }
 }

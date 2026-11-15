@@ -80,7 +80,7 @@ which a local container run executes too:
   bundle, then `Stage-CrossTests.ps1`, which builds the whole workspace's tests for arm64,
   renderer included, and stages them with their DLL closure, the chain ORT beside the
   binaries that load it, the model under `resources\models`, the product's GStreamer
-  plugins, the renderer's fixtures and `shaders/forward/forward.slang`.
+  plugins, the renderer's fixtures and `shaders/forward`.
   `Initialize-BuildDirectory -Empty` clears the test destination before any copy and fails
   on a broken path; its Pester fixture runs in lint gates. The source-copy fixture also
   rejects a missing shader path.

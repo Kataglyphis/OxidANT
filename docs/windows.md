@@ -69,7 +69,7 @@ and checks both stale-file cleanup and failed directory creation through the sha
 `WindowsStageDirectory.Fixture.psm1`. This repo supplies its Cargo stage script and reset
 callback; ANTfrastructure owns the common AST and filesystem checks.
 The same staging script copies `shaders/forward` into the artifact because the renderer's
-native shader-constant tests read `forward.slang` relative to the embedded `CARGO_MANIFEST_DIR`.
+native shader-constant tests read `forward_lighting.slang` relative to the embedded `CARGO_MANIFEST_DIR`.
 `CrossTestSources.Tests.ps1` executes that source-copy loop against a small fixture and proves
 the shader is absent when its path is removed from the loop. It does not build Cargo tests.
 The suite uses ANTfrastructure's `Get-TestSourceCopyLoopText` and

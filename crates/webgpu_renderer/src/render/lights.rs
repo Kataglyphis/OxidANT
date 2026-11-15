@@ -1,4 +1,4 @@
-//! Packs punctual lights for `forward.slang`'s `punctualLights`; change both sides together.
+//! Packs punctual lights for `forward_lighting.slang`'s `punctualLights`; change both sides together.
 //! Four vec4 rows per light: [pos, kind], [color * intensity, range], [dir, cos_inner], [cos_outer].
 
 use crate::scene::{CpuLight, CpuLightKind};
@@ -92,7 +92,7 @@ mod tests {
         let (packed, count) = pack_punctual_lights(&lights);
         assert_eq!(count, 3);
 
-        // forward.slang: kind > 2.5 directional, > 1.5 spot, else point; test both thresholds.
+        // forward_lighting.slang: kind > 2.5 directional, > 1.5 spot, else point; test both thresholds.
         let kind_of = |light_index: usize| packed[light_index * 4][3];
         let point_kind = kind_of(0);
         let spot_kind = kind_of(1);
@@ -149,7 +149,7 @@ mod tests {
     fn spot_cone_angles_land_in_the_slots_smoothstep_reads() {
         let lights = [spot_light(0.9, 0.7)];
         let (packed, _) = pack_punctual_lights(&lights);
-        // forward.slang: `smoothstep(dvec.x, cvec.w, cosAngle)`, dvec row base+3, cvec base+2.
+        // forward_lighting.slang: `smoothstep(dvec.x, cvec.w, cosAngle)`, dvec row base+3, cvec base+2.
         let cvec = packed[2];
         let dvec = packed[3];
         assert_eq!(cvec[3], 0.9, "cos_inner must be in packed[base+2][3]");

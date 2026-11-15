@@ -9,7 +9,7 @@ struct SkyUniforms
 };
 [vk::binding(0, 0)] ConstantBuffer<SkyUniforms> sky;
 
-// Below fp16's 65504, as forward.slang's: a brighter sun would store +Inf in the HDR target.
+// Below fp16's 65504, as forward_lighting.slang's: a brighter sun would store +Inf in the HDR target.
 static const float HDR_MAX = 65000.0;
 
 struct SkyVsOut

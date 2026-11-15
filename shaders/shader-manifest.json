@@ -60,6 +60,30 @@
       ]
     },
     {
+      "file": "forward/forward.slang",
+      "entry": "fs_gbuffer",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "forward/forward.slang",
+      "entry": "vs_deferred_lighting",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "forward/forward.slang",
+      "entry": "fs_deferred_lighting",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
       "_comment": "Rust/WebGPU procedural sky (WGSL emit).",
       "file": "sky/sky.slang",
       "entry": "vs_main",
@@ -309,6 +333,16 @@
       {
         "pattern": "(var shadowMap_\\w+\\s*:\\s*)texture_2d_array<f32>",
         "replacement": "${1}texture_depth_2d_array"
+      },
+      {
+        "_comment": "The deferred lighting pass reads the G-buffer depth the geometry pass wrote.",
+        "pattern": "(var gbufferDepth_\\w+\\s*:\\s*)texture_2d<f32>",
+        "replacement": "${1}texture_depth_2d"
+      },
+      {
+        "_comment": "As in ssao.wgsl: textureLoad on texture_depth_2d returns f32 directly, so the trailing .x goes.",
+        "pattern": "(textureLoad\\(\\(gbufferDepth_\\w+\\), \\(\\(\\w+\\)\\)\\.xy, \\(\\(\\w+\\)\\)\\.z\\))\\.x",
+        "replacement": "${1}"
       }
     ],
     "depth_resolve.wgsl": [

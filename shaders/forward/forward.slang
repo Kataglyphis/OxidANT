@@ -1,28 +1,7 @@
-import brdf;
-import sky_model;
+import forward_lighting;
+import fullscreen;
 
-// Rust/WebGPU forward PBR pass: the checked-in forward.wgsl is generated from this file.
-
-// Must match CASCADE_COUNT in forward.rs (one light_space* matrix each).
-static const int CASCADE_COUNT = 3;
-
-// Must match render::tile_grid::TILE_SIZE, the CPU's light-binning tile size.
-static const uint TILE_SIZE = 16;
-
-// Below fp16's 65504: a larger radiance stores as +Inf in the Rgba16Float target, and ACES turns Inf into NaN.
-static const float HDR_MAX = 65000.0;
-
-struct FrameUniforms
-{
-    float4x4 view_proj;
-    float4x4 light_space;
-    float4x4 light_space_1;
-    float4x4 light_space_2;
-    float4 light_dir_ambient;  // xyz: dir towards light, w: ambient
-    float4 light_color_intensity; // rgb: color, w: intensity
-    float4 camera_position;    // xyz: pos, w: punctual light count
-    float4 cascade_splits;     // x,y: splits, z: tile_w, w: tile_h
-};
+// Rust/WebGPU forward PBR pass and its deferred twin: the checked-in forward.wgsl is generated from this file.
 
 struct PrimUniforms
 {
@@ -100,14 +79,7 @@ float2 occlusion_uv(float2 uv0, float2 uv1)
     return apply_uv_transform(prim.occlusion_uv_row0, prim.occlusion_uv_row1, uv);
 }
 
-struct IblParams
-{
-    float4 enabled_maxmip_intensity;
-};
-
 [vk::binding(0, 0)] ConstantBuffer<PrimUniforms> prim;
-[vk::binding(1, 0)] Texture2DArray<float> shadowMap;
-[vk::binding(2, 0)] SamplerComparisonState shadowSampler;
 [vk::binding(3, 0)] Texture2D<float4> baseColorTex;
 [vk::binding(4, 0)] SamplerState baseColorSampler;
 [vk::binding(5, 0)] Texture2D<float4> metalRoughTex;
@@ -120,21 +92,20 @@ struct IblParams
 [vk::binding(12, 0)] SamplerState occlusionSampler;
 [vk::binding(13, 0)] StructuredBuffer<float4x4> jointMatrices;
 
-[vk::binding(0, 1)] ConstantBuffer<IblParams> iblParams;
-[vk::binding(1, 1)] TextureCube<float4> irradianceMap;
-[vk::binding(2, 1)] TextureCube<float4> prefilteredMap;
-[vk::binding(3, 1)] Texture2D<float4> brdfLut;
-[vk::binding(4, 1)] SamplerState iblSampler;
-
-[vk::binding(0, 2)] ConstantBuffer<FrameUniforms> frame;
-
-// One group for the lights and their tile grid: WebGPU allows 4 bind groups (maxBindGroups), so no group 4.
-[vk::binding(0, 3)] StructuredBuffer<float4> punctualLights;
-[vk::binding(1, 3)] StructuredBuffer<uint2> tileLightGrid;
-[vk::binding(2, 3)] StructuredBuffer<uint> tileLightIndices;
-
 // Shares set 1 binding 0 with iblParams: the forward and shadow pipelines use different bind-group layouts.
 [vk::binding(0, 1)] ConstantBuffer<uint4> shadowCascadeIndex;
+
+// The deferred lighting pass's group 0 starts past the material's bindings, so no binding has two meanings.
+[vk::binding(14, 0)] Texture2D<float4> gbufferNormal;
+[vk::binding(15, 0)] Texture2D<float4> gbufferAlbedo;
+[vk::binding(16, 0)] Texture2D<float4> gbufferMaterial;
+[vk::binding(17, 0)] Texture2D<float> gbufferDepth;
+
+struct DeferredUniforms
+{
+    float4x4 inv_view_proj;
+};
+[vk::binding(18, 0)] ConstantBuffer<DeferredUniforms> deferredParams;
 
 struct VsIn
 {
@@ -271,143 +242,14 @@ void fs_shadow_masked(VsShadowMaskedOut In)
     if (alpha < prim.emissive_factor.w) discard;
 }
 
-float4x4 light_space_for(int cascade)
+// The material at a fragment, where fs_main and fs_gbuffer both start.
+struct MaterialSample
 {
-    if (cascade == 1) return frame.light_space_1;
-    if (cascade == 2) return frame.light_space_2;
-    return frame.light_space;
-}
+    SurfacePoint surface;
+    float alpha;
+};
 
-// Visibility (1 = lit), the inverse of cascaded_shadow.slang's calc_cascaded_shadow.
-float shadow_visibility(float viewDepth, float3 worldPos, float nDotL)
-{
-    int selected = 0;
-    if (viewDepth > frame.cascade_splits.x) selected = 1;
-    if (viewDepth > frame.cascade_splits.y) selected = 2;
-    if (selected > CASCADE_COUNT - 1) selected = CASCADE_COUNT - 1;
-
-    // Cascade 0 hugs the focus point, not the camera: a near fragment retries coarser cascades before counting as lit.
-    float3 proj = float3(0.0, 0.0, 0.0);
-    float2 uv = float2(0.0, 0.0);
-    int cascade = selected;
-    bool inBounds = false;
-    for (; cascade < CASCADE_COUNT; cascade++)
-    {
-        float4 lightSpacePos = mul(light_space_for(cascade), float4(worldPos, 1.0));
-        proj = lightSpacePos.xyz / lightSpacePos.w;
-        uv = float2(proj.x * 0.5 + 0.5, 0.5 - proj.y * 0.5);
-        if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 && proj.z <= 1.0)
-        {
-            inBounds = true;
-            break;
-        }
-    }
-    if (!inBounds) return 1.0;
-
-    float bias = clamp(0.002 * (1.0 - nDotL) + 0.0005, 0.0005, 0.004);
-
-    uint shadowWidth, shadowHeight, shadowLayers;
-    shadowMap.GetDimensions(shadowWidth, shadowHeight, shadowLayers);
-    float texel = 1.0 / float(shadowWidth);
-    float sum = 0.0;
-    // Out-of-map taps count as lit here: the web target has no ClampToBorder, and ClampToEdge would shadow them.
-    for (int y = -1; y <= 1; y++)
-    {
-        for (int x = -1; x <= 1; x++)
-        {
-            float2 offset = float2(float(x), float(y)) * texel;
-            float2 tapUV = uv + offset;
-            sum += (tapUV.x >= 0.0 && tapUV.x <= 1.0 && tapUV.y >= 0.0 && tapUV.y <= 1.0)
-              ? shadowMap.SampleCmpLevelZero(shadowSampler, float3(tapUV, float(cascade)), proj.z - bias)
-              : 1.0;
-        }
-    }
-    return sum / 9.0;
-}
-
-// Local wrapper: this pass's light comes from FrameUniforms, not sky.slang's SkyUniforms.
-float3 sky_radiance(float3 dir, bool withSun)
-{
-    float3 color = sky_gradient(dir);
-    if (withSun)
-        color += sun_disk(dir, frame.light_dir_ambient.xyz, frame.light_color_intensity.w);
-    return color;
-}
-
-float3 env_brdf_approx(float3 f0, float roughness, float nDotV)
-{
-    float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
-    float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
-    float4 r = float4(roughness) * c0 + c1;
-    float a004 = min(r.x * r.x, exp2(-9.28 * nDotV)) * r.x + r.y;
-    float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
-    return f0 * ab.x + float3(ab.y);
-}
-
-float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
-    float metallic, float roughness, float3 f0, float4 fragCoord)
-{
-    float3 total = float3(0.0);
-    uint tileX = uint(fragCoord.x) / TILE_SIZE;
-    uint tileY = uint(fragCoord.y) / TILE_SIZE;
-    uint tileW = uint(frame.cascade_splits.z);
-    uint tileH = uint(frame.cascade_splits.w);
-    int totalLights = int(frame.camera_position.w);
-    int tileCount = totalLights;
-    uint tileOffset = 0u;
-    int count = 0;
-    if (tileW != 0u)
-    {
-        uint tx = min(tileX, max(tileW, 1u) - 1u);
-        uint ty = min(tileY, max(tileH, 1u) - 1u);
-        uint tileIndex = ty * tileW + tx;
-        uint2 gridEntry = tileLightGrid[tileIndex];
-        count = int(gridEntry.x);
-        tileOffset = gridEntry.y;
-        // An empty tile shades every light: binning is not fully conservative, and an overflowing tile lists none.
-        if (count > 0) tileCount = count;
-    }
-
-    for (uint j = 0u; j < uint(tileCount); j++)
-    {
-        uint lightIdx = (count > 0) ? tileLightIndices[tileOffset + j] : j;
-        float4 a = punctualLights[lightIdx * 4u];
-        float4 b = punctualLights[lightIdx * 4u + 1u];
-        float4 cvec = punctualLights[lightIdx * 4u + 2u];
-        float4 dvec = punctualLights[lightIdx * 4u + 3u];
-        float kind = a.w;
-        float3 l;
-        float attenuation = 1.0;
-        if (kind > 2.5)
-        {
-            l = normalize(-cvec.xyz);
-        }
-        else
-        {
-            float3 toLight = a.xyz - worldPos;
-            float dist = max(length(toLight), 1e-4);
-            l = toLight / dist;
-            attenuation = 1.0 / (dist * dist);
-            float range = b.w;
-            if (range > 0.0)
-            {
-                float k = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
-                attenuation *= k * k;
-            }
-            if (kind > 1.5)
-            {
-                float cosAngle = dot(normalize(cvec.xyz), -l);
-                attenuation *= smoothstep(dvec.x, cvec.w, cosAngle);
-            }
-        }
-        if (attenuation <= 0.0) continue;
-        total += brdf_direct(n, v, l, albedo, metallic, roughness, f0, b.rgb * attenuation);
-    }
-    return total;
-}
-
-[shader("fragment")]
-float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
+MaterialSample sample_material(VsOut In, bool isFrontFace)
 {
     float2 baseUv = base_color_uv(In.uv, In.uv1);
     float2 mrUv = metallic_roughness_uv(In.uv, In.uv1);
@@ -422,13 +264,14 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float4 occlusionSample = occlusionTex.Sample(occlusionSampler, occlusionUv);
 
     float4 albedo = prim.base_color * baseSample * In.vertexColor;
-    if (albedo.a < prim.emissive_factor.w) discard;
-    if (prim.material_flags.x > 0.5) return albedo;
-
-    float metallic = clamp(prim.material_factors.x * mrSample.b, 0.0, 1.0);
-    float roughness = clamp(prim.material_factors.y * mrSample.g, 0.045, 1.0);
-    float occlusion = lerp(1.0, occlusionSample.r, prim.material_factors.z);
-    float3 emissive = prim.emissive_factor.rgb * emissiveSample.rgb;
+    MaterialSample m;
+    m.alpha = albedo.a;
+    m.surface.position = In.worldPosition;
+    m.surface.albedo = albedo.rgb;
+    m.surface.metallic = clamp(prim.material_factors.x * mrSample.b, 0.0, 1.0);
+    m.surface.roughness = clamp(prim.material_factors.y * mrSample.g, 0.045, 1.0);
+    m.surface.occlusion = lerp(1.0, occlusionSample.r, prim.material_factors.z);
+    m.surface.emissive = prim.emissive_factor.rgb * emissiveSample.rgb;
 
     float3 v = normalize(frame.camera_position.xyz - In.worldPosition);
     // A fragment whose vertices all collapsed faces the camera; a zero tangent leaves the mapped normal at nGeom.
@@ -443,43 +286,68 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float3 n = normalize_or(mul(nTs, float3x3(t, b, nGeom)), nGeom);
     // A doubleSided back face reverses the whole tangent frame (glTF 3.9.2), so the mapped normal flips.
     if (!isFrontFace) n = -n;
+    m.surface.n = n;
+    return m;
+}
 
-    float3 l = normalize(frame.light_dir_ambient.xyz);
+[shader("fragment")]
+float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
+{
+    MaterialSample m = sample_material(In, isFrontFace);
+    if (m.alpha < prim.emissive_factor.w) discard;
+    if (prim.material_flags.x > 0.5) return float4(m.surface.albedo, m.alpha);
+    return float4(shade_surface(m.surface, In.svPosition), m.alpha);
+}
 
-    float3 f0 = lerp(float3(0.04), albedo.rgb, metallic);
-    float3 radiance = frame.light_color_intensity.rgb * frame.light_color_intensity.w;
-    float nDotL = max(dot(n, l), 0.0);
+// 24 bytes a sample, under WebGPU's 32: metallic's sign carries unlit, since albedo's alpha holds the occlusion.
+struct GBufferOut
+{
+    float4 normalMetallic : SV_Target0;
+    float4 albedoOcclusion : SV_Target1;
+    float4 roughnessEmissive : SV_Target2;
+};
 
-    float3 directLight = brdf_direct(n, v, l, albedo.rgb, metallic, roughness, f0, radiance);
-    // Per fragment: a per-vertex distance interpolates too far inside big triangles, picking coarse cascades.
-    float eyeDistance = distance(In.worldPosition, frame.camera_position.xyz);
-    float visibility = shadow_visibility(eyeDistance, In.worldPosition, nDotL);
-    directLight *= visibility;
+[shader("fragment")]
+GBufferOut fs_gbuffer(VsOut In, bool isFrontFace : SV_IsFrontFace)
+{
+    MaterialSample m = sample_material(In, isFrontFace);
+    if (m.alpha < prim.emissive_factor.w) discard;
+    SurfacePoint s = m.surface;
+    GBufferOut g;
+    g.normalMetallic = float4(s.n, prim.material_flags.x > 0.5 ? -1.0 : s.metallic);
+    g.albedoOcclusion = float4(s.albedo, s.occlusion);
+    // Half floats keep an emissive strength above 1, which an 8-bit target would clip.
+    g.roughnessEmissive = float4(s.roughness, s.emissive);
+    return g;
+}
 
-    float3 punctual = punctual_lighting(In.worldPosition, n, v, albedo.rgb, metallic, roughness, f0, In.svPosition);
+// Returned directly: a copy into a local struct makes Slang emit FullscreenVsOut with two @location(0), which Tint rejects.
+[shader("vertex")]
+FullscreenVsOut vs_deferred_lighting(uint vid : SV_VertexID)
+{
+    return fullscreen_vs(vid);
+}
 
-    // Both IBL paths are evaluated and picked by ternary, keeping the no-environment path bit-identical to the goldens.
-    float3 reflected = reflect(-v, n);
-    float nDotV = max(dot(n, v), 1e-4);
-    float3 kSIbl = fresnel_schlick(nDotV, f0);
-    float envIntensity = iblParams.enabled_maxmip_intensity.z;
-    float iblStrength = frame.light_dir_ambient.w;
-    bool envEnabled = iblParams.enabled_maxmip_intensity.x > 0.5;
+[shader("fragment")]
+float4 fs_deferred_lighting(FullscreenVsOut In) : SV_Target
+{
+    int3 texel = int3(int2(In.svPosition.xy), 0);
+    float depth = gbufferDepth.Load(texel);
+    // Nothing was drawn here: the sky fills it after this pass, testing the same depth.
+    if (depth >= 1.0) discard;
+    float4 normalMetallic = gbufferNormal.Load(texel);
+    float4 albedoOcclusion = gbufferAlbedo.Load(texel);
+    if (normalMetallic.w < -0.5) return float4(albedoOcclusion.rgb, 1.0);
+    float4 roughnessEmissive = gbufferMaterial.Load(texel);
+    float4 world = mul(deferredParams.inv_view_proj, float4(fullscreen_uv_to_ndc(In.uv), depth, 1.0));
 
-    float3 irradianceAnalytic = hemisphere_irradiance(n);
-    float3 irradianceEnv = irradianceMap.SampleLevel(iblSampler, n, 0.0).xyz * envIntensity;
-    float3 irradiance = envEnabled ? irradianceEnv : irradianceAnalytic;
-    float3 diffuseIbl = (float3(1.0) - kSIbl) * (1.0 - metallic) * albedo.rgb * irradiance;
-
-    float3 prefiltered = prefilteredMap.SampleLevel(iblSampler, reflected, roughness * iblParams.enabled_maxmip_intensity.y).xyz * envIntensity;
-    float2 brdfLutSample = brdfLut.Sample(iblSampler, float2(max(dot(n, v), 0.0), roughness)).rg;
-    float3 specularSplitSum = prefiltered * (f0 * brdfLutSample.x + brdfLutSample.y);
-    float3 envAnalytic = lerp(sky_radiance(reflected, true), irradianceAnalytic, roughness * roughness);
-    float3 specularAnalytic = envAnalytic * env_brdf_approx(f0, roughness, nDotV);
-    float3 specularIbl = envEnabled ? specularSplitSum : specularAnalytic;
-
-    float3 ambient = iblStrength * occlusion * (diffuseIbl + specularIbl);
-
-    float3 color = directLight + punctual + ambient + emissive;
-    return float4(clamp(color, float3(0.0), float3(HDR_MAX)), albedo.a);
+    SurfacePoint s;
+    s.position = world.xyz / world.w;
+    s.n = normalize_or(normalMetallic.xyz, float3(0.0, 1.0, 0.0));
+    s.albedo = albedoOcclusion.rgb;
+    s.metallic = normalMetallic.w;
+    s.roughness = roughnessEmissive.r;
+    s.occlusion = albedoOcclusion.a;
+    s.emissive = roughnessEmissive.gba;
+    return float4(shade_surface(s, In.svPosition), 1.0);
 }

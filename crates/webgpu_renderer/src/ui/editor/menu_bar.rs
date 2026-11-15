@@ -4,6 +4,7 @@ use egui::{pos2, vec2, Align2, Button, Margin, MenuBar, Rect, Style, TextStyle, 
 
 use super::docks::{self, Side};
 use super::{Editor, EditorAction, EditorContext, SceneObject, BRAND, FRAME_RATE_WINDOW};
+use crate::render::forward::RasterPath;
 use crate::ui::icons::{self, StudioIcon};
 use crate::ui::palette as pal;
 use crate::ui::theme;
@@ -27,7 +28,7 @@ pub(super) fn bar_height(ui: &Ui) -> f32 {
     frame_height(ui) + 2.0 * BAR_EXTRA
 }
 
-pub(super) fn show(ui: &mut Ui, editor: &mut Editor, cx: &EditorContext<'_>) {
+pub(super) fn show(ui: &mut Ui, editor: &mut Editor, cx: &mut EditorContext<'_>) {
     let margin = Margin::symmetric(theme::WINDOW_PADDING.x as i8, 0);
     docks::panel(ui, "studio_menu", Side::Top, bar_height(ui), margin, |ui| {
         let bar = ui.max_rect();
@@ -63,10 +64,10 @@ fn brand(ui: &mut Ui) {
 }
 
 /// File, View, Render and Help; returns the right edge of the last.
-fn menus(ui: &mut Ui, editor: &mut Editor, cx: &EditorContext<'_>) -> f32 {
+fn menus(ui: &mut Ui, editor: &mut Editor, cx: &mut EditorContext<'_>) -> f32 {
     ui.menu_button("File", |ui| file_menu(ui, cx, &mut editor.actions));
     ui.menu_button("View", |ui| view_menu(ui, editor));
-    ui.menu_button("Render", render_menu);
+    ui.menu_button("Render", |ui| render_menu(ui, &mut cx.settings.raster_path));
     let help = ui.menu_button("Help", |ui| {
         if ui.button("Key bindings").clicked() {
             editor.select(SceneObject::Camera);
@@ -132,7 +133,7 @@ fn view_menu(ui: &mut Ui, editor: &mut Editor) {
 }
 
 /// The C++ Render menu; what WebGPU lacks shows disabled, as in a C++ build without hardware ray tracing.
-fn render_menu(ui: &mut Ui) {
+fn render_menu(ui: &mut Ui, path: &mut RasterPath) {
     for (index, label) in RENDER_MODES.iter().enumerate() {
         ui.add_enabled(
             RENDER_MODES_ENABLED[index],
@@ -140,9 +141,11 @@ fn render_menu(ui: &mut Ui) {
         );
     }
     ui.separator();
-    ui.add(egui::RadioButton::new(true, "Forward"));
-    ui.add_enabled(false, egui::RadioButton::new(false, "Deferred"))
-        .on_disabled_hover_text("The WebGPU renderer has no deferred path yet");
+    for option in RasterPath::ALL {
+        if ui.radio(*path == option, option.label()).clicked() {
+            *path = option;
+        }
+    }
     ui.separator();
     ui.add_enabled(false, egui::Checkbox::new(&mut true, "Frustum culling"))
         .on_disabled_hover_text("The renderer always culls against the frustum");

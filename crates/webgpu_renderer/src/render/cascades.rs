@@ -1,5 +1,5 @@
 //! Pure-CPU shadow-cascade fitting, texel-stabilized like `CascadedShadowMapMath.cpp`.
-//! Splits are eye distances: `forward.slang`'s `fs_main` selects by each fragment's own distance.
+//! Splits are eye distances: `forward_lighting.slang`'s `shade_surface` selects by each fragment's own distance.
 
 // glam's `directx` clip convention is NDC Z in [0,1] with Y up, the same as wgpu's.
 use glam::camera::rh::proj::directx as clip;
@@ -303,7 +303,7 @@ mod tests {
         );
     }
 
-    /// Whether `world` lands inside the box, per `forward.slang:212`'s `uv`/`proj.z` check.
+    /// Whether `world` lands inside the box, per `forward_lighting.slang`'s `shadow_visibility` `uv`/`proj.z` check.
     fn shader_covers(view_proj: Mat4, world: Vec3) -> bool {
         let clip = view_proj * world.extend(1.0);
         if clip.w.abs() < 1e-6 {
@@ -315,7 +315,7 @@ mod tests {
         (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v) && (0.0..=1.0).contains(&proj.z)
     }
 
-    /// `forward.slang:198-203`'s cascade selection rule, in isolation.
+    /// `forward_lighting.slang`'s `shadow_visibility` cascade selection rule, in isolation.
     fn select_cascade(eye_distance: f32, splits: [f32; 2]) -> usize {
         let mut cascade = 0usize;
         if eye_distance > splits[0] {

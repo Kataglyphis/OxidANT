@@ -1,10 +1,11 @@
 //! Renders headlessly and writes per-pass GPU timings as JSON in the C++ engine's schema.
-//! Usage: `cargo run --example dump_gpu_timings -- <out.json> [scene.gltf [width height]]`
+//! Usage: `cargo run --example dump_gpu_timings -- <out.json> [scene.gltf [width height]] [--deferred]`
 //! `frames_measured` counts the frames whose timestamps arrived, 0 without timestamps; a pass is the renderer's mean.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
+use kataglyphis_webgpu_renderer::render::forward::RasterPath;
 use kataglyphis_webgpu_renderer::{
     load_gltf, ForwardRenderer, GpuContext, OrbitCamera, TonemapPass,
 };
@@ -16,7 +17,15 @@ const FRAMES: u32 = 96;
 type Passes = Vec<(&'static str, f32)>;
 
 fn main() -> anyhow::Result<()> {
-    let mut args = std::env::args().skip(1);
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // The C++ export times its forward path, so the deferred one is asked for by name.
+    let path = if args.iter().any(|arg| arg == "--deferred") {
+        RasterPath::Deferred
+    } else {
+        RasterPath::Forward
+    };
+    args.retain(|arg| arg != "--deferred");
+    let mut args = args.into_iter();
     let out_path = args
         .next()
         .unwrap_or_else(|| "gpu-timings-rust.json".to_string());
@@ -32,7 +41,7 @@ fn main() -> anyhow::Result<()> {
         return write(&out_path, &timings_json(false, 0, &[]));
     };
     gpu.check_target_size(width, height)?;
-    let (supported, measured, passes) = measure(&gpu, &scene_path, [width, height])?;
+    let (supported, measured, passes) = measure(&gpu, &scene_path, [width, height], path)?;
     write(&out_path, &timings_json(supported, measured, &passes))?;
     eprintln!("wrote {out_path} ({} passes)", passes.len());
     Ok(())
@@ -43,8 +52,10 @@ fn measure(
     gpu: &GpuContext,
     scene: &Path,
     [width, height]: [u32; 2],
+    path: RasterPath,
 ) -> anyhow::Result<(bool, u32, Passes)> {
     let mut renderer = ForwardRenderer::new(gpu, width, height);
+    renderer.raster_path = path;
     let supported = renderer.enable_gpu_timing(gpu);
     renderer.upload_scene(gpu, &load_gltf(scene).context("scene must load")?);
     let camera = OrbitCamera::default();

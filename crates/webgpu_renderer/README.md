@@ -29,7 +29,12 @@ converter (`asset::obj_to_gltf`, the `obj2gltf` example).
 **Shading** — metallic-roughness PBR (GGX + Smith + Fresnel-Schlick) with
 base color / metallic-roughness / normal / emissive / occlusion maps,
 `KHR_materials_unlit`, alpha OPAQUE/MASK/BLEND, double-sided materials,
-CPU-generated mip chains.
+CPU-generated mip chains. Two raster paths, switched at run time like the C++
+engine's (`ForwardRenderer::raster_path`): forward, and deferred, whose
+single-sample G-buffer (normal + metallic, albedo + occlusion, roughness +
+emissive: 24 of WebGPU's 32 colour bytes per sample) one full-screen pass lights
+with the forward pass's own lighting module (`shaders/forward/forward_lighting.slang`);
+the sky and blended materials draw forward after it.
 
 **Lighting** — directional sun with 3-cascade shadow maps (3×3 PCF) and
 per-pixel alpha-tested shadows for cut-out (MASK) materials, up to 256
@@ -39,7 +44,9 @@ procedural sky with an analytic sun, and image-based lighting: analytic
 from a Radiance `.hdr` environment map (irradiance and prefiltered specular
 cubemaps + a BRDF LUT).
 
-**Post** — 4× MSAA, HDR `Rgba16Float` target, bloom (bright-pass + separable
+**Post** — 4× MSAA on the forward path (deferred renders one sample, so its
+silhouettes, creases and sub-pixel detail differ; `tests/deferred.rs` measures
+it), HDR `Rgba16Float` target, bloom (bright-pass + separable
 Gaussian), SSAO (depth reconstruction), manual or histogram auto-exposure, ACES
 tonemapping.
 
@@ -94,7 +101,7 @@ cargo run -p kataglyphis_webgpu_renderer --example export_shaders -- out_dir
 
 # The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe)
 cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir \
-  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web ...]
+  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web,deferred ...]
 
 # Browser demo (drop a self-contained .glb onto the page; the Colosseum row fetches Colosseum-web.glb beside it)
 cargo build -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown --release

@@ -278,7 +278,7 @@ impl Editor {
         menu_bar::show(ui, self, cx);
         status_bar::show(ui, cx);
         let scene = self.docks(ui, cx);
-        chip::paint(ui, scene, cx.scene.loading);
+        chip::paint(ui, scene, cx.scene.loading, cx.settings.raster_path);
         windows::show(ui.ctx(), self, cx);
         EditorOutput {
             viewport: layout::viewport_of(scene, frame),

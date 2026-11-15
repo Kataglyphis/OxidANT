@@ -468,10 +468,10 @@ fn every_cascade_layer_is_rendered_with_its_own_light_matrix() {
     }
 }
 
-/// The shader source is owned here, so standalone checkouts run the parity checks too.
+/// The lighting module both raster paths import; owned here, so standalone checkouts run the parity checks too.
 fn slang_source() -> Option<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../shaders/forward/forward.slang");
+        .join("../../shaders/forward/forward_lighting.slang");
     match std::fs::read_to_string(&path) {
         Ok(source) => Some(source),
         Err(err) => {
@@ -488,7 +488,7 @@ fn parse_slang_constant<T: std::str::FromStr>(source: &str, name: &str) -> Optio
     source[start..end].trim().parse().ok()
 }
 
-/// Pins Rust `CASCADE_COUNT` against `forward.slang`'s; no GPU needed.
+/// Pins Rust `CASCADE_COUNT` against `forward_lighting.slang`'s; no GPU needed.
 #[test]
 fn cascade_count_matches_the_slang_constant() {
     assert_eq!(
@@ -500,26 +500,26 @@ fn cascade_count_matches_the_slang_constant() {
         return;
     };
     let shader_cascade_count: usize = parse_slang_constant(&source, "CASCADE_COUNT")
-        .expect("forward.slang must declare `static const int CASCADE_COUNT = <n>;`");
+        .expect("forward_lighting.slang must declare `static const int CASCADE_COUNT = <n>;`");
     assert_eq!(
         kataglyphis_webgpu_renderer::render::forward::CASCADE_COUNT,
         shader_cascade_count,
-        "Rust CASCADE_COUNT and forward.slang's CASCADE_COUNT have drifted apart"
+        "Rust CASCADE_COUNT and forward_lighting.slang's CASCADE_COUNT have drifted apart"
     );
 }
 
-/// Pins `render::tile_grid::TILE_SIZE` against `forward.slang`'s; no GPU needed.
+/// Pins `render::tile_grid::TILE_SIZE` against `forward_lighting.slang`'s; no GPU needed.
 #[test]
 fn tile_size_matches_the_slang_constant() {
     let Some(source) = slang_source() else {
         return;
     };
     let shader_tile_size: u32 = parse_slang_constant(&source, "TILE_SIZE")
-        .expect("forward.slang must declare `static const uint TILE_SIZE = <n>;`");
+        .expect("forward_lighting.slang must declare `static const uint TILE_SIZE = <n>;`");
     assert_eq!(
         kataglyphis_webgpu_renderer::render::tile_grid::TILE_SIZE,
         shader_tile_size,
-        "Rust TILE_SIZE and forward.slang's TILE_SIZE have drifted apart"
+        "Rust TILE_SIZE and forward_lighting.slang's TILE_SIZE have drifted apart"
     );
 }
 

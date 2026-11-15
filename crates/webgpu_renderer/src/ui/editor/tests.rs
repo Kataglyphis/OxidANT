@@ -510,3 +510,45 @@ fn the_about_modal_names_the_egui_this_crate_builds_against() {
     let manifest = include_str!("../../../Cargo.toml");
     assert!(manifest.contains(&format!("egui = \"{}\"", windows::EGUI_VERSION)));
 }
+
+/// Clicks the centre of the first text shape that reads `text`.
+fn click_text(studio: &mut Harness, text: &str) {
+    let rect = studio
+        .text_rect(text)
+        .unwrap_or_else(|| panic!("nothing reads {text:?}"));
+    studio.frame(click(rect.center().x, rect.center().y));
+}
+
+#[test]
+fn the_renderer_tab_switches_the_raster_path_and_the_chip_names_it() {
+    use crate::render::forward::RasterPath;
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.editor.select(SceneObject::Renderer);
+    let chip = |studio: &mut Harness, path: &str| {
+        let wanted = format!("Raster  ·  {path}");
+        painted_texts(studio)
+            .iter()
+            .any(|(text, _)| *text == wanted)
+    };
+    assert!(chip(&mut studio, "Forward"));
+    click_text(&mut studio, "Deferred");
+    assert_eq!(studio.settings.raster_path, RasterPath::Deferred);
+    assert!(chip(&mut studio, "Deferred"));
+    click_text(&mut studio, "Forward");
+    assert_eq!(studio.settings.raster_path, RasterPath::Forward);
+    assert!(chip(&mut studio, "Forward"));
+}
+
+#[test]
+fn the_render_menu_switches_the_raster_path() {
+    use crate::render::forward::RasterPath;
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.frame(Vec::new());
+    click_text(&mut studio, "Render");
+    assert!(
+        egui::Popup::is_any_open(&studio.ctx),
+        "the Render menu opens"
+    );
+    click_text(&mut studio, "Deferred");
+    assert_eq!(studio.settings.raster_path, RasterPath::Deferred);
+}

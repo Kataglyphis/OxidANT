@@ -1,4 +1,4 @@
-//! The Studio editor rendered headless into PNGs: `editor_snapshot -- [out_dir] [--model=PATH] [--web-model=PATH] [WxH@scale[,tab][,about][,hidden][,web] ...]`.
+//! The Studio editor rendered headless into PNGs: `editor_snapshot -- [out_dir] [--model=PATH] [--web-model=PATH] [WxH@scale[,tab][,about][,hidden][,web][,deferred] ...]`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use kataglyphis_webgpu_renderer::app::discovery::native_startup;
 use kataglyphis_webgpu_renderer::app::library::{ModelLibrary, SceneSource, WEB_COLOSSEUM};
+use kataglyphis_webgpu_renderer::render::forward::RasterPath;
 use kataglyphis_webgpu_renderer::ui::{DockPrefs, ModelSource, SceneObject};
 use kataglyphis_webgpu_renderer::{
     load_gltf, GpuContext, HostCaps, OffscreenFrame, OrbitCamera, StudioApp,
@@ -24,7 +25,7 @@ const WARM_UP_FRAMES: u32 = 4;
 /// Lavapipe parses and uploads the 5.9 M-triangle Colosseum in minutes, not seconds.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(1800);
 
-/// One PNG: the frame's size in pixels, its scale, the inspector tab, About open, the editor hidden, the browser's host.
+/// One PNG: the frame's size in pixels, its scale, the inspector tab, About open, the editor hidden, the browser's host, the raster path.
 struct Shot {
     size: [u32; 2],
     scale: f32,
@@ -32,6 +33,7 @@ struct Shot {
     about: bool,
     hidden: bool,
     web: bool,
+    path: RasterPath,
 }
 
 fn parse(spec: &str) -> anyhow::Result<Shot> {
@@ -46,12 +48,14 @@ fn parse(spec: &str) -> anyhow::Result<Shot> {
         about: false,
         hidden: false,
         web: false,
+        path: RasterPath::Forward,
     };
     for option in parts {
         match option {
             "about" => shot.about = true,
             "hidden" => shot.hidden = true,
             "web" => shot.web = true,
+            "deferred" => shot.path = RasterPath::Deferred,
             name => {
                 shot.object = SceneObject::ALL
                     .into_iter()
@@ -80,6 +84,7 @@ fn file_name(spec: &str) -> String {
 /// `now_s` runs on across shots, so the frame clock never steps back.
 fn render(app: &mut StudioApp, shot: &Shot, path: &Path, now_s: &mut f64) -> anyhow::Result<()> {
     app.editor_mut().select(shot.object);
+    app.renderer.raster_path = shot.path;
     app.editor_mut().set_visible(!shot.hidden);
     if shot.about {
         app.editor_mut().show_about();

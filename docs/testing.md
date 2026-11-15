@@ -226,7 +226,7 @@ $env:KATAGLYPHIS_REQUIRE_GPU = '1'; cargo test -p kataglyphis_webgpu_renderer --
 CI splits the same way: `windows-x64.yml` builds the renderer's tests in the container and
 runs them on the runner, a desktop Windows Server with `opengl32.dll`;
 `windows-arm64-cross.yml` runs the whole workspace's tests on `windows-11-arm`. Its staged
-artifact includes `shaders/forward/forward.slang` for the renderer's shader-constant tests.
+artifact includes `shaders/forward` for the renderer's shader-constant tests, which read `forward_lighting.slang`.
 The lane's build and run sequence is in
 [AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration).
 
