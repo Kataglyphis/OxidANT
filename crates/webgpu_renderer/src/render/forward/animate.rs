@@ -22,43 +22,62 @@ pub(super) struct SceneAnimation {
     pub(super) animations: Vec<CpuAnimation>,
     pub(super) skins: Vec<CpuSkin>,
     pub(super) pending_joint_world: Option<Vec<Mat4>>,
+    /// The one clip `set_animation_time` samples: clips on the same nodes would overwrite each other.
+    active: usize,
+    /// The file's pose, which a clip switch restores for the nodes the new clip does not drive.
+    rest_nodes: Vec<CpuNode>,
+    /// Each primitive's default morph weights, restored on a clip switch like `rest_nodes`.
+    rest_morph_weights: Vec<Vec<f32>>,
 }
 
 impl SceneAnimation {
-    /// Samples every translation, rotation and scale channel at `time` into its node.
+    /// The uploaded scene at its rest pose, with the first clip active.
+    pub(super) fn for_scene(scene: &CpuScene) -> Self {
+        Self {
+            nodes: scene.nodes.clone(),
+            animations: scene.animations.clone(),
+            skins: scene.skins.clone(),
+            pending_joint_world: None,
+            active: 0,
+            rest_nodes: scene.nodes.clone(),
+            rest_morph_weights: scene
+                .primitives
+                .iter()
+                .map(|prim| prim.morph_weights.clone())
+                .collect(),
+        }
+    }
+
+    /// Samples the active clip's translation, rotation and scale channels at `time` into their nodes.
     pub(super) fn sample_node_channels(&mut self, time: f32) {
-        for animation in &self.animations {
-            for channel in &animation.channels {
-                let Some(node) = self.nodes.get_mut(channel.node) else {
-                    continue;
-                };
-                let t = clip_time(animation, time);
-                let (i0, i1, frac, dt) = keyframe_lerp_indices(&channel.times, t);
-                match &channel.values {
-                    ChannelValues::Translation(values) => {
-                        if let Some(v) =
-                            sample_vec3(values, channel.interpolation, i0, i1, frac, dt)
-                        {
-                            node.translation = v;
-                        }
+        let Some(animation) = self.animations.get(self.active) else {
+            return;
+        };
+        let t = clip_time(animation, time);
+        for channel in &animation.channels {
+            let Some(node) = self.nodes.get_mut(channel.node) else {
+                continue;
+            };
+            let (i0, i1, frac, dt) = keyframe_lerp_indices(&channel.times, t);
+            let interpolation = channel.interpolation;
+            match &channel.values {
+                ChannelValues::Translation(values) => {
+                    if let Some(v) = sample_vec3(values, interpolation, i0, i1, frac, dt) {
+                        node.translation = v;
                     }
-                    ChannelValues::Rotation(values) => {
-                        if let Some(q) =
-                            sample_quat(values, channel.interpolation, i0, i1, frac, dt)
-                        {
-                            node.rotation = q;
-                        }
-                    }
-                    ChannelValues::Scale(values) => {
-                        if let Some(v) =
-                            sample_vec3(values, channel.interpolation, i0, i1, frac, dt)
-                        {
-                            node.scale = v;
-                        }
-                    }
-                    // Sampled by `sample_morph_channels`, which avoids fighting the `nodes` borrow.
-                    ChannelValues::MorphWeights(_) => {}
                 }
+                ChannelValues::Rotation(values) => {
+                    if let Some(q) = sample_quat(values, interpolation, i0, i1, frac, dt) {
+                        node.rotation = q;
+                    }
+                }
+                ChannelValues::Scale(values) => {
+                    if let Some(v) = sample_vec3(values, interpolation, i0, i1, frac, dt) {
+                        node.scale = v;
+                    }
+                }
+                // Sampled by `sample_morph_channels`, which avoids fighting the `nodes` borrow.
+                ChannelValues::MorphWeights(_) => {}
             }
         }
     }
@@ -83,9 +102,43 @@ impl ForwardRenderer {
         self.recompute_scene_bounds();
     }
 
-    /// Morph weights; the target count comes from each primitive to stride the flat channel.
+    /// Names of the uploaded clips in file order, for [`Self::set_active_animation`].
+    pub fn animation_names(&self) -> Vec<&str> {
+        self.animation
+            .animations
+            .iter()
+            .map(|animation| animation.name.as_str())
+            .collect()
+    }
+
+    /// The clip `set_animation_time` plays; the first one after an upload.
+    pub fn active_animation(&self) -> usize {
+        self.animation.active
+    }
+
+    /// Plays clip `index` from the next `set_animation_time` on; an index past the last clip is ignored.
+    /// Nodes and morph weights return to the file's pose first, since the new clip may drive fewer of them.
+    pub fn set_active_animation(&mut self, index: usize) {
+        if index >= self.animation.animations.len() || index == self.animation.active {
+            return;
+        }
+        self.animation.active = index;
+        self.animation.nodes = self.animation.rest_nodes.clone();
+        for (prim, rest) in self
+            .primitives
+            .iter_mut()
+            .zip(&self.animation.rest_morph_weights)
+        {
+            if prim.morph_weights != *rest {
+                prim.morph_weights = rest.clone();
+                prim.morph_dirty = true;
+            }
+        }
+    }
+
+    /// The active clip's morph weights; each primitive's target count strides the flat channel.
     pub(super) fn sample_morph_channels(&mut self, time: f32) {
-        for animation in &self.animation.animations {
+        if let Some(animation) = self.animation.animations.get(self.animation.active) {
             let t = clip_time(animation, time);
             for channel in &animation.channels {
                 let ChannelValues::MorphWeights(values) = &channel.values else {

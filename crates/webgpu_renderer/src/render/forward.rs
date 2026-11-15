@@ -503,7 +503,7 @@ impl ForwardRenderer {
         !self.animation.animations.is_empty()
     }
 
-    /// Samples every animation at `time` (s) and retargets transforms, bounds and blend centres.
+    /// Samples the active clip at `time` (s) and retargets transforms, bounds and blend centres.
     pub fn set_animation_time(&mut self, time: f32) {
         if self.animation.animations.is_empty() || self.animation.nodes.is_empty() {
             return;

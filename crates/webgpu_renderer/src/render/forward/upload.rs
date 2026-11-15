@@ -208,11 +208,8 @@ impl ForwardRenderer {
         let (packed, count) = pack_punctual_lights(&scene.lights);
         self.lights.punctual = packed;
         self.lights.punctual_count = count;
-        self.animation.nodes = scene.nodes.clone();
-        self.animation.animations = scene.animations.clone();
-        self.animation.skins = scene.skins.clone();
-        // A pose sampled for the previous scene would land on this scene's joint buffers.
-        self.animation.pending_joint_world = None;
+        // Also drops a pose sampled for the previous scene, which would land on this scene's joints.
+        self.animation = super::animate::SceneAnimation::for_scene(scene);
         if scene.lights.len() > MAX_PUNCTUAL_LIGHTS {
             log::warn!(
                 "Scene has {} punctual lights; only the first {} are used.",

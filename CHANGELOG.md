@@ -62,6 +62,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   device's storage-binding limit. The loader drops influences on joints the node's skin does not have, and every
   influence of a weighted mesh on a node without a skin, which the shader skinned with no palette and drew at the
   mesh origin instead of the node transform.
+- **Every animation clip played at once**, each clip overwriting the ones before it per channel (Fox.glb always
+  showed Run). `set_animation_time` samples one clip, the first by default; `animation_names`,
+  `active_animation` and `set_active_animation` pick it, and a switch returns nodes and morph weights to the
+  file's pose first.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
