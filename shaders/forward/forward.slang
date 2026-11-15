@@ -9,6 +9,9 @@ static const int CASCADE_COUNT = 3;
 // Must match render::tile_grid::TILE_SIZE, the CPU's light-binning tile size.
 static const uint TILE_SIZE = 16;
 
+// Below fp16's 65504: a larger radiance stores as +Inf in the Rgba16Float target, and ACES turns Inf into NaN.
+static const float HDR_MAX = 65000.0;
+
 struct FrameUniforms
 {
     float4x4 view_proj;
@@ -468,5 +471,5 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float3 ambient = iblStrength * occlusion * (diffuseIbl + specularIbl);
 
     float3 color = directLight + punctual + ambient + emissive;
-    return float4(color, albedo.a);
+    return float4(clamp(color, float3(0.0), float3(HDR_MAX)), albedo.a);
 }

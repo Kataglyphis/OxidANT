@@ -33,7 +33,9 @@ float4 fs_main(FullscreenVsOut In) : SV_Target
     float aoRaw = aoTex.Sample(hdrSampler, In.uv).r;
     float ao = lerp(1.0, aoRaw, tonemapUniforms.params.y);
     float exposure = exp2(exposureState[0]);
-    float3 mapped = aces_tonemap(hdr * ao * exposure + bloom * tonemapUniforms.params.x);
+    // ACES saturates long before 1e4, and capping there keeps its x*x terms off Inf/Inf = NaN.
+    float3 scene = min(hdr * ao * exposure + bloom * tonemapUniforms.params.x, float3(1e4));
+    float3 mapped = aces_tonemap(scene);
 
     // WebGPU canvases have no sRGB surface format, so the web encodes here (docs/shaders.md#color-space).
     if (tonemapUniforms.params.w > 0.5)

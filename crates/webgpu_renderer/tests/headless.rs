@@ -1477,6 +1477,63 @@ fn a_screenshot_at_the_window_size_leaves_the_window_post_inputs_live() {
     );
 }
 
+/// Radiance past fp16's 65504 stores +Inf on most GPUs, and ACES turns Inf into NaN: a black hot spot.
+/// Lavapipe rounds that overflow to 65504, so the second scene feeds a true +Inf: an emissive
+/// strength past f32's range, which a glTF's `emissiveStrength: 1e39` loads as.
+#[test]
+fn a_hot_spot_past_the_half_float_range_saturates_instead_of_turning_black() {
+    use kataglyphis_webgpu_renderer::scene::{CpuLight, CpuLightKind};
+
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let mut plane_only = load_gltf(path).expect("cube_on_plane.gltf must load");
+    plane_only.primitives.retain(|p| p.vertices.len() == 4);
+    // A lamp 2 cm above the plane: about 7e9 at the plane under it.
+    let mut lamp = plane_only.clone();
+    lamp.lights = vec![CpuLight {
+        kind: CpuLightKind::Point,
+        color: [1.0, 1.0, 1.0],
+        intensity: 1.0e7,
+        range: 0.0,
+        position: [0.0, 0.02, 0.0],
+        direction: [0.0, -1.0, 0.0],
+    }];
+    let mut glowing = plane_only;
+    glowing.primitives[0].material.emissive_factor = [f32::INFINITY; 3];
+
+    for (label, scene) in [("lamp", lamp), ("infinite emissive", glowing)] {
+        let size = 96u32;
+        let mut renderer = ForwardRenderer::new(&gpu, size, size);
+        renderer.upload_scene(&gpu, &scene);
+        let camera = OrbitCamera {
+            radius: 3.0,
+            pitch_deg: 89.0,
+            ..OrbitCamera::default()
+        };
+        let pixels = renderer
+            .render_to_pixels(&gpu, size, size, &camera)
+            .expect("headless render must succeed");
+        // A half float with every exponent bit set is +-Inf or NaN.
+        let hdr = renderer
+            .read_hdr_target(&gpu)
+            .expect("HDR readback must succeed");
+        let non_finite = hdr.iter().filter(|h| *h & 0x7c00 == 0x7c00).count();
+        assert_eq!(
+            non_finite, 0,
+            "{label}: {non_finite} HDR channels hold Inf or NaN, which bloom spreads and ACES blackens"
+        );
+        let i = (((size / 2) * size + size / 2) * 4) as usize;
+        let centre = [pixels[i], pixels[i + 1], pixels[i + 2]];
+        assert!(
+            centre.iter().all(|c| *c > 240),
+            "{label}: the overexposed centre must saturate to white, got {centre:?}"
+        );
+    }
+}
+
 /// Fewer instances within the buffer's capacity must take their shadows with them.
 #[test]
 fn shrinking_or_clearing_instances_removes_their_shadows() {

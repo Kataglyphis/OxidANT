@@ -10,6 +10,9 @@ import fullscreen;
 
 static const float THRESHOLD = 1.0;
 
+// Below fp16's 65504: the bright pass scales by the exposure, and the bloom targets are Rgba16Float too.
+static const float HDR_MAX = 65000.0;
+
 static const float W0 = 0.227027;
 static const float W1 = 0.1945946;
 static const float W2 = 0.1216216;
@@ -42,8 +45,8 @@ FullscreenVsOut vs_main(uint vid : SV_VertexID)
 [shader("fragment")]
 float4 fs_brightpass(FullscreenVsOut In) : SV_Target
 {
-    float3 hdr = srcTex.Sample(srcSampler, In.uv).rgb * exp2(exposureState[0]);
-    float3 bright = max(hdr - float3(THRESHOLD), float3(0.0));
+    float3 hdr = min(srcTex.Sample(srcSampler, In.uv).rgb, float3(HDR_MAX)) * exp2(exposureState[0]);
+    float3 bright = clamp(hdr - float3(THRESHOLD), float3(0.0), float3(HDR_MAX));
     return float4(bright, 1.0);
 }
 

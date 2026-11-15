@@ -56,6 +56,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pass was rebound to the new textures. Each rebuild now names its input set, every `TonemapPass` remembers the set
   it samples and rebinds when they differ, and a screenshot rebuilds nothing. Test:
   `a_screenshot_at_the_window_size_leaves_the_window_post_inputs_live`.
+- **Radiance past the half-float range blackened hot spots**: the Rgba16Float HDR target stores anything above
+  65504 as +Inf on most GPUs (lavapipe rounds it to 65504), bloom spread the Inf and ACES turned it into NaN, so a
+  lamp inside a fixture or a strong emitter drew a black block. The forward and sky passes clamp their output to
+  65000, the bloom bright pass clamps after its exposure scale, and the tonemap caps its input at 1e4, where ACES
+  has long saturated. Test: `a_hot_spot_past_the_half_float_range_saturates_instead_of_turning_black`, whose
+  infinite-emissive scene (a glTF `emissiveStrength` past f32's range) fails on lavapipe without the clamps; it
+  reads the target back through the doc-hidden `read_hdr_target`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

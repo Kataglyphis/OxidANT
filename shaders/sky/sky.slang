@@ -9,6 +9,9 @@ struct SkyUniforms
 };
 [vk::binding(0, 0)] ConstantBuffer<SkyUniforms> sky;
 
+// Below fp16's 65504, as forward.slang's: a brighter sun would store +Inf in the HDR target.
+static const float HDR_MAX = 65000.0;
+
 struct SkyVsOut
 {
     float4 svPosition : SV_Position;
@@ -35,5 +38,5 @@ float4 fs_main(SkyVsOut In) : SV_Target
 
     float3 color = sky_gradient(dir) + sun_disk(dir, sky.light_dir_intensity.xyz, sky.light_dir_intensity.w);
 
-    return float4(color, 1.0);
+    return float4(min(color, float3(HDR_MAX)), 1.0);
 }

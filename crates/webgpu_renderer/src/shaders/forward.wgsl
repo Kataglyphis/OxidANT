@@ -862,7 +862,7 @@ fn fs_main( _S56 : pixelInput_1, @builtin(front_facing) isFrontFace_0 : bool, @b
     {
         specularIbl_0 = specularAnalytic_0;
     }
-    var _S64 : pixelOutput_0 = pixelOutput_0( vec4<f32>(directLight_0 + punctual_0 + vec3<f32>((iblStrength_0 * occlusion_0)) * (diffuseIbl_0 + specularIbl_0) + emissive_0, _S57) );
+    var _S64 : pixelOutput_0 = pixelOutput_0( vec4<f32>(clamp(directLight_0 + punctual_0 + vec3<f32>((iblStrength_0 * occlusion_0)) * (diffuseIbl_0 + specularIbl_0) + emissive_0, vec3<f32>(0.0f), vec3<f32>(65000.0f)), _S57) );
     return _S64;
 }
 
