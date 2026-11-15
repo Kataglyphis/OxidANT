@@ -112,6 +112,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   distance and took cascade 1 or 2, with their coarser texels and larger world-space bias. `fs_main` measures each
   fragment's own distance now; the `viewDepth` varying is gone. Test:
   `a_huge_floor_takes_its_cascade_from_each_fragment_distance`.
+- **A cascade clipped casters between the light and its box**: each cascade's depth range was a fixed ±4r band
+  around its centre, so with the focus off the scene centre and a low sun a tall caster's top fell before cascade
+  0's near plane and its shadow tip vanished near the camera. The near plane now also reaches the scene box's corner
+  nearest the light; ranges that already reached it are unchanged. Test:
+  `no_cascade_clips_a_caster_between_the_light_and_its_box`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

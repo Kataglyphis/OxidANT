@@ -63,22 +63,45 @@ pub(crate) fn fit_cascades(
     };
     // Eye at +light_dir, not -: ours points toward the light, the C++ `lightDir` along the ray.
     let light_basis = look_at_mat4(light_dir, Vec3::ZERO, up);
+    let nearest_caster = nearest_light_depth(light_basis, scene_min, scene_max);
 
     let mut matrices = [Mat4::IDENTITY; CASCADE_COUNT];
     for (i, (center, radius)) in cascades.into_iter().enumerate() {
-        matrices[i] = stabilized_light_matrix_for(light_basis, center, radius, SHADOW_MAP_SIZE);
+        matrices[i] = stabilized_light_matrix_for(
+            light_basis,
+            center,
+            radius,
+            SHADOW_MAP_SIZE,
+            nearest_caster,
+        );
     }
 
     CascadeFit { splits, matrices }
 }
 
+/// The smallest light-view depth over the scene box's corners: the scene's point nearest the light.
+fn nearest_light_depth(light_basis: Mat4, scene_min: Vec3, scene_max: Vec3) -> f32 {
+    (0..8)
+        .map(|corner| {
+            Vec3::select(
+                glam::BVec3::new(corner & 1 != 0, corner & 2 != 0, corner & 4 != 0),
+                scene_max,
+                scene_min,
+            )
+        })
+        .map(|p| -light_basis.transform_point3(p).z)
+        .fold(f32::INFINITY, f32::min)
+}
+
 /// One cascade's ortho light matrix for a sphere, snapped to whole texels in `light_basis`.
 /// The basis must be world-fixed: one anchored at a moving center absorbs motion no snap undoes.
+/// `nearest_caster` is the light-view depth the near plane must reach so no caster is clipped.
 fn stabilized_light_matrix_for(
     light_basis: Mat4,
     center: Vec3,
     radius: f32,
     shadow_map_size: u32,
+    nearest_caster: f32,
 ) -> Mat4 {
     // Pad by one projected texel so snap and projection share a grid; size <= 2 cannot be padded.
     let (half_extent, texel_world) = if shadow_map_size > 2 {
@@ -98,9 +121,12 @@ fn stabilized_light_matrix_for(
         (center_ls.x, center_ls.y)
     };
 
-    // Not sphere-tight: every caster reaches every cascade's pass, so a tight range clips some.
+    // Every caster reaches every cascade's pass, so the near plane also reaches the nearest one.
     let depth_pad = radius * 4.0;
-    let near = -center_ls.z - depth_pad;
+    let mut near = -center_ls.z - depth_pad;
+    if nearest_caster.is_finite() {
+        near = near.min(nearest_caster - radius * 0.01);
+    }
     let mut far = -center_ls.z + depth_pad;
     if far <= near {
         far = near + 1.0;
@@ -258,8 +284,11 @@ mod tests {
         let center_a = Vec3::ZERO;
         let center_b = center_a + Vec3::new(0.5, 0.0, 0.0);
 
-        let matrix_a = stabilized_light_matrix_for(light_basis, center_a, radius, SHADOW_MAP_SIZE);
-        let matrix_b = stabilized_light_matrix_for(light_basis, center_b, radius, SHADOW_MAP_SIZE);
+        let no_caster = f32::INFINITY;
+        let matrix_a =
+            stabilized_light_matrix_for(light_basis, center_a, radius, SHADOW_MAP_SIZE, no_caster);
+        let matrix_b =
+            stabilized_light_matrix_for(light_basis, center_b, radius, SHADOW_MAP_SIZE, no_caster);
 
         let (ax, ay) = texel_space(matrix_a, probe);
         let (bx, by) = texel_space(matrix_b, probe);
@@ -341,6 +370,35 @@ mod tests {
             STEPS + 1,
             uncovered
         );
+    }
+
+    #[test]
+    fn no_cascade_clips_a_caster_between_the_light_and_its_box() {
+        // A 30-unit tower far from the focus under a low sun: its top was before cascade 0's near plane.
+        let scene_min = Vec3::new(-20.0, 0.0, -20.0);
+        let scene_max = Vec3::new(20.0, 30.0, 20.0);
+        let camera = OrbitCamera {
+            target: Vec3::new(15.0, 0.0, 15.0),
+            radius: 6.0,
+            pitch_deg: 30.0,
+            ..OrbitCamera::default()
+        };
+        let fit = fit_cascades(&camera, scene_min, scene_max, Vec3::new(-1.0, 0.88, -1.0));
+        for (i, m) in fit.matrices.iter().enumerate() {
+            for corner in 0..8u32 {
+                let p = Vec3::select(
+                    glam::BVec3::new(corner & 1 != 0, corner & 2 != 0, corner & 4 != 0),
+                    scene_max,
+                    scene_min,
+                );
+                let clip = *m * p.extend(1.0);
+                let z = clip.z / clip.w;
+                assert!(
+                    z >= 0.0,
+                    "cascade {i} clips the scene corner {p} at NDC z {z}: casters there cast nothing"
+                );
+            }
+        }
     }
 
     #[test]
