@@ -13,6 +13,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-15, `src`'s coverage leaves the generated bridge out)
+- The `coverage` step passes `src/frb_generated.rs` to tarpaulin's `--exclude-files` beside `third_party/*`: the file
+  was 1157 of `src`'s 1795 lines and no Rust test runs it, so `src` read 24 % (run 43737706756) and 67.6 % without
+  it, and the workspace 78.8 % against 85.9 %. `src`'s floor goes from 19 % to 65 %; `docs/testing.md` says so.
+
 ### Changed (2026-11-15, the wgpu GUI captures through the media crate; two camera pipelines left)
 - `crates/gui` drops its own pipeline (`build_pipeline`, which never read its bus) and runs a
   `kataglyphis_media::CaptureSession` at the camera's own size: `CaptureConfig` takes width or height 0 for the

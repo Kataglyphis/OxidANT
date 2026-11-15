@@ -96,14 +96,10 @@ and the backlog is empty"; it was neither.
       one new gated bench is wanted: preprocessing at 1280x720, the app's default size. No
       allocation-count tests.
 
-- [ ] **The `src` coverage floor is 19 %, and Rust mutation testing is by hand** (M, ★★). Audit
-      2026-11-12: `scripts/linux/ci-container-steps.sh` holds `src` to 19 % and excludes only
-      `third_party/*`. `src/frb_generated.rs` is 2301 of the 5405 lines under `src`, but nobody
-      has read its share of the coverage report. The `cargo mutants` scores in
-      `docs/testing.md` are from 2026-10-15; no workflow runs the tool, and the image does not
-      carry it. Next: read the per-file rates in the x64 lane's `cobertura.xml`; if the
-      generated file is the drag, exclude it with a second `--exclude-files` and set the floor
-      within 3 points of the new figure. Then, if the owner accepts one more scheduled job, a
+- [ ] **Rust mutation testing is by hand** (M, ★★). Audit 2026-11-12. The coverage half is done (2026-11-15): the
+      `coverage` step leaves `src/frb_generated.rs` out (1157 of `src`'s 1795 lines, never run by a Rust test), which
+      took `src` from 24 % to 67.6 %, and its floor from 19 % to 65 %. The `cargo mutants` scores in `docs/testing.md`
+      are from 2026-10-15; no workflow runs the tool, and the image does not carry it (hub CON238). If the owner accepts one more scheduled job, a
       weekly one runs the per-file commands of `docs/testing.md` with `--jobs 1 -- --lib` on
       the pure modules and uploads `mutants.out`. The five `crates/inference` recipes are in
       `scripts/linux/tests/ort-license-mutations.json` since 2026-11-15 (`consumer.oxidant-inference-*`, each

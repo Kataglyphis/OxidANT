@@ -449,10 +449,18 @@
  {
   "id": "consumer.oxidant-ci-max-slack",
   "target": "scripts/linux/ci-container-steps.sh",
-  "find": " --floor src=19 --max-slack 3'",
-  "replace": " --floor src=19'",
+  "find": " --floor src=65 --max-slack 3'",
+  "replace": " --floor src=65'",
   "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
   "why": "The CI coverage step passes --max-slack 3."
+ },
+ {
+  "id": "consumer.oxidant-ci-generated-bridge-counted",
+  "target": "scripts/linux/ci-container-steps.sh",
+  "find": "--exclude-files \"${COVERAGE_EXCLUDE}\" \"${COVERAGE_GENERATED}\" --timeout",
+  "replace": "--exclude-files \"${COVERAGE_EXCLUDE}\" --timeout",
+  "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
+  "why": "The generated bridge, never run by a Rust test, stays out of src's coverage, or it reads 24 % instead of 67.6 %."
  },
  {
   "id": "consumer.oxidant-rustdoc-log-stderr",

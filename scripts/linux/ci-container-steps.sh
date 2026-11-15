@@ -8,9 +8,11 @@ source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
 # Each crate's own floor, just under its latest figure, so one well-tested crate cannot carry a weak one; raise them as tests come.
-COVERAGE_FLOORS='--floor crates/observant=83 --floor crates/webgpu_renderer=89 --floor crates/inference=85 --floor crates/text=94 --floor crates/cli=87 --floor crates/core=80 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/cxx_bridge=100 --floor crates/media=72 --floor crates/gui=29 --floor src=19 --max-slack 3'
+COVERAGE_FLOORS='--floor crates/observant=83 --floor crates/webgpu_renderer=89 --floor crates/inference=85 --floor crates/text=94 --floor crates/cli=87 --floor crates/core=80 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/cxx_bridge=100 --floor crates/media=72 --floor crates/gui=29 --floor src=65 --max-slack 3'
 # The vendored crates under third_party/ are upstream's code: tract-linalg's took the workspace figure from 71 % to 56 %.
 COVERAGE_EXCLUDE='third_party/*'
+# flutter_rust_bridge's output, 1157 of src's 1795 lines and never run by a Rust test: src read 24 % with it, 67.6 % without.
+COVERAGE_GENERATED='src/frb_generated.rs'
 
 usage() {
     cat >&2 <<'USAGE'
@@ -85,7 +87,7 @@ case "$step" in
         bash "${SCRIPT_DIR}/fetch-models.sh" --llm
         # Not antfrastructure_exec, which replaces this shell: the per-crate floors run after it. 300 s: an arm64 runner needed more than 60.
         WORKSPACE_ROOT="${WORKSPACE_ROOT:-$KATAGLYPHIS_REPO_ROOT}" xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_coverage.sh")" \
-            --workspace --exclude-files "${COVERAGE_EXCLUDE}" --timeout 300 --fail-under 70 "$@"
+            --workspace --exclude-files "${COVERAGE_EXCLUDE}" "${COVERAGE_GENERATED}" --timeout 300 --fail-under 70 "$@"
         # shellcheck disable=SC2086 # COVERAGE_FLOORS is a list of --floor arguments.
         python3 "${SCRIPT_DIR}/check-crate-coverage.py" cobertura.xml ${COVERAGE_FLOORS}
         ;;
