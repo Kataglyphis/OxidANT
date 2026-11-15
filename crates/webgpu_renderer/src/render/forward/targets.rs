@@ -62,7 +62,7 @@ impl ForwardRenderer {
         );
         // A stale view here reads a destroyed texture.
         self.post.histogram.set_input(gpu, &self.targets.hdr_view);
-        self.post.rebound_needed = true;
+        self.post.rebuild_needed = true;
     }
 
     /// Depth resolve: MSAA depth to single-sample (min over samples) for SSAO and occlusion.

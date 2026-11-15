@@ -12,6 +12,8 @@ pub struct TonemapPass {
     sampler: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
     bind_group: Option<wgpu::BindGroup>,
+    /// The `ForwardRenderer` input set `bind_group` samples, so a rebuild there rebinds this pass.
+    pub(crate) bound_inputs: Option<u64>,
     /// Whether the shader must gamma-encode itself: WebGPU canvases have no sRGB surface format.
     encode_srgb: bool,
 }
@@ -73,6 +75,7 @@ impl TonemapPass {
             sampler,
             uniform_buffer,
             bind_group: None,
+            bound_inputs: None,
             encode_srgb: !output_format.is_srgb(),
         }
     }
@@ -102,6 +105,7 @@ impl TonemapPass {
         ao_view: &wgpu::TextureView,
         exposure_buffer: &wgpu::Buffer,
     ) {
+        self.bound_inputs = None;
         self.bind_group = Some(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tonemap_bind_group"),
             layout: &self.bind_group_layout,

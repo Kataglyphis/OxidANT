@@ -407,9 +407,7 @@ impl ForwardRenderer {
             1,
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Force a rebind: this pass instance has never seen the HDR view.
-        self.post.rebound_needed = true;
+        // The fresh pass binds the live bloom and AO outputs; nothing is rebuilt under the window's pass.
         self.render_tonemapped(gpu, &mut tonemap, &view, width, height, camera);
 
         readback::read_rgba8(gpu, &texture, width, height)

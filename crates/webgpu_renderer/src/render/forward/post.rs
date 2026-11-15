@@ -1,5 +1,7 @@
 //! The post chain after the forward pass: bloom, SSAO, histogram exposure and the tonemap.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use super::ForwardRenderer;
 use crate::context::GpuContext;
 use crate::render::bloom::BloomPass;
@@ -12,8 +14,16 @@ pub(super) struct PostChain {
     pub(super) bloom: BloomPass,
     pub(super) ssao: SsaoPass,
     pub(super) histogram: HistogramPass,
-    /// Bloom, SSAO and the tonemap must rebind to the HDR and depth targets before the next frame.
-    pub(super) rebound_needed: bool,
+    /// Bloom and SSAO must rebuild on the current HDR and depth targets before the next frame.
+    pub(super) rebuild_needed: bool,
+    /// Names the current HDR, bloom, AO and exposure set; unique across renderers.
+    inputs_id: u64,
+}
+
+/// A fresh id per rebuilt input set, so no tonemap mistakes another renderer's set for its own.
+fn next_inputs_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl PostChain {
@@ -24,21 +34,16 @@ impl PostChain {
             bloom: BloomPass::new(gpu),
             ssao: SsaoPass::new(gpu),
             histogram,
-            rebound_needed: true,
+            rebuild_needed: true,
+            inputs_id: 0,
         }
     }
 }
 
 impl ForwardRenderer {
-    /// Rebuilds bloom and SSAO on the current targets and binds `tonemap` to their outputs.
-    pub(super) fn rebind_post_inputs(
-        &mut self,
-        gpu: &GpuContext,
-        tonemap: &mut TonemapPass,
-        width: u32,
-        height: u32,
-    ) {
-        if !self.post.rebound_needed {
+    /// Rebuilds bloom and SSAO on the current targets after those were recreated.
+    pub(super) fn rebuild_post_inputs(&mut self, gpu: &GpuContext, width: u32, height: u32) {
+        if !self.post.rebuild_needed {
             return;
         }
         let post = &mut self.post;
@@ -50,24 +55,29 @@ impl ForwardRenderer {
             post.histogram.exposure_buffer(),
         );
         post.ssao.rebuild(gpu, width, height, &self.targets.depth);
-        let bloom_out = post
-            .bloom
-            .output()
-            .expect("bloom output exists after rebuild")
-            .clone();
-        let ao_out = post
-            .ssao
-            .output()
-            .expect("ssao output exists after rebuild")
-            .clone();
+        post.inputs_id = next_inputs_id();
+        post.rebuild_needed = false;
+    }
+
+    /// Binds `tonemap` to the current HDR, bloom and AO outputs unless it samples them already.
+    /// Per pass, not per rebuild: every pass a host renders with must follow a rebuild.
+    pub(super) fn bind_tonemap_inputs(&self, gpu: &GpuContext, tonemap: &mut TonemapPass) {
+        let post = &self.post;
+        if tonemap.bound_inputs == Some(post.inputs_id) {
+            return;
+        }
         tonemap.set_input(
             gpu,
             &self.targets.hdr_view,
-            &bloom_out,
-            &ao_out,
+            post.bloom
+                .output()
+                .expect("bloom output exists after rebuild"),
+            post.ssao
+                .output()
+                .expect("ssao output exists after rebuild"),
             post.histogram.exposure_buffer(),
         );
-        post.rebound_needed = false;
+        tonemap.bound_inputs = Some(post.inputs_id);
     }
 
     /// This frame's bloom and SSAO mix, and the exposure mode the reduce pass applies.

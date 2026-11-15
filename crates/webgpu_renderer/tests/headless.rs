@@ -1369,6 +1369,114 @@ fn differing_pixels(a: &[u8], b: &[u8], tolerance: u8) -> usize {
         .count()
 }
 
+/// Renders one frame through `tonemap` into a fresh RGBA8 target, as a window frame would, and reads it.
+fn render_through(
+    gpu: &GpuContext,
+    renderer: &mut ForwardRenderer,
+    tonemap: &mut kataglyphis_webgpu_renderer::TonemapPass,
+    size: u32,
+    camera: &OrbitCamera,
+) -> Vec<u8> {
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("window_stand_in"),
+        size: wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    renderer.render_tonemapped(gpu, tonemap, &view, size, size, camera);
+
+    let row = (size * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("window_stand_in_readback"),
+        size: u64::from(row * size),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(size),
+            },
+        },
+        texture.size(),
+    );
+    gpu.queue.submit(Some(encoder.finish()));
+    buffer.slice(..).map_async(wgpu::MapMode::Read, |result| {
+        result.expect("readback must map");
+    });
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll must succeed");
+    let data = buffer
+        .slice(..)
+        .get_mapped_range()
+        .expect("the buffer is mapped");
+    data.chunks(row as usize)
+        .flat_map(|r| &r[..(size * 4) as usize])
+        .copied()
+        .collect()
+}
+
+/// A screenshot at the window's size must leave the window's bloom and AO following the scene.
+#[test]
+fn a_screenshot_at_the_window_size_leaves_the_window_post_inputs_live() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let size = 128;
+    let mut renderer = ForwardRenderer::new(&gpu, size, size);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.35);
+    renderer.bloom_strength = 1.5;
+    let mut window =
+        kataglyphis_webgpu_renderer::TonemapPass::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let before = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    let after = OrbitCamera {
+        yaw_deg: 160.0,
+        ..before.clone()
+    };
+
+    render_through(&gpu, &mut renderer, &mut window, size, &before);
+    renderer
+        .render_to_pixels(&gpu, size, size, &before)
+        .expect("the screenshot must render");
+    let live = render_through(&gpu, &mut renderer, &mut window, size, &after);
+    let reference = renderer
+        .render_to_pixels(&gpu, size, size, &after)
+        .expect("the reference must render");
+
+    let differing = differing_pixels(&live, &reference, 2);
+    assert!(
+        differing < 20,
+        "after a same-size screenshot the window frame differs from a fresh one in {differing} \
+         pixels: its tonemap still samples the bloom and AO of the frame before the screenshot"
+    );
+}
+
 /// Fewer instances within the buffer's capacity must take their shadows with them.
 #[test]
 fn shrinking_or_clearing_instances_removes_their_shadows() {

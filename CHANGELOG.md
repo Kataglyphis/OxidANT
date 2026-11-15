@@ -51,6 +51,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   the normal and bitangent but not the tangent, mirroring a normal map's X relief; the whole mapped normal flips
   now. Tests: `tests/mirrored.rs`,
   `a_non_uniform_instance_scale_shades_a_skinned_mesh_like_an_unskinned_one`.
+- **A screenshot at the window's own size froze the window's bloom and AO** until the next resize (the viewer's S at
+  a 1920×1080 surface): `render_to_pixels` forced bloom and SSAO to rebuild, and only its own temporary tonemap
+  pass was rebound to the new textures. Each rebuild now names its input set, every `TonemapPass` remembers the set
+  it samples and rebinds when they differ, and a screenshot rebuilds nothing. Test:
+  `a_screenshot_at_the_window_size_leaves_the_window_post_inputs_live`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
