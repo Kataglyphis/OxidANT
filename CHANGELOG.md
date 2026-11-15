@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, ObservANT's capture loop runs in tests with the real model)
+- `capture.rs` tests run the whole worker: the real model on `two_cats.jpg` opens one visit with both cats through
+  the pacer and `spawn_inference` (skipped without the model, required where `KATAGLYPHIS_REQUIRE_MODEL=1`), and an
+  `image:` path that is missing at start is tried again after the 1 s backoff and delivers frames once the file
+  exists. The test helper became `Capturing`, which a test can start with a detector. 4 s on a Pi 5 for both.
+
 ### Fixed (2026-11-15, `/healthz` takes no lock while it holds another)
 - `Status::to_json` copies what it needs out of `detected` and releases it before it locks `clips`, `stats` or
   anything `health()` reads; it held `detected` throughout, so the lock order was right by convention only. A test

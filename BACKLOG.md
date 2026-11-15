@@ -59,18 +59,15 @@ and the backlog is empty"; it was neither.
       image and in the NVIDIA package, which the search's second step finds; the hub names no root variable for it.
 
 - [ ] **The capture and inference loops cannot run with a fake detector or a failing camera**
-      (M, ★★★). Audit 2026-11-12: no test here runs `spawn_inference`
-      (`crates/observant/src/capture.rs`; the test helper passes `detector: None`), the engine's
-      two end reasons (`src/webcam_engine.rs`: the camera ended, 30 failed runs), the 10 s stall
-      or the 30 s re-probe. `docs/testing.md` calls `capture.rs` the weakest file, 98 of 124
-      mutants caught. Next: two tests that need nothing new (the real model on
-      `image:two_cats.jpg` opens a visit; a missing image file is retried after the backoff and
-      recovers). Then the smallest seam: each loop body takes the detector as a closure,
-      `CaptureSession` gets a `#[doc(hidden)]` launch-line constructor, and `STALL_AFTER` and
-      `REPROBE_EVERY` move into a `Timing` value on `Worker` with today's numbers as default.
-      No public trait and no dev-only crate. Guard: the new tests in the `test` step, the
-      `crates/observant` and `src` coverage floors raised to the new figures, and the new
-      `capture.rs` count of `cargo mutants` written into `docs/testing.md`.
+      (M, ★★★). Audit 2026-11-12. Since 2026-11-15 two tests run the real loop (`crates/observant/src/capture.rs`):
+      the real model on `two_cats.jpg` opens one visit with both cats through `spawn_inference`, and a missing image
+      file is retried after the backoff and recovers. Left: the engine's two end reasons (`src/webcam_engine.rs`: the
+      camera ended, 30 failed runs), the 10 s stall and the 30 s re-probe. Next, the smallest seam: each loop body
+      takes the detector as a closure, `CaptureSession` gets a `#[doc(hidden)]` launch-line constructor, and
+      `STALL_AFTER` and `REPROBE_EVERY` move into a `Timing` value on `Worker` with today's numbers as default.
+      No public trait and no dev-only crate. Guard: the new tests in the `test` step, the `crates/observant` and
+      `src` coverage floors raised to the new figures, and the new `capture.rs` count of `cargo mutants` written
+      into `docs/testing.md`.
 
 - [ ] **Detection quality has no regression set** (M, ★★★). Audit 2026-11-12
       (not double-checked): `crates/inference/tests/fixtures` holds one photo, checked loosely

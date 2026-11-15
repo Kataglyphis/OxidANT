@@ -892,6 +892,77 @@ mod tests {
     }
     use crate::motion::rate_period;
 
+    /// A running capture worker, its output's sink and what stops it.
+    struct Capturing {
+        sink: gst_app::AppSink,
+        output: gst::Pipeline,
+        status: Arc<Status>,
+        shutdown: Arc<AtomicBool>,
+        worker: thread::JoinHandle<()>,
+    }
+
+    impl Capturing {
+        /// The worker on `config.camera`, pushing into an appsrc whose frames a test pulls from `sink`.
+        fn start(config: Config, detector: Option<PersonDetector>) -> Self {
+            gst::init().unwrap();
+            let appsrc = gst::ElementFactory::make("appsrc")
+                .build()
+                .unwrap()
+                .downcast::<gst_app::AppSrc>()
+                .unwrap();
+            appsrc.set_is_live(true);
+            appsrc.set_do_timestamp(true);
+            appsrc.set_format(gst::Format::Time);
+            appsrc.set_caps(Some(&frame::caps(&config)));
+            let sink = kataglyphis_media::frame_sink(0, false).unwrap();
+            let output = gst::Pipeline::new();
+            output
+                .add_many([appsrc.upcast_ref::<gst::Element>(), sink.upcast_ref()])
+                .unwrap();
+            appsrc.link(&sink).unwrap();
+            output.set_state(gst::State::Playing).unwrap();
+            let status = Arc::new(Status::new("test", false, config.width, config.height));
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let choice = Choice::parse(&config.camera).unwrap();
+            let worker = Worker {
+                config: Arc::new(config),
+                choice,
+                appsrc,
+                detector,
+                status: status.clone(),
+                shutdown: shutdown.clone(),
+                notifier: None,
+                clip: None,
+            }
+            .spawn()
+            .unwrap();
+            Self {
+                sink,
+                output,
+                status,
+                shutdown,
+                worker,
+            }
+        }
+
+        /// The next frame within `wait`, with its caps.
+        fn frame(&self, wait: Duration) -> Option<(gst::Caps, Vec<u8>)> {
+            let sample = self
+                .sink
+                .try_pull_sample(gst::ClockTime::from_mseconds(wait.as_millis() as u64))?;
+            let data = sample.buffer().unwrap().map_readable().unwrap().to_vec();
+            Some((sample.caps().unwrap().to_owned(), data))
+        }
+
+        /// Stops the worker the way the service does and hands back its status.
+        fn stop(self) -> Arc<Status> {
+            self.shutdown.store(true, Ordering::Relaxed);
+            self.worker.join().unwrap();
+            self.output.set_state(gst::State::Null).unwrap();
+            self.status
+        }
+    }
+
     /// Runs the capture worker on `config.camera` into an appsrc and a frame sink and returns `wanted` frames.
     fn capture_frames(config: Config, wanted: usize) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {
         capture_frames_turning(config, wanted, None)
@@ -903,56 +974,108 @@ mod tests {
         wanted: usize,
         turn: Option<(usize, u32)>,
     ) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {
-        gst::init().unwrap();
-        let appsrc = gst::ElementFactory::make("appsrc")
-            .build()
-            .unwrap()
-            .downcast::<gst_app::AppSrc>()
-            .unwrap();
-        appsrc.set_is_live(true);
-        appsrc.set_do_timestamp(true);
-        appsrc.set_format(gst::Format::Time);
-        appsrc.set_caps(Some(&frame::caps(&config)));
-        let sink = kataglyphis_media::frame_sink(0, false).unwrap();
-        let output = gst::Pipeline::new();
-        output
-            .add_many([appsrc.upcast_ref::<gst::Element>(), sink.upcast_ref()])
-            .unwrap();
-        appsrc.link(&sink).unwrap();
-        output.set_state(gst::State::Playing).unwrap();
-
-        let status = Arc::new(Status::new("test", false, config.width, config.height));
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let choice = Choice::parse(&config.camera).unwrap();
-        let worker = Worker {
-            config: Arc::new(config),
-            choice,
-            appsrc,
-            detector: None,
-            status: status.clone(),
-            shutdown: shutdown.clone(),
-            notifier: None,
-            clip: None,
-        }
-        .spawn()
-        .unwrap();
+        let running = Capturing::start(config, None);
         let mut frames = Vec::new();
         while frames.len() < wanted {
-            let sample = sink
-                .try_pull_sample(gst::ClockTime::from_seconds(20))
-                .expect("a frame within 20 s");
-            let data = sample.buffer().unwrap().map_readable().unwrap().to_vec();
-            frames.push((sample.caps().unwrap().to_owned(), data));
+            frames.push(
+                running
+                    .frame(Duration::from_secs(20))
+                    .expect("a frame within 20 s"),
+            );
             if let Some((after, degrees)) = turn {
                 if frames.len() == after {
-                    status.set_rotation(degrees).unwrap();
+                    running.status.set_rotation(degrees).unwrap();
                 }
             }
         }
-        shutdown.store(true, Ordering::Relaxed);
-        worker.join().unwrap();
-        output.set_state(gst::State::Null).unwrap();
-        (frames, status)
+        (frames, running.stop())
+    }
+
+    /// The model `scripts/linux/fetch-models.sh` puts in the checkout; `None` skips, unless CI demands it.
+    fn real_model() -> Option<String> {
+        let path = kataglyphis_inference::person_detection::resolve_model_path(None);
+        if std::path::Path::new(&path).is_file() {
+            return Some(path);
+        }
+        assert!(
+            std::env::var("KATAGLYPHIS_REQUIRE_MODEL").as_deref() != Ok("1"),
+            "no model at {path}: scripts/linux/fetch-models.sh fetches it"
+        );
+        eprintln!("SKIP: no model at {path}");
+        None
+    }
+
+    /// The whole loop on the photo: capture, pacer, the inference thread with the real model, and the visit it opens.
+    #[test]
+    fn the_real_model_on_the_photo_opens_a_visit_through_the_capture_loop() {
+        let Some(model) = real_model() else { return };
+        let photo = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../inference/tests/fixtures/two_cats.jpg"
+        );
+        let config = Config {
+            camera: format!("image:{photo}"),
+            ..Config::default()
+        };
+        let running = Capturing::start(config, Some(PersonDetector::new(&model).unwrap()));
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut health = serde_json::Value::Null;
+        while Instant::now() < deadline {
+            let _ = running.frame(Duration::from_millis(100));
+            health = serde_json::from_str(&running.status.to_json()).unwrap();
+            if health["detection"]["visits"].as_u64() >= Some(1) {
+                break;
+            }
+        }
+        running.stop();
+        let detection = &health["detection"];
+        assert_eq!(detection["visits"], 1, "{health}");
+        assert_eq!(detection["in_view"], true, "{health}");
+        assert_eq!(
+            detection["boxes"].as_array().map(Vec::len),
+            Some(2),
+            "both cats: {health}"
+        );
+        assert!(health["model_runs"].as_u64() >= Some(1), "{health}");
+    }
+
+    /// A camera path that is missing at start is tried again after the backoff, and its frames come once it exists.
+    #[test]
+    fn a_missing_image_is_retried_after_the_backoff_and_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("later.jpg");
+        let config = Config {
+            camera: format!("image:{}", image.display()),
+            width: 64,
+            height: 48,
+            ..Config::default()
+        };
+        let running = Capturing::start(config, None);
+        let label = format!("still image {}", image.display());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let camera = |status: &Status| {
+            serde_json::from_str::<serde_json::Value>(&status.to_json()).unwrap()["camera"].clone()
+        };
+        while camera(&running.status) != label.as_str() {
+            assert!(Instant::now() < deadline, "the worker never tried {label}");
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            running.frame(Duration::from_millis(500)).is_none(),
+            "a frame from a file that is not there"
+        );
+        std::fs::write(
+            &image,
+            crate::status::encode_jpeg(&[200u8; 64 * 48 * 4], 64, 48).unwrap(),
+        )
+        .unwrap();
+        let (caps, data) = running
+            .frame(Duration::from_secs(10))
+            .expect("the capture recovered once the file existed");
+        running.stop();
+        let s = caps.structure(0).unwrap();
+        assert_eq!(s.get::<i32>("width").unwrap(), 64);
+        assert_eq!(data.len(), frame::size(64, 48));
     }
 
     #[test]
