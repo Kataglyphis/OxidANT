@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the browser demo's crate texts are reviewed)
+- `packaging/cargo-license-policy.json` covers `kataglyphis_webgpu_renderer`'s graph for `wasm32-unknown-unknown`, the
+  WebGPU demo BeschleunigerBallett's docs site ships; the hub's stager stopped at the first two gaps. `bevy_mikktspace`
+  1.0.0 declares `Zlib AND (MIT OR Apache-2.0)` and ships only `LICENSE-APACHE` and `LICENSE-MIT`: its reviewed entry
+  names the crate's own `src/lib.rs`, whose Copyright section carries Morten S. Mikkelsen's Zlib notice for the
+  MikkTSpace code it reimplements (upstream has no Zlib file at the crate's commit 9de78a28 either).
+  `kataglyphis_webgpu_renderer` takes the repository's `LICENSE` like every workspace crate, plus the texts of the
+  two Dear ImGui fonts it embeds (`assets/fonts/`). The stager now stages 258 packages for that root and target;
+  `test-cargo-license-policy.sh` stages it too.
+
 ### Changed (2026-11-15, the Colosseum releases are published)
 - AssetANT published `Colosseum-gltf-v1` and `Colosseum-web-v1`; both archives match the SHA-256 that
   `resources/scenes/scenes.lock` pins, and `bash scripts/linux/fetch-models.sh --scenes --dest <dir>` unpacked both on

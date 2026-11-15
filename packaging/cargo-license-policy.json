@@ -23,6 +23,17 @@
         }
       ]
     },
+    "bevy_mikktspace@1.0.0": {
+      "reviewed_expression": "Zlib AND (MIT OR Apache-2.0)",
+      "files": [
+        {
+          "root": "package",
+          "path": "src/lib.rs",
+          "sha256": "fa8e325aff353900eda3490836342012638473347252167910c9a76c60fd537c",
+          "provenance": "crates.io archive bevy_mikktspace@1.0.0: Morten S. Mikkelsen's Zlib notice for the MikkTSpace code it reimplements, in the crate docs' Copyright section; the crate ships no Zlib file, and its LICENSE-APACHE and LICENSE-MIT cover the rest"
+        }
+      ]
+    },
     "clipboard-win@5.4.3": {
       "files": [
         {
@@ -348,6 +359,34 @@
           "path": "LICENSE",
           "sha256": "586ec400195558a35f3895d08f8e089f3de6206ab8512fe58d6e4b47fb342e7b",
           "provenance": "this repository's LICENSE; the workspace crates declare license.workspace = MIT"
+        }
+      ]
+    },
+    "kataglyphis_webgpu_renderer@3.0.0": {
+      "files": [
+        {
+          "root": "workspace",
+          "path": "LICENSE",
+          "sha256": "586ec400195558a35f3895d08f8e089f3de6206ab8512fe58d6e4b47fb342e7b",
+          "provenance": "this repository's LICENSE; the workspace crates declare license.workspace = MIT"
+        },
+        {
+          "root": "workspace",
+          "path": "crates/webgpu_renderer/assets/fonts/Apache-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "provenance": "crates/webgpu_renderer/assets/fonts/NOTICE: the editor's embedded Dear ImGui fonts (Roboto Medium under Apache-2.0, Cousine under OFL-1.1) and where each text was copied from"
+        },
+        {
+          "root": "workspace",
+          "path": "crates/webgpu_renderer/assets/fonts/OFL-1.1.txt",
+          "sha256": "1d361a8f8e8ce6e68457dcd93fb56e162e6baa3bbb7e7573a290d44399f6b57e",
+          "provenance": "crates/webgpu_renderer/assets/fonts/NOTICE: the editor's embedded Dear ImGui fonts (Roboto Medium under Apache-2.0, Cousine under OFL-1.1) and where each text was copied from"
+        },
+        {
+          "root": "workspace",
+          "path": "crates/webgpu_renderer/assets/fonts/NOTICE",
+          "sha256": "91f7e400a729b4afde42767f94268e72fce721dc247cfead2597b867a3316b61",
+          "provenance": "crates/webgpu_renderer/assets/fonts/NOTICE: the editor's embedded Dear ImGui fonts (Roboto Medium under Apache-2.0, Cousine under OFL-1.1) and where each text was copied from"
         }
       ]
     },

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proves the policy covers the CLI's and the C++ bridge's Cargo graphs on every packaged target; it does not prove linkage or native-library coverage.
+# Proves the policy covers the CLI's and the C++ bridge's Cargo graphs on every packaged target, and the renderer's wasm graph; it does not prove linkage or native-library coverage.
 set -u
 # shellcheck source=scripts/linux/tests/lib-suite.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
@@ -10,6 +10,8 @@ python="$(command -v python3 || command -v python)"
 targets=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-pc-windows-msvc)
 # BeschleunigerBallett links the bridge into its packages, riscv64 included.
 bridge_targets=("${targets[@]}" riscv64gc-unknown-linux-gnu)
+# BeschleunigerBallett's docs site ships the renderer as its WebGPU demo.
+demo_target=wasm32-unknown-unknown
 
 stage() {
     "$python" "$stager" --workspace "${KATAGLYPHIS_REPO_ROOT}" --root-package "${root:-kataglyphis_cli}" --target "$1" --policy "$2" --output-dir "$3"
@@ -17,7 +19,7 @@ stage() {
 
 t_case 'the locked dependencies are available for every packaged target'
 fetch=(cargo fetch --locked --manifest-path "${KATAGLYPHIS_REPO_ROOT}/Cargo.toml")
-for target in "${bridge_targets[@]}"; do fetch+=(--target "$target"); done
+for target in "${bridge_targets[@]}" "$demo_target"; do fetch+=(--target "$target"); done
 t_assert_ok "${fetch[@]}"
 
 for target in "${targets[@]}"; do
@@ -30,6 +32,9 @@ for target in "${bridge_targets[@]}"; do
     root=kataglyphis_cxx_bridge t_assert_ok stage "$target" "$policy" "${work}/bridge-${target}"
     t_assert_grep "${work}/bridge-${target}/manifest.json" '"name": "kataglyphis_cxx_bridge"'
 done
+t_case "every crate the browser demo ships on ${demo_target} has reviewed original license texts"
+root=kataglyphis_webgpu_renderer t_assert_ok stage "$demo_target" "$policy" "${work}/demo"
+t_assert_grep "${work}/demo/manifest.json" '"name": "bevy_mikktspace"'
 
 t_case 'every vendored text is named by the policy'
 orphans() {
