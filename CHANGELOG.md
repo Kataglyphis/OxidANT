@@ -29,6 +29,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   camera, and a KHR directional light leaves no tile empty for the all-lights fallback. Such a light is binned into
   every tile now. A tile more than 32 lights overlap dropped the rest without a trace; it lists none now, so the
   shader shades every light there. Tests in `tile_grid.rs`.
+- **The occlusion-culling checkbox panicked on scenes past 4096 primitives**, and below it whenever doubling the
+  query set overshot (2100 primitives, then 2200, asked for 4200): one query set holds at most
+  `wgpu::QUERY_SET_MAX_QUERIES`. Growth stops at the limit and only the first 4096 boxes are queried; the rest stay
+  visible. `occlusion.rs:358` is `:374` for `buffer_desc_single_definition.rs` now. Tests:
+  `query_capacity_never_grows_past_the_query_set_limit`,
+  `more_boxes_than_the_query_set_limit_record_without_a_validation_error`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

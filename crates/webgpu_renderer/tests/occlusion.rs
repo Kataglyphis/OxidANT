@@ -442,3 +442,72 @@ fn gpu_culling_is_off_by_default() {
         "no primitive should be culled while gpu_culling_enabled is off"
     );
 }
+
+/// More boxes than one query set holds: the excess stays visible instead of a validation error.
+#[test]
+fn more_boxes_than_the_query_set_limit_record_without_a_validation_error() {
+    use kataglyphis_webgpu_renderer::render::gpu_timing::PassScope;
+    use kataglyphis_webgpu_renderer::render::occlusion::OcclusionQueries;
+
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let device = &gpu.device;
+    let depth = device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("occlusion_limit_depth"),
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+        .create_view(&wgpu::TextureViewDescriptor::default());
+    let box_count = wgpu::QUERY_SET_MAX_QUERIES as usize + 904;
+    let aabbs: Vec<(Vec3, Vec3)> = (0..box_count)
+        .map(|i| {
+            let x = (i % 64) as f32 * 0.1 - 3.2;
+            (Vec3::new(x, -0.05, -2.0), Vec3::new(x + 0.05, 0.05, -1.9))
+        })
+        .collect();
+    let view_proj = OrbitCamera::default().view_projection(1.0);
+
+    let mut queries = OcclusionQueries::new(device);
+    let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    for _ in 0..8 {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        queries.record(
+            device,
+            &gpu.queue,
+            &mut encoder,
+            &depth,
+            view_proj,
+            &aabbs,
+            Vec3::new(0.0, 0.0, 8.0),
+            PassScope::disabled(),
+        );
+        gpu.queue.submit(Some(encoder.finish()));
+        queries.end_frame(device);
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    }
+    let error = pollster::block_on(error_scope.pop());
+    assert!(
+        error.is_none(),
+        "{box_count} boxes must record within the query-set limit, got {error:?}"
+    );
+    assert_eq!(
+        queries.visibility().len(),
+        wgpu::QUERY_SET_MAX_QUERIES as usize,
+        "the readback must cover exactly the queried boxes"
+    );
+    assert!(
+        queries.visible(box_count - 1),
+        "a box past the query limit is unmeasured, so it must stay visible"
+    );
+}
