@@ -177,13 +177,6 @@ and the backlog is empty"; it was neither.
       often the playground hits it. Guard: the extended unit test and one ObservANT test per
       status.
 
-- [ ] **OmniAccelerANT's Dart tests do not read ObservANT's API goldens yet** (S, ★★). Since 2026-11-14
-      `/healthz` (`tests/fixtures/healthz/`) and since 2026-11-15 `/settings`, `/visits`, `/summary` (GET and POST)
-      and `/ask` (`tests/fixtures/api/`) have goldens that `the_api_answers_match_their_goldens` in `web.rs`
-      compares, wall-clock values fixed; `OBSERVANT_UPDATE_GOLDEN=1` rewrites them. OmniAccelerANT's `/healthz`
-      test reads its goldens; left: its parsers of the other four read `tests/fixtures/api/` at the next pin bump
-      instead of hand-typed bodies.
-
 - [ ] **Every chat turn runs the whole conversation through the model again** (M, ★★). Audit
       2026-11-12 (not double-checked), not measured: `generate` in `crates/text/src/genai.rs`
       templates and encodes all messages and builds a new generator on every call, and

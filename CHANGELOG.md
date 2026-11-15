@@ -19,6 +19,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `the_api_answers_match_their_goldens` in `web.rs` compares them; `OBSERVANT_UPDATE_GOLDEN=1` rewrites them.
   A renamed settings key fails it (proven by hand in the image). The `/healthz` test shares the new
   `golden` test module.
+- OmniAccelerANT 2cabbff reads them: `test/observant_api_goldens_test.dart` parses `/settings`, `/visits`, `/ask` and
+  `POST /summary` from this directory at its pin.
 
 ### Fixed (2026-11-15, the healthz goldens on the Windows arm64 runner)
 - `healthz_matches_its_goldens` embeds the three goldens with `include_str!`; it read them at run time, and the
