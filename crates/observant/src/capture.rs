@@ -1024,6 +1024,17 @@ mod tests {
         (frames, running.stop())
     }
 
+    /// The photo, from inside the test binary: a cross lane runs it on a machine without the source tree.
+    fn two_cats_in(dir: &std::path::Path) -> String {
+        let photo = dir.join("two_cats.jpg");
+        std::fs::write(
+            &photo,
+            include_bytes!("../../inference/tests/fixtures/two_cats.jpg"),
+        )
+        .unwrap();
+        photo.display().to_string()
+    }
+
     /// The model `scripts/linux/fetch-models.sh` puts in the checkout; `None` skips, unless CI demands it.
     fn real_model() -> Option<String> {
         let path = kataglyphis_inference::person_detection::resolve_model_path(None);
@@ -1042,10 +1053,8 @@ mod tests {
     #[test]
     fn the_real_model_on_the_photo_opens_a_visit_through_the_capture_loop() {
         let Some(model) = real_model() else { return };
-        let photo = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../inference/tests/fixtures/two_cats.jpg"
-        );
+        let dir = tempfile::tempdir().unwrap();
+        let photo = two_cats_in(dir.path());
         let config = Config {
             camera: format!("image:{photo}"),
             ..Config::default()
@@ -1075,10 +1084,8 @@ mod tests {
     /// A camera slower than `stall_after` counts as gone: the capture ends with the stall, and the worker restarts it.
     #[test]
     fn a_camera_that_stops_sending_is_a_stall_after_its_time() {
-        let photo = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../inference/tests/fixtures/two_cats.jpg"
-        );
+        let dir = tempfile::tempdir().unwrap();
+        let photo = two_cats_in(dir.path());
         let config = Config {
             camera: format!("image:{photo}"),
             width: 64,
