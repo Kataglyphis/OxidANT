@@ -94,6 +94,11 @@ points mixing lateral and depth offsets, so the true footprint is wider by up to
 McGuire, *2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere*), the
 shader's per-tile `count <= 0` fallback that iterates every light must stay.
 
+Two cases bypass the footprint on purpose. A light without a finite positive `range`
+(glTF's unbounded light, Blender's default export) is binned into every tile, as a
+directional one is. A tile more than `MAX_LIGHTS_PER_TILE` lights overlap lists none,
+so the same fallback shades every light there instead of a truncated list.
+
 ## Non-finite input
 
 Bounds are also where bad data does the most damage, because it *spreads*:

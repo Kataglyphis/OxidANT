@@ -24,6 +24,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `set_instances` re-records them whenever a count changes (the clearing path too), `reload_shaders` after every
   successful reload. Tests: `shrinking_or_clearing_instances_removes_their_shadows`,
   `reloading_shaders_rerecords_the_shadow_bundles`.
+- **Point and spot lights without a glTF `range` lit one 16×16 tile** (Blender's default export): range 0 means
+  unbounded, but the tile binning collapsed its footprint to the tile under the light's centre, or none behind the
+  camera, and a KHR directional light leaves no tile empty for the all-lights fallback. Such a light is binned into
+  every tile now. A tile more than 32 lights overlap dropped the rest without a trace; it lists none now, so the
+  shader shades every light there. Tests in `tile_grid.rs`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

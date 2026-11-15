@@ -348,7 +348,7 @@ float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
         uint2 gridEntry = tileLightGrid[tileIndex];
         count = int(gridEntry.x);
         tileOffset = gridEntry.y;
-        // An empty tile falls back to all lights: tile_rect_for_light is not yet fully conservative.
+        // An empty tile shades every light: binning is not fully conservative, and an overflowing tile lists none.
         if (count > 0) tileCount = count;
     }
 
