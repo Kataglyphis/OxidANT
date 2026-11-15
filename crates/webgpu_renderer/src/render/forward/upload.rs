@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt as _;
 
+use super::animate::JOINT_MATRIX_BYTES;
 use super::primitive::{is_mirrored, GpuPrimitive, LodLevel, PrimMaterial, PrimUniforms};
-use super::{ForwardRenderer, MAX_JOINTS, MAX_PUNCTUAL_LIGHTS};
+use super::{ForwardRenderer, MAX_PUNCTUAL_LIGHTS};
 use crate::context::GpuContext;
 use crate::render::bounds::{
     compute_world_bounds, normal_matrix_of, primitive_local_aabb, primitive_world_aabb,
@@ -14,7 +15,9 @@ use crate::render::bounds::{
 };
 use crate::render::buffer_desc;
 use crate::render::lights::pack_punctual_lights;
-use crate::render::texture::{create_material_texture, create_sampler};
+use crate::render::texture::{
+    create_material_texture, create_sampler, material_view, upload_material_texture,
+};
 use crate::scene::{
     AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef,
     InstanceRaw,
@@ -52,7 +55,7 @@ impl MaterialDefaults {
 /// One upload and mip build per (image `Arc` pointer, sRGB), not per referencing primitive.
 #[derive(Default)]
 pub(super) struct MaterialTextureCache {
-    textures: HashMap<(usize, bool), wgpu::TextureView>,
+    textures: HashMap<(usize, bool), wgpu::Texture>,
     samplers: HashMap<CpuSampler, wgpu::Sampler>,
     /// GPU textures created so far; the cache hits do not count.
     pub(super) uploaded: usize,
@@ -113,18 +116,18 @@ impl MaterialTextureCache {
             std::sync::Arc::as_ptr(&tex_ref.texture) as usize,
             tex_ref.srgb,
         );
-        if let Some(view) = self.textures.get(&key) {
-            return view.clone();
+        if !self.textures.contains_key(&key) {
+            let texture = upload_material_texture(
+                gpu,
+                &tex_ref.texture,
+                tex_ref.srgb,
+                Some(&format!("material_{i}_slot_{slot_index}")),
+            );
+            self.uploaded += 1;
+            self.textures.insert(key, texture);
         }
-        let view = create_material_texture(
-            gpu,
-            &tex_ref.texture,
-            tex_ref.srgb,
-            Some(&format!("material_{i}_slot_{slot_index}")),
-        );
-        self.uploaded += 1;
-        self.textures.insert(key, view.clone());
-        view
+        // The view, not the texture, follows the sampler: one upload serves both filter kinds.
+        material_view(&self.textures[&key], &tex_ref.sampler)
     }
 
     fn sampler(&mut self, device: &wgpu::Device, desc: CpuSampler) -> wgpu::Sampler {
@@ -155,13 +158,13 @@ impl PrimitiveBuffers {
             vertex: init_buffer(
                 device,
                 &format!("vertices_{i}"),
-                bytemuck::cast_slice(&prim.vertices),
+                &non_empty_contents(&prim.vertices),
                 vertex_usage,
             ),
             index: init_buffer(
                 device,
                 &format!("indices_{i}"),
-                bytemuck::cast_slice(&prim.indices),
+                &non_empty_contents(&prim.indices),
                 wgpu::BufferUsages::INDEX,
             ),
             uniform: buffer_desc::uniform(
@@ -207,9 +210,8 @@ impl ForwardRenderer {
         let (packed, count) = pack_punctual_lights(&scene.lights);
         self.lights.punctual = packed;
         self.lights.punctual_count = count;
-        self.animation.nodes = scene.nodes.clone();
-        self.animation.animations = scene.animations.clone();
-        self.animation.skins = scene.skins.clone();
+        // Also drops a pose sampled for the previous scene, which would land on this scene's joints.
+        self.animation = super::animate::SceneAnimation::for_scene(scene);
         if scene.lights.len() > MAX_PUNCTUAL_LIGHTS {
             log::warn!(
                 "Scene has {} punctual lights; only the first {} are used.",
@@ -510,18 +512,25 @@ fn posed_world_bounds(
     prim_bounds
 }
 
-/// Joint matrices: sized to the skin (identity when unskinned).
+/// Joint matrices: sized to the skin (identity when unskinned), within the device's binding limit.
 fn create_joint_buffer(
     device: &wgpu::Device,
     scene: &CpuScene,
     prim: &CpuPrimitive,
     i: usize,
 ) -> wgpu::Buffer {
-    let joint_count = prim
+    let skin_joints = prim
         .skin_index
         .and_then(|s| scene.skins.get(s))
-        .map(|s| s.joints.len().clamp(1, MAX_JOINTS))
-        .unwrap_or(1);
+        .map_or(1, |s| s.joints.len());
+    let max_joints =
+        (device.limits().max_storage_buffer_binding_size / JOINT_MATRIX_BYTES) as usize;
+    if skin_joints > max_joints {
+        log::warn!(
+            "primitive {i}: its skin has {skin_joints} joints; the device binds {max_joints}"
+        );
+    }
+    let joint_count = skin_joints.clamp(1, max_joints);
     let identity = vec![Mat4::IDENTITY.to_cols_array_2d(); joint_count];
     init_buffer(
         device,
@@ -529,6 +538,15 @@ fn create_joint_buffer(
         bytemuck::cast_slice(&identity),
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     )
+}
+
+/// `items` as bytes, or one zeroed item: wgpu panics slicing an empty buffer, and draws use the real count.
+fn non_empty_contents<T: bytemuck::Pod>(items: &[T]) -> std::borrow::Cow<'_, [u8]> {
+    if items.is_empty() {
+        std::borrow::Cow::Owned(vec![0; std::mem::size_of::<T>()])
+    } else {
+        std::borrow::Cow::Borrowed(bytemuck::cast_slice(items))
+    }
 }
 
 fn init_buffer(

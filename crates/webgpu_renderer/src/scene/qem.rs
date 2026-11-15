@@ -151,11 +151,17 @@ pub fn simplify_primitive_qem(prim: &CpuPrimitive, target_ratio: f32) -> CpuPrim
     mesh.into_primitive(prim)
 }
 
+/// Per undirected edge, each face on it with the attribute sets at the edge's two ends.
+type EdgeSides = HashMap<(u32, u32), Vec<(u32, [u32; 2])>>;
+
 /// The mesh as decimation needs it: welded vertices, face adjacency, one quadric per vertex.
+/// Welding is topology only: each face corner keeps its own attribute set, so seams survive.
 struct WeldedMesh {
     positions: Vec<DVec3>,
-    /// Attributes for each welded vertex, blended as collapses proceed.
+    /// Attribute sets: the source's distinct vertices, then the blends collapses create.
     attributes: Vec<Vertex>,
+    /// Each face's corners as indices into `attributes`, parallel to `faces`.
+    corners: Vec<[u32; 3]>,
     quadrics: Vec<Quadric>,
     alive: Vec<bool>,
     versions: Vec<u32>,
@@ -168,53 +174,16 @@ struct WeldedMesh {
 
 impl WeldedMesh {
     fn build(prim: &CpuPrimitive) -> Option<Self> {
-        let mut min = Vec3::splat(f32::INFINITY);
-        let mut max = Vec3::splat(f32::NEG_INFINITY);
-        for v in &prim.vertices {
-            let p = Vec3::from_array(v.position);
-            min = min.min(p);
-            max = max.max(p);
-        }
-        let diagonal = (max - min).length();
-        if !diagonal.is_finite() || diagonal <= 0.0 {
-            return None;
-        }
-
-        // Weld first: split-UV duplicates look like boundary edges and would pin the interior.
-        let epsilon = (diagonal as f64) * 1e-6;
-        let mut key_to_welded: HashMap<[i64; 3], u32> = HashMap::new();
-        let mut remap = Vec::with_capacity(prim.vertices.len());
-        let mut positions: Vec<DVec3> = Vec::new();
-        let mut attributes: Vec<Vertex> = Vec::new();
-
-        for v in &prim.vertices {
-            let p = DVec3::new(
-                v.position[0] as f64,
-                v.position[1] as f64,
-                v.position[2] as f64,
-            );
-            let key = [
-                (p.x / epsilon).round() as i64,
-                (p.y / epsilon).round() as i64,
-                (p.z / epsilon).round() as i64,
-            ];
-            let index = *key_to_welded.entry(key).or_insert_with(|| {
-                positions.push(p);
-                attributes.push(*v);
-                (positions.len() - 1) as u32
-            });
-            remap.push(index);
-        }
+        let (positions, remap) = weld_positions(&prim.vertices)?;
+        let wedge = distinct_wedges(&prim.vertices, &remap);
 
         let mut faces: Vec<[u32; 3]> = Vec::with_capacity(prim.indices.len() / 3);
+        let mut corners: Vec<[u32; 3]> = Vec::with_capacity(prim.indices.len() / 3);
         for tri in prim.indices.as_chunks::<3>().0 {
-            let (a, b, c) = (
-                remap[tri[0] as usize],
-                remap[tri[1] as usize],
-                remap[tri[2] as usize],
-            );
-            if a != b && b != c && a != c {
-                faces.push([a, b, c]);
+            let face = tri.map(|i| remap[i as usize]);
+            if face[0] != face[1] && face[1] != face[2] && face[0] != face[2] {
+                faces.push(face);
+                corners.push(tri.map(|i| wedge[i as usize]));
             }
         }
         if faces.is_empty() {
@@ -231,7 +200,8 @@ impl WeldedMesh {
 
         let mut mesh = Self {
             positions,
-            attributes,
+            attributes: prim.vertices.clone(),
+            corners,
             quadrics: vec![Quadric::default(); vertex_count],
             alive: vec![true; vertex_count],
             versions: vec![0; vertex_count],
@@ -244,7 +214,7 @@ impl WeldedMesh {
         Some(mesh)
     }
 
-    /// Area-weighted face quadrics, so slivers cannot outvote a large face, plus boundary quadrics.
+    /// Area-weighted face quadrics, so slivers cannot outvote a large face, plus constraint quadrics.
     fn accumulate_quadrics(&mut self) {
         for face_index in 0..self.faces.len() {
             let face = self.faces[face_index];
@@ -258,25 +228,7 @@ impl WeldedMesh {
             }
         }
 
-        // Count faces per undirected edge to find the open rim.
-        let mut edge_faces: HashMap<(u32, u32), (u32, u32)> = HashMap::new();
-        for (face_index, face) in self.faces.iter().enumerate() {
-            for i in 0..3 {
-                let key = edge_key(face[i], face[(i + 1) % 3]);
-                let entry = edge_faces.entry(key).or_insert((0, face_index as u32));
-                entry.0 += 1;
-            }
-        }
-
-        // Sorted so f64 rounding does not depend on HashMap iteration order.
-        let mut boundary: Vec<((u32, u32), u32)> = edge_faces
-            .iter()
-            .filter(|(_, (count, _))| *count == 1)
-            .map(|(k, (_, face))| (*k, *face))
-            .collect();
-        boundary.sort_unstable();
-
-        for ((a, b), face_index) in boundary {
+        for ((a, b), face_index) in self.constrained_edges() {
             let face = self.faces[face_index as usize];
             let Some((normal, _)) = self.face_plane(face) else {
                 continue;
@@ -294,6 +246,32 @@ impl WeldedMesh {
             self.quadrics[a as usize].add(&q);
             self.quadrics[b as usize].add(&q);
         }
+    }
+
+    /// Open-rim edges and attribute seams, each with a face beside it, sorted for determinism.
+    /// Planes along them stop an open mesh eroding from its rim and keep seams where they are.
+    fn constrained_edges(&self) -> Vec<((u32, u32), u32)> {
+        let mut sides: EdgeSides = HashMap::new();
+        for (face_index, (face, corners)) in self.faces.iter().zip(&self.corners).enumerate() {
+            for i in 0..3 {
+                let (a, b) = (face[i], face[(i + 1) % 3]);
+                let (ca, cb) = (corners[i], corners[(i + 1) % 3]);
+                let ends = if a < b { [ca, cb] } else { [cb, ca] };
+                sides
+                    .entry(edge_key(a, b))
+                    .or_default()
+                    .push((face_index as u32, ends));
+            }
+        }
+        let mut edges: Vec<((u32, u32), u32)> = Vec::new();
+        for (key, faces) in &sides {
+            let seam = faces.len() == 2 && faces[0].1 != faces[1].1;
+            if faces.len() == 1 || seam {
+                edges.extend(faces.iter().map(|&(face_index, _)| (*key, face_index)));
+            }
+        }
+        edges.sort_unstable();
+        edges
     }
 
     /// Unit normal and area of a face, or `None` if it is degenerate.
@@ -435,39 +413,22 @@ impl WeldedMesh {
         result
     }
 
-    /// Collapses `v1` into `v0` at `target`; false, changing nothing, if it would fold the surface.
+    /// Collapses `v1` into `v0` at `target`; false, changing nothing, if it would fold the surface
+    /// or a corner would need two attribute sets at once.
     fn collapse(&mut self, v0: u32, v1: u32, target: DVec3) -> bool {
         let faces0 = self.live_incident(v0);
         let faces1 = self.live_incident(v1);
-
-        // Reshaped faces must keep their orientation; the metric alone happily folds the one-ring.
-        for (&face_index, moved) in faces0
-            .iter()
-            .map(|f| (f, v0))
-            .chain(faces1.iter().map(|f| (f, v1)))
-        {
-            let face = self.faces[face_index as usize];
-            if face.contains(&v0) && face.contains(&v1) {
-                continue;
-            }
-            let Some((before, _)) = self.face_plane(face) else {
-                continue;
-            };
-            let after = self.face_normal_with(face, moved, target);
-            if after.length_squared() <= 0.0 || before.dot(after) <= 0.0 {
-                return false;
-            }
+        if self.folds(v0, v1, target, &faces0, &faces1) {
+            return false;
         }
-
         let p0 = self.positions[v0 as usize];
         let p1 = self.positions[v1 as usize];
-        self.attributes[v0 as usize] = blend(
-            &self.attributes[v0 as usize],
-            &self.attributes[v1 as usize],
-            interpolation_parameter(p0, p1, target),
-        );
+        let t = interpolation_parameter(p0, p1, target);
+        let Some(pairs) = self.wedge_pairs(v0, v1, &faces1, t) else {
+            return false;
+        };
+        self.blend_wedges(v0, v1, &pairs, t, faces0.iter().chain(&faces1));
         self.positions[v0 as usize] = target;
-        self.attributes[v0 as usize].position = target.as_vec3().to_array();
 
         let mut removed = 0usize;
         for &face_index in faces1.iter() {
@@ -496,8 +457,93 @@ impl WeldedMesh {
         true
     }
 
+    /// True when moving `v0` and `v1` to `target` would flip a face that survives the collapse.
+    fn folds(&self, v0: u32, v1: u32, target: DVec3, faces0: &[u32], faces1: &[u32]) -> bool {
+        // Reshaped faces must keep their orientation; the metric alone happily folds the one-ring.
+        for (&face_index, moved) in faces0
+            .iter()
+            .map(|f| (f, v0))
+            .chain(faces1.iter().map(|f| (f, v1)))
+        {
+            let face = self.faces[face_index as usize];
+            if face.contains(&v0) && face.contains(&v1) {
+                continue;
+            }
+            let Some((before, _)) = self.face_plane(face) else {
+                continue;
+            };
+            let after = self.face_normal_with(face, moved, target);
+            if after.length_squared() <= 0.0 || before.dot(after) <= 0.0 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Attribute sets at `v0` and `v1` paired by the faces the collapse removes, which lie on one
+    /// side of any seam. `None` when a set on a moving end pairs with two: its corners would split.
+    fn wedge_pairs(&self, v0: u32, v1: u32, faces1: &[u32], t: f32) -> Option<Vec<(u32, u32)>> {
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        for &face_index in faces1 {
+            let (face, corners) = (
+                self.faces[face_index as usize],
+                self.corners[face_index as usize],
+            );
+            let (Some(i0), Some(i1)) = (
+                face.iter().position(|&v| v == v0),
+                face.iter().position(|&v| v == v1),
+            ) else {
+                continue;
+            };
+            let pair = (corners[i0], corners[i1]);
+            if pairs.contains(&pair) {
+                continue;
+            }
+            let splits_v0 = t > 0.0 && pairs.iter().any(|p| p.0 == pair.0);
+            let splits_v1 = t < 1.0 && pairs.iter().any(|p| p.1 == pair.1);
+            if splits_v0 || splits_v1 {
+                return None;
+            }
+            pairs.push(pair);
+        }
+        Some(pairs)
+    }
+
+    /// Gives each paired corner around `v0` and `v1` the pair's blend at `t`; unpaired corners,
+    /// across a seam from the collapsed edge, keep their own set.
+    fn blend_wedges<'a>(
+        &mut self,
+        v0: u32,
+        v1: u32,
+        pairs: &[(u32, u32)],
+        t: f32,
+        faces: impl Iterator<Item = &'a u32>,
+    ) {
+        let first_blend = self.attributes.len() as u32;
+        for &(a0, a1) in pairs {
+            let blended = blend(
+                &self.attributes[a0 as usize],
+                &self.attributes[a1 as usize],
+                t,
+            );
+            self.attributes.push(blended);
+        }
+        for &face_index in faces {
+            let face = self.faces[face_index as usize];
+            for (k, corner) in self.corners[face_index as usize].iter_mut().enumerate() {
+                let paired = pairs.iter().position(|&(a0, a1)| {
+                    (face[k] == v0 && *corner == a0) || (face[k] == v1 && *corner == a1)
+                });
+                if let Some(pair) = paired {
+                    *corner = first_blend + pair as u32;
+                }
+            }
+        }
+    }
+
     fn into_primitive(self, source: &CpuPrimitive) -> CpuPrimitive {
-        let mut remap = vec![u32::MAX; self.positions.len()];
+        // One output vertex per (position, attribute set): a seam keeps both of its sides.
+        let mut remap: HashMap<(u32, u32), u32> = HashMap::new();
         let mut vertices = Vec::new();
         let mut indices = Vec::with_capacity(self.live_faces * 3);
 
@@ -508,12 +554,14 @@ impl WeldedMesh {
             if face[0] == face[1] || face[1] == face[2] || face[0] == face[2] {
                 continue;
             }
-            for &v in face {
-                if remap[v as usize] == u32::MAX {
-                    remap[v as usize] = vertices.len() as u32;
-                    vertices.push(self.attributes[v as usize]);
-                }
-                indices.push(remap[v as usize]);
+            for (&v, &wedge) in face.iter().zip(&self.corners[face_index]) {
+                let index = *remap.entry((v, wedge)).or_insert_with(|| {
+                    let mut vertex = self.attributes[wedge as usize];
+                    vertex.position = self.positions[v as usize].as_vec3().to_array();
+                    vertices.push(vertex);
+                    (vertices.len() - 1) as u32
+                });
+                indices.push(index);
             }
         }
 
@@ -528,6 +576,57 @@ impl WeldedMesh {
             morph_weights: Vec::new(),
         }
     }
+}
+
+/// Welds positions within a millionth of the bounding diagonal; `None` for a degenerate mesh.
+/// Split-UV duplicates would otherwise look like boundary edges and pin the interior.
+fn weld_positions(vertices: &[Vertex]) -> Option<(Vec<DVec3>, Vec<u32>)> {
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for v in vertices {
+        let p = Vec3::from_array(v.position);
+        min = min.min(p);
+        max = max.max(p);
+    }
+    let diagonal = (max - min).length();
+    if !diagonal.is_finite() || diagonal <= 0.0 {
+        return None;
+    }
+    let epsilon = (diagonal as f64) * 1e-6;
+    let mut key_to_welded: HashMap<[i64; 3], u32> = HashMap::new();
+    let mut remap = Vec::with_capacity(vertices.len());
+    let mut positions: Vec<DVec3> = Vec::new();
+    for v in vertices {
+        let p = Vec3::from_array(v.position).as_dvec3();
+        let key = [
+            (p.x / epsilon).round() as i64,
+            (p.y / epsilon).round() as i64,
+            (p.z / epsilon).round() as i64,
+        ];
+        let index = *key_to_welded.entry(key).or_insert_with(|| {
+            positions.push(p);
+            (positions.len() - 1) as u32
+        });
+        remap.push(index);
+    }
+    Some((positions, remap))
+}
+
+/// For each source vertex, the first source vertex at the same welded position with identical
+/// attributes, so duplicated vertices are one attribute set and only real seams split.
+fn distinct_wedges(vertices: &[Vertex], remap: &[u32]) -> Vec<u32> {
+    let mut first: HashMap<(u32, Vec<u8>), u32> = HashMap::new();
+    vertices
+        .iter()
+        .zip(remap)
+        .enumerate()
+        .map(|(i, (vertex, &welded))| {
+            let mut attributes = *vertex;
+            attributes.position = [0.0; 3];
+            let key = (welded, bytemuck::bytes_of(&attributes).to_vec());
+            *first.entry(key).or_insert(i as u32)
+        })
+        .collect()
 }
 
 fn edge_key(a: u32, b: u32) -> (u32, u32) {

@@ -3,8 +3,14 @@
 
 use crate::render::ibl::EquirectImage;
 
-/// Cap on `width * height` (16384 x 8192), so `pixels * 16` bytes fits a 32-bit wasm `usize`.
-const MAX_PIXELS: u64 = 1 << 27;
+/// Cap on `width * height`: 16384 x 8192, and 8192 x 4096 on 32-bit targets, whose allocations stop at 2 GiB.
+const MAX_PIXELS: u64 = if usize::BITS == 32 { 1 << 25 } else { 1 << 27 };
+
+/// Cap on `width` alone, which sizes the scanline before any pixel data is read.
+const MAX_WIDTH: u64 = 1 << 16;
+
+// The output's amortised growth may double its capacity, so twice the image must stay allocatable.
+const _: () = assert!(MAX_PIXELS * 16 * 2 <= isize::MAX as u64);
 
 /// Everything that can be wrong with an `.hdr` file; the decoder reports here instead of panicking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +34,7 @@ pub enum HdrError {
     UnsupportedOrientation {
         orientation: String,
     },
-    /// Zero or beyond the internal `MAX_PIXELS` cap.
+    /// Zero, beyond the internal caps, or more than this target can allocate.
     BadDimensions {
         width: u64,
         height: u64,
@@ -151,10 +157,17 @@ pub fn decode_hdr(bytes: &[u8]) -> Result<EquirectImage, HdrError> {
     let (width, height) = parse_resolution(resolution.trim())?;
 
     // Grown per scanline, not reserved from the untrusted header, so a lying size never allocates.
-    let mut rgba32f = Vec::new();
+    let mut rgba32f: Vec<f32> = Vec::new();
     let mut scanline = vec![[0u8; 4]; width as usize];
     for _ in 0..height {
         decode_scanline(&mut cursor, &mut scanline)?;
+        // A failed allocation is an error the caller can show, where `extend` would abort.
+        rgba32f
+            .try_reserve(scanline.len() * 4)
+            .map_err(|_| HdrError::BadDimensions {
+                width: u64::from(width),
+                height: u64::from(height),
+            })?;
         for rgbe in &scanline {
             let [r, g, b] = rgbe_to_linear(*rgbe, exposure);
             rgba32f.extend_from_slice(&[r, g, b, 1.0]);
@@ -208,7 +221,7 @@ fn parse_resolution(line: &str) -> Result<(u32, u32), HdrError> {
     let height: u64 = len_a.parse().map_err(|_| bad())?;
     let width: u64 = len_b.parse().map_err(|_| bad())?;
     let total = width.checked_mul(height);
-    if width == 0 || height == 0 || total.is_none_or(|t| t > MAX_PIXELS) {
+    if width == 0 || height == 0 || width > MAX_WIDTH || total.is_none_or(|t| t > MAX_PIXELS) {
         return Err(HdrError::BadDimensions { width, height });
     }
     Ok((width as u32, height as u32))
@@ -680,6 +693,19 @@ mod tests {
             decode_hdr(&negative),
             Err(HdrError::BadHeaderValue { .. })
         ));
+    }
+
+    #[test]
+    fn a_huge_width_is_refused_before_its_scanline_is_allocated() {
+        // 2^27 x 1 is within the pixel cap, but its scanline alone was 512 MiB for a 40-byte file.
+        let wide = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 134217728\n";
+        assert_eq!(
+            decode_hdr(wide).err(),
+            Some(HdrError::BadDimensions {
+                width: 1 << 27,
+                height: 1
+            })
+        );
     }
 
     #[test]

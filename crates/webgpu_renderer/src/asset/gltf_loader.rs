@@ -9,7 +9,7 @@ use glam::{Mat4, Vec2, Vec3};
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuCamera, CpuCameraProjection,
     CpuLight, CpuLightKind, CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin,
-    CpuTexture, CpuTextureRef, CpuWrap, Interpolation, Vertex,
+    CpuTexture, CpuTextureRef, CpuWrap, Interpolation, MorphTarget, Vertex,
 };
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
@@ -40,7 +40,6 @@ pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
     build_scene(document, buffers, images)
 }
 
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn build_scene(
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
@@ -51,7 +50,31 @@ fn build_scene(
         .map(|img| to_rgba8(img).map(Arc::new))
         .collect::<anyhow::Result<_>>()?;
 
-    // Full node table (index-aligned with glTF node indices).
+    let mut scene = CpuScene {
+        nodes: read_nodes(&document),
+        animations: read_animations(&document, &buffers),
+        skins: read_skins(&document, &buffers),
+        cameras: read_cameras(&document),
+        ..CpuScene::default()
+    };
+
+    let gltf_scene = document
+        .default_scene()
+        .or_else(|| document.scenes().next())
+        .context("glTF file contains no scenes")?;
+
+    visit_scene(&gltf_scene, &buffers, &textures, &mut scene)?;
+
+    anyhow::ensure!(
+        !scene.primitives.is_empty(),
+        "glTF file contains no triangle primitives"
+    );
+
+    Ok(scene)
+}
+
+/// The full node table, index-aligned with glTF node indices, with each node's local TRS and parent.
+fn read_nodes(document: &gltf::Document) -> Vec<CpuNode> {
     let mut nodes: Vec<CpuNode> = document
         .nodes()
         .map(|n| {
@@ -69,77 +92,140 @@ fn build_scene(
             nodes[child.index()].parent = Some(node.index());
         }
     }
+    nodes
+}
 
-    let mut scene = CpuScene {
-        nodes,
-        ..CpuScene::default()
-    };
-
+/// Every animation with at least one valid channel.
+fn read_animations(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Vec<CpuAnimation> {
+    let mut animations = Vec::new();
     for animation in document.animations() {
-        let mut channels = Vec::new();
-        let mut duration = 0.0f32;
-        for channel in animation.channels() {
-            let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
-            let Some(times) = reader.read_inputs() else {
-                continue;
-            };
-            let times: Vec<f32> = times.collect();
-            if let Some(&last) = times.last() {
-                duration = duration.max(last);
-            }
-            let Some(outputs) = reader.read_outputs() else {
-                continue;
-            };
-            use gltf::animation::util::ReadOutputs;
-            let values = match outputs {
-                ReadOutputs::Translations(iter) => {
-                    ChannelValues::Translation(iter.map(glam::Vec3::from_array).collect())
-                }
-                ReadOutputs::Rotations(rotations) => ChannelValues::Rotation(
-                    rotations.into_f32().map(glam::Quat::from_array).collect(),
-                ),
-                ReadOutputs::Scales(iter) => {
-                    ChannelValues::Scale(iter.map(glam::Vec3::from_array).collect())
-                }
-                ReadOutputs::MorphTargetWeights(w) => {
-                    ChannelValues::MorphWeights(w.into_f32().collect())
-                }
-            };
-            let interpolation = match channel.sampler().interpolation() {
-                gltf::animation::Interpolation::Linear => Interpolation::Linear,
-                gltf::animation::Interpolation::Step => Interpolation::Step,
-                gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
-            };
-            channels.push(CpuAnimationChannel {
-                node: channel.target().node().index(),
-                times,
-                values,
-                interpolation,
-            });
-        }
+        let channels: Vec<CpuAnimationChannel> = animation
+            .channels()
+            .filter_map(|channel| read_channel(&channel, buffers))
+            .collect();
+        let duration = channels
+            .iter()
+            .filter_map(|channel| channel.times.last().copied())
+            .fold(0.0f32, f32::max);
         if !channels.is_empty() {
-            scene.animations.push(CpuAnimation {
+            animations.push(CpuAnimation {
                 name: animation.name().unwrap_or("animation").to_string(),
                 duration,
                 channels,
             });
         }
     }
+    animations
+}
 
-    // Skins: joint node indices + inverse bind matrices.
-    for skin in document.skins() {
-        let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
-        let inverse_bind_matrices = reader
-            .read_inverse_bind_matrices()
-            .map(|iter| iter.map(|m| Mat4::from_cols_array_2d(&m)).collect())
-            .unwrap_or_default();
-        scene.skins.push(CpuSkin {
-            joints: skin.joints().map(|j| j.index()).collect(),
-            inverse_bind_matrices,
-        });
+/// One channel, or `None` when unreadable or invalid; gltf checks no accessor values.
+fn read_channel(
+    channel: &gltf::animation::Channel,
+    buffers: &[gltf::buffer::Data],
+) -> Option<CpuAnimationChannel> {
+    let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+    let times: Vec<f32> = reader.read_inputs()?.collect();
+    let values = channel_values(reader.read_outputs()?);
+    let interpolation = interpolation_of(channel.sampler().interpolation());
+    if let Err(reason) = check_keyframes(&times, &values, interpolation) {
+        log::warn!(
+            "glTF animation channel {} skipped: {reason}",
+            channel.index()
+        );
+        return None;
     }
+    Some(CpuAnimationChannel {
+        node: channel.target().node().index(),
+        times,
+        values,
+        interpolation,
+    })
+}
 
-    // Cameras authored in the file (pose = their node's world transform).
+/// Sampling bisects `times`, so a NaN or a step back breaks it; a short output reads past its end.
+fn check_keyframes(
+    times: &[f32],
+    values: &ChannelValues,
+    interpolation: Interpolation,
+) -> Result<(), &'static str> {
+    if times.is_empty() || times.iter().any(|t| !t.is_finite()) {
+        return Err("its keyframe times are empty or not finite");
+    }
+    if times.windows(2).any(|pair| pair[1] < pair[0]) {
+        return Err("its keyframe times decrease");
+    }
+    let (count, finite) = match values {
+        ChannelValues::Translation(v) | ChannelValues::Scale(v) => {
+            (v.len(), v.iter().all(|x| x.is_finite()))
+        }
+        ChannelValues::Rotation(v) => (v.len(), v.iter().all(|q| q.is_finite())),
+        ChannelValues::MorphWeights(v) => (v.len(), v.iter().all(|w| w.is_finite())),
+    };
+    if !finite {
+        return Err("its keyframe values are not finite");
+    }
+    let per_key = if interpolation == Interpolation::CubicSpline {
+        3
+    } else {
+        1
+    };
+    let keys = times.len() * per_key;
+    let fits = match values {
+        // Morph weights hold one value per target per key, so any whole multiple fits.
+        ChannelValues::MorphWeights(_) => count > 0 && count.is_multiple_of(keys),
+        _ => count == keys,
+    };
+    if !fits {
+        return Err("its value count does not match its keyframes");
+    }
+    Ok(())
+}
+
+fn channel_values(outputs: gltf::animation::util::ReadOutputs<'_>) -> ChannelValues {
+    use gltf::animation::util::ReadOutputs;
+    match outputs {
+        ReadOutputs::Translations(iter) => {
+            ChannelValues::Translation(iter.map(glam::Vec3::from_array).collect())
+        }
+        ReadOutputs::Rotations(rotations) => {
+            ChannelValues::Rotation(rotations.into_f32().map(glam::Quat::from_array).collect())
+        }
+        ReadOutputs::Scales(iter) => {
+            ChannelValues::Scale(iter.map(glam::Vec3::from_array).collect())
+        }
+        ReadOutputs::MorphTargetWeights(w) => ChannelValues::MorphWeights(w.into_f32().collect()),
+    }
+}
+
+fn interpolation_of(interpolation: gltf::animation::Interpolation) -> Interpolation {
+    match interpolation {
+        gltf::animation::Interpolation::Linear => Interpolation::Linear,
+        gltf::animation::Interpolation::Step => Interpolation::Step,
+        gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
+    }
+}
+
+/// Skins: joint node indices + inverse bind matrices.
+fn read_skins(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Vec<CpuSkin> {
+    document
+        .skins()
+        .map(|skin| {
+            let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+            let inverse_bind_matrices = reader
+                .read_inverse_bind_matrices()
+                .map(|iter| iter.map(|m| Mat4::from_cols_array_2d(&m)).collect())
+                .unwrap_or_default();
+            CpuSkin {
+                joints: skin.joints().map(|j| j.index()).collect(),
+                inverse_bind_matrices,
+            }
+        })
+        .collect()
+}
+
+/// Cameras authored in the file (pose = their node's world transform).
+fn read_cameras(document: &gltf::Document) -> Vec<CpuCamera> {
+    let mut cameras = Vec::new();
     for node in document.nodes() {
         let Some(camera) = node.camera() else {
             continue;
@@ -161,28 +247,13 @@ fn build_scene(
                 }
             }
         };
-        scene.cameras.push(CpuCamera {
+        cameras.push(CpuCamera {
             name: camera.name().map(str::to_string),
             node: node.index(),
             projection,
         });
     }
-
-    let gltf_scene = document
-        .default_scene()
-        .or_else(|| document.scenes().next())
-        .context("glTF file contains no scenes")?;
-
-    for node in gltf_scene.nodes() {
-        visit_node(&node, Mat4::IDENTITY, &buffers, &textures, &mut scene)?;
-    }
-
-    anyhow::ensure!(
-        !scene.primitives.is_empty(),
-        "glTF file contains no triangle primitives"
-    );
-
-    Ok(scene)
+    cameras
 }
 
 /// UV-set bit for a texture slot: `1 << bit` for TEXCOORD_1, else 0 (TEXCOORD_2+ warns and uses UV0).
@@ -352,17 +423,21 @@ fn to_cpu_sampler(sampler: &gltf::texture::Sampler) -> CpuSampler {
         WrappingMode::Repeat => CpuWrap::Repeat,
     };
 
-    let (min_nearest, mip_nearest) = match sampler.min_filter() {
-        Some(MinFilter::Nearest | MinFilter::NearestMipmapNearest) => (true, true),
-        Some(MinFilter::NearestMipmapLinear) => (true, false),
-        Some(MinFilter::LinearMipmapNearest) => (false, true),
-        Some(MinFilter::Linear | MinFilter::LinearMipmapLinear) | None => (false, false),
+    let (min_nearest, mip_nearest, mipmaps) = match sampler.min_filter() {
+        // NEAREST and LINEAR are glTF's mipmap-less filters: level 0 only.
+        Some(MinFilter::Nearest) => (true, true, false),
+        Some(MinFilter::Linear) => (false, false, false),
+        Some(MinFilter::NearestMipmapNearest) => (true, true, true),
+        Some(MinFilter::NearestMipmapLinear) => (true, false, true),
+        Some(MinFilter::LinearMipmapNearest) => (false, true, true),
+        Some(MinFilter::LinearMipmapLinear) | None => (false, false, true),
     };
 
     CpuSampler {
         mag_nearest: matches!(sampler.mag_filter(), Some(MagFilter::Nearest)),
         min_nearest,
         mip_nearest,
+        mipmaps,
         wrap_u: wrap(sampler.wrap_s()),
         wrap_v: wrap(sampler.wrap_t()),
     }
@@ -383,39 +458,76 @@ fn texture_ref(
         })
 }
 
-fn visit_node(
-    node: &gltf::Node,
-    parent_transform: Mat4,
+/// Depth-first over the scene's node trees with an explicit stack, each node visited once.
+/// A cycle or a second parent is invalid glTF; recursion overflowed the stack on it, and on deep chains.
+fn visit_scene(
+    gltf_scene: &gltf::Scene,
     buffers: &[gltf::buffer::Data],
     textures: &[Arc<CpuTexture>],
     scene: &mut CpuScene,
 ) -> anyhow::Result<()> {
-    let local = Mat4::from_cols_array_2d(&node.transform().matrix());
-    let world = parent_transform * local;
+    let mut visited = vec![false; scene.nodes.len()];
+    let mut stack: Vec<(gltf::Node, Mat4)> = gltf_scene
+        .nodes()
+        .map(|node| (node, Mat4::IDENTITY))
+        .collect();
+    stack.reverse();
+    while let Some((node, parent_world)) = stack.pop() {
+        if std::mem::replace(&mut visited[node.index()], true) {
+            log::warn!(
+                "glTF node {} is reached a second time (a cycle or a second parent); skipped",
+                node.index()
+            );
+            continue;
+        }
+        let world = parent_world * Mat4::from_cols_array_2d(&node.transform().matrix());
+        visit_node(&node, world, buffers, textures, scene)?;
+        let first_child = stack.len();
+        stack.extend(node.children().map(|child| (child, world)));
+        // Reversed, so children pop in document order as they did in the recursive walk.
+        stack[first_child..].reverse();
+    }
+    Ok(())
+}
 
-    if let Some(light) = node.light() {
-        use gltf::khr_lights_punctual::Kind;
-        let kind = match light.kind() {
-            Kind::Point => CpuLightKind::Point,
-            Kind::Spot {
-                inner_cone_angle,
-                outer_cone_angle,
-            } => CpuLightKind::Spot {
-                cos_inner: inner_cone_angle.cos(),
-                cos_outer: outer_cone_angle.cos(),
-            },
-            Kind::Directional => CpuLightKind::Directional,
-        };
-        // glTF lights point down their node's -Z axis.
-        let direction = world.transform_vector3(Vec3::NEG_Z).normalize_or_zero();
-        scene.lights.push(CpuLight {
-            kind,
-            color: light.color(),
-            intensity: light.intensity(),
-            range: light.range().unwrap_or(0.0),
-            position: world.transform_point3(Vec3::ZERO).to_array(),
-            direction: direction.to_array(),
-        });
+/// The node's KHR_lights_punctual light, posed by its `world` transform and tied to the node.
+fn read_light(node: &gltf::Node, world: Mat4) -> Option<CpuLight> {
+    use gltf::khr_lights_punctual::Kind;
+    let light = node.light()?;
+    let kind = match light.kind() {
+        Kind::Point => CpuLightKind::Point,
+        Kind::Spot {
+            inner_cone_angle,
+            outer_cone_angle,
+        } => CpuLightKind::Spot {
+            cos_inner: inner_cone_angle.cos(),
+            cos_outer: outer_cone_angle.cos(),
+        },
+        Kind::Directional => CpuLightKind::Directional,
+    };
+    let mut cpu = CpuLight {
+        kind,
+        color: light.color(),
+        intensity: light.intensity(),
+        range: light.range().unwrap_or(0.0),
+        position: [0.0; 3],
+        direction: [0.0; 3],
+        node: Some(node.index()),
+    };
+    cpu.pose_at(world);
+    Some(cpu)
+}
+
+/// One node's light and mesh primitives, posed by its `world` transform.
+fn visit_node(
+    node: &gltf::Node,
+    world: Mat4,
+    buffers: &[gltf::buffer::Data],
+    textures: &[Arc<CpuTexture>],
+    scene: &mut CpuScene,
+) -> anyhow::Result<()> {
+    if let Some(light) = read_light(node, world) {
+        scene.lights.push(light);
     }
 
     if let Some(mesh) = node.mesh() {
@@ -436,6 +548,8 @@ fn visit_node(
             if let Some(mut cpu) = load_primitive(&primitive, world, buffers, textures)? {
                 cpu.node_index = Some(node.index());
                 cpu.skin_index = node.skin().map(|s| s.index());
+                let joint_count = node.skin().map(|skin| skin.joints().count());
+                bind_influences(&mut cpu.vertices, joint_count, primitive.index());
                 // Node weights override mesh weights (glTF spec); kept only when the count matches.
                 if !cpu.morph_targets.is_empty() {
                     if let Some(weights) = node.weights().or_else(|| mesh.weights()) {
@@ -448,14 +562,30 @@ fn visit_node(
             }
         }
     }
-
-    for child in node.children() {
-        visit_node(&child, world, buffers, textures, scene)?;
-    }
     Ok(())
 }
 
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
+/// Drops skin influences the shader cannot resolve: every one without a skin, and joints past its end.
+/// A weighted vertex skips the node transform, so a skinless node's copy drew at the mesh origin.
+fn bind_influences(vertices: &mut [Vertex], joint_count: Option<usize>, primitive: usize) {
+    let mut dropped = 0usize;
+    for vertex in vertices.iter_mut() {
+        for k in 0..4 {
+            if joint_count.is_some_and(|count| (vertex.joints[k] as usize) < count) {
+                continue;
+            }
+            dropped += usize::from(vertex.weights[k] != 0.0);
+            vertex.weights[k] = 0.0;
+            vertex.joints[k] = 0.0;
+        }
+    }
+    if dropped > 0 {
+        log::warn!(
+            "glTF primitive {primitive}: dropped {dropped} skin influence(s) without a joint in its node's skin"
+        );
+    }
+}
+
 fn load_primitive(
     primitive: &gltf::Primitive,
     transform: Mat4,
@@ -463,115 +593,229 @@ fn load_primitive(
     textures: &[Arc<CpuTexture>],
 ) -> anyhow::Result<Option<CpuPrimitive>> {
     let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+    let Some(vertices) = read_vertices(primitive, buffers)? else {
+        return Ok(None);
+    };
+    let Some(indices) = read_triangles(primitive, buffers, vertices.len()) else {
+        return Ok(None);
+    };
+    let options = GeometryOptions {
+        has_normals: reader.read_normals().is_some(),
+        has_tangents: reader.read_tangents().is_some(),
+        // glTF generates tangents from the UV set the normal texture samples.
+        tangent_uv_set: primitive
+            .material()
+            .normal_texture()
+            .map_or(0, |info| info.tex_coord()),
+        mikktspace: mikktspace_tangents_enabled(),
+    };
+    let geometry = finish_geometry(
+        Geometry {
+            vertices,
+            indices,
+            morph_targets: read_morph_targets(primitive, buffers),
+        },
+        &options,
+    );
+    // Weights start at zero: the caller applies mesh/node defaults, and animation drives them.
+    let morph_weights = vec![0.0f32; geometry.morph_targets.len()];
 
+    Ok(Some(CpuPrimitive {
+        vertices: geometry.vertices,
+        indices: geometry.indices,
+        transform,
+        node_index: None,
+        skin_index: None,
+        material: load_material(&primitive.material(), textures),
+        morph_targets: geometry.morph_targets,
+        morph_weights,
+    }))
+}
+
+/// A primitive's vertices, triangle list and morph targets, kept together while vertices are rebuilt.
+struct Geometry {
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
+    morph_targets: Vec<MorphTarget>,
+}
+
+/// Which attributes the file supplied, and how missing tangents are generated.
+struct GeometryOptions {
+    has_normals: bool,
+    has_tangents: bool,
+    /// The normal texture's `texCoord`; 1 means TEXCOORD_1, anything else UV0, as the shader samples it.
+    tangent_uv_set: u32,
+    mikktspace: bool,
+}
+
+/// Generates what the file left out (flat normals, tangents) and repairs what NaNs the shader.
+fn finish_geometry(mut geometry: Geometry, options: &GeometryOptions) -> Geometry {
+    if !options.has_normals {
+        // Flat shading needs a vertex per corner: a shared vertex kept its last face's normal.
+        geometry = unindexed(geometry);
+        compute_flat_normals(&mut geometry.vertices, &geometry.indices);
+    }
+    repair_normals(&mut geometry.vertices, &geometry.indices);
+    if !options.has_tangents {
+        let uv_set = options.tangent_uv_set;
+        compute_tangents(&mut geometry.vertices, &geometry.indices, uv_set);
+        // Opt-in MikkTSpace replaces only tangents we generated; a file's own tangents are kept.
+        if options.mikktspace {
+            if let Some((vertices, indices, sources)) =
+                generate_tangents_mikktspace(&geometry.vertices, &geometry.indices, uv_set)
+            {
+                // MikkTSpace renumbers and splits vertices; the deltas must follow them.
+                geometry = Geometry {
+                    morph_targets: gather_morph_targets(&geometry.morph_targets, &sources),
+                    vertices,
+                    indices,
+                };
+            }
+        }
+    }
+    repair_tangents(&mut geometry.vertices);
+    geometry
+}
+
+/// One vertex per triangle corner, with each morph target's deltas gathered alongside.
+fn unindexed(geometry: Geometry) -> Geometry {
+    Geometry {
+        vertices: geometry
+            .indices
+            .iter()
+            .map(|&i| geometry.vertices[i as usize])
+            .collect(),
+        morph_targets: gather_morph_targets(&geometry.morph_targets, &geometry.indices),
+        indices: (0..geometry.indices.len() as u32).collect(),
+    }
+}
+
+/// Re-indexes each target so new vertex `i` carries the deltas of old vertex `source[i]`.
+fn gather_morph_targets(targets: &[MorphTarget], source: &[u32]) -> Vec<MorphTarget> {
+    let gather = |deltas: &Vec<Vec3>| -> Vec<Vec3> {
+        if deltas.is_empty() {
+            return Vec::new();
+        }
+        source
+            .iter()
+            .map(|&i| deltas.get(i as usize).copied().unwrap_or(Vec3::ZERO))
+            .collect()
+    };
+    targets
+        .iter()
+        .map(|target| MorphTarget {
+            position_deltas: gather(&target.position_deltas),
+            normal_deltas: gather(&target.normal_deltas),
+            tangent_deltas: gather(&target.tangent_deltas),
+        })
+        .collect()
+}
+
+/// Every vertex attribute with its glTF fallback; `None` without POSITION.
+fn read_vertices(
+    primitive: &gltf::Primitive,
+    buffers: &[gltf::buffer::Data],
+) -> anyhow::Result<Option<Vec<Vertex>>> {
+    let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
     let Some(positions) = reader.read_positions() else {
         return Ok(None);
     };
     let positions: Vec<[f32; 3]> = positions.collect();
+    let count = positions.len();
 
-    let normals: Vec<[f32; 3]> = match reader.read_normals() {
-        Some(iter) => iter.collect(),
-        None => vec![[0.0, 0.0, 0.0]; positions.len()],
-    };
-    let uvs: Vec<[f32; 2]> = match reader.read_tex_coords(0) {
-        Some(iter) => iter.into_f32().collect(),
-        None => vec![[0.0, 0.0]; positions.len()],
-    };
+    let normals: Vec<[f32; 3]> = reader
+        .read_normals()
+        .map_or_else(|| vec![[0.0, 0.0, 0.0]; count], Iterator::collect);
+    let uvs: Vec<[f32; 2]> = reader
+        .read_tex_coords(0)
+        .map_or_else(|| vec![[0.0, 0.0]; count], |iter| iter.into_f32().collect());
     // TEXCOORD_1 falls back to UV0, so a slot wrongly flagged UV1 still samples something sane.
-    let uvs1: Vec<[f32; 2]> = match reader.read_tex_coords(1) {
-        Some(iter) => iter.into_f32().collect(),
-        None => uvs.clone(),
-    };
-    let joints: Vec<[f32; 4]> = match reader.read_joints(0) {
-        Some(iter) => iter
-            .into_u16()
-            .map(|j| [j[0] as f32, j[1] as f32, j[2] as f32, j[3] as f32])
-            .collect(),
-        None => vec![[0.0; 4]; positions.len()],
-    };
-    let weights: Vec<[f32; 4]> = match reader.read_weights(0) {
-        Some(iter) => iter.into_f32().collect(),
-        None => vec![[0.0; 4]; positions.len()],
-    };
+    let uvs1: Vec<[f32; 2]> = reader
+        .read_tex_coords(1)
+        .map_or_else(|| uvs.clone(), |iter| iter.into_f32().collect());
+    let joints: Vec<[f32; 4]> = reader.read_joints(0).map_or_else(
+        || vec![[0.0; 4]; count],
+        |iter| iter.into_u16().map(|j| j.map(f32::from)).collect(),
+    );
+    let weights: Vec<[f32; 4]> = reader
+        .read_weights(0)
+        .map_or_else(|| vec![[0.0; 4]; count], |iter| iter.into_f32().collect());
     // COLOR_0 defaults to white, so multiplying it into albedo is a no-op.
-    let colors: Vec<[f32; 4]> = match reader.read_colors(0) {
-        Some(iter) => iter.into_rgba_f32().collect(),
-        None => vec![[1.0, 1.0, 1.0, 1.0]; positions.len()],
-    };
-
-    let tangents: Vec<[f32; 4]> = match reader.read_tangents() {
-        Some(iter) => iter.collect(),
-        None => vec![[0.0, 0.0, 0.0, 0.0]; positions.len()],
-    };
-    let had_tangents = reader.read_tangents().is_some();
+    let colors: Vec<[f32; 4]> = reader.read_colors(0).map_or_else(
+        || vec![[1.0, 1.0, 1.0, 1.0]; count],
+        |iter| iter.into_rgba_f32().collect(),
+    );
+    let tangents: Vec<[f32; 4]> = reader
+        .read_tangents()
+        .map_or_else(|| vec![[0.0, 0.0, 0.0, 0.0]; count], Iterator::collect);
 
     anyhow::ensure!(
-        normals.len() == positions.len()
-            && uvs.len() == positions.len()
-            && tangents.len() == positions.len(),
+        normals.len() == count && uvs.len() == count && tangents.len() == count,
         "Attribute count mismatch: {} positions, {} normals, {} uvs, {} tangents",
-        positions.len(),
+        count,
         normals.len(),
         uvs.len(),
         tangents.len()
     );
 
-    let mut vertices: Vec<Vertex> = positions
-        .iter()
-        .zip(normals.iter())
-        .zip(uvs.iter())
-        .zip(tangents.iter())
-        .enumerate()
-        .map(|(i, (((p, n), t), tan))| Vertex {
-            position: *p,
-            normal: *n,
-            uv: *t,
-            tangent: *tan,
-            joints: joints.get(i).copied().unwrap_or([0.0; 4]),
-            weights: weights.get(i).copied().unwrap_or([0.0; 4]),
-            color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
-            uv1: uvs1.get(i).copied().unwrap_or(*t),
-        })
-        .collect();
+    Ok(Some(
+        (0..count)
+            .map(|i| Vertex {
+                position: positions[i],
+                normal: normals[i],
+                uv: uvs[i],
+                tangent: tangents[i],
+                joints: joints.get(i).copied().unwrap_or([0.0; 4]),
+                weights: weights.get(i).copied().unwrap_or([0.0; 4]),
+                color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
+                uv1: uvs1.get(i).copied().unwrap_or(uvs[i]),
+            })
+            .collect(),
+    ))
+}
 
+/// The primitive as a triangle list whose every index addresses one of its `vertex_count` vertices.
+/// `None` when no triangle survives: an empty index buffer panics wgpu's `slice(..)` on the first frame.
+fn read_triangles(
+    primitive: &gltf::Primitive,
+    buffers: &[gltf::buffer::Data],
+    vertex_count: usize,
+) -> Option<Vec<u32>> {
+    let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
     let raw_indices: Vec<u32> = match reader.read_indices() {
         Some(iter) => iter.into_u32().collect(),
-        None => (0..vertices.len() as u32).collect(),
+        None => (0..vertex_count as u32).collect(),
     };
     // Triangulating on load keeps culling, LOD, QEM and drawing on one triangle-list representation.
     let indices = triangulate(&raw_indices, primitive.mode());
     // Sanitize before flat normals, tangents and MikkTSpace index `vertices` with these values.
-    let (indices, dropped_triangles) = drop_out_of_range_triangles(indices, vertices.len());
+    let (indices, dropped_triangles) = drop_out_of_range_triangles(indices, vertex_count);
     if dropped_triangles > 0 {
         log::warn!(
             "glTF primitive {}: dropped {} triangle(s) whose indices do not address any of its {} vertices",
             primitive.index(),
             dropped_triangles,
-            vertices.len()
+            vertex_count
         );
     }
-
-    // Missing normals: derive flat face normals so lighting stays sane.
-    if reader.read_normals().is_none() {
-        compute_flat_normals(&mut vertices, &indices);
+    if indices.is_empty() {
+        log::warn!(
+            "glTF primitive {}: skipped, no triangle survives triangulation and the index checks",
+            primitive.index()
+        );
+        return None;
     }
-    if !had_tangents {
-        compute_tangents(&mut vertices, &indices);
-    }
-    // Opt-in MikkTSpace replaces only tangents we generated; a file's own tangents are kept.
-    let (vertices, indices) = if !had_tangents && mikktspace_tangents_enabled() {
-        match generate_tangents_mikktspace(&vertices, &indices) {
-            Some(rebuilt) => rebuilt,
-            None => (vertices, indices),
-        }
-    } else {
-        (vertices, indices)
-    };
+    Some(indices)
+}
 
-    // Weights start at zero: the caller applies mesh/node defaults, and animation drives them.
-    let morph_targets: Vec<crate::scene::MorphTarget> = reader
+fn read_morph_targets(
+    primitive: &gltf::Primitive,
+    buffers: &[gltf::buffer::Data],
+) -> Vec<MorphTarget> {
+    let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+    reader
         .read_morph_targets()
-        .map(|(pos, norm, tan)| crate::scene::MorphTarget {
+        .map(|(pos, norm, tan)| MorphTarget {
             position_deltas: pos
                 .map(|it| it.map(Vec3::from_array).collect())
                 .unwrap_or_default(),
@@ -583,49 +827,20 @@ fn load_primitive(
                 .map(|it| it.map(Vec3::from_array).collect())
                 .unwrap_or_default(),
         })
-        .collect();
-    let morph_weights = vec![0.0f32; morph_targets.len()];
+        .collect()
+}
 
-    let material = primitive.material();
+/// The metallic-roughness material with each slot's texture, sampler, UV set and transform.
+fn load_material(material: &gltf::Material, textures: &[Arc<CpuTexture>]) -> CpuMaterial {
     let pbr = material.pbr_metallic_roughness();
-
     let alpha_mode = match material.alpha_mode() {
         gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
         gltf::material::AlphaMode::Mask => AlphaMode::Mask(material.alpha_cutoff().unwrap_or(0.5)),
         gltf::material::AlphaMode::Blend => AlphaMode::Blend,
     };
-
-    // KHR_texture_transform is scoped to `textureInfo`, so each slot carries its own transform.
-    let base_uv_transform = uv_transform_from_info(
-        pbr.base_color_texture()
-            .and_then(|info| info.texture_transform()),
-    );
-    let mr_uv_transform = uv_transform_from_info(
-        pbr.metallic_roughness_texture()
-            .and_then(|info| info.texture_transform()),
-    );
-    let emissive_uv_transform = uv_transform_from_info(
-        material
-            .emissive_texture()
-            .and_then(|info| info.texture_transform()),
-    );
-    // `.extensions()` borrows from the texture-info value itself, so it must outlive the chain.
-    let normal_texture_info = material.normal_texture();
-    let normal_uv_transform = uv_transform_from_extension_json(
-        normal_texture_info
-            .as_ref()
-            .and_then(|info| info.extensions())
-            .and_then(|ext| ext.get("KHR_texture_transform")),
-    );
-    let occlusion_texture_info = material.occlusion_texture();
-    let occlusion_uv_transform = uv_transform_from_extension_json(
-        occlusion_texture_info
-            .as_ref()
-            .and_then(|info| info.extensions())
-            .and_then(|ext| ext.get("KHR_texture_transform")),
-    );
-
-    let cpu_material = CpuMaterial {
+    let [base_uv_transform, mr_uv_transform, normal_uv_transform, emissive_uv_transform, occlusion_uv_transform] =
+        slot_uv_transforms(material);
+    CpuMaterial {
         base_color: pbr.base_color_factor(),
         base_uv_transform,
         mr_uv_transform,
@@ -663,34 +878,62 @@ fn load_primitive(
         occlusion_texture: material
             .occlusion_texture()
             .and_then(|info| texture_ref(&info.texture(), textures, false)),
-        // Which slots sample UV1 (bit per slot: 0 base .. 4 occlusion).
-        uv_set_mask: pbr
-            .base_color_texture()
-            .map_or(0, |i| uv_set_bit("base color", i.tex_coord(), 0))
-            | pbr
-                .metallic_roughness_texture()
-                .map_or(0, |i| uv_set_bit("metallic-roughness", i.tex_coord(), 1))
-            | material
-                .normal_texture()
-                .map_or(0, |i| uv_set_bit("normal", i.tex_coord(), 2))
-            | material
-                .emissive_texture()
-                .map_or(0, |i| uv_set_bit("emissive", i.tex_coord(), 3))
-            | material
-                .occlusion_texture()
-                .map_or(0, |i| uv_set_bit("occlusion", i.tex_coord(), 4)),
-    };
+        uv_set_mask: uv_set_mask(material),
+    }
+}
 
-    Ok(Some(CpuPrimitive {
-        vertices,
-        indices,
-        transform,
-        node_index: None,
-        skin_index: None,
-        material: cpu_material,
-        morph_targets,
-        morph_weights,
-    }))
+/// KHR_texture_transform per slot (base, MR, normal, emissive, occlusion): glTF scopes it to `textureInfo`.
+fn slot_uv_transforms(material: &gltf::Material) -> [[[f32; 3]; 2]; 5] {
+    let pbr = material.pbr_metallic_roughness();
+    // `.extensions()` borrows from the texture-info value itself, so it must outlive the chain.
+    let normal_texture_info = material.normal_texture();
+    let occlusion_texture_info = material.occlusion_texture();
+    [
+        uv_transform_from_info(
+            pbr.base_color_texture()
+                .and_then(|info| info.texture_transform()),
+        ),
+        uv_transform_from_info(
+            pbr.metallic_roughness_texture()
+                .and_then(|info| info.texture_transform()),
+        ),
+        uv_transform_from_extension_json(
+            normal_texture_info
+                .as_ref()
+                .and_then(|info| info.extensions())
+                .and_then(|ext| ext.get("KHR_texture_transform")),
+        ),
+        uv_transform_from_info(
+            material
+                .emissive_texture()
+                .and_then(|info| info.texture_transform()),
+        ),
+        uv_transform_from_extension_json(
+            occlusion_texture_info
+                .as_ref()
+                .and_then(|info| info.extensions())
+                .and_then(|ext| ext.get("KHR_texture_transform")),
+        ),
+    ]
+}
+
+/// Which slots sample UV1 (bit per slot: 0 base .. 4 occlusion).
+fn uv_set_mask(material: &gltf::Material) -> u32 {
+    let pbr = material.pbr_metallic_roughness();
+    pbr.base_color_texture()
+        .map_or(0, |i| uv_set_bit("base color", i.tex_coord(), 0))
+        | pbr
+            .metallic_roughness_texture()
+            .map_or(0, |i| uv_set_bit("metallic-roughness", i.tex_coord(), 1))
+        | material
+            .normal_texture()
+            .map_or(0, |i| uv_set_bit("normal", i.tex_coord(), 2))
+        | material
+            .emissive_texture()
+            .map_or(0, |i| uv_set_bit("emissive", i.tex_coord(), 3))
+        | material
+            .occlusion_texture()
+            .map_or(0, |i| uv_set_bit("occlusion", i.tex_coord(), 4))
 }
 
 fn compute_flat_normals(vertices: &mut [Vertex], indices: &[u32]) {
@@ -699,16 +942,75 @@ fn compute_flat_normals(vertices: &mut [Vertex], indices: &[u32]) {
         let p0 = Vec3::from_array(vertices[i0].position);
         let p1 = Vec3::from_array(vertices[i1].position);
         let p2 = Vec3::from_array(vertices[i2].position);
-        let n = (p1 - p0).cross(p2 - p0).normalize_or_zero().to_array();
+        // A zero-area face has no normal; writing its zero would erase a shared corner's real one.
+        let Some(n) = (p1 - p0).cross(p2 - p0).try_normalize() else {
+            continue;
+        };
         for i in [i0, i1, i2] {
-            vertices[i].normal = n;
+            vertices[i].normal = n.to_array();
         }
     }
 }
 
-/// Per-vertex tangent frame from triangle UV gradients (Lengyel), with glTF handedness in `.w`.
+/// Replaces zero or non-finite normals, which the shader's `normalize` turns into NaN shading.
+/// The replacement is the corner's area-weighted face normal, else +Y.
+fn repair_normals(vertices: &mut [Vertex], indices: &[u32]) {
+    let broken = |n: [f32; 3]| Vec3::from_array(n).try_normalize().is_none();
+    if !vertices.iter().any(|v| broken(v.normal)) {
+        return;
+    }
+    let mut face_sums = vec![Vec3::ZERO; vertices.len()];
+    for tri in indices.as_chunks::<3>().0 {
+        let [a, b, c] = tri.map(|i| Vec3::from_array(vertices[i as usize].position));
+        let face = (b - a).cross(c - a);
+        if face.is_finite() {
+            for &i in tri {
+                face_sums[i as usize] += face;
+            }
+        }
+    }
+    for (vertex, sum) in vertices.iter_mut().zip(face_sums) {
+        if broken(vertex.normal) {
+            vertex.normal = sum.try_normalize().unwrap_or(Vec3::Y).to_array();
+        }
+    }
+}
+
+/// A zero or non-finite tangent NaNs the shader's TBN even without a normal map; `w` must be a sign.
+fn repair_tangents(vertices: &mut [Vertex]) {
+    for vertex in vertices {
+        let t = Vec3::new(vertex.tangent[0], vertex.tangent[1], vertex.tangent[2]);
+        if t.try_normalize().is_none() {
+            let p = any_perpendicular(Vec3::from_array(vertex.normal));
+            vertex.tangent[..3].copy_from_slice(&p.to_array());
+        }
+        let w = vertex.tangent[3];
+        if w != 1.0 && w != -1.0 {
+            vertex.tangent[3] = if w < 0.0 { -1.0 } else { 1.0 };
+        }
+    }
+}
+
+/// Any unit vector perpendicular to the unit `n`, for a tangent with no UV gradient to follow.
+fn any_perpendicular(n: Vec3) -> Vec3 {
+    n.cross(Vec3::Y)
+        .try_normalize()
+        .or_else(|| n.cross(Vec3::X).try_normalize())
+        .unwrap_or(Vec3::X)
+}
+
+/// The UV set `uv_set` names: TEXCOORD_1 for 1, else TEXCOORD_0.
+fn tangent_uv(vertex: &Vertex, uv_set: u32) -> [f32; 2] {
+    if uv_set == 1 {
+        vertex.uv1
+    } else {
+        vertex.uv
+    }
+}
+
+/// Per-vertex tangent frame from the UV gradients of `uv_set` (Lengyel), with glTF handedness in `.w`.
 /// Never splits vertices at UV seams; [`generate_tangents_mikktspace`] does.
-pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
+pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32], uv_set: u32) {
     let mut tan_accum = vec![Vec3::ZERO; vertices.len()];
     let mut bitan_accum = vec![Vec3::ZERO; vertices.len()];
 
@@ -717,9 +1019,9 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
         let p0 = Vec3::from_array(vertices[i0].position);
         let p1 = Vec3::from_array(vertices[i1].position);
         let p2 = Vec3::from_array(vertices[i2].position);
-        let u0 = Vec2::from_array(vertices[i0].uv);
-        let u1 = Vec2::from_array(vertices[i1].uv);
-        let u2 = Vec2::from_array(vertices[i2].uv);
+        let u0 = Vec2::from_array(tangent_uv(&vertices[i0], uv_set));
+        let u1 = Vec2::from_array(tangent_uv(&vertices[i1], uv_set));
+        let u2 = Vec2::from_array(tangent_uv(&vertices[i2], uv_set));
 
         let e1 = p1 - p0;
         let e2 = p2 - p0;
@@ -742,13 +1044,9 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
     for ((vertex, tangent), bitangent) in vertices.iter_mut().zip(tan_accum).zip(bitan_accum) {
         let n = Vec3::from_array(vertex.normal);
         // Gram-Schmidt against the normal; any perpendicular axis for degenerate UVs.
-        let mut t = (tangent - n * n.dot(tangent)).normalize_or_zero();
-        if t == Vec3::ZERO {
-            t = n.cross(Vec3::Y).normalize_or_zero();
-            if t == Vec3::ZERO {
-                t = n.cross(Vec3::X).normalize_or_zero();
-            }
-        }
+        let t = (tangent - n * n.dot(tangent))
+            .try_normalize()
+            .unwrap_or_else(|| any_perpendicular(n));
         // Degenerate accumulation gets +1, since 0 would zero the shader's bitangent.
         let w = if n.cross(t).dot(bitangent) < 0.0 {
             -1.0
@@ -764,61 +1062,65 @@ fn mikktspace_tangents_enabled() -> bool {
     std::env::var_os("KATAGLYPHIS_MIKKTSPACE_TANGENTS").is_some()
 }
 
-/// MikkTSpace tangents, the basis DCC tools bake normal maps against (opt-in; [`compute_tangents`] is the default).
-/// Splits vertices at seams, so it returns fresh buffers; `None` on failure keeps the caller's.
+/// The mesh as `bevy_mikktspace` reads it, collecting one tangent per triangle corner.
+struct MikkMesh<'a> {
+    vertices: &'a [Vertex],
+    indices: &'a [u32],
+    uv_set: u32,
+    /// Per-corner tangent, length `num_faces * 3`, filled by the algorithm.
+    tangents: Vec<[f32; 4]>,
+}
+
+impl MikkMesh<'_> {
+    fn corner(&self, face: usize, vert: usize) -> usize {
+        self.indices[face * 3 + vert] as usize
+    }
+}
+
+impl bevy_mikktspace::Geometry for MikkMesh<'_> {
+    fn num_faces(&self) -> usize {
+        self.indices.len() / 3
+    }
+    fn num_vertices_of_face(&self, _face: usize) -> usize {
+        3
+    }
+    fn position(&self, face: usize, vert: usize) -> [f32; 3] {
+        self.vertices[self.corner(face, vert)].position
+    }
+    fn normal(&self, face: usize, vert: usize) -> [f32; 3] {
+        self.vertices[self.corner(face, vert)].normal
+    }
+    fn tex_coord(&self, face: usize, vert: usize) -> [f32; 2] {
+        tangent_uv(&self.vertices[self.corner(face, vert)], self.uv_set)
+    }
+    fn set_tangent(
+        &mut self,
+        tangent_space: Option<bevy_mikktspace::TangentSpace>,
+        face: usize,
+        vert: usize,
+    ) {
+        // A `None` space (degenerate corner) keeps the initialized default.
+        if let Some(ts) = tangent_space {
+            self.tangents[face * 3 + vert] = ts.tangent_encoded();
+        }
+    }
+}
+
+/// MikkTSpace tangents from `uv_set`, the basis DCC tools bake normal maps against (opt-in; [`compute_tangents`] is the default).
+/// Splits vertices at seams, so it returns fresh buffers and each new vertex's source; `None` keeps the caller's.
 pub(crate) fn generate_tangents_mikktspace(
     vertices: &[Vertex],
     indices: &[u32],
-) -> Option<(Vec<Vertex>, Vec<u32>)> {
+    uv_set: u32,
+) -> Option<(Vec<Vertex>, Vec<u32>, Vec<u32>)> {
     if indices.len() < 3 || !indices.len().is_multiple_of(3) {
         return None;
     }
-
-    struct MikkMesh<'a> {
-        vertices: &'a [Vertex],
-        indices: &'a [u32],
-        /// Per-corner tangent, length `num_faces * 3`, filled by the algorithm.
-        tangents: Vec<[f32; 4]>,
-    }
-    impl MikkMesh<'_> {
-        fn corner(&self, face: usize, vert: usize) -> usize {
-            self.indices[face * 3 + vert] as usize
-        }
-    }
-    impl bevy_mikktspace::Geometry for MikkMesh<'_> {
-        fn num_faces(&self) -> usize {
-            self.indices.len() / 3
-        }
-        fn num_vertices_of_face(&self, _face: usize) -> usize {
-            3
-        }
-        fn position(&self, face: usize, vert: usize) -> [f32; 3] {
-            self.vertices[self.corner(face, vert)].position
-        }
-        fn normal(&self, face: usize, vert: usize) -> [f32; 3] {
-            self.vertices[self.corner(face, vert)].normal
-        }
-        fn tex_coord(&self, face: usize, vert: usize) -> [f32; 2] {
-            self.vertices[self.corner(face, vert)].uv
-        }
-        fn set_tangent(
-            &mut self,
-            tangent_space: Option<bevy_mikktspace::TangentSpace>,
-            face: usize,
-            vert: usize,
-        ) {
-            // A `None` space (degenerate corner) keeps the initialized default.
-            if let Some(ts) = tangent_space {
-                self.tangents[face * 3 + vert] = ts.tangent_encoded();
-            }
-        }
-    }
-
-    let num_corners = indices.len();
     let mut mesh = MikkMesh {
         vertices,
         indices,
-        tangents: vec![[0.0, 0.0, 0.0, 1.0]; num_corners],
+        uv_set,
+        tangents: vec![[0.0, 0.0, 0.0, 1.0]; indices.len()],
     };
     if bevy_mikktspace::generate_tangents(&mut mesh).is_err() {
         return None;
@@ -829,26 +1131,20 @@ pub(crate) fn generate_tangents_mikktspace(
         std::collections::HashMap::new();
     let mut out_vertices: Vec<Vertex> = Vec::with_capacity(vertices.len());
     let mut out_indices: Vec<u32> = Vec::with_capacity(indices.len());
+    let mut sources: Vec<u32> = Vec::with_capacity(vertices.len());
     for (corner, &orig) in indices.iter().enumerate() {
         let tangent = mesh.tangents[corner];
-        let key = (
-            orig,
-            [
-                tangent[0].to_bits(),
-                tangent[1].to_bits(),
-                tangent[2].to_bits(),
-                tangent[3].to_bits(),
-            ],
-        );
+        let key = (orig, tangent.map(f32::to_bits));
         let new_index = *remap.entry(key).or_insert_with(|| {
             let mut v = vertices[orig as usize];
             v.tangent = tangent;
             out_vertices.push(v);
+            sources.push(orig);
             (out_vertices.len() - 1) as u32
         });
         out_indices.push(new_index);
     }
-    Some((out_vertices, out_indices))
+    Some((out_vertices, out_indices, sources))
 }
 
 #[cfg(test)]
@@ -912,7 +1208,7 @@ mod tests {
             drop_out_of_range_triangles(vec![0, 1, 2, 3, 4, 5], vertices.len());
         assert_eq!(dropped, 1);
         compute_flat_normals(&mut vertices, &filtered);
-        compute_tangents(&mut vertices, &filtered);
+        compute_tangents(&mut vertices, &filtered, 0);
 
         // A trailing partial triangle is truncated but not counted as dropped.
         assert_eq!(drop_out_of_range_triangles(vec![], 3), (vec![], 0));
@@ -981,7 +1277,7 @@ mod tests {
         .collect();
         let indices = [0u32, 1, 2, 0, 2, 3];
 
-        compute_tangents(&mut vertices, &indices);
+        compute_tangents(&mut vertices, &indices, 0);
 
         for vertex in &vertices {
             assert!(
@@ -1024,10 +1320,10 @@ mod tests {
     fn mirrored_uvs_flip_handedness() {
         // Mirroring V keeps the +X tangent but makes the chart left-handed, so w must flip to -1.
         let (mut normal, idx) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-        compute_tangents(&mut normal, &idx);
+        compute_tangents(&mut normal, &idx, 0);
 
         let (mut mirrored, idx) = quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
-        compute_tangents(&mut mirrored, &idx);
+        compute_tangents(&mut mirrored, &idx, 0);
 
         for v in &normal {
             assert_eq!(v.tangent[3], 1.0, "unmirrored chart is right-handed");
@@ -1045,8 +1341,8 @@ mod tests {
     fn mikktspace_quad_tangent_is_x() {
         // Aligned UVs have no seam, so the corners must weld back to the original 4 vertices.
         let (vertices, indices) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-        let (out_v, out_i) =
-            generate_tangents_mikktspace(&vertices, &indices).expect("mikktspace should succeed");
+        let (out_v, out_i, _) = generate_tangents_mikktspace(&vertices, &indices, 0)
+            .expect("mikktspace should succeed");
         assert_eq!(out_i.len(), indices.len(), "index count is preserved");
         assert_eq!(
             out_v.len(),
@@ -1073,8 +1369,8 @@ mod tests {
     fn mikktspace_mirrored_uvs_flip_handedness() {
         // V mirrored: handedness must flip to -1, as on the Lengyel path.
         let (vertices, indices) = quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
-        let (out_v, _) =
-            generate_tangents_mikktspace(&vertices, &indices).expect("mikktspace should succeed");
+        let (out_v, _, _) = generate_tangents_mikktspace(&vertices, &indices, 0)
+            .expect("mikktspace should succeed");
         for v in &out_v {
             assert_eq!(
                 v.tangent[3], -1.0,
@@ -1085,11 +1381,47 @@ mod tests {
     }
 
     #[test]
+    fn morph_deltas_follow_the_vertices_mikktspace_renumbers() {
+        // First use 3, 0, 2, 1: MikkTSpace's output order, which the file's delta order is not.
+        let (vertices, _) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+        let indices = vec![3, 0, 2, 2, 0, 1];
+        let deltas: Vec<Vec3> = (0..4)
+            .map(|i| Vec3::new(0.0, 0.0, i as f32 + 1.0))
+            .collect();
+        let options = GeometryOptions {
+            has_normals: true,
+            has_tangents: false,
+            tangent_uv_set: 0,
+            mikktspace: true,
+        };
+        let geometry = finish_geometry(
+            Geometry {
+                vertices: vertices.clone(),
+                indices,
+                morph_targets: vec![MorphTarget {
+                    position_deltas: deltas.clone(),
+                    ..MorphTarget::default()
+                }],
+            },
+            &options,
+        );
+        let moved = &geometry.morph_targets[0].position_deltas;
+        assert_eq!(moved.len(), geometry.vertices.len());
+        for (vertex, delta) in geometry.vertices.iter().zip(moved) {
+            let source = vertices
+                .iter()
+                .position(|v| v.position == vertex.position)
+                .expect("every output vertex comes from an input vertex");
+            assert_eq!(*delta, deltas[source], "vertex at {:?}", vertex.position);
+        }
+    }
+
+    #[test]
     fn mikktspace_rejects_degenerate_input() {
         // None, so the caller keeps its buffers instead of getting empty geometry.
         let (vertices, _) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-        assert!(generate_tangents_mikktspace(&vertices, &[0, 1]).is_none());
-        assert!(generate_tangents_mikktspace(&vertices, &[]).is_none());
-        assert!(generate_tangents_mikktspace(&vertices, &[0, 1, 2, 3]).is_none());
+        assert!(generate_tangents_mikktspace(&vertices, &[0, 1], 0).is_none());
+        assert!(generate_tangents_mikktspace(&vertices, &[], 0).is_none());
+        assert!(generate_tangents_mikktspace(&vertices, &[0, 1, 2, 3], 0).is_none());
     }
 }

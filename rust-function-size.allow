@@ -10,13 +10,10 @@ crates/gui/src/gui.rs | try_build_ui | 143 | the GTK window, its widgets and the
 crates/gui/src/gui_wgpu/renderer.rs | submit_frame | 95 | one egui frame from input to present; clippy counts it under 80 without comments, the hub counts them
 crates/burn_demos/src/main.rs | main | 93 | the demo subcommand dispatch; #[expect] in the source
 crates/burn_demos/src/onnx_detector.rs | onnx_detector_demo | 87 | one detector run from model to output shape; clippy counts it under 80 without comments, the hub counts them
-crates/webgpu_renderer/src/asset/gltf_loader.rs | build_scene | 143 | one glTF document into the scene graph; #[expect] in the source
-crates/webgpu_renderer/src/asset/gltf_loader.rs | load_primitive | 236 | one glTF primitive, every attribute and its fallbacks; #[expect] in the source
-crates/webgpu_renderer/src/asset/gltf_loader.rs | generate_tangents_mikktspace | 84 | MikkTSpace's callbacks in one place; a row only: clippy counts it under 80, or it is outside the crate root's lint
 crates/webgpu_renderer/src/asset/hdr.rs | every_malformed_input_is_a_typed_error_not_a_panic | 108 | one table of malformed HDR files; a row only: clippy counts it under 80, or it is outside the crate root's lint
 crates/webgpu_renderer/src/asset/obj_to_gltf.rs | parse_mtl | 103 | the MTL keywords in one match; #[expect] in the source
 crates/webgpu_renderer/src/asset/obj_to_gltf.rs | parse_obj_with_materials | 171 | the OBJ keywords in one match; #[expect] in the source
-crates/webgpu_renderer/src/asset/obj_to_gltf.rs | to_gltf | 285 | one OBJ model into a glTF document; #[expect] in the source
+crates/webgpu_renderer/src/asset/obj_to_gltf.rs | to_gltf | 281 | one OBJ model into a glTF document; #[expect] in the source
 crates/webgpu_renderer/src/render/gpu_occlusion.rs | cull | 94 | the occlusion pass and its readback; a row only: clippy counts it under 80, or it is outside the crate root's lint
 crates/webgpu_renderer/src/render/ibl.rs | bake | 109 | the IBL bake's three passes; #[expect] in the source
 crates/webgpu_renderer/src/scene/lod.rs | simplify_primitive | 111 | one LOD level of a primitive; #[expect] in the source

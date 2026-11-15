@@ -40,9 +40,6 @@ use sky::SkyResources;
 use targets::{DepthResolve, RenderTargets};
 use upload::{MaterialDefaults, MaterialTextureCache};
 
-/// Upper bound on joints per skin (storage buffer is sized to the skin).
-pub const MAX_JOINTS: usize = 256;
-
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -329,6 +326,7 @@ impl ForwardRenderer {
             self.primitives.push(primitive);
         }
         self.uploaded_texture_count = textures.uploaded;
+        self.settle_uploaded_pose(scene, upload_node_world);
     }
 
     /// Renders the scene HDR->tonemap into `output_view`, which must be `width` x `height`.
@@ -469,8 +467,10 @@ impl ForwardRenderer {
         !self.animation.animations.is_empty()
     }
 
-    /// Samples every animation at `time` (s) and retargets transforms, bounds and blend centres.
-    pub fn set_animation_time(&mut self, time: f32) {
+    /// Samples the active clip at `time` (s) and retargets transforms, bounds and blend centres.
+    /// Takes f64 too: f32 seconds step by 1/64 s after 36 hours, which stutters a long-running app.
+    pub fn set_animation_time(&mut self, time: impl Into<f64>) {
+        let time = time.into();
         if self.animation.animations.is_empty() || self.animation.nodes.is_empty() {
             return;
         }
@@ -480,6 +480,7 @@ impl ForwardRenderer {
         let world = CpuScene::compute_world_transforms(&self.animation.nodes);
         self.animation.pending_joint_world = Some(world.clone());
         self.retarget_primitives(&world);
+        self.retarget_lights(&world);
         self.recompute_scene_bounds();
     }
 

@@ -1572,6 +1572,7 @@ fn a_hot_spot_past_the_half_float_range_saturates_instead_of_turning_black() {
         range: 0.0,
         position: [0.0, 0.02, 0.0],
         direction: [0.0, -1.0, 0.0],
+        node: None,
     }];
     let mut glowing = plane_only;
     glowing.primitives[0].material.emissive_factor = [f32::INFINITY; 3];

@@ -34,8 +34,9 @@ pub(crate) fn create_sampler(device: &wgpu::Device, desc: &CpuSampler) -> wgpu::
 }
 
 /// Anisotropy for a glTF sampler; wgpu rejects anisotropy above 1 unless every filter is Linear.
+/// A mipmap-less filter gets none either: glTF's LINEAR is plain bilinear on level 0.
 pub(crate) fn anisotropy_for(desc: &CpuSampler) -> u16 {
-    if desc.mag_nearest || desc.min_nearest || desc.mip_nearest {
+    if desc.mag_nearest || desc.min_nearest || desc.mip_nearest || !desc.mipmaps {
         1
     } else {
         16
@@ -124,7 +125,7 @@ pub(crate) fn create_compressed_texture(
     compressed: &CompressedTexture,
     srgb: bool,
     label: Option<&str>,
-) -> wgpu::TextureView {
+) -> wgpu::Texture {
     if let Some(declared) = compressed.declared_srgb {
         if declared != srgb {
             log::warn!(
@@ -137,7 +138,7 @@ pub(crate) fn create_compressed_texture(
         }
     }
     let format = compressed_wgpu_format(compressed.format, srgb);
-    // `compressed.mips` is trusted: `ktx2_loader::validate_mip_chain` already checked its sizes.
+    // `compressed_upload_problem` already checked the base and every level's byte count.
     let block_bytes = compressed.format.block_bytes();
     let gpu_texture = create_2d_texture(
         &gpu.device,
@@ -167,28 +168,86 @@ pub(crate) fn create_compressed_texture(
                 bytes_per_row: Some(blocks_wide * block_bytes),
                 rows_per_image: Some(blocks_high),
             },
+            // wgpu copies whole blocks: a 2x2 or 1x1 level is one block, 4x4 physical texels.
             wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: blocks_wide * 4,
+                height: blocks_high * 4,
                 depth_or_array_layers: 1,
             },
         );
     }
-    gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
+    gpu_texture
 }
 
+/// Why a BCn payload cannot become a valid wgpu texture, or `None` when it can.
+fn compressed_upload_problem(
+    gpu: &GpuContext,
+    texture: &CpuTexture,
+    compressed: &CompressedTexture,
+) -> Option<String> {
+    if !gpu.supports_bc {
+        return Some("the adapter has no BC support".to_string());
+    }
+    let max_side = gpu.device.limits().max_texture_dimension_2d;
+    if texture.width > max_side || texture.height > max_side {
+        return Some(format!(
+            "its {}x{} base exceeds the device's {max_side}-texel side",
+            texture.width, texture.height
+        ));
+    }
+    // WebGPU requires a block-compressed texture's base to be whole 4x4 blocks.
+    if !texture.width.is_multiple_of(4) || !texture.height.is_multiple_of(4) {
+        return Some(format!(
+            "its {}x{} base is not whole 4x4 blocks",
+            texture.width, texture.height
+        ));
+    }
+    crate::asset::ktx2_loader::validate_mip_chain(
+        texture.width,
+        texture.height,
+        compressed.format,
+        &compressed.mips,
+    )
+    .err()
+    .map(|err| err.to_string())
+}
+
+/// The texture with its whole mip chain behind the default view.
 pub(crate) fn create_material_texture(
     gpu: &GpuContext,
     texture: &CpuTexture,
     srgb: bool,
     label: Option<&str>,
 ) -> wgpu::TextureView {
+    upload_material_texture(gpu, texture, srgb, label)
+        .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// A view of a material texture for `sampler`: glTF's mipmap-less filters see level 0 alone.
+/// A one-level view, not a zero LOD clamp: Vulkan treats a clamped LOD of 0 as magnified.
+pub(crate) fn material_view(texture: &wgpu::Texture, sampler: &CpuSampler) -> wgpu::TextureView {
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        mip_level_count: if sampler.mipmaps { None } else { Some(1) },
+        ..Default::default()
+    })
+}
+
+/// Uploads a material texture with its mip chain; a BCn payload wgpu would reject becomes white.
+pub(crate) fn upload_material_texture(
+    gpu: &GpuContext,
+    texture: &CpuTexture,
+    srgb: bool,
+    label: Option<&str>,
+) -> wgpu::Texture {
     if let Some(compressed) = texture.compressed.as_ref() {
-        if gpu.supports_bc {
+        let Some(problem) = compressed_upload_problem(gpu, texture, compressed) else {
             return create_compressed_texture(gpu, texture, compressed, srgb, label);
-        }
-        log::warn!("block-compressed texture but no BC support; falling back to white");
-        return create_material_texture(
+        };
+        log::warn!(
+            "{}: block-compressed texture falls back to white: {problem}",
+            label.unwrap_or("<unlabeled texture>")
+        );
+        return upload_material_texture(
             gpu,
             &CpuTexture {
                 width: 1,
@@ -200,7 +259,34 @@ pub(crate) fn create_material_texture(
             label,
         );
     }
+    create_rgba8_texture(gpu, texture, srgb, label)
+}
+
+/// A CPU mip chain whose first level within the device's side limit becomes the base.
+fn create_rgba8_texture(
+    gpu: &GpuContext,
+    texture: &CpuTexture,
+    srgb: bool,
+    label: Option<&str>,
+) -> wgpu::Texture {
     let mips = generate_mips(texture, srgb);
+    // A side over the limit fails texture creation, a panic on native; the chain holds the downsampled image.
+    let max_side = gpu.device.limits().max_texture_dimension_2d;
+    let first = mips
+        .iter()
+        .position(|(w, h, _)| *w <= max_side && *h <= max_side)
+        .unwrap_or(mips.len() - 1);
+    if first > 0 {
+        log::warn!(
+            "{}: {}x{} exceeds the device's {max_side}-texel side; uploaded at {}x{}",
+            label.unwrap_or("<unlabeled texture>"),
+            texture.width,
+            texture.height,
+            mips[first].0,
+            mips[first].1
+        );
+    }
+    let mips = &mips[first..];
     let format = if srgb {
         wgpu::TextureFormat::Rgba8UnormSrgb
     } else {
@@ -209,8 +295,8 @@ pub(crate) fn create_material_texture(
     let gpu_texture = create_2d_texture(
         &gpu.device,
         label,
-        texture.width,
-        texture.height,
+        mips[0].0,
+        mips[0].1,
         format,
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         mips.len() as u32,
@@ -237,7 +323,7 @@ pub(crate) fn create_material_texture(
             },
         );
     }
-    gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
+    gpu_texture
 }
 
 pub(crate) fn create_depth_texture(
@@ -363,6 +449,13 @@ mod tests {
                 "mip",
                 CpuSampler {
                     mip_nearest: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "mipmap-less",
+                CpuSampler {
+                    mipmaps: false,
                     ..Default::default()
                 },
             ),

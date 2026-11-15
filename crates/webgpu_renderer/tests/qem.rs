@@ -383,3 +383,84 @@ fn the_chain_builder_routes_to_the_requested_simplifier() {
         "the two simplifiers produced the same triangle count - is the argument wired up?"
     );
 }
+
+/// (normal, u axis, v axis) per cube face; u x v = normal, so every face winds outward.
+const CUBE_FACES: [(Vec3, Vec3, Vec3); 6] = [
+    (Vec3::X, Vec3::Y, Vec3::Z),
+    (Vec3::NEG_X, Vec3::Z, Vec3::Y),
+    (Vec3::Y, Vec3::Z, Vec3::X),
+    (Vec3::NEG_Y, Vec3::X, Vec3::Z),
+    (Vec3::Z, Vec3::X, Vec3::Y),
+    (Vec3::NEG_Z, Vec3::Y, Vec3::X),
+];
+
+/// The UV a cube face with this normal maps `p` to: what that side of a seam stores.
+fn planar_uv(face_normal: Vec3, p: Vec3) -> [f32; 2] {
+    let &(normal, u_axis, v_axis) = CUBE_FACES
+        .iter()
+        .max_by(|a, b| a.0.dot(face_normal).total_cmp(&b.0.dot(face_normal)))
+        .expect("six faces");
+    let origin = normal * 0.5 - (u_axis + v_axis) * 0.5;
+    [(p - origin).dot(u_axis), (p - origin).dot(v_axis)]
+}
+
+/// A unit cube of six `n` x `n` grids, each face with its own vertices, normal and planar UV.
+fn faceted_cube(n: usize) -> CpuPrimitive {
+    let (mut vertices, mut indices) = (Vec::new(), Vec::new());
+    for (normal, u_axis, v_axis) in CUBE_FACES {
+        let base = vertices.len() as u32;
+        for y in 0..=n {
+            for x in 0..=n {
+                let (u, v) = (x as f32 / n as f32, y as f32 / n as f32);
+                let p = normal * 0.5 + u_axis * (u - 0.5) + v_axis * (v - 0.5);
+                let mut vertex = vertex(p.to_array(), normal.to_array());
+                vertex.uv = [u, v];
+                vertices.push(vertex);
+            }
+        }
+        let row = (n + 1) as u32;
+        for y in 0..n as u32 {
+            for x in 0..n as u32 {
+                let i = base + y * row + x;
+                indices.extend_from_slice(&[i, i + 1, i + row + 1, i, i + row + 1, i + row]);
+            }
+        }
+    }
+    primitive(vertices, indices)
+}
+
+/// Welding kept the first coincident vertex's attributes, so faces along a seam took a neighbour's
+/// normal and UV before any collapse. Hard edges and UV seams must survive decimation intact.
+#[test]
+fn hard_edges_and_uv_seams_keep_each_sides_attributes() {
+    let full = faceted_cube(4);
+    let out = simplify_primitive_qem(&full, 0.25);
+    assert_well_formed(&out);
+    assert!(
+        triangle_count(&out) <= triangle_count(&full) * 5 / 16,
+        "the cube must decimate: {} of {} triangles left",
+        triangle_count(&out),
+        triangle_count(&full)
+    );
+    for tri in out.indices.as_chunks::<3>().0 {
+        let p = |i: u32| Vec3::from_array(out.vertices[i as usize].position);
+        let face = (p(tri[1]) - p(tri[0]))
+            .cross(p(tri[2]) - p(tri[0]))
+            .normalize();
+        for &corner in tri {
+            let v = &out.vertices[corner as usize];
+            let normal = Vec3::from_array(v.normal);
+            assert!(
+                normal.dot(face) > 0.99,
+                "corner normal {normal:?} is not its face's {face:?}"
+            );
+            let expected = planar_uv(face, p(corner));
+            assert!(
+                (v.uv[0] - expected[0]).abs() < 1e-4 && (v.uv[1] - expected[1]).abs() < 1e-4,
+                "corner at {:?} carries uv {:?}, its face maps it to {expected:?}",
+                v.position,
+                v.uv
+            );
+        }
+    }
+}

@@ -646,6 +646,9 @@ fn draw_fullscreen(
 }
 
 fn upload_equirect(gpu: &GpuContext, image: &EquirectImage) -> wgpu::TextureView {
+    // A side over the device's limit fails texture creation; the bake only fills small cube faces.
+    let fitted = fit_equirect(image, gpu.device.limits().max_texture_dimension_2d);
+    let image = fitted.as_ref().unwrap_or(image);
     let texture = create_2d_texture(
         &gpu.device,
         Some("ibl_equirect_source"),
@@ -676,6 +679,42 @@ fn upload_equirect(gpu: &GpuContext, image: &EquirectImage) -> wgpu::TextureView
         },
     );
     texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// `image` box-halved until both sides fit `max_side`, or `None` when it already fits.
+fn fit_equirect(image: &EquirectImage, max_side: u32) -> Option<EquirectImage> {
+    if image.width <= max_side && image.height <= max_side {
+        return None;
+    }
+    let mut fitted = halve_equirect(image);
+    while fitted.width > max_side || fitted.height > max_side {
+        fitted = halve_equirect(&fitted);
+    }
+    Some(fitted)
+}
+
+/// One 2x2 box-filter step; an odd trailing row or column is dropped, a side of one repeats.
+fn halve_equirect(image: &EquirectImage) -> EquirectImage {
+    let (width, height) = ((image.width / 2).max(1), (image.height / 2).max(1));
+    let texel = |x: u32, y: u32| {
+        let i = ((y.min(image.height - 1) * image.width + x.min(image.width - 1)) * 4) as usize;
+        glam::Vec4::from_slice(&image.rgba32f[i..i + 4])
+    };
+    let mut rgba32f = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let sum = texel(2 * x, 2 * y)
+                + texel(2 * x + 1, 2 * y)
+                + texel(2 * x, 2 * y + 1)
+                + texel(2 * x + 1, 2 * y + 1);
+            rgba32f.extend_from_slice(&(sum * 0.25).to_array());
+        }
+    }
+    EquirectImage {
+        width,
+        height,
+        rgba32f,
+    }
 }
 
 fn read_cube_face_rgb(

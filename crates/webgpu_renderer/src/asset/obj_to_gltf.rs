@@ -570,11 +570,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         }
     }
 
-    let images_json = image_uris
-        .iter()
-        .map(|uri| format!(r#"{{ "uri": "{}" }}"#, json_escape(uri)))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let images_json = images_json(&image_uris);
     let textures_json = (0..image_uris.len())
         .map(|index| format!(r#"{{ "source": {index}, "sampler": 0 }}"#))
         .collect::<Vec<_>>()
@@ -789,6 +785,7 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
 
     let mesh = parse_obj_with_materials(&source, materials)
         .with_context(|| format!("parsing {}", obj_path.display()))?;
+    check_texture_formats(&mesh)?;
 
     let bin_name = gltf_path
         .file_stem()
@@ -823,6 +820,53 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     }
 
     Ok(mesh)
+}
+
+/// The `images` entries; the loader matches extensions case-sensitively, so `Wall.JPG` names its type.
+fn images_json(image_uris: &[String]) -> String {
+    image_uris
+        .iter()
+        .map(|uri| match image_mime_type(uri) {
+            Some(mime) => format!(
+                r#"{{ "uri": "{}", "mimeType": "{mime}" }}"#,
+                json_escape(uri)
+            ),
+            None => format!(r#"{{ "uri": "{}" }}"#, json_escape(uri)),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The glTF `mimeType` for a texture file name, matched case-insensitively; `None` for formats glTF lacks.
+fn image_mime_type(uri: &str) -> Option<&'static str> {
+    let extension = Path::new(uri).extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        _ => None,
+    }
+}
+
+/// Refuses a texture glTF cannot carry: the converted file would fail to load as a whole.
+fn check_texture_formats(mesh: &ObjMesh) -> Result<()> {
+    for material in &mesh.materials {
+        for uri in [
+            &material.base_color_texture,
+            &material.normal_texture,
+            &material.emissive_texture,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if image_mime_type(uri).is_none() {
+                bail!(
+                    "material '{}' uses texture '{uri}', which is neither PNG nor JPEG, the only images glTF carries",
+                    material.name
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Copies the texture named by `uri` (as written in the .mtl) beside `gltf_path`.

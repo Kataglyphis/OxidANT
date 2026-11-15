@@ -115,6 +115,11 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
 
     let width = header.pixel_width.max(1);
     let height = header.pixel_height.max(1);
+    // WebGPU creates block-compressed textures only from whole 4x4 blocks; an error lets callers fall back.
+    anyhow::ensure!(
+        width.is_multiple_of(4) && height.is_multiple_of(4),
+        "KTX2 base {width}x{height} is not whole 4x4 blocks, which WebGPU requires for BCn"
+    );
     validate_mip_chain(width, height, format, &mips)
         .context("KTX2 mip chain does not match the declared dimensions")?;
 

@@ -7,20 +7,30 @@ use crate::scene::Interpolation;
 /// Returns `(i0, i1, frac, td)`: bracketing keyframes, lerp fraction in `[0,1]`, segment duration.
 /// `td` is the unclamped span CUBICSPLINE tangents scale by; never substitute `frac`'s clamped one.
 pub(crate) fn keyframe_lerp_indices(times: &[f32], t: f32) -> (usize, usize, f32, f32) {
-    if times.is_empty() {
+    let (Some(&first), Some(&last_time)) = (times.first(), times.last()) else {
+        return (0, 0, 0.0, 0.0);
+    };
+    // NaN fails both end tests, which left the search at 0 and underflowed `- 1`.
+    if t.is_nan() || first.is_nan() || t <= first {
         return (0, 0, 0.0, 0.0);
     }
-    if t <= times[0] {
-        return (0, 0, 0.0, 0.0);
-    }
-    if t >= *times.last().unwrap() {
-        let last = times.len() - 1;
+    let last = times.len() - 1;
+    if last_time.is_nan() || t >= last_time {
         return (last, last, 0.0, 0.0);
     }
-    // glTF requires sorted `times`, which makes the binary search valid.
-    let i = times.partition_point(|&x| x < t) - 1;
+    // glTF requires sorted `times`, which makes the binary search valid; the clamps keep bad data in range.
+    let i = times
+        .partition_point(|&x| x < t)
+        .saturating_sub(1)
+        .min(last - 1);
     let span = times[i + 1] - times[i];
-    (i, i + 1, (t - times[i]) / span.max(1e-6), span)
+    let frac = (t - times[i]) / span.max(1e-6);
+    let frac = if frac.is_finite() {
+        frac.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (i, i + 1, frac, span)
 }
 
 /// glTF CUBICSPLINE Hermite weights for (v0, out0, v1, in1) at `t`, tangents scaled by `td`.
@@ -302,6 +312,28 @@ mod tests {
         let (i0, i1, _frac, dt) = keyframe_lerp_indices(&times, 10.0);
         assert_eq!((i0, i1), (3, 3));
         assert_eq!(dt, 0.0);
+    }
+
+    #[test]
+    fn nan_times_or_a_nan_time_never_panic() {
+        // Both end tests fail for NaN, which left the search at 0 and underflowed.
+        for (times, t) in [
+            (&[f32::NAN][..], 0.5),
+            (&[f32::NAN, 1.0][..], 0.5),
+            (&[0.0, f32::NAN, 2.0][..], 1.0),
+            (&[0.0, 1.0][..], f32::NAN),
+            (&[0.0, 1.0][..], f32::INFINITY),
+        ] {
+            let (i0, i1, frac, _dt) = keyframe_lerp_indices(times, t);
+            assert!(
+                i0 < times.len() && i1 < times.len(),
+                "indices out of range for {times:?} at {t}"
+            );
+            assert!(
+                (0.0..=1.0).contains(&frac),
+                "frac {frac} for {times:?} at {t}"
+            );
+        }
     }
 
     #[test]

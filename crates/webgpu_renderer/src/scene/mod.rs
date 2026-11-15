@@ -69,13 +69,29 @@ impl InstanceRaw {
 }
 
 /// Texture filtering/wrapping requested by the glTF sampler.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CpuSampler {
     pub mag_nearest: bool,
     pub min_nearest: bool,
     pub mip_nearest: bool,
+    /// False for glTF's NEAREST and LINEAR min filters, which sample level 0 only.
+    pub mipmaps: bool,
     pub wrap_u: CpuWrap,
     pub wrap_v: CpuWrap,
+}
+
+impl Default for CpuSampler {
+    /// Trilinear, repeating: glTF's behaviour for a texture without a sampler.
+    fn default() -> Self {
+        Self {
+            mag_nearest: false,
+            min_nearest: false,
+            mip_nearest: false,
+            mipmaps: true,
+            wrap_u: CpuWrap::Repeat,
+            wrap_v: CpuWrap::Repeat,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
@@ -218,6 +234,19 @@ pub struct CpuLight {
     pub position: [f32; 3],
     /// Direction the light POINTS (spot/directional).
     pub direction: [f32; 3],
+    /// Index into `CpuScene::nodes` whose world transform poses the light; `None` keeps it fixed.
+    pub node: Option<usize>,
+}
+
+impl CpuLight {
+    /// Places the light at `world`'s origin, pointing down its -Z axis, as glTF poses a light by its node.
+    pub fn pose_at(&mut self, world: Mat4) {
+        self.position = world.transform_point3(Vec3::ZERO).to_array();
+        self.direction = world
+            .transform_vector3(Vec3::NEG_Z)
+            .normalize_or_zero()
+            .to_array();
+    }
 }
 
 /// A scene-graph node with its local TRS (animation targets these).
@@ -419,60 +448,61 @@ impl CpuScene {
     pub fn compute_world_transforms(nodes: &[CpuNode]) -> Vec<Mat4> {
         let mut world = vec![Mat4::IDENTITY; nodes.len()];
         let mut done = vec![false; nodes.len()];
-        // `visiting` breaks parent cycles, which would otherwise overflow the stack (an abort).
-        let mut visiting = vec![false; nodes.len()];
-        fn resolve(
-            i: usize,
-            nodes: &[CpuNode],
-            world: &mut Vec<Mat4>,
-            done: &mut Vec<bool>,
-            visiting: &mut Vec<bool>,
-        ) -> Mat4 {
-            if done[i] {
-                return world[i];
+        // Iterative: recursion overflowed the stack on a deep chain, and aborts are uncatchable.
+        let mut on_chain = vec![false; nodes.len()];
+        let mut chain = Vec::new();
+        for start in 0..nodes.len() {
+            // Up to a resolved ancestor or a root; a parent cycle ends at its first repeat.
+            let mut parent_world = Mat4::IDENTITY;
+            let mut cursor = Some(start);
+            while let Some(i) = cursor.filter(|&i| i < nodes.len()) {
+                if done[i] {
+                    parent_world = world[i];
+                    break;
+                }
+                if on_chain[i] {
+                    break;
+                }
+                on_chain[i] = true;
+                chain.push(i);
+                cursor = nodes[i].parent;
             }
-            if visiting[i] {
-                return Mat4::IDENTITY;
-            }
-            visiting[i] = true;
-            // Non-finite or zero-scale inputs would NaN every descendant through the product.
-            let translation = if nodes[i].translation.is_finite() {
-                nodes[i].translation
-            } else {
-                Vec3::ZERO
-            };
-            let scale = if nodes[i].scale.is_finite() && nodes[i].scale != Vec3::ZERO {
-                nodes[i].scale
-            } else {
-                Vec3::ONE
-            };
-            let rotation = if nodes[i].rotation.is_finite() {
-                nodes[i].rotation
-            } else {
-                Quat::IDENTITY
-            };
-            let local = Mat4::from_scale_rotation_translation(scale, rotation, translation);
-            if !local.is_finite() {
-                // Finite inputs can still yield NaN through a degenerate rotation.
-                visiting[i] = false;
-                world[i] = Mat4::IDENTITY;
+            while let Some(i) = chain.pop() {
+                on_chain[i] = false;
+                let local = local_transform(&nodes[i]);
+                // Finite inputs can still yield NaN through a degenerate rotation; that node restarts the chain.
+                parent_world = if local.is_finite() {
+                    parent_world * local
+                } else {
+                    Mat4::IDENTITY
+                };
+                world[i] = parent_world;
                 done[i] = true;
-                return Mat4::IDENTITY;
             }
-            let m = match nodes[i].parent {
-                Some(p) if p < nodes.len() => resolve(p, nodes, world, done, visiting) * local,
-                _ => local,
-            };
-            visiting[i] = false;
-            world[i] = m;
-            done[i] = true;
-            m
-        }
-        for i in 0..nodes.len() {
-            resolve(i, nodes, &mut world, &mut done, &mut visiting);
         }
         world
     }
+}
+
+/// A node's local matrix; non-finite inputs would NaN every descendant through the product.
+/// Zero scale stays: it is how exporters hide a node, and the singular product is still finite.
+fn local_transform(node: &CpuNode) -> Mat4 {
+    let translation = if node.translation.is_finite() {
+        node.translation
+    } else {
+        Vec3::ZERO
+    };
+    let scale = if node.scale.is_finite() {
+        node.scale
+    } else {
+        Vec3::ONE
+    };
+    let rotation = if node.rotation.is_finite() {
+        node.rotation
+    } else {
+        Quat::IDENTITY
+    };
+    Mat4::from_scale_rotation_translation(scale, rotation, translation)
 }
 
 impl CpuScene {
@@ -575,6 +605,23 @@ mod tests {
     }
 
     #[test]
+    fn a_deep_parent_chain_resolves_without_overflowing_the_stack() {
+        // Leaf first, root last: resolving node 0 walks all levels, one stack frame each if recursive.
+        const DEPTH: usize = 100_000;
+        let nodes: Vec<CpuNode> = (0..DEPTH)
+            .map(|i| CpuNode {
+                parent: (i + 1 < DEPTH).then_some(i + 1),
+                translation: Vec3::new(0.0, 1.0, 0.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            })
+            .collect();
+        let world = CpuScene::compute_world_transforms(&nodes);
+        let leaf = world[0].transform_point3(Vec3::ZERO);
+        assert_eq!(leaf.y, DEPTH as f32, "every level adds its translation");
+    }
+
+    #[test]
     fn an_out_of_range_parent_index_does_not_panic() {
         let nodes = vec![CpuNode {
             parent: Some(99),
@@ -587,24 +634,33 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_scale_node_produces_a_finite_identity_transform() {
-        // Blender's Hide sets scale 0; the degenerate matrix must not NaN the scene graph.
-        let nodes = vec![CpuNode {
-            parent: None,
-            translation: Vec3::new(1.0, 2.0, 3.0),
-            rotation: Quat::IDENTITY,
-            scale: Vec3::ZERO,
-        }];
+    fn a_zero_scale_node_stays_hidden_and_finite() {
+        // Blender's Hide sets scale 0; the degenerate matrix must stay finite and keep its children hidden.
+        let nodes = vec![
+            CpuNode {
+                parent: None,
+                translation: Vec3::new(1.0, 2.0, 3.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ZERO,
+            },
+            node(Some(0), Vec3::new(5.0, 0.0, 0.0)),
+        ];
         let world = CpuScene::compute_world_transforms(&nodes);
-        assert!(
-            world[0].is_finite(),
-            "zero-scale transform must be finite, got {:?}",
-            world[0]
+        for (i, m) in world.iter().enumerate() {
+            assert!(m.is_finite(), "node {i} must stay finite, got {m:?}");
+        }
+        assert_eq!(
+            world[0].x_axis.length(),
+            0.0,
+            "a zero scale must not become 1"
         );
-        // The node is treated as scale=1 since zero scale is degenerate.
-        assert!(
-            (world[0].x_axis.length() - 1.0).abs() < 1e-5,
-            "axis length should be identity-like"
+        // The child collapses onto the hidden parent's origin: X and the origin land on one point.
+        let child_origin = world[1].transform_point3(Vec3::ZERO);
+        let child_x = world[1].transform_point3(Vec3::X);
+        assert_eq!(child_origin, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(
+            child_x, child_origin,
+            "a hidden parent's child must collapse too"
         );
     }
 

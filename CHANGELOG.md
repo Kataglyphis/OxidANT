@@ -142,6 +142,87 @@ on 2026-09-15, verbatim. Nothing was deleted.
   now has every texel tested (early out at the first one at or behind the box), and a larger rect is drawn. Test:
   `a_box_seen_through_a_two_pixel_slit_is_never_gpu_culled`.
 
+### Fixed (2026-11-15, the renderer's scenes and assets)
+- **A skinned mesh in a scene without animations drew in raw mesh space**: its joint buffer stayed identity,
+  because only `set_animation_time` posed joints and it returns early without clips. `upload_scene` now poses the
+  joints from the file's node transforms, and its scene bounds come from the skin-widened boxes, so the cascades
+  fit the posed mesh from the first frame.
+- **Every mipmapped KTX2 BCn texture failed wgpu validation** (a panic on native): levels below 4x4 were copied
+  at their logical size, and wgpu copies whole blocks. They copy their block-rounded size now. A base that is not
+  whole 4x4 blocks (6x6, 1000x750), which WebGPU cannot create, is refused by `load_ktx2`, and a payload built in
+  code that wgpu would reject falls back to white with a warning. `tests/ktx2.rs` uploads through a material now;
+  its old upload test drew a scene without primitives, so the texture was never created.
+- **A glTF primitive whose triangles were all dropped panicked the first frame** (`buffer slice can not be
+  empty`, also on the web demo's drag-and-drop): every index out of range, or a strip of two indices, left an
+  empty index buffer. The loader skips such a primitive with a warning, and `upload_scene` never creates an empty
+  vertex or index buffer, so a scene built in code with an empty primitive draws nothing for it instead.
+- **A glTF node cycle overflowed the stack** (an abort natively, a dead canvas on the web): the loader recursed
+  into children with no visited set. It walks the node trees with an explicit stack and visits each node once,
+  warning on a second visit; `CpuScene::compute_world_transforms` resolves parents iteratively too, so a
+  50 000-level chain, valid glTF, no longer overflows either.
+- **A NaN keyframe time panicked every animation frame**: both end tests of the keyframe search fail for NaN,
+  which left the binary search at 0 and underflowed. The loader drops a channel whose times are empty, not finite
+  or decreasing, whose values are not finite, or whose value count does not fit its keys, and the search pins a
+  NaN time or key to the first key.
+- **A glTF texture or an equirect over 8192 px a side panicked at upload** on native (nothing rendered on the
+  web): the device runs at WebGPU's default limits. A material texture now uploads from the first level of its
+  CPU mip chain within `max_texture_dimension_2d`, and the IBL bake box-halves an equirect until it fits; a BCn
+  payload over the limit falls back to white.
+- **`decode_hdr` let a 40-byte header allocate a 512 MiB scanline**, and on wasm32 an image over 2^26 pixels
+  panicked with `capacity overflow` instead of returning an error. The width has a cap of its own (65 536), the
+  pixel cap is 8192 x 4096 on 32-bit targets (a compile-time check keeps twice the image allocatable), and the
+  output grows with `try_reserve`, so a failed allocation is `HdrError::BadDimensions`.
+- **A node hidden with scale 0 reappeared at full size once animation ran**: `compute_world_transforms` turned an
+  all-zero scale into 1. The singular matrix is finite, the normal matrix already guards its inverse, and zero
+  scale is how exporters hide a node, so it stays; only non-finite inputs are replaced.
+- **An indexed glTF without NORMAL was not flat-shaded**: each shared vertex kept the normal of its last face (24
+  of 36 corners on an 8-vertex cube). Such a primitive is un-indexed first, one vertex per corner with its morph
+  deltas, as glTF's flat normals need. A zero-area face no longer overwrites a corner's normal with zero, and a
+  zero or non-finite normal or tangent, from a degenerate face or from the file, is repaired (face normal or +Y, a
+  perpendicular tangent, `w` a sign), since the shader's `normalize` turned it into NaN shading.
+- **Generated tangents always followed TEXCOORD_0**, so a normal map on TEXCOORD_1 was lit along the wrong axes.
+  The Lengyel and MikkTSpace generators read the UV set the normal texture samples, as glTF specifies.
+  `generate_tangents_mikktspace`'s callbacks moved out of its body, which leaves its `rust-function-size.allow` row.
+- **With `KATAGLYPHIS_MIKKTSPACE_TANGENTS`, morph deltas landed on the wrong vertices**: MikkTSpace renumbers
+  vertices in first-use order and splits them at seams, and the deltas kept the file's numbering. It returns each
+  new vertex's source, and every target's deltas are gathered through it, split copies included.
+- **Skins over 256 joints were truncated silently**, so vertices on joint 256 and up read a clamped or zero matrix
+  and their bounds ignored those joints. `MAX_JOINTS` is gone: the joint buffer holds the whole skin, within the
+  device's storage-binding limit. The loader drops influences on joints the node's skin does not have, and every
+  influence of a weighted mesh on a node without a skin, which the shader skinned with no palette and drew at the
+  mesh origin instead of the node transform.
+- **Every animation clip played at once**, each clip overwriting the ones before it per channel (Fox.glb always
+  showed Run). `set_animation_time` samples one clip, the first by default; `animation_names`,
+  `active_animation` and `set_active_animation` pick it, and a switch returns nodes and morph weights to the
+  file's pose first.
+- **Animation stuttered after a day or two of uptime**: `set_animation_time` took f32 seconds and wrapped them in
+  f32, which steps by 1/64 s after 36 hours. It takes anything `Into<f64>` now (an f32 still compiles) and wraps
+  each clip in f64 before narrowing. `StudioApp::advance` still converts its seconds to f32 (`src/app/frame.rs`).
+- **Punctual lights on animated nodes never moved**: a light's pose was baked at load. `CpuLight` carries its node
+  (`node`, `None` for a fixed light), and `set_animation_time` re-poses every such light from its node's world
+  transform (`CpuLight::pose_at`, the loader's rule: the node's origin, pointing down its -Z) and repacks them.
+- **Morph culling bounds assumed weights in [0, 1]**, so a default weight of 2 or a CUBICSPLINE overshoot drew
+  geometry the frustum test, the shadow casters and the cascade fit did not see; `renderer-bounds-invariant.md`
+  called the box conservative outside that range, which it was not. Each target now covers `min(0, w)` to
+  `max(1, w)` of its current weight, and an animation frame that moves the weights rebuilds the box.
+- **QEM LODs broke normals and UVs at every hard edge and seam**: the weld merged coincident vertices and kept the
+  first one's attributes, so 24 of `cube.gltf`'s 36 corners took a neighbouring face's normal and UV before any
+  collapse. Welding is topology only now: each face corner keeps its own attribute set, a collapse blends the sets
+  its removed faces pair across the edge and refuses one that would need two at a corner, and seam edges get the
+  same constraint planes as open rims.
+- **glTF's NEAREST and LINEAR min filters still sampled the generated mip chain**, so minified pixel art blurred
+  into box-filtered averages and LINEAR got trilinear 16x anisotropic filtering. `CpuSampler::mipmaps` is false
+  for them, and such a slot samples a one-level view of the texture (a zero LOD clamp would not do: Vulkan counts
+  a clamped LOD of 0 as magnified and switches to the mag filter); the upload stays shared.
+- **An image URI with an uppercase extension, or the common wrong MIME type `image/jpg`, failed the whole glTF
+  load**: the importer matches `png`, `jpg` and `jpeg` exactly. The renderer enables `gltf`'s `guess_mime_type`,
+  which decides by the PNG or JPEG bytes. `obj2gltf` writes a `mimeType` for every image and refuses a texture
+  that is neither PNG nor JPEG, which converted fine and then failed to load.
+- **One large wheel event snapped the orbit radius to its minimum**: the zoom factor `1 - amount * zoom_step`
+  reached zero at ten notches (one 300 CSS-px flick at devicePixelRatio 2) and went negative beyond, and zooming
+  in and out by the same amount did not return. It is `(1 - zoom_step)^amount` now. Dividing pixel deltas by the
+  window's scale factor needs the host's DPI and stays with the editor work.
+
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
   on, so every glyph was a box in the renderer's overlay and in `crates/gui`. The renderer embeds the C++ editor's
