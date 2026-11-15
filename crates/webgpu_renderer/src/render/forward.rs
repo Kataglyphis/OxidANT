@@ -29,7 +29,7 @@ use crate::scene::CpuScene;
 
 use animate::SceneAnimation;
 use culling::Culling;
-use environment::{create_ibl_bind_group, IblBinding, IblUniforms};
+use environment::{create_ibl_bind_group, IblBinding};
 use frame::FrameBinding;
 use light_grid::LightResources;
 use main_pass::MainPipelines;
@@ -93,7 +93,7 @@ pub struct ForwardRenderer {
     /// Build and draw per-primitive LOD chains; off by default.
     /// Read only by `upload_scene`, so set it (and `lod_switch_distances`) before uploading.
     pub lod_enabled: bool,
-    /// Multiplier on the environment's radiance; the ambient slider is `light_dir_ambient.w`.
+    /// Multiplier on the environment's radiance, read every frame; `light_dir_ambient.w` is the ambient.
     pub ibl_intensity: f32,
     /// Per-pass GPU timestamps. Inert until [`Self::enable_gpu_timing`].
     gpu_timing: GpuTiming,
@@ -274,15 +274,6 @@ impl ForwardRenderer {
         // The BRDF table never touches the environment, so it is baked once and reused.
         let brdf_lut = ibl.brdf_lut.get_or_insert_with(|| BrdfLut::new(gpu));
         let environment = IblEnvironment::bake(gpu, equirect);
-
-        gpu.queue.write_buffer(
-            &ibl.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&IblUniforms::enabled(
-                environment.max_prefiltered_mip(),
-                self.ibl_intensity,
-            )),
-        );
         ibl.bind_group = create_ibl_bind_group(
             &gpu.device,
             &ibl.layout,
@@ -293,18 +284,15 @@ impl ForwardRenderer {
             &ibl.fallback.sampler,
         );
         ibl.environment = Some(environment);
+        self.write_ibl_uniforms(gpu);
     }
 
     /// Drops the environment and returns to the analytic hemisphere path.
     pub fn clear_environment(&mut self, gpu: &GpuContext) {
         let ibl = &mut self.ibl;
         ibl.environment = None;
-        gpu.queue.write_buffer(
-            &ibl.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&IblUniforms::disabled()),
-        );
         ibl.bind_group = ibl.fallback_bind_group(&gpu.device);
+        self.write_ibl_uniforms(gpu);
     }
 
     /// True when a baked environment is lighting the scene.

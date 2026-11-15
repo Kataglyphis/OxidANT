@@ -83,6 +83,7 @@ impl ForwardRenderer {
         self.rebuild_post_inputs(gpu, width, height);
         self.bind_tonemap_inputs(gpu, tonemap);
         self.write_post_settings(gpu, tonemap);
+        self.write_ibl_uniforms(gpu);
 
         self.update_joint_matrices(gpu);
         self.apply_morph_targets(gpu);

@@ -80,6 +80,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   bright one started 32× underexposed; `HistogramPass::reset_exposure` existed but nothing outside the tests could
   call it. `upload_scene` resets the exposure to `exposure_ev`, and `ForwardRenderer::reset_exposure` does it on
   demand. Test: `uploading_a_scene_resets_the_adapted_exposure` (through the doc-hidden `read_exposure`).
+- **`ibl_intensity` was ignored after `set_environment`**: the bake was the only write of it into the IBL uniforms,
+  unlike every other public knob. They are written every frame now. Test:
+  `ibl_intensity_takes_effect_after_set_environment`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
