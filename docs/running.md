@@ -40,9 +40,11 @@ run it on the packaged exe, the Linux lanes on every package:
 cargo run -p kataglyphis_cli -- onnx-runtime
 ```
 
-The GUI creates its camera pipeline's GStreamer elements by name (`mfvideosrc`,
-falling back to `autovideosrc`, then `videoconvert`, `capsfilter`, the frame sink), so every
-package carries their plugins in `lib/gstreamer-1.0` (Windows: `Build.GStreamerPlugins` in
+The GUI captures through `kataglyphis_media`'s session, as the app's engine does, at the camera's own size: its
+GStreamer elements are created by name (`mfvideosrc`, else `ksvideosrc`, `autovideosrc` or `v4l2src`, then
+`videoconvert`, `videoscale`, the frame sink), and a camera that ends, fails or sends nothing for 10 s ends the
+window with that reason. Every package carries their plugins in `lib/gstreamer-1.0` (Windows:
+`Build.GStreamerPlugins` in
 `scripts/windows/Build-Windows.config.psd1`; Linux: `plugins` in
 `scripts/linux/package-linux.sh`; how: [AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration)).
 The `media-check` subcommand builds that pipeline without starting it, so with no camera
@@ -105,7 +107,8 @@ Optional environment variables:
   `ProviderUnavailable` on arm64; the current `:latest` also lacks oneDNN's `libdnnl.so.3`, so
   `dnnl` is `ProviderUnavailable` on amd64 too (BACKLOG.md).
 - `KATAGLYPHIS_DIRECTML_DEVICE_ID` – optional non-negative Windows DXGI adapter index for DirectML; unset uses ONNX Runtime's default GPU selection
-- `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: `0`, one per core)
+- `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: the usable CPUs but one, 1 to 8, the
+  family's rule since 2026-11-15; `0` keeps ORT's own one per core)
 - `KATAGLYPHIS_ORT_SPIN` – `0` stops idle ONNX Runtime threads spin-waiting for the next run
   (default: ORT's, spinning); for inference at a capped rate, so the cat cam sets it itself
 - `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (default: `stretch`). A model that names

@@ -22,10 +22,23 @@ use crate::notify::Notifier;
 use crate::presence::{best_score, outside, smaller_than, zone_of, Change, Presence};
 use crate::status::Status;
 
-/// A stand-in test pattern runs this long before the camera is probed again.
-const REPROBE_EVERY: Duration = Duration::from_secs(30);
-/// A camera that delivers no frame for this long counts as gone.
-const STALL_AFTER: Duration = Duration::from_secs(10);
+/// How long the worker waits on a camera; a test shortens both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timing {
+    /// A camera that delivers no frame for this long counts as gone.
+    pub stall_after: Duration,
+    /// A stand-in test pattern runs this long before the camera is probed again.
+    pub reprobe_every: Duration,
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Self {
+            stall_after: Duration::from_secs(10),
+            reprobe_every: Duration::from_secs(30),
+        }
+    }
+}
 /// A capture that ran this long was a working camera: the next failure backs off from 1 s again.
 const STABLE_AFTER: Duration = Duration::from_secs(60);
 
@@ -91,6 +104,7 @@ pub struct Worker {
     pub shutdown: Arc<AtomicBool>,
     pub notifier: Option<Notifier>,
     pub clip: Option<Arc<Clip>>,
+    pub timing: Timing,
 }
 
 impl Worker {
@@ -122,7 +136,7 @@ impl Worker {
             self.status.set_camera(&label, plan.is_stand_in());
             log::info!("camera: {label}");
             let started = Instant::now();
-            let deadline = plan.is_stand_in().then(|| started + REPROBE_EVERY);
+            let deadline = self.reprobe_at(&plan, started);
             let result = self.capture(&plan, &found, &boxes, frames, deadline);
             if self.shutdown.load(Ordering::Relaxed) {
                 break;
@@ -151,6 +165,12 @@ impl Worker {
             let _ = handle.join();
         }
         log::info!("capture worker stopped");
+    }
+
+    /// When a stand-in started at `started` ends so the camera is probed again; a real camera runs until it fails.
+    fn reprobe_at(&self, plan: &Plan, started: Instant) -> Option<Instant> {
+        plan.is_stand_in()
+            .then(|| started + self.timing.reprobe_every)
     }
 
     fn capture(
@@ -206,8 +226,11 @@ impl Worker {
                     bus_says_done(&bus)?;
                     return Ok(Ended::Done);
                 }
-                if last_frame.elapsed() > STALL_AFTER {
-                    bail!("no frame for {} s", STALL_AFTER.as_secs());
+                if last_frame.elapsed() > self.timing.stall_after {
+                    bail!(
+                        "no frame for {:.1} s",
+                        self.timing.stall_after.as_secs_f64()
+                    );
                 }
                 continue;
             };
@@ -878,8 +901,9 @@ mod tests {
     #[test]
     fn a_stand_in_that_ran_its_course_probes_at_once_and_counts_no_failure() {
         let mut backoff = Backoff::default();
-        assert_eq!(backoff.after(REPROBE_EVERY, false, true), None);
-        assert_eq!(backoff.after(REPROBE_EVERY, false, true), None);
+        let reprobe_every = Timing::default().reprobe_every;
+        assert_eq!(backoff.after(reprobe_every, false, true), None);
+        assert_eq!(backoff.after(reprobe_every, false, true), None);
         // A real camera's source that ended, or a stand-in that failed, waits; still from 1 s.
         assert_eq!(
             backoff.after(Duration::from_secs(5), false, false),
@@ -892,17 +916,21 @@ mod tests {
     }
     use crate::motion::rate_period;
 
-    /// Runs the capture worker on `config.camera` into an appsrc and a frame sink and returns `wanted` frames.
-    fn capture_frames(config: Config, wanted: usize) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {
-        capture_frames_turning(config, wanted, None)
+    /// A running capture worker, its output's sink and what stops it.
+    struct Capturing {
+        sink: gst_app::AppSink,
+        output: gst::Pipeline,
+        status: Arc<Status>,
+        shutdown: Arc<AtomicBool>,
+        worker: thread::JoinHandle<()>,
     }
 
-    /// As [`capture_frames`], turning the picture to `degrees` once `after` frames have come out.
-    fn capture_frames_turning(
+    /// A worker on `config.camera`, not started, and the output it pushes into, already playing.
+    fn unstarted(
         config: Config,
-        wanted: usize,
-        turn: Option<(usize, u32)>,
-    ) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {
+        detector: Option<PersonDetector>,
+        timing: Timing,
+    ) -> (Worker, gst_app::AppSink, gst::Pipeline) {
         gst::init().unwrap();
         let appsrc = gst::ElementFactory::make("appsrc")
             .build()
@@ -920,39 +948,228 @@ mod tests {
             .unwrap();
         appsrc.link(&sink).unwrap();
         output.set_state(gst::State::Playing).unwrap();
-
         let status = Arc::new(Status::new("test", false, config.width, config.height));
-        let shutdown = Arc::new(AtomicBool::new(false));
         let choice = Choice::parse(&config.camera).unwrap();
         let worker = Worker {
             config: Arc::new(config),
             choice,
             appsrc,
-            detector: None,
-            status: status.clone(),
-            shutdown: shutdown.clone(),
+            detector,
+            status,
+            shutdown: Arc::new(AtomicBool::new(false)),
             notifier: None,
             clip: None,
+            timing,
+        };
+        (worker, sink, output)
+    }
+
+    impl Capturing {
+        /// The worker on `config.camera`, pushing into an appsrc whose frames a test pulls from `sink`.
+        fn start(config: Config, detector: Option<PersonDetector>) -> Self {
+            let (worker, sink, output) = unstarted(config, detector, Timing::default());
+            let (status, shutdown) = (worker.status.clone(), worker.shutdown.clone());
+            Self {
+                sink,
+                output,
+                status,
+                shutdown,
+                worker: worker.spawn().unwrap(),
+            }
         }
-        .spawn()
-        .unwrap();
+
+        /// The next frame within `wait`, with its caps.
+        fn frame(&self, wait: Duration) -> Option<(gst::Caps, Vec<u8>)> {
+            let sample = self
+                .sink
+                .try_pull_sample(gst::ClockTime::from_mseconds(wait.as_millis() as u64))?;
+            let data = sample.buffer().unwrap().map_readable().unwrap().to_vec();
+            Some((sample.caps().unwrap().to_owned(), data))
+        }
+
+        /// Stops the worker the way the service does and hands back its status.
+        fn stop(self) -> Arc<Status> {
+            self.shutdown.store(true, Ordering::Relaxed);
+            self.worker.join().unwrap();
+            self.output.set_state(gst::State::Null).unwrap();
+            self.status
+        }
+    }
+
+    /// Runs the capture worker on `config.camera` into an appsrc and a frame sink and returns `wanted` frames.
+    fn capture_frames(config: Config, wanted: usize) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {
+        capture_frames_turning(config, wanted, None)
+    }
+
+    /// As [`capture_frames`], turning the picture to `degrees` once `after` frames have come out.
+    fn capture_frames_turning(
+        config: Config,
+        wanted: usize,
+        turn: Option<(usize, u32)>,
+    ) -> (Vec<(gst::Caps, Vec<u8>)>, Arc<Status>) {
+        let running = Capturing::start(config, None);
         let mut frames = Vec::new();
         while frames.len() < wanted {
-            let sample = sink
-                .try_pull_sample(gst::ClockTime::from_seconds(20))
-                .expect("a frame within 20 s");
-            let data = sample.buffer().unwrap().map_readable().unwrap().to_vec();
-            frames.push((sample.caps().unwrap().to_owned(), data));
+            frames.push(
+                running
+                    .frame(Duration::from_secs(20))
+                    .expect("a frame within 20 s"),
+            );
             if let Some((after, degrees)) = turn {
                 if frames.len() == after {
-                    status.set_rotation(degrees).unwrap();
+                    running.status.set_rotation(degrees).unwrap();
                 }
             }
         }
-        shutdown.store(true, Ordering::Relaxed);
-        worker.join().unwrap();
+        (frames, running.stop())
+    }
+
+    /// The model `scripts/linux/fetch-models.sh` puts in the checkout; `None` skips, unless CI demands it.
+    fn real_model() -> Option<String> {
+        let path = kataglyphis_inference::person_detection::resolve_model_path(None);
+        if std::path::Path::new(&path).is_file() {
+            return Some(path);
+        }
+        assert!(
+            std::env::var("KATAGLYPHIS_REQUIRE_MODEL").as_deref() != Ok("1"),
+            "no model at {path}: scripts/linux/fetch-models.sh fetches it"
+        );
+        eprintln!("SKIP: no model at {path}");
+        None
+    }
+
+    /// The whole loop on the photo: capture, pacer, the inference thread with the real model, and the visit it opens.
+    #[test]
+    fn the_real_model_on_the_photo_opens_a_visit_through_the_capture_loop() {
+        let Some(model) = real_model() else { return };
+        let photo = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../inference/tests/fixtures/two_cats.jpg"
+        );
+        let config = Config {
+            camera: format!("image:{photo}"),
+            ..Config::default()
+        };
+        let running = Capturing::start(config, Some(PersonDetector::new(&model).unwrap()));
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut health = serde_json::Value::Null;
+        while Instant::now() < deadline {
+            let _ = running.frame(Duration::from_millis(100));
+            health = serde_json::from_str(&running.status.to_json()).unwrap();
+            if health["detection"]["visits"].as_u64() >= Some(1) {
+                break;
+            }
+        }
+        running.stop();
+        let detection = &health["detection"];
+        assert_eq!(detection["visits"], 1, "{health}");
+        assert_eq!(detection["in_view"], true, "{health}");
+        assert_eq!(
+            detection["boxes"].as_array().map(Vec::len),
+            Some(2),
+            "both cats: {health}"
+        );
+        assert!(health["model_runs"].as_u64() >= Some(1), "{health}");
+    }
+
+    /// A camera slower than `stall_after` counts as gone: the capture ends with the stall, and the worker restarts it.
+    #[test]
+    fn a_camera_that_stops_sending_is_a_stall_after_its_time() {
+        let photo = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../inference/tests/fixtures/two_cats.jpg"
+        );
+        let config = Config {
+            camera: format!("image:{photo}"),
+            width: 64,
+            height: 48,
+            // One frame a second, so the 300 ms stall comes between two of them.
+            fps: 1,
+            ..Config::default()
+        };
+        let timing = Timing {
+            stall_after: Duration::from_millis(300),
+            ..Timing::default()
+        };
+        let (worker, _sink, output) = unstarted(config, None, timing);
+        let found = camera::probe(&worker.choice);
+        let plan = camera::choose(&worker.choice, &found.probe);
+        let started = Instant::now();
+        let ended = worker.capture(&plan, &found, &Boxes::default(), None, None);
         output.set_state(gst::State::Null).unwrap();
-        (frames, status)
+        let err = format!("{:#}", ended.expect_err("a stall, not a clean end"));
+        assert_eq!(err, "no frame for 0.3 s");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A stand-in pattern ends at `reprobe_every` so the camera is looked for again; a real source has no such end.
+    #[test]
+    fn a_stand_in_ends_at_its_reprobe_time_and_a_real_camera_never() {
+        let timing = Timing {
+            reprobe_every: Duration::from_millis(300),
+            ..Timing::default()
+        };
+        let config = Config {
+            camera: "test".into(),
+            width: 64,
+            height: 48,
+            ..Config::default()
+        };
+        let (worker, _sink, output) = unstarted(config, None, timing);
+        let at = Instant::now();
+        assert_eq!(worker.reprobe_at(&Plan::Test(None), at), None);
+        assert_eq!(worker.reprobe_at(&Plan::Image("cat.jpg".into()), at), None);
+        let stand_in = Plan::Test(Some("no USB webcam found".into()));
+        let deadline = worker.reprobe_at(&stand_in, at);
+        assert_eq!(deadline, Some(at + Duration::from_millis(300)));
+        let found = camera::probe(&Choice::Test);
+        let ended = worker.capture(&stand_in, &found, &Boxes::default(), None, deadline);
+        output.set_state(gst::State::Null).unwrap();
+        assert!(matches!(ended, Ok(Ended::Done)), "{ended:?}");
+        assert!(at.elapsed() < Duration::from_secs(5), "{:?}", at.elapsed());
+    }
+
+    /// A camera path that is missing at start is tried again after the backoff, and its frames come once it exists.
+    #[test]
+    fn a_missing_image_is_retried_after_the_backoff_and_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("later.jpg");
+        let config = Config {
+            camera: format!("image:{}", image.display()),
+            width: 64,
+            height: 48,
+            ..Config::default()
+        };
+        let running = Capturing::start(config, None);
+        let label = format!("still image {}", image.display());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let camera = |status: &Status| {
+            serde_json::from_str::<serde_json::Value>(&status.to_json()).unwrap()["camera"].clone()
+        };
+        while camera(&running.status) != label.as_str() {
+            assert!(Instant::now() < deadline, "the worker never tried {label}");
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            running.frame(Duration::from_millis(500)).is_none(),
+            "a frame from a file that is not there"
+        );
+        std::fs::write(
+            &image,
+            crate::status::encode_jpeg(&[200u8; 64 * 48 * 4], 64, 48).unwrap(),
+        )
+        .unwrap();
+        let (caps, data) = running
+            .frame(Duration::from_secs(10))
+            .expect("the capture recovered once the file existed");
+        running.stop();
+        let s = caps.structure(0).unwrap();
+        assert_eq!(s.get::<i32>("width").unwrap(), 64);
+        assert_eq!(data.len(), frame::size(64, 48));
     }
 
     #[test]
@@ -1231,6 +1448,7 @@ mod tests {
             shutdown: Arc::new(AtomicBool::new(false)),
             notifier: None,
             clip: None,
+            timing: Timing::default(),
         }
     }
 

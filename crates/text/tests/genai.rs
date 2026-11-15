@@ -61,6 +61,64 @@ fn greedy_decoding_yields_the_oracles_continuation() {
     assert!(result.time_to_first_token_ms >= 0.0 && result.decode_tokens_per_second > 0.0);
 }
 
+/// ObservANT's `llm_threads`: a thread count laid over the config still loads and answers as the oracle says.
+#[test]
+fn a_thread_count_at_load_still_yields_the_oracles_continuation() {
+    if generator().is_none() {
+        return;
+    }
+    let mut capped = GenaiGenerator::load_with(tiny_model_dir(), Provider::Cpu, Some(1)).unwrap();
+    let (prompt, continuation, ids) = tiny_fixture();
+    let result = capped
+        .generate(
+            &[ChatMessage::user(&prompt)],
+            &budget(ids.len()),
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(result.tokens, ids);
+    assert_eq!(result.text, continuation);
+}
+
+/// A greedy turn continues the last generator when its prompt extends what that one holds; it must give what a fresh one gives.
+#[test]
+fn a_continued_generator_gives_the_tokens_of_a_fresh_one() {
+    let Some(mut generator) = generator() else {
+        return;
+    };
+    let (prompt, _, ids) = tiny_fixture();
+    let quiet = &mut |_: &str| {};
+    let first = generator
+        .generate(
+            &[ChatMessage::user(&prompt)],
+            &budget(ids.len()),
+            &CancelToken::default(),
+            quiet,
+        )
+        .unwrap();
+    let second = [
+        ChatMessage::user(&prompt),
+        ChatMessage::new("assistant", first.text.clone()),
+        ChatMessage::user("ab"),
+    ];
+    let other = [ChatMessage::user("xyz")];
+    // Extending the first turn, asking it again, and a conversation that shares nothing with it.
+    for messages in [&second[..], &second[..1], &other[..]] {
+        let continued = generator
+            .generate(messages, &budget(8), &CancelToken::default(), quiet)
+            .unwrap();
+        let mut fresh = GenaiGenerator::load(tiny_model_dir(), Provider::Cpu).unwrap();
+        let alone = fresh
+            .generate(messages, &budget(8), &CancelToken::default(), quiet)
+            .unwrap();
+        let asked = &messages[messages.len() - 1].content;
+        assert_eq!(continued.tokens, alone.tokens, "{asked}");
+        assert_eq!(continued.text, alone.text, "{asked}");
+        assert_eq!(continued.finish_reason, alone.finish_reason, "{asked}");
+    }
+}
+
 #[test]
 fn the_end_token_stops_before_the_budget() {
     let Some(mut generator) = generator() else {

@@ -129,6 +129,12 @@ pub struct Config {
     /// Overrides the endpoint's or backend's model.
     pub llm_model: Option<String>,
     pub llm_max_new_tokens: u32,
+    /// Intra-op threads of `llm_model_dir`'s decoder, beside the detector's two; 0 leaves GenAI's own count.
+    pub llm_threads: u32,
+    /// Seconds without a question after which `llm_model_dir`'s model is unloaded; 0 keeps it loaded.
+    pub llm_idle_unload_s: u32,
+    /// Seconds one answer may take, an endpoint's whole stream included; a slower one is a 504.
+    pub llm_timeout_s: u32,
 }
 
 /// A host name as a camera's default name, so two unnamed cameras still differ; "ObservANT" where there is none.
@@ -184,6 +190,9 @@ impl Default for Config {
             llm_backend: None,
             llm_model: None,
             llm_max_new_tokens: 128,
+            llm_threads: 2,
+            llm_idle_unload_s: 600,
+            llm_timeout_s: 300,
         }
     }
 }
@@ -325,6 +334,9 @@ impl Config {
         if self.llm_max_new_tokens == 0 {
             bail!("llm_max_new_tokens must be non-zero");
         }
+        if self.llm_timeout_s == 0 {
+            bail!("llm_timeout_s must be non-zero");
+        }
         if self.llm_model_dir.is_some()
             && (self.llm_base_url.is_some() || self.llm_backend.is_some())
         {
@@ -346,13 +358,18 @@ mod tests {
         let with = |config: Config| config.validate_language().map_err(|e| e.to_string());
         assert_eq!(with(Config::default()), Ok(()));
         let parsed = Config::parse(
-            "llm_model_dir = \"/m\"\nllm_provider = \"cuda\"\nllm_max_new_tokens = 9\n",
+            "llm_model_dir = \"/m\"\nllm_provider = \"cuda\"\nllm_max_new_tokens = 9\nllm_threads = 3\n",
         )
         .unwrap();
         assert_eq!(
-            (parsed.llm_model_dir.as_deref(), parsed.llm_max_new_tokens),
-            (Some(Path::new("/m")), 9)
+            (
+                parsed.llm_model_dir.as_deref(),
+                parsed.llm_max_new_tokens,
+                parsed.llm_threads
+            ),
+            (Some(Path::new("/m")), 9, 3)
         );
+        assert_eq!(Config::default().llm_threads, 2);
         assert_eq!(with(parsed), Ok(()));
         let url = Some("http://x".to_string());
         for (bad, says) in [
@@ -369,6 +386,13 @@ mod tests {
                     ..Config::default()
                 },
                 "llm_max_new_tokens",
+            ),
+            (
+                Config {
+                    llm_timeout_s: 0,
+                    ..Config::default()
+                },
+                "llm_timeout_s",
             ),
             (
                 Config {

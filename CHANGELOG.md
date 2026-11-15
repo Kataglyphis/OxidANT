@@ -700,6 +700,131 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `upload_scene`, `render_tonemapped`, `render_to_pixels_with_format`, `set_animation_time`) are gone. The two
   source-text tests scan the new files too.
 
+### Changed (2026-11-15, `src`'s coverage leaves the generated bridge out)
+- The `coverage` step passes `src/frb_generated.rs` to tarpaulin's `--exclude-files` beside `third_party/*`: the file
+  was 1157 of `src`'s 1795 lines and no Rust test runs it, so `src` read 24 % (run 43737706756) and 67.6 % without
+  it, and the workspace 78.8 % against 85.9 %. `src`'s floor goes from 19 % to 65 %; `docs/testing.md` says so.
+
+### Changed (2026-11-15, the wgpu GUI captures through the media crate; two camera pipelines left)
+- `crates/gui` drops its own pipeline (`build_pipeline`, which never read its bus) and runs a
+  `kataglyphis_media::CaptureSession` at the camera's own size: `CaptureConfig` takes width or height 0 for the
+  camera's own size and framerate 0 for any. A camera that ends, fails or goes silent for 10 s now ends the window
+  with that reason. `media-check` builds the same session unstarted (`CaptureSession::unstarted_pipeline`), so it
+  reports `videoconvert`, `videoscale` and the frame sink, and the Linux package checks `videoscale` instead of
+  `capsfilter`. `crates/media/tests/one_camera_pipeline.rs` fails when a crate other than `crates/media` or
+  ObservANT builds an appsink. `gstreamer-app` left the GUI's dependencies.
+
+### Fixed (2026-11-15, the app's camera session ends when the camera goes silent)
+- `kataglyphis_media`'s frame slot stamps the session's start and each frame; `take_latest` closes it with
+  `no frame for 10.0 s` (`capture::STALL_AFTER`, the same 10 s as ObservANT) once nothing came for that long. The app
+  engine's loop waited on a silent camera forever; it now ends with that reason, which the app shows. Tests: a launch
+  line that never sends and one whose valve closes after a frame, in the media crate and through the engine
+  (`FrameSlot::set_stall_after`, hidden, shortens the time).
+
+### Added (2026-11-15, mutation recipes for the detector's pre- and postprocessing)
+- Five `consumer.oxidant-inference-*` recipes run `cargo test -p kataglyphis_inference --lib` against red and blue
+  swapped, the score threshold ignored, a NaN corner kept, the corners unclamped and one scale for both axes; each
+  proved to bite with two mirrors (26 min on a Pi 5, cold builds included). `crates/inference` had none.
+
+### Added (2026-11-15, ObservANT's stall and re-probe times are a `Timing` value)
+- `capture::Timing` holds the 10 s stall and the 30 s re-probe of a stand-in, both formerly constants, as a field of
+  `Worker` with today's numbers as default. Tests: an image at one frame a second against a 300 ms stall ends the
+  capture with `no frame for 0.3 s`, and a stand-in pattern ends at its re-probe time while a chosen test pattern or
+  image has none. The stall message names tenths of a second now (`no frame for 10.0 s`). `main.rs`'s `run` moved its
+  status setup into `build_status` (112 to 91 lines in `rust-function-size.allow`).
+
+### Added (2026-11-15, the app engine's end reasons are tested)
+- `WebcamEngine::start` builds the detector and the capture and hands them to `run`, whose worker
+  (`infer_until_done`) takes the model as a closure; `kataglyphis_media::CaptureSession::from_launch` (hidden, for
+  tests) starts a session from a launch line. Three tests: a camera that ends (`videotestsrc num-buffers=5`) ends
+  the session with `the camera stream ended`, a model that fails every frame ends it after exactly 30 runs, and one
+  good run in 25 keeps it going past 100. `start` left `rust-function-size.allow` (107 lines, now under 80).
+
+### Added (2026-11-15, ObservANT's capture loop runs in tests with the real model)
+- `capture.rs` tests run the whole worker: the real model on `two_cats.jpg` opens one visit with both cats through
+  the pacer and `spawn_inference` (skipped without the model, required where `KATAGLYPHIS_REQUIRE_MODEL=1`), and an
+  `image:` path that is missing at start is tried again after the 1 s backoff and delivers frames once the file
+  exists. The test helper became `Capturing`, which a test can start with a detector. 4 s on a Pi 5 for both.
+
+### Fixed (2026-11-15, `/healthz` takes no lock while it holds another)
+- `Status::to_json` copies what it needs out of `detected` and releases it before it locks `clips`, `stats` or
+  anything `health()` reads; it held `detected` throughout, so the lock order was right by convention only. A test
+  holds `clips` on one thread and then wants `detected` while `to_json` runs on another: on the old order the two
+  wait forever and the test fails after 5 s (checked), on the new one it returns.
+
+### Changed (2026-11-15, the endpoint client has a limit per phase; ObservANT's `llm_timeout_s`)
+- `Endpoint` waits 5 s for the connection (`connect_timeout`) and 120 s for any one read, the response head
+  included (`read_timeout`), beside the 300 s cap on the whole request (`timeout`); it had the cap alone, so a
+  server that took the question and went quiet held ObservANT's one `/ask` slot for five minutes. A timeout is
+  the new `TextError::EndpointTimedOut` (kind `endpoint_timed_out`), no longer `EndpointUnreachable`, and
+  ObservANT answers it with 504. `llm_timeout_s` (default 300, at least 1) sets both the endpoint's cap and the
+  answer's limit. Tests: a server silent before its head, after it and after a piece; a stream that keeps
+  talking until the cap; on Linux a connection that never opens (a full accept queue); a silent endpoint behind
+  ObservANT with `llm_timeout_s = 1`. Five mutation recipes, `consumer.oxidant-text-*-timeout`, `-request-cap`
+  and `-timeout-kind-*`, each proved to bite.
+- `docs/observant.md` replaces an unmeasured reload time with a measured one: a fresh CLI process that loads
+  SmolLM2-135M and gives one token takes 0.7 s on a Pi 5, 1.3 s with a cold page cache.
+
+### Added (2026-11-15, ObservANT unloads an idle language model)
+- `llm_idle_unload_s` (default 600; 0 keeps it) unloads `llm_model_dir`'s model after that many seconds without a
+  question, and the next question loads it again (owner decision). A task started beside the web server asks the
+  `Assistant` every quarter of that time, at most a minute; a running answer holds the model, and an endpoint has
+  nothing to unload. Tests: an idle model unloads and reloads, a running answer and an endpoint keep theirs, and
+  only an in-process model with a non-zero setting unloads.
+- The app's text bridge (`src/api/text.rs`) does the same for its cached local model: a watcher thread, started
+  with the first load, drops a model unused for 600 s (`IDLE_UNLOAD`), skipping a turn in flight through
+  `try_lock`; each generation and embedding marks the model as used. No generated binding moved.
+
+### Changed (2026-11-15, the Rust detector follows the family's ORT thread rule)
+- Without `KATAGLYPHIS_ORT_THREADS` the detector's session takes the usable CPUs but one, 1 to 8
+  (`kataglyphis_core::config::family_threads`, from `available_parallelism`), as OrchestrANT and AccelerANTgine
+  do (owner decision; was ORT's own default, a written choice of 2026-10-11). `0` still keeps ORT's own count;
+  ObservANT's 2, the bench's 2 and every set value stay. Measured on a Pi 5 (4 CPUs, two runs each, p50): ORT's
+  default 237-247 ms, 3 threads 234-242 ms, 4 threads 253-262 ms, 7 threads 525-567 ms. `docs/running.md` and
+  `docs/observant.md` say so.
+
+### Changed (2026-11-15, a text failure keeps its kind)
+- `TextError::kind()` names each variant with a fixed snake_case word (`invalid_options`, `model_load_failed`,
+  `endpoint_unreachable`, ...), and `every_error_names_its_kind` asserts them distinct. ObservANT maps it: the
+  caller's `InvalidOptions` is 400, a library, model or provider that cannot load 503, everything past it 502, each
+  with the text body as before (`each_kind_of_text_failure_has_its_status`). The bridge's `text_generate` and
+  `text_embed` errors start with `kind: `, so no generated binding moved; the web build says
+  `library_unavailable: `.
+
+### Fixed (2026-11-15, the wasm32 build)
+- `text_default_options` has read `kataglyphis_text`'s defaults since dc3916e, which wasm32 did not depend on, so
+  `cargo check --target wasm32-unknown-unknown -p oxidant` failed; no lane builds it. The root crate depends on the
+  text crate there too (its endpoint and GenAI stay native), and six native-only helpers are gated off wasm32, so
+  clippy passes for both targets.
+
+### Added (2026-11-15, ObservANT's in-process model is capped and reports its speed)
+- `llm_threads` (default 2; 0 leaves GenAI's own count) holds `llm_model_dir`'s decoder to that many intra-op
+  threads beside the detector's two: `GenaiGenerator::load_with` lays `thread_overlay(n)` over the model's
+  `genai_config.json` through `OgaConfigOverlay`, bound optionally, and refuses to load when the library lacks it.
+- `/ask` and `POST /summary` return `time_to_first_token_ms` and `decode_tokens_per_second`, and each answer logs
+  its token count and both figures; the goldens carry the two keys. Tests: the overlay, a capped tiny-model load
+  that still gives the oracle's continuation, and the `llm_threads` default and parse.
+
+### Changed (2026-11-15, a greedy GenAI turn continues the last generator)
+- `GenaiGenerator` keeps the generator of a greedy turn without `json_schema` and every token it holds; the next
+  prompt rewinds it to the start the two share (`OgaGenerator_RewindTo`) and appends only the rest
+  (`OgaGenerator_AppendTokens`). Room: prompt, budget and 1024 more tokens, capped at `genai_config.json`'s
+  `context_length`; the decode loop now ends at `max_new_tokens` itself. Sampling, a schema, a prompt sharing
+  nothing, one that does not fit or a GenAI without the five symbols (bound optionally) start a fresh generator.
+  New test `a_continued_generator_gives_the_tokens_of_a_fresh_one`. On a Pi 5, turn 5 of a five-turn chat reaches
+  its first token after 48-52 ms instead of 539-540 ms (release CLI, two runs each).
+- `kataglyphis_cli chat --then TEXT` (repeatable) asks each text as one more turn of the same conversation;
+  `perf-host.sh text-turns` and `quality-report.toml`'s `text_turns_rust` time turn 1 and turn 5.
+
+### Added (2026-11-15, goldens for the rest of ObservANT's JSON)
+- `tests/fixtures/api/{settings,visits,summary,summary_words,ask}.json`: what `/settings`, `/visits`, `GET` and
+  `POST /summary` and `/ask` answer for a camera with one visit and a stub model, arrival, day and times fixed.
+  `the_api_answers_match_their_goldens` in `web.rs` compares them; `OBSERVANT_UPDATE_GOLDEN=1` rewrites them.
+  A renamed settings key fails it (proven by hand in the image). The `/healthz` test shares the new
+  `golden` test module.
+- OmniAccelerANT 2cabbff reads them: `test/observant_api_goldens_test.dart` parses `/settings`, `/visits`, `/ask` and
+  `POST /summary` from this directory at its pin.
+
 ### Fixed (2026-11-15, the healthz goldens on the Windows arm64 runner)
 - `healthz_matches_its_goldens` embeds the three goldens with `include_str!`; it read them at run time, and the
   cross-built test on `windows-11-arm` runs where no checkout of the fixtures sits, so it compared against an empty

@@ -53,6 +53,16 @@ token or the server's `stop`, `Length` when the budget ran out, and `Cancelled` 
 clears the token as it starts. A stream that ends without a finish reason is an error, not an
 answer. A server without usage reports leaves the completion count at the number of pieces.
 
+**A greedy GenAI turn continues the last generator.** Without sampling and without `json_schema`,
+`GenaiGenerator` keeps its GenAI generator and every token it holds. The next prompt rewinds it to
+the start the two share (`OgaGenerator_RewindTo`) and appends only the rest
+(`OgaGenerator_AppendTokens`), so a chat turn no longer runs the whole conversation through the
+model; its tokens are those of a fresh generator, which `a_continued_generator_gives_the_tokens_of_a_fresh_one`
+asserts on the tiny model. The kept generator has room for the prompt, the budget and 1024 more
+tokens, capped at `genai_config.json`'s `context_length`, and costs that much KV cache (about 45 KB
+a token for SmolLM2-135M). A turn that does not fit, sampling, a schema, a prompt that shares nothing
+or a GenAI without those symbols starts a fresh one.
+
 **A thinking model's reasoning is not the answer.** It arrives in one of three ways, and
 `answer::Answer` handles all of them for both backends:
 
@@ -103,8 +113,13 @@ build GenAI with llguidance; a GenAI built without it refuses a schema with
 Each failure has its own `TextError`: the library, the model directory, the provider, the
 tokenizer, the chat template, the encoding, invalid options (no messages, a zero budget, a NUL
 byte, a seed above `i32::MAX`, an empty stop string, a `json_schema` that is not a JSON object),
-generation, an unreachable endpoint, an endpoint HTTP status with its body, a streamed line over
-the 1 MiB bound, and a `json_schema` this lane cannot hold.
+generation, an unreachable endpoint, an endpoint too slow, an endpoint HTTP status with its body, a streamed
+line over the 1 MiB bound, and a `json_schema` this lane cannot hold.
+
+An `Endpoint` waits 5 s for the connection (`connect_timeout`), 120 s for any one read, the response head
+included (`read_timeout`), and 300 s for the whole request with its stream (`timeout`). Running past one is
+`TextError::EndpointTimedOut` (kind `endpoint_timed_out`), so a caller tells a slow server from a refused port,
+which stays `EndpointUnreachable`.
 
 ## Embedding
 
@@ -135,7 +150,8 @@ kataglyphis_cli embed --model-dir <genai-model-dir> "first" "second"
 `chat` streams the answer to stdout, without a thinking model's reasoning, and prints the token
 count, the time to the first token, the decode rate and the finish reason to stderr; that line
 does not name the thinking count yet. `--seed N`, `--json-schema '<schema JSON>'` and a
-repeatable `--stop TEXT` set the three options above. `--provider cuda` or `dml` selects GenAI's execution
+repeatable `--stop TEXT` set the three options above, and a repeatable `--then TEXT` asks each text
+as one more turn of the same conversation, which `perf-host.sh text-turns` times. `--provider cuda` or `dml` selects GenAI's execution
 provider, on `embed --model-dir` too. `embed` prints one L2-normalised vector per text, one JSON array per line.
 
 ## The Flutter bridge
@@ -188,7 +204,7 @@ local server that plays back one recorded answer and ends within 30 s on its own
 | `crates/text/src/*.rs` | Option checks, the request body, stream lines and their 1 MiB bound, thinking deltas under both names, `<think>` blocks (whole, split over pieces, unclosed, beside a stop string), the redacted key, embeddings, endpoint resolution, the loader's search and its chain check |
 | `crates/text/tests/genai.rs` | The tiny model: the oracle's tokens and text, the end token, a cancel from another thread, invalid requests, a repeated seed's identical ids, at least two different 24-token answers across seeds 1 to 4 at temperature 1, a schema answer that parses and validates on Linux and `JsonSchemaUnsupported` on Windows, a stop string ending with `Stop`, the oracle's embedding, several texts in order, generation after embedding, a model without the output, texts that cannot be embedded |
 | `crates/text/tests/contract.rs` | ModelANT's text-generation-v1 on SmolLM2-135M: exact ids and `must_contain` |
-| `crates/text/tests/endpoint.rs` | Streaming, cancel, both finish reasons, the three thinking dialects giving one answer, a reply cut inside its thinking, HTTP errors, an over-long stream line, an unreachable port, embeddings, `seed`, `stop` and `response_format` in the request body |
+| `crates/text/tests/endpoint.rs` | Streaming, cancel, both finish reasons, the three thinking dialects giving one answer, a reply cut inside its thinking, HTTP errors, an over-long stream line, an unreachable port, a connection that never opens, a server silent before its head, after it and after a piece, a stream that ends only at the cap, embeddings, `seed`, `stop` and `response_format` in the request body |
 | `crates/cli/tests/text.rs` | `chat` and `embed` on both backends, a named backend, the missing-endpoint error, the `--seed`, `--json-schema` and `--stop` request body |
 | `src/api/text.rs` | The bridge's mapping |
 

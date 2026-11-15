@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use gstreamer as gst;
@@ -26,8 +26,10 @@ pub enum CameraSource {
 #[derive(Debug, Clone, Copy)]
 pub struct CaptureConfig {
     pub source: CameraSource,
+    /// With `height`, the frame size; 0 for either keeps the camera's own.
     pub width: u32,
     pub height: u32,
+    /// 0 takes any rate the source offers.
     pub framerate: u32,
 }
 
@@ -54,12 +56,18 @@ pub struct VideoFrame {
     pub sequence: u64,
 }
 
+/// A camera that delivers no frame for this long counts as gone, as ObservANT's capture does.
+pub const STALL_AFTER: Duration = Duration::from_secs(10);
+
 struct SlotInner {
     latest: Mutex<Option<VideoFrame>>,
     signal: Condvar,
     closed: AtomicBool,
     produced: AtomicU64,
     error: Mutex<Option<String>>,
+    /// The session's start, then each frame's arrival: a source that stops sending without an error or an end.
+    last_frame: Mutex<Instant>,
+    stall_after: Mutex<Duration>,
 }
 
 /// Runs on the capture thread for every frame, before a consumer can take it.
@@ -80,7 +88,29 @@ impl FrameSlot {
                 closed: AtomicBool::new(false),
                 produced: AtomicU64::new(0),
                 error: Mutex::new(None),
+                last_frame: Mutex::new(Instant::now()),
+                stall_after: Mutex::new(STALL_AFTER),
             }),
+        }
+    }
+
+    /// Shortens the stall for a test; not a camera setting.
+    #[doc(hidden)]
+    pub fn set_stall_after(&self, after: Duration) {
+        *self.inner.stall_after.lock().expect("frame slot poisoned") = after;
+    }
+
+    /// Closes the slot with `no frame for N s` once the last frame, or the start, is older than the stall.
+    fn fail_if_stalled(&self) {
+        let after = *self.inner.stall_after.lock().expect("frame slot poisoned");
+        let quiet = self
+            .inner
+            .last_frame
+            .lock()
+            .expect("frame slot poisoned")
+            .elapsed();
+        if quiet > after {
+            self.fail(format!("no frame for {:.1} s", after.as_secs_f64()));
         }
     }
 
@@ -98,6 +128,7 @@ impl FrameSlot {
     }
 
     fn publish(&self, frame: VideoFrame) {
+        *self.inner.last_frame.lock().expect("frame slot poisoned") = Instant::now();
         let mut slot = self.inner.latest.lock().expect("frame slot poisoned");
         *slot = Some(frame);
         self.inner.produced.fetch_add(1, Ordering::Relaxed);
@@ -129,8 +160,16 @@ impl FrameSlot {
             .clone()
     }
 
-    /// Takes the newest frame, waiting up to `timeout`; `None` on timeout or once closed.
+    /// Takes the newest frame, waiting up to `timeout`; `None` on timeout or once closed, and a stall closes it.
     pub fn take_latest(&self, timeout: Duration) -> Option<VideoFrame> {
+        let frame = self.wait_latest(timeout);
+        if frame.is_none() && !self.is_closed() {
+            self.fail_if_stalled();
+        }
+        frame
+    }
+
+    fn wait_latest(&self, timeout: Duration) -> Option<VideoFrame> {
         let mut slot = self.inner.latest.lock().expect("frame slot poisoned");
         loop {
             if let Some(frame) = slot.take() {
@@ -176,15 +215,44 @@ pub struct CaptureSession {
     frames: FrameSlot,
 }
 
-/// RGBA at the asked size with square pixels, at the asked rate where the source has it, else at any.
+/// The source element `config` names; a listed device builds its own, Windows' sources take an index.
+fn source_element(config: &CaptureConfig) -> Result<gst::Element> {
+    let factory = match config.source {
+        CameraSource::Test => {
+            return gst::ElementFactory::make("videotestsrc")
+                .property_from_str("pattern", "smpte")
+                .property("is-live", true)
+                .build()
+                .context("failed to create videotestsrc")
+        }
+        CameraSource::Auto | CameraSource::Device(_) => webcam_source_factory()?,
+    };
+    log::info!("using webcam source element `{factory}`");
+    match config.source {
+        // Only these two have `device-index`; setting it on a fallback would panic.
+        CameraSource::Device(index) if matches!(factory, "mfvideosrc" | "ksvideosrc") => {
+            gst::ElementFactory::make(factory)
+                .property("device-index", index as i32)
+                .build()
+        }
+        // Elsewhere the listed device builds its own source, so the index picks the camera it names.
+        CameraSource::Device(index) => return crate::devices::camera_element(index),
+        _ => gst::ElementFactory::make(factory).build(),
+    }
+    .with_context(|| format!("failed to create `{factory}`"))
+}
+
+/// RGBA at the asked size with square pixels, or the camera's own size for 0, at the asked rate where the source has it.
 fn frame_caps(config: &CaptureConfig) -> gst::Caps {
     // Without the pixel aspect ratio `videoscale` keeps a 4:3 camera's shape with non-square pixels, which no texture honours.
-    let any_rate = gst::Structure::builder("video/x-raw")
+    let mut any_rate = gst::Structure::builder("video/x-raw")
         .field("format", "RGBA")
-        .field("width", config.width as i32)
-        .field("height", config.height as i32)
         .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
         .build();
+    if config.width > 0 && config.height > 0 {
+        any_rate.set("width", config.width as i32);
+        any_rate.set("height", config.height as i32);
+    }
     let mut caps = gst::Caps::builder_full();
     if config.framerate > 0 {
         let mut exact = any_rate.clone();
@@ -203,47 +271,53 @@ impl CaptureSession {
     /// [`Self::start`], with `observer` called for every frame the camera delivers.
     pub fn start_observed(config: CaptureConfig, observer: Option<FrameObserver>) -> Result<Self> {
         ensure_gst_initialized()?;
-
-        let source = match config.source {
-            CameraSource::Test => gst::ElementFactory::make("videotestsrc")
-                .property_from_str("pattern", "smpte")
-                .property("is-live", true)
-                .build()
-                .context("failed to create videotestsrc")?,
-            CameraSource::Auto | CameraSource::Device(_) => {
-                let factory = webcam_source_factory()?;
-                log::info!("using webcam source element `{factory}`");
-                match config.source {
-                    // Only these two have `device-index`; setting it on a fallback would panic.
-                    CameraSource::Device(index)
-                        if matches!(factory, "mfvideosrc" | "ksvideosrc") =>
-                    {
-                        gst::ElementFactory::make(factory)
-                            .property("device-index", index as i32)
-                            .build()
-                    }
-                    // Elsewhere the listed device builds its own source, so the index picks the camera it names.
-                    CameraSource::Device(index) => {
-                        return Self::from_source(
-                            crate::devices::camera_element(index)?,
-                            &config,
-                            observer,
-                        )
-                    }
-                    _ => gst::ElementFactory::make(factory).build(),
-                }
-                .with_context(|| format!("failed to create `{factory}`"))?
-            }
-        };
-        Self::from_source(source, &config, observer)
+        Self::from_source(source_element(&config)?, &config, observer)
     }
 
-    /// The pipeline behind `source`: convert, scale, and an appsink feeding the frame slot.
+    /// The pipeline a session on `config` runs, built and not started, so a package check needs no camera.
+    pub fn unstarted_pipeline(config: &CaptureConfig) -> Result<gst::Pipeline> {
+        ensure_gst_initialized()?;
+        Ok(Self::assemble(source_element(config)?, config, None)?.0)
+    }
+
+    /// A session whose source is a launch line, so a test can end or break the stream at a chosen frame; not a camera API.
+    #[doc(hidden)]
+    pub fn from_launch(
+        description: &str,
+        config: &CaptureConfig,
+        observer: Option<FrameObserver>,
+    ) -> Result<Self> {
+        ensure_gst_initialized()?;
+        let source = gst::parse::bin_from_description(description, true)
+            .with_context(|| format!("the launch line `{description}`"))?;
+        Self::from_source(source.upcast(), config, observer)
+    }
+
+    /// The session behind `source`, started.
     fn from_source(
         source: gst::Element,
         config: &CaptureConfig,
-        mut observer: Option<FrameObserver>,
+        observer: Option<FrameObserver>,
     ) -> Result<Self> {
+        let (pipeline, frames) = Self::assemble(source, config, observer)?;
+        if let Err(error) = pipeline.set_state(gst::State::Playing) {
+            // A half-started pipeline keeps the camera open until it reaches Null.
+            let _ = pipeline.set_state(gst::State::Null);
+            if let Some(bus) = pipeline.bus() {
+                bus.unset_sync_handler();
+            }
+            let reason = frames.error().unwrap_or_else(|| error.to_string());
+            anyhow::bail!("failed to set pipeline to Playing: {reason}");
+        }
+        Ok(Self { pipeline, frames })
+    }
+
+    /// The pipeline behind `source`: convert, scale, and an appsink feeding the frame slot.
+    fn assemble(
+        source: gst::Element,
+        config: &CaptureConfig,
+        mut observer: Option<FrameObserver>,
+    ) -> Result<(gst::Pipeline, FrameSlot)> {
         let videoconvert = gst::ElementFactory::make("videoconvert")
             .build()
             .context("failed to create videoconvert")?;
@@ -305,16 +379,7 @@ impl CaptureSession {
             }
             gst::BusSyncReply::Drop
         });
-
-        if let Err(error) = pipeline.set_state(gst::State::Playing) {
-            // A half-started pipeline keeps the camera open until it reaches Null.
-            let _ = pipeline.set_state(gst::State::Null);
-            bus.unset_sync_handler();
-            let reason = frames.error().unwrap_or_else(|| error.to_string());
-            anyhow::bail!("failed to set pipeline to Playing: {reason}");
-        }
-
-        Ok(Self { pipeline, frames })
+        Ok((pipeline, frames))
     }
 
     /// Shared handle for pulling frames; stays valid until [`stop`](Self::stop).
@@ -395,11 +460,8 @@ mod tests {
         }
     }
 
-    /// A source bin from a launch line, so a test can end or break the stream at a chosen frame.
     fn session(description: &str, observer: Option<FrameObserver>) -> Result<CaptureSession> {
-        ensure_gst_initialized()?;
-        let source = gst::parse::bin_from_description(description, true)?;
-        CaptureSession::from_source(source.upcast(), &config(30), observer)
+        CaptureSession::from_launch(description, &config(30), observer)
     }
 
     fn wait_closed(frames: &FrameSlot) {
@@ -461,6 +523,57 @@ mod tests {
         // A stop afterwards keeps the reason the stream ended for.
         session.stop();
         assert_eq!(frames.error(), Some(reason));
+    }
+
+    /// A source that never sends, and one that stops: either closes the slot with the stall, as ObservANT's does.
+    #[test]
+    fn a_camera_that_sends_nothing_for_the_stall_time_ends_the_session() {
+        for (launch, frames_first) in [
+            ("videotestsrc is-live=true ! valve drop=true", false),
+            ("videotestsrc is-live=true ! valve name=gate", true),
+        ] {
+            let session = session(launch, None).unwrap();
+            let frames = session.frames();
+            frames.set_stall_after(Duration::from_millis(300));
+            if frames_first {
+                assert!(
+                    frames.take_latest(Duration::from_secs(20)).is_some(),
+                    "{launch}"
+                );
+                let gate = session.pipeline.by_name("gate").unwrap();
+                gate.set_property("drop", true);
+            }
+            let started = std::time::Instant::now();
+            wait_closed(&frames);
+            assert_eq!(
+                frames.error().as_deref(),
+                Some("no frame for 0.3 s"),
+                "{launch}"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "{launch}: {:?}",
+                started.elapsed()
+            );
+            session.stop();
+        }
+    }
+
+    #[test]
+    fn a_size_of_zero_keeps_the_cameras_own() {
+        let own = CaptureConfig {
+            source: CameraSource::Test,
+            width: 0,
+            height: 0,
+            framerate: 0,
+        };
+        let launch = "videotestsrc is-live=true ! capsfilter caps=video/x-raw,width=320,height=240";
+        let session = CaptureSession::from_launch(launch, &own, None).unwrap();
+        let frame = session.frames().take_latest(Duration::from_secs(20));
+        session.stop();
+        let frame = frame.expect("a frame within 20 s");
+        assert_eq!((frame.width, frame.height), (320, 240));
+        assert_eq!(frame.rgba.len(), 320 * 240 * 4);
     }
 
     #[test]

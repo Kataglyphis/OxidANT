@@ -48,15 +48,20 @@ exits; a packager runs it once, and the server then sends those files as they ar
 `llm_model_dir` (a GenAI directory on the chain's GenAI, with `llm_provider` `cpu`, `cuda` or
 `dml`), `llm_base_url` or `llm_backend` (an OpenAI-compatible server; `backends.json` comes from
 `LLM_BACKENDS`), which exclude each other, and `llm_model` to override an endpoint's model.
-`llm_max_new_tokens` bounds an answer (128). Nothing loads until the first question; the model then
-stays loaded. Without one configured both answer 503 and say which keys to set, and `/healthz`'s
+`llm_max_new_tokens` bounds an answer (128). `llm_threads` (2) holds `llm_model_dir`'s decoder to that many
+intra-op threads beside the detector's two, laid over the model's `genai_config.json` at load; 0 leaves GenAI's
+own count, one per core. Nothing loads until the first question. `llm_idle_unload_s` (600) unloads
+`llm_model_dir`'s model after that many seconds without a question and the next question loads it again
+(a fresh CLI process that loads SmolLM2-135M and gives one token takes 0.7 s on a Pi 5, 1.3 s with a cold
+page cache, measured 2026-11-15); 0 keeps it loaded, and an endpoint holds nothing here (owner decision
+2026-11-15). `llm_timeout_s` (300, at least 1) bounds one answer, an endpoint's whole stream included. Without one configured both answer 503 and say which keys to set, and `/healthz`'s
 `ask` is false, which is what OmniAccelerANT's Stream page reads to offer questions.
 
 | Request | Answer |
 | --- | --- |
-| `POST /ask` `{"question", "tz_offset_min"?, "language"?}` | `answer`, the `facts` it was given, `finish_reason`, `prompt_tokens`, `completion_tokens`, `thinking_chars` |
+| `POST /ask` `{"question", "tz_offset_min"?, "language"?}` | `answer`, the `facts` it was given, `finish_reason`, `prompt_tokens`, `completion_tokens`, `thinking_chars`, `time_to_first_token_ms`, `decode_tokens_per_second` |
 | `GET /summary?day=YYYY-MM-DD&tz=<minutes>` | `day`, `visits`, `first`, `last`, `longest_stay_s`, `total_stay_s`; no model runs |
-| `POST /summary` `{"day"?, "tz_offset_min"?, "language"?}` | The same figures plus `summary` and `finish_reason`; a day without visits has `summary: null` and asks no model |
+| `POST /summary` `{"day"?, "tz_offset_min"?, "language"?}` | The same figures plus `summary`, `finish_reason`, `time_to_first_token_ms` and `decode_tokens_per_second`; a day without visits has `summary: null` and asks no model |
 
 - **The model sees the log, not the picture.** `facts` is one line about the camera and one per day
   with visits, at most seven, so a month of history cannot outgrow its context. An answer is
@@ -65,9 +70,11 @@ stays loaded. Without one configured both answer 503 and say which keys to set, 
 - **A day is local to the caller.** `tz_offset_min` (`tz`) is minutes east of UTC, default 0, within
   14 hours. A daylight-saving change inside a day is not modelled. `language` is `de` or `en`.
 - **One answer at a time.** A second question while one runs gets 503. A client that leaves, and
-  the 300 s limit (504), cancel the answer after its current token. A failure of the model or
-  endpoint is a 502 carrying its message, never an empty answer; a model that returns no words
-  is a 502 naming its finish reason. A body that does not arrive within 10 s is a 408.
+  `llm_timeout_s` (504), cancel the answer after its current token. An endpoint that does not connect
+  within 5 s or stays silent for 120 s is a 504 too, carrying its message. Invalid settings are a 400,
+  a model, library or provider that cannot load a 503, and any other failure of the model or endpoint
+  a 502 carrying its message, never an empty answer; a model that returns no words is a 502 naming
+  its finish reason. A body that does not arrive within 10 s is a 408.
   A panic inside an answer is a 502 as well when the service is built with its own profile,
   `cargo build --profile observant -p kataglyphis_observant` (release with `panic = "unwind"`);
   a plain `--release` build aborts on any panic, and systemd restarts the camera after 5 s.
@@ -189,8 +196,9 @@ board runs it as one service unit. How to run and configure it:
 - **ORT runs two threads that sleep between runs.** `main` sets `KATAGLYPHIS_ORT_SPIN=0`
   unless the caller set it, and `inference_threads` (default 2, `0` one per core) becomes
   `KATAGLYPHIS_ORT_THREADS`, both before anything starts a thread. ORT's own default,
-  four threads that spin-wait between runs, is for back-to-back inference, and the
-  inference crate keeps it for every other caller. Measured on himbeere2 (Pi 5,
+  four threads that spin-wait between runs, is for back-to-back inference; every other
+  caller that sets no count gets the family's rule, the usable CPUs but one, 1 to 8 (owner decision
+  2026-11-15; on a Pi 5 the detector took 234-242 ms p50 at 3 threads against 237-247 ms at ORT's default). Measured on himbeere2 (Pi 5,
   2026-10-11; ANThology's photo at 2 Hz, 45 s per row, the live service beside it):
 
   | ORT setting | process CPU |

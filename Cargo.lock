@@ -5178,7 +5178,6 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "gstreamer",
- "gstreamer-app",
  "gtk4",
  "kataglyphis_core",
  "kataglyphis_inference",

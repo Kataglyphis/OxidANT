@@ -265,9 +265,6 @@ fn silent_after(reply: &'static str) -> (Endpoint, std::sync::mpsc::Sender<()>) 
 
 #[test]
 fn a_cancel_during_the_servers_silence_ends_the_run_without_waiting_for_its_next_line() {
-    const HEAD: &str =
-        "HTTP/1.1 200 X\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
-    const FIRST: &str = "HTTP/1.1 200 X\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n";
     // Silent before the status line, after the head, and after the first piece.
     for (reply, text) in [("", ""), (HEAD, ""), (FIRST, "a")] {
         let (mut endpoint, _release) = silent_after(reply);
@@ -475,4 +472,94 @@ fn without_a_seed_schema_or_stop_the_body_names_none_of_them() {
     for key in [r#""seed""#, r#""stop""#, r#""response_format""#] {
         assert!(!request.contains(key), "{key} in {request}");
     }
+}
+
+const HEAD: &str = "HTTP/1.1 200 X\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+const PIECE: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n";
+const FIRST: &str = "HTTP/1.1 200 X\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n";
+
+/// Asks once without a cancel, for a run that must fail: the failure and how long it took.
+fn fails_after(endpoint: &mut Endpoint) -> (TextError, std::time::Duration) {
+    let started = std::time::Instant::now();
+    let failure = endpoint
+        .generate(
+            &[ChatMessage::user("x")],
+            &GenerationOptions::default(),
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap_err();
+    (failure, started.elapsed())
+}
+
+#[test]
+fn a_server_silent_longer_than_one_read_may_wait_is_too_slow_not_gone() {
+    // Silent before the status line, after the head, and after the first piece; the 5 s cap stays far off.
+    for reply in ["", HEAD, FIRST] {
+        let (mut endpoint, _release) = silent_after(reply);
+        endpoint.read_timeout = std::time::Duration::from_millis(300);
+        let (failure, took) = fails_after(&mut endpoint);
+        assert_eq!(failure.kind(), "endpoint_timed_out", "{reply:?}: {failure}");
+        assert!(
+            took < std::time::Duration::from_secs(3),
+            "{reply:?}: {took:?}"
+        );
+    }
+}
+
+/// A server that sends a piece every 20 ms, 250 of them, so only the whole request's cap ends it early.
+fn dribbling() -> Endpoint {
+    use std::io::{Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut endpoint = Endpoint::new(format!("http://{}", listener.local_addr().unwrap()));
+    endpoint.model = Some("tiny".into());
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 4096];
+        let _ = stream.read(&mut request);
+        let _ = stream.write_all(HEAD.as_bytes());
+        for _ in 0..250 {
+            if stream.write_all(PIECE.as_bytes()).is_err() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let _ = stream.write_all(b"data: [DONE]\n\n");
+    });
+    endpoint
+}
+
+#[test]
+fn a_stream_that_keeps_talking_still_ends_at_the_cap() {
+    let mut endpoint = dribbling();
+    endpoint.timeout = std::time::Duration::from_millis(800);
+    let (failure, took) = fails_after(&mut endpoint);
+    assert_eq!(failure.kind(), "endpoint_timed_out", "{failure}");
+    assert!(
+        took >= std::time::Duration::from_millis(700) && took < std::time::Duration::from_secs(4),
+        "{took:?}"
+    );
+}
+
+/// Linux drops a connect to a listener whose accept queue is full, so the client waits as for a host that is gone.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_connection_that_never_opens_is_too_slow_not_refused() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut queued = Vec::new();
+    while let Ok(stream) =
+        std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(200))
+    {
+        queued.push(stream);
+        assert!(queued.len() < 10_000, "the accept queue never filled");
+    }
+    let mut endpoint = Endpoint::new(format!("http://{addr}"));
+    endpoint.model = Some("tiny".into());
+    endpoint.connect_timeout = std::time::Duration::from_millis(300);
+    endpoint.timeout = std::time::Duration::from_secs(5);
+    let (failure, took) = fails_after(&mut endpoint);
+    assert_eq!(failure.kind(), "endpoint_timed_out", "{failure}");
+    assert!(took < std::time::Duration::from_secs(3), "{took:?}");
+    drop(listener);
 }

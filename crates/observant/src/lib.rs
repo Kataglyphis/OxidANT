@@ -10,6 +10,8 @@ pub mod clip;
 pub use kataglyphis_core::coco;
 pub mod config;
 pub mod frame;
+#[cfg(test)]
+mod golden;
 pub mod install;
 pub mod motion;
 pub mod notify;

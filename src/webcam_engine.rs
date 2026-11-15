@@ -123,13 +123,25 @@ pub struct WebcamEngine {
     worker: Option<JoinHandle<()>>,
 }
 
+/// One frame through the model: the detector in the app, a stand-in where a test needs a model that fails.
+type Detect = Box<dyn FnMut(&[u8], u32, u32, f32, Option<&[i64]>) -> Result<Vec<Detection>> + Send>;
+
+/// Hears every result, and once an `Err` when the session ends by itself.
+type OnEvent = Box<dyn Fn(Result<EngineEvent, String>) + Send + 'static>;
+
+/// What the inference worker keeps once the capture runs.
+struct Inference {
+    detect: Detect,
+    backend: &'static str,
+    execution_provider: &'static str,
+    score_threshold: f32,
+    classes: Vec<i64>,
+    on_detections: Option<DetectionsHook>,
+}
+
 impl WebcamEngine {
     /// Starts capture and inference; `on_event` gets every result, and once an `Err` when the session ends by itself.
-    #[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
-    pub fn start(
-        config: EngineConfig,
-        on_event: Box<dyn Fn(Result<EngineEvent, String>) + Send + 'static>,
-    ) -> Result<Self> {
+    pub fn start(config: EngineConfig, on_event: OnEvent) -> Result<Self> {
         let model_path = crate::person_detection::resolve_model_path(Some(&config.model_path));
         let mut detector = PersonDetector::new(&model_path)?;
 
@@ -148,85 +160,30 @@ impl WebcamEngine {
             },
             pusher.map(TexturePusher::into_observer),
         )?;
-        let frames = capture.frames();
-
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_worker = stop.clone();
-        let score_threshold = config.score_threshold;
-        let classes = config.classes;
-        let on_detections = config.on_detections;
         let (backend, execution_provider) =
             (detector.backend_name(), detector.execution_provider());
+        let inference = Inference {
+            detect: Box::new(move |rgba, width, height, score, filter| {
+                detector.infer_rgba(rgba, width, height, score, filter)
+            }),
+            backend,
+            execution_provider,
+            score_threshold: config.score_threshold,
+            classes: config.classes,
+            on_detections: config.on_detections,
+        };
+        Self::run(capture, inference, on_event)
+    }
 
+    /// The inference worker over `capture`'s frames.
+    fn run(capture: CaptureSession, inference: Inference, on_event: OnEvent) -> Result<Self> {
+        let frames = capture.frames();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_worker = stop.clone();
         let worker = std::thread::Builder::new()
             .name("webcam-inference".into())
-            .spawn(move || {
-                let mut recent: VecDeque<Instant> = VecDeque::with_capacity(32);
-                let mut failed_runs = 0u32;
-                while !stop_worker.load(Ordering::Acquire) {
-                    let Some(frame) = frames.take_latest(Duration::from_millis(200)) else {
-                        if frames.is_closed() {
-                            // Closed by stop() there is nothing to say; closed by the pipeline, the viewer must hear why.
-                            if !stop_worker.load(Ordering::Acquire) {
-                                let reason = frames.error();
-                                on_event(Err(
-                                    reason.unwrap_or_else(|| "the camera stream ended".into())
-                                ));
-                            }
-                            break;
-                        }
-                        continue;
-                    };
-
-                    let started = Instant::now();
-                    let filter = (!classes.is_empty()).then_some(classes.as_slice());
-                    let detections = match detector.infer_rgba(
-                        &frame.rgba,
-                        frame.width,
-                        frame.height,
-                        score_threshold,
-                        filter,
-                    ) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            failed_runs += 1;
-                            // The first of a streak: every frame of a broken model would say the same.
-                            if failed_runs == 1 {
-                                log::error!("inference failed on frame {}: {e:#}", frame.sequence);
-                            }
-                            if failed_runs >= MAX_FAILED_RUNS {
-                                on_event(Err(format!("inference keeps failing: {e:#}")));
-                                break;
-                            }
-                            continue;
-                        }
-                    };
-                    failed_runs = 0;
-                    let inference_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-                    if let Some(on_detections) = &on_detections {
-                        on_detections(&detections);
-                    }
-
-                    recent.push_back(Instant::now());
-                    while recent.len() > 30 {
-                        recent.pop_front();
-                    }
-                    let fps = rolling_fps(&recent);
-
-                    on_event(Ok(EngineEvent {
-                        detections,
-                        backend,
-                        execution_provider,
-                        frame_sequence: frame.sequence,
-                        pts_ms: frame.pts_ms,
-                        inference_ms,
-                        fps,
-                    }));
-                }
-            })
+            .spawn(move || infer_until_done(&frames, &stop_worker, inference, &on_event))
             .context("failed to spawn webcam inference worker")?;
-
         Ok(Self {
             capture,
             stop,
@@ -250,6 +207,78 @@ impl WebcamEngine {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+    }
+}
+
+/// Infers the latest frame until a stop, the end of the camera or `MAX_FAILED_RUNS` failures in a row.
+fn infer_until_done(
+    frames: &kataglyphis_media::FrameSlot,
+    stop: &AtomicBool,
+    mut inference: Inference,
+    on_event: &OnEvent,
+) {
+    let mut recent: VecDeque<Instant> = VecDeque::with_capacity(32);
+    let mut failed_runs = 0u32;
+    while !stop.load(Ordering::Acquire) {
+        let Some(frame) = frames.take_latest(Duration::from_millis(200)) else {
+            if frames.is_closed() {
+                // Closed by stop() there is nothing to say; closed by the pipeline, the viewer must hear why.
+                if !stop.load(Ordering::Acquire) {
+                    let reason = frames.error();
+                    on_event(Err(
+                        reason.unwrap_or_else(|| "the camera stream ended".into())
+                    ));
+                }
+                break;
+            }
+            continue;
+        };
+
+        let started = Instant::now();
+        let filter = (!inference.classes.is_empty()).then_some(inference.classes.as_slice());
+        let detections = match (inference.detect)(
+            &frame.rgba,
+            frame.width,
+            frame.height,
+            inference.score_threshold,
+            filter,
+        ) {
+            Ok(d) => d,
+            Err(e) => {
+                failed_runs += 1;
+                // The first of a streak: every frame of a broken model would say the same.
+                if failed_runs == 1 {
+                    log::error!("inference failed on frame {}: {e:#}", frame.sequence);
+                }
+                if failed_runs >= MAX_FAILED_RUNS {
+                    on_event(Err(format!("inference keeps failing: {e:#}")));
+                    break;
+                }
+                continue;
+            }
+        };
+        failed_runs = 0;
+        let inference_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        if let Some(on_detections) = &inference.on_detections {
+            on_detections(&detections);
+        }
+
+        recent.push_back(Instant::now());
+        while recent.len() > 30 {
+            recent.pop_front();
+        }
+        let fps = rolling_fps(&recent);
+
+        on_event(Ok(EngineEvent {
+            detections,
+            backend: inference.backend,
+            execution_provider: inference.execution_provider,
+            frame_sequence: frame.sequence,
+            pts_ms: frame.pts_ms,
+            inference_ms,
+            fps,
+        }));
     }
 }
 
@@ -416,6 +445,139 @@ mod tests {
             "{err}"
         );
         assert!(!err.contains("`knt_push_frame` not exported"), "{err}");
+    }
+
+    type Events = mpsc::Receiver<Result<EngineEvent, String>>;
+
+    /// A session over a launch line with `detect` in place of the model, and the events it sends.
+    fn fake_session(launch: &str, detect: Detect) -> (WebcamEngine, Events) {
+        fake_session_stalling(launch, detect, kataglyphis_media::capture::STALL_AFTER)
+    }
+
+    /// As [`fake_session`], counting a source silent for `stall` as gone.
+    fn fake_session_stalling(
+        launch: &str,
+        detect: Detect,
+        stall: Duration,
+    ) -> (WebcamEngine, Events) {
+        let (tx, rx) = mpsc::channel();
+        let capture = CaptureSession::from_launch(
+            launch,
+            &CaptureConfig {
+                source: CameraSource::Test,
+                width: 64,
+                height: 48,
+                framerate: 30,
+            },
+            None,
+        )
+        .unwrap();
+        capture.frames().set_stall_after(stall);
+        let inference = Inference {
+            detect,
+            backend: "fake",
+            execution_provider: "none",
+            score_threshold: 0.5,
+            classes: Vec::new(),
+            on_detections: None,
+        };
+        let engine = WebcamEngine::run(
+            capture,
+            inference,
+            Box::new(move |event| {
+                let _ = tx.send(event);
+            }),
+        )
+        .unwrap();
+        (engine, rx)
+    }
+
+    /// Why the session ended by itself, within 20 s, and that its worker is gone then.
+    fn ending(engine: &WebcamEngine, events: &Events) -> String {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let reason = loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match events
+                .recv_timeout(left)
+                .expect("the session never ended by itself")
+            {
+                Ok(_) => continue,
+                Err(reason) => break reason,
+            }
+        };
+        while !engine.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "the worker outlived its last event"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        reason
+    }
+
+    #[test]
+    fn a_camera_that_ends_ends_the_session_and_says_so() {
+        let (engine, events) = fake_session(
+            "videotestsrc num-buffers=5",
+            Box::new(|_, _, _, _, _| Ok(Vec::new())),
+        );
+        assert_eq!(ending(&engine, &events), "the camera stream ended");
+    }
+
+    #[test]
+    fn a_camera_that_goes_silent_ends_the_session_with_the_stall() {
+        let (engine, events) = fake_session_stalling(
+            "videotestsrc is-live=true ! valve drop=true",
+            Box::new(|_, _, _, _, _| Ok(Vec::new())),
+            Duration::from_millis(300),
+        );
+        assert_eq!(ending(&engine, &events), "no frame for 0.3 s");
+    }
+
+    #[test]
+    fn a_model_that_fails_every_frame_ends_the_session_after_thirty_runs() {
+        let runs = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counted = runs.clone();
+        let (engine, events) = fake_session(
+            "videotestsrc is-live=true",
+            Box::new(move |_, _, _, _, _| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Err(anyhow::anyhow!("a broken model"))
+            }),
+        );
+        assert_eq!(
+            ending(&engine, &events),
+            "inference keeps failing: a broken model"
+        );
+        assert_eq!(runs.load(Ordering::SeqCst), MAX_FAILED_RUNS);
+    }
+
+    #[test]
+    fn one_good_run_starts_the_failure_count_again() {
+        // Every 25th run succeeds, so no streak reaches 30 and the session outlives 100 runs.
+        let runs = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counted = runs.clone();
+        let (mut engine, events) = fake_session(
+            "videotestsrc is-live=true",
+            Box::new(move |_, _, _, _, _| {
+                if (counted.fetch_add(1, Ordering::SeqCst) + 1).is_multiple_of(25) {
+                    Ok(Vec::new())
+                } else {
+                    Err(anyhow::anyhow!("a flaky model"))
+                }
+            }),
+        );
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while runs.load(Ordering::SeqCst) < 100 {
+            assert!(Instant::now() < deadline, "100 runs did not come in 30 s");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        engine.stop();
+        let ended: Vec<String> = events.try_iter().filter_map(Result::err).collect();
+        assert!(
+            ended.is_empty(),
+            "ended though no streak reached 30: {ended:?}"
+        );
     }
 
     #[test]

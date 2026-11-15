@@ -148,6 +148,9 @@ pub struct ChatArgs {
     /// Ends the answer before this string; repeatable.
     #[arg(long)]
     pub stop: Vec<String>,
+    /// Asked after the prompt, one turn each, with every earlier reply in the conversation; repeatable.
+    #[arg(long)]
+    pub then: Vec<String>,
 }
 
 /// The endpoint: --base-url, else LLM_BASE_URL or OLLAMA_BASE_URL, else --backend or the default in backends.json.

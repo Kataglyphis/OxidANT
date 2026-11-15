@@ -20,14 +20,13 @@ impl EndpointArgs {
     }
 }
 
-/// Streams the reply to stdout as it is generated and the figures to stderr.
+/// Streams each reply to stdout as it is generated and its figures to stderr, one turn per question.
 pub fn chat(args: ChatArgs) -> Result<()> {
     let mut messages: Vec<ChatMessage> = args
         .system
         .iter()
         .map(|s| ChatMessage::new("system", s))
         .collect();
-    messages.push(ChatMessage::user(&args.prompt));
     let options = GenerationOptions {
         max_new_tokens: args.max_new_tokens,
         temperature: args.temperature,
@@ -38,17 +37,21 @@ pub fn chat(args: ChatArgs) -> Result<()> {
     };
     let mut backend = backend(&args)?;
     let mut stdout = std::io::stdout().lock();
-    let mut failed_write = None;
     let cancel = CancelToken::default();
-    let result = {
-        let mut on_text = oxidant::text::write_pieces(&mut stdout, &cancel, &mut failed_write);
-        backend.generate(&messages, &options, &cancel, &mut on_text)?
-    };
-    if let Some(e) = failed_write {
-        bail!("stdout: {e}");
+    for question in std::iter::once(&args.prompt).chain(&args.then) {
+        messages.push(ChatMessage::user(question));
+        let mut failed_write = None;
+        let result = {
+            let mut on_text = oxidant::text::write_pieces(&mut stdout, &cancel, &mut failed_write);
+            backend.generate(&messages, &options, &cancel, &mut on_text)?
+        };
+        if let Some(e) = failed_write {
+            bail!("stdout: {e}");
+        }
+        writeln!(stdout)?;
+        eprintln!("{}", figures(&result));
+        messages.push(ChatMessage::new("assistant", result.text));
     }
-    writeln!(stdout)?;
-    eprintln!("{}", figures(&result));
     Ok(())
 }
 

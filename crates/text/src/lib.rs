@@ -66,6 +66,7 @@ impl Default for GenerationOptions {
 
 impl GenerationOptions {
     /// The schema as JSON; [`check_request`] has refused one that is not an object.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn schema_value(&self) -> Option<serde_json::Value> {
         self.json_schema
             .as_deref()
@@ -136,12 +137,36 @@ pub enum TextError {
     GenerationFailed(String),
     EndpointUnreachable(String),
     EndpointStatus(u16, String),
+    /// The connection, one read or the whole request outlasted its limit: a server that is slow, not one that is gone.
+    EndpointTimedOut(String),
     /// The byte limit one streamed line exceeded.
     StreamLineTooLong(usize),
     /// This GenAI build has no llguidance, so it cannot hold an answer to a schema.
     JsonSchemaUnsupported(String),
     /// This model directory was exported without the `hidden_states` output embeddings read.
     EmbeddingsUnsupported(String),
+}
+
+impl TextError {
+    /// A fixed word per variant, which a caller maps to a status or a translated sentence instead of matching text.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::LibraryUnavailable(_) => "library_unavailable",
+            Self::ModelLoadFailed(_) => "model_load_failed",
+            Self::ProviderUnavailable(_) => "provider_unavailable",
+            Self::TokenizerFailed(_) => "tokenizer_failed",
+            Self::ChatTemplateFailed(_) => "chat_template_failed",
+            Self::EncodeFailed(_) => "encode_failed",
+            Self::InvalidOptions(_) => "invalid_options",
+            Self::GenerationFailed(_) => "generation_failed",
+            Self::EndpointUnreachable(_) => "endpoint_unreachable",
+            Self::EndpointStatus(..) => "endpoint_status",
+            Self::EndpointTimedOut(_) => "endpoint_timed_out",
+            Self::StreamLineTooLong(_) => "stream_line_too_long",
+            Self::JsonSchemaUnsupported(_) => "json_schema_unsupported",
+            Self::EmbeddingsUnsupported(_) => "embeddings_unsupported",
+        }
+    }
 }
 
 impl fmt::Display for TextError {
@@ -161,6 +186,7 @@ impl fmt::Display for TextError {
             Self::GenerationFailed(d) => write!(f, "generation failed: {d}"),
             Self::EndpointUnreachable(d) => write!(f, "the endpoint is unreachable: {d}"),
             Self::EndpointStatus(code, d) => write!(f, "the endpoint answered HTTP {code}: {d}"),
+            Self::EndpointTimedOut(d) => write!(f, "the endpoint did not answer in time: {d}"),
             Self::StreamLineTooLong(limit) => {
                 write!(f, "the endpoint streamed a line longer than {limit} bytes")
             }
@@ -225,6 +251,7 @@ pub trait TextBackend {
 }
 
 /// Refuses what no backend can answer, so both report it the same way.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn check_request(
     messages: &[ChatMessage],
     options: &GenerationOptions,
@@ -254,6 +281,7 @@ pub(crate) fn check_request(
 }
 
 /// Where a stop string first starts in `text`, and how much of `text` is safe to show: the rest may begin one.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn stop_scan<S: AsRef<str>>(text: &str, stops: &[S]) -> (Option<usize>, usize) {
     let each = || stops.iter().map(AsRef::<str>::as_ref);
     if let Some(at) = each().filter_map(|stop| text.find(stop)).min() {
@@ -273,6 +301,7 @@ pub(crate) fn stop_scan<S: AsRef<str>>(text: &str, stops: &[S]) -> (Option<usize
 }
 
 /// Messages as the OpenAI chat format, which GenAI's chat template reads too.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn messages_json(messages: &[ChatMessage]) -> serde_json::Value {
     serde_json::Value::Array(
         messages
@@ -283,12 +312,14 @@ pub(crate) fn messages_json(messages: &[ChatMessage]) -> serde_json::Value {
 }
 
 /// `vector` scaled to length 1, or `None` when it has no direction: empty, all zero or not finite.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn unit_length(vector: Vec<f32>) -> Option<Vec<f32>> {
     let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
     (norm.is_finite() && norm > 0.0).then(|| vector.into_iter().map(|v| v / norm).collect())
 }
 
 /// The decode rate after the first token, 0 when fewer than two arrived.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn decode_rate(tokens: usize, first_to_last_seconds: f64) -> f64 {
     if tokens < 2 || first_to_last_seconds <= 0.0 {
         return 0.0;
@@ -434,6 +465,7 @@ mod tests {
             TextError::GenerationFailed("x".into()),
             TextError::EndpointUnreachable("x".into()),
             TextError::EndpointStatus(503, "x".into()),
+            TextError::EndpointTimedOut("x".into()),
             TextError::StreamLineTooLong(1),
             TextError::JsonSchemaUnsupported("x".into()),
             TextError::EmbeddingsUnsupported("x".into()),
@@ -441,6 +473,11 @@ mod tests {
         let texts: std::collections::HashSet<String> =
             errors.iter().map(ToString::to_string).collect();
         assert_eq!(texts.len(), errors.len());
+        let kinds: std::collections::HashSet<&str> = errors.iter().map(TextError::kind).collect();
+        assert_eq!(kinds.len(), errors.len());
+        assert!(kinds
+            .iter()
+            .all(|k| k.chars().all(|c| c.is_ascii_lowercase() || c == '_')));
         assert!(TextError::EndpointStatus(503, "busy".into())
             .to_string()
             .contains("HTTP 503"));

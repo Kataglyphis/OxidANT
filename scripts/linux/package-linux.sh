@@ -86,9 +86,9 @@ rm -rf "${bundle}"
 mkdir -p "${bundle}/lib/gstreamer-1.0"
 install -m 0755 "${binary_path}" "${bundle}/${binary}"
 
-# The GUI's pipeline (crates/gui/src/gui_wgpu/pipeline.rs) and autovideosrc's camera and test sources.
+# The GUI's pipeline, crates/media's session (crates/media/src/capture.rs), and autovideosrc's camera and test sources.
 plugins=(coreelements app videoconvertscale autodetect video4linux2 videotestsrc)
-elements=(appsink autovideosrc capsfilter v4l2src videoconvert videotestsrc)
+elements=(appsink autovideosrc v4l2src videoconvert videoscale videotestsrc)
 gst_copy=(copy --dest "${bundle}/lib/gstreamer-1.0" --plugin-dir "$(pkg-config --variable=pluginsdir gstreamer-1.0)")
 gtk_plugin="$(gst-inspect-1.0 gtk4paintablesink | awk '$1 == "Filename" { print $2; exit }')"
 [ -f "${gtk_plugin}" ] || { printf 'gtk4paintablesink is missing from this image\n' >&2; exit 1; }

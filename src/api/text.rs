@@ -76,7 +76,7 @@ pub fn text_generate(
     options: TextOptions,
     sink: StreamSink<TextEvent>,
 ) -> Result<(), String> {
-    enabled::generate(source, messages, options, sink).map_err(|e| e.to_string())
+    enabled::generate(source, messages, options, sink).map_err(enabled::describe)
 }
 
 /// Ends the running generation after its current token; its `done` event says `cancelled`.
@@ -87,7 +87,7 @@ pub fn text_cancel() {
 
 /// One L2-normalised vector per text, from the model directory or the endpoint the source names.
 pub fn text_embed(source: TextSource, texts: Vec<String>) -> Result<Vec<Vec<f32>>, String> {
-    enabled::embed(source, texts).map_err(|e| e.to_string())
+    enabled::embed(source, texts).map_err(enabled::describe)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -102,6 +102,11 @@ mod enabled {
 
     use super::{TextEvent, TextMessage, TextOptions, TextSource};
     use crate::frb_generated::StreamSink;
+
+    /// `kind: text`: the app reads the kind before the colon instead of matching English (`TextError::kind`).
+    pub(super) fn describe(err: TextError) -> String {
+        format!("{}: {err}", err.kind())
+    }
 
     fn cancel_token() -> &'static CancelToken {
         static TOKEN: OnceLock<CancelToken> = OnceLock::new();
@@ -131,7 +136,12 @@ mod enabled {
         texts: Vec<String>,
     ) -> Result<Vec<Vec<f32>>, TextError> {
         match &source.model_dir {
-            Some(dir) => local::embed(&mut turn(), dir, &source.provider, &texts),
+            Some(dir) => {
+                let mut cached = turn();
+                let vectors = local::embed(&mut cached, dir, &source.provider, &texts);
+                local::touch(&mut cached);
+                vectors
+            }
             None => endpoint(&source)?.embed(&texts),
         }
     }
@@ -182,9 +192,24 @@ mod enabled {
     }
 
     /// One generation at a time: the app has one conversation running, and a local model is too large to hold twice.
+    static TURN: Mutex<Option<local::Cached>> = Mutex::new(None);
+
     fn turn() -> std::sync::MutexGuard<'static, Option<local::Cached>> {
-        static TURN: Mutex<Option<local::Cached>> = Mutex::new(None);
         TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// A local model nobody asked for this long is unloaded (owner decision 2026-11-15, as ObservANT's default).
+    #[cfg(any(target_os = "linux", windows))]
+    pub(super) const IDLE_UNLOAD: std::time::Duration = std::time::Duration::from_secs(600);
+
+    /// Whether a model last used at `used` has rested at least `idle` by `now`.
+    #[cfg(any(target_os = "linux", windows))]
+    pub(super) fn rested(
+        used: std::time::Instant,
+        now: std::time::Instant,
+        idle: std::time::Duration,
+    ) -> bool {
+        now.saturating_duration_since(used) >= idle
     }
 
     pub(super) fn generate(
@@ -205,7 +230,9 @@ mod enabled {
                 |backend| backend.generate(&messages, &options, cancel_token(), &mut on_text),
             ),
             None => endpoint(&source)?.generate(&messages, &options, cancel_token(), &mut on_text),
-        }?;
+        };
+        local::touch(&mut cached);
+        let result = result?;
         let _ = sink.add(done(&result));
         Ok(())
     }
@@ -234,13 +261,56 @@ mod enabled {
 
     #[cfg(any(target_os = "linux", windows))]
     mod local {
+        use std::sync::Once;
+        use std::time::{Duration, Instant};
+
         use kataglyphis_text::genai::{GenaiGenerator, Provider};
         use kataglyphis_text::TextError;
 
-        /// The last model loaded, kept for the next turn of the conversation.
+        /// The last model loaded, kept for the next turn of the conversation until it rests IDLE_UNLOAD.
         pub(super) struct Cached {
             key: (String, Provider),
             generator: GenaiGenerator,
+            used: Instant,
+        }
+
+        /// Marks the cached model as just used.
+        pub(super) fn touch(cached: &mut Option<Cached>) {
+            if let Some(cached) = cached.as_mut() {
+                cached.used = Instant::now();
+            }
+        }
+
+        /// Drops a cached model that rested IDLE_UNLOAD; the turn's lock keeps a running one.
+        fn unload_if_idle(cached: &mut Option<Cached>, now: Instant) {
+            if cached
+                .as_ref()
+                .is_some_and(|c| super::rested(c.used, now, super::IDLE_UNLOAD))
+            {
+                *cached = None;
+                log::info!(
+                    "text: unloaded the local model after {} s unused",
+                    super::IDLE_UNLOAD.as_secs()
+                );
+            }
+        }
+
+        /// One watcher for the bridge's life, from the first load: a turn in flight holds the lock, so try_lock skips it.
+        fn watch_idle() {
+            static WATCHER: Once = Once::new();
+            WATCHER.call_once(|| {
+                let watcher = std::thread::Builder::new()
+                    .name("text-idle-unload".into())
+                    .spawn(|| loop {
+                        std::thread::sleep(Duration::from_secs(60));
+                        if let Ok(mut cached) = super::TURN.try_lock() {
+                            unload_if_idle(&mut cached, Instant::now());
+                        }
+                    });
+                if let Err(err) = watcher {
+                    log::warn!("text: no idle-unload watcher ({err}); the model stays loaded");
+                }
+            });
         }
 
         pub(super) fn provider(name: &str) -> Result<Provider, TextError> {
@@ -256,7 +326,12 @@ mod enabled {
             if cached.as_ref().is_none_or(|c| c.key != key) {
                 *cached = None;
                 let generator = GenaiGenerator::load(std::path::Path::new(dir), key.1)?;
-                *cached = Some(Cached { key, generator });
+                *cached = Some(Cached {
+                    key,
+                    generator,
+                    used: Instant::now(),
+                });
+                watch_idle();
             }
             Ok(&mut cached.as_mut().expect("loaded above").generator)
         }
@@ -280,6 +355,8 @@ mod enabled {
         use kataglyphis_text::{TextBackend, TextError};
 
         pub(super) enum Cached {}
+
+        pub(super) fn touch(_: &mut Option<Cached>) {}
 
         fn unavailable() -> TextError {
             TextError::LibraryUnavailable(
@@ -323,6 +400,11 @@ mod enabled {
 
     const WEB: &str = "the web build reaches language models from Dart, not through this bridge";
 
+    /// The native build's `kind: text` form; this build has no library to run one.
+    pub(super) fn describe(err: String) -> String {
+        format!("library_unavailable: {err}")
+    }
+
     pub(super) fn cancel() {}
 
     pub(super) fn local_available() -> bool {
@@ -347,6 +429,22 @@ mod enabled {
 mod tests {
     use super::*;
     use kataglyphis_text::{FinishReason, GenerationResult};
+
+    #[test]
+    #[cfg(any(target_os = "linux", windows))]
+    fn a_local_model_counts_as_rested_from_the_idle_time_on() {
+        let used = std::time::Instant::now();
+        let idle = enabled::IDLE_UNLOAD;
+        assert!(!enabled::rested(used, used, idle));
+        assert!(!enabled::rested(
+            used,
+            used + idle - std::time::Duration::from_secs(1),
+            idle
+        ));
+        assert!(enabled::rested(used, used + idle, idle));
+        // A clock read before the use is no rest at all.
+        assert!(!enabled::rested(used + idle, used, idle));
+    }
 
     #[test]
     fn the_default_options_are_the_contracts() {

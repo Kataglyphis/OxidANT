@@ -1,8 +1,8 @@
 //! `/ask` and `/summary`: a language model answers from the visit log, never from the picture; see `docs/observant.md`.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, TryLockError};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError, TryLockError, Weak};
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use bytes::Bytes;
@@ -32,6 +32,7 @@ const QUESTION_LIMIT: usize = 1000;
 /// Days of figures `/ask` hands the model, today included.
 const ASK_DAYS: u64 = 7;
 const LONGEST_OFFSET_MIN: i32 = 14 * 60;
+/// The default of `llm_timeout_s`.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
 
 const SYSTEM: &str = "You answer questions about a camera's visit log. Use only these facts, and say so when they do not answer the question.";
@@ -45,6 +46,10 @@ pub struct Assistant {
     backend: Mutex<Option<Box<dyn TextBackend + Send>>>,
     max_new_tokens: u32,
     timeout: Duration,
+    /// How long an in-process model may rest before it is unloaded; `None` keeps it (an endpoint, or 0).
+    idle_unload: Option<Duration>,
+    /// When the last answer ended.
+    last_used: Mutex<Instant>,
 }
 
 /// Why no answer came; each one reaches the client with its own status.
@@ -70,14 +75,20 @@ impl Drop for CancelOnDrop {
 fn local_backend(
     dir: &std::path::Path,
     provider: &str,
+    threads: u32,
 ) -> Result<Box<dyn TextBackend + Send>, TextError> {
     use kataglyphis_text::genai::{GenaiGenerator, Provider};
     let provider: Provider = provider.parse()?;
-    Ok(Box::new(GenaiGenerator::load(dir, provider)?))
+    let threads = (threads > 0).then_some(threads);
+    Ok(Box::new(GenaiGenerator::load_with(dir, provider, threads)?))
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-fn local_backend(_: &std::path::Path, _: &str) -> Result<Box<dyn TextBackend + Send>, TextError> {
+fn local_backend(
+    _: &std::path::Path,
+    _: &str,
+    _: u32,
+) -> Result<Box<dyn TextBackend + Send>, TextError> {
     Err(TextError::LibraryUnavailable(
         "the chain's ONNX Runtime GenAI exists for Linux and Windows only; use an endpoint".into(),
     ))
@@ -96,12 +107,23 @@ impl Assistant {
         if !config.names_a_language_model() {
             return None;
         }
-        let provider = config.llm_provider.clone();
+        let (provider, threads) = (config.llm_provider.clone(), config.llm_threads);
+        let limit = Duration::from_secs(u64::from(config.llm_timeout_s));
+        // An endpoint holds no memory here; only a model in this process is worth unloading (owner decision).
+        let idle_unload = (model_dir.is_some() && config.llm_idle_unload_s > 0)
+            .then(|| Duration::from_secs(u64::from(config.llm_idle_unload_s)));
         let open: Opener = Box::new(move || match &model_dir {
-            Some(dir) => local_backend(dir, &provider),
-            None => Ok(Box::new(choice.resolve()?)),
+            Some(dir) => local_backend(dir, &provider, threads),
+            None => {
+                let mut endpoint = choice.resolve()?;
+                endpoint.timeout = limit;
+                Ok(Box::new(endpoint))
+            }
         });
-        Some(Self::with_opener(open, config.llm_max_new_tokens))
+        let mut assistant = Self::with_opener(open, config.llm_max_new_tokens);
+        assistant.idle_unload = idle_unload;
+        assistant.timeout = limit;
+        Some(assistant)
     }
 
     fn with_opener(open: Opener, max_new_tokens: u32) -> Self {
@@ -110,7 +132,35 @@ impl Assistant {
             backend: Mutex::new(None),
             max_new_tokens,
             timeout: ANSWER_TIMEOUT,
+            idle_unload: None,
+            last_used: Mutex::new(Instant::now()),
         }
+    }
+
+    /// Drops an in-process model that rested longer than `idle_unload`; a running answer holds the lock and keeps it.
+    pub(crate) fn unload_if_idle(&self, now: Instant) -> bool {
+        let Some(idle) = self.idle_unload else {
+            return false;
+        };
+        let last = *self
+            .last_used
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let rested = now.saturating_duration_since(last);
+        if rested < idle {
+            return false;
+        }
+        let Ok(mut backend) = self.backend.try_lock() else {
+            return false;
+        };
+        if backend.take().is_none() {
+            return false;
+        }
+        log::info!(
+            "unloaded the language model after {} s without a question",
+            rested.as_secs()
+        );
+        true
     }
 
     /// Runs on a blocking thread: a second question while one is running is refused, not queued.
@@ -141,10 +191,13 @@ impl Assistant {
                 Ok(slot.as_mut().expect("opened above"))
             },
             |model| model.generate(messages, &options, cancel, &mut |_| {}),
-        )
-        .map_err(Refusal::Text)?;
+        );
+        *self
+            .last_used
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Instant::now();
         // A client that left while the model loaded gets no answer decoded for nobody.
-        answered.ok_or(Refusal::Cancelled)
+        answered.map_err(Refusal::Text)?.ok_or(Refusal::Cancelled)
     }
 
     async fn answer(
@@ -156,12 +209,38 @@ impl Assistant {
         let timeout = self.timeout;
         let work = tokio::task::spawn_blocking(move || self.run(&messages, &cancel));
         match tokio::time::timeout(timeout, work).await {
-            Ok(Ok(result)) => result,
+            Ok(Ok(result)) => {
+                if let Ok(done) = &result {
+                    log::info!(
+                        "answer: {} tokens, {:.0} ms to the first, {:.1} tokens/s",
+                        done.completion_tokens,
+                        done.time_to_first_token_ms,
+                        done.decode_tokens_per_second
+                    );
+                }
+                result
+            }
             Ok(Err(joined)) => Err(Refusal::Text(TextError::GenerationFailed(
                 joined.to_string(),
             ))),
             Err(_) => Err(Refusal::TimedOut),
         }
+    }
+}
+
+/// Asks now and then whether the in-process model rested long enough to unload; ends with the assistant.
+pub async fn unload_when_idle(assistant: Weak<Assistant>) {
+    let Some(idle) = assistant.upgrade().and_then(|a| a.idle_unload) else {
+        return;
+    };
+    let mut tick =
+        tokio::time::interval((idle / 4).clamp(Duration::from_secs(1), Duration::from_secs(60)));
+    loop {
+        tick.tick().await;
+        let Some(assistant) = assistant.upgrade() else {
+            return;
+        };
+        assistant.unload_if_idle(Instant::now());
     }
 }
 
@@ -333,9 +412,21 @@ fn refused(refusal: Refusal) -> Response<Body> {
             "the question was cancelled",
         ),
         Refusal::Text(err) => {
-            log::warn!("language model: {err}");
-            text_reply(StatusCode::BAD_GATEWAY, err.to_string())
+            log::warn!("language model ({}): {err}", err.kind());
+            text_reply(status_of(&err), err.to_string())
         }
+    }
+}
+
+/// The caller's mistake is 400, a model that cannot load 503, a server too slow 504, and everything else past it 502.
+fn status_of(err: &TextError) -> StatusCode {
+    match err {
+        TextError::InvalidOptions(_) => StatusCode::BAD_REQUEST,
+        TextError::EndpointTimedOut(_) => StatusCode::GATEWAY_TIMEOUT,
+        TextError::LibraryUnavailable(_)
+        | TextError::ModelLoadFailed(_)
+        | TextError::ProviderUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+        _ => StatusCode::BAD_GATEWAY,
     }
 }
 
@@ -451,6 +542,8 @@ pub(crate) async fn ask(
                     "prompt_tokens": result.prompt_tokens,
                     "completion_tokens": result.completion_tokens,
                     "thinking_chars": result.thinking_chars,
+                    "time_to_first_token_ms": result.time_to_first_token_ms,
+                    "decode_tokens_per_second": result.decode_tokens_per_second,
                 }),
             )
         }),
@@ -524,6 +617,8 @@ async fn summary_words(
             }
             reply["summary"] = result.text.into();
             reply["finish_reason"] = result.finish_reason.as_str().into();
+            reply["time_to_first_token_ms"] = result.time_to_first_token_ms.into();
+            reply["decode_tokens_per_second"] = result.decode_tokens_per_second.into();
             json_reply(StatusCode::OK, &reply)
         }
         Err(refusal) => refused(refusal),
@@ -613,6 +708,86 @@ pub(crate) mod tests {
             }))
         });
         (Arc::new(Assistant::with_opener(open, 16)), seen)
+    }
+
+    /// An assistant whose every open is counted, so a test sees when the model loads again.
+    fn counting_assistant(idle: Option<Duration>) -> (Assistant, Arc<AtomicUsize>) {
+        let opens = Arc::new(AtomicUsize::new(0));
+        let counted = opens.clone();
+        let open: Opener = Box::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(Stub {
+                seen: Arc::default(),
+                reply: Ok("Twice.".into()),
+                hold: false,
+                thinking_chars: 0,
+                saw_cancel: Arc::default(),
+            }))
+        });
+        let mut assistant = Assistant::with_opener(open, 16);
+        assistant.idle_unload = idle;
+        (assistant, opens)
+    }
+
+    #[test]
+    fn only_an_in_process_model_unloads_and_zero_keeps_it() {
+        let local = Config {
+            llm_model_dir: Some("/m".into()),
+            ..Config::default()
+        };
+        let idle = |config: &Config| Assistant::from_config(config).unwrap().idle_unload;
+        assert_eq!(idle(&local), Some(Duration::from_secs(600)));
+        let endpoint = Config {
+            llm_base_url: Some("http://127.0.0.1:1".into()),
+            ..Config::default()
+        };
+        assert_eq!(idle(&endpoint), None);
+        let kept = Config {
+            llm_idle_unload_s: 0,
+            ..local
+        };
+        assert_eq!(idle(&kept), None);
+    }
+
+    #[test]
+    fn an_idle_model_is_unloaded_and_the_next_question_loads_it_again() {
+        let (assistant, opens) = counting_assistant(Some(Duration::from_secs(600)));
+        let ask = || {
+            assistant
+                .run(&[ChatMessage::user("hi")], &CancelToken::default())
+                .unwrap()
+        };
+        ask();
+        let now = Instant::now();
+        assert!(!assistant.unload_if_idle(now), "it just answered");
+        assert!(assistant.unload_if_idle(now + Duration::from_secs(601)));
+        assert!(
+            !assistant.unload_if_idle(now + Duration::from_secs(602)),
+            "nothing left to unload"
+        );
+        ask();
+        assert_eq!(opens.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_running_answer_or_an_endpoint_keeps_the_model() {
+        let (assistant, _) = counting_assistant(Some(Duration::from_secs(1)));
+        assistant
+            .run(&[ChatMessage::user("hi")], &CancelToken::default())
+            .unwrap();
+        let later = Instant::now() + Duration::from_secs(5);
+        let running = assistant.backend.lock().unwrap();
+        assert!(
+            !assistant.unload_if_idle(later),
+            "an answer holds the model"
+        );
+        drop(running);
+        assert!(assistant.unload_if_idle(later));
+        let (endpoint, _) = counting_assistant(None);
+        endpoint
+            .run(&[ChatMessage::user("hi")], &CancelToken::default())
+            .unwrap();
+        assert!(!endpoint.unload_if_idle(later + Duration::from_secs(3600)));
     }
 
     /// An assistant whose model holds its answer until a cancel comes, and the flag it sets then.

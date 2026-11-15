@@ -6,20 +6,19 @@ pub(crate) mod pipeline;
 pub(crate) mod renderer;
 pub(crate) mod wgpu_init;
 
-use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use gstreamer as gst;
-use gstreamer::prelude::ElementExt;
+use kataglyphis_media::{CaptureSession, FrameSlot};
+use kataglyphis_telemetry::resource_monitor;
 use pollster::block_on;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
-use pipeline::{build_pipeline, Frame};
+use pipeline::{camera_config, Frame};
 pub use pipeline::{media_check, MediaReport};
 use renderer::WgpuState;
 
@@ -75,17 +74,16 @@ fn run_inner(backends: wgpu::Backends, backend_label: &str) -> anyhow::Result<()
     // Not a bare gst::init(): the packaged plugins must win over a host's GStreamer install.
     kataglyphis_media::ensure_gst_initialized().context("Failed to initialize GStreamer")?;
 
-    let (frame_tx, frame_rx) = sync_channel::<Frame>(2);
-    let pipeline = build_pipeline(frame_tx).context("Failed to build GStreamer pipeline")?;
+    let session = CaptureSession::start_observed(
+        camera_config(),
+        Some(Box::new(|_| resource_monitor::record_camera_frame())),
+    )
+    .context("Failed to start the camera")?;
 
-    pipeline
-        .set_state(gst::State::Playing)
-        .map_err(|e| anyhow::anyhow!("Failed to start pipeline: {e}"))?;
+    let window_result = start_window(session.frames(), backends, backend_label);
 
-    let window_result = start_window(frame_rx, backends, backend_label);
-
-    // Always try to stop the pipeline, even if the window loop failed.
-    let _ = pipeline.set_state(gst::State::Null);
+    // Always stop the camera, even if the window loop failed.
+    session.stop();
 
     window_result
 }
@@ -93,7 +91,7 @@ fn run_inner(backends: wgpu::Backends, backend_label: &str) -> anyhow::Result<()
 // GuiApp
 
 struct GuiApp {
-    frame_rx: Receiver<Frame>,
+    frames: FrameSlot,
     backends: wgpu::Backends,
     backend_label: String,
     window: Option<Arc<Window>>,
@@ -103,20 +101,23 @@ struct GuiApp {
     uploaded_frame_id: u64,
     next_redraw_deadline: Instant,
     redraw_interval: Duration,
-    /// Stored init error from `resumed()` — checked on next event tick.
+    /// Why the window ended by itself: it or WGPU did not start, or the camera ended, failed or went silent.
     init_error: Option<String>,
 }
 
 impl GuiApp {
-    /// Drain pending frames, keeping only the latest; `true` if any arrived.
+    /// Takes the newest frame, `true` if one came; a closed slot leaves its reason in `init_error`.
     fn drain_frames(&mut self) -> bool {
-        let mut got_frame = false;
-        while let Ok(frame) = self.frame_rx.try_recv() {
-            self.latest_frame = Some(frame);
+        if let Some(frame) = self.frames.take_latest(Duration::ZERO) {
+            self.latest_frame = Some(Frame::from(frame));
             self.latest_frame_id = self.latest_frame_id.wrapping_add(1);
-            got_frame = true;
+            return true;
         }
-        got_frame
+        if self.frames.is_closed() && self.init_error.is_none() {
+            let reason = self.frames.error();
+            self.init_error = Some(reason.unwrap_or_else(|| "the camera stream ended".into()));
+        }
+        false
     }
 }
 
@@ -221,6 +222,10 @@ impl ApplicationHandler for GuiApp {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Redraw at a steady cadence so egui stays smooth even with a low-FPS video source.
         let got_frame = self.drain_frames();
+        if self.init_error.is_some() {
+            event_loop.exit();
+            return;
+        }
 
         let Some(window) = self.window.as_ref() else {
             return;
@@ -239,13 +244,13 @@ impl ApplicationHandler for GuiApp {
 }
 
 fn start_window(
-    frame_rx: Receiver<Frame>,
+    frames: FrameSlot,
     backends: wgpu::Backends,
     backend_label: &str,
 ) -> anyhow::Result<()> {
     let event_loop = EventLoop::new().context("Failed to create event loop")?;
     let mut app = GuiApp {
-        frame_rx,
+        frames,
         backends,
         backend_label: backend_label.to_string(),
         window: None,

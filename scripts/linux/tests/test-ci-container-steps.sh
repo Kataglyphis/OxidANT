@@ -191,9 +191,9 @@ t_assert_grep "${work}/out" '^FETCHED-LLM$'
 t_assert_grep "${work}/out" '^DRIVER$'
 t_assert_grep "${work}/out" '^crates/gui .*100.0 % .*floor +29 % +ok$'
 t_case "coverage warns about floor slack over 3 points without failing"
-t_assert_grep "${work}/out" '^warning: floor slack over 3 points: src 100\.0 % is 81\.0 points over its 19 % floor; raise the floor$'
-t_case "coverage retains its workspace scope, vendor exclusion, timeout and aggregate floor"
-for arg in --workspace --exclude-files 'third_party/*' --timeout 300 --fail-under 70 --package 'two words' ''; do
+t_assert_grep "${work}/out" '^warning: floor slack over 3 points: src 100\.0 % is 35\.0 points over its 65 % floor; raise the floor$'
+t_case "coverage retains its workspace scope, vendor and generated-code exclusions, timeout and aggregate floor"
+for arg in --workspace --exclude-files 'third_party/*' 'src/frb_generated.rs' --timeout 300 --fail-under 70 --package 'two words' ''; do
     t_assert_grep "${work}/out" "^ARG=${arg//\*/\\*}$"
 done
 t_case "coverage requires all four services"

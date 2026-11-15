@@ -72,20 +72,6 @@ its open work is here.
       and reads each frame back: not the clear colour, no WebGPU error on the console. Guard: that run as a
       job on request, or its receipt in `docs/testing.md`.
 
-- [ ] **The capture and inference loops cannot run with a fake detector or a failing camera**
-      (M, ★★★). Audit 2026-11-12: no test here runs `spawn_inference`
-      (`crates/observant/src/capture.rs`; the test helper passes `detector: None`), the engine's
-      two end reasons (`src/webcam_engine.rs`: the camera ended, 30 failed runs), the 10 s stall
-      or the 30 s re-probe. `docs/testing.md` calls `capture.rs` the weakest file, 98 of 124
-      mutants caught. Next: two tests that need nothing new (the real model on
-      `image:two_cats.jpg` opens a visit; a missing image file is retried after the backoff and
-      recovers). Then the smallest seam: each loop body takes the detector as a closure,
-      `CaptureSession` gets a `#[doc(hidden)]` launch-line constructor, and `STALL_AFTER` and
-      `REPROBE_EVERY` move into a `Timing` value on `Worker` with today's numbers as default.
-      No public trait and no dev-only crate. Guard: the new tests in the `test` step, the
-      `crates/observant` and `src` coverage floors raised to the new figures, and the new
-      `capture.rs` count of `cargo mutants` written into `docs/testing.md`.
-
 - [ ] **Detection quality has no regression set** (M, ★★★). Audit 2026-11-12
       (not double-checked): `crates/inference/tests/fixtures` holds one photo, checked loosely
       (two cats, one at 0.8 or more). The rules in `crates/observant/src/presence.rs` and
@@ -156,20 +142,6 @@ its open work is here.
       goes, the two diverge. Next: once it lands, move the estimator into `shaders/tracer/path_estimator.slang`
       as a module both renderers import, as `volumetric_clouds.slang` is.
 
-- [ ] **Measure whether ORT's default thread count costs the Rust detector half its speed**
-      (S, ★★). Audit 2026-11-12, from the recorded perf-host baselines of the four repos (same
-      host, model and photo, 8 pinned CPUs): Rust 50.7 ms p50, C++ 30.3 ms, Python 24.1 ms, and
-      Python at ORT's default 51.3 ms. `ort_backend.rs` sets intra-op threads only when
-      `KATAGLYPHIS_ORT_THREADS` is above 0. The cause is inferred, not confirmed by a Rust run,
-      and nothing shows that an unpinned host or a Pi is slower. Next, on the perf host: run
-      `KATAGLYPHIS_ORT_THREADS=7 target/release/kataglyphis_cli detect-latency --image
-      third_party/ModelANT/contracts/fixtures/two_cats.jpg --runs 30` once pinned and once
-      unpinned. Keeping ORT's default was a written choice (2026-10-11), so the owner decides on
-      the numbers. If it changes, only the unset case moves (the usable CPUs, at most 8);
-      ObservANT's 2, the bench's 2 and every override stay, and `docs/running.md` and
-      `docs/observant.md` change in the same commit. Guard: a perf-host row at ORT's default
-      beside the shipped one with a ratio check, as OrchestrANT's `quality-report.toml` has.
-
 - [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
       nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
       in `.github/workflows/reusable-linux.yml` fails only on a doubling. On a Pi 5 the model is
@@ -180,89 +152,26 @@ its open work is here.
       the result into `CHANGELOG.md`; on x86 XNNPACK is 3.7 times slower, on ARM nobody knows.
       A Cortex-A76 perf-host baseline only if it is still wanted: its setup builds the release
       CLI with fat LTO in the container and refuses a load above 2, a heavy job beside a live
-      camera. Then first give the detector commands in `quality-report.toml` ObservANT's two
+      camera. On himbeere2 that link does not fit `pi-ci`'s 5 GB at all: rustc was killed linking
+      `kataglyphis_cli` on 2026-11-15, and `CARGO_PROFILE_RELEASE_LTO=false
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16` built it; the setup needs that override, or a larger
+      `PI_CI_MEMORY`, before a Pi baseline. Then first give the detector commands in `quality-report.toml` ObservANT's two
       threads without spinning, and record it on a quiet night as one `systemd-run` unit. If
       one new gated bench is wanted: preprocessing at 1280x720, the app's default size. No
       allocation-count tests.
 
-- [ ] **The `src` coverage floor is 19 %, and Rust mutation testing is by hand** (M, ★★). Audit
-      2026-11-12: `scripts/linux/ci-container-steps.sh` holds `src` to 19 % and excludes only
-      `third_party/*`. `src/frb_generated.rs` is 2301 of the 5405 lines under `src`, but nobody
-      has read its share of the coverage report. The `cargo mutants` scores in
-      `docs/testing.md` are from 2026-10-15; no workflow runs the tool, and the image does not
-      carry it. Next: read the per-file rates in the x64 lane's `cobertura.xml`; if the
-      generated file is the drag, exclude it with a second `--exclude-files` and set the floor
-      within 3 points of the new figure. Then, if the owner accepts one more scheduled job, a
+- [ ] **Rust mutation testing is by hand** (M, ★★). Audit 2026-11-12. The coverage half is done (2026-11-15): the
+      `coverage` step leaves `src/frb_generated.rs` out (1157 of `src`'s 1795 lines, never run by a Rust test), which
+      took `src` from 24 % to 67.6 %, and its floor from 19 % to 65 %. The `cargo mutants` scores in `docs/testing.md`
+      are from 2026-10-15; no workflow runs the tool, and the image does not carry it (hub CON238). If the owner accepts one more scheduled job, a
       weekly one runs the per-file commands of `docs/testing.md` with `--jobs 1 -- --lib` on
-      the pure modules and uploads `mutants.out`. Also (not double-checked):
-      `scripts/linux/tests/ort-license-mutations.json` has no recipe for `crates/inference`; add
-      five that run `cargo test -p kataglyphis_inference --lib` (swap red and blue, ignore the
-      threshold, drop the finite check, drop the clamp, one scale for both axes). Guard: the
+      the pure modules and uploads `mutants.out`. The five `crates/inference` recipes are in
+      `scripts/linux/tests/ort-license-mutations.json` since 2026-11-15 (`consumer.oxidant-inference-*`, each
+      proved to bite). Guard: the
       raised floor, and a `kind = "count"` artifact over `mutants.out/missed.txt` in
-      `quality-report.toml`.
-
-- [ ] **The endpoint client has one 300 s budget for everything** (M, ★★). Audit 2026-11-12, not
-      measured: `Endpoint::post` in `crates/text/src/endpoint.rs` sets only `timeout_global`, so
-      the connect, the first byte and the whole stream share one clock, and a timeout arrives
-      as `EndpointUnreachable`, like a refused port. `ANSWER_TIMEOUT` in
-      `crates/observant/src/ask.rs` is 300 s too, and no config key changes either. A client
-      that leaves still cancels within 20 ms, so the one `/ask` slot is held only while a
-      client keeps waiting. Next: `timeout_connect` (about 5 s) and `timeout_per_read`
-      (generous, about 120 s, it also covers the response head) beside the cap; the cap becomes
-      a field ObservANT sets from a new `llm_timeout_s` key; ureq's timeout maps to a new
-      `TextError` kind that `/ask` answers with 504. Guard: cases on the `silent_after` server
-      in `crates/text/tests/endpoint.rs` with short limits, asserting the kind and an upper
-      bound on the time, and one mutation recipe per timeout.
-
-- [ ] **ObservANT's in-process model has no thread cap and reports no speed** (M, ★★). Audit
-      2026-11-12, not measured: `load()` in `crates/text/src/genai.rs` sets no thread count, so
-      GenAI uses its config's (ORT's default, one per core) beside a detector held to 2 threads
-      for a measured reason (`docs/observant.md`). `/ask` drops the time to first token and the
-      decode rate its result already has (`crates/observant/src/ask.rs`). A packaged board is
-      not hit today: no package carries GenAI, so it answers through an endpoint. Next:
-      `llm_threads`, default 2, applied at load (the overlay call if the pinned `ort_genai_c.h`
-      has it, else the config rewrite the hub's `genai-model-threads.py` does); this is the
-      consumer half of hub CON218. Return and log the two figures; they are the measurement any
-      default needs. An idle unload for `llm_model_dir` waits for the owner: "the model stays
-      loaded" is a written choice, and nothing is measured on the Pi. A bridge `text_unload`
-      must land with OmniAccelerANT's regenerated bindings. Guard: a recorder test that `load()`
-      passes the thread count, and a test for the figures in the reply.
-
-- [ ] **A text failure loses its kind on the way out** (M, ★★). Audit 2026-11-12: `text_generate`
-      in `src/api/text.rs` returns `Result<(), String>`, so the app cannot tell a missing model
-      directory from a dead endpoint without matching English text. `refused` in
-      `crates/observant/src/ask.rs` answers every `TextError` with 502, also a question with a
-      NUL character, which is the caller's fault. Next: `TextError::kind()` returns a fixed
-      word, with `every_error_names_its_kind` in `crates/text/src/lib.rs` extended; ObservANT
-      maps the kind to a status (400 invalid request, 503 the model cannot load, 502 the
-      endpoint) and keeps the text body. Then the bridge puts the kind at the front of its error
-      string, so no generated binding moves, and Dart maps it to a translated sentence. A typed
-      bridge error waits for a planned regeneration, `ContextExceeded` for a measurement of how
-      often the playground hits it. Guard: the extended unit test and one ObservANT test per
-      status.
-
-- [ ] **ObservANT's JSON has example files for `/healthz` only** (M, ★★). `/healthz` has goldens
-      (`crates/observant/tests/fixtures/healthz/`, idle, a visit and a problem, compared by
-      `healthz_matches_its_goldens`) that OmniAccelerANT parses. `/visits`, `/settings`, `/ask` and `/summary`
-      have none, so OmniAccelerANT's Dart parsers are tested on hand-typed bodies and fall back to a default
-      for every missing field. Next: fixtures for the four beside the healthz ones, the same blanking of
-      `version`, ages and `stats`, and the same switch to rewrite them; OmniAccelerANT's Dart tests read them
-      from this submodule. Guard: the Rust test here, and the Dart tests failing in the pin-bump commit when a
-      field moves.
-
-- [ ] **Three camera pipelines, each with its own failure rules** (L, ★★). Audit 2026-11-12:
-      `crates/media/src/capture.rs` (the Flutter engine), `crates/observant/src/capture.rs` and
-      `crates/gui/src/gui_wgpu/pipeline.rs` each open a camera and keep the newest frame. Only
-      ObservANT notices a stall: the engine's loop continues on a timeout
-      (`src/webcam_engine.rs`), and the wgpu GUI never reads its pipeline bus, the bug fixed in
-      `crates/media` on 2026-11-11. The three loops differ on purpose, so no shared worker.
-      Next, two steps. `kataglyphis_media` stamps the last frame time in the appsink callback
-      and fails the slot with `no frame for N s`, tested with a launch line that delivers
-      nothing. Then the wgpu GUI uses `CaptureSession` (`CaptureConfig` learns "size 0 means the
-      camera's own size"), which deletes the third pipeline and gives the GUI its errors.
-      ObservANT's pipeline stays in its crate. Guard: the media tests for end, error and stall,
-      and a source-reading test that only `crates/media` and `crates/observant` build an
-      appsink.
+      `quality-report.toml`. The capture loop got six tests on 2026-11-15 (the real model, a late
+      file, the stall, the re-probe, the engine's two end reasons): the first run after CON238 writes
+      `capture.rs`'s new count into `docs/testing.md` and adds `src/session_slot.rs` to its file list.
 
 - [ ] **No packaged ObservANT has answered 502 to a panicking question yet** (S, ★★). Since 2026-11-14 every
       ObservANT build uses its own profile (`[profile.observant]`, release with `panic = "unwind"`, owner decision of
@@ -328,27 +237,11 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       guards of 2026-11-13 are unit tests; add `capture.rs` and `src/session_slot.rs` to the `cargo mutants` file
       list in `docs/testing.md` at the next mutation run (75 minutes on a Pi 5, not run for this change).
 
-- [ ] **Every chat turn runs the whole conversation through the model again** (M, ★★). Audit
-      2026-11-12 (not double-checked), not measured: `generate` in `crates/text/src/genai.rs`
-      templates and encodes all messages and builds a new generator on every call, and
-      `src/api/text.rs` caches the model only. So the time to first token should grow with the
-      chat. Next: measure first. Replay a fixed five-turn chat on SmolLM2 and compare the time
-      to first token of turn 1 and turn 5. Only if it matters: keep the last generator and its
-      token ids with the cached model and append only the new tokens when the old ids are a
-      prefix, after checking that the pinned `ort_genai_c.h` can append to a live generator.
-      Guard: a `text_turns` command in `scripts/linux/perf-host.sh` under
-      `quality-report.sh --perf-host`, and a tiny-model test that a turn 2 which extends turn 1
-      gives the same ids as a fresh run.
-
-- [ ] **`to_json` holds one lock while it takes others** (M, ★). Audit 2026-11-12: in
-      `crates/observant/src/status.rs`, `to_json` keeps the `detected` guard while it locks
-      `clips` and, through `health()`, `last_frame`, `last_run` and `model_error`. The order is
-      right today, by convention only; nothing is broken. Next: copy the needed values out of
-      `detected` and drop the guard first, with a test that holds `clips` on another thread and
-      expects `to_json` to return. Then split only `capture.rs` into the part that needs a
-      camera and the pure part (`Visits`, `counted`, `Backoff`, geometry), which helps the
-      weakest mutation score; split `status.rs` (31 fields) when the next feature adds one.
-      Guard: the tests move unchanged, and the file names in the `cargo mutants` commands of
+- [ ] **`capture.rs` mixes the camera with pure logic** (M, ★). Audit 2026-11-12; its first half, `to_json` holding
+      `detected` while it took other locks, is done (2026-11-15, a test that deadlocked on the old order). Left:
+      split `crates/observant/src/capture.rs` into the part that needs a camera and the pure part (`Visits`,
+      `counted`, `Backoff`, geometry), which helps the weakest mutation score; split `status.rs` (31 fields) when the
+      next feature adds one. Guard: the tests move unchanged, and the file names in the `cargo mutants` commands of
       `docs/testing.md` change in the same commit.
 
 - [b] **CUDA still loads the old way; move it to the plugin row when the hub publishes its new NVIDIA image** (S, ★★).
@@ -389,7 +282,7 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       Blocked on the owner's decision: streaming the reply (the facts first, then the pieces,
       then a done line, with the JSON reply kept for clients that do not ask) changes the body
       type of the whole web module, the Dart client and their tests. It is not part of the
-      timeout entry above.
+      timeout work (2026-11-15).
 
 - [b] **A push type-checks Rust for the host target only** (L, ★★). Audit 2026-11-12: the
       `fmt-clippy` step lints the host target, and no workflow or step calls

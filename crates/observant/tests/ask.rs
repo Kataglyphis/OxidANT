@@ -87,7 +87,8 @@ async fn a_missing_model_directory_is_the_replys_error_and_the_service_lives() {
     })
     .await;
     let (reply, _) = ask(addr, "abc").await;
-    assert!(reply.starts_with("HTTP/1.1 502"), "{reply}");
+    // A model that cannot load is this service's fault, not a gateway's.
+    assert!(reply.starts_with("HTTP/1.1 503"), "{reply}");
     assert!(reply.contains("could not be loaded"), "{reply}");
 }
 
@@ -181,6 +182,30 @@ async fn an_endpoint_that_thinks_first_gives_its_answer_without_the_thinking() {
         assert_eq!(json["answer"], "Once.", "{deltas:?}");
         assert_eq!(json["thinking_chars"], thinking_chars, "{deltas:?}");
     }
+}
+
+/// `llm_timeout_s` bounds a server that takes the question and never answers: a 504, long before the 120 s per read.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_silent_endpoint_is_a_504_after_llm_timeout_s() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let held = std::thread::spawn(move || listener.accept().map(|(stream, _)| stream));
+    let addr = start(&Config {
+        llm_base_url: Some(format!("http://127.0.0.1:{port}")),
+        llm_model: Some("m".into()),
+        llm_timeout_s: 1,
+        ..Config::default()
+    })
+    .await;
+    let started = std::time::Instant::now();
+    let (reply, _) = ask(addr, "How often?").await;
+    assert!(reply.starts_with("HTTP/1.1 504"), "{reply}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    drop(held.join());
 }
 
 #[tokio::test(flavor = "multi_thread")]
