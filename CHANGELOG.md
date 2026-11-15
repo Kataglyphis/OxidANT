@@ -126,6 +126,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and a windowed host whose best adapter was GL (a Windows VM) panicked building the depth-resolve and SSAO
   pipelines, whose depth `textureLoad` has no GLSL form. Native contexts no longer request GL; the web keeps every
   backend. Test: `native_contexts_never_request_the_gl_backend`.
+- **A window wider or taller than 8192 px panicked**: the device asks for WebGPU's default limits, but the surface
+  took any size, so a window across two 5K monitors failed surface validation. The surface now scales down to the
+  device's largest texture side with its aspect kept, and the scene renders at that size. Test:
+  `a_surface_past_the_texture_limit_scales_down_with_its_aspect`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
