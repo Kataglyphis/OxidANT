@@ -46,8 +46,13 @@ pub const MAX_JOINTS: usize = 256;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// MSAA sample count of the forward HDR and depth targets (1 disables MSAA).
+/// MSAA sample count of the forward HDR and depth targets. Never 1: the forward pass always
+/// resolves colour, and the depth-resolve shader and layout read a multisampled depth texture.
 const MSAA_SAMPLE_COUNT: u32 = 4;
+const _: () = assert!(
+    MSAA_SAMPLE_COUNT > 1,
+    "the forward pass resolves MSAA colour and depth, so it needs more than one sample"
+);
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 /// Cascaded shadow map layers (split by view distance).
 pub const CASCADE_COUNT: usize = 3;

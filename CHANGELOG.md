@@ -87,6 +87,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   their last result while switched off, and the compute path's unread slots drained after the switch back, so
   objects revealed in between popped in for a few frames. Any change of the two culling flags now resets both
   paths. Test: `re_enabling_culling_forgets_the_visibility_from_before`.
+- `MSAA_SAMPLE_COUNT`'s "(1 disables MSAA)" was false: the forward pass always sets a resolve target and the depth
+  resolve reads a multisampled texture, so 1 fails validation. A const assertion now refuses it at compile time.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
