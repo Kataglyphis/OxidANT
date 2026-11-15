@@ -83,6 +83,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **`ibl_intensity` was ignored after `set_environment`**: the bake was the only write of it into the IBL uniforms,
   unlike every other public knob. They are written every frame now. Test:
   `ibl_intensity_takes_effect_after_set_environment`.
+- **Re-enabling occlusion or compute culling culled with visibility from an old camera**: both readback paths kept
+  their last result while switched off, and the compute path's unread slots drained after the switch back, so
+  objects revealed in between popped in for a few frames. Any change of the two culling flags now resets both
+  paths. Test: `re_enabling_culling_forgets_the_visibility_from_before`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

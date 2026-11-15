@@ -88,6 +88,7 @@ impl ForwardRenderer {
         self.update_joint_matrices(gpu);
         self.apply_morph_targets(gpu);
         self.ensure_mirrored_pipelines(&gpu.device);
+        self.reset_culling_on_mode_change();
 
         let view = self.prepare_view(gpu, camera, width, height);
         self.write_sky_uniforms(gpu, &view);

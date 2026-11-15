@@ -511,3 +511,60 @@ fn more_boxes_than_the_query_set_limit_record_without_a_validation_error() {
         "a box past the query limit is unmeasured, so it must stay visible"
     );
 }
+
+/// Re-enabling a culling mode must not cull with visibility measured from an earlier camera.
+#[test]
+fn re_enabling_culling_forgets_the_visibility_from_before() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let occluder = cube_with_transform(
+        Mat4::from_translation(Vec3::new(0.0, 0.0, 2.0)) * Mat4::from_scale(Vec3::splat(4.0)),
+    );
+    let hidden = cube_with_transform(Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0)));
+    let scene = CpuScene {
+        primitives: vec![occluder, hidden],
+        ..Default::default()
+    };
+    // From -Z the small cube stands in front of the occluder, so both are visible.
+    let from_behind = OrbitCamera {
+        radius: 8.0,
+        yaw_deg: -90.0,
+        pitch_deg: 0.0,
+        ..OrbitCamera::default()
+    };
+
+    for gpu_path in [false, true] {
+        let set_culling = |renderer: &mut ForwardRenderer, on: bool| {
+            if gpu_path {
+                renderer.gpu_culling_enabled = on;
+            } else {
+                renderer.occlusion_queries_enabled = on;
+            }
+        };
+        let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+        renderer.upload_scene(&gpu, &scene);
+        set_culling(&mut renderer, true);
+        render_until_readback_lands(&mut renderer, &gpu, &looking_down_neg_z());
+        assert_eq!(
+            renderer.occlusion_cull_stats(),
+            (1, 2),
+            "precondition (gpu path: {gpu_path}): the hidden cube must be culled"
+        );
+
+        set_culling(&mut renderer, false);
+        renderer
+            .render_to_pixels(&gpu, 256, 256, &from_behind)
+            .expect("render");
+        set_culling(&mut renderer, true);
+        renderer
+            .render_to_pixels(&gpu, 256, 256, &from_behind)
+            .expect("render");
+        assert_eq!(
+            renderer.occlusion_cull_stats(),
+            (2, 2),
+            "gpu path: {gpu_path}: the first re-enabled frame culled with visibility \
+             measured from the camera before culling was switched off"
+        );
+    }
+}
