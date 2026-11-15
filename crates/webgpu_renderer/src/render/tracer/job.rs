@@ -88,8 +88,12 @@ struct Job {
 
 impl Job {
     #[cfg(not(target_arch = "wasm32"))]
-    fn start(source: Arc<CpuScene>, options: TraceBuildOptions) -> Result<Self, String> {
-        let builder = TraceSceneBuilder::new(source, Vec::new(), options);
+    fn start(
+        source: Arc<CpuScene>,
+        explicit: Vec<Vec<Mat4>>,
+        options: TraceBuildOptions,
+    ) -> Result<Self, String> {
+        let builder = TraceSceneBuilder::new(source, explicit, options);
         let progress = builder.progress();
         let handle = std::thread::Builder::new()
             .name("tracer-build".to_owned())
@@ -107,8 +111,12 @@ impl Job {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn start(source: Arc<CpuScene>, options: TraceBuildOptions) -> Result<Self, String> {
-        let builder = TraceSceneBuilder::new(source, Vec::new(), options);
+    fn start(
+        source: Arc<CpuScene>,
+        explicit: Vec<Vec<Mat4>>,
+        options: TraceBuildOptions,
+    ) -> Result<Self, String> {
+        let builder = TraceSceneBuilder::new(source, explicit, options);
         Ok(Self {
             progress: builder.progress(),
             builder,
@@ -160,6 +168,12 @@ pub struct Tracer {
     pub options: TraceBuildOptions,
     /// Counts every change of the uploaded scene, so a path tracer's history knows when it went stale.
     generation: u64,
+    /// The model transform every instance sits under, kept across builds.
+    root: Mat4,
+    /// `set_instances`' transforms by scene primitive, which the next build instances.
+    explicit: Vec<Vec<Mat4>>,
+    /// The built scene lacks instances `set_instances` asked for; warned once.
+    stale_instances: bool,
 }
 
 impl Default for Tracer {
@@ -169,6 +183,9 @@ impl Default for Tracer {
             state: State::Idle,
             options: TraceBuildOptions::default(),
             generation: 0,
+            root: Mat4::IDENTITY,
+            explicit: Vec::new(),
+            stale_instances: false,
         }
     }
 }
@@ -180,10 +197,13 @@ impl Tracer {
         self.state = State::Idle;
     }
 
-    /// Forgets the scene and everything built from it.
+    /// Forgets the scene, everything built from it and where it was placed.
     pub fn reset(&mut self) {
         self.source = None;
         self.state = State::Idle;
+        self.root = Mat4::IDENTITY;
+        self.explicit.clear();
+        self.stale_instances = false;
     }
 
     /// Starts the build unless one ran or runs; without a source there is nothing to build.
@@ -191,7 +211,8 @@ impl Tracer {
         let (State::Idle, Some(source)) = (&self.state, &self.source) else {
             return;
         };
-        self.state = match Job::start(Arc::clone(source), self.options) {
+        let explicit = self.explicit.clone();
+        self.state = match Job::start(Arc::clone(source), explicit, self.options) {
             Ok(job) => State::Building(job),
             Err(why) => State::Failed(why),
         };
@@ -214,7 +235,14 @@ impl Tracer {
         // Built or refused, the CPU scene is not read again; its memory goes back now.
         self.source = None;
         self.generation += 1;
-        self.state = match result.and_then(|scene| upload(gpu, scene)) {
+        let root = self.root;
+        let placed = result.map(|mut scene| {
+            if root != Mat4::IDENTITY {
+                scene.set_root_transform(root);
+            }
+            scene
+        });
+        self.state = match placed.and_then(|scene| upload(gpu, scene)) {
             Ok(ready) => State::Ready(Box::new(ready)),
             Err(why) => {
                 log::warn!("tracer: {why}");
@@ -265,9 +293,50 @@ impl Tracer {
         }
     }
 
-    /// Moves every instance under `root` (the model transform): the top level rebuilds, the meshes stay.
+    /// Moves every instance under `root` (the model transform): the top level rebuilds, the meshes stay; a later build keeps it.
     pub fn set_root_transform(&mut self, gpu: &GpuContext, root: Mat4) {
+        if root == self.root {
+            return;
+        }
+        self.root = root;
         self.move_instances(gpu, |scene| scene.set_root_transform(root));
+    }
+
+    /// The transform every instance sits under now.
+    pub fn root_transform(&self) -> Mat4 {
+        self.root
+    }
+
+    /// Instances primitive `primitive` by `transforms` (none: drawn once) as `ForwardRenderer::set_instances` does.
+    /// A build in flight starts over with them; a built scene moves them in place when it traces the primitive as that
+    /// many instances, and otherwise keeps tracing the old ones until the next upload, warned once.
+    pub fn set_instances(&mut self, gpu: &GpuContext, primitive: usize, transforms: &[Mat4]) {
+        if self.explicit.len() <= primitive {
+            self.explicit.resize(primitive + 1, Vec::new());
+        }
+        self.explicit[primitive] = transforms.to_vec();
+        match &mut self.state {
+            State::Building(_) => self.state = State::Idle,
+            State::Ready(ready) => {
+                let (scene, uploaded) = &mut **ready;
+                if scene.set_instance_extras(primitive as u32, transforms) {
+                    uploaded.write_instances(gpu, scene);
+                    self.generation += 1;
+                } else if !std::mem::replace(&mut self.stale_instances, true) {
+                    log::warn!(
+                        "tracer: primitive {primitive} cannot take {} instances in place; the traced scene keeps its \
+                         old ones until the next upload",
+                        transforms.len()
+                    );
+                }
+            }
+            State::Idle | State::Failed(_) => {}
+        }
+    }
+
+    /// Whether the built scene traces every instance `set_instances` asked for.
+    pub fn instances_current(&self) -> bool {
+        !self.stale_instances
     }
 
     /// Moves instanced primitives to their new world transforms, by scene primitive; see [`TraceScene::set_primitive_transforms`].

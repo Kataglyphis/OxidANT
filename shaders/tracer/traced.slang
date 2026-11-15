@@ -7,16 +7,16 @@ import trace_shading;
 // The ray- and path-traced modes' kernels: each dispatch shades one tile into the accumulation, which trace_resolve.slang copies into the HDR target.
 
 // The C++ ray-traced mode: one ray through the pixel centre, lit by the sun and its emission alone, without an ambient term.
-float3 ray_trace_pixel(uint2 pixel)
+// Alpha is the hit's NDC depth, as raytrace.rgen.slang writes it for the clouds; a miss leaves the sky pass its pixel.
+float4 ray_trace_pixel(uint2 pixel)
 {
     TraceRay ray = camera_ray(float2(pixel) + 0.5);
     TraceHit hit = trace_closest(ray);
     if (hit.instance == TRACE_NO_HIT)
-        return sky_with_sun(ray.direction);
+        return float4(sky_with_sun(ray.direction), 1.0);
     TracedSurface s = shade_hit(ray, hit);
-    if (s.unlit)
-        return s.albedo;
-    return sun_light(s, -ray.direction) + s.emissive;
+    float3 colour = s.unlit ? s.albedo : sun_light(s, -ray.direction) + s.emissive;
+    return float4(colour, ndc_depth(ray, hit));
 }
 
 [shader("compute")]
@@ -26,7 +26,15 @@ void cs_ray_trace(uint3 id : SV_DispatchThreadID)
     uint2 pixel;
     if (!tile_pixel(id.xy, pixel))
         return;
-    traceAccumulation[pixel_index(pixel)] = float4(hdr_safe(ray_trace_pixel(pixel)), 1.0);
+    float4 traced = ray_trace_pixel(pixel);
+    traceAccumulation[pixel_index(pixel)] = float4(hdr_safe(traced.rgb), traced.a);
+}
+
+// path_tracing.slang's primary_hit_depth: the first surface through the pixel centre, unjittered, for the clouds.
+float primary_hit_depth(uint2 pixel)
+{
+    TraceRay ray = camera_ray(float2(pixel) + 0.5);
+    return ndc_depth(ray, trace_closest(ray));
 }
 
 bool furnace_on()
@@ -130,6 +138,9 @@ void cs_path_trace(uint3 id : SV_DispatchThreadID)
     for (uint i = 0u; i < traceTile.samples.y; i++)
         sum += hdr_safe(trace_path(pixel, rng));
     float before = float(traceTile.samples.z);
-    float3 previous = traceTile.samples.z > 0u ? traceAccumulation[index].rgb : float3(0.0);
-    traceAccumulation[index] = float4((previous * before + sum) / (before + float(traceTile.samples.y)), 1.0);
+    float4 held = traceAccumulation[index];
+    float3 previous = traceTile.samples.z > 0u ? held.rgb : float3(0.0);
+    // The frame's first chunk traces the depth; its later chunks over the same tile keep it.
+    float depth = traceTile.samples.x == 0u ? primary_hit_depth(pixel) : held.a;
+    traceAccumulation[index] = float4((previous * before + sum) / (before + float(traceTile.samples.y)), depth);
 }

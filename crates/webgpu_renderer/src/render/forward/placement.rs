@@ -23,6 +23,8 @@ impl ForwardRenderer {
         }
         self.repack_lights();
         self.recompute_scene_bounds();
+        // The traced scene keeps the root across a build, so a transform set before its first traced frame holds too.
+        self.tracer.set_root_transform(gpu, root);
     }
 
     /// The root matrix the instances and lights carry now.

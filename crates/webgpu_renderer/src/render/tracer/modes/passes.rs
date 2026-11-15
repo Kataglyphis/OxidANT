@@ -2,9 +2,9 @@
 
 use super::dispatch::TraceDispatch;
 use crate::context::GpuContext;
-use crate::render::forward::HDR_FORMAT;
+use crate::render::forward::{DEPTH_FORMAT, HDR_FORMAT};
 use crate::render::gpu_timing::PassScope;
-use crate::render::pipeline_desc::{self, FullscreenPipeline};
+use crate::render::pipeline_desc;
 use crate::render::tracer::gpu::{TraceGpuScene, TRACE_SCENE_GROUP};
 use crate::render::{bind_layout, buffer_desc};
 
@@ -26,6 +26,8 @@ pub struct TraceFrameUniforms {
     pub light_radiance: [f32; 4],
     /// The white furnace's sky radiance, metallic and roughness; w is 1 when it is on.
     pub furnace: [f32; 4],
+    /// The raster's world to clip, for the primary hit's depth.
+    pub view_proj: [[f32; 4]; 4],
 }
 
 /// `TraceTile` in `trace_shading.slang`: one dispatch's tile and samples.
@@ -52,13 +54,34 @@ pub enum Kernel {
     Path,
 }
 
-/// One traced frame: what it traces, how, and the HDR target it resolves into.
+/// Draws into the resolve's pass after it, against the depth it wrote: the ray-traced mode's sky.
+pub type AfterResolve<'a> = &'a dyn Fn(&mut wgpu::RenderPass<'_>);
+
+/// One traced frame: what it traces, how, and the HDR and single-sample depth targets it resolves into.
 pub struct TracedFrame<'a> {
     pub kernel: Kernel,
     pub scene: &'a TraceGpuScene,
     pub uniforms: TraceFrameUniforms,
     pub dispatches: &'a [TraceDispatch],
     pub hdr_view: &'a wgpu::TextureView,
+    pub depth_view: &'a wgpu::TextureView,
+    pub after_resolve: Option<AfterResolve<'a>>,
+}
+
+/// The WGSL of the traced kernels and their resolve: the generated files, or a shader reload's.
+#[derive(Clone, Copy, Debug)]
+pub struct TracedSources<'a> {
+    pub traced: &'a str,
+    pub resolve: &'a str,
+}
+
+impl TracedSources<'static> {
+    pub fn shipped() -> Self {
+        Self {
+            traced: include_str!("../../../shaders/traced.wgsl"),
+            resolve: include_str!("../../../shaders/trace_resolve.wgsl"),
+        }
+    }
 }
 
 /// The accumulation of one output size and the groups that bind it.
@@ -86,15 +109,13 @@ struct Kernels {
 
 impl Kernels {
     /// The scene's group comes second, as `bvh_traverse.slang` declares it.
-    fn new(device: &wgpu::Device, kernel_layout: &wgpu::BindGroupLayout) -> Self {
+    fn new(device: &wgpu::Device, kernel_layout: &wgpu::BindGroupLayout, wgsl: &str) -> Self {
         let scene_layout = TraceGpuScene::bind_group_layout(device);
         debug_assert_eq!(TRACE_SCENE_GROUP, 1, "the layout lists the scene second");
         Self {
             module: device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("traced"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("../../../shaders/traced.wgsl").into(),
-                ),
+                source: wgpu::ShaderSource::Wgsl(wgsl.into()),
             }),
             layout: device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("traced_kernel_pipeline_layout"),
@@ -145,6 +166,26 @@ pub struct TracedPasses {
 
 impl TracedPasses {
     pub fn new(device: &wgpu::Device) -> Self {
+        Self::with_sources(device, TracedSources::shipped())
+    }
+
+    /// Both kernels compiled now rather than on first use, so a shader reload's error scope sees every entry point.
+    pub fn compiled(device: &wgpu::Device, sources: TracedSources<'_>) -> Self {
+        let mut passes = Self::with_sources(device, sources);
+        passes.kernels.compile(device, Kernel::Ray);
+        passes.kernels.compile(device, Kernel::Path);
+        passes
+    }
+
+    /// Whether `kernel`'s pipeline has been built.
+    pub fn is_compiled(&self, kernel: Kernel) -> bool {
+        match kernel {
+            Kernel::Ray => self.kernels.ray.is_some(),
+            Kernel::Path => self.kernels.path.is_some(),
+        }
+    }
+
+    fn with_sources(device: &wgpu::Device, sources: TracedSources<'_>) -> Self {
         let compute = wgpu::ShaderStages::COMPUTE;
         let tile_size = std::mem::size_of::<TraceTileUniforms>() as u64;
         let kernel_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -166,8 +207,8 @@ impl TracedPasses {
             device.limits().min_uniform_buffer_offset_alignment,
         ));
         Self {
-            kernels: Kernels::new(device, &kernel_layout),
-            resolve: create_resolve(device, &resolve_layout),
+            kernels: Kernels::new(device, &kernel_layout, sources.traced),
+            resolve: create_resolve(device, &resolve_layout, sources.resolve),
             kernel_layout,
             resolve_layout,
             frame: buffer_desc::uniform(
@@ -195,7 +236,7 @@ impl TracedPasses {
             .write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame.uniforms));
         self.tiles.write(gpu, frame.dispatches);
         self.encode_kernel(encoder, frame, trace_scope);
-        self.encode_resolve(encoder, frame.hdr_view, resolve_scope);
+        self.encode_resolve(encoder, frame, resolve_scope);
         Ok(())
     }
 
@@ -273,18 +314,18 @@ impl TracedPasses {
         }
     }
 
-    /// The accumulation into the HDR target, every pixel written, so nothing needs a clear.
+    /// The accumulation into the HDR and depth targets, every pixel written, then what draws against that depth.
     fn encode_resolve(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        hdr_view: &wgpu::TextureView,
+        frame: &TracedFrame<'_>,
         scope: PassScope<'_>,
     ) {
         let target = self.target.as_ref().expect("prepared before the kernels");
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("traced_resolve"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: hdr_view,
+                view: frame.hdr_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -292,7 +333,14 @@ impl TracedPasses {
                 },
                 depth_slice: None,
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: frame.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: scope.render_writes(0, 1),
             occlusion_query_set: None,
             multiview_mask: None,
@@ -300,6 +348,9 @@ impl TracedPasses {
         pass.set_pipeline(&self.resolve);
         pass.set_bind_group(0, &target.resolve_group, &[]);
         pass.draw(0..3, 0..1);
+        if let Some(draw) = frame.after_resolve {
+            draw(&mut pass);
+        }
     }
 }
 
@@ -359,25 +410,47 @@ fn buffer_entry(binding: u32, resource: wgpu::BindingResource<'_>) -> wgpu::Bind
     wgpu::BindGroupEntry { binding, resource }
 }
 
-fn create_resolve(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::RenderPipeline {
+/// A full-screen copy that writes every pixel's depth too, so it tests nothing and always writes.
+fn create_resolve(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    wgsl: &str,
+) -> wgpu::RenderPipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("trace_resolve"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!("../../../shaders/trace_resolve.wgsl").into(),
-        ),
+        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
     });
     let pipeline_layout =
         pipeline_desc::single_layout(device, "traced_resolve_pipeline_layout", layout);
-    pipeline_desc::create_fullscreen_pipeline(
-        device,
-        FullscreenPipeline {
-            label: "traced_resolve",
-            layout: &pipeline_layout,
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("traced_resolve"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
             module: &module,
-            vs_entry: "vs_main",
-            fs_entry: "fs_main",
-            format: HDR_FORMAT,
-            blend: None,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
         },
-    )
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: HDR_FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
 }

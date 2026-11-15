@@ -9,6 +9,8 @@ use crate::render::texture::{create_2d_texture, create_depth_texture, create_hdr
 
 /// The forward pass's MSAA targets and the single-sample ones the later passes read.
 pub(super) struct RenderTargets {
+    /// The single-sample depth: resolved, the G-buffer pass's or the traced primary hit's; only tests copy it out.
+    depth_texture: wgpu::Texture,
     pub(super) depth: wgpu::TextureView,
     /// The resolved HDR colour; `hdr_view` samples it, and only tests copy it out.
     hdr: wgpu::Texture,
@@ -34,8 +36,21 @@ impl RenderTargets {
             1,
             1,
         );
+        let depth_texture = create_2d_texture(
+            device,
+            Some("depth"),
+            width,
+            height,
+            DEPTH_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            1,
+            1,
+        );
         Self {
-            depth: create_depth_texture(device, width, height, 1),
+            depth: depth_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            depth_texture,
             hdr_view: hdr.create_view(&wgpu::TextureViewDescriptor::default()),
             hdr,
             depth_msaa: create_depth_texture(device, width, height, MSAA_SAMPLE_COUNT),
@@ -95,6 +110,25 @@ impl ForwardRenderer {
                 height,
                 layers: 1,
                 texel_bytes: 8,
+            },
+        )?;
+        Ok(bytemuck::pod_collect_to_vec(&bytes))
+    }
+
+    /// The last frame's single-sample depth, row-major: what SSAO, the cullers and the clouds read.
+    /// Stalls on a readback, so tests and diagnostics only.
+    #[doc(hidden)]
+    pub fn read_depth_target(&self, gpu: &GpuContext) -> anyhow::Result<Vec<f32>> {
+        let (width, height) = self.targets.size;
+        let bytes = read_texture(
+            gpu,
+            &self.targets.depth_texture,
+            &TextureRegion {
+                aspect: wgpu::TextureAspect::DepthOnly,
+                width,
+                height,
+                layers: 1,
+                texel_bytes: 4,
             },
         )?;
         Ok(bytemuck::pod_collect_to_vec(&bytes))

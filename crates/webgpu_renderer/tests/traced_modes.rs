@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use glam::{DVec3, Mat4, Vec3, Vec4};
+use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
 use kataglyphis_webgpu_renderer::render::tracer::{FurnaceSettings, RenderMode, TraceSettings};
 use kataglyphis_webgpu_renderer::scene::{
@@ -259,6 +260,8 @@ fn ray_traced_shadows_land_where_the_raster_shadows_are_and_go_black() {
         return;
     };
     rig.renderer.light_dir_ambient = LOW_SUN;
+    // The traced shadow ray blocks the sun whole, so the cascades compare at full strength, not the C++ default 0.65.
+    rig.renderer.shadows.strength = 1.0;
     let raster = rig.frames(RenderMode::Raster, 1);
     let traced = rig.frames(RenderMode::RayTraced, 1);
     let plane: Vec<bool> = pixels(&raster)
@@ -713,7 +716,14 @@ fn traced_frames_skip_the_raster_passes_and_time_their_own() {
             names.contains(&own) && names.contains(&"TraceResolve"),
             "{names:?}"
         );
-        for raster in ["ShadowCascades", "Forward", "Ssao", "OcclusionCull"] {
+        for raster in [
+            "ShadowCascades",
+            "Forward",
+            "GBuffer",
+            "DeferredLighting",
+            "Ssao",
+            "OcclusionCull",
+        ] {
             assert!(
                 !names.contains(&raster),
                 "{mode:?} still times {raster}: {names:?}"
@@ -795,4 +805,79 @@ fn the_traced_scene_follows_an_animated_node() {
     rig.renderer.set_animation_time(1.5);
     rig.frames(RenderMode::PathTraced, 1);
     assert_eq!(rig.renderer.accumulated_samples(), 8, "a move starts over");
+}
+
+/// `source` with `old` replaced, which must occur: the generated WGSL's names move when the Slang does.
+fn edited(source: &str, old: &str, new: &str) -> String {
+    let edited = source.replace(old, new);
+    assert_ne!(
+        edited, source,
+        "the generated WGSL no longer contains `{old}`"
+    );
+    edited
+}
+
+/// F5 rebuilds both kernels and the resolve inside the reload's error scope, though each compiles lazily on its mode's
+/// first frame otherwise: a kernel or resolve without its entry point is refused before that mode ever drew, the old
+/// pipelines keep drawing, an edited kernel draws from the next frame and the shipped WGSL brings the frame back.
+#[test]
+fn a_shader_reload_rebuilds_the_traced_kernels_or_keeps_them() {
+    let Some(mut rig) = Rig::new(&asset("cube_on_plane.gltf"), 32, above_the_plane()) else {
+        return;
+    };
+    let shipped = ShaderSources::shipped();
+    let before = rig.frames(RenderMode::RayTraced, 1);
+    assert!(
+        !rig.renderer.traced_kernel_compiled(RenderMode::PathTraced),
+        "the path kernel compiles on its first frame"
+    );
+    let no_path = edited(
+        shipped.traced,
+        "fn cs_path_trace(",
+        "fn cs_path_trace_gone(",
+    );
+    let no_resolve = edited(shipped.trace_resolve, "fn fs_main(", "fn fs_main_gone(");
+    for broken in [
+        ShaderSources {
+            traced: &no_path,
+            ..shipped
+        },
+        ShaderSources {
+            trace_resolve: &no_resolve,
+            ..shipped
+        },
+    ] {
+        assert!(
+            rig.renderer.reload_shaders(&rig.gpu, &broken).is_err(),
+            "a traced shader without its entry point must be refused"
+        );
+        assert!(
+            rig.frames(RenderMode::RayTraced, 1) == before,
+            "the refused reload changed the frame"
+        );
+    }
+    // Every hit radiates a flat quarter; misses keep the sky pass.
+    let flat = edited(
+        shipped.traced,
+        "vec4<f32>(hdr_safe_0(traced_0.xyz), traced_0.w)",
+        "vec4<f32>(0.25f, 0.25f, 0.25f, traced_0.w)",
+    );
+    let reload = ShaderSources {
+        traced: &flat,
+        ..shipped
+    };
+    rig.renderer
+        .reload_shaders(&rig.gpu, &reload)
+        .expect("a valid kernel must reload");
+    assert!(rig.renderer.traced_kernel_compiled(RenderMode::PathTraced));
+    rig.frames(RenderMode::RayTraced, 1);
+    let centre = rig.hdr()[(16 * 32 + 16) as usize];
+    assert_eq!(&centre[..3], &[0.25; 3], "the edited kernel did not draw");
+    rig.renderer
+        .reload_shaders(&rig.gpu, &shipped)
+        .expect("the shipped WGSL must reload");
+    assert!(
+        rig.frames(RenderMode::RayTraced, 1) == before,
+        "the shipped kernel did not bring the frame back"
+    );
 }

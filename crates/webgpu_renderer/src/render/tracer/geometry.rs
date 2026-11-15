@@ -28,6 +28,8 @@ pub struct InstanceSource {
     pub primitive: u32,
     /// The explicit instance's transform, applied after the primitive's; identity without one.
     pub extra: Mat4,
+    /// The primitive's own transform, which `extra` follows.
+    pub base: Mat4,
     pub local: Mat4,
 }
 
@@ -86,6 +88,7 @@ pub fn gather(scene: &CpuScene, table: &MaterialTable, explicit: &[Vec<Mat4>]) -
             mesh: 0,
             primitive: u32::MAX,
             extra: Mat4::IDENTITY,
+            base: Mat4::IDENTITY,
             local: Mat4::IDENTITY,
         };
         gathered.instances.insert(0, whole);
@@ -137,6 +140,7 @@ fn push_instances(
                 mesh,
                 primitive: member as u32,
                 extra,
+                base: transform,
                 local,
             });
         }

@@ -22,6 +22,7 @@ struct TraceFrame
     float4 light_dir;        // towards the sun, unit; w: the sky's sun-disk intensity
     float4 light_radiance;   // colour times intensity; w: the sky's light, the raster's ambient strength times its environment's
     float4 furnace;          // the white furnace's sky radiance, metallic, roughness; w: 1 when on
+    float4x4 view_proj;      // world to clip, the raster's, so a hit's depth is the one raster writes
 };
 
 // One dispatch's pixels and samples, bound at a dynamic offset: render::tracer::modes::TraceDispatch.
@@ -32,7 +33,7 @@ struct TraceTile
 };
 
 [vk::binding(0, 0)] ConstantBuffer<TraceFrame> traceFrame;
-// One running mean per pixel, row-major; WebGPU has no read-write rgba32f storage texture.
+// One running mean per pixel, row-major; WebGPU has no read-write rgba32f storage texture. Alpha: the primary hit's NDC depth.
 [vk::binding(1, 0)] RWStructuredBuffer<float4> traceAccumulation;
 [vk::binding(2, 0)] ConstantBuffer<TraceTile> traceTile;
 
@@ -89,6 +90,15 @@ TraceRay camera_ray(float2 pixel)
     ray.direction = normalize(span);
     ray.tmax = length(span);
     return ray;
+}
+
+// The NDC depth raster writes for a world point, 1 for nothing hit, as a cleared depth buffer holds.
+float ndc_depth(TraceRay ray, TraceHit hit)
+{
+    if (hit.instance == TRACE_NO_HIT)
+        return 1.0;
+    float4 clip = mul(traceFrame.view_proj, float4(ray.origin + ray.direction * hit.t, 1.0));
+    return saturate(clip.z / clip.w);
 }
 
 // forward.slang's normal mapping: a two-channel map rebuilds z, and a back face turns the whole frame.

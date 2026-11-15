@@ -5,12 +5,12 @@ use std::sync::Arc;
 use glam::{Mat4, Vec3};
 
 use super::frame::FrameView;
-use super::ForwardRenderer;
+use super::{sky, ForwardRenderer};
 use crate::context::GpuContext;
 use crate::render::gpu_timing::TimedPass;
 use crate::render::tracer::modes::{
-    plan, Accumulation, AccumulationKey, Kernel, TraceDispatch, TraceFrameUniforms, TracedFrame,
-    TracedPasses,
+    plan, Accumulation, AccumulationKey, AfterResolve, Kernel, TraceDispatch, TraceFrameUniforms,
+    TracedFrame, TracedPasses,
 };
 use crate::render::tracer::{RenderMode, TraceSettings, TraceStatus, Tracer};
 use crate::scene::CpuScene;
@@ -18,7 +18,9 @@ use crate::scene::CpuScene;
 /// The traced modes' GPU half, built on first use, and the path tracer's running mean.
 #[derive(Default)]
 pub(super) struct TracedState {
-    passes: Option<TracedPasses>,
+    pub(super) passes: Option<TracedPasses>,
+    /// The sky at one sample, which the ray-traced mode draws where its primary rays missed.
+    pub(super) sky: Option<wgpu::RenderPipeline>,
     accumulation: Accumulation,
     /// The tracer generation and animated transforms its instances were last moved to.
     synced: (u64, Vec<Mat4>),
@@ -56,6 +58,31 @@ impl ForwardRenderer {
     /// Samples per pixel in the path tracer's running mean; 0 in any other mode.
     pub fn accumulated_samples(&self) -> u64 {
         self.traced.accumulation.samples()
+    }
+
+    /// A shader reload's kernels, resolve and sky; the mean starts over, since it was traced by the old kernel.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn replace_traced_pipelines(
+        &mut self,
+        passes: TracedPasses,
+        sky: wgpu::RenderPipeline,
+    ) {
+        self.traced.passes = Some(passes);
+        self.traced.sky = Some(sky);
+        self.traced.accumulation.reset();
+    }
+
+    /// Whether the traced kernel for `mode` has been built, for the reload tests.
+    #[doc(hidden)]
+    pub fn traced_kernel_compiled(&self, mode: RenderMode) -> bool {
+        let kernel = match mode {
+            RenderMode::PathTraced => Kernel::Path,
+            _ => Kernel::Ray,
+        };
+        self.traced
+            .passes
+            .as_ref()
+            .is_some_and(|passes| passes.is_compiled(kernel))
     }
 
     /// Starts the path tracer's mean over: the hook for anything that changes what it traces in place.
@@ -142,6 +169,7 @@ impl ForwardRenderer {
             furnace: settings.furnace.map_or([0.0; 4], |furnace| {
                 [furnace.radiance, furnace.metallic, furnace.roughness, 1.0]
             }),
+            view_proj: view.view_proj.to_cols_array_2d(),
         }
     }
 
@@ -167,16 +195,29 @@ impl ForwardRenderer {
         let Some(scene) = self.tracer.gpu_scene() else {
             return false;
         };
-        let passes = self
-            .traced
+        let device = &gpu.device;
+        let traced = &mut self.traced;
+        let passes = traced
             .passes
-            .get_or_insert_with(|| TracedPasses::new(&gpu.device));
+            .get_or_insert_with(|| TracedPasses::new(device));
+        let sky_res = &self.sky;
+        // The C++ ray-traced mode shows the sky pass where its rays miss; the path tracer keeps its own sky, as in C++.
+        let sky_pipeline = (kernel == Kernel::Ray).then(|| {
+            &*traced.sky.get_or_insert_with(|| {
+                sky::sky_pipeline(device, &sky_res.shader, &sky_res.pipeline_layout, 1)
+            })
+        });
+        let draw_sky = sky_pipeline.map(|pipeline| {
+            move |pass: &mut wgpu::RenderPass<'_>| sky_res.draw_with(pass, pipeline)
+        });
         let frame = TracedFrame {
             kernel,
             scene,
             uniforms,
             dispatches,
             hdr_view: &self.targets.hdr_view,
+            depth_view: &self.targets.depth,
+            after_resolve: draw_sky.as_ref().map(|draw| draw as AfterResolve<'_>),
         };
         let scopes = (
             self.gpu_timing.scope(timed),
@@ -186,7 +227,7 @@ impl ForwardRenderer {
             return true;
         };
         let size = (uniforms.size[0], uniforms.size[1]);
-        if self.traced.refused.replace(size) != Some(size) {
+        if traced.refused.replace(size) != Some(size) {
             log::warn!("tracer: {why}; the frame rasters");
         }
         false

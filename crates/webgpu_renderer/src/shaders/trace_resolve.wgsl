@@ -28,9 +28,10 @@ fn vs_main(@builtin(vertex_index) vid_1 : u32) -> FullscreenVsOut_0
     return fullscreen_vs_0(vid_1);
 }
 
-struct pixelOutput_0
+struct ResolveOut_0
 {
-    @location(0) output_0 : vec4<f32>,
+    @location(0) colour_0 : vec4<f32>,
+    @builtin(frag_depth) depth_0 : f32,
 };
 
 struct pixelInput_0
@@ -39,10 +40,13 @@ struct pixelInput_0
 };
 
 @fragment
-fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
+fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> ResolveOut_0
 {
     var _S2 : vec2<u32> = vec2<u32>(svPosition_1.xy);
-    var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(resolveAccumulation_0[_S2.y * resolveParams_0.size_0.x + _S2.x].xyz, 1.0f) );
-    return _S3;
+    var traced_0 : vec4<f32> = resolveAccumulation_0[_S2.y * resolveParams_0.size_0.x + _S2.x];
+    var o_1 : ResolveOut_0;
+    o_1.colour_0 = vec4<f32>(traced_0.xyz, 1.0f);
+    o_1.depth_0 = traced_0.w;
+    return o_1;
 }
 

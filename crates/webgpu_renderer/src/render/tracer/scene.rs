@@ -194,10 +194,40 @@ impl TraceScene {
     pub fn set_primitive_transforms(&mut self, transforms: &[Mat4]) {
         for source in &mut self.sources {
             if let Some(transform) = transforms.get(source.primitive as usize) {
+                source.base = *transform;
                 source.local = source.extra * *transform;
             }
         }
         self.rebuild_tlas();
+    }
+
+    /// Moves primitive `primitive`'s explicit instances to `extras` (none: one identity) and rebuilds the top level.
+    /// False, changing nothing, unless it is traced as that many instances: the buffers' layout cannot change in place.
+    pub fn set_instance_extras(&mut self, primitive: u32, extras: &[Mat4]) -> bool {
+        let identity = [Mat4::IDENTITY];
+        let extras = if extras.is_empty() { &identity } else { extras };
+        let slots: Vec<usize> = (0..self.sources.len())
+            .filter(|&i| self.sources[i].primitive == primitive)
+            .collect();
+        let Some(&first) = slots.first() else {
+            return false;
+        };
+        let base = self.sources[first].base;
+        let traceable = |extra: &&Mat4| {
+            let local = **extra * base;
+            local.is_finite() && local.determinant().abs() > f32::MIN_POSITIVE
+        };
+        let kept: Vec<Mat4> = extras.iter().filter(traceable).copied().collect();
+        if kept.len() != slots.len() {
+            return false;
+        }
+        for (slot, extra) in slots.into_iter().zip(kept) {
+            let source = &mut self.sources[slot];
+            source.extra = extra;
+            source.local = extra * base;
+        }
+        self.rebuild_tlas();
+        true
     }
 
     /// Recomputes the instances from their sources and the top level over them.

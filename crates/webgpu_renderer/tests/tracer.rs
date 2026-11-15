@@ -195,6 +195,7 @@ fn the_traced_kernels_read_the_rust_uniforms_and_workgroups() {
             offset_of!(TraceFrameUniforms, light_dir) as u32,
             offset_of!(TraceFrameUniforms, light_radiance) as u32,
             offset_of!(TraceFrameUniforms, furnace) as u32,
+            offset_of!(TraceFrameUniforms, view_proj) as u32,
         ],
         size_of::<TraceFrameUniforms>() as u32,
     );

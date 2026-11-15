@@ -311,6 +311,56 @@ mod tests {
         );
     }
 
+    /// The profiler's pass rows scroll, so the scene rect stays put while a traced frame times fewer passes than raster:
+    /// a rect that moved as rows left would restart the path tracer's mean every frame until the docks settled.
+    #[test]
+    fn a_mode_switch_keeps_the_scene_rect_so_the_path_tracers_mean_keeps_growing() {
+        let Some(mut app) = studio() else {
+            return;
+        };
+        let mut now_s = 0.0;
+        let mut step = |app: &mut StudioApp| {
+            let shot = OffscreenFrame {
+                size_px: [1600, 900],
+                ..frame(now_s, Vec::new())
+            };
+            now_s += 1.0 / 60.0;
+            app.render_offscreen(&shot).expect("renders");
+            (
+                app.camera.viewport,
+                SceneStats::of(&app.renderer).gpu_passes.len(),
+            )
+        };
+        let mut raster = (SceneViewport::FULL, 0);
+        for _ in 0..8 {
+            raster = step(&mut app);
+        }
+        app.renderer.render_mode = RenderMode::PathTraced;
+        app.renderer.trace_settings.samples_per_pixel = 1;
+        app.renderer.trace_settings.max_bounces = 1;
+        let built = app
+            .renderer
+            .tracer_mut()
+            .finish_build(&app.gpu, std::time::Duration::from_secs(120));
+        assert!(built, "{:?}", app.trace_status());
+        let mut traced = raster;
+        // Past the timing window, so the raster passes' rows have left the profiler.
+        for frame in 1..=40u64 {
+            traced = step(&mut app);
+            assert_eq!(traced.0, raster.0, "frame {frame} moved the scene rect");
+            assert_eq!(
+                app.renderer.accumulated_samples(),
+                frame,
+                "the mean restarted"
+            );
+        }
+        assert!(
+            raster.1 > traced.1,
+            "the profiler lists {} passes in both modes",
+            raster.1
+        );
+    }
+
     #[test]
     fn f1_gives_the_camera_the_whole_frame_and_back() {
         let Some(mut app) = studio() else {

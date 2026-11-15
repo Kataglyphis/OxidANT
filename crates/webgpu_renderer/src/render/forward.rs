@@ -32,6 +32,8 @@ use crate::render::model_transform::ModelTransform;
 use crate::render::shadow_settings::ShadowSettings;
 use crate::render::texture::create_2d_texture;
 use crate::render::tonemap::TonemapPass;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::render::tracer::modes::{TracedPasses, TracedSources};
 use crate::render::tracer::{RenderMode, TraceSettings, Tracer};
 use crate::scene::camera::OrbitCamera;
 use crate::scene::CpuScene;
@@ -71,7 +73,7 @@ pub const SHADOW_MAP_SIZE: u32 = 2048;
 /// The most cascades, the C++ `MAX_CASCADES`; [`ShadowSettings::cascade_count`] renders 1 to this many.
 pub const CASCADE_COUNT: usize = 3;
 
-/// The WGSL a shader reload rebuilds the scene, shadow, sky, deferred and cloud pipelines from.
+/// The WGSL a shader reload rebuilds the scene, shadow, sky, deferred, cloud and traced pipelines from.
 /// The tonemap, bloom, SSAO, histogram and depth-resolve passes keep the WGSL the crate was built with.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug)]
@@ -80,25 +82,33 @@ pub struct ShaderSources<'a> {
     pub sky: &'a str,
     pub cloud_march: &'a str,
     pub cloud_noise: &'a str,
+    /// Both traced modes' kernels.
+    pub traced: &'a str,
+    pub trace_resolve: &'a str,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ShaderSources<'static> {
     /// The generated files, in field order, as a hot reload watches them.
-    pub const FILES: [&'static str; 4] = [
+    pub const FILES: [&'static str; 6] = [
         "forward.wgsl",
         "sky.wgsl",
         "cloud_march.wgsl",
         "cloud_noise.wgsl",
+        "traced.wgsl",
+        "trace_resolve.wgsl",
     ];
 
     /// The WGSL this crate was built with.
     pub fn shipped() -> Self {
+        let traced = TracedSources::shipped();
         Self {
             forward: include_str!("../shaders/forward.wgsl"),
             sky: include_str!("../shaders/sky.wgsl"),
             cloud_march: include_str!("../shaders/cloud_march.wgsl"),
             cloud_noise: include_str!("../shaders/cloud_noise.wgsl"),
+            traced: traced.traced,
+            trace_resolve: traced.resolve,
         }
     }
 }
@@ -242,6 +252,7 @@ impl ForwardRenderer {
     }
 
     /// Replaces one primitive's instance transforms; an empty slice restores the identity instance.
+    /// The traced scene instances them too, see [`Tracer::set_instances`] for what it moves in place.
     pub fn set_instances(&mut self, gpu: &GpuContext, primitive_index: usize, transforms: &[Mat4]) {
         let Some(primitive) = self.primitives.get_mut(primitive_index) else {
             return;
@@ -251,6 +262,7 @@ impl ForwardRenderer {
             self.shadow.caster_bundles = None;
         }
         self.recompute_scene_bounds();
+        self.tracer.set_instances(gpu, primitive_index, transforms);
     }
 
     /// Instance count of a primitive, for tests and diagnostics.
@@ -516,7 +528,7 @@ impl ForwardRenderer {
         readback::read_rgba8(gpu, &texture, width, height)
     }
 
-    /// Rebuilds the scene, shadow, sky, deferred and cloud pipelines from new WGSL; invalid shaders keep the old ones.
+    /// Rebuilds the scene, shadow, sky, deferred, cloud and traced pipelines from new WGSL; invalid shaders keep the old ones.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn reload_shaders(
         &mut self,
@@ -550,6 +562,15 @@ impl ForwardRenderer {
         let deferred = self.build_deferred(device, &shader, &sky_shader);
         // Even with clouds off: a cloud shader that cannot build is refused now, not on the first cloud frame.
         let clouds = CloudPipelines::new(device, sources.cloud_march, sources.cloud_noise);
+        // Both kernels now, as for deferred: each otherwise compiles on its mode's first frame, outside any scope.
+        let traced = TracedPasses::compiled(
+            device,
+            TracedSources {
+                traced: sources.traced,
+                resolve: sources.trace_resolve,
+            },
+        );
+        let traced_sky = sky::sky_pipeline(device, &sky_shader, &self.sky.pipeline_layout, 1);
         if let Some(err) = pollster::block_on(error_scope.pop()) {
             anyhow::bail!("shader reload rejected: {err}");
         }
@@ -566,6 +587,7 @@ impl ForwardRenderer {
             self.deferred = Some(deferred);
         }
         self.cloud_pass.replace_pipelines(device, clouds);
+        self.replace_traced_pipelines(traced, traced_sky);
         Ok(())
     }
 

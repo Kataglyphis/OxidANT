@@ -67,8 +67,8 @@ impl Viewer {
             shader_paths().iter().map(std::fs::read_to_string).collect();
         let files = read
             .ok()
-            .and_then(|files| <[String; 4]>::try_from(files).ok());
-        let Some([forward, sky, cloud_march, cloud_noise]) = files else {
+            .and_then(|files| <[String; 6]>::try_from(files).ok());
+        let Some([forward, sky, cloud_march, cloud_noise, traced, trace_resolve]) = files else {
             log::error!("Failed to read shader sources for reload");
             return;
         };
@@ -77,6 +77,8 @@ impl Viewer {
             sky: &sky,
             cloud_march: &cloud_march,
             cloud_noise: &cloud_noise,
+            traced: &traced,
+            trace_resolve: &trace_resolve,
         };
         match app.renderer.reload_shaders(&app.gpu, &sources) {
             Ok(()) => log::info!("Shaders reloaded"),

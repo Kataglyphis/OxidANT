@@ -1,5 +1,9 @@
-//! The raster settings, the deferred path and the clouds together on a headless adapter: every feature on both
-//! raster paths, checked structurally (masks, centroids, counters) so the checks survive driver differences.
+//! The raster settings, the deferred path, the clouds and the traced modes together on a headless adapter: every
+//! feature on both raster paths and in both traced modes, checked structurally (masks, centroids, counters) so the
+//! checks survive driver differences.
+
+use std::sync::Arc;
+use std::time::Duration;
 
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 use kataglyphis_webgpu_renderer::asset::skybox::CubemapFaces;
@@ -8,6 +12,7 @@ use kataglyphis_webgpu_renderer::render::forward::{RasterPath, SkyMode};
 use kataglyphis_webgpu_renderer::render::gpu_timing::TimedPass;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
 use kataglyphis_webgpu_renderer::render::model_transform::ModelTransform;
+use kataglyphis_webgpu_renderer::render::tracer::RenderMode;
 use kataglyphis_webgpu_renderer::{
     load_gltf, CpuScene, ForwardRenderer, GpuContext, OrbitCamera, TonemapPass,
 };
@@ -50,6 +55,62 @@ fn plain(gpu: &GpuContext, scene: &CpuScene, path: RasterPath) -> ForwardRendere
     renderer.bloom_strength = 0.0;
     renderer.raster_path = path;
     renderer
+}
+
+/// Every frame the renderer draws: both raster paths, then both traced modes, picked over the deferred path, which
+/// they must not run.
+const MODES: [(RasterPath, RenderMode); 4] = [
+    (RasterPath::Forward, RenderMode::Raster),
+    (RasterPath::Deferred, RenderMode::Raster),
+    (RasterPath::Deferred, RenderMode::RayTraced),
+    (RasterPath::Deferred, RenderMode::PathTraced),
+];
+
+/// Hands `renderer` its scene's traced copy; a traced frame needs [`build`] after it.
+fn trace(renderer: &mut ForwardRenderer, scene: &CpuScene) {
+    renderer.set_trace_source(Arc::new(scene.clone()));
+    // A short path keeps lavapipe's frames quick; the estimator itself is `traced_modes.rs`'s.
+    renderer.trace_settings.samples_per_pixel = 2;
+    renderer.trace_settings.max_bounces = 2;
+}
+
+/// Blocks until the traced scene is on the GPU, so the next frame in a traced mode traces.
+fn build(gpu: &GpuContext, renderer: &mut ForwardRenderer) {
+    let built = renderer
+        .tracer_mut()
+        .finish_build(gpu, Duration::from_secs(120));
+    assert!(
+        built,
+        "the tracer did not build: {:?}",
+        renderer.trace_status()
+    );
+}
+
+/// [`plain`] drawing `mode`, its traced scene built when the mode traces.
+fn plain_in(
+    gpu: &GpuContext,
+    scene: &CpuScene,
+    (path, mode): (RasterPath, RenderMode),
+) -> ForwardRenderer {
+    let mut renderer = plain(gpu, scene, path);
+    renderer.render_mode = mode;
+    if mode.is_traced() {
+        trace(&mut renderer, scene);
+        build(gpu, &mut renderer);
+    }
+    renderer
+}
+
+/// One frame of `renderer`'s mode; a path-traced one starts its mean over, so equal inputs trace equal samples.
+fn render_once(gpu: &GpuContext, renderer: &mut ForwardRenderer, camera: &OrbitCamera) -> Vec<u8> {
+    renderer.reset_accumulation();
+    let frame = render(gpu, renderer, camera);
+    assert_eq!(
+        renderer.drawn_mode(),
+        renderer.render_mode,
+        "the frame drew another mode"
+    );
+    frame
 }
 
 /// As [`plain`], under the shadow tests' low sun at full strength, as the C++ shadow goldens measure.
@@ -359,23 +420,37 @@ struct CloudChange {
     march: Vec<u16>,
 }
 
-fn cloud_change(gpu: &GpuContext, path: RasterPath) -> CloudChange {
-    let camera = facing_minus_z(20.0);
-    let (wall_centre, wall_half) = (Vec3::ZERO, Vec3::new(3.0, 2.0, 0.1));
-    let (box_centre, box_half) = (Vec3::new(0.0, 0.0, -10.0), Vec3::new(8.0, 5.0, 3.0));
-    let mut renderer = plain(gpu, &scene("cube.gltf"), path);
-    let wall = Mat4::from_scale_rotation_translation(wall_half * 2.0, Quat::IDENTITY, wall_centre);
+/// The cloud scene's wall and box, and the camera facing them.
+const WALL: (Vec3, Vec3) = (Vec3::ZERO, Vec3::new(3.0, 2.0, 0.1));
+const CLOUD_BOX: (Vec3, Vec3) = (Vec3::new(0.0, 0.0, -10.0), Vec3::new(8.0, 5.0, 3.0));
+
+/// A wall in front of a cloud box in `mode`, clouds still off; a traced mode builds the wall as an explicit instance.
+fn cloud_scene(gpu: &GpuContext, (path, mode): (RasterPath, RenderMode)) -> ForwardRenderer {
+    let scene = scene("cube.gltf");
+    let mut renderer = plain(gpu, &scene, path);
+    renderer.render_mode = mode;
+    trace(&mut renderer, &scene);
+    let wall = Mat4::from_scale_rotation_translation(WALL.1 * 2.0, Quat::IDENTITY, WALL.0);
     renderer.set_instances(gpu, 0, &[wall]);
+    if mode.is_traced() {
+        build(gpu, &mut renderer);
+    }
     renderer.clouds = CloudSettings {
         coverage: 0.3,
         ..CloudSettings::default()
     };
-    renderer.clouds.place_box(box_centre, box_half, 1.0);
-    let off = render(gpu, &mut renderer, &camera);
+    renderer.clouds.place_box(CLOUD_BOX.0, CLOUD_BOX.1, 1.0);
+    renderer
+}
+
+fn cloud_change(gpu: &GpuContext, mode: (RasterPath, RenderMode)) -> CloudChange {
+    let camera = facing_minus_z(20.0);
+    let mut renderer = cloud_scene(gpu, mode);
+    let off = render_once(gpu, &mut renderer, &camera);
     renderer.clouds.enabled = true;
-    let on = render(gpu, &mut renderer, &camera);
-    let wall_rect = PixelRect::of_box(&camera, wall_centre, wall_half);
-    let box_rect = PixelRect::of_box(&camera, box_centre, box_half);
+    let on = render_once(gpu, &mut renderer, &camera);
+    let wall_rect = PixelRect::of_box(&camera, WALL.0, WALL.1);
+    let box_rect = PixelRect::of_box(&camera, CLOUD_BOX.0, CLOUD_BOX.1);
     let sky_pixels: Vec<usize> = (0..PIXELS)
         .filter(|&p| box_rect.contains(p, -2.0) && !wall_rect.contains(p, 2.0))
         .collect();
@@ -394,39 +469,43 @@ fn cloud_change(gpu: &GpuContext, path: RasterPath) -> CloudChange {
     }
 }
 
-/// The march reads the single-sample depth either path leaves, so a wall hides the clouds on both alike.
+/// The march reads the single-sample depth every frame leaves: either raster path's, or the traced primary hit's,
+/// as the C++ engine binds the traced depth for its clouds; so a wall hides the clouds in every mode alike.
 #[test]
-fn clouds_on_the_deferred_path_change_the_sky_and_stay_behind_a_wall_as_on_forward() {
+fn clouds_change_the_sky_and_stay_behind_a_wall_on_both_paths_and_in_both_traced_modes() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let [forward, deferred] = RasterPath::ALL.map(|path| cloud_change(&gpu, path));
-    for (path, change) in RasterPath::ALL.iter().zip([&forward, &deferred]) {
+    let changes = MODES.map(|mode| cloud_change(&gpu, mode));
+    for (mode, change) in MODES.iter().zip(&changes) {
         eprintln!(
-            "{path:?}: {} wall px changed, {} of {} sky px",
+            "{mode:?}: {} wall px changed, {} of {} sky px",
             change.wall,
             change.sky,
             change.sky_pixels.len()
         );
         assert_eq!(
             change.wall, 0,
-            "{path:?}: clouds behind the wall drew over it"
+            "{mode:?}: clouds behind the wall drew over it"
         );
         assert!(
             change.sky * 4 > change.sky_pixels.len(),
-            "{path:?}: the clouds barely changed the sky"
+            "{mode:?}: the clouds barely changed the sky"
         );
     }
     let alpha = |march: &[u16], p: usize| half_to_f32(march[p * 4 + 3]);
-    let apart = forward
-        .sky_pixels
-        .iter()
-        .filter(|&&p| (alpha(&forward.march, p) - alpha(&deferred.march, p)).abs() > 1e-3)
-        .count();
-    assert_eq!(
-        apart, 0,
-        "the march over the open sky differs between the paths in {apart} px"
-    );
+    let forward = &changes[0];
+    for (mode, change) in MODES.iter().zip(&changes).skip(1) {
+        let apart = forward
+            .sky_pixels
+            .iter()
+            .filter(|&&p| (alpha(&forward.march, p) - alpha(&change.march, p)).abs() > 1e-3)
+            .count();
+        assert_eq!(
+            apart, 0,
+            "{mode:?}: the march over the open sky differs from forward's in {apart} px"
+        );
+    }
 }
 
 /// The centroid of the pixels `pick` keeps.
@@ -542,22 +621,37 @@ fn culling_counts_the_same_on_both_paths_with_frustum_culling_on_and_off() {
     assert_eq!(primitives(false, &away), (2, 2), "off draws everything");
 }
 
-/// The passes `path` records with every optional pass on: all of them but the other path's.
-fn passes_on(path: RasterPath) -> Vec<&'static str> {
-    let other: &[TimedPass] = match path {
-        RasterPath::Forward => &[TimedPass::GBuffer, TimedPass::DeferredLighting],
-        RasterPath::Deferred => &[TimedPass::Forward],
+/// The passes `mode` records with every optional pass on: a raster path all but the other path's and the traced
+/// passes; a traced mode its kernel, the resolve and the post chain without SSAO.
+fn passes_in((path, mode): (RasterPath, RenderMode)) -> Vec<&'static str> {
+    let runs = |pass: &TimedPass| match (mode, pass) {
+        (RenderMode::Raster, TimedPass::GBuffer | TimedPass::DeferredLighting) => {
+            path == RasterPath::Deferred
+        }
+        (RenderMode::Raster, TimedPass::Forward) => path == RasterPath::Forward,
+        (RenderMode::Raster, pass) => !pass.is_traced(),
+        (_, TimedPass::RayTrace) => mode == RenderMode::RayTraced,
+        (_, TimedPass::PathTrace) => mode == RenderMode::PathTraced,
+        (_, pass) => matches!(
+            pass,
+            TimedPass::TraceResolve
+                | TimedPass::Histogram
+                | TimedPass::ExposureReduce
+                | TimedPass::Bloom
+                | TimedPass::Clouds
+                | TimedPass::Tonemap
+        ),
     };
     TimedPass::ALL
         .into_iter()
-        .filter(|pass| !other.contains(pass))
+        .filter(runs)
         .map(TimedPass::name)
         .collect()
 }
 
-/// With every feature on, each path reports exactly the passes it runs; the list keeps `ALL` order, not record order.
+/// With every feature on, each path and mode reports exactly the passes it runs; the list keeps `ALL` order.
 #[test]
-fn each_path_reports_exactly_the_passes_it_runs_with_every_feature_on() {
+fn each_path_and_mode_reports_exactly_the_passes_it_runs_with_every_feature_on() {
     let mut names: Vec<&str> = TimedPass::ALL.iter().map(|pass| pass.name()).collect();
     let mut labels: Vec<&str> = TimedPass::ALL.iter().map(|pass| pass.label()).collect();
     for list in [&mut names, &mut labels] {
@@ -576,11 +670,16 @@ fn each_path_reports_exactly_the_passes_it_runs_with_every_feature_on() {
         return;
     }
     let scene = scene("cube_on_plane.gltf");
-    for path in RasterPath::ALL {
+    for mode in MODES {
         // Bloom and SSAO at their defaults: at zero strength their passes do not record.
         let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
         renderer.upload_scene(&gpu, &scene);
-        renderer.raster_path = path;
+        renderer.raster_path = mode.0;
+        renderer.render_mode = mode.1;
+        trace(&mut renderer, &scene);
+        if mode.1.is_traced() {
+            build(&gpu, &mut renderer);
+        }
         renderer.shadows.pcf_radius = 5;
         assert!(renderer.enable_gpu_timing(&gpu));
         renderer.occlusion_queries_enabled = true;
@@ -590,7 +689,7 @@ fn each_path_reports_exactly_the_passes_it_runs_with_every_feature_on() {
         renderer.set_skybox(&gpu, &CubemapFaces::solid(FACES));
         renderer.model_transform.position = Vec3::new(0.5, 0.0, 0.0);
         let reported = timed(&gpu, &mut renderer);
-        assert_eq!(reported, passes_on(path), "{path:?}");
+        assert_eq!(reported, passes_in(mode), "{mode:?}");
     }
 }
 
@@ -621,4 +720,302 @@ fn timed(gpu: &GpuContext, renderer: &mut ForwardRenderer) -> Vec<&'static str> 
         .into_iter()
         .map(|(name, _)| name)
         .collect()
+}
+
+/// Raster after a trip through both traced modes draws what it drew before on either path, and the traced frames
+/// count no primitives or casters, as the C++ engine's traced frames zero its visibility counts.
+#[test]
+fn raster_frames_are_bit_identical_after_a_trip_through_both_traced_modes() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = scene("cube_on_plane.gltf");
+    let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
+    renderer.upload_scene(&gpu, &scene);
+    trace(&mut renderer, &scene);
+    build(&gpu, &mut renderer);
+    renderer.clouds.enabled = true;
+    renderer.occlusion_queries_enabled = true;
+    let camera = top_down();
+    let raster = |renderer: &mut ForwardRenderer, path| {
+        renderer.render_mode = RenderMode::Raster;
+        renderer.raster_path = path;
+        let frame = render(&gpu, renderer, &camera);
+        let counts = (renderer.primitive_stats(), renderer.shadow_caster_stats());
+        (frame, counts)
+    };
+    let before = RasterPath::ALL.map(|path| raster(&mut renderer, path));
+    for mode in [RenderMode::RayTraced, RenderMode::PathTraced] {
+        renderer.render_mode = mode;
+        let traced = render(&gpu, &mut renderer, &camera);
+        assert_eq!(renderer.drawn_mode(), mode);
+        assert_ne!(traced, before[0].0, "{mode:?} drew the raster frame");
+        assert_eq!(renderer.primitive_stats(), (0, 0), "{mode:?}");
+        assert_eq!(renderer.shadow_caster_stats(), (0, 0), "{mode:?}");
+        assert_eq!(renderer.occlusion_cull_stats(), (0, 0), "{mode:?}");
+    }
+    for path in [RasterPath::Deferred, RasterPath::Forward] {
+        let (frame, counts) = raster(&mut renderer, path);
+        let index = RasterPath::ALL.iter().position(|p| *p == path);
+        let (expected, expected_counts) = &before[index.expect("a listed path")];
+        let off = differing(&frame, expected, 0);
+        assert_eq!(
+            off, 0,
+            "{path:?}: {off} pixels changed after the traced modes"
+        );
+        assert_eq!(counts, *expected_counts, "{path:?}");
+        assert!(counts.0 .0 > 0, "{path:?} drew nothing");
+    }
+}
+
+/// Where the traced depth and `reference` both see geometry, how far apart they are at most, and how many pixels
+/// one calls sky and the other not.
+fn depth_gap(traced: &[f32], reference: &[f32]) -> (f32, usize) {
+    let mut worst = 0.0f32;
+    let mut coverage = 0;
+    for (t, r) in traced.iter().zip(reference) {
+        match (*t < 1.0, *r < 1.0) {
+            (true, true) => worst = worst.max((t - r).abs()),
+            (false, false) => {}
+            _ => coverage += 1,
+        }
+    }
+    (worst, coverage)
+}
+
+/// The traced kernels write the primary hit's NDC depth as raytrace.rgen.slang and path_tracing.slang do: the depth
+/// raster writes for the same surface, and 1 where nothing is hit.
+#[test]
+fn the_traced_depth_is_the_raster_depth_on_a_simple_scene() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = scene("cube_on_plane.gltf");
+    let side = OrbitCamera {
+        radius: 7.0,
+        pitch_deg: 20.0,
+        target: Vec3::new(0.0, 0.5, 0.0),
+        ..OrbitCamera::default()
+    };
+    let mut renderer = plain_in(&gpu, &scene, MODES[0]);
+    trace(&mut renderer, &scene);
+    build(&gpu, &mut renderer);
+    let depths = MODES.map(|(path, mode)| {
+        renderer.raster_path = path;
+        renderer.render_mode = mode;
+        render_once(&gpu, &mut renderer, &side);
+        renderer.read_depth_target(&gpu).expect("depth readback")
+    });
+    let sky = depths[0].iter().filter(|d| **d == 1.0).count();
+    assert!(
+        sky > PIXELS / 10 && sky < PIXELS * 9 / 10,
+        "the view must hold sky and geometry: {sky} sky px"
+    );
+    // Deferred writes one sample at the pixel centre, as both kernels trace; forward resolves the nearest of four.
+    for (i, label) in [(2, "ray traced"), (3, "path traced")] {
+        let (worst, coverage) = depth_gap(&depths[i], &depths[1]);
+        let (worst_f, coverage_f) = depth_gap(&depths[i], &depths[0]);
+        eprintln!(
+            "{label}: deferred gap {worst:e}, {coverage} px coverage; forward gap {worst_f:e}, {coverage_f} px"
+        );
+        assert!(worst < 1e-4, "{label}: {worst} from the deferred depth");
+        assert!(coverage < 40, "{label}: {coverage} px disagree on coverage");
+        assert!(coverage_f < 400, "{label}: {coverage_f} px against forward");
+    }
+}
+
+/// The cube far off the axes, so a view from the origin along any axis sees only sky.
+fn sky_only(gpu: &GpuContext, mode: (RasterPath, RenderMode)) -> ForwardRenderer {
+    let scene = scene("cube.gltf");
+    let mut renderer = plain(gpu, &scene, mode.0);
+    renderer.render_mode = mode.1;
+    trace(&mut renderer, &scene);
+    let away = Mat4::from_scale_rotation_translation(
+        Vec3::splat(0.01),
+        Quat::IDENTITY,
+        Vec3::splat(500.0),
+    );
+    renderer.set_instances(gpu, 0, &[away]);
+    if mode.1.is_traced() {
+        build(gpu, &mut renderer);
+    }
+    renderer
+}
+
+/// The C++ ray-traced mode draws its sky pass where a primary ray misses: the cube map, or the navy when switched off,
+/// as raster does. The path tracer keeps its own sky term, the procedural gradient, as the C++ one keeps its own.
+#[test]
+fn ray_traced_misses_show_the_sky_pass_and_path_traced_ones_the_tracers_sky() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let faces = CubemapFaces {
+        size: 4,
+        rgba8: FACES.iter().flat_map(|colour| colour.repeat(16)).collect(),
+    };
+    let views = [
+        (180.0, 0.0),
+        (0.0, 0.0),
+        (0.0, -89.0),
+        (0.0, 89.0),
+        (270.0, 0.0),
+        (90.0, 0.0),
+    ];
+    // Per mode: each view's centre with the cube map, then with the skybox off, then the procedural sky.
+    let shown = MODES.map(|mode| {
+        let mut renderer = sky_only(&gpu, mode);
+        renderer.set_skybox(&gpu, &faces);
+        let centre = |renderer: &mut ForwardRenderer, (yaw, pitch)| {
+            pixel(
+                &render_once(&gpu, renderer, &looking(yaw, pitch)),
+                SIZE / 2,
+                SIZE / 2,
+            )
+        };
+        let cube = views.map(|view| centre(&mut renderer, view));
+        renderer.skybox_enabled = false;
+        let navy = centre(&mut renderer, views[1]);
+        renderer.skybox_enabled = true;
+        renderer.clear_skybox(&gpu);
+        let procedural = views.map(|view| centre(&mut renderer, view));
+        (cube, navy, procedural)
+    });
+    let (forward, ray, path) = (&shown[0], &shown[2], &shown[3]);
+    for (layer, face) in FACES.into_iter().enumerate() {
+        assert!(
+            near(ray.0[layer], face, 2),
+            "ray traced shows {:?} along cube layer {layer}, not {:?}",
+            ray.0[layer],
+            face
+        );
+        assert!(near(ray.0[layer], forward.0[layer], 1));
+        let (procedural, raster) = (ray.2[layer], forward.2[layer]);
+        assert!(
+            near(procedural, raster, 1),
+            "{procedural:?} against {raster:?}"
+        );
+        assert!(
+            near(path.0[layer], path.2[layer], 2) && !near(path.0[layer], face, 20),
+            "the path tracer's sky along layer {layer} is {:?} with the cube map, {:?} without",
+            path.0[layer],
+            path.2[layer]
+        );
+        let (jittered, raster) = (path.2[layer], forward.2[layer]);
+        assert!(near(jittered, raster, 3), "{jittered:?} against {raster:?}");
+    }
+    assert!(
+        near(ray.1, [0, 0, 188, 255], 2),
+        "ray traced off: {:?}",
+        ray.1
+    );
+    assert_eq!(ray.1, forward.1, "the navy differs from raster's");
+}
+
+/// The red cube's centroid in one frame of `mode`.
+fn red_centroid(
+    gpu: &GpuContext,
+    renderer: &mut ForwardRenderer,
+    mode: RenderMode,
+    camera: &OrbitCamera,
+) -> Vec2 {
+    renderer.render_mode = mode;
+    let red = |p: &[u8]| i32::from(p[0]) - i32::from(p[1]) > 60;
+    centroid(&render_once(gpu, renderer, camera), red)
+}
+
+/// The model transform is one root matrix over the traced instances too: set before the build it holds after it, a
+/// change moves the traced cube as it moves the raster one, and the path tracer's mean starts over.
+#[test]
+fn the_model_transform_moves_the_traced_scene_with_raster_and_restarts_the_mean() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = scene("cube_on_plane.gltf");
+    let camera = top_down();
+    let mut renderer = plain(&gpu, &scene, RasterPath::Forward);
+    trace(&mut renderer, &scene);
+    let raster_home = red_centroid(&gpu, &mut renderer, RenderMode::Raster, &camera);
+    let moved = ModelTransform {
+        position: Vec3::new(1.5, 0.0, 0.5),
+        rotation_deg: Vec3::new(0.0, 90.0, 0.0),
+    };
+    renderer.model_transform = moved;
+    let raster_moved = red_centroid(&gpu, &mut renderer, RenderMode::Raster, &camera);
+    build(&gpu, &mut renderer);
+    let traced_moved = red_centroid(&gpu, &mut renderer, RenderMode::RayTraced, &camera);
+    renderer.model_transform = ModelTransform::default();
+    let traced_home = red_centroid(&gpu, &mut renderer, RenderMode::RayTraced, &camera);
+    let (raster_shift, traced_shift) = (raster_moved - raster_home, traced_moved - traced_home);
+    eprintln!("raster {raster_home} -> {raster_moved}, ray traced {traced_home} -> {traced_moved}");
+    assert!(
+        raster_shift.length() > 10.0,
+        "the cube barely moved: {raster_shift}"
+    );
+    assert!(
+        traced_shift.distance(raster_shift) < 1.0,
+        "the traced cube moved by {traced_shift}, raster by {raster_shift}"
+    );
+    assert!(
+        traced_moved.distance(raster_moved) < 3.0,
+        "{traced_moved} against {raster_moved}"
+    );
+    renderer.render_mode = RenderMode::PathTraced;
+    renderer.reset_accumulation();
+    for _ in 0..2 {
+        render(&gpu, &mut renderer, &camera);
+    }
+    assert_eq!(renderer.accumulated_samples(), 4);
+    renderer.model_transform = moved;
+    render(&gpu, &mut renderer, &camera);
+    assert_eq!(
+        renderer.accumulated_samples(),
+        2,
+        "the move must start the mean over"
+    );
+}
+
+/// `set_instances` before the build is traced as explicit instances; after it, a move of as many instances happens in
+/// place, and a new count keeps the built ones, flagged, until the next upload.
+#[test]
+fn set_instances_reaches_the_traced_scene_in_place_or_says_it_waits() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = scene("cube.gltf");
+    let camera = facing_minus_z(12.0);
+    let at = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
+    let mut renderer = plain(&gpu, &scene, RasterPath::Forward);
+    trace(&mut renderer, &scene);
+    renderer.set_instances(&gpu, 0, &[at(-2.0)]);
+    build(&gpu, &mut renderer);
+    let left = red_centroid(&gpu, &mut renderer, RenderMode::RayTraced, &camera);
+    let raster_left = red_centroid(&gpu, &mut renderer, RenderMode::Raster, &camera);
+    let generation = renderer.tracer().generation();
+    renderer.set_instances(&gpu, 0, &[at(2.0)]);
+    assert!(
+        renderer.tracer().generation() > generation,
+        "the move did not reach the tracer"
+    );
+    assert!(renderer.tracer().instances_current());
+    let right = red_centroid(&gpu, &mut renderer, RenderMode::RayTraced, &camera);
+    let raster_right = red_centroid(&gpu, &mut renderer, RenderMode::Raster, &camera);
+    eprintln!("ray traced {left} -> {right}, raster {raster_left} -> {raster_right}");
+    assert!(
+        (right - left).x > 20.0,
+        "the traced cube stayed: {left} -> {right}"
+    );
+    assert!(
+        (right - left).distance(raster_right - raster_left) < 1.0,
+        "{right} - {left} against raster {raster_right} - {raster_left}"
+    );
+    renderer.set_instances(&gpu, 0, &[at(-2.0), at(2.0)]);
+    assert!(
+        !renderer.tracer().instances_current(),
+        "a second instance cannot join the built buffers"
+    );
+    let kept = red_centroid(&gpu, &mut renderer, RenderMode::RayTraced, &camera);
+    assert!(
+        kept.distance(right) < 0.5,
+        "the traced scene changed: {kept}"
+    );
 }
