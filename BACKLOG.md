@@ -11,16 +11,21 @@ and the backlog is empty"; it was neither.
   backlog containing only blocked items still lets the planner run again
 - `- [x]` completed — pruned on sight; the history lives in git
 
-## Open
+Entries are sorted by priority, and the executor takes the first `- [ ]` in file order:
+**P0** broken or blocking, **P1** high value, **P2** medium, **P3** ideas, chores and blocked work.
+The renderer's feature status per row is
+[`crates/webgpu_renderer/docs/webgpu-renderer-roadmap.md`](crates/webgpu_renderer/docs/webgpu-renderer-roadmap.md);
+its open work is here.
 
-- [ ] **Diagnose the intermittent headless GPU-test SIGSEGV** (M). A full default-parallel
-      workspace run at `38b1c597` crashed in the `occlusion` test binary after 7/11 cases
-      (SIGSEGV 11, exit 101). The same ELF then passed default and serial runs and five
-      further default repeats; source CI on `920ca1b7` passed. The crash remains unexplained.
-      Next: capture the GPU backend/driver and all-thread stack or core, distinguish test
-      resource lifetime from a driver fault, then add a regression for the proven cause.
-      Do not serialize all tests or call it fixed solely because CI is green.
-      Attempts: 2026-11-03, 100 runs of the `occlusion` binary without a crash (5 at a time, llvmpipe, 15 min bound).
+## P0 — broken or blocking
+
+- [ ] **The default scene cannot be fetched: AssetANT has not published the two Colosseum releases**
+      (S, ★★★). `resources/scenes/scenes.lock` pins `Colosseum-gltf-v1` (the native viewer's default) and
+      `Colosseum-web-v1` (the browser demo's); both download URLs answered 404 on 2026-11-15, and only
+      `Colosseum-v1`, the Blender source, exists. So `fetch-models.sh --scenes` fails on a fresh clone and
+      neither shell opens the Colosseum. The owner publishes both from AssetANT with the archives whose SHA-256
+      the lock names; then BeschleunigerBallett's docs build copies `Colosseum-web.glb` beside the demo.
+      Done when `bash scripts/linux/fetch-models.sh --scenes` passes on a clean checkout.
 
 - [ ] **The NVIDIA packages have not run on a GPU they support** (S, ★★★). The Linux and Windows packages are built and
       passed on the CPU, and hosted runners have no GPU. Done on an RTX 30xx or newer when
@@ -47,16 +52,25 @@ and the backlog is empty"; it was neither.
       CPU for the tar, the deb and the AppImage and each run's profile has model operators on the provider `MIGraphX`;
       the hub's `docs/gpu-artifact-receipts.md` has the commands.
 
-- [b] **CUDA still loads the old way; move it to the plugin row when the hub publishes its new NVIDIA image** (S, ★★).
-      Owner, 2026-11-12: only AMD now. The hub's contract (`docs/consumer-image-contract.md`, *The CUDA plugin EP*)
-      says a Rust consumer of the new `:latest-nvidia` registers `libonnxruntime_providers_cuda.so` by path under the
-      name `CUDAExecutionProvider`: the module there has no `GetProvider` bridge, and `ort`'s `CUDA::default()`
-      appends in the in-tree form (`SessionOptionsAppendExecutionProvider_CUDA_V2`). Not run against that image.
-      Blocked: the hub records its runtime wrappers and receipts as open. Then: one more row in
-      `crates/inference/src/ort_plugin.rs` (the name, the variable that names its root, the module's file name), that
-      row in `providers_for_device` in place of `CUDA::default()`, `cuda_probe` taking the row's provider, and `ort`'s
-      `cuda` feature dropped if nothing else needs it. The module lies beside the GPU ONNX Runtime library, in the
-      image and in the NVIDIA package, which the search's second step finds; the hub names no root variable for it.
+## P1 — high value
+
+- [ ] **Diagnose the intermittent headless GPU-test SIGSEGV** (M). A full default-parallel
+      workspace run at `38b1c597` crashed in the `occlusion` test binary after 7/11 cases
+      (SIGSEGV 11, exit 101). The same ELF then passed default and serial runs and five
+      further default repeats; source CI on `920ca1b7` passed. The crash remains unexplained.
+      Next: capture the GPU backend/driver and all-thread stack or core, distinguish test
+      resource lifetime from a driver fault, then add a regression for the proven cause.
+      Do not serialize all tests or call it fixed solely because CI is green.
+      Attempts: 2026-11-03, 100 runs of the `occlusion` binary without a crash (5 at a time, llvmpipe, 15 min bound).
+      Since 2026-11-14 the Linux test step's JUnit record (`scripts/linux/cargo-test-junit.py`) names a binary
+      that ended early, so the next crash in CI says which one.
+
+- [ ] **No browser has drawn a traced frame, the deferred path or the clouds** (M, ★★★). Tint (headless
+      Chrome on SwiftShader) compiles every traced kernel and the resolve (`crates/webgpu_renderer/docs/tracer.md`
+      § Tests); the deferred and cloud WGSL have had only naga and the wasm32 check. Next: a headless Chrome run
+      of the web demo that draws Forward, Deferred, clouds on, Ray traced and Path traced over `cube_on_plane`
+      and reads each frame back: not the clear colour, no WebGPU error on the console. Guard: that run as a
+      job on request, or its receipt in `docs/testing.md`.
 
 - [ ] **The capture and inference loops cannot run with a fake detector or a failing camera**
       (M, ★★★). Audit 2026-11-12: no test here runs `spawn_inference`
@@ -86,11 +100,61 @@ and the backlog is empty"; it was neither.
       boxes at 0.25) for ORT and tract, so a new model or a retuned constant passes it before
       it reaches a camera.
 
-- [ ] **A model run that hangs cannot be ended** (S, ★). A run in flight for over 20 s shows in `/healthz`, its
-      boxes are dropped and a start in the app gives up after 10 s, but the run itself goes on: nothing calls
-      `RunOptions::terminate`. Leave it until a GPU provider ships; on the CPU no hung run is on record. The four
-      guards of 2026-11-13 are unit tests; add `capture.rs` and `src/session_slot.rs` to the `cargo mutants` file
-      list in `docs/testing.md` at the next mutation run (75 minutes on a Pi 5, not run for this change).
+## P2 — medium
+
+- [ ] **A BC normal map on an adapter without BC becomes one white texel** (S, ★★). `upload_material_texture`
+      (`crates/webgpu_renderer/src/render/texture.rs`) swaps any BCn payload it cannot upload for white,
+      whatever the slot. White is neutral for base colour, metallic-roughness and occlusion, but a normal
+      slot reads (1, 1, 1), a normal bent off the surface. Next: the flat (128, 128, 255) for a normal slot.
+      Guard: a test of the fallback texel per slot.
+
+- [ ] **`crates/gui` answers a lost surface with a reconfigure only** (S, ★★). `on_failed_acquire`
+      (`crates/gui/src/gui_wgpu/renderer.rs`) maps `Lost` like `Outdated`; wgpu 30 says a lost surface
+      must be created again before `configure`, so the camera GUI retries a configure that cannot help.
+      The renderer already recreates it (`recovery` in `crates/webgpu_renderer/src/context.rs`); reuse that
+      rule. Guard: the mapping test in `renderer.rs` expects a recreate for `Lost`.
+
+- [ ] **An OBJ opened in memory loses its alpha masks and every texture that is not PNG or JPEG** (S, ★★).
+      `obj_to_glb` (`crates/webgpu_renderer/src/app/obj_glb.rs`) packs only PNG and JPEG and unhooks the
+      slot of anything else with a warning, and `parse_mtl` (`crates/webgpu_renderer/src/asset/obj_to_gltf.rs`) reads no `map_d`, so
+      Sponza's vase plant and chain (`map_d *_mask.jpg`) draw as solid cards. The C++ engine cuts them
+      (`MaskCardDiscardsCutoutTexelsVisually`). Next: `map_d` into the base colour's alpha with MASK, and
+      TGA/BMP decoded to PNG before packing. Guard: an `obj_glb` test with a mask and a TGA texture.
+
+- [ ] **lavapipe refuses the full Colosseum's traced scene** (M, ★★). lavapipe binds at most 128 MiB per
+      storage buffer, and the full Colosseum's vertex buffer is larger, so `check`
+      (`crates/webgpu_renderer/src/render/tracer/limits.rs`) ends the build in `TraceStatus::Failed` with the
+      buffer named; desktop GPUs bind it and the browser takes Colosseum-web. Next, if CI or a software host
+      should trace it: drop uv1 when no material samples it (24 bytes a vertex instead of 32) or split the
+      vertices over two bindings. Guard: a limits test at the full Colosseum's counts.
+
+- [ ] **Skins and morph targets are traced at their first pose** (M, ★★). `sync_animated_instances`
+      (`crates/webgpu_renderer/src/render/forward/traced.rs`) moves rigid instances only; a skinned or morphed mesh keeps the pose the
+      build saw, so its traced frame and shadow disagree with raster once it moves. Next: refit that mesh's
+      BVH from the skinned positions on a pose change. Guard: `skinned_bar.gltf` posed away from its rest,
+      traced against raster as `the_traced_scene_follows_an_animated_node` does for a rigid node.
+
+- [ ] **The path tracer ignores punctual lights and a loaded HDR environment** (M, ★★). NEE samples the
+      sun alone and a bounce that misses sees the procedural gradient (`shaders/tracer/traced.slang`,
+      `miss_radiance`), so `KHR_lights_punctual` scenes and a bound `.hdr` light the raster frame only.
+      Next: punctual lights in NEE, then the environment as the miss term. Guard: a lone card lit by a point
+      light, traced against raster within a tolerance.
+
+- [ ] **The deferred path has no anti-aliasing** (M, ★★). The G-buffer is one sample, as in the C++ engine, so
+      the Colosseum's sub-pixel crowd aliases where forward's 4x MSAA does not (`crates/webgpu_renderer/tests/deferred.rs`; 6.4
+      levels apart on average, `CHANGELOG.md`). Next: FXAA after the lighting pass, off with forward.
+      Guard: the deferred-against-forward edge measurements in `crates/webgpu_renderer/tests/deferred.rs` shrink.
+
+- [ ] **Clouds are dark and grainy in both renderers** (M, ★★). The shared estimator
+      (`shaders/common/volumetric_clouds.slang`) has no ambient term, so a cloud is darker than the sky
+      around it, and 8 steps through a slab seen at a grazing angle undersample the fine noise. Fixing it moves
+      the C++ cloud goldens too, so change both renderers in one pin bump. Guard: a cloud's mean luminance
+      against the sky behind it in `crates/webgpu_renderer/tests/clouds.rs` and the C++ golden.
+
+- [ ] **The path estimator follows an uncommitted C++ shader** (S, ★★). The Rust path tracer ports
+      BeschleunigerBallett's GGX `path_tracing.slang`, which is modified but not committed there; if that change
+      goes, the two diverge. Next: once it lands, move the estimator into `shaders/tracer/path_estimator.slang`
+      as a module both renderers import, as `volumetric_clouds.slang` is.
 
 - [ ] **Measure whether ORT's default thread count costs the Rust detector half its speed**
       (S, ★★). Audit 2026-11-12, from the recorded perf-host baselines of the four repos (same
@@ -177,30 +241,14 @@ and the backlog is empty"; it was neither.
       often the playground hits it. Guard: the extended unit test and one ObservANT test per
       status.
 
-- [ ] **ObservANT's JSON has no example files the app's tests read** (M, ★★). Audit 2026-11-12:
-      `to_json` in `crates/observant/src/status.rs` builds `/healthz` from a `json!` literal of
-      about 30 field names, and the Rust tests assert on Rust's own output. OmniAccelerANT's
-      four Dart parsers are tested on hand-typed bodies and fall back to a default for every
-      missing field, so a renamed field shows as "no cat, 0 visits". Only its on-request package
-      test checks the real fields, with `jq`. Next: `crates/observant/tests/fixtures/api/` with
-      `/healthz` (idle, a cat in view, not ok), `/visits`, `/settings`, `/ask` and `/summary`.
-      A Rust test compares its output with each file after blanking `version`, the ages and
-      `stats`, and an environment switch rewrites the files after an intended change.
-      OmniAccelerANT's Dart tests and `web-smoke-server.js` then read them from this submodule.
-      Guard: the Rust test here, and the Dart tests failing in the pin-bump commit when a field
-      moves.
-
-- [ ] **Every chat turn runs the whole conversation through the model again** (M, ★★). Audit
-      2026-11-12 (not double-checked), not measured: `generate` in `crates/text/src/genai.rs`
-      templates and encodes all messages and builds a new generator on every call, and
-      `src/api/text.rs` caches the model only. So the time to first token should grow with the
-      chat. Next: measure first. Replay a fixed five-turn chat on SmolLM2 and compare the time
-      to first token of turn 1 and turn 5. Only if it matters: keep the last generator and its
-      token ids with the cached model and append only the new tokens when the old ids are a
-      prefix, after checking that the pinned `ort_genai_c.h` can append to a live generator.
-      Guard: a `text_turns` command in `scripts/linux/perf-host.sh` under
-      `quality-report.sh --perf-host`, and a tiny-model test that a turn 2 which extends turn 1
-      gives the same ids as a fresh run.
+- [ ] **ObservANT's JSON has example files for `/healthz` only** (M, ★★). `/healthz` has goldens
+      (`crates/observant/tests/fixtures/healthz/`, idle, a visit and a problem, compared by
+      `healthz_matches_its_goldens`) that OmniAccelerANT parses. `/visits`, `/settings`, `/ask` and `/summary`
+      have none, so OmniAccelerANT's Dart parsers are tested on hand-typed bodies and fall back to a default
+      for every missing field. Next: fixtures for the four beside the healthz ones, the same blanking of
+      `version`, ages and `stats`, and the same switch to rewrite them; OmniAccelerANT's Dart tests read them
+      from this submodule. Guard: the Rust test here, and the Dart tests failing in the pin-bump commit when a
+      field moves.
 
 - [ ] **Three camera pipelines, each with its own failure rules** (L, ★★). Audit 2026-11-12:
       `crates/media/src/capture.rs` (the Flutter engine), `crates/observant/src/capture.rs` and
@@ -216,6 +264,82 @@ and the backlog is empty"; it was neither.
       and a source-reading test that only `crates/media` and `crates/observant` build an
       appsink.
 
+- [ ] **No packaged ObservANT has answered 502 to a panicking question yet** (S, ★★). Since 2026-11-14 every
+      ObservANT build uses its own profile (`[profile.observant]`, release with `panic = "unwind"`, owner decision of
+      2026-11-13): OxidANT's producer helper (790f8bb) and OmniAccelerANT's three package paths (8108bd6). Left: the
+      proof in the field. Done when a packaged service answers 502 to a question whose answer panics and keeps
+      streaming (`crates/observant/src/ask.rs`, the poisoned-lock recovery and the failed-task reply).
+
+### Quality queue
+
+The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md; re-sync when it moves.
+
+- [ ] `large-files.allow:3` budget 2031 (allow_budget_total)
+- [ ] `rust-function-size.allow:15` budget 281 (allow_budget_total)
+- [ ] `function-size.allow:6` budget 171 (allow_budget_total)
+- [ ] `rust-function-size.allow:14` budget 171 (allow_budget_total)
+- [ ] `function-size.allow:5` budget 156 (allow_budget_total)
+
+## P3 — ideas, chores and blocked work
+
+- [ ] **Decide whether the path tracer's bounce misses match the C++ sky** (S). On purpose, a bounce that misses
+      gets the renderer's sky gradient times the ambient strength and the environment intensity, where the C++
+      path tracer uses a fixed gradient at half intensity (roadmap, ray- and path-traced row). Owner decision;
+      if it should match, the C++ side changes, since its raster has no ambient term to follow.
+
+- [ ] **A new `set_instances` count waits for the next upload** (S). A count change flags
+      `Tracer::instances_current` false and the traced scene keeps the old instances until a scene upload;
+      the same count moves in place. Next: rebuild the top level on a count change.
+
+- [ ] **Bloom glows through clouds** (S). The bright pass reads the HDR before the clouds, and the tonemap only
+      scales it by the cloud's transmittance (`shaders/tonemap/tonemap.slang`), so a hidden sun's halo shows
+      at a cloud's edge. Next: bloom after the cloud composite, if the cost is acceptable.
+
+- [ ] **A one-pixel rim without clouds at silhouettes** (S). The march stops at the resolved depth, the nearest
+      of the four MSAA samples (`shaders/depth_resolve/depth_resolve.slang`), so an edge pixel half sky gets no cloud.
+
+- [ ] **egui text renders heavier natively than in the browser** (S). The native surface is sRGB
+      (`surface_config` in `crates/webgpu_renderer/src/context.rs`), so egui's coverage blends in linear light;
+      the browser canvas is not, so it blends in sRGB. Next: paint egui into a non-sRGB view of the frame.
+
+- [ ] **egui's Style editor and inspection windows show tofu** (S). The studio fonts
+      (`crates/webgpu_renderer/src/ui/fonts.rs`, `FontDefinitions::empty()`) carry no emoji, which those two debug windows
+      (`crates/webgpu_renderer/src/ui/editor/windows.rs`) draw. Next: add egui's emoji face as the last fallback, inside the wasm budget.
+
+- [ ] **Debug builds trace slowly** (S). The dev profile builds the renderer at opt-level 0 (`Cargo.toml` raises
+      only dependencies), so building the full Colosseum's BVH in a debug viewer takes about half a minute.
+      Owner decision: `[profile.dev.package.kataglyphis_webgpu_renderer] opt-level = 1`.
+
+- [ ] **The tracer uploads in one frame and keeps its CPU arrays** (M). About 0.5 GB for the full Colosseum goes
+      to the GPU in one frame (a hitch), and about 480 MB of CPU arrays stay for queries and top-level rebuilds.
+      Next: spread the upload over frames; free the arrays a build no longer needs.
+
+- [ ] **F5 leaves the post passes alone** (S). `reload_shaders` rebuilds forward, sky, deferred, clouds and both
+      traced kernels; the tonemap (with the cloud composite), bloom, SSAO, histogram and depth-resolve WGSL keep
+      the build's. Next: a `TonemapPass` reload in the same error scope first.
+
+- [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
+      `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially all pass. Re-dispatch
+      `windows-arm64-cross.yml` with `parallel-renderer-tests` after a runner image update.
+
+- [ ] **A model run that hangs cannot be ended** (S, ★). A run in flight for over 20 s shows in `/healthz`, its
+      boxes are dropped and a start in the app gives up after 10 s, but the run itself goes on: nothing calls
+      `RunOptions::terminate`. Leave it until a GPU provider ships; on the CPU no hung run is on record. The four
+      guards of 2026-11-13 are unit tests; add `capture.rs` and `src/session_slot.rs` to the `cargo mutants` file
+      list in `docs/testing.md` at the next mutation run (75 minutes on a Pi 5, not run for this change).
+
+- [ ] **Every chat turn runs the whole conversation through the model again** (M, ★★). Audit
+      2026-11-12 (not double-checked), not measured: `generate` in `crates/text/src/genai.rs`
+      templates and encodes all messages and builds a new generator on every call, and
+      `src/api/text.rs` caches the model only. So the time to first token should grow with the
+      chat. Next: measure first. Replay a fixed five-turn chat on SmolLM2 and compare the time
+      to first token of turn 1 and turn 5. Only if it matters: keep the last generator and its
+      token ids with the cached model and append only the new tokens when the old ids are a
+      prefix, after checking that the pinned `ort_genai_c.h` can append to a live generator.
+      Guard: a `text_turns` command in `scripts/linux/perf-host.sh` under
+      `quality-report.sh --perf-host`, and a tiny-model test that a turn 2 which extends turn 1
+      gives the same ids as a fresh run.
+
 - [ ] **`to_json` holds one lock while it takes others** (M, ★). Audit 2026-11-12: in
       `crates/observant/src/status.rs`, `to_json` keeps the `detected` guard while it locks
       `clips` and, through `health()`, `last_frame`, `last_run` and `model_error`. The order is
@@ -226,6 +350,17 @@ and the backlog is empty"; it was neither.
       weakest mutation score; split `status.rs` (31 fields) when the next feature adds one.
       Guard: the tests move unchanged, and the file names in the `cargo mutants` commands of
       `docs/testing.md` change in the same commit.
+
+- [b] **CUDA still loads the old way; move it to the plugin row when the hub publishes its new NVIDIA image** (S, ★★).
+      Owner, 2026-11-12: only AMD now. The hub's contract (`docs/consumer-image-contract.md`, *The CUDA plugin EP*)
+      says a Rust consumer of the new `:latest-nvidia` registers `libonnxruntime_providers_cuda.so` by path under the
+      name `CUDAExecutionProvider`: the module there has no `GetProvider` bridge, and `ort`'s `CUDA::default()`
+      appends in the in-tree form (`SessionOptionsAppendExecutionProvider_CUDA_V2`). Not run against that image.
+      Blocked: the hub records its runtime wrappers and receipts as open. Then: one more row in
+      `crates/inference/src/ort_plugin.rs` (the name, the variable that names its root, the module's file name), that
+      row in `providers_for_device` in place of `CUDA::default()`, `cuda_probe` taking the row's provider, and `ort`'s
+      `cuda` feature dropped if nothing else needs it. The module lies beside the GPU ONNX Runtime library, in the
+      image and in the NVIDIA package, which the search's second step finds; the hub names no root variable for it.
 
 - [b] **RVV `MatMulNBits` segfaults on a 4-bit model in the chain's ORT 1.31.0** (M, ★★). Crash:
       `kataglyphis_text --test contract`, `signal: 11, SIGSEGV`, run 41463196239 and locally on
@@ -248,11 +383,6 @@ and the backlog is empty"; it was neither.
       BACKLOG CON191 (an image chain). Then `cpu_accelerators.rs` and `check-backend-parity.sh`
       require DNNL to run and match the CPU provider on amd64; nothing here changes.
 
-- [ ] **No packaged ObservANT has answered 502 to a panicking question yet** (S, ★★). Since 2026-11-14 every
-      ObservANT build uses its own profile (`[profile.observant]`, release with `panic = "unwind"`, owner decision of
-      2026-11-13): OxidANT's producer helper (790f8bb) and OmniAccelerANT's three package paths (8108bd6). Left: the
-      proof in the field. Done when a packaged service answers 502 to a question whose answer panics and keeps
-      streaming (`crates/observant/src/ask.rs`, the poisoned-lock recovery and the failed-task reply).
 - [b] **`/ask` shows no text until the whole answer is there** (L, ★★). Audit 2026-11-12:
       `Assistant::run` in `crates/observant/src/ask.rs` throws the pieces away and `web.rs` has
       `Body = Full<Bytes>`, so the Stream page waits up to 310 s behind one empty bubble.
@@ -284,9 +414,8 @@ and the backlog is empty"; it was neither.
   budget ends, so the schema test keeps the tight form. No SmolLM2-135M fallback is needed for
   schema tests; SmolLM2-135M runs the ModelANT contract (`crates/text/tests/contract.rs`).
   Sampling at temperature 1 over the full vocabulary gives seed 1 a different 24-token answer
-  from seeds 2 to 4. The Windows chain builds GenAI without llguidance, where the generator
-  refuses a schema as `TextError::JsonSchemaUnsupported`. That no longer holds: the Windows
-  chain builds GenAI with llguidance now (`CHANGELOG.md`, `254b7ea`).
+  from seeds 2 to 4. The Windows chain builds GenAI with llguidance too since `254b7ea`
+  (`CHANGELOG.md`).
 
 ## Not adopted yet
 
@@ -294,13 +423,3 @@ The loop itself (config, runner wrappers, `scripts/agentic-loop/`) is not set up
 Copy-and-edit templates live in ANTfrastructure's `shared/agentic-loop/templates/`; a
 consumer supplies this file, a config JSON, thin runner wrappers, and optionally
 per-engine system prompts.
-
-## Quality queue
-
-The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md; re-sync when it moves.
-
-- [ ] `large-files.allow:3` budget 2031 (allow_budget_total)
-- [ ] `function-size.allow:6` budget 171 (allow_budget_total)
-- [ ] `function-size.allow:5` budget 156 (allow_budget_total)
-- [ ] `function-size.allow:4` budget 127 (allow_budget_total)
-- [ ] `function-size.allow:3` budget 102 (allow_budget_total)
