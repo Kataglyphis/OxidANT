@@ -54,6 +54,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **Generated tangents always followed TEXCOORD_0**, so a normal map on TEXCOORD_1 was lit along the wrong axes.
   The Lengyel and MikkTSpace generators read the UV set the normal texture samples, as glTF specifies.
   `generate_tangents_mikktspace`'s callbacks moved out of its body, which leaves its `rust-function-size.allow` row.
+- **With `KATAGLYPHIS_MIKKTSPACE_TANGENTS`, morph deltas landed on the wrong vertices**: MikkTSpace renumbers
+  vertices in first-use order and splits them at seams, and the deltas kept the file's numbering. It returns each
+  new vertex's source, and every target's deltas are gathered through it, split copies included.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

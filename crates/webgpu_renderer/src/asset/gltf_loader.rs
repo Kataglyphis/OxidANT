@@ -627,11 +627,15 @@ fn finish_geometry(mut geometry: Geometry, options: &GeometryOptions) -> Geometr
         compute_tangents(&mut geometry.vertices, &geometry.indices, uv_set);
         // Opt-in MikkTSpace replaces only tangents we generated; a file's own tangents are kept.
         if options.mikktspace {
-            if let Some((vertices, indices)) =
+            if let Some((vertices, indices, sources)) =
                 generate_tangents_mikktspace(&geometry.vertices, &geometry.indices, uv_set)
             {
-                geometry.vertices = vertices;
-                geometry.indices = indices;
+                // MikkTSpace renumbers and splits vertices; the deltas must follow them.
+                geometry = Geometry {
+                    morph_targets: gather_morph_targets(&geometry.morph_targets, &sources),
+                    vertices,
+                    indices,
+                };
             }
         }
     }
@@ -1069,12 +1073,12 @@ impl bevy_mikktspace::Geometry for MikkMesh<'_> {
 }
 
 /// MikkTSpace tangents from `uv_set`, the basis DCC tools bake normal maps against (opt-in; [`compute_tangents`] is the default).
-/// Splits vertices at seams, so it returns fresh buffers; `None` on failure keeps the caller's.
+/// Splits vertices at seams, so it returns fresh buffers and each new vertex's source; `None` keeps the caller's.
 pub(crate) fn generate_tangents_mikktspace(
     vertices: &[Vertex],
     indices: &[u32],
     uv_set: u32,
-) -> Option<(Vec<Vertex>, Vec<u32>)> {
+) -> Option<(Vec<Vertex>, Vec<u32>, Vec<u32>)> {
     if indices.len() < 3 || !indices.len().is_multiple_of(3) {
         return None;
     }
@@ -1093,6 +1097,7 @@ pub(crate) fn generate_tangents_mikktspace(
         std::collections::HashMap::new();
     let mut out_vertices: Vec<Vertex> = Vec::with_capacity(vertices.len());
     let mut out_indices: Vec<u32> = Vec::with_capacity(indices.len());
+    let mut sources: Vec<u32> = Vec::with_capacity(vertices.len());
     for (corner, &orig) in indices.iter().enumerate() {
         let tangent = mesh.tangents[corner];
         let key = (orig, tangent.map(f32::to_bits));
@@ -1100,11 +1105,12 @@ pub(crate) fn generate_tangents_mikktspace(
             let mut v = vertices[orig as usize];
             v.tangent = tangent;
             out_vertices.push(v);
+            sources.push(orig);
             (out_vertices.len() - 1) as u32
         });
         out_indices.push(new_index);
     }
-    Some((out_vertices, out_indices))
+    Some((out_vertices, out_indices, sources))
 }
 
 #[cfg(test)]
@@ -1301,7 +1307,7 @@ mod tests {
     fn mikktspace_quad_tangent_is_x() {
         // Aligned UVs have no seam, so the corners must weld back to the original 4 vertices.
         let (vertices, indices) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-        let (out_v, out_i) = generate_tangents_mikktspace(&vertices, &indices, 0)
+        let (out_v, out_i, _) = generate_tangents_mikktspace(&vertices, &indices, 0)
             .expect("mikktspace should succeed");
         assert_eq!(out_i.len(), indices.len(), "index count is preserved");
         assert_eq!(
@@ -1329,7 +1335,7 @@ mod tests {
     fn mikktspace_mirrored_uvs_flip_handedness() {
         // V mirrored: handedness must flip to -1, as on the Lengyel path.
         let (vertices, indices) = quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
-        let (out_v, _) = generate_tangents_mikktspace(&vertices, &indices, 0)
+        let (out_v, _, _) = generate_tangents_mikktspace(&vertices, &indices, 0)
             .expect("mikktspace should succeed");
         for v in &out_v {
             assert_eq!(
@@ -1337,6 +1343,42 @@ mod tests {
                 "mirrored chart must be left-handed, got {:?}",
                 v.tangent
             );
+        }
+    }
+
+    #[test]
+    fn morph_deltas_follow_the_vertices_mikktspace_renumbers() {
+        // First use 3, 0, 2, 1: MikkTSpace's output order, which the file's delta order is not.
+        let (vertices, _) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+        let indices = vec![3, 0, 2, 2, 0, 1];
+        let deltas: Vec<Vec3> = (0..4)
+            .map(|i| Vec3::new(0.0, 0.0, i as f32 + 1.0))
+            .collect();
+        let options = GeometryOptions {
+            has_normals: true,
+            has_tangents: false,
+            tangent_uv_set: 0,
+            mikktspace: true,
+        };
+        let geometry = finish_geometry(
+            Geometry {
+                vertices: vertices.clone(),
+                indices,
+                morph_targets: vec![MorphTarget {
+                    position_deltas: deltas.clone(),
+                    ..MorphTarget::default()
+                }],
+            },
+            &options,
+        );
+        let moved = &geometry.morph_targets[0].position_deltas;
+        assert_eq!(moved.len(), geometry.vertices.len());
+        for (vertex, delta) in geometry.vertices.iter().zip(moved) {
+            let source = vertices
+                .iter()
+                .position(|v| v.position == vertex.position)
+                .expect("every output vertex comes from an input vertex");
+            assert_eq!(*delta, deltas[source], "vertex at {:?}", vertex.position);
         }
     }
 
