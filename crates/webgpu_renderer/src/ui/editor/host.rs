@@ -5,6 +5,7 @@ use glam::Vec4;
 use crate::app::library::ModelLibrary;
 use crate::app::loader::LoadProgress;
 use crate::app::Notice;
+use crate::render::clouds::CloudSettings;
 use crate::render::forward::{ForwardRenderer, RasterPath};
 use crate::render::gpu_timing::TimedPass;
 use crate::render::model_transform::ModelTransform;
@@ -30,6 +31,7 @@ pub struct RendererSettings {
     pub skybox_enabled: bool,
     pub model_transform: ModelTransform,
     pub raster_path: RasterPath,
+    pub clouds: CloudSettings,
 }
 
 impl Default for RendererSettings {
@@ -51,6 +53,7 @@ impl Default for RendererSettings {
             skybox_enabled: true,
             model_transform: ModelTransform::default(),
             raster_path: RasterPath::Forward,
+            clouds: CloudSettings::default(),
         }
     }
 }
@@ -73,6 +76,7 @@ impl RendererSettings {
             skybox_enabled: renderer.skybox_enabled,
             model_transform: renderer.model_transform,
             raster_path: renderer.raster_path,
+            clouds: renderer.clouds,
         }
     }
 
@@ -92,6 +96,7 @@ impl RendererSettings {
         renderer.skybox_enabled = self.skybox_enabled;
         renderer.model_transform = self.model_transform;
         renderer.raster_path = self.raster_path;
+        renderer.clouds = self.clouds;
     }
 }
 

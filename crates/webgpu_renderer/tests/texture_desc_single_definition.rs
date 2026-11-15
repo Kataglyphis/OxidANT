@@ -23,6 +23,11 @@ const SOURCES: &[(&str, &str, bool)] = &[
         false,
     ),
     (
+        "render/forward/cloud_pass.rs",
+        include_str!("../src/render/forward/cloud_pass.rs"),
+        false,
+    ),
+    (
         "render/forward/culling.rs",
         include_str!("../src/render/forward/culling.rs"),
         false,
@@ -144,10 +149,10 @@ fn texture_descriptor_literals_are_the_single_definition_or_marked_non_goals() {
         unmarked.join("\n")
     );
     assert_eq!(
-        marked_count, 4,
-        "expected exactly 4 marked non-goal TextureDescriptor literals (three cube \
-         textures, one depth array); found {marked_count} - update this count if a \
-         new non-goal shape is added, or investigate if one disappeared"
+        marked_count, 5,
+        "expected exactly 5 marked non-goal TextureDescriptor literals (three cube \
+         textures, one depth array, the cloud noise volume); found {marked_count} - \
+         update this count if a new non-goal shape is added, or investigate if one disappeared"
     );
     assert_eq!(
         definition_count, 1,

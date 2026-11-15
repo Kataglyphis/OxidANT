@@ -23,8 +23,8 @@ pub(super) fn show(ui: &mut Ui, editor: &mut Editor, cx: &mut EditorContext<'_>)
             tooltip: None,
         };
         let row = list_row(ui, &spec);
-        if row.trailing_clicked && object == SceneObject::Skybox {
-            cx.settings.skybox_enabled = !cx.settings.skybox_enabled;
+        if row.trailing_clicked {
+            toggle_shown(object, cx);
         } else if row.clicked {
             editor.select(object);
         }
@@ -50,7 +50,7 @@ pub(super) fn detail(object: SceneObject, cx: &EditorContext<'_>) -> String {
     }
 }
 
-/// The sky and the clouds carry the C++ eye; the renderer has no clouds yet.
+/// The sky and the clouds carry the C++ eye, which shows and hides what they draw.
 fn trailing(object: SceneObject, cx: &EditorContext<'_>) -> RowTrailing<'static> {
     match object {
         SceneObject::Skybox => RowTrailing::Eye {
@@ -59,10 +59,19 @@ fn trailing(object: SceneObject, cx: &EditorContext<'_>) -> RowTrailing<'static>
             enabled: true,
         },
         SceneObject::Clouds => RowTrailing::Eye {
-            visible: false,
+            visible: cx.settings.clouds.enabled,
             tooltip: "Show or hide the clouds",
-            enabled: false,
+            enabled: true,
         },
         _ => RowTrailing::None,
+    }
+}
+
+/// A click on an eye: the skybox switches to the C++ navy and back, the clouds off and on.
+fn toggle_shown(object: SceneObject, cx: &mut EditorContext<'_>) {
+    match object {
+        SceneObject::Skybox => cx.settings.skybox_enabled = !cx.settings.skybox_enabled,
+        SceneObject::Clouds => cx.settings.clouds.enabled = !cx.settings.clouds.enabled,
+        _ => {}
     }
 }

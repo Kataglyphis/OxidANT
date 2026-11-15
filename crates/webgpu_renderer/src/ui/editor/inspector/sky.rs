@@ -1,8 +1,9 @@
-//! The Sky tab: the C++ SKYBOX switch, then the image-based light the sky gives the scene.
+//! The Sky tab: the C++ SKYBOX switch, the image-based light the sky gives the scene, then the C++ CLOUDS section.
 
 use egui::Ui;
 
 use super::super::EditorContext;
+use super::clouds;
 use crate::ui::widgets::{caption_line, muted_wrapped, property_row, section_header, FillSlider};
 
 pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
@@ -18,4 +19,5 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
         Some("How strongly the sky lights the scene"),
         |ui| ui.add(FillSlider::new(ambient, 0.0..=2.0).decimals(2)),
     );
+    clouds::show(ui, &mut cx.settings.clouds);
 }

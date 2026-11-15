@@ -2,6 +2,7 @@
 //! The frame's passes and the resources each one owns live in the submodules, one per pass.
 
 mod animate;
+mod cloud_pass;
 mod culling;
 mod deferred;
 mod environment;
@@ -21,6 +22,7 @@ mod upload;
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::context::GpuContext;
+use crate::render::clouds::CloudSettings;
 use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::GpuTiming;
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
@@ -33,6 +35,7 @@ use crate::scene::camera::OrbitCamera;
 use crate::scene::CpuScene;
 
 use animate::SceneAnimation;
+use cloud_pass::CloudPass;
 use culling::Culling;
 use deferred::DeferredResources;
 pub use deferred::RasterPath;
@@ -79,6 +82,8 @@ pub struct ForwardRenderer {
     depth_resolve: DepthResolve,
     /// Bloom, SSAO and exposure, which the tonemap composes.
     post: PostChain,
+    /// The cloud noise, march and target, which the tonemap composites.
+    cloud_pass: CloudPass,
     culling: Culling,
     /// The deferred path's G-buffer and pipelines, built by its first frame.
     deferred: Option<DeferredResources>,
@@ -128,6 +133,8 @@ pub struct ForwardRenderer {
     pub model_transform: ModelTransform,
     /// Forward or deferred shading, read every frame.
     pub raster_path: RasterPath,
+    /// The volumetric clouds, off by default as in the C++ engine; the noise is made the first frame they are on.
+    pub clouds: CloudSettings,
     /// The root matrix the instances and lights carry now.
     placed_root: Mat4,
 }
@@ -155,6 +162,7 @@ impl ForwardRenderer {
             targets,
             depth_resolve,
             post,
+            cloud_pass: CloudPass::new(device),
             culling: Culling::new(device),
             deferred: None,
             primitives: Vec::new(),
@@ -181,6 +189,7 @@ impl ForwardRenderer {
             skybox_enabled: true,
             model_transform: ModelTransform::default(),
             raster_path: RasterPath::Forward,
+            clouds: CloudSettings::default(),
             placed_root: Mat4::IDENTITY,
         }
     }
@@ -392,6 +401,7 @@ impl ForwardRenderer {
         self.encode_exposure(&mut encoder, view.width, view.height);
         self.encode_bloom(&mut encoder);
         self.encode_ssao(&mut encoder);
+        self.encode_clouds(gpu, &mut encoder, &view);
         self.encode_tonemap(&mut encoder, tonemap, output_view);
         self.finish_frame(gpu, encoder);
     }

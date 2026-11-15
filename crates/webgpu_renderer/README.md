@@ -51,6 +51,15 @@ cubemaps + a BRDF LUT). The skybox faces carry no licence in BeschleunigerBallet
 `licenses/`, so the web demo does not ship them; shipping them beside the page needs a
 licence from their rights holder and a row there first.
 
+**Clouds** — the C++ engine's volumetric clouds, sharing its mathematics
+([`shaders/common/volumetric_clouds.slang`](../../shaders/common/volumetric_clouds.slang)):
+a 128³ noise volume generated once, then per frame a ray march through an
+axis-aligned box (Offset, Scale × Density × 10) with a light march toward the
+sun, Henyey-Greenstein phase and powder term. It stops at the single-sample scene
+depth either raster path leaves, and the tonemap composites it in linear HDR, the
+same over sky and geometry. Off by default (`ForwardRenderer::clouds`), with the C++
+ranges in the Sky tab.
+
 **Post** — 4× MSAA on the forward path (deferred renders one sample, so its
 silhouettes, creases and sub-pixel detail differ; `tests/deferred.rs` measures
 it), HDR `Rgba16Float` target, bloom (bright-pass + separable
@@ -81,11 +90,11 @@ glTF left active, else its first, else fitted to its bounds, and its
 `asset.copyright` shows in the status bar and About. In the browser the profiler
 starts hidden and a narrow canvas drops the inspector first, so the docs iframe
 keeps the library. The inspector's C++ rows are live: the Sun's SHADOWS section, the
-Model tab's transform, the skybox switch (also the outliner's eye), frustum culling
-(also in the Render menu and the profiler's Visibility tab, with the C++ counts) and the
-raster path (also the Render menu's radios, named by the viewport chip); a scene's start
-view sets the shadow distance to twice its distance to the target, never under the C++
-60 m. Clouds and ray and path tracing follow.
+Model tab's transform, the skybox switch and the Sky tab's CLOUDS section (each also an
+eye in the outliner), frustum culling (also in the Render menu and the profiler's
+Visibility tab, with the C++ counts) and the raster path (also the Render menu's radios,
+named by the viewport chip); a scene's start view sets the shadow distance to twice its
+distance to the target, never under the C++ 60 m. Ray and path tracing follow.
 
 **Camera** — the C++ engine's fly camera (`scene::fly`) and the orbit controller
 share one `OrbitCamera`: flying moves eye and target together and turns about the
@@ -114,7 +123,7 @@ cargo run -p kataglyphis_webgpu_renderer --example export_shaders -- out_dir
 
 # The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe)
 cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir \
-  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web,deferred ...]
+  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web,deferred,cloudy,pitch=0,zoom=4 ...]
 
 # Browser demo (drop a self-contained .glb onto the page; the Colosseum row fetches Colosseum-web.glb beside it)
 cargo build -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown --release

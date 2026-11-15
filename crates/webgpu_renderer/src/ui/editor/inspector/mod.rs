@@ -1,6 +1,7 @@
 //! The inspector dock: the C++ tab bar kept in step with the outliner, a title row, then one module per tab.
 
 mod camera;
+mod clouds;
 mod model;
 mod renderer;
 mod sky;

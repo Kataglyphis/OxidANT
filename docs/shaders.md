@@ -23,6 +23,17 @@ OxidANT submodule. Its Vulkan entry points and material modules stay in that
 repository. Commit source and generated WGSL here before updating its pin;
 an OxidANT checkout needs no parent source tree to run its shader parity tests.
 
+`common/volumetric_clouds.slang` is the volumetric clouds' mathematics for both
+renderers: the noise texels, the unpack of the C++ `SceneUBO` cloud block, the
+box, the density and the march. Its functions take an `ICloudNoise`, which
+Slang specializes per caller, so each renderer binds the noise volume its own
+way: `clouds/cloud_march.slang` a texture and a sampler, the C++ `clouds_main` a
+combined `Sampler3D`.
+`tests/volumetric_clouds_test.slang` compiles the C++ way to SPIR-V, so a change
+that breaks that target fails here before it reaches the pin. WebGPU writes
+`rgba16float` only through a write-only storage texture, which Slang emits from
+`[format("rgba16f")] WTexture3D`; an `RWTexture3D` would emit `read_write`.
+
 Instance vertex attributes contain matrix columns. `instance_matrix` transposes
 the Slang row constructor so instances and equivalent node transforms agree.
 `skinned_bounds::a_non_uniform_instance_scale_shades_like_the_same_node_scale`

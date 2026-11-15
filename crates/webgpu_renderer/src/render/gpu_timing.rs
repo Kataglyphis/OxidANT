@@ -29,13 +29,15 @@ pub enum TimedPass {
     Bloom,
     /// Occlusion plus blur (two render passes).
     Ssao,
+    /// The volumetric clouds' march to the scene depth (one render pass; only with clouds on).
+    Clouds,
     /// ACES tonemap and composite to the output target.
     Tonemap,
 }
 
 impl TimedPass {
     /// Every pass, in record order. Iteration order is the reporting order.
-    pub const ALL: [TimedPass; 10] = [
+    pub const ALL: [TimedPass; 11] = [
         TimedPass::ShadowCascades,
         TimedPass::Forward,
         TimedPass::GBuffer,
@@ -45,6 +47,7 @@ impl TimedPass {
         TimedPass::ExposureReduce,
         TimedPass::Bloom,
         TimedPass::Ssao,
+        TimedPass::Clouds,
         TimedPass::Tonemap,
     ];
 
@@ -61,6 +64,7 @@ impl TimedPass {
             TimedPass::Tonemap => "Tonemap",
             TimedPass::GBuffer => "GBuffer",
             TimedPass::DeferredLighting => "DeferredLighting",
+            TimedPass::Clouds => "Clouds",
         }
     }
 
@@ -77,6 +81,7 @@ impl TimedPass {
             TimedPass::Tonemap => "Tonemap",
             TimedPass::GBuffer => "G-buffer",
             TimedPass::DeferredLighting => "Lighting + sky",
+            TimedPass::Clouds => "Clouds",
         }
     }
 
@@ -92,6 +97,7 @@ impl TimedPass {
             TimedPass::Tonemap => 7,
             TimedPass::GBuffer => 8,
             TimedPass::DeferredLighting => 9,
+            TimedPass::Clouds => 10,
         }
     }
 }

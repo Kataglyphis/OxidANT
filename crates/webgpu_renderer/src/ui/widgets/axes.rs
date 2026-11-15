@@ -21,6 +21,36 @@ pub fn drag_axes(
     decimals: usize,
     suffix: &str,
 ) -> Response {
+    axes_row(ui, values, &|_| speed, range, decimals, suffix)
+}
+
+/// [`drag_axes`] as ImGui's logarithmic drag: `step` per pixel crosses the log of `range` as it would the range.
+pub fn drag_axes_logarithmic(
+    ui: &mut Ui,
+    values: &mut [f32; 3],
+    step: f64,
+    range: RangeInclusive<f32>,
+    decimals: usize,
+) -> Response {
+    let rate = logarithmic_rate(step, &range);
+    let speed = move |value: f32| f64::from(value.abs()) * rate;
+    axes_row(ui, values, &speed, range, decimals, "")
+}
+
+/// The share of its value a logarithmic field moves per pixel; needs `0 < start < end`.
+fn logarithmic_rate(step: f64, range: &RangeInclusive<f32>) -> f64 {
+    let (lo, hi) = (f64::from(*range.start()), f64::from(*range.end()));
+    (step / (hi - lo) * (hi / lo).ln()).exp_m1()
+}
+
+fn axes_row(
+    ui: &mut Ui,
+    values: &mut [f32; 3],
+    speed: &dyn Fn(f32) -> f64,
+    range: RangeInclusive<f32>,
+    decimals: usize,
+    suffix: &str,
+) -> Response {
     let gap = theme::INNER_SPACING.x;
     let width = ((ui.available_width() - 2.0 * gap) / 3.0).floor().max(1.0);
     let size = vec2(width, frame_height(ui));
@@ -28,6 +58,7 @@ pub fn drag_axes(
         ui.spacing_mut().item_spacing.x = gap;
         let mut row: Option<Response> = None;
         for (axis, value) in values.iter_mut().enumerate() {
+            let speed = speed(*value);
             let field = DragValue::new(value)
                 .speed(speed)
                 .range(range.clone())
@@ -79,6 +110,13 @@ mod tests {
             (row.width() - available).abs() <= 3.0,
             "{row:?} of {available}"
         );
+    }
+
+    #[test]
+    fn a_logarithmic_field_crosses_the_cpp_cloud_scale_range_in_400_pixels() {
+        let rate = logarithmic_rate(2.5, &(0.001..=1000.0));
+        let pixels = (1000.0_f64 / 0.001).ln() / rate.ln_1p();
+        assert!((pixels - 400.0).abs() < 1.0, "{pixels} px");
     }
 
     #[test]

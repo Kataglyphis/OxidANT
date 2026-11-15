@@ -67,6 +67,26 @@ pub const fn texture_2d(
     )
 }
 
+/// A storage texture binding; WebGPU writes most formats only write-only.
+pub const fn storage_texture(
+    binding: u32,
+    visibility: wgpu::ShaderStages,
+    access: wgpu::StorageTextureAccess,
+    format: wgpu::TextureFormat,
+    view_dimension: wgpu::TextureViewDimension,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::StorageTexture {
+            access,
+            format,
+            view_dimension,
+        },
+        count: None,
+    }
+}
+
 /// A sampler binding.
 pub const fn sampler(
     binding: u32,
@@ -178,6 +198,28 @@ mod tests {
         assert!(matches!(
             e.ty,
             wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)
+        ));
+    }
+
+    #[test]
+    fn storage_texture_builds_the_expected_entry() {
+        let e = storage_texture(
+            0,
+            wgpu::ShaderStages::COMPUTE,
+            wgpu::StorageTextureAccess::WriteOnly,
+            wgpu::TextureFormat::Rgba16Float,
+            wgpu::TextureViewDimension::D3,
+        );
+        assert_eq!(e.binding, 0);
+        assert_eq!(e.visibility, wgpu::ShaderStages::COMPUTE);
+        assert_eq!(e.count, None);
+        assert!(matches!(
+            e.ty,
+            wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: wgpu::TextureFormat::Rgba16Float,
+                view_dimension: wgpu::TextureViewDimension::D3,
+            }
         ));
     }
 

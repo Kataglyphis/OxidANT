@@ -1,4 +1,4 @@
-//! The Studio editor rendered headless into PNGs: `editor_snapshot -- [out_dir] [--model=PATH] [--web-model=PATH] [WxH@scale[,tab][,about][,hidden][,web][,deferred] ...]`.
+//! The Studio editor rendered headless into PNGs: `editor_snapshot -- [out_dir] [--model=PATH] [--web-model=PATH] [WxH@scale[,tab][,about][,hidden][,web][,deferred][,cloudy][,pitch=DEG][,zoom=F] ...]`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -25,7 +25,7 @@ const WARM_UP_FRAMES: u32 = 4;
 /// Lavapipe parses and uploads the 5.9 M-triangle Colosseum in minutes, not seconds.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(1800);
 
-/// One PNG: the frame's size in pixels, its scale, the inspector tab, About open, the editor hidden, the browser's host, the raster path.
+/// One PNG: size and scale, inspector tab, About, editor hidden, the browser's host, the raster path, clouds on, a pitch and zoom.
 struct Shot {
     size: [u32; 2],
     scale: f32,
@@ -34,6 +34,10 @@ struct Shot {
     hidden: bool,
     web: bool,
     path: RasterPath,
+    cloudy: bool,
+    pitch: Option<f32>,
+    /// Multiplies the start view's distance to its target.
+    zoom: f32,
 }
 
 fn parse(spec: &str) -> anyhow::Result<Shot> {
@@ -49,13 +53,25 @@ fn parse(spec: &str) -> anyhow::Result<Shot> {
         hidden: false,
         web: false,
         path: RasterPath::Forward,
+        cloudy: false,
+        pitch: None,
+        zoom: 1.0,
     };
     for option in parts {
+        if let Some(pitch) = option.strip_prefix("pitch=") {
+            shot.pitch = Some(pitch.parse()?);
+            continue;
+        }
+        if let Some(zoom) = option.strip_prefix("zoom=") {
+            shot.zoom = zoom.parse()?;
+            continue;
+        }
         match option {
             "about" => shot.about = true,
             "hidden" => shot.hidden = true,
             "web" => shot.web = true,
             "deferred" => shot.path = RasterPath::Deferred,
+            "cloudy" => shot.cloudy = true,
             name => {
                 shot.object = SceneObject::ALL
                     .into_iter()
@@ -86,6 +102,11 @@ fn render(app: &mut StudioApp, shot: &Shot, path: &Path, now_s: &mut f64) -> any
     app.editor_mut().select(shot.object);
     app.renderer.raster_path = shot.path;
     app.editor_mut().set_visible(!shot.hidden);
+    app.renderer.clouds.enabled = shot.cloudy;
+    if let Some(pitch) = shot.pitch {
+        app.camera.pitch_deg = pitch;
+    }
+    app.camera.radius *= shot.zoom;
     if shot.about {
         app.editor_mut().show_about();
     } else {

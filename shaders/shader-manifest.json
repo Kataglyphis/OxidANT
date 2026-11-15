@@ -266,6 +266,40 @@
       "targets": [
         "wgsl"
       ]
+    },
+    {
+      "_comment": "Rust/WebGPU volumetric clouds: the one-shot noise volume and the per-frame march (WGSL emit).",
+      "file": "clouds/cloud_noise.slang",
+      "entry": "cs_noise",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "clouds/cloud_march.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "clouds/cloud_march.slang",
+      "entry": "fs_main",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "CI guard: the shared cloud module emits SPIR-V as the C++ engine's clouds_main imports it.",
+      "file": "tests/volumetric_clouds_test.slang",
+      "entry": "clouds_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv"
+      ]
     }
   ],
   "wgslMap": [
@@ -312,6 +346,16 @@
     {
       "src": "occlusion_bbox/occlusion_bbox.slang",
       "out": "occlusion_bbox.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "clouds/cloud_noise.slang",
+      "out": "cloud_noise.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "clouds/cloud_march.slang",
+      "out": "cloud_march.wgsl",
       "dst": "crates/webgpu_renderer/src/shaders"
     },
     {
