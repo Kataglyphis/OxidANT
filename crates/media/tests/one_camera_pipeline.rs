@@ -25,6 +25,11 @@ fn appsink_builders(dir: &Path, found: &mut Vec<PathBuf>) {
 #[test]
 fn only_the_media_crate_and_observant_build_an_appsink() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // A cross lane runs this binary on a machine without the sources; every lane that builds here has them.
+    if !root.join("src").is_dir() {
+        eprintln!("SKIP: no source tree at {}", root.display());
+        return;
+    }
     let mut found = Vec::new();
     appsink_builders(&root.join("src"), &mut found);
     appsink_builders(&root.join("crates"), &mut found);

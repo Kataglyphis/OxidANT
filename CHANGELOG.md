@@ -715,6 +715,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `upload_scene`, `render_tonemapped`, `render_to_pixels_with_format`, `set_animation_time`) are gone. The two
   source-text tests scan the new files too.
 
+### Fixed (2026-11-15, three new tests on the Windows arm64 cross lane)
+- The lane runs the cross-built test binaries on a machine without the source tree (run 43750810210), so the
+  capture tests' photo, read through `CARGO_MANIFEST_DIR`, was missing and `one_camera_pipeline` found no `src`. The
+  photo is now in the test binary (`include_bytes!`) and written to a temporary folder, as the inference crate's
+  tests do; the source-reading guard says SKIP without a source tree, which every lane that builds has.
+
 ### Changed (2026-11-15, `src`'s coverage leaves the generated bridge out)
 - The `coverage` step passes `src/frb_generated.rs` to tarpaulin's `--exclude-files` beside `third_party/*`: the file
   was 1157 of `src`'s 1795 lines and no Rust test runs it, so `src` read 24 % (run 43737706756) and 67.6 % without
