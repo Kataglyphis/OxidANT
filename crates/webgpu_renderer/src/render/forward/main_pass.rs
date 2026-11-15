@@ -1,4 +1,5 @@
 //! The forward main pass: culled opaque draws, the sky, then sorted blended draws, all MSAA.
+//! Its draw loops and pipeline builder also serve the deferred path's passes.
 
 use glam::Vec3;
 
@@ -10,7 +11,15 @@ use crate::render::bounds::aabb_contains_point;
 use crate::render::gpu_timing::TimedPass;
 use crate::scene::{InstanceRaw, Vertex};
 
-/// One winding's four forward pipelines: back-culled or double-sided, opaque or blended.
+/// Where the sky's background starts before anything draws, in both raster paths.
+pub(super) const HDR_CLEAR: wgpu::Color = wgpu::Color {
+    r: 0.05,
+    g: 0.05,
+    b: 0.08,
+    a: 1.0,
+};
+
+/// One winding's four scene pipelines: back-culled or double-sided, opaque or blended.
 pub(super) struct ForwardPipelineSet {
     opaque: wgpu::RenderPipeline,
     double_sided: wgpu::RenderPipeline,
@@ -19,6 +28,27 @@ pub(super) struct ForwardPipelineSet {
 }
 
 impl ForwardPipelineSet {
+    /// Builds the four from the opaque and the blended target spec; `label` prefixes each pipeline's name.
+    pub(super) fn build(
+        device: &wgpu::Device,
+        source: &PipelineSource<'_>,
+        front_face: wgpu::FrontFace,
+        [opaque, blend]: [&SceneTargets<'_>; 2],
+        label: &str,
+    ) -> Self {
+        let make = |targets: &SceneTargets<'_>, cull_mode: Option<wgpu::Face>, suffix: &str| {
+            let label = format!("{label}{suffix}");
+            scene_pipeline(device, source, targets, (front_face, cull_mode), &label)
+        };
+        let back = Some(wgpu::Face::Back);
+        Self {
+            opaque: make(opaque, back, ""),
+            double_sided: make(opaque, None, "_double_sided"),
+            blend: make(blend, back, "_blend"),
+            blend_double_sided: make(blend, None, "_blend_double_sided"),
+        }
+    }
+
     /// The pipeline for a material's sidedness and blending.
     fn pick(&self, double_sided: bool, blend: bool) -> &wgpu::RenderPipeline {
         match (double_sided, blend) {
@@ -73,16 +103,33 @@ impl MainPipelines {
         }
     }
 
+    /// The forward pass's sets for both windings.
+    pub(super) fn sets(&self) -> WindingSets<'_> {
+        WindingSets {
+            upright: &self.upright,
+            mirrored: self.mirrored.as_ref(),
+        }
+    }
+}
+
+/// The pipeline sets a pass draws primitives with, one per front-face winding.
+#[derive(Clone, Copy)]
+pub(super) struct WindingSets<'a> {
+    pub(super) upright: &'a ForwardPipelineSet,
+    pub(super) mirrored: Option<&'a ForwardPipelineSet>,
+}
+
+impl<'a> WindingSets<'a> {
     /// The set whose front faces wind clockwise when `clockwise`, else counter-clockwise.
-    fn for_winding(&self, clockwise: bool) -> &ForwardPipelineSet {
+    fn for_winding(self, clockwise: bool) -> &'a ForwardPipelineSet {
         if !clockwise {
-            return &self.upright;
+            return self.upright;
         }
         debug_assert!(
             self.mirrored.is_some(),
-            "ensure_mirrored_pipelines must run first"
+            "the mirrored set must be built before a mirrored primitive is drawn"
         );
-        self.mirrored.as_ref().unwrap_or(&self.upright)
+        self.mirrored.unwrap_or(self.upright)
     }
 }
 
@@ -123,9 +170,9 @@ impl ForwardRenderer {
         let mut pass = self.begin_forward_pass(encoder);
         // Per-frame groups 1-3; rebound after the sky, whose own layout invalidates them.
         self.bind_frame_groups(&mut pass);
-        let (drawn, considered) = self.draw_opaque(&mut pass, view);
+        let (drawn, considered) = self.draw_opaque(&mut pass, view, self.main.sets());
         self.sky.draw(&mut pass);
-        let blended = self.draw_blended(&mut pass, view);
+        let blended = self.draw_blended(&mut pass, view, self.main.sets());
         self.culling.drawn = drawn;
         self.culling.considered = considered;
         self.culling.primitives = (drawn + blended, self.primitives.len() as u32);
@@ -146,12 +193,7 @@ impl ForwardRenderer {
                 view: &self.targets.hdr_msaa,
                 resolve_target: Some(&self.targets.hdr_view),
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.05,
-                        g: 0.05,
-                        b: 0.08,
-                        a: 1.0,
-                    }),
+                    load: wgpu::LoadOp::Clear(HDR_CLEAR),
                     store: wgpu::StoreOp::Discard,
                 },
                 depth_slice: None,
@@ -174,14 +216,19 @@ impl ForwardRenderer {
         })
     }
 
-    fn bind_frame_groups(&self, pass: &mut wgpu::RenderPass<'_>) {
+    pub(super) fn bind_frame_groups(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_bind_group(1, &self.ibl.bind_group, &[]);
         pass.set_bind_group(2, &self.frame.bind_group, &[]);
         pass.set_bind_group(3, &self.lights.bind_group, &[]);
     }
 
     /// Frustum-tested, then occlusion-skipped opaque draws; returns (drawn, considered).
-    fn draw_opaque(&self, pass: &mut wgpu::RenderPass<'_>, view: &FrameView) -> (u32, u32) {
+    pub(super) fn draw_opaque(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        view: &FrameView,
+        sets: WindingSets<'_>,
+    ) -> (u32, u32) {
         let mut occ_drawn = 0u32;
         let mut occ_considered = 0u32;
         for (i, prim) in self.primitives.iter().enumerate() {
@@ -196,13 +243,18 @@ impl ForwardRenderer {
                 continue;
             }
             occ_drawn += 1;
-            draw_primitive(pass, &self.main, prim, view.eye);
+            draw_primitive(pass, sets, prim, view.eye);
         }
         (occ_drawn, occ_considered)
     }
 
     /// Transparents last, farthest first, no depth writes; returns how many it drew.
-    fn draw_blended(&self, pass: &mut wgpu::RenderPass<'_>, view: &FrameView) -> u32 {
+    pub(super) fn draw_blended(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        view: &FrameView,
+        sets: WindingSets<'_>,
+    ) -> u32 {
         let eye = view.eye;
         let mut blended: Vec<&GpuPrimitive> = self
             .primitives
@@ -218,7 +270,7 @@ impl ForwardRenderer {
             self.bind_frame_groups(pass);
         }
         for prim in &blended {
-            draw_primitive(pass, &self.main, prim, eye);
+            draw_primitive(pass, sets, prim, eye);
         }
         blended.len() as u32
     }
@@ -227,7 +279,7 @@ impl ForwardRenderer {
 /// Binds `prim`'s group 0 and its LOD-selected geometry, then draws each winding's instances.
 fn draw_primitive(
     pass: &mut wgpu::RenderPass<'_>,
-    pipelines: &MainPipelines,
+    sets: WindingSets<'_>,
     prim: &GpuPrimitive,
     eye: Vec3,
 ) {
@@ -237,7 +289,7 @@ fn draw_primitive(
     pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
     pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
     for (instances, clockwise) in prim.instance_runs() {
-        let set = pipelines.for_winding(clockwise);
+        let set = sets.for_winding(clockwise);
         pass.set_pipeline(set.pick(prim.double_sided, prim.alpha_blend));
         pass.draw_indexed(0..index_count, 0, instances);
     }
@@ -292,55 +344,108 @@ pub(super) fn create_forward_pipeline_set(
     pipeline_layout: &wgpu::PipelineLayout,
     front_face: wgpu::FrontFace,
 ) -> ForwardPipelineSet {
-    let make = |cull_mode: Option<wgpu::Face>, blend: bool, label: &str| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(Vertex::LAYOUT), Some(InstanceRaw::LAYOUT)],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR_FORMAT,
-                    blend: Some(if blend {
-                        wgpu::BlendState::ALPHA_BLENDING
-                    } else {
-                        wgpu::BlendState::REPLACE
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                front_face,
-                cull_mode,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(!blend),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: MSAA_SAMPLE_COUNT,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview_mask: None,
-            cache: None,
-        })
+    let source = PipelineSource {
+        shader,
+        layout: pipeline_layout,
     };
-    ForwardPipelineSet {
-        opaque: make(Some(wgpu::Face::Back), false, "forward_pipeline"),
-        double_sided: make(None, false, "forward_pipeline_double_sided"),
-        blend: make(Some(wgpu::Face::Back), true, "forward_pipeline_blend"),
-        blend_double_sided: make(None, true, "forward_pipeline_blend_double_sided"),
+    let opaque = [Some(hdr_target(false))];
+    let blend = [Some(hdr_target(true))];
+    ForwardPipelineSet::build(
+        device,
+        &source,
+        front_face,
+        [
+            &SceneTargets::new("fs_main", &opaque, true, MSAA_SAMPLE_COUNT),
+            &SceneTargets::new("fs_main", &blend, false, MSAA_SAMPLE_COUNT),
+        ],
+        "forward_pipeline",
+    )
+}
+
+/// The HDR colour target, alpha-blended for BLEND materials.
+pub(super) fn hdr_target(blend: bool) -> wgpu::ColorTargetState {
+    wgpu::ColorTargetState {
+        format: HDR_FORMAT,
+        blend: Some(if blend {
+            wgpu::BlendState::ALPHA_BLENDING
+        } else {
+            wgpu::BlendState::REPLACE
+        }),
+        write_mask: wgpu::ColorWrites::ALL,
     }
+}
+
+/// The forward module and pipeline layout every scene pipeline is built from.
+pub(super) struct PipelineSource<'a> {
+    pub(super) shader: &'a wgpu::ShaderModule,
+    pub(super) layout: &'a wgpu::PipelineLayout,
+}
+
+/// What a scene pipeline writes: its fragment entry point, colour targets, depth writes and samples.
+pub(super) struct SceneTargets<'a> {
+    fragment: &'a str,
+    targets: &'a [Option<wgpu::ColorTargetState>],
+    depth_write: bool,
+    samples: u32,
+}
+
+impl<'a> SceneTargets<'a> {
+    pub(super) fn new(
+        fragment: &'a str,
+        targets: &'a [Option<wgpu::ColorTargetState>],
+        depth_write: bool,
+        samples: u32,
+    ) -> Self {
+        Self {
+            fragment,
+            targets,
+            depth_write,
+            samples,
+        }
+    }
+}
+
+/// One pipeline over `vs_main` and the scene vertex layout, depth-tested against [`DEPTH_FORMAT`].
+fn scene_pipeline(
+    device: &wgpu::Device,
+    source: &PipelineSource<'_>,
+    spec: &SceneTargets<'_>,
+    (front_face, cull_mode): (wgpu::FrontFace, Option<wgpu::Face>),
+    label: &str,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(source.layout),
+        vertex: wgpu::VertexState {
+            module: source.shader,
+            entry_point: Some("vs_main"),
+            buffers: &[Some(Vertex::LAYOUT), Some(InstanceRaw::LAYOUT)],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: source.shader,
+            entry_point: Some(spec.fragment),
+            targets: spec.targets,
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            front_face,
+            cull_mode,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(spec.depth_write),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: spec.samples,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview_mask: None,
+        cache: None,
+    })
 }

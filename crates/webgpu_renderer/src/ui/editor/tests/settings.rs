@@ -33,15 +33,6 @@ fn collect_circles(shape: &egui::Shape, knobs: &mut Vec<Pos2>) {
     }
 }
 
-/// A click on the centre of the first painted `text`.
-fn click_text(studio: &mut Harness, text: &str) {
-    let at = studio
-        .text_rect(text)
-        .unwrap_or_else(|| panic!("{text} is painted"))
-        .center();
-    studio.frame(click(at.x, at.y));
-}
-
 #[test]
 fn the_shadows_section_writes_every_cpp_control_and_its_switch_disables_them() {
     let mut studio = Harness::new((1600.0, 900.0), 1.0);

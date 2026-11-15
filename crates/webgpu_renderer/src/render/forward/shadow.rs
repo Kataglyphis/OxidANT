@@ -249,7 +249,7 @@ impl ForwardRenderer {
         }
     }
 
-    /// Reallocates the cascade array when the resolution or the cascade count changed, then rebinds group 0.
+    /// Reallocates the cascade array when the resolution or the cascade count changed, then rebinds every group over it.
     pub(super) fn sync_shadow_map(&mut self, device: &wgpu::Device) {
         let settings = self.shadows.sanitized();
         let layers = settings.cascade_count as usize;
@@ -264,6 +264,7 @@ impl ForwardRenderer {
         self.shadow.layer_views = layer_views;
         self.shadow.resolution = settings.resolution;
         self.rebuild_material_bind_groups(device);
+        self.rebind_deferred_shadow_map(device);
     }
 
     /// Texels per side of each cascade's map as allocated now.

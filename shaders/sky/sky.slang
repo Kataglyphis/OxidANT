@@ -12,7 +12,7 @@ struct SkyUniforms
 [vk::binding(1, 0)] TextureCube<float4> skyboxTex;
 [vk::binding(2, 0)] SamplerState skyboxSampler;
 
-// Below fp16's 65504, as forward.slang's: a brighter sun would store +Inf in the HDR target.
+// Below fp16's 65504, as forward_lighting.slang's: a brighter sun would store +Inf in the HDR target.
 static const float HDR_MAX = 65000.0;
 
 // The C++ SKYBOX_DISABLED_RADIANCE: linear navy while the skybox is switched off.

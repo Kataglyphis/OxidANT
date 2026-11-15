@@ -4,6 +4,7 @@ use egui::{vec2, Button, Ui};
 
 use super::super::menu_bar::{RENDER_MODES, RENDER_MODES_ENABLED};
 use super::super::{EditorAction, EditorContext};
+use crate::render::forward::RasterPath;
 use crate::ui::widgets::{
     enabled_ui, frame_height, muted_wrapped, property_row, section_header, toggle, FillSlider,
     Segmented,
@@ -15,17 +16,18 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>, actions: &mut Vec<Ed
         .enabled(&RENDER_MODES_ENABLED)
         .show(ui, &mut mode);
     muted_wrapped(ui, "WebGPU has no hardware ray tracing.");
-    let mut path = 0;
+    let settings = &mut *cx.settings;
+    let mut path = RasterPath::ALL
+        .iter()
+        .position(|path| *path == settings.raster_path)
+        .unwrap_or(0);
     property_row(
         ui,
         "Raster path",
         Some("Forward shades while drawing; deferred shades a G-buffer afterwards"),
-        |ui| {
-            Segmented::new(&["Forward", "Deferred"])
-                .enabled(&[true, false])
-                .show(ui, &mut path)
-        },
+        |ui| Segmented::new(&RasterPath::ALL.map(RasterPath::label)).show(ui, &mut path),
     );
+    settings.raster_path = RasterPath::ALL[path];
     post(ui, cx);
     culling(ui, cx);
     if shaders(ui, cx) {

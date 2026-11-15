@@ -29,7 +29,12 @@ converter (`asset::obj_to_gltf`, the `obj2gltf` example).
 **Shading** — metallic-roughness PBR (GGX + Smith + Fresnel-Schlick) with
 base color / metallic-roughness / normal / emissive / occlusion maps,
 `KHR_materials_unlit`, alpha OPAQUE/MASK/BLEND, double-sided materials,
-CPU-generated mip chains.
+CPU-generated mip chains. Two raster paths, switched at run time like the C++
+engine's (`ForwardRenderer::raster_path`): forward, and deferred, whose
+single-sample G-buffer (normal + metallic, albedo + occlusion, roughness +
+emissive: 24 of WebGPU's 32 colour bytes per sample) one full-screen pass lights
+with the forward pass's own lighting module (`shaders/forward/forward_lighting.slang`);
+the sky and blended materials draw forward after it.
 
 **Lighting** — directional sun with the C++ engine's cascaded shadow maps
 (`render::shadow_settings`: 1 to 3 cascades fitted to slices of the view frustum by
@@ -46,7 +51,9 @@ cubemaps + a BRDF LUT). The skybox faces carry no licence in BeschleunigerBallet
 `licenses/`, so the web demo does not ship them; shipping them beside the page needs a
 licence from their rights holder and a row there first.
 
-**Post** — 4× MSAA, HDR `Rgba16Float` target, bloom (bright-pass + separable
+**Post** — 4× MSAA on the forward path (deferred renders one sample, so its
+silhouettes, creases and sub-pixel detail differ; `tests/deferred.rs` measures
+it), HDR `Rgba16Float` target, bloom (bright-pass + separable
 Gaussian), SSAO (depth reconstruction), manual or histogram auto-exposure, ACES
 tonemapping.
 
@@ -74,10 +81,11 @@ glTF left active, else its first, else fitted to its bounds, and its
 `asset.copyright` shows in the status bar and About. In the browser the profiler
 starts hidden and a narrow canvas drops the inspector first, so the docs iframe
 keeps the library. The inspector's C++ rows are live: the Sun's SHADOWS section, the
-Model tab's transform, the skybox switch (also the outliner's eye) and frustum culling
-(also in the Render menu and the profiler's Visibility tab, with the C++ counts); a
-scene's start view sets the shadow distance to twice its distance to the target, never
-under the C++ 60 m. Clouds, the deferred path and ray and path tracing follow.
+Model tab's transform, the skybox switch (also the outliner's eye), frustum culling
+(also in the Render menu and the profiler's Visibility tab, with the C++ counts) and the
+raster path (also the Render menu's radios, named by the viewport chip); a scene's start
+view sets the shadow distance to twice its distance to the target, never under the C++
+60 m. Clouds and ray and path tracing follow.
 
 **Camera** — the C++ engine's fly camera (`scene::fly`) and the orbit controller
 share one `OrbitCamera`: flying moves eye and target together and turns about the
@@ -106,7 +114,7 @@ cargo run -p kataglyphis_webgpu_renderer --example export_shaders -- out_dir
 
 # The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe)
 cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir \
-  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web ...]
+  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web,deferred ...]
 
 # Browser demo (drop a self-contained .glb onto the page; the Colosseum row fetches Colosseum-web.glb beside it)
 cargo build -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown --release

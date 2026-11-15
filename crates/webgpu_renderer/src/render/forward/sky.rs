@@ -1,4 +1,4 @@
-//! The sky: a fullscreen triangle at far depth inside the forward pass; the C++ cube map, the procedural sky or navy.
+//! The sky, a fullscreen triangle at far depth in the forward or deferred lighting pass: cube map, procedural or navy.
 
 use super::frame::FrameView;
 use super::{ForwardRenderer, DEPTH_FORMAT, HDR_FORMAT, MSAA_SAMPLE_COUNT};
@@ -27,10 +27,10 @@ pub enum SkyMode {
 
 pub(super) struct SkyResources {
     pub(super) pipeline: wgpu::RenderPipeline,
-    // Read only by the native shader hot-reload path, so unread on wasm32.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(super) pipeline_layout: wgpu::PipelineLayout,
     bind_group_layout: wgpu::BindGroupLayout,
+    /// The module `pipeline` was built from, which the deferred path's single-sample twin is built from too.
+    pub(super) shader: wgpu::ShaderModule,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
@@ -75,6 +75,7 @@ impl SkyResources {
             pipeline,
             pipeline_layout,
             bind_group_layout,
+            shader: sky_shader,
             uniform_buffer,
             bind_group,
             sampler,
@@ -98,7 +99,16 @@ impl SkyResources {
 
     /// Sky fills every pixel geometry left untouched.
     pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
-        pass.set_pipeline(&self.pipeline);
+        self.draw_with(pass, &self.pipeline);
+    }
+
+    /// As [`Self::draw`] with `pipeline`, whose sample count matches the pass.
+    pub(super) fn draw_with(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        pipeline: &wgpu::RenderPipeline,
+    ) {
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
@@ -238,6 +248,16 @@ pub(super) fn create_sky_pipeline(
     sky_shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
 ) -> wgpu::RenderPipeline {
+    sky_pipeline(device, sky_shader, layout, MSAA_SAMPLE_COUNT)
+}
+
+/// The sky pipeline for a pass of `samples` samples.
+pub(super) fn sky_pipeline(
+    device: &wgpu::Device,
+    sky_shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    samples: u32,
+) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("sky_pipeline"),
         layout: Some(layout),
@@ -266,7 +286,7 @@ pub(super) fn create_sky_pipeline(
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState {
-            count: MSAA_SAMPLE_COUNT,
+            count: samples,
             mask: !0,
             alpha_to_coverage_enabled: false,
         },

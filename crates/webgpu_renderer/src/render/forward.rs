@@ -3,6 +3,7 @@
 
 mod animate;
 mod culling;
+mod deferred;
 mod environment;
 mod frame;
 mod light_grid;
@@ -33,6 +34,8 @@ use crate::scene::CpuScene;
 
 use animate::SceneAnimation;
 use culling::Culling;
+use deferred::DeferredResources;
+pub use deferred::RasterPath;
 use environment::{create_ibl_bind_group, IblBinding};
 use frame::FrameBinding;
 use light_grid::LightResources;
@@ -77,6 +80,8 @@ pub struct ForwardRenderer {
     /// Bloom, SSAO and exposure, which the tonemap composes.
     post: PostChain,
     culling: Culling,
+    /// The deferred path's G-buffer and pipelines, built by its first frame.
+    deferred: Option<DeferredResources>,
     primitives: Vec<GpuPrimitive>,
     scene_bounds: Option<(Vec3, Vec3)>,
     /// GPU textures created by the last `upload_scene`, so tests can prove the dedup.
@@ -121,6 +126,8 @@ pub struct ForwardRenderer {
     pub skybox_enabled: bool,
     /// Where the Model tab places the uploaded scene; an upload resets it.
     pub model_transform: ModelTransform,
+    /// Forward or deferred shading, read every frame.
+    pub raster_path: RasterPath,
     /// The root matrix the instances and lights carry now.
     placed_root: Mat4,
 }
@@ -149,6 +156,7 @@ impl ForwardRenderer {
             depth_resolve,
             post,
             culling: Culling::new(device),
+            deferred: None,
             primitives: Vec::new(),
             scene_bounds: None,
             uploaded_texture_count: 0,
@@ -172,6 +180,7 @@ impl ForwardRenderer {
             frustum_culling: true,
             skybox_enabled: true,
             model_transform: ModelTransform::default(),
+            raster_path: RasterPath::Forward,
             placed_root: Mat4::IDENTITY,
         }
     }
@@ -370,10 +379,14 @@ impl ForwardRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("forward_encoder"),
             });
-        // Pass wiring is validated once by `graph::tests::forward_graph_is_valid`, not per frame.
+        // Pass wiring is validated once per path by `graph::tests`, not per frame.
         self.encode_shadow_cascades(gpu, &mut encoder);
-        self.encode_forward_pass(&mut encoder, &view);
-        self.encode_depth_resolve(&mut encoder);
+        if self.raster_path == RasterPath::Deferred {
+            self.encode_deferred(gpu, &mut encoder, &view);
+        } else {
+            self.encode_forward_pass(&mut encoder, &view);
+            self.encode_depth_resolve(&mut encoder);
+        }
         self.encode_occlusion(gpu, &mut encoder, &view);
         // Before bloom: its bright pass thresholds at this frame's exposure, as the tonemap exposes.
         self.encode_exposure(&mut encoder, view.width, view.height);
@@ -469,6 +482,9 @@ impl ForwardRenderer {
             &self.shadow.masked_pipeline_layout,
         );
         let sky = sky::create_sky_pipeline(device, &sky_shader, &self.sky.pipeline_layout);
+        // In the scope too, so a broken deferred entry point keeps the old pipelines as well.
+        let deferred =
+            (self.deferred.as_ref()).map(|_| self.build_deferred(device, &shader, &sky_shader));
         if let Some(err) = pollster::block_on(error_scope.pop()) {
             anyhow::bail!("shader reload rejected: {err}");
         }
@@ -480,6 +496,8 @@ impl ForwardRenderer {
         // The cached bundles still hold the old shadow pipelines.
         self.shadow.caster_bundles = None;
         self.sky.pipeline = sky;
+        self.sky.shader = sky_shader;
+        self.deferred = deferred;
         Ok(())
     }
 

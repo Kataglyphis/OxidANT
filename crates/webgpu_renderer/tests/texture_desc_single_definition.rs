@@ -28,6 +28,11 @@ const SOURCES: &[(&str, &str, bool)] = &[
         false,
     ),
     (
+        "render/forward/deferred.rs",
+        include_str!("../src/render/forward/deferred.rs"),
+        false,
+    ),
+    (
         "render/forward/environment.rs",
         include_str!("../src/render/forward/environment.rs"),
         false,

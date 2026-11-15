@@ -6,6 +6,7 @@ use super::docks::{self, Side};
 use super::{
     Editor, EditorAction, EditorContext, RendererSettings, SceneObject, BRAND, FRAME_RATE_WINDOW,
 };
+use crate::render::forward::RasterPath;
 use crate::ui::icons::{self, StudioIcon};
 use crate::ui::palette as pal;
 use crate::ui::theme;
@@ -142,9 +143,14 @@ fn render_menu(ui: &mut Ui, settings: &mut RendererSettings) {
         );
     }
     ui.separator();
-    ui.add(egui::RadioButton::new(true, "Forward"));
-    ui.add_enabled(false, egui::RadioButton::new(false, "Deferred"))
-        .on_disabled_hover_text("The WebGPU renderer has no deferred path yet");
+    for option in RasterPath::ALL {
+        if ui
+            .radio(settings.raster_path == option, option.label())
+            .clicked()
+        {
+            settings.raster_path = option;
+        }
+    }
     ui.separator();
     ui.checkbox(&mut settings.frustum_culling, "Frustum culling");
 }

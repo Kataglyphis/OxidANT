@@ -103,7 +103,7 @@ Its source-copy suite also uses the hub's parsed loop and fixture helpers; keep 
 shader-path assertions and removed-shader mutant here. The Windows build driver uses
 `Get-BuildWorkspaceConfig` for config and workspace-root selection, then validates the path here.
 `Stage-CrossTests.ps1` also stages `shaders/forward` beside the mirrored renderer sources:
-the native shader-constant tests read `forward.slang` through embedded `CARGO_MANIFEST_DIR`.
+the native shader-constant tests read `forward_lighting.slang` through embedded `CARGO_MANIFEST_DIR`.
 Both Windows build lanes request direct submodules to avoid the hub's cyclic
 documentation subtree during the short-path checkout.
 

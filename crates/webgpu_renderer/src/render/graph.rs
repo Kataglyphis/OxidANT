@@ -12,8 +12,10 @@ pub enum Resource {
     ShadowMap,
     /// MSAA depth buffer written by the forward pass.
     DepthMsaa,
-    /// Single-sample depth resolved from `DepthMsaa`; SSAO and the cull pass's input.
+    /// Single-sample depth resolved from `DepthMsaa`, or written by the G-buffer pass; SSAO and the cull pass's input.
     Depth,
+    /// The deferred path's normal, albedo and material targets.
+    GBuffer,
     /// HDR scene color.
     HdrColor,
     /// Cull-pass visibility; the *next* frame's forward pass reads it, so nothing here does.
@@ -147,6 +149,26 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
     ]
 }
 
+/// The deferred path's maximal frame: the G-buffer and lighting passes replace forward+sky and the resolve.
+pub fn deferred_frame_graph() -> Vec<PassDesc<'static>> {
+    let mut passes = forward_frame_graph();
+    passes.retain(|pass| !matches!(pass.name, "forward+sky" | "depth_resolve"));
+    let deferred = [
+        PassDesc {
+            name: "gbuffer",
+            reads: &[],
+            writes: &[Resource::GBuffer, Resource::Depth],
+        },
+        PassDesc {
+            name: "deferred_lighting+sky",
+            reads: &[Resource::GBuffer, Resource::Depth, Resource::ShadowMap],
+            writes: &[Resource::HdrColor],
+        },
+    ];
+    passes.splice(1..1, deferred);
+    passes
+}
+
 /// Graph row of a timed pass; a `match` so a new `TimedPass` variant fails to compile here.
 #[cfg(test)]
 fn graph_pass_name(pass: TimedPass) -> &'static str {
@@ -159,6 +181,8 @@ fn graph_pass_name(pass: TimedPass) -> &'static str {
         TimedPass::Histogram => "histogram",
         TimedPass::ExposureReduce => "exposure_reduce",
         TimedPass::Tonemap => "tonemap",
+        TimedPass::GBuffer => "gbuffer",
+        TimedPass::DeferredLighting => "deferred_lighting+sky",
     }
 }
 
@@ -170,18 +194,46 @@ const UNTIMED_ROWS: &[&str] = &["depth_resolve"];
 mod tests {
     use super::*;
 
+    /// Both paths' graphs, which every per-row test covers.
+    fn graphs() -> [Vec<PassDesc<'static>>; 2] {
+        [forward_frame_graph(), deferred_frame_graph()]
+    }
+
     #[test]
     fn forward_graph_is_valid() {
         validate(&forward_frame_graph(), &[]).expect("the shipped frame graph must validate");
     }
 
     #[test]
+    fn deferred_graph_is_valid() {
+        validate(&deferred_frame_graph(), &[]).expect("the deferred frame graph must validate");
+    }
+
+    #[test]
+    fn the_deferred_graph_swaps_only_the_raster_rows() {
+        let names = |graph: &[PassDesc<'_>]| graph.iter().map(|p| p.name).collect::<Vec<_>>();
+        let deferred = names(&deferred_frame_graph());
+        assert_eq!(
+            deferred[..3],
+            ["shadow", "gbuffer", "deferred_lighting+sky"]
+        );
+        let forward = names(&forward_frame_graph());
+        assert_eq!(
+            deferred[3..],
+            forward[3..],
+            "the post chain is the same in both paths"
+        );
+        let resolve = |graph: &[PassDesc<'_>]| graph.iter().any(|p| p.writes == [Resource::Depth]);
+        assert!(resolve(&forward_frame_graph()) && !resolve(&deferred_frame_graph()));
+    }
+
+    #[test]
     fn every_timed_pass_has_a_graph_row() {
-        let graph = forward_frame_graph();
+        let graphs = graphs();
         for pass in TimedPass::ALL {
             let expected = graph_pass_name(pass);
             assert!(
-                graph.iter().any(|p| p.name == expected),
+                graphs.iter().flatten().any(|p| p.name == expected),
                 "TimedPass::{pass:?} maps to graph row '{expected}', but no such row exists"
             );
         }
@@ -189,9 +241,8 @@ mod tests {
 
     #[test]
     fn every_graph_row_is_timed_or_explicitly_untimed() {
-        let graph = forward_frame_graph();
         let timed_names: Vec<&str> = TimedPass::ALL.iter().map(|&p| graph_pass_name(p)).collect();
-        for pass in &graph {
+        for pass in graphs().iter().flatten() {
             assert!(
                 timed_names.contains(&pass.name) || UNTIMED_ROWS.contains(&pass.name),
                 "graph row '{}' is neither timed by any TimedPass nor listed in UNTIMED_ROWS",

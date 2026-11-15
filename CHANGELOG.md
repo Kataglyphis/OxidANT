@@ -13,6 +13,50 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, the deferred raster path)
+- **A deferred raster path beside forward**, switched at run time like the C++ engine's Forward/Deferred control:
+  `ForwardRenderer::raster_path` (`RasterPath`), `RendererSettings::raster_path`, the Renderer tab's *Raster path*
+  segments and the Render menu's radios, and the viewport chip reads `Raster  ·  Deferred`. A G-buffer pass
+  (`fs_gbuffer`) writes, at one sample, normal + metallic (`Rgba16Float`; a negative metallic marks
+  `KHR_materials_unlit`), albedo + occlusion (`Rgba8UnormSrgb`) and roughness + emissive (`Rgba16Float`, so an
+  emissive strength above 1 survives): 24 of WebGPU's 32 colour bytes per sample. Its depth goes straight into the
+  single-sample depth target, so SSAO and both occlusion cullers read it and the MSAA depth resolve is skipped. One
+  more pass (`fs_deferred_lighting`) lights every covered pixel full-screen, rebuilding its position from that depth,
+  then draws the sky and the sorted BLEND primitives forward against the same read-only depth with single-sample
+  twins of their pipelines; mirrored primitives get the clockwise-front twins. Shadows, the tiled punctual lights,
+  IBL and the post chain are the forward path's. The first deferred frame builds the G-buffer and its pipelines, a
+  resize rebuilds the G-buffer, and a shader reload rebuilds the deferred pipelines inside its error scope.
+- **One lighting module for both paths**: `shaders/forward/forward_lighting.slang` holds the frame, IBL and light
+  bindings, the cascaded shadows, the punctual lights, the IBL ambient and `shade_surface`; `fs_main` and `fs_gbuffer`
+  share `sample_material`, and the lighting pass reads the G-buffer back into the same `SurfacePoint`. The BRDF table
+  is read at level 0, its only mip, which stays legal after the lighting pass's non-uniform return; the forward frames
+  of eight test scenes are bit-identical to before. Nothing under `shaders/common/` changed.
+- **Forward stays 4x MSAA and deferred one sample, measured rather than hidden** (`tests/deferred.rs`, lavapipe,
+  256x256, seven views): mean luminance at most 0.37 levels apart, coverage 0.0021, mean channel difference at most
+  0.50, away from edges at most 0.30 (a 0.9 albedo rounds down 0.4 % in the 8-bit target), and every channel
+  difference above 24 levels lies on a silhouette or crease. On the Colosseum's start view at 1600x900 the frames are
+  6.4 levels apart on average and 8.8 % of the pixels differ visibly: 0.3 to 0.6 levels on the flat arena floor, 14
+  on the crowd, whose figures are smaller than a pixel and come out 3.6 levels darker on one sample. With SSAO and
+  bloom off the numbers stay (6.2 levels, 3.6 darker), which leaves the resolve order: MSAA averages linear radiance
+  before the concave ACES and sRGB curves. GPU time on lavapipe at 1280x720 (`dump_gpu_timings`, forward vs G-buffer + lighting):
+  cube_on_plane 41.3 vs 13.3 + 27.2 ms, point_light 52.5 vs 14.2 + 32.4 ms, cube_alpha 47.2 vs 14.4 + 27.8 ms; a CPU
+  rasterizer's numbers, not a GPU's. Rebuilt from 32-bit depth at the Colosseum's clip planes, a position is 6 mm
+  off at the arena's 150 m and 40 cm at 1 km.
+- `TimedPass::GBuffer` ("G-buffer") and `TimedPass::DeferredLighting` ("Lighting + sky"); `name()` stays first and its
+  existing arms unchanged. The render graph's `deferred_frame_graph` swaps the forward and depth-resolve rows for
+  them, with a `GBuffer` resource. `dump_gpu_timings --deferred` times the deferred path; BeschleunigerBallett's
+  `Compare-RendererTimings.ps1` derives its required Rust passes from `name()` and must skip the two deferred-only
+  names, as it skips `OcclusionCull`.
+- `editor_snapshot` takes a `deferred` shot option.
+- Tests: `tests/deferred.rs` (parity on the shadowed plane, with a baked environment, under punctual lights, on MASK
+  and BLEND, on a transformed texture, on an emissive strength of 3 and on a mirrored instance; shadows landing
+  where forward's do, IoU 0.999 against 0.000 for the mirror image; MASK cut-outs and BLEND composites; punctual
+  pools within 5 %; a double-sided MASK card from behind and its culled single-sided twin; unlit; the switch both
+  ways across a resize; SSAO and occlusion queries on the G-buffer depth; a hidden cube culled by both cullers; a
+  shader reload, and one refused for a missing deferred entry point), the GPU-timing pass test on both paths, the
+  graph's deferred rows, the G-buffer's colour-byte budget, the depth rebuild's precision, and the editor's switch,
+  Render menu and chip.
+
 ### Added (2026-11-15, the C++ inspector's raster settings in the WebGPU renderer)
 - **Shadow controls with BeschleunigerBallett's ranges and defaults** (`render::shadow_settings`,
   `ForwardRenderer::shadows`), bound in the Sun tab's SHADOWS section: the switch, resolution 512 to 4096, 1 to 3
@@ -26,7 +70,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   ground got metre-sized texels and a bias of metres. WebGPU core has no depth clamp to pancake casters, so a box's
   near plane reaches the scene's point nearest the light and the shader scales the bias by the C++ box's depth range
   over this one's: the bias keeps the C++ size in metres.
-- **One shadow-bias formula in both renderers**: `forward.slang` takes `cascaded_shadow.slang`'s
+- **One shadow-bias formula in both renderers**: `forward_lighting.slang` takes `cascaded_shadow.slang`'s
   `max(0.002 * (1 - N·L), 0.0005)` (BeschleunigerBallett's backlog idea; the old `clamp(... + 0.0005, ..., 0.004)` is
   gone). Shared shaders under `shaders/common/` are unchanged.
 - **Shadow casters culled per cascade** against the cascade's box without its near plane, as the C++ multiview pass
@@ -58,6 +102,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   goldens do; `a_far_extra_caster_leaves_the_near_shadow_intact` now checks that caster culling engages, and
   `every_cascade_layer_is_rendered_with_its_own_light_matrix` and the orbit-fit tests of `render::cascades` gave way
   to the frustum-slice ones, since their probes assumed every cascade covers the whole scene.
+
 
 ### Fixed (2026-11-15, the app host after the two editor merges)
 - **The animation clock got f32 seconds**: `StudioApp::advance` narrowed its elapsed time before

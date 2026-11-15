@@ -5,7 +5,7 @@ use glam::Vec4;
 use crate::app::library::ModelLibrary;
 use crate::app::loader::LoadProgress;
 use crate::app::Notice;
-use crate::render::forward::ForwardRenderer;
+use crate::render::forward::{ForwardRenderer, RasterPath};
 use crate::render::gpu_timing::TimedPass;
 use crate::render::model_transform::ModelTransform;
 use crate::render::shadow_settings::ShadowSettings;
@@ -29,6 +29,7 @@ pub struct RendererSettings {
     pub frustum_culling: bool,
     pub skybox_enabled: bool,
     pub model_transform: ModelTransform,
+    pub raster_path: RasterPath,
 }
 
 impl Default for RendererSettings {
@@ -49,6 +50,7 @@ impl Default for RendererSettings {
             frustum_culling: true,
             skybox_enabled: true,
             model_transform: ModelTransform::default(),
+            raster_path: RasterPath::Forward,
         }
     }
 }
@@ -70,6 +72,7 @@ impl RendererSettings {
             frustum_culling: renderer.frustum_culling,
             skybox_enabled: renderer.skybox_enabled,
             model_transform: renderer.model_transform,
+            raster_path: renderer.raster_path,
         }
     }
 
@@ -88,6 +91,7 @@ impl RendererSettings {
         renderer.frustum_culling = self.frustum_culling;
         renderer.skybox_enabled = self.skybox_enabled;
         renderer.model_transform = self.model_transform;
+        renderer.raster_path = self.raster_path;
     }
 }
 
@@ -367,8 +371,10 @@ mod tests {
         let mut settings = RendererSettings::of(&renderer);
         settings.ssao_strength = 0.1;
         settings.light_dir_ambient = Vec4::new(0.0, 1.0, 0.0, 0.5);
+        settings.raster_path = RasterPath::Deferred;
         settings.apply(&mut renderer);
         assert_eq!(renderer.ssao_strength, 0.1);
+        assert_eq!(renderer.raster_path, RasterPath::Deferred);
         assert_eq!(renderer.light_dir_ambient, Vec4::new(0.0, 1.0, 0.0, 0.5));
         assert_eq!(RendererSettings::of(&renderer), settings);
     }

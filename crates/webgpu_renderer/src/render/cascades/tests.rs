@@ -26,14 +26,14 @@ fn ndc(view_proj: Mat4, world: Vec3) -> Vec3 {
     clip.truncate() / clip.w
 }
 
-/// `forward.slang`'s bounds check: inside the map and its depth range.
+/// `forward_lighting.slang`'s bounds check: inside the map and its depth range.
 fn covers(view_proj: Mat4, world: Vec3) -> bool {
     let p = ndc(view_proj, world);
     let (u, v) = (p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
     (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v) && (0.0..=1.0).contains(&p.z)
 }
 
-/// `forward.slang`'s selection: the first of `count` cascades whose split lies beyond the depth, else the last.
+/// `forward_lighting.slang`'s selection: the first of `count` cascades whose split lies beyond the depth, else the last.
 fn select(fit: &CascadeFit, count: usize, view_depth: f32) -> usize {
     let passed = fit.splits[..count - 1]
         .iter()

@@ -307,12 +307,12 @@ fn a_card_50_m_away_on_an_8_km_ground_still_casts_its_shadow() {
 fn the_pcf_radius_bound_matches_the_slang_constant() {
     use kataglyphis_webgpu_renderer::render::shadow_settings::MAX_PCF_RADIUS;
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../shaders/forward/forward.slang");
-    let source = std::fs::read_to_string(&path).expect("forward.slang is owned here");
+        .join("../../shaders/forward/forward_lighting.slang");
+    let source = std::fs::read_to_string(&path).expect("forward_lighting.slang is owned here");
     let needle = "static const int MAX_PCF_RADIUS = ";
     let start = source
         .find(needle)
-        .expect("forward.slang declares MAX_PCF_RADIUS")
+        .expect("forward_lighting.slang declares MAX_PCF_RADIUS")
         + needle.len();
     let value: u32 = source[start..start + source[start..].find(';').expect("a semicolon")]
         .trim()

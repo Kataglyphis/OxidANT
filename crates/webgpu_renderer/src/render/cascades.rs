@@ -1,5 +1,5 @@
 //! Pure-CPU shadow-cascade fitting: the C++ `computeCascadeDataInto`, one texel-stabilized box per view-frustum slice.
-//! Splits are view depths along the camera's forward axis, which `forward.slang`'s `shadow_visibility` selects by.
+//! Splits are view depths along the camera's forward axis, which `forward_lighting.slang`'s `shadow_visibility` selects by.
 
 // glam's `directx` clip convention is NDC Z in [0,1] with Y up, the same as wgpu's.
 use glam::camera::rh::proj::directx as clip;
