@@ -19,6 +19,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `Assistant` every quarter of that time, at most a minute; a running answer holds the model, and an endpoint has
   nothing to unload. Tests: an idle model unloads and reloads, a running answer and an endpoint keep theirs, and
   only an in-process model with a non-zero setting unloads.
+- The app's text bridge (`src/api/text.rs`) does the same for its cached local model: a watcher thread, started
+  with the first load, drops a model unused for 600 s (`IDLE_UNLOAD`), skipping a turn in flight through
+  `try_lock`; each generation and embedding marks the model as used. No generated binding moved.
 
 ### Changed (2026-11-15, the Rust detector follows the family's ORT thread rule)
 - Without `KATAGLYPHIS_ORT_THREADS` the detector's session takes the usable CPUs but one, 1 to 8

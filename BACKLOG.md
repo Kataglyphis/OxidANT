@@ -139,12 +139,6 @@ and the backlog is empty"; it was neither.
       in `crates/text/tests/endpoint.rs` with short limits, asserting the kind and an upper
       bound on the time, and one mutation recipe per timeout.
 
-- [ ] **The app's text bridge keeps its model loaded forever** (S, ★). ObservANT unloads its in-process model after
-      `llm_idle_unload_s` since 2026-11-15 (owner decision: unload a model nobody uses). `src/api/text.rs` caches
-      the desktop playground's model the same way and never drops it. Next: the same idle unload inside the bridge,
-      a watcher thread started with the first load, so no generated binding moves; or a `text_unload` call that
-      lands with OmniAccelerANT's regenerated bindings. Guard: a test that an idle bridge reloads on the next call.
-
 - [ ] **Three camera pipelines, each with its own failure rules** (L, ★★). Audit 2026-11-12:
       `crates/media/src/capture.rs` (the Flutter engine), `crates/observant/src/capture.rs` and
       `crates/gui/src/gui_wgpu/pipeline.rs` each open a camera and keep the newest frame. Only
