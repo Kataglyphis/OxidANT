@@ -121,6 +121,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `normal.z = 2b - 1` was -1 and a flat texel turned the normal around. A normal sample with blue exactly 0 now
   rebuilds z from the unit length glTF requires; RGB maps never sample blue 0 for a valid normal, so they shade as
   before. Test: `a_bc5_normal_map_shades_like_a_flat_one`.
+- **A GL adapter could win adapter selection natively**: both contexts asked for every backend, and wgpu ranks a
+  GL adapter (an integrated or unknown GPU) above lavapipe, so headless tests skipped on hosts where Vulkan worked,
+  and a windowed host whose best adapter was GL (a Windows VM) panicked building the depth-resolve and SSAO
+  pipelines, whose depth `textureLoad` has no GLSL form. Native contexts no longer request GL; the web keeps every
+  backend. Test: `native_contexts_never_request_the_gl_backend`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

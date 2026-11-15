@@ -30,7 +30,7 @@ impl GpuContext {
     pub async fn new_windowed_async(window: Arc<Window>) -> anyhow::Result<Self> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: requested_backends(),
             flags: wgpu::InstanceFlags::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             backend_options: wgpu::BackendOptions::default(),
@@ -100,7 +100,7 @@ impl GpuContext {
 
     async fn new_headless_async() -> anyhow::Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: requested_backends(),
             flags: wgpu::InstanceFlags::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             backend_options: wgpu::BackendOptions::default(),
@@ -209,6 +209,16 @@ impl GpuContext {
     }
 }
 
+/// The backends an instance may pick: never GL natively, as GLSL cannot `textureLoad` a depth texture
+/// (the depth resolve and SSAO do), and a GL adapter can outrank lavapipe in adapter selection.
+fn requested_backends() -> wgpu::Backends {
+    if cfg!(target_arch = "wasm32") {
+        wgpu::Backends::all()
+    } else {
+        wgpu::Backends::all().difference(wgpu::Backends::GL)
+    }
+}
+
 async fn request_device(
     adapter: &wgpu::Adapter,
 ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, bool)> {
@@ -240,4 +250,16 @@ async fn request_device(
         .await
         .map(|(device, queue)| (device, queue, supports_bc, supports_timestamps))
         .context("Failed to create device")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_contexts_never_request_the_gl_backend() {
+        let backends = requested_backends();
+        assert!(!backends.contains(wgpu::Backends::GL), "{backends:?}");
+        assert!(backends.contains(wgpu::Backends::VULKAN), "{backends:?}");
+    }
 }
