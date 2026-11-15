@@ -1,5 +1,6 @@
 //! Texture, sampler and mip-chain creation, split out of `forward.rs`.
 
+use crate::asset::bc_decode::decode_level;
 use crate::context::GpuContext;
 use crate::render::forward::{DEPTH_FORMAT, HDR_FORMAT};
 use crate::scene::{CompressedFormat, CompressedTexture, CpuSampler, CpuTexture, CpuWrap};
@@ -212,14 +213,14 @@ fn compressed_upload_problem(
     .map(|err| err.to_string())
 }
 
-/// The texture with its whole mip chain behind the default view.
+/// An uncompressed texture with its whole mip chain behind the default view.
 pub(crate) fn create_material_texture(
     gpu: &GpuContext,
     texture: &CpuTexture,
     srgb: bool,
     label: Option<&str>,
 ) -> wgpu::TextureView {
-    upload_material_texture(gpu, texture, srgb, label)
+    create_rgba8_texture(gpu, texture, srgb, label)
         .create_view(&wgpu::TextureViewDescriptor::default())
 }
 
@@ -232,34 +233,62 @@ pub(crate) fn material_view(texture: &wgpu::Texture, sampler: &CpuSampler) -> wg
     })
 }
 
-/// Uploads a material texture with its mip chain; a BCn payload wgpu would reject becomes white.
+/// Uploads a material texture and its mips, decoding a BCn payload the device refuses; `None` if even that fails.
 pub(crate) fn upload_material_texture(
     gpu: &GpuContext,
     texture: &CpuTexture,
     srgb: bool,
     label: Option<&str>,
-) -> wgpu::Texture {
-    if let Some(compressed) = texture.compressed.as_ref() {
-        let Some(problem) = compressed_upload_problem(gpu, texture, compressed) else {
-            return create_compressed_texture(gpu, texture, compressed, srgb, label);
+) -> Option<wgpu::Texture> {
+    let Some(compressed) = texture.compressed.as_ref() else {
+        return Some(create_rgba8_texture(gpu, texture, srgb, label));
+    };
+    let Some(problem) = compressed_upload_problem(gpu, texture, compressed) else {
+        return Some(create_compressed_texture(
+            gpu, texture, compressed, srgb, label,
+        ));
+    };
+    let name = label.unwrap_or("<unlabeled texture>");
+    let Some(levels) = decoded_levels(texture, compressed) else {
+        log::warn!("{name}: block-compressed texture ({problem}) does not decode; the slot keeps its default");
+        return None;
+    };
+    log::info!("{name}: block-compressed texture decoded on the CPU: {problem}");
+    // BC5 has no sRGB variant, so the adapter's own decode would read it linear whatever the slot.
+    let srgb = compressed_wgpu_format(compressed.format, srgb).is_srgb();
+    let max_side = gpu.device.limits().max_texture_dimension_2d;
+    if texture.width > max_side || texture.height > max_side {
+        let (width, height) = (texture.width, texture.height);
+        let base = levels.into_iter().next().map(|(_, _, rgba8)| rgba8)?;
+        let decoded = CpuTexture {
+            width,
+            height,
+            rgba8: base,
+            compressed: None,
         };
-        log::warn!(
-            "{}: block-compressed texture falls back to white: {problem}",
-            label.unwrap_or("<unlabeled texture>")
-        );
-        return upload_material_texture(
-            gpu,
-            &CpuTexture {
-                width: 1,
-                height: 1,
-                rgba8: vec![255, 255, 255, 255],
-                compressed: None,
-            },
-            srgb,
-            label,
-        );
+        return Some(create_rgba8_texture(gpu, &decoded, srgb, label));
     }
-    create_rgba8_texture(gpu, texture, srgb, label)
+    Some(write_rgba8_levels(gpu, &levels, srgb, label))
+}
+
+/// The payload's mip chain as RGBA8, up to its first level too short to decode; `None` if that is the base.
+fn decoded_levels(
+    texture: &CpuTexture,
+    compressed: &CompressedTexture,
+) -> Option<Vec<(u32, u32, Vec<u8>)>> {
+    let levels: Vec<_> = compressed
+        .mips
+        .iter()
+        .enumerate()
+        .map_while(|(level, data)| {
+            let (w, h) = (
+                (texture.width >> level).max(1),
+                (texture.height >> level).max(1),
+            );
+            decode_level(compressed.format, w, h, data).map(|rgba8| (w, h, rgba8))
+        })
+        .collect();
+    (!levels.is_empty()).then_some(levels)
 }
 
 /// A CPU mip chain whose first level within the device's side limit becomes the base.
@@ -286,7 +315,16 @@ fn create_rgba8_texture(
             mips[first].1
         );
     }
-    let mips = &mips[first..];
+    write_rgba8_levels(gpu, &mips[first..], srgb, label)
+}
+
+/// An RGBA8 texture holding `mips`, level 0 first.
+fn write_rgba8_levels(
+    gpu: &GpuContext,
+    mips: &[(u32, u32, Vec<u8>)],
+    srgb: bool,
+    label: Option<&str>,
+) -> wgpu::Texture {
     let format = if srgb {
         wgpu::TextureFormat::Rgba8UnormSrgb
     } else {

@@ -185,9 +185,9 @@ fn full_bc1_mip_chains_upload_and_sample() {
     }
 }
 
-/// A payload built in code bypasses the loader; the upload must still refuse it, not fail validation.
+/// A payload built in code bypasses the loader; a 6x6 base wgpu cannot take is decoded, never a validation error.
 #[test]
-fn an_invalid_compressed_payload_falls_back_instead_of_failing_validation() {
+fn a_payload_the_device_refuses_is_decoded_instead_of_failing_validation() {
     let Some(gpu) = bc_gpu() else {
         return;
     };
@@ -204,13 +204,79 @@ fn an_invalid_compressed_payload_falls_back_instead_of_failing_validation() {
     let (error, pixels) = render_cube_with(&gpu, six);
     assert!(
         error.is_none(),
-        "a 6x6 BC1 payload must fall back, not fail validation: {error:?}"
+        "a 6x6 BC1 payload must be decoded, not fail validation: {error:?}"
     );
-    assert_eq!(
-        green_pixels(&pixels),
-        0,
-        "the fallback is white, not the payload"
+    let green = green_pixels(&pixels);
+    assert!(
+        green > 200,
+        "the decoded payload must show, {green} green pixels"
     );
+}
+
+/// `count` xorshift blocks of `format`; a BC7 block cycles through the eight modes so each one is drawn.
+fn random_blocks(format: CompressedFormat, count: usize) -> Vec<u8> {
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let block_bytes = format.block_bytes() as usize;
+    let mut out = Vec::with_capacity(count * block_bytes);
+    for index in 0..count {
+        let start = out.len();
+        while out.len() < start + block_bytes {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            out.extend_from_slice(&state.to_le_bytes()[..8]);
+        }
+        if format == CompressedFormat::Bc7RgbaUnorm {
+            let mode = index % 8;
+            out[start] = (out[start] & !((2u32 << mode) - 1) as u8) | (1u32 << mode) as u8;
+        }
+    }
+    out
+}
+
+/// The CPU decode is checked against the adapter's own: the same payload, with and without BC, draws the same.
+#[test]
+fn the_cpu_decode_of_every_bc_format_draws_like_the_adapters_own() {
+    let Some(mut gpu) = bc_gpu() else {
+        return;
+    };
+    for format in [
+        CompressedFormat::Bc1RgbaUnorm,
+        CompressedFormat::Bc3RgbaUnorm,
+        CompressedFormat::Bc5RgUnorm,
+        CompressedFormat::Bc7RgbaUnorm,
+    ] {
+        let texture = CpuTexture {
+            width: 32,
+            height: 32,
+            rgba8: Vec::new(),
+            compressed: Some(CompressedTexture {
+                format,
+                mips: vec![random_blocks(format, 64)],
+                declared_srgb: None,
+            }),
+        };
+        gpu.supports_bc = true;
+        let (_, native) = render_cube_with(&gpu, texture.clone());
+        gpu.supports_bc = false;
+        let (error, decoded) = render_cube_with(&gpu, texture);
+        assert!(
+            error.is_none(),
+            "{format:?} without BC failed validation: {error:?}"
+        );
+        let diffs: Vec<u8> = native
+            .iter()
+            .zip(&decoded)
+            .map(|(a, b)| a.abs_diff(*b))
+            .collect();
+        let mean = diffs.iter().map(|d| f64::from(*d)).sum::<f64>() / diffs.len() as f64;
+        let max = diffs.iter().copied().max().unwrap_or(0);
+        eprintln!("{format:?}: mean {mean:.3}, max {max}");
+        assert!(
+            mean < 0.1 && max <= 4,
+            "{format:?}: the CPU decode draws {mean:.3} apart on average, {max} at most"
+        );
+    }
 }
 
 /// One 4x4 BC5 block: two BC4 halves whose endpoints are both 128, so every texel is (128, 128).
@@ -319,5 +385,82 @@ fn a_bc5_normal_map_shades_like_a_flat_one() {
         (with_bc5 - without_map).abs() < without_map * 0.03,
         "a flat BC5 normal map shades {with_bc5:.1} where no normal map shades {without_map:.1}: \
          its z came from the blue channel BC5 does not have"
+    );
+}
+
+/// A BC5 normal map whose every texel (51, 128) tilts the normal 37 degrees away from the default light.
+fn tilted_bc5_normal_map() -> CpuTextureRef {
+    CpuTextureRef {
+        texture: Arc::new(CpuTexture {
+            width: 4,
+            height: 4,
+            rgba8: Vec::new(),
+            compressed: Some(CompressedTexture {
+                format: CompressedFormat::Bc5RgUnorm,
+                mips: vec![[51, 51, 0, 0, 0, 0, 0, 0, 128, 128, 0, 0, 0, 0, 0, 0].to_vec()],
+                declared_srgb: None,
+            }),
+        }),
+        sampler: CpuSampler::default(),
+        srgb: false,
+    }
+}
+
+/// An adapter without BC swapped a BC normal map for a white texel, the normal (1, 1, 1) off the surface.
+#[test]
+fn a_bc5_normal_map_keeps_its_normal_on_an_adapter_without_bc() {
+    let Some(mut gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    gpu.supports_bc = false;
+    let uncompressed = CpuTextureRef {
+        texture: Arc::new(CpuTexture {
+            width: 1,
+            height: 1,
+            rgba8: vec![51, 128, 0, 255],
+            compressed: None,
+        }),
+        sampler: CpuSampler::default(),
+        srgb: false,
+    };
+    let flat = centre_luma(&gpu, lit_plane(None));
+    let reference = centre_luma(&gpu, lit_plane(Some(uncompressed)));
+    let decoded = centre_luma(&gpu, lit_plane(Some(tilted_bc5_normal_map())));
+    assert!(
+        (reference - flat).abs() > flat * 0.1,
+        "the tilt must shade apart from a flat plane: {reference:.1} against {flat:.1}"
+    );
+    assert!(
+        (decoded - reference).abs() < reference * 0.03,
+        "a BC5 normal map without BC shades {decoded:.1} where its texels shade {reference:.1}"
+    );
+}
+
+/// A payload not even the CPU decodes leaves a normal slot its flat default, not white.
+#[test]
+fn an_undecodable_normal_map_leaves_the_normal_flat() {
+    let Some(mut gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    gpu.supports_bc = false;
+    let short = CpuTextureRef {
+        texture: Arc::new(CpuTexture {
+            width: 4,
+            height: 4,
+            rgba8: Vec::new(),
+            compressed: Some(CompressedTexture {
+                format: CompressedFormat::Bc5RgUnorm,
+                mips: vec![vec![0; 8]],
+                declared_srgb: None,
+            }),
+        }),
+        sampler: CpuSampler::default(),
+        srgb: false,
+    };
+    let flat = centre_luma(&gpu, lit_plane(None));
+    let undecodable = centre_luma(&gpu, lit_plane(Some(short)));
+    assert!(
+        (undecodable - flat).abs() < flat * 0.01,
+        "an undecodable normal map shades {undecodable:.1} where no map shades {flat:.1}"
     );
 }

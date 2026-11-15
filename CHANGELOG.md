@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, a BC texture on an adapter without BC keeps its texels)
+- **A BC texture the device could not take became one white texel**, whatever the slot: a normal map then bent every
+  normal to (1, 1, 1). `upload_material_texture` (`render/texture.rs`) now decodes BC1, BC3, BC5 and BC7 on the CPU
+  (`asset/bc_decode.rs`) when the adapter lacks `TEXTURE_COMPRESSION_BC` or wgpu refuses the payload's size, keeps its
+  mip chain, and uploads BC5 linear as the adapter would. A payload whose base level does not decode leaves the slot
+  its neutral default (the flat normal for a normal map; `an_undecodable_normal_map_leaves_the_normal_flat` shaded 692
+  against the flat 720 before). `a_bc5_normal_map_keeps_its_normal_on_an_adapter_without_bc`
+  shaded 692 where the texels shade 641 before; `the_cpu_decode_of_every_bc_format_draws_like_the_adapters_own` draws
+  each format's random blocks within 2 of lavapipe's own decode (10.3 apart on average for BC1 before), and
+  `every_bc7_mode_decodes_like_the_basis_universal_reference` pins 4096 blocks per BC7 mode to basisu's `unpack_bc7`.
+
 ### Fixed (2026-11-16, the tile-light grid is conservative)
 - **A point or spot light was cut off in tiles that listed other lights**: `render/tile_grid.rs` bounded its range
   sphere by the screen AABB of the centre and the six `pos ± range * axis` points, which under-covers the silhouette

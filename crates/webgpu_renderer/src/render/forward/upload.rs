@@ -56,7 +56,8 @@ impl MaterialDefaults {
 /// One upload and mip build per (image `Arc` pointer, sRGB), not per referencing primitive.
 #[derive(Default)]
 pub(super) struct MaterialTextureCache {
-    textures: HashMap<(usize, bool), wgpu::Texture>,
+    /// `None` for a payload that does not decode: its slots keep their defaults.
+    textures: HashMap<(usize, bool), Option<wgpu::Texture>>,
     samplers: HashMap<CpuSampler, wgpu::Sampler>,
     /// GPU textures created so far; the cache hits do not count.
     pub(super) uploaded: usize,
@@ -91,8 +92,8 @@ impl MaterialTextureCache {
         for (slot_index, (texture_ref, fallback)) in slots.iter().enumerate() {
             match texture_ref {
                 Some(tex_ref) => {
-                    out.views
-                        .push(self.texture_view(gpu, tex_ref, i, slot_index));
+                    let view = self.texture_view(gpu, tex_ref, i, slot_index);
+                    out.views.push(view.unwrap_or_else(|| (*fallback).clone()));
                     out.samplers
                         .push(self.sampler(&gpu.device, tex_ref.sampler));
                 }
@@ -112,7 +113,7 @@ impl MaterialTextureCache {
         tex_ref: &CpuTextureRef,
         i: usize,
         slot_index: usize,
-    ) -> wgpu::TextureView {
+    ) -> Option<wgpu::TextureView> {
         let key = (
             std::sync::Arc::as_ptr(&tex_ref.texture) as usize,
             tex_ref.srgb,
@@ -124,11 +125,13 @@ impl MaterialTextureCache {
                 tex_ref.srgb,
                 Some(&format!("material_{i}_slot_{slot_index}")),
             );
-            self.uploaded += 1;
+            self.uploaded += usize::from(texture.is_some());
             self.textures.insert(key, texture);
         }
         // The view, not the texture, follows the sampler: one upload serves both filter kinds.
-        material_view(&self.textures[&key], &tex_ref.sampler)
+        self.textures[&key]
+            .as_ref()
+            .map(|texture| material_view(texture, &tex_ref.sampler))
     }
 
     fn sampler(&mut self, device: &wgpu::Device, desc: CpuSampler) -> wgpu::Sampler {

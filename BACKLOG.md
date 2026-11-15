@@ -80,12 +80,6 @@ its open work is here.
 
 ## P2 — medium
 
-- [ ] **A BC normal map on an adapter without BC becomes one white texel** (S, ★★). `upload_material_texture`
-      (`crates/webgpu_renderer/src/render/texture.rs`) swaps any BCn payload it cannot upload for white,
-      whatever the slot. White is neutral for base colour, metallic-roughness and occlusion, but a normal
-      slot reads (1, 1, 1), a normal bent off the surface. Next: the flat (128, 128, 255) for a normal slot.
-      Guard: a test of the fallback texel per slot.
-
 - [ ] **`crates/gui` answers a lost surface with a reconfigure only** (S, ★★). `on_failed_acquire`
       (`crates/gui/src/gui_wgpu/renderer.rs`) maps `Lost` like `Outdated`; wgpu 30 says a lost surface
       must be created again before `configure`, so the camera GUI retries a configure that cannot help.

@@ -1,3 +1,4 @@
+pub(crate) mod bc_decode;
 pub mod gltf_loader;
 pub mod hdr;
 pub mod ktx2_loader;
