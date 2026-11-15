@@ -427,6 +427,8 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float3 t = normalize(In.worldTangent.xyz - nGeom * dot(nGeom, In.worldTangent.xyz));
     float3 b = cross(nGeom, t) * In.worldTangent.w;
     float3 nTs = normalSample.xyz * 2.0 - 1.0;
+    // A two-channel map (BC5) samples blue as 0; glTF normals are unit length, so z is rebuilt from xy.
+    if (normalSample.b == 0.0) nTs.z = sqrt(saturate(1.0 - dot(nTs.xy, nTs.xy)));
     nTs = float3(nTs.xy * prim.material_factors.w, nTs.z);
     // Row-multiply mul(v, M), as in common/normal_map.slang's apply_normal_map().
     float3 n = normalize(mul(nTs, float3x3(t, b, nGeom)));

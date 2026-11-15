@@ -117,6 +117,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   0's near plane and its shadow tip vanished near the camera. The near plane now also reaches the scene box's corner
   nearest the light; ranges that already reached it are unchanged. Test:
   `no_cascade_clips_a_caster_between_the_light_and_its_box`.
+- **BC5 normal maps shaded inside out**: BC5 stores a normal map's x and y and samples blue as 0, so the shader's
+  `normal.z = 2b - 1` was -1 and a flat texel turned the normal around. A normal sample with blue exactly 0 now
+  rebuilds z from the unit length glTF requires; RGB maps never sample blue 0 for a valid normal, so they shade as
+  before. Test: `a_bc5_normal_map_shades_like_a_flat_one`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

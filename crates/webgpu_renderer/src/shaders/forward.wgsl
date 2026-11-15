@@ -811,8 +811,15 @@ fn fs_main( _S56 : pixelInput_1, @builtin(front_facing) isFrontFace_0 : bool, @b
     var nGeom_0 : vec3<f32> = normalize(_S56.worldNormal_1);
     var _S59 : vec3<f32> = _S56.worldTangent_1.xyz;
     var t_0 : vec3<f32> = normalize(_S59 - nGeom_0 * vec3<f32>(dot(nGeom_0, _S59)));
+    var b_1 : vec3<f32> = cross(nGeom_0, t_0) * vec3<f32>(_S56.worldTangent_1.w);
     var nTs_0 : vec3<f32> = normalSample_0.xyz * vec3<f32>(2.0f) - vec3<f32>(1.0f);
-    var n_3 : vec3<f32> = normalize((((mat3x3<f32>(t_0, cross(nGeom_0, t_0) * vec3<f32>(_S56.worldTangent_1.w), nGeom_0)) * (vec3<f32>(nTs_0.xy * vec2<f32>(prim_0.material_factors_0.w), nTs_0.z)))));
+    if((normalSample_0.z) == 0.0f)
+    {
+        nTs_0[i32(2)] = sqrt(saturate(1.0f - dot(nTs_0.xy, nTs_0.xy)));
+    }
+    var _S60 : vec3<f32> = vec3<f32>(nTs_0.xy * vec2<f32>(prim_0.material_factors_0.w), nTs_0.z);
+    nTs_0 = _S60;
+    var n_3 : vec3<f32> = normalize((((mat3x3<f32>(t_0, b_1, nGeom_0)) * (_S60))));
     var n_4 : vec3<f32>;
     if(!isFrontFace_0)
     {
@@ -824,19 +831,19 @@ fn fs_main( _S56 : pixelInput_1, @builtin(front_facing) isFrontFace_0 : bool, @b
     }
     var l_3 : vec3<f32> = normalize(frame_0.light_dir_ambient_0.xyz);
     var v_2 : vec3<f32> = normalize(frame_0.camera_position_0.xyz - _S56.worldPosition_1);
-    var _S60 : vec3<f32> = albedo_3.xyz;
-    var f0_4 : vec3<f32> = mix(vec3<f32>(0.03999999910593033f), _S60, vec3<f32>(metallic_2));
-    var directLight_0 : vec3<f32> = brdf_direct_0(n_4, v_2, l_3, _S60, metallic_2, roughness_5, f0_4, frame_0.light_color_intensity_0.xyz * vec3<f32>(frame_0.light_color_intensity_0.w)) * vec3<f32>(shadow_visibility_0(distance(_S56.worldPosition_1, frame_0.camera_position_0.xyz), _S56.worldPosition_1, max(dot(n_4, l_3), 0.0f)));
-    var punctual_0 : vec3<f32> = punctual_lighting_0(_S56.worldPosition_1, n_4, v_2, _S60, metallic_2, roughness_5, f0_4, svPosition_1);
+    var _S61 : vec3<f32> = albedo_3.xyz;
+    var f0_4 : vec3<f32> = mix(vec3<f32>(0.03999999910593033f), _S61, vec3<f32>(metallic_2));
+    var directLight_0 : vec3<f32> = brdf_direct_0(n_4, v_2, l_3, _S61, metallic_2, roughness_5, f0_4, frame_0.light_color_intensity_0.xyz * vec3<f32>(frame_0.light_color_intensity_0.w)) * vec3<f32>(shadow_visibility_0(distance(_S56.worldPosition_1, frame_0.camera_position_0.xyz), _S56.worldPosition_1, max(dot(n_4, l_3), 0.0f)));
+    var punctual_0 : vec3<f32> = punctual_lighting_0(_S56.worldPosition_1, n_4, v_2, _S61, metallic_2, roughness_5, f0_4, svPosition_1);
     var reflected_0 : vec3<f32> = reflect((vec3<f32>(0) - v_2), n_4);
-    var _S61 : f32 = dot(n_4, v_2);
-    var _S62 : f32 = max(_S61, 0.00009999999747379f);
-    var kSIbl_0 : vec3<f32> = fresnel_schlick_0(_S62, f0_4);
+    var _S62 : f32 = dot(n_4, v_2);
+    var _S63 : f32 = max(_S62, 0.00009999999747379f);
+    var kSIbl_0 : vec3<f32> = fresnel_schlick_0(_S63, f0_4);
     var iblStrength_0 : f32 = frame_0.light_dir_ambient_0.w;
     var envEnabled_0 : bool = (iblParams_0.enabled_maxmip_intensity_0.x) > 0.5f;
     var irradianceAnalytic_0 : vec3<f32> = hemisphere_irradiance_0(n_4);
-    var _S63 : vec3<f32> = vec3<f32>(iblParams_0.enabled_maxmip_intensity_0.z);
-    var irradianceEnv_0 : vec3<f32> = (textureSampleLevel((irradianceMap_0), (iblSampler_0), (n_4), (0.0f))).xyz * _S63;
+    var _S64 : vec3<f32> = vec3<f32>(iblParams_0.enabled_maxmip_intensity_0.z);
+    var irradianceEnv_0 : vec3<f32> = (textureSampleLevel((irradianceMap_0), (iblSampler_0), (n_4), (0.0f))).xyz * _S64;
     var irradiance_0 : vec3<f32>;
     if(envEnabled_0)
     {
@@ -846,10 +853,10 @@ fn fs_main( _S56 : pixelInput_1, @builtin(front_facing) isFrontFace_0 : bool, @b
     {
         irradiance_0 = irradianceAnalytic_0;
     }
-    var diffuseIbl_0 : vec3<f32> = (vec3<f32>(1.0f) - kSIbl_0) * vec3<f32>((1.0f - metallic_2)) * _S60 * irradiance_0;
-    var brdfLutSample_0 : vec2<f32> = (textureSample((brdfLut_0), (iblSampler_0), (vec2<f32>(max(_S61, 0.0f), roughness_5)))).xy;
-    var specularSplitSum_0 : vec3<f32> = (textureSampleLevel((prefilteredMap_0), (iblSampler_0), (reflected_0), (roughness_5 * iblParams_0.enabled_maxmip_intensity_0.y))).xyz * _S63 * (f0_4 * vec3<f32>(brdfLutSample_0.x) + vec3<f32>(brdfLutSample_0.y));
-    var specularAnalytic_0 : vec3<f32> = mix(sky_radiance_0(reflected_0, true), irradianceAnalytic_0, vec3<f32>((roughness_5 * roughness_5))) * env_brdf_approx_0(f0_4, roughness_5, _S62);
+    var diffuseIbl_0 : vec3<f32> = (vec3<f32>(1.0f) - kSIbl_0) * vec3<f32>((1.0f - metallic_2)) * _S61 * irradiance_0;
+    var brdfLutSample_0 : vec2<f32> = (textureSample((brdfLut_0), (iblSampler_0), (vec2<f32>(max(_S62, 0.0f), roughness_5)))).xy;
+    var specularSplitSum_0 : vec3<f32> = (textureSampleLevel((prefilteredMap_0), (iblSampler_0), (reflected_0), (roughness_5 * iblParams_0.enabled_maxmip_intensity_0.y))).xyz * _S64 * (f0_4 * vec3<f32>(brdfLutSample_0.x) + vec3<f32>(brdfLutSample_0.y));
+    var specularAnalytic_0 : vec3<f32> = mix(sky_radiance_0(reflected_0, true), irradianceAnalytic_0, vec3<f32>((roughness_5 * roughness_5))) * env_brdf_approx_0(f0_4, roughness_5, _S63);
     var specularIbl_0 : vec3<f32>;
     if(envEnabled_0)
     {
@@ -859,7 +866,7 @@ fn fs_main( _S56 : pixelInput_1, @builtin(front_facing) isFrontFace_0 : bool, @b
     {
         specularIbl_0 = specularAnalytic_0;
     }
-    var _S64 : pixelOutput_0 = pixelOutput_0( vec4<f32>(clamp(directLight_0 + punctual_0 + vec3<f32>((iblStrength_0 * occlusion_0)) * (diffuseIbl_0 + specularIbl_0) + emissive_0, vec3<f32>(0.0f), vec3<f32>(65000.0f)), _S57) );
-    return _S64;
+    var _S65 : pixelOutput_0 = pixelOutput_0( vec4<f32>(clamp(directLight_0 + punctual_0 + vec3<f32>((iblStrength_0 * occlusion_0)) * (diffuseIbl_0 + specularIbl_0) + emissive_0, vec3<f32>(0.0f), vec3<f32>(65000.0f)), _S57) );
+    return _S65;
 }
 
