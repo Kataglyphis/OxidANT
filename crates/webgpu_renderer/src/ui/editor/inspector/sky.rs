@@ -1,8 +1,9 @@
-//! The Sky tab: the procedural sky's image-based light; the C++ skybox and cloud switches follow with the renderer.
+//! The Sky tab: the procedural sky's image-based light, then the C++ CLOUDS section; the skybox switch follows.
 
 use egui::Ui;
 
 use super::super::EditorContext;
+use super::clouds;
 use crate::ui::widgets::{caption_line, property_row, FillSlider};
 
 pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
@@ -14,4 +15,5 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
         Some("How strongly the sky lights the scene"),
         |ui| ui.add(FillSlider::new(ambient, 0.0..=2.0).decimals(2)),
     );
+    clouds::show(ui, &mut cx.settings.clouds);
 }

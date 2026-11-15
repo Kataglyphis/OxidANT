@@ -28,6 +28,10 @@ pub enum Resource {
     Exposure,
     /// Final display target (swapchain frame or readback texture).
     Output,
+    /// The clouds' 3D noise, generated on the first frame with clouds and kept.
+    NoiseVolume,
+    /// Premultiplied cloud colour and coverage, marched to `Depth`.
+    CloudColor,
 }
 
 /// A declared pass: its name and the resources it reads and writes.
@@ -135,12 +139,23 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
             writes: &[Resource::Ambient],
         },
         PassDesc {
+            name: "cloud_noise",
+            reads: &[],
+            writes: &[Resource::NoiseVolume],
+        },
+        PassDesc {
+            name: "clouds",
+            reads: &[Resource::Depth, Resource::NoiseVolume],
+            writes: &[Resource::CloudColor],
+        },
+        PassDesc {
             name: "tonemap",
             reads: &[
                 Resource::HdrColor,
                 Resource::Bloom,
                 Resource::Ambient,
                 Resource::Exposure,
+                Resource::CloudColor,
             ],
             writes: &[Resource::Output],
         },
@@ -159,12 +174,13 @@ fn graph_pass_name(pass: TimedPass) -> &'static str {
         TimedPass::Histogram => "histogram",
         TimedPass::ExposureReduce => "exposure_reduce",
         TimedPass::Tonemap => "tonemap",
+        TimedPass::Clouds => "clouds",
     }
 }
 
-/// Graph rows deliberately left untimed; not a way to silence the timed-rows test.
+/// Graph rows deliberately left untimed (the cloud noise runs once); not a way to silence the timed-rows test.
 #[cfg(test)]
-const UNTIMED_ROWS: &[&str] = &["depth_resolve"];
+const UNTIMED_ROWS: &[&str] = &["depth_resolve", "cloud_noise"];
 
 #[cfg(test)]
 mod tests {

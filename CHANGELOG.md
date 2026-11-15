@@ -13,6 +13,37 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, the volumetric clouds)
+- The C++ engine's volumetric clouds in the WebGPU renderer, with the C++ bugs fixed rather than copied:
+  `ForwardRenderer::clouds` (`render::clouds::CloudSettings`, the C++ ten controls, defaults and clamps), off by
+  default. The box is the axis-aligned one the C++ tooltips describe: Offset moves it, Scale times Density times
+  ten are its half extents, and the noise is sampled box-local, so moving the box carries its clouds. The march
+  stops at the scene depth, so geometry in front hides the clouds and geometry inside cuts the march short, and the
+  tonemap composites them premultiplied-over in linear HDR, before exposure and ACES, the same over sky and geometry.
+- `shaders/common/volumetric_clouds.slang`, the cloud mathematics both renderers share: the noise volume's texels,
+  `cloud_unpack` of the C++ `SceneUBO` cloud block, the box, density, Henyey-Greenstein phase, light march and
+  `march_clouds`. They take an `ICloudNoise`, which Slang specializes per caller, so the C++ engine keeps its
+  combined `Sampler3D` and WGSL takes a texture and a sampler. `shaders/tests/volumetric_clouds_test.slang` emits it to SPIR-V as the C++ engine will
+  import it. A ray with a zero direction component no longer turns the slab test into NaN.
+- `render/forward/cloud_pass.rs`: the 128³ `rgba16float` noise volume (a write-only 3D storage texture, the one
+  way WebGPU writes that format) is made and filled by `cloud_noise.slang` the first frame clouds are on and kept;
+  `cloud_march.slang` marches every pixel per frame in a full-screen pass that reads the resolved depth, bound as
+  unfilterable float so the WGSL needs no depth patch. `TimedPass::Clouds`, graph rows `cloud_noise` (untimed, it
+  runs once) and `clouds`, and `TonemapPass`'s binding 6 with `params.z` as the clouds switch.
+- The Sky tab's CLOUDS section (switch, March steps, Light steps, Density, Coverage, Pillowness, Cirrus, Powder
+  effect, Scale on ImGui's logarithmic drag, Offset) with the C++ ranges, formats and tooltips, and the outliner's
+  eye on Clouds, which was disabled. `editor_snapshot` takes `cloudy`, `pitch=DEG` and `zoom=F`.
+- Tests: the C++ cloud goldens ported (`EnablingCloudsChangesTheFrameAndAddsDetail`, the device-survival frames,
+  Offset moving the box, the depth, the composite) with stronger checks: the clouds stay inside the projected box
+  and leave every other pixel's bytes untouched, switching them off restores the frame exactly, a box behind the
+  camera or above the view draws nothing, the noise fills all four channels in all three dimensions, and every
+  pixel over sky and over a card matches `cloud + hdr x (1 - alpha)`. On the adapter, `cloud_march.wgsl`'s box,
+  phase function and unpack are checked against CPU references; `tests/cloud_constants.rs` pins the Rust bounds
+  to the Slang literals.
+
+### Changed (2026-11-15, the volumetric clouds)
+- The profiler's GPU passes scroll once there are more than the dock shows.
+
 ### Fixed (2026-11-15, the app host after the two editor merges)
 - **The animation clock got f32 seconds**: `StudioApp::advance` narrowed its elapsed time before
   `set_animation_time`, which takes f64 since the scene fixes, so a clip stepped by 1/64 s after 36 hours and by

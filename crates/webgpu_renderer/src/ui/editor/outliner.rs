@@ -20,11 +20,15 @@ pub(super) fn show(ui: &mut Ui, editor: &mut Editor, cx: &mut EditorContext<'_>)
             detail: &detail,
             highlighted: editor.selection == object,
             marked: editor.selection == object,
-            trailing: trailing(object),
+            trailing: trailing(object, cx),
             tooltip: None,
         };
-        if list_row(ui, &spec).clicked {
+        let row = list_row(ui, &spec);
+        if row.clicked {
             editor.select(object);
+        }
+        if row.trailing_clicked && object == SceneObject::Clouds {
+            cx.settings.clouds.enabled = !cx.settings.clouds.enabled;
         }
     }
     ui.spacing_mut().item_spacing.y = spacing;
@@ -45,8 +49,8 @@ pub(super) fn detail(object: SceneObject, cx: &EditorContext<'_>) -> String {
     }
 }
 
-/// The sky and the clouds carry the C++ eye; the renderer always draws the one and has not got the other.
-fn trailing(object: SceneObject) -> RowTrailing<'static> {
+/// The sky and the clouds carry the C++ eye; the renderer always draws the sky.
+fn trailing(object: SceneObject, cx: &EditorContext<'_>) -> RowTrailing<'static> {
     match object {
         SceneObject::Skybox => RowTrailing::Eye {
             visible: true,
@@ -54,9 +58,9 @@ fn trailing(object: SceneObject) -> RowTrailing<'static> {
             enabled: false,
         },
         SceneObject::Clouds => RowTrailing::Eye {
-            visible: false,
+            visible: cx.settings.clouds.enabled,
             tooltip: "Show or hide the clouds",
-            enabled: false,
+            enabled: true,
         },
         _ => RowTrailing::None,
     }

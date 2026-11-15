@@ -510,3 +510,38 @@ fn the_about_modal_names_the_egui_this_crate_builds_against() {
     let manifest = include_str!("../../../Cargo.toml");
     assert!(manifest.contains(&format!("egui = \"{}\"", windows::EGUI_VERSION)));
 }
+
+#[test]
+fn the_outliner_eye_switches_the_clouds_and_their_row_opens_the_clouds_section() {
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.frame(Vec::new());
+    let row = studio
+        .text_rect("Clouds")
+        .expect("the outliner lists the clouds");
+    let detail = studio
+        .text_rect("45°")
+        .expect("the camera row shows its field of view");
+    // The eye's ink ends where a row's detail ends, and the eye button is centred half a line in from there.
+    let eye = pos2(detail.right() - 6.0, row.center().y);
+    studio.frame(click(eye.x, eye.y));
+    assert!(
+        studio.settings.clouds.enabled,
+        "the eye turns the clouds on"
+    );
+    assert_eq!(
+        studio.editor.selection(),
+        SceneObject::Model,
+        "the eye is not the row"
+    );
+    studio.frame(click(eye.x, eye.y));
+    assert!(
+        !studio.settings.clouds.enabled,
+        "a second click turns them off"
+    );
+    studio.frame(click(row.center().x, row.center().y));
+    assert_eq!(studio.editor.selection(), SceneObject::Clouds);
+    assert!(
+        studio.text_rect("CLOUDS").is_some(),
+        "the Sky tab shows the CLOUDS section"
+    );
+}

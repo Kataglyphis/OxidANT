@@ -38,6 +38,11 @@ impl PostChain {
             inputs_id: 0,
         }
     }
+
+    /// A tonemap input outside this chain changed, such as the cloud target: every tonemap must rebind.
+    pub(super) fn tonemap_inputs_changed(&mut self) {
+        self.inputs_id = next_inputs_id();
+    }
 }
 
 impl ForwardRenderer {
@@ -76,13 +81,19 @@ impl ForwardRenderer {
                 .output()
                 .expect("ssao output exists after rebuild"),
             post.histogram.exposure_buffer(),
+            self.cloud_pass.composite_view(),
         );
         tonemap.bound_inputs = Some(post.inputs_id);
     }
 
     /// This frame's bloom and SSAO mix, and the exposure mode the reduce pass applies.
     pub(super) fn write_post_settings(&self, gpu: &GpuContext, tonemap: &TonemapPass) {
-        tonemap.set_params(&gpu.queue, self.bloom_strength, self.ssao_strength);
+        tonemap.set_params(
+            &gpu.queue,
+            self.bloom_strength,
+            self.ssao_strength,
+            self.clouds.enabled,
+        );
         self.post.histogram.set_exposure_settings(
             &gpu.queue,
             ExposureSettings {

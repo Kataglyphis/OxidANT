@@ -5,6 +5,7 @@ use glam::Vec4;
 use crate::app::library::ModelLibrary;
 use crate::app::loader::LoadProgress;
 use crate::app::Notice;
+use crate::render::clouds::CloudSettings;
 use crate::render::forward::ForwardRenderer;
 use crate::render::gpu_timing::TimedPass;
 
@@ -23,6 +24,7 @@ pub struct RendererSettings {
     pub auto_exposure_speed: f32,
     pub occlusion_queries_enabled: bool,
     pub gpu_culling_enabled: bool,
+    pub clouds: CloudSettings,
 }
 
 impl Default for RendererSettings {
@@ -39,6 +41,7 @@ impl Default for RendererSettings {
             auto_exposure_speed: 3.0,
             occlusion_queries_enabled: false,
             gpu_culling_enabled: false,
+            clouds: CloudSettings::default(),
         }
     }
 }
@@ -56,6 +59,7 @@ impl RendererSettings {
             auto_exposure_speed: renderer.auto_exposure_speed,
             occlusion_queries_enabled: renderer.occlusion_queries_enabled,
             gpu_culling_enabled: renderer.gpu_culling_enabled,
+            clouds: renderer.clouds,
         }
     }
 
@@ -70,6 +74,7 @@ impl RendererSettings {
         renderer.auto_exposure_speed = self.auto_exposure_speed;
         renderer.occlusion_queries_enabled = self.occlusion_queries_enabled;
         renderer.gpu_culling_enabled = self.gpu_culling_enabled;
+        renderer.clouds = self.clouds;
     }
 }
 

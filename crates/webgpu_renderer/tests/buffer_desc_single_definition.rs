@@ -22,6 +22,10 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../src/render/forward/animate.rs"),
     ),
     (
+        "render/forward/cloud_pass.rs",
+        include_str!("../src/render/forward/cloud_pass.rs"),
+    ),
+    (
         "render/forward/culling.rs",
         include_str!("../src/render/forward/culling.rs"),
     ),

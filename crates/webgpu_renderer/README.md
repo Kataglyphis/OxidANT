@@ -39,6 +39,14 @@ procedural sky with an analytic sun, and image-based lighting: analytic
 from a Radiance `.hdr` environment map (irradiance and prefiltered specular
 cubemaps + a BRDF LUT).
 
+**Clouds** — the C++ engine's volumetric clouds, sharing its mathematics
+([`shaders/common/volumetric_clouds.slang`](../../shaders/common/volumetric_clouds.slang)):
+a 128³ noise volume generated once, then per frame a ray march through an
+axis-aligned box (Offset, Scale × Density × 10) with a light march toward the
+sun, Henyey-Greenstein phase and powder term. It stops at the scene depth, and the
+tonemap composites it in linear HDR, the same over sky and geometry. Off by
+default (`ForwardRenderer::clouds`), with the C++ ranges in the Sky tab.
+
 **Post** — 4× MSAA, HDR `Rgba16Float` target, bloom (bright-pass + separable
 Gaussian), SSAO (depth reconstruction), manual or histogram auto-exposure, ACES
 tonemapping.
@@ -94,7 +102,7 @@ cargo run -p kataglyphis_webgpu_renderer --example export_shaders -- out_dir
 
 # The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe)
 cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir \
-  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web ...]
+  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web,cloudy,pitch=0,zoom=4 ...]
 
 # Browser demo (drop a self-contained .glb onto the page; the Colosseum row fetches Colosseum-web.glb beside it)
 cargo build -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown --release

@@ -41,6 +41,7 @@ impl TonemapPass {
                 bind_layout::texture_2d(4, wgpu::ShaderStages::FRAGMENT, true),
                 // Exposure stays on the GPU, so no frame waits on a readback.
                 bind_layout::storage_buffer(5, wgpu::ShaderStages::FRAGMENT, true),
+                bind_layout::texture_2d(6, wgpu::ShaderStages::FRAGMENT, true),
             ],
         });
 
@@ -80,23 +81,28 @@ impl TonemapPass {
         }
     }
 
-    /// Per-frame parameters.
-    pub fn set_params(&self, queue: &wgpu::Queue, bloom_strength: f32, ssao_strength: f32) {
+    /// Per-frame parameters; `clouds` composites the cloud input over the scene.
+    pub fn set_params(
+        &self,
+        queue: &wgpu::Queue,
+        bloom_strength: f32,
+        ssao_strength: f32,
+        clouds: bool,
+    ) {
         queue.write_buffer(
             &self.uniform_buffer,
             0,
             bytemuck::bytes_of(&[
                 bloom_strength,
                 ssao_strength,
-                // params.z: unused, but the shader struct pins the layout.
-                0.0,
+                if clouds { 1.0 } else { 0.0 },
                 // params.w: `encode_srgb`, fixed at creation but carried in the spare slot.
                 if self.encode_srgb { 1.0 } else { 0.0 },
             ]),
         );
     }
 
-    /// (Re)binds the HDR + bloom inputs; call whenever they are recreated.
+    /// (Re)binds the HDR, bloom, AO, exposure and cloud inputs; call whenever they are recreated.
     pub fn set_input(
         &mut self,
         gpu: &GpuContext,
@@ -104,6 +110,7 @@ impl TonemapPass {
         bloom_view: &wgpu::TextureView,
         ao_view: &wgpu::TextureView,
         exposure_buffer: &wgpu::Buffer,
+        cloud_view: &wgpu::TextureView,
     ) {
         self.bound_inputs = None;
         self.bind_group = Some(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -133,6 +140,10 @@ impl TonemapPass {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: exposure_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(cloud_view),
                 },
             ],
         }));

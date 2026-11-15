@@ -32,9 +32,10 @@ fn every_pass_reports_a_finite_non_negative_duration() {
         "the adapter reports TIMESTAMP_QUERY, so enabling must succeed"
     );
     renderer.upload_scene(&gpu, &load_gltf(cube_path()).expect("cube.gltf must load"));
-    // Occlusion cull and the histogram only record when enabled, and every pass must report.
+    // Occlusion cull, the histogram and the clouds only record when enabled, and every pass must report.
     renderer.occlusion_queries_enabled = true;
     renderer.auto_exposure = true;
+    renderer.clouds.enabled = true;
     let camera = OrbitCamera::default();
     let mut tonemap = TonemapPass::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
 

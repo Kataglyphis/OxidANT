@@ -1,6 +1,6 @@
 //! The profiler dock, for now the C++ layout: Performance (frame figure, frame-time graph, GPU passes) and Visibility.
 
-use egui::{pos2, vec2, Align, Layout, Rect, RichText, Sense, Shape, Stroke, Ui};
+use egui::{pos2, vec2, Align, Layout, Rect, RichText, ScrollArea, Sense, Shape, Stroke, Ui};
 
 use super::{Editor, EditorContext, FRAME_RATE_WINDOW};
 use crate::ui::palette as pal;
@@ -107,17 +107,23 @@ fn gpu_passes(ui: &mut Ui, cx: &EditorContext<'_>) {
         .fold(0.0, f32::max);
     let value_width = galley(ui, "0000.00 ms", font, pal::TEXT).size().x;
     ui.spacing_mut().item_spacing.y = 2.0;
-    for (name, ms) in &cx.stats.gpu_passes {
-        let value = format!("{ms:.2} ms");
-        let fraction = if frame_ms > 0.0 { ms / frame_ms } else { 0.0 };
-        let row = MetricRow {
-            name,
-            fraction,
-            value: &value,
-            active: true,
-        };
-        metric_row(ui, (name_width, value_width), &row);
-    }
+    // More passes than the C++ five outgrow the dock's default height, so the rows scroll.
+    ScrollArea::vertical()
+        .auto_shrink(false)
+        .id_salt("gpu_passes")
+        .show(ui, |ui| {
+            for (name, ms) in &cx.stats.gpu_passes {
+                let value = format!("{ms:.2} ms");
+                let fraction = if frame_ms > 0.0 { ms / frame_ms } else { 0.0 };
+                let row = MetricRow {
+                    name,
+                    fraction,
+                    value: &value,
+                    active: true,
+                };
+                metric_row(ui, (name_width, value_width), &row);
+            }
+        });
 }
 
 fn visibility(ui: &mut Ui, cx: &EditorContext<'_>) {

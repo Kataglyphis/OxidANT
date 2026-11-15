@@ -20,6 +20,14 @@ const SHADERS: &[(&str, &str)] = &[
     ),
     ("gpu_cull", include_str!("../src/shaders/gpu_cull.wgsl")),
     ("histogram", include_str!("../src/shaders/histogram.wgsl")),
+    (
+        "cloud_noise",
+        include_str!("../src/shaders/cloud_noise.wgsl"),
+    ),
+    (
+        "cloud_march",
+        include_str!("../src/shaders/cloud_march.wgsl"),
+    ),
 ];
 
 #[test]

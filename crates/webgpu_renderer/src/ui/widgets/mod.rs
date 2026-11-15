@@ -10,7 +10,7 @@ mod tabs;
 mod text;
 mod toggle;
 
-pub use axes::drag_axes;
+pub use axes::{drag_axes, drag_axes_logarithmic};
 pub use fill_slider::FillSlider;
 pub use list_row::{list_row, RowResult, RowSpec, RowTrailing};
 pub use metrics::{keycap, keycap_size, metric_row, status_dot, MetricRow};

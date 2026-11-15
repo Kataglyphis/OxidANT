@@ -80,6 +80,7 @@ impl ForwardRenderer {
     ) -> FrameView {
         let (width, height) = (width.max(1), height.max(1));
         self.resize_targets(gpu, width, height);
+        self.prepare_clouds(gpu, width, height);
         self.rebuild_post_inputs(gpu, width, height);
         self.bind_tonemap_inputs(gpu, tonemap);
         self.write_post_settings(gpu, tonemap);

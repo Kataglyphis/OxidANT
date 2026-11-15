@@ -2,6 +2,7 @@
 //! The frame's passes and the resources each one owns live in the submodules, one per pass.
 
 mod animate;
+mod cloud_pass;
 mod culling;
 mod environment;
 mod frame;
@@ -18,6 +19,7 @@ mod upload;
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::context::GpuContext;
+use crate::render::clouds::CloudSettings;
 use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::GpuTiming;
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
@@ -28,6 +30,7 @@ use crate::scene::camera::OrbitCamera;
 use crate::scene::CpuScene;
 
 use animate::SceneAnimation;
+use cloud_pass::CloudPass;
 use culling::Culling;
 use environment::{create_ibl_bind_group, IblBinding};
 use frame::FrameBinding;
@@ -70,6 +73,8 @@ pub struct ForwardRenderer {
     depth_resolve: DepthResolve,
     /// Bloom, SSAO and exposure, which the tonemap composes.
     post: PostChain,
+    /// The cloud noise, march and target, which the tonemap composites.
+    cloud_pass: CloudPass,
     culling: Culling,
     primitives: Vec<GpuPrimitive>,
     scene_bounds: Option<(Vec3, Vec3)>,
@@ -107,6 +112,8 @@ pub struct ForwardRenderer {
     /// Camera distances at which successive LOD levels take over, ascending.
     /// Defaults suit unit-scale assets; a scene in metres wants larger values.
     pub lod_switch_distances: Vec<f32>,
+    /// The volumetric clouds, off by default as in the C++ engine; the noise is made the first frame they are on.
+    pub clouds: CloudSettings,
 }
 
 impl ForwardRenderer {
@@ -132,6 +139,7 @@ impl ForwardRenderer {
             targets,
             depth_resolve,
             post,
+            cloud_pass: CloudPass::new(device),
             culling: Culling::new(device),
             primitives: Vec::new(),
             scene_bounds: None,
@@ -152,6 +160,7 @@ impl ForwardRenderer {
             occlusion_queries_enabled: false,
             gpu_culling_enabled: false,
             lod_switch_distances: vec![8.0, 24.0],
+            clouds: CloudSettings::default(),
         }
     }
 
@@ -358,6 +367,7 @@ impl ForwardRenderer {
         self.encode_exposure(&mut encoder, view.width, view.height);
         self.encode_bloom(&mut encoder);
         self.encode_ssao(&mut encoder);
+        self.encode_clouds(gpu, &mut encoder, &view);
         self.encode_tonemap(&mut encoder, tonemap, output_view);
         self.finish_frame(gpu, encoder);
     }

@@ -27,11 +27,13 @@ pub enum TimedPass {
     Ssao,
     /// ACES tonemap and composite to the output target.
     Tonemap,
+    /// The volumetric clouds' march to the scene depth (one render pass; only with clouds on).
+    Clouds,
 }
 
 impl TimedPass {
     /// Every pass, in record order. Iteration order is the reporting order.
-    pub const ALL: [TimedPass; 8] = [
+    pub const ALL: [TimedPass; 9] = [
         TimedPass::ShadowCascades,
         TimedPass::Forward,
         TimedPass::OcclusionCull,
@@ -39,6 +41,7 @@ impl TimedPass {
         TimedPass::ExposureReduce,
         TimedPass::Bloom,
         TimedPass::Ssao,
+        TimedPass::Clouds,
         TimedPass::Tonemap,
     ];
 
@@ -53,6 +56,7 @@ impl TimedPass {
             TimedPass::Histogram => "Histogram",
             TimedPass::ExposureReduce => "ExposureReduce",
             TimedPass::Tonemap => "Tonemap",
+            TimedPass::Clouds => "Clouds",
         }
     }
 
@@ -67,6 +71,7 @@ impl TimedPass {
             TimedPass::Histogram => "Histogram",
             TimedPass::ExposureReduce => "Exposure",
             TimedPass::Tonemap => "Tonemap",
+            TimedPass::Clouds => "Clouds",
         }
     }
 
@@ -80,6 +85,7 @@ impl TimedPass {
             TimedPass::Histogram => 5,
             TimedPass::ExposureReduce => 6,
             TimedPass::Tonemap => 7,
+            TimedPass::Clouds => 8,
         }
     }
 }
