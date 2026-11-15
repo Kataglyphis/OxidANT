@@ -256,8 +256,11 @@ async fn request_device(
         required_features |= wgpu::Features::TIMESTAMP_QUERY;
     }
 
-    // WebGPU's defaults on every target: a browser grants no more, so native tests fail where the web would.
-    let required_limits = wgpu::Limits::default();
+    // WebGPU's defaults, so native tests fail where the web would; natively the tracer's buffer sizes come from the adapter.
+    let required_limits = crate::render::tracer::limits::device_limits(
+        &adapter.limits(),
+        cfg!(target_arch = "wasm32"),
+    );
 
     adapter
         .request_device(&wgpu::DeviceDescriptor {

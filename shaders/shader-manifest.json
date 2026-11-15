@@ -242,6 +242,23 @@
       "targets": [
         "wgsl"
       ]
+    },
+    {
+      "_comment": "Rust/WebGPU tracer: the BVH traversal (tracer/bvh_traverse.slang) over a ray buffer, for its GPU tests (WGSL emit).",
+      "file": "tracer/trace_debug.slang",
+      "entry": "cs_trace_closest",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tracer/trace_debug.slang",
+      "entry": "cs_trace_any",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
     }
   ],
   "wgslMap": [
@@ -294,6 +311,11 @@
       "src": "tex_quad/tex_quad.slang",
       "out": "tex_quad.wgsl",
       "dst": "crates/gui/src/shaders"
+    },
+    {
+      "src": "tracer/trace_debug.slang",
+      "out": "trace_debug.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
     }
   ],
   "depthTexturePatches": {

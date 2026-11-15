@@ -6,7 +6,8 @@ to the C++ Vulkan engine in
 [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett).
 Its design documents live beside the code, in [`docs/`](docs):
 the [roadmap](docs/webgpu-renderer-roadmap.md), the [bounds
-invariant](docs/renderer-bounds-invariant.md) and the [original glTF plan](docs/webgpu-gltf-rust-plan.md).
+invariant](docs/renderer-bounds-invariant.md), the [tracer core](docs/tracer.md) and the
+[original glTF plan](docs/webgpu-gltf-rust-plan.md).
 They come from BeschleunigerBallett's `docs/` (decision D6: this repository owns the
 WebGPU renderer's code **and** its documentation). Their paths are relative to this
 repository (crate `crates/webgpu_renderer`) unless they name another one. The pages that describe both
@@ -43,6 +44,13 @@ cubemaps + a BRDF LUT).
 Gaussian), SSAO (depth reconstruction), manual or histogram auto-exposure, ACES
 tonemapping.
 
+**Tracing** — the ray-traced and path-traced modes' core: a CPU-built, binned-SAH BVH in two
+levels (repeated and moving meshes instanced), traversed by a compute kernel natively and in
+the browser, with closest- and any-hit queries that alpha-test MASK materials; the scene's
+materials and textures as one table and two texture arrays. Built the first time a traced
+mode is picked, off the frame (the full 6 M-triangle Colosseum in about 2 s natively):
+[`docs/tracer.md`](docs/tracer.md). The modes' shading follows.
+
 **Runtime** — GPU skinning, morph-target and TRS animation playback, GPU
 instancing, frustum plus occlusion culling (hardware queries, or an opt-in
 compute pass), LOD simplification, a validated render graph, hot shader reload
@@ -72,6 +80,9 @@ cargo test -p kataglyphis_webgpu_renderer
 # Translate the WGSL shaders to SPIR-V/GLSL with naga, for inspection only: the
 # C++ engine compiles its SPIR-V from the shared Slang sources (shader-sharing guide)
 cargo run -p kataglyphis_webgpu_renderer --example export_shaders -- out_dir
+
+# The tracer's build of a glTF: times per stage, buffer sizes, the browser's limits
+cargo run --release -p kataglyphis_webgpu_renderer --example trace_build -- model.gltf
 
 # The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe)
 cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir [1600x900@1.5,sun,about,web ...]

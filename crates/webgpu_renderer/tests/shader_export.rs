@@ -20,6 +20,10 @@ const SHADERS: &[(&str, &str)] = &[
     ),
     ("gpu_cull", include_str!("../src/shaders/gpu_cull.wgsl")),
     ("histogram", include_str!("../src/shaders/histogram.wgsl")),
+    (
+        "trace_debug",
+        include_str!("../src/shaders/trace_debug.wgsl"),
+    ),
 ];
 
 #[test]
@@ -208,6 +212,7 @@ const REQUIRED_ENTRY_POINTS: &[(&str, &[&str])] = &[
             "cs_clear_histogram",
         ],
     ),
+    ("trace_debug", &["cs_trace_closest", "cs_trace_any"]),
 ];
 
 #[test]

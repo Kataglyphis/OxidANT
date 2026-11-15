@@ -3,6 +3,8 @@
 mod frame;
 mod input;
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use winit::window::Window;
 
@@ -14,6 +16,7 @@ use crate::render::frame_clock::FrameClock;
 use crate::render::ibl::EquirectImage;
 use crate::render::overlay::Overlay;
 use crate::render::tonemap::TonemapPass;
+use crate::render::tracer::TraceStatus;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::controller::OrbitController;
 use crate::scene::viewport::SceneViewport;
@@ -105,6 +108,7 @@ impl StudioApp {
         let mut renderer = ForwardRenderer::new(&gpu, size[0], size[1]);
         renderer.enable_gpu_timing(&gpu);
         renderer.upload_scene(&gpu, scene);
+        renderer.set_trace_source(Arc::new(scene.clone()));
         // IBL baked from the background's own sky; 256x128 suffices for low-frequency lighting.
         renderer.set_environment(&gpu, &EquirectImage::sky(256, 128));
         Self {
@@ -126,9 +130,10 @@ impl StudioApp {
         }
     }
 
-    /// Swaps in `scene` and starts its camera and animation clock over.
+    /// Swaps in `scene` and starts its camera and animation clock over; the renderer keeps a copy for the traced modes.
     pub fn load_scene(&mut self, scene: &CpuScene) {
         self.renderer.upload_scene(&self.gpu, scene);
+        self.renderer.set_trace_source(Arc::new(scene.clone()));
         self.camera = self.home.clone();
         self.controller = OrbitController::default();
         self.epoch_s = None;
@@ -140,6 +145,11 @@ impl StudioApp {
             viewport: SceneViewport::FULL,
             ..self.camera.clone()
         }
+    }
+
+    /// Where the traced scene is, for a host that shows the build's progress itself.
+    pub fn trace_status(&self) -> TraceStatus {
+        self.renderer.trace_status()
     }
 
     pub fn editor(&self) -> &Editor {

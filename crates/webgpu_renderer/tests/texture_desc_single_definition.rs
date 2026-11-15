@@ -84,6 +84,11 @@ const SOURCES: &[(&str, &str, bool)] = &[
     ),
     ("render/ibl.rs", include_str!("../src/render/ibl.rs"), false),
     (
+        "render/tracer/gpu.rs",
+        include_str!("../src/render/tracer/gpu.rs"),
+        false,
+    ),
+    (
         "render/texture.rs",
         include_str!("../src/render/texture.rs"),
         true,
@@ -129,10 +134,10 @@ fn texture_descriptor_literals_are_the_single_definition_or_marked_non_goals() {
         unmarked.join("\n")
     );
     assert_eq!(
-        marked_count, 3,
-        "expected exactly 3 marked non-goal TextureDescriptor literals (two cube \
-         textures, one depth array); found {marked_count} - update this count if a \
-         new non-goal shape is added, or investigate if one disappeared"
+        marked_count, 4,
+        "expected exactly 4 marked non-goal TextureDescriptor literals (two cube \
+         textures, one depth array, the tracer's layer arrays); found {marked_count} - \
+         update this count if a new non-goal shape is added, or investigate if one disappeared"
     );
     assert_eq!(
         definition_count, 1,

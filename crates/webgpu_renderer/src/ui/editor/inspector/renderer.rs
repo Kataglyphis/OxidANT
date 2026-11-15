@@ -2,19 +2,19 @@
 
 use egui::{vec2, Button, Ui};
 
-use super::super::menu_bar::{RENDER_MODES, RENDER_MODES_ENABLED};
+use super::super::menu_bar::RENDER_MODES;
 use super::super::{EditorAction, EditorContext};
+use crate::render::tracer::RenderMode;
 use crate::ui::widgets::{
     enabled_ui, frame_height, muted_wrapped, property_row, section_header, toggle, FillSlider,
     Segmented,
 };
 
 pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>, actions: &mut Vec<EditorAction>) {
-    let mut mode = 0;
-    Segmented::new(&RENDER_MODES)
-        .enabled(&RENDER_MODES_ENABLED)
-        .show(ui, &mut mode);
-    muted_wrapped(ui, "WebGPU has no hardware ray tracing.");
+    let mut mode = cx.settings.render_mode.index();
+    Segmented::new(&RENDER_MODES).show(ui, &mut mode);
+    cx.settings.render_mode = RenderMode::from_index(mode);
+    muted_wrapped(ui, cx.stats.trace.text());
     let mut path = 0;
     property_row(
         ui,

@@ -13,6 +13,29 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, the compute-shader tracer core)
+- `render::tracer`, the core of the ray-traced and path-traced modes: a binned-SAH BVH the CPU builds (16 bins on
+  three axes, sampled above 16 K boxes, leaves of 4, depth capped at the traversal stack) in two levels, repeated
+  and animated meshes instanced in object space and the rest merged in world space; the flat GPU arrays (records,
+  triangles, positions, packed vertices), the material table and the textures resampled into two mipmapped texture
+  arrays; the CPU traversal the GPU one is tested against. Layout, limits and API: `crates/webgpu_renderer/docs/tracer.md`.
+- `shaders/tracer/bvh_traverse.slang`: closest- and any-hit traversal over one stack for both levels, with glTF's
+  MASK alpha test at level 0, surface and material fetch; `trace_debug.slang` traces a ray buffer for the tests.
+- `Tracer::set_root_transform` and `set_primitive_transforms` move instances (the model transform, animated nodes)
+  by rebuilding only the top level.
+- The traced scene builds the first time `ForwardRenderer::render_mode` is traced: on a worker thread natively, a
+  budget per frame in the browser; `trace_status()` reports its stage and progress, the Renderer tab shows it. The
+  full Colosseum (6.0 M triangles) builds in about 2 s natively.
+- The menu bar's switch, the Render menu and the Renderer tab set the render mode; the frame rasters until the
+  modes land.
+- `examples/trace_build.rs`: a glTF's build times per stage, buffer sizes and fit to the browser's limits.
+
+### Changed (2026-11-15, the compute-shader tracer core)
+- Natively `GpuContext` requests the adapter's `max_storage_buffer_binding_size` and `max_buffer_size`; every other
+  limit, and everything in the browser, stays at WebGPU's defaults.
+- `StudioApp` hands each scene it uploads to the renderer's tracer (`ForwardRenderer::set_trace_source`), which drops
+  it once the traced scene is built.
+
 ### Added (2026-11-15, the Studio Pro editor shell)
 - `ui::Editor`, BeschleunigerBallett's docked C++ editor in egui, one module per dock under
   `crates/webgpu_renderer/src/ui/editor/`: the menu bar (brand, File/View/Render/Help, the centred renderer switch,

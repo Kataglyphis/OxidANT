@@ -78,6 +78,7 @@ path, not a copy. Four pages describe both renderers and stayed there.
 | `renderer-bounds-invariant.md` | **here**, `crates/webgpu_renderer/docs/` |
 | `webgpu-renderer-roadmap.md` | **here**, `crates/webgpu_renderer/docs/` |
 | `webgpu-gltf-rust-plan.md` | **here**, `crates/webgpu_renderer/docs/` |
+| `tracer.md` | **here**, `crates/webgpu_renderer/docs/` (new on 2026-11-15) |
 | `gpu-golden-testing.md` | stays in BeschleunigerBallett |
 | `model-loading.md` | stays in BeschleunigerBallett |
 | `shader-sharing.md` | stays in BeschleunigerBallett |

@@ -3,6 +3,7 @@
 use glam::Vec4;
 
 use crate::render::forward::ForwardRenderer;
+use crate::render::tracer::{RenderMode, TraceStatus};
 
 /// The renderer's editable settings: read before the egui pass, written back after it.
 #[derive(Clone, Debug, PartialEq)]
@@ -19,6 +20,7 @@ pub struct RendererSettings {
     pub auto_exposure_speed: f32,
     pub occlusion_queries_enabled: bool,
     pub gpu_culling_enabled: bool,
+    pub render_mode: RenderMode,
 }
 
 impl Default for RendererSettings {
@@ -35,6 +37,7 @@ impl Default for RendererSettings {
             auto_exposure_speed: 3.0,
             occlusion_queries_enabled: false,
             gpu_culling_enabled: false,
+            render_mode: RenderMode::Raster,
         }
     }
 }
@@ -52,6 +55,7 @@ impl RendererSettings {
             auto_exposure_speed: renderer.auto_exposure_speed,
             occlusion_queries_enabled: renderer.occlusion_queries_enabled,
             gpu_culling_enabled: renderer.gpu_culling_enabled,
+            render_mode: renderer.render_mode,
         }
     }
 
@@ -66,6 +70,7 @@ impl RendererSettings {
         renderer.auto_exposure_speed = self.auto_exposure_speed;
         renderer.occlusion_queries_enabled = self.occlusion_queries_enabled;
         renderer.gpu_culling_enabled = self.gpu_culling_enabled;
+        renderer.render_mode = self.render_mode;
     }
 }
 
@@ -79,6 +84,8 @@ pub struct SceneStats {
     /// Smoothed GPU milliseconds per timed pass; a pass without a sample is absent, not zero.
     pub gpu_passes: Vec<(&'static str, f32)>,
     pub gpu_timing: bool,
+    /// Where the traced modes' scene is.
+    pub trace: TraceStatus,
 }
 
 impl SceneStats {
@@ -88,6 +95,7 @@ impl SceneStats {
             shadow_casters: renderer.shadow_caster_stats(),
             gpu_passes: renderer.gpu_timings_ms(),
             gpu_timing: renderer.gpu_timing_available(),
+            trace: renderer.trace_status(),
         }
     }
 }
@@ -278,7 +286,9 @@ mod tests {
         let mut settings = RendererSettings::of(&renderer);
         settings.ssao_strength = 0.1;
         settings.light_dir_ambient = Vec4::new(0.0, 1.0, 0.0, 0.5);
+        settings.render_mode = RenderMode::PathTraced;
         settings.apply(&mut renderer);
+        assert_eq!(renderer.render_mode, RenderMode::PathTraced);
         assert_eq!(renderer.ssao_strength, 0.1);
         assert_eq!(renderer.light_dir_ambient, Vec4::new(0.0, 1.0, 0.0, 0.5));
         assert_eq!(RendererSettings::of(&renderer), settings);

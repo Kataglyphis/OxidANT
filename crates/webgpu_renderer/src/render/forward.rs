@@ -13,6 +13,7 @@ pub(crate) mod readback;
 mod shadow;
 mod sky;
 mod targets;
+mod traced;
 mod upload;
 
 use glam::{Mat4, Vec3, Vec4};
@@ -24,6 +25,7 @@ use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
 pub use crate::render::lights::MAX_PUNCTUAL_LIGHTS;
 use crate::render::texture::create_2d_texture;
 use crate::render::tonemap::TonemapPass;
+use crate::render::tracer::{RenderMode, Tracer};
 use crate::scene::camera::OrbitCamera;
 use crate::scene::CpuScene;
 
@@ -107,6 +109,9 @@ pub struct ForwardRenderer {
     /// Camera distances at which successive LOD levels take over, ascending.
     /// Defaults suit unit-scale assets; a scene in metres wants larger values.
     pub lod_switch_distances: Vec<f32>,
+    /// A traced mode builds the traced scene on first use; until it is ready the frame rasters.
+    pub render_mode: RenderMode,
+    tracer: Tracer,
 }
 
 impl ForwardRenderer {
@@ -152,6 +157,8 @@ impl ForwardRenderer {
             occlusion_queries_enabled: false,
             gpu_culling_enabled: false,
             lod_switch_distances: vec![8.0, 24.0],
+            render_mode: RenderMode::Raster,
+            tracer: Tracer::default(),
         }
     }
 
@@ -315,6 +322,8 @@ impl ForwardRenderer {
     /// Uploads a CPU scene, replacing any previously uploaded one.
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
         self.reset_scene_state(scene);
+        // The traced scene is of the old scene until `set_trace_source` hands over this one.
+        self.tracer.reset();
         // A new scene must not inherit the last one's adapted exposure.
         self.reset_exposure(gpu);
         // Skinned primitives need the joint nodes' world matrices to size their bounds.
@@ -339,6 +348,7 @@ impl ForwardRenderer {
         height: u32,
         camera: &OrbitCamera,
     ) {
+        self.tracer.advance(gpu, self.render_mode.is_traced());
         let view = self.prepare_frame(gpu, tonemap, width, height, camera);
 
         // Before any scope: begin_frame picks the ring slot every scope below writes into.

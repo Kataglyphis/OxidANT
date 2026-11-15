@@ -20,3 +20,4 @@ pub mod ssao;
 pub mod texture;
 pub mod tile_grid;
 pub mod tonemap;
+pub mod tracer;
