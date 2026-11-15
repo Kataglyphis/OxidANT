@@ -55,6 +55,7 @@ mod tests {
             range: 10.0,
             position: [1.0, 2.0, 3.0],
             direction: [0.0, -1.0, 0.0],
+            node: None,
         }
     }
 
@@ -69,6 +70,7 @@ mod tests {
             range: 5.0,
             position: [0.0, 1.0, 0.0],
             direction: [0.0, -1.0, 0.0],
+            node: None,
         }
     }
 
@@ -80,6 +82,7 @@ mod tests {
             range: 0.0,
             position: [0.0, 0.0, 0.0],
             direction: [1.0, 0.0, 0.0],
+            node: None,
         }
     }
 

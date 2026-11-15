@@ -67,7 +67,7 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | --- | --- | --- |
 | ✅ Skybox pass | M | Done 2026-07-18: procedural gradient + analytic sun following the light sliders (HDR equirect/cubemap upgrade later with IBL) |
 | ✅ Image-based lighting | L | Analytic v1 done 2026-07-18 (hemisphere irradiance + roughness-blended sky reflection + Karis split-sum approx from the analytic sky). HDR-cubemap IBL for arbitrary env maps done (audited 2026-07-21): real split-sum in `render/ibl.rs` (irradiance-convolved cubemap + roughness-prefiltered specular cubemap + BRDF LUT), fed by `asset/hdr.rs` decoding Radiance `.hdr`/RGBE; the analytic path is now the fallback when no env is bound |
-| ✅ `KHR_lights_punctual` | M | Done 2026-07-18: point/spot/directional, KHR range window + spot cones, up to 4 lights (shadowless; punctual shadows are the next row). Raised to 256 on 2026-07-28 (`render::lights::MAX_PUNCTUAL_LIGHTS`, a storage buffer), binned per screen tile — see the Forward+ row |
+| ✅ `KHR_lights_punctual` | M | Done 2026-07-18: point/spot/directional, KHR range window + spot cones, up to 4 lights (shadowless; punctual shadows are the next row); lights follow their animated nodes since 2026-11-15. Raised to 256 on 2026-07-28 (`render::lights::MAX_PUNCTUAL_LIGHTS`, a storage buffer), binned per screen tile — see the Forward+ row |
 | Point/spot shadows | L | Shadow atlas or cube shadows; after punctual lights |
 | ✅ Cascaded shadow maps | L | Done 2026-07-18: 3 cascades in a depth array, view-distance selection, per-cascade fitting |
 | ✅ Bloom | M | Done 2026-07-18: half-res brightpass + 9-tap separable Gaussian, strength slider in the overlay |

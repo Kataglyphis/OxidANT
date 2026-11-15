@@ -486,6 +486,34 @@ fn visit_scene(
     Ok(())
 }
 
+/// The node's KHR_lights_punctual light, posed by its `world` transform and tied to the node.
+fn read_light(node: &gltf::Node, world: Mat4) -> Option<CpuLight> {
+    use gltf::khr_lights_punctual::Kind;
+    let light = node.light()?;
+    let kind = match light.kind() {
+        Kind::Point => CpuLightKind::Point,
+        Kind::Spot {
+            inner_cone_angle,
+            outer_cone_angle,
+        } => CpuLightKind::Spot {
+            cos_inner: inner_cone_angle.cos(),
+            cos_outer: outer_cone_angle.cos(),
+        },
+        Kind::Directional => CpuLightKind::Directional,
+    };
+    let mut cpu = CpuLight {
+        kind,
+        color: light.color(),
+        intensity: light.intensity(),
+        range: light.range().unwrap_or(0.0),
+        position: [0.0; 3],
+        direction: [0.0; 3],
+        node: Some(node.index()),
+    };
+    cpu.pose_at(world);
+    Some(cpu)
+}
+
 /// One node's light and mesh primitives, posed by its `world` transform.
 fn visit_node(
     node: &gltf::Node,
@@ -494,29 +522,8 @@ fn visit_node(
     textures: &[Arc<CpuTexture>],
     scene: &mut CpuScene,
 ) -> anyhow::Result<()> {
-    if let Some(light) = node.light() {
-        use gltf::khr_lights_punctual::Kind;
-        let kind = match light.kind() {
-            Kind::Point => CpuLightKind::Point,
-            Kind::Spot {
-                inner_cone_angle,
-                outer_cone_angle,
-            } => CpuLightKind::Spot {
-                cos_inner: inner_cone_angle.cos(),
-                cos_outer: outer_cone_angle.cos(),
-            },
-            Kind::Directional => CpuLightKind::Directional,
-        };
-        // glTF lights point down their node's -Z axis.
-        let direction = world.transform_vector3(Vec3::NEG_Z).normalize_or_zero();
-        scene.lights.push(CpuLight {
-            kind,
-            color: light.color(),
-            intensity: light.intensity(),
-            range: light.range().unwrap_or(0.0),
-            position: world.transform_point3(Vec3::ZERO).to_array(),
-            direction: direction.to_array(),
-        });
+    if let Some(light) = read_light(node, world) {
+        scene.lights.push(light);
     }
 
     if let Some(mesh) = node.mesh() {

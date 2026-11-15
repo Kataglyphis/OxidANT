@@ -516,6 +516,7 @@ impl ForwardRenderer {
         let world = CpuScene::compute_world_transforms(&self.animation.nodes);
         self.animation.pending_joint_world = Some(world.clone());
         self.retarget_primitives(&world);
+        self.retarget_lights(&world);
         self.recompute_scene_bounds();
     }
 

@@ -10,7 +10,8 @@ use crate::render::animation::{
 use crate::render::bounds::{
     instanced_bounds, normal_matrix_of, transform_aabb, widen_bounds_for_skin,
 };
-use crate::scene::{ChannelValues, CpuAnimation, CpuNode, CpuScene, CpuSkin};
+use crate::render::lights::pack_punctual_lights;
+use crate::scene::{ChannelValues, CpuAnimation, CpuLight, CpuNode, CpuScene, CpuSkin};
 
 /// Bytes per joint in a joint buffer: one column-major mat4.
 pub(super) const JOINT_MATRIX_BYTES: u64 = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
@@ -28,6 +29,8 @@ pub(super) struct SceneAnimation {
     rest_nodes: Vec<CpuNode>,
     /// Each primitive's default morph weights, restored on a clip switch like `rest_nodes`.
     rest_morph_weights: Vec<Vec<f32>>,
+    /// The scene's punctual lights, re-posed from their nodes on every animation frame.
+    lights: Vec<CpuLight>,
 }
 
 impl SceneAnimation {
@@ -45,6 +48,7 @@ impl SceneAnimation {
                 .iter()
                 .map(|prim| prim.morph_weights.clone())
                 .collect(),
+            lights: scene.lights.clone(),
         }
     }
 
@@ -162,6 +166,22 @@ impl ForwardRenderer {
         }
     }
 
+    /// Re-poses every light tied to a node from `world` and repacks them; a light at load stayed put.
+    pub(super) fn retarget_lights(&mut self, world: &[Mat4]) {
+        let mut moved = false;
+        for light in &mut self.animation.lights {
+            if let Some(m) = light.node.and_then(|node| world.get(node)) {
+                light.pose_at(*m);
+                moved = true;
+            }
+        }
+        if moved {
+            let (packed, count) = pack_punctual_lights(&self.animation.lights);
+            self.lights.punctual = packed;
+            self.lights.punctual_count = count;
+        }
+    }
+
     /// Moves every node-driven primitive to its node's `world` matrix and re-derives its bounds.
     pub(super) fn retarget_primitives(&mut self, world: &[Mat4]) {
         for prim in &mut self.primitives {
@@ -251,6 +271,58 @@ impl ForwardRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene::{CpuAnimationChannel, Interpolation};
+    use glam::{Quat, Vec3};
+
+    #[test]
+    fn lights_on_animated_nodes_follow_them() {
+        let Some(gpu) = GpuContext::headless_or_skip() else {
+            return;
+        };
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/point_light.gltf");
+        let mut scene = crate::load_gltf(&path).expect("point_light.gltf must load");
+        let point_node = scene.lights[0].node.expect("a KHR light carries its node");
+        let spot_node = scene.lights[1].node.expect("a KHR light carries its node");
+        let channel = |node, values| CpuAnimationChannel {
+            node,
+            times: vec![0.0, 2.0],
+            values,
+            interpolation: Interpolation::Linear,
+        };
+        scene.animations = vec![CpuAnimation {
+            name: "move".to_string(),
+            duration: 2.0,
+            channels: vec![
+                channel(
+                    point_node,
+                    ChannelValues::Translation(vec![
+                        Vec3::new(-2.0, 1.0, 0.0),
+                        Vec3::new(2.0, 1.0, 0.0),
+                    ]),
+                ),
+                channel(spot_node, ChannelValues::Rotation(vec![Quat::IDENTITY; 2])),
+            ],
+        }];
+        let mut renderer = ForwardRenderer::new(&gpu, 4, 4);
+        renderer.upload_scene(&gpu, &scene);
+        renderer.set_animation_time(1.0);
+
+        let row = |light: usize, row: usize| {
+            let r = renderer.lights.punctual[light * 4 + row];
+            Vec3::new(r[0], r[1], r[2])
+        };
+        assert!(
+            row(0, 0).abs_diff_eq(Vec3::new(0.0, 1.0, 0.0), 1e-5),
+            "the point light must sit at its node's animated position, got {}",
+            row(0, 0)
+        );
+        assert!(
+            row(1, 2).abs_diff_eq(Vec3::NEG_Z, 1e-5),
+            "an unrotated spot points down -Z, got {}",
+            row(1, 2)
+        );
+    }
 
     #[test]
     fn clip_time_keeps_its_fraction_after_days_of_uptime() {

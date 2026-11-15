@@ -69,6 +69,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **Animation stuttered after a day or two of uptime**: `set_animation_time` took f32 seconds and wrapped them in
   f32, which steps by 1/64 s after 36 hours. It takes anything `Into<f64>` now (an f32 still compiles) and wraps
   each clip in f64 before narrowing. `StudioApp::advance` still converts its seconds to f32 (`src/app/frame.rs`).
+- **Punctual lights on animated nodes never moved**: a light's pose was baked at load. `CpuLight` carries its node
+  (`node`, `None` for a fixed light), and `set_animation_time` re-poses every such light from its node's world
+  transform (`CpuLight::pose_at`, the loader's rule: the node's origin, pointing down its -Z) and repacks them.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

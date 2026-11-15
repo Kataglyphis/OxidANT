@@ -218,6 +218,19 @@ pub struct CpuLight {
     pub position: [f32; 3],
     /// Direction the light POINTS (spot/directional).
     pub direction: [f32; 3],
+    /// Index into `CpuScene::nodes` whose world transform poses the light; `None` keeps it fixed.
+    pub node: Option<usize>,
+}
+
+impl CpuLight {
+    /// Places the light at `world`'s origin, pointing down its -Z axis, as glTF poses a light by its node.
+    pub fn pose_at(&mut self, world: Mat4) {
+        self.position = world.transform_point3(Vec3::ZERO).to_array();
+        self.direction = world
+            .transform_vector3(Vec3::NEG_Z)
+            .normalize_or_zero()
+            .to_array();
+    }
 }
 
 /// A scene-graph node with its local TRS (animation targets these).
