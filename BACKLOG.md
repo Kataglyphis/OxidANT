@@ -105,10 +105,9 @@ and the backlog is empty"; it was neither.
       generated file is the drag, exclude it with a second `--exclude-files` and set the floor
       within 3 points of the new figure. Then, if the owner accepts one more scheduled job, a
       weekly one runs the per-file commands of `docs/testing.md` with `--jobs 1 -- --lib` on
-      the pure modules and uploads `mutants.out`. Also (not double-checked):
-      `scripts/linux/tests/ort-license-mutations.json` has no recipe for `crates/inference`; add
-      five that run `cargo test -p kataglyphis_inference --lib` (swap red and blue, ignore the
-      threshold, drop the finite check, drop the clamp, one scale for both axes). Guard: the
+      the pure modules and uploads `mutants.out`. The five `crates/inference` recipes are in
+      `scripts/linux/tests/ort-license-mutations.json` since 2026-11-15 (`consumer.oxidant-inference-*`, each
+      proved to bite). Guard: the
       raised floor, and a `kind = "count"` artifact over `mutants.out/missed.txt` in
       `quality-report.toml`. The capture loop got six tests on 2026-11-15 (the real model, a late
       file, the stall, the re-probe, the engine's two end reasons): the first run after CON238 writes

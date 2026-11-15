@@ -354,6 +354,51 @@
   "why": "A stream that stalls after its head is too slow, not broken: the same 504 as a silent server."
  },
  {
+  "id": "consumer.oxidant-inference-red-blue-swapped",
+  "target": "crates/inference/src/person_detection/preprocess.rs",
+  "find": "            *r = UNIT_FLOATS[row[offset] as usize];\n            *g = UNIT_FLOATS[row[offset + 1] as usize];\n            *b = UNIT_FLOATS[row[offset + 2] as usize];\n",
+  "replace": "            *r = UNIT_FLOATS[row[offset + 2] as usize];\n            *g = UNIT_FLOATS[row[offset + 1] as usize];\n            *b = UNIT_FLOATS[row[offset] as usize];\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-inference-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_inference --lib",
+  "timeout": 1800,
+  "why": "The model reads RGB planes; a BGR input still finds boxes on most photos, so only the contract's exact floats notice."
+ },
+ {
+  "id": "consumer.oxidant-inference-threshold-ignored",
+  "target": "crates/inference/src/person_detection/postprocess.rs",
+  "find": "        if !score.is_finite() || score < score_threshold {\n",
+  "replace": "        if !score.is_finite() {\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-inference-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_inference --lib",
+  "timeout": 1800,
+  "why": "A row under the score threshold is no detection: the settings page's score would change nothing."
+ },
+ {
+  "id": "consumer.oxidant-inference-nan-corner-kept",
+  "target": "crates/inference/src/person_detection/postprocess.rs",
+  "find": "        if ![x1, y1, x2, y2].iter().all(|corner| corner.is_finite()) {\n            continue;\n        }\n",
+  "replace": "",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-inference-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_inference --lib",
+  "timeout": 1800,
+  "why": "A NaN corner survives every clamp and reaches the overlay as a box that cannot be drawn."
+ },
+ {
+  "id": "consumer.oxidant-inference-corners-unclamped",
+  "target": "crates/inference/src/person_detection/postprocess.rs",
+  "find": "            x1: x1.clamp(0.0, mapping.src_w as f32),\n            y1: y1.clamp(0.0, mapping.src_h as f32),\n            x2: x2.clamp(0.0, mapping.src_w as f32),\n            y2: y2.clamp(0.0, mapping.src_h as f32),\n",
+  "replace": "            x1,\n            y1,\n            x2,\n            y2,\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-inference-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_inference --lib",
+  "timeout": 1800,
+  "why": "A box is held inside the frame it was found in; a corner past the edge breaks the privacy filter and the drawing."
+ },
+ {
+  "id": "consumer.oxidant-inference-one-scale-for-both-axes",
+  "target": "crates/inference/src/person_detection/preprocess.rs",
+  "find": "    let y = (y - mapping.pad_y) / mapping.scale_y.max(1e-6);\n",
+  "replace": "    let y = (y - mapping.pad_y) / mapping.scale_x.max(1e-6);\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-inference-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_inference --lib",
+  "timeout": 1800,
+  "why": "A stretched input scales x and y apart; one scale for both puts every box of a non-square camera in the wrong rows."
+ },
+ {
   "id": "consumer.oxidant-crate-floor-unfloored",
   "target": "scripts/linux/check-crate-coverage.py",
   "find": "return 1 if bad[\"BELOW\"] or bad[\"NO FLOOR\"] else 0",

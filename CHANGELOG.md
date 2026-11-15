@@ -13,6 +13,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, mutation recipes for the detector's pre- and postprocessing)
+- Five `consumer.oxidant-inference-*` recipes run `cargo test -p kataglyphis_inference --lib` against red and blue
+  swapped, the score threshold ignored, a NaN corner kept, the corners unclamped and one scale for both axes; each
+  proved to bite with two mirrors (26 min on a Pi 5, cold builds included). `crates/inference` had none.
+
 ### Added (2026-11-15, ObservANT's stall and re-probe times are a `Timing` value)
 - `capture::Timing` holds the 10 s stall and the 30 s re-probe of a stand-in, both formerly constants, as a field of
   `Worker` with today's numbers as default. Tests: an image at one frame a second against a 300 ms stall ends the
