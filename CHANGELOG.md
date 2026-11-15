@@ -172,6 +172,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   since it never re-entered the depth buffer; the roadmap called the path conservative. A rect of up to 4096 texels
   now has every texel tested (early out at the first one at or behind the box), and a larger rect is drawn. Test:
   `a_box_seen_through_a_two_pixel_slit_is_never_gpu_culled`.
+- **A vertex on a zero-scale joint, or under an instance with a zero scale axis, shaded its triangles with NaN**:
+  the forward pass's `normalize` of the collapsed normal or tangent is NaN, and every fragment of a triangle that
+  touches the vertex interpolated it (near-black on lavapipe, whose min and max drop the NaN). Rigs hide parts this
+  way. `forward.slang`'s `normalize_or` passes zero from the vertex, which leaves the direction to the triangle's
+  other vertices; a fragment whose vertices all collapsed faces the camera, and a zero tangent leaves the mapped
+  normal at the geometric one. Tests: `a_vertex_on_a_zero_scale_joint_never_shades_nan`,
+  `a_flattened_instance_never_shades_nan`.
 
 ### Fixed (2026-11-15, the renderer's scenes and assets)
 - **A skinned mesh in a scene without animations drew in raw mesh space**: its joint buffer stayed identity,

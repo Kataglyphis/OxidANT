@@ -2,8 +2,8 @@
 //! See crates/webgpu_renderer/docs/renderer-bounds-invariant.md.
 
 use glam::{Mat4, Quat, Vec3};
-use kataglyphis_webgpu_renderer::scene::{CpuNode, CpuSkin};
-use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext};
+use kataglyphis_webgpu_renderer::scene::{CpuMaterial, CpuNode, CpuPrimitive, CpuSkin, Vertex};
+use kataglyphis_webgpu_renderer::{load_gltf, CpuScene, ForwardRenderer, GpuContext};
 
 fn cube_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
@@ -373,5 +373,126 @@ fn a_non_uniform_instance_scale_shades_a_skinned_mesh_like_an_unskinned_one() {
     assert!(
         differing < 40,
         "a skinned and a plain cube under the same instance shade differently in {differing} pixels"
+    );
+}
+
+/// Half-float HDR channels with every exponent bit set: Inf, or a NaN the adapter's min and max kept.
+fn non_finite_channels(hdr: &[u16]) -> usize {
+    hdr.iter().filter(|h| *h & 0x7c00 == 0x7c00).count()
+}
+
+/// Rigs hide parts with a zero-scale joint, whose vertices' normals and tangents collapse to zero.
+#[test]
+fn a_vertex_on_a_zero_scale_joint_never_shades_nan() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    // The top corners ride a zero-scale joint at the top face's centre, so every visible face meets it.
+    let mut scene = skinned_cube_scene(Vec3::ZERO);
+    scene.nodes.push(CpuNode {
+        parent: None,
+        translation: Vec3::new(0.0, 0.5, 0.0),
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ZERO,
+    });
+    scene.skins[0].joints.push(2);
+    scene.skins[0].inverse_bind_matrices.push(Mat4::IDENTITY);
+    for v in &mut scene.primitives[0].vertices {
+        if v.position[1] > 0.0 {
+            v.joints = [1.0, 0.0, 0.0, 0.0];
+        }
+    }
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(&gpu, &scene);
+
+    let red = red_pixels_around(&mut renderer, &gpu, Vec3::ZERO);
+    let hdr = renderer.read_hdr_target(&gpu).expect("HDR readback");
+    assert_eq!(non_finite_channels(&hdr), 0, "the pyramid left Inf or NaN");
+    // Where min and max drop the NaN (lavapipe), the faces shade near-black instead.
+    assert!(
+        red > 200,
+        "the pyramid must shade red, found {red} red pixels"
+    );
+}
+
+/// A red octahedron whose smooth normals are its corners.
+fn smooth_octahedron() -> CpuPrimitive {
+    let corners = [
+        Vec3::X,
+        Vec3::NEG_X,
+        Vec3::Y,
+        Vec3::NEG_Y,
+        Vec3::Z,
+        Vec3::NEG_Z,
+    ];
+    let vertices = corners
+        .iter()
+        .map(|&c| Vertex {
+            position: (c * 0.8).to_array(),
+            normal: c.to_array(),
+            uv: [0.0, 0.0],
+            tangent: if c.x == 0.0 {
+                [1.0, 0.0, 0.0, 1.0]
+            } else {
+                [0.0, 1.0, 0.0, 1.0]
+            },
+            joints: [0.0; 4],
+            weights: [0.0; 4],
+            color: [1.0; 4],
+            uv1: [0.0, 0.0],
+        })
+        .collect();
+    CpuPrimitive {
+        vertices,
+        indices: vec![
+            0, 2, 4, 0, 4, 3, 0, 3, 5, 0, 5, 2, 1, 4, 2, 1, 3, 4, 1, 5, 3, 1, 2, 5,
+        ],
+        transform: Mat4::IDENTITY,
+        node_index: None,
+        skin_index: None,
+        material: CpuMaterial {
+            base_color: [0.8, 0.2, 0.2, 1.0],
+            ..CpuMaterial::default()
+        },
+        morph_targets: Vec::new(),
+        morph_weights: Vec::new(),
+    }
+}
+
+/// An instance with a zero scale axis zeroes every normal lying across it, here the y and z corners'.
+#[test]
+fn a_flattened_instance_never_shades_nan() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(
+        &gpu,
+        &CpuScene {
+            primitives: vec![smooth_octahedron()],
+            ..CpuScene::default()
+        },
+    );
+    renderer.set_instances(&gpu, 0, &[Mat4::from_scale(Vec3::new(0.0, 1.0, 1.0))]);
+    // Looking down -x at the flat diamond the +x half leaves.
+    let camera = kataglyphis_webgpu_renderer::OrbitCamera {
+        yaw_deg: 0.0,
+        pitch_deg: 0.0,
+        ..Default::default()
+    };
+    let pixels = renderer
+        .render_to_pixels(&gpu, 128, 128, &camera)
+        .expect("render");
+    let red = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[0] as i32 > p[2] as i32 + 20)
+        .count();
+    let hdr = renderer.read_hdr_target(&gpu).expect("HDR readback");
+    assert_eq!(non_finite_channels(&hdr), 0, "the diamond left Inf or NaN");
+    assert!(
+        red > 300,
+        "the diamond must shade red, found {red} red pixels"
     );
 }

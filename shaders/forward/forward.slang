@@ -173,6 +173,12 @@ float3x3 normal_transform(float4x4 m)
     return float3x3(cross(r1, r2), cross(r2, r0), cross(r0, r1)) * mirror_sign(m);
 }
 
+// normalize() of a zero vector is NaN, and a zero-scale joint or a flattening instance zeroes normals and tangents.
+float3 normalize_or(float3 v, float3 fallback)
+{
+    return dot(v, v) > 1e-30 ? normalize(v) : fallback;
+}
+
 float4x4 skin_matrix(VsIn In)
 {
     float4 w = In.weights;
@@ -205,18 +211,19 @@ VsOut vs_main(VsIn In)
     float4x4 model = mul(instance_matrix(In), skin_matrix(In));
     float4 worldPos = mul(model, float4(In.position, 1.0));
     o.svPosition = mul(frame.view_proj, worldPos);
+    // A collapsed vertex passes zero, which leaves the interpolated direction to its triangle's other vertices.
     if (In.weights.x + In.weights.y + In.weights.z + In.weights.w > 0.0001)
     {
-        o.worldNormal = normalize(mul(normal_transform(model), In.normal));
+        o.worldNormal = normalize_or(mul(normal_transform(model), In.normal), float3(0.0));
     }
     else
     {
         float3 nModel = mul(prim.normal_matrix, float4(In.normal, 0.0)).xyz;
-        o.worldNormal = normalize(mul(normal_transform(instance_matrix(In)), nModel));
+        o.worldNormal = normalize_or(mul(normal_transform(instance_matrix(In)), nModel), float3(0.0));
     }
     // A mirroring transform reverses the tangent frame's handedness, so the bitangent sign follows.
     float handedness = In.tangent.w * mirror_sign(model);
-    o.worldTangent = float4(normalize(mul(model, float4(In.tangent.xyz, 0.0)).xyz), handedness);
+    o.worldTangent = float4(normalize_or(mul(model, float4(In.tangent.xyz, 0.0)).xyz, float3(0.0)), handedness);
     o.uv = In.uv;
     o.lightSpacePos = mul(frame.light_space, worldPos);
     o.worldPosition = worldPos.xyz;
@@ -423,20 +430,21 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float occlusion = lerp(1.0, occlusionSample.r, prim.material_factors.z);
     float3 emissive = prim.emissive_factor.rgb * emissiveSample.rgb;
 
-    float3 nGeom = normalize(In.worldNormal);
-    float3 t = normalize(In.worldTangent.xyz - nGeom * dot(nGeom, In.worldTangent.xyz));
+    float3 v = normalize(frame.camera_position.xyz - In.worldPosition);
+    // A fragment whose vertices all collapsed faces the camera; a zero tangent leaves the mapped normal at nGeom.
+    float3 nGeom = normalize_or(In.worldNormal, v);
+    float3 t = normalize_or(In.worldTangent.xyz - nGeom * dot(nGeom, In.worldTangent.xyz), float3(0.0));
     float3 b = cross(nGeom, t) * In.worldTangent.w;
     float3 nTs = normalSample.xyz * 2.0 - 1.0;
     // A two-channel map (BC5) samples blue as 0; glTF normals are unit length, so z is rebuilt from xy.
     if (normalSample.b == 0.0) nTs.z = sqrt(saturate(1.0 - dot(nTs.xy, nTs.xy)));
     nTs = float3(nTs.xy * prim.material_factors.w, nTs.z);
     // Row-multiply mul(v, M), as in common/normal_map.slang's apply_normal_map().
-    float3 n = normalize(mul(nTs, float3x3(t, b, nGeom)));
+    float3 n = normalize_or(mul(nTs, float3x3(t, b, nGeom)), nGeom);
     // A doubleSided back face reverses the whole tangent frame (glTF 3.9.2), so the mapped normal flips.
     if (!isFrontFace) n = -n;
 
     float3 l = normalize(frame.light_dir_ambient.xyz);
-    float3 v = normalize(frame.camera_position.xyz - In.worldPosition);
 
     float3 f0 = lerp(float3(0.04), albedo.rgb, metallic);
     float3 radiance = frame.light_color_intensity.rgb * frame.light_color_intensity.w;
