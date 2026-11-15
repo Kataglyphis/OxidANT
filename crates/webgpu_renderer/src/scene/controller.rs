@@ -78,8 +78,7 @@ impl OrbitController {
                 camera,
             ),
             WindowEvent::Focused(false) => {
-                self.dragging = false;
-                self.last_cursor = None;
+                self.forget_pointers();
                 false
             }
             _ => false,
@@ -92,10 +91,12 @@ impl OrbitController {
             WindowEvent::CursorMoved { position, .. } => {
                 self.last_cursor = Some((position.x, position.y));
             }
-            WindowEvent::Focused(false) => {
-                self.dragging = false;
-                self.last_cursor = None;
-            }
+            WindowEvent::Focused(false) => self.forget_pointers(),
+            WindowEvent::Touch(touch) => self.note_consumed_touch(
+                touch.id,
+                touch.phase,
+                (touch.location.x, touch.location.y),
+            ),
             WindowEvent::MouseInput {
                 state: ElementState::Released,
                 button: MouseButton::Left,
@@ -106,6 +107,35 @@ impl OrbitController {
             }
             _ => {}
         }
+    }
+
+    /// A drag and every finger end with the window's focus; a finger lifted elsewhere would stay down forever.
+    fn forget_pointers(&mut self) {
+        self.dragging = false;
+        self.last_cursor = None;
+        self.touches.clear();
+        self.last_pinch_distance = None;
+    }
+
+    /// A finger egui took still lifts or moves here, or a ghost finger turns every later one-finger orbit into a pinch.
+    fn note_consumed_touch(&mut self, id: u64, phase: TouchPhase, position: (f64, f64)) {
+        match phase {
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                self.touches.retain(|(existing, _)| *existing != id);
+            }
+            TouchPhase::Moved => {
+                if let Some(slot) = self
+                    .touches
+                    .iter_mut()
+                    .find(|(existing, _)| *existing == id)
+                {
+                    slot.1 = position;
+                }
+            }
+            TouchPhase::Started => return,
+        }
+        // The next pinch measures from here, not across the travel egui swallowed.
+        self.last_pinch_distance = None;
     }
 
     /// One finger orbits, two pinch to zoom; true when the camera moved.
@@ -405,6 +435,52 @@ mod tests {
             yaw_delta < 5.0,
             "one finger moving 10px should not swing yaw by {yaw_delta} degrees"
         );
+    }
+
+    fn touch(id: u64, phase: TouchPhase, x: f64) -> WindowEvent {
+        WindowEvent::Touch(winit::event::Touch {
+            device_id: DeviceId::dummy(),
+            phase,
+            location: PhysicalPosition::new(x, 300.0),
+            force: None,
+            id,
+        })
+    }
+
+    #[test]
+    fn a_finger_lifted_on_the_overlay_leaves_no_ghost_behind() {
+        let mut controller = OrbitController::default();
+        let mut camera = OrbitCamera::default();
+        controller.handle_event(&touch(1, TouchPhase::Started, 100.0), &mut camera);
+        // The press landed on a panel, so egui consumed the lift.
+        controller.note_consumed_event(&touch(1, TouchPhase::Ended, 100.0));
+        let (yaw, radius) = (camera.yaw_deg, camera.radius);
+        controller.handle_event(&touch(2, TouchPhase::Started, 400.0), &mut camera);
+        controller.handle_event(&touch(2, TouchPhase::Moved, 440.0), &mut camera);
+        assert!(camera.yaw_deg > yaw, "one finger must orbit");
+        assert_eq!(camera.radius, radius, "one finger must not pinch");
+    }
+
+    #[test]
+    fn a_consumed_move_and_lost_focus_leave_no_finger_behind() {
+        let mut controller = OrbitController::default();
+        let mut camera = OrbitCamera {
+            radius: 10.0,
+            ..OrbitCamera::default()
+        };
+        controller.handle_event(&touch(1, TouchPhase::Started, 100.0), &mut camera);
+        controller.handle_event(&touch(2, TouchPhase::Started, 200.0), &mut camera);
+        controller.handle_event(&touch(2, TouchPhase::Moved, 200.0), &mut camera);
+        // egui swallows finger 2's travel; the next pinch must start from where it went.
+        controller.note_consumed_event(&touch(2, TouchPhase::Moved, 500.0));
+        controller.handle_event(&touch(2, TouchPhase::Moved, 500.0), &mut camera);
+        assert_eq!(camera.radius, 10.0, "swallowed travel must not zoom");
+        controller.note_consumed_event(&WindowEvent::Focused(false));
+        let yaw = camera.yaw_deg;
+        controller.handle_event(&touch(3, TouchPhase::Started, 100.0), &mut camera);
+        controller.handle_event(&touch(3, TouchPhase::Moved, 140.0), &mut camera);
+        assert!(camera.yaw_deg > yaw, "both fingers went with the focus");
+        assert_eq!(camera.radius, 10.0);
     }
 
     #[test]

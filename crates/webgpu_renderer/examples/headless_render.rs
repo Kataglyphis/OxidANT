@@ -18,6 +18,7 @@ fn main() -> anyhow::Result<()> {
     let height: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(720);
 
     let gpu = GpuContext::new_headless()?;
+    gpu.check_target_size(width, height)?;
     let scene = load_gltf(&model)?;
     println!(
         "loaded {model}: {} primitives, {} triangles",

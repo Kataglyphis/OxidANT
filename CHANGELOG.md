@@ -14,6 +14,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed (2026-11-15, the app, UI and web bugs)
+- **A Timeout, Occluded or Validation acquire ended the viewer's frame loop**: nothing asked for the next redraw.
+  `GpuContext::acquire` repairs the surface and says when to retry, next frame or, occluded, on
+  `WindowEvent::Occluded(false)`. A Suboptimal frame reconfigures after presenting, as `context.rs` claimed; a
+  native Lost surface is made anew from the window, where reconfiguring it was a validation panic, and a browser's
+  Lost, a failed configure, reconfigures.
+- **A window or canvas over 8192 px panicked in surface configure**: the surface scales down within the device's
+  `max_texture_dimension_2d` with the window's aspect, and egui paints at the same scale, so it still hit-tests
+  where it draws. `headless_render` and `dump_gpu_timings` check their size (`GpuContext::check_target_size`).
+- **The windowed viewer took a GL adapter** and panicked translating SSAO's WGSL. Native contexts ask for
+  `Backends::PRIMARY`, and `context::check_adapter` refuses any other backend with a reason, windowed and headless.
+- `dump_gpu_timings` wrote `frames_measured: 96` without timestamps; it writes 0 then, as the C++ schema does, and
+  otherwise the frames whose timestamps arrived. Its JSON tests run with `cargo test` (`[[example]] test = true`).
+- **A touch egui consumed left a ghost finger** in the orbit controller (a tap on a panel was enough), so every
+  later one-finger orbit pinched instead; a consumed lift or move updates the fingers, and lost focus clears them.
+- An orbit drag turned per physical pixel, so a HiDPI screen or a phone orbited 2-3x faster; it turns 0.25° per
+  logical pixel.
+- The idle spin's yaw is computed in f64 and wrapped to 360°; f32 degrees stepped visibly after a few hours.
+  `set_animation_time` still receives f32 seconds from `StudioApp::advance`.
 - `crates/gui`: a minimized, covered or stalled window (an Occluded, Timeout or Validation acquire) quit the camera
   GUI; it skips the frame, and a Suboptimal one reconfigures after presenting. `submit_frame` is 57 lines and left
   `rust-function-size.allow`.

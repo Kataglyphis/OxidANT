@@ -1,37 +1,54 @@
 //! Renders headlessly and writes per-pass GPU timings as JSON in the C++ engine's schema.
 //! Usage: `cargo run --example dump_gpu_timings -- <out.json> [scene.gltf [width height]]`
+//! `frames_measured` counts the frames whose timestamps arrived, 0 without timestamps; a pass is the renderer's mean.
 
+use std::path::{Path, PathBuf};
+
+use anyhow::Context as _;
 use kataglyphis_webgpu_renderer::{
     load_gltf, ForwardRenderer, GpuContext, OrbitCamera, TonemapPass,
 };
 
-fn main() {
+/// Matches the C++ export; tests/gpu_timing.rs says why 64 is the minimum that yields averages.
+const FRAMES: u32 = 96;
+
+/// Each pass's mean GPU milliseconds, by name.
+type Passes = Vec<(&'static str, f32)>;
+
+fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let out_path = args
         .next()
         .unwrap_or_else(|| "gpu-timings-rust.json".to_string());
     let scene_path = args
         .next()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
-        });
-
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf"));
     let width: u32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(1280);
     let height: u32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(720);
 
     let Ok(gpu) = GpuContext::new_headless() else {
         eprintln!("no GPU adapter; writing an unsupported dump");
-        write_json(&out_path, 0, false, &[]);
-        return;
+        return write(&out_path, &timings_json(false, 0, &[]));
     };
+    gpu.check_target_size(width, height)?;
+    let (supported, measured, passes) = measure(&gpu, &scene_path, [width, height])?;
+    write(&out_path, &timings_json(supported, measured, &passes))?;
+    eprintln!("wrote {out_path} ({} passes)", passes.len());
+    Ok(())
+}
 
-    let mut renderer = ForwardRenderer::new(&gpu, width, height);
-    let supported = renderer.enable_gpu_timing(&gpu);
-    renderer.upload_scene(&gpu, &load_gltf(scene_path).expect("scene must load"));
+/// Renders [`FRAMES`] frames: whether timestamps work, how many frames delivered them, and each pass's mean.
+fn measure(
+    gpu: &GpuContext,
+    scene: &Path,
+    [width, height]: [u32; 2],
+) -> anyhow::Result<(bool, u32, Passes)> {
+    let mut renderer = ForwardRenderer::new(gpu, width, height);
+    let supported = renderer.enable_gpu_timing(gpu);
+    renderer.upload_scene(gpu, &load_gltf(scene).context("scene must load")?);
     let camera = OrbitCamera::default();
-    let mut tonemap = TonemapPass::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
-
+    let mut tonemap = TonemapPass::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("timing_dump_target"),
         size: wgpu::Extent3d {
@@ -47,31 +64,55 @@ fn main() {
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-    // Matches the C++ export; tests/gpu_timing.rs says why 64 is the minimum that yields averages.
-    let frames = 96u32;
-    for _ in 0..frames {
-        renderer.render_tonemapped(&gpu, &mut tonemap, &view, width, height, &camera);
+    let mut measured = 0;
+    for _ in 0..FRAMES {
+        renderer.render_tonemapped(gpu, &mut tonemap, &view, width, height, &camera);
         // Headless: nothing presents, so the map callbacks need a poll to run.
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        // With that wait each frame's stamps land one frame later, so this counts the frames that delivered some.
+        if !renderer.gpu_timings_ms().is_empty() {
+            measured += 1;
+        }
     }
-
-    let timings = renderer.gpu_timings_ms();
-    write_json(&out_path, frames, supported, &timings);
-    eprintln!("wrote {out_path} ({} passes)", timings.len());
+    Ok((supported, measured, renderer.gpu_timings_ms()))
 }
 
-fn write_json(path: &str, frames: u32, supported: bool, passes: &[(&'static str, f32)]) {
+/// The C++ export's JSON: without timestamps no frame was measured, however many ran.
+fn timings_json(supported: bool, frames_with_samples: u32, passes: &[(&str, f32)]) -> String {
+    let frames = if supported { frames_with_samples } else { 0 };
     let body: Vec<String> = passes
         .iter()
         .map(|(name, ms)| format!("    \"{name}\": {ms}"))
         .collect();
-    let json = format!(
+    format!(
         "{{\n  \"frames_measured\": {frames},\n  \"timestamps_supported\": {supported},\n  \"passes\": {{\n{}\n  }}\n}}\n",
         body.join(",\n")
-    );
-    if let Err(err) = std::fs::write(path, json) {
-        eprintln!("could not write {path}: {err}");
-        std::process::exit(1);
+    )
+}
+
+fn write(path: &str, json: &str) -> anyhow::Result<()> {
+    std::fs::write(path, json).with_context(|| format!("could not write {path}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn without_timestamps_no_frame_counts_as_measured() {
+        let json = timings_json(false, FRAMES, &[]);
+        assert!(json.contains("\"frames_measured\": 0,"), "{json}");
+        assert!(json.contains("\"timestamps_supported\": false,"), "{json}");
+        assert!(json.contains("\"passes\": {\n\n  }"), "{json}");
+    }
+
+    #[test]
+    fn with_timestamps_the_count_and_every_pass_are_written() {
+        let json = timings_json(true, 95, &[("shadow", 0.5), ("forward", 1.25)]);
+        assert!(json.contains("\"frames_measured\": 95,"), "{json}");
+        assert!(
+            json.contains("\"shadow\": 0.5,\n    \"forward\": 1.25\n"),
+            "{json}"
+        );
     }
 }

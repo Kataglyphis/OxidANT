@@ -92,17 +92,11 @@ fn performance_now_seconds() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Sizes the canvas backing store to CSS size x devicePixelRatio, which winit skips on web.
-fn sync_canvas_backing_size(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
+/// The canvas's CSS size x devicePixelRatio; configuring the surface sizes its backing store, within the device limit.
+fn canvas_device_size(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
     let dpr = web_sys::window().map_or(1.0, |w| w.device_pixel_ratio());
     let width = ((canvas.client_width().max(1) as f64) * dpr) as u32;
     let height = ((canvas.client_height().max(1) as f64) * dpr) as u32;
-    if canvas.width() != width {
-        canvas.set_width(width);
-    }
-    if canvas.height() != height {
-        canvas.set_height(height);
-    }
     (width.max(1), height.max(1))
 }
 
@@ -189,15 +183,14 @@ fn scene_source(name: &str) -> ModelSource {
     }
 }
 
-/// Follows the canvas's CSS layout size every frame, which winit's web backend does not report.
+/// Follows the canvas's CSS layout size every frame; against the size asked, so a clamped surface stays put.
 fn follow_canvas_size(window: &Window, gpu: &mut GpuContext) {
     let Some(canvas) = window.canvas() else {
         return;
     };
-    let (width, height) = sync_canvas_backing_size(&canvas);
-    let configured = gpu.surface_config.as_ref().map(|c| (c.width, c.height));
-    if configured != Some((width, height)) {
-        gpu.resize(width, height);
+    let size = canvas_device_size(&canvas);
+    if gpu.requested_size() != Some(size) {
+        gpu.resize(size.0, size.1);
     }
 }
 
@@ -224,7 +217,7 @@ impl ApplicationHandler for DemoApp {
             slot.borrow_mut().replace(Rc::clone(&self.dropped_scene));
         });
         let canvas = window.canvas().expect("winit window must expose a canvas");
-        let size = sync_canvas_backing_size(&canvas);
+        let size = canvas_device_size(&canvas);
         spawn_app_init(Rc::clone(&self.app), Arc::clone(&window), size);
         self.window = Some(window);
     }
