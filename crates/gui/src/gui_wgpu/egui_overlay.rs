@@ -63,7 +63,6 @@ impl EguiOverlay {
         frame_dimensions: (u32, u32),
         inference: &mut InferenceState,
     ) -> egui::FullOutput {
-        self.screen.pixels_per_point = window.scale_factor() as f32;
         let raw_input = self.state.take_egui_input(window);
 
         let mut overlay_enabled = self.enabled;
@@ -119,6 +118,7 @@ impl EguiOverlay {
             }
         }
         let full_output = ctx.end_pass();
+        self.screen = screen_for(&full_output, self.screen.size_in_pixels);
 
         self.enabled = overlay_enabled;
         inference.infer_enabled = infer_enabled;
@@ -200,11 +200,40 @@ impl EguiOverlay {
     }
 }
 
+/// The pass's own pixels per point, egui's zoom times the window's scale, so a Ctrl +/- zoom draws where it hit-tests.
+pub(crate) fn screen_for(output: &egui::FullOutput, size_in_pixels: [u32; 2]) -> ScreenDescriptor {
+    ScreenDescriptor {
+        size_in_pixels,
+        pixels_per_point: output.pixels_per_point,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use egui::epaint::{RectShape, Shape};
 
     use super::*;
+
+    #[test]
+    fn a_zoomed_pass_paints_at_its_zoomed_scale_not_the_windows() {
+        let ctx = EguiContext::default();
+        ctx.set_zoom_factor(1.5);
+        let mut input = egui::RawInput::default();
+        let root = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        root.native_pixels_per_point = Some(2.0);
+        // A new zoom factor takes effect at the start of the next pass.
+        let mut screen = None;
+        for _ in 0..2 {
+            let output = ctx.run_ui(input.clone(), |ui| {
+                ui.label("zoomed");
+            });
+            screen = Some(screen_for(&output, [1600, 1200]));
+            output.drop_without_applying_deltas();
+        }
+        let screen = screen.expect("two passes ran");
+        assert_eq!(screen.size_in_pixels, [1600, 1200]);
+        assert_eq!(screen.pixels_per_point, 3.0);
+    }
 
     /// Every text and every detection box a headless egui pass painted; no renderer takes the textures.
     fn painted(output: egui::FullOutput) -> (String, usize) {

@@ -13,6 +13,60 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, the Studio Pro fly camera and Camera tab)
+- `scene::fly`, the C++ engine's fly camera: W A S D move along the view and its right vector, Q and E turn
+  90°/s, the held right button looks around at 0.25°/px with the pointer held (winit's `Locked`, `Confined` where
+  a platform has no lock, the Pointer Lock API in a browser; raw `DeviceEvent::MouseMotion`), the pitch stays
+  within ±89° and a step integrates at most 0.1 s. It drives the same `OrbitCamera` as the orbit controller:
+  flying moves eye and target together and turns about the eye, orbiting turns about the target, so an orbit after
+  a flight circles the point ahead. The speed starts at a quarter of the scene's diagonal per second, the C++
+  10 units/s in a 40-unit Sponza, so a 1 m cube and an 8 km city both take four seconds to cross.
+- Input routing: a press egui consumes never reaches the fly camera, a release always does, losing the window's
+  focus releases every key and ends the look, and winit's synthetic presses on focus gain are ignored. While
+  looking egui sees no pointer moves; the pointer comes back where the look began, as GLFW's does.
+- The Camera tab: field of view, near and far planes on log scales (far stays twice near), the fly speed, and
+  *Frame the scene*, which emits `EditorAction::FrameScene`: the home view, the fly speed refitted. CONTROLS lists
+  W A S D, Q E and the right mouse; a test keeps every fly key in it and off every shortcut.
+
+### Changed (2026-11-15, the Studio Pro fly camera and Camera tab)
+- The screenshot key moved from S to F12: S flies back.
+
+### Fixed (2026-11-15, the app, UI and web bugs)
+- **A Timeout, Occluded or Validation acquire ended the viewer's frame loop**: nothing asked for the next redraw.
+  `GpuContext::acquire` repairs the surface and says when to retry, next frame or, occluded, on
+  `WindowEvent::Occluded(false)`. A Suboptimal frame reconfigures after presenting, as `context.rs` claimed; a
+  native Lost surface is made anew from the window, where reconfiguring it was a validation panic, and a browser's
+  Lost, a failed configure, reconfigures.
+- **A window or canvas over 8192 px panicked in surface configure**: the surface scales down within the device's
+  `max_texture_dimension_2d` with the window's aspect (`context::surface_extent`, the one clamp the render fix
+  below uses too), and egui paints at the same scale, so it still hit-tests where it draws.
+  `headless_render` and `dump_gpu_timings` check their size (`GpuContext::check_target_size`).
+- **The windowed viewer took a GL adapter** and panicked translating SSAO's WGSL. Every context asks for
+  `context::BACKENDS` (`Backends::PRIMARY`; the render fix below had asked natively for every backend but GL),
+  and `context::check_adapter` refuses any other backend with a reason, windowed and headless.
+- `dump_gpu_timings` wrote `frames_measured: 96` without timestamps; it writes 0 then, as the C++ schema does, and
+  otherwise the frames whose timestamps arrived. Its JSON tests run with `cargo test` (`[[example]] test = true`).
+- **A touch egui consumed left a ghost finger** in the orbit controller (a tap on a panel was enough), so every
+  later one-finger orbit pinched instead; a consumed lift or move updates the fingers, and lost focus clears them.
+- An orbit drag turned per physical pixel, so a HiDPI screen or a phone orbited 2-3x faster; it turns 0.25° per
+  logical pixel.
+- The idle spin's yaw is computed in f64 and wrapped to 360°; f32 degrees stepped visibly after a few hours.
+  `set_animation_time` still receives f32 seconds from `StudioApp::advance`.
+- Web: a browser with `navigator.gpu` but no adapter panicked behind a live "drag to orbit" status. The page shows
+  its WebGPU fallback with the reason (`webgpuDemoFailed`), and the scene picker opens only once the device is up
+  (`webgpuDemoReady`); a native test checks that the page defines each hook the demo calls.
+- Web: winit cancelled Tab, F5, Ctrl+R and Ctrl +/-/0 on the focused canvas, a keyboard trap in the docs iframe.
+  A capture-phase listener on the canvas's parent leaves them to the browser unless an egui widget has focus.
+- Web: after a drop the scene picker still showed the startup scene, which then could not be picked again; a drop
+  clears it (`webgpuDemoDropped`).
+- `crates/gui`: a minimized, covered or stalled window (an Occluded, Timeout or Validation acquire) quit the camera
+  GUI; it skips the frame, and a Suboptimal one reconfigures after presenting. `submit_frame` is 57 lines and left
+  `rust-function-size.allow`.
+- `crates/gui`: the overlay painted at the window's scale, so egui's Ctrl +/- zoom drew the UI off its hit areas and
+  the detection boxes off the video; it paints at the pass's own `pixels_per_point`.
+- `crates/gui`: the CPU graph sat at the top whenever the process used more than one core; it scales to 100 % or
+  the history's peak.
+
 ### Added (2026-11-15, the Studio Pro editor shell)
 - `ui::Editor`, BeschleunigerBallett's docked C++ editor in egui, one module per dock under
   `crates/webgpu_renderer/src/ui/editor/`: the menu bar (brand, File/View/Render/Help, the centred renderer switch,
@@ -155,8 +209,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **A GL adapter could win adapter selection natively**: both contexts asked for every backend, and wgpu ranks a
   GL adapter (an integrated or unknown GPU) above lavapipe, so headless tests skipped on hosts where Vulkan worked,
   and a windowed host whose best adapter was GL (a Windows VM) panicked building the depth-resolve and SSAO
-  pipelines, whose depth `textureLoad` has no GLSL form. Native contexts no longer request GL; the web keeps every
-  backend. Test: `native_contexts_never_request_the_gl_backend`.
+  pipelines, whose depth `textureLoad` has no GLSL form. No context requests GL (`context::BACKENDS`, above).
+  Test: `native_contexts_never_request_the_gl_backend`.
 - **A window wider or taller than 8192 px panicked**: the device asks for WebGPU's default limits, but the surface
   took any size, so a window across two 5K monitors failed surface validation. The surface now scales down to the
   device's largest texture side with its aspect kept, and the scene renders at that size. Test:

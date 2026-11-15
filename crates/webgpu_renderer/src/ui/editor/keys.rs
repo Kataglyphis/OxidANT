@@ -24,6 +24,21 @@ pub struct KeyBinding {
 
 pub const KEY_BINDINGS: &[KeyBinding] = &[
     KeyBinding {
+        keys: &["W", "A", "S", "D"],
+        action: "Move forward, back and sideways",
+        shortcut: None,
+    },
+    KeyBinding {
+        keys: &["Q", "E"],
+        action: "Turn left and right",
+        shortcut: None,
+    },
+    KeyBinding {
+        keys: &["Right mouse"],
+        action: "Hold to look around",
+        shortcut: None,
+    },
+    KeyBinding {
         keys: &["Left drag"],
         action: "Orbit around the target",
         shortcut: None,
@@ -49,9 +64,9 @@ pub const KEY_BINDINGS: &[KeyBinding] = &[
         shortcut: Some((Key::F5, Shortcut::ReloadShaders)),
     },
     KeyBinding {
-        keys: &["S"],
+        keys: &["F12"],
         action: "Save a screenshot",
-        shortcut: Some((Key::S, Shortcut::Screenshot)),
+        shortcut: Some((Key::F12, Shortcut::Screenshot)),
     },
 ];
 
@@ -67,7 +82,7 @@ impl KeyBinding {
     }
 }
 
-/// The table's keys pressed this pass; none while typing, so a field can take an `s`.
+/// The table's keys pressed this pass; none while typing, as the C++ editor ignores them during text input.
 pub(super) fn shortcuts(
     ctx: &Context,
     esc_armed: bool,
@@ -140,13 +155,29 @@ mod tests {
     }
 
     #[test]
+    fn the_controls_name_every_fly_key_and_no_shortcut_takes_one() {
+        use crate::scene::fly::FlyKey;
+        let listed: Vec<&str> = KEY_BINDINGS
+            .iter()
+            .flat_map(|b| b.keys.iter().copied())
+            .collect();
+        for key in FlyKey::ALL {
+            assert!(listed.contains(&key.label()), "{key:?} is not in CONTROLS");
+        }
+        for (key, shortcut) in KEY_BINDINGS.iter().filter_map(|b| b.shortcut) {
+            let flies = FlyKey::ALL.iter().any(|fly| fly.label() == key.name());
+            assert!(!flies, "{shortcut:?} would fire on a fly key");
+        }
+    }
+
+    #[test]
     fn the_browser_lists_no_file_keys_and_an_esc_that_never_quits() {
         let browser = HostCaps::default();
         let rows: Vec<&str> = KEY_BINDINGS
             .iter()
             .filter_map(|b| b.action_on(browser))
             .collect();
-        assert_eq!(rows.len(), 4);
+        assert_eq!(rows.len(), 7);
         assert!(rows.contains(&"Leave the focused field or menu"));
         assert!(!rows
             .iter()

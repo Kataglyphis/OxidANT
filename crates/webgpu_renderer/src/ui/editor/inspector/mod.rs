@@ -34,7 +34,7 @@ pub(super) fn show(ui: &mut Ui, editor: &mut Editor, cx: &mut EditorContext<'_>)
         .show(ui, |ui| match object.tab() {
             InspectorTab::Model => model::show(ui, cx),
             InspectorTab::Sun => sun::show(ui, cx),
-            InspectorTab::Camera => camera::show(ui, cx),
+            InspectorTab::Camera => camera::show(ui, cx, &mut editor.actions),
             InspectorTab::Sky => sky::show(ui, cx),
             InspectorTab::Renderer => renderer::show(ui, cx, &mut editor.actions),
         });

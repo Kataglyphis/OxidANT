@@ -54,7 +54,13 @@ web-sys = { version = "0.3", features = [
     "FileList",
     "File",
     "Performance",
+    "KeyboardEvent",
 ] }
+
+# Its JSON schema has unit tests, which `cargo test` runs only for an example marked so.
+[[example]]
+name = "dump_gpu_timings"
+test = true
 
 [lints]
 workspace = true

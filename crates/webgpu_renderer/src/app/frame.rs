@@ -3,6 +3,7 @@
 use winit::window::Window;
 
 use super::{AppSignal, StudioApp};
+use crate::context::AcquireRetry;
 use crate::render::forward::readback;
 use crate::render::texture::create_2d_texture;
 use crate::ui::editor::{EditorAction, EditorContext, RendererSettings, SceneStats};
@@ -41,20 +42,29 @@ impl StudioApp {
     /// Draws one frame and returns what the shell must do; a frame without a surface texture is skipped whole.
     pub fn frame(&mut self, window: &Window, now_s: f64) -> Vec<AppSignal> {
         // Acquired before the egui pass, so a skipped frame never strands a font atlas delta.
-        let Some(frame) = self.acquire(window) else {
-            return Vec::new();
+        let frame = match self.gpu.acquire() {
+            Ok(frame) => frame,
+            Err(retry) => {
+                // An occluded window asks again when it shows (`Occluded(false)`); every other failure next frame.
+                if retry == AcquireRetry::NextFrame {
+                    window.request_redraw();
+                }
+                return Vec::new();
+            }
         };
         let size = [frame.texture.width(), frame.texture.height()];
         let raw = self.overlay.take_input(window);
         let (mut output, signals) = self.pass(raw, now_s, size);
         let platform = std::mem::take(&mut output.platform_output);
         self.overlay.handle_platform_output(window, platform);
+        // A surface the texture limit shrank is stretched over the window, so egui paints at the same shrink.
+        output.pixels_per_point *= self.gpu.surface_scale();
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         self.draw(&view, size, output);
         window.pre_present_notify();
-        self.gpu.queue.present(frame);
+        self.gpu.present(frame);
         window.request_redraw();
         signals
     }
@@ -83,23 +93,6 @@ impl StudioApp {
         Ok((pixels, signals))
     }
 
-    fn acquire(&mut self, window: &Window) -> Option<wgpu::SurfaceTexture> {
-        match self.gpu.surface.as_ref()?.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Some(frame),
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                // Never abort on Outdated/Lost: reconfigure and retry next frame.
-                self.gpu.reconfigure();
-                window.request_redraw();
-                None
-            }
-            other => {
-                log::error!("Surface acquire failed: {other:?}");
-                None
-            }
-        }
-    }
-
     /// The editor pass between the renderer's settings read and written back; its rect becomes the camera's.
     fn pass(
         &mut self,
@@ -119,6 +112,7 @@ impl StudioApp {
         let mut cx = EditorContext {
             settings: &mut settings,
             camera: &mut self.camera,
+            fly_speed: &mut self.fly.speed,
             stats: &stats,
             frames: &self.frames,
             device: &self.device,
@@ -132,20 +126,44 @@ impl StudioApp {
             .run(raw, |ui| editor.show(ui, &mut cx, esc_armed));
         settings.apply(&mut self.renderer);
         self.camera.viewport = editor_output.viewport;
+        let signals = self.act(editor_output.actions);
         self.advance(now_s);
-        let signals = editor_output.actions.into_iter().map(signal).collect();
         (output, signals)
     }
 
+    /// Does what the app can itself and hands the rest to the shell.
+    fn act(&mut self, actions: Vec<EditorAction>) -> Vec<AppSignal> {
+        let mut signals = Vec::new();
+        for action in actions {
+            match action {
+                EditorAction::FrameScene => {
+                    // A frame the user asked for is an interaction: the idle spin must not turn it away.
+                    self.controller.auto_orbit = false;
+                    self.frame_scene();
+                }
+                EditorAction::Quit => signals.push(AppSignal::Quit),
+                EditorAction::Screenshot => signals.push(AppSignal::Screenshot),
+                EditorAction::ReloadShaders => signals.push(AppSignal::ReloadShaders),
+            }
+        }
+        signals
+    }
+
+    /// The frame's time step: the fly camera's held keys, the idle spin and the animation clock.
     fn advance(&mut self, now_s: f64) {
-        let elapsed = (now_s - *self.epoch_s.get_or_insert(now_s)) as f32;
+        let elapsed_s = now_s - *self.epoch_s.get_or_insert(now_s);
+        let step_s = self.clock.tick_at(now_s);
+        self.renderer.frame_delta_seconds = step_s;
+        if self.fly.is_engaged() {
+            self.controller.auto_orbit = false;
+        }
+        self.fly.advance(&mut self.camera, step_s);
         if self.controller.auto_orbit {
-            self.camera.yaw_deg = self.home.yaw_deg + elapsed * AUTO_ORBIT_DEG_PER_S;
+            self.camera.yaw_deg = auto_orbit_yaw(self.home.yaw_deg, elapsed_s);
         }
         if self.renderer.has_animations() {
-            self.renderer.set_animation_time(elapsed);
+            self.renderer.set_animation_time(elapsed_s as f32);
         }
-        self.renderer.frame_delta_seconds = self.clock.tick_at(now_s);
     }
 
     fn draw(
@@ -174,13 +192,10 @@ impl StudioApp {
     }
 }
 
-/// What the shell does for an editor action.
-fn signal(action: EditorAction) -> AppSignal {
-    match action {
-        EditorAction::Quit => AppSignal::Quit,
-        EditorAction::Screenshot => AppSignal::Screenshot,
-        EditorAction::ReloadShaders => AppSignal::ReloadShaders,
-    }
+/// The idle spin's yaw `elapsed_s` after it began, wrapped in f64: f32 degrees step visibly after a few hours.
+fn auto_orbit_yaw(home_yaw_deg: f32, elapsed_s: f64) -> f32 {
+    let yaw = f64::from(home_yaw_deg) + elapsed_s * f64::from(AUTO_ORBIT_DEG_PER_S);
+    yaw.rem_euclid(360.0) as f32
 }
 
 #[cfg(test)]
@@ -280,5 +295,95 @@ mod tests {
         assert!(!app.editor().is_visible());
         app.render_offscreen(&frame(0.2, f1())).expect("renders");
         assert_ne!(app.camera.viewport, SceneViewport::FULL);
+    }
+
+    #[test]
+    fn the_idle_spin_turns_smoothly_after_days_of_uptime() {
+        // Twelve days in, f32 seconds are 1/8 s apart: a 144 Hz spin would stall, then jump 3.75 degrees.
+        let base = f64::from(1u32 << 20);
+        let yaws: Vec<f32> = (0..8)
+            .map(|k| auto_orbit_yaw(45.0, base + f64::from(k) / 144.0))
+            .collect();
+        for pair in yaws.windows(2) {
+            let step = (pair[1] - pair[0]).rem_euclid(360.0);
+            assert!(
+                (step - AUTO_ORBIT_DEG_PER_S / 144.0).abs() < 1e-3,
+                "{yaws:?}"
+            );
+        }
+        assert_eq!(auto_orbit_yaw(45.0, 0.0), 45.0);
+        assert_eq!(auto_orbit_yaw(350.0, 1.0), 20.0);
+        // Negative control: the old f32 seconds and degrees repeat a frame's yaw.
+        let old: Vec<f32> = (0..8)
+            .map(|k| 45.0 + (base + f64::from(k) / 144.0) as f32 * AUTO_ORBIT_DEG_PER_S)
+            .collect();
+        assert!(old.windows(2).any(|pair| pair[1] == pair[0]), "{old:?}");
+    }
+
+    #[test]
+    fn held_keys_fly_the_camera_and_end_the_idle_spin() {
+        use crate::scene::fly::{FlyInput, FlyKey};
+        let Some(mut app) = studio() else {
+            return;
+        };
+        app.render_offscreen(&frame(0.0, Vec::new()))
+            .expect("renders");
+        let target = app.camera.target;
+        let w = FlyInput::Key {
+            key: FlyKey::Forward,
+            pressed: true,
+        };
+        app.fly.handle(w, false, &mut app.camera);
+        app.render_offscreen(&frame(0.05, Vec::new()))
+            .expect("renders");
+        assert!(!app.controller.auto_orbit);
+        let flown = app.camera.target.distance(target);
+        assert!(
+            (flown - app.fly_speed() * 0.05).abs() < 1e-4,
+            "flew {flown} at {} units/s",
+            app.fly_speed()
+        );
+    }
+
+    #[test]
+    fn framing_brings_the_camera_home_and_fits_the_fly_speed_to_the_scene() {
+        let Some(mut app) = studio() else {
+            return;
+        };
+        let expected = crate::scene::fly::speed_for_bounds(app.renderer.scene_bounds());
+        assert_eq!(
+            app.fly_speed(),
+            expected,
+            "the speed fits the scene from the start"
+        );
+        assert_ne!(expected, crate::scene::fly::DEFAULT_SPEED);
+        app.fly.speed = 123.0;
+        app.camera.target = glam::Vec3::splat(50.0);
+        app.camera.viewport = SceneViewport {
+            x0: 0.2,
+            ..SceneViewport::FULL
+        };
+        let signals = app.act(vec![
+            EditorAction::FrameScene,
+            EditorAction::Quit,
+            EditorAction::Screenshot,
+            EditorAction::ReloadShaders,
+        ]);
+        let shell = [
+            AppSignal::Quit,
+            AppSignal::Screenshot,
+            AppSignal::ReloadShaders,
+        ];
+        assert_eq!(signals, shell);
+        assert_eq!(app.camera.target, OrbitCamera::default().target);
+        assert_eq!(
+            app.camera.viewport.x0, 0.2,
+            "the docks still frame the view"
+        );
+        assert_eq!(app.fly_speed(), expected);
+        assert!(
+            !app.controller.auto_orbit,
+            "a frame asked for ends the idle spin"
+        );
     }
 }

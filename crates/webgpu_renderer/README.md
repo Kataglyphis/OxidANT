@@ -58,7 +58,15 @@ edge resize them. The native viewer and the browser demo run one host,
 `app::StudioApp`; its camera centres on the rect the docks leave free
 (`SceneViewport`, the C++ `makeViewportRemap`) while every pass stays full-frame.
 The library and the profiler show their C++ layout over what the renderer has
-today; their full versions, the remaining inspector rows and the fly camera follow.
+today; their full versions and the remaining inspector rows follow.
+
+**Camera** — the C++ engine's fly camera (`scene::fly`) and the orbit controller
+share one `OrbitCamera`: flying moves eye and target together and turns about the
+eye, orbiting turns about the target and the wheel changes the distance between
+them, so an orbit after a flight circles the point the camera looked at. The fly
+speed starts at a quarter of the scene's diagonal per second (the C++ 10 units/s
+in a 40-unit Sponza); the Camera tab sets it with the field of view and the clip
+planes, and *Frame the scene* returns to the home view with the speed refitted.
 
 ## Running
 
@@ -83,11 +91,15 @@ wasm-bindgen target/wasm32-unknown-unknown/release/kataglyphis_webgpu_renderer.w
 python -m http.server 8931 --directory crates/webgpu_renderer/web
 ```
 
-Controls (also listed in the inspector's Camera tab): drag to orbit, wheel to
-zoom, **F1** hides or shows the editor, **F5** reloads the shaders, **S** saves a
-screenshot, **Esc** quits. While a text field has focus these keys do nothing, and
-the first **Esc** only leaves the field, closes a menu or the About box. The browser
-demo has F1 and Esc, which never quits there.
+Controls (also listed in the inspector's Camera tab): **W A S D** fly, **Q E**
+turn, the held **right mouse** button looks around (0.25° per pixel, the pointer
+locked meanwhile), drag to orbit, wheel to zoom, **F1** hides or shows the editor,
+**F5** reloads the shaders, **F12** saves a screenshot, **Esc** quits. While a text
+field has focus these keys do nothing; a key released there still stops the camera,
+and losing the window's focus releases everything. The first **Esc** only leaves
+the field, closes a menu or the About box. The browser demo has the camera keys, F1
+and Esc, which never quits there; Tab, F5 and Ctrl +/-/0 stay the browser's unless
+an egui field has focus.
 
 ## Testing approach
 

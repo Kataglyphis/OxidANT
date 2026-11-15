@@ -132,6 +132,8 @@ pub enum EditorAction {
     Quit,
     Screenshot,
     ReloadShaders,
+    /// Back to the scene's view, with clip planes and fly speed for its size.
+    FrameScene,
 }
 
 /// One pass's result: where the scene shows through, and what to do.
@@ -146,6 +148,8 @@ pub struct EditorOutput {
 pub struct EditorContext<'a> {
     pub settings: &'a mut RendererSettings,
     pub camera: &'a mut OrbitCamera,
+    /// The fly camera's world units per second.
+    pub fly_speed: &'a mut f32,
     pub stats: &'a SceneStats,
     pub frames: &'a FrameHistory,
     pub device: &'a DeviceInfo,

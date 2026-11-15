@@ -1,17 +1,17 @@
 //! Browser (wasm32/WebGPU) demo entry point; the page is crates/webgpu_renderer/web/index.html.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use wasm_bindgen::prelude::*;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys};
 use winit::window::{Window, WindowId};
 
-use crate::app::{HostCaps, StudioApp};
+use crate::app::{web, HostCaps, StudioApp};
 use crate::asset::gltf_loader::load_gltf_slice;
 use crate::context::GpuContext;
 use crate::scene::camera::OrbitCamera;
@@ -69,6 +69,7 @@ fn install_drop_zone(document: &web_sys::Document, slot: DroppedScene) {
                 return;
             };
             let name = file.name();
+            web::notify_page(web::PAGE_DROPPED, &name);
             let slot = Rc::clone(&slot);
             wasm_bindgen_futures::spawn_local(async move {
                 match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
@@ -92,17 +93,11 @@ fn performance_now_seconds() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Sizes the canvas backing store to CSS size x devicePixelRatio, which winit skips on web.
-fn sync_canvas_backing_size(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
+/// The canvas's CSS size x devicePixelRatio; configuring the surface sizes its backing store, within the device limit.
+fn canvas_device_size(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
     let dpr = web_sys::window().map_or(1.0, |w| w.device_pixel_ratio());
     let width = ((canvas.client_width().max(1) as f64) * dpr) as u32;
     let height = ((canvas.client_height().max(1) as f64) * dpr) as u32;
-    if canvas.width() != width {
-        canvas.set_width(width);
-    }
-    if canvas.height() != height {
-        canvas.set_height(height);
-    }
     (width.max(1), height.max(1))
 }
 
@@ -116,7 +111,10 @@ fn home_camera() -> OrbitCamera {
 }
 
 /// A canvas-backed window, mounted in `#demo` (or the body), its CSS size driving the layout.
-fn create_canvas_window(event_loop: &ActiveEventLoop) -> Arc<Window> {
+fn create_canvas_window(
+    event_loop: &ActiveEventLoop,
+    egui_wants_keys: Rc<Cell<bool>>,
+) -> Arc<Window> {
     let window = Arc::new(
         event_loop
             .create_window(
@@ -138,15 +136,18 @@ fn create_canvas_window(event_loop: &ActiveEventLoop) -> Arc<Window> {
     mount
         .append_child(&canvas)
         .expect("failed to append canvas");
+    web::leave_browser_keys(&mount, egui_wants_keys);
     window
 }
 
 /// WebGPU init is async-only in browsers: the app lands in `slot` once the device resolves.
 fn spawn_app_init(slot: Rc<RefCell<Option<StudioApp>>>, window: Arc<Window>, size: (u32, u32)) {
     wasm_bindgen_futures::spawn_local(async move {
-        let mut gpu = GpuContext::new_windowed_async(Arc::clone(&window))
-            .await
-            .expect("WebGPU init failed (does this browser support WebGPU?)");
+        let mut gpu = match GpuContext::new_windowed_async(Arc::clone(&window)).await {
+            Ok(gpu) => gpu,
+            // navigator.gpu without an adapter (a blocklisted GPU, Linux without the flag): the page's fallback, no panic.
+            Err(err) => return web::notify_page(web::PAGE_FAILED, &format!("{err:#}")),
+        };
         // The context read inner_size before the canvas size propagated through winit.
         gpu.resize(size.0, size.1);
         let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
@@ -155,6 +156,7 @@ fn spawn_app_init(slot: Rc<RefCell<Option<StudioApp>>>, window: Arc<Window>, siz
             .expect("failed to set up the renderer");
         app.model = Some(scene_source(DEMO_SCENES[0].0));
         slot.borrow_mut().replace(app);
+        web::notify_page(web::PAGE_READY, "");
         window.request_redraw();
     });
 }
@@ -189,15 +191,14 @@ fn scene_source(name: &str) -> ModelSource {
     }
 }
 
-/// Follows the canvas's CSS layout size every frame, which winit's web backend does not report.
+/// Follows the canvas's CSS layout size every frame; against the size asked, so a clamped surface stays put.
 fn follow_canvas_size(window: &Window, gpu: &mut GpuContext) {
     let Some(canvas) = window.canvas() else {
         return;
     };
-    let (width, height) = sync_canvas_backing_size(&canvas);
-    let configured = gpu.surface_config.as_ref().map(|c| (c.width, c.height));
-    if configured != Some((width, height)) {
-        gpu.resize(width, height);
+    let size = canvas_device_size(&canvas);
+    if gpu.requested_size() != Some(size) {
+        gpu.resize(size.0, size.1);
     }
 }
 
@@ -208,6 +209,8 @@ struct DemoApp {
     app: Rc<RefCell<Option<StudioApp>>>,
     /// Filled asynchronously by the drop-zone listeners.
     dropped_scene: DroppedScene,
+    /// egui had focus last frame, so the browser-key listener lets winit hand it Tab and friends.
+    egui_wants_keys: Rc<Cell<bool>>,
 }
 
 impl ApplicationHandler for DemoApp {
@@ -215,7 +218,7 @@ impl ApplicationHandler for DemoApp {
         if self.window.is_some() {
             return;
         }
-        let window = create_canvas_window(event_loop);
+        let window = create_canvas_window(event_loop, Rc::clone(&self.egui_wants_keys));
         if let Some(document) = web_sys::window().and_then(|w| w.document()) {
             install_drop_zone(&document, Rc::clone(&self.dropped_scene));
         }
@@ -224,7 +227,7 @@ impl ApplicationHandler for DemoApp {
             slot.borrow_mut().replace(Rc::clone(&self.dropped_scene));
         });
         let canvas = window.canvas().expect("winit window must expose a canvas");
-        let size = sync_canvas_backing_size(&canvas);
+        let size = canvas_device_size(&canvas);
         spawn_app_init(Rc::clone(&self.app), Arc::clone(&window), size);
         self.window = Some(window);
     }
@@ -243,6 +246,14 @@ impl ApplicationHandler for DemoApp {
             follow_canvas_size(window, &mut app.gpu);
             // A browser tab never quits and has no file shortcuts, so a frame asks nothing of this shell.
             let _ = app.frame(window, performance_now_seconds());
+            self.egui_wants_keys.set(app.wants_keyboard());
+        }
+    }
+
+    /// Raw pointer motion, which turns a right-drag look while the Pointer Lock API holds the cursor.
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+        if let Some(app) = self.app.borrow_mut().as_mut() {
+            app.device_event(&event);
         }
     }
 }
