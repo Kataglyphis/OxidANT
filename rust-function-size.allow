@@ -17,11 +17,6 @@ crates/webgpu_renderer/src/asset/hdr.rs | every_malformed_input_is_a_typed_error
 crates/webgpu_renderer/src/asset/obj_to_gltf.rs | parse_mtl | 103 | the MTL keywords in one match; #[expect] in the source
 crates/webgpu_renderer/src/asset/obj_to_gltf.rs | parse_obj_with_materials | 171 | the OBJ keywords in one match; #[expect] in the source
 crates/webgpu_renderer/src/asset/obj_to_gltf.rs | to_gltf | 285 | one OBJ model into a glTF document; #[expect] in the source
-crates/webgpu_renderer/src/render/forward.rs | new | 405 | the forward renderer's pipelines and bind groups; #[expect] in the source
-crates/webgpu_renderer/src/render/forward.rs | upload_scene | 339 | the scene's buffers and textures in one pass; #[expect] in the source
-crates/webgpu_renderer/src/render/forward.rs | render_tonemapped | 520 | the frame's passes in their order; #[expect] in the source
-crates/webgpu_renderer/src/render/forward.rs | render_to_pixels_with_format | 83 | one offscreen frame read back; a row only: clippy counts it under 80, or it is outside the crate root's lint
-crates/webgpu_renderer/src/render/forward.rs | set_animation_time | 99 | every channel of an animation at one time; #[expect] in the source
 crates/webgpu_renderer/src/render/gpu_occlusion.rs | cull | 94 | the occlusion pass and its readback; a row only: clippy counts it under 80, or it is outside the crate root's lint
 crates/webgpu_renderer/src/render/ibl.rs | bake | 109 | the IBL bake's three passes; #[expect] in the source
 crates/webgpu_renderer/src/render/tile_grid.rs | build_tile_light_grid | 87 | the light grid in one sweep; a row only: clippy counts it under 80, or it is outside the crate root's lint

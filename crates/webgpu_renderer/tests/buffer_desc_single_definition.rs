@@ -11,6 +11,88 @@ fn code_of(line: &str) -> &str {
     }
 }
 
+/// The modules scanned for `BufferDescriptor` literals outside `render::buffer_desc`.
+const SOURCES: &[(&str, &str)] = &[
+    (
+        "render/forward.rs",
+        include_str!("../src/render/forward.rs"),
+    ),
+    (
+        "render/forward/animate.rs",
+        include_str!("../src/render/forward/animate.rs"),
+    ),
+    (
+        "render/forward/culling.rs",
+        include_str!("../src/render/forward/culling.rs"),
+    ),
+    (
+        "render/forward/environment.rs",
+        include_str!("../src/render/forward/environment.rs"),
+    ),
+    (
+        "render/forward/frame.rs",
+        include_str!("../src/render/forward/frame.rs"),
+    ),
+    (
+        "render/forward/light_grid.rs",
+        include_str!("../src/render/forward/light_grid.rs"),
+    ),
+    (
+        "render/forward/main_pass.rs",
+        include_str!("../src/render/forward/main_pass.rs"),
+    ),
+    (
+        "render/forward/post.rs",
+        include_str!("../src/render/forward/post.rs"),
+    ),
+    (
+        "render/forward/primitive.rs",
+        include_str!("../src/render/forward/primitive.rs"),
+    ),
+    (
+        "render/forward/readback.rs",
+        include_str!("../src/render/forward/readback.rs"),
+    ),
+    (
+        "render/forward/shadow.rs",
+        include_str!("../src/render/forward/shadow.rs"),
+    ),
+    (
+        "render/forward/sky.rs",
+        include_str!("../src/render/forward/sky.rs"),
+    ),
+    (
+        "render/forward/targets.rs",
+        include_str!("../src/render/forward/targets.rs"),
+    ),
+    (
+        "render/forward/upload.rs",
+        include_str!("../src/render/forward/upload.rs"),
+    ),
+    (
+        "render/occlusion.rs",
+        include_str!("../src/render/occlusion.rs"),
+    ),
+    (
+        "render/gpu_timing.rs",
+        include_str!("../src/render/gpu_timing.rs"),
+    ),
+    (
+        "render/tonemap.rs",
+        include_str!("../src/render/tonemap.rs"),
+    ),
+    ("render/ibl.rs", include_str!("../src/render/ibl.rs")),
+    (
+        "render/histogram.rs",
+        include_str!("../src/render/histogram.rs"),
+    ),
+    (
+        "render/gpu_occlusion.rs",
+        include_str!("../src/render/gpu_occlusion.rs"),
+    ),
+    ("render/ssao.rs", include_str!("../src/render/ssao.rs")),
+];
+
 #[test]
 fn buffer_descriptor_literals_are_the_single_definition_or_the_two_named_outliers() {
     let buffer_desc_src = include_str!("../src/render/buffer_desc.rs");
@@ -24,37 +106,8 @@ fn buffer_descriptor_literals_are_the_single_definition_or_the_two_named_outlier
          (uniform, storage_dst, storage_src, readback, query_resolve); found {definition_count}"
     );
 
-    let sources: &[(&str, &str)] = &[
-        (
-            "render/forward.rs",
-            include_str!("../src/render/forward.rs"),
-        ),
-        (
-            "render/occlusion.rs",
-            include_str!("../src/render/occlusion.rs"),
-        ),
-        (
-            "render/gpu_timing.rs",
-            include_str!("../src/render/gpu_timing.rs"),
-        ),
-        (
-            "render/tonemap.rs",
-            include_str!("../src/render/tonemap.rs"),
-        ),
-        ("render/ibl.rs", include_str!("../src/render/ibl.rs")),
-        (
-            "render/histogram.rs",
-            include_str!("../src/render/histogram.rs"),
-        ),
-        (
-            "render/gpu_occlusion.rs",
-            include_str!("../src/render/gpu_occlusion.rs"),
-        ),
-        ("render/ssao.rs", include_str!("../src/render/ssao.rs")),
-    ];
-
     let mut unmarked = Vec::new();
-    for (path, contents) in sources {
+    for (path, contents) in SOURCES {
         for (i, line) in contents.lines().enumerate() {
             if code_of(line).contains(NEEDLE) {
                 unmarked.push(format!("{path}:{}", i + 1));
