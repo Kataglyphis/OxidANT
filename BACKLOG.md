@@ -129,11 +129,6 @@ its open work is here.
       the C++ cloud goldens too, so change both renderers in one pin bump. Guard: a cloud's mean luminance
       against the sky behind it in `crates/webgpu_renderer/tests/clouds.rs` and the C++ golden.
 
-- [ ] **The path estimator follows an uncommitted C++ shader** (S, ★★). The Rust path tracer ports
-      BeschleunigerBallett's GGX `path_tracing.slang`, which is modified but not committed there; if that change
-      goes, the two diverge. Next: once it lands, move the estimator into `shaders/tracer/path_estimator.slang`
-      as a module both renderers import, as `volumetric_clouds.slang` is.
-
 - [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
       nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
       in `.github/workflows/reusable-linux.yml` fails only on a doubling. On a Pi 5 the model is
