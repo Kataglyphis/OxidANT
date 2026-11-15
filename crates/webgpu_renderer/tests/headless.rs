@@ -1332,10 +1332,10 @@ fn growing_the_instance_count_reallocates_correctly() {
     }
 }
 
-/// Shadows survive caster culling; `drawn < considered` is unchecked while one cached bundle
-/// serves every cascade, which leaves per-cascade culling off.
+/// A caster far outside every cascade's box refits them all; the near shadow must survive it.
+/// No caster is culled: the cascade bundles draw every caster, so drawn == considered.
 #[test]
-fn caster_culling_engages_and_shadows_survive() {
+fn a_far_extra_caster_leaves_the_near_shadow_intact() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -1363,8 +1363,12 @@ fn caster_culling_engages_and_shadows_survive() {
         .render_to_pixels(&gpu, width, height, &camera)
         .expect("headless render must succeed");
 
-    let (_drawn, considered) = renderer.shadow_caster_stats();
+    let (drawn, considered) = renderer.shadow_caster_stats();
     assert!(considered > 0, "no casters considered - did the pass run?");
+    assert_eq!(
+        drawn, considered,
+        "no shadow-caster culling exists to skip any"
+    );
 
     // As in shadow_darkens_plane_under_cube: the shadow is blue-tinted, never neutral dark.
     let mut lit_plane = 0usize;

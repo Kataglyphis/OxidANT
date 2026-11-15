@@ -93,6 +93,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `Bgra8Unorm` (the browser's preferred canvas format) came back channel-swapped and `Rgba16Float` overran the
   4-byte row pitch in a validation panic. It returns an error for anything but `Rgba8Unorm` and `Rgba8UnormSrgb`.
   Test: `render_to_pixels_refuses_formats_that_are_not_rgba8`.
+- The docs claimed shadow-caster culling that does not exist: `bounds.rs` said the cascade pass culls casters, and
+  the bounds invariant listed it as a consumer, but the cached bundles draw every caster. Both say so now, and
+  `caster_culling_engages_and_shadows_survive` is `a_far_extra_caster_leaves_the_near_shadow_intact`, which pins
+  drawn == considered.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

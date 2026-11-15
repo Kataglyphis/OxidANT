@@ -36,8 +36,9 @@ Change any of these and you inherit the invariant:
 
 - **Frustum culling** (`Frustum::intersects_aabb`) — wrong bounds delete a
   visible object outright.
-- **Shadow-caster culling** (`intersects_aabb_as_caster`) — wrong bounds delete
-  its *shadow*, which looks like a lighting bug, not a culling bug.
+- **Shadow-caster culling** (`intersects_aabb_as_caster`) — not wired in: the
+  cascade passes replay cached bundles that draw every caster. Once it is, wrong
+  bounds delete a *shadow*, which looks like a lighting bug, not a culling bug.
 - **Cascade fitting** (`update_cascades` via `scene_bounds`) — this one is
   scene-wide: bad bounds misfit *all three* cascades, so unrelated objects lose
   their shadows.
