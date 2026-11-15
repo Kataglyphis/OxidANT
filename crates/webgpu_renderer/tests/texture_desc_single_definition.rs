@@ -17,6 +17,71 @@ const SOURCES: &[(&str, &str, bool)] = &[
         include_str!("../src/render/forward.rs"),
         false,
     ),
+    (
+        "render/forward/animate.rs",
+        include_str!("../src/render/forward/animate.rs"),
+        false,
+    ),
+    (
+        "render/forward/culling.rs",
+        include_str!("../src/render/forward/culling.rs"),
+        false,
+    ),
+    (
+        "render/forward/environment.rs",
+        include_str!("../src/render/forward/environment.rs"),
+        false,
+    ),
+    (
+        "render/forward/frame.rs",
+        include_str!("../src/render/forward/frame.rs"),
+        false,
+    ),
+    (
+        "render/forward/light_grid.rs",
+        include_str!("../src/render/forward/light_grid.rs"),
+        false,
+    ),
+    (
+        "render/forward/main_pass.rs",
+        include_str!("../src/render/forward/main_pass.rs"),
+        false,
+    ),
+    (
+        "render/forward/post.rs",
+        include_str!("../src/render/forward/post.rs"),
+        false,
+    ),
+    (
+        "render/forward/primitive.rs",
+        include_str!("../src/render/forward/primitive.rs"),
+        false,
+    ),
+    (
+        "render/forward/readback.rs",
+        include_str!("../src/render/forward/readback.rs"),
+        false,
+    ),
+    (
+        "render/forward/shadow.rs",
+        include_str!("../src/render/forward/shadow.rs"),
+        false,
+    ),
+    (
+        "render/forward/sky.rs",
+        include_str!("../src/render/forward/sky.rs"),
+        false,
+    ),
+    (
+        "render/forward/targets.rs",
+        include_str!("../src/render/forward/targets.rs"),
+        false,
+    ),
+    (
+        "render/forward/upload.rs",
+        include_str!("../src/render/forward/upload.rs"),
+        false,
+    ),
     ("render/ibl.rs", include_str!("../src/render/ibl.rs"), false),
     (
         "render/texture.rs",

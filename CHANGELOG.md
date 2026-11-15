@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-15, the forward renderer is one module per pass)
+- `render/forward.rs` keeps `ForwardRenderer`, its public API and the frame's pass order; each pass and the
+  resources it owns moved to a module under `render/forward/`: `shadow`, `main_pass`, `sky`, `targets` (with the
+  depth resolve), `culling`, `post` (bloom, SSAO, exposure, tonemap), `light_grid`, `frame`, `environment`, `upload`,
+  `animate`, `primitive` and `readback`. `render_tonemapped` is now one `encode_*` call per pass. No function there
+  is over 56 lines in the hub's count, so the five `forward.rs` rows of `rust-function-size.allow` (`new`,
+  `upload_scene`, `render_tonemapped`, `render_to_pixels_with_format`, `set_animation_time`) are gone. The two
+  source-text tests scan the new files too.
+
 ### Fixed (2026-11-15, the healthz goldens on the Windows arm64 runner)
 - `healthz_matches_its_goldens` embeds the three goldens with `include_str!`; it read them at run time, and the
   cross-built test on `windows-11-arm` runs where no checkout of the fixtures sits, so it compared against an empty

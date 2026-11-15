@@ -1,0 +1,182 @@
+//! The frame's CPU prologue and epilogue: per-frame uniforms, the camera view, submit and readbacks.
+
+use glam::{Mat4, Vec3};
+
+use super::ForwardRenderer;
+use crate::context::GpuContext;
+use crate::render::bind_layout;
+use crate::render::bounds::Frustum;
+use crate::render::buffer_desc;
+use crate::render::tile_grid::TILE_SIZE;
+use crate::render::tonemap::TonemapPass;
+use crate::scene::camera::OrbitCamera;
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct FrameUniforms {
+    view_proj: [[f32; 4]; 4],
+    light_space: [[f32; 4]; 4],
+    light_space_1: [[f32; 4]; 4],
+    light_space_2: [[f32; 4]; 4],
+    light_dir_ambient: [f32; 4],
+    light_color_intensity: [f32; 4],
+    camera_position: [f32; 4],
+    cascade_splits: [f32; 4],
+}
+
+/// Group 2 of the forward and shadow layouts: the per-frame uniforms.
+pub(super) struct FrameBinding {
+    /// Read only to build the forward and shadow pipeline layouts.
+    pub(super) layout: wgpu::BindGroupLayout,
+    uniform_buffer: wgpu::Buffer,
+    pub(super) bind_group: wgpu::BindGroup,
+}
+
+impl FrameBinding {
+    pub(super) fn new(device: &wgpu::Device) -> Self {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("frame_bind_group_layout"),
+            entries: &[bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
+        });
+        let uniform_buffer = buffer_desc::uniform(
+            device,
+            "frame_uniforms",
+            std::mem::size_of::<FrameUniforms>() as wgpu::BufferAddress,
+        );
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("frame_bind_group"),
+            layout: &layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+        Self {
+            layout,
+            uniform_buffer,
+            bind_group,
+        }
+    }
+}
+
+/// What every pass of one frame reads from the camera and the output size.
+pub(super) struct FrameView {
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) view_proj: Mat4,
+    pub(super) frustum: Frustum,
+    pub(super) eye: Vec3,
+}
+
+impl ForwardRenderer {
+    /// Everything the passes read, written before the frame's encoder exists.
+    pub(super) fn prepare_frame(
+        &mut self,
+        gpu: &GpuContext,
+        tonemap: &mut TonemapPass,
+        width: u32,
+        height: u32,
+        camera: &OrbitCamera,
+    ) -> FrameView {
+        let (width, height) = (width.max(1), height.max(1));
+        self.resize_targets(gpu, width, height);
+        self.rebind_post_inputs(gpu, tonemap, width, height);
+        self.write_post_settings(gpu, tonemap);
+
+        self.update_joint_matrices(gpu);
+        self.apply_morph_targets(gpu);
+
+        let view = self.prepare_view(gpu, camera, width, height);
+        self.write_sky_uniforms(gpu, &view);
+        self.write_frame_uniforms(gpu, &view);
+        self.write_light_grid(gpu, &view);
+        self.write_dirty_prim_uniforms(gpu);
+        view
+    }
+
+    /// The camera's view for this frame, plus the SSAO projection and the cascade fit it drives.
+    fn prepare_view(
+        &mut self,
+        gpu: &GpuContext,
+        camera: &OrbitCamera,
+        width: u32,
+        height: u32,
+    ) -> FrameView {
+        let aspect = width as f32 / height as f32;
+        let view_proj = camera.view_projection(aspect);
+        let frustum = Frustum::from_view_proj(&view_proj);
+        self.post
+            .ssao
+            .write_uniforms(&gpu.queue, camera.projection(aspect), 0.6, 0.02, 1.0);
+        self.update_cascades(camera);
+        FrameView {
+            width,
+            height,
+            view_proj,
+            frustum,
+            eye: camera.eye(),
+        }
+    }
+
+    /// Per-frame data: write ONCE, shared by every primitive via @group(2).
+    fn write_frame_uniforms(&mut self, gpu: &GpuContext, view: &FrameView) {
+        // Before the frame uniforms, so this frame's tile counts land in cascade_splits.zw.
+        let tx = view.width.div_ceil(TILE_SIZE);
+        let ty = view.height.div_ceil(TILE_SIZE);
+        self.lights.tile_counts = (tx, ty);
+
+        let cascades = &self.shadow.cascade_matrices;
+        let eye = view.eye;
+        let frame_uniforms = FrameUniforms {
+            view_proj: view.view_proj.to_cols_array_2d(),
+            light_space: cascades[0].to_cols_array_2d(),
+            light_space_1: cascades[1].to_cols_array_2d(),
+            light_space_2: cascades[2].to_cols_array_2d(),
+            light_dir_ambient: self.light_dir_ambient.to_array(),
+            light_color_intensity: self.light_color_intensity.to_array(),
+            camera_position: [eye.x, eye.y, eye.z, self.lights.punctual_count as f32],
+            cascade_splits: [
+                self.shadow.cascade_splits[0],
+                self.shadow.cascade_splits[1],
+                self.lights.tile_counts.0 as f32,
+                self.lights.tile_counts.1 as f32,
+            ],
+        };
+        gpu.queue.write_buffer(
+            &self.frame.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&frame_uniforms),
+        );
+    }
+
+    /// Re-uploads the uniforms of every primitive whose model or material moved.
+    fn write_dirty_prim_uniforms(&mut self, gpu: &GpuContext) {
+        for prim in &mut self.primitives {
+            if !prim.uniforms_dirty {
+                continue;
+            }
+            gpu.queue.write_buffer(
+                &prim.uniform_buffer,
+                0,
+                bytemuck::bytes_of(&prim.uniforms()),
+            );
+            prim.uniforms_dirty = false;
+        }
+    }
+
+    /// Resolves the timestamps, submits the frame and starts its non-blocking readbacks.
+    pub(super) fn finish_frame(&mut self, gpu: &GpuContext, mut encoder: wgpu::CommandEncoder) {
+        // In the frame's encoder: a second submit would serialise against the frame it measures.
+        self.gpu_timing.resolve(&mut encoder);
+        gpu.queue.submit(Some(encoder.finish()));
+        self.gpu_timing.end_frame(&gpu.device);
+        // Non-blocking: results lag a frame or more, which advisory visibility tolerates.
+        self.culling.occlusion.end_frame(&gpu.device);
+        // The culling paths are exclusive, so only the enabled one has readbacks in flight.
+        if self.gpu_culling_enabled {
+            if let Some(gpu_cull) = self.culling.gpu_culling.as_mut() {
+                gpu_cull.end_frame(&gpu.device);
+            }
+        }
+    }
+}
