@@ -18,6 +18,7 @@ use crate::render::overlay::Overlay;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::controller::OrbitController;
+use crate::scene::fly::{self, FlyController};
 use crate::scene::viewport::SceneViewport;
 use crate::scene::CpuScene;
 use crate::ui::editor::{DeviceInfo, Editor, FrameHistory, ModelSource};
@@ -27,7 +28,7 @@ use crate::ui::editor::{DeviceInfo, Editor, FrameHistory, ModelSource};
 pub struct HostCaps {
     /// Esc may close the app: a native window, never a browser tab.
     pub quit: bool,
-    /// S asks the shell for a screenshot.
+    /// F12 asks the shell for a screenshot.
     pub screenshot: bool,
     /// F5 asks the shell to reload the shaders.
     pub hot_reload: bool,
@@ -54,6 +55,7 @@ pub struct StudioApp {
     tonemap: TonemapPass,
     overlay: Overlay,
     controller: OrbitController,
+    fly: FlyController,
     home: OrbitCamera,
     caps: HostCaps,
     clock: FrameClock,
@@ -109,10 +111,12 @@ impl StudioApp {
         renderer.upload_scene(&gpu, scene);
         // IBL baked from the background's own sky; 256x128 suffices for low-frequency lighting.
         renderer.set_environment(&gpu, &EquirectImage::sky(256, 128));
+        let fly = FlyController::with_speed(fly::speed_for_bounds(renderer.scene_bounds()));
         Self {
             tonemap: TonemapPass::new(&gpu, format),
             device: DeviceInfo::of(&gpu.adapter_info),
             controller: OrbitController::default(),
+            fly,
             camera: home.clone(),
             model: None,
             editor: Editor::default(),
@@ -131,9 +135,23 @@ impl StudioApp {
     /// Swaps in `scene` and starts its camera and animation clock over.
     pub fn load_scene(&mut self, scene: &CpuScene) {
         self.renderer.upload_scene(&self.gpu, scene);
-        self.camera = self.home.clone();
         self.controller = OrbitController::default();
         self.epoch_s = None;
+        self.frame_scene();
+    }
+
+    /// The camera back at its home view, and a fly speed that crosses the scene in a few seconds.
+    pub fn frame_scene(&mut self) {
+        self.camera = OrbitCamera {
+            viewport: self.camera.viewport,
+            ..self.home.clone()
+        };
+        self.fly.speed = fly::speed_for_bounds(self.renderer.scene_bounds());
+    }
+
+    /// World units per second for W A S D.
+    pub fn fly_speed(&self) -> f32 {
+        self.fly.speed
     }
 
     /// egui wants the keys: a field or a widget has focus, so a browser key belongs to egui, not the page.

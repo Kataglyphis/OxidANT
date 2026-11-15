@@ -1,9 +1,11 @@
-//! Window events reach egui first and the orbit camera second; the editor reads its keys inside the egui pass.
+//! Window events reach egui first, then the fly and orbit cameras; the editor reads its keys inside the egui pass.
 
-use winit::event::WindowEvent;
-use winit::window::Window;
+use winit::dpi::PhysicalPosition;
+use winit::event::{DeviceEvent, WindowEvent};
+use winit::window::{CursorGrabMode, Window};
 
 use super::StudioApp;
+use crate::scene::fly::{FlyInput, PointerGrab};
 
 /// Orbit degrees per logical pixel of drag, so a HiDPI screen or a phone turns as far per finger travel as 100 %.
 const ORBIT_DEG_PER_POINT: f32 = 0.25;
@@ -11,7 +13,18 @@ const ORBIT_DEG_PER_POINT: f32 = 0.25;
 impl StudioApp {
     /// Routes one window event; true when egui consumed it.
     pub fn window_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
-        let consumed = self.overlay.on_event(window, event);
+        // While looking, the hidden pointer is the camera's: egui sees no moves, so no panel lights up under it.
+        let looking_move =
+            self.fly.is_looking() && matches!(event, WindowEvent::CursorMoved { .. });
+        let consumed = !looking_move && self.overlay.on_event(window, event);
+        if let Some(input) = FlyInput::of(event) {
+            let grab = self.fly.handle(input, consumed, &mut self.camera);
+            apply_grab(window, grab);
+            // At the event, not the frame: a look shorter than a frame must not be spun away.
+            if self.fly.is_engaged() {
+                self.controller.auto_orbit = false;
+            }
+        }
         self.controller.rotate_speed_deg_per_px = orbit_deg_per_px(window.scale_factor());
         if consumed {
             self.controller.note_consumed_event(event);
@@ -26,6 +39,13 @@ impl StudioApp {
         }
         consumed
     }
+
+    /// Raw pointer motion, which keeps a look turning where the platform holds the cursor still.
+    pub fn device_event(&mut self, event: &DeviceEvent) {
+        if let DeviceEvent::MouseMotion { delta } = event {
+            self.fly.raw_motion(&mut self.camera, *delta);
+        }
+    }
 }
 
 /// The orbit controller's rate for a window at `scale_factor`: pointer and touch deltas arrive in physical pixels.
@@ -36,6 +56,30 @@ fn orbit_deg_per_px(scale_factor: f64) -> f32 {
         1.0
     };
     ORBIT_DEG_PER_POINT / scale
+}
+
+/// Hides and holds the pointer for a look, Locked where the platform has it and Confined elsewhere, or gives it back.
+fn apply_grab(window: &Window, grab: PointerGrab) {
+    match grab {
+        PointerGrab::Keep => {}
+        PointerGrab::Hide => {
+            let held = window
+                .set_cursor_grab(CursorGrabMode::Locked)
+                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+            if let Err(err) = held {
+                log::debug!("The pointer stays free during the look: {err}");
+            }
+            window.set_cursor_visible(false);
+        }
+        PointerGrab::Show { at } => {
+            let _ = window.set_cursor_grab(CursorGrabMode::None);
+            window.set_cursor_visible(true);
+            if let Some((x, y)) = at {
+                // Wayland and browsers cannot place the pointer; it then reappears where the platform left it.
+                let _ = window.set_cursor_position(PhysicalPosition::new(x, y));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

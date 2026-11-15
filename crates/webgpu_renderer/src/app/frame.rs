@@ -112,6 +112,7 @@ impl StudioApp {
         let mut cx = EditorContext {
             settings: &mut settings,
             camera: &mut self.camera,
+            fly_speed: &mut self.fly.speed,
             stats: &stats,
             frames: &self.frames,
             device: &self.device,
@@ -125,16 +126,38 @@ impl StudioApp {
             .run(raw, |ui| editor.show(ui, &mut cx, esc_armed));
         settings.apply(&mut self.renderer);
         self.camera.viewport = editor_output.viewport;
+        let signals = self.act(editor_output.actions);
         self.advance(now_s);
-        let signals = editor_output.actions.into_iter().map(signal).collect();
         (output, signals)
     }
 
-    /// The frame's time step: the idle spin and the animation clock.
+    /// Does what the app can itself and hands the rest to the shell.
+    fn act(&mut self, actions: Vec<EditorAction>) -> Vec<AppSignal> {
+        let mut signals = Vec::new();
+        for action in actions {
+            match action {
+                EditorAction::FrameScene => {
+                    // A frame the user asked for is an interaction: the idle spin must not turn it away.
+                    self.controller.auto_orbit = false;
+                    self.frame_scene();
+                }
+                EditorAction::Quit => signals.push(AppSignal::Quit),
+                EditorAction::Screenshot => signals.push(AppSignal::Screenshot),
+                EditorAction::ReloadShaders => signals.push(AppSignal::ReloadShaders),
+            }
+        }
+        signals
+    }
+
+    /// The frame's time step: the fly camera's held keys, the idle spin and the animation clock.
     fn advance(&mut self, now_s: f64) {
         let elapsed_s = now_s - *self.epoch_s.get_or_insert(now_s);
         let step_s = self.clock.tick_at(now_s);
         self.renderer.frame_delta_seconds = step_s;
+        if self.fly.is_engaged() {
+            self.controller.auto_orbit = false;
+        }
+        self.fly.advance(&mut self.camera, step_s);
         if self.controller.auto_orbit {
             self.camera.yaw_deg = auto_orbit_yaw(self.home.yaw_deg, elapsed_s);
         }
@@ -166,15 +189,6 @@ impl StudioApp {
         self.overlay
             .paint(&self.gpu, &mut encoder, view, [width, height], output);
         self.gpu.queue.submit(Some(encoder.finish()));
-    }
-}
-
-/// What the shell does for an editor action.
-fn signal(action: EditorAction) -> AppSignal {
-    match action {
-        EditorAction::Quit => AppSignal::Quit,
-        EditorAction::Screenshot => AppSignal::Screenshot,
-        EditorAction::ReloadShaders => AppSignal::ReloadShaders,
     }
 }
 
@@ -304,5 +318,72 @@ mod tests {
             .map(|k| 45.0 + (base + f64::from(k) / 144.0) as f32 * AUTO_ORBIT_DEG_PER_S)
             .collect();
         assert!(old.windows(2).any(|pair| pair[1] == pair[0]), "{old:?}");
+    }
+
+    #[test]
+    fn held_keys_fly_the_camera_and_end_the_idle_spin() {
+        use crate::scene::fly::{FlyInput, FlyKey};
+        let Some(mut app) = studio() else {
+            return;
+        };
+        app.render_offscreen(&frame(0.0, Vec::new()))
+            .expect("renders");
+        let target = app.camera.target;
+        let w = FlyInput::Key {
+            key: FlyKey::Forward,
+            pressed: true,
+        };
+        app.fly.handle(w, false, &mut app.camera);
+        app.render_offscreen(&frame(0.05, Vec::new()))
+            .expect("renders");
+        assert!(!app.controller.auto_orbit);
+        let flown = app.camera.target.distance(target);
+        assert!(
+            (flown - app.fly_speed() * 0.05).abs() < 1e-4,
+            "flew {flown} at {} units/s",
+            app.fly_speed()
+        );
+    }
+
+    #[test]
+    fn framing_brings_the_camera_home_and_fits_the_fly_speed_to_the_scene() {
+        let Some(mut app) = studio() else {
+            return;
+        };
+        let expected = crate::scene::fly::speed_for_bounds(app.renderer.scene_bounds());
+        assert_eq!(
+            app.fly_speed(),
+            expected,
+            "the speed fits the scene from the start"
+        );
+        assert_ne!(expected, crate::scene::fly::DEFAULT_SPEED);
+        app.fly.speed = 123.0;
+        app.camera.target = glam::Vec3::splat(50.0);
+        app.camera.viewport = SceneViewport {
+            x0: 0.2,
+            ..SceneViewport::FULL
+        };
+        let signals = app.act(vec![
+            EditorAction::FrameScene,
+            EditorAction::Quit,
+            EditorAction::Screenshot,
+            EditorAction::ReloadShaders,
+        ]);
+        let shell = [
+            AppSignal::Quit,
+            AppSignal::Screenshot,
+            AppSignal::ReloadShaders,
+        ];
+        assert_eq!(signals, shell);
+        assert_eq!(app.camera.target, OrbitCamera::default().target);
+        assert_eq!(
+            app.camera.viewport.x0, 0.2,
+            "the docks still frame the view"
+        );
+        assert_eq!(app.fly_speed(), expected);
+        assert!(
+            !app.controller.auto_orbit,
+            "a frame asked for ends the idle spin"
+        );
     }
 }

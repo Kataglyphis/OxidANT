@@ -17,6 +17,7 @@ struct Harness {
     editor: Editor,
     settings: RendererSettings,
     camera: OrbitCamera,
+    fly_speed: f32,
     stats: SceneStats,
     frames: FrameHistory,
     device: DeviceInfo,
@@ -44,6 +45,7 @@ impl Harness {
             editor: Editor::default(),
             settings: RendererSettings::default(),
             camera: OrbitCamera::default(),
+            fly_speed: 10.0,
             stats,
             frames,
             device: DeviceInfo {
@@ -61,6 +63,26 @@ impl Harness {
 
     /// One pass; Esc is armed before it, as the host does.
     fn frame(&mut self, events: Vec<Event>) -> EditorOutput {
+        let (output, full) = self.painted_frame(events);
+        full.drop_without_applying_deltas();
+        output
+    }
+
+    /// Where a pass draws `text`, to click a widget that has no fixed id.
+    fn text_rect(&mut self, text: &str) -> Option<Rect> {
+        let (_, full) = self.painted_frame(Vec::new());
+        let found = full.shapes.iter().find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(shape) if shape.galley.text() == text => {
+                Some(shape.galley.rect.translate(shape.pos.to_vec2()))
+            }
+            _ => None,
+        });
+        full.drop_without_applying_deltas();
+        found
+    }
+
+    /// One pass and what it painted.
+    fn painted_frame(&mut self, events: Vec<Event>) -> (EditorOutput, egui::FullOutput) {
         let armed = self.editor.esc_armed(&self.ctx);
         let raw = input(self.size, self.ppp, events);
         let surface_px = [
@@ -72,6 +94,7 @@ impl Harness {
             let mut cx = EditorContext {
                 settings: &mut self.settings,
                 camera: &mut self.camera,
+                fly_speed: &mut self.fly_speed,
                 stats: &self.stats,
                 frames: &self.frames,
                 device: &self.device,
@@ -81,8 +104,7 @@ impl Harness {
             };
             output = self.editor.show(ui, &mut cx, armed);
         });
-        full.drop_without_applying_deltas();
-        output
+        (output, full)
     }
 
     fn scene_rect(&self, viewport: SceneViewport) -> Rect {
@@ -313,9 +335,11 @@ fn the_status_bar_names_the_device_the_frame_and_the_build() {
     let studio = Harness::new((1600.0, 900.0), 1.0);
     let mut settings = RendererSettings::default();
     let mut camera = OrbitCamera::default();
+    let mut fly_speed = 10.0;
     let cx = EditorContext {
         settings: &mut settings,
         camera: &mut camera,
+        fly_speed: &mut fly_speed,
         stats: &studio.stats,
         frames: &studio.frames,
         device: &studio.device,
@@ -336,6 +360,23 @@ fn the_status_bar_names_the_device_the_frame_and_the_build() {
     assert_eq!(outliner::detail(SceneObject::Model, &cx), "none");
     assert_eq!(outliner::detail(SceneObject::Camera, &cx), "45°");
     assert_eq!(inspector::subtitle(SceneObject::Model, &cx), "No model");
+}
+
+#[test]
+fn the_camera_tab_frames_the_scene_and_keeps_far_beyond_near() {
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.editor.select(SceneObject::Camera);
+    studio.frame(Vec::new());
+    let button = studio
+        .text_rect("Frame the scene")
+        .expect("the Camera tab shows its frame button");
+    let output = studio.frame(click(button.center().x, button.center().y));
+    assert_eq!(output.actions, [EditorAction::FrameScene]);
+    studio.camera.near = 50.0;
+    studio.camera.far = 60.0;
+    studio.frame(Vec::new());
+    assert_eq!(studio.camera.far, 100.0, "far stays twice near");
+    assert!(studio.text_rect("10.0 /s").is_some(), "the fly speed shows");
 }
 
 #[test]

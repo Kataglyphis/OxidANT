@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use wasm_bindgen::prelude::*;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys};
 use winit::window::{Window, WindowId};
@@ -247,6 +247,13 @@ impl ApplicationHandler for DemoApp {
             // A browser tab never quits and has no file shortcuts, so a frame asks nothing of this shell.
             let _ = app.frame(window, performance_now_seconds());
             self.egui_wants_keys.set(app.wants_keyboard());
+        }
+    }
+
+    /// Raw pointer motion, which turns a right-drag look while the Pointer Lock API holds the cursor.
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+        if let Some(app) = self.app.borrow_mut().as_mut() {
+            app.device_event(&event);
         }
     }
 }

@@ -13,6 +13,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, the Studio Pro fly camera and Camera tab)
+- `scene::fly`, the C++ engine's fly camera: W A S D move along the view and its right vector, Q and E turn
+  90°/s, the held right button looks around at 0.25°/px with the pointer held (winit's `Locked`, `Confined` where
+  a platform has no lock, the Pointer Lock API in a browser; raw `DeviceEvent::MouseMotion`), the pitch stays
+  within ±89° and a step integrates at most 0.1 s. It drives the same `OrbitCamera` as the orbit controller:
+  flying moves eye and target together and turns about the eye, orbiting turns about the target, so an orbit after
+  a flight circles the point ahead. The speed starts at a quarter of the scene's diagonal per second, the C++
+  10 units/s in a 40-unit Sponza, so a 1 m cube and an 8 km city both take four seconds to cross.
+- Input routing: a press egui consumes never reaches the fly camera, a release always does, losing the window's
+  focus releases every key and ends the look, and winit's synthetic presses on focus gain are ignored. While
+  looking egui sees no pointer moves; the pointer comes back where the look began, as GLFW's does.
+- The Camera tab: field of view, near and far planes on log scales (far stays twice near), the fly speed, and
+  *Frame the scene*, which emits `EditorAction::FrameScene`: the home view, the fly speed refitted. CONTROLS lists
+  W A S D, Q E and the right mouse; a test keeps every fly key in it and off every shortcut.
+
+### Changed (2026-11-15, the Studio Pro fly camera and Camera tab)
+- The screenshot key moved from S to F12: S flies back.
+
 ### Fixed (2026-11-15, the app, UI and web bugs)
 - **A Timeout, Occluded or Validation acquire ended the viewer's frame loop**: nothing asked for the next redraw.
   `GpuContext::acquire` repairs the surface and says when to retry, next frame or, occluded, on

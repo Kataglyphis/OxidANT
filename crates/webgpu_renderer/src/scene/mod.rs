@@ -2,6 +2,7 @@
 
 pub mod camera;
 pub mod controller;
+pub mod fly;
 pub mod lod;
 pub mod qem;
 pub mod viewport;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
@@ -110,7 +110,7 @@ impl Viewer {
         }
     }
 
-    /// S key: renders one frame offscreen and writes screenshots/NNN.png.
+    /// F12: renders one frame offscreen and writes screenshots/NNN.png.
     fn save_screenshot(&mut self) {
         let Some(app) = self.app.as_mut() else {
             return;
@@ -201,6 +201,13 @@ impl ApplicationHandler for Viewer {
             WindowEvent::DroppedFile(path) => self.load_model(path),
             WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
+        }
+    }
+
+    /// Raw mouse motion turns a right-drag look where the platform holds the cursor still.
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+        if let Some(app) = self.app.as_mut() {
+            app.device_event(&event);
         }
     }
 }
