@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, the tile-light grid is conservative)
+- **A point or spot light was cut off in tiles that listed other lights**: `render/tile_grid.rs` bounded its range
+  sphere by the screen AABB of the centre and the six `pos ± range * axis` points, which under-covers the silhouette
+  by up to `D / sqrt(D² - r²)`. The rect now comes from the sphere's tangents per screen axis (Mara & McGuire 2013),
+  exact for the perspective lens and the docked viewport's remap, with a pixel of padding; a sphere reaching the eye
+  plane takes the whole grid. `every_point_a_light_reaches_shades_in_a_tile_that_lists_it` (300 random cameras, 32
+  lights with ranges from 0.01 to 50, 64 points inside each range) missed 4009 of 313052 on-screen points before;
+  `a_sphere_is_bound_by_its_tangents_not_its_axis_points` pins one rect.
+- **An empty tile iterated every light**, up to 256 per fragment, to hide that under-coverage. `forward_lighting.slang`
+  now shades nothing there. An overflowing tile stores its true count past `MAX_LIGHTS_PER_TILE` (32, pinned against
+  the shader by `max_lights_per_tile_matches_the_slang_constant`) and still shades every light.
+
 ### Fixed (2026-11-15, the browser demo's crate texts are reviewed)
 - `packaging/cargo-license-policy.json` covers `kataglyphis_webgpu_renderer`'s graph for `wasm32-unknown-unknown`, the
   WebGPU demo BeschleunigerBallett's docs site ships; the hub's stager stopped at the first two gaps. `bevy_mikktspace`

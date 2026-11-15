@@ -113,9 +113,9 @@ impl ForwardRenderer {
             &mut lights.scratch,
             &lights.punctual,
             lights.punctual_count,
-            view.width,
-            view.height,
-            &view.view_proj,
+            (view.width, view.height),
+            &view.view,
+            &view.projection,
         );
         lights.grow_tile_buffers(&gpu.device);
         gpu.queue.write_buffer(

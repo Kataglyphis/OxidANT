@@ -1,14 +1,17 @@
 //! CPU binning of punctual lights into the screen tiles their `range` covers, for tiled lighting.
 //! An empty grid (`tileW == 0`) is the shader's all-lights fallback.
 
-use glam::{Mat4, Vec4Swizzles};
+use glam::{DVec2, Mat4, Vec2, Vec3, Vec4, Vec4Swizzles};
 
 use crate::render::forward::MAX_PUNCTUAL_LIGHTS;
 
 /// Tile edge in pixels; each fragment iterates only its tile's lights.
 pub const TILE_SIZE: u32 = 16;
-/// Most lights one tile lists; a tile more lights overlap lists none, so the shader takes them all.
+/// Most lights one tile lists; a tile more lights overlap lists none, and the shader takes them all.
 pub const MAX_LIGHTS_PER_TILE: u32 = 32;
+
+/// An inclusive tile rect `(min_tx, min_ty, max_tx, max_ty)`.
+type TileRect = (u32, u32, u32, u32);
 
 /// Scratch for [`build_tile_light_grid`], kept on `ForwardRenderer` to avoid per-frame allocations.
 #[derive(Default)]
@@ -17,8 +20,8 @@ pub(crate) struct TileLightGridScratch {
     pub(crate) grid: Vec<u32>,
     pub(crate) indices: Vec<u32>,
     pub(crate) write_positions: Vec<u32>,
-    /// Each light's inclusive tile rect, `None` when it reaches no tile.
-    rects: Vec<Option<(u32, u32, u32, u32)>>,
+    /// Each light's tile rect, `None` when it reaches no tile.
+    rects: Vec<Option<TileRect>>,
 }
 
 /// Tiles across and down for a `width` x `height` target.
@@ -26,6 +29,8 @@ pub(crate) struct TileLightGridScratch {
 struct TileGrid {
     tiles_x: u32,
     tiles_y: u32,
+    width: u32,
+    height: u32,
 }
 
 impl TileGrid {
@@ -33,123 +38,136 @@ impl TileGrid {
         (self.tiles_x * self.tiles_y) as usize
     }
 
-    /// Flat tile indices inside the inclusive rect `(min_tx, min_ty, max_tx, max_ty)`.
-    fn tiles_in(
-        self,
-        (min_tx, min_ty, max_tx, max_ty): (u32, u32, u32, u32),
-    ) -> impl Iterator<Item = usize> {
+    fn whole(self) -> TileRect {
+        (0, 0, self.tiles_x - 1, self.tiles_y - 1)
+    }
+
+    /// Flat tile indices inside `rect`.
+    fn tiles_in(self, (min_tx, min_ty, max_tx, max_ty): TileRect) -> impl Iterator<Item = usize> {
         (min_ty..=max_ty)
             .flat_map(move |ty| (min_tx..=max_tx).map(move |tx| (ty * self.tiles_x + tx) as usize))
     }
+
+    /// The tiles an NDC rect covers, or `None` when it lies wholly off screen.
+    fn ndc_rect(self, min: Vec2, max: Vec2) -> Option<TileRect> {
+        let (w, h) = (self.width as f32, self.height as f32);
+        // Framebuffer pixels, y down; the pixel of padding absorbs rounding, a sample off the pixel centre included.
+        let (px0, px1) = ((min.x * 0.5 + 0.5) * w - 1.0, (max.x * 0.5 + 0.5) * w + 1.0);
+        let (py0, py1) = ((0.5 - max.y * 0.5) * h - 1.0, (0.5 - min.y * 0.5) * h + 1.0);
+        if px1 < 0.0 || py1 < 0.0 || px0 >= w || py0 >= h {
+            return None;
+        }
+        let tile = |p: f32, extent: u32| (p.clamp(0.0, (extent - 1) as f32) as u32) / TILE_SIZE;
+        Some((
+            tile(px0, self.width).min(self.tiles_x - 1),
+            tile(py0, self.height).min(self.tiles_y - 1),
+            tile(px1, self.width).min(self.tiles_x - 1),
+            tile(py1, self.height).min(self.tiles_y - 1),
+        ))
+    }
 }
 
-/// Inclusive tile rect a light's footprint covers, or `None` when it is entirely behind the camera.
-/// See crates/webgpu_renderer/docs/renderer-bounds-invariant.md § The tile-light grid is not conservative.
-// Single call site; a struct of the grid parameters would only move the argument list.
-#[allow(clippy::too_many_arguments)]
+/// Where a light's sphere lands on screen.
+enum Footprint {
+    /// Wholly behind the eye.
+    Hidden,
+    /// Reaching the eye plane, or not boundable by this projection.
+    Unbounded,
+    /// The NDC rect `min..max` bounding its silhouette.
+    Ndc(Vec2, Vec2),
+}
+
+/// The slopes `x / depth` of the two tangents from the eye to a circle at lateral `c`, `depth` and radius `r`.
+fn tangent_slopes(c: f64, depth: f64, r: f64) -> (f64, f64) {
+    // Roots of s²(d² - r²) - 2cds + c² - r² = 0, the second from the product so neither cancels.
+    let a = depth * depth - r * r;
+    let q = c * depth + c.signum() * r * (c * c + a).sqrt();
+    let (s0, s1) = (q / a, (c * c - r * r) / q);
+    (s0.min(s1), s0.max(s1))
+}
+
+/// The NDC bound of a view-space sphere's perspective silhouette (Mara & McGuire 2013, one axis at a time).
+fn sphere_footprint(center: Vec3, radius: f32, proj: &Mat4) -> Footprint {
+    let (depth, r) = (f64::from(-center.z), f64::from(radius));
+    if depth <= -r {
+        return Footprint::Hidden;
+    }
+    // The slope rect maps to NDC only when clip w is a positive multiple of view depth.
+    let w_row = proj.row(3);
+    let perspective = w_row.x == 0.0 && w_row.y == 0.0 && w_row.w == 0.0 && w_row.z < 0.0;
+    if !perspective || depth * depth - r * r <= 1e-6 * depth * depth {
+        return Footprint::Unbounded;
+    }
+    let (x0, x1) = tangent_slopes(f64::from(center.x), depth, r);
+    let (y0, y1) = tangent_slopes(f64::from(center.y), depth, r);
+    let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    // At depth 1 a slope is the view-space offset; NDC is affine in it, so the corners bound the rect's image.
+    for s in [
+        DVec2::new(x0, y0),
+        DVec2::new(x0, y1),
+        DVec2::new(x1, y0),
+        DVec2::new(x1, y1),
+    ] {
+        let clip = *proj * Vec4::new(s.x as f32, s.y as f32, -1.0, 1.0);
+        let ndc = clip.xy() / clip.w;
+        min = min.min(ndc);
+        max = max.max(ndc);
+    }
+    if min.is_finite() && max.is_finite() {
+        Footprint::Ndc(min, max)
+    } else {
+        Footprint::Unbounded
+    }
+}
+
+/// The tiles a light's sphere covers, or `None` when no on-screen point lies inside it.
+/// See crates/webgpu_renderer/docs/renderer-bounds-invariant.md § The tile-light grid is conservative.
 fn tile_rect_for_light(
-    pos: glam::Vec3,
-    range: f32,
-    kind: f32,
-    tile_x: u32,
-    tile_y: u32,
-    width: u32,
-    height: u32,
-    view_proj: &Mat4,
-) -> Option<(u32, u32, u32, u32)> {
+    light: &[[f32; 4]; 4],
+    grid: TileGrid,
+    view: &Mat4,
+    proj: &Mat4,
+) -> Option<TileRect> {
+    let (kind, range) = (light[0][3], light[1][3]);
     // Range 0 is glTF's "unbounded" (Blender exports it by default), so it reaches every tile.
     if kind == 3.0 || !(range > 0.0 && range.is_finite()) {
-        return Some((0, 0, tile_x.saturating_sub(1), tile_y.saturating_sub(1)));
+        return Some(grid.whole());
     }
-
-    let candidates = [
-        pos,
-        pos + glam::Vec3::X * range,
-        pos - glam::Vec3::X * range,
-        pos + glam::Vec3::Y * range,
-        pos - glam::Vec3::Y * range,
-        pos + glam::Vec3::Z * range,
-        pos - glam::Vec3::Z * range,
-    ];
-
-    let mut min_uv = glam::Vec2::splat(f32::MAX);
-    let mut max_uv = glam::Vec2::splat(f32::MIN);
-    let mut any_in_front = false;
-    let mut any_behind = false;
-
-    for c in candidates {
-        let clip = *view_proj * glam::Vec4::new(c.x, c.y, c.z, 1.0);
-        if clip.w <= 0.0 {
-            any_behind = true;
-            continue;
-        }
-        any_in_front = true;
-        let ndc = clip.xy() / clip.w;
-        // Framebuffer-oriented (y down, 0.0 = top) to match @builtin(position), not NDC.
-        let uv = glam::Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-        min_uv = min_uv.min(uv);
-        max_uv = max_uv.max(uv);
+    let center = view.transform_point3(Vec3::from_slice(&light[0][..3]));
+    match sphere_footprint(center, range, proj) {
+        Footprint::Hidden => None,
+        Footprint::Unbounded => Some(grid.whole()),
+        Footprint::Ndc(min, max) => grid.ndc_rect(min, max),
     }
-
-    if !any_in_front {
-        return None;
-    }
-
-    if any_behind {
-        // Straddles the near plane: the in-front AABB bounds nothing, so cover the whole grid.
-        return Some((0, 0, tile_x.saturating_sub(1), tile_y.saturating_sub(1)));
-    }
-
-    let min_uv = min_uv.clamp(glam::Vec2::ZERO, glam::Vec2::ONE);
-    let max_uv = max_uv.clamp(glam::Vec2::ZERO, glam::Vec2::ONE);
-
-    let last_x = width.saturating_sub(1);
-    let last_y = height.saturating_sub(1);
-    let min_tx = ((min_uv.x * width as f32) as u32).min(last_x) / TILE_SIZE;
-    let min_ty = ((min_uv.y * height as f32) as u32).min(last_y) / TILE_SIZE;
-    let max_tx = ((max_uv.x * width as f32) as u32).min(last_x) / TILE_SIZE;
-    let max_ty = ((max_uv.y * height as f32) as u32).min(last_y) / TILE_SIZE;
-
-    Some((
-        min_tx.min(tile_x.saturating_sub(1)),
-        min_ty.min(tile_y.saturating_sub(1)),
-        max_tx.min(tile_x.saturating_sub(1)),
-        max_ty.min(tile_y.saturating_sub(1)),
-    ))
 }
 
 /// Bins lights per tile into `scratch.grid` ([count, offset] per tile) and flat `scratch.indices`.
+/// `view` must be rigid, and `proj` a perspective projection for a bound tighter than the whole grid.
 pub(crate) fn build_tile_light_grid(
     scratch: &mut TileLightGridScratch,
     packed_lights: &[[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
     light_count: u32,
-    width: u32,
-    height: u32,
-    view_proj: &Mat4,
+    (width, height): (u32, u32),
+    view: &Mat4,
+    proj: &Mat4,
 ) {
+    let (width, height) = (width.max(1), height.max(1));
     let grid = TileGrid {
         tiles_x: width.div_ceil(TILE_SIZE),
         tiles_y: height.div_ceil(TILE_SIZE),
+        width,
+        height,
     };
     scratch.rects.clear();
-    for i in 0..light_count as usize {
-        let base = i * 4;
-        let pos = glam::Vec3::new(
-            packed_lights[base][0],
-            packed_lights[base][1],
-            packed_lights[base][2],
-        );
-        let (kind, range) = (packed_lights[base][3], packed_lights[base + 1][3]);
-        scratch.rects.push(tile_rect_for_light(
-            pos,
-            range,
-            kind,
-            grid.tiles_x,
-            grid.tiles_y,
-            width,
-            height,
-            view_proj,
-        ));
+    for light in packed_lights
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .take(light_count as usize)
+    {
+        scratch
+            .rects
+            .push(tile_rect_for_light(light, grid, view, proj));
     }
     count_lights_per_tile(scratch, grid);
     assign_tile_offsets(scratch, grid);
@@ -166,20 +184,25 @@ fn count_lights_per_tile(scratch: &mut TileLightGridScratch, grid: TileGrid) {
     }
 }
 
-/// Prefix-sums the per-tile counts into `[count, offset]` pairs.
+/// How many of a tile's `count` lights it lists: all of them, or none once they overflow it.
+fn listed(count: u32) -> u32 {
+    if count > MAX_LIGHTS_PER_TILE {
+        0
+    } else {
+        count
+    }
+}
+
+/// Writes each tile's `[count, offset]`; a count past `MAX_LIGHTS_PER_TILE` lists nothing at its offset.
 fn assign_tile_offsets(scratch: &mut TileLightGridScratch, grid: TileGrid) {
     scratch.grid.clear();
     scratch.grid.resize(grid.total() * 2, 0);
     let mut running_offset = 0u32;
     for t in 0..grid.total() {
-        // An overflowing tile lists nothing: the shader's empty-tile path then shades every light.
-        let cnt = match scratch.per_tile_counts[t] {
-            n if n > MAX_LIGHTS_PER_TILE => 0,
-            n => n,
-        };
-        scratch.grid[t * 2] = cnt;
+        let count = scratch.per_tile_counts[t];
+        scratch.grid[t * 2] = count;
         scratch.grid[t * 2 + 1] = running_offset;
-        running_offset += cnt;
+        running_offset += listed(count);
     }
     scratch.indices.clear();
     scratch.indices.resize((running_offset as usize).max(1), 0);
@@ -200,367 +223,16 @@ fn write_tile_indices(scratch: &mut TileLightGridScratch, grid: TileGrid) {
             continue;
         };
         for idx in grid.tiles_in(*rect) {
-            // Each tile writes only within [offset, offset + count), so an overflowing tile writes nothing.
-            let end = scratch.grid[idx * 2 + 1] + scratch.grid[idx * 2];
-            let wp = scratch.write_positions[idx];
-            if wp < end {
-                scratch.indices[wp as usize] = i as u32;
-                scratch.write_positions[idx] = wp + 1;
+            // An overflowing tile lists nothing, so it never writes.
+            if listed(scratch.grid[idx * 2]) == 0 {
+                continue;
             }
+            let wp = scratch.write_positions[idx];
+            scratch.indices[wp as usize] = i as u32;
+            scratch.write_positions[idx] = wp + 1;
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    // See render/bounds.rs's tests for why `directx` matches the old `Mat4::*_rh` constructors.
-    use glam::camera::rh::proj::directx as clip;
-    use glam::camera::rh::view::look_at_mat4;
-    use glam::Vec3;
-
-    #[test]
-    fn build_tile_light_grid_bins_lights_into_correct_tiles() {
-        // Single light at origin, perspective camera at (0,0,5) looking at origin.
-        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-
-        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        // The range spans the frustum, so only "the centre tile holds it" is checkable here.
-        packed[0] = [0.0, 0.0, 0.0, 1.0]; // position + kind=point
-        packed[1] = [1.0, 1.0, 1.0, 10.0]; // color*intensity + range
-
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
-        // The light at origin should cover the center tile.
-        let tx = 128 / TILE_SIZE; // ~8 for 16px tiles
-        let ty = 128 / TILE_SIZE;
-        let tile_w = 256 / TILE_SIZE; // 16
-        let center_tile = (ty * tile_w + tx) as usize;
-        assert!(
-            scratch.grid[center_tile * 2] >= 1,
-            "center tile should contain the light"
-        );
-        let offset = scratch.grid[center_tile * 2 + 1] as usize;
-        let count = scratch.grid[center_tile * 2] as usize;
-        assert!(
-            scratch.indices[offset..offset + count].contains(&0),
-            "center tile's light list should contain light index 0"
-        );
-    }
-
-    #[test]
-    fn build_tile_light_grid_handles_zero_lights() {
-        let vp = Mat4::IDENTITY;
-        let packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, 0, 256, 256, &vp);
-        assert!(
-            scratch.grid.iter().all(|&c| c == 0),
-            "all tiles should have zero lights"
-        );
-        assert!(!scratch.indices.is_empty(), "indices buffer should exist");
-    }
-
-    #[test]
-    fn build_tile_light_grid_skips_lights_behind_camera() {
-        // Light behind the camera, with a range too short to reach in front of it.
-        let view = look_at_mat4(Vec3::new(5.0, 0.0, 0.0), Vec3::ZERO, Vec3::Y);
-        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-
-        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        packed[0] = [10.0, 0.0, 0.0, 1.0];
-        packed[1] = [1.0, 1.0, 1.0, 2.0];
-
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
-        for chunk in scratch.grid.chunks(2) {
-            assert_eq!(chunk[0], 0, "no light should reach any tile");
-        }
-    }
-
-    #[test]
-    fn build_tile_light_grid_covers_tiles_within_range() {
-        // Range spills past the centre tile but stays a proper subset, so the rectangle is checkable.
-        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-
-        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        packed[0] = [0.0, 0.0, 0.0, 1.0];
-        packed[1] = [1.0, 1.0, 1.0, 1.0]; // range = 1.0
-
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
-
-        let tile_w = 256 / TILE_SIZE;
-        let lit_tiles: Vec<(u32, u32)> = (0..tile_w)
-            .flat_map(|ty| (0..tile_w).map(move |tx| (tx, ty)))
-            .filter(|&(tx, ty)| scratch.grid[((ty * tile_w + tx) * 2) as usize] > 0)
-            .collect();
-
-        assert!(
-            lit_tiles.len() > 1,
-            "a light with nonzero range should cover more than one tile, got {}",
-            lit_tiles.len()
-        );
-
-        let min_tx = lit_tiles.iter().map(|&(tx, _)| tx).min().unwrap();
-        let max_tx = lit_tiles.iter().map(|&(tx, _)| tx).max().unwrap();
-        let min_ty = lit_tiles.iter().map(|&(_, ty)| ty).min().unwrap();
-        let max_ty = lit_tiles.iter().map(|&(_, ty)| ty).max().unwrap();
-        let expected_count = ((max_tx - min_tx + 1) * (max_ty - min_ty + 1)) as usize;
-        assert_eq!(
-            lit_tiles.len(),
-            expected_count,
-            "lit tiles should form a contiguous rectangle, got {:?}",
-            lit_tiles
-        );
-
-        let center_tx = 128 / TILE_SIZE;
-        let center_ty = 128 / TILE_SIZE;
-        assert!(
-            min_tx <= center_tx && center_tx <= max_tx,
-            "rectangle should surround the centre tile"
-        );
-        assert!(
-            min_ty <= center_ty && center_ty <= max_ty,
-            "rectangle should surround the centre tile"
-        );
-    }
-
-    #[test]
-    fn build_tile_light_grid_includes_directional_lights_in_every_tile() {
-        let vp = Mat4::IDENTITY;
-        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        packed[0] = [0.0, -1.0, 0.0, 3.0]; // kind = directional; position unused
-        packed[1] = [1.0, 1.0, 1.0, 0.0]; // color*intensity + range (unused)
-
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
-
-        let total_tiles = scratch.grid.len() / 2;
-        for t in 0..total_tiles {
-            assert!(
-                scratch.grid[t * 2] >= 1,
-                "tile {} missing the directional light",
-                t
-            );
-        }
-    }
-
-    #[test]
-    fn build_tile_light_grid_bins_a_light_into_the_row_the_shader_reads() {
-        // Small-range light above centre, so its rect stays in the upper half.
-        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-
-        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        packed[0] = [0.0, 1.5, 0.0, 1.0]; // position above centre + kind=point
-        packed[1] = [1.0, 1.0, 1.0, 0.3]; // color*intensity + small range
-
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
-
-        // Expected tile as the shader computes it: fragCoord is y down, 0.0 = top.
-        let clip = vp * glam::Vec4::new(0.0, 1.5, 0.0, 1.0);
-        let ndc = clip.xy() / clip.w;
-        let uv_y = 0.5 - (ndc.y) * 0.5;
-        let ty = ((uv_y * 256.0) as u32).min(255) / TILE_SIZE;
-        let tile_w = 256 / TILE_SIZE;
-
-        let mut found = false;
-        for tx in 0..tile_w {
-            let idx = (ty * tile_w + tx) as usize;
-            let count = scratch.grid[idx * 2] as usize;
-            if count == 0 {
-                continue;
-            }
-            let offset = scratch.grid[idx * 2 + 1] as usize;
-            if scratch.indices[offset..offset + count].contains(&0) {
-                found = true;
-                break;
-            }
-        }
-        assert!(
-            found,
-            "the row the shader reads for this light should contain it"
-        );
-        assert!(
-            ty < 8,
-            "a light above centre should land in the upper half, got ty={ty}"
-        );
-    }
-
-    #[test]
-    fn build_tile_light_grid_keeps_two_lights_in_their_own_halves() {
-        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-
-        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        packed[0] = [0.0, 1.5, 0.0, 1.0]; // above centre
-        packed[1] = [1.0, 1.0, 1.0, 0.3];
-        packed[4] = [0.0, -1.5, 0.0, 1.0]; // below centre
-        packed[5] = [1.0, 1.0, 1.0, 0.3];
-
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, 2, 256, 256, &vp);
-
-        let tile_w = 256 / TILE_SIZE;
-        let tile_h = 256 / TILE_SIZE;
-
-        let tile_contains = |ty: u32, tx: u32, light: u32| -> bool {
-            let idx = (ty * tile_w + tx) as usize;
-            let count = scratch.grid[idx * 2] as usize;
-            if count == 0 {
-                return false;
-            }
-            let offset = scratch.grid[idx * 2 + 1] as usize;
-            scratch.indices[offset..offset + count].contains(&light)
-        };
-
-        // Each light must appear in its own half and never leak into the other.
-        let light0_in_upper = (0..8).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 0)));
-        let light0_in_lower = (8..tile_h).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 0)));
-        let light1_in_lower = (8..tile_h).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 1)));
-        let light1_in_upper = (0..8).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 1)));
-
-        assert!(
-            light0_in_upper,
-            "light above centre should be in the upper half"
-        );
-        assert!(
-            !light0_in_lower,
-            "light above centre should not leak into the lower half"
-        );
-        assert!(
-            light1_in_lower,
-            "light below centre should be in the lower half"
-        );
-        assert!(
-            !light1_in_upper,
-            "light below centre should not leak into the upper half"
-        );
-    }
-
-    #[test]
-    fn build_tile_light_grid_keeps_offscreen_but_overlapping_lights() {
-        // Centre outside the frustum, but the range reaches back onto the screen.
-        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-
-        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        packed[0] = [3.0, 0.0, 0.0, 1.0]; // centre projects outside [0,1]
-        packed[1] = [1.0, 1.0, 1.0, 5.0]; // range reaches back onto the screen
-
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
-
-        let any_lit = scratch.grid.chunks(2).any(|c| c[0] > 0);
-        assert!(
-            any_lit,
-            "a light whose range reaches the screen must light at least one tile even though its centre is off-screen"
-        );
-    }
-
-    /// The light indices `scratch` lists for tile (`tx`, `ty`) of a `tile_w`-wide grid.
-    fn tile_lights(scratch: &TileLightGridScratch, tile_w: u32, tx: u32, ty: u32) -> &[u32] {
-        let idx = (ty * tile_w + tx) as usize;
-        let count = scratch.grid[idx * 2] as usize;
-        let offset = scratch.grid[idx * 2 + 1] as usize;
-        &scratch.indices[offset..offset + count]
-    }
-
-    #[test]
-    fn a_range_less_point_light_reaches_every_tile_beside_a_directional_one() {
-        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-
-        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        packed[0] = [0.0, -1.0, 0.0, 3.0]; // directional
-        packed[1] = [1.0, 1.0, 1.0, 0.0];
-        packed[4] = [0.0, 0.0, 0.0, 1.0]; // point in front of the camera
-        packed[5] = [1.0, 1.0, 1.0, 0.0]; // range 0: unbounded
-        packed[8] = [0.0, 0.0, 9.0, 1.0]; // point behind the camera
-        packed[9] = [1.0, 1.0, 1.0, 0.0];
-
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, 3, 256, 256, &vp);
-
-        let tile_w = 256 / TILE_SIZE;
-        for ty in 0..tile_w {
-            for tx in 0..tile_w {
-                let lights = tile_lights(&scratch, tile_w, tx, ty);
-                assert!(
-                    lights.contains(&1) && lights.contains(&2),
-                    "tile ({tx}, {ty}) lists {lights:?}: both unbounded point lights reach it"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn an_overflowing_tile_falls_back_to_every_light_instead_of_dropping_some() {
-        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-
-        // 40 small lights around the centre plus one far off to the side, which few tiles see.
-        let light_count = MAX_LIGHTS_PER_TILE as usize + 9;
-        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        for i in 0..light_count - 1 {
-            packed[i * 4] = [(i % 5) as f32 * 0.01, (i / 5) as f32 * 0.01, 0.0, 1.0];
-            packed[i * 4 + 1] = [1.0, 1.0, 1.0, 0.2];
-        }
-        packed[(light_count - 1) * 4] = [1.4, 1.4, 0.0, 1.0];
-        packed[(light_count - 1) * 4 + 1] = [1.0, 1.0, 1.0, 0.1];
-
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, light_count as u32, 256, 256, &vp);
-
-        let tile_w = 256 / TILE_SIZE;
-        let centre = tile_lights(&scratch, tile_w, 8, 8);
-        assert!(
-            centre.is_empty(),
-            "the centre tile, which {} lights overlap, must fall back to every light, \
-             not list a truncated {centre:?}",
-            light_count - 1
-        );
-        let corner_light = (light_count - 1) as u32;
-        let lit_by_corner_light = (0..tile_w)
-            .flat_map(|ty| (0..tile_w).map(move |tx| (tx, ty)))
-            .any(|(tx, ty)| tile_lights(&scratch, tile_w, tx, ty) == [corner_light]);
-        assert!(
-            lit_by_corner_light,
-            "a tile only the side light overlaps must still list it alone"
-        );
-    }
-
-    #[test]
-    fn a_light_straddling_the_near_plane_covers_the_whole_grid() {
-        // The +Z candidate (z = 6.9) is behind the eye at z = 5 while the centre is in front.
-        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-
-        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-        packed[0] = [0.0, 0.0, 4.9, 1.0]; // position + kind=point
-        packed[1] = [1.0, 1.0, 1.0, 2.0]; // color*intensity + range
-
-        let mut scratch = TileLightGridScratch::default();
-        build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
-
-        for chunk in scratch.grid.chunks(2) {
-            assert!(
-                chunk[0] >= 1,
-                "every tile should list the near-plane-straddling light"
-            );
-        }
-    }
-}
+mod tests;

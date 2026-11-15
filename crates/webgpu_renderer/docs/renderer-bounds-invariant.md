@@ -88,20 +88,26 @@ exactly, over-cover it:
 Each of those is a proof, not a fudge factor — which is why none of them needs a
 magic epsilon.
 
-### The tile-light grid is not conservative
+### The tile-light grid is conservative
 
-`render/tile_grid.rs` bounds a point or spot light by the screen AABB of its centre
-and the six `pos ± range * axis` points (the whole grid when it straddles the near
-plane). That AABB can still miss tiles: a sphere's silhouette is set by tangent
-points mixing lateral and depth offsets, so the true footprint is wider by up to
-`D / sqrt(D² - r²)`. Until a projection-aware sphere bound replaces it (Mara &
-McGuire, *2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere*), the
-shader's per-tile `count <= 0` fallback that iterates every light must stay.
+`render/tile_grid.rs` bounds a point or spot light by the screen rect of its range sphere's
+perspective silhouette (Mara & McGuire, *2D Polyhedral Bounds of a Clipped,
+Perspective-Projected 3D Sphere*, 2013): per screen axis, the two tangents from the eye to
+the sphere's view-space circle give the extreme slopes `x / depth`, and the projection maps
+the slope rect's corners to NDC. That is exact for any lens whose clip `w` is a positive
+multiple of view depth, the docked viewport's remap included; a pixel of padding absorbs
+rounding. A sphere reaching the eye plane, or a non-perspective projection, takes the whole
+grid. The bound it replaced, the AABB of the centre and the six `pos ± range * axis` points,
+under-covered by up to `D / sqrt(D² - r²)` and cut such a light off in tiles that listed
+others. `every_point_a_light_reaches_shades_in_a_tile_that_lists_it` pins it: 300 random
+cameras, 32 lights each with ranges from 0.01 to 50, 64 points inside each range; the old
+bound missed 4009 of 313052 on-screen points.
 
-Two cases bypass the footprint on purpose. A light without a finite positive `range`
-(glTF's unbounded light, Blender's default export) is binned into every tile, as a
-directional one is. A tile more than `MAX_LIGHTS_PER_TILE` lights overlap lists none,
-so the same fallback shades every light there instead of a truncated list.
+Because the bound is conservative, the shader's empty tile shades no light. Two cases
+bypass the footprint on purpose. A light without a finite positive `range` (glTF's
+unbounded light, Blender's default export) is binned into every tile, as a directional
+one is. A tile more than `MAX_LIGHTS_PER_TILE` lights overlap stores its true count and
+lists none, and the shader shades every light there instead of a truncated list.
 
 ## Non-finite input
 

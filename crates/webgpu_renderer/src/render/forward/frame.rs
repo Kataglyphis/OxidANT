@@ -68,6 +68,9 @@ pub(super) struct FrameView {
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) view_proj: Mat4,
+    /// The two factors of `view_proj`, which the light binning bounds spheres in.
+    pub(super) view: Mat4,
+    pub(super) projection: Mat4,
     pub(super) frustum: Frustum,
     pub(super) eye: Vec3,
 }
@@ -114,16 +117,19 @@ impl ForwardRenderer {
         height: u32,
     ) -> FrameView {
         let aspect = width as f32 / height as f32;
-        let view_proj = camera.view_projection(aspect);
+        let (view, projection) = (camera.view(), camera.projection(aspect));
+        let view_proj = projection * view;
         let frustum = Frustum::from_view_proj(&view_proj);
         self.post
             .ssao
-            .write_uniforms(&gpu.queue, camera.projection(aspect), 0.6, 0.02, 1.0);
+            .write_uniforms(&gpu.queue, projection, 0.6, 0.02, 1.0);
         self.update_cascades(camera, aspect);
         FrameView {
             width,
             height,
             view_proj,
+            view,
+            projection,
             frustum,
             eye: camera.eye(),
         }

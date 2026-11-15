@@ -472,6 +472,22 @@ fn tile_size_matches_the_slang_constant() {
     );
 }
 
+/// Pins `render::tile_grid::MAX_LIGHTS_PER_TILE`, which tells the shader a tile overflowed; no GPU needed.
+#[test]
+fn max_lights_per_tile_matches_the_slang_constant() {
+    let Some(source) = slang_source() else {
+        return;
+    };
+    let shader_max: u32 = parse_slang_constant(&source, "MAX_LIGHTS_PER_TILE").expect(
+        "forward_lighting.slang must declare `static const uint MAX_LIGHTS_PER_TILE = <n>;`",
+    );
+    assert_eq!(
+        kataglyphis_webgpu_renderer::render::tile_grid::MAX_LIGHTS_PER_TILE,
+        shader_max,
+        "Rust MAX_LIGHTS_PER_TILE and forward_lighting.slang's have drifted apart"
+    );
+}
+
 #[test]
 fn alpha_modes_blend_and_mask() {
     let Some(gpu) = GpuContext::headless_or_skip() else {

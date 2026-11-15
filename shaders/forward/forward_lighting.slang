@@ -11,6 +11,8 @@ static const int MAX_PCF_RADIUS = 5;
 
 // Must match render::tile_grid::TILE_SIZE, the CPU's light-binning tile size.
 static const uint TILE_SIZE = 16;
+// Must match render::tile_grid::MAX_LIGHTS_PER_TILE: a tile counting more lists none.
+static const uint MAX_LIGHTS_PER_TILE = 32;
 
 // Below fp16's 65504: a larger radiance stores as +Inf in the Rgba16Float target, and ACES turns Inf into NaN.
 static const float HDR_MAX = 65000.0;
@@ -161,25 +163,27 @@ float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
     uint tileY = uint(fragCoord.y) / TILE_SIZE;
     uint tileW = uint(frame.cascade_splits.z);
     uint tileH = uint(frame.cascade_splits.w);
-    int totalLights = int(frame.camera_position.w);
-    int tileCount = totalLights;
+    uint tileCount = uint(frame.camera_position.w);
     uint tileOffset = 0u;
-    int count = 0;
+    bool listed = false;
     if (tileW != 0u)
     {
         uint tx = min(tileX, max(tileW, 1u) - 1u);
         uint ty = min(tileY, max(tileH, 1u) - 1u);
         uint tileIndex = ty * tileW + tx;
         uint2 gridEntry = tileLightGrid[tileIndex];
-        count = int(gridEntry.x);
-        tileOffset = gridEntry.y;
-        // An empty tile shades every light: binning is not fully conservative, and an overflowing tile lists none.
-        if (count > 0) tileCount = count;
+        // The binning is conservative, so an empty tile shades nothing; an overflowing one lists none and shades all.
+        listed = gridEntry.x <= MAX_LIGHTS_PER_TILE;
+        if (listed)
+        {
+            tileCount = gridEntry.x;
+            tileOffset = gridEntry.y;
+        }
     }
 
-    for (uint j = 0u; j < uint(tileCount); j++)
+    for (uint j = 0u; j < tileCount; j++)
     {
-        uint lightIdx = (count > 0) ? tileLightIndices[tileOffset + j] : j;
+        uint lightIdx = listed ? tileLightIndices[tileOffset + j] : j;
         float4 a = punctualLights[lightIdx * 4u];
         float4 b = punctualLights[lightIdx * 4u + 1u];
         float4 cvec = punctualLights[lightIdx * 4u + 2u];
