@@ -162,7 +162,7 @@ impl StudioApp {
             self.camera.yaw_deg = auto_orbit_yaw(self.home.yaw_deg, elapsed_s);
         }
         if self.renderer.has_animations() {
-            self.renderer.set_animation_time(elapsed_s as f32);
+            self.renderer.set_animation_time(elapsed_s);
         }
     }
 
@@ -207,9 +207,14 @@ mod tests {
     use crate::{load_gltf, GpuContext};
 
     fn studio() -> Option<StudioApp> {
+        studio_of("cube_on_plane.gltf")
+    }
+
+    fn studio_of(asset: &str) -> Option<StudioApp> {
         let gpu = GpuContext::headless_or_skip()?;
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/assets/cube_on_plane.gltf");
+            .join("tests/assets")
+            .join(asset);
         let scene = load_gltf(&path).expect("the test scene loads");
         let caps = HostCaps {
             quit: true,
@@ -321,6 +326,31 @@ mod tests {
     }
 
     #[test]
+    fn the_animation_clock_keeps_its_fraction_after_days_of_uptime() {
+        let Some(mut app) = studio_of("cube_animated.gltf") else {
+            return;
+        };
+        // Twelve days in, f32 seconds are 1/8 s apart: frames at 144 Hz posed the slide's cube alike.
+        app.epoch_s = Some(0.0);
+        let base = f64::from(1u32 << 20);
+        let lefts: Vec<f32> = (0..4)
+            .map(|k| {
+                app.advance(base + f64::from(k) / 144.0);
+                app.renderer
+                    .scene_bounds()
+                    .expect("the cube has bounds")
+                    .0
+                    .x
+            })
+            .collect();
+        for pair in lefts.windows(2) {
+            // The cube slides 1.5 m/s, about 10 mm a frame.
+            let step = pair[1] - pair[0];
+            assert!((step - 1.5 / 144.0).abs() < 1e-3, "{lefts:?}");
+        }
+    }
+
+    #[test]
     fn held_keys_fly_the_camera_and_end_the_idle_spin() {
         use crate::scene::fly::{FlyInput, FlyKey};
         let Some(mut app) = studio() else {
@@ -387,6 +417,7 @@ mod tests {
             "the docks still frame the view"
         );
         assert_eq!(app.fly_speed(), expected);
+        assert_eq!(app.controller.radius_range, framing.radius_range);
         assert!(
             !app.controller.auto_orbit,
             "a frame asked for ends the idle spin"

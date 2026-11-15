@@ -36,6 +36,8 @@ pub struct Framing {
     pub camera: OrbitCamera,
     /// World units per second.
     pub fly_speed: f32,
+    /// The orbit radius the wheel and a pinch keep to.
+    pub radius_range: (f32, f32),
     pub source: FramingSource,
 }
 
@@ -81,6 +83,7 @@ pub fn frame(
     }
     let fly_speed = fly_speed(bounds, camera.radius);
     Framing {
+        radius_range: radius_range(&camera),
         camera,
         fly_speed,
         source,
@@ -173,6 +176,13 @@ fn clip_planes(camera: &mut OrbitCamera, centre: Vec3, half: f32) {
     camera.near = camera.far / NEAR_FAR_RATIO;
 }
 
+/// From twice the near plane to half the far, the default camera's 0.2 to 500 m, always holding the start radius.
+fn radius_range(camera: &OrbitCamera) -> (f32, f32) {
+    let low = (camera.near * 2.0).min(camera.radius);
+    let high = (camera.far * 0.5).max(camera.radius);
+    (low, high)
+}
+
 /// The scene's own speed, [`fly::speed_for_bounds`], at most half the start view's distance per second.
 fn fly_speed(bounds: Option<(Vec3, Vec3)>, view_distance: f32) -> f32 {
     let scene = fly::speed_for_bounds(bounds);
@@ -190,6 +200,7 @@ mod tests {
     use glam::{Quat, Vec4};
 
     use super::*;
+    use crate::scene::controller::{OrbitController, DEFAULT_RADIUS_RANGE};
     use crate::scene::CpuNode;
 
     fn node(translation: Vec3, rotation: Quat) -> CpuNode {
@@ -354,5 +365,55 @@ mod tests {
             assert_eq!(unbounded.source, FramingSource::Unchanged);
             assert_eq!(unbounded.camera.radius, OrbitCamera::default().radius);
         }
+    }
+
+    #[test]
+    fn a_bounds_fitted_eight_kilometre_scene_zooms_from_its_start_radius() {
+        let (mut scene, meta, bounds) = colosseum();
+        let arena = frame(&scene, &meta, Some(bounds), &OrbitCamera::default());
+        scene.cameras.clear();
+        let fitted = frame(
+            &scene,
+            &SceneMeta::default(),
+            Some(bounds),
+            &OrbitCamera::default(),
+        );
+        assert_eq!(fitted.source, FramingSource::Bounds);
+        let start = fitted.camera.radius;
+        assert!(start > 10_000.0, "{start}");
+        // The fixed 0.2 to 500 m range snapped a 15 km fit to 500 m on the first wheel notch.
+        let mut snapped = fitted.camera.clone();
+        OrbitController::default().apply_zoom(&mut snapped, 1.0);
+        assert_eq!(snapped.radius, DEFAULT_RADIUS_RANGE.1);
+        for framing in [&fitted, &arena] {
+            let mut controller = OrbitController::default();
+            controller.radius_range = framing.radius_range;
+            let mut camera = framing.camera.clone();
+            let start = camera.radius;
+            controller.apply_zoom(&mut camera, 1.0);
+            assert!(
+                (camera.radius / start - 0.9).abs() < 1e-4,
+                "{} from {start}",
+                camera.radius
+            );
+            // All the way in the target stays past the near plane; all the way out the scene stays inside the far.
+            controller.apply_zoom(&mut camera, 500.0);
+            assert_eq!(camera.radius, 2.0 * camera.near);
+            controller.apply_zoom(&mut camera, -500.0);
+            assert_eq!(camera.radius, 0.5 * camera.far);
+            let (centre, half) = (
+                (bounds.0 + bounds.1) * 0.5,
+                (bounds.1 - bounds.0).length() * 0.5,
+            );
+            let farthest = camera.target.distance(centre) + camera.radius + half;
+            assert!(
+                farthest <= camera.far * 1.0001,
+                "{farthest} past {}",
+                camera.far
+            );
+        }
+        assert!(arena.radius_range.1 > 5_000.0, "{:?}", arena.radius_range);
+        let unchanged = frame(&scene, &SceneMeta::default(), None, &OrbitCamera::default());
+        assert_eq!(unchanged.radius_range, DEFAULT_RADIUS_RANGE);
     }
 }

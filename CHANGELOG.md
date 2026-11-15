@@ -13,6 +13,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the app host after the two editor merges)
+- **The animation clock got f32 seconds**: `StudioApp::advance` narrowed its elapsed time before
+  `set_animation_time`, which takes f64 since the scene fixes, so a clip stepped by 1/64 s after 36 hours and by
+  1/8 s after twelve days. It passes f64; the idle spin's yaw stays wrapped in f64. Test:
+  `the_animation_clock_keeps_its_fraction_after_days_of_uptime`.
+- **A wheel or trackpad scroll zoomed by physical pixels**: at devicePixelRatio 2 one Chrome notch (100 CSS px,
+  200 physical) zoomed twice as far as at 100 %. The orbit controller takes the window's scale factor
+  (`OrbitController::set_scale_factor`) and divides wheel pixels, drags and fingers by it once; the app no longer
+  divides the drag rate itself, so nothing scales twice. Tests:
+  `a_wheel_scroll_zooms_as_far_per_logical_pixel_at_every_scale`, `each_pixel_delta_is_scaled_once`;
+  `an_orbit_drag_turns_as_far_per_logical_pixel_at_every_scale` moved from `app::input` to the controller.
+- **The wheel and a pinch held the radius to 0.2..500 m**: the first notch on a bounds-fitted Colosseum, a 15 km
+  fit, snapped in to 500 m, and from `Kamera_Arena` the view could not back off farther than 500 m. Framing derives
+  `Framing::radius_range` from the scene's clip planes, twice the near plane to half the far (the default camera's
+  0.2..500 m), and `apply_framing` hands it to the controller. Tests:
+  `a_bounds_fitted_eight_kilometre_scene_zooms_from_its_start_radius`,
+  `the_wheel_and_a_pinch_keep_to_the_radius_range`.
+
 ### Added (2026-11-15, the editor's model library and the Colosseum)
 - `resources/scenes/scenes.lock` pins AssetANT's `Colosseum-gltf` and `Colosseum-web` archives;
   `scripts/linux/fetch-models.sh --scenes` (Windows: `Get-Models.ps1 -Scenes`) unpacks them into
@@ -90,7 +108,6 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - An orbit drag turned per physical pixel, so a HiDPI screen or a phone orbited 2-3x faster; it turns 0.25° per
   logical pixel.
 - The idle spin's yaw is computed in f64 and wrapped to 360°; f32 degrees stepped visibly after a few hours.
-  `set_animation_time` still receives f32 seconds from `StudioApp::advance`.
 - Web: a browser with `navigator.gpu` but no adapter panicked behind a live "drag to orbit" status. The page shows
   its WebGPU fallback with the reason (`webgpuDemoFailed`), and the scene picker opens only once the device is up
   (`webgpuDemoReady`); a native test checks that the page defines each hook the demo calls.

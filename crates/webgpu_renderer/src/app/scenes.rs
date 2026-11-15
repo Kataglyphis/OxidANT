@@ -245,6 +245,7 @@ impl StudioApp {
             ..framing.camera.clone()
         };
         self.fly.speed = framing.fly_speed;
+        self.controller.radius_range = framing.radius_range;
     }
 }
 

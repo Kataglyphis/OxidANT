@@ -5,11 +5,21 @@ use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, Wind
 
 use crate::scene::camera::OrbitCamera;
 
+/// The radius range before a scene is framed: twice the default camera's 0.1 m near plane, half its 1 km far one.
+pub const DEFAULT_RADIUS_RANGE: (f32, f32) = (0.2, 500.0);
+/// Logical pixels of a pixel-precise scroll per wheel notch.
+const WHEEL_POINTS_PER_NOTCH: f64 = 60.0;
+
 pub struct OrbitController {
     /// Keep spinning until the user interacts.
     pub auto_orbit: bool,
+    /// Degrees per logical pixel of drag, so a HiDPI screen or a phone turns as far per finger travel as 100 %.
     pub rotate_speed_deg_per_px: f32,
     pub zoom_step: f32,
+    /// The radius the wheel and a pinch keep to; framing fits it to the scene's size.
+    pub radius_range: (f32, f32),
+    /// Physical pixels per logical pixel: cursor, touch and wheel pixel deltas arrive in physical pixels.
+    scale_factor: f64,
     dragging: bool,
     last_cursor: Option<(f64, f64)>,
     /// Active touch points in insertion order, so `touches[0]` started the gesture.
@@ -24,6 +34,8 @@ impl Default for OrbitController {
             auto_orbit: true,
             rotate_speed_deg_per_px: 0.25,
             zoom_step: 0.1,
+            radius_range: DEFAULT_RADIUS_RANGE,
+            scale_factor: 1.0,
             dragging: false,
             last_cursor: None,
             touches: Vec::new(),
@@ -33,6 +45,15 @@ impl Default for OrbitController {
 }
 
 impl OrbitController {
+    /// The window's scale factor, which turns the events' physical pixels into logical ones; a bogus one reads as 1.
+    pub fn set_scale_factor(&mut self, scale_factor: f64) {
+        self.scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
+            scale_factor
+        } else {
+            1.0
+        };
+    }
+
     /// Feeds a window event; returns true when the event changed the camera.
     pub fn handle_event(&mut self, event: &WindowEvent, camera: &mut OrbitCamera) -> bool {
         match event {
@@ -66,7 +87,9 @@ impl OrbitController {
             WindowEvent::MouseWheel { delta, .. } => {
                 let amount = match delta {
                     MouseScrollDelta::LineDelta(_, y) => *y,
-                    MouseScrollDelta::PixelDelta(pos) => (pos.y as f32) / 60.0,
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        (pos.y / self.scale_factor / WHEEL_POINTS_PER_NOTCH) as f32
+                    }
                 };
                 self.apply_zoom(camera, amount);
                 true
@@ -138,8 +161,7 @@ impl OrbitController {
         self.last_pinch_distance = None;
     }
 
-    /// One finger orbits, two pinch to zoom; true when the camera moved.
-    /// Takes fields, not a `Touch`, whose `DeviceId` has no public constructor for tests.
+    /// One finger orbits, two pinch to zoom, at `position` in physical pixels; true when the camera moved.
     pub fn handle_touch(
         &mut self,
         id: u64,
@@ -213,11 +235,11 @@ impl OrbitController {
         }
     }
 
-    /// Drag in pixels -> yaw/pitch. Exposed for tests.
+    /// Drag in physical pixels -> yaw/pitch, turned by the scale factor once. Exposed for tests.
     pub fn apply_drag(&self, camera: &mut OrbitCamera, dx_px: f32, dy_px: f32) {
-        camera.yaw_deg += dx_px * self.rotate_speed_deg_per_px;
-        camera.pitch_deg =
-            (camera.pitch_deg + dy_px * self.rotate_speed_deg_per_px).clamp(-89.0, 89.0);
+        let deg_per_px = self.rotate_speed_deg_per_px / self.scale_factor as f32;
+        camera.yaw_deg += dx_px * deg_per_px;
+        camera.pitch_deg = (camera.pitch_deg + dy_px * deg_per_px).clamp(-89.0, 89.0);
     }
 
     /// Positive amount zooms in, each unit by `zoom_step`. Exposed for tests.
@@ -225,7 +247,7 @@ impl OrbitController {
         // A power, not `1 - amount * step`: that hit zero at ten notches, and in-then-out drifted.
         let factor = (1.0 - self.zoom_step).max(f32::MIN_POSITIVE).powf(amount);
         if factor.is_finite() {
-            camera.radius = (camera.radius * factor).clamp(0.2, 500.0);
+            camera.radius = self.clamp_radius(camera.radius * factor);
         }
     }
 
@@ -243,7 +265,18 @@ impl OrbitController {
         {
             return;
         }
-        camera.radius = (camera.radius * (previous_distance / current_distance)).clamp(0.2, 500.0);
+        camera.radius = self.clamp_radius(camera.radius * (previous_distance / current_distance));
+    }
+
+    /// `radius` within [`Self::radius_range`], or the default range while that is not a positive interval.
+    fn clamp_radius(&self, radius: f32) -> f32 {
+        let (low, high) = self.radius_range;
+        let (low, high) = if low > 0.0 && low <= high && high.is_finite() {
+            (low, high)
+        } else {
+            DEFAULT_RADIUS_RANGE
+        };
+        radius.clamp(low, high)
     }
 }
 
@@ -574,5 +607,127 @@ mod tests {
             controller.apply_zoom(&mut camera, 1.0);
         }
         assert!(camera.radius >= 0.2);
+    }
+
+    fn wheel(delta: MouseScrollDelta) -> WindowEvent {
+        WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta,
+            phase: TouchPhase::Moved,
+        }
+    }
+
+    #[test]
+    fn an_orbit_drag_turns_as_far_per_logical_pixel_at_every_scale() {
+        let turn = |scale: f64, physical_px: f32| {
+            let mut controller = OrbitController::default();
+            controller.set_scale_factor(scale);
+            let mut camera = OrbitCamera::default();
+            let yaw = camera.yaw_deg;
+            controller.apply_drag(&mut camera, physical_px, 0.0);
+            camera.yaw_deg - yaw
+        };
+        assert_eq!(turn(1.0, 40.0), 10.0);
+        assert_eq!(turn(2.0, 80.0), 10.0);
+        assert!((turn(1.5, 60.0) - 10.0).abs() < 1e-4);
+        assert_eq!(turn(0.0, 40.0), 10.0, "a bogus scale falls back to 100 %");
+        assert_eq!(turn(f64::NAN, 40.0), 10.0);
+    }
+
+    #[test]
+    fn a_wheel_scroll_zooms_as_far_per_logical_pixel_at_every_scale() {
+        // Pixel deltas are physical: at devicePixelRatio 2 one Chrome notch used to zoom two notches.
+        for scale in [1.0, 1.5, 2.0, 3.0] {
+            let mut controller = OrbitController::default();
+            controller.set_scale_factor(scale);
+            let mut camera = OrbitCamera {
+                radius: 100.0,
+                ..OrbitCamera::default()
+            };
+            let notch = PhysicalPosition::new(0.0, WHEEL_POINTS_PER_NOTCH * scale);
+            controller.handle_event(&wheel(MouseScrollDelta::PixelDelta(notch)), &mut camera);
+            assert!(
+                (camera.radius - 90.0).abs() < 1e-3,
+                "scale {scale}: {}",
+                camera.radius
+            );
+            controller.handle_event(&wheel(MouseScrollDelta::LineDelta(0.0, -1.0)), &mut camera);
+            assert!(
+                (camera.radius - 100.0).abs() < 1e-3,
+                "a line notch is one notch at scale {scale}: {}",
+                camera.radius
+            );
+        }
+    }
+
+    #[test]
+    fn each_pixel_delta_is_scaled_once() {
+        // The host hands over only the window's scale: a rate it divided as well would halve every drag.
+        let mut controller = OrbitController::default();
+        controller.set_scale_factor(2.0);
+        let mut camera = OrbitCamera {
+            radius: 100.0,
+            ..OrbitCamera::default()
+        };
+        let yaw = camera.yaw_deg;
+        controller.handle_event(&left_button(ElementState::Pressed), &mut camera);
+        controller.handle_event(&cursor_moved(100.0, 100.0), &mut camera);
+        controller.handle_event(&cursor_moved(180.0, 100.0), &mut camera);
+        let turned = camera.yaw_deg - yaw;
+        assert!(
+            (turned - 10.0).abs() < 1e-4,
+            "80 px at 200 % are 40 points: {turned}"
+        );
+        controller.handle_event(&left_button(ElementState::Released), &mut camera);
+        controller.handle_touch(1, TouchPhase::Started, (100.0, 100.0), &mut camera);
+        controller.handle_touch(1, TouchPhase::Moved, (180.0, 100.0), &mut camera);
+        let turned = camera.yaw_deg - yaw;
+        assert!(
+            (turned - 20.0).abs() < 1e-4,
+            "a finger turns as the pointer: {turned}"
+        );
+        let notch = PhysicalPosition::new(0.0, 120.0);
+        controller.handle_event(&wheel(MouseScrollDelta::PixelDelta(notch)), &mut camera);
+        assert!(
+            (camera.radius - 90.0).abs() < 1e-3,
+            "120 px at 200 % are one notch: {}",
+            camera.radius
+        );
+    }
+
+    #[test]
+    fn the_wheel_and_a_pinch_keep_to_the_radius_range() {
+        let controller = OrbitController {
+            radius_range: (2.0, 20_000.0),
+            ..OrbitController::default()
+        };
+        let mut camera = OrbitCamera {
+            radius: 15_000.0,
+            ..OrbitCamera::default()
+        };
+        controller.apply_zoom(&mut camera, 1.0);
+        assert!((camera.radius - 13_500.0).abs() < 0.1, "{}", camera.radius);
+        controller.apply_zoom(&mut camera, -100.0);
+        assert_eq!(camera.radius, 20_000.0);
+        controller.apply_pinch(&mut camera, 100.0, 1e9);
+        assert_eq!(camera.radius, 2.0);
+        // Not a positive interval: the default range, where `f32::clamp` would panic or pass NaN on.
+        for range in [
+            (5.0, 1.0),
+            (f32::NAN, 10.0),
+            (0.0, 10.0),
+            (1.0, f32::INFINITY),
+        ] {
+            let controller = OrbitController {
+                radius_range: range,
+                ..OrbitController::default()
+            };
+            let mut camera = OrbitCamera {
+                radius: 1000.0,
+                ..OrbitCamera::default()
+            };
+            controller.apply_zoom(&mut camera, 0.0);
+            assert_eq!(camera.radius, DEFAULT_RADIUS_RANGE.1, "{range:?}");
+        }
     }
 }

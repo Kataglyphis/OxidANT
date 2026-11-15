@@ -74,7 +74,9 @@ them, so an orbit after a flight circles the point the camera looked at. The fly
 speed is a quarter of the scene's diagonal per second (the C++ 10 units/s in a
 40-unit Sponza), at most half the start view's distance to its target (33 m/s
 from the Colosseum's `Kamera_Arena`); the Camera tab sets it with the field of
-view and the clip planes, and *Frame the scene* returns to the start view.
+view and the clip planes, and *Frame the scene* returns to the start view. The
+wheel and a pinch keep the radius between twice the near plane and half the far,
+which the start view fits to the scene, so an 8 km scene zooms from where it starts.
 
 ## Running
 
