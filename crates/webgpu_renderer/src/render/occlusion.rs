@@ -56,6 +56,8 @@ struct Slot {
     count: u32,
     /// Scene generation at record time; a stale one is drained without touching visibility.
     generation: u64,
+    /// When the slot was recorded, so a late drain never applies an older frame over a newer one.
+    sequence: u64,
     /// "Eye inside this AABB" flags from this slot's own eye, since the readback lands late.
     forced_visible: Vec<bool>,
 }
@@ -81,6 +83,19 @@ pub struct OcclusionQueries {
     visibility: Vec<bool>,
     /// Bumped by [`Self::reset`] so readbacks from a replaced scene are discarded.
     generation: u64,
+    /// Sequence of the last recorded slot, and of the newest readback applied to `visibility`.
+    sequence: u64,
+    applied_sequence: u64,
+}
+
+/// Whether a drained readback recorded at `sequence` is newer than the last applied one; if so
+/// it becomes that one. Slots drain in index order, which after a wrap is not age order.
+pub(crate) fn newer_readback(sequence: u64, applied: &mut u64) -> bool {
+    let newer = sequence > *applied;
+    if newer {
+        *applied = sequence;
+    }
+    newer
 }
 
 impl OcclusionQueries {
@@ -163,6 +178,8 @@ impl OcclusionQueries {
             samples: Vec::new(),
             visibility: Vec::new(),
             generation: 0,
+            sequence: 0,
+            applied_sequence: 0,
         }
     }
 
@@ -277,8 +294,11 @@ impl OcclusionQueries {
                     callback_state.store(code, Ordering::Release);
                 },
             );
-            self.slots[self.current].map_state = Some(state);
-            self.slots[self.current].generation = self.generation;
+            self.sequence += 1;
+            let slot = &mut self.slots[self.current];
+            slot.map_state = Some(state);
+            slot.generation = self.generation;
+            slot.sequence = self.sequence;
             self.current = (self.current + 1) % SLOT_COUNT;
             self.recording = false;
         }
@@ -297,7 +317,9 @@ impl OcclusionQueries {
                     self.slots[index].readback.unmap();
                     self.slots[index].map_state = None;
                     // A stale generation is drained but must not cull the new scene.
-                    if self.slots[index].generation == self.generation {
+                    if self.slots[index].generation == self.generation
+                        && newer_readback(self.slots[index].sequence, &mut self.applied_sequence)
+                    {
                         let forced = &self.slots[index].forced_visible;
                         self.visibility = samples
                             .iter()
@@ -396,6 +418,7 @@ fn create_slots(device: &wgpu::Device, capacity: u32) -> Vec<Slot> {
             map_state: None,
             count: 0,
             generation: 0,
+            sequence: 0,
             forced_visible: Vec::new(),
         })
         .collect()
@@ -421,6 +444,27 @@ fn read_samples(buffer: &wgpu::Buffer, count: usize) -> Vec<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_late_older_readback_never_overwrites_a_newer_one() {
+        // After a wrap, slot 0 holds frame 4 and slot 2 frame 3; index order drains 4 first.
+        let mut applied = 2;
+        let drained_in_index_order = [4, 3];
+        let applied_frames: Vec<u64> = drained_in_index_order
+            .into_iter()
+            .filter(|&sequence| newer_readback(sequence, &mut applied))
+            .collect();
+        assert_eq!(
+            applied_frames,
+            [4],
+            "frame 3 must be skipped once frame 4 applied"
+        );
+        assert_eq!(applied, 4);
+        assert!(
+            !newer_readback(4, &mut applied),
+            "the same frame never applies twice"
+        );
+    }
 
     #[test]
     fn query_capacity_never_grows_past_the_query_set_limit() {

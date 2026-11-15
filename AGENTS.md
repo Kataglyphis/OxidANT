@@ -256,7 +256,7 @@ ModelANT's photo: [running.md](docs/running.md), [testing.md](docs/testing.md).
 ### Tests and scripts that read source text
 
 - `crates/webgpu_renderer/tests/buffer_desc_single_definition.rs` pins the two `BufferDescriptor` outliers by
-  line number (`occlusion.rs:374`, `histogram.rs:102`), so a comment edit above either line breaks it.
+  line number (`occlusion.rs:396`, `histogram.rs:102`), so a comment edit above either line breaks it.
 - `TEXTURE_2D_SHAPE_OK` must stay on the first line of its `wgpu::TextureDescriptor {` body
   (`tests/texture_desc_single_definition.rs`).
 - `scripts/linux/check-ort-chain-only.sh --help` prints lines 2-10 of the file (`sed -n '2,10p'`).

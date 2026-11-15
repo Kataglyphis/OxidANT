@@ -32,7 +32,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **The occlusion-culling checkbox panicked on scenes past 4096 primitives**, and below it whenever doubling the
   query set overshot (2100 primitives, then 2200, asked for 4200): one query set holds at most
   `wgpu::QUERY_SET_MAX_QUERIES`. Growth stops at the limit and only the first 4096 boxes are queried; the rest stay
-  visible. `occlusion.rs:358` is `:374` for `buffer_desc_single_definition.rs` now. Tests:
+  visible. `occlusion.rs:358` is `:396` for `buffer_desc_single_definition.rs` now. Tests:
   `query_capacity_never_grows_past_the_query_set_limit`,
   `more_boxes_than_the_query_set_limit_record_without_a_validation_error`.
 - **Double-sided sheets cast no shadow with their back to the light, and vertex-alpha cut-outs cast solid shadows**:
@@ -97,6 +97,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   the bounds invariant listed it as a consumer, but the cached bundles draw every caster. Both say so now, and
   `caster_culling_engages_and_shadows_survive` is `a_far_extra_caster_leaves_the_near_shadow_intact`, which pins
   drawn == considered.
+- **An older occlusion readback could overwrite a newer one**: both readback rings drained their ready slots in
+  index order, which after a wrap is not age order, so frame 3 in slot 2 could land after frame 4 in slot 0 and
+  culling lagged an extra frame. Each slot records a sequence number and only a readback newer than the last applied
+  one is applied (`occlusion::newer_readback`, shared by `gpu_occlusion.rs`). Test:
+  `a_late_older_readback_never_overwrites_a_newer_one`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
