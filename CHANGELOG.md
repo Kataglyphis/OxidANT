@@ -14,6 +14,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 ## [Unreleased]
 
 ### Fixed (2026-11-15, the raster settings, deferred path and clouds together)
+- **The deferred path follows the raster settings.** The settings' shadow code (PCF radius, strength on the sun
+  term, the C++ bias and its per-cascade scale, selection by view depth) lives in `forward_lighting.slang`'s
+  `shadow_visibility`, which `fs_main` and `fs_deferred_lighting` share through `shade_surface`. The deferred sky is
+  built on the cube-map sky layout, so the DOOM2016 faces and the switched-off navy show on both paths.
+  `sync_shadow_map` also rebinds the deferred lighting pass's group 0 (`rebind_deferred_shadow_map`), which binds
+  the shadow map too: without it the frame after a new resolution or cascade count sampled the old map, 32206 of
+  65536 pixels off at 512 texels and one cascade. The G-buffer and lighting passes count the Visibility tab's
+  primitives, blended ones included, as the forward pass does, and the clouds march on the depth the G-buffer pass
+  writes as on the forward path's resolved one.
 - **F5 rebuilds the cloud pipelines.** `ForwardRenderer::reload_shaders` takes `ShaderSources` (forward, sky, cloud
   march and cloud noise WGSL; `ShaderSources::shipped()`, `ShaderSources::FILES`) and builds the march and noise
   pipelines inside the same error scope as the others, even with clouds off, so a cloud shader that cannot build is
@@ -22,6 +31,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
   viewer watches and reloads all four files. Tests: a refused reload of either cloud shader leaves the frame and the
   volume byte-identical, an edited noise and march land in every texel, the shipped shaders bring the frame back
   exactly, and a reload with clouds off is what their first frame uses.
+
+### Added (2026-11-15, the raster settings, deferred path and clouds together)
+- `tests/feature_matrix.rs`, every feature on both raster paths (lavapipe, structural): the shadow masks of forward
+  and deferred at PCF radius 5, strength 1 and one cascade agree (IoU 0.994), the radius widens the penumbra on both,
+  a new resolution and cascade count while deferred match a fresh deferred renderer within 10 pixels at 512, 4096
+  and 1024 texels (32206 pixels off without the rebind), the cube faces and the navy show alike on both, clouds
+  change the sky alike and leave a wall in front untouched (0 pixels) with a bit-identical march over the open sky,
+  the model transform moves the cube by the same vector, the primitive, caster and occlusion counts match with
+  culling on and off, and with every feature on each path times each pass it runs once.
+- Editor tests over the merged rows (`ui::editor::tests::combined`): the Render menu's radios and culling switch,
+  the Renderer tab's raster path and culling switch, the Sky tab's SKYBOX and CLOUDS switches, both outliner eyes
+  and the Sun's cascade count, and the profiler scrolling to the last of eleven passes beside the culled counts.
+- `graph` tests: each raster path's graph has a row for every pass it times and times every other row, and the
+  clouds march after the depth writer and before the tonemap on both; `TimedPass` labels are unique.
 
 ### Added (2026-11-15, the volumetric clouds)
 - The C++ engine's volumetric clouds in the WebGPU renderer, with the C++ bugs fixed rather than copied:

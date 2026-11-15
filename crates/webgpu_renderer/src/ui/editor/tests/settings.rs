@@ -7,7 +7,7 @@ use super::*;
 use crate::render::model_transform::ModelTransform;
 
 /// The knob of the pill switch at the right end of `caption`'s line.
-fn switch_of(studio: &mut Harness, caption: &str) -> Pos2 {
+pub(super) fn switch_of(studio: &mut Harness, caption: &str) -> Pos2 {
     let line = studio
         .text_rect(caption)
         .unwrap_or_else(|| panic!("{caption} is painted"));

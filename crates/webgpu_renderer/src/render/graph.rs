@@ -267,6 +267,57 @@ mod tests {
         }
     }
 
+    /// The timed passes each raster path runs: the other path's raster passes never record.
+    fn timed_on(deferred: bool) -> Vec<&'static str> {
+        let other: &[TimedPass] = if deferred {
+            &[TimedPass::Forward]
+        } else {
+            &[TimedPass::GBuffer, TimedPass::DeferredLighting]
+        };
+        let passes = TimedPass::ALL
+            .into_iter()
+            .filter(|pass| !other.contains(pass));
+        passes.map(graph_pass_name).collect()
+    }
+
+    #[test]
+    fn each_paths_graph_has_a_row_for_every_pass_it_times_and_times_every_other_row() {
+        for (deferred, graph) in [false, true].into_iter().zip(graphs()) {
+            let rows: Vec<&str> = graph.iter().map(|pass| pass.name).collect();
+            let timed = timed_on(deferred);
+            let untimed: Vec<&str> = rows
+                .iter()
+                .copied()
+                .filter(|row| !timed.contains(row))
+                .collect();
+            assert!(
+                timed.iter().all(|pass| rows.contains(pass)),
+                "deferred {deferred}: timed {timed:?}, rows {rows:?}"
+            );
+            assert!(
+                untimed.iter().all(|row| UNTIMED_ROWS.contains(row)),
+                "deferred {deferred}: rows {untimed:?} are untimed"
+            );
+        }
+    }
+
+    #[test]
+    fn the_clouds_march_after_the_depth_and_before_the_tonemap_on_both_paths() {
+        for graph in graphs() {
+            let at = |name: &str| graph.iter().position(|pass| pass.name == name);
+            let writer = graph
+                .iter()
+                .position(|pass| pass.writes.contains(&Resource::Depth))
+                .expect("a pass writes the single-sample depth");
+            let (noise, clouds, tonemap) = (at("cloud_noise"), at("clouds"), at("tonemap"));
+            let (Some(noise), Some(clouds), Some(tonemap)) = (noise, clouds, tonemap) else {
+                panic!("a graph lacks the cloud rows");
+            };
+            assert!(writer < clouds && noise < clouds && clouds < tonemap);
+            assert!(graph[tonemap].reads.contains(&Resource::CloudColor));
+        }
+    }
+
     #[test]
     fn detects_reading_undefined_resource() {
         let passes = vec![PassDesc {

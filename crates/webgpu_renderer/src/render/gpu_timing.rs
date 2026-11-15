@@ -595,6 +595,14 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), PASS_COUNT);
+        let mut labels: Vec<&str> = TimedPass::ALL.iter().map(|p| p.label()).collect();
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(
+            labels.len(),
+            PASS_COUNT,
+            "two passes share a profiler label"
+        );
     }
 
     #[test]
