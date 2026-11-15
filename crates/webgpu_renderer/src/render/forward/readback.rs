@@ -6,7 +6,7 @@ use crate::context::GpuContext;
 use crate::render::buffer_desc;
 
 /// Copies `texture` into a mapped buffer and returns its rows without the copy's row padding.
-pub(super) fn read_rgba8(
+pub(crate) fn read_rgba8(
     gpu: &GpuContext,
     texture: &wgpu::Texture,
     width: u32,

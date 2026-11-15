@@ -15,6 +15,7 @@ use crate::app::{HostCaps, StudioApp};
 use crate::asset::gltf_loader::load_gltf_slice;
 use crate::context::GpuContext;
 use crate::scene::camera::OrbitCamera;
+use crate::ui::editor::ModelSource;
 
 const DEMO_SCENE: &[u8] = include_bytes!("../tests/assets/cube_on_plane.gltf");
 
@@ -150,8 +151,9 @@ fn spawn_app_init(slot: Rc<RefCell<Option<StudioApp>>>, window: Arc<Window>, siz
         gpu.resize(size.0, size.1);
         let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
         // No quit, screenshot or shader files in a browser tab.
-        let app = StudioApp::new(&window, gpu, &scene, home_camera(), HostCaps::default())
+        let mut app = StudioApp::new(&window, gpu, &scene, home_camera(), HostCaps::default())
             .expect("failed to set up the renderer");
+        app.model = Some(scene_source(DEMO_SCENES[0].0));
         slot.borrow_mut().replace(app);
         window.request_redraw();
     });
@@ -170,11 +172,20 @@ fn load_dropped_scene(app: &mut StudioApp, dropped: &DroppedScene) {
                 scene.triangle_count()
             );
             app.load_scene(&scene);
+            app.model = Some(scene_source(&name));
         }
         Err(err) => log::error!(
             "Failed to load {name}: {err:#} (external .bin/textures cannot \
              be resolved from a drop - use a self-contained .glb)"
         ),
+    }
+}
+
+/// A browser scene has no path; its name serves as both.
+fn scene_source(name: &str) -> ModelSource {
+    ModelSource {
+        name: name.to_owned(),
+        path: name.to_owned(),
     }
 }
 

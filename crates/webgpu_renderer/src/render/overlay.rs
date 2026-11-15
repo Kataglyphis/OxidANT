@@ -5,31 +5,35 @@ use std::num::NonZeroUsize;
 use winit::window::Window;
 
 use crate::context::GpuContext;
-use crate::render::forward::ForwardRenderer;
 
 pub struct Overlay {
     ctx: egui::Context,
-    state: egui_winit::State,
+    /// The window's input; `None` for an offscreen overlay, which takes its input whole from the caller.
+    state: Option<egui_winit::State>,
     renderer: egui_wgpu::Renderer,
 }
 
 impl Overlay {
     pub fn new(window: &Window, device: &wgpu::Device, output_format: wgpu::TextureFormat) -> Self {
-        let ctx = studio_context();
+        let mut overlay = Self::headless(device, output_format);
         let max_texture_side = device.limits().max_texture_dimension_2d as usize;
-        let state = egui_winit::State::new(
-            ctx.clone(),
+        overlay.state = Some(egui_winit::State::new(
+            overlay.ctx.clone(),
             egui::ViewportId::ROOT,
             window,
             Some(window.scale_factor() as f32),
             Some(winit::window::Theme::Dark),
             Some(max_texture_side),
-        );
-        let renderer = egui_wgpu::Renderer::new(device, output_format, Default::default());
+        ));
+        overlay
+    }
+
+    /// An overlay without a window, for offscreen frames: snapshots and tests.
+    pub fn headless(device: &wgpu::Device, output_format: wgpu::TextureFormat) -> Self {
         Self {
-            ctx,
-            state,
-            renderer,
+            ctx: studio_context(),
+            state: None,
+            renderer: egui_wgpu::Renderer::new(device, output_format, Default::default()),
         }
     }
 
@@ -40,20 +44,33 @@ impl Overlay {
 
     /// Feeds a window event; true when egui consumed it, so camera controls should skip it.
     pub fn on_event(&mut self, window: &Window, event: &winit::event::WindowEvent) -> bool {
-        self.state.on_window_event(window, event).consumed
+        self.state
+            .as_mut()
+            .is_some_and(|state| state.on_window_event(window, event).consumed)
     }
 
-    /// Runs one pass of `ui` over the window's input; paint its output with [`Self::paint`].
+    /// The window's input since the last pass; an offscreen overlay has none.
+    pub fn take_input(&mut self, window: &Window) -> egui::RawInput {
+        self.state
+            .as_mut()
+            .map(|state| state.take_egui_input(window))
+            .unwrap_or_default()
+    }
+
+    /// Hands cursor, clipboard and IME requests back to the window.
+    pub fn handle_platform_output(&mut self, window: &Window, output: egui::PlatformOutput) {
+        if let Some(state) = self.state.as_mut() {
+            state.handle_platform_output(window, output);
+        }
+    }
+
+    /// Runs one pass of `ui` over `raw_input`; paint its output with [`Self::paint`].
     pub fn run<R: Default>(
         &mut self,
-        window: &Window,
+        raw_input: egui::RawInput,
         ui: impl FnOnce(&mut egui::Ui) -> R,
     ) -> (egui::FullOutput, R) {
-        let raw_input = self.state.take_egui_input(window);
-        let (mut output, result) = run_pass(&self.ctx, raw_input, ui);
-        let platform_output = std::mem::take(&mut output.platform_output);
-        self.state.handle_platform_output(window, platform_output);
-        (output, result)
+        run_pass(&self.ctx, raw_input, ui)
     }
 
     /// Paints a pass over the scene already in `view` (loads, never clears).
@@ -173,125 +190,9 @@ fn paint(
     }
 }
 
-/// State backing the standard demo control panel.
-pub struct OverlayControls {
-    pub light_azimuth_deg: f32,
-    pub light_elevation_deg: f32,
-    pub intensity: f32,
-    pub ambient: f32,
-    pub bloom: f32,
-    pub ssao: f32,
-    pub exposure_ev: f32,
-    pub occlusion_culling: bool,
-    /// Last frame's (drawn, considered) opaque-primitive counts, set by the caller; `None` hides it.
-    pub occlusion_stats: Option<(u32, u32)>,
-}
-
-impl OverlayControls {
-    pub fn from_light(light_dir_ambient: glam::Vec4, light_color_intensity: glam::Vec4) -> Self {
-        let dir = light_dir_ambient.truncate();
-        Self {
-            light_azimuth_deg: dir.z.atan2(dir.x).to_degrees(),
-            light_elevation_deg: dir
-                .y
-                .atan2((dir.x * dir.x + dir.z * dir.z).sqrt())
-                .to_degrees(),
-            intensity: light_color_intensity.w,
-            ambient: light_dir_ambient.w,
-            bloom: 0.6,
-            ssao: 0.7,
-            exposure_ev: 0.0,
-            occlusion_culling: false,
-            occlusion_stats: None,
-        }
-    }
-
-    /// Starts from the renderer's own values, so the first change does not move the other settings.
-    pub fn from_renderer(renderer: &ForwardRenderer) -> Self {
-        Self {
-            bloom: renderer.bloom_strength,
-            ssao: renderer.ssao_strength,
-            exposure_ev: renderer.exposure_ev,
-            occlusion_culling: renderer.occlusion_queries_enabled,
-            ..Self::from_light(renderer.light_dir_ambient, renderer.light_color_intensity)
-        }
-    }
-
-    /// Writes every control into the renderer.
-    pub fn apply(&self, renderer: &mut ForwardRenderer) {
-        let dir = self.light_direction();
-        renderer.light_dir_ambient = glam::Vec4::new(dir.x, dir.y, dir.z, self.ambient);
-        renderer.light_color_intensity.w = self.intensity;
-        renderer.bloom_strength = self.bloom;
-        renderer.ssao_strength = self.ssao;
-        renderer.exposure_ev = self.exposure_ev;
-        renderer.occlusion_queries_enabled = self.occlusion_culling;
-    }
-
-    /// Direction TOWARDS the light from azimuth/elevation.
-    pub fn light_direction(&self) -> glam::Vec3 {
-        let az = self.light_azimuth_deg.to_radians();
-        let el = self.light_elevation_deg.to_radians();
-        glam::Vec3::new(el.cos() * az.cos(), el.sin(), el.cos() * az.sin())
-    }
-
-    /// Draws the panel and returns true when a value changed.
-    pub fn ui(&mut self, ctx: &egui::Context) -> bool {
-        let mut changed = false;
-        egui::Window::new("Renderer")
-            .default_open(true)
-            .resizable(false)
-            .show(ctx, |ui| {
-                let dt = ctx.input(|i| i.stable_dt).max(1e-6);
-                ui.label(format!("{:.1} ms/frame ({:.0} FPS)", dt * 1000.0, 1.0 / dt));
-                ui.separator();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut self.light_azimuth_deg, -180.0..=180.0)
-                            .text("light azimuth"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut self.light_elevation_deg, 5.0..=89.0)
-                            .text("light elevation"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut self.intensity, 0.0..=20.0).text("intensity"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut self.ambient, 0.0..=2.0).text("IBL strength"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut self.bloom, 0.0..=2.0).text("bloom"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut self.ssao, 0.0..=1.0).text("SSAO"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut self.exposure_ev, -4.0..=4.0).text("exposure EV"))
-                    .changed();
-                changed |= ui
-                    .checkbox(&mut self.occlusion_culling, "occlusion culling")
-                    .changed();
-                if self.occlusion_culling {
-                    if let Some((drawn, considered)) = self.occlusion_stats {
-                        let culled = considered.saturating_sub(drawn);
-                        ui.label(format!("  drew {drawn}/{considered} ({culled} culled)"));
-                    }
-                }
-                ui.separator();
-                ui.label("drag: orbit - wheel: zoom");
-            });
-        changed
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GpuContext;
 
     #[test]
     fn painting_takes_the_first_frames_font_texture_out_of_its_delta() {
@@ -418,28 +319,5 @@ mod tests {
         });
         output.drop_without_applying_deltas();
         assert_eq!((calls, value), (1, 7));
-    }
-
-    #[test]
-    fn the_controls_start_from_the_renderer_and_write_back_what_they_show() {
-        let Some(gpu) = GpuContext::headless_or_skip() else {
-            return;
-        };
-        let mut renderer = ForwardRenderer::new(&gpu, 8, 8);
-        renderer.light_dir_ambient = glam::Vec4::new(0.5, 0.8, 0.3, 0.35);
-        renderer.bloom_strength = 0.25;
-        renderer.occlusion_queries_enabled = true;
-        let mut controls = OverlayControls::from_renderer(&renderer);
-        assert_eq!(controls.bloom, 0.25);
-        assert!(controls.occlusion_culling);
-        controls.ssao = 0.1;
-        controls.apply(&mut renderer);
-        assert_eq!(
-            (renderer.ssao_strength, renderer.bloom_strength),
-            (0.1, 0.25)
-        );
-        let dir = renderer.light_dir_ambient.truncate().normalize();
-        let expected = glam::Vec3::new(0.5, 0.8, 0.3).normalize();
-        assert!(dir.abs_diff_eq(expected, 1e-4), "{dir} vs {expected}");
     }
 }

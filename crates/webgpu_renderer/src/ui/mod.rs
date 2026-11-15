@@ -1,8 +1,16 @@
-//! The editor's look: BeschleunigerBallett's Studio Pro palette, style and fonts, in egui.
+//! The Studio Pro editor and its look: BeschleunigerBallett's palette, style, fonts, widgets and icons, in egui.
 
+pub mod editor;
 pub mod fonts;
+pub mod icons;
 pub mod palette;
 pub mod theme;
+pub mod widgets;
+
+pub use editor::{
+    DeviceInfo, Editor, EditorAction, EditorContext, EditorOutput, FrameHistory, InspectorTab,
+    ModelSource, RendererSettings, SceneObject, SceneStats,
+};
 
 /// Gives `ctx` the studio fonts, style and options; without the fonts egui 0.37 draws no text at all.
 pub fn install(ctx: &egui::Context) {
@@ -13,10 +21,8 @@ pub fn install(ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use egui::{pos2, vec2, Rect, RichText};
-    use glam::Vec4;
 
     use super::*;
-    use crate::render::overlay::OverlayControls;
 
     /// What the C++ editor writes beyond plain words: separators, units and ellipses.
     const EDITOR_STRINGS: &[&str] = &[
@@ -54,23 +60,16 @@ mod tests {
     }
 
     #[test]
-    fn every_character_the_editor_writes_has_a_glyph() {
+    fn every_printable_character_and_editor_symbol_has_a_glyph_in_every_face() {
         let ctx = studio_context();
         let printable: String = (' '..='~').collect();
-        let mut controls = OverlayControls::from_light(Vec4::new(0.5, 0.8, 0.3, 0.4), Vec4::ONE);
-        controls.occlusion_culling = true;
-        controls.occlusion_stats = Some((3, 7));
-        // Two passes: a new window lays its contents out in an invisible sizing pass first.
-        for _ in 0..2 {
-            let output = ctx.run_ui(screen(), |ui| {
-                show_in_every_font(ui, &printable);
-                for text in EDITOR_STRINGS {
-                    show_in_every_font(ui, text);
-                }
-                controls.ui(ui.ctx());
-            });
-            output.drop_without_applying_deltas();
-        }
+        let output = ctx.run_ui(screen(), |ui| {
+            show_in_every_font(ui, &printable);
+            for text in EDITOR_STRINGS {
+                show_in_every_font(ui, text);
+            }
+        });
+        output.drop_without_applying_deltas();
     }
 
     #[test]

@@ -12,14 +12,14 @@ pub mod ui;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_demo;
 
-pub use app::{AppSignal, HostCaps, StudioApp};
+pub use app::{AppSignal, HostCaps, OffscreenFrame, StudioApp};
 pub use asset::gltf_loader::load_gltf;
 pub use asset::hdr::{decode_hdr, HdrError};
 pub use context::GpuContext;
 pub use render::forward::ForwardRenderer;
 pub use render::frame_clock::FrameClock;
 pub use render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
-pub use render::overlay::{Overlay, OverlayControls};
+pub use render::overlay::Overlay;
 pub use render::tonemap::TonemapPass;
 pub use scene::camera::OrbitCamera;
 pub use scene::controller::OrbitController;

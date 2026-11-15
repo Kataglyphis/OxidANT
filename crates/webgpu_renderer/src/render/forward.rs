@@ -9,7 +9,7 @@ mod light_grid;
 mod main_pass;
 mod post;
 mod primitive;
-mod readback;
+pub(crate) mod readback;
 mod shadow;
 mod sky;
 mod targets;

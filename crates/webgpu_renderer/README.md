@@ -45,12 +45,20 @@ tonemapping.
 
 **Runtime** — GPU skinning, morph-target and TRS animation playback, GPU
 instancing, frustum plus occlusion culling (hardware queries, or an opt-in
-compute pass), LOD simplification, a validated render graph, hot shader reload,
-an egui overlay in the C++ editor's Studio Pro palette, style and fonts (Roboto
-Medium and Cousine, embedded from `assets/fonts/` with their licences), and
-screenshot capture. The native viewer and the browser demo run one host,
-`app::StudioApp`; its camera centres on the part of the frame the UI leaves free
+compute pass), LOD simplification, a validated render graph, hot shader reload
+and screenshot capture.
+
+**Editor** — BeschleunigerBallett's docked C++ editor ("Studio Pro") in egui
+(`ui::Editor`): menu bar, status bar, a scene dock (outliner and model library),
+an inspector with the Model, Sun, Camera, Sky and Renderer tabs, a profiler, the
+viewport chip and an About modal, in the C++ palette, metrics and fonts (Roboto
+Medium and Cousine, embedded from `assets/fonts/` with their licences). The docks
+take the C++ sizes, caps and drop order, and custom splitters inside the scene's
+edge resize them. The native viewer and the browser demo run one host,
+`app::StudioApp`; its camera centres on the rect the docks leave free
 (`SceneViewport`, the C++ `makeViewportRemap`) while every pass stays full-frame.
+The library and the profiler show their C++ layout over what the renderer has
+today; their full versions, the remaining inspector rows and the fly camera follow.
 
 ## Running
 
@@ -65,6 +73,9 @@ cargo test -p kataglyphis_webgpu_renderer
 # C++ engine compiles its SPIR-V from the shared Slang sources (shader-sharing guide)
 cargo run -p kataglyphis_webgpu_renderer --example export_shaders -- out_dir
 
+# The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe)
+cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir [1600x900@1.5,sun,about,web ...]
+
 # Browser demo (drop a self-contained .glb onto the page to load it)
 cargo build -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown --release
 wasm-bindgen target/wasm32-unknown-unknown/release/kataglyphis_webgpu_renderer.wasm \
@@ -72,10 +83,11 @@ wasm-bindgen target/wasm32-unknown-unknown/release/kataglyphis_webgpu_renderer.w
 python -m http.server 8931 --directory crates/webgpu_renderer/web
 ```
 
-Viewer controls: drag to orbit, wheel to zoom, **S** screenshot,
-**R** reload shaders, **Esc** quit. While a text field has focus these keys do
-nothing, and the first **Esc** only leaves the field or closes a popup. The
-browser demo has no keyboard shortcuts.
+Controls (also listed in the inspector's Camera tab): drag to orbit, wheel to
+zoom, **F1** hides or shows the editor, **F5** reloads the shaders, **S** saves a
+screenshot, **Esc** quits. While a text field has focus these keys do nothing, and
+the first **Esc** only leaves the field, closes a menu or the About box. The browser
+demo has F1 and Esc, which never quits there.
 
 ## Testing approach
 

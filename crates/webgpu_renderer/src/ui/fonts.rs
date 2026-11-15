@@ -9,8 +9,14 @@ pub const ROBOTO_MEDIUM: &[u8] = include_bytes!("../../assets/fonts/Roboto-Mediu
 /// Byte for byte BeschleunigerBallett's `third_party/IMGUI/misc/fonts/Cousine-Regular.ttf` (OFL-1.1).
 pub const COUSINE_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Cousine-Regular.ttf");
 
-/// The C++ editor's 15 px body size, in points.
-pub const BODY_SIZE: f32 = 15.0;
+/// The C++ editor's 15 px body line, in points: one row of body text.
+pub const LINE_HEIGHT: f32 = 15.0;
+/// ImGui sizes a face by ascent minus descent, egui by the em: Roboto's 2400-unit line on a 2048-unit em.
+const ROBOTO_EM_PER_LINE: f32 = 2048.0 / 2400.0;
+/// Cousine's line is 2320 units on the same em.
+const COUSINE_EM_PER_LINE: f32 = 2048.0 / 2320.0;
+/// The em that gives Roboto the C++ 15 px line, 12.8 points.
+pub const BODY_SIZE: f32 = LINE_HEIGHT * ROBOTO_EM_PER_LINE;
 pub const CAPTION_SCALE: f32 = 0.8;
 pub const TITLE_SCALE: f32 = 1.2;
 pub const FIGURE_SCALE: f32 = 1.8;
@@ -53,7 +59,7 @@ pub fn figure_font() -> FontId {
 }
 
 pub fn mono_font() -> FontId {
-    FontId::monospace(BODY_SIZE)
+    FontId::monospace(LINE_HEIGHT * COUSINE_EM_PER_LINE)
 }
 
 #[cfg(test)]
@@ -93,6 +99,25 @@ mod tests {
             sha256_hex(include_bytes!("../../assets/fonts/OFL-1.1.txt")),
             "1d361a8f8e8ce6e68457dcd93fb56e162e6baa3bbb7e7573a290d44399f6b57e"
         );
+    }
+
+    #[test]
+    fn a_body_row_is_the_cpp_15_pixel_line_and_text_keeps_its_width() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(studio_fonts());
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let galley = ui.painter().layout_no_wrap(
+                "BeschleunigerBallett".into(),
+                body_font(),
+                egui::Color32::WHITE,
+            );
+            assert_eq!(galley.size().y, LINE_HEIGHT);
+            // The C++ menu bar sets the brand 118 pixels wide.
+            assert!((galley.size().x - 118.5).abs() < 1.0, "{}", galley.size().x);
+            let mono = ui.ctx().fonts_mut(|f| f.row_height(&mono_font()));
+            assert!((mono - LINE_HEIGHT).abs() < 0.5, "{mono}");
+        });
+        output.drop_without_applying_deltas();
     }
 
     #[test]

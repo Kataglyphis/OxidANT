@@ -1,21 +1,40 @@
 //! One frame: acquire, egui pass, its actions, the scene with the camera on the free rect, egui paint, present.
 
-use glam::Vec2;
 use winit::window::Window;
 
-use super::{input, AppSignal, HostCaps, StudioApp};
-use crate::render::overlay::OverlayControls;
-use crate::scene::viewport::SceneViewport;
+use super::{AppSignal, StudioApp};
+use crate::render::forward::readback;
+use crate::render::texture::create_2d_texture;
+use crate::ui::editor::{EditorAction, EditorContext, RendererSettings, SceneStats};
 
 /// Auto-orbit turn rate until the first drag.
 const AUTO_ORBIT_DEG_PER_S: f32 = 30.0;
 
-/// What one egui pass hands back to its frame.
-#[derive(Debug, Default)]
-pub(crate) struct PassOutput {
-    pub(crate) signals: Vec<AppSignal>,
-    pub(crate) controls_changed: bool,
-    pub(crate) viewport: SceneViewport,
+/// One frame without a window: its size in pixels, its scale, its time and the input it receives.
+#[derive(Clone, Debug)]
+pub struct OffscreenFrame {
+    pub size_px: [u32; 2],
+    pub pixels_per_point: f32,
+    pub now_s: f64,
+    pub events: Vec<egui::Event>,
+}
+
+impl OffscreenFrame {
+    /// What egui-winit would hand egui for a window of this size and scale.
+    fn raw_input(&self) -> egui::RawInput {
+        let [width, height] = self.size_px;
+        let points = egui::vec2(width as f32, height as f32) / self.pixels_per_point;
+        let mut raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, points)),
+            time: Some(self.now_s),
+            focused: true,
+            events: self.events.clone(),
+            ..Default::default()
+        };
+        let root = raw.viewports.entry(egui::ViewportId::ROOT).or_default();
+        root.native_pixels_per_point = Some(self.pixels_per_point);
+        raw
+    }
 }
 
 impl StudioApp {
@@ -25,17 +44,43 @@ impl StudioApp {
         let Some(frame) = self.acquire(window) else {
             return Vec::new();
         };
-        let (output, pass) = self.run_ui(window);
-        if pass.controls_changed {
-            self.controls.apply(&mut self.renderer);
-        }
-        self.camera.viewport = pass.viewport;
-        self.advance(now_s);
-        self.draw(&frame, output);
+        let size = [frame.texture.width(), frame.texture.height()];
+        let raw = self.overlay.take_input(window);
+        let (mut output, signals) = self.pass(raw, now_s, size);
+        let platform = std::mem::take(&mut output.platform_output);
+        self.overlay.handle_platform_output(window, platform);
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.draw(&view, size, output);
         window.pre_present_notify();
         self.gpu.queue.present(frame);
         window.request_redraw();
-        pass.signals
+        signals
+    }
+
+    /// One frame of scene and editor into an offscreen target, read back as tightly packed RGBA8 rows.
+    pub fn render_offscreen(
+        &mut self,
+        frame: &OffscreenFrame,
+    ) -> anyhow::Result<(Vec<u8>, Vec<AppSignal>)> {
+        let (output, signals) = self.pass(frame.raw_input(), frame.now_s, frame.size_px);
+        let [width, height] = frame.size_px;
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
+        let texture = create_2d_texture(
+            &self.gpu.device,
+            Some("studio_offscreen"),
+            width,
+            height,
+            self.format,
+            usage,
+            1,
+            1,
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.draw(&view, frame.size_px, output);
+        let pixels = readback::read_rgba8(&self.gpu, &texture, width, height)?;
+        Ok((pixels, signals))
     }
 
     fn acquire(&mut self, window: &Window) -> Option<wgpu::SurfaceTexture> {
@@ -55,14 +100,41 @@ impl StudioApp {
         }
     }
 
-    fn run_ui(&mut self, window: &Window) -> (egui::FullOutput, PassOutput) {
-        // Read before the pass: the pass's own Esc handling clears focus and closes popups.
-        let esc_armed = input::esc_armed(self.overlay.context());
-        let caps = self.caps;
-        let controls = &mut self.controls;
-        controls.occlusion_stats = Some(self.renderer.occlusion_cull_stats());
-        self.overlay
-            .run(window, |ui| studio_pass(ui, esc_armed, caps, controls))
+    /// The editor pass between the renderer's settings read and written back; its rect becomes the camera's.
+    fn pass(
+        &mut self,
+        raw: egui::RawInput,
+        now_s: f64,
+        surface_px: [u32; 2],
+    ) -> (egui::FullOutput, Vec<AppSignal>) {
+        // Recorded before the pass, so the editor is a pure function of what it is handed.
+        self.frames.tick(now_s);
+        let ctx = self.overlay.context();
+        let delay = self.frames.double_click_delay_s();
+        // A click's down, up and down reach egui a frame apart, so at software-rendering rates 0.3 s is never a double-click.
+        ctx.options_mut(|options| options.input_options.max_double_click_delay = delay);
+        let esc_armed = self.editor.esc_armed(ctx);
+        let mut settings = RendererSettings::of(&self.renderer);
+        let stats = SceneStats::of(&self.renderer);
+        let mut cx = EditorContext {
+            settings: &mut settings,
+            camera: &mut self.camera,
+            stats: &stats,
+            frames: &self.frames,
+            device: &self.device,
+            model: self.model.as_ref(),
+            caps: self.caps,
+            surface_px,
+        };
+        let editor = &mut self.editor;
+        let (output, editor_output) = self
+            .overlay
+            .run(raw, |ui| editor.show(ui, &mut cx, esc_armed));
+        settings.apply(&mut self.renderer);
+        self.camera.viewport = editor_output.viewport;
+        self.advance(now_s);
+        let signals = editor_output.actions.into_iter().map(signal).collect();
+        (output, signals)
     }
 
     fn advance(&mut self, now_s: f64) {
@@ -76,16 +148,16 @@ impl StudioApp {
         self.renderer.frame_delta_seconds = self.clock.tick_at(now_s);
     }
 
-    fn draw(&mut self, frame: &wgpu::SurfaceTexture, output: egui::FullOutput) {
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        // Size from the acquired texture: mid-resize the window already differs from the surface.
-        let (width, height) = (frame.texture.width(), frame.texture.height());
+    fn draw(
+        &mut self,
+        view: &wgpu::TextureView,
+        [width, height]: [u32; 2],
+        output: egui::FullOutput,
+    ) {
         self.renderer.render_tonemapped(
             &self.gpu,
             &mut self.tonemap,
-            &view,
+            view,
             width,
             height,
             &self.camera,
@@ -97,31 +169,116 @@ impl StudioApp {
                 label: Some("overlay_encoder"),
             });
         self.overlay
-            .paint(&self.gpu, &mut encoder, &view, [width, height], output);
+            .paint(&self.gpu, &mut encoder, view, [width, height], output);
         self.gpu.queue.submit(Some(encoder.finish()));
     }
 }
 
-/// One pass's UI: the shortcuts, then the controls; what the root keeps free is the scene's rect.
-pub(crate) fn studio_pass(
-    ui: &mut egui::Ui,
-    esc_armed: bool,
-    caps: HostCaps,
-    controls: &mut OverlayControls,
-) -> PassOutput {
-    let signals = input::shortcuts(ui.ctx(), esc_armed, caps);
-    let controls_changed = controls.ui(ui.ctx());
-    let point = |p: egui::Pos2| Vec2::new(p.x, p.y);
-    let free = ui.available_rect_before_wrap();
-    let frame = ui.ctx().viewport_rect();
-    PassOutput {
-        signals,
-        controls_changed,
-        viewport: SceneViewport::of_rect(
-            point(free.min),
-            point(free.max),
-            point(frame.min),
-            point(frame.max),
-        ),
+/// What the shell does for an editor action.
+fn signal(action: EditorAction) -> AppSignal {
+    match action {
+        EditorAction::Quit => AppSignal::Quit,
+        EditorAction::Screenshot => AppSignal::Screenshot,
+        EditorAction::ReloadShaders => AppSignal::ReloadShaders,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::HostCaps;
+    use crate::scene::camera::OrbitCamera;
+    use crate::scene::viewport::SceneViewport;
+    use crate::{load_gltf, GpuContext};
+
+    fn studio() -> Option<StudioApp> {
+        let gpu = GpuContext::headless_or_skip()?;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/assets/cube_on_plane.gltf");
+        let scene = load_gltf(&path).expect("the test scene loads");
+        let caps = HostCaps {
+            quit: true,
+            screenshot: true,
+            hot_reload: true,
+        };
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        Some(StudioApp::headless(
+            gpu,
+            &scene,
+            OrbitCamera::default(),
+            caps,
+            format,
+        ))
+    }
+
+    fn frame(now_s: f64, events: Vec<egui::Event>) -> OffscreenFrame {
+        OffscreenFrame {
+            size_px: [800, 450],
+            pixels_per_point: 1.0,
+            now_s,
+            events,
+        }
+    }
+
+    fn f1() -> Vec<egui::Event> {
+        [true, false]
+            .map(|pressed| egui::Event::Key {
+                key: egui::Key::F1,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            })
+            .to_vec()
+    }
+
+    #[test]
+    fn an_offscreen_frame_paints_the_editor_and_centres_the_camera_on_the_scene() {
+        let Some(mut app) = studio() else {
+            return;
+        };
+        for step in 0..2 {
+            app.render_offscreen(&frame(f64::from(step) / 60.0, Vec::new()))
+                .expect("renders");
+        }
+        let (pixels, signals) = app
+            .render_offscreen(&frame(2.0 / 60.0, Vec::new()))
+            .expect("renders");
+        assert!(signals.is_empty());
+        assert_eq!(pixels.len(), 800 * 450 * 4);
+        // 800 points drop the scene dock; menu bar 29, status bar 23, the inspector at its 320-point cap, profiler 172.
+        let expected = SceneViewport {
+            x0: 0.0,
+            y0: 29.0 / 450.0,
+            x1: 480.0 / 800.0,
+            y1: (450.0 - 23.0 - 172.0) / 450.0,
+        };
+        assert_eq!(app.camera.viewport, expected);
+        let pixel = |x: usize, y: usize| {
+            let at = (y * 800 + x) * 4;
+            [pixels[at], pixels[at + 1], pixels[at + 2]]
+        };
+        let panel = crate::ui::palette::PANEL.to_array();
+        let near = |rgb: [u8; 3]| rgb.iter().zip(panel).all(|(a, b)| a.abs_diff(b) <= 1);
+        assert!(
+            near(pixel(4, 14)),
+            "the menu bar is the panel colour: {:?}",
+            pixel(4, 14)
+        );
+        assert!(!near(pixel(200, 200)), "the scene shows through");
+    }
+
+    #[test]
+    fn f1_gives_the_camera_the_whole_frame_and_back() {
+        let Some(mut app) = studio() else {
+            return;
+        };
+        app.render_offscreen(&frame(0.0, Vec::new()))
+            .expect("renders");
+        app.render_offscreen(&frame(0.1, f1())).expect("renders");
+        assert_eq!(app.camera.viewport, SceneViewport::FULL);
+        assert!(!app.editor().is_visible());
+        app.render_offscreen(&frame(0.2, f1())).expect("renders");
+        assert_ne!(app.camera.viewport, SceneViewport::FULL);
     }
 }
