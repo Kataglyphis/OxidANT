@@ -3,7 +3,7 @@
 
 use glam::{Mat4, Vec3};
 
-use crate::scene::{CpuScene, CpuSkin};
+use crate::scene::{CpuScene, CpuSkin, MorphTarget, Vertex};
 
 /// View frustum from a wgpu (0..1 depth) view-projection; Gribb-Hartmann planes, normals inward.
 pub(crate) struct Frustum {
@@ -144,22 +144,42 @@ pub(crate) fn primitive_world_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, 
     }
 }
 
-/// Local-space bounds covering every morph pose the primitive can reach (exact for weights 0..1).
+/// Local-space bounds covering the morph poses its current weights allow; see [`morph_local_aabb`].
 pub(crate) fn primitive_local_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
+    morph_local_aabb(&prim.vertices, &prim.morph_targets, &prim.morph_weights)
+}
+
+/// Bounds over each target's weights from `min(0, w)` to `max(1, w)`, `w` its current weight.
+/// Exact over [0, 1]; a default above 1 or a CUBICSPLINE overshoot widens that target's range.
+pub(crate) fn morph_local_aabb(
+    vertices: &[Vertex],
+    targets: &[MorphTarget],
+    weights: &[f32],
+) -> (Vec3, Vec3) {
+    let ranges: Vec<(f32, f32)> = (0..targets.len())
+        .map(|t| {
+            let w = weights
+                .get(t)
+                .copied()
+                .filter(|w| w.is_finite())
+                .unwrap_or(0.0);
+            (w.min(0.0), w.max(1.0))
+        })
+        .collect();
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
-    for (i, vertex) in prim.vertices.iter().enumerate() {
+    for (i, vertex) in vertices.iter().enumerate() {
         let p = Vec3::from_array(vertex.position);
-        // One NaN vertex would NaN the scene bounds and every cascade matrix, so skip it.
-        if !p.is_finite() {
-            continue;
-        }
         let (mut lo, mut hi) = (p, p);
-        for target in &prim.morph_targets {
-            if let Some(d) = target.position_deltas.get(i) {
-                lo += d.min(Vec3::ZERO);
-                hi += d.max(Vec3::ZERO);
+        for (target, &(w_lo, w_hi)) in targets.iter().zip(&ranges) {
+            if let Some(&d) = target.position_deltas.get(i) {
+                lo += (d * w_lo).min(d * w_hi);
+                hi += (d * w_lo).max(d * w_hi);
             }
+        }
+        // One NaN vertex or delta would NaN the scene bounds and every cascade matrix, so skip it.
+        if !lo.is_finite() || !hi.is_finite() {
+            continue;
         }
         min = min.min(lo);
         max = max.max(hi);

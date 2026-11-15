@@ -166,3 +166,66 @@ fn animation_time_in_f64_advances_every_frame_after_three_days() {
         previous = x;
     }
 }
+
+/// cube_morph.gltf: the unit cube and one target lifting every vertex 1.0 in +Y, at `weight`.
+fn morph_cube(weight: f32) -> CpuScene {
+    let mut scene = load_gltf(asset("cube_morph.gltf")).expect("cube_morph.gltf must load");
+    scene.primitives[0].morph_weights = vec![weight];
+    scene
+}
+
+/// glTF puts no range on morph weights; bounds built for [0, 1] let the frustum drop drawn geometry.
+#[test]
+fn morph_bounds_cover_default_weights_outside_zero_to_one() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
+    renderer.upload_scene(&gpu, &morph_cube(2.0));
+    let (_, max) = renderer.primitive_world_aabb(0).expect("primitive 0");
+    assert!(
+        max.y >= 2.5 - 1e-5,
+        "weight 2 lifts the top to 2.5, bounds end at {}",
+        max.y
+    );
+
+    renderer.upload_scene(&gpu, &morph_cube(-1.0));
+    let (min, _) = renderer.primitive_world_aabb(0).expect("primitive 0");
+    assert!(
+        min.y <= -1.5 + 1e-5,
+        "weight -1 drops the bottom to -1.5, bounds end at {}",
+        min.y
+    );
+}
+
+#[test]
+fn morph_bounds_follow_an_animated_weight_past_one() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut scene = morph_cube(0.0);
+    let node = scene.primitives[0]
+        .node_index
+        .expect("the morph cube hangs from a node");
+    scene.animations = vec![CpuAnimation {
+        name: "swell".to_string(),
+        duration: 2.0,
+        channels: vec![CpuAnimationChannel {
+            node,
+            times: vec![0.0, 2.0],
+            values: ChannelValues::MorphWeights(vec![0.0, 2.0]),
+            interpolation: Interpolation::Linear,
+        }],
+    }];
+    let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.set_animation_time(1.5);
+    let (_, max) = renderer.primitive_world_aabb(0).expect("primitive 0");
+    assert!(
+        max.y >= 2.0 - 1e-5,
+        "weight 1.5 lifts the top to 2.0, bounds end at {}",
+        max.y
+    );
+    let (_, scene_max) = renderer.scene_bounds().expect("scene bounds");
+    assert!(scene_max.y >= 2.0 - 1e-5, "the cascades must see it too");
+}

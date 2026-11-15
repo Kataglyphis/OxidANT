@@ -8,7 +8,7 @@ use crate::render::animation::{
     keyframe_lerp_indices, sample_morph_weights, sample_quat, sample_vec3,
 };
 use crate::render::bounds::{
-    instanced_bounds, normal_matrix_of, transform_aabb, widen_bounds_for_skin,
+    instanced_bounds, morph_local_aabb, normal_matrix_of, transform_aabb, widen_bounds_for_skin,
 };
 use crate::render::lights::pack_punctual_lights;
 use crate::scene::{ChannelValues, CpuAnimation, CpuLight, CpuNode, CpuScene, CpuSkin};
@@ -185,6 +185,14 @@ impl ForwardRenderer {
     /// Moves every node-driven primitive to its node's `world` matrix and re-derives its bounds.
     pub(super) fn retarget_primitives(&mut self, world: &[Mat4]) {
         for prim in &mut self.primitives {
+            // New weights move the vertices, so the local box follows them before it is posed.
+            if prim.morph_dirty && !prim.base_vertices.is_empty() {
+                (prim.local_aabb_min, prim.local_aabb_max) = morph_local_aabb(
+                    &prim.base_vertices,
+                    &prim.morph_targets,
+                    &prim.morph_weights,
+                );
+            }
             if let Some(node) = prim.node_index {
                 if let Some(m) = world.get(node) {
                     prim.model = *m;

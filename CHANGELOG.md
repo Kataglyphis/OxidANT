@@ -72,6 +72,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **Punctual lights on animated nodes never moved**: a light's pose was baked at load. `CpuLight` carries its node
   (`node`, `None` for a fixed light), and `set_animation_time` re-poses every such light from its node's world
   transform (`CpuLight::pose_at`, the loader's rule: the node's origin, pointing down its -Z) and repacks them.
+- **Morph culling bounds assumed weights in [0, 1]**, so a default weight of 2 or a CUBICSPLINE overshoot drew
+  geometry the frustum test, the shadow casters and the cascade fit did not see; `renderer-bounds-invariant.md`
+  called the box conservative outside that range, which it was not. Each target now covers `min(0, w)` to
+  `max(1, w)` of its current weight, and an animation frame that moves the weights rebuilds the box.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

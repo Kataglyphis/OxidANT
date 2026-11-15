@@ -73,9 +73,12 @@ Bounds may be **too big** — that only costs a little culling efficiency. Bound
 that are **too small delete visible geometry**. So when a pose is not known
 exactly, over-cover it:
 
-- **Morph:** for weights in `[0,1]`, a vertex's extremes are its position plus
-  the sum of the negative deltas (lower) and the positive deltas (upper). Exact
-  over that range, conservative outside it.
+- **Morph:** each target covers weights from `min(0, w)` to `max(1, w)`, `w` its
+  current weight, so a vertex's extremes are its position plus, per target, the
+  lower and the higher of its delta scaled by either end. Exact over `[0,1]`; a
+  weight outside it (a default of 2, a CUBICSPLINE overshoot) widens its own
+  target's range, and the box is rebuilt whenever an animation frame moves the
+  weights, since glTF puts no range on them.
 - **Skinning:** skin weights are normalised, so a skinned position is a *convex
   combination* of `J_i · v` and therefore lies inside the **union of the
   per-joint boxes**. Union them.
