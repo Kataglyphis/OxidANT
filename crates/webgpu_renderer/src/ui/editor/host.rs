@@ -7,6 +7,8 @@ use crate::app::loader::LoadProgress;
 use crate::app::Notice;
 use crate::render::forward::ForwardRenderer;
 use crate::render::gpu_timing::TimedPass;
+use crate::render::model_transform::ModelTransform;
+use crate::render::shadow_settings::ShadowSettings;
 
 /// The renderer's editable settings: read before the egui pass, written back after it.
 #[derive(Clone, Debug, PartialEq)]
@@ -23,6 +25,10 @@ pub struct RendererSettings {
     pub auto_exposure_speed: f32,
     pub occlusion_queries_enabled: bool,
     pub gpu_culling_enabled: bool,
+    pub shadows: ShadowSettings,
+    pub frustum_culling: bool,
+    pub skybox_enabled: bool,
+    pub model_transform: ModelTransform,
 }
 
 impl Default for RendererSettings {
@@ -39,6 +45,10 @@ impl Default for RendererSettings {
             auto_exposure_speed: 3.0,
             occlusion_queries_enabled: false,
             gpu_culling_enabled: false,
+            shadows: ShadowSettings::default(),
+            frustum_culling: true,
+            skybox_enabled: true,
+            model_transform: ModelTransform::default(),
         }
     }
 }
@@ -56,6 +66,10 @@ impl RendererSettings {
             auto_exposure_speed: renderer.auto_exposure_speed,
             occlusion_queries_enabled: renderer.occlusion_queries_enabled,
             gpu_culling_enabled: renderer.gpu_culling_enabled,
+            shadows: renderer.shadows,
+            frustum_culling: renderer.frustum_culling,
+            skybox_enabled: renderer.skybox_enabled,
+            model_transform: renderer.model_transform,
         }
     }
 
@@ -70,6 +84,10 @@ impl RendererSettings {
         renderer.auto_exposure_speed = self.auto_exposure_speed;
         renderer.occlusion_queries_enabled = self.occlusion_queries_enabled;
         renderer.gpu_culling_enabled = self.gpu_culling_enabled;
+        renderer.shadows = self.shadows;
+        renderer.frustum_culling = self.frustum_culling;
+        renderer.skybox_enabled = self.skybox_enabled;
+        renderer.model_transform = self.model_transform;
     }
 }
 
@@ -83,6 +101,10 @@ pub struct SceneStats {
     /// Smoothed GPU milliseconds per timed pass, by its label; a pass without a sample is absent, not zero.
     pub gpu_passes: Vec<(&'static str, f32)>,
     pub gpu_timing: bool,
+    /// Primitives the camera pass drew, and primitives uploaded.
+    pub primitives: (u32, u32),
+    /// A cube map is loaded, so the skybox is the C++ one rather than the procedural sky.
+    pub cubemap: bool,
 }
 
 impl SceneStats {
@@ -92,6 +114,8 @@ impl SceneStats {
             shadow_casters: renderer.shadow_caster_stats(),
             gpu_passes: labelled(renderer.gpu_timings_ms()),
             gpu_timing: renderer.gpu_timing_available(),
+            primitives: renderer.primitive_stats(),
+            cubemap: renderer.skybox_loaded(),
         }
     }
 }

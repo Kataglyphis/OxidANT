@@ -144,6 +144,21 @@ impl StudioApp {
         !self.is_loading()
     }
 
+    /// Shows the C++ cube map from `dir`; when its faces do not load, the procedural sky stays and the log says why.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_skybox(&mut self, dir: &std::path::Path) -> bool {
+        match crate::asset::skybox::CubemapFaces::load_dir(dir) {
+            Ok(faces) => {
+                self.renderer.set_skybox(&self.gpu, &faces);
+                true
+            }
+            Err(error) => {
+                log::warn!("Keeping the procedural sky: {error:#}");
+                false
+            }
+        }
+    }
+
     /// Swaps in `scene` at once, framed and lit as a load would be; no library row holds it.
     pub fn load_scene(&mut self, scene: CpuScene) {
         self.upload_loaded(scene, SceneMeta::default());
@@ -227,6 +242,7 @@ impl StudioApp {
             framing.source
         );
         let auto_orbit = framing.auto_orbit();
+        self.renderer.shadows.distance = framing.shadow_distance;
         self.scene.meta = meta;
         self.scene.framing = Some(framing);
         self.controller = OrbitController::default();

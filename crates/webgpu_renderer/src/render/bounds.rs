@@ -34,8 +34,6 @@ impl Frustum {
     }
 
     /// Caster test without the near plane: casters between light and cascade box still shadow it.
-    /// Only tests call it: the cascade passes replay cached bundles that draw every caster.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn intersects_aabb_as_caster(&self, min: Vec3, max: Vec3) -> bool {
         let [left, right, bottom, top, _near, far] = &self.planes;
         self.test_planes(min, max, &[*left, *right, *bottom, *top, *far])

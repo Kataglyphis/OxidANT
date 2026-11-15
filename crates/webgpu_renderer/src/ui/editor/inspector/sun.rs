@@ -1,12 +1,23 @@
-//! The Sun tab: radiance, colour and the direction from the sun into the scene, bound to the renderer's light.
+//! The Sun tab: radiance, colour and the direction from the sun into the scene, then the C++ SHADOWS section.
 
 use egui::{vec2, Align2, Sense, TextStyle, Ui};
 use glam::Vec3;
 
 use super::super::{EditorContext, RendererSettings};
+use crate::render::forward::CASCADE_COUNT;
+use crate::render::shadow_settings::{
+    ShadowSettings, MAX_PCF_RADIUS, SHADOW_DISTANCE_RANGE, SHADOW_MAP_RESOLUTIONS,
+};
 use crate::ui::palette as pal;
 use crate::ui::theme;
-use crate::ui::widgets::{drag_axes, frame_fill, frame_height, property_row, FillSlider};
+use crate::ui::widgets::{
+    drag_axes, enabled_ui, frame_fill, frame_height, property_row, section_header, FillSlider,
+    Segmented,
+};
+
+/// The C++ segment labels: `kShadowMapResolutions`, then the digits of the cascade and radius rows.
+const RESOLUTION_LABELS: [&str; 4] = ["512", "1024", "2048", "4096"];
+const DIGITS: [&str; 6] = ["0", "1", "2", "3", "4", "5"];
 
 pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
     let settings = &mut *cx.settings;
@@ -18,6 +29,59 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
     });
     let tooltip = "Points from the sun into the scene; normalized before use";
     property_row(ui, "Direction", Some(tooltip), |ui| direction(ui, settings));
+    shadows(ui, &mut settings.shadows);
+}
+
+/// The SHADOWS header's switch, then the grid it disables.
+fn shadows(ui: &mut Ui, shadows: &mut ShadowSettings) {
+    section_header(ui, "SHADOWS", Some(&mut shadows.enabled));
+    enabled_ui(ui, shadows.enabled, |ui| {
+        let tooltip = "Texels per side of each cascade's map";
+        property_row(ui, "Resolution", Some(tooltip), |ui| {
+            let mut index = SHADOW_MAP_RESOLUTIONS
+                .iter()
+                .position(|texels| *texels == shadows.resolution)
+                .unwrap_or(2);
+            let response = Segmented::new(&RESOLUTION_LABELS).show(ui, &mut index);
+            shadows.resolution = SHADOW_MAP_RESOLUTIONS[index];
+            response
+        });
+        let tooltip = "Shadow maps along the view; more keep near shadows sharp";
+        property_row(ui, "Cascades", Some(tooltip), |ui| {
+            let mut index = (shadows.cascade_count as usize).clamp(1, CASCADE_COUNT) - 1;
+            let response = Segmented::new(&DIGITS[1..=CASCADE_COUNT]).show(ui, &mut index);
+            shadows.cascade_count = index as u32 + 1;
+            response
+        });
+        let tooltip = "Filter taps on each side; 0 gives hard edges";
+        property_row(ui, "PCF radius", Some(tooltip), |ui| {
+            let mut index = shadows.pcf_radius.min(MAX_PCF_RADIUS) as usize;
+            let labels = &DIGITS[..=MAX_PCF_RADIUS as usize];
+            let response = Segmented::new(labels).show(ui, &mut index);
+            shadows.pcf_radius = index as u32;
+            response
+        });
+        filtering(ui, shadows);
+    });
+}
+
+/// Strength, the logarithmic distance and the split lambda, the C++ sliders.
+fn filtering(ui: &mut Ui, shadows: &mut ShadowSettings) {
+    let tooltip = "How dark shadowed areas get: 0 leaves them lit, 1 makes them black";
+    property_row(ui, "Strength", Some(tooltip), |ui| {
+        ui.add(FillSlider::new(&mut shadows.strength, 0.0..=1.0).decimals(2))
+    });
+    let tooltip = "How far from the camera the cascades reach";
+    property_row(ui, "Distance", Some(tooltip), |ui| {
+        let slider = FillSlider::new(&mut shadows.distance, SHADOW_DISTANCE_RANGE)
+            .logarithmic(true)
+            .decimals(0);
+        ui.add(slider)
+    });
+    let tooltip = "0 splits the cascades evenly, 1 logarithmically";
+    property_row(ui, "Split lambda", Some(tooltip), |ui| {
+        ui.add(FillSlider::new(&mut shadows.split_lambda, 0.0..=1.0).decimals(2))
+    });
 }
 
 /// The colour as hex in a field, and the swatch that opens egui's picker.

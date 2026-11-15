@@ -7,10 +7,12 @@ mod environment;
 mod frame;
 mod light_grid;
 mod main_pass;
+mod placement;
 mod post;
 mod primitive;
 pub(crate) mod readback;
 mod shadow;
+mod shadow_casters;
 mod sky;
 mod targets;
 mod upload;
@@ -22,6 +24,8 @@ use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::GpuTiming;
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
 pub use crate::render::lights::MAX_PUNCTUAL_LIGHTS;
+use crate::render::model_transform::ModelTransform;
+use crate::render::shadow_settings::ShadowSettings;
 use crate::render::texture::create_2d_texture;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
@@ -36,6 +40,7 @@ use main_pass::MainPipelines;
 use post::PostChain;
 use primitive::GpuPrimitive;
 use shadow::ShadowResources;
+pub use sky::SkyMode;
 use sky::SkyResources;
 use targets::{DepthResolve, RenderTargets};
 use upload::{MaterialDefaults, MaterialTextureCache};
@@ -50,8 +55,9 @@ const _: () = assert!(
     MSAA_SAMPLE_COUNT > 1,
     "the forward pass resolves MSAA colour and depth, so it needs more than one sample"
 );
+/// The default texels per side of each cascade's map; [`ShadowSettings::resolution`] picks another.
 pub const SHADOW_MAP_SIZE: u32 = 2048;
-/// Cascaded shadow map layers (split by view distance).
+/// The most cascades, the C++ `MAX_CASCADES`; [`ShadowSettings::cascade_count`] renders 1 to this many.
 pub const CASCADE_COUNT: usize = 3;
 
 pub struct ForwardRenderer {
@@ -107,6 +113,16 @@ pub struct ForwardRenderer {
     /// Camera distances at which successive LOD levels take over, ascending.
     /// Defaults suit unit-scale assets; a scene in metres wants larger values.
     pub lod_switch_distances: Vec<f32>,
+    /// The Sun's shadows; read every frame, a new resolution or cascade count reallocates the maps.
+    pub shadows: ShadowSettings,
+    /// Skip what lies outside the camera frustum, and casters outside every cascade.
+    pub frustum_culling: bool,
+    /// The skybox, or with it off the C++ navy; without a cube map the procedural sky stands in.
+    pub skybox_enabled: bool,
+    /// Where the Model tab places the uploaded scene; an upload resets it.
+    pub model_transform: ModelTransform,
+    /// The root matrix the instances and lights carry now.
+    placed_root: Mat4,
 }
 
 impl ForwardRenderer {
@@ -123,7 +139,7 @@ impl ForwardRenderer {
         let post = PostChain::new(gpu, &targets.hdr_view);
         Self {
             main,
-            sky: SkyResources::new(device),
+            sky: SkyResources::new(gpu),
             shadow,
             frame,
             lights,
@@ -152,6 +168,11 @@ impl ForwardRenderer {
             occlusion_queries_enabled: false,
             gpu_culling_enabled: false,
             lod_switch_distances: vec![8.0, 24.0],
+            shadows: ShadowSettings::default(),
+            frustum_culling: true,
+            skybox_enabled: true,
+            model_transform: ModelTransform::default(),
+            placed_root: Mat4::IDENTITY,
         }
     }
 

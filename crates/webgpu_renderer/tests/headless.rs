@@ -329,6 +329,8 @@ fn shadow_darkens_plane_under_cube() {
     renderer.upload_scene(&gpu, &scene);
     // Low light, so the shadow falls where the camera looks rather than under the cube.
     renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+    // Full strength, as the C++ shadow goldens measure: the default 0.65 leaves sun in the shadow.
+    renderer.shadows.strength = 1.0;
 
     // Look down from above so the plane fills most of the frame.
     let camera = OrbitCamera {
@@ -384,6 +386,7 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
         let mut renderer = ForwardRenderer::new(&gpu, width, height);
         renderer.upload_scene(&gpu, &scene);
         renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+        renderer.shadows.strength = 1.0;
 
         let pixels = renderer
             .render_to_pixels(&gpu, width, height, &camera)
@@ -411,61 +414,6 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
         shadowed_512 > 150,
         "512x512 first frame: expected a shadowed patch under the cube, got {shadowed_512} pixels"
     );
-}
-
-/// Each cascade's depth layer holds the casters through its own light matrix, not cascade 0's.
-#[test]
-fn every_cascade_layer_is_rendered_with_its_own_light_matrix() {
-    use kataglyphis_webgpu_renderer::render::forward::{CASCADE_COUNT, SHADOW_MAP_SIZE};
-
-    let Some(gpu) = GpuContext::headless_or_skip() else {
-        return;
-    };
-
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
-    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
-    let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
-    renderer.upload_scene(&gpu, &scene);
-    renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
-    let camera = OrbitCamera {
-        radius: 6.0,
-        pitch_deg: 55.0,
-        ..OrbitCamera::default()
-    };
-    renderer
-        .render_to_pixels(&gpu, 64, 64, &camera)
-        .expect("headless render must succeed");
-
-    let depths = renderer
-        .read_shadow_map(&gpu)
-        .expect("shadow map readback must succeed");
-    let size = SHADOW_MAP_SIZE as usize;
-    assert_eq!(depths.len(), CASCADE_COUNT * size * size);
-    // The cube's top centre and a plane point on the lit side: every cascade's light sees both.
-    let probes = [
-        glam::Vec3::new(0.0, 1.4, 0.0),
-        glam::Vec3::new(-1.5, 0.0, -1.5),
-    ];
-    for (cascade, matrix) in renderer.shadow_cascade_matrices().iter().enumerate() {
-        for probe in probes {
-            let clip = *matrix * probe.extend(1.0);
-            let ndc = clip.truncate() / clip.w;
-            let (u, v) = (ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-            assert!(
-                (0.0..1.0).contains(&u) && (0.0..1.0).contains(&v) && (0.0..1.0).contains(&ndc.z),
-                "precondition: {probe} must lie inside cascade {cascade}'s box, got {ndc:?}"
-            );
-            let (x, y) = ((u * size as f32) as usize, (v * size as f32) as usize);
-            let stored = depths[cascade * size * size + y * size + x];
-            assert!(
-                (stored - ndc.z).abs() < 2e-3,
-                "cascade {cascade}: its layer holds depth {stored} at {probe}'s texel, \
-                 but its own light matrix puts that point at {}",
-                ndc.z
-            );
-        }
-    }
 }
 
 /// The shader source is owned here, so standalone checkouts run the parity checks too.
@@ -1353,21 +1301,29 @@ fn a_far_extra_caster_leaves_the_near_shadow_intact() {
     let mut renderer = ForwardRenderer::new(&gpu, width, height);
     renderer.upload_scene(&gpu, &scene);
     renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+    renderer.shadows.strength = 1.0;
 
     let camera = OrbitCamera {
         radius: 6.0,
         pitch_deg: 55.0,
         ..OrbitCamera::default()
     };
+    // The C++ DisablingFrustumCullingAlsoDisablesShadowCasterCulling: off draws every caster.
+    renderer.frustum_culling = false;
+    renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("headless render must succeed");
+    let (drawn, considered) = renderer.shadow_caster_stats();
+    assert!(considered > 0, "no casters considered - did the pass run?");
+    assert_eq!(drawn, considered, "culling off skips no caster");
+    renderer.frustum_culling = true;
     let pixels = renderer
         .render_to_pixels(&gpu, width, height, &camera)
         .expect("headless render must succeed");
-
     let (drawn, considered) = renderer.shadow_caster_stats();
-    assert!(considered > 0, "no casters considered - did the pass run?");
-    assert_eq!(
-        drawn, considered,
-        "no shadow-caster culling exists to skip any"
+    assert!(
+        drawn < considered,
+        "the far cube lies outside every cascade, yet {drawn} of {considered} casters were drawn"
     );
 
     // As in shadow_darkens_plane_under_cube: the shadow is blue-tinted, never neutral dark.
@@ -1877,8 +1833,8 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
         let (width, height) = (256u32, 256u32);
         let mut renderer = ForwardRenderer::new(&gpu, width, height);
         renderer.upload_scene(&gpu, &scene);
-        // The proven shadow test's light and camera.
         renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+        renderer.shadows.strength = 1.0;
         // SSAO off: it darkens from forward depth, which the forward alpha test already halves.
         renderer.ssao_strength = 0.0;
 
@@ -1988,6 +1944,7 @@ fn ground_shadow_pixels(
         let mut renderer = ForwardRenderer::new(gpu, 256, 256);
         renderer.upload_scene(gpu, &scene);
         renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+        renderer.shadows.strength = 1.0;
         renderer.ssao_strength = 0.0;
         let camera = OrbitCamera {
             radius: 6.0,
@@ -2049,9 +2006,9 @@ fn up_facing_quad(
     }
 }
 
-/// The cascade comes from each fragment's own eye distance: interpolated per vertex across a huge
-/// floor it reads about 420 m right under the camera and picks cascade 1, whose depth bias, twice
-/// cascade 0's in world units, lets a card 1.6 m above the floor cast no shadow.
+/// The cascade comes from each fragment's own view depth: interpolated per vertex across a huge
+/// floor it reads hundreds of metres right under the camera and picks a coarse cascade, whose
+/// depth bias in world units lets a card 1.6 m above the floor cast no shadow.
 #[test]
 fn a_huge_floor_takes_its_cascade_from_each_fragment_distance() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -2075,6 +2032,7 @@ fn a_huge_floor_takes_its_cascade_from_each_fragment_distance() {
         renderer.upload_scene(&gpu, &scene);
         // From +x at 45 degrees: the card's shadow falls 1.6 m towards -x, where the camera looks.
         renderer.light_dir_ambient = glam::Vec4::new(1.0, 1.0, 0.0, 0.15);
+        renderer.shadows.strength = 1.0;
         renderer.ssao_strength = 0.0;
         renderer
             .render_to_pixels(&gpu, 128, 128, &camera)

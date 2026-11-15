@@ -1,29 +1,34 @@
-//! The Model tab: the C++ transform rows, disabled until the renderer has a root transform, and the model's source.
+//! The Model tab: the C++ transform rows over the loaded scene, then its source.
 
 use egui::{vec2, Button, Label, RichText, Ui};
+use glam::Vec3;
 
 use super::super::EditorContext;
+use crate::render::model_transform::ModelTransform;
 use crate::ui::palette as pal;
 use crate::ui::widgets::{
     drag_axes, enabled_ui, frame_height, muted_wrapped, property_row, section_header,
 };
 
 pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
-    enabled_ui(ui, false, |ui| {
+    let transform = &mut cx.settings.model_transform;
+    enabled_ui(ui, cx.model.is_some(), |ui| {
         let unbounded = f32::NEG_INFINITY..=f32::INFINITY;
-        let mut position = [0.0; 3];
+        let mut position = transform.position.to_array();
         property_row(ui, "Position", None, |ui| {
             drag_axes(ui, &mut position, 0.1, unbounded.clone(), 2, "")
         });
-        let mut rotation = [0.0; 3];
+        transform.position = Vec3::from_array(position);
+        let mut rotation = transform.rotation_deg.to_array();
         property_row(ui, "Rotation", Some("Degrees about X, Y and Z"), |ui| {
             drag_axes(ui, &mut rotation, 0.5, unbounded, 1, "°")
         });
+        transform.rotation_deg = Vec3::from_array(rotation);
         let size = vec2(ui.available_width(), frame_height(ui));
-        ui.add_sized(size, Button::new("Reset transform"));
-    })
-    .response
-    .on_disabled_hover_text("The renderer has no model transform yet");
+        if ui.add_sized(size, Button::new("Reset transform")).clicked() {
+            *transform = ModelTransform::default();
+        }
+    });
     section_header(ui, "SOURCE", None);
     match cx.model {
         Some(model) => {

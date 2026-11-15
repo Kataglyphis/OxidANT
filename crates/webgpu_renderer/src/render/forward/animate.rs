@@ -1,6 +1,6 @@
 //! Animation playback: node and morph channels, the posed bounds they move, joints and morph uploads.
 
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 
 use super::primitive::is_mirrored;
 use super::ForwardRenderer;
@@ -177,10 +177,30 @@ impl ForwardRenderer {
             }
         }
         if moved {
-            let (packed, count) = pack_punctual_lights(&self.animation.lights);
-            self.lights.punctual = packed;
-            self.lights.punctual_count = count;
+            self.repack_lights();
         }
+    }
+
+    /// Packs the scene's lights where the Model tab's root places them.
+    pub(super) fn repack_lights(&mut self) {
+        let root = self.placed_root;
+        let placed: Vec<CpuLight> = self
+            .animation
+            .lights
+            .iter()
+            .map(|light| CpuLight {
+                position: root
+                    .transform_point3(Vec3::from_array(light.position))
+                    .to_array(),
+                direction: root
+                    .transform_vector3(Vec3::from_array(light.direction))
+                    .to_array(),
+                ..*light
+            })
+            .collect();
+        let (packed, count) = pack_punctual_lights(&placed);
+        self.lights.punctual = packed;
+        self.lights.punctual_count = count;
     }
 
     /// Moves every node-driven primitive to its node's `world` matrix and re-derives its bounds.
@@ -214,7 +234,7 @@ impl ForwardRenderer {
                     }
                     // The posed box moved, so re-apply the instances on top.
                     prim.pre_instance_aabb = bounds;
-                    let (min, max) = instanced_bounds(bounds, &prim.instance_transforms);
+                    let (min, max) = instanced_bounds(bounds, &prim.placed_instances());
                     prim.aabb_min = min;
                     prim.aabb_max = max;
                     prim.world_center = (min + max) * 0.5;

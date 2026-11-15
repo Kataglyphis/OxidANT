@@ -22,6 +22,10 @@ struct FrameUniforms {
     light_color_intensity: [f32; 4],
     camera_position: [f32; 4],
     cascade_splits: [f32; 4],
+    /// x: cascades (0 = off), y: PCF radius, z: strength.
+    shadow_params: [f32; 4],
+    shadow_view_dir: [f32; 4],
+    shadow_bias_scale: [f32; 4],
 }
 
 /// Group 2 of the forward and shadow layouts: the per-frame uniforms.
@@ -80,6 +84,8 @@ impl ForwardRenderer {
     ) -> FrameView {
         let (width, height) = (width.max(1), height.max(1));
         self.resize_targets(gpu, width, height);
+        self.sync_shadow_map(&gpu.device);
+        self.apply_model_transform(gpu);
         self.rebuild_post_inputs(gpu, width, height);
         self.bind_tonemap_inputs(gpu, tonemap);
         self.write_post_settings(gpu, tonemap);
@@ -112,7 +118,7 @@ impl ForwardRenderer {
         self.post
             .ssao
             .write_uniforms(&gpu.queue, camera.projection(aspect), 0.6, 0.02, 1.0);
-        self.update_cascades(camera);
+        self.update_cascades(camera, aspect);
         FrameView {
             width,
             height,
@@ -131,6 +137,8 @@ impl ForwardRenderer {
 
         let cascades = &self.shadow.cascade_matrices;
         let eye = view.eye;
+        let shadows = self.shadows.sanitized();
+        let [bias_0, bias_1, bias_2] = self.shadow.bias_scales;
         let frame_uniforms = FrameUniforms {
             view_proj: view.view_proj.to_cols_array_2d(),
             light_space: cascades[0].to_cols_array_2d(),
@@ -145,6 +153,14 @@ impl ForwardRenderer {
                 self.lights.tile_counts.0 as f32,
                 self.lights.tile_counts.1 as f32,
             ],
+            shadow_params: [
+                self.shadows.active_cascades() as f32,
+                shadows.pcf_radius as f32,
+                shadows.strength,
+                0.0,
+            ],
+            shadow_view_dir: self.shadow.view_dir.extend(0.0).to_array(),
+            shadow_bias_scale: [bias_0, bias_1, bias_2, 0.0],
         };
         gpu.queue.write_buffer(
             &self.frame.uniform_buffer,

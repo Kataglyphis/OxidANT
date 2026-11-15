@@ -3,6 +3,7 @@
 use glam::{Mat4, Vec3};
 
 use super::scene_meta::SceneMeta;
+use crate::render::shadow_settings::{DEFAULT_SHADOW_DISTANCE, SHADOW_DISTANCE_RANGE};
 use crate::scene::camera::OrbitCamera;
 use crate::scene::fly;
 use crate::scene::{CpuCamera, CpuCameraProjection, CpuScene};
@@ -17,6 +18,8 @@ const FIT_MARGIN: f32 = 1.1;
 const FOV_RANGE_DEG: (f32, f32) = (20.0, 110.0);
 /// At most half the start view's distance to its target per second, so a close start view flies slowly.
 const FLY_SPEED_PER_VIEW_DISTANCE: f32 = 0.5;
+/// Shadows reach twice the start view's distance to its target, so the subject and what lies behind it are shadowed.
+const SHADOW_DISTANCE_PER_VIEW_DISTANCE: f32 = 2.0;
 
 /// Which framing a scene got.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,6 +41,8 @@ pub struct Framing {
     pub fly_speed: f32,
     /// The orbit radius the wheel and a pinch keep to.
     pub radius_range: (f32, f32),
+    /// How far the shadow cascades reach.
+    pub shadow_distance: f32,
     pub source: FramingSource,
 }
 
@@ -84,6 +89,7 @@ pub fn frame(
     let fly_speed = fly_speed(bounds, camera.radius);
     Framing {
         radius_range: radius_range(&camera),
+        shadow_distance: shadow_distance(camera.radius),
         camera,
         fly_speed,
         source,
@@ -181,6 +187,17 @@ fn radius_range(camera: &OrbitCamera) -> (f32, f32) {
     let low = (camera.near * 2.0).min(camera.radius);
     let high = (camera.far * 0.5).max(camera.radius);
     (low, high)
+}
+
+/// Never under the C++ 60 m its scenes were tuned for, more for a scene viewed from farther away.
+fn shadow_distance(view_distance: f32) -> f32 {
+    let fitted = view_distance * SHADOW_DISTANCE_PER_VIEW_DISTANCE;
+    let distance = if fitted.is_finite() {
+        fitted.max(DEFAULT_SHADOW_DISTANCE)
+    } else {
+        DEFAULT_SHADOW_DISTANCE
+    };
+    distance.clamp(*SHADOW_DISTANCE_RANGE.start(), *SHADOW_DISTANCE_RANGE.end())
 }
 
 /// The scene's own speed, [`fly::speed_for_bounds`], at most half the start view's distance per second.
@@ -415,5 +432,26 @@ mod tests {
         assert!(arena.radius_range.1 > 5_000.0, "{:?}", arena.radius_range);
         let unchanged = frame(&scene, &SceneMeta::default(), None, &OrbitCamera::default());
         assert_eq!(unchanged.radius_range, DEFAULT_RADIUS_RANGE);
+    }
+
+    #[test]
+    fn the_shadows_reach_twice_the_start_view_never_under_the_cpp_distance() {
+        let (scene, meta, bounds) = colosseum();
+        let framing = frame(&scene, &meta, Some(bounds), &OrbitCamera::default());
+        // From Kamera_Arena about 130 m: the arena and the stands behind it, not 60 m short of its far side.
+        let expected = 2.0 * framing.camera.radius;
+        assert!(
+            (framing.shadow_distance - expected).abs() < 1e-3,
+            "{}",
+            framing.shadow_distance
+        );
+        assert!(
+            framing.shadow_distance > 120.0,
+            "{}",
+            framing.shadow_distance
+        );
+        assert_eq!(shadow_distance(4.0), DEFAULT_SHADOW_DISTANCE);
+        assert_eq!(shadow_distance(1e6), *SHADOW_DISTANCE_RANGE.end());
+        assert_eq!(shadow_distance(f32::NAN), DEFAULT_SHADOW_DISTANCE);
     }
 }

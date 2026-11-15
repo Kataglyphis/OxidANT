@@ -47,6 +47,7 @@ impl Harness {
             shadow_casters: (5, 9),
             gpu_passes: vec![("shadow", 0.42), ("forward", 1.25), ("tonemap", 0.1)],
             gpu_timing: true,
+            ..SceneStats::default()
         };
         Self {
             ctx: crate::ui::widgets::test_support::context(),
@@ -510,3 +511,5 @@ fn the_about_modal_names_the_egui_this_crate_builds_against() {
     let manifest = include_str!("../../../Cargo.toml");
     assert!(manifest.contains(&format!("egui = \"{}\"", windows::EGUI_VERSION)));
 }
+
+mod settings;

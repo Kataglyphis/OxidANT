@@ -3,7 +3,6 @@
 use egui::Ui;
 
 use super::{library, Editor, EditorContext, SceneObject};
-use crate::render::forward::CASCADE_COUNT;
 use crate::ui::widgets::{caption_line, list_row, section_header, RowSpec, RowTrailing};
 
 /// The scene dock: SCENE, its rows, then the LIBRARY.
@@ -20,10 +19,13 @@ pub(super) fn show(ui: &mut Ui, editor: &mut Editor, cx: &mut EditorContext<'_>)
             detail: &detail,
             highlighted: editor.selection == object,
             marked: editor.selection == object,
-            trailing: trailing(object),
+            trailing: trailing(object, cx),
             tooltip: None,
         };
-        if list_row(ui, &spec).clicked {
+        let row = list_row(ui, &spec);
+        if row.trailing_clicked && object == SceneObject::Skybox {
+            cx.settings.skybox_enabled = !cx.settings.skybox_enabled;
+        } else if row.clicked {
             editor.select(object);
         }
     }
@@ -38,20 +40,23 @@ pub(super) fn detail(object: SceneObject, cx: &EditorContext<'_>) -> String {
         SceneObject::Model => cx
             .model
             .map_or_else(|| "none".to_owned(), |m| m.name.clone()),
-        SceneObject::Sun => format!("{CASCADE_COUNT} cascades"),
+        SceneObject::Sun if cx.settings.shadows.enabled => {
+            format!("{} cascades", cx.settings.shadows.sanitized().cascade_count)
+        }
+        SceneObject::Sun => "no shadows".to_owned(),
         SceneObject::Camera => format!("{:.0}°", cx.camera.fov_y_deg),
         SceneObject::Renderer => "Raster".to_owned(),
         SceneObject::Skybox | SceneObject::Clouds => String::new(),
     }
 }
 
-/// The sky and the clouds carry the C++ eye; the renderer always draws the one and has not got the other.
-fn trailing(object: SceneObject) -> RowTrailing<'static> {
+/// The sky and the clouds carry the C++ eye; the renderer has no clouds yet.
+fn trailing(object: SceneObject, cx: &EditorContext<'_>) -> RowTrailing<'static> {
     match object {
         SceneObject::Skybox => RowTrailing::Eye {
-            visible: true,
+            visible: cx.settings.skybox_enabled,
             tooltip: "Show or hide the skybox",
-            enabled: false,
+            enabled: true,
         },
         SceneObject::Clouds => RowTrailing::Eye {
             visible: false,

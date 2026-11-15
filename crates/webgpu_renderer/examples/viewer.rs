@@ -9,7 +9,7 @@ use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
-use kataglyphis_webgpu_renderer::app::discovery::native_startup;
+use kataglyphis_webgpu_renderer::app::discovery::{native_startup, skybox_dir};
 use kataglyphis_webgpu_renderer::app::library::EMBEDDED_SCENES;
 use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf_slice;
 use kataglyphis_webgpu_renderer::ui::ModelSource;
@@ -200,10 +200,13 @@ impl ApplicationHandler for Viewer {
     }
 }
 
-/// The library and the startup chain: the command line, `KATAGLYPHIS_MODEL_OVERRIDE`, the fetched Colosseum.
+/// The library, the C++ skybox and the startup chain: the command line, `KATAGLYPHIS_MODEL_OVERRIDE`, the fetched Colosseum.
 fn start_scene(app: &mut StudioApp, model_path: Option<&Path>) {
     let (library, startup) = native_startup(model_path);
     app.set_library(library, None);
+    if let Some(dir) = skybox_dir(&std::env::current_dir().unwrap_or_default()) {
+        app.load_skybox(&dir);
+    }
     if let Some(path) = &startup.path {
         app.open_path(path);
     }

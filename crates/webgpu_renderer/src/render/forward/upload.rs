@@ -15,6 +15,7 @@ use crate::render::bounds::{
 };
 use crate::render::buffer_desc;
 use crate::render::lights::pack_punctual_lights;
+use crate::render::model_transform::ModelTransform;
 use crate::render::texture::{
     create_material_texture, create_sampler, material_view, upload_material_texture,
 };
@@ -62,7 +63,7 @@ pub(super) struct MaterialTextureCache {
 }
 
 /// The five material slots' views and samplers, in binding order.
-struct MaterialSlots {
+pub(super) struct MaterialSlots {
     views: Vec<wgpu::TextureView>,
     samplers: Vec<wgpu::Sampler>,
 }
@@ -190,6 +191,7 @@ struct PrimitiveParts {
     joint_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
     groups: PrimitiveBindGroups,
+    slots: MaterialSlots,
     lod: (Vec<LodLevel>, Vec<f32>),
     local_bounds: (Vec3, Vec3),
     prim_bounds: (Vec3, Vec3),
@@ -207,6 +209,9 @@ impl ForwardRenderer {
             gpu_cull.reset();
         }
         self.scene_bounds = compute_world_bounds(scene);
+        // A load places the scene at the origin, as the C++ zeroes the inspector's transform.
+        self.model_transform = ModelTransform::default();
+        self.placed_root = Mat4::IDENTITY;
         let (packed, count) = pack_punctual_lights(&scene.lights);
         self.lights.punctual = packed;
         self.lights.punctual_count = count;
@@ -259,11 +264,33 @@ impl ForwardRenderer {
                 joint_buffer,
                 instance_buffer,
                 groups,
+                slots,
                 lod,
                 local_bounds,
                 prim_bounds,
             },
         )
+    }
+
+    /// Every primitive's group 0 again, around the shadow map `sync_shadow_map` just reallocated.
+    pub(super) fn rebuild_material_bind_groups(&mut self, device: &wgpu::Device) {
+        let groups: Vec<wgpu::BindGroup> = self
+            .primitives
+            .iter()
+            .enumerate()
+            .map(|(i, prim)| {
+                self.create_material_bind_group(
+                    device,
+                    i,
+                    &prim.uniform_buffer,
+                    &prim.joint_buffer,
+                    &prim.material_slots,
+                )
+            })
+            .collect();
+        for (prim, group) in self.primitives.iter_mut().zip(groups) {
+            prim.bind_group = group;
+        }
     }
 
     /// Forward group 0, the shadow group and, for MASK casters, the alpha-testing one.
@@ -446,6 +473,7 @@ fn assemble_primitive(prim: &CpuPrimitive, parts: PrimitiveParts) -> GpuPrimitiv
         index_count: prim.indices.len() as u32,
         uniform_buffer: parts.buffers.uniform,
         bind_group: parts.groups.main,
+        material_slots: parts.slots,
         shadow_bind_group: parts.groups.shadow,
         alpha_masked: parts.groups.alpha_masked,
         shadow_masked_bind_group: parts.groups.shadow_masked,
@@ -454,6 +482,7 @@ fn assemble_primitive(prim: &CpuPrimitive, parts: PrimitiveParts) -> GpuPrimitiv
         mirrored_instances_from: 1,
         mirrored: is_mirrored(&prim.transform),
         instance_transforms: Vec::new(),
+        root: Mat4::IDENTITY,
         pre_instance_aabb: parts.prim_bounds,
         model: prim.transform,
         normal_matrix: normal_matrix_of(prim.transform),
