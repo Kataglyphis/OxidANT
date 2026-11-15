@@ -385,20 +385,26 @@ impl TileSlots {
 }
 
 /// One running mean per pixel, or why this device cannot bind one that large.
-fn create_accumulation(
-    device: &wgpu::Device,
-    (width, height): (u32, u32),
-) -> Result<wgpu::Buffer, String> {
-    let bytes = u64::from(width) * u64::from(height) * 16;
-    let limits = device.limits();
-    let limit = limits
+/// The largest accumulation `limits` let the kernels bind, in bytes.
+pub fn accumulation_limit(limits: &wgpu::Limits) -> u64 {
+    limits
         .max_storage_buffer_binding_size
-        .min(limits.max_buffer_size);
+        .min(limits.max_buffer_size)
+}
+
+/// The bytes a `width` x `height` accumulation takes, or why `limit` cannot hold it.
+pub fn accumulation_bytes((width, height): (u32, u32), limit: u64) -> Result<u64, String> {
+    let bytes = u64::from(width) * u64::from(height) * 16;
     if bytes > limit {
         return Err(format!(
             "a {width} x {height} accumulation needs {bytes} bytes, past this device's {limit}"
         ));
     }
+    Ok(bytes)
+}
+
+fn create_accumulation(device: &wgpu::Device, size: (u32, u32)) -> Result<wgpu::Buffer, String> {
+    let bytes = accumulation_bytes(size, accumulation_limit(&device.limits()))?;
     Ok(buffer_desc::storage_src(
         device,
         "traced_accumulation",

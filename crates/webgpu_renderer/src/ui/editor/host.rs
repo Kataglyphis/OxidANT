@@ -133,8 +133,10 @@ pub struct SceneStats {
     pub cubemap: bool,
     /// Where the traced modes' scene is.
     pub trace: TraceStatus,
-    /// What the frame draws: raster while a traced pick waits for its scene.
+    /// What the frame draws: raster while a traced pick waits for its scene, or while its accumulation does not fit.
     pub drawn_mode: RenderMode,
+    /// Why a traced pick with its scene ready rasters, see [`ForwardRenderer::traced_fallback`].
+    pub trace_fallback: Option<String>,
     /// Samples per pixel in the path tracer's running mean.
     pub accumulated_samples: u64,
 }
@@ -150,6 +152,7 @@ impl SceneStats {
             cubemap: renderer.skybox_loaded(),
             trace: renderer.trace_status(),
             drawn_mode: renderer.drawn_mode(),
+            trace_fallback: renderer.traced_fallback(),
             accumulated_samples: renderer.accumulated_samples(),
         }
     }

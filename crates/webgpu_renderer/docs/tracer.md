@@ -154,7 +154,10 @@ build through `ForwardRenderer`; `limits.rs` the browser and native limits.
 
 `ForwardRenderer::render_mode` picks Raster, RayTraced or PathTraced; `drawn_mode()` says what
 a frame draws: the pick once the traced scene is on the GPU, raster until then, on whichever
-`raster_path` is set. A traced frame runs its kernel (`shaders/tracer/traced.slang`) over
+`raster_path` is set. An output whose 16-byte-per-pixel accumulation passes the device's storage
+binding or buffer limit rasters too, and `traced_fallback()` says why (the chip reads
+`accumulation too large, rastering`), so SSAO, the profiler and the outliner follow the frame drawn.
+A traced frame runs its kernel (`shaders/tracer/traced.slang`) over
 256 x 256 tiles into a per-pixel accumulation buffer, then `trace_resolve.slang` copies that into
 the HDR target, so exposure, bloom, the clouds and the tonemap run as after raster. The shadow
 cascades, either raster path (the forward pass and depth resolve, or the G-buffer and deferred
@@ -256,7 +259,8 @@ Tests: `tests/traced_modes.rs` (lavapipe; the C++ goldens' ports): the white fur
 post chain (a sky of 2 at -1 EV must give the C++ 231.6 within 3 levels, 98 % of pixels within
 6), a white metal card against a quadrature of `brdf_direct` (within 0.03; measured within
 0.001), accumulation that settles, every reset premise, a MASK card's half shadow in both modes,
-the untextured metallic factor, unlit albedo in every mode, the traced shadow against the
+the untextured metallic factor, unlit albedo in every mode, an output whose accumulation does not
+fit drawing and reporting raster, the traced shadow against the
 cascades' (IoU over 0.75; measured 0.98) and black, the lens shift, the raster round trip, and
 that no raster pass runs or is timed, and that a shader reload rebuilds both kernels or keeps them.
 `tests/feature_matrix.rs` runs the traced modes over the deferred path beside both raster paths:

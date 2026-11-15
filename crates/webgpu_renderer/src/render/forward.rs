@@ -247,7 +247,7 @@ impl ForwardRenderer {
             render_mode: RenderMode::Raster,
             tracer: Tracer::default(),
             trace_settings: TraceSettings::default(),
-            traced: TracedState::default(),
+            traced: TracedState::new(&gpu.device.limits()),
         }
     }
 

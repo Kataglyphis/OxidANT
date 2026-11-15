@@ -505,6 +505,30 @@ fn a_new_scene_starts_the_accumulation_over() {
     assert_eq!(rig.renderer.accumulated_samples(), 8);
 }
 
+/// An output whose accumulation the device cannot hold rasters, and says so: drawn mode, sample count and the reason.
+#[test]
+fn an_accumulation_past_the_device_limit_draws_and_reports_raster() {
+    let Some(mut rig) = Rig::new(&asset("cube_on_plane.gltf"), 32, OrbitCamera::default()) else {
+        return;
+    };
+    rig.renderer.ssao_strength = 0.7;
+    let raster = rig.frames(RenderMode::Raster, 2);
+    // One byte short of a 32 x 32 accumulation; a 16 x 16 one still fits.
+    rig.renderer.cap_accumulation_bytes(32 * 32 * 16 - 1);
+    let refused = rig.frames(RenderMode::PathTraced, 2);
+    assert_eq!(rig.renderer.drawn_mode(), RenderMode::Raster);
+    assert_eq!(rig.renderer.accumulated_samples(), 0);
+    let why = rig.renderer.traced_fallback().expect("a reason");
+    assert!(why.contains("32 x 32 accumulation"), "{why}");
+    // The raster frame keeps its SSAO, which a frame reported as traced would drop.
+    assert!(refused == raster, "the refused frame is not the raster one");
+    rig.size = 16;
+    rig.frames(RenderMode::PathTraced, 1);
+    assert_eq!(rig.renderer.drawn_mode(), RenderMode::PathTraced);
+    assert_eq!(rig.renderer.traced_fallback(), None);
+    assert_eq!(rig.renderer.accumulated_samples(), 8);
+}
+
 /// cube_on_plane's ground plane alone, and with a horizontal 2 x 2 card above it whose texture's right half is cut.
 fn card_over_plane(alpha_mode: AlphaMode) -> [CpuScene; 2] {
     let base = asset("cube_on_plane.gltf");

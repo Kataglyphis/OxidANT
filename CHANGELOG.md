@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the traced modes' fallback)
+- **An output whose accumulation does not fit the device reports raster.** The frame rastered, but `drawn_mode()`
+  still said traced, so the tonemap dropped SSAO and the chip, outliner and profiler named the traced mode. The fit is
+  now part of the drawn mode (`accumulation_bytes` against the device's storage binding and buffer limits, for the
+  current output), `ForwardRenderer::traced_fallback` gives the reason, and the chip reads
+  `Raster  ·  Forward  ·  accumulation too large, rastering` with the reason in the switch's tooltip. A test caps the
+  limit one byte below a 32 x 32 accumulation: the frame is the raster one with its SSAO, the drawn mode Raster, and a
+  16 x 16 output traces again; without the fix it reads PathTraced and the frame lacks its SSAO.
+
 ### Fixed (2026-11-15, the tracer with the raster settings, deferred path and clouds)
 - **A traced frame replaces either raster path.** The deferred G-buffer and lighting passes sit beside the forward pass
   and depth resolve inside the traced frame's skip, so a ray- or path-traced pick over `RasterPath::Deferred` runs no

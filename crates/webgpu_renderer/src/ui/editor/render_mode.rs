@@ -21,6 +21,9 @@ fn pending(cx: &EditorContext<'_>) -> Option<RenderMode> {
 /// Why a traced pick still draws raster, for the switch's tooltip and the Renderer tab.
 pub(super) fn pending_note(cx: &EditorContext<'_>) -> Option<String> {
     let label = RENDER_MODES[pending(cx)?.index()];
+    if let Some(why) = &cx.stats.trace_fallback {
+        return Some(format!("{label} rasters: {why}."));
+    }
     Some(match &cx.stats.trace {
         TraceStatus::Building(progress) => format!(
             "{label} starts once its BVH is built, {:.0} % so far; Raster cancels it.",
@@ -67,6 +70,9 @@ pub(super) fn chip_label(cx: &EditorContext<'_>) -> String {
         }
         RenderMode::Raster => match (pending(cx), &cx.stats.trace) {
             (None, _) => raster,
+            (Some(_), _) if cx.stats.trace_fallback.is_some() => {
+                format!("{raster}  ·  accumulation too large, rastering")
+            }
             (Some(_), TraceStatus::Building(progress)) => {
                 format!("{raster}  ·  BVH {:.0} %", progress.fraction * 100.0)
             }
@@ -203,6 +209,22 @@ mod tests {
         );
         assert_eq!(drawn.with(|cx| pending_note(cx)), None);
         assert_eq!(drawn.with(|cx| drawn_label(cx)), "Path traced");
+    }
+
+    #[test]
+    fn a_pick_whose_accumulation_does_not_fit_says_it_rasters_and_why() {
+        let ready = TraceStatus::Ready(Default::default());
+        let mut host = Host::new(RenderMode::PathTraced, RenderMode::Raster, ready);
+        host.stats.trace_fallback =
+            Some("a 9000 x 9000 accumulation needs 1296000000 bytes".into());
+        assert_eq!(
+            host.with(|cx| chip_label(cx)),
+            "Raster  ·  Forward  ·  accumulation too large, rastering"
+        );
+        assert_eq!(
+            host.with(|cx| pending_note(cx)).as_deref(),
+            Some("Path traced rasters: a 9000 x 9000 accumulation needs 1296000000 bytes.")
+        );
     }
 
     /// The switch over 300 points; returns the pick after a frame that clicks `segment`, if any.

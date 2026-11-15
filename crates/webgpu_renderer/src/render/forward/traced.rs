@@ -9,8 +9,8 @@ use super::{sky, ForwardRenderer, RasterPath};
 use crate::context::GpuContext;
 use crate::render::gpu_timing::TimedPass;
 use crate::render::tracer::modes::{
-    plan, Accumulation, AccumulationKey, AfterResolve, Kernel, TraceDispatch, TraceFrameUniforms,
-    TracedFrame, TracedPasses,
+    accumulation_bytes, accumulation_limit, plan, Accumulation, AccumulationKey, AfterResolve,
+    Kernel, TraceDispatch, TraceFrameUniforms, TracedFrame, TracedPasses,
 };
 use crate::render::tracer::{RenderMode, TraceSettings, TraceStatus, Tracer};
 use crate::scene::CpuScene;
@@ -26,8 +26,19 @@ pub(super) struct TracedState {
     synced: (u64, Vec<Mat4>),
     /// The output an accumulation was refused for, so the refusal is logged once.
     refused: Option<(u32, u32)>,
+    /// The largest accumulation the device binds, in bytes; an output past it rasters.
+    accumulation_limit: u64,
     /// The kind of frame the timings last measured: the drawn mode, and the raster path while it rasters.
     timed_as: Option<(RenderMode, RasterPath)>,
+}
+
+impl TracedState {
+    pub(super) fn new(limits: &wgpu::Limits) -> Self {
+        Self {
+            accumulation_limit: accumulation_limit(limits),
+            ..Self::default()
+        }
+    }
 }
 
 /// Whether a frame of `mode` over `path` records `pass` (with its optional passes on).
@@ -70,13 +81,27 @@ impl ForwardRenderer {
         &mut self.tracer
     }
 
-    /// What a frame draws: the picked traced mode once its scene is on the GPU, raster until then.
+    /// What a frame draws: the picked traced mode once its scene is on the GPU and its accumulation fits, raster otherwise.
     pub fn drawn_mode(&self) -> RenderMode {
-        if self.tracer.gpu_scene().is_some() {
+        if self.tracer.gpu_scene().is_some() && self.traced_fallback().is_none() {
             self.render_mode
         } else {
             RenderMode::Raster
         }
+    }
+
+    /// Why a traced pick whose scene is ready rasters anyway: this output's accumulation does not fit the device.
+    pub fn traced_fallback(&self) -> Option<String> {
+        if !self.render_mode.is_traced() || self.tracer.gpu_scene().is_none() {
+            return None;
+        }
+        accumulation_bytes(self.targets.size, self.traced.accumulation_limit).err()
+    }
+
+    /// Lowers the accumulation limit below the device's, so a test can refuse an output without a huge one.
+    #[doc(hidden)]
+    pub fn cap_accumulation_bytes(&mut self, bytes: u64) {
+        self.traced.accumulation_limit = self.traced.accumulation_limit.min(bytes);
     }
 
     /// Samples per pixel in the path tracer's running mean; 0 in any other mode.
@@ -141,6 +166,7 @@ impl ForwardRenderer {
             self.traced.accumulation.reset();
         }
         if !mode.is_traced() {
+            self.log_traced_fallback();
             return false;
         }
         self.sync_animated_instances(gpu);
@@ -261,14 +287,22 @@ impl ForwardRenderer {
             self.gpu_timing.scope(timed),
             self.gpu_timing.scope(TimedPass::TraceResolve),
         );
-        let Err(why) = passes.encode(gpu, encoder, &frame, scopes) else {
-            return true;
+        if let Err(why) = passes.encode(gpu, encoder, &frame, scopes) {
+            log::error!("tracer: {why}, although the drawn mode said it fits");
+            return false;
+        }
+        true
+    }
+
+    /// Logs once per output size that a traced pick rasters because its accumulation does not fit.
+    fn log_traced_fallback(&mut self) {
+        let Some(why) = self.traced_fallback() else {
+            return;
         };
-        let size = (uniforms.size[0], uniforms.size[1]);
-        if traced.refused.replace(size) != Some(size) {
+        let size = self.targets.size;
+        if self.traced.refused.replace(size) != Some(size) {
             log::warn!("tracer: {why}; the frame rasters");
         }
-        false
     }
 
     /// Moves the traced scene's animated instances to the poses the raster draws, rebuilding the top level on a change.

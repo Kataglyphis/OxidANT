@@ -9,7 +9,7 @@ pub mod settings;
 pub use accumulation::{Accumulation, AccumulationKey};
 pub use dispatch::{plan, TraceDispatch, DISPATCH_SEGMENTS, TILE_SIZE};
 pub use passes::{
-    AfterResolve, Kernel, TraceFrameUniforms, TraceTileUniforms, TracedFrame, TracedPasses,
-    TracedSources, KERNEL_GROUP_SIZE,
+    accumulation_bytes, accumulation_limit, AfterResolve, Kernel, TraceFrameUniforms,
+    TraceTileUniforms, TracedFrame, TracedPasses, TracedSources, KERNEL_GROUP_SIZE,
 };
 pub use settings::{FurnaceSettings, TraceSettings, MAX_BOUNCES, SAMPLES_PER_PIXEL};
