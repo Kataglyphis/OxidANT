@@ -140,15 +140,11 @@ and the backlog is empty"; it was neither.
       and a source-reading test that only `crates/media` and `crates/observant` build an
       appsink.
 
-- [ ] **`to_json` holds one lock while it takes others** (M, ★). Audit 2026-11-12: in
-      `crates/observant/src/status.rs`, `to_json` keeps the `detected` guard while it locks
-      `clips` and, through `health()`, `last_frame`, `last_run` and `model_error`. The order is
-      right today, by convention only; nothing is broken. Next: copy the needed values out of
-      `detected` and drop the guard first, with a test that holds `clips` on another thread and
-      expects `to_json` to return. Then split only `capture.rs` into the part that needs a
-      camera and the pure part (`Visits`, `counted`, `Backoff`, geometry), which helps the
-      weakest mutation score; split `status.rs` (31 fields) when the next feature adds one.
-      Guard: the tests move unchanged, and the file names in the `cargo mutants` commands of
+- [ ] **`capture.rs` mixes the camera with pure logic** (M, ★). Audit 2026-11-12; its first half, `to_json` holding
+      `detected` while it took other locks, is done (2026-11-15, a test that deadlocked on the old order). Left:
+      split `crates/observant/src/capture.rs` into the part that needs a camera and the pure part (`Visits`,
+      `counted`, `Backoff`, geometry), which helps the weakest mutation score; split `status.rs` (31 fields) when the
+      next feature adds one. Guard: the tests move unchanged, and the file names in the `cargo mutants` commands of
       `docs/testing.md` change in the same commit.
 
 - [b] **RVV `MatMulNBits` segfaults on a 4-bit model in the chain's ORT 1.31.0** (M, ★★). Crash:

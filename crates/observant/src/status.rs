@@ -955,9 +955,10 @@ impl Status {
 
     pub fn to_json(&self) -> String {
         let camera = self.camera.lock().map(|c| c.clone()).unwrap_or_default();
-        let cat = self.detected.lock();
-        let (in_view, last_seen, visits, best, runs, clip) = cat
-            .as_deref()
+        // Copied out and released before any other lock, so no lock order has to hold by convention.
+        let (in_view, last_seen, visits, best, runs, clip, boxes, recent) = self
+            .detected
+            .lock()
             .map(|c| {
                 (
                     c.in_view,
@@ -966,22 +967,16 @@ impl Status {
                     c.best_score,
                     c.runs,
                     c.clip,
+                    rounded(&c.boxes),
+                    c.recent.iter().cloned().collect::<Vec<Visit>>(),
                 )
             })
-            .unwrap_or_default();
-        let boxes = cat
-            .as_deref()
-            .map(|c| rounded(&c.boxes))
             .unwrap_or_default();
         // The arrivals whose clips /arrival.mp4?t= still serves, newest first.
         let clips: Vec<u64> = self
             .clips
             .lock()
             .map(|c| c.iter().map(|(t, _)| *t).collect())
-            .unwrap_or_default();
-        let recent: Vec<Visit> = cat
-            .as_deref()
-            .map(|c| c.recent.iter().cloned().collect())
             .unwrap_or_default();
         let (ok, problem, frame_age, model_age) = self.health();
         serde_json::json!({
@@ -1131,6 +1126,32 @@ mod tests {
         Change::Left {
             stayed: Duration::from_secs(seconds),
         }
+    }
+
+    /// A thread that holds `clips` and then wants `detected` must not meet a `to_json` that holds them the other way.
+    #[test]
+    fn to_json_holds_no_lock_while_it_waits_for_another() {
+        let status = Arc::new(Status::new("Cam", true, 4, 4));
+        let (held, holding) = std::sync::mpsc::channel();
+        let holder = status.clone();
+        std::thread::spawn(move || {
+            let clips = holder.clips.lock().unwrap();
+            held.send(()).unwrap();
+            // Long enough for to_json to reach `clips`; had it kept `detected`, both threads would wait forever here.
+            std::thread::sleep(Duration::from_millis(200));
+            drop(holder.detected.lock().unwrap());
+            drop(clips);
+        });
+        holding.recv().unwrap();
+        let (done, finished) = std::sync::mpsc::channel();
+        let reader = status.clone();
+        std::thread::spawn(move || {
+            let _ = done.send(reader.to_json());
+        });
+        let json = finished
+            .recv_timeout(Duration::from_secs(5))
+            .expect("to_json deadlocked against a thread holding clips");
+        assert!(json.contains("\"detection\""), "{json}");
     }
 
     #[test]

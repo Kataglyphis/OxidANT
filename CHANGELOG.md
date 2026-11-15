@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, `/healthz` takes no lock while it holds another)
+- `Status::to_json` copies what it needs out of `detected` and releases it before it locks `clips`, `stats` or
+  anything `health()` reads; it held `detected` throughout, so the lock order was right by convention only. A test
+  holds `clips` on one thread and then wants `detected` while `to_json` runs on another: on the old order the two
+  wait forever and the test fails after 5 s (checked), on the new one it returns.
+
 ### Changed (2026-11-15, the endpoint client has a limit per phase; ObservANT's `llm_timeout_s`)
 - `Endpoint` waits 5 s for the connection (`connect_timeout`) and 120 s for any one read, the response head
   included (`read_timeout`), beside the 300 s cap on the whole request (`timeout`); it had the cap alone, so a
