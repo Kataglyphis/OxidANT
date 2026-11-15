@@ -190,8 +190,9 @@ board runs it as one service unit. How to run and configure it:
 - **ORT runs two threads that sleep between runs.** `main` sets `KATAGLYPHIS_ORT_SPIN=0`
   unless the caller set it, and `inference_threads` (default 2, `0` one per core) becomes
   `KATAGLYPHIS_ORT_THREADS`, both before anything starts a thread. ORT's own default,
-  four threads that spin-wait between runs, is for back-to-back inference, and the
-  inference crate keeps it for every other caller. Measured on himbeere2 (Pi 5,
+  four threads that spin-wait between runs, is for back-to-back inference; every other
+  caller that sets no count gets the family's rule, the usable CPUs but one, 1 to 8 (owner decision
+  2026-11-15; on a Pi 5 the detector took 234-242 ms p50 at 3 threads against 237-247 ms at ORT's default). Measured on himbeere2 (Pi 5,
   2026-10-11; ANThology's photo at 2 Hz, 45 s per row, the live service beside it):
 
   | ORT setting | process CPU |

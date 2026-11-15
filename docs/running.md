@@ -105,7 +105,8 @@ Optional environment variables:
   `ProviderUnavailable` on arm64; the current `:latest` also lacks oneDNN's `libdnnl.so.3`, so
   `dnnl` is `ProviderUnavailable` on amd64 too (BACKLOG.md).
 - `KATAGLYPHIS_DIRECTML_DEVICE_ID` – optional non-negative Windows DXGI adapter index for DirectML; unset uses ONNX Runtime's default GPU selection
-- `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: `0`, one per core)
+- `KATAGLYPHIS_ORT_THREADS` – ONNX Runtime's intra-op threads (default: the usable CPUs but one, 1 to 8, the
+  family's rule since 2026-11-15; `0` keeps ORT's own one per core)
 - `KATAGLYPHIS_ORT_SPIN` – `0` stops idle ONNX Runtime threads spin-waiting for the next run
   (default: ORT's, spinning); for inference at a capped rate, so the cat cam sets it itself
 - `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (default: `stretch`). A model that names

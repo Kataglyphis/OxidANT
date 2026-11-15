@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-15, the Rust detector follows the family's ORT thread rule)
+- Without `KATAGLYPHIS_ORT_THREADS` the detector's session takes the usable CPUs but one, 1 to 8
+  (`kataglyphis_core::config::family_threads`, from `available_parallelism`), as OrchestrANT and AccelerANTgine
+  do (owner decision; was ORT's own default, a written choice of 2026-10-11). `0` still keeps ORT's own count;
+  ObservANT's 2, the bench's 2 and every set value stay. Measured on a Pi 5 (4 CPUs, two runs each, p50): ORT's
+  default 237-247 ms, 3 threads 234-242 ms, 4 threads 253-262 ms, 7 threads 525-567 ms. `docs/running.md` and
+  `docs/observant.md` say so.
+
 ### Changed (2026-11-15, a text failure keeps its kind)
 - `TextError::kind()` names each variant with a fixed snake_case word (`invalid_options`, `model_load_failed`,
   `endpoint_unreachable`, ...), and `every_error_names_its_kind` asserts them distinct. ObservANT maps it: the

@@ -92,20 +92,6 @@ and the backlog is empty"; it was neither.
       guards of 2026-11-13 are unit tests; add `capture.rs` and `src/session_slot.rs` to the `cargo mutants` file
       list in `docs/testing.md` at the next mutation run (75 minutes on a Pi 5, not run for this change).
 
-- [ ] **Measure whether ORT's default thread count costs the Rust detector half its speed**
-      (S, ★★). Audit 2026-11-12, from the recorded perf-host baselines of the four repos (same
-      host, model and photo, 8 pinned CPUs): Rust 50.7 ms p50, C++ 30.3 ms, Python 24.1 ms, and
-      Python at ORT's default 51.3 ms. `ort_backend.rs` sets intra-op threads only when
-      `KATAGLYPHIS_ORT_THREADS` is above 0. The cause is inferred, not confirmed by a Rust run,
-      and nothing shows that an unpinned host or a Pi is slower. Next, on the perf host: run
-      `KATAGLYPHIS_ORT_THREADS=7 target/release/kataglyphis_cli detect-latency --image
-      third_party/ModelANT/contracts/fixtures/two_cats.jpg --runs 30` once pinned and once
-      unpinned. Keeping ORT's default was a written choice (2026-10-11), so the owner decides on
-      the numbers. If it changes, only the unset case moves (the usable CPUs, at most 8);
-      ObservANT's 2, the bench's 2 and every override stay, and `docs/running.md` and
-      `docs/observant.md` change in the same commit. Guard: a perf-host row at ORT's default
-      beside the shipped one with a ratio check, as OrchestrANT's `quality-report.toml` has.
-
 - [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
       nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
       in `.github/workflows/reusable-linux.yml` fails only on a doubling. On a Pi 5 the model is

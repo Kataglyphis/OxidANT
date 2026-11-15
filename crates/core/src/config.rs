@@ -98,11 +98,23 @@ env_cached!(
 );
 
 env_cached!(
-    /// `KATAGLYPHIS_ORT_THREADS`: ORT intra-op threads; unset or `0` keeps ORT's one per core.
+    /// `KATAGLYPHIS_ORT_THREADS`: ORT intra-op threads; unset takes [`family_threads`], `0` ORT's own one per core.
     fn ort_intra_threads -> usize, || {
-        parse_or(std::env::var("KATAGLYPHIS_ORT_THREADS").ok().as_deref(), 0)
+        let usable = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+        threads_from(std::env::var("KATAGLYPHIS_ORT_THREADS").ok().as_deref(), usable)
     }
 );
+
+/// The family's ORT pool: the usable CPUs but one, 1 to 8 (owner decision 2026-11-15); ORT's default ignores the mask.
+pub fn family_threads(usable: usize) -> usize {
+    usable.saturating_sub(1).clamp(1, 8)
+}
+
+/// A set count wins, `0` included; unset or unreadable takes [`family_threads`] of `usable`.
+fn threads_from(raw: Option<&str>, usable: usize) -> usize {
+    raw.and_then(|v| v.trim().parse().ok())
+        .unwrap_or_else(|| family_threads(usable))
+}
 
 env_cached!(
     /// `KATAGLYPHIS_ORT_SPIN`: `"0"` stops idle ORT workers spin-waiting for the next run (default: ORT's, on).
@@ -163,6 +175,19 @@ fn parse_log_level(raw: Option<&str>) -> log::LevelFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unset_thread_count_is_the_usable_cpus_but_one_from_one_to_eight() {
+        assert_eq!(
+            [1, 2, 4, 8, 16].map(family_threads),
+            [1, 1, 3, 7, 8],
+            "the usable CPUs but one, at least 1 and at most 8"
+        );
+        assert_eq!(threads_from(None, 4), 3);
+        assert_eq!(threads_from(Some("many"), 4), 3);
+        assert_eq!(threads_from(Some(" 2 "), 4), 2);
+        assert_eq!(threads_from(Some("0"), 4), 0, "0 keeps ORT's own default");
+    }
 
     #[test]
     fn preprocess_takes_its_synonyms_in_any_case_and_falls_back_to_stretch() {
