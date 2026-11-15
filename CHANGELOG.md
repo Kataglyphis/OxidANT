@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, ObservANT's stall and re-probe times are a `Timing` value)
+- `capture::Timing` holds the 10 s stall and the 30 s re-probe of a stand-in, both formerly constants, as a field of
+  `Worker` with today's numbers as default. Tests: an image at one frame a second against a 300 ms stall ends the
+  capture with `no frame for 0.3 s`, and a stand-in pattern ends at its re-probe time while a chosen test pattern or
+  image has none. The stall message names tenths of a second now (`no frame for 10.0 s`). `main.rs`'s `run` moved its
+  status setup into `build_status` (112 to 91 lines in `rust-function-size.allow`).
+
 ### Added (2026-11-15, the app engine's end reasons are tested)
 - `WebcamEngine::start` builds the detector and the capture and hands them to `run`, whose worker
   (`infer_until_done`) takes the model as a closure; `kataglyphis_media::CaptureSession::from_launch` (hidden, for

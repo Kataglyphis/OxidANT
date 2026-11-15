@@ -22,10 +22,23 @@ use crate::notify::Notifier;
 use crate::presence::{best_score, outside, smaller_than, zone_of, Change, Presence};
 use crate::status::Status;
 
-/// A stand-in test pattern runs this long before the camera is probed again.
-const REPROBE_EVERY: Duration = Duration::from_secs(30);
-/// A camera that delivers no frame for this long counts as gone.
-const STALL_AFTER: Duration = Duration::from_secs(10);
+/// How long the worker waits on a camera; a test shortens both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timing {
+    /// A camera that delivers no frame for this long counts as gone.
+    pub stall_after: Duration,
+    /// A stand-in test pattern runs this long before the camera is probed again.
+    pub reprobe_every: Duration,
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Self {
+            stall_after: Duration::from_secs(10),
+            reprobe_every: Duration::from_secs(30),
+        }
+    }
+}
 /// A capture that ran this long was a working camera: the next failure backs off from 1 s again.
 const STABLE_AFTER: Duration = Duration::from_secs(60);
 
@@ -91,6 +104,7 @@ pub struct Worker {
     pub shutdown: Arc<AtomicBool>,
     pub notifier: Option<Notifier>,
     pub clip: Option<Arc<Clip>>,
+    pub timing: Timing,
 }
 
 impl Worker {
@@ -122,7 +136,7 @@ impl Worker {
             self.status.set_camera(&label, plan.is_stand_in());
             log::info!("camera: {label}");
             let started = Instant::now();
-            let deadline = plan.is_stand_in().then(|| started + REPROBE_EVERY);
+            let deadline = self.reprobe_at(&plan, started);
             let result = self.capture(&plan, &found, &boxes, frames, deadline);
             if self.shutdown.load(Ordering::Relaxed) {
                 break;
@@ -151,6 +165,12 @@ impl Worker {
             let _ = handle.join();
         }
         log::info!("capture worker stopped");
+    }
+
+    /// When a stand-in started at `started` ends so the camera is probed again; a real camera runs until it fails.
+    fn reprobe_at(&self, plan: &Plan, started: Instant) -> Option<Instant> {
+        plan.is_stand_in()
+            .then(|| started + self.timing.reprobe_every)
     }
 
     fn capture(
@@ -206,8 +226,11 @@ impl Worker {
                     bus_says_done(&bus)?;
                     return Ok(Ended::Done);
                 }
-                if last_frame.elapsed() > STALL_AFTER {
-                    bail!("no frame for {} s", STALL_AFTER.as_secs());
+                if last_frame.elapsed() > self.timing.stall_after {
+                    bail!(
+                        "no frame for {:.1} s",
+                        self.timing.stall_after.as_secs_f64()
+                    );
                 }
                 continue;
             };
@@ -878,8 +901,9 @@ mod tests {
     #[test]
     fn a_stand_in_that_ran_its_course_probes_at_once_and_counts_no_failure() {
         let mut backoff = Backoff::default();
-        assert_eq!(backoff.after(REPROBE_EVERY, false, true), None);
-        assert_eq!(backoff.after(REPROBE_EVERY, false, true), None);
+        let reprobe_every = Timing::default().reprobe_every;
+        assert_eq!(backoff.after(reprobe_every, false, true), None);
+        assert_eq!(backoff.after(reprobe_every, false, true), None);
         // A real camera's source that ended, or a stand-in that failed, waits; still from 1 s.
         assert_eq!(
             backoff.after(Duration::from_secs(5), false, false),
@@ -901,47 +925,56 @@ mod tests {
         worker: thread::JoinHandle<()>,
     }
 
+    /// A worker on `config.camera`, not started, and the output it pushes into, already playing.
+    fn unstarted(
+        config: Config,
+        detector: Option<PersonDetector>,
+        timing: Timing,
+    ) -> (Worker, gst_app::AppSink, gst::Pipeline) {
+        gst::init().unwrap();
+        let appsrc = gst::ElementFactory::make("appsrc")
+            .build()
+            .unwrap()
+            .downcast::<gst_app::AppSrc>()
+            .unwrap();
+        appsrc.set_is_live(true);
+        appsrc.set_do_timestamp(true);
+        appsrc.set_format(gst::Format::Time);
+        appsrc.set_caps(Some(&frame::caps(&config)));
+        let sink = kataglyphis_media::frame_sink(0, false).unwrap();
+        let output = gst::Pipeline::new();
+        output
+            .add_many([appsrc.upcast_ref::<gst::Element>(), sink.upcast_ref()])
+            .unwrap();
+        appsrc.link(&sink).unwrap();
+        output.set_state(gst::State::Playing).unwrap();
+        let status = Arc::new(Status::new("test", false, config.width, config.height));
+        let choice = Choice::parse(&config.camera).unwrap();
+        let worker = Worker {
+            config: Arc::new(config),
+            choice,
+            appsrc,
+            detector,
+            status,
+            shutdown: Arc::new(AtomicBool::new(false)),
+            notifier: None,
+            clip: None,
+            timing,
+        };
+        (worker, sink, output)
+    }
+
     impl Capturing {
         /// The worker on `config.camera`, pushing into an appsrc whose frames a test pulls from `sink`.
         fn start(config: Config, detector: Option<PersonDetector>) -> Self {
-            gst::init().unwrap();
-            let appsrc = gst::ElementFactory::make("appsrc")
-                .build()
-                .unwrap()
-                .downcast::<gst_app::AppSrc>()
-                .unwrap();
-            appsrc.set_is_live(true);
-            appsrc.set_do_timestamp(true);
-            appsrc.set_format(gst::Format::Time);
-            appsrc.set_caps(Some(&frame::caps(&config)));
-            let sink = kataglyphis_media::frame_sink(0, false).unwrap();
-            let output = gst::Pipeline::new();
-            output
-                .add_many([appsrc.upcast_ref::<gst::Element>(), sink.upcast_ref()])
-                .unwrap();
-            appsrc.link(&sink).unwrap();
-            output.set_state(gst::State::Playing).unwrap();
-            let status = Arc::new(Status::new("test", false, config.width, config.height));
-            let shutdown = Arc::new(AtomicBool::new(false));
-            let choice = Choice::parse(&config.camera).unwrap();
-            let worker = Worker {
-                config: Arc::new(config),
-                choice,
-                appsrc,
-                detector,
-                status: status.clone(),
-                shutdown: shutdown.clone(),
-                notifier: None,
-                clip: None,
-            }
-            .spawn()
-            .unwrap();
+            let (worker, sink, output) = unstarted(config, detector, Timing::default());
+            let (status, shutdown) = (worker.status.clone(), worker.shutdown.clone());
             Self {
                 sink,
                 output,
                 status,
                 shutdown,
-                worker,
+                worker: worker.spawn().unwrap(),
             }
         }
 
@@ -1037,6 +1070,67 @@ mod tests {
             "both cats: {health}"
         );
         assert!(health["model_runs"].as_u64() >= Some(1), "{health}");
+    }
+
+    /// A camera slower than `stall_after` counts as gone: the capture ends with the stall, and the worker restarts it.
+    #[test]
+    fn a_camera_that_stops_sending_is_a_stall_after_its_time() {
+        let photo = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../inference/tests/fixtures/two_cats.jpg"
+        );
+        let config = Config {
+            camera: format!("image:{photo}"),
+            width: 64,
+            height: 48,
+            // One frame a second, so the 300 ms stall comes between two of them.
+            fps: 1,
+            ..Config::default()
+        };
+        let timing = Timing {
+            stall_after: Duration::from_millis(300),
+            ..Timing::default()
+        };
+        let (worker, _sink, output) = unstarted(config, None, timing);
+        let found = camera::probe(&worker.choice);
+        let plan = camera::choose(&worker.choice, &found.probe);
+        let started = Instant::now();
+        let ended = worker.capture(&plan, &found, &Boxes::default(), None, None);
+        output.set_state(gst::State::Null).unwrap();
+        let err = format!("{:#}", ended.expect_err("a stall, not a clean end"));
+        assert_eq!(err, "no frame for 0.3 s");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A stand-in pattern ends at `reprobe_every` so the camera is looked for again; a real source has no such end.
+    #[test]
+    fn a_stand_in_ends_at_its_reprobe_time_and_a_real_camera_never() {
+        let timing = Timing {
+            reprobe_every: Duration::from_millis(300),
+            ..Timing::default()
+        };
+        let config = Config {
+            camera: "test".into(),
+            width: 64,
+            height: 48,
+            ..Config::default()
+        };
+        let (worker, _sink, output) = unstarted(config, None, timing);
+        let at = Instant::now();
+        assert_eq!(worker.reprobe_at(&Plan::Test(None), at), None);
+        assert_eq!(worker.reprobe_at(&Plan::Image("cat.jpg".into()), at), None);
+        let stand_in = Plan::Test(Some("no USB webcam found".into()));
+        let deadline = worker.reprobe_at(&stand_in, at);
+        assert_eq!(deadline, Some(at + Duration::from_millis(300)));
+        let found = camera::probe(&Choice::Test);
+        let ended = worker.capture(&stand_in, &found, &Boxes::default(), None, deadline);
+        output.set_state(gst::State::Null).unwrap();
+        assert!(matches!(ended, Ok(Ended::Done)), "{ended:?}");
+        assert!(at.elapsed() < Duration::from_secs(5), "{:?}", at.elapsed());
     }
 
     /// A camera path that is missing at start is tried again after the backoff, and its frames come once it exists.
@@ -1354,6 +1448,7 @@ mod tests {
             shutdown: Arc::new(AtomicBool::new(false)),
             notifier: None,
             clip: None,
+            timing: Timing::default(),
         }
     }
 

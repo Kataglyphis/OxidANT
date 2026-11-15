@@ -1,7 +1,7 @@
 # Rust functions over 80 lines in the gated crates, frozen at today's size (the hub's count, comments included).
 # path | function | lines | why it is not split yet
 crates/observant/src/clip.rs | encode_mp4 | 97 | one encoder pipeline from appsrc to the file; #[expect] in the source
-crates/observant/src/main.rs | run | 112 | the service's start order; #[expect] in the source
+crates/observant/src/main.rs | run | 91 | the service's start order; #[expect] in the source
 crates/observant/src/web.rs | handle | 114 | the route table of ObservANT's web server; #[expect] in the source
 crates/cli/src/main.rs | main | 96 | the CLI's subcommand dispatch; #[expect] in the source
 crates/telemetry/src/resource_monitor.rs | run_monitor_loop | 84 | one sampling loop; clippy counts it under 80 without comments, the hub counts them

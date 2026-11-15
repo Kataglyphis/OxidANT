@@ -58,15 +58,6 @@ and the backlog is empty"; it was neither.
       `cuda` feature dropped if nothing else needs it. The module lies beside the GPU ONNX Runtime library, in the
       image and in the NVIDIA package, which the search's second step finds; the hub names no root variable for it.
 
-- [ ] **ObservANT's stall and re-probe have no test** (M, ★★). Audit 2026-11-12. Done on 2026-11-15: the capture loop
-      with the real model opens a visit, a missing image is retried and recovers (`crates/observant/src/capture.rs`),
-      and the app's engine (`src/webcam_engine.rs`) is tested for both end reasons, the camera ending and 30 failed
-      runs, plus a good run restarting the count, through a detection closure and `CaptureSession::from_launch`.
-      Left: ObservANT's 10 s stall (`STALL_AFTER`) and 30 s re-probe of a stand-in (`REPROBE_EVERY`). Next: both move
-      into a `Timing` value on `Worker` with today's numbers as default, and a test with a short stall sees the
-      capture restart. Guard: the `crates/observant` and `src` coverage floors raised to the new figures, and the new
-      `capture.rs` count of `cargo mutants` written into `docs/testing.md`.
-
 - [ ] **Detection quality has no regression set** (M, ★★★). Audit 2026-11-12
       (not double-checked): `crates/inference/tests/fixtures` holds one photo, checked loosely
       (two cats, one at 0.8 or more). The rules in `crates/observant/src/presence.rs` and
@@ -119,7 +110,9 @@ and the backlog is empty"; it was neither.
       five that run `cargo test -p kataglyphis_inference --lib` (swap red and blue, ignore the
       threshold, drop the finite check, drop the clamp, one scale for both axes). Guard: the
       raised floor, and a `kind = "count"` artifact over `mutants.out/missed.txt` in
-      `quality-report.toml`.
+      `quality-report.toml`. The capture loop got six tests on 2026-11-15 (the real model, a late
+      file, the stall, the re-probe, the engine's two end reasons): the first run after CON238 writes
+      `capture.rs`'s new count into `docs/testing.md` and adds `src/session_slot.rs` to its file list.
 
 - [ ] **Three camera pipelines, each with its own failure rules** (L, ★★). Audit 2026-11-12:
       `crates/media/src/capture.rs` (the Flutter engine), `crates/observant/src/capture.rs` and

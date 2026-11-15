@@ -202,29 +202,7 @@ fn run(args: Args) -> anyhow::Result<()> {
     kataglyphis_media::ensure_gst_initialized()?;
 
     let detector = load_detector(&config)?;
-    let status = status::Status::new(
-        &config.name,
-        detector.is_some(),
-        config.width,
-        config.height,
-    );
-    let status = status
-        .rotated(config.rotate)
-        .scored(config.score)
-        .at_fps(config.fps)
-        .private(config.privacy)
-        .watching(config.classes.clone(), config.all_classes)
-        .answering(config.names_a_language_model())
-        .running_on(detector.as_ref().map(engine))
-        .fell_back(detector.as_ref().and_then(PersonDetector::fallback_reason))
-        .peered(config.peers.clone());
-    let status = Arc::new(match state_dir() {
-        Some(dir) => {
-            log::info!("state: {}", dir.display());
-            status.remember_in(dir)
-        }
-        None => status,
-    });
+    let status = build_status(&config, detector.as_ref());
     stats::spawn(status.clone());
     let (pipeline, appsrc) = output::build(&config)?;
     pipeline
@@ -270,6 +248,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         shutdown: shutdown.clone(),
         notifier,
         clip,
+        timing: capture::Timing::default(),
     }
     .spawn()
     .context("spawn capture worker")?;
@@ -284,6 +263,32 @@ fn run(args: Args) -> anyhow::Result<()> {
     at_exit.persist();
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
     outcome
+}
+
+/// What `/healthz` starts from: the config's settings, the model's engine, and the state kept across restarts.
+fn build_status(config: &Config, detector: Option<&PersonDetector>) -> Arc<status::Status> {
+    let status = status::Status::new(
+        &config.name,
+        detector.is_some(),
+        config.width,
+        config.height,
+    )
+    .rotated(config.rotate)
+    .scored(config.score)
+    .at_fps(config.fps)
+    .private(config.privacy)
+    .watching(config.classes.clone(), config.all_classes)
+    .answering(config.names_a_language_model())
+    .running_on(detector.map(engine))
+    .fell_back(detector.and_then(PersonDetector::fallback_reason))
+    .peered(config.peers.clone());
+    Arc::new(match state_dir() {
+        Some(dir) => {
+            log::info!("state: {}", dir.display());
+            status.remember_in(dir)
+        }
+        None => status,
+    })
 }
 
 /// Flags override the config file; the camera flags keep their old meaning and precedence.
