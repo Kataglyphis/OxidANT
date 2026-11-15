@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the app, UI and web bugs)
+- `crates/gui`: a minimized, covered or stalled window (an Occluded, Timeout or Validation acquire) quit the camera
+  GUI; it skips the frame, and a Suboptimal one reconfigures after presenting. `submit_frame` is 57 lines and left
+  `rust-function-size.allow`.
+- `crates/gui`: the overlay painted at the window's scale, so egui's Ctrl +/- zoom drew the UI off its hit areas and
+  the detection boxes off the video; it paints at the pass's own `pixels_per_point`.
+- `crates/gui`: the CPU graph sat at the top whenever the process used more than one core; it scales to 100 % or
+  the history's peak.
+
 ### Added (2026-11-15, the Studio Pro editor shell)
 - `ui::Editor`, BeschleunigerBallett's docked C++ editor in egui, one module per dock under
   `crates/webgpu_renderer/src/ui/editor/`: the menu bar (brand, File/View/Render/Help, the centred renderer switch,

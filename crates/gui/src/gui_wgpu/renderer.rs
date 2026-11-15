@@ -31,6 +31,26 @@ pub(crate) struct WgpuState {
     inference: InferenceState,
     current_frame_id: Option<u64>,
     first_frame_logged: bool,
+    /// The frame in flight came from a suboptimal acquire: configure the surface again once it is presented.
+    reconfigure_after_present: bool,
+}
+
+/// What a frame does after an acquire that brought no texture; none of them ends the app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AcquireFailure {
+    /// The surface changed or went: configure it again, and draw next frame.
+    Reconfigure,
+    /// Minimized, covered or timed out: skip the frame, the redraw cadence tries again.
+    Skip,
+}
+
+fn on_failed_acquire(status: &wgpu::CurrentSurfaceTexture) -> AcquireFailure {
+    use wgpu::CurrentSurfaceTexture as Status;
+    match status {
+        Status::Outdated | Status::Lost => AcquireFailure::Reconfigure,
+        Status::Timeout | Status::Occluded | Status::Validation => AcquireFailure::Skip,
+        Status::Success(_) | Status::Suboptimal(_) => AcquireFailure::Skip,
+    }
 }
 
 /// Draws the camera frame; none has arrived before the first sample, and a draw without its bind group fails wgpu validation.
@@ -115,6 +135,7 @@ impl WgpuState {
             },
             current_frame_id: None,
             first_frame_logged: false,
+            reconfigure_after_present: false,
         })
     }
 
@@ -277,15 +298,8 @@ impl WgpuState {
         clipped_primitives: &[egui::ClippedPrimitive],
         _full_output: &egui::FullOutput,
     ) -> anyhow::Result<()> {
-        // Outdated/Lost reconfigure and skip the frame rather than tearing the app down.
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
-                return Ok(());
-            }
-            other => anyhow::bail!("surface acquire failed: {other:?}"),
+        let Some(frame) = self.acquire() else {
+            return Ok(());
         };
         let view = frame
             .texture
@@ -326,45 +340,70 @@ impl WgpuState {
             );
         }
 
-        self.egui.renderer.update_buffers(
-            &self.device,
-            &self.queue,
-            &mut encoder,
-            clipped_primitives,
-            &self.egui.screen,
-        );
-
-        {
-            let color_attachments = [Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })];
-
-            let mut egui_rpass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui_render_pass"),
-                    color_attachments: &color_attachments,
-                    depth_stencil_attachment: None,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                    multiview_mask: None,
-                })
-                .forget_lifetime();
-
-            self.egui
-                .renderer
-                .render(&mut egui_rpass, clipped_primitives, &self.egui.screen);
-        }
-
+        self.encode_egui(&mut encoder, &view, clipped_primitives);
         self.queue.submit(Some(encoder.finish()));
         // wgpu 30: presentation lives on the queue now.
         self.queue.present(frame);
+        if std::mem::take(&mut self.reconfigure_after_present) {
+            self.surface.configure(&self.device, &self.config);
+        }
         Ok(())
+    }
+
+    /// The next frame to draw into, or `None` to skip one: a minimized or covered window must not quit the app.
+    fn acquire(&mut self) -> Option<wgpu::SurfaceTexture> {
+        match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => Some(frame),
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                self.reconfigure_after_present = true;
+                Some(frame)
+            }
+            failed => {
+                if on_failed_acquire(&failed) == AcquireFailure::Reconfigure {
+                    self.surface.configure(&self.device, &self.config);
+                }
+                log::debug!("Skipping a frame: surface acquire {failed:?}");
+                None
+            }
+        }
+    }
+
+    /// egui over the camera frame in `view`, which it loads and never clears.
+    fn encode_egui(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        clipped_primitives: &[egui::ClippedPrimitive],
+    ) {
+        self.egui.renderer.update_buffers(
+            &self.device,
+            &self.queue,
+            encoder,
+            clipped_primitives,
+            &self.egui.screen,
+        );
+        let color_attachments = [Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            depth_slice: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })];
+        let mut egui_rpass = encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui_render_pass"),
+                color_attachments: &color_attachments,
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            })
+            .forget_lifetime();
+        self.egui
+            .renderer
+            .render(&mut egui_rpass, clipped_primitives, &self.egui.screen);
     }
 }
 
@@ -388,6 +427,25 @@ mod tests {
                 eprintln!("SKIP: no GPU adapter available in this environment");
                 None
             }
+        }
+    }
+
+    #[test]
+    fn a_minimized_covered_or_stalled_window_skips_frames_instead_of_quitting() {
+        use wgpu::CurrentSurfaceTexture as Status;
+        for status in [Status::Timeout, Status::Occluded, Status::Validation] {
+            assert_eq!(
+                on_failed_acquire(&status),
+                AcquireFailure::Skip,
+                "{status:?}"
+            );
+        }
+        for status in [Status::Outdated, Status::Lost] {
+            assert_eq!(
+                on_failed_acquire(&status),
+                AcquireFailure::Reconfigure,
+                "{status:?}"
+            );
         }
     }
 
