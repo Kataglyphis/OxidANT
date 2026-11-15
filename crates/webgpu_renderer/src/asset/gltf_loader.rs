@@ -40,7 +40,6 @@ pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
     build_scene(document, buffers, images)
 }
 
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn build_scene(
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
@@ -51,7 +50,33 @@ fn build_scene(
         .map(|img| to_rgba8(img).map(Arc::new))
         .collect::<anyhow::Result<_>>()?;
 
-    // Full node table (index-aligned with glTF node indices).
+    let mut scene = CpuScene {
+        nodes: read_nodes(&document),
+        animations: read_animations(&document, &buffers),
+        skins: read_skins(&document, &buffers),
+        cameras: read_cameras(&document),
+        ..CpuScene::default()
+    };
+
+    let gltf_scene = document
+        .default_scene()
+        .or_else(|| document.scenes().next())
+        .context("glTF file contains no scenes")?;
+
+    for node in gltf_scene.nodes() {
+        visit_node(&node, Mat4::IDENTITY, &buffers, &textures, &mut scene)?;
+    }
+
+    anyhow::ensure!(
+        !scene.primitives.is_empty(),
+        "glTF file contains no triangle primitives"
+    );
+
+    Ok(scene)
+}
+
+/// The full node table, index-aligned with glTF node indices, with each node's local TRS and parent.
+fn read_nodes(document: &gltf::Document) -> Vec<CpuNode> {
     let mut nodes: Vec<CpuNode> = document
         .nodes()
         .map(|n| {
@@ -69,12 +94,12 @@ fn build_scene(
             nodes[child.index()].parent = Some(node.index());
         }
     }
+    nodes
+}
 
-    let mut scene = CpuScene {
-        nodes,
-        ..CpuScene::default()
-    };
-
+/// Every animation with at least one readable channel.
+fn read_animations(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Vec<CpuAnimation> {
+    let mut animations = Vec::new();
     for animation in document.animations() {
         let mut channels = Vec::new();
         let mut duration = 0.0f32;
@@ -87,59 +112,72 @@ fn build_scene(
             if let Some(&last) = times.last() {
                 duration = duration.max(last);
             }
-            let Some(outputs) = reader.read_outputs() else {
+            let Some(values) = reader.read_outputs().map(channel_values) else {
                 continue;
-            };
-            use gltf::animation::util::ReadOutputs;
-            let values = match outputs {
-                ReadOutputs::Translations(iter) => {
-                    ChannelValues::Translation(iter.map(glam::Vec3::from_array).collect())
-                }
-                ReadOutputs::Rotations(rotations) => ChannelValues::Rotation(
-                    rotations.into_f32().map(glam::Quat::from_array).collect(),
-                ),
-                ReadOutputs::Scales(iter) => {
-                    ChannelValues::Scale(iter.map(glam::Vec3::from_array).collect())
-                }
-                ReadOutputs::MorphTargetWeights(w) => {
-                    ChannelValues::MorphWeights(w.into_f32().collect())
-                }
-            };
-            let interpolation = match channel.sampler().interpolation() {
-                gltf::animation::Interpolation::Linear => Interpolation::Linear,
-                gltf::animation::Interpolation::Step => Interpolation::Step,
-                gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
             };
             channels.push(CpuAnimationChannel {
                 node: channel.target().node().index(),
                 times,
                 values,
-                interpolation,
+                interpolation: interpolation_of(channel.sampler().interpolation()),
             });
         }
         if !channels.is_empty() {
-            scene.animations.push(CpuAnimation {
+            animations.push(CpuAnimation {
                 name: animation.name().unwrap_or("animation").to_string(),
                 duration,
                 channels,
             });
         }
     }
+    animations
+}
 
-    // Skins: joint node indices + inverse bind matrices.
-    for skin in document.skins() {
-        let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
-        let inverse_bind_matrices = reader
-            .read_inverse_bind_matrices()
-            .map(|iter| iter.map(|m| Mat4::from_cols_array_2d(&m)).collect())
-            .unwrap_or_default();
-        scene.skins.push(CpuSkin {
-            joints: skin.joints().map(|j| j.index()).collect(),
-            inverse_bind_matrices,
-        });
+fn channel_values(outputs: gltf::animation::util::ReadOutputs<'_>) -> ChannelValues {
+    use gltf::animation::util::ReadOutputs;
+    match outputs {
+        ReadOutputs::Translations(iter) => {
+            ChannelValues::Translation(iter.map(glam::Vec3::from_array).collect())
+        }
+        ReadOutputs::Rotations(rotations) => {
+            ChannelValues::Rotation(rotations.into_f32().map(glam::Quat::from_array).collect())
+        }
+        ReadOutputs::Scales(iter) => {
+            ChannelValues::Scale(iter.map(glam::Vec3::from_array).collect())
+        }
+        ReadOutputs::MorphTargetWeights(w) => ChannelValues::MorphWeights(w.into_f32().collect()),
     }
+}
 
-    // Cameras authored in the file (pose = their node's world transform).
+fn interpolation_of(interpolation: gltf::animation::Interpolation) -> Interpolation {
+    match interpolation {
+        gltf::animation::Interpolation::Linear => Interpolation::Linear,
+        gltf::animation::Interpolation::Step => Interpolation::Step,
+        gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
+    }
+}
+
+/// Skins: joint node indices + inverse bind matrices.
+fn read_skins(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Vec<CpuSkin> {
+    document
+        .skins()
+        .map(|skin| {
+            let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+            let inverse_bind_matrices = reader
+                .read_inverse_bind_matrices()
+                .map(|iter| iter.map(|m| Mat4::from_cols_array_2d(&m)).collect())
+                .unwrap_or_default();
+            CpuSkin {
+                joints: skin.joints().map(|j| j.index()).collect(),
+                inverse_bind_matrices,
+            }
+        })
+        .collect()
+}
+
+/// Cameras authored in the file (pose = their node's world transform).
+fn read_cameras(document: &gltf::Document) -> Vec<CpuCamera> {
+    let mut cameras = Vec::new();
     for node in document.nodes() {
         let Some(camera) = node.camera() else {
             continue;
@@ -161,28 +199,13 @@ fn build_scene(
                 }
             }
         };
-        scene.cameras.push(CpuCamera {
+        cameras.push(CpuCamera {
             name: camera.name().map(str::to_string),
             node: node.index(),
             projection,
         });
     }
-
-    let gltf_scene = document
-        .default_scene()
-        .or_else(|| document.scenes().next())
-        .context("glTF file contains no scenes")?;
-
-    for node in gltf_scene.nodes() {
-        visit_node(&node, Mat4::IDENTITY, &buffers, &textures, &mut scene)?;
-    }
-
-    anyhow::ensure!(
-        !scene.primitives.is_empty(),
-        "glTF file contains no triangle primitives"
-    );
-
-    Ok(scene)
+    cameras
 }
 
 /// UV-set bit for a texture slot: `1 << bit` for TEXCOORD_1, else 0 (TEXCOORD_2+ warns and uses UV0).
@@ -455,7 +478,6 @@ fn visit_node(
     Ok(())
 }
 
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn load_primitive(
     primitive: &gltf::Primitive,
     transform: Mat4,
@@ -463,93 +485,11 @@ fn load_primitive(
     textures: &[Arc<CpuTexture>],
 ) -> anyhow::Result<Option<CpuPrimitive>> {
     let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
-
-    let Some(positions) = reader.read_positions() else {
+    let Some(mut vertices) = read_vertices(primitive, buffers)? else {
         return Ok(None);
     };
-    let positions: Vec<[f32; 3]> = positions.collect();
-
-    let normals: Vec<[f32; 3]> = match reader.read_normals() {
-        Some(iter) => iter.collect(),
-        None => vec![[0.0, 0.0, 0.0]; positions.len()],
-    };
-    let uvs: Vec<[f32; 2]> = match reader.read_tex_coords(0) {
-        Some(iter) => iter.into_f32().collect(),
-        None => vec![[0.0, 0.0]; positions.len()],
-    };
-    // TEXCOORD_1 falls back to UV0, so a slot wrongly flagged UV1 still samples something sane.
-    let uvs1: Vec<[f32; 2]> = match reader.read_tex_coords(1) {
-        Some(iter) => iter.into_f32().collect(),
-        None => uvs.clone(),
-    };
-    let joints: Vec<[f32; 4]> = match reader.read_joints(0) {
-        Some(iter) => iter
-            .into_u16()
-            .map(|j| [j[0] as f32, j[1] as f32, j[2] as f32, j[3] as f32])
-            .collect(),
-        None => vec![[0.0; 4]; positions.len()],
-    };
-    let weights: Vec<[f32; 4]> = match reader.read_weights(0) {
-        Some(iter) => iter.into_f32().collect(),
-        None => vec![[0.0; 4]; positions.len()],
-    };
-    // COLOR_0 defaults to white, so multiplying it into albedo is a no-op.
-    let colors: Vec<[f32; 4]> = match reader.read_colors(0) {
-        Some(iter) => iter.into_rgba_f32().collect(),
-        None => vec![[1.0, 1.0, 1.0, 1.0]; positions.len()],
-    };
-
-    let tangents: Vec<[f32; 4]> = match reader.read_tangents() {
-        Some(iter) => iter.collect(),
-        None => vec![[0.0, 0.0, 0.0, 0.0]; positions.len()],
-    };
     let had_tangents = reader.read_tangents().is_some();
-
-    anyhow::ensure!(
-        normals.len() == positions.len()
-            && uvs.len() == positions.len()
-            && tangents.len() == positions.len(),
-        "Attribute count mismatch: {} positions, {} normals, {} uvs, {} tangents",
-        positions.len(),
-        normals.len(),
-        uvs.len(),
-        tangents.len()
-    );
-
-    let mut vertices: Vec<Vertex> = positions
-        .iter()
-        .zip(normals.iter())
-        .zip(uvs.iter())
-        .zip(tangents.iter())
-        .enumerate()
-        .map(|(i, (((p, n), t), tan))| Vertex {
-            position: *p,
-            normal: *n,
-            uv: *t,
-            tangent: *tan,
-            joints: joints.get(i).copied().unwrap_or([0.0; 4]),
-            weights: weights.get(i).copied().unwrap_or([0.0; 4]),
-            color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
-            uv1: uvs1.get(i).copied().unwrap_or(*t),
-        })
-        .collect();
-
-    let raw_indices: Vec<u32> = match reader.read_indices() {
-        Some(iter) => iter.into_u32().collect(),
-        None => (0..vertices.len() as u32).collect(),
-    };
-    // Triangulating on load keeps culling, LOD, QEM and drawing on one triangle-list representation.
-    let indices = triangulate(&raw_indices, primitive.mode());
-    // Sanitize before flat normals, tangents and MikkTSpace index `vertices` with these values.
-    let (indices, dropped_triangles) = drop_out_of_range_triangles(indices, vertices.len());
-    if dropped_triangles > 0 {
-        log::warn!(
-            "glTF primitive {}: dropped {} triangle(s) whose indices do not address any of its {} vertices",
-            primitive.index(),
-            dropped_triangles,
-            vertices.len()
-        );
-    }
+    let indices = read_triangles(primitive, buffers, vertices.len());
 
     // Missing normals: derive flat face normals so lighting stays sane.
     if reader.read_normals().is_none() {
@@ -568,8 +508,117 @@ fn load_primitive(
         (vertices, indices)
     };
 
+    let morph_targets = read_morph_targets(primitive, buffers);
     // Weights start at zero: the caller applies mesh/node defaults, and animation drives them.
-    let morph_targets: Vec<crate::scene::MorphTarget> = reader
+    let morph_weights = vec![0.0f32; morph_targets.len()];
+
+    Ok(Some(CpuPrimitive {
+        vertices,
+        indices,
+        transform,
+        node_index: None,
+        skin_index: None,
+        material: load_material(&primitive.material(), textures),
+        morph_targets,
+        morph_weights,
+    }))
+}
+
+/// Every vertex attribute with its glTF fallback; `None` without POSITION.
+fn read_vertices(
+    primitive: &gltf::Primitive,
+    buffers: &[gltf::buffer::Data],
+) -> anyhow::Result<Option<Vec<Vertex>>> {
+    let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+    let Some(positions) = reader.read_positions() else {
+        return Ok(None);
+    };
+    let positions: Vec<[f32; 3]> = positions.collect();
+    let count = positions.len();
+
+    let normals: Vec<[f32; 3]> = reader
+        .read_normals()
+        .map_or_else(|| vec![[0.0, 0.0, 0.0]; count], Iterator::collect);
+    let uvs: Vec<[f32; 2]> = reader
+        .read_tex_coords(0)
+        .map_or_else(|| vec![[0.0, 0.0]; count], |iter| iter.into_f32().collect());
+    // TEXCOORD_1 falls back to UV0, so a slot wrongly flagged UV1 still samples something sane.
+    let uvs1: Vec<[f32; 2]> = reader
+        .read_tex_coords(1)
+        .map_or_else(|| uvs.clone(), |iter| iter.into_f32().collect());
+    let joints: Vec<[f32; 4]> = reader.read_joints(0).map_or_else(
+        || vec![[0.0; 4]; count],
+        |iter| iter.into_u16().map(|j| j.map(f32::from)).collect(),
+    );
+    let weights: Vec<[f32; 4]> = reader
+        .read_weights(0)
+        .map_or_else(|| vec![[0.0; 4]; count], |iter| iter.into_f32().collect());
+    // COLOR_0 defaults to white, so multiplying it into albedo is a no-op.
+    let colors: Vec<[f32; 4]> = reader.read_colors(0).map_or_else(
+        || vec![[1.0, 1.0, 1.0, 1.0]; count],
+        |iter| iter.into_rgba_f32().collect(),
+    );
+    let tangents: Vec<[f32; 4]> = reader
+        .read_tangents()
+        .map_or_else(|| vec![[0.0, 0.0, 0.0, 0.0]; count], Iterator::collect);
+
+    anyhow::ensure!(
+        normals.len() == count && uvs.len() == count && tangents.len() == count,
+        "Attribute count mismatch: {} positions, {} normals, {} uvs, {} tangents",
+        count,
+        normals.len(),
+        uvs.len(),
+        tangents.len()
+    );
+
+    Ok(Some(
+        (0..count)
+            .map(|i| Vertex {
+                position: positions[i],
+                normal: normals[i],
+                uv: uvs[i],
+                tangent: tangents[i],
+                joints: joints.get(i).copied().unwrap_or([0.0; 4]),
+                weights: weights.get(i).copied().unwrap_or([0.0; 4]),
+                color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
+                uv1: uvs1.get(i).copied().unwrap_or(uvs[i]),
+            })
+            .collect(),
+    ))
+}
+
+/// The primitive as a triangle list whose every index addresses one of its `vertex_count` vertices.
+fn read_triangles(
+    primitive: &gltf::Primitive,
+    buffers: &[gltf::buffer::Data],
+    vertex_count: usize,
+) -> Vec<u32> {
+    let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+    let raw_indices: Vec<u32> = match reader.read_indices() {
+        Some(iter) => iter.into_u32().collect(),
+        None => (0..vertex_count as u32).collect(),
+    };
+    // Triangulating on load keeps culling, LOD, QEM and drawing on one triangle-list representation.
+    let indices = triangulate(&raw_indices, primitive.mode());
+    // Sanitize before flat normals, tangents and MikkTSpace index `vertices` with these values.
+    let (indices, dropped_triangles) = drop_out_of_range_triangles(indices, vertex_count);
+    if dropped_triangles > 0 {
+        log::warn!(
+            "glTF primitive {}: dropped {} triangle(s) whose indices do not address any of its {} vertices",
+            primitive.index(),
+            dropped_triangles,
+            vertex_count
+        );
+    }
+    indices
+}
+
+fn read_morph_targets(
+    primitive: &gltf::Primitive,
+    buffers: &[gltf::buffer::Data],
+) -> Vec<crate::scene::MorphTarget> {
+    let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+    reader
         .read_morph_targets()
         .map(|(pos, norm, tan)| crate::scene::MorphTarget {
             position_deltas: pos
@@ -583,49 +632,20 @@ fn load_primitive(
                 .map(|it| it.map(Vec3::from_array).collect())
                 .unwrap_or_default(),
         })
-        .collect();
-    let morph_weights = vec![0.0f32; morph_targets.len()];
+        .collect()
+}
 
-    let material = primitive.material();
+/// The metallic-roughness material with each slot's texture, sampler, UV set and transform.
+fn load_material(material: &gltf::Material, textures: &[Arc<CpuTexture>]) -> CpuMaterial {
     let pbr = material.pbr_metallic_roughness();
-
     let alpha_mode = match material.alpha_mode() {
         gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
         gltf::material::AlphaMode::Mask => AlphaMode::Mask(material.alpha_cutoff().unwrap_or(0.5)),
         gltf::material::AlphaMode::Blend => AlphaMode::Blend,
     };
-
-    // KHR_texture_transform is scoped to `textureInfo`, so each slot carries its own transform.
-    let base_uv_transform = uv_transform_from_info(
-        pbr.base_color_texture()
-            .and_then(|info| info.texture_transform()),
-    );
-    let mr_uv_transform = uv_transform_from_info(
-        pbr.metallic_roughness_texture()
-            .and_then(|info| info.texture_transform()),
-    );
-    let emissive_uv_transform = uv_transform_from_info(
-        material
-            .emissive_texture()
-            .and_then(|info| info.texture_transform()),
-    );
-    // `.extensions()` borrows from the texture-info value itself, so it must outlive the chain.
-    let normal_texture_info = material.normal_texture();
-    let normal_uv_transform = uv_transform_from_extension_json(
-        normal_texture_info
-            .as_ref()
-            .and_then(|info| info.extensions())
-            .and_then(|ext| ext.get("KHR_texture_transform")),
-    );
-    let occlusion_texture_info = material.occlusion_texture();
-    let occlusion_uv_transform = uv_transform_from_extension_json(
-        occlusion_texture_info
-            .as_ref()
-            .and_then(|info| info.extensions())
-            .and_then(|ext| ext.get("KHR_texture_transform")),
-    );
-
-    let cpu_material = CpuMaterial {
+    let [base_uv_transform, mr_uv_transform, normal_uv_transform, emissive_uv_transform, occlusion_uv_transform] =
+        slot_uv_transforms(material);
+    CpuMaterial {
         base_color: pbr.base_color_factor(),
         base_uv_transform,
         mr_uv_transform,
@@ -663,34 +683,62 @@ fn load_primitive(
         occlusion_texture: material
             .occlusion_texture()
             .and_then(|info| texture_ref(&info.texture(), textures, false)),
-        // Which slots sample UV1 (bit per slot: 0 base .. 4 occlusion).
-        uv_set_mask: pbr
-            .base_color_texture()
-            .map_or(0, |i| uv_set_bit("base color", i.tex_coord(), 0))
-            | pbr
-                .metallic_roughness_texture()
-                .map_or(0, |i| uv_set_bit("metallic-roughness", i.tex_coord(), 1))
-            | material
-                .normal_texture()
-                .map_or(0, |i| uv_set_bit("normal", i.tex_coord(), 2))
-            | material
-                .emissive_texture()
-                .map_or(0, |i| uv_set_bit("emissive", i.tex_coord(), 3))
-            | material
-                .occlusion_texture()
-                .map_or(0, |i| uv_set_bit("occlusion", i.tex_coord(), 4)),
-    };
+        uv_set_mask: uv_set_mask(material),
+    }
+}
 
-    Ok(Some(CpuPrimitive {
-        vertices,
-        indices,
-        transform,
-        node_index: None,
-        skin_index: None,
-        material: cpu_material,
-        morph_targets,
-        morph_weights,
-    }))
+/// KHR_texture_transform per slot (base, MR, normal, emissive, occlusion): glTF scopes it to `textureInfo`.
+fn slot_uv_transforms(material: &gltf::Material) -> [[[f32; 3]; 2]; 5] {
+    let pbr = material.pbr_metallic_roughness();
+    // `.extensions()` borrows from the texture-info value itself, so it must outlive the chain.
+    let normal_texture_info = material.normal_texture();
+    let occlusion_texture_info = material.occlusion_texture();
+    [
+        uv_transform_from_info(
+            pbr.base_color_texture()
+                .and_then(|info| info.texture_transform()),
+        ),
+        uv_transform_from_info(
+            pbr.metallic_roughness_texture()
+                .and_then(|info| info.texture_transform()),
+        ),
+        uv_transform_from_extension_json(
+            normal_texture_info
+                .as_ref()
+                .and_then(|info| info.extensions())
+                .and_then(|ext| ext.get("KHR_texture_transform")),
+        ),
+        uv_transform_from_info(
+            material
+                .emissive_texture()
+                .and_then(|info| info.texture_transform()),
+        ),
+        uv_transform_from_extension_json(
+            occlusion_texture_info
+                .as_ref()
+                .and_then(|info| info.extensions())
+                .and_then(|ext| ext.get("KHR_texture_transform")),
+        ),
+    ]
+}
+
+/// Which slots sample UV1 (bit per slot: 0 base .. 4 occlusion).
+fn uv_set_mask(material: &gltf::Material) -> u32 {
+    let pbr = material.pbr_metallic_roughness();
+    pbr.base_color_texture()
+        .map_or(0, |i| uv_set_bit("base color", i.tex_coord(), 0))
+        | pbr
+            .metallic_roughness_texture()
+            .map_or(0, |i| uv_set_bit("metallic-roughness", i.tex_coord(), 1))
+        | material
+            .normal_texture()
+            .map_or(0, |i| uv_set_bit("normal", i.tex_coord(), 2))
+        | material
+            .emissive_texture()
+            .map_or(0, |i| uv_set_bit("emissive", i.tex_coord(), 3))
+        | material
+            .occlusion_texture()
+            .map_or(0, |i| uv_set_bit("occlusion", i.tex_coord(), 4))
 }
 
 fn compute_flat_normals(vertices: &mut [Vertex], indices: &[u32]) {
