@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, the camera GUI makes a lost surface anew)
+- **`crates/gui` answered a lost surface with a configure only**, which wgpu 30 cannot satisfy natively, so the camera
+  window stayed black after the platform dropped its surface. The renderer's rule moved from `context.rs` into
+  `crates/webgpu_renderer/src/surface_recovery.rs` (`recovery` and `recreate_surface`), which the GUI includes by
+  `#[path]`: a dependency on the renderer would bring its GL backend into the GUI. The GUI keeps the instance, window and
+  adapter backend, recreates a natively lost surface (a browser's Lost still reconfigures) and retries a recreate that
+  failed on the next frame. `a_lost_surface_is_made_anew_and_a_covered_or_stalled_one_left_alone` expects the
+  recreate where the GUI's old mapping test expected a reconfigure.
+
 ### Fixed (2026-11-16, a BC texture on an adapter without BC keeps its texels)
 - **A BC texture the device could not take became one white texel**, whatever the slot: a normal map then bent every
   normal to (1, 1, 1). `upload_material_texture` (`render/texture.rs`) now decodes BC1, BC3, BC5 and BC7 on the CPU

@@ -135,15 +135,20 @@ pub(crate) fn create_render_pipeline(
     })
 }
 
+/// The device and a configured surface, with the instance and backend that make a lost surface anew.
+pub(crate) struct WgpuInit {
+    pub instance: wgpu::Instance,
+    pub surface: wgpu::Surface<'static>,
+    pub backend: wgpu::Backend,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub config: wgpu::SurfaceConfiguration,
+}
+
 pub(crate) async fn init_wgpu(
     window: &Arc<Window>,
     backends: wgpu::Backends,
-) -> anyhow::Result<(
-    wgpu::Surface<'static>,
-    wgpu::Device,
-    wgpu::Queue,
-    wgpu::SurfaceConfiguration,
-)> {
+) -> anyhow::Result<WgpuInit> {
     let size = window.inner_size();
 
     // No Default for InstanceDescriptor: its `display` field is a deliberate choice.
@@ -209,7 +214,14 @@ pub(crate) async fn init_wgpu(
     };
     surface.configure(&device, &config);
 
-    Ok((surface, device, queue, config))
+    Ok(WgpuInit {
+        backend: adapter.get_info().backend,
+        instance,
+        surface,
+        device,
+        queue,
+        config,
+    })
 }
 
 pub(crate) fn init_egui(

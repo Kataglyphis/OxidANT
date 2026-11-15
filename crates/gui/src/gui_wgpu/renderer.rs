@@ -6,7 +6,12 @@ use winit::window::Window;
 
 use super::inference::InferenceState;
 use super::inference_bridge::spawn_inference_thread;
-use super::wgpu_init::{create_quad_buffers, create_render_pipeline, init_wgpu};
+use super::wgpu_init::{create_quad_buffers, create_render_pipeline, init_wgpu, WgpuInit};
+
+/// The renderer's rule for a failed acquire, one file for both crates: depending on the renderer would bring in its GL backend.
+#[path = "../../../webgpu_renderer/src/surface_recovery.rs"]
+mod surface_recovery;
+use surface_recovery::{recovery, recreate_surface, Repair};
 
 struct FrameTexture {
     texture: wgpu::Texture,
@@ -17,7 +22,11 @@ struct FrameTexture {
 }
 
 pub(crate) struct WgpuState {
-    surface: wgpu::Surface<'static>,
+    /// `None` only while a lost surface could not be made anew; the next failed acquire tries again.
+    surface: Option<wgpu::Surface<'static>>,
+    instance: wgpu::Instance,
+    window: Arc<Window>,
+    backend: wgpu::Backend,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -35,22 +44,9 @@ pub(crate) struct WgpuState {
     reconfigure_after_present: bool,
 }
 
-/// What a frame does after an acquire that brought no texture; none of them ends the app.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AcquireFailure {
-    /// The surface changed or went: configure it again, and draw next frame.
-    Reconfigure,
-    /// Minimized, covered or timed out: skip the frame, the redraw cadence tries again.
-    Skip,
-}
-
-fn on_failed_acquire(status: &wgpu::CurrentSurfaceTexture) -> AcquireFailure {
-    use wgpu::CurrentSurfaceTexture as Status;
-    match status {
-        Status::Outdated | Status::Lost => AcquireFailure::Reconfigure,
-        Status::Timeout | Status::Occluded | Status::Validation => AcquireFailure::Skip,
-        Status::Success(_) | Status::Suboptimal(_) => AcquireFailure::Skip,
-    }
+/// What a frame does to the surface after an acquire that brought no texture; it then skips the frame, never quits.
+fn on_failed_acquire(status: &wgpu::CurrentSurfaceTexture, backend: wgpu::Backend) -> Repair {
+    recovery(status, backend).0
 }
 
 /// Draws the camera frame; none has arrived before the first sample, and a draw without its bind group fails wgpu validation.
@@ -77,7 +73,14 @@ impl WgpuState {
         display_target: &dyn wgpu::rwh::HasDisplayHandle,
         backends: wgpu::Backends,
     ) -> anyhow::Result<Self> {
-        let (surface, device, queue, config) = init_wgpu(&window, backends).await?;
+        let WgpuInit {
+            instance,
+            surface,
+            backend,
+            device,
+            queue,
+            config,
+        } = init_wgpu(&window, backends).await?;
 
         let (vertex_buffer, index_buffer, num_indices) = create_quad_buffers(&device);
 
@@ -109,7 +112,10 @@ impl WgpuState {
         let infer_every_ms = kataglyphis_core::config::infer_every_ms();
 
         Ok(Self {
-            surface,
+            surface: Some(surface),
+            instance,
+            window,
+            backend,
             device,
             queue,
             config,
@@ -143,7 +149,7 @@ impl WgpuState {
         if new_size.width > 0 && new_size.height > 0 {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
+            self.configure_surface();
             self.egui.resize(new_size.width, new_size.height);
         }
     }
@@ -345,27 +351,49 @@ impl WgpuState {
         // wgpu 30: presentation lives on the queue now.
         self.queue.present(frame);
         if std::mem::take(&mut self.reconfigure_after_present) {
-            self.surface.configure(&self.device, &self.config);
+            self.configure_surface();
         }
         Ok(())
     }
 
     /// The next frame to draw into, or `None` to skip one: a minimized or covered window must not quit the app.
     fn acquire(&mut self) -> Option<wgpu::SurfaceTexture> {
-        match self.surface.get_current_texture() {
+        let Some(surface) = self.surface.as_ref() else {
+            self.recreate_surface();
+            return None;
+        };
+        match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => Some(frame),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 self.reconfigure_after_present = true;
                 Some(frame)
             }
             failed => {
-                if on_failed_acquire(&failed) == AcquireFailure::Reconfigure {
-                    self.surface.configure(&self.device, &self.config);
+                match on_failed_acquire(&failed, self.backend) {
+                    Repair::Nothing => {}
+                    Repair::Reconfigure => self.configure_surface(),
+                    Repair::Recreate => self.recreate_surface(),
                 }
                 log::debug!("Skipping a frame: surface acquire {failed:?}");
                 None
             }
         }
+    }
+
+    fn configure_surface(&self) {
+        if let Some(surface) = self.surface.as_ref() {
+            surface.configure(&self.device, &self.config);
+        }
+    }
+
+    fn recreate_surface(&mut self) {
+        recreate_surface(
+            &mut self.surface,
+            &self.instance,
+            &self.window,
+            &self.device,
+            &self.config,
+        );
     }
 
     /// egui over the camera frame in `view`, which it loads and never clears.
@@ -430,23 +458,28 @@ mod tests {
         }
     }
 
+    /// wgpu 30: a natively lost surface must be created again, a configure alone cannot bring it back.
     #[test]
-    fn a_minimized_covered_or_stalled_window_skips_frames_instead_of_quitting() {
+    fn a_lost_surface_is_made_anew_and_a_covered_or_stalled_one_left_alone() {
         use wgpu::CurrentSurfaceTexture as Status;
+        let native = wgpu::Backend::Vulkan;
         for status in [Status::Timeout, Status::Occluded, Status::Validation] {
             assert_eq!(
-                on_failed_acquire(&status),
-                AcquireFailure::Skip,
+                on_failed_acquire(&status, native),
+                Repair::Nothing,
                 "{status:?}"
             );
         }
-        for status in [Status::Outdated, Status::Lost] {
-            assert_eq!(
-                on_failed_acquire(&status),
-                AcquireFailure::Reconfigure,
-                "{status:?}"
-            );
-        }
+        assert_eq!(
+            on_failed_acquire(&Status::Outdated, native),
+            Repair::Reconfigure
+        );
+        assert_eq!(on_failed_acquire(&Status::Lost, native), Repair::Recreate);
+        assert_eq!(
+            on_failed_acquire(&Status::Lost, wgpu::Backend::BrowserWebGpu),
+            Repair::Reconfigure,
+            "a browser's Lost is a failed configure"
+        );
     }
 
     #[test]

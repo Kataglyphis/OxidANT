@@ -80,12 +80,6 @@ its open work is here.
 
 ## P2 — medium
 
-- [ ] **`crates/gui` answers a lost surface with a reconfigure only** (S, ★★). `on_failed_acquire`
-      (`crates/gui/src/gui_wgpu/renderer.rs`) maps `Lost` like `Outdated`; wgpu 30 says a lost surface
-      must be created again before `configure`, so the camera GUI retries a configure that cannot help.
-      The renderer already recreates it (`recovery` in `crates/webgpu_renderer/src/context.rs`); reuse that
-      rule. Guard: the mapping test in `renderer.rs` expects a recreate for `Lost`.
-
 - [ ] **An OBJ opened in memory loses its alpha masks and every texture that is not PNG or JPEG** (S, ★★).
       `obj_to_glb` (`crates/webgpu_renderer/src/app/obj_glb.rs`) packs only PNG and JPEG and unhooks the
       slot of anything else with a warning, and `parse_mtl` (`crates/webgpu_renderer/src/asset/obj_to_gltf.rs`) reads no `map_d`, so

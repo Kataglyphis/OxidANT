@@ -6,6 +6,9 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use winit::window::Window;
 
+pub use crate::surface_recovery::AcquireRetry;
+use crate::surface_recovery::{recovery, Repair};
+
 /// The backends this renderer can run; GL is not one: naga cannot translate the depth resolve's and SSAO's
 /// depth `textureLoad` to GLSL, and a GL adapter could outrank lavapipe in adapter selection.
 const BACKENDS: wgpu::Backends = wgpu::Backends::PRIMARY;
@@ -30,23 +33,6 @@ pub struct GpuContext {
     suboptimal: bool,
     /// Failed acquires in a row, so a surface that stays unusable logs once, not every frame.
     failed_acquires: u32,
-}
-
-/// When a frame whose acquire failed should try again; the surface is already repaired.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AcquireRetry {
-    /// Next frame: the surface was reconfigured or made anew, or the acquire timed out.
-    NextFrame,
-    /// Once the window is visible again: an occluded surface hands out nothing, so retrying only spins.
-    WhenVisible,
-}
-
-/// What a failed acquire asks of the surface.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Repair {
-    Nothing,
-    Reconfigure,
-    Recreate,
 }
 
 impl GpuContext {
@@ -263,19 +249,20 @@ impl GpuContext {
         retry
     }
 
-    /// A new surface from the same window, configured as the lost one was; the old one goes first.
+    /// A new surface from the same window, configured as the lost one was.
     fn recreate_surface(&mut self) {
-        let Some((instance, window)) = self.origin.as_ref() else {
+        let (Some((instance, window)), Some(config)) =
+            (self.origin.as_ref(), self.surface_config.as_ref())
+        else {
             return self.reconfigure();
         };
-        self.surface = None;
-        match instance.create_surface(Arc::clone(window)) {
-            Ok(surface) => {
-                self.surface = Some(surface);
-                self.reconfigure();
-            }
-            Err(err) => log::error!("Recreating the lost surface failed: {err}"),
-        }
+        crate::surface_recovery::recreate_surface(
+            &mut self.surface,
+            instance,
+            window,
+            &self.device,
+            config,
+        );
     }
 }
 
@@ -315,26 +302,6 @@ pub fn check_target_size(width: u32, height: u32, max_side: u32) -> anyhow::Resu
         return Ok(());
     }
     anyhow::bail!("{width}x{height} is not a render size this device takes: each side must be 1 to {max_side}")
-}
-
-/// What repairs the surface after a failed acquire, and when the next try is worth making.
-fn recovery(
-    status: &wgpu::CurrentSurfaceTexture,
-    backend: wgpu::Backend,
-) -> (Repair, AcquireRetry) {
-    use wgpu::CurrentSurfaceTexture as Status;
-    match status {
-        Status::Outdated => (Repair::Reconfigure, AcquireRetry::NextFrame),
-        // A browser's Lost means only that the last configure failed; a native one needs a new surface.
-        Status::Lost if backend == wgpu::Backend::BrowserWebGpu => {
-            (Repair::Reconfigure, AcquireRetry::NextFrame)
-        }
-        Status::Lost => (Repair::Recreate, AcquireRetry::NextFrame),
-        Status::Occluded => (Repair::Nothing, AcquireRetry::WhenVisible),
-        Status::Timeout | Status::Validation | Status::Success(_) | Status::Suboptimal(_) => {
-            (Repair::Nothing, AcquireRetry::NextFrame)
-        }
-    }
 }
 
 fn new_instance() -> wgpu::Instance {
