@@ -95,31 +95,18 @@ fn read_nodes(document: &gltf::Document) -> Vec<CpuNode> {
     nodes
 }
 
-/// Every animation with at least one readable channel.
+/// Every animation with at least one valid channel.
 fn read_animations(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Vec<CpuAnimation> {
     let mut animations = Vec::new();
     for animation in document.animations() {
-        let mut channels = Vec::new();
-        let mut duration = 0.0f32;
-        for channel in animation.channels() {
-            let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
-            let Some(times) = reader.read_inputs() else {
-                continue;
-            };
-            let times: Vec<f32> = times.collect();
-            if let Some(&last) = times.last() {
-                duration = duration.max(last);
-            }
-            let Some(values) = reader.read_outputs().map(channel_values) else {
-                continue;
-            };
-            channels.push(CpuAnimationChannel {
-                node: channel.target().node().index(),
-                times,
-                values,
-                interpolation: interpolation_of(channel.sampler().interpolation()),
-            });
-        }
+        let channels: Vec<CpuAnimationChannel> = animation
+            .channels()
+            .filter_map(|channel| read_channel(&channel, buffers))
+            .collect();
+        let duration = channels
+            .iter()
+            .filter_map(|channel| channel.times.last().copied())
+            .fold(0.0f32, f32::max);
         if !channels.is_empty() {
             animations.push(CpuAnimation {
                 name: animation.name().unwrap_or("animation").to_string(),
@@ -129,6 +116,69 @@ fn read_animations(document: &gltf::Document, buffers: &[gltf::buffer::Data]) ->
         }
     }
     animations
+}
+
+/// One channel, or `None` when unreadable or invalid; gltf checks no accessor values.
+fn read_channel(
+    channel: &gltf::animation::Channel,
+    buffers: &[gltf::buffer::Data],
+) -> Option<CpuAnimationChannel> {
+    let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+    let times: Vec<f32> = reader.read_inputs()?.collect();
+    let values = channel_values(reader.read_outputs()?);
+    let interpolation = interpolation_of(channel.sampler().interpolation());
+    if let Err(reason) = check_keyframes(&times, &values, interpolation) {
+        log::warn!(
+            "glTF animation channel {} skipped: {reason}",
+            channel.index()
+        );
+        return None;
+    }
+    Some(CpuAnimationChannel {
+        node: channel.target().node().index(),
+        times,
+        values,
+        interpolation,
+    })
+}
+
+/// Sampling bisects `times`, so a NaN or a step back breaks it; a short output reads past its end.
+fn check_keyframes(
+    times: &[f32],
+    values: &ChannelValues,
+    interpolation: Interpolation,
+) -> Result<(), &'static str> {
+    if times.is_empty() || times.iter().any(|t| !t.is_finite()) {
+        return Err("its keyframe times are empty or not finite");
+    }
+    if times.windows(2).any(|pair| pair[1] < pair[0]) {
+        return Err("its keyframe times decrease");
+    }
+    let (count, finite) = match values {
+        ChannelValues::Translation(v) | ChannelValues::Scale(v) => {
+            (v.len(), v.iter().all(|x| x.is_finite()))
+        }
+        ChannelValues::Rotation(v) => (v.len(), v.iter().all(|q| q.is_finite())),
+        ChannelValues::MorphWeights(v) => (v.len(), v.iter().all(|w| w.is_finite())),
+    };
+    if !finite {
+        return Err("its keyframe values are not finite");
+    }
+    let per_key = if interpolation == Interpolation::CubicSpline {
+        3
+    } else {
+        1
+    };
+    let keys = times.len() * per_key;
+    let fits = match values {
+        // Morph weights hold one value per target per key, so any whole multiple fits.
+        ChannelValues::MorphWeights(_) => count > 0 && count.is_multiple_of(keys),
+        _ => count == keys,
+    };
+    if !fits {
+        return Err("its value count does not match its keyframes");
+    }
+    Ok(())
 }
 
 fn channel_values(outputs: gltf::animation::util::ReadOutputs<'_>) -> ChannelValues {

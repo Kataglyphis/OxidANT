@@ -69,6 +69,10 @@ impl Bin {
         )
     }
 
+    fn scalars(&mut self, values: &[f32]) -> usize {
+        self.accessor(&f32_bytes(values), 5126, values.len(), "SCALAR", "")
+    }
+
     fn indices(&mut self, values: &[u32]) -> usize {
         self.accessor(&u32_bytes(values), 5125, values.len(), "SCALAR", "")
     }
@@ -194,4 +198,32 @@ fn a_deep_node_chain_loads_without_overflowing_the_stack() {
         (DEPTH - 1) as f32,
         "every level adds its translation"
     );
+}
+
+/// A NaN time defeats both end tests of the keyframe search, which then underflowed on every frame.
+#[test]
+fn animation_channels_with_bad_keyframes_are_dropped() {
+    let mut bin = Bin::default();
+    let pos = bin.vec3(&TRIANGLE);
+    let nan_times = bin.scalars(&[f32::NAN, 1.0]);
+    let backwards = bin.scalars(&[1.0, 0.0]);
+    let good_times = bin.scalars(&[0.0, 1.0]);
+    let two_keys = bin.vec3(&[[0.0; 3], [1.0; 3]]);
+    let one_key = bin.vec3(&[[0.0; 3]]);
+    let samplers = format!(
+        r#"{{"input":{nan_times},"output":{two_keys}}},{{"input":{backwards},"output":{two_keys}}},{{"input":{good_times},"output":{one_key}}},{{"input":{good_times},"output":{two_keys}}}"#
+    );
+    let channels = r#"{"sampler":0,"target":{"node":0,"path":"translation"}},{"sampler":1,"target":{"node":0,"path":"scale"}},{"sampler":2,"target":{"node":1,"path":"translation"}},{"sampler":3,"target":{"node":1,"path":"scale"}}"#;
+    let glb = bin.glb(&format!(
+        r#""meshes":[{{"primitives":[{{"attributes":{{"POSITION":{pos}}}}}]}}],"nodes":[{{"mesh":0}},{{}}],"scenes":[{{"nodes":[0,1]}}],"scene":0,"animations":[{{"samplers":[{samplers}],"channels":[{channels}]}}]"#
+    ));
+    let scene = load_gltf_slice(&glb).expect("bad channels are dropped, not fatal");
+    assert_eq!(scene.animations.len(), 1);
+    let kept = &scene.animations[0].channels;
+    assert_eq!(
+        kept.len(),
+        1,
+        "only the channel with sorted, finite times and enough values stays"
+    );
+    assert_eq!(kept[0].times, vec![0.0, 1.0]);
 }

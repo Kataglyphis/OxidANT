@@ -31,6 +31,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   into children with no visited set. It walks the node trees with an explicit stack and visits each node once,
   warning on a second visit; `CpuScene::compute_world_transforms` resolves parents iteratively too, so a
   50 000-level chain, valid glTF, no longer overflows either.
+- **A NaN keyframe time panicked every animation frame**: both end tests of the keyframe search fail for NaN,
+  which left the binary search at 0 and underflowed. The loader drops a channel whose times are empty, not finite
+  or decreasing, whose values are not finite, or whose value count does not fit its keys, and the search pins a
+  NaN time or key to the first key.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
