@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, the app engine's end reasons are tested)
+- `WebcamEngine::start` builds the detector and the capture and hands them to `run`, whose worker
+  (`infer_until_done`) takes the model as a closure; `kataglyphis_media::CaptureSession::from_launch` (hidden, for
+  tests) starts a session from a launch line. Three tests: a camera that ends (`videotestsrc num-buffers=5`) ends
+  the session with `the camera stream ended`, a model that fails every frame ends it after exactly 30 runs, and one
+  good run in 25 keeps it going past 100. `start` left `rust-function-size.allow` (107 lines, now under 80).
+
 ### Added (2026-11-15, ObservANT's capture loop runs in tests with the real model)
 - `capture.rs` tests run the whole worker: the real model on `two_cats.jpg` opens one visit with both cats through
   the pacer and `spawn_inference` (skipped without the model, required where `KATAGLYPHIS_REQUIRE_MODEL=1`), and an

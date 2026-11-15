@@ -58,16 +58,14 @@ and the backlog is empty"; it was neither.
       `cuda` feature dropped if nothing else needs it. The module lies beside the GPU ONNX Runtime library, in the
       image and in the NVIDIA package, which the search's second step finds; the hub names no root variable for it.
 
-- [ ] **The capture and inference loops cannot run with a fake detector or a failing camera**
-      (M, ★★★). Audit 2026-11-12. Since 2026-11-15 two tests run the real loop (`crates/observant/src/capture.rs`):
-      the real model on `two_cats.jpg` opens one visit with both cats through `spawn_inference`, and a missing image
-      file is retried after the backoff and recovers. Left: the engine's two end reasons (`src/webcam_engine.rs`: the
-      camera ended, 30 failed runs), the 10 s stall and the 30 s re-probe. Next, the smallest seam: each loop body
-      takes the detector as a closure, `CaptureSession` gets a `#[doc(hidden)]` launch-line constructor, and
-      `STALL_AFTER` and `REPROBE_EVERY` move into a `Timing` value on `Worker` with today's numbers as default.
-      No public trait and no dev-only crate. Guard: the new tests in the `test` step, the `crates/observant` and
-      `src` coverage floors raised to the new figures, and the new `capture.rs` count of `cargo mutants` written
-      into `docs/testing.md`.
+- [ ] **ObservANT's stall and re-probe have no test** (M, ★★). Audit 2026-11-12. Done on 2026-11-15: the capture loop
+      with the real model opens a visit, a missing image is retried and recovers (`crates/observant/src/capture.rs`),
+      and the app's engine (`src/webcam_engine.rs`) is tested for both end reasons, the camera ending and 30 failed
+      runs, plus a good run restarting the count, through a detection closure and `CaptureSession::from_launch`.
+      Left: ObservANT's 10 s stall (`STALL_AFTER`) and 30 s re-probe of a stand-in (`REPROBE_EVERY`). Next: both move
+      into a `Timing` value on `Worker` with today's numbers as default, and a test with a short stall sees the
+      capture restart. Guard: the `crates/observant` and `src` coverage floors raised to the new figures, and the new
+      `capture.rs` count of `cargo mutants` written into `docs/testing.md`.
 
 - [ ] **Detection quality has no regression set** (M, ★★★). Audit 2026-11-12
       (not double-checked): `crates/inference/tests/fixtures` holds one photo, checked loosely

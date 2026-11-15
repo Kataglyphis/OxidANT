@@ -238,6 +238,19 @@ impl CaptureSession {
         Self::from_source(source, &config, observer)
     }
 
+    /// A session whose source is a launch line, so a test can end or break the stream at a chosen frame; not a camera API.
+    #[doc(hidden)]
+    pub fn from_launch(
+        description: &str,
+        config: &CaptureConfig,
+        observer: Option<FrameObserver>,
+    ) -> Result<Self> {
+        ensure_gst_initialized()?;
+        let source = gst::parse::bin_from_description(description, true)
+            .with_context(|| format!("the launch line `{description}`"))?;
+        Self::from_source(source.upcast(), config, observer)
+    }
+
     /// The pipeline behind `source`: convert, scale, and an appsink feeding the frame slot.
     fn from_source(
         source: gst::Element,
@@ -395,11 +408,8 @@ mod tests {
         }
     }
 
-    /// A source bin from a launch line, so a test can end or break the stream at a chosen frame.
     fn session(description: &str, observer: Option<FrameObserver>) -> Result<CaptureSession> {
-        ensure_gst_initialized()?;
-        let source = gst::parse::bin_from_description(description, true)?;
-        CaptureSession::from_source(source.upcast(), &config(30), observer)
+        CaptureSession::from_launch(description, &config(30), observer)
     }
 
     fn wait_closed(frames: &FrameSlot) {
