@@ -136,6 +136,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   vanished entirely). The cube pass now averages a tap grid sized to the panorama's texels (up to 16 per side), and
   each irradiance tap reads the mip whose texels match its patch of the hemisphere. Test:
   `a_small_sun_gives_the_same_irradiance_at_any_sub_texel_offset` (within 3% of the analytic irradiance).
+- **Compute occlusion culling culled boxes seen through narrow gaps**: it tested 8×8 point taps across each box's
+  screen rect, so a box visible only through a gap between taps (a slit, a colonnade) was culled, and stayed culled
+  since it never re-entered the depth buffer; the roadmap called the path conservative. A rect of up to 4096 texels
+  now has every texel tested (early out at the first one at or behind the box), and a larger rect is drawn. Test:
+  `a_box_seen_through_a_two_pixel_slit_is_never_gpu_culled`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

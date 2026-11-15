@@ -27,8 +27,8 @@ static const float3 UNIT_CORNERS[8] = {
     float3(0.0, 1.0, 1.0), float3(1.0, 1.0, 1.0),
 };
 
-// 8x8 taps keep the test O(1) yet catch an occluder covering only part of the rect.
-static const uint DEPTH_TAPS = 8u;
+// Rects up to this many texels are tested texel by texel: sparse point taps miss gaps between them.
+static const uint MAX_TESTED_TEXELS = 4096u;
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
@@ -69,20 +69,21 @@ void cs_main(uint3 gid : SV_DispatchThreadID)
     uint w, h;
     depthTex.GetDimensions(w, h);
     int2 maxCoord = int2(int(w) - 1, int(h) - 1);
+    float2 size = float2(float(w), float(h));
+    int2 lo = clamp(int2(floor(uvMin * size)), int2(0, 0), maxCoord);
+    int2 hi = clamp(int2(ceil(uvMax * size)) - int2(1, 1), lo, maxCoord);
+    uint2 extent = uint2(hi - lo) + uint2(1u, 1u);
+    // Too many texels to test one by one: drawn, since a sparser test can miss the gap it is seen through.
+    if (extent.x * extent.y > MAX_TESTED_TEXELS) { visibility[idx] = 1u; return; }
 
-    float maxSampled = 0.0;
-    for (uint ty = 0u; ty < DEPTH_TAPS; ++ty)
+    // Occluded only when every texel the rect covers is nearer than the box's nearest corner.
+    for (int y = lo.y; y <= hi.y; ++y)
     {
-        for (uint tx = 0u; tx < DEPTH_TAPS; ++tx)
+        for (int x = lo.x; x <= hi.x; ++x)
         {
-            float2 t = (float2(float(tx), float(ty)) + 0.5) / float(DEPTH_TAPS);
-            float2 uv = lerp(uvMin, uvMax, t);
-            int2 coords = clamp(int2(uv * float2(float(w), float(h))), int2(0, 0), maxCoord);
-            float sampledDepth = depthTex.Load(int3(coords, 0));
-            maxSampled = max(maxSampled, sampledDepth);
+            int3 coords = int3(x, y, 0);
+            if (depthTex.Load(coords) >= aabbNear) { visibility[idx] = 1u; return; }
         }
     }
-
-    // Occluded only when the nearest corner is behind the covered surface everywhere.
-    visibility[idx] = (aabbNear > maxSampled) ? 0u : 1u;
+    visibility[idx] = 0u;
 }

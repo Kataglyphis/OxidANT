@@ -568,3 +568,48 @@ fn re_enabling_culling_forgets_the_visibility_from_before() {
         );
     }
 }
+
+/// A box seen only through a slit narrower than any sparse tap spacing must stay drawn.
+#[test]
+fn a_box_seen_through_a_two_pixel_slit_is_never_gpu_culled() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    // At z = 0 one pixel is 2 * 8 * tan(22.5 deg) / 256 world units, so the walls leave columns 127-128.
+    let pixel = 2.0 * 8.0 * 22.5f32.to_radians().tan() / 256.0;
+    let wall = |side: f32| {
+        cube_with_transform(
+            Mat4::from_translation(Vec3::new(side * (pixel + 1.0), 0.0, 0.0))
+                * Mat4::from_scale(Vec3::new(2.0, 4.0, 0.2)),
+        )
+    };
+    // Turned 45 degrees, so the faces either side of its front edge recede behind the box's nearest point.
+    let behind = cube_with_transform(
+        Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0))
+            * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_4),
+    );
+    let scene = CpuScene {
+        primitives: vec![wall(-1.0), wall(1.0), behind],
+        ..Default::default()
+    };
+    let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.gpu_culling_enabled = true;
+    render_until_readback_lands(&mut renderer, &gpu, &looking_down_neg_z());
+
+    let visibility = renderer.gpu_culling_visibility();
+    assert_eq!(
+        visibility.len(),
+        3,
+        "one entry per primitive: {visibility:?}"
+    );
+    assert!(
+        visibility[2],
+        "the box behind the slit is visible through it, yet the compute cull marked it occluded"
+    );
+    assert_eq!(
+        renderer.occlusion_cull_stats(),
+        (3, 3),
+        "every primitive must draw"
+    );
+}
