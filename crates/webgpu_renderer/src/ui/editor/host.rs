@@ -366,6 +366,76 @@ mod tests {
         );
     }
 
+    /// Every field away from its default, written as a literal so a new field must join it.
+    fn changed_settings() -> RendererSettings {
+        let defaults = RendererSettings::default();
+        RendererSettings {
+            light_dir_ambient: Vec4::new(0.0, 1.0, 0.0, 0.5),
+            light_color_intensity: Vec4::new(0.5, 0.25, 1.0, 2.0),
+            ibl_intensity: 0.25,
+            bloom_strength: 0.1,
+            ssao_strength: 0.1,
+            exposure_ev: 1.5,
+            auto_exposure: !defaults.auto_exposure,
+            auto_exposure_speed: 1.0,
+            occlusion_queries_enabled: !defaults.occlusion_queries_enabled,
+            gpu_culling_enabled: !defaults.gpu_culling_enabled,
+            shadows: ShadowSettings {
+                enabled: false,
+                resolution: 512,
+                cascade_count: 1,
+                pcf_radius: 5,
+                strength: 0.2,
+                distance: 100.0,
+                split_lambda: 0.5,
+            },
+            frustum_culling: !defaults.frustum_culling,
+            skybox_enabled: !defaults.skybox_enabled,
+            model_transform: ModelTransform {
+                position: glam::Vec3::X,
+                rotation_deg: glam::Vec3::new(0.0, 90.0, 0.0),
+            },
+            raster_path: RasterPath::Deferred,
+            clouds: CloudSettings {
+                enabled: true,
+                march_steps: 16,
+                ..defaults.clouds
+            },
+        }
+    }
+
+    #[test]
+    fn the_changed_settings_differ_from_the_defaults_in_every_field() {
+        let (changed, defaults) = (changed_settings(), RendererSettings::default());
+        macro_rules! same {
+            ($($field:ident),*) => { [$((stringify!($field), changed.$field == defaults.$field)),*] };
+        }
+        let same = same!(
+            light_dir_ambient,
+            light_color_intensity,
+            ibl_intensity,
+            bloom_strength,
+            ssao_strength,
+            exposure_ev,
+            auto_exposure,
+            auto_exposure_speed,
+            occlusion_queries_enabled,
+            gpu_culling_enabled,
+            shadows,
+            frustum_culling,
+            skybox_enabled,
+            model_transform,
+            raster_path,
+            clouds
+        );
+        let unchanged: Vec<&str> = same
+            .iter()
+            .filter(|(_, same)| *same)
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(unchanged.is_empty(), "still at the default: {unchanged:?}");
+    }
+
     #[test]
     fn the_settings_start_from_the_renderer_and_write_back_what_they_show() {
         let Some(gpu) = crate::GpuContext::headless_or_skip() else {
@@ -373,14 +443,11 @@ mod tests {
         };
         let mut renderer = ForwardRenderer::new(&gpu, 8, 8);
         assert_eq!(RendererSettings::of(&renderer), RendererSettings::default());
-        let mut settings = RendererSettings::of(&renderer);
-        settings.ssao_strength = 0.1;
-        settings.light_dir_ambient = Vec4::new(0.0, 1.0, 0.0, 0.5);
-        settings.raster_path = RasterPath::Deferred;
+        let settings = changed_settings();
         settings.apply(&mut renderer);
-        assert_eq!(renderer.ssao_strength, 0.1);
-        assert_eq!(renderer.raster_path, RasterPath::Deferred);
-        assert_eq!(renderer.light_dir_ambient, Vec4::new(0.0, 1.0, 0.0, 0.5));
+        assert_eq!(renderer.shadows, settings.shadows);
+        assert_eq!(renderer.model_transform, settings.model_transform);
+        assert_eq!(renderer.clouds, settings.clouds);
         assert_eq!(RendererSettings::of(&renderer), settings);
     }
 }

@@ -30,7 +30,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
   new shader on the next cloud frame; before clouds first run, that frame builds on the reloaded pipelines. The
   viewer watches and reloads all four files. Tests: a refused reload of either cloud shader leaves the frame and the
   volume byte-identical, an edited noise and march land in every texel, the shipped shaders bring the frame back
-  exactly, and a reload with clouds off is what their first frame uses.
+  exactly, and a reload with clouds off is what their first frame uses. The tonemap (and with it the cloud
+  composite), bloom, SSAO, histogram and depth-resolve WGSL are built once and not reloaded.
+- **A reload checks the deferred entry points before the first deferred frame.** The deferred pipelines are built
+  lazily, so a reload on a forward-only renderer skipped them: a module without `fs_deferred_lighting` was accepted,
+  and the first deferred frame then failed pipeline creation outside any error scope. `reload_shaders` now builds
+  them in its scope either way and keeps them only once deferred has run (a test refuses that module on a
+  forward-only renderer, then draws a clean deferred frame).
+- **The Sun tab leaves an unlisted shadow resolution alone.** Showing it wrote 2048 over a resolution such as 600,
+  which the renderer draws at its nearest listed size, 512; the row now selects that nearest size and writes only
+  when clicked.
+- **`editor_snapshot` aims every shot from the host's start view.** `zoom=` multiplied the radius left by the shot
+  before and `pitch=` carried into later shots; both now apply to the view the host opened on (a unit test, which
+  `cargo test` runs since the example is marked `test = true`).
 
 ### Added (2026-11-15, the raster settings, deferred path and clouds together)
 - `tests/feature_matrix.rs`, every feature on both raster paths (lavapipe, structural): the shadow masks of forward
@@ -39,7 +51,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and 1024 texels (32206 pixels off without the rebind), the cube faces and the navy show alike on both, clouds
   change the sky alike and leave a wall in front untouched (0 pixels) with a bit-identical march over the open sky,
   the model transform moves the cube by the same vector, the primitive, caster and occlusion counts match with
-  culling on and off, and with every feature on each path times each pass it runs once.
+  culling on and off, and with every feature on each path reports exactly the passes it runs (the timings list
+  each pass at most once and in `TimedPass::ALL` order, so this does not check the order they record in).
+- The `RendererSettings` round trip writes a value away from its default in every field, so dropping any of
+  `apply`'s assignments fails it.
 - Editor tests over the merged rows (`ui::editor::tests::combined`): the Render menu's radios and culling switch,
   the Renderer tab's raster path and culling switch, the Sky tab's SKYBOX and CLOUDS switches, both outliner eyes
   and the Sun's cascade count, and the profiler scrolling to the last of eleven passes beside the culled counts.
@@ -110,8 +125,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - `TimedPass::GBuffer` ("G-buffer") and `TimedPass::DeferredLighting` ("Lighting + sky"); `name()` stays first and its
   existing arms unchanged. The render graph's `deferred_frame_graph` swaps the forward and depth-resolve rows for
   them, with a `GBuffer` resource. `dump_gpu_timings --deferred` times the deferred path; BeschleunigerBallett's
-  `Compare-RendererTimings.ps1` derives its required Rust passes from `name()` and must skip the two deferred-only
-  names, as it skips `OcclusionCull`.
+  `Compare-RendererTimings.ps1` derives its required Rust passes from `name()` and must treat `GBuffer`,
+  `DeferredLighting` and `Clouds` as optional, as it does `OcclusionCull`: a default `dump_gpu_timings` run draws
+  forward without clouds, so it reports none of the three.
 - `editor_snapshot` takes a `deferred` shot option.
 - Tests: `tests/deferred.rs` (parity on the shadowed plane, with a baked environment, under punctual lights, on MASK
   and BLEND, on a transformed texture, on an emissive strength of 3 and on a mirrored instance; shadows landing

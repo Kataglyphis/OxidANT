@@ -69,5 +69,10 @@ web-sys = { version = "0.3", features = [
 name = "dump_gpu_timings"
 test = true
 
+# Its shot camera has a unit test.
+[[example]]
+name = "editor_snapshot"
+test = true
+
 [lints]
 workspace = true

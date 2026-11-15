@@ -97,16 +97,19 @@ fn file_name(spec: &str) -> String {
     format!("editor-{safe}.png")
 }
 
-/// `now_s` runs on across shots, so the frame clock never steps back.
-fn render(app: &mut StudioApp, shot: &Shot, path: &Path, now_s: &mut f64) -> anyhow::Result<()> {
+/// The shot's pitch and zoom applied to the host's start view, so no shot inherits the last one's.
+fn aim(camera: &mut OrbitCamera, start: &OrbitCamera, shot: &Shot) {
+    camera.pitch_deg = shot.pitch.unwrap_or(start.pitch_deg);
+    camera.radius = start.radius * shot.zoom;
+}
+
+/// `host.now_s` runs on across shots, so the frame clock never steps back.
+fn render(app: &mut StudioApp, host: &mut Host, shot: &Shot, path: &Path) -> anyhow::Result<()> {
     app.editor_mut().select(shot.object);
     app.renderer.raster_path = shot.path;
     app.editor_mut().set_visible(!shot.hidden);
     app.renderer.clouds.enabled = shot.cloudy;
-    if let Some(pitch) = shot.pitch {
-        app.camera.pitch_deg = pitch;
-    }
-    app.camera.radius *= shot.zoom;
+    aim(&mut app.camera, &host.start, shot);
     if shot.about {
         app.editor_mut().show_about();
     } else {
@@ -117,11 +120,11 @@ fn render(app: &mut StudioApp, shot: &Shot, path: &Path, now_s: &mut f64) -> any
         let frame = OffscreenFrame {
             size_px: shot.size,
             pixels_per_point: shot.scale,
-            now_s: *now_s,
+            now_s: host.now_s,
             events: Vec::new(),
         };
         pixels = app.render_offscreen(&frame)?.0;
-        *now_s += 1.0 / 60.0;
+        host.now_s += 1.0 / 60.0;
     }
     let [width, height] = shot.size;
     image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)?;
@@ -131,6 +134,12 @@ fn render(app: &mut StudioApp, shot: &Shot, path: &Path, now_s: &mut f64) -> any
         shot.scale
     );
     Ok(())
+}
+
+/// One host's clock and the view it opened on.
+struct Host {
+    now_s: f64,
+    start: OrbitCamera,
 }
 
 /// The scenes the two hosts open before their first shot: the viewer's model and the browser's Colosseum file.
@@ -162,15 +171,17 @@ fn main() -> anyhow::Result<()> {
     };
     std::fs::create_dir_all(&out_dir)?;
     // Each host keeps its own clock, so its frame history never sees the other's frames.
-    let mut hosts: [Option<(StudioApp, f64)>; 2] = [None, None];
+    let mut hosts: [Option<(StudioApp, Host)>; 2] = [None, None];
     for spec in specs {
         let shot = parse(spec)?;
-        let host = &mut hosts[usize::from(shot.web)];
-        if host.is_none() {
-            *host = Some((studio(shot.web, &models)?, 0.0));
+        let slot = &mut hosts[usize::from(shot.web)];
+        if slot.is_none() {
+            let app = studio(shot.web, &models)?;
+            let start = app.camera.clone();
+            *slot = Some((app, Host { now_s: 0.0, start }));
         }
-        let (app, now_s) = host.as_mut().expect("built above");
-        render(app, &shot, &out_dir.join(file_name(spec)), now_s)?;
+        let (app, host) = slot.as_mut().expect("built above");
+        render(app, host, &shot, &out_dir.join(file_name(spec)))?;
     }
     Ok(())
 }
@@ -237,5 +248,23 @@ fn open_web(app: &mut StudioApp, path: Option<&Path>) {
         .position(|entry| entry.display == WEB_COLOSSEUM.0);
     if let (Some(row), Some(_)) = (colosseum, path) {
         app.open_entry(row);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_shot_aims_from_the_start_view_not_the_last_shot() {
+        let start = OrbitCamera::default();
+        let mut camera = start.clone();
+        for spec in ["8x8@1,zoom=2,pitch=10", "8x8@1,zoom=2"] {
+            aim(&mut camera, &start, &parse(spec).expect("a valid shot"));
+            assert_eq!(camera.radius, start.radius * 2.0, "{spec}");
+        }
+        assert_eq!(camera.pitch_deg, start.pitch_deg, "the pitch carried over");
+        aim(&mut camera, &start, &parse("8x8@1").expect("a valid shot"));
+        assert_eq!(camera.radius, start.radius, "the zoom carried over");
     }
 }

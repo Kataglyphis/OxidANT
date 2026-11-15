@@ -6,7 +6,8 @@ use glam::Vec3;
 use super::super::{EditorContext, RendererSettings};
 use crate::render::forward::CASCADE_COUNT;
 use crate::render::shadow_settings::{
-    ShadowSettings, MAX_PCF_RADIUS, SHADOW_DISTANCE_RANGE, SHADOW_MAP_RESOLUTIONS,
+    nearest_resolution, ShadowSettings, MAX_PCF_RADIUS, SHADOW_DISTANCE_RANGE,
+    SHADOW_MAP_RESOLUTIONS,
 };
 use crate::ui::palette as pal;
 use crate::ui::theme;
@@ -38,12 +39,16 @@ fn shadows(ui: &mut Ui, shadows: &mut ShadowSettings) {
     enabled_ui(ui, shadows.enabled, |ui| {
         let tooltip = "Texels per side of each cascade's map";
         property_row(ui, "Resolution", Some(tooltip), |ui| {
+            // The size the renderer draws; an unlisted value is written over only by a click.
+            let drawn = nearest_resolution(shadows.resolution);
             let mut index = SHADOW_MAP_RESOLUTIONS
                 .iter()
-                .position(|texels| *texels == shadows.resolution)
+                .position(|texels| *texels == drawn)
                 .unwrap_or(2);
             let response = Segmented::new(&RESOLUTION_LABELS).show(ui, &mut index);
-            shadows.resolution = SHADOW_MAP_RESOLUTIONS[index];
+            if response.changed() {
+                shadows.resolution = SHADOW_MAP_RESOLUTIONS[index];
+            }
             response
         });
         let tooltip = "Shadow maps along the view; more keep near shadows sharp";

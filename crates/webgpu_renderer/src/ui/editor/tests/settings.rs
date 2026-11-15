@@ -33,6 +33,19 @@ fn collect_circles(shape: &egui::Shape, knobs: &mut Vec<Pos2>) {
     }
 }
 
+/// Showing the tab leaves an unlisted resolution alone; the renderer draws its nearest listed size, 512.
+#[test]
+fn the_sun_tab_does_not_rewrite_an_unlisted_shadow_resolution() {
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.settings.shadows.resolution = 600;
+    studio.editor.select(SceneObject::Sun);
+    studio.frame(Vec::new());
+    studio.frame(Vec::new());
+    assert_eq!(studio.settings.shadows.resolution, 600);
+    click_text(&mut studio, "1024");
+    assert_eq!(studio.settings.shadows.resolution, 1024);
+}
+
 #[test]
 fn the_shadows_section_writes_every_cpp_control_and_its_switch_disables_them() {
     let mut studio = Harness::new((1600.0, 900.0), 1.0);

@@ -796,3 +796,34 @@ fn a_shader_reload_rebuilds_the_deferred_pipelines_or_keeps_them() {
         "the refused reload changed the frame"
     );
 }
+
+/// Deferred builds lazily, yet a reload before its first frame still refuses a module missing its entry points.
+#[test]
+fn a_reload_before_the_first_deferred_frame_still_checks_the_deferred_entry_points() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let shipped = ShaderSources::shipped();
+    let mut renderer = ForwardRenderer::new(&gpu, W, H);
+    renderer.upload_scene(&gpu, &scene("cube_on_plane.gltf"));
+    let camera = top_down(6.0, 55.0);
+    frame(&gpu, &mut renderer, RasterPath::Forward, &camera);
+    let renamed =
+        (shipped.forward).replace("fn fs_deferred_lighting(", "fn fs_deferred_lighting_gone(");
+    let broken = ShaderSources {
+        forward: &renamed,
+        ..shipped
+    };
+    assert!(
+        renderer.reload_shaders(&gpu, &broken).is_err(),
+        "a forward-only renderer must refuse a module without the deferred lighting entry point"
+    );
+    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let deferred = frame(&gpu, &mut renderer, RasterPath::Deferred, &camera);
+    let error = pollster::block_on(scope.pop());
+    assert!(
+        error.is_none(),
+        "the first deferred frame failed: {error:?}"
+    );
+    assert!(mean_luma(&deferred) > 0.0, "the deferred frame is black");
+}

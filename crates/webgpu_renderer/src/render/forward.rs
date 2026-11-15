@@ -68,7 +68,8 @@ pub const SHADOW_MAP_SIZE: u32 = 2048;
 /// The most cascades, the C++ `MAX_CASCADES`; [`ShadowSettings::cascade_count`] renders 1 to this many.
 pub const CASCADE_COUNT: usize = 3;
 
-/// The WGSL a shader reload rebuilds every pipeline from, one module per generated file in `src/shaders`.
+/// The WGSL a shader reload rebuilds the scene, shadow, sky, deferred and cloud pipelines from.
+/// The tonemap, bloom, SSAO, histogram and depth-resolve passes keep the WGSL the crate was built with.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug)]
 pub struct ShaderSources<'a> {
@@ -524,9 +525,8 @@ impl ForwardRenderer {
             &self.shadow.masked_pipeline_layout,
         );
         let sky = sky::create_sky_pipeline(device, &sky_shader, &self.sky.pipeline_layout);
-        // In the scope too, so a broken deferred entry point keeps the old pipelines as well.
-        let deferred =
-            (self.deferred.as_ref()).map(|_| self.build_deferred(device, &shader, &sky_shader));
+        // Even before deferred first runs: its pipelines are built lazily, outside any error scope.
+        let deferred = self.build_deferred(device, &shader, &sky_shader);
         // Even with clouds off: a cloud shader that cannot build is refused now, not on the first cloud frame.
         let clouds = CloudPipelines::new(device, sources.cloud_march, sources.cloud_noise);
         if let Some(err) = pollster::block_on(error_scope.pop()) {
@@ -541,7 +541,9 @@ impl ForwardRenderer {
         self.shadow.caster_bundles = None;
         self.sky.pipeline = sky;
         self.sky.shader = sky_shader;
-        self.deferred = deferred;
+        if self.deferred.is_some() {
+            self.deferred = Some(deferred);
+        }
         self.cloud_pass.replace_pipelines(device, clouds);
         Ok(())
     }

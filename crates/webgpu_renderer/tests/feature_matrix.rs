@@ -555,9 +555,9 @@ fn passes_on(path: RasterPath) -> Vec<&'static str> {
         .collect()
 }
 
-/// With every feature on at once, each path reports each pass it runs once, in record order.
+/// With every feature on, each path reports exactly the passes it runs; the list keeps `ALL` order, not record order.
 #[test]
-fn every_pass_each_path_runs_is_timed_once_with_every_feature_on() {
+fn each_path_reports_exactly_the_passes_it_runs_with_every_feature_on() {
     let mut names: Vec<&str> = TimedPass::ALL.iter().map(|pass| pass.name()).collect();
     let mut labels: Vec<&str> = TimedPass::ALL.iter().map(|pass| pass.label()).collect();
     for list in [&mut names, &mut labels] {
