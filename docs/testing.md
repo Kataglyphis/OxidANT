@@ -159,7 +159,7 @@ tests do.
 
 ## The GPU tests must render
 
-The `crates/webgpu_renderer` headless golden tests (about 170) need a GPU adapter and
+The `crates/webgpu_renderer` headless golden tests (about 180) need a GPU adapter and
 **silently skip without one**: `GpuContext::headless_or_skip()` returns `None`.
 `KATAGLYPHIS_REQUIRE_GPU=1` makes it panic instead, so a green run means they rendered.
 Every CI lane that renders sets it: the Linux lanes render on the image's software Vulkan
@@ -190,7 +190,7 @@ that repeats a `@location`, which naga accepts and Tint, the browsers' WGSL comp
   `crates/media/tests/capture_test.rs` (a `videotestsrc` pipeline and camera
   enumeration); `crates/inference/tests/` (the real model on both backends, the fallback,
   the load errors); `crates/burn_demos/tests/` (each demo's result, the detector demo on the
-  real model); and the renderer's NN binaries under `crates/webgpu_renderer/tests/`, where
+  real model); and the renderer's 34 binaries under `crates/webgpu_renderer/tests/`, where
   `feature_matrix.rs` runs the shadow settings, the cube skybox, the clouds, the model transform and
   frustum culling on both raster paths and in both traced modes.
 - Property-based (fuzz) tests: [proptest](https://proptest-rs.github.io/proptest/)

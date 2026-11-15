@@ -57,8 +57,8 @@ licence from their rights holder and a row there first.
 a 128³ noise volume generated once, then per frame a ray march through an
 axis-aligned box (Offset, Scale × Density × 10) with a light march toward the
 sun, Henyey-Greenstein phase and powder term. It stops at the single-sample scene
-depth either raster path leaves, and the tonemap composites it in linear HDR, the
-same over sky and geometry. Off by default (`ForwardRenderer::clouds`), with the C++
+depth either raster path leaves, or in a traced frame at the primary hit's depth the
+kernel writes, and the tonemap composites it in linear HDR, the same over sky and geometry. Off by default (`ForwardRenderer::clouds`), with the C++
 ranges in the Sky tab.
 
 **Post** — 4× MSAA on the forward path (deferred renders one sample, so its
@@ -74,7 +74,9 @@ furnace), over a CPU-built, binned-SAH BVH in two levels (repeated and moving me
 instanced) that compute kernels traverse natively and in the browser, alpha-testing MASK
 materials; the scene's materials and textures as one table and two texture arrays. Built the
 first time a traced mode is picked, off the frame (the full 6 M-triangle Colosseum in about
-2 s natively); the frame rasters meanwhile: [`docs/tracer.md`](docs/tracer.md).
+2 s natively); the frame rasters meanwhile. A ray-traced miss shows the sky pass (the cube
+map, or the navy with it off), the clouds march to the traced depth, and the model transform,
+animated nodes and `set_instances` move the traced instances: [`docs/tracer.md`](docs/tracer.md).
 
 **Runtime** — GPU skinning, morph-target and TRS animation playback, GPU
 instancing, a model transform over the whole scene (the C++ Model tab's), frustum
@@ -103,8 +105,10 @@ keeps the library. The inspector's C++ rows are live: the Sun's SHADOWS section,
 Model tab's transform, the skybox switch and the Sky tab's CLOUDS section (each also an
 eye in the outliner), frustum culling (also in the Render menu and the profiler's
 Visibility tab, with the C++ counts) and the raster path (also the Render menu's radios,
-named by the viewport chip); a scene's start view sets the shadow distance to twice its
-distance to the target, never under the C++ 60 m. Ray and path tracing follow.
+named by the viewport chip while the frame rasters); a scene's start view sets the shadow
+distance to twice its distance to the target, never under the C++ 60 m. The menu bar's
+switch, the Render menu and the Renderer tab pick raster, ray or path tracing, and the
+Renderer tab's PATH TRACING rows set its samples, bounces and white furnace.
 
 **Camera** — the C++ engine's fly camera (`scene::fly`) and the orbit controller
 share one `OrbitCamera`: flying moves eye and target together and turns about the
@@ -169,4 +173,6 @@ GPU-timing tests:
 [`docs/testing.md` § The GPU tests must render](../../docs/testing.md#the-gpu-tests-must-render).
 `tests/mirrored.rs` holds mirrored (negative-determinant) nodes and instances, and
 double-sided back faces, to the shading of their unmirrored originals. `tests/traced_modes.rs`
-holds the traced modes to the C++ goldens and the path tracer's white furnace to analytic values.
+holds the traced modes to the C++ goldens and the path tracer's white furnace to analytic values;
+`tests/feature_matrix.rs` runs the shadow settings, skybox, clouds, model transform and culling
+on both raster paths and in both traced modes.

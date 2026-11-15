@@ -153,12 +153,14 @@ build through `ForwardRenderer`; `limits.rs` the browser and native limits.
 ## The modes
 
 `ForwardRenderer::render_mode` picks Raster, RayTraced or PathTraced; `drawn_mode()` says what
-a frame draws: the pick once the traced scene is on the GPU, raster until then. A traced frame
-runs its kernel (`shaders/tracer/traced.slang`) over 256 x 256 tiles into a per-pixel
-accumulation buffer, then `trace_resolve.slang` copies that into the HDR target, so exposure,
-bloom and the tonemap run as after raster. The shadow cascades, the forward pass, the depth
-resolve, occlusion culling and SSAO do not run (the tonemap's SSAO weight is 0), and the
-primitive and shadow-caster counts read 0, as in the C++ engine's traced frames. Camera rays run
+a frame draws: the pick once the traced scene is on the GPU, raster until then, on whichever
+`raster_path` is set. A traced frame runs its kernel (`shaders/tracer/traced.slang`) over
+256 x 256 tiles into a per-pixel accumulation buffer, then `trace_resolve.slang` copies that into
+the HDR target, so exposure, bloom, the clouds and the tonemap run as after raster. The shadow
+cascades, either raster path (the forward pass and depth resolve, or the G-buffer and deferred
+lighting), occlusion culling and SSAO do not run (the tonemap's SSAO weight is 0), and the
+primitive, frustum-culling and shadow-caster counts read 0 / 0, as in the C++ engine's traced
+frames. Camera rays run
 from the near to the far plane through `inverse(view_proj)`: the raster camera, the docked
 viewport's lens shift included. Code: `src/render/tracer/modes/`, `src/render/forward/traced.rs`;
 shading shared by both kernels: `trace_shading.slang`; the estimator: `path_estimator.slang`.
@@ -167,7 +169,10 @@ shading shared by both kernels: `trace_shading.slang`; the estimator: `path_esti
 times vertex colour, the metallic-roughness and normal maps at level 0, the forward pass's
 `brdf_direct` (GGX and Lambert) lit by the sun through one shadow ray (any-hit, MASK
 alpha-tested), plus emission. An unlit material returns its albedo. No ambient term and no
-punctual lights, as the C++ engine has neither. A miss shows the raster sky with its sun disk.
+punctual lights, as the C++ engine has neither. A miss is left to the sky pass, drawn in the
+resolve's render pass against the traced depth: the cube map, the C++ navy with the skybox
+switched off, or the procedural sky and its sun disk without a cube map, as raster draws it
+(the C++ ray-traced mode shows its skybox).
 
 **Path traced**, the estimator of BeschleunigerBallett's `path_tracing.slang`: `samples_per_pixel`
 (1-64, default 8) paths a pixel and frame of at most `max_bounces` (1-16, default 8) segments; a
@@ -176,7 +181,7 @@ bounce that samples the GGX lobe (visible normals) or the cosine lobe by the lob
 and divides by the mixture's density; Russian roulette from the fourth segment, survival in
 0.05-0.95; an unlit surface ends its path at its albedo; emission is added before the surface
 absorbs. Metallic is the factor times the texture, so an untextured factor counts (the C++
-kernel once applied it with a texture only). A camera ray that misses sees the raster sky, sun
+kernel once applied it with a texture only). A camera ray that misses sees the procedural sky, sun
 disk included. A bounce that misses gets the sky's light as the raster's ambient term does: the
 gradient times the ambient strength (`light_dir_ambient.w`) and the environment's intensity,
 without the disk, which NEE brings. So the path tracer lights a scene as raster does, plus the
@@ -186,9 +191,18 @@ bounces and the sky's occlusion.
 no read-write `rgba32f` storage texture. It starts over when `AccumulationKey` changes (the
 view-projection, eye and output size; the sun's direction, colour and intensity; the sky's light;
 the settings; the tracer's generation, which a build and every instance move bump), on `reset_accumulation()`,
-and after any frame that is not path traced. A material changes only with a new scene, which
-rebuilds the traced one. The RNG stream of a dispatch is its pixel index plus the samples
-accumulated before it times 2654435769, the C++ seed with samples for frames.
+after a shader reload, and after any frame that is not path traced. A material changes only with
+a new scene, which rebuilds the traced one. The RNG stream of a dispatch is its pixel index plus
+the samples accumulated before it times 2654435769, the C++ seed with samples for frames.
+
+**Depth and clouds.** Both kernels write the primary hit's NDC depth, through the raster's
+view-projection, into the accumulation's alpha, 1 where nothing is hit: the ray tracer its one
+ray's hit, the path tracer an unjittered ray through the pixel centre on each frame's first sample
+chunk (`path_tracing.slang`'s `primary_hit_depth`). The resolve writes it into the single-sample
+depth target (`frag_depth`, compare always), which the clouds march to as they march to either
+raster path's depth: the C++ engine's `cloudDepthSourceForThisFrame` and `bindCloudSceneDepth`.
+It rides the accumulation, so no storage binding is added to the limits above. On a simple scene
+it matches the deferred depth within 4.2e-7 (`tests/feature_matrix.rs`).
 
 **White furnace.** `TraceSettings::furnace` (sky radiance, metallic, roughness) makes every
 surface white with that metallic and roughness, without emission or sun, under a uniform sky. A
@@ -203,14 +217,27 @@ Each kernel compiles the first time its mode draws: SwiftShader, which backs Web
 GPU-less Chrome, takes about two minutes for the path-tracing kernel and three seconds for the
 ray-tracing one; lavapipe takes about a second.
 
-**Animation.** The renderer moves the traced instances of rigid animated nodes to the raster's
-poses each frame (`set_primitive_transforms`), which restarts the mean; skins and morph targets
-trace at their first pose.
+**Animation and placement.** The renderer moves the traced instances of rigid animated nodes to
+the raster's poses each frame (`set_primitive_transforms`), which restarts the mean; skins and
+morph targets trace at their first pose. The model transform is the tracer's root
+(`Tracer::set_root_transform` on every change); the tracer keeps it, so a transform set before
+the build applies to the built scene, and an upload resets it with the renderer's.
+`ForwardRenderer::set_instances` reaches `Tracer::set_instances`: a build takes the transforms as
+explicit instances (a running one starts over), and a built scene moves them in place when it
+traces the primitive as that many instances. A new count cannot change the uploaded buffers'
+layout, and the CPU scene is gone after the build, so the old instances stay traced until the next
+upload: `Tracer::instances_current()` turns false and the tracer warns once.
 
-**On purpose unlike the C++ engine:** misses see the Rust procedural sky (C++: the skybox in the
-ray-traced mode, an RTIOW gradient at half intensity in the path-traced one, whose raster has no
-ambient term to match); offsets and side tests take the triangle's face normal (C++: the
-interpolated one); camera rays clip to the near and far planes as raster does (C++: 0.001-10000
+**Shader reload.** F5's `ForwardRenderer::reload_shaders` builds both kernels, the resolve and
+the ray tracer's one-sample sky from `ShaderSources::traced`, `trace_resolve` and `sky` inside its
+error scope, though they otherwise compile on their mode's first frame: a module the device
+refuses keeps the old pipelines, an accepted one replaces them and restarts the mean.
+
+**On purpose unlike the C++ engine:** a path-traced bounce that misses gets the renderer's sky
+gradient times the ambient strength and the environment's intensity (C++: an RTIOW gradient at
+half intensity, whose raster has no ambient term to match), and a path-traced camera miss sees
+that procedural sky with its sun disk, not the cube map; offsets and side tests take the
+triangle's face normal (C++: the interpolated one); camera rays clip to the near and far planes as raster does (C++: 0.001-10000
 from the eye, which bounces keep). The whole frame is traced, docks included, as in C++.
 
 Measured on lavapipe, the 8-core arm64 host under WSL, shared with other builds:
@@ -230,7 +257,13 @@ post chain (a sky of 2 at -1 EV must give the C++ 231.6 within 3 levels, 98 % of
 0.001), accumulation that settles, every reset premise, a MASK card's half shadow in both modes,
 the untextured metallic factor, unlit albedo in every mode, the traced shadow against the
 cascades' (IoU over 0.75; measured 0.98) and black, the lens shift, the raster round trip, and
-that no raster pass runs or is timed. The modes' pure parts are unit-tested in place; the Slang
+that no raster pass runs or is timed, and that a shader reload rebuilds both kernels or keeps them.
+`tests/feature_matrix.rs` runs the traced modes over the deferred path beside both raster paths:
+the clouds stop at a wall in front (0 wall pixels change in either mode while 10743 and 10748 of
+13332 sky pixels do), the traced depth against the raster one, the cube map, navy and procedural
+sky on a ray-traced miss, the model transform and `set_instances` moving the traced cube as raster
+moves it, the passes each mode times, and raster frames bit-identical after a trip through both
+modes. The modes' pure parts are unit-tested in place; the Slang
 uniforms and workgroup size are pinned in `tests/tracer.rs`. Tint (headless Chrome 157 on
 SwiftShader) compiles every traced kernel and the resolve; no browser has rendered a traced
 frame yet.

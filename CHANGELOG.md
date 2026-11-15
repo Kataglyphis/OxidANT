@@ -13,6 +13,57 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the tracer with the raster settings, deferred path and clouds)
+- **A traced frame replaces either raster path.** The deferred G-buffer and lighting passes sit beside the forward pass
+  and depth resolve inside the traced frame's skip, so a ray- or path-traced pick over `RasterPath::Deferred` runs no
+  raster pass; `raster_path` applies while the frame rasters, and the chip, Renderer tab and Render menu name or
+  enable it only then (`Raster  ·  Deferred  ·  BVH 42 %` while a traced pick waits).
+- **The clouds march to the traced depth.** Both kernels write the primary hit's NDC depth into the accumulation's
+  alpha (the ray tracer its hit, the path tracer an unjittered ray through the pixel centre, as the C++
+  `raytrace.rgen.slang` and `path_tracing.slang` write theirs; 1 on a miss), and the resolve writes it into the
+  single-sample depth target, so the clouds stop at traced geometry as they stop at raster's: the C++ engine's
+  `cloudDepthSourceForThisFrame`. No storage binding is added. Before, a traced frame's clouds marched to whatever
+  depth the last raster frame left, or the cleared target, and drew over a wall in front of them.
+- **A ray-traced miss shows the sky pass.** The resolve's render pass draws the one-sample sky against the traced
+  depth: the DOOM2016 cube map, the navy with the skybox off, or the procedural sky, as raster does; the path tracer
+  keeps its own sky term, as the C++ one does.
+- **The model transform and `set_instances` move the traced scene.** `Tracer` keeps the root
+  (`set_root_transform` on every change, kept across a build, reset by an upload) and the explicit instances, which a
+  build instances and a built scene moves in place when the count matches; each bumps the generation, so the path
+  tracer's mean starts over. A new instance count waits for the next upload (`Tracer::instances_current`).
+- **F5 rebuilds the traced kernels.** `ShaderSources` gains `traced` and `trace_resolve` (six files);
+  `reload_shaders` builds both kernels, the resolve and the ray tracer's sky inside its error scope, though they
+  otherwise compile lazily, so a module the device refuses keeps the old ones.
+- **A traced frame reads 0 / 0 in the Visibility tab** (`primitive_stats` too, as the C++ engine zeroes its meshes).
+- **The traced shadow golden compares at full shadow strength**, as the other shadow goldens do since the C++
+  default became 0.65 (IoU 0.935 against the view-fitted cascades).
+
+### Added (2026-11-15, the tracer with the raster settings, deferred path and clouds)
+- `tests/feature_matrix.rs` over the traced modes, picked over the deferred path (lavapipe, structural): clouds on in
+  both modes leave a wall in front untouched (0 pixels) while 10743 and 10748 of 13332 sky pixels change, and the march
+  over the open sky is bit-identical to forward's; the traced depth matches the deferred one within 4.2e-7 with no
+  pixel disagreeing on coverage (108 against forward's four-sample resolve, all on silhouettes); a ray-traced miss
+  shows each cube face, the navy and the procedural sky as raster does, a path-traced one its own gradient; the model
+  transform set before the build and changed after it moves the traced cube by raster's shift (0.13 px apart) and
+  restarts the mean; `set_instances` before the build and in place after it moves the traced cube as raster's, and a
+  new count is flagged; each raster path and traced mode times exactly its passes with every feature on; raster frames
+  on both paths are bit-identical after a trip through both modes, whose frames count 0 / 0.
+- `tests/traced_modes.rs`: a reload refuses a kernel or resolve without its entry point before the path kernel ever
+  compiled, keeps the frame, draws an edited kernel and comes back with the shipped one.
+- `app::frame`: across a switch to path tracing the scene rect stays put for 40 frames while the profiler drops the
+  raster rows, and the mean grows by one sample each frame (the scrolling pass list already keeps the dock's height).
+- `ForwardRenderer::read_depth_target` (tests and diagnostics), `traced_kernel_compiled`; `Tracer::set_instances`,
+  `root_transform`, `instances_current`; `TraceScene::set_instance_extras`; `editor_snapshot` takes `spp=N` and
+  `frames=N`.
+
+### Changed (2026-11-15, the tracer with the raster settings, deferred path and clouds)
+- `TimedPass::ALL` lists 14 passes, the raster frame's in record order, then `RayTrace`, `PathTrace` and
+  `TraceResolve` (indices 11 to 13, profiler labels "Ray trace", "Path trace", "Trace resolve"); `name()` stays first
+  and unchanged. BeschleunigerBallett's `Compare-RendererTimings.ps1` must treat `GBuffer`, `DeferredLighting`,
+  `Clouds`, `RayTrace`, `PathTrace` and `TraceResolve` as optional, as it does `OcclusionCull`.
+- `RendererSettings` carries `render_mode`, `trace` and `reset_accumulation` through `Default`, `of` and `apply`;
+  `TraceFrameUniforms` gains `view_proj`; the render graph's traced frames keep the cloud rows.
+
 ### Fixed (2026-11-15, the raster settings, deferred path and clouds together)
 - **The deferred path follows the raster settings.** The settings' shadow code (PCF radius, strength on the sun
   term, the C++ bias and its per-cascade scale, selection by view depth) lives in `forward_lighting.slang`'s
@@ -126,8 +177,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   existing arms unchanged. The render graph's `deferred_frame_graph` swaps the forward and depth-resolve rows for
   them, with a `GBuffer` resource. `dump_gpu_timings --deferred` times the deferred path; BeschleunigerBallett's
   `Compare-RendererTimings.ps1` derives its required Rust passes from `name()` and must treat `GBuffer`,
-  `DeferredLighting` and `Clouds` as optional, as it does `OcclusionCull`: a default `dump_gpu_timings` run draws
-  forward without clouds, so it reports none of the three.
+  `DeferredLighting`, `Clouds`, `RayTrace`, `PathTrace` and `TraceResolve` as optional, as it does `OcclusionCull`:
+  a default `dump_gpu_timings` run draws forward raster without clouds, so it reports none of the six.
 - `editor_snapshot` takes a `deferred` shot option.
 - Tests: `tests/deferred.rs` (parity on the shadowed plane, with a baked environment, under punctual lights, on MASK
   and BLEND, on a transformed texture, on an emissive strength of 3 and on a mirrored instance; shadows landing
