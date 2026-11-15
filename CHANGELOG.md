@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the app's camera session ends when the camera goes silent)
+- `kataglyphis_media`'s frame slot stamps the session's start and each frame; `take_latest` closes it with
+  `no frame for 10.0 s` (`capture::STALL_AFTER`, the same 10 s as ObservANT) once nothing came for that long. The app
+  engine's loop waited on a silent camera forever; it now ends with that reason, which the app shows. Tests: a launch
+  line that never sends and one whose valve closes after a frame, in the media crate and through the engine
+  (`FrameSlot::set_stall_after`, hidden, shortens the time).
+
 ### Added (2026-11-15, mutation recipes for the detector's pre- and postprocessing)
 - Five `consumer.oxidant-inference-*` recipes run `cargo test -p kataglyphis_inference --lib` against red and blue
   swapped, the score threshold ignored, a NaN corner kept, the corners unclamped and one scale for both axes; each

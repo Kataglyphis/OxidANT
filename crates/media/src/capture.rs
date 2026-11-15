@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use gstreamer as gst;
@@ -54,12 +54,18 @@ pub struct VideoFrame {
     pub sequence: u64,
 }
 
+/// A camera that delivers no frame for this long counts as gone, as ObservANT's capture does.
+pub const STALL_AFTER: Duration = Duration::from_secs(10);
+
 struct SlotInner {
     latest: Mutex<Option<VideoFrame>>,
     signal: Condvar,
     closed: AtomicBool,
     produced: AtomicU64,
     error: Mutex<Option<String>>,
+    /// The session's start, then each frame's arrival: a source that stops sending without an error or an end.
+    last_frame: Mutex<Instant>,
+    stall_after: Mutex<Duration>,
 }
 
 /// Runs on the capture thread for every frame, before a consumer can take it.
@@ -80,7 +86,29 @@ impl FrameSlot {
                 closed: AtomicBool::new(false),
                 produced: AtomicU64::new(0),
                 error: Mutex::new(None),
+                last_frame: Mutex::new(Instant::now()),
+                stall_after: Mutex::new(STALL_AFTER),
             }),
+        }
+    }
+
+    /// Shortens the stall for a test; not a camera setting.
+    #[doc(hidden)]
+    pub fn set_stall_after(&self, after: Duration) {
+        *self.inner.stall_after.lock().expect("frame slot poisoned") = after;
+    }
+
+    /// Closes the slot with `no frame for N s` once the last frame, or the start, is older than the stall.
+    fn fail_if_stalled(&self) {
+        let after = *self.inner.stall_after.lock().expect("frame slot poisoned");
+        let quiet = self
+            .inner
+            .last_frame
+            .lock()
+            .expect("frame slot poisoned")
+            .elapsed();
+        if quiet > after {
+            self.fail(format!("no frame for {:.1} s", after.as_secs_f64()));
         }
     }
 
@@ -98,6 +126,7 @@ impl FrameSlot {
     }
 
     fn publish(&self, frame: VideoFrame) {
+        *self.inner.last_frame.lock().expect("frame slot poisoned") = Instant::now();
         let mut slot = self.inner.latest.lock().expect("frame slot poisoned");
         *slot = Some(frame);
         self.inner.produced.fetch_add(1, Ordering::Relaxed);
@@ -129,8 +158,16 @@ impl FrameSlot {
             .clone()
     }
 
-    /// Takes the newest frame, waiting up to `timeout`; `None` on timeout or once closed.
+    /// Takes the newest frame, waiting up to `timeout`; `None` on timeout or once closed, and a stall closes it.
     pub fn take_latest(&self, timeout: Duration) -> Option<VideoFrame> {
+        let frame = self.wait_latest(timeout);
+        if frame.is_none() && !self.is_closed() {
+            self.fail_if_stalled();
+        }
+        frame
+    }
+
+    fn wait_latest(&self, timeout: Duration) -> Option<VideoFrame> {
         let mut slot = self.inner.latest.lock().expect("frame slot poisoned");
         loop {
             if let Some(frame) = slot.take() {
@@ -471,6 +508,40 @@ mod tests {
         // A stop afterwards keeps the reason the stream ended for.
         session.stop();
         assert_eq!(frames.error(), Some(reason));
+    }
+
+    /// A source that never sends, and one that stops: either closes the slot with the stall, as ObservANT's does.
+    #[test]
+    fn a_camera_that_sends_nothing_for_the_stall_time_ends_the_session() {
+        for (launch, frames_first) in [
+            ("videotestsrc is-live=true ! valve drop=true", false),
+            ("videotestsrc is-live=true ! valve name=gate", true),
+        ] {
+            let session = session(launch, None).unwrap();
+            let frames = session.frames();
+            frames.set_stall_after(Duration::from_millis(300));
+            if frames_first {
+                assert!(
+                    frames.take_latest(Duration::from_secs(20)).is_some(),
+                    "{launch}"
+                );
+                let gate = session.pipeline.by_name("gate").unwrap();
+                gate.set_property("drop", true);
+            }
+            let started = std::time::Instant::now();
+            wait_closed(&frames);
+            assert_eq!(
+                frames.error().as_deref(),
+                Some("no frame for 0.3 s"),
+                "{launch}"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "{launch}: {:?}",
+                started.elapsed()
+            );
+            session.stop();
+        }
     }
 
     #[test]

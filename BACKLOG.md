@@ -115,17 +115,14 @@ and the backlog is empty"; it was neither.
 
 - [ ] **Three camera pipelines, each with its own failure rules** (L, ★★). Audit 2026-11-12:
       `crates/media/src/capture.rs` (the Flutter engine), `crates/observant/src/capture.rs` and
-      `crates/gui/src/gui_wgpu/pipeline.rs` each open a camera and keep the newest frame. Only
-      ObservANT notices a stall: the engine's loop continues on a timeout
-      (`src/webcam_engine.rs`), and the wgpu GUI never reads its pipeline bus, the bug fixed in
-      `crates/media` on 2026-11-11. The three loops differ on purpose, so no shared worker.
-      Next, two steps. `kataglyphis_media` stamps the last frame time in the appsink callback
-      and fails the slot with `no frame for N s`, tested with a launch line that delivers
-      nothing. Then the wgpu GUI uses `CaptureSession` (`CaptureConfig` learns "size 0 means the
-      camera's own size"), which deletes the third pipeline and gives the GUI its errors.
-      ObservANT's pipeline stays in its crate. Guard: the media tests for end, error and stall,
-      and a source-reading test that only `crates/media` and `crates/observant` build an
-      appsink.
+      `crates/gui/src/gui_wgpu/pipeline.rs` each open a camera and keep the newest frame. The three loops differ on
+      purpose, so no shared worker. Step 1 is done (2026-11-15): `kataglyphis_media`'s frame slot stamps each frame
+      and closes with `no frame for 10.0 s` when the source goes silent, so the app's engine ends with that reason
+      instead of waiting (tests with a launch line that never sends and one whose valve closes). Left: the wgpu GUI
+      never reads its pipeline bus, the bug fixed in `crates/media` on 2026-11-11. Next: the wgpu GUI uses
+      `CaptureSession` (`CaptureConfig` learns "size 0 means the camera's own size"), which deletes the third
+      pipeline and gives the GUI its errors. ObservANT's pipeline stays in its crate. Guard: a source-reading test
+      that only `crates/media` and `crates/observant` build an appsink.
 
 - [ ] **`capture.rs` mixes the camera with pure logic** (M, ★). Audit 2026-11-12; its first half, `to_json` holding
       `detected` while it took other locks, is done (2026-11-15, a test that deadlocked on the old order). Left:

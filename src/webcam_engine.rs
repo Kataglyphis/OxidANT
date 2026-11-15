@@ -451,6 +451,15 @@ mod tests {
 
     /// A session over a launch line with `detect` in place of the model, and the events it sends.
     fn fake_session(launch: &str, detect: Detect) -> (WebcamEngine, Events) {
+        fake_session_stalling(launch, detect, kataglyphis_media::capture::STALL_AFTER)
+    }
+
+    /// As [`fake_session`], counting a source silent for `stall` as gone.
+    fn fake_session_stalling(
+        launch: &str,
+        detect: Detect,
+        stall: Duration,
+    ) -> (WebcamEngine, Events) {
         let (tx, rx) = mpsc::channel();
         let capture = CaptureSession::from_launch(
             launch,
@@ -463,6 +472,7 @@ mod tests {
             None,
         )
         .unwrap();
+        capture.frames().set_stall_after(stall);
         let inference = Inference {
             detect,
             backend: "fake",
@@ -512,6 +522,16 @@ mod tests {
             Box::new(|_, _, _, _, _| Ok(Vec::new())),
         );
         assert_eq!(ending(&engine, &events), "the camera stream ended");
+    }
+
+    #[test]
+    fn a_camera_that_goes_silent_ends_the_session_with_the_stall() {
+        let (engine, events) = fake_session_stalling(
+            "videotestsrc is-live=true ! valve drop=true",
+            Box::new(|_, _, _, _, _| Ok(Vec::new())),
+            Duration::from_millis(300),
+        );
+        assert_eq!(ending(&engine, &events), "no frame for 0.3 s");
     }
 
     #[test]
