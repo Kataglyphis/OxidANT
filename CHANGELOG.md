@@ -13,6 +13,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-15, the Colosseum releases are published)
+- AssetANT published `Colosseum-gltf-v1` and `Colosseum-web-v1`; both archives match the SHA-256 that
+  `resources/scenes/scenes.lock` pins, and `bash scripts/linux/fetch-models.sh --scenes --dest <dir>` unpacked both on
+  a clean cache (276 MiB and 59 MiB). The P0 backlog entry is gone, and the roadmap's demo-scene row is done.
+
 ### Fixed (2026-11-15, the traced modes' fallback)
 - **An output whose accumulation does not fit the device reports raster.** The frame rastered, but `drawn_mode()`
   still said traced, so the tonemap dropped SSAO and the chip, outliner and profiler named the traced mode. The fit is

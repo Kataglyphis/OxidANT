@@ -102,7 +102,7 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | ✅ Model picker UI | S | Dropdown done 2026-07-23: the web demo's `<select>` switches between five embedded scenes (`select_demo_scene`, the same swap path drag-and-drop uses). 2026-11-15: the editor's library lists them and the Colosseum, which `?scene-base=` may fetch from elsewhere; the `<select>` loads the same rows |
 | ✅ WebGPU-unsupported fallback page | S | Done 2026-07-18: `navigator.gpu` check with requirements + native command. 2026-11-15: also when `navigator.gpu` yields no adapter or device (the demo reports through the page's `webgpuDemoFailed` hook instead of panicking) |
 | WebGL fallback | M | wgpu's GL backend for older browsers with reduced effects; no Cargo feature (none in this workspace), so a runtime fallback when `navigator.gpu` yields no adapter |
-| 🟡 Demo scene: Colosseum | M | 2026-11-15: AssetANT's Colosseum (Sulo456, CC BY 4.0), converted from Blender: `Colosseum-gltf` (5.9 M triangles, the native viewer's default) and `Colosseum-web` (a 58 MiB GLB the browser demo fetches beside its page). `resources/scenes/scenes.lock` pins both, `fetch-models.sh --scenes` unpacks them; a load starts at `Kamera_Arena` (`scenes[0].extras.active_camera`) with near and far from the 8 km ground, and the status bar and About show `asset.copyright`. Open (P0 in [`BACKLOG.md`](../../../BACKLOG.md)): AssetANT publishing the two releases, whose URLs answer 404; BeschleunigerBallett's docs build copying `Colosseum-web.glb` beside the demo |
+| ✅ Demo scene: Colosseum | M | 2026-11-15: AssetANT's Colosseum (Sulo456, CC BY 4.0), converted from Blender: `Colosseum-gltf` (5.9 M triangles, the native viewer's default) and `Colosseum-web` (a 58 MiB GLB the browser demo fetches beside its page). `resources/scenes/scenes.lock` pins both, `fetch-models.sh --scenes` unpacks them; a load starts at `Kamera_Arena` (`scenes[0].extras.active_camera`) with near and far from the 8 km ground, and the status bar and About show `asset.copyright`. AssetANT publishes both (`Colosseum-gltf-v1`, `Colosseum-web-v1`), and BeschleunigerBallett's docs build stages `Colosseum-web.glb` beside the demo |
 
 ## Phase F — Engine architecture & tooling
 
@@ -134,5 +134,5 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 
 ## Order of work
 
-The open rows' work is sorted by priority in [`BACKLOG.md`](../../../BACKLOG.md): P0 the Colosseum releases,
-P1 a browser drawing the traced, deferred and cloud paths, then the P2 renderer entries.
+The open rows' work is sorted by priority in [`BACKLOG.md`](../../../BACKLOG.md): P1 a browser drawing the traced,
+deferred and cloud paths, then the P2 renderer entries.

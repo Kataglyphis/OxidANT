@@ -19,14 +19,6 @@ its open work is here.
 
 ## P0 — broken or blocking
 
-- [ ] **The default scene cannot be fetched: AssetANT has not published the two Colosseum releases**
-      (S, ★★★). `resources/scenes/scenes.lock` pins `Colosseum-gltf-v1` (the native viewer's default) and
-      `Colosseum-web-v1` (the browser demo's); both download URLs answered 404 on 2026-11-15, and only
-      `Colosseum-v1`, the Blender source, exists. So `fetch-models.sh --scenes` fails on a fresh clone and
-      neither shell opens the Colosseum. The owner publishes both from AssetANT with the archives whose SHA-256
-      the lock names; then BeschleunigerBallett's docs build copies `Colosseum-web.glb` beside the demo.
-      Done when `bash scripts/linux/fetch-models.sh --scenes` passes on a clean checkout.
-
 - [ ] **The NVIDIA packages have not run on a GPU they support** (S, ★★★). The Linux and Windows packages are built and
       passed on the CPU, and hosted runners have no GPU. Done on an RTX 30xx or newer when
       `compare_detector_parity.py` passes against the CPU and the profile shows the provider; the hub's
