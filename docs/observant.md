@@ -52,8 +52,9 @@ exits; a packager runs it once, and the server then sends those files as they ar
 intra-op threads beside the detector's two, laid over the model's `genai_config.json` at load; 0 leaves GenAI's
 own count, one per core. Nothing loads until the first question. `llm_idle_unload_s` (600) unloads
 `llm_model_dir`'s model after that many seconds without a question and the next question loads it again
-(about 0.6 s for SmolLM2-135M on a Pi 5); 0 keeps it loaded, and an endpoint holds nothing here (owner
-decision 2026-11-15). Without one configured both answer 503 and say which keys to set, and `/healthz`'s
+(a fresh CLI process that loads SmolLM2-135M and gives one token takes 0.7 s on a Pi 5, 1.3 s with a cold
+page cache, measured 2026-11-15); 0 keeps it loaded, and an endpoint holds nothing here (owner decision
+2026-11-15). `llm_timeout_s` (300, at least 1) bounds one answer, an endpoint's whole stream included. Without one configured both answer 503 and say which keys to set, and `/healthz`'s
 `ask` is false, which is what OmniAccelerANT's Stream page reads to offer questions.
 
 | Request | Answer |
@@ -69,9 +70,11 @@ decision 2026-11-15). Without one configured both answer 503 and say which keys 
 - **A day is local to the caller.** `tz_offset_min` (`tz`) is minutes east of UTC, default 0, within
   14 hours. A daylight-saving change inside a day is not modelled. `language` is `de` or `en`.
 - **One answer at a time.** A second question while one runs gets 503. A client that leaves, and
-  the 300 s limit (504), cancel the answer after its current token. A failure of the model or
-  endpoint is a 502 carrying its message, never an empty answer; a model that returns no words
-  is a 502 naming its finish reason. A body that does not arrive within 10 s is a 408.
+  `llm_timeout_s` (504), cancel the answer after its current token. An endpoint that does not connect
+  within 5 s or stays silent for 120 s is a 504 too, carrying its message. Invalid settings are a 400,
+  a model, library or provider that cannot load a 503, and any other failure of the model or endpoint
+  a 502 carrying its message, never an empty answer; a model that returns no words is a 502 naming
+  its finish reason. A body that does not arrive within 10 s is a 408.
   A panic inside an answer is a 502 as well when the service is built with its own profile,
   `cargo build --profile observant -p kataglyphis_observant` (release with `panic = "unwind"`);
   a plain `--release` build aborts on any panic, and systemd restarts the camera after 5 s.

@@ -32,6 +32,7 @@ const QUESTION_LIMIT: usize = 1000;
 /// Days of figures `/ask` hands the model, today included.
 const ASK_DAYS: u64 = 7;
 const LONGEST_OFFSET_MIN: i32 = 14 * 60;
+/// The default of `llm_timeout_s`.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
 
 const SYSTEM: &str = "You answer questions about a camera's visit log. Use only these facts, and say so when they do not answer the question.";
@@ -107,15 +108,21 @@ impl Assistant {
             return None;
         }
         let (provider, threads) = (config.llm_provider.clone(), config.llm_threads);
+        let limit = Duration::from_secs(u64::from(config.llm_timeout_s));
         // An endpoint holds no memory here; only a model in this process is worth unloading (owner decision).
         let idle_unload = (model_dir.is_some() && config.llm_idle_unload_s > 0)
             .then(|| Duration::from_secs(u64::from(config.llm_idle_unload_s)));
         let open: Opener = Box::new(move || match &model_dir {
             Some(dir) => local_backend(dir, &provider, threads),
-            None => Ok(Box::new(choice.resolve()?)),
+            None => {
+                let mut endpoint = choice.resolve()?;
+                endpoint.timeout = limit;
+                Ok(Box::new(endpoint))
+            }
         });
         let mut assistant = Self::with_opener(open, config.llm_max_new_tokens);
         assistant.idle_unload = idle_unload;
+        assistant.timeout = limit;
         Some(assistant)
     }
 
@@ -411,10 +418,11 @@ fn refused(refusal: Refusal) -> Response<Body> {
     }
 }
 
-/// The caller's mistake is 400, a model that cannot load 503, and everything past it, the endpoint included, 502.
+/// The caller's mistake is 400, a model that cannot load 503, a server too slow 504, and everything else past it 502.
 fn status_of(err: &TextError) -> StatusCode {
     match err {
         TextError::InvalidOptions(_) => StatusCode::BAD_REQUEST,
+        TextError::EndpointTimedOut(_) => StatusCode::GATEWAY_TIMEOUT,
         TextError::LibraryUnavailable(_)
         | TextError::ModelLoadFailed(_)
         | TextError::ProviderUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,

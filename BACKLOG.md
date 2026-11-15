@@ -126,19 +126,6 @@ and the backlog is empty"; it was neither.
       raised floor, and a `kind = "count"` artifact over `mutants.out/missed.txt` in
       `quality-report.toml`.
 
-- [ ] **The endpoint client has one 300 s budget for everything** (M, ★★). Audit 2026-11-12, not
-      measured: `Endpoint::post` in `crates/text/src/endpoint.rs` sets only `timeout_global`, so
-      the connect, the first byte and the whole stream share one clock, and a timeout arrives
-      as `EndpointUnreachable`, like a refused port. `ANSWER_TIMEOUT` in
-      `crates/observant/src/ask.rs` is 300 s too, and no config key changes either. A client
-      that leaves still cancels within 20 ms, so the one `/ask` slot is held only while a
-      client keeps waiting. Next: `timeout_connect` (about 5 s) and `timeout_per_read`
-      (generous, about 120 s, it also covers the response head) beside the cap; the cap becomes
-      a field ObservANT sets from a new `llm_timeout_s` key; ureq's timeout maps to a new
-      `TextError` kind that `/ask` answers with 504. Guard: cases on the `silent_after` server
-      in `crates/text/tests/endpoint.rs` with short limits, asserting the kind and an upper
-      bound on the time, and one mutation recipe per timeout.
-
 - [ ] **Three camera pipelines, each with its own failure rules** (L, ★★). Audit 2026-11-12:
       `crates/media/src/capture.rs` (the Flutter engine), `crates/observant/src/capture.rs` and
       `crates/gui/src/gui_wgpu/pipeline.rs` each open a camera and keep the newest frame. Only

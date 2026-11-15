@@ -1609,6 +1609,10 @@ mod tests {
                 TextError::EndpointUnreachable("connection refused".into()),
                 "502",
             ),
+            (
+                TextError::EndpointTimedOut("timeout: per read".into()),
+                "504",
+            ),
         ] {
             let said = failure.to_string();
             let (assistant, _) = crate::ask::tests::stub_assistant(Err(failure), false);

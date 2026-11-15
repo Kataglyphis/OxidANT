@@ -184,6 +184,30 @@ async fn an_endpoint_that_thinks_first_gives_its_answer_without_the_thinking() {
     }
 }
 
+/// `llm_timeout_s` bounds a server that takes the question and never answers: a 504, long before the 120 s per read.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_silent_endpoint_is_a_504_after_llm_timeout_s() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let held = std::thread::spawn(move || listener.accept().map(|(stream, _)| stream));
+    let addr = start(&Config {
+        llm_base_url: Some(format!("http://127.0.0.1:{port}")),
+        llm_model: Some("m".into()),
+        llm_timeout_s: 1,
+        ..Config::default()
+    })
+    .await;
+    let started = std::time::Instant::now();
+    let (reply, _) = ask(addr, "How often?").await;
+    assert!(reply.starts_with("HTTP/1.1 504"), "{reply}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    drop(held.join());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unreachable_endpoint_is_the_replys_error() {
     let port = std::net::TcpListener::bind("127.0.0.1:0")

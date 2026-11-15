@@ -137,6 +137,8 @@ pub enum TextError {
     GenerationFailed(String),
     EndpointUnreachable(String),
     EndpointStatus(u16, String),
+    /// The connection, one read or the whole request outlasted its limit: a server that is slow, not one that is gone.
+    EndpointTimedOut(String),
     /// The byte limit one streamed line exceeded.
     StreamLineTooLong(usize),
     /// This GenAI build has no llguidance, so it cannot hold an answer to a schema.
@@ -159,6 +161,7 @@ impl TextError {
             Self::GenerationFailed(_) => "generation_failed",
             Self::EndpointUnreachable(_) => "endpoint_unreachable",
             Self::EndpointStatus(..) => "endpoint_status",
+            Self::EndpointTimedOut(_) => "endpoint_timed_out",
             Self::StreamLineTooLong(_) => "stream_line_too_long",
             Self::JsonSchemaUnsupported(_) => "json_schema_unsupported",
             Self::EmbeddingsUnsupported(_) => "embeddings_unsupported",
@@ -183,6 +186,7 @@ impl fmt::Display for TextError {
             Self::GenerationFailed(d) => write!(f, "generation failed: {d}"),
             Self::EndpointUnreachable(d) => write!(f, "the endpoint is unreachable: {d}"),
             Self::EndpointStatus(code, d) => write!(f, "the endpoint answered HTTP {code}: {d}"),
+            Self::EndpointTimedOut(d) => write!(f, "the endpoint did not answer in time: {d}"),
             Self::StreamLineTooLong(limit) => {
                 write!(f, "the endpoint streamed a line longer than {limit} bytes")
             }
@@ -461,6 +465,7 @@ mod tests {
             TextError::GenerationFailed("x".into()),
             TextError::EndpointUnreachable("x".into()),
             TextError::EndpointStatus(503, "x".into()),
+            TextError::EndpointTimedOut("x".into()),
             TextError::StreamLineTooLong(1),
             TextError::JsonSchemaUnsupported("x".into()),
             TextError::EmbeddingsUnsupported("x".into()),

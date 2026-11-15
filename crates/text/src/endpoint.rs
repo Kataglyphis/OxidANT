@@ -37,7 +37,12 @@ pub struct Endpoint {
     pub headers: Vec<(String, String)>,
     /// Body keys the caller's own keys override.
     pub request_extra: Map<String, Value>,
+    /// The cap on one whole request, the stream included.
     pub timeout: Duration,
+    /// How long the connection may take to open.
+    pub connect_timeout: Duration,
+    /// How long one read may wait, the response head included: a server silent this long is gone.
+    pub read_timeout: Duration,
 }
 
 impl fmt::Debug for Endpoint {
@@ -50,6 +55,8 @@ impl fmt::Debug for Endpoint {
             headers,
             request_extra,
             timeout,
+            connect_timeout,
+            read_timeout,
         } = self;
         f.debug_struct("Endpoint")
             .field("base_url", base_url)
@@ -58,6 +65,8 @@ impl fmt::Debug for Endpoint {
             .field("headers", headers)
             .field("request_extra", request_extra)
             .field("timeout", timeout)
+            .field("connect_timeout", connect_timeout)
+            .field("read_timeout", read_timeout)
             .finish()
     }
 }
@@ -71,6 +80,9 @@ impl Endpoint {
             headers: Vec::new(),
             request_extra: Map::new(),
             timeout: Duration::from_secs(300),
+            connect_timeout: Duration::from_secs(5),
+            // Generous: a small server can think long over a big prompt before its first byte.
+            read_timeout: Duration::from_secs(120),
         }
     }
 
@@ -148,6 +160,8 @@ impl Endpoint {
             .config()
             .http_status_as_error(false)
             .timeout_global(Some(self.timeout))
+            .timeout_connect(Some(self.connect_timeout))
+            .timeout_per_read(Some(self.read_timeout))
             .build()
             .header("Content-Type", "application/json");
         for (name, value) in &self.headers {
@@ -156,9 +170,10 @@ impl Endpoint {
         if let Some(key) = &self.api_key {
             request = request.header("Authorization", format!("Bearer {key}"));
         }
-        let mut response = request
-            .send(body.to_string())
-            .map_err(|e| TextError::EndpointUnreachable(format!("{url}: {e}")))?;
+        let mut response = request.send(body.to_string()).map_err(|e| match e {
+            ureq::Error::Timeout(_) => TextError::EndpointTimedOut(format!("{url}: {e}")),
+            e => TextError::EndpointUnreachable(format!("{url}: {e}")),
+        })?;
         let status = response.status().as_u16();
         if status >= 400 {
             // Bytes first: read_to_string keeps nothing of a body cut inside a character or sent in another charset.
@@ -224,9 +239,10 @@ impl Endpoint {
             "/v1/embeddings",
             &json!({ "model": self.model()?, "input": texts }),
         )?;
-        let text = response.body_mut().read_to_string().map_err(|e| {
-            TextError::EndpointUnreachable(format!("the embeddings answer broke: {e}"))
-        })?;
+        let text = response
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| broke("the embeddings answer", &e.into_io()))?;
         let answer: Value = serde_json::from_str(&text)
             .map_err(|e| TextError::GenerationFailed(format!("the embeddings answer: {e}")))?;
         parse_embeddings(&answer, texts.len())
@@ -285,13 +301,26 @@ impl EndpointChoice {
     }
 }
 
+/// A read that failed: a ureq timeout under the io error is a server that went quiet, anything else a broken line.
+fn broke(what: &str, e: &std::io::Error) -> TextError {
+    let late = e.kind() == std::io::ErrorKind::TimedOut
+        || e.get_ref()
+            .and_then(|inner| inner.downcast_ref::<ureq::Error>())
+            .is_some_and(|inner| matches!(inner, ureq::Error::Timeout(_)));
+    if late {
+        TextError::EndpointTimedOut(format!("{what} stalled: {e}"))
+    } else {
+        TextError::EndpointUnreachable(format!("{what} broke: {e}"))
+    }
+}
+
 /// The next streamed line without its `\n` or `\r\n`, `None` at the end; reads at most [`STREAM_LINE_LIMIT`] + 2 bytes.
 pub fn read_stream_line(reader: &mut impl BufRead) -> Result<Option<String>, TextError> {
     let mut buffer = Vec::new();
     let read = reader
         .take(STREAM_LINE_LIMIT as u64 + 2)
         .read_until(b'\n', &mut buffer)
-        .map_err(|e| TextError::EndpointUnreachable(format!("the stream broke: {e}")))?;
+        .map_err(|e| broke("the stream", &e))?;
     if read == 0 {
         return Ok(None);
     }

@@ -133,6 +133,8 @@ pub struct Config {
     pub llm_threads: u32,
     /// Seconds without a question after which `llm_model_dir`'s model is unloaded; 0 keeps it loaded.
     pub llm_idle_unload_s: u32,
+    /// Seconds one answer may take, an endpoint's whole stream included; a slower one is a 504.
+    pub llm_timeout_s: u32,
 }
 
 /// A host name as a camera's default name, so two unnamed cameras still differ; "ObservANT" where there is none.
@@ -190,6 +192,7 @@ impl Default for Config {
             llm_max_new_tokens: 128,
             llm_threads: 2,
             llm_idle_unload_s: 600,
+            llm_timeout_s: 300,
         }
     }
 }
@@ -331,6 +334,9 @@ impl Config {
         if self.llm_max_new_tokens == 0 {
             bail!("llm_max_new_tokens must be non-zero");
         }
+        if self.llm_timeout_s == 0 {
+            bail!("llm_timeout_s must be non-zero");
+        }
         if self.llm_model_dir.is_some()
             && (self.llm_base_url.is_some() || self.llm_backend.is_some())
         {
@@ -380,6 +386,13 @@ mod tests {
                     ..Config::default()
                 },
                 "llm_max_new_tokens",
+            ),
+            (
+                Config {
+                    llm_timeout_s: 0,
+                    ..Config::default()
+                },
+                "llm_timeout_s",
             ),
             (
                 Config {

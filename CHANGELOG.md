@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-15, the endpoint client has a limit per phase; ObservANT's `llm_timeout_s`)
+- `Endpoint` waits 5 s for the connection (`connect_timeout`) and 120 s for any one read, the response head
+  included (`read_timeout`), beside the 300 s cap on the whole request (`timeout`); it had the cap alone, so a
+  server that took the question and went quiet held ObservANT's one `/ask` slot for five minutes. A timeout is
+  the new `TextError::EndpointTimedOut` (kind `endpoint_timed_out`), no longer `EndpointUnreachable`, and
+  ObservANT answers it with 504. `llm_timeout_s` (default 300, at least 1) sets both the endpoint's cap and the
+  answer's limit. Tests: a server silent before its head, after it and after a piece; a stream that keeps
+  talking until the cap; on Linux a connection that never opens (a full accept queue); a silent endpoint behind
+  ObservANT with `llm_timeout_s = 1`. Five mutation recipes, `consumer.oxidant-text-*-timeout`, `-request-cap`
+  and `-timeout-kind-*`, each proved to bite.
+- `docs/observant.md` replaces an unmeasured reload time with a measured one: a fresh CLI process that loads
+  SmolLM2-135M and gives one token takes 0.7 s on a Pi 5, 1.3 s with a cold page cache.
+
 ### Added (2026-11-15, ObservANT unloads an idle language model)
 - `llm_idle_unload_s` (default 600; 0 keeps it) unloads `llm_model_dir`'s model after that many seconds without a
   question, and the next question loads it again (owner decision). A task started beside the web server asks the

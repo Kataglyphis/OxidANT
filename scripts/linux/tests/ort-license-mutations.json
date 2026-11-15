@@ -309,6 +309,51 @@
   "why": "The answer starts with its first word, not with the blank lines a model writes after its thinking."
  },
  {
+  "id": "consumer.oxidant-text-connect-timeout",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "            .timeout_connect(Some(self.connect_timeout))\n",
+  "replace": "",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --test endpoint a_connection_that_never_opens",
+  "timeout": 900,
+  "why": "A host that never answers the connect must fail within connect_timeout, not wait for the whole request's cap."
+ },
+ {
+  "id": "consumer.oxidant-text-per-read-timeout",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "            .timeout_per_read(Some(self.read_timeout))\n",
+  "replace": "",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --test endpoint a_server_silent_longer",
+  "timeout": 900,
+  "why": "A server that goes quiet before or inside its reply must fail within read_timeout, not hold the one /ask slot for the cap."
+ },
+ {
+  "id": "consumer.oxidant-text-request-cap",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "            .timeout_global(Some(self.timeout))\n",
+  "replace": "",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --test endpoint a_stream_that_keeps_talking",
+  "timeout": 900,
+  "why": "A stream that keeps sending must still end at the request's cap, which ObservANT sets from llm_timeout_s."
+ },
+ {
+  "id": "consumer.oxidant-text-timeout-kind-at-send",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "            ureq::Error::Timeout(_) => TextError::EndpointTimedOut(format!(\"{url}: {e}\")),\n",
+  "replace": "",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --test endpoint a_connection_that_never_opens",
+  "timeout": 900,
+  "why": "A timeout before the reply is endpoint_timed_out, which ObservANT answers with 504, not a refused port's 502."
+ },
+ {
+  "id": "consumer.oxidant-text-timeout-kind-in-stream",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "    let late = e.kind() == std::io::ErrorKind::TimedOut\n        || e.get_ref()\n            .and_then(|inner| inner.downcast_ref::<ureq::Error>())\n            .is_some_and(|inner| matches!(inner, ureq::Error::Timeout(_)));\n",
+  "replace": "    let late = false;\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --test endpoint a_server_silent_longer",
+  "timeout": 900,
+  "why": "A stream that stalls after its head is too slow, not broken: the same 504 as a silent server."
+ },
+ {
   "id": "consumer.oxidant-crate-floor-unfloored",
   "target": "scripts/linux/check-crate-coverage.py",
   "find": "return 1 if bad[\"BELOW\"] or bad[\"NO FLOOR\"] else 0",
