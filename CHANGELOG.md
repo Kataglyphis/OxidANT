@@ -76,6 +76,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   geometry the frustum test, the shadow casters and the cascade fit did not see; `renderer-bounds-invariant.md`
   called the box conservative outside that range, which it was not. Each target now covers `min(0, w)` to
   `max(1, w)` of its current weight, and an animation frame that moves the weights rebuilds the box.
+- **QEM LODs broke normals and UVs at every hard edge and seam**: the weld merged coincident vertices and kept the
+  first one's attributes, so 24 of `cube.gltf`'s 36 corners took a neighbouring face's normal and UV before any
+  collapse. Welding is topology only now: each face corner keeps its own attribute set, a collapse blends the sets
+  its removed faces pair across the edge and refuses one that would need two at a corner, and seam edges get the
+  same constraint planes as open rims.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
