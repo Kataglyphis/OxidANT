@@ -229,3 +229,49 @@ fn a_non_uniform_instance_scale_shades_like_the_same_node_scale() {
         "node-scale and instance-scale must shade the same, {differing} pixels differ"
     );
 }
+
+/// Skinned normals take the inverse transpose too: a non-uniform instance shades as on the plain mesh.
+#[test]
+fn a_non_uniform_instance_scale_shades_a_skinned_mesh_like_an_unskinned_one() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let (w, h) = (128, 128);
+    let camera = kataglyphis_webgpu_renderer::OrbitCamera::default();
+    // Rotated as well, since an axis-aligned cube hides a wrong normal transform under a plain scale.
+    let squash = Mat4::from_scale(Vec3::new(0.25, 1.0, 1.0))
+        * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_4);
+
+    let mut plain = load_gltf(cube_path()).expect("cube.gltf must load");
+    plain.primitives[0].transform = Mat4::IDENTITY;
+    plain.primitives[0].node_index = None;
+    let mut ra = ForwardRenderer::new(&gpu, w, h);
+    ra.upload_scene(&gpu, &plain);
+    ra.set_instances(&gpu, 0, &[squash]);
+    let pixels_a = ra.render_to_pixels(&gpu, w, h, &camera).expect("render a");
+
+    // The joint sits at the origin with an identity inverse bind, so skinning moves nothing.
+    let mut rb = ForwardRenderer::new(&gpu, w, h);
+    rb.upload_scene(&gpu, &skinned_cube_scene(Vec3::ZERO));
+    rb.set_instances(&gpu, 0, &[squash]);
+    let pixels_b = rb.render_to_pixels(&gpu, w, h, &camera).expect("render b");
+
+    let differing = pixels_a
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(pixels_b.as_chunks::<4>().0)
+        .filter(|(a, b)| {
+            let d: i32 = a
+                .iter()
+                .zip(b.iter())
+                .map(|(x, y)| (*x as i32 - *y as i32).abs())
+                .sum();
+            d > 12
+        })
+        .count();
+    assert!(
+        differing < 40,
+        "a skinned and a plain cube under the same instance shade differently in {differing} pixels"
+    );
+}

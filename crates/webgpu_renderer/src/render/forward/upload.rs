@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt as _;
 
-use super::primitive::{GpuPrimitive, LodLevel, PrimMaterial, PrimUniforms};
+use super::primitive::{is_mirrored, GpuPrimitive, LodLevel, PrimMaterial, PrimUniforms};
 use super::{ForwardRenderer, MAX_JOINTS, MAX_PUNCTUAL_LIGHTS};
 use crate::context::GpuContext;
 use crate::render::bounds::{
@@ -449,6 +449,8 @@ fn assemble_primitive(prim: &CpuPrimitive, parts: PrimitiveParts) -> GpuPrimitiv
         shadow_masked_bind_group: parts.groups.shadow_masked,
         instance_buffer: parts.instance_buffer,
         instance_count: 1,
+        mirrored_instances_from: 1,
+        mirrored: is_mirrored(&prim.transform),
         instance_transforms: Vec::new(),
         pre_instance_aabb: parts.prim_bounds,
         model: prim.transform,

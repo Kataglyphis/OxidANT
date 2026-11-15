@@ -16,10 +16,8 @@ mod targets;
 mod upload;
 
 use glam::{Mat4, Vec3, Vec4};
-use wgpu::util::DeviceExt as _;
 
 use crate::context::GpuContext;
-use crate::render::bounds::instanced_bounds;
 use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::GpuTiming;
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
@@ -27,7 +25,7 @@ pub use crate::render::lights::MAX_PUNCTUAL_LIGHTS;
 use crate::render::texture::create_2d_texture;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
-use crate::scene::{CpuScene, InstanceRaw};
+use crate::scene::CpuScene;
 
 use animate::SceneAnimation;
 use culling::Culling;
@@ -116,8 +114,8 @@ impl ForwardRenderer {
         let frame = FrameBinding::new(device);
         let lights = LightResources::new(device);
         let ibl = IblBinding::new(device);
-        let main = MainPipelines::new(device, &shader, &ibl.layout, &frame.layout, &lights.layout);
         let shadow = ShadowResources::new(device, &shader, &frame.layout);
+        let main = MainPipelines::new(device, shader, &ibl.layout, &frame.layout, &lights.layout);
         let targets = RenderTargets::new(device, width, height);
         let depth_resolve = DepthResolve::new(device, &targets.depth_msaa);
         let post = PostChain::new(gpu, &targets.hdr_view);
@@ -160,60 +158,10 @@ impl ForwardRenderer {
         let Some(primitive) = self.primitives.get_mut(primitive_index) else {
             return;
         };
-
-        // The bundles bake each draw's instance count, so a new count must re-record them.
-        let old_count = primitive.instance_count;
-        if transforms.is_empty() {
-            gpu.queue.write_buffer(
-                &primitive.instance_buffer,
-                0,
-                bytemuck::bytes_of(&InstanceRaw::IDENTITY),
-            );
-            primitive.instance_count = 1;
-            if old_count != 1 {
-                self.shadow.caster_bundles = None;
-            }
-            // Single identity instance again: bounds collapse to the posed box.
-            primitive.instance_transforms.clear();
-            let (min, max) = primitive.pre_instance_aabb;
-            primitive.aabb_min = min;
-            primitive.aabb_max = max;
-            primitive.world_center = (min + max) * 0.5;
-            self.recompute_scene_bounds();
-            return;
-        }
-
-        let raw: Vec<InstanceRaw> = transforms
-            .iter()
-            .map(|m| InstanceRaw {
-                model: m.to_cols_array_2d(),
-            })
-            .collect();
-        let bytes = bytemuck::cast_slice(&raw);
-
-        if (bytes.len() as u64) <= primitive.instance_buffer.size() {
-            gpu.queue.write_buffer(&primitive.instance_buffer, 0, bytes);
-        } else {
-            primitive.instance_buffer =
-                gpu.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("instances"),
-                        contents: bytes,
-                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    });
-            // The bundles captured the old buffer by reference, and this replaced it.
+        // The bundles bake each draw's instance buffer, range and winding.
+        if primitive.write_instances(gpu, transforms) {
             self.shadow.caster_bundles = None;
         }
-        primitive.instance_count = raw.len() as u32;
-        if primitive.instance_count != old_count {
-            self.shadow.caster_bundles = None;
-        }
-        // Culling bounds must span every instance, not just the base position.
-        primitive.instance_transforms = transforms.to_vec();
-        let (min, max) = instanced_bounds(primitive.pre_instance_aabb, transforms);
-        primitive.aabb_min = min;
-        primitive.aabb_max = max;
-        primitive.world_center = (min + max) * 0.5;
         self.recompute_scene_bounds();
     }
 
@@ -485,7 +433,12 @@ impl ForwardRenderer {
             label: Some("sky_shader_reloaded"),
             source: wgpu::ShaderSource::Wgsl(sky_wgsl.into()),
         });
-        let set = main_pass::create_forward_pipeline_set(device, &shader, &self.main.layout);
+        let set = main_pass::create_forward_pipeline_set(
+            device,
+            &shader,
+            &self.main.layout,
+            wgpu::FrontFace::Ccw,
+        );
         let shadow = shadow::ShadowPipelines::new(
             device,
             &shader,
@@ -496,12 +449,10 @@ impl ForwardRenderer {
         if let Some(err) = pollster::block_on(error_scope.pop()) {
             anyhow::bail!("shader reload rejected: {err}");
         }
-        (
-            self.main.opaque,
-            self.main.double_sided,
-            self.main.blend,
-            self.main.blend_double_sided,
-        ) = set;
+        self.main.upright = set;
+        // The mirrored sets are rebuilt from the new module the next frame one is drawn.
+        self.main.mirrored = None;
+        self.main.shader = shader;
         self.shadow.pipelines = shadow;
         // The cached bundles still hold the old shadow pipelines.
         self.shadow.caster_bundles = None;

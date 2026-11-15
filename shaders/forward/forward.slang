@@ -155,13 +155,19 @@ float4x4 instance_matrix(VsIn In)
     return transpose(float4x4(In.instance0, In.instance1, In.instance2, In.instance3));
 }
 
-float3x3 instance_cofactor(VsIn In)
+// Sign of the upper 3x3's determinant: -1 where m mirrors space.
+float mirror_sign(float4x4 m)
 {
-    float4x4 m = instance_matrix(In);
-    float3 c0 = m[0].xyz;
-    float3 c1 = m[1].xyz;
-    float3 c2 = m[2].xyz;
-    return float3x3(cross(c1, c2), cross(c2, c0), cross(c0, c1));
+    return dot(m[0].xyz, cross(m[1].xyz, m[2].xyz)) < 0.0 ? -1.0 : 1.0;
+}
+
+// Cofactor of m's upper 3x3 times mirror_sign: |det| m^-T, the normal transform up to scale.
+float3x3 normal_transform(float4x4 m)
+{
+    float3 r0 = m[0].xyz;
+    float3 r1 = m[1].xyz;
+    float3 r2 = m[2].xyz;
+    return float3x3(cross(r1, r2), cross(r2, r0), cross(r0, r1)) * mirror_sign(m);
 }
 
 float4x4 skin_matrix(VsIn In)
@@ -199,14 +205,16 @@ VsOut vs_main(VsIn In)
     o.svPosition = mul(frame.view_proj, worldPos);
     if (In.weights.x + In.weights.y + In.weights.z + In.weights.w > 0.0001)
     {
-        o.worldNormal = normalize(mul(model, float4(In.normal, 0.0)).xyz);
+        o.worldNormal = normalize(mul(normal_transform(model), In.normal));
     }
     else
     {
         float3 nModel = mul(prim.normal_matrix, float4(In.normal, 0.0)).xyz;
-        o.worldNormal = normalize(mul(instance_cofactor(In), nModel));
+        o.worldNormal = normalize(mul(normal_transform(instance_matrix(In)), nModel));
     }
-    o.worldTangent = float4(normalize(mul(model, float4(In.tangent.xyz, 0.0)).xyz), In.tangent.w);
+    // A mirroring transform reverses the tangent frame's handedness, so the bitangent sign follows.
+    float handedness = In.tangent.w * mirror_sign(model);
+    o.worldTangent = float4(normalize(mul(model, float4(In.tangent.xyz, 0.0)).xyz), handedness);
     o.uv = In.uv;
     o.lightSpacePos = mul(frame.light_space, worldPos);
     o.worldPosition = worldPos.xyz;
@@ -415,14 +423,14 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float3 emissive = prim.emissive_factor.rgb * emissiveSample.rgb;
 
     float3 nGeom = normalize(In.worldNormal);
-    // Only doubleSided materials disable culling; flip before deriving t and b so the handedness follows.
-    if (!isFrontFace) nGeom = -nGeom;
     float3 t = normalize(In.worldTangent.xyz - nGeom * dot(nGeom, In.worldTangent.xyz));
     float3 b = cross(nGeom, t) * In.worldTangent.w;
     float3 nTs = normalSample.xyz * 2.0 - 1.0;
     nTs = float3(nTs.xy * prim.material_factors.w, nTs.z);
     // Row-multiply mul(v, M), as in common/normal_map.slang's apply_normal_map().
     float3 n = normalize(mul(nTs, float3x3(t, b, nGeom)));
+    // A doubleSided back face reverses the whole tangent frame (glTF 3.9.2), so the mapped normal flips.
+    if (!isFrontFace) n = -n;
 
     float3 l = normalize(frame.light_dir_ambient.xyz);
     float3 v = normalize(frame.camera_position.xyz - In.worldPosition);

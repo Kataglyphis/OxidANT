@@ -41,6 +41,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
   an unculled pipeline now, and every MASK caster the alpha-testing one (with the white fallback when untextured).
   Tests: `a_double_sided_sheet_casts_a_shadow_with_its_back_to_the_light`,
   `vertex_alpha_cut_outs_of_an_untextured_mask_cast_no_shadow`.
+- **Mirrored nodes and instances rendered inside out** (Khronos NegativeScaleTest, a part mirrored with scale -1):
+  glTF reverses a primitive's winding under a negative determinant, but every pipeline culled clockwise faces, and
+  the instance normal transform (the bare cofactor, det·A⁻ᵀ) pointed mirrored normals inward. A primitive whose node
+  mirrors space, and each mirrored instance (stored after the upright ones and drawn separately), use clockwise-front
+  pipelines, built the first frame one is drawn; the cofactor carries the determinant's sign and the bitangent sign
+  follows the mirror, so normal maps keep their relief. Skinned normals took the forward matrix and sheared under a
+  non-uniform joint or instance scale; they take the same sign-corrected cofactor. A double-sided back face flipped
+  the normal and bitangent but not the tangent, mirroring a normal map's X relief; the whole mapped normal flips
+  now. Tests: `tests/mirrored.rs`,
+  `a_non_uniform_instance_scale_shades_a_skinned_mesh_like_an_unskinned_one`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

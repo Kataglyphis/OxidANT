@@ -2,6 +2,7 @@
 
 use glam::Mat4;
 
+use super::primitive::is_mirrored;
 use super::{ForwardRenderer, MAX_JOINTS};
 use crate::context::GpuContext;
 use crate::render::animation::{
@@ -98,11 +99,14 @@ impl ForwardRenderer {
 
     /// Moves every node-driven primitive to its node's `world` matrix and re-derives its bounds.
     pub(super) fn retarget_primitives(&mut self, world: &[Mat4]) {
+        let mut winding_flipped = false;
         for prim in &mut self.primitives {
             if let Some(node) = prim.node_index {
                 if let Some(m) = world.get(node) {
                     prim.model = *m;
                     prim.normal_matrix = normal_matrix_of(*m);
+                    winding_flipped |= prim.mirrored != is_mirrored(m);
+                    prim.mirrored = is_mirrored(m);
                     prim.uniforms_dirty = true;
                     let mut bounds = transform_aabb(*m, prim.local_aabb_min, prim.local_aabb_max);
                     if let Some(skin) = prim.skin_index.and_then(|s| self.animation.skins.get(s)) {
@@ -122,6 +126,10 @@ impl ForwardRenderer {
                     prim.world_center = (min + max) * 0.5;
                 }
             }
+        }
+        // An animated negative scale reverses the winding the shadow bundles baked in.
+        if winding_flipped {
+            self.shadow.caster_bundles = None;
         }
     }
 

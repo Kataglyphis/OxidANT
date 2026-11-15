@@ -15,6 +15,8 @@ use crate::scene::{InstanceRaw, Vertex};
 /// The caster pipelines: back-culled, unculled for double-sided materials, alpha-tested for MASK.
 pub(super) struct ShadowPipelines {
     opaque: wgpu::RenderPipeline,
+    /// `opaque` with clockwise front faces, for mirrored transforms; built when first needed.
+    opaque_mirrored: Option<wgpu::RenderPipeline>,
     double_sided: wgpu::RenderPipeline,
     masked: wgpu::RenderPipeline,
 }
@@ -32,26 +34,64 @@ impl ShadowPipelines {
                 shader,
                 layout,
                 "shadow_pipeline",
-                Some(wgpu::Face::Back),
+                back_culled(wgpu::FrontFace::Ccw),
             ),
+            opaque_mirrored: None,
             // Unculled: a double-sided sheet must shadow whichever side faces the light.
             double_sided: create_shadow_pipeline(
                 device,
                 shader,
                 layout,
                 "shadow_pipeline_double_sided",
-                None,
+                wgpu::PrimitiveState::default(),
             ),
             masked: create_masked_shadow_pipeline(device, shader, masked_layout),
         }
+    }
+
+    /// Builds the clockwise-front opaque pipeline once a mirrored caster exists.
+    pub(super) fn ensure_mirrored(
+        &mut self,
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        layout: &wgpu::PipelineLayout,
+    ) {
+        if self.opaque_mirrored.is_none() {
+            self.opaque_mirrored = Some(create_shadow_pipeline(
+                device,
+                shader,
+                layout,
+                "shadow_pipeline_mirrored",
+                back_culled(wgpu::FrontFace::Cw),
+            ));
+        }
+    }
+
+    /// The opaque caster pipeline whose front faces wind clockwise when `clockwise`.
+    fn opaque_for(&self, clockwise: bool) -> &wgpu::RenderPipeline {
+        if !clockwise {
+            return &self.opaque;
+        }
+        debug_assert!(
+            self.opaque_mirrored.is_some(),
+            "ensure_mirrored must run first"
+        );
+        self.opaque_mirrored.as_ref().unwrap_or(&self.opaque)
+    }
+}
+
+fn back_culled(front_face: wgpu::FrontFace) -> wgpu::PrimitiveState {
+    wgpu::PrimitiveState {
+        front_face,
+        cull_mode: Some(wgpu::Face::Back),
+        ..Default::default()
     }
 }
 
 pub(super) struct ShadowResources {
     pub(super) pipelines: ShadowPipelines,
-    // Read only by the native shader hot-reload path, so unread on wasm32.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(super) pipeline_layout: wgpu::PipelineLayout,
+    // Read only by the native shader hot-reload path, so unread on wasm32.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(super) masked_pipeline_layout: wgpu::PipelineLayout,
     pub(super) bind_group_layout: wgpu::BindGroupLayout,
@@ -131,30 +171,29 @@ impl ShadowResources {
         }
     }
 
-    /// One caster's draw: MASK casters alpha-test, double-sided ones are not culled.
+    /// One caster's draws: MASK casters alpha-test, double-sided ones are not culled.
     fn record_caster<'a>(
         &'a self,
         bundle: &mut wgpu::RenderBundleEncoder<'a>,
         prim: &'a GpuPrimitive,
     ) {
         let pipelines = &self.pipelines;
-        if let (true, Some(masked_group)) =
-            (prim.alpha_masked, prim.shadow_masked_bind_group.as_ref())
-        {
-            bundle.set_pipeline(&pipelines.masked);
-            bundle.set_bind_group(0, masked_group, &[]);
-        } else {
-            bundle.set_pipeline(if prim.double_sided {
-                &pipelines.double_sided
-            } else {
-                &pipelines.opaque
-            });
-            bundle.set_bind_group(0, &prim.shadow_bind_group, &[]);
-        }
+        let masked_group = prim
+            .shadow_masked_bind_group
+            .as_ref()
+            .filter(|_| prim.alpha_masked);
+        bundle.set_bind_group(0, masked_group.unwrap_or(&prim.shadow_bind_group), &[]);
         bundle.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
         bundle.set_vertex_buffer(1, prim.instance_buffer.slice(..));
         bundle.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        bundle.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
+        for (instances, clockwise) in prim.instance_runs() {
+            bundle.set_pipeline(match (masked_group.is_some(), prim.double_sided) {
+                (true, _) => &pipelines.masked,
+                (false, true) => &pipelines.double_sided,
+                (false, false) => pipelines.opaque_for(clockwise),
+            });
+            bundle.draw_indexed(0..prim.index_count, 0, instances);
+        }
     }
 }
 
@@ -414,7 +453,7 @@ fn create_shadow_pipeline(
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     label: &str,
-    cull_mode: Option<wgpu::Face>,
+    primitive: wgpu::PrimitiveState,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -426,10 +465,7 @@ fn create_shadow_pipeline(
             compilation_options: Default::default(),
         },
         fragment: None,
-        primitive: wgpu::PrimitiveState {
-            cull_mode,
-            ..Default::default()
-        },
+        primitive,
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
             depth_write_enabled: Some(true),
