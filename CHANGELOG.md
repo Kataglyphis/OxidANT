@@ -39,6 +39,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   web): the device runs at WebGPU's default limits. A material texture now uploads from the first level of its
   CPU mip chain within `max_texture_dimension_2d`, and the IBL bake box-halves an equirect until it fits; a BCn
   payload over the limit falls back to white.
+- **`decode_hdr` let a 40-byte header allocate a 512 MiB scanline**, and on wasm32 an image over 2^26 pixels
+  panicked with `capacity overflow` instead of returning an error. The width has a cap of its own (65 536), the
+  pixel cap is 8192 x 4096 on 32-bit targets (a compile-time check keeps twice the image allocatable), and the
+  output grows with `try_reserve`, so a failed allocation is `HdrError::BadDimensions`.
+
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
   on, so every glyph was a box in the renderer's overlay and in `crates/gui`. The renderer embeds the C++ editor's
