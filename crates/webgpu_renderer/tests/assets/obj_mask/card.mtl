@@ -1,0 +1,4 @@
+newmtl cutout
+Kd 1 1 1
+map_Kd red.bmp
+map_d half_mask.tga

@@ -80,13 +80,6 @@ its open work is here.
 
 ## P2 — medium
 
-- [ ] **An OBJ opened in memory loses its alpha masks and every texture that is not PNG or JPEG** (S, ★★).
-      `obj_to_glb` (`crates/webgpu_renderer/src/app/obj_glb.rs`) packs only PNG and JPEG and unhooks the
-      slot of anything else with a warning, and `parse_mtl` (`crates/webgpu_renderer/src/asset/obj_to_gltf.rs`) reads no `map_d`, so
-      Sponza's vase plant and chain (`map_d *_mask.jpg`) draw as solid cards. The C++ engine cuts them
-      (`MaskCardDiscardsCutoutTexelsVisually`). Next: `map_d` into the base colour's alpha with MASK, and
-      TGA/BMP decoded to PNG before packing. Guard: an `obj_glb` test with a mask and a TGA texture.
-
 - [ ] **lavapipe refuses the full Colosseum's traced scene** (M, ★★). lavapipe binds at most 128 MiB per
       storage buffer, and the full Colosseum's vertex buffer is larger, so `check`
       (`crates/webgpu_renderer/src/render/tracer/limits.rs`) ends the build in `TraceStatus::Failed` with the

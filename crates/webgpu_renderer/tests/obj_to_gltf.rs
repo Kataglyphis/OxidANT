@@ -247,6 +247,23 @@ fn tr_is_inverted_relative_to_d() {
 }
 
 #[test]
+fn map_d_is_read_apart_from_d_and_the_other_maps() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+
+    let materials =
+        parse_mtl("newmtl leaf\nd 1\nmap_Kd leaf.jpg\nmap_d -clamp on masks\\leaf_mask.jpg\n");
+    assert_eq!(
+        materials[0].alpha_texture.as_deref(),
+        Some("masks/leaf_mask.jpg")
+    );
+    assert_eq!(materials[0].base_color_texture.as_deref(), Some("leaf.jpg"));
+    assert!(
+        (materials[0].base_color[3] - 1.0).abs() < 1e-6,
+        "map_d is not d"
+    );
+}
+
+#[test]
 fn mtl_emissive_becomes_emissive_factor() {
     use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
 

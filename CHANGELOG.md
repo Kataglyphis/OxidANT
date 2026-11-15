@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, an OBJ opened in memory keeps its masks and its TGA and BMP textures)
+- **An OBJ opened in memory drew its `map_d` cut-outs as solid cards and dropped every texture that was not PNG or
+  JPEG** (Sponza's vase plant and chain). `parse_mtl` reads `map_d` into `ObjMaterial::alpha_texture`; `obj_to_glb`
+  (`app/obj_glb.rs`) multiplies the base colour's alpha by the mask's red channel, as the C++ shaders test it, packs
+  that as its own PNG and makes the material MASK at 0.5 (`ObjLoader.cpp`'s cutoff); a mask without a base colour
+  texture composites over white. A texture glTF cannot carry is decoded by its extension (BMP, TGA; `image` gains
+  those codecs and JPEG, no new crate) and packed as PNG. The file converter `convert_file` still writes no composite
+  and warns per masked material. `tests/assets/obj_mask` is a card with `map_Kd red.bmp` and `map_d half_mask.tga`:
+  `an_obj_card_with_a_map_d_mask_draws_only_its_uncut_half` keeps 1306 of the opaque card's 2627 red pixels (0 red
+  before: the BMP was dropped), `a_map_d_mask_becomes_the_base_colour_alpha_of_a_mask_material` failed on the OPAQUE
+  mode before, and `map_d_is_read_apart_from_d_and_the_other_maps` covers the MTL. This also covers
+  BeschleunigerBallett's idea "`obj_to_gltf` drops `map_d`" for the editor's library, which opens OBJ through it.
+
 ### Fixed (2026-11-16, the camera GUI makes a lost surface anew)
 - **`crates/gui` answered a lost surface with a configure only**, which wgpu 30 cannot satisfy natively, so the camera
   window stayed black after the platform dropped its surface. The renderer's rule moved from `context.rs` into

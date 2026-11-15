@@ -22,6 +22,8 @@ pub struct ObjMaterial {
     pub normal_scale: f32,
     /// `map_Ke`, as written in the .mtl (relative to it).
     pub emissive_texture: Option<String>,
+    /// `map_d`, as written in the .mtl (relative to it): a cut-out mask in its first channel, as the C++ engine reads it.
+    pub alpha_texture: Option<String>,
     /// `Pm`; `None` when absent, distinct from an authored `Pm 0.0`.
     pub metallic: Option<f32>,
     /// `Pr`. `None` when absent, same reasoning as `metallic`.
@@ -43,6 +45,7 @@ impl Default for ObjMaterial {
             // glTF's own default normalTexture.scale.
             normal_scale: 1.0,
             emissive_texture: None,
+            alpha_texture: None,
             metallic: None,
             roughness: None,
             shininess: None,
@@ -138,16 +141,15 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     material.base_color[3] = opacity.clamp(0.0, 1.0);
                 }
             }
-            "map_Kd" if !values.is_empty() => {
+            "map_Kd" | "map_Ke" | "map_d" if !values.is_empty() => {
                 if let Some(material) = materials.last_mut() {
+                    let slot = match keyword {
+                        "map_Kd" => &mut material.base_color_texture,
+                        "map_Ke" => &mut material.emissive_texture,
+                        _ => &mut material.alpha_texture,
+                    };
                     // Last token, past any options; `\` becomes `/` so Windows-authored paths resolve on Linux.
-                    material.base_color_texture = values.last().map(|name| name.replace('\\', "/"));
-                }
-            }
-            // Same last-token, backslash-normalising rule as `map_Kd`.
-            "map_Ke" if !values.is_empty() => {
-                if let Some(material) = materials.last_mut() {
-                    material.emissive_texture = values.last().map(|name| name.replace('\\', "/"));
+                    *slot = values.last().map(|name| name.replace('\\', "/"));
                 }
             }
             "Tr" if !values.is_empty() => {
@@ -791,6 +793,12 @@ pub fn read_obj(obj_path: &Path) -> Result<ObjMesh> {
 pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     let mesh = read_obj(obj_path)?;
     check_texture_formats(&mesh)?;
+    for material in mesh.materials.iter().filter(|m| m.alpha_texture.is_some()) {
+        log::warn!(
+            "material '{}': its map_d mask needs a composited image, which only the in-memory GLB writes; it draws solid",
+            material.name
+        );
+    }
     let bin_name = gltf_path
         .file_stem()
         .map(|stem| format!("{}.bin", stem.to_string_lossy()))
