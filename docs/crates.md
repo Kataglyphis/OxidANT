@@ -127,6 +127,11 @@ model goes into ModelANT first, and only the lock changes here: the Rust crate c
 `scripts/windows/check_gpu_detector_parity.py` goes through the hub's parser.
 `test-models-lock.sh` fails a second tracked file that names the model outside tests and docs.
 
+**Scenes are data too.** `resources/scenes/scenes.lock` pins AssetANT's two Colosseum archives,
+the glTF the native viewer opens and the lighter GLB the browser demo fetches;
+`fetch-models.sh --scenes` (Windows: `Get-Models.ps1 -Scenes`) unpacks each beside the lock, and
+nothing packages them. The viewer's lookup order: [`running.md`](running.md#the-webgpu-viewer-and-its-scenes).
+
 **One owner per fact.** The 80 class names are the hub's `coco-classes.txt`, copied to
 `crates/core/src/coco-classes.txt` and held there by the lint gates' shared-config check; refresh
 the copy with `sync-shared-config.sh --write`, never by hand. `kataglyphis_core::provenance` owns

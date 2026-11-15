@@ -125,6 +125,9 @@ flake.lock
 /resources/models/*
 !/resources/models/models.lock
 !/resources/models/llm.lock
+# The viewer's scenes: resources/scenes/scenes.lock names them, fetch-models.sh --scenes unpacks them beside it.
+/resources/scenes/*
+!/resources/scenes/scenes.lock
 *.gif
 *.webp
 !images/Rust.webp
