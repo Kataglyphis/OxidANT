@@ -1,5 +1,4 @@
-//! Minimal glTF viewer: `cargo run -p kataglyphis_webgpu_renderer --example viewer [model.gltf]`
-//! Drag orbits, wheel zooms, Esc quits, S screenshots, R reloads shaders, drag-and-drop loads.
+//! The Studio editor over a glTF: `cargo run -p kataglyphis_webgpu_renderer --example viewer [model.gltf]`; keys in the Camera tab.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,6 +9,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
+use kataglyphis_webgpu_renderer::ui::ModelSource;
 use kataglyphis_webgpu_renderer::{
     load_gltf, AppSignal, GpuContext, HostCaps, OrbitCamera, StudioApp,
 };
@@ -67,6 +67,7 @@ impl Viewer {
                     scene.triangle_count()
                 );
                 app.load_scene(&scene);
+                app.model = Some(ModelSource::from_path(&path));
                 self.model_path = path;
             }
             Err(err) => log::error!("Failed to load {}: {err:#}", path.display()),
@@ -165,7 +166,7 @@ impl ApplicationHandler for Viewer {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("Kataglyphis WebGPU glTF viewer (drop a .gltf/.glb to load)")
+                        .with_title("BeschleunigerBallett WebGPU (drop a .gltf/.glb to load)")
                         .with_inner_size(WINDOW_SIZE),
                 )
                 .expect("failed to create window"),
@@ -184,8 +185,9 @@ impl ApplicationHandler for Viewer {
             screenshot: true,
             hot_reload: true,
         };
-        let app = StudioApp::new(&window, gpu, &scene, OrbitCamera::default(), caps)
+        let mut app = StudioApp::new(&window, gpu, &scene, OrbitCamera::default(), caps)
             .expect("failed to set up the renderer");
+        app.model = Some(ModelSource::from_path(&self.model_path));
         self.app = Some(app);
         self.window = Some(window);
     }

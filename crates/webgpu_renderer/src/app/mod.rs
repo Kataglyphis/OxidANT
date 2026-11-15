@@ -6,16 +6,19 @@ mod input;
 use anyhow::Context as _;
 use winit::window::Window;
 
+pub use frame::OffscreenFrame;
+
 use crate::context::GpuContext;
 use crate::render::forward::ForwardRenderer;
 use crate::render::frame_clock::FrameClock;
 use crate::render::ibl::EquirectImage;
-use crate::render::overlay::{Overlay, OverlayControls};
+use crate::render::overlay::Overlay;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::controller::OrbitController;
 use crate::scene::viewport::SceneViewport;
 use crate::scene::CpuScene;
+use crate::ui::editor::{DeviceInfo, Editor, FrameHistory, ModelSource};
 
 /// What the shell can do for the app; each is off where the target cannot do it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -24,7 +27,7 @@ pub struct HostCaps {
     pub quit: bool,
     /// S asks the shell for a screenshot.
     pub screenshot: bool,
-    /// R asks the shell to reload the shaders.
+    /// F5 asks the shell to reload the shaders.
     pub hot_reload: bool,
 }
 
@@ -40,9 +43,14 @@ pub struct StudioApp {
     pub gpu: GpuContext,
     pub renderer: ForwardRenderer,
     pub camera: OrbitCamera,
+    /// The loaded model as the editor names it; the shell sets it with each load.
+    pub model: Option<ModelSource>,
+    editor: Editor,
+    frames: FrameHistory,
+    device: DeviceInfo,
+    format: wgpu::TextureFormat,
     tonemap: TonemapPass,
     overlay: Overlay,
-    controls: OverlayControls,
     controller: OrbitController,
     home: OrbitCamera,
     caps: HostCaps,
@@ -64,27 +72,58 @@ impl StudioApp {
             .surface_config
             .as_ref()
             .context("StudioApp needs a windowed GpuContext")?;
-        let (format, width, height) = (config.format, config.width, config.height);
-        let mut renderer = ForwardRenderer::new(&gpu, width, height);
+        let (format, size) = (config.format, [config.width, config.height]);
+        let overlay = Overlay::new(window, &gpu.device, format);
+        Ok(Self::with_overlay(
+            gpu,
+            scene,
+            (home, caps),
+            (format, size),
+            overlay,
+        ))
+    }
+
+    /// Without a window: frames go to [`Self::render_offscreen`] in `format`, for snapshots and tests.
+    pub fn headless(
+        gpu: GpuContext,
+        scene: &CpuScene,
+        home: OrbitCamera,
+        caps: HostCaps,
+        format: wgpu::TextureFormat,
+    ) -> Self {
+        let overlay = Overlay::headless(&gpu.device, format);
+        Self::with_overlay(gpu, scene, (home, caps), (format, [1, 1]), overlay)
+    }
+
+    fn with_overlay(
+        gpu: GpuContext,
+        scene: &CpuScene,
+        (home, caps): (OrbitCamera, HostCaps),
+        (format, size): (wgpu::TextureFormat, [u32; 2]),
+        overlay: Overlay,
+    ) -> Self {
+        let mut renderer = ForwardRenderer::new(&gpu, size[0], size[1]);
         renderer.enable_gpu_timing(&gpu);
         renderer.upload_scene(&gpu, scene);
         // IBL baked from the background's own sky; 256x128 suffices for low-frequency lighting.
         renderer.set_environment(&gpu, &EquirectImage::sky(256, 128));
-        let tonemap = TonemapPass::new(&gpu, format);
-        let overlay = Overlay::new(window, &gpu.device, format);
-        Ok(Self {
-            controls: OverlayControls::from_renderer(&renderer),
+        Self {
+            tonemap: TonemapPass::new(&gpu, format),
+            device: DeviceInfo::of(&gpu.adapter_info),
             controller: OrbitController::default(),
             camera: home.clone(),
+            model: None,
+            editor: Editor::default(),
+            frames: FrameHistory::default(),
             home,
             caps,
+            format,
             clock: FrameClock::new(),
             epoch_s: None,
             gpu,
             renderer,
-            tonemap,
             overlay,
-        })
+        }
     }
 
     /// Swaps in `scene` and starts its camera and animation clock over.
@@ -101,5 +140,14 @@ impl StudioApp {
             viewport: SceneViewport::FULL,
             ..self.camera.clone()
         }
+    }
+
+    pub fn editor(&self) -> &Editor {
+        &self.editor
+    }
+
+    /// The editor's own state: its docks, selection and windows.
+    pub fn editor_mut(&mut self) -> &mut Editor {
+        &mut self.editor
     }
 }

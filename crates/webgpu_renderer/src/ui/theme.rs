@@ -16,7 +16,15 @@ pub const FIGURE_STYLE: &str = "figure";
 /// Windows, popups and menus, the C++ WindowRounding.
 const WINDOW_RADIUS: u8 = 6;
 /// Frames and buttons, the C++ FrameRounding.
-const FRAME_RADIUS: u8 = 5;
+pub const FRAME_RADIUS: u8 = 5;
+/// The C++ FramePadding.
+pub const FRAME_PADDING: egui::Vec2 = egui::Vec2::new(8.0, 4.0);
+/// The C++ GetFrameHeight: one body line and the frame padding above and below it.
+pub const FRAME_HEIGHT: f32 = fonts::LINE_HEIGHT + 2.0 * FRAME_PADDING.y;
+/// The C++ WindowPadding, every dock's and bar's margin.
+pub const WINDOW_PADDING: egui::Vec2 = egui::Vec2::new(12.0, 10.0);
+/// The C++ ItemInnerSpacing.
+pub const INNER_SPACING: egui::Vec2 = egui::Vec2::new(6.0, 4.0);
 
 /// Installs the style for the dark theme and pins that theme, so an OS in light mode cannot swap it out.
 pub fn install(ctx: &egui::Context) {
@@ -54,7 +62,9 @@ fn text_styles() -> BTreeMap<TextStyle, FontId> {
 
 fn spacing(spacing: &mut Spacing) {
     spacing.item_spacing = vec2(8.0, 6.0);
-    spacing.button_padding = vec2(8.0, 4.0);
+    spacing.button_padding = FRAME_PADDING;
+    // DragValues and menu bars take this height, so they line up with the frame-height widgets.
+    spacing.interact_size.y = FRAME_HEIGHT;
     spacing.window_margin = Margin::symmetric(12, 10);
     spacing.menu_margin = Margin::same(6);
     spacing.indent = 14.0;
@@ -137,10 +147,13 @@ mod tests {
     fn the_type_scale_follows_the_cpp_editor() {
         let styles = text_styles();
         let size = |style: TextStyle| styles[&style].size;
-        assert_eq!(size(TextStyle::Body), 15.0);
-        assert_eq!(size(TextStyle::Small), 12.0);
-        assert_eq!(size(TextStyle::Heading), 18.0);
-        assert_eq!(size(TextStyle::Name(FIGURE_STYLE.into())), 27.0);
+        // In C++ pixels of line height: 15, 12, 18 and 27; egui sizes the em, 2048/2400 of that.
+        let line = |style: TextStyle| size(style) * 2400.0 / 2048.0;
+        assert!((line(TextStyle::Body) - 15.0).abs() < 1e-4);
+        assert!((line(TextStyle::Small) - 12.0).abs() < 1e-4);
+        assert!((line(TextStyle::Heading) - 18.0).abs() < 1e-4);
+        assert!((line(TextStyle::Name(FIGURE_STYLE.into())) - 27.0).abs() < 1e-4);
         assert_eq!(styles[&TextStyle::Monospace], fonts::mono_font());
+        assert_eq!(FRAME_HEIGHT, 23.0);
     }
 }

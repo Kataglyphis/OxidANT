@@ -13,6 +13,37 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, the Studio Pro editor shell)
+- `ui::Editor`, BeschleunigerBallett's docked C++ editor in egui, one module per dock under
+  `crates/webgpu_renderer/src/ui/editor/`: the menu bar (brand, File/View/Render/Help, the centred renderer switch,
+  the frame rate), the status bar, the scene dock (outliner; the library for now over the loaded model), the
+  inspector with its five tabs, the profiler (frame figure, frame-time graph, GPU passes, visibility), the viewport
+  chip and the About modal. No `CentralPanel`: the scene is the root `Ui`'s leftover rect, which becomes
+  `camera.viewport`.
+- The C++ dock geometry (`DockPlan`): default, minimum and maximum sizes, drop order on narrow and low windows, whole
+  pixels at every scale; custom splitters inside the scene edge that re-anchor every frame, never rewrite a
+  preference on a click, ignore a pointer another button holds, and are egui's so a press there never orbits.
+- F1 hides and shows the editor (the camera gets the whole frame), F5 reloads the shaders, S takes a screenshot; one
+  key table feeds the handlers and the Camera tab's CONTROLS. Esc quits only when, before the pass, nothing had focus
+  and no menu or About was open. The double-click window follows the frame rate, as in the C++ editor.
+- `src/ui/widgets/` and `src/ui/icons.rs`: the C++ custom widgets as egui painter widgets (fill slider, axis drags,
+  pill toggle, segmented control, tab bar, list row, keycap, metric row, status dot, captions, property rows) and
+  its eleven stroke icons, each with headless tests.
+- `StudioApp::headless` and `render_offscreen`, and `examples/editor_snapshot.rs`, which renders the editor over a
+  scene into PNGs at any size and scale, natively or as the browser draws it, on lavapipe without a window.
+
+### Changed (2026-11-15, the Studio Pro editor shell)
+- Body text is a 12.8-point em: Dear ImGui sizes a face by ascent minus descent, so the C++ 15 px Roboto is that em
+  and egui's 15 points drew it 17 % larger. Rows are 15 points and frames 23, as in the C++ editor.
+- The inspector carries the old overlay's controls: the sun's radiance, colour and direction (from the sun into the
+  scene, as in C++, instead of azimuth and elevation), the ambient light, bloom, SSAO, exposure, auto exposure and
+  occlusion culling with its counts. `RendererSettings` reads them before the egui pass and writes them back after
+  it, so the editor needs no GPU.
+- Shader reload moved from R to F5, the C++ key.
+
+### Removed (2026-11-15, the Studio Pro editor shell)
+- `OverlayControls` and its re-export: the editor replaces the floating panel.
+
 ### Fixed (2026-11-15, the renderer's frame, lighting and post core)
 - **Every shadow cascade rendered with cascade 0's light matrix** (since 2026-07-24): a render bundle sees only the
   bind groups it sets itself, so the one cached caster bundle's cascade index 0 beat each pass's own, and layers 1
