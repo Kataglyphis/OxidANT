@@ -46,7 +46,11 @@ tonemapping.
 **Runtime** — GPU skinning, morph-target and TRS animation playback, GPU
 instancing, frustum plus occlusion culling (hardware queries, or an opt-in
 compute pass), LOD simplification, a validated render graph, hot shader reload,
-an egui overlay, and screenshot capture.
+an egui overlay in the C++ editor's Studio Pro palette, style and fonts (Roboto
+Medium and Cousine, embedded from `assets/fonts/` with their licences), and
+screenshot capture. The native viewer and the browser demo run one host,
+`app::StudioApp`; its camera centres on the part of the frame the UI leaves free
+(`SceneViewport`, the C++ `makeViewportRemap`) while every pass stays full-frame.
 
 ## Running
 
@@ -69,7 +73,9 @@ python -m http.server 8931 --directory crates/webgpu_renderer/web
 ```
 
 Viewer controls: drag to orbit, wheel to zoom, **S** screenshot,
-**R** reload shaders, **Esc** quit.
+**R** reload shaders, **Esc** quit. While a text field has focus these keys do
+nothing, and the first **Esc** only leaves the field or closes a popup. The
+browser demo has no keyboard shortcuts.
 
 ## Testing approach
 

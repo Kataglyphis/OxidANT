@@ -11,14 +11,10 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys};
 use winit::window::{Window, WindowId};
 
+use crate::app::{HostCaps, StudioApp};
 use crate::asset::gltf_loader::load_gltf_slice;
 use crate::context::GpuContext;
-use crate::render::forward::ForwardRenderer;
-use crate::render::frame_clock::FrameClock;
-use crate::render::overlay::{Overlay, OverlayControls};
-use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
-use crate::scene::controller::OrbitController;
 
 const DEMO_SCENE: &[u8] = include_bytes!("../tests/assets/cube_on_plane.gltf");
 
@@ -109,25 +105,98 @@ fn sync_canvas_backing_size(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
     (width.max(1), height.max(1))
 }
 
-struct GpuState {
-    gpu: GpuContext,
-    renderer: ForwardRenderer,
-    tonemap: TonemapPass,
-    overlay: Overlay,
-    controls: OverlayControls,
+/// The showcase framing: a little further out and higher than the native viewer's.
+fn home_camera() -> OrbitCamera {
+    OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 35.0,
+        ..OrbitCamera::default()
+    }
+}
+
+/// A canvas-backed window, mounted in `#demo` (or the body), its CSS size driving the layout.
+fn create_canvas_window(event_loop: &ActiveEventLoop) -> Arc<Window> {
+    let window = Arc::new(
+        event_loop
+            .create_window(
+                Window::default_attributes()
+                    .with_inner_size(winit::dpi::LogicalSize::new(1024, 640)),
+            )
+            .expect("failed to create window"),
+    );
+    let canvas = window.canvas().expect("winit window must expose a canvas");
+    let style = canvas.style();
+    let _ = style.set_property("width", "100%");
+    let _ = style.set_property("height", "100%");
+    let document = web_sys::window()
+        .and_then(|w| w.document())
+        .expect("no document");
+    let mount = document
+        .get_element_by_id("demo")
+        .unwrap_or_else(|| document.body().expect("no body").into());
+    mount
+        .append_child(&canvas)
+        .expect("failed to append canvas");
+    window
+}
+
+/// WebGPU init is async-only in browsers: the app lands in `slot` once the device resolves.
+fn spawn_app_init(slot: Rc<RefCell<Option<StudioApp>>>, window: Arc<Window>, size: (u32, u32)) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let mut gpu = GpuContext::new_windowed_async(Arc::clone(&window))
+            .await
+            .expect("WebGPU init failed (does this browser support WebGPU?)");
+        // The context read inner_size before the canvas size propagated through winit.
+        gpu.resize(size.0, size.1);
+        let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
+        // No quit, screenshot or shader files in a browser tab.
+        let app = StudioApp::new(&window, gpu, &scene, home_camera(), HostCaps::default())
+            .expect("failed to set up the renderer");
+        slot.borrow_mut().replace(app);
+        window.request_redraw();
+    });
+}
+
+/// Swaps in a dropped or picked scene, keeping the current one on a parse error.
+fn load_dropped_scene(app: &mut StudioApp, dropped: &DroppedScene) {
+    let Some((name, bytes)) = dropped.borrow_mut().take() else {
+        return;
+    };
+    match load_gltf_slice(&bytes) {
+        Ok(scene) => {
+            log::info!(
+                "Loaded {name}: {} primitives, {} triangles",
+                scene.primitives.len(),
+                scene.triangle_count()
+            );
+            app.load_scene(&scene);
+        }
+        Err(err) => log::error!(
+            "Failed to load {name}: {err:#} (external .bin/textures cannot \
+             be resolved from a drop - use a self-contained .glb)"
+        ),
+    }
+}
+
+/// Follows the canvas's CSS layout size every frame, which winit's web backend does not report.
+fn follow_canvas_size(window: &Window, gpu: &mut GpuContext) {
+    let Some(canvas) = window.canvas() else {
+        return;
+    };
+    let (width, height) = sync_canvas_backing_size(&canvas);
+    let configured = gpu.surface_config.as_ref().map(|c| (c.width, c.height));
+    if configured != Some((width, height)) {
+        gpu.resize(width, height);
+    }
 }
 
 #[derive(Default)]
 struct DemoApp {
     window: Option<Arc<Window>>,
     /// Filled asynchronously once the WebGPU adapter/device resolve.
-    state: Rc<RefCell<Option<GpuState>>>,
+    app: Rc<RefCell<Option<StudioApp>>>,
     /// Filled asynchronously by the drop-zone listeners.
     dropped_scene: DroppedScene,
-    controller: OrbitController,
-    camera: OrbitCamera,
-    frame: u64,
-    frame_clock: FrameClock,
 }
 
 impl ApplicationHandler for DemoApp {
@@ -135,219 +204,34 @@ impl ApplicationHandler for DemoApp {
         if self.window.is_some() {
             return;
         }
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_inner_size(winit::dpi::LogicalSize::new(1024, 640)),
-                )
-                .expect("failed to create window"),
-        );
-
-        // CSS drives the canvas layout size; the backing store follows it.
-        let canvas = window.canvas().expect("winit window must expose a canvas");
-        let style = canvas.style();
-        let _ = style.set_property("width", "100%");
-        let _ = style.set_property("height", "100%");
-        let document = web_sys::window()
-            .and_then(|w| w.document())
-            .expect("no document");
-        let mount = document
-            .get_element_by_id("demo")
-            .unwrap_or_else(|| document.body().expect("no body").into());
-        mount
-            .append_child(&canvas)
-            .expect("failed to append canvas");
-        install_drop_zone(&document, Rc::clone(&self.dropped_scene));
+        let window = create_canvas_window(event_loop);
+        if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+            install_drop_zone(&document, Rc::clone(&self.dropped_scene));
+        }
         // The scene picker and drag-drop share one slot.
         SCENE_SLOT.with(|slot| {
             slot.borrow_mut().replace(Rc::clone(&self.dropped_scene));
         });
-        let (initial_width, initial_height) = sync_canvas_backing_size(&canvas);
-
-        // WebGPU init is async-only in browsers.
-        let state_slot = Rc::clone(&self.state);
-        let init_window = Arc::clone(&window);
-        wasm_bindgen_futures::spawn_local(async move {
-            let mut gpu = GpuContext::new_windowed_async(Arc::clone(&init_window))
-                .await
-                .expect("WebGPU init failed (does this browser support WebGPU?)");
-            let format = gpu.surface_format().expect("windowed context has a format");
-            // The context read inner_size before the canvas size propagated through winit.
-            gpu.resize(initial_width, initial_height);
-            let mut renderer = ForwardRenderer::new(&gpu, initial_width, initial_height);
-            let tonemap = TonemapPass::new(&gpu, format);
-
-            let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
-            renderer.upload_scene(&gpu, &scene);
-
-            // IBL from the procedural sky, so the showcase has real environment reflections.
-            let sky_env = crate::render::ibl::EquirectImage::sky(256, 128);
-            renderer.set_environment(&gpu, &sky_env);
-
-            let overlay = Overlay::new(&init_window, &gpu.device, format);
-            let controls = OverlayControls::from_light(
-                renderer.light_dir_ambient,
-                renderer.light_color_intensity,
-            );
-
-            state_slot.borrow_mut().replace(GpuState {
-                gpu,
-                renderer,
-                tonemap,
-                overlay,
-                controls,
-            });
-            init_window.request_redraw();
-        });
-
+        let canvas = window.canvas().expect("winit window must expose a canvas");
+        let size = sync_canvas_backing_size(&canvas);
+        spawn_app_init(Rc::clone(&self.app), Arc::clone(&window), size);
         self.window = Some(window);
     }
 
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let consumed = match (self.state.borrow_mut().as_mut(), self.window.as_ref()) {
-            (Some(state), Some(window)) => state.overlay.on_event(window, &event),
-            _ => false,
+        let Some(window) = self.window.as_ref() else {
+            return;
         };
-        if consumed {
-            self.controller.note_consumed_event(&event);
-        } else {
-            self.controller.handle_event(&event, &mut self.camera);
-        }
-
-        match event {
-            WindowEvent::Resized(size) => {
-                if let Some(state) = self.state.borrow_mut().as_mut() {
-                    state.gpu.resize(size.width, size.height);
-                }
-            }
-            WindowEvent::RedrawRequested => {
-                let Some(window) = self.window.as_ref() else {
-                    return;
-                };
-                let mut state_ref = self.state.borrow_mut();
-                let Some(state) = state_ref.as_mut() else {
-                    return;
-                };
-
-                // As the native viewer: swap and re-frame, keeping the scene on a parse error.
-                if let Some((name, bytes)) = self.dropped_scene.borrow_mut().take() {
-                    match load_gltf_slice(&bytes) {
-                        Ok(scene) => {
-                            log::info!(
-                                "Loaded {name}: {} primitives, {} triangles",
-                                scene.primitives.len(),
-                                scene.triangle_count()
-                            );
-                            state.renderer.upload_scene(&state.gpu, &scene);
-                            self.camera = OrbitCamera::default();
-                            self.controller = OrbitController::default();
-                            self.frame = 0;
-                        }
-                        Err(err) => log::error!(
-                            "Failed to load {name}: {err:#} (external .bin/textures cannot \
-                             be resolved from a drop - use a self-contained .glb)"
-                        ),
-                    }
-                }
-
-                // Follow the CSS layout size every frame.
-                if let Some(canvas) = window.canvas() {
-                    let (width, height) = sync_canvas_backing_size(&canvas);
-                    let configured = state
-                        .gpu
-                        .surface_config
-                        .as_ref()
-                        .map(|c| (c.width, c.height));
-                    if configured != Some((width, height)) {
-                        state.gpu.resize(width, height);
-                    }
-                }
-
-                let Some(surface) = state.gpu.surface.as_ref() else {
-                    return;
-                };
-
-                // std::time::Instant is unavailable on wasm32: animate by frame.
-                self.frame += 1;
-                if state.renderer.has_animations() {
-                    state.renderer.set_animation_time(self.frame as f32 / 60.0);
-                }
-                if self.controller.auto_orbit {
-                    self.camera.yaw_deg = 45.0 + self.frame as f32 * 0.5;
-                    self.camera.radius = 6.0;
-                    self.camera.pitch_deg = 35.0;
-                }
-                // rAF runs at the display rate, so adaptation needs real time, not frames.
-                state.renderer.frame_delta_seconds =
-                    self.frame_clock.tick_at(performance_now_seconds());
-
-                // Keep this acquire identical to the native viewer's.
-                let frame = match surface.get_current_texture() {
-                    wgpu::CurrentSurfaceTexture::Success(frame)
-                    | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-                    wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                        // Never abort on Outdated/Lost: reconfigure and retry.
-                        state.gpu.reconfigure();
-                        window.request_redraw();
-                        return;
-                    }
-                    other => {
-                        log::error!("Surface acquire failed: {other:?}");
-                        return;
-                    }
-                };
-                let view = frame
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-                let (width, height) = (frame.texture.width(), frame.texture.height());
-                let GpuState {
-                    gpu,
-                    renderer,
-                    tonemap,
-                    overlay,
-                    controls,
-                } = state;
-                renderer.render_tonemapped(gpu, tonemap, &view, width, height, &self.camera);
-
-                let mut encoder =
-                    gpu.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("overlay_encoder"),
-                        });
-                // Cull counts for the overlay's occlusion toggle.
-                controls.occlusion_stats = Some(renderer.occlusion_cull_stats());
-                let mut changed = false;
-                overlay.render(
-                    &gpu.device,
-                    &gpu.queue,
-                    &mut encoder,
-                    window,
-                    &view,
-                    width,
-                    height,
-                    |ctx| {
-                        changed |= controls.ui(ctx);
-                    },
-                );
-                gpu.queue.submit(Some(encoder.finish()));
-                if changed {
-                    let dir = controls.light_direction();
-                    renderer.light_dir_ambient =
-                        glam::Vec4::new(dir.x, dir.y, dir.z, controls.ambient);
-                    renderer.light_color_intensity.w = controls.intensity;
-                    renderer.bloom_strength = controls.bloom;
-                    renderer.ssao_strength = controls.ssao;
-                    renderer.exposure_ev = controls.exposure_ev;
-                    renderer.occlusion_queries_enabled = controls.occlusion_culling;
-                }
-
-                window.pre_present_notify();
-                // wgpu 30: presentation moved to the queue.
-                gpu.queue.present(frame);
-                window.request_redraw();
-            }
-            _ => {}
+        let mut slot = self.app.borrow_mut();
+        let Some(app) = slot.as_mut() else {
+            return;
+        };
+        app.window_event(window, &event);
+        if matches!(event, WindowEvent::RedrawRequested) {
+            load_dropped_scene(app, &self.dropped_scene);
+            follow_canvas_size(window, &mut app.gpu);
+            // A browser tab never quits and has no file shortcuts, so a frame asks nothing of this shell.
+            let _ = app.frame(window, performance_now_seconds());
         }
     }
 }

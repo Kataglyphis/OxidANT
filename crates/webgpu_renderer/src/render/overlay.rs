@@ -1,6 +1,11 @@
-//! egui overlay (stats, light and tonemap controls) over the tonemapped output, native and wasm32.
+//! egui over the tonemapped output, native and wasm32: one pass per frame, painted over the finished scene.
+
+use std::num::NonZeroUsize;
 
 use winit::window::Window;
+
+use crate::context::GpuContext;
+use crate::render::forward::ForwardRenderer;
 
 pub struct Overlay {
     ctx: egui::Context,
@@ -10,8 +15,7 @@ pub struct Overlay {
 
 impl Overlay {
     pub fn new(window: &Window, device: &wgpu::Device, output_format: wgpu::TextureFormat) -> Self {
-        let ctx = egui::Context::default();
-        crate::ui::install(&ctx);
+        let ctx = studio_context();
         let max_texture_side = device.limits().max_texture_dimension_2d as usize;
         let state = egui_winit::State::new(
             ctx.clone(),
@@ -29,47 +33,78 @@ impl Overlay {
         }
     }
 
+    /// The egui context, to read focus and popups before a pass.
+    pub fn context(&self) -> &egui::Context {
+        &self.ctx
+    }
+
     /// Feeds a window event; true when egui consumed it, so camera controls should skip it.
     pub fn on_event(&mut self, window: &Window, event: &winit::event::WindowEvent) -> bool {
         self.state.on_window_event(window, event).consumed
     }
 
-    /// Runs the UI closure and paints over the scene already in `view` (loads, never clears).
-    #[allow(clippy::too_many_arguments)]
-    pub fn render(
+    /// Runs one pass of `ui` over the window's input; paint its output with [`Self::paint`].
+    pub fn run<R: Default>(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
         window: &Window,
-        view: &wgpu::TextureView,
-        width: u32,
-        height: u32,
-        mut run_ui: impl FnMut(&egui::Context),
-    ) {
+        ui: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> (egui::FullOutput, R) {
         let raw_input = self.state.take_egui_input(window);
-        // egui 0.35 replaced Context::run with begin_pass/end_pass.
-        self.ctx.begin_pass(raw_input);
-        run_ui(&self.ctx);
-        let mut output = self.ctx.end_pass();
-        let screen = screen_for(&output, [width, height]);
+        let (mut output, result) = run_pass(&self.ctx, raw_input, ui);
         let platform_output = std::mem::take(&mut output.platform_output);
         self.state.handle_platform_output(window, platform_output);
-
-        let clipped = self.ctx.tessellate(output.shapes, screen.pixels_per_point);
-        paint(
-            &mut self.renderer,
-            PaintTarget {
-                device,
-                queue,
-                encoder,
-                view,
-                screen,
-            },
-            &clipped,
-            output.textures_delta,
-        );
+        (output, result)
     }
+
+    /// Paints a pass over the scene already in `view` (loads, never clears).
+    pub fn paint(
+        &mut self,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        size_in_pixels: [u32; 2],
+        output: egui::FullOutput,
+    ) {
+        let screen = screen_for(&output, size_in_pixels);
+        let egui::FullOutput {
+            textures_delta,
+            shapes,
+            ..
+        } = output;
+        let clipped = self.ctx.tessellate(shapes, screen.pixels_per_point);
+        let target = PaintTarget {
+            device: &gpu.device,
+            queue: &gpu.queue,
+            encoder,
+            view,
+            screen,
+        };
+        paint(&mut self.renderer, target, &clipped, textures_delta);
+    }
+}
+
+/// A context with the studio look that runs exactly one pass per frame, so the UI's actions happen once.
+pub(crate) fn studio_context() -> egui::Context {
+    let ctx = egui::Context::default();
+    crate::ui::install(&ctx);
+    ctx.options_mut(|options| options.max_passes = NonZeroUsize::MIN);
+    ctx
+}
+
+/// One pass of `ui`; `run_ui` rather than `begin_pass`/`end_pass`, which would skip egui's own plugins.
+pub(crate) fn run_pass<R: Default>(
+    ctx: &egui::Context,
+    raw_input: egui::RawInput,
+    ui: impl FnOnce(&mut egui::Ui) -> R,
+) -> (egui::FullOutput, R) {
+    let mut ui = Some(ui);
+    let mut result = None;
+    let output = ctx.run_ui(raw_input, |root| {
+        if let Some(ui) = ui.take() {
+            result = Some(ui(root));
+        }
+    });
+    (output, result.unwrap_or_default())
 }
 
 /// The pass's own pixels per point: egui lays out at zoom times the window's scale factor.
@@ -169,6 +204,28 @@ impl OverlayControls {
             occlusion_culling: false,
             occlusion_stats: None,
         }
+    }
+
+    /// Starts from the renderer's own values, so the first change does not move the other settings.
+    pub fn from_renderer(renderer: &ForwardRenderer) -> Self {
+        Self {
+            bloom: renderer.bloom_strength,
+            ssao: renderer.ssao_strength,
+            exposure_ev: renderer.exposure_ev,
+            occlusion_culling: renderer.occlusion_queries_enabled,
+            ..Self::from_light(renderer.light_dir_ambient, renderer.light_color_intensity)
+        }
+    }
+
+    /// Writes every control into the renderer.
+    pub fn apply(&self, renderer: &mut ForwardRenderer) {
+        let dir = self.light_direction();
+        renderer.light_dir_ambient = glam::Vec4::new(dir.x, dir.y, dir.z, self.ambient);
+        renderer.light_color_intensity.w = self.intensity;
+        renderer.bloom_strength = self.bloom;
+        renderer.ssao_strength = self.ssao;
+        renderer.exposure_ev = self.exposure_ev;
+        renderer.occlusion_queries_enabled = self.occlusion_culling;
     }
 
     /// Direction TOWARDS the light from azimuth/elevation.
@@ -311,19 +368,13 @@ mod tests {
         input
     }
 
-    fn studio_context() -> egui::Context {
-        let ctx = egui::Context::default();
-        crate::ui::install(&ctx);
-        ctx
-    }
-
     #[test]
     fn the_paint_scale_is_the_zoomed_one_not_the_windows() {
         let ctx = studio_context();
         ctx.set_zoom_factor(2.0);
         // A new zoom factor takes effect at the start of the next pass.
         for _ in 0..2 {
-            let output = ctx.run_ui(window_input(1.5, Vec::new()), |ui| {
+            let (output, ()) = run_pass(&ctx, window_input(1.5, Vec::new()), |ui| {
                 ui.label("zoomed");
             });
             let screen = screen_for(&output, [2400, 1350]);
@@ -348,10 +399,47 @@ mod tests {
             modifiers: egui::Modifiers::COMMAND,
         };
         for events in [vec![plus], Vec::new()] {
-            let output = ctx.run_ui(window_input(1.0, events), |_| {});
+            let (output, ()) = run_pass(&ctx, window_input(1.0, events), |_| {});
             output.drop_without_applying_deltas();
         }
         assert_eq!(ctx.zoom_factor(), 1.0);
         assert_eq!(ctx.pixels_per_point(), 1.0);
+    }
+
+    #[test]
+    fn a_pass_runs_the_ui_once_even_when_a_widget_asks_for_another() {
+        let ctx = studio_context();
+        let mut calls = 0;
+        let (output, value) = run_pass(&ctx, window_input(1.0, Vec::new()), |ui| {
+            calls += 1;
+            ui.ctx()
+                .request_discard("a second pass would rerun the editor's actions");
+            7
+        });
+        output.drop_without_applying_deltas();
+        assert_eq!((calls, value), (1, 7));
+    }
+
+    #[test]
+    fn the_controls_start_from_the_renderer_and_write_back_what_they_show() {
+        let Some(gpu) = GpuContext::headless_or_skip() else {
+            return;
+        };
+        let mut renderer = ForwardRenderer::new(&gpu, 8, 8);
+        renderer.light_dir_ambient = glam::Vec4::new(0.5, 0.8, 0.3, 0.35);
+        renderer.bloom_strength = 0.25;
+        renderer.occlusion_queries_enabled = true;
+        let mut controls = OverlayControls::from_renderer(&renderer);
+        assert_eq!(controls.bloom, 0.25);
+        assert!(controls.occlusion_culling);
+        controls.ssao = 0.1;
+        controls.apply(&mut renderer);
+        assert_eq!(
+            (renderer.ssao_strength, renderer.bloom_strength),
+            (0.1, 0.25)
+        );
+        let dir = renderer.light_dir_ambient.truncate().normalize();
+        let expected = glam::Vec3::new(0.5, 0.8, 0.3).normalize();
+        assert!(dir.abs_diff_eq(expected, 1e-4), "{dir} vs {expected}");
     }
 }

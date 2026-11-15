@@ -8,26 +8,20 @@ use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 use kataglyphis_webgpu_renderer::{
-    load_gltf, ForwardRenderer, FrameClock, GpuContext, OrbitCamera, OrbitController, Overlay,
-    OverlayControls, TonemapPass,
+    load_gltf, AppSignal, GpuContext, HostCaps, OrbitCamera, StudioApp,
 };
+
+/// The C++ editor's start size, in logical pixels.
+const WINDOW_SIZE: winit::dpi::LogicalSize<u32> = winit::dpi::LogicalSize::new(1600, 900);
 
 struct Viewer {
     model_path: PathBuf,
     window: Option<Arc<Window>>,
-    gpu: Option<GpuContext>,
-    renderer: Option<ForwardRenderer>,
-    tonemap: Option<TonemapPass>,
-    overlay: Option<Overlay>,
-    controls: Option<OverlayControls>,
-    controller: OrbitController,
-    camera: OrbitCamera,
+    app: Option<StudioApp>,
     started: Instant,
-    frame_clock: FrameClock,
     frame: u64,
     shader_mtimes: Vec<(PathBuf, std::time::SystemTime)>,
 }
@@ -52,15 +46,8 @@ impl Viewer {
         Self {
             model_path,
             window: None,
-            gpu: None,
-            renderer: None,
-            tonemap: None,
-            overlay: None,
-            controls: None,
-            controller: OrbitController::default(),
-            camera: OrbitCamera::default(),
+            app: None,
             started: Instant::now(),
-            frame_clock: FrameClock::new(),
             frame: 0,
             shader_mtimes: shader_mtimes(),
         }
@@ -68,7 +55,7 @@ impl Viewer {
 
     /// Loads a different model at runtime (drag & drop).
     fn load_model(&mut self, path: PathBuf) {
-        let (Some(gpu), Some(renderer)) = (self.gpu.as_ref(), self.renderer.as_mut()) else {
+        let Some(app) = self.app.as_mut() else {
             return;
         };
         match load_gltf(&path) {
@@ -79,12 +66,8 @@ impl Viewer {
                     scene.primitives.len(),
                     scene.triangle_count()
                 );
-                renderer.upload_scene(gpu, &scene);
+                app.load_scene(&scene);
                 self.model_path = path;
-                // Frame the new model: fit the orbit radius to its bounds.
-                self.camera = OrbitCamera::default();
-                self.controller = OrbitController::default();
-                self.started = Instant::now();
             }
             Err(err) => log::error!("Failed to load {}: {err:#}", path.display()),
         }
@@ -92,7 +75,7 @@ impl Viewer {
 
     /// Hot shader reload; invalid WGSL keeps the previous pipelines running.
     fn reload_shaders(&mut self) {
-        let (Some(gpu), Some(renderer)) = (self.gpu.as_ref(), self.renderer.as_mut()) else {
+        let Some(app) = self.app.as_mut() else {
             return;
         };
         let paths = shader_paths();
@@ -103,7 +86,10 @@ impl Viewer {
             log::error!("Failed to read shader sources for reload");
             return;
         };
-        match renderer.reload_shaders(gpu, &forward_src, &sky_src) {
+        match app
+            .renderer
+            .reload_shaders(&app.gpu, &forward_src, &sky_src)
+        {
             Ok(()) => log::info!("Shaders reloaded"),
             Err(err) => log::error!("{err:#}"),
         }
@@ -125,11 +111,16 @@ impl Viewer {
 
     /// S key: renders one frame offscreen and writes screenshots/NNN.png.
     fn save_screenshot(&mut self) {
-        let (Some(gpu), Some(renderer)) = (self.gpu.as_mut(), self.renderer.as_mut()) else {
+        let Some(app) = self.app.as_mut() else {
             return;
         };
         let (width, height) = (1920u32, 1080u32);
-        match renderer.render_to_pixels(gpu, width, height, &self.camera) {
+        // The whole frame: no dock covers an offscreen shot, so the camera must not centre on the free rect.
+        let camera = app.full_frame_camera();
+        match app
+            .renderer
+            .render_to_pixels(&app.gpu, width, height, &camera)
+        {
             Ok(pixels) => {
                 let dir = std::path::Path::new("screenshots");
                 let _ = std::fs::create_dir_all(dir);
@@ -150,88 +141,18 @@ impl Viewer {
         }
     }
 
-    fn redraw(&mut self) {
+    fn redraw(&mut self, event_loop: &ActiveEventLoop) {
         self.poll_shader_changes();
-        let (Some(window), Some(gpu), Some(renderer), Some(tonemap), Some(overlay), Some(controls)) = (
-            self.window.as_ref(),
-            self.gpu.as_mut(),
-            self.renderer.as_mut(),
-            self.tonemap.as_mut(),
-            self.overlay.as_mut(),
-            self.controls.as_mut(),
-        ) else {
+        let (Some(window), Some(app)) = (self.window.as_ref(), self.app.as_mut()) else {
             return;
         };
-        let Some(surface) = gpu.surface.as_ref() else {
-            return;
-        };
-
-        if self.controller.auto_orbit {
-            self.camera.yaw_deg = 45.0 + self.started.elapsed().as_secs_f32() * 30.0;
-        }
-        if renderer.has_animations() {
-            renderer.set_animation_time(self.started.elapsed().as_secs_f32());
-        }
-        renderer.frame_delta_seconds = self
-            .frame_clock
-            .tick_at(self.started.elapsed().as_secs_f64());
-
-        let frame = match surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                // Never abort on Outdated/Lost: reconfigure and retry next frame.
-                gpu.reconfigure();
-                window.request_redraw();
-                return;
+        for signal in app.frame(window, self.started.elapsed().as_secs_f64()) {
+            match signal {
+                AppSignal::Quit => event_loop.exit(),
+                AppSignal::Screenshot => self.save_screenshot(),
+                AppSignal::ReloadShaders => self.reload_shaders(),
             }
-            other => {
-                log::error!("Surface acquire failed: {other:?}");
-                return;
-            }
-        };
-
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        // Size from the acquired texture: mid-resize the window already differs from the surface.
-        let (width, height) = (frame.texture.width(), frame.texture.height());
-        renderer.render_tonemapped(gpu, tonemap, &view, width, height, &self.camera);
-
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("overlay_encoder"),
-            });
-        // Feed this frame's cull counts to the panel so the toggle's effect is visible.
-        controls.occlusion_stats = Some(renderer.occlusion_cull_stats());
-        let mut changed = false;
-        overlay.render(
-            &gpu.device,
-            &gpu.queue,
-            &mut encoder,
-            window,
-            &view,
-            width,
-            height,
-            |ctx| {
-                changed |= controls.ui(ctx);
-            },
-        );
-        gpu.queue.submit(Some(encoder.finish()));
-        if changed {
-            let dir = controls.light_direction();
-            renderer.light_dir_ambient = glam::Vec4::new(dir.x, dir.y, dir.z, controls.ambient);
-            renderer.light_color_intensity.w = controls.intensity;
-            renderer.bloom_strength = controls.bloom;
-            renderer.ssao_strength = controls.ssao;
-            renderer.exposure_ev = controls.exposure_ev;
-            renderer.occlusion_queries_enabled = controls.occlusion_culling;
         }
-
-        window.pre_present_notify();
-        gpu.queue.present(frame);
-        window.request_redraw();
     }
 }
 
@@ -245,20 +166,11 @@ impl ApplicationHandler for Viewer {
                 .create_window(
                     Window::default_attributes()
                         .with_title("Kataglyphis WebGPU glTF viewer (drop a .gltf/.glb to load)")
-                        .with_inner_size(winit::dpi::LogicalSize::new(1024, 768)),
+                        .with_inner_size(WINDOW_SIZE),
                 )
                 .expect("failed to create window"),
         );
-
         let gpu = GpuContext::new_windowed(Arc::clone(&window)).expect("failed to init wgpu");
-        let format = gpu.surface_format().expect("windowed context has a format");
-        let size = window.inner_size();
-        let mut renderer = ForwardRenderer::new(&gpu, size.width.max(1), size.height.max(1));
-        let tonemap = TonemapPass::new(&gpu, format);
-        let overlay = Overlay::new(&window, &gpu.device, format);
-        let controls =
-            OverlayControls::from_light(renderer.light_dir_ambient, renderer.light_color_intensity);
-
         let scene = load_gltf(&self.model_path)
             .unwrap_or_else(|err| panic!("failed to load {}: {err:#}", self.model_path.display()));
         log::info!(
@@ -267,55 +179,25 @@ impl ApplicationHandler for Viewer {
             scene.primitives.len(),
             scene.triangle_count()
         );
-        renderer.upload_scene(&gpu, &scene);
-
-        // IBL baked from the background's own sky; 256x128 suffices for low-frequency lighting.
-        let sky_env = kataglyphis_webgpu_renderer::EquirectImage::sky(256, 128);
-        renderer.set_environment(&gpu, &sky_env);
-
-        self.gpu = Some(gpu);
-        self.renderer = Some(renderer);
-        self.tonemap = Some(tonemap);
-        self.overlay = Some(overlay);
-        self.controls = Some(controls);
+        let caps = HostCaps {
+            quit: true,
+            screenshot: true,
+            hot_reload: true,
+        };
+        let app = StudioApp::new(&window, gpu, &scene, OrbitCamera::default(), caps)
+            .expect("failed to set up the renderer");
+        self.app = Some(app);
         self.window = Some(window);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let consumed = match (self.overlay.as_mut(), self.window.as_ref()) {
-            (Some(overlay), Some(window)) => overlay.on_event(window, &event),
-            _ => false,
-        };
-        if consumed {
-            self.controller.note_consumed_event(&event);
-        } else {
-            self.controller.handle_event(&event, &mut self.camera);
+        if let (Some(app), Some(window)) = (self.app.as_mut(), self.window.as_ref()) {
+            app.window_event(window, &event);
         }
-
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::KeyboardInput { event, .. }
-                if event.logical_key == Key::Named(NamedKey::Escape) =>
-            {
-                event_loop.exit()
-            }
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state.is_pressed() && event.logical_key == Key::Character("s".into()) =>
-            {
-                self.save_screenshot();
-            }
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state.is_pressed() && event.logical_key == Key::Character("r".into()) =>
-            {
-                self.reload_shaders();
-            }
-            WindowEvent::Resized(size) => {
-                if let Some(gpu) = self.gpu.as_mut() {
-                    gpu.resize(size.width, size.height);
-                }
-            }
             WindowEvent::DroppedFile(path) => self.load_model(path),
-            WindowEvent::RedrawRequested => self.redraw(),
+            WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
         }
     }

@@ -3,6 +3,7 @@
 // The owner's hard gate on function size; clippy.toml holds the limit.
 #![warn(clippy::too_many_lines)]
 
+pub mod app;
 pub mod asset;
 pub mod context;
 pub mod render;
@@ -11,6 +12,7 @@ pub mod ui;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_demo;
 
+pub use app::{AppSignal, HostCaps, StudioApp};
 pub use asset::gltf_loader::load_gltf;
 pub use asset::hdr::{decode_hdr, HdrError};
 pub use context::GpuContext;

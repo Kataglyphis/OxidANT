@@ -23,12 +23,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - **The overlay paints at egui's own scale** (`FullOutput::pixels_per_point`, zoom times the window's), passes the
   device's largest texture side, pins the dark theme and turns keyboard zoom off; it painted at the window's scale,
   so a Ctrl `+` zoom drew the UI off its hit areas.
+- **The viewer's S, R and Esc fired while typing**: they are read inside the egui pass now, and do nothing while a
+  text field has focus. Esc first releases focus or a popup, then quits; the browser demo never quits.
+- **The web demo animated and auto-orbited per frame**, so their speed followed the display rate, and the auto-orbit
+  reset the wheel zoom every frame. It runs on time like the viewer, and only the yaw orbits.
 
 ### Added (2026-11-15, the Studio Pro foundation)
 - `src/ui/{palette,theme,fonts}.rs`: the C++ editor's palette, style and type scale in egui points.
 - `SceneViewport` and `OrbitCamera::viewport`: the C++ `makeViewportRemap` lens shift, Y negated for WebGPU clip
   space, so the camera centres on the rect the docks leave free while every pass stays full-frame. A full-frame
   camera's projection is bit for bit what it was.
+- `src/app/`: `StudioApp`, the one host `examples/viewer.rs` and `src/wasm_demo.rs` run, in the C++ frame order:
+  acquire, one egui pass, its actions, the scene with the camera on the free rect, egui paint, present. It starts
+  GPU timing. The viewer opens at 1600×900 logical like the C++ app, and screenshots with the full-frame camera.
+  `viewer.rs redraw` and `wasm_demo.rs window_event` leave `rust-function-size.allow`.
 
 ### Fixed (2026-11-15, the healthz goldens on the Windows arm64 runner)
 - `healthz_matches_its_goldens` embeds the three goldens with `include_str!`; it read them at run time, and the
