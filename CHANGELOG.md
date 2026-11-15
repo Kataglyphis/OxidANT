@@ -19,6 +19,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and 2 held cascade 0's projection. Every fragment past the first split, most of a typical view, got a misplaced,
   mis-scaled shadow. Each cascade records its own bundle now; `every_cascade_layer_is_rendered_with_its_own_light_matrix`
   reads the layers back (`read_shadow_map`) and checks two points' depths against each cascade's matrix.
+- **Removed instances kept casting shadows, and a shader reload left shadows on the old shaders**: the bundles bake
+  each draw's instance count and pipelines, but only a reallocated instance buffer or a new scene re-recorded them.
+  `set_instances` re-records them whenever a count changes (the clearing path too), `reload_shaders` after every
+  successful reload. Tests: `shrinking_or_clearing_instances_removes_their_shadows`,
+  `reloading_shaders_rerecords_the_shadow_bundles`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

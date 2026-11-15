@@ -1355,6 +1355,103 @@ fn shadow_caster_bundle_is_cached_across_frames() {
     );
 }
 
+/// Pixels where any channel of `a` and `b` differs by more than `tolerance`.
+fn differing_pixels(a: &[u8], b: &[u8], tolerance: u8) -> usize {
+    a.as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.as_chunks::<4>().0)
+        .filter(|(p, q)| {
+            p.iter()
+                .zip(q.iter())
+                .any(|(x, y)| x.abs_diff(*y) > tolerance)
+        })
+        .count()
+}
+
+/// Fewer instances within the buffer's capacity must take their shadows with them.
+#[test]
+fn shrinking_or_clearing_instances_removes_their_shadows() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let (width, height) = (128, 128);
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    let new_renderer = || {
+        let mut renderer = ForwardRenderer::new(&gpu, width, height);
+        renderer.upload_scene(&gpu, &scene);
+        renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+        renderer
+    };
+    let reference = new_renderer()
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("reference render must succeed");
+
+    let three = [
+        glam::Mat4::IDENTITY,
+        glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 1.5)),
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, -2.0)),
+    ];
+    let mut renderer = new_renderer();
+    for shrink_to in [&[glam::Mat4::IDENTITY][..], &[]] {
+        renderer.set_instances(&gpu, 0, &three);
+        renderer
+            .render_to_pixels(&gpu, width, height, &camera)
+            .expect("three-instance render must succeed");
+        renderer.set_instances(&gpu, 0, shrink_to);
+        let shrunk = renderer
+            .render_to_pixels(&gpu, width, height, &camera)
+            .expect("one-instance render must succeed");
+        let differing = differing_pixels(&shrunk, &reference, 2);
+        assert!(
+            differing < 20,
+            "after set_instances({} transforms) {differing} pixels differ from a renderer that \
+             only ever had one instance: the removed instances still cast shadows",
+            shrink_to.len()
+        );
+    }
+}
+
+/// A shader reload replaces the shadow pipelines, so the bundles that hold the old ones go.
+#[test]
+fn reloading_shaders_rerecords_the_shadow_bundles() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
+    renderer.upload_scene(&gpu, &scene);
+    renderer
+        .render_to_pixels(&gpu, 64, 64, &OrbitCamera::default())
+        .expect("first render must succeed");
+    assert!(renderer.shadow_caster_bundle_is_cached());
+
+    renderer
+        .reload_shaders(
+            &gpu,
+            include_str!("../src/shaders/forward.wgsl"),
+            include_str!("../src/shaders/sky.wgsl"),
+        )
+        .expect("the shipped shaders must reload");
+    assert!(
+        !renderer.shadow_caster_bundle_is_cached(),
+        "the cached shadow bundles still draw with the replaced pipelines"
+    );
+    renderer
+        .render_to_pixels(&gpu, 64, 64, &OrbitCamera::default())
+        .expect("render after the reload must succeed");
+    assert!(renderer.shadow_caster_bundle_is_cached());
+}
+
 #[test]
 fn gltf_loader_reads_unlit_flag() {
     let path =

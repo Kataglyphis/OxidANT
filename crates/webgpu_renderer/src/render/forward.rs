@@ -161,6 +161,8 @@ impl ForwardRenderer {
             return;
         };
 
+        // The bundles bake each draw's instance count, so a new count must re-record them.
+        let old_count = primitive.instance_count;
         if transforms.is_empty() {
             gpu.queue.write_buffer(
                 &primitive.instance_buffer,
@@ -168,6 +170,9 @@ impl ForwardRenderer {
                 bytemuck::bytes_of(&InstanceRaw::IDENTITY),
             );
             primitive.instance_count = 1;
+            if old_count != 1 {
+                self.shadow.caster_bundles = None;
+            }
             // Single identity instance again: bounds collapse to the posed box.
             primitive.instance_transforms.clear();
             let (min, max) = primitive.pre_instance_aabb;
@@ -196,10 +201,13 @@ impl ForwardRenderer {
                         contents: bytes,
                         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     });
-            // The bundle captured the old buffer by reference, and this replaced it.
+            // The bundles captured the old buffer by reference, and this replaced it.
             self.shadow.caster_bundles = None;
         }
         primitive.instance_count = raw.len() as u32;
+        if primitive.instance_count != old_count {
+            self.shadow.caster_bundles = None;
+        }
         // Culling bounds must span every instance, not just the base position.
         primitive.instance_transforms = transforms.to_vec();
         let (min, max) = instanced_bounds(primitive.pre_instance_aabb, transforms);
@@ -496,6 +504,8 @@ impl ForwardRenderer {
         ) = set;
         self.shadow.pipeline = shadow;
         self.shadow.masked_pipeline = shadow_masked;
+        // The cached bundles still hold the old shadow pipelines.
+        self.shadow.caster_bundles = None;
         self.sky.pipeline = sky;
         Ok(())
     }
