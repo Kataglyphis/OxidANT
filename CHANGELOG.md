@@ -102,6 +102,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   culling lagged an extra frame. Each slot records a sequence number and only a readback newer than the last applied
   one is applied (`occlusion::newer_readback`, shared by `gpu_occlusion.rs`). Test:
   `a_late_older_readback_never_overwrites_a_newer_one`.
+- **GPU timings kept reporting a pass after it stopped running** (bloom or SSAO at strength 0, auto exposure off,
+  culling off): each frame resolved its slot's whole query range, and an unwritten query resolves the stamps an
+  earlier frame left there, which passed the plausibility filter. Each `PassScope` now marks the stamps it hands
+  out, a frame samples only the passes it stamped, and a pass missing for a full averaging window drops out of
+  `gpu_timings_ms`. Test: `a_pass_that_stops_running_drops_out_of_the_timings`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

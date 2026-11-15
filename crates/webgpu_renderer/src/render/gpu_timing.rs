@@ -1,6 +1,7 @@
 //! Per-pass GPU timestamp queries, in the C++ engine's `gpuTimings` shape so the two compare.
 //! Stamps at pass boundaries: `write_timestamp` needs a feature WebGPU never exposes.
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
@@ -131,6 +132,11 @@ impl RollingAverage {
     pub fn is_empty(&self) -> bool {
         self.filled == 0
     }
+
+    /// Forgets every sample, so the pass reads as not reporting.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
 }
 
 /// Converts a GPU timestamp delta to milliseconds.
@@ -146,6 +152,8 @@ pub struct PassScope<'a> {
     query_set: Option<&'a wgpu::QuerySet>,
     begin: u32,
     end: u32,
+    /// The frame's written-stamp mask and this pass's begin bit; the end bit is the next one up.
+    written: Option<(&'a Cell<u32>, u32)>,
 }
 
 // Writes borrow the query set (`'a`), not the scope, so an inline temporary scope still works.
@@ -156,6 +164,7 @@ impl<'a> PassScope<'a> {
             query_set: None,
             begin: 0,
             end: 0,
+            written: None,
         }
     }
 
@@ -193,6 +202,7 @@ impl<'a> PassScope<'a> {
         })
     }
 
+    /// The indices sub-pass `sub` writes, noting each stamp it hands out in the frame's mask.
     fn indices(
         &self,
         sub: usize,
@@ -200,6 +210,10 @@ impl<'a> PassScope<'a> {
     ) -> Option<(&'a wgpu::QuerySet, Option<u32>, Option<u32>)> {
         let query_set = self.query_set?;
         let (beginning, end) = sub_pass_write_indices(sub, count, self.begin, self.end)?;
+        if let Some((mask, begin_bit)) = self.written {
+            let stamped = u32::from(beginning.is_some()) | (u32::from(end.is_some()) << 1);
+            mask.set(mask.get() | (stamped << begin_bit));
+        }
         Some((query_set, beginning, end))
     }
 }
@@ -230,6 +244,8 @@ struct Slot {
     readback: wgpu::Buffer,
     /// `Some` while a map is outstanding; the callback sets READY/FAILED for `end_frame` to drain.
     map_state: Option<Arc<AtomicU8>>,
+    /// Which stamps this slot's frame wrote, two bits per pass; an unwritten query resolves stale.
+    written: u32,
 }
 
 struct Resources {
@@ -247,6 +263,10 @@ pub struct GpuTiming {
     /// Set by `begin_frame` when this frame found a free slot to record into.
     recording: bool,
     averages: Vec<RollingAverage>,
+    /// The stamps this frame's passes were handed, two bits per pass (begin, end).
+    written: Cell<u32>,
+    /// Measured frames in a row each pass has not run in; a full window clears its average.
+    frames_without: [usize; PASS_COUNT],
 }
 
 impl GpuTiming {
@@ -256,6 +276,8 @@ impl GpuTiming {
             resources: None,
             recording: false,
             averages: vec![RollingAverage::default(); PASS_COUNT],
+            written: Cell::new(0),
+            frames_without: [0; PASS_COUNT],
         }
     }
 
@@ -281,6 +303,7 @@ impl GpuTiming {
                 ),
                 readback: buffer_desc::readback(device, &format!("gpu_timing_readback_{i}"), bytes),
                 map_state: None,
+                written: 0,
             })
             .collect();
 
@@ -293,6 +316,8 @@ impl GpuTiming {
             }),
             recording: false,
             averages: vec![RollingAverage::default(); PASS_COUNT],
+            written: Cell::new(0),
+            frames_without: [0; PASS_COUNT],
         }
     }
 
@@ -323,6 +348,7 @@ impl GpuTiming {
     /// With every slot still mapping the frame goes untimed: dropping a sample beats stalling.
     pub fn begin_frame(&mut self) {
         self.recording = false;
+        self.written.set(0);
         let Some(resources) = self.resources.as_mut() else {
             return;
         };
@@ -349,6 +375,7 @@ impl GpuTiming {
             query_set: Some(&resources.query_set),
             begin: base,
             end: base + 1,
+            written: Some((&self.written, pass.index() as u32 * 2)),
         }
     }
 
@@ -391,6 +418,7 @@ impl GpuTiming {
                     callback_state.store(code, Ordering::Release);
                 });
             resources.slots[resources.current].map_state = Some(state);
+            resources.slots[resources.current].written = self.written.get();
             resources.current = (resources.current + 1) % SLOT_COUNT;
             self.recording = false;
         }
@@ -407,20 +435,43 @@ impl GpuTiming {
                     let ticks = read_ticks(&resources.slots[index].readback);
                     resources.slots[index].readback.unmap();
                     resources.slots[index].map_state = None;
-                    for pass in TimedPass::ALL {
-                        let i = pass.index();
-                        let (begin, end) = (ticks[i * 2], ticks[i * 2 + 1]);
-                        // Unwritten queries hold garbage; real stamps are nonzero and monotonic.
-                        if begin == 0 || end == 0 || end < begin {
-                            continue;
-                        }
-                        self.averages[i].push(ticks_to_ms(end - begin, resources.period_ns));
-                    }
+                    let mut history = PassHistory {
+                        averages: &mut self.averages,
+                        frames_without: &mut self.frames_without,
+                    };
+                    history.record(&ticks, resources.slots[index].written, resources.period_ns);
                 }
                 MAP_FAILED => {
                     resources.slots[index].map_state = None;
                 }
                 _ => {}
+            }
+        }
+    }
+}
+
+/// The per-pass samples and run streaks `end_frame` updates from one measured frame.
+struct PassHistory<'a> {
+    averages: &'a mut [RollingAverage],
+    frames_without: &'a mut [usize; PASS_COUNT],
+}
+
+impl PassHistory<'_> {
+    /// One measured frame: a sample per pass it stamped; a pass it skipped a full window running
+    /// stops reporting, since an unwritten query resolves an old frame's stamps.
+    fn record(&mut self, ticks: &[u64], written: u32, period_ns: f32) {
+        for pass in TimedPass::ALL {
+            let i = pass.index();
+            let (begin, end) = (ticks[i * 2], ticks[i * 2 + 1]);
+            let stamped = (written >> (i * 2)) & 0b11 == 0b11;
+            if stamped && begin != 0 && end >= begin {
+                self.averages[i].push(ticks_to_ms(end - begin, period_ns));
+                self.frames_without[i] = 0;
+                continue;
+            }
+            self.frames_without[i] += 1;
+            if self.frames_without[i] >= AVERAGE_WINDOW {
+                self.averages[i].clear();
             }
         }
     }
