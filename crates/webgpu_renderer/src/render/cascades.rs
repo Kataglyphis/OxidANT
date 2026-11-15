@@ -1,5 +1,5 @@
 //! Pure-CPU shadow-cascade fitting, texel-stabilized like `CascadedShadowMapMath.cpp`.
-//! Splits are eye distances: `forward.slang:151` selects by `distance(worldPos, camera_position)`.
+//! Splits are eye distances: `forward.slang`'s `fs_main` selects by each fragment's own distance.
 
 // glam's `directx` clip convention is NDC Z in [0,1] with Y up, the same as wgpu's.
 use glam::camera::rh::proj::directx as clip;
@@ -27,7 +27,7 @@ pub(crate) fn fit_cascades(
         scene_radius = 1.0;
     }
 
-    // Floored: `viewDepth` is interpolated per vertex, and smaller boxes miss its error.
+    // Floored at the scene radius: a camera inside the scene sizes the cascades by the scene.
     let mut raw_dist = (scene_center - camera.eye()).length().max(scene_radius);
     if !raw_dist.is_finite() {
         raw_dist = scene_radius;

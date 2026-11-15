@@ -194,7 +194,6 @@ struct VsOut
     float4 lightSpacePos : TEXCOORD2;
     float4 worldTangent : TEXCOORD3;
     float3 worldPosition : TEXCOORD4;
-    float viewDepth : TEXCOORD5;
     float4 vertexColor : TEXCOORD6;
     float2 uv1 : TEXCOORD7;
 };
@@ -221,7 +220,6 @@ VsOut vs_main(VsIn In)
     o.uv = In.uv;
     o.lightSpacePos = mul(frame.light_space, worldPos);
     o.worldPosition = worldPos.xyz;
-    o.viewDepth = distance(worldPos.xyz, frame.camera_position.xyz);
     o.vertexColor = In.color;
     o.uv1 = In.uv1;
     return o;
@@ -443,7 +441,9 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     float nDotL = max(dot(n, l), 0.0);
 
     float3 directLight = brdf_direct(n, v, l, albedo.rgb, metallic, roughness, f0, radiance);
-    float visibility = shadow_visibility(In.viewDepth, In.worldPosition, nDotL);
+    // Per fragment: a per-vertex distance interpolates too far inside big triangles, picking coarse cascades.
+    float eyeDistance = distance(In.worldPosition, frame.camera_position.xyz);
+    float visibility = shadow_visibility(eyeDistance, In.worldPosition, nDotL);
     directLight *= visibility;
 
     float3 punctual = punctual_lighting(In.worldPosition, n, v, albedo.rgb, metallic, roughness, f0, In.svPosition);

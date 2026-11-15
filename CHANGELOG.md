@@ -107,6 +107,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   earlier frame left there, which passed the plausibility filter. Each `PassScope` now marks the stamps it hands
   out, a frame samples only the passes it stamped, and a pass missing for a full averaging window drops out of
   `gpu_timings_ms`. Test: `a_pass_that_stops_running_drops_out_of_the_timings`.
+- **Large triangles picked coarse shadow cascades**: the cascade came from an eye distance computed per vertex and
+  interpolated, which overestimates inside a big triangle, so a floor under the camera read its far corners'
+  distance and took cascade 1 or 2, with their coarser texels and larger world-space bias. `fs_main` measures each
+  fragment's own distance now; the `viewDepth` varying is gone. Test:
+  `a_huge_floor_takes_its_cascade_from_each_fragment_distance`.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

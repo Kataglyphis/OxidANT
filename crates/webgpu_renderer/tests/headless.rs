@@ -2011,6 +2011,91 @@ fn ground_shadow_pixels(
         .count()
 }
 
+/// An up-facing horizontal quad at height `y` over `[x0, x1] x [z0, z1]`.
+fn up_facing_quad(
+    y: f32,
+    (x0, x1): (f32, f32),
+    (z0, z1): (f32, f32),
+) -> kataglyphis_webgpu_renderer::CpuPrimitive {
+    use kataglyphis_webgpu_renderer::scene::{CpuMaterial, CpuPrimitive, Vertex};
+    let vertices = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]
+        .iter()
+        .map(|[x, z]| Vertex {
+            position: [*x, y, *z],
+            normal: [0.0, 1.0, 0.0],
+            uv: [0.0, 0.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            joints: [0.0; 4],
+            weights: [0.0; 4],
+            color: [1.0; 4],
+            uv1: [0.0, 0.0],
+        })
+        .collect();
+    CpuPrimitive {
+        vertices,
+        indices: vec![0, 2, 1, 0, 3, 2],
+        transform: glam::Mat4::IDENTITY,
+        node_index: None,
+        skin_index: None,
+        material: CpuMaterial {
+            base_color: [0.8, 0.8, 0.8, 1.0],
+            metallic_factor: 0.0,
+            roughness_factor: 0.9,
+            ..CpuMaterial::default()
+        },
+        morph_targets: Vec::new(),
+        morph_weights: Vec::new(),
+    }
+}
+
+/// The cascade comes from each fragment's own eye distance: interpolated per vertex across a huge
+/// floor it reads about 420 m right under the camera and picks cascade 1, whose depth bias, twice
+/// cascade 0's in world units, lets a card 1.6 m above the floor cast no shadow.
+#[test]
+fn a_huge_floor_takes_its_cascade_from_each_fragment_distance() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let floor = up_facing_quad(0.0, (-300.0, 300.0), (-300.0, 300.0));
+    let card = up_facing_quad(1.6, (-1.0, 1.0), (-1.0, 1.0));
+    let camera = OrbitCamera {
+        target: glam::Vec3::new(-1.6, 0.0, 0.0),
+        radius: 6.0,
+        yaw_deg: 180.0,
+        pitch_deg: 50.0,
+        ..OrbitCamera::default()
+    };
+    let render = |primitives| {
+        let scene = kataglyphis_webgpu_renderer::CpuScene {
+            primitives,
+            ..Default::default()
+        };
+        let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+        renderer.upload_scene(&gpu, &scene);
+        // From +x at 45 degrees: the card's shadow falls 1.6 m towards -x, where the camera looks.
+        renderer.light_dir_ambient = glam::Vec4::new(1.0, 1.0, 0.0, 0.15);
+        renderer.ssao_strength = 0.0;
+        renderer
+            .render_to_pixels(&gpu, 128, 128, &camera)
+            .expect("headless render must succeed")
+    };
+    let bare = render(vec![floor.clone()]);
+    let with_card = render(vec![floor, card]);
+    let luma = |p: &[u8; 4]| (p[0] as i32 * 3 + p[1] as i32 * 6 + p[2] as i32) / 10;
+    let shadowed = bare
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(with_card.as_chunks::<4>().0)
+        .filter(|(b, w)| luma(b) - luma(w) > 40)
+        .count();
+    assert!(
+        shadowed > 500,
+        "the card shadowed only {shadowed} floor pixels: the fragments under it picked a cascade \
+         by a distance interpolated from the floor's far corners"
+    );
+}
+
 /// A double-sided sheet shadows the ground from either side, as the camera pass draws both.
 #[test]
 fn a_double_sided_sheet_casts_a_shadow_with_its_back_to_the_light() {
