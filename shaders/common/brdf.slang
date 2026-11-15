@@ -2,6 +2,9 @@
 
 static const float PI = 3.14159265358979323846;
 
+// Smallest perceptual roughness the NDF evaluates; below it the GGX peak 1/(PI r^4) outgrows HDR targets.
+static const float MIN_ROUGHNESS = 0.045;
+
 // Lambertian diffuse.
 float3 lambert_diffuse(float3 albedo)
 {
@@ -11,10 +14,12 @@ float3 lambert_diffuse(float3 albedo)
 // GGX (Trowbridge-Reitz) normal distribution function.
 float distribution_ggx(float n_dot_h, float roughness)
 {
-    float a = roughness * roughness;
+    float r = max(roughness, MIN_ROUGHNESS);
+    float a = r * r;
     float a2 = a * a;
     float denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
-    return a2 / max(PI * denom * denom, 1e-6);
+    // denom >= a2 > 0, so the guard only catches rounding; a 1e-6 one clipped every peak below r = 0.154.
+    return a2 / (PI * max(denom * denom, 1e-20));
 }
 
 // Smith geometry function (Epic Games approximation with k = (r+1)^2/8).

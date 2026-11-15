@@ -63,6 +63,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   has long saturated. Test: `a_hot_spot_past_the_half_float_range_saturates_instead_of_turning_black`, whose
   infinite-emissive scene (a glTF `emissiveStrength` past f32's range) fails on lavapipe without the clamps; it
   reads the target back through the doc-hidden `read_hdr_target`.
+- **The shared GGX NDF clipped every specular peak below roughness 0.154** (`shaders/common/brdf.slang`, which
+  BeschleunigerBallett's C++ renderer compiles too): its `max(PI * denom², 1e-6)` guard engaged at the peak, so a
+  0.045-roughness lobe kept 1.45% of its energy and highlights dimmed as surfaces got smoother. The guard now only
+  keeps a rounding error off zero, and the NDF raises roughness below 0.045 to that floor itself, so every caller,
+  the C++ ones whose textured roughness reaches 0 included, gets a finite lobe. BeschleunigerBallett's goldens need
+  a re-run with the next OxidANT pin. Tests: `tests/brdf.rs` evaluates the emitted WGSL on the GPU; the peak is
+  1/(πr⁴) and the projected lobe integrates to one from roughness 0.045 to 1.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
