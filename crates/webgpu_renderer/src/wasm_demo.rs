@@ -1,6 +1,6 @@
 //! Browser (wasm32/WebGPU) demo entry point; the page is crates/webgpu_renderer/web/index.html.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys};
 use winit::window::{Window, WindowId};
 
-use crate::app::{HostCaps, StudioApp};
+use crate::app::{web, HostCaps, StudioApp};
 use crate::asset::gltf_loader::load_gltf_slice;
 use crate::context::GpuContext;
 use crate::scene::camera::OrbitCamera;
@@ -69,6 +69,7 @@ fn install_drop_zone(document: &web_sys::Document, slot: DroppedScene) {
                 return;
             };
             let name = file.name();
+            web::notify_page(web::PAGE_DROPPED, &name);
             let slot = Rc::clone(&slot);
             wasm_bindgen_futures::spawn_local(async move {
                 match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
@@ -110,7 +111,10 @@ fn home_camera() -> OrbitCamera {
 }
 
 /// A canvas-backed window, mounted in `#demo` (or the body), its CSS size driving the layout.
-fn create_canvas_window(event_loop: &ActiveEventLoop) -> Arc<Window> {
+fn create_canvas_window(
+    event_loop: &ActiveEventLoop,
+    egui_wants_keys: Rc<Cell<bool>>,
+) -> Arc<Window> {
     let window = Arc::new(
         event_loop
             .create_window(
@@ -132,15 +136,18 @@ fn create_canvas_window(event_loop: &ActiveEventLoop) -> Arc<Window> {
     mount
         .append_child(&canvas)
         .expect("failed to append canvas");
+    web::leave_browser_keys(&mount, egui_wants_keys);
     window
 }
 
 /// WebGPU init is async-only in browsers: the app lands in `slot` once the device resolves.
 fn spawn_app_init(slot: Rc<RefCell<Option<StudioApp>>>, window: Arc<Window>, size: (u32, u32)) {
     wasm_bindgen_futures::spawn_local(async move {
-        let mut gpu = GpuContext::new_windowed_async(Arc::clone(&window))
-            .await
-            .expect("WebGPU init failed (does this browser support WebGPU?)");
+        let mut gpu = match GpuContext::new_windowed_async(Arc::clone(&window)).await {
+            Ok(gpu) => gpu,
+            // navigator.gpu without an adapter (a blocklisted GPU, Linux without the flag): the page's fallback, no panic.
+            Err(err) => return web::notify_page(web::PAGE_FAILED, &format!("{err:#}")),
+        };
         // The context read inner_size before the canvas size propagated through winit.
         gpu.resize(size.0, size.1);
         let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
@@ -149,6 +156,7 @@ fn spawn_app_init(slot: Rc<RefCell<Option<StudioApp>>>, window: Arc<Window>, siz
             .expect("failed to set up the renderer");
         app.model = Some(scene_source(DEMO_SCENES[0].0));
         slot.borrow_mut().replace(app);
+        web::notify_page(web::PAGE_READY, "");
         window.request_redraw();
     });
 }
@@ -201,6 +209,8 @@ struct DemoApp {
     app: Rc<RefCell<Option<StudioApp>>>,
     /// Filled asynchronously by the drop-zone listeners.
     dropped_scene: DroppedScene,
+    /// egui had focus last frame, so the browser-key listener lets winit hand it Tab and friends.
+    egui_wants_keys: Rc<Cell<bool>>,
 }
 
 impl ApplicationHandler for DemoApp {
@@ -208,7 +218,7 @@ impl ApplicationHandler for DemoApp {
         if self.window.is_some() {
             return;
         }
-        let window = create_canvas_window(event_loop);
+        let window = create_canvas_window(event_loop, Rc::clone(&self.egui_wants_keys));
         if let Some(document) = web_sys::window().and_then(|w| w.document()) {
             install_drop_zone(&document, Rc::clone(&self.dropped_scene));
         }
@@ -236,6 +246,7 @@ impl ApplicationHandler for DemoApp {
             follow_canvas_size(window, &mut app.gpu);
             // A browser tab never quits and has no file shortcuts, so a frame asks nothing of this shell.
             let _ = app.frame(window, performance_now_seconds());
+            self.egui_wants_keys.set(app.wants_keyboard());
         }
     }
 }

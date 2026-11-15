@@ -147,21 +147,35 @@
     window.addEventListener('unhandledrejection', (e) => append('unhandledrejection', [e.reason]));
 
     const statusEl = document.getElementById('status');
-    if (!navigator.gpu) {
+    const select = document.getElementById('scene');
+    const showUnsupported = (status) => {
       // Graceful fallback instead of a silently black canvas.
       document.getElementById('unsupported').hidden = false;
       document.getElementById('demo').hidden = true;
-      statusEl.textContent = 'unsupported browser';
+      statusEl.textContent = status;
+    };
+    // The demo reports through these hooks (src/app/web.rs); the page owns its DOM.
+    window.webgpuDemoReady = () => {
+      statusEl.textContent = 'WASD to fly · right-drag to look · drag to orbit';
+      select.disabled = false;
+    };
+    window.webgpuDemoFailed = (reason) => {
+      // navigator.gpu exists, but no adapter or device came of it.
+      showUnsupported('no usable WebGPU adapter');
+      console.error('WebGPU init failed: ' + reason);
+    };
+    window.webgpuDemoDropped = () => {
+      // A dropped model is no listed scene: picking the startup scene again must fire `change`.
+      select.selectedIndex = -1;
+    };
+    if (!navigator.gpu) {
+      showUnsupported('unsupported browser');
     } else {
-      statusEl.textContent = 'drag to orbit · wheel to zoom';
+      statusEl.textContent = 'starting WebGPU…';
       const module = await import('./pkg/kataglyphis_webgpu_renderer.js');
       const init = module.default;
       init().then(() => {
-        // The wasm is up: let the header dropdown feed embedded showcase
-        // scenes through the same swap path drag-and-drop uses. Option order
-        // matches the DEMO_SCENES array in wasm_demo.rs by index.
-        const select = document.getElementById('scene');
-        select.disabled = false;
+        // The dropdown feeds embedded scenes through the drop path; its option order is DEMO_SCENES' in wasm_demo.rs.
         select.addEventListener('change', () => {
           module.select_demo_scene(select.selectedIndex);
         });

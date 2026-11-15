@@ -32,6 +32,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   logical pixel.
 - The idle spin's yaw is computed in f64 and wrapped to 360°; f32 degrees stepped visibly after a few hours.
   `set_animation_time` still receives f32 seconds from `StudioApp::advance`.
+- Web: a browser with `navigator.gpu` but no adapter panicked behind a live "drag to orbit" status. The page shows
+  its WebGPU fallback with the reason (`webgpuDemoFailed`), and the scene picker opens only once the device is up
+  (`webgpuDemoReady`); a native test checks that the page defines each hook the demo calls.
+- Web: winit cancelled Tab, F5, Ctrl+R and Ctrl +/-/0 on the focused canvas, a keyboard trap in the docs iframe.
+  A capture-phase listener on the canvas's parent leaves them to the browser unless an egui widget has focus.
+- Web: after a drop the scene picker still showed the startup scene, which then could not be picked again; a drop
+  clears it (`webgpuDemoDropped`).
 - `crates/gui`: a minimized, covered or stalled window (an Occluded, Timeout or Validation acquire) quit the camera
   GUI; it skips the frame, and a Suboptimal one reconfigures after presenting. `submit_frame` is 57 lines and left
   `rust-function-size.allow`.

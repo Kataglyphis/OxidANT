@@ -97,7 +97,7 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | ✅ Responsive canvas | S | Done 2026-07-18: CSS-driven layout, backing store follows clientSize × devicePixelRatio per frame |
 | ✅ Touch controls | M | Done 2026-07-20: one finger orbits, two-finger pinch-zoom; ratio-based (DPI-independent), pinch baseline resets on finger-count change |
 | 🟡 Model picker UI | S | Dropdown done 2026-07-23: the web demo's `<select>` switches between five embedded scenes (`select_demo_scene`, the same swap path drag-and-drop uses). The query parameter is still open |
-| ✅ WebGPU-unsupported fallback page | S | Done 2026-07-18: `navigator.gpu` check with requirements + native command |
+| ✅ WebGPU-unsupported fallback page | S | Done 2026-07-18: `navigator.gpu` check with requirements + native command. 2026-11-15: also when `navigator.gpu` yields no adapter or device (the demo reports through the page's `webgpuDemoFailed` hook instead of panicking) |
 | `webgl` backend feature flag | M | wgpu's GL backend for older browsers, feature-gated with reduced effects |
 | Demo scene: Colosseum | M | License-checked photogrammetry scan (CC-BY: attribute in `LICENSES-ASSETS.md`), LFS or download step — never committed raw; needs Phase D compression to be pleasant |
 

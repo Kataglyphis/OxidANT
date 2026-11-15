@@ -2,6 +2,8 @@
 
 mod frame;
 mod input;
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) mod web;
 
 use anyhow::Context as _;
 use winit::window::Window;
@@ -132,6 +134,11 @@ impl StudioApp {
         self.camera = self.home.clone();
         self.controller = OrbitController::default();
         self.epoch_s = None;
+    }
+
+    /// egui wants the keys: a field or a widget has focus, so a browser key belongs to egui, not the page.
+    pub fn wants_keyboard(&self) -> bool {
+        self.overlay.context().egui_wants_keyboard_input()
     }
 
     /// The camera over the whole frame, for an offscreen render that no dock covers.
