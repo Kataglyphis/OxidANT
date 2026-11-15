@@ -423,17 +423,21 @@ fn to_cpu_sampler(sampler: &gltf::texture::Sampler) -> CpuSampler {
         WrappingMode::Repeat => CpuWrap::Repeat,
     };
 
-    let (min_nearest, mip_nearest) = match sampler.min_filter() {
-        Some(MinFilter::Nearest | MinFilter::NearestMipmapNearest) => (true, true),
-        Some(MinFilter::NearestMipmapLinear) => (true, false),
-        Some(MinFilter::LinearMipmapNearest) => (false, true),
-        Some(MinFilter::Linear | MinFilter::LinearMipmapLinear) | None => (false, false),
+    let (min_nearest, mip_nearest, mipmaps) = match sampler.min_filter() {
+        // NEAREST and LINEAR are glTF's mipmap-less filters: level 0 only.
+        Some(MinFilter::Nearest) => (true, true, false),
+        Some(MinFilter::Linear) => (false, false, false),
+        Some(MinFilter::NearestMipmapNearest) => (true, true, true),
+        Some(MinFilter::NearestMipmapLinear) => (true, false, true),
+        Some(MinFilter::LinearMipmapNearest) => (false, true, true),
+        Some(MinFilter::LinearMipmapLinear) | None => (false, false, true),
     };
 
     CpuSampler {
         mag_nearest: matches!(sampler.mag_filter(), Some(MagFilter::Nearest)),
         min_nearest,
         mip_nearest,
+        mipmaps,
         wrap_u: wrap(sampler.wrap_s()),
         wrap_v: wrap(sampler.wrap_t()),
     }

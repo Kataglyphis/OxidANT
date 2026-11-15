@@ -81,6 +81,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   collapse. Welding is topology only now: each face corner keeps its own attribute set, a collapse blends the sets
   its removed faces pair across the edge and refuses one that would need two at a corner, and seam edges get the
   same constraint planes as open rims.
+- **glTF's NEAREST and LINEAR min filters still sampled the generated mip chain**, so minified pixel art blurred
+  into box-filtered averages and LINEAR got trilinear 16x anisotropic filtering. `CpuSampler::mipmaps` is false
+  for them, and such a slot samples a one-level view of the texture (a zero LOD clamp would not do: Vulkan counts
+  a clamped LOD of 0 as magnified and switches to the mag filter); the upload stays shared.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

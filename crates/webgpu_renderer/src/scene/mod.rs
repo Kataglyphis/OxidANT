@@ -69,13 +69,29 @@ impl InstanceRaw {
 }
 
 /// Texture filtering/wrapping requested by the glTF sampler.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CpuSampler {
     pub mag_nearest: bool,
     pub min_nearest: bool,
     pub mip_nearest: bool,
+    /// False for glTF's NEAREST and LINEAR min filters, which sample level 0 only.
+    pub mipmaps: bool,
     pub wrap_u: CpuWrap,
     pub wrap_v: CpuWrap,
+}
+
+impl Default for CpuSampler {
+    /// Trilinear, repeating: glTF's behaviour for a texture without a sampler.
+    fn default() -> Self {
+        Self {
+            mag_nearest: false,
+            min_nearest: false,
+            mip_nearest: false,
+            mipmaps: true,
+            wrap_u: CpuWrap::Repeat,
+            wrap_v: CpuWrap::Repeat,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]

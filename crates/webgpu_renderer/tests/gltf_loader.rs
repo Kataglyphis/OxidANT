@@ -442,3 +442,42 @@ fn skin_influences_without_a_joint_to_resolve_are_dropped() {
         );
     }
 }
+
+/// glTF's NEAREST (9728) and LINEAR (9729) min filters sample no mip chain; the four mipmap filters do.
+#[test]
+fn mipmap_less_min_filters_load_as_mipmap_less_samplers() {
+    let filters = [(9728, false), (9729, false), (9984, true), (9987, true)];
+    let mut bin = Bin::default();
+    let pos = bin.vec3(&TRIANGLE);
+    let png = bin.view(&flat_normal_png());
+    let primitives: Vec<String> = (0..filters.len())
+        .map(|m| format!(r#"{{"attributes":{{"POSITION":{pos}}},"material":{m}}}"#))
+        .collect();
+    let materials: Vec<String> = (0..filters.len())
+        .map(|t| format!(r#"{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":{t}}}}}}}"#))
+        .collect();
+    let textures: Vec<String> = (0..filters.len())
+        .map(|s| format!(r#"{{"source":0,"sampler":{s}}}"#))
+        .collect();
+    let samplers: Vec<String> = filters
+        .iter()
+        .map(|(filter, _)| format!(r#"{{"minFilter":{filter}}}"#))
+        .collect();
+    let glb = bin.glb(&format!(
+        r#"{},"materials":[{}],"textures":[{}],"samplers":[{}],"images":[{{"bufferView":{png},"mimeType":"image/png"}}]"#,
+        one_mesh(&primitives),
+        materials.join(","),
+        textures.join(","),
+        samplers.join(",")
+    ));
+    let scene = load_gltf_slice(&glb).expect("four textured triangles");
+    for (prim, (filter, mipmaps)) in scene.primitives.iter().zip(filters) {
+        let sampler = prim
+            .material
+            .base_color_texture
+            .as_ref()
+            .expect("textured")
+            .sampler;
+        assert_eq!(sampler.mipmaps, mipmaps, "minFilter {filter}");
+    }
+}

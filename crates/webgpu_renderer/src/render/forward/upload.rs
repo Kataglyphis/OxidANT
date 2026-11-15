@@ -15,7 +15,9 @@ use crate::render::bounds::{
 };
 use crate::render::buffer_desc;
 use crate::render::lights::pack_punctual_lights;
-use crate::render::texture::{create_material_texture, create_sampler};
+use crate::render::texture::{
+    create_material_texture, create_sampler, material_view, upload_material_texture,
+};
 use crate::scene::{
     AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef,
     InstanceRaw,
@@ -53,7 +55,7 @@ impl MaterialDefaults {
 /// One upload and mip build per (image `Arc` pointer, sRGB), not per referencing primitive.
 #[derive(Default)]
 pub(super) struct MaterialTextureCache {
-    textures: HashMap<(usize, bool), wgpu::TextureView>,
+    textures: HashMap<(usize, bool), wgpu::Texture>,
     samplers: HashMap<CpuSampler, wgpu::Sampler>,
     /// GPU textures created so far; the cache hits do not count.
     pub(super) uploaded: usize,
@@ -114,18 +116,18 @@ impl MaterialTextureCache {
             std::sync::Arc::as_ptr(&tex_ref.texture) as usize,
             tex_ref.srgb,
         );
-        if let Some(view) = self.textures.get(&key) {
-            return view.clone();
+        if !self.textures.contains_key(&key) {
+            let texture = upload_material_texture(
+                gpu,
+                &tex_ref.texture,
+                tex_ref.srgb,
+                Some(&format!("material_{i}_slot_{slot_index}")),
+            );
+            self.uploaded += 1;
+            self.textures.insert(key, texture);
         }
-        let view = create_material_texture(
-            gpu,
-            &tex_ref.texture,
-            tex_ref.srgb,
-            Some(&format!("material_{i}_slot_{slot_index}")),
-        );
-        self.uploaded += 1;
-        self.textures.insert(key, view.clone());
-        view
+        // The view, not the texture, follows the sampler: one upload serves both filter kinds.
+        material_view(&self.textures[&key], &tex_ref.sampler)
     }
 
     fn sampler(&mut self, device: &wgpu::Device, desc: CpuSampler) -> wgpu::Sampler {

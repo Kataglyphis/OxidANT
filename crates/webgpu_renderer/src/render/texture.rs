@@ -34,8 +34,9 @@ pub(crate) fn create_sampler(device: &wgpu::Device, desc: &CpuSampler) -> wgpu::
 }
 
 /// Anisotropy for a glTF sampler; wgpu rejects anisotropy above 1 unless every filter is Linear.
+/// A mipmap-less filter gets none either: glTF's LINEAR is plain bilinear on level 0.
 pub(crate) fn anisotropy_for(desc: &CpuSampler) -> u16 {
-    if desc.mag_nearest || desc.min_nearest || desc.mip_nearest {
+    if desc.mag_nearest || desc.min_nearest || desc.mip_nearest || !desc.mipmaps {
         1
     } else {
         16
@@ -124,7 +125,7 @@ pub(crate) fn create_compressed_texture(
     compressed: &CompressedTexture,
     srgb: bool,
     label: Option<&str>,
-) -> wgpu::TextureView {
+) -> wgpu::Texture {
     if let Some(declared) = compressed.declared_srgb {
         if declared != srgb {
             log::warn!(
@@ -175,7 +176,7 @@ pub(crate) fn create_compressed_texture(
             },
         );
     }
-    gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
+    gpu_texture
 }
 
 /// Why a BCn payload cannot become a valid wgpu texture, or `None` when it can.
@@ -211,12 +212,33 @@ fn compressed_upload_problem(
     .map(|err| err.to_string())
 }
 
+/// The texture with its whole mip chain behind the default view.
 pub(crate) fn create_material_texture(
     gpu: &GpuContext,
     texture: &CpuTexture,
     srgb: bool,
     label: Option<&str>,
 ) -> wgpu::TextureView {
+    upload_material_texture(gpu, texture, srgb, label)
+        .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// A view of a material texture for `sampler`: glTF's mipmap-less filters see level 0 alone.
+/// A one-level view, not a zero LOD clamp: Vulkan treats a clamped LOD of 0 as magnified.
+pub(crate) fn material_view(texture: &wgpu::Texture, sampler: &CpuSampler) -> wgpu::TextureView {
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        mip_level_count: if sampler.mipmaps { None } else { Some(1) },
+        ..Default::default()
+    })
+}
+
+/// Uploads a material texture with its mip chain; a BCn payload wgpu would reject becomes white.
+pub(crate) fn upload_material_texture(
+    gpu: &GpuContext,
+    texture: &CpuTexture,
+    srgb: bool,
+    label: Option<&str>,
+) -> wgpu::Texture {
     if let Some(compressed) = texture.compressed.as_ref() {
         let Some(problem) = compressed_upload_problem(gpu, texture, compressed) else {
             return create_compressed_texture(gpu, texture, compressed, srgb, label);
@@ -225,7 +247,7 @@ pub(crate) fn create_material_texture(
             "{}: block-compressed texture falls back to white: {problem}",
             label.unwrap_or("<unlabeled texture>")
         );
-        return create_material_texture(
+        return upload_material_texture(
             gpu,
             &CpuTexture {
                 width: 1,
@@ -246,7 +268,7 @@ fn create_rgba8_texture(
     texture: &CpuTexture,
     srgb: bool,
     label: Option<&str>,
-) -> wgpu::TextureView {
+) -> wgpu::Texture {
     let mips = generate_mips(texture, srgb);
     // A side over the limit fails texture creation, a panic on native; the chain holds the downsampled image.
     let max_side = gpu.device.limits().max_texture_dimension_2d;
@@ -301,7 +323,7 @@ fn create_rgba8_texture(
             },
         );
     }
-    gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
+    gpu_texture
 }
 
 pub(crate) fn create_depth_texture(
@@ -427,6 +449,13 @@ mod tests {
                 "mip",
                 CpuSampler {
                     mip_nearest: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "mipmap-less",
+                CpuSampler {
+                    mipmaps: false,
                     ..Default::default()
                 },
             ),

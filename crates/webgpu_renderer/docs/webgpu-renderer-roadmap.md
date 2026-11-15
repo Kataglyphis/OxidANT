@@ -30,7 +30,7 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 
 | Feature | Effort | Notes |
 | --- | --- | --- |
-| ✅ glTF sampler filters + wrap modes | S | Done 2026-07-18: nearest/linear + repeat/mirror/clamp honored per material texture |
+| ✅ glTF sampler filters + wrap modes | S | Done 2026-07-18: nearest/linear + repeat/mirror/clamp honored per material texture; the mipmap-less NEAREST and LINEAR min filters sample level 0 through a one-level view since 2026-11-15 |
 | ✅ Mipmap generation | M | Done 2026-07-18: CPU box-filter chains at upload, sRGB-aware averaging |
 | ✅ Normal matrix | S | Done 2026-07-18: inverse-transpose per primitive |
 | ✅ Normal mapping | M | Done 2026-07-18: glTF tangents or Lengyel-style generation (MikkTSpace parity later if baked assets demand it) |
@@ -43,7 +43,7 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | ✅ Double-sided materials | S | Done 2026-07-18: per-primitive pipeline variant |
 | ✅ sRGB/linear audit | S | Done 2026-07-18: full table in [`webgpu-srgb-audit.md`](https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/webgpu-srgb-audit.md) (stays in BeschleunigerBallett); one known deviation (web swapchain non-sRGB) |
 | ✅ `KHR_materials_unlit` | S | Done 2026-07-22: flag rides a new `material_flags` vec4; the shader returns base color BEFORE any lighting, per spec. Fixes every Sketchfab/mobile/AR flat-color export, which previously got a full GGX response with IBL and shadows |
-| ✅ Anisotropic filtering | S | Done 2026-07-22: 16x, but only when min/mag/mipmap are ALL linear - wgpu validates that, and nearest-filtered assets are the pixel-art ones whose look is deliberate. Grazing-angle floors were being over-blurred by several mip levels |
+| ✅ Anisotropic filtering | S | Done 2026-07-22: 16x, but only when min/mag/mipmap are ALL linear and the filter is mipmapped - wgpu validates that, and nearest-filtered assets are the pixel-art ones whose look is deliberate. Grazing-angle floors were being over-blurred by several mip levels |
 | ✅ Loader robustness | S | Done 2026-07-22: 16-bit images down-convert instead of aborting the WHOLE file (one 16-bit PNG used to mean the model would not open); triangle strips/fans are triangulated instead of silently vanishing (with the odd-triangle winding swap, or half the faces come out back-facing) |
 | ✅ Degenerate-input hardening | S | Done 2026-07-22: a cyclic node parent was a stack-overflow ABORT; one non-finite vertex NaN'd all three cascade matrices (breaking shadows scene-wide, and `test_planes` treats NaN as visible); a zero-scale node NaN'd its normal matrix. All three are pure unit tests |
 
