@@ -190,9 +190,13 @@ impl OrbitController {
             (camera.pitch_deg + dy_px * self.rotate_speed_deg_per_px).clamp(-89.0, 89.0);
     }
 
-    /// Positive amount zooms in. Exposed for tests.
+    /// Positive amount zooms in, each unit by `zoom_step`. Exposed for tests.
     pub fn apply_zoom(&self, camera: &mut OrbitCamera, amount: f32) {
-        camera.radius = (camera.radius * (1.0 - amount * self.zoom_step)).clamp(0.2, 500.0);
+        // A power, not `1 - amount * step`: that hit zero at ten notches, and in-then-out drifted.
+        let factor = (1.0 - self.zoom_step).max(f32::MIN_POSITIVE).powf(amount);
+        if factor.is_finite() {
+            camera.radius = (camera.radius * factor).clamp(0.2, 500.0);
+        }
     }
 
     /// Pinch zoom by the inverse separation ratio, so out-and-back returns to the start radius.
@@ -449,6 +453,36 @@ mod tests {
 
         controller.apply_drag(&mut camera, 0.0, 100000.0);
         assert!((camera.pitch_deg - 89.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_large_wheel_delta_zooms_in_proportion_and_reverses_exactly() {
+        // A 300 CSS-px flick at devicePixelRatio 2 arrives as one 600 px event: 10 notches.
+        let controller = OrbitController::default();
+        let mut camera = OrbitCamera {
+            radius: 100.0,
+            ..OrbitCamera::default()
+        };
+        controller.apply_zoom(&mut camera, 12.0);
+        let expected = 100.0 * 0.9f32.powi(12);
+        assert!(
+            (camera.radius - expected).abs() < 1e-3,
+            "12 notches must zoom to {expected}, got {}",
+            camera.radius
+        );
+        for amount in [0.5, 3.0, 15.0] {
+            let mut camera = OrbitCamera {
+                radius: 50.0,
+                ..OrbitCamera::default()
+            };
+            controller.apply_zoom(&mut camera, amount);
+            controller.apply_zoom(&mut camera, -amount);
+            assert!(
+                (camera.radius - 50.0).abs() < 1e-3,
+                "zooming {amount} in and out must return to 50, got {}",
+                camera.radius
+            );
+        }
     }
 
     #[test]

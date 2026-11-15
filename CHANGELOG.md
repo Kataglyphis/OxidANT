@@ -89,6 +89,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   load**: the importer matches `png`, `jpg` and `jpeg` exactly. The renderer enables `gltf`'s `guess_mime_type`,
   which decides by the PNG or JPEG bytes. `obj2gltf` writes a `mimeType` for every image and refuses a texture
   that is neither PNG nor JPEG, which converted fine and then failed to load.
+- **One large wheel event snapped the orbit radius to its minimum**: the zoom factor `1 - amount * zoom_step`
+  reached zero at ten notches (one 300 CSS-px flick at devicePixelRatio 2) and went negative beyond, and zooming
+  in and out by the same amount did not return. It is `(1 - zoom_step)^amount` now. Dividing pixel deltas by the
+  window's scale factor needs the host's DPI and stays with the editor work.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
