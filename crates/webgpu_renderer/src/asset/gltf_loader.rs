@@ -63,9 +63,7 @@ fn build_scene(
         .or_else(|| document.scenes().next())
         .context("glTF file contains no scenes")?;
 
-    for node in gltf_scene.nodes() {
-        visit_node(&node, Mat4::IDENTITY, &buffers, &textures, &mut scene)?;
-    }
+    visit_scene(&gltf_scene, &buffers, &textures, &mut scene)?;
 
     anyhow::ensure!(
         !scene.primitives.is_empty(),
@@ -406,16 +404,46 @@ fn texture_ref(
         })
 }
 
-fn visit_node(
-    node: &gltf::Node,
-    parent_transform: Mat4,
+/// Depth-first over the scene's node trees with an explicit stack, each node visited once.
+/// A cycle or a second parent is invalid glTF; recursion overflowed the stack on it, and on deep chains.
+fn visit_scene(
+    gltf_scene: &gltf::Scene,
     buffers: &[gltf::buffer::Data],
     textures: &[Arc<CpuTexture>],
     scene: &mut CpuScene,
 ) -> anyhow::Result<()> {
-    let local = Mat4::from_cols_array_2d(&node.transform().matrix());
-    let world = parent_transform * local;
+    let mut visited = vec![false; scene.nodes.len()];
+    let mut stack: Vec<(gltf::Node, Mat4)> = gltf_scene
+        .nodes()
+        .map(|node| (node, Mat4::IDENTITY))
+        .collect();
+    stack.reverse();
+    while let Some((node, parent_world)) = stack.pop() {
+        if std::mem::replace(&mut visited[node.index()], true) {
+            log::warn!(
+                "glTF node {} is reached a second time (a cycle or a second parent); skipped",
+                node.index()
+            );
+            continue;
+        }
+        let world = parent_world * Mat4::from_cols_array_2d(&node.transform().matrix());
+        visit_node(&node, world, buffers, textures, scene)?;
+        let first_child = stack.len();
+        stack.extend(node.children().map(|child| (child, world)));
+        // Reversed, so children pop in document order as they did in the recursive walk.
+        stack[first_child..].reverse();
+    }
+    Ok(())
+}
 
+/// One node's light and mesh primitives, posed by its `world` transform.
+fn visit_node(
+    node: &gltf::Node,
+    world: Mat4,
+    buffers: &[gltf::buffer::Data],
+    textures: &[Arc<CpuTexture>],
+    scene: &mut CpuScene,
+) -> anyhow::Result<()> {
     if let Some(light) = node.light() {
         use gltf::khr_lights_punctual::Kind;
         let kind = match light.kind() {
@@ -470,10 +498,6 @@ fn visit_node(
                 scene.primitives.push(cpu);
             }
         }
-    }
-
-    for child in node.children() {
-        visit_node(&child, world, buffers, textures, scene)?;
     }
     Ok(())
 }

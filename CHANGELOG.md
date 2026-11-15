@@ -27,6 +27,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   empty`, also on the web demo's drag-and-drop): every index out of range, or a strip of two indices, left an
   empty index buffer. The loader skips such a primitive with a warning, and `upload_scene` never creates an empty
   vertex or index buffer, so a scene built in code with an empty primitive draws nothing for it instead.
+- **A glTF node cycle overflowed the stack** (an abort natively, a dead canvas on the web): the loader recursed
+  into children with no visited set. It walks the node trees with an explicit stack and visits each node once,
+  warning on a second visit; `CpuScene::compute_world_transforms` resolves parents iteratively too, so a
+  50 000-level chain, valid glTF, no longer overflows either.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

@@ -156,3 +156,42 @@ fn empty_primitives_upload_and_render_without_a_panic() {
         .render_to_pixels(&gpu, 64, 64, &OrbitCamera::default())
         .expect("a frame with empty primitives must render");
 }
+
+/// One triangle mesh hung from `nodes` (JSON objects), the scene's roots being `roots`.
+fn triangle_under(nodes: &str, roots: &str) -> Vec<u8> {
+    let mut bin = Bin::default();
+    let pos = bin.vec3(&TRIANGLE);
+    bin.glb(&format!(
+        r#""meshes":[{{"primitives":[{{"attributes":{{"POSITION":{pos}}}}}]}}],"nodes":[{nodes}],"scenes":[{{"nodes":[{roots}]}}],"scene":0"#
+    ))
+}
+
+/// gltf validates index ranges only; a cycle recursed until the stack overflowed (an abort, not an error).
+#[test]
+fn node_cycles_load_each_node_once() {
+    let two_cycle = triangle_under(r#"{"children":[1]},{"children":[0],"mesh":0}"#, "0");
+    let scene = load_gltf_slice(&two_cycle).expect("a cycle is skipped, not fatal");
+    assert_eq!(scene.primitives.len(), 1, "the mesh node is visited once");
+
+    let self_parent = triangle_under(r#"{"children":[0],"mesh":0}"#, "0");
+    let scene = load_gltf_slice(&self_parent).expect("a self-parented node is skipped, not fatal");
+    assert_eq!(scene.primitives.len(), 1);
+}
+
+/// Valid but deep: a recursive walk needs one stack frame per level.
+#[test]
+fn a_deep_node_chain_loads_without_overflowing_the_stack() {
+    const DEPTH: usize = 50_000;
+    let mut nodes: Vec<String> = (1..DEPTH)
+        .map(|child| format!(r#"{{"children":[{child}],"translation":[0,1,0]}}"#))
+        .collect();
+    nodes.push(r#"{"mesh":0}"#.to_string());
+    let scene = load_gltf_slice(&triangle_under(&nodes.join(","), "0")).expect("deep chain");
+    assert_eq!(scene.primitives.len(), 1);
+    let lifted = scene.primitives[0].transform.w_axis.y;
+    assert_eq!(
+        lifted,
+        (DEPTH - 1) as f32,
+        "every level adds its translation"
+    );
+}
