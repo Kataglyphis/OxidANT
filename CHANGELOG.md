@@ -130,6 +130,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   took any size, so a window across two 5K monitors failed surface validation. The surface now scales down to the
   device's largest texture side with its aspect kept, and the scene renders at that size. Test:
   `a_surface_past_the_texture_limit_scales_down_with_its_aspect`.
+- **The IBL bake dropped small bright sources**: the panorama-to-cube pass took one bilinear tap per cube texel
+  although a 2048-wide panorama holds about five texels per face-centre cube texel, and the irradiance pass read
+  mip 0 on a 128x64 grid, so a sun a few texels wide was lit or missed by its sub-texel position (a 2x2-texel sun
+  vanished entirely). The cube pass now averages a tap grid sized to the panorama's texels (up to 16 per side), and
+  each irradiance tap reads the mip whose texels match its patch of the hemisphere. Test:
+  `a_small_sun_gives_the_same_irradiance_at_any_sub_texel_offset` (within 3% of the analytic irradiance).
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

@@ -6,6 +6,9 @@ static const float PI = 3.14159265359;
 static const uint IRRADIANCE_PHI_STEPS = 128u;
 static const uint IRRADIANCE_THETA_STEPS = 64u;
 
+// Most bilinear taps per cube texel side: an 8K panorama has 16 texels per cube texel, and one tap drops a small sun.
+static const uint MAX_EQUIRECT_TAPS = 16u;
+
 struct IblParams
 {
     float4 face_roughness_samples_mip; // x: face, y: roughness, z: samples, w: mip
@@ -79,8 +82,20 @@ float3 sample_equirect(float3 dir)
 [shader("fragment")]
 float4 fs_equirect_to_cube(FullscreenVsOut In) : SV_Target
 {
-    float3 dir = cube_direction(uint(params.face_roughness_samples_mip.x), In.uv);
-    return float4(sample_equirect(dir), 1.0);
+    uint face = uint(params.face_roughness_samples_mip.x);
+    float2 texel = fwidth(In.uv);
+    // Taps under one panorama texel apart: a face-centre cube texel spans about 5 of them per 4 on average.
+    uint taps = clamp(uint(ceil(0.5 * params.source_resolution.x * texel.x)), 1u, MAX_EQUIRECT_TAPS);
+    float3 sum = float3(0.0);
+    for (uint y = 0u; y < taps; y++)
+    {
+        for (uint x = 0u; x < taps; x++)
+        {
+            float2 offset = (float2(float(x), float(y)) + 0.5) / float(taps) - 0.5;
+            sum += sample_equirect(cube_direction(face, In.uv + offset * texel));
+        }
+    }
+    return float4(sum / float(taps * taps), 1.0);
 }
 
 // A texel sits on the corner of its four parents, so one bilinear tap is their box average.
@@ -99,6 +114,9 @@ float4 fs_irradiance(FullscreenVsOut In) : SV_Target
     float3 right = normalize(cross(up, dir));
     up = cross(dir, right);
     float3 irradiance = float3(0.0);
+    // A tap stands for its patch of the hemisphere, so it reads the mip whose texels match that patch.
+    float texelSolidAngle = 4.0 * PI / (6.0 * params.source_resolution.x * params.source_resolution.x);
+    float patchSolidAngle = (2.0 * PI / float(IRRADIANCE_PHI_STEPS)) * (0.5 * PI / float(IRRADIANCE_THETA_STEPS));
     for (uint phi_i = 0u; phi_i < IRRADIANCE_PHI_STEPS; phi_i++)
     {
         float phi = 2.0 * PI * (float(phi_i) + 0.5) / float(IRRADIANCE_PHI_STEPS);
@@ -107,7 +125,8 @@ float4 fs_irradiance(FullscreenVsOut In) : SV_Target
             float theta = 0.5 * PI * (float(theta_i) + 0.5) / float(IRRADIANCE_THETA_STEPS);
             float3 tangent = float3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
             float3 sampleDir = tangent.x * right + tangent.y * up + tangent.z * dir;
-            irradiance += srcCube.SampleLevel(srcSampler, sampleDir, 0.0).rgb * cos(theta) * sin(theta);
+            float lod = max(0.5 * log2(patchSolidAngle * sin(theta) / texelSolidAngle) + 1.0, 0.0);
+            irradiance += srcCube.SampleLevel(srcSampler, sampleDir, lod).rgb * cos(theta) * sin(theta);
         }
     }
     float sampleCount = float(IRRADIANCE_PHI_STEPS * IRRADIANCE_THETA_STEPS);
