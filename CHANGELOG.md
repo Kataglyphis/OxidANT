@@ -22,6 +22,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   limit one byte below a 32 x 32 accumulation: the frame is the raster one with its SSAO, the drawn mode Raster, and a
   16 x 16 output traces again; without the fix it reads PathTraced and the frame lacks its SSAO.
 
+### Added (2026-11-15, the C++ dielectric furnace checks)
+- `tests/traced_modes.rs`: a lone white dielectric card at roughness 0.5 and 0.25, mu 1 and 0.5, within 0.01 of
+  E(mu), as the C++ `PathTracingPassesTheWhiteFurnaceTest` grades it (measured 0.9938/0.9943, 0.9913/0.9910,
+  0.9984/0.9995, 1.0041/1.0036). The furnace golden moved to the C++ shadow rig and grades the HDR mean against the C++
+  0.98..1.002 (measured 0.987) and 98 % of pixels within 0.1 of the sky. A 1.5 % gain a bounce fails both: the rig
+  reads 1.008, the first card 1.0085 against 0.9943.
+
 ### Fixed (2026-11-15, the tracer with the raster settings, deferred path and clouds)
 - **A traced frame replaces either raster path.** The deferred G-buffer and lighting passes sit beside the forward pass
   and depth resolve inside the traced frame's skip, so a ray- or path-traced pick over `RasterPath::Deferred` runs no

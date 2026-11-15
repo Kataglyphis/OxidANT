@@ -256,11 +256,13 @@ Measured on lavapipe, the 8-core arm64 host under WSL, shared with other builds:
 The first frame of a mode adds its kernel's compile: 1-2 s for either on lavapipe.
 
 Tests: `tests/traced_modes.rs` (lavapipe; the C++ goldens' ports): the white furnace through the
-post chain (a sky of 2 at -1 EV must give the C++ 231.6 within 3 levels, 98 % of pixels within
-6), a white metal card against a quadrature of `brdf_direct` (within 0.03; measured within
-0.001), accumulation that settles, every reset premise, a MASK card's half shadow in both modes,
-the untextured metallic factor, unlit albedo in every mode, an output whose accumulation does not
-fit drawing and reporting raster, the traced shadow against the
+post chain on the C++ shadow rig (the HDR mean within the C++ 0.98..1.002 of the sky, measured
+0.987, and 98 % of pixels within 0.1; a 1.5 % gain a bounce reads 1.008; the 8-bit mean the C++
+231.6 within 3 levels), a white metal card against a quadrature of `brdf_direct` (within 0.03;
+measured within 0.001) and a white dielectric one at roughness 0.5 and 0.25, mu 1 and 0.5 (within
+the C++ 0.01; measured within 0.0011, the 1.5 % gain off by 0.014), an output whose accumulation
+does not fit drawing and reporting raster, accumulation that settles, every reset premise, a MASK card's half shadow in both modes,
+the untextured metallic factor, unlit albedo in every mode, the traced shadow against the
 cascades' (IoU over 0.75; measured 0.98) and black, the lens shift, the raster round trip, and
 that no raster pass runs or is timed, and that a shader reload rebuilds both kernels or keeps them.
 `tests/feature_matrix.rs` runs the traced modes over the deferred path beside both raster paths:

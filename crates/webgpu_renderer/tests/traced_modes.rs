@@ -304,10 +304,76 @@ fn ray_traced_shadows_land_where_the_raster_shadows_are_and_go_black() {
     );
 }
 
-/// C++ `PathTracingPassesTheWhiteFurnaceTest`: a sky of 2 at -1 EV is the C++ golden's radiance 1, ACES-encoded to 231.6.
+/// The C++ shadow rig (`ShadowTest/shadow_rig.obj`): a 60 x 60 ground at y = 0 under a 44 x 2 x 12 slab centred at (0, 9, -4).
+fn shadow_rig() -> CpuScene {
+    let ground = quad([
+        Vec3::new(-30.0, 0.0, -30.0),
+        Vec3::new(-30.0, 0.0, 30.0),
+        Vec3::new(30.0, 0.0, 30.0),
+        Vec3::new(30.0, 0.0, -30.0),
+    ]);
+    let (min, max) = (Vec3::new(-22.0, 8.0, -10.0), Vec3::new(22.0, 10.0, 2.0));
+    let mut slab = Vec::new();
+    for axis in 0..3 {
+        for side in [min, max] {
+            let normal = (side - (min + max) * 0.5) * Vec3::AXES[axis];
+            slab.push(box_face(min, max, axis, normal.normalize()));
+        }
+    }
+    let mut primitives = vec![ground];
+    primitives.extend(slab);
+    scene_of(primitives)
+}
+
+/// A quad from four counter-clockwise corners, its normal theirs.
+fn quad(corners: [Vec3; 4]) -> CpuPrimitive {
+    let normal = (corners[1] - corners[0])
+        .cross(corners[2] - corners[0])
+        .normalize();
+    let vertices = corners
+        .iter()
+        .map(|&c| vertex(c, normal, [0.0, 0.0]))
+        .collect();
+    primitive(vertices, vec![0, 1, 2, 0, 2, 3], CpuMaterial::default())
+}
+
+/// The face of the `min`..`max` box whose outward normal is `normal`, along `axis`.
+fn box_face(min: Vec3, max: Vec3, axis: usize, normal: Vec3) -> CpuPrimitive {
+    let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+    let corner = |a: bool, b: bool| {
+        let mut c = if normal[axis] > 0.0 { max } else { min };
+        c[u] = if a { max[u] } else { min[u] };
+        c[v] = if b { max[v] } else { min[v] };
+        c
+    };
+    let mut corners = [
+        corner(false, false),
+        corner(true, false),
+        corner(true, true),
+        corner(false, true),
+    ];
+    if (corners[1] - corners[0])
+        .cross(corners[2] - corners[0])
+        .dot(normal)
+        < 0.0
+    {
+        corners.reverse();
+    }
+    quad(corners)
+}
+
+/// C++ `PathTracingPassesTheWhiteFurnaceTest`'s rig half: a sky of 2 at -1 EV is the C++ golden's radiance 1, ACES-encoded to 231.6.
 #[test]
 fn the_white_furnace_converges_to_the_sky_through_the_post_chain() {
-    let Some(mut rig) = Rig::new(&asset("cube_on_plane.gltf"), 64, OrbitCamera::default()) else {
+    // Down on the rig, so every pixel is the ground or the slab, as in the C++ crop.
+    let camera = OrbitCamera {
+        target: Vec3::new(0.0, 4.0, -4.0),
+        radius: 30.0,
+        yaw_deg: 90.0,
+        pitch_deg: 60.0,
+        ..OrbitCamera::default()
+    };
+    let Some(mut rig) = Rig::new(&shadow_rig(), 64, camera) else {
         return;
     };
     let furnace = FurnaceSettings {
@@ -321,68 +387,93 @@ fn the_white_furnace_converges_to_the_sky_through_the_post_chain() {
     };
     rig.renderer.exposure_ev = -1.0;
     let frame = rig.frames(RenderMode::PathTraced, 12);
-    // The white dielectric keeps 99 to 100 % at every angle (quadrature), so paths lose about 1 % a bounce.
-    let worst = (1..=10).map(|i| directional_albedo(f64::from(i) * 0.1, 0.0, 0.5));
-    let floor = worst.fold(1.0, f64::min) as f32;
-    let hdr = rig.hdr();
-    let mean = hdr.iter().map(|p| (p[0] + p[1] + p[2]) / 3.0).sum::<f32>() / hdr.len() as f32;
-    eprintln!("furnace HDR mean {mean} of a sky of 2, albedo floor {floor}");
-    assert!(mean > 2.0 * floor * floor && mean < 2.0 * 1.003, "{mean}");
+    let relative: Vec<f32> = rig
+        .hdr()
+        .iter()
+        .map(|p| (p[0] + p[1] + p[2]) / 6.0)
+        .collect();
+    let mean = relative.iter().sum::<f32>() / relative.len() as f32;
+    let uniform = relative.iter().filter(|r| (*r - 1.0).abs() <= 0.1).count();
+    eprintln!(
+        "furnace HDR mean {mean} of the sky, {uniform} of {} within 0.1",
+        relative.len()
+    );
+    // The C++ bounds: E(mu) <= 1 at roughness 0.5 caps the mean at 1, and 1 % lost a bounce stays above 0.98.
+    assert!((0.98..1.002).contains(&mean), "{mean}");
+    assert!(
+        uniform * 100 > relative.len() * 98,
+        "geometry shows through the furnace"
+    );
     let expected = tonemapped(1.0, 0.0);
     let lumas: Vec<f32> = pixels(&frame).iter().map(luma).collect();
     let mean8 = lumas.iter().sum::<f32>() / lumas.len() as f32;
-    let within = lumas
-        .iter()
-        .filter(|l| (*l - expected).abs() <= 6.0)
-        .count();
-    eprintln!(
-        "furnace 8-bit mean {mean8} (analytic {expected:.1}), {within} of {} within 6",
-        lumas.len()
-    );
+    eprintln!("furnace 8-bit mean {mean8} (analytic {expected:.1})");
     assert!((mean8 - expected).abs() < 3.0, "{mean8} against {expected}");
-    assert!(
-        within * 100 > lumas.len() * 98,
-        "geometry shows through the furnace"
-    );
+}
+
+/// A lone white card's centre radiance in the furnace, seen at `mu` (1 or 0.5), and its analytic E(mu).
+fn card_albedo(rig: &mut Rig, metallic: f32, roughness: f32, mu: f64) -> (f64, f64) {
+    rig.renderer.trace_settings = TraceSettings {
+        samples_per_pixel: 8,
+        max_bounces: 2,
+        furnace: Some(FurnaceSettings {
+            radiance: 1.0,
+            metallic,
+            roughness,
+        }),
+    };
+    rig.camera = OrbitCamera {
+        target: Vec3::ZERO,
+        radius: 2.0,
+        // The card faces +Z, so the eye's yaw from +X is asin(mu).
+        yaw_deg: mu.asin().to_degrees() as f32,
+        pitch_deg: 0.0,
+        ..OrbitCamera::default()
+    };
+    rig.frames(RenderMode::PathTraced, 16);
+    let measured = f64::from(rig.centre_radiance(16));
+    let expected = directional_albedo(mu, f64::from(metallic), f64::from(roughness));
+    eprintln!("white card, metallic {metallic}, roughness {roughness}, mu {mu}: {measured:.4}, E(mu) {expected:.4}");
+    (measured, expected)
+}
+
+fn lone_card() -> Option<Rig> {
+    Rig::new(
+        &scene_of(vec![card(CpuMaterial::default())]),
+        64,
+        OrbitCamera::default(),
+    )
 }
 
 /// C++ `PathTracingPassesTheWhiteMetalFurnaceTest`: a metal card returns its GGX lobe's directional albedo of a uniform sky.
 #[test]
 fn a_white_metal_card_reflects_its_directional_albedo() {
-    let Some(mut rig) = Rig::new(
-        &scene_of(vec![card(CpuMaterial::default())]),
-        64,
-        OrbitCamera::default(),
-    ) else {
+    let Some(mut rig) = lone_card() else {
         return;
     };
-    for roughness in [0.3f32, 0.7] {
-        for (mu, yaw_deg) in [(1.0f64, 90.0f32), (0.5, 30.0)] {
-            rig.renderer.trace_settings = TraceSettings {
-                samples_per_pixel: 8,
-                max_bounces: 2,
-                furnace: Some(FurnaceSettings {
-                    radiance: 1.0,
-                    metallic: 1.0,
-                    roughness,
-                }),
-            };
-            rig.camera = OrbitCamera {
-                target: Vec3::ZERO,
-                radius: 2.0,
-                yaw_deg,
-                pitch_deg: 0.0,
-                ..OrbitCamera::default()
-            };
-            rig.frames(RenderMode::PathTraced, 8);
-            let measured = f64::from(rig.centre_radiance(8));
-            let expected = directional_albedo(mu, 1.0, f64::from(roughness));
-            eprintln!(
-                "white metal, roughness {roughness}, mu {mu}: {measured:.4}, E(mu) {expected:.4}"
-            );
+    for roughness in [0.3, 0.7] {
+        for mu in [1.0, 0.5] {
+            let (measured, expected) = card_albedo(&mut rig, 1.0, roughness, mu);
             assert!(
                 (measured - expected).abs() < 0.03,
                 "{measured} against {expected}"
+            );
+        }
+    }
+}
+
+/// C++ `PathTracingPassesTheWhiteFurnaceTest`'s card half: at 0.25 the 0.1 floor on the GGX lobe's chance decides the mixture.
+#[test]
+fn a_white_dielectric_card_reflects_its_directional_albedo() {
+    let Some(mut rig) = lone_card() else {
+        return;
+    };
+    for roughness in [0.5, 0.25] {
+        for mu in [1.0, 0.5] {
+            let (measured, expected) = card_albedo(&mut rig, 0.0, roughness, mu);
+            assert!(
+                (measured - expected).abs() < 0.01,
+                "the lobe mixture's weight is off at roughness {roughness}, mu {mu}: {measured} against {expected}"
             );
         }
     }
