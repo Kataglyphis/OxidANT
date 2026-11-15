@@ -10,6 +10,7 @@ mod library;
 mod menu_bar;
 mod outliner;
 mod profiler;
+mod render_mode;
 mod status_bar;
 mod windows;
 
@@ -278,7 +279,7 @@ impl Editor {
         menu_bar::show(ui, self, cx);
         status_bar::show(ui, cx);
         let scene = self.docks(ui, cx);
-        chip::paint(ui, scene, cx.scene.loading, cx.settings.raster_path);
+        chip::paint(ui, scene, cx);
         windows::show(ui.ctx(), self, cx);
         EditorOutput {
             viewport: layout::viewport_of(scene, frame),

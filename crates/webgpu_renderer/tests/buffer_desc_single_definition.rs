@@ -107,6 +107,22 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../src/render/gpu_occlusion.rs"),
     ),
     ("render/ssao.rs", include_str!("../src/render/ssao.rs")),
+    (
+        "render/tracer/gpu.rs",
+        include_str!("../src/render/tracer/gpu.rs"),
+    ),
+    (
+        "render/tracer/debug.rs",
+        include_str!("../src/render/tracer/debug.rs"),
+    ),
+    (
+        "render/tracer/modes/passes.rs",
+        include_str!("../src/render/tracer/modes/passes.rs"),
+    ),
+    (
+        "render/forward/traced.rs",
+        include_str!("../src/render/forward/traced.rs"),
+    ),
 ];
 
 #[test]

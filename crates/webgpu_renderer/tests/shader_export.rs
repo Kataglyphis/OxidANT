@@ -28,6 +28,15 @@ const SHADERS: &[(&str, &str)] = &[
         "cloud_march",
         include_str!("../src/shaders/cloud_march.wgsl"),
     ),
+    (
+        "trace_debug",
+        include_str!("../src/shaders/trace_debug.wgsl"),
+    ),
+    ("traced", include_str!("../src/shaders/traced.wgsl")),
+    (
+        "trace_resolve",
+        include_str!("../src/shaders/trace_resolve.wgsl"),
+    ),
 ];
 
 #[test]
@@ -216,6 +225,9 @@ const REQUIRED_ENTRY_POINTS: &[(&str, &[&str])] = &[
             "cs_clear_histogram",
         ],
     ),
+    ("trace_debug", &["cs_trace_closest", "cs_trace_any"]),
+    ("traced", &["cs_ray_trace", "cs_path_trace"]),
+    ("trace_resolve", &["vs_main", "fs_main"]),
 ];
 
 #[test]

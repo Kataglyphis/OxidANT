@@ -88,12 +88,13 @@ impl ForwardRenderer {
 
     /// This frame's bloom and SSAO mix, and the exposure mode the reduce pass applies.
     pub(super) fn write_post_settings(&self, gpu: &GpuContext, tonemap: &TonemapPass) {
-        tonemap.set_params(
-            &gpu.queue,
-            self.bloom_strength,
-            self.ssao_strength,
-            self.clouds.enabled,
-        );
+        // A traced frame has no depth for SSAO, so it must not darken by a raster frame's occlusion.
+        let ssao = if self.drawn_mode().is_traced() {
+            0.0
+        } else {
+            self.ssao_strength
+        };
+        tonemap.set_params(&gpu.queue, self.bloom_strength, ssao, self.clouds.enabled);
         self.post.histogram.set_exposure_settings(
             &gpu.queue,
             ExposureSettings {

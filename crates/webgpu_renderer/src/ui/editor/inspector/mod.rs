@@ -52,7 +52,7 @@ pub(super) fn subtitle(object: SceneObject, cx: &EditorContext<'_>) -> String {
         SceneObject::Skybox if cx.stats.cubemap => "Cube map".to_owned(),
         SceneObject::Skybox => "Procedural".to_owned(),
         SceneObject::Clouds => "Volumetric".to_owned(),
-        SceneObject::Renderer => "Raster".to_owned(),
+        SceneObject::Renderer => super::render_mode::drawn_label(cx).to_owned(),
     }
 }
 

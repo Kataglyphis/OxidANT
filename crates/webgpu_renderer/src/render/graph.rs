@@ -12,7 +12,7 @@ pub enum Resource {
     ShadowMap,
     /// MSAA depth buffer written by the forward pass.
     DepthMsaa,
-    /// Single-sample depth resolved from `DepthMsaa`, or written by the G-buffer pass; SSAO and the cull pass's input.
+    /// Single-sample depth resolved from `DepthMsaa`, written by the G-buffer pass, or the traced primary hit's; SSAO, the cull pass and the clouds read it.
     Depth,
     /// The deferred path's normal, albedo and material targets.
     GBuffer,
@@ -34,6 +34,8 @@ pub enum Resource {
     NoiseVolume,
     /// Premultiplied cloud colour and coverage, marched to `Depth`.
     CloudColor,
+    /// The traced modes' per-pixel running mean.
+    Accumulation,
 }
 
 /// A declared pass: its name and the resources it reads and writes.
@@ -184,6 +186,53 @@ pub fn deferred_frame_graph() -> Vec<PassDesc<'static>> {
     passes
 }
 
+/// A traced frame: `kernel` (`ray_trace` or `path_trace`) and the resolve replace every raster pass before exposure.
+/// The kernel writes the primary hit's depth, which the clouds march to as they do to the raster depth.
+pub fn traced_frame_graph(kernel: &'static str) -> Vec<PassDesc<'static>> {
+    let mut passes = vec![
+        PassDesc {
+            name: kernel,
+            reads: &[],
+            writes: &[Resource::Accumulation, Resource::Depth],
+        },
+        PassDesc {
+            name: "trace_resolve",
+            reads: &[Resource::Accumulation],
+            writes: &[Resource::HdrColor],
+        },
+    ];
+    // SSAO does not run, so the tonemap reads no ambient term.
+    let post = forward_frame_graph().into_iter().filter(|pass| {
+        matches!(
+            pass.name,
+            "histogram" | "exposure_reduce" | "bloom" | "cloud_noise" | "clouds"
+        )
+    });
+    passes.extend(post);
+    passes.push(PassDesc {
+        name: "tonemap",
+        reads: &[
+            Resource::HdrColor,
+            Resource::Bloom,
+            Resource::Exposure,
+            Resource::CloudColor,
+        ],
+        writes: &[Resource::Output],
+    });
+    passes
+}
+
+/// Every frame the renderer records: forward, deferred, ray traced, path traced.
+#[cfg(test)]
+fn every_frame_graph() -> [Vec<PassDesc<'static>>; 4] {
+    [
+        forward_frame_graph(),
+        deferred_frame_graph(),
+        traced_frame_graph("ray_trace"),
+        traced_frame_graph("path_trace"),
+    ]
+}
+
 /// Graph row of a timed pass; a `match` so a new `TimedPass` variant fails to compile here.
 #[cfg(test)]
 fn graph_pass_name(pass: TimedPass) -> &'static str {
@@ -199,6 +248,9 @@ fn graph_pass_name(pass: TimedPass) -> &'static str {
         TimedPass::GBuffer => "gbuffer",
         TimedPass::DeferredLighting => "deferred_lighting+sky",
         TimedPass::Clouds => "clouds",
+        TimedPass::RayTrace => "ray_trace",
+        TimedPass::PathTrace => "path_trace",
+        TimedPass::TraceResolve => "trace_resolve",
     }
 }
 
@@ -209,11 +261,6 @@ const UNTIMED_ROWS: &[&str] = &["depth_resolve", "cloud_noise"];
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Both paths' graphs, which every per-row test covers.
-    fn graphs() -> [Vec<PassDesc<'static>>; 2] {
-        [forward_frame_graph(), deferred_frame_graph()]
-    }
 
     #[test]
     fn forward_graph_is_valid() {
@@ -244,21 +291,31 @@ mod tests {
     }
 
     #[test]
+    fn the_traced_graphs_are_valid() {
+        for kernel in ["ray_trace", "path_trace"] {
+            validate(&traced_frame_graph(kernel), &[]).expect("a traced frame graph must validate");
+        }
+    }
+
+    #[test]
     fn every_timed_pass_has_a_graph_row() {
-        let graphs = graphs();
+        let graphs = every_frame_graph();
         for pass in TimedPass::ALL {
             let expected = graph_pass_name(pass);
+            let in_graph = |graph: &Vec<PassDesc>| graph.iter().any(|p| p.name == expected);
             assert!(
-                graphs.iter().flatten().any(|p| p.name == expected),
-                "TimedPass::{pass:?} maps to graph row '{expected}', but no such row exists"
+                graphs.iter().any(in_graph),
+                "TimedPass::{pass:?} maps to graph row '{expected}', but no frame has such a row"
             );
+            let traced_only = !in_graph(&graphs[0]) && !in_graph(&graphs[1]);
+            assert_eq!(pass.is_traced(), traced_only, "{pass:?}");
         }
     }
 
     #[test]
     fn every_graph_row_is_timed_or_explicitly_untimed() {
         let timed_names: Vec<&str> = TimedPass::ALL.iter().map(|&p| graph_pass_name(p)).collect();
-        for pass in graphs().iter().flatten() {
+        for pass in every_frame_graph().iter().flatten() {
             assert!(
                 timed_names.contains(&pass.name) || UNTIMED_ROWS.contains(&pass.name),
                 "graph row '{}' is neither timed by any TimedPass nor listed in UNTIMED_ROWS",
@@ -267,24 +324,34 @@ mod tests {
         }
     }
 
-    /// The timed passes each raster path runs: the other path's raster passes never record.
-    fn timed_on(deferred: bool) -> Vec<&'static str> {
-        let other: &[TimedPass] = if deferred {
-            &[TimedPass::Forward]
-        } else {
-            &[TimedPass::GBuffer, TimedPass::DeferredLighting]
+    /// The timed passes frame `frame` of [`every_frame_graph`] records: each skips the other paths' and modes' passes.
+    fn timed_in(frame: usize) -> Vec<&'static str> {
+        use TimedPass::*;
+        const RASTER: [TimedPass; 6] = [
+            ShadowCascades,
+            Forward,
+            GBuffer,
+            DeferredLighting,
+            OcclusionCull,
+            Ssao,
+        ];
+        let skipped: Vec<TimedPass> = match frame {
+            0 => vec![GBuffer, DeferredLighting, RayTrace, PathTrace, TraceResolve],
+            1 => vec![Forward, RayTrace, PathTrace, TraceResolve],
+            2 => [RASTER.as_slice(), &[PathTrace]].concat(),
+            _ => [RASTER.as_slice(), &[RayTrace]].concat(),
         };
         let passes = TimedPass::ALL
             .into_iter()
-            .filter(|pass| !other.contains(pass));
+            .filter(|pass| !skipped.contains(pass));
         passes.map(graph_pass_name).collect()
     }
 
     #[test]
-    fn each_paths_graph_has_a_row_for_every_pass_it_times_and_times_every_other_row() {
-        for (deferred, graph) in [false, true].into_iter().zip(graphs()) {
+    fn each_frames_graph_has_a_row_for_every_pass_it_times_and_times_every_other_row() {
+        for (frame, graph) in every_frame_graph().into_iter().enumerate() {
             let rows: Vec<&str> = graph.iter().map(|pass| pass.name).collect();
-            let timed = timed_on(deferred);
+            let timed = timed_in(frame);
             let untimed: Vec<&str> = rows
                 .iter()
                 .copied()
@@ -292,18 +359,18 @@ mod tests {
                 .collect();
             assert!(
                 timed.iter().all(|pass| rows.contains(pass)),
-                "deferred {deferred}: timed {timed:?}, rows {rows:?}"
+                "frame {frame}: timed {timed:?}, rows {rows:?}"
             );
             assert!(
                 untimed.iter().all(|row| UNTIMED_ROWS.contains(row)),
-                "deferred {deferred}: rows {untimed:?} are untimed"
+                "frame {frame}: rows {untimed:?} are untimed"
             );
         }
     }
 
     #[test]
-    fn the_clouds_march_after_the_depth_and_before_the_tonemap_on_both_paths() {
-        for graph in graphs() {
+    fn the_clouds_march_after_the_depth_and_before_the_tonemap_in_every_frame() {
+        for graph in every_frame_graph() {
             let at = |name: &str| graph.iter().position(|pass| pass.name == name);
             let writer = graph
                 .iter()

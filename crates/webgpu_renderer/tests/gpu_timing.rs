@@ -11,7 +11,7 @@ fn cube_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
 }
 
-/// The passes `path` records with occlusion culling, the histogram and the clouds on: all but the other path's.
+/// The passes `path` records with occlusion culling, the histogram and the clouds on: all but the other path's and the traced modes'.
 fn passes_of(path: RasterPath) -> Vec<TimedPass> {
     let other: &[TimedPass] = match path {
         RasterPath::Forward => &[TimedPass::GBuffer, TimedPass::DeferredLighting],
@@ -19,7 +19,7 @@ fn passes_of(path: RasterPath) -> Vec<TimedPass> {
     };
     TimedPass::ALL
         .into_iter()
-        .filter(|pass| !other.contains(pass))
+        .filter(|pass| !other.contains(pass) && !pass.is_traced())
         .collect()
 }
 

@@ -45,7 +45,7 @@ pub(super) fn detail(object: SceneObject, cx: &EditorContext<'_>) -> String {
         }
         SceneObject::Sun => "no shadows".to_owned(),
         SceneObject::Camera => format!("{:.0}°", cx.camera.fov_y_deg),
-        SceneObject::Renderer => "Raster".to_owned(),
+        SceneObject::Renderer => super::render_mode::drawn_label(cx).to_owned(),
         SceneObject::Skybox | SceneObject::Clouds => String::new(),
     }
 }

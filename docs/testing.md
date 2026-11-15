@@ -174,7 +174,9 @@ without them. Since when each lane sets it, and the one test it cannot hold:
 
 **They render under the browser's limits.** `GpuContext` requests `wgpu::Limits::default()`,
 WebGPU's defaults, on native too: a browser grants no more whatever the adapter offers, so a
-layout the web demo would reject (a fifth bind group, say) fails these tests.
+layout the web demo would reject (a fifth bind group, say) fails these tests. The two buffer
+sizes are the exception natively, so the tracer can bind a large scene; its own tests check
+its buffers against the defaults ([tracer.md](../crates/webgpu_renderer/docs/tracer.md#limits)).
 `tests/shader_export.rs` checks the WGSL without a GPU: no `@group` past 3, and no struct
 that repeats a `@location`, which naga accepts and Tint, the browsers' WGSL compiler, rejects.
 
@@ -188,9 +190,9 @@ that repeats a `@location`, which naga accepts and Tint, the browsers' WGSL comp
   `crates/media/tests/capture_test.rs` (a `videotestsrc` pipeline and camera
   enumeration); `crates/inference/tests/` (the real model on both backends, the fallback,
   the load errors); `crates/burn_demos/tests/` (each demo's result, the detector demo on the
-  real model); and the renderer's 32 binaries under `crates/webgpu_renderer/tests/`, where
+  real model); and the renderer's NN binaries under `crates/webgpu_renderer/tests/`, where
   `feature_matrix.rs` runs the shadow settings, the cube skybox, the clouds, the model transform and
-  frustum culling on both raster paths.
+  frustum culling on both raster paths and in both traced modes.
 - Property-based (fuzz) tests: [proptest](https://proptest-rs.github.io/proptest/)
   properties on ObservANT's network-facing parsers (Range header, query, Host/Origin
   check, request path, camera spec, config file), 256 random inputs per property and run,

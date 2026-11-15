@@ -104,6 +104,21 @@ const SOURCES: &[(&str, &str, bool)] = &[
     ),
     ("render/ibl.rs", include_str!("../src/render/ibl.rs"), false),
     (
+        "render/tracer/gpu.rs",
+        include_str!("../src/render/tracer/gpu.rs"),
+        false,
+    ),
+    (
+        "render/tracer/modes/passes.rs",
+        include_str!("../src/render/tracer/modes/passes.rs"),
+        false,
+    ),
+    (
+        "render/forward/traced.rs",
+        include_str!("../src/render/forward/traced.rs"),
+        false,
+    ),
+    (
         "render/texture.rs",
         include_str!("../src/render/texture.rs"),
         true,
@@ -149,10 +164,11 @@ fn texture_descriptor_literals_are_the_single_definition_or_marked_non_goals() {
         unmarked.join("\n")
     );
     assert_eq!(
-        marked_count, 5,
-        "expected exactly 5 marked non-goal TextureDescriptor literals (three cube \
-         textures, one depth array, the cloud noise volume); found {marked_count} - \
-         update this count if a new non-goal shape is added, or investigate if one disappeared"
+        marked_count, 6,
+        "expected exactly 6 marked non-goal TextureDescriptor literals (three cube \
+         textures, one depth array, the cloud noise volume, the tracer's layer arrays); \
+         found {marked_count} - update this count if a new non-goal shape is added, or \
+         investigate if one disappeared"
     );
     assert_eq!(
         definition_count, 1,

@@ -12,6 +12,7 @@ pub struct Segmented<'a> {
     labels: &'a [&'a str],
     enabled: &'a [bool],
     width: Option<f32>,
+    reselectable: bool,
 }
 
 impl<'a> Segmented<'a> {
@@ -21,12 +22,19 @@ impl<'a> Segmented<'a> {
             labels,
             enabled: &[],
             width: None,
+            reselectable: false,
         }
     }
 
     /// One flag per label; a missing flag counts as enabled.
     pub fn enabled(mut self, enabled: &'a [bool]) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    /// A click on the selected segment reports a change too, as the C++ render-mode switch does.
+    pub fn reselectable(mut self, reselectable: bool) -> Self {
+        self.reselectable = reselectable;
         self
     }
 
@@ -61,7 +69,7 @@ impl<'a> Segmented<'a> {
         for index in 0..self.labels.len() {
             let segment = self.segment_rect(ui, rect, index);
             let clicked = self.segment(ui, response.id.with(index), segment, index, *selected);
-            if clicked && index != *selected {
+            if clicked && (index != *selected || self.reselectable) {
                 *selected = index;
                 response.mark_changed();
             }
@@ -191,5 +199,21 @@ mod tests {
             ui,
             &mut selected
         )));
+    }
+
+    #[test]
+    fn a_reselectable_control_reports_a_click_on_its_selected_segment() {
+        let ctx = context();
+        let show = |ui: &mut Ui, reselectable: bool| {
+            let mut selected = 0;
+            Segmented::new(&MODES)
+                .reselectable(reselectable)
+                .width(300.0)
+                .show(ui, &mut selected)
+        };
+        let rect = frame(&ctx, Vec::new(), |ui| show(ui, true).rect);
+        let first = click(rect.left() + 20.0, rect.center().y);
+        assert!(frame(&ctx, first.clone(), |ui| show(ui, true).changed()));
+        assert!(!frame(&ctx, first, |ui| show(ui, false).changed()));
     }
 }

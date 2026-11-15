@@ -14,6 +14,8 @@ mod scenes;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod web;
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use winit::window::Window;
 
@@ -26,6 +28,7 @@ use crate::render::frame_clock::FrameClock;
 use crate::render::ibl::EquirectImage;
 use crate::render::overlay::Overlay;
 use crate::render::tonemap::TonemapPass;
+use crate::render::tracer::TraceStatus;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::controller::OrbitController;
 use crate::scene::fly::FlyController;
@@ -142,6 +145,7 @@ impl StudioApp {
             overlay,
         };
         app.upload(scene, SceneMeta::default());
+        app.renderer.set_trace_source(Arc::new(scene.clone()));
         app
     }
 
@@ -161,6 +165,11 @@ impl StudioApp {
             viewport: SceneViewport::FULL,
             ..self.camera.clone()
         }
+    }
+
+    /// Where the traced scene is, for a host that shows the build's progress itself.
+    pub fn trace_status(&self) -> TraceStatus {
+        self.renderer.trace_status()
     }
 
     pub fn editor(&self) -> &Editor {

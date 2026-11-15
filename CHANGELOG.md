@@ -295,6 +295,55 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - `crates/gui`: the CPU graph sat at the top whenever the process used more than one core; it scales to 100 % or
   the history's peak.
 
+### Added (2026-11-15, the ray-traced and path-traced modes)
+- The C++ engine's ray-traced mode on the tracer core: one ray through each pixel centre, the forward pass's
+  GGX and Lambert BRDF lit by the sun through a traced shadow ray (any-hit, MASK alpha-tested), emission, unlit
+  albedo, no ambient term; a miss shows the raster sky. `shaders/tracer/traced.slang` (`cs_ray_trace`).
+- Its path tracer (`cs_path_trace`, the estimator of BeschleunigerBallett's `path_tracing.slang` in
+  `path_estimator.slang`): a jittered primary ray, NEE to the sun, a one-sample mix of the GGX (visible normals) and
+  cosine lobes, Russian roulette, 1-64 samples a frame and 1-16 bounces (`ForwardRenderer::trace_settings`), a
+  running mean a pixel in a storage buffer that starts over when the camera, viewport, output size, sun, sky light,
+  settings or traced scene change, and a white-furnace mode (`TraceSettings::furnace`). The untextured metallic factor
+  counts. A bounce that misses gets the sky's light at the raster's ambient strength.
+- `trace_resolve.slang` copies the accumulation into the HDR target, so exposure, bloom and the tonemap apply as
+  after raster. Dispatches cover 256 x 256 tiles with at most 4 M path segments each, short for a browser's GPU
+  watchdog. Each kernel compiles the first time its mode draws.
+- `ForwardRenderer::drawn_mode`, `accumulated_samples` and `reset_accumulation`; GPU timing for `RayTrace`,
+  `PathTrace` and `TraceResolve`; the render graph's traced frames.
+- The editor: the menu bar's switch, the Render menu, the outliner, the inspector title and the viewport chip name the
+  drawn mode, raster while the BVH builds, with the build's progress in the chip and the switch's tooltip; the
+  Renderer tab's PATH TRACING rows (samples, bounces, white furnace, accumulated samples, restart).
+- `editor_snapshot` takes `rt` and `pt`; `tests/traced_modes.rs` ports the C++ PT and RT goldens to lavapipe.
+
+### Changed (2026-11-15, the ray-traced and path-traced modes)
+- A ray- or path-traced frame skips the shadow cascades, the forward pass, the depth resolve, occlusion culling and
+  SSAO, and reports no drawn primitives or shadow casters, as the C++ engine's traced frames do.
+- Picking the path-traced mode stops the viewer's idle camera spin, which would restart its accumulation every frame.
+- The traced scene follows rigid animated nodes; `Tracer::generation` counts its changes.
+
+### Added (2026-11-15, the compute-shader tracer core)
+- `render::tracer`, the core of the ray-traced and path-traced modes: a binned-SAH BVH the CPU builds (16 bins on
+  three axes, sampled above 16 K boxes, leaves of 4, depth capped at the traversal stack) in two levels, repeated
+  and animated meshes instanced in object space and the rest merged in world space; the flat GPU arrays (records,
+  triangles, positions, packed vertices), the material table and the textures resampled into two mipmapped texture
+  arrays; the CPU traversal the GPU one is tested against. Layout, limits and API: `crates/webgpu_renderer/docs/tracer.md`.
+- `shaders/tracer/bvh_traverse.slang`: closest- and any-hit traversal over one stack for both levels, with glTF's
+  MASK alpha test at level 0, surface and material fetch; `trace_debug.slang` traces a ray buffer for the tests.
+- `Tracer::set_root_transform` and `set_primitive_transforms` move instances (the model transform, animated nodes)
+  by rebuilding only the top level.
+- The traced scene builds the first time `ForwardRenderer::render_mode` is traced: on a worker thread natively, a
+  budget per frame in the browser; `trace_status()` reports its stage and progress, the Renderer tab shows it. The
+  full Colosseum (6.0 M triangles) builds in about 2 s natively.
+- The menu bar's switch, the Render menu and the Renderer tab set the render mode; the frame rasters until the
+  modes land.
+- `examples/trace_build.rs`: a glTF's build times per stage, buffer sizes and fit to the browser's limits.
+
+### Changed (2026-11-15, the compute-shader tracer core)
+- Natively `GpuContext` requests the adapter's `max_storage_buffer_binding_size` and `max_buffer_size`; every other
+  limit, and everything in the browser, stays at WebGPU's defaults.
+- `StudioApp` hands each scene it uploads to the renderer's tracer (`ForwardRenderer::set_trace_source`), which drops
+  it once the traced scene is built.
+
 ### Added (2026-11-15, the Studio Pro editor shell)
 - `ui::Editor`, BeschleunigerBallett's docked C++ editor in egui, one module per dock under
   `crates/webgpu_renderer/src/ui/editor/`: the menu bar (brand, File/View/Render/Help, the centred renderer switch,

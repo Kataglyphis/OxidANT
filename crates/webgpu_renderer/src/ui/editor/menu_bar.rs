@@ -3,10 +3,10 @@
 use egui::{pos2, vec2, Align2, Button, Margin, MenuBar, Rect, Style, TextStyle, Ui, UiBuilder};
 
 use super::docks::{self, Side};
-use super::{
-    Editor, EditorAction, EditorContext, RendererSettings, SceneObject, BRAND, FRAME_RATE_WINDOW,
-};
+use super::render_mode::mode_switch;
+use super::{Editor, EditorAction, EditorContext, SceneObject, BRAND, FRAME_RATE_WINDOW};
 use crate::render::forward::RasterPath;
+use crate::render::tracer::RenderMode;
 use crate::ui::icons::{self, StudioIcon};
 use crate::ui::palette as pal;
 use crate::ui::theme;
@@ -22,9 +22,8 @@ pub(super) const UI_SCALES: [(f32, &str); 5] = [
     (1.3, "130 %"),
     (1.5, "150 %"),
 ];
+/// [`RenderMode::ALL`]'s labels; the traced modes run as a compute-shader BVH tracer, so WebGPU has all three.
 pub(super) const RENDER_MODES: [&str; 3] = ["Raster", "Ray traced", "Path traced"];
-/// WebGPU has no ray tracing pipeline, so only the raster mode can be picked.
-pub(super) const RENDER_MODES_ENABLED: [bool; 3] = [true, false, false];
 
 pub(super) fn bar_height(ui: &Ui) -> f32 {
     frame_height(ui) + 2.0 * BAR_EXTRA
@@ -44,7 +43,7 @@ pub(super) fn show(ui: &mut Ui, editor: &mut Editor, cx: &mut EditorContext<'_>)
                     .inner
             })
             .inner;
-        let switch_right = renderer_switch(ui, bar, menus_right);
+        let switch_right = renderer_switch(ui, bar, menus_right, cx);
         frame_rate(ui, bar, switch_right.unwrap_or(menus_right), cx);
     });
 }
@@ -69,7 +68,7 @@ fn brand(ui: &mut Ui) {
 fn menus(ui: &mut Ui, editor: &mut Editor, cx: &mut EditorContext<'_>) -> f32 {
     ui.menu_button("File", |ui| file_menu(ui, cx, &mut editor.actions));
     ui.menu_button("View", |ui| view_menu(ui, editor));
-    ui.menu_button("Render", |ui| render_menu(ui, cx.settings));
+    ui.menu_button("Render", |ui| render_menu(ui, cx));
     let help = ui.menu_button("Help", |ui| {
         if ui.button("Key bindings").clicked() {
             editor.select(SceneObject::Camera);
@@ -134,20 +133,19 @@ fn view_menu(ui: &mut Ui, editor: &mut Editor) {
     ui.checkbox(&mut editor.windows.inspection, "egui inspection");
 }
 
-/// The C++ Render menu; what WebGPU lacks shows disabled, as in a C++ build without hardware ray tracing.
-fn render_menu(ui: &mut Ui, settings: &mut RendererSettings) {
-    for (index, label) in RENDER_MODES.iter().enumerate() {
-        ui.add_enabled(
-            RENDER_MODES_ENABLED[index],
-            egui::RadioButton::new(index == 0, *label),
-        );
+/// The C++ Render menu, its radio on the drawn mode; the raster path applies while the frame rasters.
+fn render_menu(ui: &mut Ui, cx: &mut EditorContext<'_>) {
+    for (option, label) in RenderMode::ALL.into_iter().zip(RENDER_MODES) {
+        if ui.radio(cx.stats.drawn_mode == option, label).clicked() {
+            cx.settings.render_mode = option;
+        }
     }
     ui.separator();
+    let rasters = cx.stats.drawn_mode == RenderMode::Raster;
+    let settings = &mut *cx.settings;
     for option in RasterPath::ALL {
-        if ui
-            .radio(settings.raster_path == option, option.label())
-            .clicked()
-        {
+        let radio = egui::RadioButton::new(settings.raster_path == option, option.label());
+        if ui.add_enabled(rasters, radio).clicked() {
             settings.raster_path = option;
         }
     }
@@ -156,8 +154,13 @@ fn render_menu(ui: &mut Ui, settings: &mut RendererSettings) {
 }
 
 /// The centred mode switch, dropped when it would touch the menus; returns its right edge.
-fn renderer_switch(ui: &mut Ui, bar: Rect, menus_right: f32) -> Option<f32> {
-    let segmented = Segmented::new(&RENDER_MODES).enabled(&RENDER_MODES_ENABLED);
+fn renderer_switch(
+    ui: &mut Ui,
+    bar: Rect,
+    menus_right: f32,
+    cx: &mut EditorContext<'_>,
+) -> Option<f32> {
+    let segmented = Segmented::new(&RENDER_MODES);
     let font = TextStyle::Body.resolve(ui.style());
     let widest = RENDER_MODES
         .iter()
@@ -174,8 +177,7 @@ fn renderer_switch(ui: &mut Ui, bar: Rect, menus_right: f32) -> Option<f32> {
         vec2(width, height),
     );
     let mut slot = ui.new_child(UiBuilder::new().max_rect(rect).id_salt("renderer_switch"));
-    let mut mode = 0;
-    segmented.width(width).show(&mut slot, &mut mode);
+    mode_switch(&mut slot, segmented.width(width), cx);
     Some(rect.right())
 }
 

@@ -10,6 +10,7 @@ use crate::render::forward::{ForwardRenderer, RasterPath};
 use crate::render::gpu_timing::TimedPass;
 use crate::render::model_transform::ModelTransform;
 use crate::render::shadow_settings::ShadowSettings;
+use crate::render::tracer::{RenderMode, TraceSettings, TraceStatus};
 
 /// The renderer's editable settings: read before the egui pass, written back after it.
 #[derive(Clone, Debug, PartialEq)]
@@ -32,6 +33,11 @@ pub struct RendererSettings {
     pub model_transform: ModelTransform,
     pub raster_path: RasterPath,
     pub clouds: CloudSettings,
+    /// The user's pick; [`SceneStats::drawn_mode`] is what the frame draws.
+    pub render_mode: RenderMode,
+    pub trace: TraceSettings,
+    /// Set by the Renderer tab's Reset; `apply` starts the path tracer's mean over.
+    pub reset_accumulation: bool,
 }
 
 impl Default for RendererSettings {
@@ -54,6 +60,9 @@ impl Default for RendererSettings {
             model_transform: ModelTransform::default(),
             raster_path: RasterPath::Forward,
             clouds: CloudSettings::default(),
+            render_mode: RenderMode::Raster,
+            trace: TraceSettings::default(),
+            reset_accumulation: false,
         }
     }
 }
@@ -77,6 +86,9 @@ impl RendererSettings {
             model_transform: renderer.model_transform,
             raster_path: renderer.raster_path,
             clouds: renderer.clouds,
+            render_mode: renderer.render_mode,
+            trace: renderer.trace_settings,
+            reset_accumulation: false,
         }
     }
 
@@ -97,6 +109,11 @@ impl RendererSettings {
         renderer.model_transform = self.model_transform;
         renderer.raster_path = self.raster_path;
         renderer.clouds = self.clouds;
+        renderer.render_mode = self.render_mode;
+        renderer.trace_settings = self.trace.clamped();
+        if self.reset_accumulation {
+            renderer.reset_accumulation();
+        }
     }
 }
 
@@ -114,6 +131,12 @@ pub struct SceneStats {
     pub primitives: (u32, u32),
     /// A cube map is loaded, so the skybox is the C++ one rather than the procedural sky.
     pub cubemap: bool,
+    /// Where the traced modes' scene is.
+    pub trace: TraceStatus,
+    /// What the frame draws: raster while a traced pick waits for its scene.
+    pub drawn_mode: RenderMode,
+    /// Samples per pixel in the path tracer's running mean.
+    pub accumulated_samples: u64,
 }
 
 impl SceneStats {
@@ -125,6 +148,9 @@ impl SceneStats {
             gpu_timing: renderer.gpu_timing_available(),
             primitives: renderer.primitive_stats(),
             cubemap: renderer.skybox_loaded(),
+            trace: renderer.trace_status(),
+            drawn_mode: renderer.drawn_mode(),
+            accumulated_samples: renderer.accumulated_samples(),
         }
     }
 }
@@ -295,6 +321,7 @@ impl ModelSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::tracer::FurnaceSettings;
 
     #[test]
     fn the_history_keeps_the_newest_120_frames_oldest_first() {
@@ -401,6 +428,13 @@ mod tests {
                 march_steps: 16,
                 ..defaults.clouds
             },
+            render_mode: RenderMode::PathTraced,
+            trace: TraceSettings {
+                samples_per_pixel: 2,
+                max_bounces: 3,
+                furnace: Some(FurnaceSettings::default()),
+            },
+            reset_accumulation: true,
         }
     }
 
@@ -426,7 +460,10 @@ mod tests {
             skybox_enabled,
             model_transform,
             raster_path,
-            clouds
+            clouds,
+            render_mode,
+            trace,
+            reset_accumulation
         );
         let unchanged: Vec<&str> = same
             .iter()
@@ -448,6 +485,13 @@ mod tests {
         assert_eq!(renderer.shadows, settings.shadows);
         assert_eq!(renderer.model_transform, settings.model_transform);
         assert_eq!(renderer.clouds, settings.clouds);
-        assert_eq!(RendererSettings::of(&renderer), settings);
+        assert_eq!(renderer.render_mode, settings.render_mode);
+        assert_eq!(renderer.trace_settings, settings.trace);
+        // A Reset is a one-frame request the renderer does not keep.
+        let kept = RendererSettings {
+            reset_accumulation: false,
+            ..settings
+        };
+        assert_eq!(RendererSettings::of(&renderer), kept);
     }
 }

@@ -14,6 +14,24 @@ pub const fn uniform(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::Bind
     }
 }
 
+/// A uniform buffer bound at a dynamic offset, `size` bytes from each.
+pub const fn dynamic_uniform(
+    binding: u32,
+    visibility: wgpu::ShaderStages,
+    size: u64,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: true,
+            min_binding_size: wgpu::BufferSize::new(size),
+        },
+        count: None,
+    }
+}
+
 /// A storage buffer binding, read-only or read-write.
 pub const fn storage_buffer(
     binding: u32,

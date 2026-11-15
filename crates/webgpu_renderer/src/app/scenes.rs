@@ -216,6 +216,7 @@ impl StudioApp {
             self.adopt_sun(&sun);
         }
         self.upload(&scene, meta);
+        self.renderer.set_trace_source(Arc::new(scene));
     }
 
     /// The Sun takes the light's direction and colour and keeps its intensity: glTF gives lux, the renderer no exposure for it.

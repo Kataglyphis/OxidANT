@@ -33,11 +33,17 @@ pub enum TimedPass {
     Clouds,
     /// ACES tonemap and composite to the output target.
     Tonemap,
+    /// The ray-traced mode's kernel, every tile in one compute pass; it replaces the shadow and forward passes.
+    RayTrace,
+    /// The path-traced mode's kernel, every tile and sample chunk in one compute pass.
+    PathTrace,
+    /// The traced modes' copy of their accumulation into the HDR target.
+    TraceResolve,
 }
 
 impl TimedPass {
-    /// Every pass, in record order. Iteration order is the reporting order.
-    pub const ALL: [TimedPass; 11] = [
+    /// Every pass: the raster frame's in record order, then the traced modes'. Iteration order is the reporting order.
+    pub const ALL: [TimedPass; 14] = [
         TimedPass::ShadowCascades,
         TimedPass::Forward,
         TimedPass::GBuffer,
@@ -49,6 +55,9 @@ impl TimedPass {
         TimedPass::Ssao,
         TimedPass::Clouds,
         TimedPass::Tonemap,
+        TimedPass::RayTrace,
+        TimedPass::PathTrace,
+        TimedPass::TraceResolve,
     ];
 
     /// Stable identifier for reports and for matching against the C++ engine.
@@ -65,6 +74,9 @@ impl TimedPass {
             TimedPass::GBuffer => "GBuffer",
             TimedPass::DeferredLighting => "DeferredLighting",
             TimedPass::Clouds => "Clouds",
+            TimedPass::RayTrace => "RayTrace",
+            TimedPass::PathTrace => "PathTrace",
+            TimedPass::TraceResolve => "TraceResolve",
         }
     }
 
@@ -82,7 +94,18 @@ impl TimedPass {
             TimedPass::GBuffer => "G-buffer",
             TimedPass::DeferredLighting => "Lighting + sky",
             TimedPass::Clouds => "Clouds",
+            TimedPass::RayTrace => "Ray trace",
+            TimedPass::PathTrace => "Path trace",
+            TimedPass::TraceResolve => "Trace resolve",
         }
+    }
+
+    /// Recorded only by a ray- or path-traced frame, which records no shadow, forward, occlusion or SSAO pass.
+    pub fn is_traced(self) -> bool {
+        matches!(
+            self,
+            TimedPass::RayTrace | TimedPass::PathTrace | TimedPass::TraceResolve
+        )
     }
 
     fn index(self) -> usize {
@@ -98,12 +121,19 @@ impl TimedPass {
             TimedPass::GBuffer => 8,
             TimedPass::DeferredLighting => 9,
             TimedPass::Clouds => 10,
+            TimedPass::RayTrace => 11,
+            TimedPass::PathTrace => 12,
+            TimedPass::TraceResolve => 13,
         }
     }
 }
 
 /// Number of timed passes.
 pub const PASS_COUNT: usize = TimedPass::ALL.len();
+const _: () = assert!(
+    PASS_COUNT * 2 <= 32,
+    "a frame's written-stamp mask holds two bits per pass in a u32"
+);
 /// Two queries (begin, end) per pass.
 const QUERIES_PER_SLOT: u32 = PASS_COUNT as u32 * 2;
 /// Frames in flight: latency 2 plus a spare, since a slot frees only once a poll maps it.

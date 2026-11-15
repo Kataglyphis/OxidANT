@@ -300,6 +300,56 @@
       "targets": [
         "spirv"
       ]
+    },
+    {
+      "_comment": "Rust/WebGPU tracer: the BVH traversal (tracer/bvh_traverse.slang) over a ray buffer, for its GPU tests (WGSL emit).",
+      "file": "tracer/trace_debug.slang",
+      "entry": "cs_trace_closest",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tracer/trace_debug.slang",
+      "entry": "cs_trace_any",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "Rust/WebGPU ray-traced and path-traced modes: the kernels over the tracer's scene, then the resolve into the HDR target (WGSL emit).",
+      "file": "tracer/traced.slang",
+      "entry": "cs_ray_trace",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tracer/traced.slang",
+      "entry": "cs_path_trace",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tracer/trace_resolve.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tracer/trace_resolve.slang",
+      "entry": "fs_main",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
     }
   ],
   "wgslMap": [
@@ -362,6 +412,21 @@
       "src": "tex_quad/tex_quad.slang",
       "out": "tex_quad.wgsl",
       "dst": "crates/gui/src/shaders"
+    },
+    {
+      "src": "tracer/trace_debug.slang",
+      "out": "trace_debug.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "tracer/traced.slang",
+      "out": "traced.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "tracer/trace_resolve.slang",
+      "out": "trace_resolve.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
     }
   ],
   "depthTexturePatches": {

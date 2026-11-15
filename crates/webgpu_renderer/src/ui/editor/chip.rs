@@ -2,27 +2,23 @@
 
 use egui::{pos2, Painter, Rect, Stroke, TextStyle, Ui};
 
-use crate::app::loader::LoadProgress;
-use crate::render::forward::RasterPath;
+use super::{render_mode, EditorContext};
 use crate::ui::palette as pal;
 use crate::ui::theme;
 use crate::ui::widgets::{frame_height, galley, line_height};
 
-/// What the WebGPU renderer draws; the C++ chip also names ray and path tracing.
-pub(super) fn mode_label(path: RasterPath) -> String {
-    format!("Raster  ·  {}", path.label())
-}
 /// One sweep of the bar while a load cannot count, in seconds.
 const SWEEP_S: f64 = 1.5;
 
 /// Painted on the root's background layer and never allocated, so the scene under it stays the camera's.
-pub(super) fn paint(ui: &Ui, scene: Rect, loading: Option<&LoadProgress>, path: RasterPath) {
+pub(super) fn paint(ui: &Ui, scene: Rect, cx: &EditorContext<'_>) {
     let pixels = scene.size() * ui.ctx().pixels_per_point();
     let extent = format!("{} × {}", pixels.x.round() as u32, pixels.y.round() as u32);
     let font = TextStyle::Body.resolve(ui.style());
+    let loading = cx.scene.loading;
     let (text, dot_colour) = match loading {
         Some(progress) => (progress.text(), pal::WARNING),
-        None => (mode_label(path), pal::ACCENT),
+        None => (render_mode::chip_label(cx), pal::ACCENT),
     };
     let label = galley(ui, text, font.clone(), pal::TEXT);
     let size = galley(ui, &extent, font, pal::TEXT_MUTED);

@@ -6,7 +6,8 @@ to the C++ Vulkan engine in
 [BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett).
 Its design documents live beside the code, in [`docs/`](docs):
 the [roadmap](docs/webgpu-renderer-roadmap.md), the [bounds
-invariant](docs/renderer-bounds-invariant.md) and the [original glTF plan](docs/webgpu-gltf-rust-plan.md).
+invariant](docs/renderer-bounds-invariant.md), the [tracer core](docs/tracer.md) and the
+[original glTF plan](docs/webgpu-gltf-rust-plan.md).
 They come from BeschleunigerBallett's `docs/` (decision D6: this repository owns the
 WebGPU renderer's code **and** its documentation). Their paths are relative to this
 repository (crate `crates/webgpu_renderer`) unless they name another one. The pages that describe both
@@ -66,6 +67,15 @@ it), HDR `Rgba16Float` target, bloom (bright-pass + separable
 Gaussian), SSAO (depth reconstruction), manual or histogram auto-exposure, ACES
 tonemapping.
 
+**Tracing** — the C++ engine's ray-traced mode (a primary ray, the sun through a traced
+shadow ray, emission) and path-traced mode (NEE to the sun, GGX and Lambert lobes, Russian
+roulette, a jittered, accumulated running mean, 1-64 samples and 1-16 bounces, a white
+furnace), over a CPU-built, binned-SAH BVH in two levels (repeated and moving meshes
+instanced) that compute kernels traverse natively and in the browser, alpha-testing MASK
+materials; the scene's materials and textures as one table and two texture arrays. Built the
+first time a traced mode is picked, off the frame (the full 6 M-triangle Colosseum in about
+2 s natively); the frame rasters meanwhile: [`docs/tracer.md`](docs/tracer.md).
+
 **Runtime** — GPU skinning, morph-target and TRS animation playback, GPU
 instancing, a model transform over the whole scene (the C++ Model tab's), frustum
 culling that can be switched off plus occlusion culling (hardware queries, or an
@@ -121,9 +131,13 @@ cargo test -p kataglyphis_webgpu_renderer
 # C++ engine compiles its SPIR-V from the shared Slang sources (shader-sharing guide)
 cargo run -p kataglyphis_webgpu_renderer --example export_shaders -- out_dir
 
-# The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe)
+# The tracer's build of a glTF: times per stage, buffer sizes, the browser's limits
+cargo run --release -p kataglyphis_webgpu_renderer --example trace_build -- model.gltf
+
+# The editor rendered headless to PNGs (default: 1600x900 at 100 % and 150 %, 2400x1350, the 800x600 docs iframe);
+# rt and pt render the ray- or path-traced mode, spp= and frames= set the path tracer's samples and frames
 cargo run -p kataglyphis_webgpu_renderer --example editor_snapshot -- out_dir \
-  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web,deferred,cloudy,pitch=0,zoom=4 ...]
+  [--model=scene.gltf] [--web-model=Colosseum-web.glb] [1600x900@1.5,sun,about,web,deferred,cloudy,pt,spp=2,pitch=0,zoom=4 ...]
 
 # Browser demo (drop a self-contained .glb onto the page; the Colosseum row fetches Colosseum-web.glb beside it)
 cargo build -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown --release
@@ -154,4 +168,5 @@ host, arm64 on `windows-11-arm`). The `ADAPTER:` line and the BC-upload and
 GPU-timing tests:
 [`docs/testing.md` § The GPU tests must render](../../docs/testing.md#the-gpu-tests-must-render).
 `tests/mirrored.rs` holds mirrored (negative-determinant) nodes and instances, and
-double-sided back faces, to the shading of their unmirrored originals.
+double-sided back faces, to the shading of their unmirrored originals. `tests/traced_modes.rs`
+holds the traced modes to the C++ goldens and the path tracer's white furnace to analytic values.

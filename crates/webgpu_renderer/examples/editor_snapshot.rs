@@ -1,4 +1,4 @@
-//! The Studio editor rendered headless into PNGs: `editor_snapshot -- [out_dir] [--model=PATH] [--web-model=PATH] [WxH@scale[,tab][,about][,hidden][,web][,deferred][,cloudy][,pitch=DEG][,zoom=F] ...]`.
+//! The Studio editor rendered headless into PNGs: `editor_snapshot -- [out_dir] [--model=PATH] [--web-model=PATH] [WxH@scale[,tab][,about][,hidden][,web][,deferred][,cloudy][,rt|pt][,spp=N][,frames=N][,pitch=DEG][,zoom=F] ...]`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use kataglyphis_webgpu_renderer::app::discovery::{native_startup, skybox_dir};
 use kataglyphis_webgpu_renderer::app::library::{ModelLibrary, SceneSource, WEB_COLOSSEUM};
 use kataglyphis_webgpu_renderer::render::forward::RasterPath;
+use kataglyphis_webgpu_renderer::render::tracer::RenderMode;
 use kataglyphis_webgpu_renderer::ui::{DockPrefs, ModelSource, SceneObject};
 use kataglyphis_webgpu_renderer::{
     load_gltf, GpuContext, HostCaps, OffscreenFrame, OrbitCamera, StudioApp,
@@ -24,8 +25,10 @@ const MODEL: &str = "tests/assets/cube_on_plane.gltf";
 const WARM_UP_FRAMES: u32 = 4;
 /// Lavapipe parses and uploads the 5.9 M-triangle Colosseum in minutes, not seconds.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(1800);
+/// A path-traced shot's frames, so its accumulation holds 128 samples at the default 8 a frame.
+const PATH_TRACED_FRAMES: u32 = 16;
 
-/// One PNG: size and scale, inspector tab, About, editor hidden, the browser's host, the raster path, clouds on, a pitch and zoom.
+/// One PNG: size and scale, inspector tab, About, editor hidden, the browser's host, the raster path, clouds on, the render mode, a pitch and zoom.
 struct Shot {
     size: [u32; 2],
     scale: f32,
@@ -38,6 +41,11 @@ struct Shot {
     pitch: Option<f32>,
     /// Multiplies the start view's distance to its target.
     zoom: f32,
+    mode: RenderMode,
+    /// The path tracer's samples per pixel and frame; `None` keeps the default.
+    spp: Option<u32>,
+    /// Frames before the shot; `None` takes the mode's default.
+    frames: Option<u32>,
 }
 
 fn parse(spec: &str) -> anyhow::Result<Shot> {
@@ -56,6 +64,9 @@ fn parse(spec: &str) -> anyhow::Result<Shot> {
         cloudy: false,
         pitch: None,
         zoom: 1.0,
+        mode: RenderMode::Raster,
+        spp: None,
+        frames: None,
     };
     for option in parts {
         if let Some(pitch) = option.strip_prefix("pitch=") {
@@ -66,12 +77,22 @@ fn parse(spec: &str) -> anyhow::Result<Shot> {
             shot.zoom = zoom.parse()?;
             continue;
         }
+        if let Some(spp) = option.strip_prefix("spp=") {
+            shot.spp = Some(spp.parse()?);
+            continue;
+        }
+        if let Some(frames) = option.strip_prefix("frames=") {
+            shot.frames = Some(frames.parse()?);
+            continue;
+        }
         match option {
             "about" => shot.about = true,
             "hidden" => shot.hidden = true,
             "web" => shot.web = true,
             "deferred" => shot.path = RasterPath::Deferred,
             "cloudy" => shot.cloudy = true,
+            "rt" => shot.mode = RenderMode::RayTraced,
+            "pt" => shot.mode = RenderMode::PathTraced,
             name => {
                 shot.object = SceneObject::ALL
                     .into_iter()
@@ -115,8 +136,25 @@ fn render(app: &mut StudioApp, host: &mut Host, shot: &Shot, path: &Path) -> any
     } else {
         app.editor_mut().hide_about();
     }
+    app.renderer.render_mode = shot.mode;
+    app.renderer.trace_settings.samples_per_pixel = shot.spp.unwrap_or(8);
+    if shot.mode.is_traced() {
+        // The shot shows the traced mode, not raster standing in while the BVH builds.
+        let built = app
+            .renderer
+            .tracer_mut()
+            .finish_build(&app.gpu, Duration::from_secs(600));
+        anyhow::ensure!(built, "the tracer did not build: {:?}", app.trace_status());
+    }
+    let frames = shot
+        .frames
+        .unwrap_or(if shot.mode == RenderMode::PathTraced {
+            PATH_TRACED_FRAMES
+        } else {
+            WARM_UP_FRAMES
+        });
     let mut pixels = Vec::new();
-    for _ in 0..=WARM_UP_FRAMES {
+    for _ in 0..=frames {
         let frame = OffscreenFrame {
             size_px: shot.size,
             pixels_per_point: shot.scale,

@@ -17,6 +17,7 @@ mod shadow;
 mod shadow_casters;
 mod sky;
 mod targets;
+mod traced;
 mod upload;
 
 use glam::{Mat4, Vec3, Vec4};
@@ -31,6 +32,7 @@ use crate::render::model_transform::ModelTransform;
 use crate::render::shadow_settings::ShadowSettings;
 use crate::render::texture::create_2d_texture;
 use crate::render::tonemap::TonemapPass;
+use crate::render::tracer::{RenderMode, TraceSettings, Tracer};
 use crate::scene::camera::OrbitCamera;
 use crate::scene::CpuScene;
 
@@ -51,6 +53,7 @@ use shadow::ShadowResources;
 pub use sky::SkyMode;
 use sky::SkyResources;
 use targets::{DepthResolve, RenderTargets};
+use traced::TracedState;
 use upload::{MaterialDefaults, MaterialTextureCache};
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -171,6 +174,12 @@ pub struct ForwardRenderer {
     pub clouds: CloudSettings,
     /// The root matrix the instances and lights carry now.
     placed_root: Mat4,
+    /// A traced mode builds the traced scene on first use; until it is ready the frame rasters.
+    pub render_mode: RenderMode,
+    tracer: Tracer,
+    /// The path-traced mode's samples, bounces and white furnace.
+    pub trace_settings: TraceSettings,
+    traced: TracedState,
 }
 
 impl ForwardRenderer {
@@ -225,6 +234,10 @@ impl ForwardRenderer {
             raster_path: RasterPath::Forward,
             clouds: CloudSettings::default(),
             placed_root: Mat4::IDENTITY,
+            render_mode: RenderMode::Raster,
+            tracer: Tracer::default(),
+            trace_settings: TraceSettings::default(),
+            traced: TracedState::default(),
         }
     }
 
@@ -388,6 +401,8 @@ impl ForwardRenderer {
     /// Uploads a CPU scene, replacing any previously uploaded one.
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
         self.reset_scene_state(scene);
+        // The traced scene is of the old scene until `set_trace_source` hands over this one.
+        self.tracer.reset();
         // A new scene must not inherit the last one's adapted exposure.
         self.reset_exposure(gpu);
         // Skinned primitives need the joint nodes' world matrices to size their bounds.
@@ -412,6 +427,7 @@ impl ForwardRenderer {
         height: u32,
         camera: &OrbitCamera,
     ) {
+        self.tracer.advance(gpu, self.render_mode.is_traced());
         let view = self.prepare_frame(gpu, tonemap, width, height, camera);
 
         // Before any scope: begin_frame picks the ring slot every scope below writes into.
@@ -422,19 +438,24 @@ impl ForwardRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("forward_encoder"),
             });
-        // Pass wiring is validated once per path by `graph::tests`, not per frame.
-        self.encode_shadow_cascades(gpu, &mut encoder);
-        if self.raster_path == RasterPath::Deferred {
-            self.encode_deferred(gpu, &mut encoder, &view);
-        } else {
-            self.encode_forward_pass(&mut encoder, &view);
-            self.encode_depth_resolve(&mut encoder);
+        // Pass wiring is validated once by the `graph` tests, per mode and path, not per frame.
+        let traced = self.encode_traced(gpu, &mut encoder, &view);
+        if !traced {
+            self.encode_shadow_cascades(gpu, &mut encoder);
+            if self.raster_path == RasterPath::Deferred {
+                self.encode_deferred(gpu, &mut encoder, &view);
+            } else {
+                self.encode_forward_pass(&mut encoder, &view);
+                self.encode_depth_resolve(&mut encoder);
+            }
+            self.encode_occlusion(gpu, &mut encoder, &view);
         }
-        self.encode_occlusion(gpu, &mut encoder, &view);
         // Before bloom: its bright pass thresholds at this frame's exposure, as the tonemap exposes.
         self.encode_exposure(&mut encoder, view.width, view.height);
         self.encode_bloom(&mut encoder);
-        self.encode_ssao(&mut encoder);
+        if !traced {
+            self.encode_ssao(&mut encoder);
+        }
         self.encode_clouds(gpu, &mut encoder, &view);
         self.encode_tonemap(&mut encoder, tonemap, output_view);
         self.finish_frame(gpu, encoder);

@@ -6,6 +6,7 @@ use super::{AppSignal, StudioApp};
 use crate::context::AcquireRetry;
 use crate::render::forward::readback;
 use crate::render::texture::create_2d_texture;
+use crate::render::tracer::RenderMode;
 use crate::ui::editor::{EditorAction, EditorContext, RendererSettings, SceneStats};
 
 /// Auto-orbit turn rate until the first drag.
@@ -154,7 +155,8 @@ impl StudioApp {
         let elapsed_s = now_s - *self.epoch_s.get_or_insert(now_s);
         let step_s = self.clock.tick_at(now_s);
         self.renderer.frame_delta_seconds = step_s;
-        if self.fly.is_engaged() {
+        // A spinning camera starts the path tracer's mean over every frame, so picking it stops the spin as a drag does.
+        if self.fly.is_engaged() || self.renderer.render_mode == RenderMode::PathTraced {
             self.controller.auto_orbit = false;
         }
         self.fly.advance(&mut self.camera, step_s);
@@ -286,6 +288,27 @@ mod tests {
             pixel(4, 14)
         );
         assert!(!near(pixel(200, 200)), "the scene shows through");
+    }
+
+    #[test]
+    fn a_path_traced_pick_stops_the_idle_spin() {
+        let Some(mut app) = studio() else {
+            return;
+        };
+        app.render_offscreen(&frame(0.0, Vec::new()))
+            .expect("renders");
+        let spinning = app.camera.yaw_deg;
+        app.render_offscreen(&frame(0.5, Vec::new()))
+            .expect("renders");
+        assert_ne!(app.camera.yaw_deg, spinning, "the camera spins while idle");
+        app.renderer.render_mode = RenderMode::PathTraced;
+        let stopped = app.camera.yaw_deg;
+        app.render_offscreen(&frame(1.0, Vec::new()))
+            .expect("renders");
+        assert_eq!(
+            app.camera.yaw_deg, stopped,
+            "the spin restarts the mean every frame"
+        );
     }
 
     #[test]
