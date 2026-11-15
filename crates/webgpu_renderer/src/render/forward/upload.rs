@@ -197,7 +197,7 @@ impl ForwardRenderer {
     pub(super) fn reset_scene_state(&mut self, scene: &CpuScene) {
         self.primitives.clear();
         // A cached bundle references buffers that are about to be dropped.
-        self.shadow.caster_bundle = None;
+        self.shadow.caster_bundles = None;
         // Visibility is per primitive index, so a new scene must not inherit stale culls.
         self.culling.occlusion.reset();
         if let Some(gpu_cull) = self.culling.gpu_culling.as_mut() {

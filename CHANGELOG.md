@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the renderer's frame, lighting and post core)
+- **Every shadow cascade rendered with cascade 0's light matrix** (since 2026-07-24): a render bundle sees only the
+  bind groups it sets itself, so the one cached caster bundle's cascade index 0 beat each pass's own, and layers 1
+  and 2 held cascade 0's projection. Every fragment past the first split, most of a typical view, got a misplaced,
+  mis-scaled shadow. Each cascade records its own bundle now; `every_cascade_layer_is_rendered_with_its_own_light_matrix`
+  reads the layers back (`read_shadow_map`) and checks two points' depths against each cascade's matrix.
+
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
   on, so every glyph was a box in the renderer's overlay and in `crates/gui`. The renderer embeds the C++ editor's

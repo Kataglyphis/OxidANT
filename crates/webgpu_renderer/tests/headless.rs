@@ -413,6 +413,61 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
     );
 }
 
+/// Each cascade's depth layer holds the casters through its own light matrix, not cascade 0's.
+#[test]
+fn every_cascade_layer_is_rendered_with_its_own_light_matrix() {
+    use kataglyphis_webgpu_renderer::render::forward::{CASCADE_COUNT, SHADOW_MAP_SIZE};
+
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    renderer
+        .render_to_pixels(&gpu, 64, 64, &camera)
+        .expect("headless render must succeed");
+
+    let depths = renderer
+        .read_shadow_map(&gpu)
+        .expect("shadow map readback must succeed");
+    let size = SHADOW_MAP_SIZE as usize;
+    assert_eq!(depths.len(), CASCADE_COUNT * size * size);
+    // The cube's top centre and a plane point on the lit side: every cascade's light sees both.
+    let probes = [
+        glam::Vec3::new(0.0, 1.4, 0.0),
+        glam::Vec3::new(-1.5, 0.0, -1.5),
+    ];
+    for (cascade, matrix) in renderer.shadow_cascade_matrices().iter().enumerate() {
+        for probe in probes {
+            let clip = *matrix * probe.extend(1.0);
+            let ndc = clip.truncate() / clip.w;
+            let (u, v) = (ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+            assert!(
+                (0.0..1.0).contains(&u) && (0.0..1.0).contains(&v) && (0.0..1.0).contains(&ndc.z),
+                "precondition: {probe} must lie inside cascade {cascade}'s box, got {ndc:?}"
+            );
+            let (x, y) = ((u * size as f32) as usize, (v * size as f32) as usize);
+            let stored = depths[cascade * size * size + y * size + x];
+            assert!(
+                (stored - ndc.z).abs() < 2e-3,
+                "cascade {cascade}: its layer holds depth {stored} at {probe}'s texel, \
+                 but its own light matrix puts that point at {}",
+                ndc.z
+            );
+        }
+    }
+}
+
 /// The shader source is owned here, so standalone checkouts run the parity checks too.
 fn slang_source() -> Option<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -197,7 +197,7 @@ impl ForwardRenderer {
                         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     });
             // The bundle captured the old buffer by reference, and this replaced it.
-            self.shadow.caster_bundle = None;
+            self.shadow.caster_bundles = None;
         }
         primitive.instance_count = raw.len() as u32;
         // Culling bounds must span every instance, not just the base position.
@@ -269,9 +269,9 @@ impl ForwardRenderer {
         (self.shadow.casters_drawn, self.shadow.casters_considered)
     }
 
-    /// Whether the shadow-caster bundle is cached, so tests can pin the cache/invalidate contract.
+    /// Whether the per-cascade shadow-caster bundles are cached, for the cache-contract tests.
     pub fn shadow_caster_bundle_is_cached(&self) -> bool {
-        self.shadow.caster_bundle.is_some()
+        self.shadow.caster_bundles.is_some()
     }
 
     /// Opaque primitives drawn / considered by the camera pass last frame (equal with culling off).
