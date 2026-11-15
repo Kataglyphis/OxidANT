@@ -24,7 +24,8 @@ winit = { version = "0.30" }
 wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 pollster = { version = "1.0" }
 bytemuck = { version = "1.25", features = ["derive"] }
-egui = { version = "0.37" }
+# egui 0.37 bundles no font by default, and without one no text renders.
+egui = { version = "0.37", features = ["default_fonts"] }
 egui-winit = { version = "0.37" }
 # Its defaults turn wgpu's GL backend back on.
 egui-wgpu = { version = "0.37", default-features = false }

@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the renderer's egui overlay and its shells)
+- **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
+  on, so every glyph was a box in the renderer's overlay and in `crates/gui`. The renderer embeds the C++ editor's
+  Roboto Medium and Cousine (`crates/webgpu_renderer/assets/fonts/`, byte for byte BeschleunigerBallett's Dear ImGui
+  copies, with their Apache-2.0 and OFL-1.1 texts and a NOTICE; a test pins all four hashes). `crates/gui` turns on
+  egui's `default_fonts`, and `packaging/cargo-license-policy.json` gets `epaint_default_fonts@0.37.0` back with the
+  0.37.0 archive's font licences. A test in each crate lays the UI's strings out under `MissingGlyphPolicy::Panic`.
+- **The overlay paints at egui's own scale** (`FullOutput::pixels_per_point`, zoom times the window's), passes the
+  device's largest texture side, pins the dark theme and turns keyboard zoom off; it painted at the window's scale,
+  so a Ctrl `+` zoom drew the UI off its hit areas.
+
+### Added (2026-11-15, the Studio Pro foundation)
+- `src/ui/{palette,theme,fonts}.rs`: the C++ editor's palette, style and type scale in egui points.
+
 ### Fixed (2026-11-15, the healthz goldens on the Windows arm64 runner)
 - `healthz_matches_its_goldens` embeds the three goldens with `include_str!`; it read them at run time, and the
   cross-built test on `windows-11-arm` runs where no checkout of the fixtures sits, so it compared against an empty

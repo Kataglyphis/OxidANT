@@ -11,13 +11,15 @@ pub struct Overlay {
 impl Overlay {
     pub fn new(window: &Window, device: &wgpu::Device, output_format: wgpu::TextureFormat) -> Self {
         let ctx = egui::Context::default();
+        crate::ui::install(&ctx);
+        let max_texture_side = device.limits().max_texture_dimension_2d as usize;
         let state = egui_winit::State::new(
             ctx.clone(),
             egui::ViewportId::ROOT,
             window,
             Some(window.scale_factor() as f32),
-            None,
-            None,
+            Some(winit::window::Theme::Dark),
+            Some(max_texture_side),
         );
         let renderer = egui_wgpu::Renderer::new(device, output_format, Default::default());
         Self {
@@ -45,18 +47,14 @@ impl Overlay {
         height: u32,
         mut run_ui: impl FnMut(&egui::Context),
     ) {
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [width, height],
-            pixels_per_point: window.scale_factor() as f32,
-        };
-
         let raw_input = self.state.take_egui_input(window);
         // egui 0.35 replaced Context::run with begin_pass/end_pass.
         self.ctx.begin_pass(raw_input);
         run_ui(&self.ctx);
-        let output = self.ctx.end_pass();
-        self.state
-            .handle_platform_output(window, output.platform_output);
+        let mut output = self.ctx.end_pass();
+        let screen = screen_for(&output, [width, height]);
+        let platform_output = std::mem::take(&mut output.platform_output);
+        self.state.handle_platform_output(window, platform_output);
 
         let clipped = self.ctx.tessellate(output.shapes, screen.pixels_per_point);
         paint(
@@ -71,6 +69,14 @@ impl Overlay {
             &clipped,
             output.textures_delta,
         );
+    }
+}
+
+/// The pass's own pixels per point: egui lays out at zoom times the window's scale factor.
+fn screen_for(output: &egui::FullOutput, size_in_pixels: [u32; 2]) -> egui_wgpu::ScreenDescriptor {
+    egui_wgpu::ScreenDescriptor {
+        size_in_pixels,
+        pixels_per_point: output.pixels_per_point,
     }
 }
 
@@ -288,5 +294,64 @@ mod tests {
 
         assert!(renderer.texture(&font).is_some());
         queue.submit(Some(encoder.finish()));
+    }
+
+    /// Input for one frame of a 1600x900-point window at `native_ppp` pixels per point.
+    fn window_input(native_ppp: f32, events: Vec<egui::Event>) -> egui::RawInput {
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1600.0, 900.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let root = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        root.native_pixels_per_point = Some(native_ppp);
+        input
+    }
+
+    fn studio_context() -> egui::Context {
+        let ctx = egui::Context::default();
+        crate::ui::install(&ctx);
+        ctx
+    }
+
+    #[test]
+    fn the_paint_scale_is_the_zoomed_one_not_the_windows() {
+        let ctx = studio_context();
+        ctx.set_zoom_factor(2.0);
+        // A new zoom factor takes effect at the start of the next pass.
+        for _ in 0..2 {
+            let output = ctx.run_ui(window_input(1.5, Vec::new()), |ui| {
+                ui.label("zoomed");
+            });
+            let screen = screen_for(&output, [2400, 1350]);
+            output.drop_without_applying_deltas();
+            assert_eq!(screen.size_in_pixels, [2400, 1350]);
+            if ctx.zoom_factor() == 2.0 {
+                assert_eq!(screen.pixels_per_point, 3.0);
+                return;
+            }
+        }
+        panic!("the zoom factor never took effect");
+    }
+
+    #[test]
+    fn ctrl_plus_does_not_zoom_the_ui() {
+        let ctx = studio_context();
+        let plus = egui::Event::Key {
+            key: egui::Key::Plus,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        for events in [vec![plus], Vec::new()] {
+            let output = ctx.run_ui(window_input(1.0, events), |_| {});
+            output.drop_without_applying_deltas();
+        }
+        assert_eq!(ctx.zoom_factor(), 1.0);
+        assert_eq!(ctx.pixels_per_point(), 1.0);
     }
 }

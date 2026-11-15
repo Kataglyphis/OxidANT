@@ -287,4 +287,43 @@ mod tests {
         assert_eq!(boxes((640, 480)), 2);
         assert_eq!(boxes((0, 480)), 0);
     }
+
+    /// Lays out every string the overlay shows, panicking on a character no installed font can draw.
+    fn lay_out_the_overlay_text(ctx: &EguiContext) {
+        ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Panic);
+        let stats = OverlayStats::new();
+        let mut enabled = true;
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            EguiOverlay::draw_system_stats(ui, (640, 480), &stats);
+            EguiOverlay::draw_onnx_panel(
+                ui,
+                Some("models/deim.onnx"),
+                0.5,
+                2,
+                Some("Inference failed: boom"),
+                &mut enabled,
+            );
+            for title in ["Overlay", "Toggle overlay visibility", "Overlay (hidden)"] {
+                ui.label(title);
+            }
+            for label in ["Overlay is hidden", "Show overlay again"] {
+                ui.label(label);
+            }
+        });
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn every_character_the_overlay_shows_has_a_glyph() {
+        // The galley texts above hold even when every glyph is a box.
+        lay_out_the_overlay_text(&EguiContext::default());
+    }
+
+    #[test]
+    #[should_panic(expected = "No glyph for")]
+    fn without_fonts_the_glyph_check_fails() {
+        let ctx = EguiContext::default();
+        ctx.set_fonts(egui::FontDefinitions::empty());
+        lay_out_the_overlay_text(&ctx);
+    }
 }

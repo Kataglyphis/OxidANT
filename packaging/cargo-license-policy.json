@@ -184,6 +184,53 @@
         }
       ]
     },
+    "epaint_default_fonts@0.37.0": {
+      "reviewed_expression": "(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0",
+      "files": [
+        {
+          "root": "workspace",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-APACHE",
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-APACHE (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
+        },
+        {
+          "root": "workspace",
+          "path": "packaging/licenses/cargo/emilk-egui-841a328ba2dd/LICENSE-MIT",
+          "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
+          "provenance": "https://github.com/emilk/egui/blob/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-MIT (tag 0.37.0; the crate's recorded commit 7c0b4040 is not on GitHub)"
+        },
+        {
+          "root": "package",
+          "path": "fonts/OFL.txt",
+          "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+          "provenance": "crates.io archive epaint_default_fonts@0.37.0: bundled font licenses"
+        },
+        {
+          "root": "package",
+          "path": "fonts/UFL.txt",
+          "sha256": "2f0015108d68627bd788d313f529c21ff4da2c2c42a5e1f3883acc83480f9002",
+          "provenance": "crates.io archive epaint_default_fonts@0.37.0: bundled font licenses"
+        },
+        {
+          "root": "package",
+          "path": "fonts/Hack-Regular.txt",
+          "sha256": "47c0cccbeec7e8614548cc485588b28149e7874188df5f41b36efebcee285c87",
+          "provenance": "crates.io archive epaint_default_fonts@0.37.0: bundled font licenses"
+        },
+        {
+          "root": "package",
+          "path": "fonts/emoji-icon-font-mit-license.txt",
+          "sha256": "b9d2c1d909aa149996fd4c91dcb92b2362a04431640c1d200959da94caf8cde1",
+          "provenance": "crates.io archive epaint_default_fonts@0.37.0: bundled font licenses"
+        },
+        {
+          "root": "package",
+          "path": "fonts/egui-icons.txt",
+          "sha256": "36dbbfd79d73974f864116879c17dd11559e1340277385f1ac52d8d29a5f5c79",
+          "provenance": "crates.io archive epaint_default_fonts@0.37.0: egui-icons.ttf, a subset of emoji-icon-font under its MIT license"
+        }
+      ]
+    },
     "flutter_rust_bridge@2.13.0": {
       "files": [
         {

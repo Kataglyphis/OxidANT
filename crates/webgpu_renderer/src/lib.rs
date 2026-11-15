@@ -7,6 +7,7 @@ pub mod asset;
 pub mod context;
 pub mod render;
 pub mod scene;
+pub mod ui;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_demo;
 
