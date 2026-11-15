@@ -18,6 +18,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   because only `set_animation_time` posed joints and it returns early without clips. `upload_scene` now poses the
   joints from the file's node transforms, and its scene bounds come from the skin-widened boxes, so the cascades
   fit the posed mesh from the first frame.
+- **Every mipmapped KTX2 BCn texture failed wgpu validation** (a panic on native): levels below 4x4 were copied
+  at their logical size, and wgpu copies whole blocks. They copy their block-rounded size now. A base that is not
+  whole 4x4 blocks (6x6, 1000x750), which WebGPU cannot create, is refused by `load_ktx2`, and a payload built in
+  code that wgpu would reject falls back to white with a warning. `tests/ktx2.rs` uploads through a material now;
+  its old upload test drew a scene without primitives, so the texture was never created.
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is

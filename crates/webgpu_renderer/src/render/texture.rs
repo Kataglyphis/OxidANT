@@ -137,7 +137,7 @@ pub(crate) fn create_compressed_texture(
         }
     }
     let format = compressed_wgpu_format(compressed.format, srgb);
-    // `compressed.mips` is trusted: `ktx2_loader::validate_mip_chain` already checked its sizes.
+    // `compressed_upload_problem` already checked the base and every level's byte count.
     let block_bytes = compressed.format.block_bytes();
     let gpu_texture = create_2d_texture(
         &gpu.device,
@@ -167,14 +167,41 @@ pub(crate) fn create_compressed_texture(
                 bytes_per_row: Some(blocks_wide * block_bytes),
                 rows_per_image: Some(blocks_high),
             },
+            // wgpu copies whole blocks: a 2x2 or 1x1 level is one block, 4x4 physical texels.
             wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: blocks_wide * 4,
+                height: blocks_high * 4,
                 depth_or_array_layers: 1,
             },
         );
     }
     gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// Why a BCn payload cannot become a valid wgpu texture, or `None` when it can.
+fn compressed_upload_problem(
+    gpu: &GpuContext,
+    texture: &CpuTexture,
+    compressed: &CompressedTexture,
+) -> Option<String> {
+    if !gpu.supports_bc {
+        return Some("the adapter has no BC support".to_string());
+    }
+    // WebGPU requires a block-compressed texture's base to be whole 4x4 blocks.
+    if !texture.width.is_multiple_of(4) || !texture.height.is_multiple_of(4) {
+        return Some(format!(
+            "its {}x{} base is not whole 4x4 blocks",
+            texture.width, texture.height
+        ));
+    }
+    crate::asset::ktx2_loader::validate_mip_chain(
+        texture.width,
+        texture.height,
+        compressed.format,
+        &compressed.mips,
+    )
+    .err()
+    .map(|err| err.to_string())
 }
 
 pub(crate) fn create_material_texture(
@@ -184,10 +211,13 @@ pub(crate) fn create_material_texture(
     label: Option<&str>,
 ) -> wgpu::TextureView {
     if let Some(compressed) = texture.compressed.as_ref() {
-        if gpu.supports_bc {
+        let Some(problem) = compressed_upload_problem(gpu, texture, compressed) else {
             return create_compressed_texture(gpu, texture, compressed, srgb, label);
-        }
-        log::warn!("block-compressed texture but no BC support; falling back to white");
+        };
+        log::warn!(
+            "{}: block-compressed texture falls back to white: {problem}",
+            label.unwrap_or("<unlabeled texture>")
+        );
         return create_material_texture(
             gpu,
             &CpuTexture {
