@@ -94,6 +94,26 @@ impl ForwardRenderer {
         );
     }
 
+    /// Drops the adapted exposure back to `exposure_ev`; `upload_scene` does it on every scene change.
+    pub fn reset_exposure(&self, gpu: &GpuContext) {
+        self.post
+            .histogram
+            .reset_exposure(&gpu.queue, self.exposure_ev);
+    }
+
+    /// The exposure state the tonemap reads, as (adapted EV, target EV); stalls, so tests only.
+    #[doc(hidden)]
+    pub fn read_exposure(&self, gpu: &GpuContext) -> (f32, f32) {
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("exposure_readback_encoder"),
+            });
+        self.post.histogram.encode_exposure_readback(&mut encoder);
+        gpu.queue.submit(Some(encoder.finish()));
+        self.post.histogram.read_back_exposure(gpu)
+    }
+
     /// At zero strength the tonemap provably ignores the output, so the pass is skipped.
     pub(super) fn encode_bloom(&self, encoder: &mut wgpu::CommandEncoder) {
         if self.bloom_strength > 0.0 {

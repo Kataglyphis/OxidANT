@@ -1137,6 +1137,40 @@ fn manual_exposure_still_controls_brightness() {
     );
 }
 
+/// A new scene starts at the manual EV, not at the exposure the previous scene adapted to.
+#[test]
+fn uploading_a_scene_resets_the_adapted_exposure() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.auto_exposure = true;
+    renderer.auto_exposure_speed = 50.0;
+    renderer.light_color_intensity.w = 200.0;
+    for _ in 0..16 {
+        renderer
+            .render_to_pixels(&gpu, 64, 64, &OrbitCamera::default())
+            .expect("render must succeed");
+    }
+    let (adapted, _) = renderer.read_exposure(&gpu);
+    assert!(
+        adapted < -1.0,
+        "precondition: the bright scene must adapt the exposure down, got EV {adapted}"
+    );
+
+    renderer.upload_scene(&gpu, &scene);
+    let manual = renderer.exposure_ev;
+    assert_eq!(
+        renderer.read_exposure(&gpu),
+        (manual, manual),
+        "a new scene inherited the previous scene's adapted exposure"
+    );
+}
+
 /// Bloom thresholds at the frame's own exposure, so a fresh renderer's first frame is already steady.
 #[test]
 fn the_first_frame_blooms_at_its_own_manual_exposure() {

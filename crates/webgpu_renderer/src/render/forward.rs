@@ -325,6 +325,8 @@ impl ForwardRenderer {
     /// Uploads a CPU scene, replacing any previously uploaded one.
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
         self.reset_scene_state(scene);
+        // A new scene must not inherit the last one's adapted exposure.
+        self.reset_exposure(gpu);
         // Skinned primitives need the joint nodes' world matrices to size their bounds.
         let upload_node_world = CpuScene::compute_world_transforms(&scene.nodes);
         let mut textures = MaterialTextureCache::default();

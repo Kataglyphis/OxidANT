@@ -76,6 +76,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `Exposure` read (`forward_graph_is_valid` fails on the old order), and `TimedPass::ALL` follows the new record
   order. The roadmap's "validated in debug builds" was never true: the unit test validates the graph. Test:
   `the_first_frame_blooms_at_its_own_manual_exposure`.
+- **A new scene inherited the last one's adapted exposure**, so with auto exposure on a dark model dropped after a
+  bright one started 32× underexposed; `HistogramPass::reset_exposure` existed but nothing outside the tests could
+  call it. `upload_scene` resets the exposure to `exposure_ev`, and `ForwardRenderer::reset_exposure` does it on
+  demand. Test: `uploading_a_scene_resets_the_adapted_exposure` (through the doc-hidden `read_exposure`).
 
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
