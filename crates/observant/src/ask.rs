@@ -70,14 +70,20 @@ impl Drop for CancelOnDrop {
 fn local_backend(
     dir: &std::path::Path,
     provider: &str,
+    threads: u32,
 ) -> Result<Box<dyn TextBackend + Send>, TextError> {
     use kataglyphis_text::genai::{GenaiGenerator, Provider};
     let provider: Provider = provider.parse()?;
-    Ok(Box::new(GenaiGenerator::load(dir, provider)?))
+    let threads = (threads > 0).then_some(threads);
+    Ok(Box::new(GenaiGenerator::load_with(dir, provider, threads)?))
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-fn local_backend(_: &std::path::Path, _: &str) -> Result<Box<dyn TextBackend + Send>, TextError> {
+fn local_backend(
+    _: &std::path::Path,
+    _: &str,
+    _: u32,
+) -> Result<Box<dyn TextBackend + Send>, TextError> {
     Err(TextError::LibraryUnavailable(
         "the chain's ONNX Runtime GenAI exists for Linux and Windows only; use an endpoint".into(),
     ))
@@ -96,9 +102,9 @@ impl Assistant {
         if !config.names_a_language_model() {
             return None;
         }
-        let provider = config.llm_provider.clone();
+        let (provider, threads) = (config.llm_provider.clone(), config.llm_threads);
         let open: Opener = Box::new(move || match &model_dir {
-            Some(dir) => local_backend(dir, &provider),
+            Some(dir) => local_backend(dir, &provider, threads),
             None => Ok(Box::new(choice.resolve()?)),
         });
         Some(Self::with_opener(open, config.llm_max_new_tokens))
@@ -156,7 +162,17 @@ impl Assistant {
         let timeout = self.timeout;
         let work = tokio::task::spawn_blocking(move || self.run(&messages, &cancel));
         match tokio::time::timeout(timeout, work).await {
-            Ok(Ok(result)) => result,
+            Ok(Ok(result)) => {
+                if let Ok(done) = &result {
+                    log::info!(
+                        "answer: {} tokens, {:.0} ms to the first, {:.1} tokens/s",
+                        done.completion_tokens,
+                        done.time_to_first_token_ms,
+                        done.decode_tokens_per_second
+                    );
+                }
+                result
+            }
             Ok(Err(joined)) => Err(Refusal::Text(TextError::GenerationFailed(
                 joined.to_string(),
             ))),
@@ -451,6 +467,8 @@ pub(crate) async fn ask(
                     "prompt_tokens": result.prompt_tokens,
                     "completion_tokens": result.completion_tokens,
                     "thinking_chars": result.thinking_chars,
+                    "time_to_first_token_ms": result.time_to_first_token_ms,
+                    "decode_tokens_per_second": result.decode_tokens_per_second,
                 }),
             )
         }),
@@ -524,6 +542,8 @@ async fn summary_words(
             }
             reply["summary"] = result.text.into();
             reply["finish_reason"] = result.finish_reason.as_str().into();
+            reply["time_to_first_token_ms"] = result.time_to_first_token_ms.into();
+            reply["decode_tokens_per_second"] = result.decode_tokens_per_second.into();
             json_reply(StatusCode::OK, &reply)
         }
         Err(refusal) => refused(refusal),

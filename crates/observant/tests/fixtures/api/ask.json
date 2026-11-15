@@ -1,8 +1,10 @@
 {
   "answer": "Twice.",
   "completion_tokens": 2,
+  "decode_tokens_per_second": 0.0,
   "facts": "<the facts the model was given>",
   "finish_reason": "stop",
   "prompt_tokens": 11,
-  "thinking_chars": 0
+  "thinking_chars": 0,
+  "time_to_first_token_ms": 0.0
 }

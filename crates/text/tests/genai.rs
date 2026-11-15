@@ -61,6 +61,26 @@ fn greedy_decoding_yields_the_oracles_continuation() {
     assert!(result.time_to_first_token_ms >= 0.0 && result.decode_tokens_per_second > 0.0);
 }
 
+/// ObservANT's `llm_threads`: a thread count laid over the config still loads and answers as the oracle says.
+#[test]
+fn a_thread_count_at_load_still_yields_the_oracles_continuation() {
+    if generator().is_none() {
+        return;
+    }
+    let mut capped = GenaiGenerator::load_with(tiny_model_dir(), Provider::Cpu, Some(1)).unwrap();
+    let (prompt, continuation, ids) = tiny_fixture();
+    let result = capped
+        .generate(
+            &[ChatMessage::user(&prompt)],
+            &budget(ids.len()),
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(result.tokens, ids);
+    assert_eq!(result.text, continuation);
+}
+
 /// A greedy turn continues the last generator when its prompt extends what that one holds; it must give what a fresh one gives.
 #[test]
 fn a_continued_generator_gives_the_tokens_of_a_fresh_one() {

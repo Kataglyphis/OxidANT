@@ -1,5 +1,6 @@
 OgaConfigAppendProvider: OgaResult* (OgaConfig* config, const char* provider)
 OgaConfigClearProviders: OgaResult* (OgaConfig* config)
+OgaConfigOverlay: OgaResult* (OgaConfig* config, const char* json)
 OgaCreateConfig: OgaResult* (const char* config_path, OgaConfig** out)
 OgaCreateGenerator: OgaResult* (const OgaModel* model, const OgaGeneratorParams* params, OgaGenerator** out)
 OgaCreateGeneratorParams: OgaResult* (const OgaModel* model, OgaGeneratorParams** out)

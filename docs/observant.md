@@ -48,15 +48,16 @@ exits; a packager runs it once, and the server then sends those files as they ar
 `llm_model_dir` (a GenAI directory on the chain's GenAI, with `llm_provider` `cpu`, `cuda` or
 `dml`), `llm_base_url` or `llm_backend` (an OpenAI-compatible server; `backends.json` comes from
 `LLM_BACKENDS`), which exclude each other, and `llm_model` to override an endpoint's model.
-`llm_max_new_tokens` bounds an answer (128). Nothing loads until the first question; the model then
-stays loaded. Without one configured both answer 503 and say which keys to set, and `/healthz`'s
+`llm_max_new_tokens` bounds an answer (128). `llm_threads` (2) holds `llm_model_dir`'s decoder to that many
+intra-op threads beside the detector's two, laid over the model's `genai_config.json` at load; 0 leaves GenAI's
+own count, one per core. Nothing loads until the first question; the model then stays loaded. Without one configured both answer 503 and say which keys to set, and `/healthz`'s
 `ask` is false, which is what OmniAccelerANT's Stream page reads to offer questions.
 
 | Request | Answer |
 | --- | --- |
-| `POST /ask` `{"question", "tz_offset_min"?, "language"?}` | `answer`, the `facts` it was given, `finish_reason`, `prompt_tokens`, `completion_tokens`, `thinking_chars` |
+| `POST /ask` `{"question", "tz_offset_min"?, "language"?}` | `answer`, the `facts` it was given, `finish_reason`, `prompt_tokens`, `completion_tokens`, `thinking_chars`, `time_to_first_token_ms`, `decode_tokens_per_second` |
 | `GET /summary?day=YYYY-MM-DD&tz=<minutes>` | `day`, `visits`, `first`, `last`, `longest_stay_s`, `total_stay_s`; no model runs |
-| `POST /summary` `{"day"?, "tz_offset_min"?, "language"?}` | The same figures plus `summary` and `finish_reason`; a day without visits has `summary: null` and asks no model |
+| `POST /summary` `{"day"?, "tz_offset_min"?, "language"?}` | The same figures plus `summary`, `finish_reason`, `time_to_first_token_ms` and `decode_tokens_per_second`; a day without visits has `summary: null` and asks no model |
 
 - **The model sees the log, not the picture.** `facts` is one line about the camera and one per day
   with visits, at most seven, so a month of history cannot outgrow its context. An answer is

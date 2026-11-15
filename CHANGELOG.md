@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-15, ObservANT's in-process model is capped and reports its speed)
+- `llm_threads` (default 2; 0 leaves GenAI's own count) holds `llm_model_dir`'s decoder to that many intra-op
+  threads beside the detector's two: `GenaiGenerator::load_with` lays `thread_overlay(n)` over the model's
+  `genai_config.json` through `OgaConfigOverlay`, bound optionally, and refuses to load when the library lacks it.
+- `/ask` and `POST /summary` return `time_to_first_token_ms` and `decode_tokens_per_second`, and each answer logs
+  its token count and both figures; the goldens carry the two keys. Tests: the overlay, a capped tiny-model load
+  that still gives the oracle's continuation, and the `llm_threads` default and parse.
+
 ### Changed (2026-11-15, a greedy GenAI turn continues the last generator)
 - `GenaiGenerator` keeps the generator of a greedy turn without `json_schema` and every token it holds; the next
   prompt rewinds it to the start the two share (`OgaGenerator_RewindTo`) and appends only the rest

@@ -90,6 +90,8 @@ struct Api {
     tensor_get_shape_rank: unsafe extern "C" fn(Handle, *mut usize) -> Status,
     tensor_get_shape: unsafe extern "C" fn(Handle, *mut i64, usize) -> Status,
     tensor_get_data: unsafe extern "C" fn(Handle, *mut *mut c_void) -> Status,
+    /// `None` on a GenAI without it: then a thread count cannot be set at load.
+    config_overlay: Option<unsafe extern "C" fn(Handle, *const c_char) -> Status>,
     /// `None` on a GenAI without these symbols: then every turn takes a fresh generator.
     continuation: Option<Continuation>,
     _library: libloading::Library,
@@ -166,6 +168,9 @@ impl Api {
             tensor_get_shape_rank: bind!(library, "OgaTensorGetShapeRank"),
             tensor_get_shape: bind!(library, "OgaTensorGetShape"),
             tensor_get_data: bind!(library, "OgaTensorGetData"),
+            config_overlay: lookup!(library, "OgaConfigOverlay")
+                .ok()
+                .map(|symbol| *symbol),
             continuation: (|| {
                 Some(Continuation {
                     sequence_data: *lookup!(library, "OgaSequencesGetSequenceData").ok()?,
@@ -454,6 +459,12 @@ struct Live {
     room: usize,
 }
 
+/// The GenAI config overlay that holds the decoder session to `threads` intra-op threads.
+pub fn thread_overlay(threads: u32) -> String {
+    serde_json::json!({ "model": { "decoder": { "session_options": { "intra_op_num_threads": threads } } } })
+        .to_string()
+}
+
 /// Sampling and guidance carry state a continued generator would not reset, so only a greedy turn continues one.
 fn continues(options: &GenerationOptions) -> bool {
     options.temperature <= 0.0 && options.json_schema.is_none()
@@ -484,7 +495,16 @@ impl GenaiGenerator {
     }
 
     pub fn load(model_dir: &Path, provider: Provider) -> Result<Self, TextError> {
-        let api = api()?;
+        Self::load_with(model_dir, provider, None)
+    }
+
+    /// The GenAI config for `model_dir` on `provider`, its decoder held to `threads` intra-op threads when given.
+    fn open_config(
+        api: &'static Api,
+        model_dir: &Path,
+        provider: Provider,
+        threads: Option<u32>,
+    ) -> Result<Owned, TextError> {
         let dir = c_string(&model_dir.to_string_lossy(), "the model path")?;
         let mut raw = std::ptr::null_mut();
         // SAFETY: valid C string and out pointer; the result is checked before raw is used.
@@ -508,6 +528,31 @@ impl GenaiGenerator {
             )
             .map_err(TextError::ProviderUnavailable)?;
         }
+        if let Some(threads) = threads {
+            let overlay = api.config_overlay.ok_or_else(|| {
+                TextError::ModelLoadFailed(
+                    "this GenAI has no OgaConfigOverlay to set a thread count".into(),
+                )
+            })?;
+            let json = c_string(&thread_overlay(threads), "the thread overlay")?;
+            // SAFETY: config is live and json is a NUL-terminated string.
+            api.check(
+                unsafe { overlay(config.handle, json.as_ptr()) },
+                "thread overlay",
+            )
+            .map_err(TextError::ModelLoadFailed)?;
+        }
+        Ok(config)
+    }
+
+    /// [`Self::load`], the decoder held to `threads` intra-op threads when given (ObservANT's `llm_threads`).
+    pub fn load_with(
+        model_dir: &Path,
+        provider: Provider,
+        threads: Option<u32>,
+    ) -> Result<Self, TextError> {
+        let api = api()?;
+        let config = Self::open_config(api, model_dir, provider, threads)?;
         let mut raw_model = std::ptr::null_mut();
         // SAFETY: config is live; the out pointer is checked through the status.
         api.check(
@@ -1054,6 +1099,15 @@ mod tests {
         let mut recorder = Recorder::default();
         configure(&mut recorder, 3 + budget(options), options).unwrap();
         recorder.0
+    }
+
+    #[test]
+    fn the_thread_overlay_holds_the_decoder_session() {
+        let overlay: serde_json::Value = serde_json::from_str(&thread_overlay(2)).unwrap();
+        assert_eq!(
+            overlay,
+            serde_json::json!({ "model": { "decoder": { "session_options": { "intra_op_num_threads": 2 } } } })
+        );
     }
 
     #[test]

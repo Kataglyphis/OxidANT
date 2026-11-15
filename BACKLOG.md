@@ -153,19 +153,10 @@ and the backlog is empty"; it was neither.
       in `crates/text/tests/endpoint.rs` with short limits, asserting the kind and an upper
       bound on the time, and one mutation recipe per timeout.
 
-- [ ] **ObservANT's in-process model has no thread cap and reports no speed** (M, ★★). Audit
-      2026-11-12, not measured: `load()` in `crates/text/src/genai.rs` sets no thread count, so
-      GenAI uses its config's (ORT's default, one per core) beside a detector held to 2 threads
-      for a measured reason (`docs/observant.md`). `/ask` drops the time to first token and the
-      decode rate its result already has (`crates/observant/src/ask.rs`). A packaged board is
-      not hit today: no package carries GenAI, so it answers through an endpoint. Next:
-      `llm_threads`, default 2, applied at load (the overlay call if the pinned `ort_genai_c.h`
-      has it, else the config rewrite the hub's `genai-model-threads.py` does); this is the
-      consumer half of hub CON218. Return and log the two figures; they are the measurement any
-      default needs. An idle unload for `llm_model_dir` waits for the owner: "the model stays
-      loaded" is a written choice, and nothing is measured on the Pi. A bridge `text_unload`
-      must land with OmniAccelerANT's regenerated bindings. Guard: a recorder test that `load()`
-      passes the thread count, and a test for the figures in the reply.
+- [b] **ObservANT's in-process model never unloads** (S, ★). Since 2026-11-15 `llm_threads` (2) caps its decoder
+      and `/ask` and `POST /summary` return and log the time to the first token and the decode rate. Left, waiting
+      for the owner: an idle unload for `llm_model_dir`, since "the model stays loaded" is a written choice and
+      nothing is measured on the Pi; a bridge `text_unload` must land with OmniAccelerANT's regenerated bindings.
 
 - [ ] **A text failure loses its kind on the way out** (M, ★★). Audit 2026-11-12: `text_generate`
       in `src/api/text.rs` returns `Result<(), String>`, so the app cannot tell a missing model
