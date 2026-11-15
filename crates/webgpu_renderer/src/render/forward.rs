@@ -504,7 +504,9 @@ impl ForwardRenderer {
     }
 
     /// Samples the active clip at `time` (s) and retargets transforms, bounds and blend centres.
-    pub fn set_animation_time(&mut self, time: f32) {
+    /// Takes f64 too: f32 seconds step by 1/64 s after 36 hours, which stutters a long-running app.
+    pub fn set_animation_time(&mut self, time: impl Into<f64>) {
+        let time = time.into();
         if self.animation.animations.is_empty() || self.animation.nodes.is_empty() {
             return;
         }

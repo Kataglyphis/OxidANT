@@ -49,7 +49,7 @@ impl SceneAnimation {
     }
 
     /// Samples the active clip's translation, rotation and scale channels at `time` into their nodes.
-    pub(super) fn sample_node_channels(&mut self, time: f32) {
+    pub(super) fn sample_node_channels(&mut self, time: f64) {
         let Some(animation) = self.animations.get(self.active) else {
             return;
         };
@@ -83,10 +83,11 @@ impl SceneAnimation {
     }
 }
 
-/// `time` wrapped into the clip; a zero-length clip holds its first key.
-fn clip_time(animation: &CpuAnimation, time: f32) -> f32 {
+/// `time` wrapped into the clip in f64, then narrowed: in f32 the wrap itself loses the fraction.
+/// A zero-length clip holds its first key.
+fn clip_time(animation: &CpuAnimation, time: f64) -> f32 {
     if animation.duration > 0.0 {
-        time % animation.duration
+        (time % f64::from(animation.duration)) as f32
     } else {
         0.0
     }
@@ -137,7 +138,7 @@ impl ForwardRenderer {
     }
 
     /// The active clip's morph weights; each primitive's target count strides the flat channel.
-    pub(super) fn sample_morph_channels(&mut self, time: f32) {
+    pub(super) fn sample_morph_channels(&mut self, time: f64) {
         if let Some(animation) = self.animation.animations.get(self.animation.active) {
             let t = clip_time(animation, time);
             for channel in &animation.channels {
@@ -244,5 +245,30 @@ impl ForwardRenderer {
                 .write_buffer(&prim.vertex_buffer, 0, bytemuck::cast_slice(&blended));
             prim.morph_dirty = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clip_time_keeps_its_fraction_after_days_of_uptime() {
+        // 2^18 s is three days, where consecutive f32 seconds are 1/32 s apart: a 144 Hz frame is 1/144 s.
+        let clip = CpuAnimation {
+            name: "clip".to_string(),
+            duration: 1.0,
+            channels: Vec::new(),
+        };
+        let base = f64::from(1u32 << 18);
+        let frames: Vec<f64> = (0..60).map(|k| base + f64::from(k) / 144.0).collect();
+        let wrapped: Vec<f32> = frames.iter().map(|&t| clip_time(&clip, t)).collect();
+        assert!(
+            wrapped.windows(2).all(|pair| pair[1] > pair[0]),
+            "every frame must advance the clip: {wrapped:?}"
+        );
+        // Negative control: the same frames as f32 seconds repeat.
+        let in_f32: Vec<f32> = frames.iter().map(|&t| (t as f32) % 1.0).collect();
+        assert!(in_f32.windows(2).any(|pair| pair[1] <= pair[0]));
     }
 }

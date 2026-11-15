@@ -143,3 +143,26 @@ fn switching_clips_returns_undriven_nodes_to_their_rest_pose() {
         "the slide must not linger once a clip that does not drive translation plays"
     );
 }
+
+/// An app passing f64 seconds keeps smooth playback after days of uptime.
+#[test]
+fn animation_time_in_f64_advances_every_frame_after_three_days() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    // The 2 s clip slides x from -1.5 to 1.5; 2^18 s is a whole number of clips.
+    let scene = load_gltf(asset("cube_animated.gltf")).expect("cube_animated.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
+    renderer.upload_scene(&gpu, &scene);
+    let base = f64::from(1u32 << 18);
+    let mut previous = f32::NEG_INFINITY;
+    for k in 0..24 {
+        renderer.set_animation_time(base + f64::from(k) / 144.0);
+        let x = centre_x(&renderer);
+        assert!(
+            x > previous,
+            "frame {k} did not advance the clip: {x} after {previous}"
+        );
+        previous = x;
+    }
+}
