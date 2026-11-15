@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-15, the renderer's scenes and assets)
+- **A skinned mesh in a scene without animations drew in raw mesh space**: its joint buffer stayed identity,
+  because only `set_animation_time` posed joints and it returns early without clips. `upload_scene` now poses the
+  joints from the file's node transforms, and its scene bounds come from the skin-widened boxes, so the cascades
+  fit the posed mesh from the first frame.
+
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
   on, so every glyph was a box in the renderer's overlay and in `crates/gui`. The renderer embeds the C++ editor's

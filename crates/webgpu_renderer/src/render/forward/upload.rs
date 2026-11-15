@@ -210,6 +210,8 @@ impl ForwardRenderer {
         self.animation.nodes = scene.nodes.clone();
         self.animation.animations = scene.animations.clone();
         self.animation.skins = scene.skins.clone();
+        // A pose sampled for the previous scene would land on this scene's joint buffers.
+        self.animation.pending_joint_world = None;
         if scene.lights.len() > MAX_PUNCTUAL_LIGHTS {
             log::warn!(
                 "Scene has {} punctual lights; only the first {} are used.",

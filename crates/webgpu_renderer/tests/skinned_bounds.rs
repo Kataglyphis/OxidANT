@@ -74,6 +74,62 @@ fn bounds_follow_the_joint_not_the_bind_pose() {
     );
 }
 
+/// Red cube pixels in a 128x128 frame looking at `target`.
+fn red_pixels_around(renderer: &mut ForwardRenderer, gpu: &GpuContext, target: Vec3) -> usize {
+    let camera = kataglyphis_webgpu_renderer::OrbitCamera {
+        target,
+        ..Default::default()
+    };
+    let pixels = renderer
+        .render_to_pixels(gpu, 128, 128, &camera)
+        .expect("render");
+    pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[0] > 110 && p[0] as i32 > p[1] as i32 + 40 && p[0] as i32 > p[2] as i32 + 40)
+        .count()
+}
+
+/// A rig with no clip never reaches `set_animation_time`; its joints must still pose the mesh.
+#[test]
+fn an_unanimated_skin_draws_at_its_joints_pose() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = skinned_cube_scene(Vec3::new(0.0, 10.0, 0.0));
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(&gpu, &scene);
+
+    let at_joint = red_pixels_around(&mut renderer, &gpu, Vec3::new(0.0, 10.0, 0.0));
+    assert!(
+        at_joint > 200,
+        "the cube must draw where its joint holds it (y = 10), found {at_joint} red pixels"
+    );
+    let at_bind_pose = red_pixels_around(&mut renderer, &gpu, Vec3::ZERO);
+    assert_eq!(
+        at_bind_pose, 0,
+        "nothing may draw at the raw bind pose (the origin)"
+    );
+}
+
+/// Cascades fit `scene_bounds` alone, so it must cover the joint-posed box from upload on.
+#[test]
+fn scene_bounds_after_upload_cover_the_joint_pose() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = skinned_cube_scene(Vec3::new(0.0, 10.0, 0.0));
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(&gpu, &scene);
+    let (_, max) = renderer.scene_bounds().expect("bounds after upload");
+    assert!(
+        max.y >= 10.0,
+        "scene bounds must reach the joint pose (~10.5) without any animation call, got max.y={}",
+        max.y
+    );
+}
+
 #[test]
 fn an_identity_joint_leaves_bounds_at_the_bind_pose() {
     let Some(gpu) = GpuContext::headless_or_skip() else {

@@ -378,6 +378,7 @@ impl ForwardRenderer {
             self.primitives.push(primitive);
         }
         self.uploaded_texture_count = textures.uploaded;
+        self.settle_uploaded_pose(scene, upload_node_world);
     }
 
     /// Renders the scene HDR->tonemap into `output_view`, which must be `width` x `height`.

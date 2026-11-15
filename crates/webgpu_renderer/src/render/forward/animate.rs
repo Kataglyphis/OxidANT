@@ -10,7 +10,7 @@ use crate::render::animation::{
 use crate::render::bounds::{
     instanced_bounds, normal_matrix_of, transform_aabb, widen_bounds_for_skin,
 };
-use crate::scene::{ChannelValues, CpuAnimation, CpuNode, CpuSkin};
+use crate::scene::{ChannelValues, CpuAnimation, CpuNode, CpuScene, CpuSkin};
 
 /// The uploaded scene's node graph, clips and skins, plus the pose the next frame uploads.
 #[derive(Default)]
@@ -71,6 +71,15 @@ fn clip_time(animation: &CpuAnimation, time: f32) -> f32 {
 }
 
 impl ForwardRenderer {
+    /// The uploaded pose: joint matrices for the next frame and scene bounds from the posed boxes.
+    /// A scene without animations never calls `set_animation_time`, so its skins pose here.
+    pub(super) fn settle_uploaded_pose(&mut self, scene: &CpuScene, node_world: Vec<Mat4>) {
+        if !scene.skins.is_empty() {
+            self.animation.pending_joint_world = Some(node_world);
+        }
+        self.recompute_scene_bounds();
+    }
+
     /// Morph weights; the target count comes from each primitive to stride the flat channel.
     pub(super) fn sample_morph_channels(&mut self, time: f32) {
         for animation in &self.animation.animations {
