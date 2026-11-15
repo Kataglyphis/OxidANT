@@ -87,7 +87,8 @@ async fn a_missing_model_directory_is_the_replys_error_and_the_service_lives() {
     })
     .await;
     let (reply, _) = ask(addr, "abc").await;
-    assert!(reply.starts_with("HTTP/1.1 502"), "{reply}");
+    // A model that cannot load is this service's fault, not a gateway's.
+    assert!(reply.starts_with("HTTP/1.1 503"), "{reply}");
     assert!(reply.contains("could not be loaded"), "{reply}");
 }
 
