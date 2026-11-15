@@ -187,6 +187,13 @@ fn compressed_upload_problem(
     if !gpu.supports_bc {
         return Some("the adapter has no BC support".to_string());
     }
+    let max_side = gpu.device.limits().max_texture_dimension_2d;
+    if texture.width > max_side || texture.height > max_side {
+        return Some(format!(
+            "its {}x{} base exceeds the device's {max_side}-texel side",
+            texture.width, texture.height
+        ));
+    }
     // WebGPU requires a block-compressed texture's base to be whole 4x4 blocks.
     if !texture.width.is_multiple_of(4) || !texture.height.is_multiple_of(4) {
         return Some(format!(
@@ -230,7 +237,34 @@ pub(crate) fn create_material_texture(
             label,
         );
     }
+    create_rgba8_texture(gpu, texture, srgb, label)
+}
+
+/// A CPU mip chain whose first level within the device's side limit becomes the base.
+fn create_rgba8_texture(
+    gpu: &GpuContext,
+    texture: &CpuTexture,
+    srgb: bool,
+    label: Option<&str>,
+) -> wgpu::TextureView {
     let mips = generate_mips(texture, srgb);
+    // A side over the limit fails texture creation, a panic on native; the chain holds the downsampled image.
+    let max_side = gpu.device.limits().max_texture_dimension_2d;
+    let first = mips
+        .iter()
+        .position(|(w, h, _)| *w <= max_side && *h <= max_side)
+        .unwrap_or(mips.len() - 1);
+    if first > 0 {
+        log::warn!(
+            "{}: {}x{} exceeds the device's {max_side}-texel side; uploaded at {}x{}",
+            label.unwrap_or("<unlabeled texture>"),
+            texture.width,
+            texture.height,
+            mips[first].0,
+            mips[first].1
+        );
+    }
+    let mips = &mips[first..];
     let format = if srgb {
         wgpu::TextureFormat::Rgba8UnormSrgb
     } else {
@@ -239,8 +273,8 @@ pub(crate) fn create_material_texture(
     let gpu_texture = create_2d_texture(
         &gpu.device,
         label,
-        texture.width,
-        texture.height,
+        mips[0].0,
+        mips[0].1,
         format,
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         mips.len() as u32,

@@ -35,7 +35,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   which left the binary search at 0 and underflowed. The loader drops a channel whose times are empty, not finite
   or decreasing, whose values are not finite, or whose value count does not fit its keys, and the search pins a
   NaN time or key to the first key.
-
+- **A glTF texture or an equirect over 8192 px a side panicked at upload** on native (nothing rendered on the
+  web): the device runs at WebGPU's default limits. A material texture now uploads from the first level of its
+  CPU mip chain within `max_texture_dimension_2d`, and the IBL bake box-halves an equirect until it fits; a BCn
+  payload over the limit falls back to white.
 ### Fixed (2026-11-15, the renderer's egui overlay and its shells)
 - **No egui text rendered since the egui 0.37 bump**: 0.37 bundles no font unless its `default_fonts` feature is
   on, so every glyph was a box in the renderer's overlay and in `crates/gui`. The renderer embeds the C++ editor's
