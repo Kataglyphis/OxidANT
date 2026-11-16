@@ -13,6 +13,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, PCF taps compare at the receiver plane's depth)
+- **A receiver sloped against the light no longer shadows itself at larger PCF radii** (`shadow_visibility`,
+  `shaders/forward/forward_lighting.slang`). Every tap compared against the centre's depth with one bias, so an outer
+  tap a few texels away read the receiver's own nearer depth as an occluder. On a lone ground plane under 15, 30 and 50
+  degree suns (2048 texels, 3 cascades), the pixels darkened by 3+ levels were 0, 0 and 0 at radius 2, 36893, 905 and
+  743 at radius 3, and all 63994 at radius 5; now 0 at every radius. Radius 0 is bit-identical.
+- **The kernel is shared**: `shaders/common/shadow_pcf.slang` (`receiver_plane_depth_slope`, `IShadowTaps`,
+  `pcf_visibility`). The slope comes from the shading normal and the affine light-space matrix's cofactor rows, not
+  from derivatives, which the deferred pass cannot take; it stops growing past 84 degrees to the light axis
+  (`PCF_MIN_RECEIVER_COS`). The C++ `cascaded_shadow.slang` can import it with the next pin bump;
+  `shaders/tests/shadow_pcf_test.slang` emits it to SPIR-V with a combined `Sampler2DArrayShadow` as that file binds.
+- Tests: `a_sloped_receiver_stays_lit_at_every_pcf_radius_and_shadows_still_darken` (a lone ground at radius 0, 2, 3
+  and 5 under three suns, and a card's shadow on it: 191 to 624 pixels at every radius). Controls: a zero slope
+  reproduces the old counts exactly; the uv y sign flipped darkens the whole ground from radius 2.
+
 ### Fixed (2026-11-16, the cloud noise tiles, so no seam crosses a cloud box)
 - **Every channel of the noise volume tiles** (`noise_volume_texel`, `shaders/common/volumetric_clouds.slang`). The
   march wraps box-local coordinates with `frac`, so a channel that does not continue across the volume's faces showed

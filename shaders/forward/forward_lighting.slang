@@ -1,5 +1,6 @@
 import brdf;
 import punctual_light;
+import shadow_pcf;
 import sky_model;
 
 // The lighting forward.slang's forward and deferred lighting passes share, so the two paths cannot drift apart.
@@ -90,8 +91,22 @@ int select_cascade(float viewDepth, int count)
     return min(selected, count - 1);
 }
 
+// This pass's map and comparison sampler, one cascade's layer.
+struct CascadeTaps : IShadowTaps
+{
+    float layer;
+
+    // Out-of-map taps count as lit here: the web target has no ClampToBorder, and ClampToEdge would shadow them.
+    float lit(float2 uv, float reference)
+    {
+        return (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
+          ? shadowMap.SampleCmpLevelZero(shadowSampler, float3(uv, layer), reference)
+          : 1.0;
+    }
+}
+
 // Visibility (1 = lit), the inverse of cascaded_shadow.slang's calc_cascaded_shadow, with its bias and (2r+1)^2 taps.
-float shadow_visibility(float3 worldPos, float nDotL)
+float shadow_visibility(float3 worldPos, float3 n, float nDotL)
 {
     int count = clamp(int(frame.shadow_params.x), 0, CASCADE_COUNT);
     if (count == 0) return 1.0;
@@ -117,24 +132,13 @@ float shadow_visibility(float3 worldPos, float nDotL)
 
     float bias = max(0.002 * (1.0 - nDotL), 0.0005) * bias_scale_for(cascade);
     int radius = clamp(int(frame.shadow_params.y), 0, MAX_PCF_RADIUS);
+    float2 slope = receiver_plane_depth_slope(light_space_for(cascade), n, -1.0);
 
     uint shadowWidth, shadowHeight, shadowLayers;
     shadowMap.GetDimensions(shadowWidth, shadowHeight, shadowLayers);
     float texel = 1.0 / float(shadowWidth);
-    float sum = 0.0;
-    // Out-of-map taps count as lit here: the web target has no ClampToBorder, and ClampToEdge would shadow them.
-    for (int y = -radius; y <= radius; y++)
-    {
-        for (int x = -radius; x <= radius; x++)
-        {
-            float2 tapUV = uv + float2(float(x), float(y)) * texel;
-            sum += (tapUV.x >= 0.0 && tapUV.x <= 1.0 && tapUV.y >= 0.0 && tapUV.y <= 1.0)
-              ? shadowMap.SampleCmpLevelZero(shadowSampler, float3(tapUV, float(cascade)), proj.z - bias)
-              : 1.0;
-        }
-    }
-    float taps = float((2 * radius + 1) * (2 * radius + 1));
-    return sum / taps;
+    CascadeTaps taps = { float(cascade) };
+    return pcf_visibility(taps, uv, float2(texel), proj.z - bias, slope, radius);
 }
 
 // Local wrapper: this pass's light comes from FrameUniforms, not sky.slang's SkyUniforms.
@@ -233,7 +237,7 @@ float3 shade_surface(SurfacePoint s, float4 fragCoord)
 
     float3 directLight = brdf_direct(s.n, v, l, s.albedo, s.metallic, s.roughness, f0, radiance);
     // Per fragment: a per-vertex depth interpolates too far inside big triangles, picking coarse cascades.
-    float visibility = shadow_visibility(s.position, nDotL);
+    float visibility = shadow_visibility(s.position, s.n, nDotL);
     // The C++ color *= 1 - shadow * strength, on the sun alone.
     directLight *= lerp(1.0, visibility, frame.shadow_params.z);
 

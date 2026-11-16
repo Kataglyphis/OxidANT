@@ -36,6 +36,19 @@ that breaks that target fails here before it reaches the pin. WebGPU writes
 `rgba16float` only through a write-only storage texture, which Slang emits from
 `[format("rgba16f")] WTexture3D`; an `RWTexture3D` would emit `read_write`.
 
+`common/shadow_pcf.slang` is the directional shadows' PCF kernel for both
+renderers. `pcf_visibility` compares each tap at the receiver plane's depth
+beneath it, which `receiver_plane_depth_slope` derives from the shading normal
+and the affine light-space matrix (its cofactor rows), not from screen-space
+derivatives, so the deferred pass can call it after non-uniform control flow.
+The slope stops growing past `PCF_MIN_RECEIVER_COS` (84 degrees to the light
+axis). Taps go through an `IShadowTaps`, so `forward/forward_lighting.slang`
+binds a texture and a comparison sampler and the C++ `cascaded_shadow.slang` a
+combined `Sampler2DArrayShadow`. Each `lit` counts an out-of-map tap as lit in
+the statement that samples, where the C++ suite's
+`BuildIntegrity.EveryPcfKernelBoundsChecksItsTaps` looks for the check;
+`tests/shadow_pcf_test.slang` is the SPIR-V guard.
+
 Instance vertex attributes contain matrix columns. `instance_matrix` transposes
 the Slang row constructor so instances and equivalent node transforms agree.
 `skinned_bounds::a_non_uniform_instance_scale_shades_like_the_same_node_scale`

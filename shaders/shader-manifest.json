@@ -319,6 +319,15 @@
       ]
     },
     {
+      "_comment": "CI guard: the shared PCF kernel emits SPIR-V as the C++ engine's cascaded_shadow.slang will import it.",
+      "file": "tests/shadow_pcf_test.slang",
+      "entry": "shadow_pcf_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv"
+      ]
+    },
+    {
       "_comment": "Rust/WebGPU tracer: the BVH traversal (tracer/bvh_traverse.slang) over a ray buffer, for its GPU tests (WGSL emit).",
       "file": "tracer/trace_debug.slang",
       "entry": "cs_trace_closest",

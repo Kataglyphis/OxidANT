@@ -303,6 +303,78 @@ fn a_card_50_m_away_on_an_8_km_ground_still_casts_its_shadow() {
     assert!(count > 150, "the card shadowed only {count} ground pixels");
 }
 
+/// Pixels the shadows darken by `levels` or more, per PCF radius 0, 2, 3 and 5.
+fn darkened_per_radius(
+    gpu: &GpuContext,
+    renderer: &mut ForwardRenderer,
+    camera: &OrbitCamera,
+    levels: f32,
+) -> Vec<usize> {
+    let lit = unshadowed(gpu, renderer, camera);
+    [0, 2, 3, 5]
+        .iter()
+        .map(|&radius| {
+            renderer.shadows.pcf_radius = radius;
+            let shadowed = render(gpu, renderer, camera);
+            darkening(&lit, &shadowed)
+                .iter()
+                .filter(|d| **d >= levels)
+                .count()
+        })
+        .collect()
+}
+
+/// C++ `DISABLED_PcfRadiusSweepMeasuresTheShadowRig`'s far-lit column: a receiver sloped against the light, no occluder.
+#[test]
+fn a_sloped_receiver_stays_lit_at_every_pcf_radius_and_shadows_still_darken() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let ground = quad(0.0, (-12.0, 12.0), (-12.0, 12.0));
+    // High enough that its shadow clears it under every sun below.
+    let card = quad(2.0, (-0.75, 0.75), (-0.75, 0.75));
+    let camera = OrbitCamera {
+        target: Vec3::new(-2.0, 0.0, 0.0),
+        radius: 16.0,
+        pitch_deg: 60.0,
+        ..OrbitCamera::default()
+    };
+    // Sun elevations of about 15, 30 and 50 degrees: the lower, the steeper the ground's slope in the map.
+    let suns = [
+        Vec4::new(1.0, 0.27, 0.0, 0.15),
+        Vec4::new(1.0, 0.6, 0.3, 0.15),
+        Vec4::new(0.6, 1.0, 0.5, 0.15),
+    ];
+    let scene = |primitives| CpuScene {
+        primitives,
+        ..CpuScene::default()
+    };
+    let mut failures = Vec::new();
+    for sun in suns {
+        let mut bare = renderer(&gpu, &scene(vec![ground.clone()]));
+        bare.light_dir_ambient = sun;
+        let self_shadowed = darkened_per_radius(&gpu, &mut bare, &camera, 3.0);
+        let mut occluded = renderer(&gpu, &scene(vec![ground.clone(), card.clone()]));
+        occluded.light_dir_ambient = sun;
+        let shadowed = darkened_per_radius(&gpu, &mut occluded, &camera, SHADOWED);
+        eprintln!(
+            "sun {sun}: lone ground darkened 3+ levels at radius 0, 2, 3, 5: {self_shadowed:?}; \
+             card shadow pixels: {shadowed:?}"
+        );
+        if self_shadowed.iter().any(|count| *count > 0) {
+            failures.push(format!(
+                "the outer taps shadow the receiver itself under sun {sun}: {self_shadowed:?}"
+            ));
+        }
+        if shadowed.iter().any(|count| *count <= 150) {
+            failures.push(format!(
+                "the card's shadow went under sun {sun}: {shadowed:?}"
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[test]
 fn the_pcf_radius_bound_matches_the_slang_constant() {
     use kataglyphis_webgpu_renderer::render::shadow_settings::MAX_PCF_RADIUS;
