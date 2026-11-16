@@ -198,7 +198,7 @@ mod enabled {
         TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// A local model nobody asked for this long is unloaded (owner decision 2026-11-15, as ObservANT's default).
+    /// A local model nobody asked for this long is unloaded (owner decision, as ObservANT's default).
     #[cfg(any(target_os = "linux", windows))]
     pub(super) const IDLE_UNLOAD: std::time::Duration = std::time::Duration::from_secs(600);
 

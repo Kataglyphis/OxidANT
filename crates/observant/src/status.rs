@@ -486,7 +486,7 @@ impl Status {
         self
     }
 
-    /// The slower stand-in is no outage, but nobody chose it: the owner wants to see it (2026-11-13).
+    /// The slower stand-in is no outage, but nobody chose it: the owner wants to see it.
     fn fallback_problem(&self) -> Option<String> {
         let reason: String = self.fallback.as_ref()?.chars().take(200).collect();
         Some(format!(

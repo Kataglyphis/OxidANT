@@ -105,7 +105,7 @@ env_cached!(
     }
 );
 
-/// The family's ORT pool: the usable CPUs but one, 1 to 8 (owner decision 2026-11-15); ORT's default ignores the mask.
+/// The family's ORT pool: the usable CPUs but one, 1 to 8 (owner decision); ORT's default ignores the mask.
 pub fn family_threads(usable: usize) -> usize {
     usable.saturating_sub(1).clamp(1, 8)
 }
