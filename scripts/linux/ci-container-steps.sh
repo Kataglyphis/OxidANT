@@ -30,6 +30,7 @@ usage: ci-container-steps.sh <step>
   ort-chain-only  check-ort-chain-only.sh - no downloaded ONNX Runtime (GATING)
   riscv64-test    the workspace tests, cross-built for riscv64 and run under QEMU
   web-browser     webgpu-demo-browser.sh    - the web demo's every mode drawn in headless Chrome
+  mutants <group> run-mutants.sh            - one group of ObservANT's cargo-mutants commands, reported, not gated
 
 Run inside the family Linux CI image, from the repository root.
 USAGE
@@ -142,6 +143,8 @@ case "$step" in
         ;;
 
     web-browser) exec bash "${SCRIPT_DIR}/webgpu-demo-browser.sh" "$@" ;;
+
+    mutants) exec bash "${SCRIPT_DIR}/run-mutants.sh" "$@" ;;
 
     -h|--help|help) usage; exit 0 ;;
     *)

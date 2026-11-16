@@ -84,19 +84,14 @@ its open work is here.
       one new gated bench is wanted: preprocessing at 1280x720, the app's default size. No
       allocation-count tests.
 
-- [ ] **Rust mutation testing is by hand** (M, ★★). Audit 2026-11-12. The coverage half is done (2026-11-15): the
-      `coverage` step leaves `src/frb_generated.rs` out (1157 of `src`'s 1795 lines, never run by a Rust test), which
-      took `src` from 24 % to 67.6 %, and its floor from 19 % to 65 %. The `cargo mutants` scores in `docs/testing.md`
-      are from 2026-10-15; no workflow runs the tool, and the image does not carry it (hub CON238). If the owner accepts one more scheduled job, a
-      weekly one runs the per-file commands of `docs/testing.md` with `--jobs 1 -- --lib` on
-      the pure modules and uploads `mutants.out`. The five `crates/inference` recipes are in
-      `scripts/linux/tests/ort-license-mutations.json` since 2026-11-15 (`consumer.oxidant-inference-*`, each
-      proved to bite). Guard: the
-      raised floor, and a `kind = "count"` artifact over `mutants.out/missed.txt` in
-      `quality-report.toml`. The capture loop got six tests on 2026-11-15 (the real model, a late
-      file, the stall, the re-probe, the engine's two end reasons): the first run after CON238 writes
-      `capture.rs`'s and `capture/logic.rs`'s new counts into `docs/testing.md` and adds `src/session_slot.rs` to its
-      file list.
+- [ ] **Rust mutation scores wait for cargo-mutants in the image** (S, ★★). The owner accepted a weekly job
+      (2026-11-16): `rust-mutants.yml` runs the five per-file groups of `docs/testing.md` on Sundays through
+      `scripts/linux/run-mutants.sh` and uploads `mutants.out`, but warns and runs nothing while the image lacks the
+      tool (hub CON238). The `cargo mutants` scores in `docs/testing.md` are from 2026-10-15. The first run after
+      CON238 writes `capture.rs`'s and `capture/logic.rs`'s new counts (six capture tests since 2026-11-15) into
+      `docs/testing.md`. Next: a group for the root crate's `src/session_slot.rs` (`-p` of the root package); a
+      `kind = "count"` artifact over `mutants.out/missed.txt` in `quality-report.toml`. Done when a weekly run has
+      uploaded all five groups and the table holds its counts.
 
 - [ ] **No packaged ObservANT has answered 502 to a panicking question yet** (S, ★★). Since 2026-11-14 every
       ObservANT build uses its own profile (`[profile.observant]`, release with `panic = "unwind"`, owner decision of

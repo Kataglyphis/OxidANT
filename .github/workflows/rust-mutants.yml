@@ -1,0 +1,66 @@
+# ObservANT's cargo-mutants groups from docs/testing.md, once a week: the scores as artifacts, nothing gated.
+name: Rust mutation scores
+
+# A no-op with a warning until the image pins cargo-mutants (hub CON238).
+on:
+  schedule:
+    - cron: "30 2 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-mutants-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mutants:
+    name: cargo mutants (${{ matrix.group }})
+    runs-on: ubuntu-26.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [network, arrival, camera, media, capture]
+    steps:
+      - name: Prepare the CI host
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
+        with:
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GHCR_PAT }}
+
+      - name: Restore the cargo and compiler cache
+        id: cc
+        uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-restore@develop
+        with:
+          key: x64-mutants
+          mounts: 'cargo-home:/tmp/cargo-home sccache:/var/cache/sccache'
+          env: 'SCCACHE_CACHE_SIZE=1500M RUSTC_WRAPPER=/workspace/third_party/ANTfrastructure/linux/scripts/01-core/sccache-launcher.sh'
+
+      - name: Run the group's mutants
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
+        with:
+          extra-args: --platform linux/amd64 -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always ${{ steps.cc.outputs.docker-args }}
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh mutants ${{ matrix.group }} logs/mutants'
+
+      # Without the tool it holds not-run.txt, so an empty upload is a broken run.
+      - name: Upload mutants.out
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutants-${{ matrix.group }}
+          if-no-files-found: error
+          path: logs/mutants/${{ matrix.group }}/mutants.out
+
+      - name: Trim the cargo home
+        if: always() && steps.cc.outputs.path != ''
+        env:
+          CACHE_PATH: ${{ steps.cc.outputs.path }}
+        run: rm -rf "${CACHE_PATH}/cargo-home/registry/src" "${CACHE_PATH}/cargo-home/git/checkouts"
+
+      - name: Save the cargo and compiler cache
+        if: always() && steps.cc.outputs.path != ''
+        uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-save@develop
+        with:
+          key: x64-mutants

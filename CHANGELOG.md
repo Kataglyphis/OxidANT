@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, a weekly job for the Rust mutation scores)
+- `rust-mutants.yml` runs ObservANT's five `cargo mutants` groups from `docs/testing.md` on Sundays and by hand, one
+  job per group, through the new `scripts/linux/run-mutants.sh` (container step `mutants <group>`), and uploads each
+  `mutants.out`; missed and timed-out mutants are its report, a failing baseline fails it (owner decision). Until the
+  image pins cargo-mutants (hub CON238) each job warns and runs nothing. `test-run-mutants.sh` holds the file lists,
+  the exit codes and the no-op.
+
 ### Changed (2026-11-16, streamed textures keep their CPU chains within a budget)
 - **`TextureStreaming::cpu_bytes`** (256 MiB in `INTERACTIVE`) bounds the level chains streaming keeps on the CPU.
   Past it the least recently stepped chains are dropped, during the upload already, one texture at a time, so its

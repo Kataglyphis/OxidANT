@@ -381,6 +381,7 @@ code only those lanes build asks for its lane. Lane by lane: [`docs/ci.md`](docs
 | `code-quality-report.yml` | `quality-report.sh` on every push and PR; uploads `code-quality-measurements` |
 | `security-audit.yml` | The hub's lockfile audit, below |
 | `ort-license-mutations.yml` | The package-license and ORT mutation recipes |
+| `rust-mutants.yml` | Sundays and by hand: ObservANT's five `cargo mutants` groups of [testing.md](docs/testing.md), `mutants.out` as artifacts, nothing gated; a warning and no run until the image pins cargo-mutants (hub CON238) |
 | `renovate-entrypoint.yml` | Checks the Renovate wrapper and config; runs no upgrade |
 | `submodule-pins.yml` | The hub's pin suite when a gitlink moves |
 | `linux-x64-amd-gpu.yml` | Dispatch only: an unverified AMD GPU package candidate |
