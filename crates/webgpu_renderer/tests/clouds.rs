@@ -178,6 +178,8 @@ fn enabling_clouds_changes_the_frame_and_adds_detail() {
     renderer.clouds = CloudSettings {
         coverage: 0.6,
         density: 2.0,
+        // The box Density 2 gave the default Scale while it sized the box.
+        scale: Vec3::new(2000.0, 10.0, 2000.0),
         offset: Vec3::new(-0.364, 6.0, -18.351),
         ..CloudSettings::default()
     };
@@ -231,7 +233,7 @@ fn footprint(off: &[u8], on: &[u8]) -> ([usize; 2], f32) {
     (halves, columns as f32 / moved.len().max(1) as f32)
 }
 
-/// Offset places the box and Scale x Density sizes it; in C++ it was once a sheared slab Offset could not move.
+/// Offset places the box and Scale sizes it; in C++ it was once a sheared slab Offset could not move.
 #[test]
 fn offset_moves_the_cloud_volume_and_away_from_the_view_removes_it() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -277,7 +279,7 @@ fn offset_moves_the_cloud_volume_and_away_from_the_view_removes_it() {
             .count();
         assert_eq!(
             outside, 0,
-            "the box at {centre} drew outside its Scale x Density extent"
+            "the box at {centre} drew outside its Scale extent"
         );
     }
     assert!(
@@ -376,6 +378,99 @@ fn geometry_inside_the_box_cuts_the_march_short() {
     assert!(
         over_wall < over_sky * 0.8,
         "the march ran past the wall: alpha {over_wall} over it, {over_sky} beside it"
+    );
+}
+
+/// The cloud target after one frame of `clouds` from `camera`.
+fn marched(
+    gpu: &GpuContext,
+    renderer: &mut ForwardRenderer,
+    clouds: CloudSettings,
+    camera: &OrbitCamera,
+) -> Vec<u16> {
+    renderer.clouds = clouds;
+    render(gpu, renderer, camera);
+    renderer
+        .read_cloud_target(gpu)
+        .expect("cloud readback must succeed")
+        .expect("clouds ran, so their target exists")
+}
+
+/// Pixels with any cloud in front of them.
+fn clouded(cloud: &[u16]) -> Vec<bool> {
+    (0..PIXELS)
+        .map(|p| half_to_f32(cloud[p * 4 + 3]) > 0.0)
+        .collect()
+}
+
+/// Density thins the cloud and Scale sizes the box, each without moving what the other sets.
+/// While Density also sized the box, a quarter of it drew a box a quarter as wide.
+#[test]
+fn density_and_scale_change_apart() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut renderer = plain_renderer(&gpu);
+    let camera = facing_minus_z(20.0);
+    let (centre, half) = (Vec3::new(0.0, 0.0, -10.0), Vec3::new(4.0, 3.0, 4.0));
+    let dense = clouds_in_box(centre, half, 1.0);
+    let thin = CloudSettings {
+        density: 0.25,
+        ..dense
+    };
+    let wide = CloudSettings {
+        scale: dense.scale * Vec3::new(1.5, 1.0, 1.0),
+        ..dense
+    };
+    let [dense_cloud, thin_cloud, wide_cloud] =
+        [dense, thin, wide].map(|clouds| marched(&gpu, &mut renderer, clouds, &camera));
+
+    let (dense_mask, thin_mask) = (clouded(&dense_cloud), clouded(&thin_cloud));
+    let footprint = dense_mask.iter().filter(|&&on| on).count();
+    let moved = (0..PIXELS)
+        .filter(|&p| dense_mask[p] != thin_mask[p])
+        .count();
+    let alpha_sum = |cloud: &[u16]| (0..PIXELS).map(|p| texel(cloud, p)[3]).sum::<f32>();
+    let (dense_alpha, thin_alpha) = (alpha_sum(&dense_cloud), alpha_sum(&thin_cloud));
+    eprintln!(
+        "footprint {footprint} px, {moved} moved at a quarter Density; alpha {dense_alpha:.0} -> {thin_alpha:.0}"
+    );
+    let rect = PixelRect::of_box(&camera, centre, half);
+    assert!(
+        footprint > (0..PIXELS).filter(|&p| rect.contains(p, -2.0)).count() / 2,
+        "the box drew too little cloud to judge: {footprint} px"
+    );
+    assert!(
+        moved <= footprint / 100,
+        "a quarter Density moved {moved} of the box's {footprint} clouded pixels"
+    );
+    assert!(
+        thin_alpha < dense_alpha * 0.8,
+        "a quarter Density must thin the cloud: alpha {dense_alpha} -> {thin_alpha}"
+    );
+
+    // Inside the back face's outline every ray crosses the box front to back, whatever its width.
+    let back = PixelRect::of_box(
+        &camera,
+        centre - Vec3::Z * half.z,
+        Vec3::new(half.x, half.y, 0.0),
+    );
+    let inner: Vec<usize> = (0..PIXELS).filter(|&p| back.contains(p, -2.0)).collect();
+    let differing = inner
+        .iter()
+        .filter(|&&p| dense_cloud[p * 4 + 3] != wide_cloud[p * 4 + 3])
+        .count();
+    assert!(inner.len() > PIXELS / 40, "{} inner pixels", inner.len());
+    assert_eq!(
+        differing,
+        0,
+        "a wider box changed the cloud along {differing} of {} rays it did not lengthen",
+        inner.len()
+    );
+    let wide_footprint = clouded(&wide_cloud).iter().filter(|&&on| on).count();
+    assert!(
+        wide_footprint > footprint + footprint / 5,
+        "a box 1.5 times as wide must cover more: {footprint} -> {wide_footprint} px"
     );
 }
 

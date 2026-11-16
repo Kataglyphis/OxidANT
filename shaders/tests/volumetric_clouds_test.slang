@@ -19,7 +19,7 @@ struct CombinedNoise : ICloudNoise
 void clouds_test_main(uint3 tid : SV_DispatchThreadID)
 {
     CloudParams params;
-    params.cloudMeshScale = float4(1000.0, 5.0, 1000.0, 0.63);
+    params.cloudMeshScale = float4(630.0, 3.15, 630.0, 0.63);
     params.cloudMeshOffset = float4(-0.364, 367.0, -18.351, 0.493);
     params.cloudParameters = float4(0.966, 0.034, 1.0, 8.0);
     params.cloudLightMarch = float4(3.0, 0.0, 0.0, 0.0);

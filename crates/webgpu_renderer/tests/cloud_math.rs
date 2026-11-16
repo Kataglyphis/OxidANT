@@ -283,7 +283,11 @@ fn the_shader_unpacks_the_box_and_steps_the_host_packs() {
         ..CloudSettings::default()
     };
     wild.place_box(Vec3::new(-3.0, 9.0, 40.0), Vec3::new(5.0, 0.5, 12.0), 0.25);
-    let settings = [CloudSettings::default(), wild];
+    let thin = CloudSettings {
+        density: 0.1,
+        ..CloudSettings::default()
+    };
+    let settings = [CloudSettings::default(), wild, thin];
     let inputs: Vec<[f32; 4]> = settings
         .iter()
         .flat_map(|s| {
@@ -304,6 +308,11 @@ fn the_shader_unpacks_the_box_and_steps_the_host_packs() {
         extract("fn cloud_unpack_0("),
     ];
     let results = probe(&gpu, &items, body, &inputs, (4, 4));
+    assert_eq!(
+        results[0][0..3],
+        results[8][0..3],
+        "Density must not size the box"
+    );
     for (clouds, unpacked) in settings.iter().zip(results.chunks(4)) {
         let radius = Vec3::from_slice(&unpacked[0][..3]);
         assert!(

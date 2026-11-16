@@ -31,6 +31,7 @@ struct Clouds
     // Centre of the cloud box.
     float3 offset;
     float threshold;
+    // Density: multiplies every noise sample.
     float scale;
     float pillowness;
     float cirrus_effect;
@@ -69,8 +70,8 @@ Clouds cloud_unpack(CloudParams scene)
     cloud.pillowness = scene.cloudParameters.x;
     cloud.cirrus_effect = scene.cloudParameters.y;
     cloud.powder_effect = scene.cloudParameters.z > 0.5;
-    // Density also sizes the box; the hosts keep both factors non-zero, so the box never collapses.
-    cloud.radius = scene.cloudMeshScale.xyz * cloud.scale * 10.0;
+    // Scale alone sizes the box, so Density thins the cloud without moving its edges; the hosts keep Scale above zero.
+    cloud.radius = scene.cloudMeshScale.xyz * 10.0;
     cloud.offset = scene.cloudMeshOffset.xyz;
     return cloud;
 }

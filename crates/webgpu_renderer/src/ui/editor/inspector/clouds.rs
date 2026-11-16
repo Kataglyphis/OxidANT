@@ -35,7 +35,7 @@ fn steps(ui: &mut Ui, clouds: &mut CloudSettings) {
 }
 
 fn shape(ui: &mut Ui, clouds: &mut CloudSettings) {
-    let tooltip = "Multiplies every noise sample (cloud.scale)";
+    let tooltip = "Multiplies every noise sample; the box keeps its size (cloud.scale)";
     property_row(ui, "Density", Some(tooltip), |ui| {
         ui.add(FillSlider::new(&mut clouds.density, DENSITY_RANGE))
     });
@@ -55,7 +55,7 @@ fn shape(ui: &mut Ui, clouds: &mut CloudSettings) {
 }
 
 fn placement(ui: &mut Ui, clouds: &mut CloudSettings) {
-    let tooltip = "Extent of the cloud box (cloud.radius)";
+    let tooltip = "Half extent of the cloud box in tens of units (cloud.radius)";
     property_row(ui, "Scale", Some(tooltip), |ui| {
         let mut scale = clouds.scale.to_array();
         let response = drag_axes_logarithmic(ui, &mut scale, SCALE_STEP, SCALE_RANGE, 1);

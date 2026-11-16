@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, Scale alone sizes the cloud box)
+- **Density no longer resizes the cloud box** (`cloud_unpack`, `shaders/common/volumetric_clouds.slang`): the half
+  extents are `cloudMeshScale.xyz * 10`, where they were that times Density (`cloudMeshScale.w`), so a thinner cloud
+  shrank its box with it. Density still multiplies every noise sample. The default Scale becomes (630, 3.15, 630), the
+  old (1000, 5, 1000) times the default Density 0.63, so the default slab keeps its 6300 by 31.5 half extents, and
+  `CloudSettings::place_box` takes the half extents without Density: no test image moves. The C++ engine packs the
+  same block, so its boxes grow by 1/Density with the next pin bump until its default Scale and `place_cloud_box`
+  follow (`BACKLOG.md`).
+- Tests: `density_and_scale_change_apart` (`tests/clouds.rs`): a quarter Density keeps all 1728 clouded pixels of a
+  box (0 change; the old unpack moved 1648) while its alpha falls from 171 to 45, and a box 1.5 times as wide changes
+  no ray it does not lengthen (alpha bit for bit, inside the back face's outline); `cloud_math.rs` unpacks one
+  Scale at two Densities to one radius.
+
 ### Changed (2026-11-16, one path estimator for both path tracers)
 - **`shaders/tracer/path_estimator.slang` moves to `shaders/common/path_estimator.slang`**, so the C++
   `path_tracing.slang` can import it with the next pin bump instead of keeping its own copies. Russian roulette
