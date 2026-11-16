@@ -9,6 +9,8 @@ use kataglyphis_webgpu_renderer::scene::{
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
 const RED_BC1: &[u8] = include_bytes!("assets/red_bc1.ktx2");
+/// 8x8 solid-green UASTC with a full mip chain; `basis.rs`'s unit tests rebuild it byte for byte.
+const GREEN_UASTC: &[u8] = include_bytes!("assets/green_uastc.ktx2");
 
 /// One BC1 block whose every texel is pure green (RGB565 0x07E0).
 const GREEN_BC1_BLOCK: [u8; 8] = [0xE0, 0x07, 0xE0, 0x07, 0, 0, 0, 0];
@@ -143,6 +145,85 @@ fn uploads_bc1_when_supported() {
     assert!(
         error.is_none(),
         "uploading red_bc1.ktx2 failed validation: {error:?}"
+    );
+}
+
+#[test]
+fn a_uastc_ktx2_loads_as_a_bc7_chain() {
+    let texture = load_ktx2(GREEN_UASTC).expect("green_uastc.ktx2 must transcode");
+    assert_eq!((texture.width, texture.height), (8, 8));
+    let compressed = texture
+        .compressed
+        .expect("an 8x8 Basis base transcodes to BC7");
+    assert_eq!(compressed.format, CompressedFormat::Bc7RgbaUnorm);
+    assert_eq!(compressed.mips.len(), 4);
+    assert_eq!(compressed.declared_srgb, Some(true));
+}
+
+/// The transcoded chain must draw on BC adapters and, decoded on the CPU, on adapters without BC.
+#[test]
+fn a_uastc_texture_draws_with_and_without_bc() {
+    let Some(mut gpu) = bc_gpu() else {
+        return;
+    };
+    for supports_bc in [true, false] {
+        gpu.supports_bc = supports_bc;
+        let texture = load_ktx2(GREEN_UASTC).expect("load");
+        let (error, pixels) = render_cube_with(&gpu, texture);
+        assert!(
+            error.is_none(),
+            "UASTC with BC {supports_bc} failed validation: {error:?}"
+        );
+        let green = green_pixels(&pixels);
+        assert!(
+            green > 200,
+            "UASTC with BC {supports_bc}: the green texture must show, {green} green pixels"
+        );
+    }
+}
+
+/// Encoder-made ETC1S and UASTC chains upload cleanly whether or not the adapter samples BC7.
+#[test]
+fn encoded_basis_textures_upload_with_and_without_bc() {
+    let Some(mut gpu) = bc_gpu() else {
+        return;
+    };
+    let fixtures: [(&str, &[u8]); 2] = [
+        ("ETC1S", include_bytes!("assets/ramp_etc1s.ktx2")),
+        ("UASTC", include_bytes!("assets/ramp_uastc.ktx2")),
+    ];
+    for (name, file) in fixtures {
+        for supports_bc in [true, false] {
+            gpu.supports_bc = supports_bc;
+            let texture = load_ktx2(file).unwrap_or_else(|err| panic!("{name}: {err:#}"));
+            let (error, _) = render_cube_with(&gpu, texture);
+            assert!(
+                error.is_none(),
+                "{name} with BC {supports_bc} failed validation: {error:?}"
+            );
+        }
+    }
+}
+
+/// A KTX2 neither BCn nor Basis is refused by name, so the caller falls back instead of drawing garbage.
+#[test]
+fn an_unsupported_ktx2_format_names_itself() {
+    let mut rgba8 = bc1_ktx2(8, 8, &[green_blocks(4)]);
+    // 37 is VK_FORMAT_R8G8B8A8_UNORM.
+    rgba8[12..16].copy_from_slice(&37u32.to_le_bytes());
+    let err = load_ktx2(&rgba8).expect_err("an uncompressed vkFormat must be refused");
+    assert!(
+        format!("{err:#}").contains("vkFormat 37"),
+        "the error must name the format, got: {err:#}"
+    );
+
+    let mut zstd_bc1 = bc1_ktx2(8, 8, &[green_blocks(4)]);
+    // Scheme 2 is Zstandard, which only a Basis payload may use here.
+    zstd_bc1[44..48].copy_from_slice(&2u32.to_le_bytes());
+    let err = load_ktx2(&zstd_bc1).expect_err("a Zstandard BC1 must be refused");
+    assert!(
+        format!("{err:#}").contains("supercompression"),
+        "the error must name the supercompression, got: {err:#}"
     );
 }
 

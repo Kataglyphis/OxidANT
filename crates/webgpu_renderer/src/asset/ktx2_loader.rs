@@ -1,5 +1,5 @@
-//! KTX2 loading for block-compressed textures (BCn passthrough).
-//! Supercompressed/Basis files are an error, so callers fall back instead of rendering garbage.
+//! KTX2 loading: BCn passthrough, and Basis (ETC1S, UASTC) transcoded to BC7.
+//! Any other format or supercompression is an error, so callers fall back instead of rendering garbage.
 
 use anyhow::Context as _;
 
@@ -81,12 +81,6 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
     let header = reader.header();
 
     anyhow::ensure!(
-        header.supercompression_scheme.is_none(),
-        "KTX2 supercompression {:?} is not supported yet (Basis transcoding pending)",
-        header.supercompression_scheme
-    );
-
-    anyhow::ensure!(
         header.face_count <= 1,
         "KTX2 cubemaps ({} faces) are not supported yet, only 2D textures",
         header.face_count
@@ -102,9 +96,18 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
         header.pixel_depth
     );
 
+    if super::basis::is_basis(&reader) {
+        return super::basis::transcode_basis(&reader);
+    }
+    anyhow::ensure!(
+        header.supercompression_scheme.is_none(),
+        "KTX2 supercompression {:?} is supported only for Basis payloads (ETC1S, UASTC)",
+        header.supercompression_scheme
+    );
+
     let vk_format = header
         .format
-        .context("KTX2 has no vkFormat (Basis-only files need a transcoder)")?
+        .context("KTX2 has no vkFormat and no Basis data format descriptor")?
         .value();
     let format = map_format(vk_format)
         .with_context(|| format!("unsupported KTX2 vkFormat {vk_format} (expected BC1/3/5/7)"))?;

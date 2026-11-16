@@ -103,7 +103,7 @@ pub enum CpuWrap {
     ClampToEdge,
 }
 
-/// GPU block-compressed formats uploaded without transcoding; Basis supercompression is unsupported.
+/// GPU block-compressed formats: KTX2 BCn as stored, Basis ETC1S/UASTC transcoded to BC7.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CompressedFormat {
     Bc1RgbaUnorm,
@@ -122,7 +122,7 @@ impl CompressedFormat {
     }
 }
 
-/// Pre-compressed mip chain straight from a KTX2 container.
+/// Block-compressed mip chain from a KTX2 container, stored or transcoded.
 #[derive(Clone, Debug)]
 pub struct CompressedTexture {
     pub format: CompressedFormat,

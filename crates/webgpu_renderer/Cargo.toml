@@ -29,6 +29,8 @@ egui = "0.37"
 egui-wgpu = "0.37"
 egui-winit = { version = "0.37", default-features = false }
 ktx2 = "0.5"
+# Pure Rust, so the wasm32 demo transcodes Basis KTX2 too without a C++ toolchain for wasm32.
+basisu = "0.1"
 
 [dev-dependencies]
 # Shader interop with the C++ Vulkan engine: WGSL -> SPIR-V / GLSL.

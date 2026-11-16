@@ -13,6 +13,23 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, Basis KTX2 transcoding in the WebGPU renderer)
+- **`load_ktx2` transcodes Basis Universal KTX2**: ETC1S (BasisLZ) and UASTC LDR (uncompressed; Zstandard levels
+  go through `ruzstd`, untested here) become a BC7 mip chain (`src/asset/basis.rs`), or RGBA8 when the base is not whole 4x4 blocks. An adapter
+  without BC takes the existing CPU BC7 decode, so the same file draws everywhere. The transcoder is the
+  pure-Rust `basisu` 0.1.0 (Apache-2.0, a port of basisu v2_1_0's transcoder, plus `ruzstd` 0.7.3, MIT), so the
+  wasm32 demo builds it too, where the `basis-universal` C++ binding would need a C++ toolchain for
+  `wasm32-unknown-unknown`.
+  UASTC HDR, ASTC/XUASTC sources, video, cubemaps and arrays are refused by name.
+- **Fixtures**: `ramp_etc1s.ktx2` (835 B) and `ramp_uastc.ktx2` (1664 B), a 32x32 ramp with six levels encoded
+  by `basis-universal` 0.3.1 (basisu 1.16) and repacked from `.basis` by `tests/assets/repack_basis_ktx2.py`;
+  `green_uastc.ktx2` (332 B), solid-colour UASTC blocks a unit test rebuilds byte for byte. Measured against the
+  source on level 0: ETC1S to BC7 5.1 mean (34 max) of 255, to RGBA32 7.0; UASTC to BC7 1.3 (9 max). The tests
+  bound ETC1S at 10 and UASTC at 2, with the transposed ramp as a negative control, and upload both, with and
+  without BC, inside a validation scope.
+- **Not yet**: ETC2/ASTC targets for a web adapter without BC (it decodes BC7 on the CPU instead), and glTF
+  `KHR_texture_basisu`: `gltf::import` decodes every image itself and refuses `image/ktx2`.
+
 ### Added (2026-11-16, ObservANT's visit rules replay against scenarios)
 - **Five hard cases replay through the visit rules in the `test` step**: `crates/observant/tests/scenarios.rs`
   reads `tests/scenarios/*.jsonl` and drives each run through the default `score` and `max_box_area`, the spots
