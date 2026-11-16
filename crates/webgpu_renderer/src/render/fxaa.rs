@@ -57,12 +57,12 @@ pub struct FxaaPass {
 }
 
 impl FxaaPass {
-    /// `format` is the output's, which the intermediate shares so one tonemap pipeline draws either.
-    pub fn new(gpu: &GpuContext, format: wgpu::TextureFormat) -> Self {
+    /// `format` is the output's, which the intermediate shares so one tonemap pipeline draws either; `wgsl` is `fxaa.wgsl`.
+    pub fn new(gpu: &GpuContext, format: wgpu::TextureFormat, wgsl: &str) -> Self {
         let device = &gpu.device;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fxaa_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/fxaa.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
         });
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("fxaa_bind_group_layout"),

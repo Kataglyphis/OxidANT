@@ -17,42 +17,19 @@ struct SsaoUniforms {
     params: [f32; 4],
 }
 
-pub struct SsaoPass {
-    ssao_pipeline: wgpu::RenderPipeline,
-    blur_pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    uniform_buffer: wgpu::Buffer,
-    raw: Option<wgpu::TextureView>,
-    blurred: Option<wgpu::TextureView>,
-    bg_ssao: Option<wgpu::BindGroup>,
-    bg_blur: Option<wgpu::BindGroup>,
+/// The occlusion and blur pipelines from one WGSL module; a shader reload builds them inside its error scope.
+pub struct SsaoPipelines {
+    ssao: wgpu::RenderPipeline,
+    blur: wgpu::RenderPipeline,
 }
 
-impl SsaoPass {
-    pub fn new(gpu: &GpuContext) -> Self {
-        let device = &gpu.device;
+impl SsaoPipelines {
+    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, wgsl: &str) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssao_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ssao.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
         });
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ssao_bind_group_layout"),
-            entries: &[
-                bind_layout::texture(
-                    0,
-                    wgpu::ShaderStages::FRAGMENT,
-                    wgpu::TextureSampleType::Depth,
-                    wgpu::TextureViewDimension::D2,
-                    false,
-                ),
-                bind_layout::uniform(1, wgpu::ShaderStages::FRAGMENT),
-                bind_layout::texture_2d(2, wgpu::ShaderStages::FRAGMENT, true),
-            ],
-        });
-        let layout =
-            pipeline_desc::single_layout(device, "ssao_pipeline_layout", &bind_group_layout);
-
+        let layout = pipeline_desc::single_layout(device, "ssao_pipeline_layout", layout);
         let make = |entry: &str, label: &str| {
             pipeline_desc::create_fullscreen_pipeline(
                 device,
@@ -67,6 +44,42 @@ impl SsaoPass {
                 },
             )
         };
+        Self {
+            ssao: make("fs_ssao", "ssao_pipeline"),
+            blur: make("fs_blur", "ssao_blur_pipeline"),
+        }
+    }
+}
+
+pub struct SsaoPass {
+    pipelines: SsaoPipelines,
+    bind_group_layout: wgpu::BindGroupLayout,
+    uniform_buffer: wgpu::Buffer,
+    raw: Option<wgpu::TextureView>,
+    blurred: Option<wgpu::TextureView>,
+    bg_ssao: Option<wgpu::BindGroup>,
+    bg_blur: Option<wgpu::BindGroup>,
+}
+
+impl SsaoPass {
+    pub fn new(gpu: &GpuContext) -> Self {
+        let device = &gpu.device;
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ssao_bind_group_layout"),
+            entries: &[
+                bind_layout::texture(
+                    0,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::TextureSampleType::Depth,
+                    wgpu::TextureViewDimension::D2,
+                    false,
+                ),
+                bind_layout::uniform(1, wgpu::ShaderStages::FRAGMENT),
+                bind_layout::texture_2d(2, wgpu::ShaderStages::FRAGMENT, true),
+            ],
+        });
+        let shipped = include_str!("../shaders/ssao.wgsl");
+        let pipelines = SsaoPipelines::new(device, &bind_group_layout, shipped);
 
         let uniform_buffer = buffer_desc::uniform(
             device,
@@ -75,8 +88,7 @@ impl SsaoPass {
         );
 
         Self {
-            ssao_pipeline: make("fs_ssao", "ssao_pipeline"),
-            blur_pipeline: make("fs_blur", "ssao_blur_pipeline"),
+            pipelines,
             bind_group_layout,
             uniform_buffer,
             raw: None,
@@ -84,6 +96,16 @@ impl SsaoPass {
             bg_ssao: None,
             bg_blur: None,
         }
+    }
+
+    /// The pipelines `wgsl` builds against this pass's layout, for [`Self::replace_pipelines`].
+    pub fn compile(&self, device: &wgpu::Device, wgsl: &str) -> SsaoPipelines {
+        SsaoPipelines::new(device, &self.bind_group_layout, wgsl)
+    }
+
+    /// Swaps in a reload's pipelines; the targets and bind groups stay.
+    pub fn replace_pipelines(&mut self, pipelines: SsaoPipelines) {
+        self.pipelines = pipelines;
     }
 
     /// (Re)creates the half-res AO chain for a new depth buffer.
@@ -169,8 +191,8 @@ impl SsaoPass {
             return;
         };
         let steps: [(&wgpu::RenderPipeline, &wgpu::BindGroup, &wgpu::TextureView); 2] = [
-            (&self.ssao_pipeline, bg_ssao, raw),
-            (&self.blur_pipeline, bg_blur, blurred),
+            (&self.pipelines.ssao, bg_ssao, raw),
+            (&self.pipelines.blur, bg_blur, blurred),
         ];
         let step_count = steps.len();
         for (step, (pipeline, bind_group, target)) in steps.into_iter().enumerate() {

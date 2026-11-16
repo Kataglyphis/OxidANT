@@ -13,6 +13,8 @@ mod placement;
 mod post;
 mod primitive;
 pub(crate) mod readback;
+#[cfg(not(target_arch = "wasm32"))]
+mod reload;
 mod shadow;
 mod shadow_casters;
 mod sky;
@@ -32,17 +34,13 @@ pub use crate::render::lights::MAX_PUNCTUAL_LIGHTS;
 use crate::render::model_transform::ModelTransform;
 use crate::render::shadow_settings::ShadowSettings;
 use crate::render::texture::create_2d_texture;
-use crate::render::tonemap::TonemapPass;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::render::tracer::modes::{TracedPasses, TracedSources};
+use crate::render::tonemap::{TonemapPass, TonemapShaders};
 use crate::render::tracer::{RenderMode, TraceSettings, Tracer};
 use crate::scene::camera::OrbitCamera;
 use crate::scene::CpuScene;
 
 use animate::SceneAnimation;
 use cloud_pass::CloudPass;
-#[cfg(not(target_arch = "wasm32"))]
-use cloud_pass::CloudPipelines;
 use culling::Culling;
 use deferred::DeferredResources;
 pub use deferred::RasterPath;
@@ -52,6 +50,8 @@ use light_grid::LightResources;
 use main_pass::MainPipelines;
 use post::PostChain;
 use primitive::GpuPrimitive;
+#[cfg(not(target_arch = "wasm32"))]
+pub use reload::ShaderSources;
 use shadow::ShadowResources;
 pub use sky::SkyMode;
 use sky::SkyResources;
@@ -74,46 +74,6 @@ pub const SHADOW_MAP_SIZE: u32 = 2048;
 /// The most cascades, the C++ `MAX_CASCADES`; [`ShadowSettings::cascade_count`] renders 1 to this many.
 pub const CASCADE_COUNT: usize = 3;
 
-/// The WGSL a shader reload rebuilds the scene, shadow, sky, deferred, cloud and traced pipelines from.
-/// The tonemap, FXAA, bloom, SSAO, histogram and depth-resolve passes keep the WGSL the crate was built with.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone, Copy, Debug)]
-pub struct ShaderSources<'a> {
-    pub forward: &'a str,
-    pub sky: &'a str,
-    pub cloud_march: &'a str,
-    pub cloud_noise: &'a str,
-    /// Both traced modes' kernels.
-    pub traced: &'a str,
-    pub trace_resolve: &'a str,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl ShaderSources<'static> {
-    /// The generated files, in field order, as a hot reload watches them.
-    pub const FILES: [&'static str; 6] = [
-        "forward.wgsl",
-        "sky.wgsl",
-        "cloud_march.wgsl",
-        "cloud_noise.wgsl",
-        "traced.wgsl",
-        "trace_resolve.wgsl",
-    ];
-
-    /// The WGSL this crate was built with.
-    pub fn shipped() -> Self {
-        let traced = TracedSources::shipped();
-        Self {
-            forward: include_str!("../shaders/forward.wgsl"),
-            sky: include_str!("../shaders/sky.wgsl"),
-            cloud_march: include_str!("../shaders/cloud_march.wgsl"),
-            cloud_noise: include_str!("../shaders/cloud_noise.wgsl"),
-            traced: traced.traced,
-            trace_resolve: traced.resolve,
-        }
-    }
-}
-
 pub struct ForwardRenderer {
     /// The forward pass's four pipelines and its group 0 layout.
     main: MainPipelines,
@@ -132,6 +92,8 @@ pub struct ForwardRenderer {
     post: PostChain,
     /// The cloud noise, march and target, which the tonemap composites.
     cloud_pass: CloudPass,
+    /// The tonemap and FXAA WGSL every tonemap pass this renderer draws with is built from: shipped, or the last reload's.
+    tonemap_shaders: TonemapShaders,
     culling: Culling,
     /// The deferred path's G-buffer and pipelines, built by its first frame.
     deferred: Option<DeferredResources>,
@@ -219,6 +181,7 @@ impl ForwardRenderer {
             depth_resolve,
             post,
             cloud_pass: CloudPass::new(device),
+            tonemap_shaders: TonemapShaders::shipped(),
             culling: Culling::new(device),
             deferred: None,
             primitives: Vec::new(),
@@ -517,7 +480,7 @@ impl ForwardRenderer {
             "render_to_pixels returns RGBA8 bytes, so it renders only to Rgba8Unorm or \
              Rgba8UnormSrgb, not {format:?}"
         );
-        let mut tonemap = TonemapPass::new(gpu, format);
+        let mut tonemap = TonemapPass::with_shaders(gpu, format, self.tonemap_shaders.clone());
 
         let texture = create_2d_texture(
             &gpu.device,
@@ -530,73 +493,10 @@ impl ForwardRenderer {
             1,
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        // The fresh pass binds the live bloom and AO outputs; nothing is rebuilt under the window's pass.
+        // The fresh pass binds the live bloom and AO outputs, built from the WGSL the window's pass draws with.
         self.render_tonemapped(gpu, &mut tonemap, &view, width, height, camera);
 
         readback::read_rgba8(gpu, &texture, width, height)
-    }
-
-    /// Rebuilds the scene, shadow, sky, deferred, cloud and traced pipelines from new WGSL; invalid shaders keep the old ones.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn reload_shaders(
-        &mut self,
-        gpu: &GpuContext,
-        sources: &ShaderSources<'_>,
-    ) -> anyhow::Result<()> {
-        let device = &gpu.device;
-        let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("forward_shader_reloaded"),
-            source: wgpu::ShaderSource::Wgsl(sources.forward.into()),
-        });
-        let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("sky_shader_reloaded"),
-            source: wgpu::ShaderSource::Wgsl(sources.sky.into()),
-        });
-        let set = main_pass::create_forward_pipeline_set(
-            device,
-            &shader,
-            &self.main.layout,
-            wgpu::FrontFace::Ccw,
-        );
-        let shadow = shadow::ShadowPipelines::new(
-            device,
-            &shader,
-            &self.shadow.pipeline_layout,
-            &self.shadow.masked_pipeline_layout,
-        );
-        let sky = sky::create_sky_pipeline(device, &sky_shader, &self.sky.pipeline_layout);
-        // Even before deferred first runs: its pipelines are built lazily, outside any error scope.
-        let deferred = self.build_deferred(device, &shader, &sky_shader);
-        // Even with clouds off: a cloud shader that cannot build is refused now, not on the first cloud frame.
-        let clouds = CloudPipelines::new(device, sources.cloud_march, sources.cloud_noise);
-        // Both kernels now, as for deferred: each otherwise compiles on its mode's first frame, outside any scope.
-        let traced = TracedPasses::compiled(
-            device,
-            TracedSources {
-                traced: sources.traced,
-                resolve: sources.trace_resolve,
-            },
-        );
-        let traced_sky = sky::sky_pipeline(device, &sky_shader, &self.sky.pipeline_layout, 1);
-        if let Some(err) = pollster::block_on(error_scope.pop()) {
-            anyhow::bail!("shader reload rejected: {err}");
-        }
-        self.main.upright = set;
-        // The mirrored sets are rebuilt from the new module the next frame one is drawn.
-        self.main.mirrored = None;
-        self.main.shader = shader;
-        self.shadow.pipelines = shadow;
-        // The cached bundles still hold the old shadow pipelines.
-        self.shadow.caster_bundles = None;
-        self.sky.pipeline = sky;
-        self.sky.shader = sky_shader;
-        if self.deferred.is_some() {
-            self.deferred = Some(deferred);
-        }
-        self.cloud_pass.replace_pipelines(device, clouds);
-        self.replace_traced_pipelines(traced, traced_sky);
-        Ok(())
     }
 
     /// True when the uploaded scene carries animations.

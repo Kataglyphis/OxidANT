@@ -151,10 +151,6 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       to the GPU in one frame (a hitch), and about 480 MB of CPU arrays stay for queries and top-level rebuilds.
       Next: spread the upload over frames; free the arrays a build no longer needs.
 
-- [ ] **F5 leaves the post passes alone** (S). `reload_shaders` rebuilds forward, sky, deferred, clouds and both
-      traced kernels; the tonemap (with the cloud composite), bloom, SSAO, histogram and depth-resolve WGSL keep
-      the build's. Next: a `TonemapPass` reload in the same error scope first.
-
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
       `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially all pass. Re-dispatch
       `windows-arm64-cross.yml` with `parallel-renderer-tests` after a runner image update.

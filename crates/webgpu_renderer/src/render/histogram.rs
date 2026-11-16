@@ -31,9 +31,7 @@ impl Default for ExposureSettings {
 }
 
 pub struct HistogramPass {
-    build_pipeline: wgpu::ComputePipeline,
-    clear_pipeline: wgpu::ComputePipeline,
-    reduce_pipeline: wgpu::ComputePipeline,
+    pipelines: HistogramPipelines,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: Option<wgpu::BindGroup>,
     histogram_buffer: wgpu::Buffer,
@@ -45,14 +43,51 @@ pub struct HistogramPass {
     readback_buffer: wgpu::Buffer,
 }
 
-impl HistogramPass {
-    pub fn new(gpu: &GpuContext) -> Self {
-        let device = &gpu.device;
+/// The clear, build and reduce kernels from one WGSL module; a shader reload builds them inside its error scope.
+pub struct HistogramPipelines {
+    build: wgpu::ComputePipeline,
+    clear: wgpu::ComputePipeline,
+    reduce: wgpu::ComputePipeline,
+}
+
+impl HistogramPipelines {
+    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, wgsl: &str) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("histogram_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/histogram.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
         });
+        let layout = pipeline_desc::single_layout(device, "histogram_pipeline_layout", layout);
+        let make = |entry: &str, label: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        Self {
+            build: make("cs_build_histogram", "histogram_build_pipeline"),
+            clear: make("cs_clear_histogram", "histogram_clear_pipeline"),
+            reduce: make("cs_reduce_exposure", "histogram_reduce_pipeline"),
+        }
+    }
+}
 
+impl HistogramPass {
+    /// The kernels `wgsl` builds against this pass's layout, for [`Self::replace_pipelines`].
+    pub fn compile(&self, device: &wgpu::Device, wgsl: &str) -> HistogramPipelines {
+        HistogramPipelines::new(device, &self.bind_group_layout, wgsl)
+    }
+
+    /// Swaps in a reload's kernels; the bins, the exposure state and the bind group stay.
+    pub fn replace_pipelines(&mut self, pipelines: HistogramPipelines) {
+        self.pipelines = pipelines;
+    }
+
+    pub fn new(gpu: &GpuContext) -> Self {
+        let device = &gpu.device;
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("histogram_bind_group_layout"),
             entries: &[
@@ -64,35 +99,8 @@ impl HistogramPass {
             ],
         });
 
-        let pipeline_layout =
-            pipeline_desc::single_layout(device, "histogram_pipeline_layout", &bind_group_layout);
-
-        let build_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("histogram_build_pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("cs_build_histogram"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-
-        let reduce_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("histogram_reduce_pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("cs_reduce_exposure"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-
-        let clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("histogram_clear_pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("cs_clear_histogram"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let shipped = include_str!("../shaders/histogram.wgsl");
+        let pipelines = HistogramPipelines::new(device, &bind_group_layout, shipped);
 
         let byte_size = (HISTOGRAM_BINS * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
         let histogram_buffer = buffer_desc::storage_src(device, "histogram_buffer", byte_size);
@@ -113,9 +121,7 @@ impl HistogramPass {
         let exposure_readback_buffer = buffer_desc::readback(device, "exposure_readback", 8);
 
         Self {
-            build_pipeline,
-            clear_pipeline,
-            reduce_pipeline,
+            pipelines,
             exposure_buffer,
             exposure_params_buffer,
             exposure_readback_buffer,
@@ -169,7 +175,7 @@ impl HistogramPass {
                 label: Some("histogram_clear"),
                 timestamp_writes: scope.compute_writes(0, 2),
             });
-            pass.set_pipeline(&self.clear_pipeline);
+            pass.set_pipeline(&self.pipelines.clear);
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(
                 HISTOGRAM_BINS.div_ceil(CLEAR_WORKGROUP as usize) as u32,
@@ -183,7 +189,7 @@ impl HistogramPass {
                 label: Some("histogram_build"),
                 timestamp_writes: scope.compute_writes(1, 2),
             });
-            pass.set_pipeline(&self.build_pipeline);
+            pass.set_pipeline(&self.pipelines.build);
             pass.set_bind_group(0, bind_group, &[]);
             // Round up: truncating leaves the right and bottom edges unsampled and biases exposure.
             pass.dispatch_workgroups(
@@ -221,7 +227,7 @@ impl HistogramPass {
             label: Some("exposure_reduce"),
             timestamp_writes: scope.compute_writes(0, 1),
         });
-        pass.set_pipeline(&self.reduce_pipeline);
+        pass.set_pipeline(&self.pipelines.reduce);
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
     }

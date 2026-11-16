@@ -1,5 +1,7 @@
 //! Fullscreen ACES tonemap pass: HDR (Rgba16Float) input -> display target.
 
+use std::sync::Arc;
+
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::buffer_desc;
@@ -7,8 +9,30 @@ use crate::render::fxaa::FxaaPass;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
 
+/// The tonemap and FXAA WGSL a pass builds from; a reload in the renderer hands every pass new ones.
+#[derive(Clone, Debug)]
+pub struct TonemapShaders {
+    pub tonemap: Arc<str>,
+    pub fxaa: Arc<str>,
+    /// 0 for the shipped pair, a fresh number for each accepted reload.
+    pub id: u64,
+}
+
+impl TonemapShaders {
+    /// The WGSL this crate was built with.
+    pub fn shipped() -> Self {
+        Self {
+            tonemap: include_str!("../shaders/tonemap.wgsl").into(),
+            fxaa: include_str!("../shaders/fxaa.wgsl").into(),
+            id: 0,
+        }
+    }
+}
+
 pub struct TonemapPass {
     pipeline: wgpu::RenderPipeline,
+    /// What `pipeline` and the FXAA pass are built from.
+    shaders: TonemapShaders,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
@@ -25,12 +49,16 @@ pub struct TonemapPass {
 impl TonemapPass {
     /// `output_format` is the format of the view later passed to [`Self::render`].
     pub fn new(gpu: &GpuContext, output_format: wgpu::TextureFormat) -> Self {
-        let device = &gpu.device;
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("tonemap_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/tonemap.wgsl").into()),
-        });
+        Self::with_shaders(gpu, output_format, TonemapShaders::shipped())
+    }
 
+    /// As [`Self::new`], built from `shaders`.
+    pub fn with_shaders(
+        gpu: &GpuContext,
+        output_format: wgpu::TextureFormat,
+        shaders: TonemapShaders,
+    ) -> Self {
+        let device = &gpu.device;
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tonemap_bind_group_layout"),
             entries: &[
@@ -49,21 +77,8 @@ impl TonemapPass {
             ],
         });
 
-        let pipeline_layout =
-            pipeline_desc::single_layout(device, "tonemap_pipeline_layout", &bind_group_layout);
-
-        let pipeline = pipeline_desc::create_fullscreen_pipeline(
-            device,
-            FullscreenPipeline {
-                label: "tonemap_pipeline",
-                layout: &pipeline_layout,
-                module: &shader,
-                vs_entry: "vs_main",
-                fs_entry: "fs_main",
-                format: output_format,
-                blend: None,
-            },
-        );
+        let pipeline =
+            tonemap_pipeline(device, &bind_group_layout, output_format, &shaders.tonemap);
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("tonemap_sampler"),
@@ -76,6 +91,7 @@ impl TonemapPass {
 
         Self {
             pipeline,
+            shaders,
             bind_group_layout,
             sampler,
             uniform_buffer,
@@ -87,11 +103,29 @@ impl TonemapPass {
         }
     }
 
+    /// Rebuilds from `shaders` unless built from them already; the bind group and its inputs stay.
+    pub fn use_shaders(&mut self, gpu: &GpuContext, shaders: &TonemapShaders) {
+        if self.shaders.id == shaders.id {
+            return;
+        }
+        let device = &gpu.device;
+        let format = self.output_format;
+        self.pipeline = tonemap_pipeline(device, &self.bind_group_layout, format, &shaders.tonemap);
+        // Rebuilt from the new WGSL the next frame FXAA filters.
+        self.fxaa = None;
+        self.shaders = shaders.clone();
+    }
+
+    /// The id of the shaders this pass is built from, [`TonemapShaders::id`].
+    pub fn shaders_id(&self) -> u64 {
+        self.shaders.id
+    }
+
     /// Readies FXAA for a `width` x `height` output, building it on first use.
     pub fn prepare_fxaa(&mut self, gpu: &GpuContext, width: u32, height: u32) {
         let format = self.output_format;
         self.fxaa
-            .get_or_insert_with(|| FxaaPass::new(gpu, format))
+            .get_or_insert_with(|| FxaaPass::new(gpu, format, &self.shaders.fxaa))
             .prepare(gpu, width, height);
     }
 
@@ -210,4 +244,30 @@ impl TonemapPass {
         pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
+}
+
+/// `fs_main` of `wgsl` over the tonemap's bind group into `format`.
+fn tonemap_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    format: wgpu::TextureFormat,
+    wgsl: &str,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("tonemap_shader"),
+        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+    });
+    let layout = pipeline_desc::single_layout(device, "tonemap_pipeline_layout", bind_group_layout);
+    pipeline_desc::create_fullscreen_pipeline(
+        device,
+        FullscreenPipeline {
+            label: "tonemap_pipeline",
+            layout: &layout,
+            module: &shader,
+            vs_entry: "vs_main",
+            fs_entry: "fs_main",
+            format,
+            blend: None,
+        },
+    )
 }

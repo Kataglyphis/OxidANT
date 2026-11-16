@@ -59,9 +59,10 @@ impl ForwardRenderer {
         post.rebuild_needed = false;
     }
 
-    /// Binds `tonemap` to the current HDR, bloom and AO outputs unless it samples them already.
+    /// Binds `tonemap` to the current HDR, bloom and AO outputs unless it samples them already, and to the reloaded WGSL.
     /// Per pass, not per rebuild: every pass a host renders with must follow a rebuild.
     pub(super) fn bind_tonemap_inputs(&self, gpu: &GpuContext, tonemap: &mut TonemapPass) {
+        tonemap.use_shaders(gpu, &self.tonemap_shaders);
         let post = &self.post;
         if tonemap.bound_inputs == Some(post.inputs_id) {
             return;

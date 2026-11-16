@@ -87,12 +87,28 @@ pub(super) struct DepthResolve {
 
 impl DepthResolve {
     pub(super) fn new(device: &wgpu::Device, depth_msaa: &wgpu::TextureView) -> Self {
-        let (pipeline, bind_group_layout) = create_depth_resolve_pipeline(device);
+        let bind_group_layout = create_depth_resolve_layout(device);
+        let shipped = include_str!("../../shaders/depth_resolve.wgsl");
+        let pipeline = create_depth_resolve_pipeline(device, &bind_group_layout, shipped);
         Self {
             pipeline,
             bind_group: create_depth_resolve_bind_group(device, &bind_group_layout, depth_msaa),
             bind_group_layout,
         }
+    }
+}
+
+impl DepthResolve {
+    /// The pipeline `wgsl` builds against this pass's layout; a shader reload builds it inside its error scope.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn compile(&self, device: &wgpu::Device, wgsl: &str) -> wgpu::RenderPipeline {
+        create_depth_resolve_pipeline(device, &self.bind_group_layout, wgsl)
+    }
+
+    /// Swaps in a reload's pipeline; the bind group stays.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn replace_pipeline(&mut self, pipeline: wgpu::RenderPipeline) {
+        self.pipeline = pipeline;
     }
 }
 
@@ -198,15 +214,8 @@ fn create_depth_resolve_bind_group(
     })
 }
 
-fn create_depth_resolve_pipeline(
-    device: &wgpu::Device,
-) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("depth_resolve_shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/depth_resolve.wgsl").into()),
-    });
-
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+fn create_depth_resolve_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("depth_resolve_bind_group_layout"),
         entries: &[bind_layout::texture(
             0,
@@ -215,12 +224,21 @@ fn create_depth_resolve_pipeline(
             wgpu::TextureViewDimension::D2,
             true,
         )],
+    })
+}
+
+fn create_depth_resolve_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    wgsl: &str,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("depth_resolve_shader"),
+        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
     });
-
     let pipeline_layout =
-        pipeline_desc::single_layout(device, "depth_resolve_pipeline_layout", &bind_group_layout);
-
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        pipeline_desc::single_layout(device, "depth_resolve_pipeline_layout", bind_group_layout);
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("depth_resolve_pipeline"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
@@ -246,7 +264,5 @@ fn create_depth_resolve_pipeline(
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
-    });
-
-    (pipeline, bind_group_layout)
+    })
 }

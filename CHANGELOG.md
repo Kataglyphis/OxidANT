@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, F5 reloads the post chain)
+- **`reload_shaders` rebuilds every pass of the frame.** `ShaderSources` carries twelve files (`FILES`, read in order by
+  `ShaderSources::from_files`): beside the scene, sky, cloud and traced WGSL now the tonemap, FXAA, bloom, SSAO,
+  histogram and depth resolve. The code moved to `render/forward/reload.rs`, compiled in one validation scope and
+  installed only when it passes. Bloom, SSAO, the histogram and the depth resolve swap their pipelines
+  (`compile`/`replace_pipelines`); the tonemap pair is compiled there once and kept as `TonemapShaders`, which every
+  `TonemapPass` the renderer draws with rebuilds from on its next frame (`TonemapPass::use_shaders`), so the window's
+  pass and an F12 screenshot's fresh one (`TonemapPass::with_shaders`) show the same reloaded tonemap.
+- Tests: `tests/post_reload.rs` refuses each of the six post shaders without its entry point and keeps the frame,
+  and takes each valid edit: a flat tonemap in the screenshot and the window's pass, then the shipped one back; FXAA,
+  a constant resolved depth, a shifted manual exposure, a blue bloom and full occlusion. Mutants: skipping
+  `use_shaders` and dropping the resolve's new pipeline each fail one test.
+
 ### Fixed (2026-11-16, clouds reach the pixels a silhouette half covers)
 - **A silhouette pixel marches to both of its depths.** The forward path's depth resolve
   (`shaders/depth_resolve/depth_resolve.slang`) writes, beside the nearest sample, the farthest one and the share of

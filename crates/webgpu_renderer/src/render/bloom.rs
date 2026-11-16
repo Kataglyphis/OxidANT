@@ -16,10 +16,44 @@ pub struct BloomInputs<'a> {
     pub cloud: &'a wgpu::TextureView,
 }
 
-pub struct BloomPass {
+/// The bright pass and both blurs, from one WGSL module; a shader reload builds them inside its error scope.
+pub struct BloomPipelines {
     brightpass: wgpu::RenderPipeline,
     blur_h: wgpu::RenderPipeline,
     blur_v: wgpu::RenderPipeline,
+}
+
+impl BloomPipelines {
+    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, wgsl: &str) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bloom_shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+        let layout = pipeline_desc::single_layout(device, "bloom_pipeline_layout", layout);
+        let make = |entry: &str, label: &str| {
+            pipeline_desc::create_fullscreen_pipeline(
+                device,
+                FullscreenPipeline {
+                    label,
+                    layout: &layout,
+                    module: &shader,
+                    vs_entry: "vs_main",
+                    fs_entry: entry,
+                    format: HDR_FORMAT,
+                    blend: None,
+                },
+            )
+        };
+        Self {
+            brightpass: make("fs_brightpass", "bloom_brightpass"),
+            blur_h: make("fs_blur_h", "bloom_blur_h"),
+            blur_v: make("fs_blur_v", "bloom_blur_v"),
+        }
+    }
+}
+
+pub struct BloomPass {
+    pipelines: BloomPipelines,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     /// Whether the bright pass composites the clouds first, written every frame.
@@ -35,11 +69,6 @@ pub struct BloomPass {
 impl BloomPass {
     pub fn new(gpu: &GpuContext) -> Self {
         let device = &gpu.device;
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("bloom_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/bloom.wgsl").into()),
-        });
-
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bloom_bind_group_layout"),
             entries: &[
@@ -55,23 +84,8 @@ impl BloomPass {
                 bind_layout::uniform(4, wgpu::ShaderStages::FRAGMENT),
             ],
         });
-        let layout =
-            pipeline_desc::single_layout(device, "bloom_pipeline_layout", &bind_group_layout);
-
-        let make = |entry: &str, label: &str| {
-            pipeline_desc::create_fullscreen_pipeline(
-                device,
-                FullscreenPipeline {
-                    label,
-                    layout: &layout,
-                    module: &shader,
-                    vs_entry: "vs_main",
-                    fs_entry: entry,
-                    format: HDR_FORMAT,
-                    blend: None,
-                },
-            )
-        };
+        let shipped = include_str!("../shaders/bloom.wgsl");
+        let pipelines = BloomPipelines::new(device, &bind_group_layout, shipped);
 
         let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("bloom_sampler"),
@@ -83,9 +97,7 @@ impl BloomPass {
         });
 
         Self {
-            brightpass: make("fs_brightpass", "bloom_brightpass"),
-            blur_h: make("fs_blur_h", "bloom_blur_h"),
-            blur_v: make("fs_blur_v", "bloom_blur_v"),
+            pipelines,
             bind_group_layout,
             sampler,
             uniform_buffer: buffer_desc::uniform(device, "bloom_uniforms", 16),
@@ -152,6 +164,16 @@ impl BloomPass {
         self.texture_b = Some(b);
     }
 
+    /// The pipelines `wgsl` builds against this pass's layout, for [`Self::replace_pipelines`].
+    pub fn compile(&self, device: &wgpu::Device, wgsl: &str) -> BloomPipelines {
+        BloomPipelines::new(device, &self.bind_group_layout, wgsl)
+    }
+
+    /// Swaps in a reload's pipelines; the targets and bind groups stay.
+    pub fn replace_pipelines(&mut self, pipelines: BloomPipelines) {
+        self.pipelines = pipelines;
+    }
+
     /// Per frame: whether the bright pass composites the cloud input over the HDR first.
     pub fn set_clouds(&self, queue: &wgpu::Queue, clouds: bool) {
         let params = [if clouds { 1.0_f32 } else { 0.0 }, 0.0, 0.0, 0.0];
@@ -174,9 +196,9 @@ impl BloomPass {
             return;
         };
         let steps: [(&wgpu::RenderPipeline, &wgpu::BindGroup, &wgpu::TextureView); 3] = [
-            (&self.brightpass, bg_bright, a),
-            (&self.blur_h, bg_h, b),
-            (&self.blur_v, bg_v, a),
+            (&self.pipelines.brightpass, bg_bright, a),
+            (&self.pipelines.blur_h, bg_h, b),
+            (&self.pipelines.blur_v, bg_v, a),
         ];
         let step_count = steps.len();
         for (step, (pipeline, bind_group, target)) in steps.into_iter().enumerate() {

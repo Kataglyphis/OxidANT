@@ -151,7 +151,7 @@ fn buffer_descriptor_literals_are_the_single_definition_or_the_two_named_outlier
         unmarked,
         vec![
             "render/occlusion.rs:396".to_string(),
-            "render/histogram.rs:102".to_string(),
+            "render/histogram.rs:110".to_string(),
         ],
         "found unexpected wgpu::BufferDescriptor literals outside render/buffer_desc.rs - \
          route new buffer sites through the helpers, or add a genuinely new outlier here \
