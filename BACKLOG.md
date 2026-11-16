@@ -62,8 +62,9 @@ its open work is here.
       `CloudSettings::half_resolution` marches a quarter of the pixels and upsamples by depth, off by default. On
       lavapipe at 1280x720 it cut the cloud pass by 63 to 80 % at a mean of 0.002 to 1.18 levels, at most 0.4 to 2.9 %
       of pixels more than 8 levels off and stair steps on thin streaks (`CHANGELOG.md`). Turning it on moves every cloud
-      image here; the C++ engine would need its own half-size `clouds_main` dispatch and an upsample, which can import
-      `cloud_upsample_depth_weight`.
+      image here. The C++ engine has the same switch since BeschleunigerBallett 19cffd45 (off by default, the upsample
+      importing `cloud_upsample_depth_weight`; 99-101 ms down to 25-26 + 14-17 ms on aarch64 llvmpipe at 1200x768), so
+      a default flip should move both.
 
 - [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
       nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
