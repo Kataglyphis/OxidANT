@@ -11,6 +11,8 @@ pub struct Overlay {
     /// The window's input; `None` for an offscreen overlay, which takes its input whole from the caller.
     state: Option<egui_winit::State>,
     renderer: egui_wgpu::Renderer,
+    /// The view format [`Self::paint`] expects.
+    format: wgpu::TextureFormat,
 }
 
 impl Overlay {
@@ -34,7 +36,13 @@ impl Overlay {
             ctx: studio_context(),
             state: None,
             renderer: egui_wgpu::Renderer::new(device, output_format, Default::default()),
+            format: output_format,
         }
+    }
+
+    /// The format of the view [`Self::paint`] takes: a linear one blends coverage in sRGB, as egui expects.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.format
     }
 
     /// The egui context, to read focus and popups before a pass.

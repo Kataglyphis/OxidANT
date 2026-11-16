@@ -22,6 +22,8 @@ pub struct GpuContext {
     pub supports_timestamps: bool,
     /// The adapter the device was created on.
     pub adapter_info: wgpu::AdapterInfo,
+    /// An sRGB texture, and on a windowed context the surface, can be viewed as its linear twin.
+    pub srgb_twin_views: bool,
     /// Present target; `None` for headless (render-to-texture) contexts.
     pub surface: Option<wgpu::Surface<'static>>,
     pub surface_config: Option<wgpu::SurfaceConfiguration>,
@@ -63,7 +65,11 @@ impl GpuContext {
         check_adapter(&adapter_info)?;
 
         let (device, queue, supports_bc, supports_timestamps) = request_device(&adapter).await?;
-        let surface_config = surface_config(&surface, &adapter, &device, size)?;
+        let downlevel = adapter.get_downlevel_capabilities().flags;
+        let srgb_twin_views = downlevel.contains(
+            wgpu::DownlevelFlags::VIEW_FORMATS | wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS,
+        );
+        let surface_config = surface_config(&surface, &adapter, &device, size, srgb_twin_views)?;
         surface.configure(&device, &surface_config);
 
         Ok(Self {
@@ -72,6 +78,7 @@ impl GpuContext {
             supports_bc,
             supports_timestamps,
             adapter_info,
+            srgb_twin_views,
             surface: Some(surface),
             surface_config: Some(surface_config),
             origin: Some((instance, window)),
@@ -100,6 +107,10 @@ impl GpuContext {
         let adapter_info = adapter.get_info();
         check_adapter(&adapter_info)?;
 
+        let srgb_twin_views = adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
         let (device, queue, supports_bc, supports_timestamps) = request_device(&adapter).await?;
         Ok(Self {
             device,
@@ -107,6 +118,7 @@ impl GpuContext {
             supports_bc,
             supports_timestamps,
             adapter_info,
+            srgb_twin_views,
             surface: None,
             surface_config: None,
             origin: None,
@@ -161,6 +173,15 @@ impl GpuContext {
 
     pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {
         self.surface_config.as_ref().map(|c| c.format)
+    }
+
+    /// The format egui paints `output` through: its linear twin where one can be viewed, as the browser's canvas is.
+    pub fn ui_format(&self, output: wgpu::TextureFormat) -> wgpu::TextureFormat {
+        if self.srgb_twin_views {
+            output.remove_srgb_suffix()
+        } else {
+            output
+        }
     }
 
     /// Checks an offscreen target's size against this device, so a tool reports it instead of wgpu panicking.
@@ -314,12 +335,13 @@ fn new_instance() -> wgpu::Instance {
     })
 }
 
-/// An sRGB format where the surface has one, at the window's size within the device's limit.
+/// An sRGB format where the surface has one, at the window's size within the device's limit; `twin_view` adds its linear view.
 fn surface_config(
     surface: &wgpu::Surface<'_>,
     adapter: &wgpu::Adapter,
     device: &wgpu::Device,
     size: winit::dpi::PhysicalSize<u32>,
+    twin_view: bool,
 ) -> anyhow::Result<wgpu::SurfaceConfiguration> {
     let caps = surface.get_capabilities(adapter);
     let format = caps
@@ -346,7 +368,12 @@ fn surface_config(
         height,
         present_mode: wgpu::PresentMode::Fifo,
         alpha_mode,
-        view_formats: vec![],
+        // egui blends in sRGB through this view, as on the browser's non-sRGB canvas.
+        view_formats: if twin_view && format.is_srgb() {
+            vec![format.remove_srgb_suffix()]
+        } else {
+            vec![]
+        },
         desired_maximum_frame_latency: 2,
     })
 }

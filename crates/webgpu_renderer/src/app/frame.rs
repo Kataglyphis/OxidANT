@@ -5,7 +5,7 @@ use winit::window::Window;
 use super::{AppSignal, StudioApp};
 use crate::context::AcquireRetry;
 use crate::render::forward::readback;
-use crate::render::texture::create_2d_texture;
+use crate::render::texture::create_viewable_2d_texture;
 use crate::render::tracer::RenderMode;
 use crate::ui::editor::{EditorAction, EditorContext, RendererSettings, SceneStats};
 
@@ -63,7 +63,8 @@ impl StudioApp {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        self.draw(&view, size, output);
+        let ui_view = self.ui_view(&frame.texture);
+        self.draw((&view, &ui_view), size, output);
         window.pre_present_notify();
         self.gpu.present(frame);
         window.request_redraw();
@@ -78,18 +79,22 @@ impl StudioApp {
         let (output, signals) = self.pass(frame.raw_input(), frame.now_s, frame.size_px);
         let [width, height] = frame.size_px;
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
-        let texture = create_2d_texture(
+        let twin = [self.ui_format];
+        let views: &[wgpu::TextureFormat] = if self.ui_format == self.format {
+            &[]
+        } else {
+            &twin
+        };
+        let texture = create_viewable_2d_texture(
             &self.gpu.device,
             Some("studio_offscreen"),
-            width,
-            height,
-            self.format,
-            usage,
-            1,
-            1,
+            (width, height),
+            (self.format, usage),
+            views,
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.draw(&view, frame.size_px, output);
+        let ui_view = self.ui_view(&texture);
+        self.draw((&view, &ui_view), frame.size_px, output);
         let pixels = readback::read_rgba8(&self.gpu, &texture, width, height)?;
         Ok((pixels, signals))
     }
@@ -168,9 +173,18 @@ impl StudioApp {
         }
     }
 
+    /// The frame's view egui paints through, [`Overlay::format`].
+    fn ui_view(&self, texture: &wgpu::Texture) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.ui_format),
+            ..Default::default()
+        })
+    }
+
+    /// The scene into `view`, then the editor over it through `ui_view`, a view of the same texture.
     fn draw(
         &mut self,
-        view: &wgpu::TextureView,
+        (view, ui_view): (&wgpu::TextureView, &wgpu::TextureView),
         [width, height]: [u32; 2],
         output: egui::FullOutput,
     ) {
@@ -189,7 +203,7 @@ impl StudioApp {
                 label: Some("overlay_encoder"),
             });
         self.overlay
-            .paint(&self.gpu, &mut encoder, view, [width, height], output);
+            .paint(&self.gpu, &mut encoder, ui_view, [width, height], output);
         self.gpu.queue.submit(Some(encoder.finish()));
     }
 }
@@ -213,6 +227,10 @@ pub(in crate::app) mod tests {
     }
 
     fn studio_of(asset: &str) -> Option<StudioApp> {
+        studio_in(asset, wgpu::TextureFormat::Rgba8UnormSrgb)
+    }
+
+    fn studio_in(asset: &str, format: wgpu::TextureFormat) -> Option<StudioApp> {
         let gpu = GpuContext::headless_or_skip()?;
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/assets")
@@ -223,7 +241,6 @@ pub(in crate::app) mod tests {
             screenshot: true,
             hot_reload: true,
         };
-        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         Some(StudioApp::headless(
             gpu,
             &scene,
@@ -288,6 +305,50 @@ pub(in crate::app) mod tests {
             pixel(4, 14)
         );
         assert!(!near(pixel(200, 200)), "the scene shows through");
+    }
+
+    /// The menu bar's rows of the third offscreen frame in `format`.
+    fn menu_bar_in(format: wgpu::TextureFormat) -> Option<Vec<u8>> {
+        let mut app = studio_in("cube_on_plane.gltf", format)?;
+        let mut pixels = Vec::new();
+        for step in 0..3 {
+            pixels = app
+                .render_offscreen(&frame(f64::from(step) / 60.0, Vec::new()))
+                .expect("renders")
+                .0;
+        }
+        pixels.truncate(800 * 29 * 4);
+        Some(pixels)
+    }
+
+    /// Text over the panel on the sRGB target matches the browser's linear canvas: egui blends its coverage in sRGB on both.
+    #[test]
+    fn editor_text_on_an_srgb_target_weighs_what_it_does_on_a_linear_one() {
+        let Some(srgb) = menu_bar_in(wgpu::TextureFormat::Rgba8UnormSrgb) else {
+            return;
+        };
+        let linear = menu_bar_in(wgpu::TextureFormat::Rgba8Unorm).expect("the adapter exists");
+        let panel = crate::ui::palette::PANEL.to_array();
+        let ink = |pixels: &[u8]| -> u64 {
+            let texels = pixels.as_chunks::<4>().0;
+            let lift = texels
+                .iter()
+                .flat_map(|px| (0..3).map(move |c| px[c].abs_diff(panel[c])));
+            lift.map(u64::from).sum()
+        };
+        let worst = srgb.iter().zip(&linear).map(|(a, b)| a.abs_diff(*b)).max();
+        let (ink_srgb, ink_linear) = (ink(&srgb), ink(&linear));
+        eprintln!(
+            "menu bar ink: {ink_srgb} on sRGB, {ink_linear} on linear; worst texel {worst:?}"
+        );
+        assert!(
+            ink_linear > 20_000,
+            "the menu bar shows too little text to compare"
+        );
+        assert!(
+            worst <= Some(2),
+            "a menu bar texel differs by {worst:?} levels between the targets"
+        );
     }
 
     #[test]

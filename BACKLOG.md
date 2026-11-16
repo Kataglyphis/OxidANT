@@ -135,10 +135,6 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       as the raster's IBL ambient does, which moves this further from C++. Owner decision;
       if it should match, the C++ side changes, since its raster has no ambient term to follow.
 
-- [ ] **egui text renders heavier natively than in the browser** (S). The native surface is sRGB
-      (`surface_config` in `crates/webgpu_renderer/src/context.rs`), so egui's coverage blends in linear light;
-      the browser canvas is not, so it blends in sRGB. Next: paint egui into a non-sRGB view of the frame.
-
 - [ ] **egui's Style editor and inspection windows show tofu** (S). The studio fonts
       (`crates/webgpu_renderer/src/ui/fonts.rs`, `FontDefinitions::empty()`) carry no emoji, which those two debug windows
       (`crates/webgpu_renderer/src/ui/editor/windows.rs`) draw. Next: add egui's emoji face as the last fallback, inside the wasm budget.

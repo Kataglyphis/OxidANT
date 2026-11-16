@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, egui text weighs natively what it weighs in the browser)
+- **egui paints through the output's linear twin.** On an sRGB surface egui's coverage blended in linear light, so
+  text came out a different weight than on the browser's non-sRGB canvas. The surface now carries its non-sRGB view
+  format (`view_formats`, where the adapter has `SURFACE_VIEW_FORMATS` and `VIEW_FORMATS`), `GpuContext::ui_format`
+  names it, and `StudioApp` paints the scene through the sRGB view and the editor through the linear one
+  (`Overlay::format`), also offscreen (`create_viewable_2d_texture`). Without the flags it paints as before.
+- Tests: `app::frame` `editor_text_on_an_srgb_target_weighs_what_it_does_on_a_linear_one` compares the menu bar of an
+  sRGB and a linear offscreen frame: identical (913887 levels of ink on both, worst texel 0), where the old path left
+  884632 against 913887 and a texel 30 levels off.
+
 ### Added (2026-11-16, F5 reloads the post chain)
 - **`reload_shaders` rebuilds every pass of the frame.** `ShaderSources` carries twelve files (`FILES`, read in order by
   `ShaderSources::from_files`): beside the scene, sky, cloud and traced WGSL now the tonemap, FXAA, bloom, SSAO,

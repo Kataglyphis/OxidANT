@@ -66,6 +66,8 @@ pub struct StudioApp {
     frames: FrameHistory,
     device: DeviceInfo,
     format: wgpu::TextureFormat,
+    /// What egui paints through: `format`'s linear twin where the device can view it, so text blends as in the browser.
+    ui_format: wgpu::TextureFormat,
     tonemap: TonemapPass,
     overlay: Overlay,
     controller: OrbitController,
@@ -92,7 +94,8 @@ impl StudioApp {
             .as_ref()
             .context("StudioApp needs a windowed GpuContext")?;
         let (format, size) = (config.format, [config.width, config.height]);
-        let overlay = Overlay::new(window, &gpu.device, format);
+        let ui_format = config.view_formats.first().copied().unwrap_or(format);
+        let overlay = Overlay::new(window, &gpu.device, ui_format);
         Ok(Self::with_overlay(
             gpu,
             scene,
@@ -110,7 +113,7 @@ impl StudioApp {
         caps: HostCaps,
         format: wgpu::TextureFormat,
     ) -> Self {
-        let overlay = Overlay::headless(&gpu.device, format);
+        let overlay = Overlay::headless(&gpu.device, gpu.ui_format(format));
         Self::with_overlay(gpu, scene, (home, caps), (format, [1, 1]), overlay)
     }
 
@@ -138,6 +141,7 @@ impl StudioApp {
             home,
             caps,
             format,
+            ui_format: overlay.format(),
             clock: FrameClock::new(),
             epoch_s: None,
             gpu,

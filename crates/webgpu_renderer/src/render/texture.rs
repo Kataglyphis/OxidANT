@@ -412,19 +412,56 @@ pub(crate) fn create_2d_texture(
     mip_level_count: u32,
     sample_count: u32,
 ) -> wgpu::Texture {
+    let shape = Shape2d {
+        size: (width, height),
+        mip_level_count,
+        sample_count,
+    };
+    create_2d(device, label, shape, (format, usage), &[])
+}
+
+/// One mip, one sample, viewable as each of `view_formats` too: an output egui paints through its linear twin.
+pub(crate) fn create_viewable_2d_texture(
+    device: &wgpu::Device,
+    label: Option<&str>,
+    size: (u32, u32),
+    (format, usage): (wgpu::TextureFormat, wgpu::TextureUsages),
+    view_formats: &[wgpu::TextureFormat],
+) -> wgpu::Texture {
+    let shape = Shape2d {
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+    };
+    create_2d(device, label, shape, (format, usage), view_formats)
+}
+
+struct Shape2d {
+    size: (u32, u32),
+    mip_level_count: u32,
+    sample_count: u32,
+}
+
+fn create_2d(
+    device: &wgpu::Device,
+    label: Option<&str>,
+    shape: Shape2d,
+    (format, usage): (wgpu::TextureFormat, wgpu::TextureUsages),
+    view_formats: &[wgpu::TextureFormat],
+) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label,
         size: wgpu::Extent3d {
-            width: width.max(1),
-            height: height.max(1),
+            width: shape.size.0.max(1),
+            height: shape.size.1.max(1),
             depth_or_array_layers: 1,
         },
-        mip_level_count,
-        sample_count,
+        mip_level_count: shape.mip_level_count,
+        sample_count: shape.sample_count,
         dimension: wgpu::TextureDimension::D2,
         format,
         usage,
-        view_formats: &[],
+        view_formats,
     })
 }
 
