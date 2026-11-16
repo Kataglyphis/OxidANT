@@ -619,7 +619,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36056503b9996959defdfcf058811637fdf68a2e35a48ee8e39c89a787fe9cdc"
 dependencies = [
  "portable-atomic",
- "ruzstd",
 ]
 
 [[package]]
@@ -5307,6 +5306,7 @@ dependencies = [
  "log",
  "naga",
  "pollster",
+ "ruzstd",
  "sha2",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -7696,9 +7696,9 @@ dependencies = [
 
 [[package]]
 name = "ruzstd"
-version = "0.7.3"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fad02996bfc73da3e301efe90b1837be9ed8f4a462b6ed410aa35d00381de89f"
+checksum = "69e4ce4a039f42bf25920b95667e4d789e98749ab11bbb8d2c2936f788421bb5"
 
 [[package]]
 name = "ryu"

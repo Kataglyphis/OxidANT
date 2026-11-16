@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Security (2026-11-16, Zstandard KTX2 levels without ruzstd 0.7, RUSTSEC-2026-0344)
+- **`ruzstd` 0.7.3 is out of the lock**: its decoder never bounded a block's decompressed size, so a file under
+  128 KiB could allocate gigabytes (RUSTSEC-2026-0344, fixed in 0.9.1). It came only from `basisu` 0.1.0's default
+  `zstd` feature, and `basisu` has no release past 0.1.0 (upstream's `ruzstd ^0.9.1` PR is unmerged), so the
+  renderer builds `basisu` without that feature and inflates Zstandard-supercompressed UASTC KTX2 itself
+  (`src/asset/ktx2_zstd.rs`) with `ruzstd` 0.9.1 (MIT, no `hash` feature), then hands basisu the uncompressed file.
+- **Bounded**: each level must declare and inflate to exactly its 4x4 blocks' size, the chain at most 512 MiB; the
+  read stops one byte past the level, and a frame's window is capped at its level's size (1 MiB at least). Tests: an
+  8 KiB frame of RLE blocks that would inflate to 256 MiB stops at 4097 bytes, a 2 TiB window is refused, a
+  Zstandard UASTC file transcodes and retargets to the same blocks as the uncompressed one.
+  Zstandard on other formats stays refused (ETC1S is always BasisLZ).
+
 ### Added (2026-11-16, a weekly job for the Rust mutation scores)
 - `rust-mutants.yml` runs ObservANT's five `cargo mutants` groups from `docs/testing.md` on Sundays and by hand, one
   job per group, through the new `scripts/linux/run-mutants.sh` (container step `mutants <group>`), and uploads each

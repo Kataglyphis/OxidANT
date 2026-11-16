@@ -22,7 +22,8 @@ pub(crate) fn transcode_basis(reader: &ktx2::Reader<&[u8]>) -> anyhow::Result<Cp
         Some(ktx2::TransferFunction::Linear) => Some(false),
         _ => None,
     };
-    let transcoder = basis_transcoder(reader.data())?;
+    let source = basis_source(reader)?;
+    let transcoder = basis_transcoder(&source)?;
     let (width, height) = transcoder.base_dimensions();
     if !width.is_multiple_of(4) || !height.is_multiple_of(4) {
         return Ok(CpuTexture {
@@ -42,9 +43,22 @@ pub(crate) fn transcode_basis(reader: &ktx2::Reader<&[u8]>) -> anyhow::Result<Cp
             format,
             mips,
             declared_srgb,
-            basis_source: Some(reader.data().into()),
+            basis_source: Some(Arc::clone(&source)),
         }),
     })
+}
+
+/// The file basisu reads: as is, or with Zstandard-supercompressed UASTC levels inflated here, not in basisu.
+fn basis_source(reader: &ktx2::Reader<&[u8]>) -> anyhow::Result<Arc<[u8]>> {
+    if reader.header().supercompression_scheme != Some(ktx2::SupercompressionScheme::Zstandard) {
+        return Ok(reader.data().into());
+    }
+    anyhow::ensure!(
+        reader.color_model() == Some(ktx2::ColorModel::UASTC),
+        "Zstandard KTX2 is supported only for UASTC, not {:?}",
+        reader.color_model()
+    );
+    Ok(super::ktx2_zstd::inflate_uastc_levels(reader)?.into())
 }
 
 /// A transcoder over an ETC1S or UASTC LDR still image; other Basis sources are refused by name.
@@ -244,6 +258,76 @@ mod tests {
             mean < 1.0 && max <= 4,
             "BC7 from UASTC is {mean:.3} off on average, {max} at most"
         );
+    }
+
+    /// `file` with every level replaced by `compress(level)` and the Zstandard scheme declared.
+    fn zstd_levels(file: &[u8], compress: impl Fn(&[u8]) -> Vec<u8>) -> Vec<u8> {
+        let word = |at: usize| u64::from_le_bytes(file[at..at + 8].try_into().unwrap()) as usize;
+        let levels = u32::from_le_bytes(file[40..44].try_into().unwrap()) as usize;
+        let data_start = (0..levels)
+            .map(|level| word(80 + level * 24))
+            .min()
+            .unwrap();
+        let mut out = file[..data_start].to_vec();
+        out[44..48].copy_from_slice(&2u32.to_le_bytes());
+        for level in 0..levels {
+            let (offset, length) = (word(80 + level * 24), word(88 + level * 24));
+            let frame = compress(&file[offset..offset + length]);
+            let entry = 80 + level * 24;
+            let at = out.len() as u64;
+            out[entry..entry + 8].copy_from_slice(&at.to_le_bytes());
+            out[entry + 8..entry + 16].copy_from_slice(&(frame.len() as u64).to_le_bytes());
+            out.extend_from_slice(&frame);
+        }
+        out
+    }
+
+    fn zstd(level: &[u8]) -> Vec<u8> {
+        ruzstd::encoding::compress_to_vec(level, ruzstd::encoding::CompressionLevel::Fastest)
+    }
+
+    #[test]
+    fn zstd_uastc_transcodes_like_the_uncompressed_file_and_retargets() {
+        let plain = uastc_ktx2(
+            16,
+            16,
+            &[ramp_level(4, 4), ramp_level(2, 2), ramp_level(1, 1)],
+        );
+        let packed = zstd_levels(&plain, zstd);
+        assert_eq!(u32::from_le_bytes(packed[44..48].try_into().unwrap()), 2);
+        let want = load_ktx2(&plain).unwrap().compressed.unwrap();
+        let got = load_ktx2(&packed)
+            .expect("a Zstandard UASTC KTX2 must transcode")
+            .compressed
+            .unwrap();
+        assert_eq!(got.mips, want.mips);
+        assert_eq!(got.declared_srgb, Some(true));
+        let etc2 = retarget_basis(&got, CompressedFormat::Etc2Rgba8Unorm)
+            .expect("the inflated file is kept to retarget")
+            .unwrap();
+        let etc2_plain = retarget_basis(&want, CompressedFormat::Etc2Rgba8Unorm)
+            .unwrap()
+            .unwrap();
+        assert_eq!(etc2.mips, etc2_plain.mips);
+    }
+
+    #[test]
+    fn a_zstd_level_that_inflates_past_its_blocks_fails_the_load() {
+        let plain = uastc_ktx2(8, 8, &[ramp_level(2, 2)]);
+        // 64 bytes of blocks, but the frame holds 64 KiB.
+        let packed = zstd_levels(&plain, |_| zstd(&[0x17; 64 << 10]));
+        let err = load_ktx2(&packed).expect_err("an oversized level must fail");
+        assert!(format!("{err:#}").contains("more than 64"), "{err:#}");
+    }
+
+    #[test]
+    fn a_zstd_level_declaring_a_size_its_blocks_do_not_have_fails_the_load() {
+        let plain = uastc_ktx2(8, 8, &[ramp_level(2, 2)]);
+        let mut packed = zstd_levels(&plain, zstd);
+        // The level index's uncompressed length: a 1 GiB claim for 64 bytes of blocks.
+        packed[96..104].copy_from_slice(&(1u64 << 30).to_le_bytes());
+        let err = load_ktx2(&packed).expect_err("a wrong uncompressed length must fail");
+        assert!(format!("{err:#}").contains("its blocks need 64"), "{err:#}");
     }
 
     #[test]

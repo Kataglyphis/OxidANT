@@ -29,8 +29,10 @@ egui = "0.37"
 egui-wgpu = "0.37"
 egui-winit = { version = "0.37", default-features = false }
 ktx2 = "0.5"
-# Pure Rust, so the wasm32 demo transcodes Basis KTX2 too without a C++ toolchain for wasm32.
-basisu = "0.1"
+# Pure Rust for wasm32; no zstd feature, whose ruzstd 0.7 has RUSTSEC-2026-0344: asset/ktx2_zstd.rs inflates.
+basisu = { version = "0.1", default-features = false, features = ["std"] }
+# Zstandard KTX2 levels; 0.9.1 bounds a block's output (RUSTSEC-2026-0344). No `hash`: frame checksums go unchecked.
+ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 # Shader interop with the C++ Vulkan engine: WGSL -> SPIR-V / GLSL.
