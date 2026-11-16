@@ -184,7 +184,7 @@ fn wgsl_layout(wgsl: &str, global: &str) -> (Vec<u32>, u32) {
 #[test]
 fn the_traced_kernels_read_the_rust_uniforms_and_workgroups() {
     use kataglyphis_webgpu_renderer::render::tracer::modes::{
-        TraceFrameUniforms, TraceTileUniforms, KERNEL_GROUP_SIZE,
+        TraceFrameUniforms, TraceTileUniforms, KERNEL_GROUP_SIZE, TRACE_LIGHTS_GROUP,
     };
     use std::mem::{offset_of, size_of};
     let traced = include_str!("../src/shaders/traced.wgsl");
@@ -196,6 +196,7 @@ fn the_traced_kernels_read_the_rust_uniforms_and_workgroups() {
             offset_of!(TraceFrameUniforms, light_radiance) as u32,
             offset_of!(TraceFrameUniforms, furnace) as u32,
             offset_of!(TraceFrameUniforms, view_proj) as u32,
+            offset_of!(TraceFrameUniforms, lights) as u32,
         ],
         size_of::<TraceFrameUniforms>() as u32,
     );
@@ -204,6 +205,15 @@ fn the_traced_kernels_read_the_rust_uniforms_and_workgroups() {
         wgsl_layout(traced, "traceTile_0"),
         (vec![0, 16], size_of::<TraceTileUniforms>() as u32)
     );
+    for (binding, name) in ["tracerLights", "tracerEnvironment"].iter().enumerate() {
+        let declared = format!("@binding({binding}) @group({TRACE_LIGHTS_GROUP}) var");
+        assert!(
+            traced
+                .lines()
+                .any(|line| line.starts_with(&declared) && line.contains(&format!(" {name}_0 "))),
+            "traced.wgsl declares no {name} at {declared}"
+        );
+    }
     // The resolve binds the frame's buffer and reads its first field only.
     let resolve = include_str!("../src/shaders/trace_resolve.wgsl");
     assert_eq!(wgsl_layout(resolve, "resolveParams_0"), (vec![0], 16));

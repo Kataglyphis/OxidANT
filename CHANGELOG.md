@@ -13,6 +13,30 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, the path tracer's punctual lights and environment)
+- **The path tracer lights with the scene's `KHR_lights_punctual` lights.** Each segment picks one light uniformly
+  and divides its term by the pick's chance, 1 / count, through one shadow ray that stops just short of the light, so
+  a punctual light casts a traced shadow; the raster's punctual lights stay shadowless. The falloff, KHR range window
+  and spot cone moved into `shaders/common/punctual_light.slang`, which `forward_lighting.slang` and
+  `trace_shading.slang` both import (`forward.wgsl` regenerated, the same arithmetic). The kernels bind the raster's
+  light buffer itself and the environment cube at a third group (`TRACE_LIGHTS_GROUP`), 6 of WebGPU's 8 storage
+  buffers per stage. The ray-traced mode keeps no punctual lights, as the C++ one has none.
+- **A bounce that misses sees the loaded environment** (`set_environment`) at mip 0, times the ambient strength and
+  the environment's intensity as the raster's IBL ambient takes it; without one, the gradient as before. The camera's
+  misses keep the procedural sky. The accumulation starts over when a light changes (a hash of the packed lights) or
+  an environment is set or cleared (`AccumulationKey::lights`, `environment`).
+- `tests/traced_lights.rs` on lavapipe: two ranged point lights lit where raster lights them (IoU 0.976 of the pixels
+  over a tenth of the peak), nothing past their range windows, the centre 0.55 % under the analytic radiance (raster
+  0.08 % over); a spot cone cut where raster cuts it (IoU 1.0); the ground behind a wall black in the traced frame
+  where shadowless raster lights it (0.0000 against 0.0969), beside it within 2 %; a white card under a constant
+  coloured environment at 0.994 of its colour in every channel. Mutations, each failing its test: dropping the
+  1/count (centre 0.390 against 0.784), the shadow ray (0.0961 behind the wall), the environment sample (the card at
+  0.36, 0.80 and 1.99 of the environment). `tests/traced_modes.rs` adds the environment to the reset premises.
+- **One shadow-ray call site in the path tracer.** SwiftShader inlines a whole traversal per call site: with one
+  `trace_any` call for the sun and one for the punctual light, the web demo's path-traced frame did not arrive within
+  the browser test's 300 s. `next_event` now traces both from one loop (`LightSample`, `shadowed`): 117 s, against
+  124 s before the punctual lights, and the same verdicts (light 165.7, tint 28.3).
+
 ### Changed (2026-11-16, the browser test judges the traced modes by their shadows)
 - **A traced frame must draw its own shadow, not just change 1 % of the viewport**, which the ray and path tracers
   cleared by 2.6 and 3.2 %. In the cube's sun shadow, which the ray tracer leaves black for want of an ambient term,

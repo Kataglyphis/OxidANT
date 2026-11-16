@@ -377,6 +377,7 @@ pub struct IblEnvironment {
     prefiltered: wgpu::Texture,
     irradiance_view: wgpu::TextureView,
     prefiltered_view: wgpu::TextureView,
+    environment_view: wgpu::TextureView,
 }
 
 impl IblEnvironment {
@@ -481,14 +482,13 @@ impl IblEnvironment {
 
         gpu.queue.submit(Some(encoder.finish()));
 
-        let irradiance_view = cube_view_all_mips(&irradiance);
-        let prefiltered_view = cube_view_all_mips(&prefiltered);
         Self {
             environment,
+            irradiance_view: cube_view_all_mips(&irradiance),
+            prefiltered_view: cube_view_all_mips(&prefiltered),
+            environment_view: environment_all_mips,
             irradiance,
             prefiltered,
-            irradiance_view,
-            prefiltered_view,
         }
     }
 
@@ -506,6 +506,11 @@ impl IblEnvironment {
 
     pub fn prefiltered_view(&self) -> &wgpu::TextureView {
         &self.prefiltered_view
+    }
+
+    /// The environment's radiance as a cube, every mip: what the path tracer's bounces see.
+    pub fn environment_view(&self) -> &wgpu::TextureView {
+        &self.environment_view
     }
 
     /// Highest prefiltered mip (roughness 1.0); the forward shader scales roughness by it.

@@ -388,6 +388,7 @@ impl ForwardRenderer {
             &ibl.fallback.sampler,
         );
         ibl.environment = Some(environment);
+        ibl.generation += 1;
         self.write_ibl_uniforms(gpu);
     }
 
@@ -395,6 +396,7 @@ impl ForwardRenderer {
     pub fn clear_environment(&mut self, gpu: &GpuContext) {
         let ibl = &mut self.ibl;
         ibl.environment = None;
+        ibl.generation += 1;
         ibl.bind_group = ibl.fallback_bind_group(&gpu.device);
         self.write_ibl_uniforms(gpu);
     }

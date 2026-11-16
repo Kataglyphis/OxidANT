@@ -61,15 +61,20 @@ float3 miss_radiance(float3 dir, uint bounce)
 {
     if (furnace_on())
         return float3(traceFrame.furnace.x);
-    return bounce == 0u ? sky_with_sun(dir) : sky_gradient(dir) * traceFrame.light_radiance.w;
+    return bounce == 0u ? sky_with_sun(dir) : bounce_sky(dir);
 }
 
-// The sun through one shadow ray; the furnace has a uniform sky and no sun.
-float3 next_event(TracedSurface s, float3 v)
+// The sun and one punctual light, each through a shadow ray; the furnace has a uniform sky and no lights.
+float3 next_event(TracedSurface s, float3 v, inout uint rng)
 {
     if (furnace_on())
         return float3(0.0);
-    return sun_light(s, v);
+    LightSample lights[2] = { sun_sample(s, v), punctual_light_sample(s, v, rng) };
+    float3 lit = float3(0.0);
+    // One shadow-ray call site in a loop: SwiftShader inlines a whole traversal per call site, and compiles for minutes.
+    for (uint i = 0u; i < 2u; i++)
+        lit += shadowed(s, lights[i]);
+    return lit;
 }
 
 // Russian roulette from the fourth segment, survival in [0.05, 0.95]; the 1/survival reweight keeps it unbiased.
@@ -109,7 +114,7 @@ float3 trace_path(uint2 pixel, inout uint rng)
             break;
         }
         float3 v = -ray.direction;
-        radiance += throughput * (s.emissive + next_event(s, v));
+        radiance += throughput * (s.emissive + next_event(s, v, rng));
         Bounce next = sample_bounce(s.normal, s.face_normal, v, s.albedo, s.metallic, s.roughness, rng);
         if (all(next.weight == float3(0.0)))
             break;

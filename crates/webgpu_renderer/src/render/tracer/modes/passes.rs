@@ -10,6 +10,8 @@ use crate::render::{bind_layout, buffer_desc};
 
 /// `trace_shading.slang`'s `TRACE_GROUP_SIZE`: a kernel's workgroup is this square of pixels.
 pub const KERNEL_GROUP_SIZE: u32 = 8;
+/// `trace_shading.slang`'s group of the raster's punctual lights and IBL environment, after the kernel's and the scene's.
+pub const TRACE_LIGHTS_GROUP: u32 = 2;
 /// Dispatch slots the tile buffer starts with; it doubles when a frame needs more.
 const INITIAL_TILE_SLOTS: usize = 64;
 
@@ -28,6 +30,8 @@ pub struct TraceFrameUniforms {
     pub furnace: [f32; 4],
     /// The raster's world to clip, for the primary hit's depth.
     pub view_proj: [[f32; 4]; 4],
+    /// The punctual light count, 1 when an environment is bound, unused, unused.
+    pub lights: [u32; 4],
 }
 
 /// `TraceTile` in `trace_shading.slang`: one dispatch's tile and samples.
@@ -57,10 +61,18 @@ pub enum Kernel {
 /// Draws into the resolve's pass after it, against the depth it wrote: the ray-traced mode's sky.
 pub type AfterResolve<'a> = &'a dyn Fn(&mut wgpu::RenderPass<'_>);
 
+/// What a path lights with besides the sun: the raster's punctual lights and the environment cube (a stand-in without one).
+#[derive(Clone, Copy)]
+pub struct TraceLights<'a> {
+    pub punctual: &'a wgpu::Buffer,
+    pub environment: &'a wgpu::TextureView,
+}
+
 /// One traced frame: what it traces, how, and the HDR and single-sample depth targets it resolves into.
 pub struct TracedFrame<'a> {
     pub kernel: Kernel,
     pub scene: &'a TraceGpuScene,
+    pub lights: TraceLights<'a>,
     pub uniforms: TraceFrameUniforms,
     pub dispatches: &'a [TraceDispatch],
     pub hdr_view: &'a wgpu::TextureView,
@@ -108,10 +120,15 @@ struct Kernels {
 }
 
 impl Kernels {
-    /// The scene's group comes second, as `bvh_traverse.slang` declares it.
-    fn new(device: &wgpu::Device, kernel_layout: &wgpu::BindGroupLayout, wgsl: &str) -> Self {
+    /// The scene's group comes second, as `bvh_traverse.slang` declares it, and the lights' third.
+    fn new(
+        device: &wgpu::Device,
+        (kernel_layout, lights_layout): (&wgpu::BindGroupLayout, &wgpu::BindGroupLayout),
+        wgsl: &str,
+    ) -> Self {
         let scene_layout = TraceGpuScene::bind_group_layout(device);
         debug_assert_eq!(TRACE_SCENE_GROUP, 1, "the layout lists the scene second");
+        debug_assert_eq!(TRACE_LIGHTS_GROUP, 2, "the layout lists the lights third");
         Self {
             module: device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("traced"),
@@ -119,7 +136,11 @@ impl Kernels {
             }),
             layout: device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("traced_kernel_pipeline_layout"),
-                bind_group_layouts: &[Some(kernel_layout), Some(&scene_layout)],
+                bind_group_layouts: &[
+                    Some(kernel_layout),
+                    Some(&scene_layout),
+                    Some(lights_layout),
+                ],
                 immediate_size: 0,
             }),
             ray: None,
@@ -159,6 +180,9 @@ pub struct TracedPasses {
     resolve: wgpu::RenderPipeline,
     kernel_layout: wgpu::BindGroupLayout,
     resolve_layout: wgpu::BindGroupLayout,
+    lights_layout: wgpu::BindGroupLayout,
+    /// The last frame's lights group, kept with the pass that binds it.
+    lights_group: Option<wgpu::BindGroup>,
     frame: wgpu::Buffer,
     tiles: TileSlots,
     target: Option<Target>,
@@ -206,11 +230,14 @@ impl TracedPasses {
         let stride = tile_size.next_multiple_of(u64::from(
             device.limits().min_uniform_buffer_offset_alignment,
         ));
+        let lights_layout = create_lights_layout(device);
         Self {
-            kernels: Kernels::new(device, &kernel_layout, sources.traced),
+            kernels: Kernels::new(device, (&kernel_layout, &lights_layout), sources.traced),
             resolve: create_resolve(device, &resolve_layout, sources.resolve),
             kernel_layout,
             resolve_layout,
+            lights_layout,
+            lights_group: None,
             frame: buffer_desc::uniform(
                 device,
                 "traced_frame",
@@ -235,6 +262,7 @@ impl TracedPasses {
         gpu.queue
             .write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame.uniforms));
         self.tiles.write(gpu, frame.dispatches);
+        self.lights_group = Some(self.bind_lights(&gpu.device, frame.lights));
         self.encode_kernel(encoder, frame, trace_scope);
         self.encode_resolve(encoder, frame, resolve_scope);
         Ok(())
@@ -254,6 +282,7 @@ impl TracedPasses {
         });
         pass.set_pipeline(self.kernels.compiled(frame.kernel));
         pass.set_bind_group(TRACE_SCENE_GROUP, frame.scene.bind_group(), &[]);
+        pass.set_bind_group(TRACE_LIGHTS_GROUP, self.lights_group.as_ref(), &[]);
         for (slot, dispatch) in frame.dispatches.iter().enumerate() {
             let offset = (slot as u64 * self.tiles.stride) as u32;
             pass.set_bind_group(0, &target.kernel_group, &[offset]);
@@ -281,6 +310,18 @@ impl TracedPasses {
             self.target = Some(self.bind(&gpu.device, size, accumulation));
         }
         Ok(())
+    }
+
+    /// Built per frame, which costs nothing beside a traced frame, so a swapped environment needs no invalidation.
+    fn bind_lights(&self, device: &wgpu::Device, lights: TraceLights<'_>) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("traced_lights_group"),
+            layout: &self.lights_layout,
+            entries: &[
+                buffer_entry(0, lights.punctual.as_entire_binding()),
+                buffer_entry(1, wgpu::BindingResource::TextureView(lights.environment)),
+            ],
+        })
     }
 
     fn bind(&self, device: &wgpu::Device, size: (u32, u32), accumulation: wgpu::Buffer) -> Target {
@@ -414,6 +455,24 @@ fn create_accumulation(device: &wgpu::Device, size: (u32, u32)) -> Result<wgpu::
 
 fn buffer_entry(binding: u32, resource: wgpu::BindingResource<'_>) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry { binding, resource }
+}
+
+/// The punctual lights (read-only storage) and the environment cube, sampled with the scene's linear sampler.
+fn create_lights_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let compute = wgpu::ShaderStages::COMPUTE;
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("traced_lights_layout"),
+        entries: &[
+            bind_layout::storage_buffer(0, compute, true),
+            bind_layout::texture(
+                1,
+                compute,
+                wgpu::TextureSampleType::Float { filterable: true },
+                wgpu::TextureViewDimension::Cube,
+                false,
+            ),
+        ],
+    })
 }
 
 /// A full-screen copy that writes every pixel's depth too, so it tests nothing and always writes.

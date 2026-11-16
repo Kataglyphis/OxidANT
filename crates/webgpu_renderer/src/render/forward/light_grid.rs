@@ -1,5 +1,7 @@
 //! Group 3 of the forward pipelines: the punctual lights and the per-tile light grid over them.
 
+use std::hash::{Hash as _, Hasher as _};
+
 use super::frame::FrameView;
 use super::{ForwardRenderer, MAX_PUNCTUAL_LIGHTS};
 use crate::context::GpuContext;
@@ -8,8 +10,8 @@ use crate::render::buffer_desc;
 use crate::render::tile_grid::{build_tile_light_grid, TileLightGridScratch, MAX_LIGHTS_PER_TILE};
 
 pub(super) struct LightResources {
-    /// Punctual lights (up to `MAX_PUNCTUAL_LIGHTS`), group 3 binding 0 of the forward shader.
-    storage_buffer: wgpu::Buffer,
+    /// Punctual lights (up to `MAX_PUNCTUAL_LIGHTS`), group 3 binding 0 of the forward shader; the path tracer binds it too.
+    pub(super) storage_buffer: wgpu::Buffer,
     /// Group 3: the lights and the tile grid below, rebuilt when a tile buffer grows.
     pub(super) layout: wgpu::BindGroupLayout,
     pub(super) bind_group: wgpu::BindGroup,
@@ -69,6 +71,17 @@ impl LightResources {
             punctual: [[0.0; 4]; MAX_PUNCTUAL_LIGHTS * 4],
             punctual_count: 0,
         }
+    }
+
+    /// A hash of the packed lights the GPU reads, for the path tracer's accumulation key.
+    pub(super) fn fingerprint(&self) -> u64 {
+        let mut hasher = std::hash::DefaultHasher::new();
+        let count = self.punctual_count as usize;
+        for row in &self.punctual[..count * 4] {
+            row.map(f32::to_bits).hash(&mut hasher);
+        }
+        count.hash(&mut hasher);
+        hasher.finish()
     }
 
     /// A bind group captures buffer identity, so rebuild it if either buffer is recreated.

@@ -98,7 +98,9 @@ array render with their factor alone.
 ## Limits
 
 The scene binds 4 storage buffers, so a kernel keeps 4 of WebGPU's default 8 per stage,
-plus 2 sampled textures and 2 samplers. In the browser the device has WebGPU's defaults:
+plus 2 sampled textures and 2 samplers. The modes' kernels use 6 of the 8: the scene's 4, the
+accumulation and the punctual lights; 3 sampled textures (the environment cube is the third) and
+the scene's 2 samplers. In the browser the device has WebGPU's defaults:
 128 MiB per storage binding, room for about 4 M vertices. Natively `GpuContext` requests the
 adapter's `max_storage_buffer_binding_size` and `max_buffer_size` and every other limit at
 the web's default, so native tests still fail where the browser would. `TraceGpuScene::upload`
@@ -173,14 +175,15 @@ shading shared by both kernels: `trace_shading.slang`; the estimator: `path_esti
 times vertex colour, the metallic-roughness and normal maps at level 0, the forward pass's
 `brdf_direct` (GGX and Lambert) lit by the sun through one shadow ray (any-hit, MASK
 alpha-tested), plus emission. An unlit material returns its albedo. No ambient term and no
-punctual lights, as the C++ engine has neither. A miss is left to the sky pass, drawn in the
+punctual lights, as the C++ engine has neither; the path tracer has both. A miss is left to the sky pass, drawn in the
 resolve's render pass against the traced depth: the cube map, the C++ navy with the skybox
 switched off, or the procedural sky and its sun disk without a cube map, as raster draws it
 (the C++ ray-traced mode shows its skybox).
 
 **Path traced**, the estimator of BeschleunigerBallett's `path_tracing.slang`: `samples_per_pixel`
 (1-64, default 8) paths a pixel and frame of at most `max_bounces` (1-16, default 8) segments; a
-primary ray jittered inside the pixel; NEE to the sun on every segment through the same BRDF; a
+primary ray jittered inside the pixel; NEE to the sun and to one punctual light on every segment
+through the same BRDF; a
 bounce that samples the GGX lobe (visible normals) or the cosine lobe by the lobe's Fresnel share
 and divides by the mixture's density; Russian roulette from the fourth segment, survival in
 0.05-0.95; an unlit surface ends its path at its albedo; emission is added before the surface
@@ -188,13 +191,28 @@ absorbs. Metallic is the factor times the texture, so an untextured factor count
 kernel once applied it with a texture only). A camera ray that misses sees the procedural sky, sun
 disk included. A bounce that misses gets the sky's light as the raster's ambient term does: the
 gradient times the ambient strength (`light_dir_ambient.w`) and the environment's intensity,
-without the disk, which NEE brings. So the path tracer lights a scene as raster does, plus the
-bounces and the sky's occlusion.
+without the disk, which NEE brings; with an environment loaded (`set_environment`), the
+environment's radiance cube at mip 0 in place of the gradient, as the raster's IBL ambient takes it.
+So the path tracer lights a scene as raster does, plus the bounces and the sky's occlusion. The
+environment is sampled only where a bounce happens to miss, with no importance sampling, so a small
+bright sun in an `.hdr` converges slowly.
+
+**Punctual lights.** Each segment picks one of the raster's `KHR_lights_punctual` lights
+uniformly, evaluates it as the raster does (`shaders/common/punctual_light.slang`, shared with
+`forward_lighting.slang`: inverse square, the KHR range window, the spot cone's smoothstep;
+directional lights unattenuated) and divides by the pick's chance, 1 / count, through a shadow ray
+that stops just short of the light. So a punctual light casts a traced shadow, which the raster's
+shadowless punctual lights do not. The kernels read the raster's light buffer itself, at
+`TRACE_LIGHTS_GROUP` (2): binding 0 the lights in `render::lights`' four rows, binding 1 the
+environment cube (the IBL's 1x1 stand-in without one); `TraceFrame::lights` carries the count and
+whether an environment is bound.
 
 **Accumulation.** One running mean a pixel in `array<vec4<f32>>`, 16 bytes a pixel: WebGPU has
 no read-write `rgba32f` storage texture. It starts over when `AccumulationKey` changes (the
 view-projection, eye and output size; the sun's direction, colour and intensity; the sky's light;
-the settings; the tracer's generation, which a build and every instance move bump), on `reset_accumulation()`,
+the settings; the tracer's generation, which a build and every instance move bump; a hash of the
+packed punctual lights, so a moved, animated or recoloured light counts; the environment's
+generation, which every `set_environment` and `clear_environment` bump), on `reset_accumulation()`,
 after a shader reload, and after any frame that is not path traced. A material changes only with
 a new scene, which rebuilds the traced one. The RNG stream of a dispatch is its pixel index plus
 the samples accumulated before it times 2654435769, the C++ seed with samples for frames.
@@ -219,7 +237,10 @@ furnace, whose test zeroes the light instead.
 browser's GPU watchdog. Each dispatch binds its tile and samples at a dynamic uniform offset.
 Each kernel compiles the first time its mode draws: SwiftShader, which backs WebGPU in a
 GPU-less Chrome, takes about two minutes for the path-tracing kernel and three seconds for the
-ray-tracing one; lavapipe takes about a second.
+ray-tracing one; lavapipe takes about a second. SwiftShader inlines a whole traversal at every call site, so the
+path tracer keeps one any-hit call: `next_event` traces the sun's and the punctual light's shadow
+rays from one loop. With a call each, the web demo's path-traced frame did not arrive within
+the browser test's 300 s; with the loop it took 117 s, against 124 before the punctual lights.
 
 **Animation and placement.** The renderer moves the traced instances of rigid animated nodes to
 the raster's poses each frame (`set_primitive_transforms`), which restarts the mean; skins and
@@ -238,8 +259,10 @@ error scope, though they otherwise compile on their mode's first frame: a module
 refuses keeps the old pipelines, an accepted one replaces them and restarts the mean.
 
 **On purpose unlike the C++ engine:** a path-traced bounce that misses gets the renderer's sky
-gradient times the ambient strength and the environment's intensity (C++: an RTIOW gradient at
-half intensity, whose raster has no ambient term to match), and a path-traced camera miss sees
+gradient, or the loaded environment, times the ambient strength and the environment's intensity
+(C++: an RTIOW gradient at half intensity, whose raster has no ambient term to match); the path
+tracer lights with the scene's punctual lights (C++: neither of its traced modes has any, so the
+ray-traced mode keeps none here); and a path-traced camera miss sees
 that procedural sky with its sun disk, not the cube map; offsets and side tests take the
 triangle's face normal (C++: the interpolated one); camera rays clip to the near and far planes as raster does (C++: 0.001-10000
 from the eye, which bounces keep). The whole frame is traced, docks included, as in C++.
@@ -265,6 +288,16 @@ does not fit drawing and reporting raster, accumulation that settles, every rese
 the untextured metallic factor, unlit albedo in every mode, the traced shadow against the
 cascades' (IoU over 0.75; measured 0.98) and black, the lens shift, the raster round trip, and
 that no raster pass runs or is timed, and that a shader reload rebuilds both kernels or keeps them.
+`tests/traced_lights.rs` (lavapipe): two ranged point lights over a ground plane lit where raster
+lights it (IoU of the pixels over a tenth of the peak above 0.9; measured 0.976), nothing past their
+range windows, and the centre within 3 % of the analytic radiance (measured 0.5 % under; raster
+within 1 %, measured 0.1 %); a spot light's cone where raster cuts it (IoU 1.0), dark past the outer
+cone and lit inside the inner one; a wall between a point light and the ground leaving the ground
+behind it black (raster, shadowless, lights it) while the ground beside it matches raster within
+2 %; a white card under a constant coloured environment converging to its colour times E(1),
+0.994 in each channel. Dropping the 1/count halves the centre (0.390 against 0.784), dropping the
+shadow ray lights the wall's shadow (0.096 against 0.097 raster), and the gradient in place of the
+environment turns the card blue (0.36, 0.80, 1.99 of the environment): each fails its test.
 `tests/feature_matrix.rs` runs the traced modes over the deferred path beside both raster paths:
 the clouds stop at a wall in front (0 wall pixels change in either mode while 10743 and 10748 of
 13332 sky pixels do), the traced depth against the raster one, the cube map, navy and procedural

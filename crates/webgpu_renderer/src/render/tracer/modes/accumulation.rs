@@ -21,6 +21,10 @@ pub struct AccumulationKey {
     pub settings: TraceSettings,
     /// The traced scene's generation: a new build, or instances moved (the model transform, animation).
     pub scene: u64,
+    /// A fingerprint of the punctual lights as packed for the GPU: any light added, moved or recoloured.
+    pub lights: u64,
+    /// The bound environment's generation: one set or cleared.
+    pub environment: u64,
 }
 
 /// How many samples the accumulation holds, and the key they were traced under.
@@ -71,6 +75,8 @@ mod tests {
             sky_light: 0.35,
             settings: TraceSettings::default(),
             scene: 1,
+            lights: 7,
+            environment: 0,
         }
     }
 
@@ -94,7 +100,7 @@ mod tests {
 
     #[test]
     fn every_premise_of_the_mean_starts_it_over() {
-        let edits: [fn(&mut AccumulationKey); 10] = [
+        let edits: [fn(&mut AccumulationKey); 12] = [
             |k| k.view_proj = Mat4::from_translation(Vec3::X * 1e-3),
             |k| k.eye.x += 1e-3,
             |k| k.size.0 += 1,
@@ -105,6 +111,8 @@ mod tests {
             |k| k.settings.max_bounces = 1,
             |k| k.settings.furnace = Some(FurnaceSettings::default()),
             |k| k.scene += 1,
+            |k| k.lights ^= 1,
+            |k| k.environment += 1,
         ];
         let base = key();
         for edit in edits {

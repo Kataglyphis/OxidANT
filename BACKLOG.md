@@ -86,12 +86,6 @@ its open work is here.
       BVH from the skinned positions on a pose change. Guard: `skinned_bar.gltf` posed away from its rest,
       traced against raster as `the_traced_scene_follows_an_animated_node` does for a rigid node.
 
-- [ ] **The path tracer ignores punctual lights and a loaded HDR environment** (M, ★★). NEE samples the
-      sun alone and a bounce that misses sees the procedural gradient (`shaders/tracer/traced.slang`,
-      `miss_radiance`), so `KHR_lights_punctual` scenes and a bound `.hdr` light the raster frame only.
-      Next: punctual lights in NEE, then the environment as the miss term. Guard: a lone card lit by a point
-      light, traced against raster within a tolerance.
-
 - [ ] **Clouds are dark and grainy in both renderers** (M, ★★). The shared estimator
       (`shaders/common/volumetric_clouds.slang`) has no ambient term, so a cloud is darker than the sky
       around it, and 8 steps through a slab seen at a grazing angle undersample the fine noise. Fixing it moves
@@ -149,7 +143,9 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
 
 - [ ] **Decide whether the path tracer's bounce misses match the C++ sky** (S). On purpose, a bounce that misses
       gets the renderer's sky gradient times the ambient strength and the environment intensity, where the C++
-      path tracer uses a fixed gradient at half intensity (roadmap, ray- and path-traced row). Owner decision;
+      path tracer uses a fixed gradient at half intensity (roadmap, ray- and path-traced row). Since 2026-11-16 a
+      loaded environment replaces that gradient on a bounce miss (`bounce_sky` in `shaders/tracer/trace_shading.slang`),
+      as the raster's IBL ambient does, which moves this further from C++. Owner decision;
       if it should match, the C++ side changes, since its raster has no ambient term to follow.
 
 - [ ] **A new `set_instances` count waits for the next upload** (S). A count change flags

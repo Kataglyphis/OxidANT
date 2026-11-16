@@ -2,6 +2,8 @@
 
 import bvh_traverse;
 import brdf;
+import path_estimator;
+import punctual_light;
 import sky_model;
 
 // render::tracer::modes::KERNEL_GROUP_SIZE: each kernel's workgroup is this square of pixels.
@@ -23,6 +25,7 @@ struct TraceFrame
     float4 light_radiance;   // colour times intensity; w: the sky's light, the raster's ambient strength times its environment's
     float4 furnace;          // the white furnace's sky radiance, metallic, roughness; w: 1 when on
     float4x4 view_proj;      // world to clip, the raster's, so a hit's depth is the one raster writes
+    uint4 lights;            // punctual light count, 1 when an environment is bound, unused, unused
 };
 
 // One dispatch's pixels and samples, bound at a dynamic offset: render::tracer::modes::TraceDispatch.
@@ -36,6 +39,9 @@ struct TraceTile
 // One running mean per pixel, row-major; WebGPU has no read-write rgba32f storage texture. Alpha: the primary hit's NDC depth.
 [vk::binding(1, 0)] RWStructuredBuffer<float4> traceAccumulation;
 [vk::binding(2, 0)] ConstantBuffer<TraceTile> traceTile;
+// The raster's punctual lights and IBL environment, at render::tracer::modes::TRACE_LIGHTS_GROUP.
+[vk::binding(0, 2)] StructuredBuffer<float4> tracerLights;
+[vk::binding(1, 2)] TextureCube<float4> tracerEnvironment;
 
 // A hit as both kernels shade it.
 struct TracedSurface
@@ -137,29 +143,89 @@ TracedSurface shade_hit(TraceRay ray, TraceHit hit)
     return o;
 }
 
-// Whether the sun reaches the surface: any hit on the way blocks it, MASK cut-outs alpha-tested.
-bool sun_visible(TracedSurface s)
+// Whether a light `distance` along `l` reaches the surface: any hit on the way blocks it, MASK cut-outs alpha-tested.
+bool light_visible(TracedSurface s, float3 l, float distance)
 {
     TraceRay ray;
     ray.origin = s.position + s.face_normal * TRACE_SURFACE_OFFSET;
     ray.tmin = TRACE_TMIN;
-    ray.direction = traceFrame.light_dir.xyz;
-    ray.tmax = TRACE_TMAX;
+    ray.direction = l;
+    ray.tmax = min(distance, TRACE_TMAX);
     return !trace_any(ray);
 }
 
-// The sun's GGX and Lambert term through the forward pass's BRDF, or nothing in its shadow.
+// A light's unshadowed term at a surface, and the shadow ray that decides it.
+struct LightSample
+{
+    float3 radiance;
+    float3 l;
+    float distance;
+};
+
+LightSample unlit_sample()
+{
+    LightSample o;
+    o.radiance = float3(0.0);
+    o.l = float3(0.0, 1.0, 0.0);
+    o.distance = 0.0;
+    return o;
+}
+
+// Its term, or nothing when the shadow ray is blocked; a zero term traces no ray.
+float3 shadowed(TracedSurface s, LightSample light)
+{
+    return any(light.radiance > 0.0) && light_visible(s, light.l, light.distance) ? light.radiance : float3(0.0);
+}
+
+// The sun's GGX and Lambert term through the forward pass's BRDF.
+LightSample sun_sample(TracedSurface s, float3 v)
+{
+    LightSample o = unlit_sample();
+    o.l = traceFrame.light_dir.xyz;
+    o.distance = TRACE_TMAX;
+    if (dot(s.normal, o.l) <= 0.0)
+        return o;
+    float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);
+    o.radiance = brdf_direct(s.normal, v, o.l, s.albedo, s.metallic, s.roughness, f0, traceFrame.light_radiance.rgb);
+    return o;
+}
+
+// The sun's term, or nothing in its shadow.
 float3 sun_light(TracedSurface s, float3 v)
 {
-    float3 l = traceFrame.light_dir.xyz;
-    if (dot(s.normal, l) <= 0.0 || !sun_visible(s))
-        return float3(0.0);
-    float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);
-    return brdf_direct(s.normal, v, l, s.albedo, s.metallic, s.roughness, f0, traceFrame.light_radiance.rgb);
+    return shadowed(s, sun_sample(s, v));
 }
 
 // The raster sky, sun disk included: what a camera ray that hits nothing sees.
 float3 sky_with_sun(float3 dir)
 {
     return sky_gradient(dir) + sun_disk(dir, traceFrame.light_dir.xyz, traceFrame.light_dir.w);
+}
+
+// One punctual light picked uniformly, lit as punctual_lighting lights it, over its 1/count chance.
+LightSample punctual_light_sample(TracedSurface s, float3 v, inout uint rng)
+{
+    LightSample o = unlit_sample();
+    uint count = traceFrame.lights.x;
+    if (count == 0u)
+        return o;
+    uint index = min(uint(rng_next(rng) * float(count)), count - 1u);
+    PunctualLight light = unpack_punctual_light(tracerLights[index * 4u], tracerLights[index * 4u + 1u],
+        tracerLights[index * 4u + 2u], tracerLights[index * 4u + 3u]);
+    PunctualIncidence incidence = punctual_incidence(light, s.position);
+    o.l = incidence.l;
+    // Short of the light, so geometry at its position does not shadow it.
+    o.distance = incidence.distance * (1.0 - 1e-4);
+    if (incidence.attenuation <= 0.0 || dot(s.normal, incidence.l) <= 0.0)
+        return o;
+    float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);
+    o.radiance = brdf_direct(s.normal, v, incidence.l, s.albedo, s.metallic, s.roughness, f0, light.radiance * incidence.attenuation) * float(count);
+    return o;
+}
+
+// The light a bounce that misses gets, as the raster's ambient term: the bound environment, else the sky gradient.
+float3 bounce_sky(float3 dir)
+{
+    float3 sky = traceFrame.lights.y != 0u ? tracerEnvironment.SampleLevel(tracerLinearSampler, dir, 0.0).rgb : sky_gradient(dir);
+    return sky * traceFrame.light_radiance.w;
 }

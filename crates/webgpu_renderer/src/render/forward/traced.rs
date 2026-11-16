@@ -10,7 +10,7 @@ use crate::context::GpuContext;
 use crate::render::gpu_timing::TimedPass;
 use crate::render::tracer::modes::{
     accumulation_bytes, accumulation_limit, plan, Accumulation, AccumulationKey, AfterResolve,
-    Kernel, TraceDispatch, TraceFrameUniforms, TracedFrame, TracedPasses,
+    Kernel, TraceDispatch, TraceFrameUniforms, TraceLights, TracedFrame, TracedPasses,
 };
 use crate::render::tracer::{RenderMode, TraceSettings, TraceStatus, Tracer};
 use crate::scene::CpuScene;
@@ -211,6 +211,8 @@ impl ForwardRenderer {
             sky_light: self.sky_light(),
             settings,
             scene: self.tracer.generation(),
+            lights: self.lights.fingerprint(),
+            environment: self.ibl.generation,
         };
         let accumulated = self.traced.accumulation.begin(key);
         let dispatches = plan(
@@ -222,7 +224,7 @@ impl ForwardRenderer {
         (Kernel::Path, TimedPass::PathTrace, dispatches)
     }
 
-    /// The camera, the sun and the furnace as both kernels read them.
+    /// The camera, the sun, the punctual lights, the environment and the furnace as both kernels read them.
     fn trace_uniforms(&self, view: &FrameView, settings: TraceSettings) -> TraceFrameUniforms {
         let light = self.light_dir_ambient.truncate().normalize_or(Vec3::Y);
         let colour = self.light_color_intensity;
@@ -237,6 +239,12 @@ impl ForwardRenderer {
                 [furnace.radiance, furnace.metallic, furnace.roughness, 1.0]
             }),
             view_proj: view.view_proj.to_cols_array_2d(),
+            lights: [
+                self.lights.punctual_count,
+                u32::from(self.environment_enabled()),
+                0,
+                0,
+            ],
         }
     }
 
@@ -277,9 +285,20 @@ impl ForwardRenderer {
         let draw_sky = sky_pipeline.map(|pipeline| {
             move |pass: &mut wgpu::RenderPass<'_>| sky_res.draw_with(pass, pipeline)
         });
+        let lights = TraceLights {
+            punctual: &self.lights.storage_buffer,
+            environment: self
+                .ibl
+                .environment
+                .as_ref()
+                .map_or(&self.ibl.fallback.prefiltered, |environment| {
+                    environment.environment_view()
+                }),
+        };
         let frame = TracedFrame {
             kernel,
             scene,
+            lights,
             uniforms,
             dispatches,
             hdr_view: &self.targets.hdr_view,

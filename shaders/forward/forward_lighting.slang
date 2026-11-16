@@ -1,4 +1,5 @@
 import brdf;
+import punctual_light;
 import sky_model;
 
 // The lighting forward.slang's forward and deferred lighting passes share, so the two paths cannot drift apart.
@@ -184,37 +185,11 @@ float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
     for (uint j = 0u; j < tileCount; j++)
     {
         uint lightIdx = listed ? tileLightIndices[tileOffset + j] : j;
-        float4 a = punctualLights[lightIdx * 4u];
-        float4 b = punctualLights[lightIdx * 4u + 1u];
-        float4 cvec = punctualLights[lightIdx * 4u + 2u];
-        float4 dvec = punctualLights[lightIdx * 4u + 3u];
-        float kind = a.w;
-        float3 l;
-        float attenuation = 1.0;
-        if (kind > 2.5)
-        {
-            l = normalize(-cvec.xyz);
-        }
-        else
-        {
-            float3 toLight = a.xyz - worldPos;
-            float dist = max(length(toLight), 1e-4);
-            l = toLight / dist;
-            attenuation = 1.0 / (dist * dist);
-            float range = b.w;
-            if (range > 0.0)
-            {
-                float k = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
-                attenuation *= k * k;
-            }
-            if (kind > 1.5)
-            {
-                float cosAngle = dot(normalize(cvec.xyz), -l);
-                attenuation *= smoothstep(dvec.x, cvec.w, cosAngle);
-            }
-        }
-        if (attenuation <= 0.0) continue;
-        total += brdf_direct(n, v, l, albedo, metallic, roughness, f0, b.rgb * attenuation);
+        PunctualLight light = unpack_punctual_light(punctualLights[lightIdx * 4u], punctualLights[lightIdx * 4u + 1u],
+            punctualLights[lightIdx * 4u + 2u], punctualLights[lightIdx * 4u + 3u]);
+        PunctualIncidence incidence = punctual_incidence(light, worldPos);
+        if (incidence.attenuation <= 0.0) continue;
+        total += brdf_direct(n, v, incidence.l, albedo, metallic, roughness, f0, light.radiance * incidence.attenuation);
     }
     return total;
 }

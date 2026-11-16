@@ -12,7 +12,7 @@ use kataglyphis_webgpu_renderer::scene::{
     AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef, Vertex,
 };
 use kataglyphis_webgpu_renderer::{
-    load_gltf, ForwardRenderer, GpuContext, OrbitCamera, SceneViewport,
+    load_gltf, EquirectImage, ForwardRenderer, GpuContext, OrbitCamera, SceneViewport,
 };
 
 /// The shadow tests' low sun, so the cube's shadow falls where the camera looks.
@@ -527,7 +527,7 @@ fn the_accumulation_starts_over_whenever_a_premise_changes() {
         return;
     };
     rig.renderer.trace_settings.max_bounces = 2;
-    let changes: [Premise; 13] = [
+    let changes: [Premise; 14] = [
         ("the camera", |r| r.camera.yaw_deg += 1.0),
         ("the viewport", |r| r.camera.viewport.x0 = 0.2),
         ("the sun's direction", |r| {
@@ -547,6 +547,10 @@ fn the_accumulation_starts_over_whenever_a_premise_changes() {
         ("the model transform", |r| {
             let root = Mat4::from_translation(Vec3::Y);
             r.renderer.tracer_mut().set_root_transform(&r.gpu, root);
+        }),
+        ("the environment", |r| {
+            let sky = EquirectImage::constant(8, 4, [1.0, 1.0, 1.0]);
+            r.renderer.set_environment(&r.gpu, &sky);
         }),
         ("an explicit reset", |r| r.renderer.reset_accumulation()),
         ("a raster frame", |r| drop(r.frames(RenderMode::Raster, 1))),

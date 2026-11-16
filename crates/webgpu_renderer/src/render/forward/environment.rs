@@ -40,6 +40,8 @@ pub(super) struct IblBinding {
     pub(super) environment: Option<IblEnvironment>,
     /// Environment-independent, baked lazily once so a renderer without an environment never pays.
     pub(super) brdf_lut: Option<BrdfLut>,
+    /// Bumped by every set or clear, so the path tracer's mean starts over.
+    pub(super) generation: u64,
 }
 
 impl IblBinding {
@@ -67,6 +69,7 @@ impl IblBinding {
             fallback,
             environment: None,
             brdf_lut: None,
+            generation: 0,
         }
     }
 
