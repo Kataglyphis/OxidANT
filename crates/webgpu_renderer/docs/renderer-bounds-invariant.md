@@ -34,11 +34,12 @@ other consumers, because nothing named them in one place. This document does.
 
 Change any of these and you inherit the invariant:
 
-- **Frustum culling** (`Frustum::intersects_aabb`) — wrong bounds delete a
-  visible object outright.
-- **Shadow-caster culling** (`intersects_aabb_as_caster`) — not wired in: the
-  cascade passes replay cached bundles that draw every caster. Once it is, wrong
-  bounds delete a *shadow*, which looks like a lighting bug, not a culling bug.
+- **Frustum culling** (`Frustum::intersects_aabb`, which decides what the
+  camera passes encode, and its GPU copy `in_camera` in `draw_cull.slang`) —
+  wrong bounds delete a visible object outright.
+- **Shadow-caster culling** (`intersects_aabb_as_caster`, which picks each
+  cascade bundle's casters, and its copy `in_cascade`) — wrong bounds delete a
+  *shadow*, which looks like a lighting bug, not a culling bug.
 - **Cascade fitting** (`update_cascades` via `scene_bounds`) — this one is
   scene-wide: bad bounds misfit *all three* cascades, so unrelated objects lose
   their shadows.
@@ -116,7 +117,8 @@ Bounds are also where bad data does the most damage, because it *spreads*:
 - One non-finite vertex NaNs the primitive bounds → the scene bounds → the
   cascade radius → **all three cascade matrices**, so shadows break for every
   object in the scene, not just the bad mesh.
-- `Frustum::test_planes` treats NaN as *visible*, so the offending primitive
+- `Frustum::test_planes` treats NaN as *visible*, and so does the draw cull's
+  copy wherever the GPU keeps IEEE comparisons, so the offending primitive
   also never culls.
 
 Both AABB helpers therefore skip non-finite vertices rather than propagate them.

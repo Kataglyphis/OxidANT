@@ -13,6 +13,39 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, indirect draws from a GPU draw cull in the WebGPU renderer)
+- **Every scene draw is `draw_indexed_indirect`** (`crates/webgpu_renderer/src/render/draw_cull.rs`,
+  `shaders/draw_cull/draw_cull.slang`). A compute pass, `FramePass::DrawCull` first in every raster frame
+  (`TimedPass::DrawCull`, "DrawCull"), takes one slot per primitive and winding run and writes its
+  `DrawIndexedIndirectArgs` for the camera and each active cascade: the camera frustum, last frame's occlusion and the
+  eye-inside guard for the camera, each cascade's frustum without its near plane for the casters; a culled slot keeps
+  its index count and gets no instances. The forward, G-buffer, blended and shadow draws read those arguments; the
+  mirrored run binds the instance buffer at its offset, so `first_instance` stays 0 without `INDIRECT_FIRST_INSTANCE`.
+- **No CPU readback decides a draw any more.** The occlusion query pass resolves into a storage buffer and the compute
+  culler keeps its visibility buffer; the next frame's draw cull reads either on the GPU. Their readback rings remain
+  for `occlusion_visibility`, `occlusion_samples` and `gpu_culling_visibility` only, and both now measure every frame,
+  skipping only the copy when no ring slot is free. The Visibility counts (`occlusion_cull_stats`, `primitive_stats`,
+  `shadow_caster_stats`) are GPU counters behind a non-blocking readback: current after `render_to_pixels`, a frame or
+  two late in a window.
+- **The CPU still skips encoding what its exact frustum test culls**, camera and cascades alike: wgpu's encode and
+  submit cost grows with every draw, culled or not. Encoding all 1600 cubes of a 40x40 grid and leaving the frustum to
+  the GPU took the median CPU frame (encode + submit, release, llvmpipe, 320x180) from 5.4 to 11.8 ms. With the
+  pre-cull, close (441 drawn) and overview (1449 drawn), frustum only / with the compute culler / with queries: before
+  5.96 / 6.02 / 6.14 and 7.01 / 7.13 / 7.38 ms, after 6.38 / 8.74 / 9.54 and 9.29 / 12.49 / 10.09 ms. Most of it is
+  wgpu's default indirect-call validation (`InstanceFlags::VALIDATION_INDIRECT_CALL`, a check pass per indirect draw):
+  with `WGPU_VALIDATION_INDIRECT_CALL=0` the same run took 6.23 / 6.42 / 6.89 and 7.45 / 7.72 / 8.04 ms. The flag stays
+  on. Occlusion-culled draws are still encoded, since only the GPU knows them.
+- One draw per slot, natively and on the web: every draw rebinds its material group and buffers, so
+  `multi_draw_indexed_indirect` needs a shared vertex/index buffer and bindless materials first.
+- Images: a hash of the frame, HDR, depth and shadow map with the Visibility counts over 72 settings (forward and
+  deferred, frustum culling on and off, no occlusion, queries and the compute culler, one and three cascades, three
+  cameras, a 123-primitive scene with blended, double-sided and mirrored-instanced primitives) was identical before
+  and after.
+- Tests: `tests/indirect_draws.rs` (a culled draw has no instances and a drawn one exact arguments, a mirrored run is
+  its own draw, a camera turn culls and draws again, blended draws are frustum-culled, each cascade keeps only its
+  casters, and occlusion by queries and by compute culls the hidden cubes while the frame stays identical to an
+  unculled one); `tests/cull_constants.rs` pins the draw cull's workgroup and layouts.
+
 ### Added (2026-11-16, glTF `KHR_texture_basisu` and ETC2/ASTC Basis targets in the WebGPU renderer)
 - **glTF `KHR_texture_basisu`**: `load_gltf` and `load_gltf_slice` no longer go through `gltf::import`, which
   decodes every image itself and refuses `image/ktx2`. `src/asset/gltf_images.rs` parses without gltf's
