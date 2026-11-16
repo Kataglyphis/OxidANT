@@ -94,8 +94,15 @@ fn the_maximal_frames_record_their_passes_in_the_hand_written_order() {
         "bloom",
     ];
     let tail = ["tonemap", "fxaa"];
-    let forward = ["shadow", "forward+sky", "depth_resolve", "occlusion_cull"];
+    let forward = [
+        "draw_cull",
+        "shadow",
+        "forward+sky",
+        "depth_resolve",
+        "occlusion_cull",
+    ];
     let deferred = [
+        "draw_cull",
         "shadow",
         "gbuffer",
         "deferred_lighting+sky",

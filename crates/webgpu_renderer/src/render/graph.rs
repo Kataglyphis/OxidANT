@@ -32,8 +32,10 @@ pub enum Resource {
     GBufferMaterial,
     /// HDR scene color.
     HdrColor,
-    /// Cull-pass visibility; the *next* frame's forward pass reads it, so nothing here does.
+    /// Cull-pass visibility; the *next* frame's draw cull reads it, so nothing here does.
     Visibility,
+    /// Every draw's indirect arguments, which the draw cull writes and the scene passes draw from.
+    DrawArgs,
     /// Blurred bloom contribution, at half resolution.
     Bloom,
     /// Bloom's horizontal blur, which the vertical one reads back into `Bloom`.

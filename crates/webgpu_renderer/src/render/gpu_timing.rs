@@ -11,6 +11,8 @@ use crate::render::buffer_desc;
 /// Opaque and blended share one: splitting that render pass to time it would change its cost.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TimedPass {
+    /// The per-draw cull that writes every draw's indirect arguments (one compute pass; raster frames only).
+    DrawCull,
     /// All shadow cascades, one render pass each.
     ShadowCascades,
     /// Opaque geometry, sky, and blended geometry in one render pass.
@@ -46,7 +48,8 @@ pub enum TimedPass {
 impl TimedPass {
     /// Every pass in record order: a raster frame's skip the traced passes, a traced frame's skip shadows to SSAO.
     /// Iteration order is the reporting order, so either kind of frame lists its passes as it records them.
-    pub const ALL: [TimedPass; 15] = [
+    pub const ALL: [TimedPass; 16] = [
+        TimedPass::DrawCull,
         TimedPass::ShadowCascades,
         TimedPass::Forward,
         TimedPass::GBuffer,
@@ -82,6 +85,7 @@ impl TimedPass {
             TimedPass::PathTrace => "PathTrace",
             TimedPass::TraceResolve => "TraceResolve",
             TimedPass::Fxaa => "Fxaa",
+            TimedPass::DrawCull => "DrawCull",
         }
     }
 
@@ -103,6 +107,7 @@ impl TimedPass {
             TimedPass::PathTrace => "Path trace",
             TimedPass::TraceResolve => "Trace resolve",
             TimedPass::Fxaa => "FXAA",
+            TimedPass::DrawCull => "Draw cull",
         }
     }
 
@@ -131,6 +136,7 @@ impl TimedPass {
             TimedPass::PathTrace => 12,
             TimedPass::TraceResolve => 13,
             TimedPass::Fxaa => 14,
+            TimedPass::DrawCull => 15,
         }
     }
 }

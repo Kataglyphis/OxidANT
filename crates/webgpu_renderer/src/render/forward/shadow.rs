@@ -3,6 +3,7 @@
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt as _;
 
+use super::culling::DrawSlot;
 use super::primitive::GpuPrimitive;
 use super::readback::{read_texture, TextureRegion};
 use super::shadow_casters::CasterBundles;
@@ -111,9 +112,9 @@ pub(super) struct ShadowResources {
     pub(super) bias_scales: [f32; CASCADE_COUNT],
     /// The camera's forward axis the splits are measured on.
     pub(super) view_dir: Vec3,
-    /// One caster bundle per cascade over the casters inside it, replayed while that set holds; `None` re-records all.
+    /// One caster bundle per cascade over the casters inside it, replayed while that set and the slots hold; `None` re-records all.
     pub(super) caster_bundles: Option<CasterBundles>,
-    /// Caster draws submitted / considered last frame, summed over cascades.
+    /// Caster draws the draw cull kept / considered, summed over cascades, as its last stats readback counted.
     pub(super) casters_drawn: u32,
     pub(super) casters_considered: u32,
 }
@@ -178,11 +179,13 @@ impl ShadowResources {
         }
     }
 
-    /// One caster's draws: MASK casters alpha-test, double-sided ones are not culled.
+    /// One caster's indirect draws, one per slot at `args`' offsets: MASK casters alpha-test, double-sided ones are not culled.
     pub(super) fn record_caster<'a>(
         &'a self,
         bundle: &mut wgpu::RenderBundleEncoder<'a>,
         prim: &'a GpuPrimitive,
+        slots: impl Iterator<Item = (wgpu::BufferAddress, DrawSlot)>,
+        args: &'a wgpu::Buffer,
     ) {
         let pipelines = &self.pipelines;
         let masked_group = prim
@@ -191,15 +194,15 @@ impl ShadowResources {
             .filter(|_| prim.alpha_masked);
         bundle.set_bind_group(0, masked_group.unwrap_or(&prim.shadow_bind_group), &[]);
         bundle.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
-        bundle.set_vertex_buffer(1, prim.instance_buffer.slice(..));
         bundle.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        for (instances, clockwise) in prim.instance_runs() {
+        for (offset, slot) in slots {
+            bundle.set_vertex_buffer(1, prim.instance_buffer.slice(slot.instance_offset()..));
             bundle.set_pipeline(match (masked_group.is_some(), prim.double_sided) {
                 (true, _) => &pipelines.masked,
                 (false, true) => &pipelines.double_sided,
-                (false, false) => pipelines.opaque_for(clockwise),
+                (false, false) => pipelines.opaque_for(slot.clockwise),
             });
-            bundle.draw_indexed(0..prim.index_count, 0, instances);
+            bundle.draw_indexed_indirect(args, offset);
         }
     }
 }
@@ -216,8 +219,6 @@ impl ForwardRenderer {
             .active_cascades()
             .min(self.shadow.layer_views.len());
         if count == 0 {
-            self.shadow.casters_drawn = 0;
-            self.shadow.casters_considered = 0;
             return;
         }
         self.ensure_shadow_caster_bundles(&gpu.device, count);

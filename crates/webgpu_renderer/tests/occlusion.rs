@@ -480,9 +480,10 @@ fn more_boxes_than_the_query_set_limit_record_without_a_validation_error() {
 
     let mut queries = OcclusionQueries::new(device);
     let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut measured = 0;
     for _ in 0..8 {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        queries.record(
+        measured = queries.record(
             device,
             &gpu.queue,
             &mut encoder,
@@ -506,9 +507,10 @@ fn more_boxes_than_the_query_set_limit_record_without_a_validation_error() {
         wgpu::QUERY_SET_MAX_QUERIES as usize,
         "the readback must cover exactly the queried boxes"
     );
-    assert!(
-        queries.visible(box_count - 1),
-        "a box past the query limit is unmeasured, so it must stay visible"
+    assert_eq!(
+        measured,
+        wgpu::QUERY_SET_MAX_QUERIES,
+        "a box past the query limit is unmeasured, so the draw cull must keep it visible"
     );
 }
 

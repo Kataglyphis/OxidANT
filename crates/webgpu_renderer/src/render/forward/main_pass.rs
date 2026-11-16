@@ -1,13 +1,10 @@
-//! The forward main pass: culled opaque draws, the sky, then sorted blended draws, all MSAA.
+//! The forward main pass: opaque draws, the sky, then sorted blended draws, all MSAA and all indirect.
 //! Its draw loops and pipeline builder also serve the deferred path's passes.
-
-use glam::Vec3;
 
 use super::frame::FrameView;
 use super::primitive::GpuPrimitive;
 use super::{ForwardRenderer, DEPTH_FORMAT, HDR_FORMAT, MSAA_SAMPLE_COUNT};
 use crate::render::bind_layout;
-use crate::render::bounds::aabb_contains_point;
 use crate::render::gpu_timing::TimedPass;
 use crate::render::graph::Resource;
 use crate::scene::{InstanceRaw, Vertex};
@@ -171,17 +168,9 @@ impl ForwardRenderer {
         let mut pass = self.begin_forward_pass(encoder);
         // Per-frame groups 1-3; rebound after the sky, whose own layout invalidates them.
         self.bind_frame_groups(&mut pass);
-        let (drawn, considered) = self.draw_opaque(&mut pass, view, self.main.sets());
+        self.draw_opaque(&mut pass, view, self.main.sets());
         self.sky.draw(&mut pass);
-        let blended = self.draw_blended(&mut pass, view, self.main.sets());
-        self.culling.drawn = drawn;
-        self.culling.considered = considered;
-        self.culling.primitives = (drawn + blended, self.primitives.len() as u32);
-    }
-
-    /// Outside the camera frustum, unless frustum culling is off.
-    fn frustum_culls(&self, prim: &GpuPrimitive, view: &FrameView) -> bool {
-        self.frustum_culling && !view.frustum.intersects_aabb(prim.aabb_min, prim.aabb_max)
+        self.draw_blended(&mut pass, view, self.main.sets());
     }
 
     fn begin_forward_pass<'e>(
@@ -223,76 +212,74 @@ impl ForwardRenderer {
         pass.set_bind_group(3, &self.lights.bind_group, &[]);
     }
 
-    /// Frustum-tested, then occlusion-skipped opaque draws; returns (drawn, considered).
+    /// Outside the camera frustum, unless frustum culling is off: the draw cull would zero it too, so it is never encoded.
+    fn frustum_culls(&self, prim: &GpuPrimitive, view: &FrameView) -> bool {
+        self.frustum_culling && !view.frustum.intersects_aabb(prim.aabb_min, prim.aabb_max)
+    }
+
+    /// Opaque primitives in upload order; the draw cull zeroed the instances of those occlusion culled.
     pub(super) fn draw_opaque(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         view: &FrameView,
         sets: WindingSets<'_>,
-    ) -> (u32, u32) {
-        let mut occ_drawn = 0u32;
-        let mut occ_considered = 0u32;
+    ) {
         for (i, prim) in self.primitives.iter().enumerate() {
-            // Frustum first (cheap, no dependency on last frame).
-            if prim.alpha_blend || self.frustum_culls(prim, view) {
-                continue;
+            if !prim.alpha_blend && !self.frustum_culls(prim, view) {
+                self.draw_primitive(pass, sets, i, view);
             }
-            occ_considered += 1;
-            let occluded = self.occluded_last_frame(i);
-            // Eye inside the box: only back faces rasterise and fail depth, so never skip.
-            if occluded && !aabb_contains_point(prim.aabb_min, prim.aabb_max, view.eye) {
-                continue;
-            }
-            occ_drawn += 1;
-            draw_primitive(pass, sets, prim, view.eye);
         }
-        (occ_drawn, occ_considered)
     }
 
-    /// Transparents last, farthest first, no depth writes; returns how many it drew.
+    /// Transparents last, farthest first, no depth writes.
     pub(super) fn draw_blended(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         view: &FrameView,
         sets: WindingSets<'_>,
-    ) -> u32 {
+    ) {
         let eye = view.eye;
-        let mut blended: Vec<&GpuPrimitive> = self
-            .primitives
-            .iter()
-            .filter(|p| p.alpha_blend && !self.frustum_culls(p, view))
+        let mut blended: Vec<usize> = (0..self.primitives.len())
+            .filter(|&i| {
+                let prim = &self.primitives[i];
+                prim.alpha_blend && !self.frustum_culls(prim, view)
+            })
             .collect();
-        blended.sort_by(|a, b| {
-            let da = a.world_center.distance_squared(eye);
-            let db = b.world_center.distance_squared(eye);
-            db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+        let distance = |i: usize| self.primitives[i].world_center.distance_squared(eye);
+        blended.sort_by(|&a, &b| {
+            distance(b)
+                .partial_cmp(&distance(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         if !blended.is_empty() {
             self.bind_frame_groups(pass);
         }
-        for prim in &blended {
-            draw_primitive(pass, sets, prim, eye);
+        for i in blended {
+            self.draw_primitive(pass, sets, i, view);
         }
-        blended.len() as u32
     }
-}
 
-/// Binds `prim`'s group 0 and its LOD-selected geometry, then draws each winding's instances.
-fn draw_primitive(
-    pass: &mut wgpu::RenderPass<'_>,
-    sets: WindingSets<'_>,
-    prim: &GpuPrimitive,
-    eye: Vec3,
-) {
-    let (vertex_buffer, index_buffer, index_count) = prim.geometry_for(eye);
-    pass.set_bind_group(0, &prim.bind_group, &[]);
-    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-    pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
-    pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-    for (instances, clockwise) in prim.instance_runs() {
-        let set = sets.for_winding(clockwise);
-        pass.set_pipeline(set.pick(prim.double_sided, prim.alpha_blend));
-        pass.draw_indexed(0..index_count, 0, instances);
+    /// Binds primitive `index`'s group 0 and LOD-selected geometry, then draws each slot from its camera arguments.
+    fn draw_primitive(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        sets: WindingSets<'_>,
+        index: usize,
+        view: &FrameView,
+    ) {
+        let prim = &self.primitives[index];
+        let draw_cull = &self.culling.draw_cull;
+        let (vertex_buffer, index_buffer, _) = prim.geometry_for(view.eye);
+        pass.set_bind_group(0, &prim.bind_group, &[]);
+        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        for (slot_index, slot) in self.culling.slots_of(index) {
+            let instances = prim.instance_buffer.slice(slot.instance_offset()..);
+            pass.set_vertex_buffer(1, instances);
+            let set = sets.for_winding(slot.clockwise);
+            pass.set_pipeline(set.pick(prim.double_sided, prim.alpha_blend));
+            pass.draw_indexed_indirect(draw_cull.args(), draw_cull.args_offset(0, slot_index));
+        }
     }
 }
 

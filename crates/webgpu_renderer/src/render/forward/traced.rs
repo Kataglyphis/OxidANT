@@ -196,9 +196,7 @@ impl ForwardRenderer {
                 .add(u64::from(settings.samples_per_pixel));
         }
         // No raster pass ran, so none reports what it drew, as in the C++ engine's traced frames.
-        (self.culling.drawn, self.culling.considered) = (0, 0);
-        self.culling.primitives = (0, 0);
-        (self.shadow.casters_drawn, self.shadow.casters_considered) = (0, 0);
+        self.forget_raster_culling();
     }
 
     /// The kernel, its timed pass and its dispatches; a path-traced frame adds to the samples its history kept.

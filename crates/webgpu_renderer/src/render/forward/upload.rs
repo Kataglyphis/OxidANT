@@ -207,10 +207,7 @@ impl ForwardRenderer {
         // A cached bundle references buffers that are about to be dropped.
         self.shadow.caster_bundles = None;
         // Visibility is per primitive index, so a new scene must not inherit stale culls.
-        self.culling.occlusion.reset();
-        if let Some(gpu_cull) = self.culling.gpu_culling.as_mut() {
-            gpu_cull.reset();
-        }
+        self.culling.reset_occlusion();
         self.scene_bounds = compute_world_bounds(scene);
         // A load places the scene at the origin, as the C++ zeroes the inspector's transform.
         self.model_transform = ModelTransform::default();

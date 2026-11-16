@@ -54,3 +54,51 @@ pub fn query_resolve(
         mapped_at_creation: false,
     })
 }
+
+/// Per-draw arguments a compute pass writes and indirect draws read: `STORAGE | INDIRECT | COPY_SRC`.
+pub fn indirect_args(
+    device: &wgpu::Device,
+    label: &str,
+    size: wgpu::BufferAddress,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::INDIRECT
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
+/// GPU counters cleared each frame and copied out: `STORAGE | COPY_DST | COPY_SRC`.
+pub fn storage_counters(
+    device: &wgpu::Device,
+    label: &str,
+    size: wgpu::BufferAddress,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
+/// An occlusion query resolve target a compute pass reads: `QUERY_RESOLVE | STORAGE | COPY_SRC`.
+pub fn query_resolve_storage(
+    device: &wgpu::Device,
+    label: &str,
+    size: wgpu::BufferAddress,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size,
+        usage: wgpu::BufferUsages::QUERY_RESOLVE
+            | wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}

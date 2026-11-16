@@ -19,6 +19,7 @@ const SHADERS: &[(&str, &str)] = &[
         "depth_resolve",
         include_str!("../src/shaders/depth_resolve.wgsl"),
     ),
+    ("draw_cull", include_str!("../src/shaders/draw_cull.wgsl")),
     ("gpu_cull", include_str!("../src/shaders/gpu_cull.wgsl")),
     ("histogram", include_str!("../src/shaders/histogram.wgsl")),
     (
@@ -217,6 +218,7 @@ const REQUIRED_ENTRY_POINTS: &[(&str, &[&str])] = &[
     ),
     ("occlusion_bbox", &["vs_main", "fs_main"]),
     ("depth_resolve", &["vs_main", "fs_main"]),
+    ("draw_cull", &["cs_main"]),
     ("gpu_cull", &["cs_main"]),
     (
         "histogram",

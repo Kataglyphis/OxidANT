@@ -107,6 +107,10 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../src/render/histogram.rs"),
     ),
     (
+        "render/draw_cull.rs",
+        include_str!("../src/render/draw_cull.rs"),
+    ),
+    (
         "render/gpu_occlusion.rs",
         include_str!("../src/render/gpu_occlusion.rs"),
     ),
@@ -141,9 +145,10 @@ fn buffer_descriptor_literals_are_the_single_definition_or_the_two_named_outlier
         .map(|line| code_of(line).matches(NEEDLE).count())
         .sum();
     assert_eq!(
-        definition_count, 5,
-        "expected exactly 5 wgpu::BufferDescriptor literals in render/buffer_desc.rs \
-         (uniform, storage_dst, storage_src, readback, query_resolve); found {definition_count}"
+        definition_count, 8,
+        "expected exactly 8 wgpu::BufferDescriptor literals in render/buffer_desc.rs (uniform, storage_dst, \
+         storage_src, readback, query_resolve, indirect_args, storage_counters, query_resolve_storage); \
+         found {definition_count}"
     );
 
     let mut unmarked = Vec::new();
@@ -158,7 +163,7 @@ fn buffer_descriptor_literals_are_the_single_definition_or_the_two_named_outlier
     assert_eq!(
         unmarked,
         vec![
-            "render/occlusion.rs:396".to_string(),
+            "render/occlusion.rs:397".to_string(),
             "render/histogram.rs:110".to_string(),
         ],
         "found unexpected wgpu::BufferDescriptor literals outside render/buffer_desc.rs - \

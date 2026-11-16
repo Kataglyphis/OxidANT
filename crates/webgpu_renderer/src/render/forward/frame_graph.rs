@@ -21,6 +21,7 @@ use Resource::*;
 /// One row of the frame graph, each recorded by its own `ForwardRenderer` method.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum FramePass {
+    DrawCull,
     ShadowCascades,
     Forward,
     DepthResolve,
@@ -44,6 +45,7 @@ impl FramePass {
     /// The row's name in the graph and its errors.
     pub(super) fn name(self) -> &'static str {
         match self {
+            FramePass::DrawCull => "draw_cull",
             FramePass::ShadowCascades => "shadow",
             FramePass::Forward => "forward+sky",
             FramePass::DepthResolve => "depth_resolve",
@@ -68,6 +70,7 @@ impl FramePass {
     #[cfg(test)]
     fn timed(self) -> Option<TimedPass> {
         Some(match self {
+            FramePass::DrawCull => TimedPass::DrawCull,
             FramePass::ShadowCascades => TimedPass::ShadowCascades,
             FramePass::Forward => TimedPass::Forward,
             FramePass::GBuffer => TimedPass::GBuffer,
@@ -181,21 +184,24 @@ fn rows(config: &FrameConfig) -> Vec<Row> {
     rows
 }
 
-/// The shadow cascades, the path's scene passes, and the occlusion cull against their depth.
+/// The draw cull, the shadow cascades, the path's scene passes, and the occlusion cull against their depth.
 fn raster_rows(config: &FrameConfig) -> Vec<Row> {
-    let mut rows = vec![(FramePass::ShadowCascades, vec![], vec![ShadowMap])];
+    let mut rows = vec![
+        (FramePass::DrawCull, vec![], vec![DrawArgs]),
+        (FramePass::ShadowCascades, vec![DrawArgs], vec![ShadowMap]),
+    ];
     if config.path == RasterPath::Deferred {
         let gbuffer = [GBufferNormal, GBufferAlbedo, GBufferMaterial];
         rows.push((
             FramePass::GBuffer,
-            vec![],
+            vec![DrawArgs],
             [&gbuffer[..], &[Depth]].concat(),
         ));
-        let reads = [&gbuffer[..], &[Depth, ShadowMap]].concat();
+        let reads = [&gbuffer[..], &[Depth, ShadowMap, DrawArgs]].concat();
         rows.push((FramePass::DeferredLighting, reads, vec![HdrColor]));
     } else {
         let writes = vec![HdrMsaa, HdrColor, DepthMsaa];
-        rows.push((FramePass::Forward, vec![ShadowMap], writes));
+        rows.push((FramePass::Forward, vec![ShadowMap, DrawArgs], writes));
         let writes = vec![Depth, DepthSpread];
         rows.push((FramePass::DepthResolve, vec![DepthMsaa], writes));
     }

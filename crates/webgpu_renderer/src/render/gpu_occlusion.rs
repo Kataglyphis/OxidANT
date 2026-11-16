@@ -1,5 +1,5 @@
-//! GPU occlusion culling: a compute pass tests every primitive against depth, read back per frame.
-//! The readback ring never waits, as in [`crate::render::occlusion`]; late frames keep old results.
+//! GPU occlusion culling: a compute pass tests every primitive against depth, which the next frame's draw cull reads.
+//! The readback ring, for stats and tests only, never waits, as in [`crate::render::occlusion`].
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
@@ -147,8 +147,8 @@ impl GpuCulling {
         }
     }
 
-    /// Uploads AABBs, dispatches the cull pass and copies into a free readback slot.
-    /// Skips the frame rather than stall if every slot is mapping; call [`Self::end_frame`] after.
+    /// Uploads AABBs, dispatches the cull pass and copies into a free readback slot; returns the primitives tested.
+    /// Skips only the copy rather than stall if every slot is mapping; call [`Self::end_frame`] after.
     #[allow(clippy::too_many_arguments)]
     pub fn cull(
         &mut self,
@@ -160,18 +160,12 @@ impl GpuCulling {
         view_proj: &[[f32; 4]; 4],
         inv_view_proj: &[[f32; 4]; 4],
         aabbs: &[(glam::Vec3, glam::Vec3)],
-    ) {
+    ) -> u32 {
         self.recording = false;
         let count = aabbs.len().min(self.max_primitives);
         if count == 0 {
-            return;
+            return 0;
         }
-
-        // Every slot still mapping: skip this frame rather than stall.
-        let Some(slot_index) = self.free_slot() else {
-            return;
-        };
-        self.current = slot_index;
 
         // Upload AABBs
         let mut gpu_aabbs: Vec<AabbGpu> = Vec::with_capacity(count);
@@ -232,17 +226,26 @@ impl GpuCulling {
             cpass.dispatch_workgroups(wg_count, 1, 1);
         }
 
-        // Copy to this frame's readback slot
-        let slot = &mut self.slots[slot_index];
-        slot.count = count as u32;
-        encoder.copy_buffer_to_buffer(
-            &self.visibility_buffer,
-            0,
-            &slot.readback,
-            0,
-            (count as u64) * 4,
-        );
-        self.recording = true;
+        // Every slot still mapping: skip this frame's copy rather than stall.
+        if let Some(slot_index) = self.free_slot() {
+            self.current = slot_index;
+            let slot = &mut self.slots[slot_index];
+            slot.count = count as u32;
+            encoder.copy_buffer_to_buffer(
+                &self.visibility_buffer,
+                0,
+                &slot.readback,
+                0,
+                (count as u64) * 4,
+            );
+            self.recording = true;
+        }
+        count as u32
+    }
+
+    /// One u32 per tested primitive, non-zero where its box passed the depth test.
+    pub fn visibility_buffer(&self) -> &wgpu::Buffer {
+        &self.visibility_buffer
     }
 
     /// Starts this frame's readback and drains completed slots without blocking; call after submit.
@@ -310,12 +313,6 @@ impl GpuCulling {
     /// Latest completed readback, as [`crate::render::occlusion::OcclusionQueries::visibility`].
     pub fn visibility(&self) -> &[bool] {
         &self.visibility
-    }
-
-    /// Whether primitive `i` should be drawn given the last readback.
-    /// Unknown indices default to visible: a spare draw is cheap, a wrong cull pops geometry out.
-    pub fn visible(&self, i: usize) -> bool {
-        self.visibility.get(i).copied().unwrap_or(true)
     }
 
     /// Forgets all readback state; call when the scene changes.

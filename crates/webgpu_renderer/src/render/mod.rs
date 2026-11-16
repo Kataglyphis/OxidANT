@@ -6,6 +6,7 @@ pub mod bounds;
 pub mod buffer_desc;
 pub mod cascades;
 pub mod clouds;
+pub mod draw_cull;
 pub mod forward;
 pub mod frame_clock;
 pub mod fxaa;

@@ -106,6 +106,9 @@ impl ForwardRenderer {
         self.reset_culling_on_mode_change();
 
         let view = self.prepare_view(gpu, camera, width, height);
+        if plan.runs(FramePass::DrawCull) {
+            self.prepare_draw_cull(gpu, &view);
+        }
         if plan.runs(FramePass::GBuffer) {
             self.prepare_deferred(gpu, &view);
         }
@@ -205,7 +208,9 @@ impl ForwardRenderer {
         self.gpu_timing.resolve(&mut encoder);
         gpu.queue.submit(Some(encoder.finish()));
         self.gpu_timing.end_frame(&gpu.device);
-        // Non-blocking: results lag a frame or more, which advisory visibility tolerates.
+        self.culling.draw_cull.end_frame(&gpu.device);
+        self.apply_draw_stats();
+        // Non-blocking, and only diagnostics: the next frame's draw cull reads the measurements on the GPU.
         self.culling.occlusion.end_frame(&gpu.device);
         // The culling paths are exclusive, so only the enabled one has readbacks in flight.
         if self.gpu_culling_enabled {

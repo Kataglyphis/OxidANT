@@ -28,7 +28,12 @@ impl Frustum {
         }
     }
 
-    /// Positive-vertex test: outside when the AABB's most favourable corner is behind any plane.
+    /// The six planes, left, right, bottom, top, near, far, for a GPU copy of the tests below.
+    pub(crate) fn planes(&self) -> [glam::Vec4; 6] {
+        self.planes
+    }
+
+    /// Positive-vertex test, which `draw_cull.slang` copies: outside when the AABB's most favourable corner is behind any plane.
     pub(crate) fn intersects_aabb(&self, min: Vec3, max: Vec3) -> bool {
         self.test_planes(min, max, &self.planes)
     }
@@ -63,17 +68,6 @@ pub(crate) fn normal_matrix_of(model: Mat4) -> Mat4 {
     } else {
         Mat4::IDENTITY
     }
-}
-
-/// True when `p` is inside the AABB grown by the occlusion proxy's margin (`occlusion_bbox.wgsl`).
-/// The GPU-culling path needs it at draw-skip time; `OcclusionQueries::record` has it built in.
-pub(crate) fn aabb_contains_point(min: Vec3, max: Vec3, p: Vec3) -> bool {
-    crate::render::occlusion::aabb_contains(
-        min,
-        max,
-        p,
-        crate::render::occlusion::CONTAINMENT_MARGIN,
-    )
 }
 
 /// Bounds covering every instance of `pre`; empty `instances` means one identity instance.
@@ -302,26 +296,6 @@ mod tests {
             max.x > min.x,
             "the good vertices must still bound something"
         );
-    }
-
-    #[test]
-    fn aabb_contains_point_matches_the_occlusion_proxy_margin() {
-        // Must match occlusion_bbox.wgsl's `half * 0.02 + 0.01` growth or it guards another volume.
-        let (min, max) = (Vec3::splat(-0.5), Vec3::splat(0.5));
-        let margin = 0.5 * 0.02 + 0.01; // half-extent 0.5
-
-        assert!(
-            aabb_contains_point(min, max, Vec3::ZERO),
-            "centre is inside"
-        );
-        // Just inside the expanded face.
-        let inside = 0.5 + margin - 1e-4;
-        assert!(aabb_contains_point(min, max, Vec3::new(inside, 0.0, 0.0)));
-        // Just outside it.
-        let outside = 0.5 + margin + 1e-3;
-        assert!(!aabb_contains_point(min, max, Vec3::new(outside, 0.0, 0.0)));
-        // Must hold on every axis, not just x.
-        assert!(!aabb_contains_point(min, max, Vec3::new(0.0, 0.0, outside)));
     }
 
     #[test]

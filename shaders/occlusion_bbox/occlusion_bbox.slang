@@ -26,7 +26,7 @@ float4 vs_main(uint vertexIndex : SV_VertexID, BboxInstance instance) : SV_Posit
 {
     uint c = corners[vertexIndex];
     float3 sel = float3(float(c & 1u), float((c >> 1u) & 1u), float((c >> 2u) & 1u));
-    // The margin stops a box z-fighting its own front face; forward.rs's aabb_contains_point must use the same one.
+    // The margin stops a box z-fighting its own front face; draw_cull.slang's contains() must use the same one.
     float3 half3 = (instance.aabb_max - instance.aabb_min) * 0.5;
     float3 margin = half3 * 0.02 + float3(0.01);
     float3 expandedMin = instance.aabb_min - margin;

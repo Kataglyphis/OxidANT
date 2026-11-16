@@ -1,5 +1,8 @@
-//! Each cascade's shadow casters, culled against its box and recorded into a bundle replayed while that set holds.
+//! Each cascade's shadow casters, culled against its box and recorded as indirect draws into a bundle replayed while that set holds.
 
+use std::ops::Range;
+
+use super::culling::DrawSlot;
 use super::{ForwardRenderer, CASCADE_COUNT, DEPTH_FORMAT};
 use crate::render::bounds::Frustum;
 
@@ -13,6 +16,10 @@ struct CasterBundle {
 #[derive(Default)]
 pub(super) struct CasterBundles {
     entries: [Option<CasterBundle>; CASCADE_COUNT],
+    /// The draw cull's args buffer the bundles read, by its generation, and the slots they draw.
+    args_generation: u64,
+    slots: Vec<DrawSlot>,
+    primitive_slots: Vec<Range<usize>>,
 }
 
 impl CasterBundles {
@@ -25,7 +32,7 @@ impl CasterBundles {
 }
 
 impl ForwardRenderer {
-    /// Records the bundle of every active cascade whose caster set moved, and counts the draws over cascades.
+    /// Records the bundle of every active cascade whose caster set, slots or args buffer moved.
     pub(super) fn ensure_shadow_caster_bundles(&mut self, device: &wgpu::Device, count: usize) {
         let casters: Vec<u32> = self
             .primitives
@@ -34,11 +41,9 @@ impl ForwardRenderer {
             .filter(|(_, prim)| prim.casts_shadow)
             .map(|(i, _)| i as u32)
             .collect();
-        let mut bundles = self.shadow.caster_bundles.take().unwrap_or_default();
-        let mut drawn = 0;
+        let mut bundles = self.current_caster_bundles();
         for (cascade, entry) in bundles.entries.iter_mut().enumerate().take(count) {
             let inside = self.casters_in_cascade(&casters, cascade);
-            drawn += inside.len();
             if entry
                 .as_ref()
                 .is_some_and(|cached| cached.casters == inside)
@@ -51,9 +56,28 @@ impl ForwardRenderer {
                 bundle,
             });
         }
-        self.shadow.casters_drawn = drawn as u32;
-        self.shadow.casters_considered = (casters.len() * count) as u32;
         self.shadow.caster_bundles = Some(bundles);
+    }
+
+    /// The cached bundles while they read the current args buffer at the current slots, else none.
+    fn current_caster_bundles(&mut self) -> CasterBundles {
+        let culling = &self.culling;
+        let generation = culling.draw_cull.generation();
+        let current = |cached: &CasterBundles| {
+            cached.args_generation == generation
+                && cached.slots == culling.slots
+                && cached.primitive_slots == culling.primitive_slots
+        };
+        self.shadow
+            .caster_bundles
+            .take()
+            .filter(current)
+            .unwrap_or_else(|| CasterBundles {
+                args_generation: generation,
+                slots: culling.slots.clone(),
+                primitive_slots: culling.primitive_slots.clone(),
+                ..CasterBundles::default()
+            })
     }
 
     /// The casters in `cascade`'s box but for its near plane, or all of them while frustum culling is off.
@@ -93,9 +117,18 @@ impl ForwardRenderer {
             });
         bundle_encoder.set_bind_group(1, &self.shadow.cascade_index_bind_groups[cascade], &[]);
         bundle_encoder.set_bind_group(2, &self.frame.bind_group, &[]);
+        let draw_cull = &self.culling.draw_cull;
         for &i in casters {
-            self.shadow
-                .record_caster(&mut bundle_encoder, &self.primitives[i as usize]);
+            let slots = self
+                .culling
+                .slots_of(i as usize)
+                .map(|(slot, draw)| (draw_cull.args_offset(cascade + 1, slot), draw));
+            self.shadow.record_caster(
+                &mut bundle_encoder,
+                &self.primitives[i as usize],
+                slots,
+                draw_cull.args(),
+            );
         }
         bundle_encoder.finish(&wgpu::RenderBundleDescriptor {
             label: Some("shadow_caster_bundle"),

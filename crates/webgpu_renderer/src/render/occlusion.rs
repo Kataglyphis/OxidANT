@@ -1,5 +1,6 @@
 //! Occlusion detection: each primitive's AABB drawn in a hardware occlusion query over forward depth.
-//! Queries, not Hi-Z, because WebGPU core has them; results drain from a non-blocking ring.
+//! Queries, not Hi-Z, because WebGPU core has them; the next frame's draw cull reads the resolved counts,
+//! and a non-blocking ring reads them back for stats and tests.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -48,7 +49,6 @@ impl BboxInstance {
 }
 
 struct Slot {
-    resolve: wgpu::Buffer,
     readback: wgpu::Buffer,
     /// `Some` while a map is outstanding; the callback sets READY/FAILED, `end_frame` drains it.
     map_state: Option<Arc<AtomicU8>>,
@@ -70,6 +70,8 @@ pub struct OcclusionQueries {
     /// One AABB per primitive, grown with the scene. Rewritten every frame.
     instance_buffer: wgpu::Buffer,
     query_set: wgpu::QuerySet,
+    /// The newest frame's resolved sample counts, which the draw cull reads.
+    resolved: wgpu::Buffer,
     /// Query-set count and the element capacity of every buffer above.
     capacity: u32,
     slots: Vec<Slot>,
@@ -149,7 +151,6 @@ impl OcclusionQueries {
             multiview_mask: None,
             cache: None,
         });
-
         let view_proj_buffer = buffer_desc::uniform(
             device,
             "occlusion_view_proj",
@@ -163,7 +164,6 @@ impl OcclusionQueries {
                 resource: view_proj_buffer.as_entire_binding(),
             }],
         });
-
         let capacity = Self::INITIAL_CAPACITY;
         Self {
             pipeline,
@@ -171,6 +171,7 @@ impl OcclusionQueries {
             view_proj_bind_group,
             instance_buffer: create_instance_buffer(device, capacity),
             query_set: create_query_set(device, capacity),
+            resolved: create_resolved(device, capacity),
             capacity,
             slots: create_slots(device, capacity),
             current: 0,
@@ -183,7 +184,7 @@ impl OcclusionQueries {
         }
     }
 
-    /// Records and resolves the pass in the forward encoder; call [`Self::end_frame`] after submit.
+    /// Records and resolves the pass in the forward encoder and returns the boxes queried; call [`Self::end_frame`] after submit.
     /// A box containing `eye` reads 0 samples, so it is forced visible, with the mask kept per slot.
     /// Only the first `QUERY_SET_MAX_QUERIES` boxes are queried; the rest stay visible.
     // Eight distinct inputs; a wrapper struct would be artificial.
@@ -198,21 +199,15 @@ impl OcclusionQueries {
         aabbs: &[(Vec3, Vec3)],
         eye: Vec3,
         timing: crate::render::gpu_timing::PassScope<'_>,
-    ) {
+    ) -> u32 {
         self.recording = false;
         // One query set holds at most QUERY_SET_MAX_QUERIES; a larger one is a validation error.
         let aabbs = &aabbs[..aabbs.len().min(wgpu::QUERY_SET_MAX_QUERIES as usize)];
         let count = aabbs.len() as u32;
         if count == 0 {
-            return;
+            return 0;
         }
         self.ensure_capacity(device, count);
-
-        // Every slot still mapping: skip this frame rather than stall.
-        let Some(slot_index) = self.free_slot() else {
-            return;
-        };
-        self.current = slot_index;
 
         let forced_visible: Vec<bool> = aabbs
             .iter()
@@ -233,14 +228,24 @@ impl OcclusionQueries {
             .collect();
         queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
         self.encode_queries(encoder, depth_view, count, timing);
+        encoder.resolve_query_set(&self.query_set, 0..count, &self.resolved, 0);
 
-        let slot = &mut self.slots[slot_index];
-        slot.count = count;
-        slot.forced_visible = forced_visible;
-        let bytes = u64::from(count) * QUERY_BYTES;
-        encoder.resolve_query_set(&self.query_set, 0..count, &slot.resolve, 0);
-        encoder.copy_buffer_to_buffer(&slot.resolve, 0, &slot.readback, 0, bytes);
-        self.recording = true;
+        // Every slot still mapping: skip this frame's readback rather than stall.
+        if let Some(slot_index) = self.free_slot() {
+            self.current = slot_index;
+            let slot = &mut self.slots[slot_index];
+            slot.count = count;
+            slot.forced_visible = forced_visible;
+            let bytes = u64::from(count) * QUERY_BYTES;
+            encoder.copy_buffer_to_buffer(&self.resolved, 0, &slot.readback, 0, bytes);
+            self.recording = true;
+        }
+        count
+    }
+
+    /// The newest frame's sample counts, one u64 per queried box.
+    pub fn samples_buffer(&self) -> &wgpu::Buffer {
+        &self.resolved
     }
 
     /// One box draw per query, indices dense in `0..count`, all in one pass over `depth_view`.
@@ -347,11 +352,6 @@ impl OcclusionQueries {
         &self.samples
     }
 
-    /// Whether primitive `i` should be drawn; uncovered indices default to visible, the safe side.
-    pub fn visible(&self, i: usize) -> bool {
-        self.visibility.get(i).copied().unwrap_or(true)
-    }
-
     /// Forgets all readback state on a scene change, since visibility is per index of the old list.
     pub fn reset(&mut self) {
         self.generation = self.generation.wrapping_add(1);
@@ -378,6 +378,7 @@ impl OcclusionQueries {
         let capacity = next_capacity(self.capacity, count);
         self.instance_buffer = create_instance_buffer(device, capacity);
         self.query_set = create_query_set(device, capacity);
+        self.resolved = create_resolved(device, capacity);
         self.slots = create_slots(device, capacity);
         self.capacity = capacity;
         self.current = 0;
@@ -409,11 +410,15 @@ fn create_query_set(device: &wgpu::Device, capacity: u32) -> wgpu::QuerySet {
     })
 }
 
+fn create_resolved(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
+    let bytes = u64::from(capacity) * QUERY_BYTES;
+    buffer_desc::query_resolve_storage(device, "occlusion_resolved", bytes)
+}
+
 fn create_slots(device: &wgpu::Device, capacity: u32) -> Vec<Slot> {
     let bytes = u64::from(capacity) * QUERY_BYTES;
     (0..SLOT_COUNT)
         .map(|i| Slot {
-            resolve: buffer_desc::query_resolve(device, &format!("occlusion_resolve_{i}"), bytes),
             readback: buffer_desc::readback(device, &format!("occlusion_readback_{i}"), bytes),
             map_state: None,
             count: 0,

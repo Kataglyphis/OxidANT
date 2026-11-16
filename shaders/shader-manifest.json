@@ -234,6 +234,15 @@
       ]
     },
     {
+      "_comment": "Rust/WebGPU per-draw culling into indirect draw arguments (WGSL emit).",
+      "file": "draw_cull/draw_cull.slang",
+      "entry": "cs_main",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
       "_comment": "Rust/WebGPU occlusion bbox detection (WGSL emit).",
       "file": "occlusion_bbox/occlusion_bbox.slang",
       "entry": "vs_main",
@@ -425,6 +434,11 @@
     {
       "src": "gpu_cull/gpu_cull.slang",
       "out": "gpu_cull.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "draw_cull/draw_cull.slang",
+      "out": "draw_cull.wgsl",
       "dst": "crates/webgpu_renderer/src/shaders"
     },
     {

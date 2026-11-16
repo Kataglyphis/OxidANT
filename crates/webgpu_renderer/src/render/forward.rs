@@ -303,8 +303,9 @@ impl ForwardRenderer {
         self.shadow.caster_bundles.is_some()
     }
 
-    /// Opaque primitives drawn / considered by the camera pass last frame (equal with culling off).
-    /// Fed by `gpu_culling_enabled` (takes priority) or `occlusion_queries_enabled`.
+    /// Opaque primitives drawn / considered by the camera pass (equal with occlusion culling off), as the GPU counted.
+    /// Occlusion comes from `gpu_culling_enabled` (takes priority) or `occlusion_queries_enabled`.
+    /// Current after [`Self::render_to_pixels`]; a windowed frame's land a frame or two later.
     pub fn occlusion_cull_stats(&self) -> (u32, u32) {
         (self.culling.drawn, self.culling.considered)
     }
@@ -492,7 +493,11 @@ impl ForwardRenderer {
         // The fresh pass binds the live bloom and AO outputs, built from the WGSL the window's pass draws with.
         self.render_tonemapped(gpu, &mut tonemap, &view, width, height, camera);
 
-        readback::read_rgba8(gpu, &texture, width, height)
+        let pixels = readback::read_rgba8(gpu, &texture, width, height);
+        // The readback waited for the frame, so its draw stats have landed; take them now.
+        self.culling.draw_cull.end_frame(&gpu.device);
+        self.apply_draw_stats();
+        pixels
     }
 
     /// True when the uploaded scene carries animations.

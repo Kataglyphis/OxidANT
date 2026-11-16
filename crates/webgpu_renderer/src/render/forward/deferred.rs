@@ -134,17 +134,14 @@ impl GBufferTargets {
 }
 
 impl ForwardRenderer {
-    /// The G-buffer pass: culled opaque draws, which report what the camera drew.
+    /// The G-buffer pass: the opaque draws.
     pub(super) fn encode_gbuffer(&mut self, encoder: &mut wgpu::CommandEncoder, view: &FrameView) {
-        let (drawn, considered) = self.encode_gbuffer_pass(encoder, view);
-        self.culling.drawn = drawn;
-        self.culling.considered = considered;
+        self.encode_gbuffer_pass(encoder, view);
     }
 
-    /// The lighting pass, in place of the forward pass's shading; its blended draws add to the G-buffer's.
+    /// The lighting pass, in place of the forward pass's shading, then the blended draws.
     pub(super) fn encode_lighting(&mut self, encoder: &mut wgpu::CommandEncoder, view: &FrameView) {
-        let blended = self.encode_deferred_lighting(encoder, view);
-        self.culling.primitives = (self.culling.drawn + blended, self.primitives.len() as u32);
+        self.encode_deferred_lighting(encoder, view);
     }
 
     /// Lets the last deferred frame's G-buffer go, which the lighting group would keep alive.
@@ -259,12 +256,8 @@ impl ForwardRenderer {
         (deferred, targets)
     }
 
-    /// Culled opaque draws into the G-buffer and the single-sample depth; returns (drawn, considered).
-    fn encode_gbuffer_pass(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &FrameView,
-    ) -> (u32, u32) {
+    /// Culled opaque draws into the G-buffer and the single-sample depth.
+    fn encode_gbuffer_pass(&self, encoder: &mut wgpu::CommandEncoder, view: &FrameView) {
         let (deferred, gbuffer) = self.deferred_frame();
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("gbuffer_pass"),
@@ -289,12 +282,8 @@ impl ForwardRenderer {
         self.draw_opaque(&mut pass, view, deferred.pipelines.sets())
     }
 
-    /// Lights the G-buffer, then draws the sky and blended geometry against its depth; returns the blended draws.
-    fn encode_deferred_lighting(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &FrameView,
-    ) -> u32 {
+    /// Lights the G-buffer, then draws the sky and blended geometry against its depth.
+    fn encode_deferred_lighting(&self, encoder: &mut wgpu::CommandEncoder, view: &FrameView) {
         let (deferred, gbuffer) = self.deferred_frame();
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("deferred_lighting_pass"),

@@ -20,6 +20,7 @@ impl ForwardRenderer {
         let (gpu, view) = (frame.gpu, frame.view);
         let encoder = &mut *frame.encoder;
         match pass {
+            FramePass::DrawCull => self.encode_draw_cull(gpu, encoder, view),
             FramePass::ShadowCascades => self.encode_shadow_cascades(gpu, encoder),
             FramePass::Forward => self.encode_forward_pass(encoder, view),
             FramePass::DepthResolve => self.encode_depth_resolve(encoder),
