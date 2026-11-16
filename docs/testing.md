@@ -279,6 +279,10 @@ same day: `CHANGELOG.md`).
   real model); and the renderer's 34 binaries under `crates/webgpu_renderer/tests/`, where
   `feature_matrix.rs` runs the shadow settings, the cube skybox, the clouds, the model transform and
   frustum culling on both raster paths and in both traced modes.
+- Scenario replays: `crates/observant/tests/scenarios.rs` drives the model runs in
+  `crates/observant/tests/scenarios/*.jsonl` through ObservANT's visit rules and asserts each
+  scenario's visits and stays ([observant.md](observant.md)); a retuned rule fails the scenario
+  that holds it (the negative controls are in `CHANGELOG.md`, 2026-11-16).
 - Property-based (fuzz) tests: [proptest](https://proptest-rs.github.io/proptest/)
   properties on ObservANT's network-facing parsers (Range header, query, Host/Origin
   check, request path, camera spec, config file), 256 random inputs per property and run,

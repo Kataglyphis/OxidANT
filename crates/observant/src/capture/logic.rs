@@ -16,6 +16,7 @@ use crate::frame;
 use crate::motion::{still_period, Moving};
 use crate::notify::Notifier;
 use crate::presence::{best_score, outside, smaller_than, zone_of, Change, Presence};
+use crate::scenario::Scenario;
 use crate::status::Status;
 
 /// How long the worker waits on a camera; a test shortens both.
@@ -142,14 +143,14 @@ impl Visits {
         self.status.set_boxes(Vec::new());
     }
 
-    /// Takes one run's `detections` on the frame `i420`, seen at `now`.
+    /// Takes one run's `detections` on the frame `i420`, seen at `now`; what it changed.
     pub(super) fn record(
         &mut self,
         now: Instant,
         i420: &[u8],
         detections: Vec<Detection>,
         moving: Option<&Moving>,
-    ) {
+    ) -> Option<Change> {
         let (width, height) = (self.width, self.height);
         let status = &self.status;
         let detections = smaller_than(
@@ -217,7 +218,68 @@ impl Visits {
         if let Ok(mut current) = self.boxes.lock() {
             *current = shown;
         }
+        change
     }
+}
+
+/// One visit a replay found, in seconds since its scenario started.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Visit {
+    pub arrived: f64,
+    /// From arrival to the last sighting; `None` while the visit is still open at the scenario's end.
+    pub stayed: Option<f64>,
+}
+
+/// The visits `scenario`'s runs make under this build's rules: [`Config::default`]'s score and box
+/// limit, [`Presence`], [`counted`]; the camera's size, rate and ignored spots come from its header.
+pub fn replay(scenario: &Scenario) -> anyhow::Result<Vec<Visit>> {
+    let h = &scenario.header;
+    let defaults = Config::default();
+    anyhow::ensure!(
+        h.floor <= defaults.score,
+        "recorded down to {} only, so a threshold of {} cannot be judged",
+        h.floor,
+        defaults.score
+    );
+    let config = Config {
+        width: h.width,
+        height: h.height,
+        inference_fps: h.inference_fps,
+        ..defaults
+    };
+    let status = Arc::new(Status::new("replay", true, h.width, h.height));
+    status.apply(crate::status::Settings {
+        ignore: Some(h.ignore.clone()),
+        ..Default::default()
+    })?;
+    let boxes: Boxes = Arc::new(Mutex::new(Vec::new()));
+    let mut visits = Visits::new(&config, boxes, status, None, None);
+    let i420 = vec![128u8; frame::size(h.width, h.height)];
+    let start = Instant::now();
+    let mut found: Vec<Visit> = Vec::new();
+    for f in &scenario.frames {
+        let detections = f
+            .boxes
+            .iter()
+            .filter(|b| b.score >= config.score)
+            .map(Detection::from)
+            .collect();
+        let moving = f.moving.as_ref().map(Moving::from);
+        let now = start + Duration::from_secs_f64(f.t);
+        match visits.record(now, &i420, detections, moving.as_ref()) {
+            Some(Change::Arrived { .. }) => found.push(Visit {
+                arrived: f.t,
+                stayed: None,
+            }),
+            Some(Change::Left { stayed }) => {
+                if let Some(open) = found.last_mut() {
+                    open.stayed = Some(stayed.as_secs_f64());
+                }
+            }
+            None => {}
+        }
+    }
+    Ok(found)
 }
 
 /// The detections that count toward a visit: all while a cat is in view, and to start one only

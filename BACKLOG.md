@@ -46,19 +46,15 @@ its open work is here.
 
 ## P1 — high value
 
-- [ ] **Detection quality has no regression set** (M, ★★★). Audit 2026-11-12
+- [ ] **Detection quality has no labelled frame set** (M, ★★★). Audit 2026-11-12
       (not double-checked): `crates/inference/tests/fixtures` holds one photo, checked loosely
-      (two cats, one at 0.8 or more). The rules in `crates/observant/src/presence.rs` and
-      `config.rs` (2 hits, 60 s return, score 0.25) come from hand observations on the Pi,
-      written in `docs/observant.md`. Next: record what the model returned run by run for the
-      known hard cases (the drying rack, a cat behind the sofa and back, the feeding hour, a
-      dark room) as JSON lines under `crates/observant/tests/scenarios`, and replay them through
-      `counted`, `Presence` and `Visits::record`, asserting the visits and stays. Later a
-      labelled set of 20 to 50 frames as a checksum-locked fetched file like `models.lock`,
-      never tracked; the owner supplies own or free pictures. Guard: the replays in the `test`
-      step; the frame set under `KATAGLYPHIS_REQUIRE_MODEL` with a budget (cats found, false
-      boxes at 0.25) for ORT and tract, so a new model or a retuned constant passes it before
-      it reaches a camera.
+      (two cats, one at 0.8 or more). Since 2026-11-16 the visit rules replay five scenarios in
+      the `test` step (`crates/observant/tests/scenarios`), synthesised from the hand
+      observations in `docs/observant.md`; the owner replaces each with a `--record-scenario`
+      run from the Pi. Next: a labelled set of 20 to 50 frames as a checksum-locked fetched file
+      like `models.lock`, never tracked; the owner supplies own or free pictures. Guard: the frame
+      set under `KATAGLYPHIS_REQUIRE_MODEL` with a budget (cats found, false boxes at 0.25) for
+      ORT and tract, so a new model passes it before it reaches a camera.
 
 ## P2 — medium
 

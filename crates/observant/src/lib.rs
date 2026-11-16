@@ -18,6 +18,7 @@ pub mod notify;
 pub mod output;
 pub mod precompress;
 pub mod presence;
+pub mod scenario;
 pub mod static_files;
 pub mod stats;
 pub mod status;

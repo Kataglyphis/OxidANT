@@ -135,6 +135,8 @@ pub struct Config {
     pub llm_idle_unload_s: u32,
     /// Seconds one answer may take, an endpoint's whole stream included; a slower one is a 504.
     pub llm_timeout_s: u32,
+    /// A file each model run's boxes go to as scenario JSON lines (`scenario.rs`); unset records none.
+    pub record_scenario: Option<PathBuf>,
 }
 
 /// A host name as a camera's default name, so two unnamed cameras still differ; "ObservANT" where there is none.
@@ -193,6 +195,7 @@ impl Default for Config {
             llm_threads: 2,
             llm_idle_unload_s: 600,
             llm_timeout_s: 300,
+            record_scenario: None,
         }
     }
 }

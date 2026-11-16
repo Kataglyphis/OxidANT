@@ -33,6 +33,16 @@ pub struct Moving {
 }
 
 impl Moving {
+    /// `cols` blocks a row, row by row, whether each moved lately: a recorded look replayed.
+    pub fn from_blocks(cols: usize, blocks: Vec<bool>) -> Self {
+        Self { cols, blocks }
+    }
+
+    /// The thumbnail's width in blocks and whether each block moved lately, row by row.
+    pub fn blocks(&self) -> (usize, &[bool]) {
+        (self.cols, &self.blocks)
+    }
+
     /// Whether something moved under `rect` (pixels: x1, y1, x2, y2) or in a block around it.
     pub fn near(&self, rect: [f32; 4]) -> bool {
         if self.cols == 0 {

@@ -13,6 +13,35 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, ObservANT's visit rules replay against scenarios)
+- **Five hard cases replay through the visit rules in the `test` step**: `crates/observant/tests/scenarios.rs`
+  reads `tests/scenarios/*.jsonl` and drives each run through the default `score` and `max_box_area`, the spots
+  marked not a cat, `counted` and `Presence` (`capture::replay`, the same `Visits::record` the camera calls, which
+  now returns the change), asserting the visits and stays within 1 s. The scenarios are synthesised from the hand
+  observations in `docs/observant.md` and here by `tests/scenarios/synthesise.py`, not recorded on a Pi, and their
+  `provenance` says so: `drying-rack-still` (the rack at 0.27 to 0.34 that never moves: no visit),
+  `drying-rack-cat-in-front` (the rack under its ignored spot and a cat in front of it: one visit of 44 s),
+  `cat-behind-the-sofa` (50 s out of sight: one visit of 112 s), `feeding-hour` (two cats, breaks of 40 and 30 s,
+  then 98 s: two visits) and `dark-room` (lone 0.2x hits, a lamp's whole-frame box at 0.31 and 0.2x boxes, a dim cat
+  at 0.25 to 0.31: one visit of 51 s).
+- **Each rule fails its scenario when broken**, measured by planting the change and replaying:
+
+  | Change | Fails | Replayed |
+  | --- | --- | --- |
+  | `CONFIRM` 2 → 1 | `dark-room` | a lone hit arrives at 15 s |
+  | `RETURN` 60 → 40 s | `cat-behind-the-sofa` | two visits |
+  | `RETURN` 60 → 120 s | `feeding-hour` (and two more stay open) | the 98 s break merges |
+  | `score` 0.25 → 0.3 | `dark-room` | the dim cat never arrives |
+  | `score` 0.25 → 0.2 | `dark-room` | the lamp's 0.2x boxes arrive at 150.5 s |
+  | `max_box_area` 0.9 → 1.0 | `dark-room` | the lamp's whole-frame box arrives |
+  | `IGNORE_IOU` 0.5 → 0.99 | `drying-rack-cat-in-front` | the rack arrives at 1 s and never leaves |
+  | `counted` without the motion gate | `drying-rack-still` | the rack arrives at 61 s |
+- **`--record-scenario FILE`** (`record_scenario`, off by default) writes a live run in that format: a header (size,
+  `inference_fps`, the ignored spots at the start, `floor`, `provenance`), then per model run `t`, the boxes and the
+  lately moved blocks as runs (`scenario::Recorder`). While it records the model is asked down to 0.1
+  (`RECORD_FLOOR`) and the service applies `score` itself, so a replay can judge a lower threshold. A recording
+  replaces a synthesised scenario once its visits are written into `EXPECTED`.
+
 ### Changed (2026-11-16, render graph v2: the post chain)
 - **Bloom, SSAO and FXAA render into the frame graph's pool** (`render/forward/frame_graph.rs`'s
   `transient_targets`): bloom's half-resolution output and scratch (`Bloom`, `BloomScratch`), SSAO's raw and blurred

@@ -230,6 +230,18 @@ board runs it as one service unit. How to run and configure it:
   the old rule logged on himbeere2 (2026-10-09 to -11, 2 Hz), 52 were a single hit, and
   42 of the 72 scored 0.2x. The journal keeps its words, `cat in view: …` on arrival and
   `no cat in view (stayed N s)`, because OmniAccelerANT's package tests grep the first.
+- **The visit rules replay against scenarios** (2026-11-16). `--record-scenario FILE`
+  (`record_scenario`, off by default) writes each model run as a JSON line: first a header (size,
+  `inference_fps`, the spots marked not a cat at the start, `floor`, `provenance`), then per run
+  `t` in seconds, the boxes (`x1`..`y2` in pixels, `score`, `class`) and the blocks that moved
+  lately as runs (`moving`, `null` with the motion gate off). While it records, the model is asked
+  down to 0.1 and the service applies `score` itself, so a replay can try a lower threshold.
+  `tests/scenarios.rs` replays every `tests/scenarios/*.jsonl` through the default `score` and
+  `max_box_area`, the ignored spots, `counted` and `Presence` (`capture::replay`) and asserts the
+  visits and stays its `EXPECTED` lists, within 1 s. The five there are synthesised from the
+  observations on this page by `synthesise.py`, not recorded, and say so in `provenance`: the
+  drying rack still and with a cat in front, the cat behind the sofa, the feeding hour, the dark
+  room. A recording replaces one: put the file there and write the visits seen into `EXPECTED`.
 - **It serves the page itself.** `http_port` (8080) serves `web_root`, the OmniAccelerANT
   web build, with the MIME types and COOP/COEP that `serve.sh` adds, plus an SPA fallback
   and ETags; a revalidation reads no file. A client that accepts gzip gets the

@@ -151,6 +151,9 @@ struct Args {
     /// Write a zopfli `<file>.gz` beside each file of this web build the server gzips, and exit.
     #[arg(long, value_name = "DIR")]
     precompress: Option<PathBuf>,
+    /// Write each model run's boxes to this file as scenario JSON lines, for crates/observant/tests/scenarios.
+    #[arg(long, value_name = "FILE")]
+    record_scenario: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -355,6 +358,9 @@ fn apply_args(args: &Args, config: &mut Config) -> anyhow::Result<()> {
     }
     if args.notify_url.is_some() {
         config.notify_url.clone_from(&args.notify_url);
+    }
+    if args.record_scenario.is_some() {
+        config.record_scenario.clone_from(&args.record_scenario);
     }
     apply_language_args(args, config);
     if let Some(range) = &args.ice_ports {

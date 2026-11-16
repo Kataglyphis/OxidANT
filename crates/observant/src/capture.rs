@@ -16,17 +16,18 @@ use kataglyphis_inference::person_detection::PersonDetector;
 
 #[cfg(unix)]
 use self::logic::I420Layout;
-pub use self::logic::Timing;
 use self::logic::{
     box_lifetime, capture_size, exact_frame, flip_method, fresh, isp_scales, sleep_unless, Backoff,
     Boxes, Visits,
 };
+pub use self::logic::{replay, Timing, Visit};
 use crate::camera::{self, Choice, Found, Plan};
 use crate::clip::Clip;
 use crate::config::{Config, Privacy};
 use crate::frame;
 use crate::motion::{still_period, Moving, Pacer};
 use crate::notify::Notifier;
+use crate::scenario;
 use crate::status::Status;
 
 /// One pull's wait, which bounds how fast shutdown, errors and stalls are noticed.
@@ -478,6 +479,7 @@ fn spawn_inference(
     let (tx, rx) = mpsc::sync_channel::<Look>(1);
     let (width, height) = (config.width, config.height);
     let mut visits = Visits::new(config, boxes, status.clone(), notifier, clip);
+    let mut recorder = start_recorder(config, &status);
     let spawned = thread::Builder::new()
         .name("observant-infer".into())
         .spawn(move || {
@@ -485,13 +487,26 @@ fn spawn_inference(
                 let rgba = frame::to_rgba(&i420, width, height);
                 // The settings page may have moved them since the last run.
                 let score = status.score();
+                let asked = if recorder.is_some() {
+                    score.min(scenario::RECORD_FLOOR)
+                } else {
+                    score
+                };
                 let wanted = status.wanted_classes();
                 let started = Instant::now();
                 status.run_starts();
-                match detector.infer_rgba(&rgba, width, height, score, wanted.as_deref()) {
-                    Ok(detections) => {
+                match detector.infer_rgba(&rgba, width, height, asked, wanted.as_deref()) {
+                    Ok(mut detections) => {
                         status.record_model_time(started.elapsed());
-                        visits.record(Instant::now(), &i420, detections, moving.as_ref());
+                        let now = Instant::now();
+                        if let Some(r) = &mut recorder {
+                            if let Err(err) = r.frame(now, &detections, moving.as_ref()) {
+                                log::warn!("scenario recording stopped: {err:#}");
+                                recorder = None;
+                            }
+                        }
+                        detections.retain(|d| d.score >= score);
+                        visits.record(now, &i420, detections, moving.as_ref());
                     }
                     Err(err) => visits.model_failed(format!("{err:#}")),
                 }
@@ -501,6 +516,21 @@ fn spawn_inference(
         Ok(handle) => Some((tx, handle)),
         Err(err) => {
             log::error!("could not start the inference thread, streaming without boxes: {err}");
+            None
+        }
+    }
+}
+
+/// The scenario recorder `record_scenario` asks for; a file that cannot be created records nothing, said once.
+fn start_recorder(config: &Config, status: &Status) -> Option<scenario::Recorder> {
+    let path = config.record_scenario.as_deref()?;
+    match scenario::Recorder::create(path, config, status.ignored()) {
+        Ok(recorder) => {
+            log::info!("recording the model's runs to {}", path.display());
+            Some(recorder)
+        }
+        Err(err) => {
+            log::warn!("no scenario recording: {err:#}");
             None
         }
     }
