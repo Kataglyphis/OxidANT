@@ -3,6 +3,7 @@
 use glam::{Mat3, Mat4, Vec3, Vec3A};
 
 use super::bvh::{self, Aabb, Bvh, BvhNode, BvhParams};
+use super::deform::DeformedSource;
 use super::geometry::{Gathered, InstanceSource};
 use super::layers::LayerArray;
 use super::limits::TraceBufferSizes;
@@ -22,7 +23,7 @@ pub struct GpuInstance {
     pub object_to_world: [[f32; 4]; 3],
     pub blas_root: u32,
     pub flags: u32,
-    /// The scene primitive, or `u32::MAX` for the merged world-space mesh.
+    /// The scene primitive, or `u32::MAX` for a world-space mesh: the merged one or a skin.
     pub primitive: u32,
     pub mesh: u32,
 }
@@ -66,6 +67,7 @@ fn affine(rows: [[f32; 4]; 3]) -> Mat4 {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeshInfo {
     pub root: u32,
+    pub node_count: u32,
     pub first_triangle: u32,
     pub triangle_count: u32,
     pub first_vertex: u32,
@@ -125,6 +127,8 @@ pub struct TraceScene {
     pub meshes: Vec<MeshInfo>,
     /// Each instance's mesh, primitive and transform below the root, index-aligned with `instances`.
     pub sources: Vec<InstanceSource>,
+    /// The meshes an animation deforms, re-posed by [`TraceScene::pose_deformed`].
+    pub deformed: Vec<DeformedSource>,
     pub(crate) root: Mat4,
     pub stats: TraceStats,
 }
@@ -143,6 +147,7 @@ impl TraceScene {
             srgb,
             linear,
             sources: gathered.instances,
+            deformed: gathered.deformed,
             root: Mat4::IDENTITY,
             ..Self::default()
         };
@@ -166,6 +171,7 @@ impl TraceScene {
             }));
             scene.meshes.push(MeshInfo {
                 root: node_base,
+                node_count: bvh.nodes.len() as u32,
                 first_triangle,
                 triangle_count: bvh.order.len() as u32,
                 first_vertex,
@@ -229,6 +235,39 @@ impl TraceScene {
         }
         self.rebuild_tlas();
         true
+    }
+
+    /// Re-poses each deformed mesh whose joints or `weights[primitive]` moved and refits it; the meshes it changed.
+    pub fn pose_deformed(&mut self, world: &[Mat4], weights: &[&[f32]]) -> Vec<u32> {
+        let mut changed = Vec::new();
+        for source in &mut self.deformed {
+            let posed = weights.get(source.primitive as usize).copied();
+            let Some(build) = source.pose(world, posed.unwrap_or_default()) else {
+                continue;
+            };
+            let mesh = &mut self.meshes[source.mesh as usize];
+            let vertices =
+                mesh.first_vertex as usize..(mesh.first_vertex + mesh.vertex_count) as usize;
+            self.positions[vertices.clone()].copy_from_slice(&build.positions);
+            self.vertices[vertices].copy_from_slice(&build.vertices);
+            let (triangles, positions) = (&self.triangles, &self.positions);
+            let nodes = mesh.root as usize..(mesh.root + mesh.node_count) as usize;
+            bvh::refit(&mut self.nodes, nodes, |first, count| {
+                let mut bounds = Aabb::EMPTY;
+                for tri in &triangles[first as usize..(first + count) as usize] {
+                    for &corner in &tri[..3] {
+                        bounds.grow_point(Vec3A::from_slice(&positions[corner as usize][..3]));
+                    }
+                }
+                bounds
+            });
+            mesh.bounds = self.nodes[mesh.root as usize].bounds();
+            changed.push(source.mesh);
+        }
+        if !changed.is_empty() {
+            self.rebuild_tlas();
+        }
+        changed
     }
 
     /// Recomputes the instances from their sources and the top level over them.

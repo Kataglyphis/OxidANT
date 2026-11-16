@@ -24,6 +24,8 @@ pub(super) struct SceneAnimation {
     pub(super) animations: Vec<CpuAnimation>,
     pub(super) skins: Vec<CpuSkin>,
     pub(super) pending_joint_world: Option<Vec<Mat4>>,
+    /// Every node's world matrix at the current pose, which the tracer re-poses its skins from.
+    pub(super) world: Vec<Mat4>,
     /// The one clip `set_animation_time` samples: clips on the same nodes would overwrite each other.
     active: usize,
     /// The file's pose, which a clip switch restores for the nodes the new clip does not drive.
@@ -42,6 +44,7 @@ impl SceneAnimation {
             animations: scene.animations.clone(),
             skins: scene.skins.clone(),
             pending_joint_world: None,
+            world: CpuScene::compute_world_transforms(&scene.nodes),
             active: 0,
             rest_nodes: scene.nodes.clone(),
             rest_morph_weights: scene

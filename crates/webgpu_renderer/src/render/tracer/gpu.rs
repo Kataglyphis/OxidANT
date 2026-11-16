@@ -47,6 +47,9 @@ impl TraceSceneInfo {
 pub struct TraceGpuScene {
     records: wgpu::Buffer,
     node_max: wgpu::Buffer,
+    positions: wgpu::Buffer,
+    vertices: wgpu::Buffer,
+    vertex_extras: wgpu::Buffer,
     layout: RecordLayout,
     bind_group: wgpu::BindGroup,
     pub stats: TraceStats,
@@ -153,6 +156,9 @@ impl TraceGpuScene {
         let uploaded = Self {
             records,
             node_max,
+            positions,
+            vertices,
+            vertex_extras,
             layout,
             bind_group,
             stats: scene.stats.clone(),
@@ -183,6 +189,36 @@ impl TraceGpuScene {
             instances,
             bytemuck::cast_slice(&scene.instances),
         );
+    }
+
+    /// Rewrites `meshes`' vertices and nodes after [`TraceScene::pose_deformed`], and the top level over them.
+    pub fn write_meshes(&self, gpu: &GpuContext, scene: &TraceScene, meshes: &[u32]) {
+        for mesh in meshes.iter().map(|&m| &scene.meshes[m as usize]) {
+            let first = mesh.first_vertex as usize;
+            let vertices = first..first + mesh.vertex_count as usize;
+            gpu.queue.write_buffer(
+                &self.positions,
+                first as u64 * 16,
+                bytemuck::cast_slice(&scene.positions[vertices.clone()]),
+            );
+            write_half(
+                &gpu.queue,
+                &self.vertices,
+                first,
+                &scene.vertices[vertices.clone()],
+                0,
+            );
+            write_half(
+                &gpu.queue,
+                &self.vertex_extras,
+                first,
+                &scene.vertices[vertices],
+                1,
+            );
+            let root = mesh.root as usize;
+            self.write_nodes(gpu, scene, root..root + mesh.node_count as usize);
+        }
+        self.write_instances(gpu, scene);
     }
 
     /// Writes both halves of `range`'s nodes.

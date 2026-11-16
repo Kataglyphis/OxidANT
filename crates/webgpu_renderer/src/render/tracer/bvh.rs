@@ -95,6 +95,26 @@ impl BvhNode {
     }
 }
 
+/// Refits `nodes[range]` to its leaves' `leaf(first, count)` boxes from the back, since every child follows its parent.
+pub fn refit(
+    nodes: &mut [BvhNode],
+    range: std::ops::Range<usize>,
+    leaf: impl Fn(u32, u32) -> Aabb,
+) {
+    for index in range.rev() {
+        let node = nodes[index];
+        let bounds = if node.is_leaf() {
+            leaf(node.first, node.count)
+        } else {
+            let mut bounds = nodes[node.first as usize].bounds();
+            bounds.grow(&nodes[node.first as usize + 1].bounds());
+            bounds
+        };
+        nodes[index].min = bounds.min.to_array();
+        nodes[index].max = bounds.max.to_array();
+    }
+}
+
 /// Leaf size and depth limits of one hierarchy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BvhParams {

@@ -5,9 +5,12 @@ use std::collections::HashMap;
 
 use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 
+use super::deform::{push_deformed, DeformedSource};
 use super::material::MaterialTable;
 use crate::render::bounds::normal_matrix_of;
-use crate::scene::{blend_morph_targets, CpuPrimitive, CpuScene, Vertex};
+use crate::scene::{
+    blend_morph_targets, ChannelValues, CpuPrimitive, CpuScene, CpuSkin, MorphTarget, Vertex,
+};
 
 /// Triangle records keep their material in the low bits and whether it alpha-tests in the top bit.
 pub const TRIANGLE_MASKED: u32 = 1 << 31;
@@ -21,7 +24,7 @@ pub struct MeshBuild {
     pub triangles: Vec<[u32; 4]>,
 }
 
-/// Where an instance comes from: its mesh, its scene primitive (`u32::MAX` for the merged mesh) and its transform.
+/// Where an instance comes from: its mesh, its scene primitive (`u32::MAX` for a world-space mesh) and its transform.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InstanceSource {
     pub mesh: u32,
@@ -33,11 +36,12 @@ pub struct InstanceSource {
     pub local: Mat4,
 }
 
-/// Every mesh and instance of a scene.
+/// Every mesh and instance of a scene, and the meshes an animation deforms.
 #[derive(Clone, Debug, Default)]
 pub struct Gathered {
     pub meshes: Vec<MeshBuild>,
     pub instances: Vec<InstanceSource>,
+    pub deformed: Vec<DeformedSource>,
 }
 
 /// Splits `scene` into meshes; `explicit[i]`, when not empty, instances primitive `i` like `ForwardRenderer::set_instances`.
@@ -50,8 +54,15 @@ pub fn gather(scene: &CpuScene, table: &MaterialTable, explicit: &[Vec<Mat4>]) -
                 .node_index
                 .is_some_and(|n| animated.get(n).copied().unwrap_or(false))
     };
-    let (classes, mut merged) = classify(scene, table);
+    let (classes, deformed) = classify(scene, table);
+    let (posed, mut merged): (Vec<usize>, Vec<usize>) = deformed
+        .into_iter()
+        .partition(|&i| deforms_over_time(scene, &animated, i));
+    let world = CpuScene::compute_world_transforms(&scene.nodes);
     let mut gathered = Gathered::default();
+    for primitive in posed {
+        push_deformed(&mut gathered, scene, table, primitive, &world);
+    }
     for class in classes {
         if class.len() < 2 && !moving(class[0]) {
             merged.push(class[0]);
@@ -77,12 +88,15 @@ pub fn gather(scene: &CpuScene, table: &MaterialTable, explicit: &[Vec<Mat4>]) -
         }
     }
     merged.sort_unstable();
-    let build = merge(scene, table, &merged);
+    let build = merge(scene, table, &merged, &world);
     if !build.triangles.is_empty() {
         // First, so assembling the arrays can take over the largest mesh's vectors without a copy.
         gathered.meshes.insert(0, build);
         for instance in &mut gathered.instances {
             instance.mesh += 1;
+        }
+        for source in &mut gathered.deformed {
+            source.mesh += 1;
         }
         let whole = InstanceSource {
             mesh: 0,
@@ -97,12 +111,11 @@ pub fn gather(scene: &CpuScene, table: &MaterialTable, explicit: &[Vec<Mat4>]) -
 }
 
 /// The primitives `merged` names, posed and moved to world space, as one mesh.
-fn merge(scene: &CpuScene, table: &MaterialTable, merged: &[usize]) -> MeshBuild {
-    let world = CpuScene::compute_world_transforms(&scene.nodes);
+fn merge(scene: &CpuScene, table: &MaterialTable, merged: &[usize], world: &[Mat4]) -> MeshBuild {
     let mut build = MeshBuild::default();
     for &i in merged {
         let prim = &scene.primitives[i];
-        let (vertices, posed) = posed_vertices(scene, prim, &world);
+        let (vertices, posed) = posed_vertices(scene, prim, world);
         let transform = if posed {
             Mat4::IDENTITY
         } else {
@@ -182,6 +195,27 @@ fn same_geometry(a: &CpuPrimitive, b: &CpuPrimitive) -> bool {
             == bytemuck::cast_slice::<Vertex, u8>(&b.vertices)
 }
 
+/// Whether an animation moves a skinned primitive's joints or a morphed one's weights, so its mesh is re-posed.
+fn deforms_over_time(scene: &CpuScene, animated: &[bool], i: usize) -> bool {
+    let prim = &scene.primitives[i];
+    let skin = prim.skin_index.and_then(|s| scene.skins.get(s));
+    let joints_move = skin.is_some_and(|skin| {
+        skin.joints
+            .iter()
+            .any(|&joint| animated.get(joint).copied().unwrap_or(false))
+    });
+    let weights_move = !prim.morph_targets.is_empty()
+        && scene
+            .animations
+            .iter()
+            .flat_map(|a| &a.channels)
+            .any(|channel| {
+                Some(channel.node) == prim.node_index
+                    && matches!(channel.values, ChannelValues::MorphWeights(_))
+            });
+    joints_move || weights_move
+}
+
 /// Nodes an animation channel moves, directly or through an ancestor.
 fn animated_nodes(scene: &CpuScene) -> Vec<bool> {
     let mut animated = vec![false; scene.nodes.len()];
@@ -213,19 +247,49 @@ fn posed_vertices<'a>(
     prim: &'a CpuPrimitive,
     world: &[Mat4],
 ) -> (Cow<'a, [Vertex]>, bool) {
-    let mut vertices = Cow::Borrowed(prim.vertices.as_slice());
-    if prim.morph_weights.iter().any(|w| *w != 0.0) {
-        vertices = Cow::Owned(blend_morph_targets(
-            &prim.vertices,
-            &prim.morph_targets,
-            &prim.morph_weights,
-        ));
-    }
-    let Some(skin) = prim.skin_index.and_then(|s| scene.skins.get(s)) else {
-        return (vertices, false);
+    let joints = prim
+        .skin_index
+        .and_then(|s| scene.skins.get(s))
+        .map(|skin| joint_matrices(skin, world));
+    let pose = Deformation {
+        targets: &prim.morph_targets,
+        weights: &prim.morph_weights,
+        joints: joints.as_deref(),
+        node: prim.transform,
     };
-    let joints: Vec<Mat4> = skin
-        .joints
+    pose.apply(&prim.vertices)
+}
+
+/// What poses a primitive's vertices: morph targets and their weights, and a skin's joint matrices with the node's own.
+pub(super) struct Deformation<'a> {
+    pub targets: &'a [MorphTarget],
+    pub weights: &'a [f32],
+    pub joints: Option<&'a [Mat4]>,
+    /// The transform an unweighted vertex of a skinned primitive follows.
+    pub node: Mat4,
+}
+
+impl Deformation<'_> {
+    /// The posed vertices; true when skinned, which leaves them in world space.
+    pub fn apply<'v>(&self, vertices: &'v [Vertex]) -> (Cow<'v, [Vertex]>, bool) {
+        let mut posed = Cow::Borrowed(vertices);
+        if self.weights.iter().any(|w| *w != 0.0) {
+            posed = Cow::Owned(blend_morph_targets(vertices, self.targets, self.weights));
+        }
+        let Some(joints) = self.joints else {
+            return (posed, false);
+        };
+        let skinned = posed
+            .iter()
+            .map(|v| skin_vertex(v, joints, self.node))
+            .collect();
+        (Cow::Owned(skinned), true)
+    }
+}
+
+/// Each joint's world matrix times its inverse bind matrix, as the raster's joint buffer holds them.
+pub(super) fn joint_matrices(skin: &CpuSkin, world: &[Mat4]) -> Vec<Mat4> {
+    skin.joints
         .iter()
         .enumerate()
         .map(|(j, &node)| {
@@ -236,12 +300,7 @@ fn posed_vertices<'a>(
                 .unwrap_or(Mat4::IDENTITY);
             world.get(node).copied().unwrap_or(Mat4::IDENTITY) * bind
         })
-        .collect();
-    let posed = vertices
-        .iter()
-        .map(|v| skin_vertex(v, &joints, prim.transform))
-        .collect();
-    (Cow::Owned(posed), true)
+        .collect()
 }
 
 /// One vertex through its weighted joints, or through the node's transform when unweighted, as `forward.slang` does.
@@ -272,7 +331,7 @@ fn skin_vertex(v: &Vertex, joints: &[Mat4], node: Mat4) -> Vertex {
 }
 
 /// A transform with its normal matrix and mirror sign, worked out once for all of a primitive's vertices.
-struct Pose {
+pub(super) struct Pose {
     model: Mat4,
     normal: Mat4,
     mirror: f32,
@@ -307,7 +366,7 @@ impl Pose {
 }
 
 /// Appends vertices (moved to world space by `transform` when given) and the non-degenerate triangles over them.
-fn append_primitive(
+pub(super) fn append_primitive(
     build: &mut MeshBuild,
     (vertices, indices): (&[Vertex], &[u32]),
     transform: Option<Mat4>,
@@ -316,26 +375,7 @@ fn append_primitive(
 ) {
     let base = build.positions.len() as u32;
     let pose = transform.map(Pose::new);
-    for v in vertices {
-        let (position, (normal, tangent, handedness)) = match &pose {
-            Some(pose) => (
-                pose.model.transform_point3(Vec3::from_array(v.position)),
-                pose.frame(v),
-            ),
-            None => (
-                Vec3::from_array(v.position),
-                (
-                    Vec3::from_array(v.normal),
-                    Vec3::new(v.tangent[0], v.tangent[1], v.tangent[2]),
-                    v.tangent[3],
-                ),
-            ),
-        };
-        build.positions.push(position.extend(0.0).to_array());
-        build
-            .vertices
-            .push(pack_vertex(v, normal, tangent, handedness));
-    }
+    append_vertices(build, vertices, pose.as_ref());
     let masked = if table.masked(material) {
         TRIANGLE_MASKED
     } else {
@@ -353,6 +393,30 @@ fn append_primitive(
             let (b, c) = if mirrored { (c, b) } else { (b, c) };
             build.triangles.push([a, b, c, material | masked]);
         }
+    }
+}
+
+/// Appends each vertex's position and packed attributes, moved by `pose` when given.
+pub(super) fn append_vertices(build: &mut MeshBuild, vertices: &[Vertex], pose: Option<&Pose>) {
+    for v in vertices {
+        let (position, (normal, tangent, handedness)) = match pose {
+            Some(pose) => (
+                pose.model.transform_point3(Vec3::from_array(v.position)),
+                pose.frame(v),
+            ),
+            None => (
+                Vec3::from_array(v.position),
+                (
+                    Vec3::from_array(v.normal),
+                    Vec3::new(v.tangent[0], v.tangent[1], v.tangent[2]),
+                    v.tangent[3],
+                ),
+            ),
+        };
+        build.positions.push(position.extend(0.0).to_array());
+        build
+            .vertices
+            .push(pack_vertex(v, normal, tangent, handedness));
     }
 }
 

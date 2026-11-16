@@ -4,6 +4,7 @@
 pub mod build;
 pub mod bvh;
 pub mod debug;
+pub mod deform;
 pub mod geometry;
 pub mod gpu;
 pub mod job;

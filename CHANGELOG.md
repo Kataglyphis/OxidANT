@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, the traced scene follows skins and morphs)
+- **A skin whose joints an animation moves, or a morph whose weights one drives, traces as its own mesh** and follows
+  the raster's pose: `Tracer::pose_deformed`, called with the animation's node matrices and each primitive's weights,
+  skins and blends the rest vertices again on the CPU as `forward.slang` does, refits the mesh's BVH bottom-up in
+  place (`bvh::refit`) and writes only its vertices, its nodes and the top level (`TraceGpuScene::write_meshes`). A
+  pose change bumps the tracer generation, so the path tracer's mean restarts. Skins and morphs no animation moves
+  still merge at their first pose.
+- Tests: `skinned_bar.gltf` bent in `tests/traced_modes.rs` moves its traced upper half by 14.5 px against raster's
+  14.6; without the re-pose the traced bar stays (65.4 px against 48.9), without the refit it lags (60.8). On the CPU
+  a bent skin and an animated morph trace as brute force, every node bounding its children; a skin no animation
+  moves merges.
+
 ### Changed (2026-11-16, lavapipe traces the full Colosseum)
 - **A node's and a packed vertex's two 16-byte halves bind apart** (`tracerNodeMax`, `tracerVertexExtras` at
   bindings 9 and 10 of the scene group), so every tracer buffer holds 16 bytes an entry. The full Colosseum needed

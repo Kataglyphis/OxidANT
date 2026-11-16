@@ -73,12 +73,6 @@ its open work is here.
 
 ## P2 — medium
 
-- [ ] **Skins and morph targets are traced at their first pose** (M, ★★). `sync_animated_instances`
-      (`crates/webgpu_renderer/src/render/forward/traced.rs`) moves rigid instances only; a skinned or morphed mesh keeps the pose the
-      build saw, so its traced frame and shadow disagree with raster once it moves. Next: refit that mesh's
-      BVH from the skinned positions on a pose change. Guard: `skinned_bar.gltf` posed away from its rest,
-      traced against raster as `the_traced_scene_follows_an_animated_node` does for a rigid node.
-
 - [ ] **Clouds are dark and grainy in both renderers** (M, ★★). The shared estimator
       (`shaders/common/volumetric_clouds.slang`) has no ambient term, so a cloud is darker than the sky
       around it, and 8 steps through a slab seen at a grazing angle undersample the fine noise. Fixing it moves

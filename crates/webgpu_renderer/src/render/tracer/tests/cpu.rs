@@ -2,13 +2,14 @@
 
 use std::sync::Arc;
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3, Vec3A};
 
 use super::scenes::{self, build, rays};
 use crate::render::tracer::build::{TraceBuildOptions, TraceSceneBuilder};
+use crate::render::tracer::bvh::Aabb;
 use crate::render::tracer::query::{TraceRay, FAR};
 use crate::render::tracer::scene::TraceScene;
-use crate::scene::CpuScene;
+use crate::scene::{ChannelValues, CpuAnimation, CpuAnimationChannel, CpuScene, Interpolation};
 
 fn named_scenes() -> Vec<(&'static str, CpuScene)> {
     vec![
@@ -295,4 +296,97 @@ fn a_large_mesh_builds_within_its_budget() {
         "{count} triangles took {elapsed:.2} s, budget {seconds} s"
     );
     assert!(scene.nodes.len() < 2 * count);
+}
+
+/// Every inner node of `scene`'s mesh `mesh` bounds both children, and every leaf its triangles.
+fn assert_mesh_bounds(scene: &TraceScene, mesh: usize) {
+    let info = &scene.meshes[mesh];
+    for index in info.root..info.root + info.node_count {
+        let node = scene.nodes[index as usize];
+        let mut inside = Aabb::EMPTY;
+        if node.is_leaf() {
+            for tri in &scene.triangles[node.first as usize..(node.first + node.count) as usize] {
+                for &corner in &tri[..3] {
+                    inside.grow_point(Vec3A::from_slice(&scene.positions[corner as usize][..3]));
+                }
+            }
+        } else {
+            inside = scene.nodes[node.first as usize].bounds();
+            inside.grow(&scene.nodes[node.first as usize + 1].bounds());
+        }
+        assert!(
+            node.bounds().contains(&inside),
+            "node {index} of mesh {mesh}"
+        );
+    }
+}
+
+/// An animated skin is its own mesh: bent, it is re-posed, refitted and still traces as brute force.
+#[test]
+fn a_bent_skin_is_refitted_and_traces_like_brute_force() {
+    let source = scenes::asset("skinned_bar.gltf");
+    let mut scene = build(source.clone());
+    assert_eq!(
+        scene.deformed.len(),
+        1,
+        "the animated skin is a mesh of its own"
+    );
+    let mesh = scene.deformed[0].mesh as usize;
+    let rest = scene.meshes[mesh].bounds;
+    let mut nodes = source.nodes.clone();
+    nodes[2].rotation = Quat::from_rotation_z(1.0);
+    let world = CpuScene::compute_world_transforms(&nodes);
+    assert_eq!(scene.pose_deformed(&world, &[]), vec![mesh as u32]);
+    assert!(
+        scene.pose_deformed(&world, &[]).is_empty(),
+        "a held pose re-poses nothing"
+    );
+    let bent = scene.meshes[mesh].bounds;
+    assert!(
+        bent.max.x - bent.min.x > rest.max.x - rest.min.x + 0.5,
+        "the bend did not widen the mesh: {rest:?} -> {bent:?}"
+    );
+    assert_mesh_bounds(&scene, mesh);
+    let hits = assert_matches_brute_force("bent bar", &scene, 1000);
+    assert!(hits > 200, "only {hits} of 1000 rays hit");
+}
+
+/// A skin no animation moves keeps merging into the world-space mesh at its first pose.
+#[test]
+fn a_still_skin_merges_at_its_first_pose() {
+    let mut source = scenes::asset("skinned_bar.gltf");
+    source.animations.clear();
+    let scene = build(source);
+    assert!(scene.deformed.is_empty());
+    assert_eq!(scene.meshes.len(), 1, "only the merged mesh");
+}
+
+/// A morphed mesh whose weights an animation drives is re-posed by the weights it is handed.
+#[test]
+fn animated_morph_weights_re_pose_their_mesh() {
+    let mut source = scenes::asset("cube_morph.gltf");
+    source.animations.push(CpuAnimation {
+        name: "breathe".to_owned(),
+        duration: 1.0,
+        channels: vec![CpuAnimationChannel {
+            node: 0,
+            times: vec![0.0],
+            values: ChannelValues::MorphWeights(vec![1.0]),
+            interpolation: Interpolation::Linear,
+        }],
+    });
+    let world = CpuScene::compute_world_transforms(&source.nodes);
+    let mut scene = build(source);
+    assert_eq!(
+        scene.deformed.len(),
+        1,
+        "the morphed cube is a mesh of its own"
+    );
+    let mesh = scene.deformed[0].mesh as usize;
+    let top = |scene: &TraceScene| scene.meshes[mesh].bounds.max.y;
+    let full = top(&scene);
+    assert_eq!(scene.pose_deformed(&world, &[&[0.0]]), vec![mesh as u32]);
+    assert!(top(&scene) < full - 0.5, "{full} -> {}", top(&scene));
+    assert_mesh_bounds(&scene, mesh);
+    assert_matches_brute_force("morphed cube", &scene, 500);
 }

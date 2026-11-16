@@ -327,17 +327,23 @@ impl ForwardRenderer {
         }
     }
 
-    /// Moves the traced scene's animated instances to the poses the raster draws, rebuilding the top level on a change.
+    /// Moves the traced scene's animated instances to the poses the raster draws and re-poses its skins and morphs.
     fn sync_animated_instances(&mut self, gpu: &GpuContext) {
         if !self.has_animations() {
             return;
         }
         let transforms: Vec<Mat4> = self.primitives.iter().map(|p| p.model).collect();
         let (generation, synced) = &self.traced.synced;
-        if *generation == self.tracer.generation() && *synced == transforms {
-            return;
+        if *generation != self.tracer.generation() || *synced != transforms {
+            self.tracer.set_primitive_transforms(gpu, &transforms);
         }
-        self.tracer.set_primitive_transforms(gpu, &transforms);
+        let weights: Vec<&[f32]> = self
+            .primitives
+            .iter()
+            .map(|p| p.morph_weights.as_slice())
+            .collect();
+        self.tracer
+            .pose_deformed(gpu, &self.animation.world, &weights);
         self.traced.synced = (self.tracer.generation(), transforms);
     }
 }

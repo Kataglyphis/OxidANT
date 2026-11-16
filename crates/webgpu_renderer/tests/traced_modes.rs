@@ -926,6 +926,68 @@ fn the_traced_scene_follows_an_animated_node() {
     assert_eq!(rig.renderer.accumulated_samples(), 8, "a move starts over");
 }
 
+/// Mean x of the reddish pixels in the top half of a `size`-wide frame, where bending the bar's upper joint swings it.
+fn upper_red_x(pixels: &[u8], size: u32) -> f32 {
+    let (mut sum, mut count) = (0.0f32, 0u32);
+    for (i, p) in pixels.as_chunks::<4>().0.iter().enumerate() {
+        let (x, y) = (i as u32 % size, i as u32 / size);
+        let (r, g, b) = (i32::from(p[0]), i32::from(p[1]), i32::from(p[2]));
+        if y < size / 2 && r > 40 && r > g + 20 && r > b + 20 {
+            sum += x as f32;
+            count += 1;
+        }
+    }
+    assert!(count > 30, "the bar is not in the top half ({count} px)");
+    sum / count as f32
+}
+
+/// A skinned bar bends in the traced frame as in the raster one: the tracer re-poses and refits its mesh.
+#[test]
+fn the_traced_scene_follows_a_skin() {
+    let camera = OrbitCamera {
+        radius: 5.0,
+        pitch_deg: 5.0,
+        yaw_deg: 90.0,
+        target: glam::Vec3::new(0.0, 1.0, 0.0),
+        ..OrbitCamera::default()
+    };
+    let size = 128;
+    let Some(mut rig) = Rig::new(&asset("skinned_bar.gltf"), size, camera) else {
+        return;
+    };
+    let mut centroids = Vec::new();
+    for time in [0.0, 1.0] {
+        rig.renderer.set_animation_time(time);
+        let raster = upper_red_x(&rig.frames(RenderMode::Raster, 1), size);
+        let traced = upper_red_x(&rig.frames(RenderMode::RayTraced, 1), size);
+        eprintln!("t {time}: upper bar x raster {raster:.2}, ray traced {traced:.2}");
+        // The traced frame has no ambient term, so its shadowed faces drop out of the red pixels.
+        assert!(
+            (raster - traced).abs() < 3.0,
+            "at t {time} the traced bar sits at {traced}, the raster one at {raster}"
+        );
+        centroids.push((raster, traced));
+    }
+    let raster_bend = centroids[1].0 - centroids[0].0;
+    let traced_bend = centroids[1].1 - centroids[0].1;
+    assert!(
+        raster_bend.abs() > 8.0,
+        "the raster bar did not bend: {centroids:?}"
+    );
+    assert!(
+        (traced_bend - raster_bend).abs() < 1.5,
+        "the traced bar bent by {traced_bend} px, the raster one by {raster_bend}"
+    );
+    rig.frames(RenderMode::PathTraced, 2);
+    rig.renderer.set_animation_time(1.5);
+    rig.frames(RenderMode::PathTraced, 1);
+    assert_eq!(
+        rig.renderer.accumulated_samples(),
+        8,
+        "a bend starts the mean over"
+    );
+}
+
 /// `source` with `old` replaced, which must occur: the generated WGSL's names move when the Slang does.
 fn edited(source: &str, old: &str, new: &str) -> String {
     let edited = source.replace(old, new);

@@ -617,6 +617,7 @@ impl ForwardRenderer {
         self.animation.pending_joint_world = Some(world.clone());
         self.retarget_primitives(&world);
         self.retarget_lights(&world);
+        self.animation.world = world;
         self.recompute_scene_bounds();
     }
 

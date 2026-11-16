@@ -345,6 +345,18 @@ impl Tracer {
         self.move_instances(gpu, |scene| scene.set_primitive_transforms(transforms));
     }
 
+    /// Re-poses the skinned and morphed meshes an animation deforms; see [`TraceScene::pose_deformed`].
+    pub fn pose_deformed(&mut self, gpu: &GpuContext, world: &[Mat4], weights: &[&[f32]]) {
+        if let State::Ready(ready) = &mut self.state {
+            let (scene, uploaded) = &mut **ready;
+            let changed = scene.pose_deformed(world, weights);
+            if !changed.is_empty() {
+                uploaded.write_meshes(gpu, scene, &changed);
+                self.generation += 1;
+            }
+        }
+    }
+
     fn move_instances(&mut self, gpu: &GpuContext, change: impl FnOnce(&mut TraceScene)) {
         if let State::Ready(ready) = &mut self.state {
             let (scene, uploaded) = &mut **ready;

@@ -10,8 +10,9 @@ the limits and the kernel API) and then [the modes](#the-modes). Code: `src/rend
 
 | Module | Holds |
 | --- | --- |
-| `bvh` | Binned SAH builder, resumable in steps or parallel over subtrees; the 32-byte node |
+| `bvh` | Binned SAH builder, resumable in steps or parallel over subtrees, and the refit; the 32-byte node |
 | `geometry` | The scene as meshes and instances, the packed vertex attributes |
+| `deform` | Animated skins and morphs as meshes of their own, re-posed on the CPU |
 | `material` | The material table and which texture lands in which array layer |
 | `layers` | Textures resampled into square, mipmapped array layers |
 | `scene` | `TraceScene`: the flat arrays, the top level, the record layout |
@@ -39,10 +40,12 @@ level, which the CPU alpha test reads.
 **Two levels.** Primitives with equal vertices, indices and material share one
 object-space mesh, instanced once per copy (the Colosseum's 1112 repeated primitives, its
 trees among them, become 15 meshes). So do primitives on an animated node, or with explicit instances
-(`TraceSceneBuilder::new`'s `explicit`, as `set_instances`). Everything else merges into one
-world-space mesh, skins and morph targets baked at their first pose; a mirroring transform
-flips that mesh's winding and bitangent sign there. Zero-scale and degenerate geometry is
-dropped. `set_root_transform` (the model transform) and `set_primitive_transforms` (animated
+(`TraceSceneBuilder::new`'s `explicit`, as `set_instances`). A skin whose joints an animation
+moves, or a morphed primitive whose weights one drives, gets a mesh of its own (`deform`), a
+skin in world space under an identity instance, a morph in object space under its node's.
+Everything else merges into one world-space mesh, skins and morph targets no animation moves
+baked at their first pose; a mirroring transform flips that mesh's winding and bitangent sign
+there. Zero-scale and degenerate geometry is dropped. `set_root_transform` (the model transform) and `set_primitive_transforms` (animated
 nodes' world matrices, by scene primitive) rebuild only the top level, and
 `TraceGpuScene::write_instances` rewrites it in place; `Tracer` has both for the uploaded
 scene.
@@ -161,7 +164,9 @@ would pass 128 MiB each, traces and decodes on the GPU as on the CPU (it fails w
 writes every chunk at the first one's offset). `tests/tracer.rs` pins the Slang constants and
 bindings and the lazy build through `ForwardRenderer`, and traces the full Colosseum on request
 ([testing.md](../../../docs/testing.md#the-gpu-tests-must-render)); `limits.rs` the browser and
-native limits, the Colosseum's counts among them.
+native limits, the Colosseum's counts among them. A bent skin and an animated morph are re-posed and
+refitted (every node bounds its children) and trace as brute force does; a skin no animation moves
+merges.
 
 ## The modes
 
@@ -254,8 +259,12 @@ rays from one loop. With a call each, the web demo's path-traced frame did not a
 the browser test's 300 s; with the loop it took 117 s, against 124 before the punctual lights.
 
 **Animation and placement.** The renderer moves the traced instances of rigid animated nodes to
-the raster's poses each frame (`set_primitive_transforms`), which restarts the mean; skins and
-morph targets trace at their first pose. The model transform is the tracer's root
+the raster's poses each frame (`set_primitive_transforms`), which restarts the mean. Its deformed
+meshes follow the raster's skins and morphs (`Tracer::pose_deformed`, from the animation's node
+matrices and each primitive's morph weights): a mesh whose joint matrices, node or weights moved
+is skinned and blended again on the CPU as `forward.slang` poses it, its BVH refitted bottom-up in
+place (`bvh::refit`; the tree keeps its shape, so a large bend makes it slower, never wrong), and
+only its vertices and nodes and the top level are written to the GPU. The model transform is the tracer's root
 (`Tracer::set_root_transform` on every change); the tracer keeps it, so a transform set before
 the build applies to the built scene, and an upload resets it with the renderer's.
 `ForwardRenderer::set_instances` reaches `Tracer::set_instances`: a build takes the transforms as
@@ -298,7 +307,9 @@ the C++ 0.01; measured within 0.0011, the 1.5 % gain off by 0.014), an output wh
 does not fit drawing and reporting raster, accumulation that settles, every reset premise, a MASK card's half shadow in both modes,
 the untextured metallic factor, unlit albedo in every mode, the traced shadow against the
 cascades' (IoU over 0.75; measured 0.98) and black, the lens shift, the raster round trip, and
-that no raster pass runs or is timed, and that a shader reload rebuilds both kernels or keeps them.
+that no raster pass runs or is timed, that a shader reload rebuilds both kernels or keeps them, and a
+skinned bar bending in the traced frame as in raster (14.5 px against 14.6; without the re-pose or
+the refit it fails) while a bend restarts the mean.
 `tests/traced_lights.rs` (lavapipe): two ranged point lights over a ground plane lit where raster
 lights it (IoU of the pixels over a tenth of the peak above 0.9; measured 0.976), nothing past their
 range windows, and the centre within 3 % of the analytic radiance (measured 0.5 % under; raster
