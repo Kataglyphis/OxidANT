@@ -5,10 +5,10 @@ import re
 import sys
 from pathlib import Path
 
-COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
-IMPORT = re.compile(r"^\s*(__exported\s+)?import\s+(\w+)\s*;", re.M)
-DEFINE = re.compile(r"^\s*#\s*define\s+(\w+)", re.M)
-DIRECTIVE = re.compile(r"^\s*#[^\n]*", re.M)
+COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+IMPORT = re.compile(r"^\s*(__exported\s+)?import\s+(\w+)\s*;", re.MULTILINE)
+DEFINE = re.compile(r"^\s*#\s*define\s+(\w+)", re.MULTILINE)
+DIRECTIVE = re.compile(r"^\s*#[^\n]*", re.MULTILINE)
 IDENT = re.compile(r"[A-Za-z_]\w*")
 # The declared name is the last identifier before the first of these at the statement's top level.
 NAME_END = re.compile(r"[(=;:{\[]")
