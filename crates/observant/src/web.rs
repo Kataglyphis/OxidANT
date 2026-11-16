@@ -4,13 +4,16 @@
 use std::convert::Infallible;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use anyhow::{bail, Context as _};
 use bytes::Bytes;
+use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt as _, Full, Limited};
-use hyper::body::Incoming;
+use hyper::body::{Frame, Incoming};
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
@@ -52,7 +55,30 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// And its body within this: the head's limit ends with the head.
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 10 });
 
-pub(crate) type Body = Full<Bytes>;
+/// Every reply's body: most are whole, `/ask`'s stream is fed from a channel.
+pub(crate) type Body = UnsyncBoxBody<Bytes, Infallible>;
+
+/// A whole body.
+pub(crate) fn full(bytes: impl Into<Bytes>) -> Body {
+    Full::new(bytes.into()).boxed_unsync()
+}
+
+/// A body sent chunk by chunk as a channel delivers it; hyper drops it when the client leaves, which closes the channel.
+pub(crate) struct ChannelBody(pub(crate) tokio::sync::mpsc::Receiver<Bytes>);
+
+impl hyper::body::Body for ChannelBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        self.0
+            .poll_recv(cx)
+            .map(|chunk| chunk.map(|bytes| Ok(Frame::data(bytes))))
+    }
+}
 
 /// A request body of at most `limit` bytes, read within [`BODY_READ_TIMEOUT`]; else the refusal to answer with.
 pub(crate) async fn read_limited(
@@ -277,7 +303,7 @@ async fn signalling(req: Request<Incoming>, site: &Site) -> Response<Body> {
 }
 
 fn json_response(json: String) -> Response<Body> {
-    let mut response = Response::new(Full::new(Bytes::from(json)));
+    let mut response = Response::new(full(json));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
@@ -365,14 +391,14 @@ async fn settings(req: Request<Incoming>, status: &Status) -> Response<Body> {
             .and_then(|update| status.apply(update));
         if let Err(err) = applied {
             log::warn!("{SETTINGS_PATH}: {err:#}");
-            let mut response = Response::new(Full::new(Bytes::from(format!("{err:#}"))));
+            let mut response = Response::new(full(Bytes::from(format!("{err:#}"))));
             *response.status_mut() = StatusCode::BAD_REQUEST;
             return response;
         }
     } else if req.method() != Method::GET && req.method() != Method::HEAD {
         return plain(StatusCode::METHOD_NOT_ALLOWED, "GET or POST only");
     }
-    let mut response = Response::new(Full::new(Bytes::from(status.settings_json())));
+    let mut response = Response::new(full(Bytes::from(status.settings_json())));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
@@ -381,7 +407,7 @@ async fn settings(req: Request<Incoming>, status: &Status) -> Response<Body> {
 }
 
 pub(crate) fn plain(status: StatusCode, text: &'static str) -> Response<Body> {
-    let mut response = Response::new(Full::new(Bytes::from_static(text.as_bytes())));
+    let mut response = Response::new(full(Bytes::from_static(text.as_bytes())));
     *response.status_mut() = status;
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -412,9 +438,9 @@ fn mp4_response(headers: &HeaderMap, mp4: Bytes) -> Response<Body> {
         .and_then(|v| v.to_str().ok())
         .map(|v| byte_range(v, len));
     let mut response = match range {
-        None | Some(Range::Ignored) => Response::new(Full::new(mp4)),
+        None | Some(Range::Ignored) => Response::new(full(mp4)),
         Some(Range::Satisfiable(start, end)) => {
-            let mut partial = Response::new(Full::new(mp4.slice(start as usize..=end as usize)));
+            let mut partial = Response::new(full(mp4.slice(start as usize..=end as usize)));
             *partial.status_mut() = StatusCode::PARTIAL_CONTENT;
             if let Ok(value) = HeaderValue::from_str(&format!("bytes {start}-{end}/{len}")) {
                 partial.headers_mut().insert(header::CONTENT_RANGE, value);
@@ -422,7 +448,7 @@ fn mp4_response(headers: &HeaderMap, mp4: Bytes) -> Response<Body> {
             partial
         }
         Some(Range::Unsatisfiable) => {
-            let mut refused = Response::new(Full::new(Bytes::new()));
+            let mut refused = Response::new(full(Bytes::new()));
             *refused.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
             if let Ok(value) = HeaderValue::from_str(&format!("bytes */{len}")) {
                 refused.headers_mut().insert(header::CONTENT_RANGE, value);
@@ -494,7 +520,7 @@ fn byte_range(value: &str, len: u64) -> Range {
 }
 
 fn jpeg_response(jpeg: impl Into<Bytes>) -> Response<Body> {
-    let mut response = Response::new(Full::new(jpeg.into()));
+    let mut response = Response::new(full(jpeg.into()));
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -546,7 +572,7 @@ async fn forward_upgrade(
         builder = builder.header(name.as_str(), value.as_slice());
     }
     if status != StatusCode::SWITCHING_PROTOCOLS {
-        return Ok(builder.body(Full::new(Bytes::from(leftover)))?);
+        return Ok(builder.body(full(Bytes::from(leftover)))?);
     }
     tokio::spawn(async move {
         // Held while the tab stays connected.
@@ -564,7 +590,7 @@ async fn forward_upgrade(
             Err(err) => log::warn!("{SIGNALLING_PATH} upgrade failed: {err}"),
         }
     });
-    Ok(builder.body(Full::new(Bytes::new()))?)
+    Ok(builder.body(full(Bytes::new()))?)
 }
 
 /// The status, headers and any bytes past the head of the upstream's response.
@@ -1600,6 +1626,136 @@ mod tests {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the model still decodes for a client that left"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    /// A chunked reply's body without its chunk heads.
+    fn dechunked(response: &str) -> String {
+        let mut rest = &response[response.find("\r\n\r\n").unwrap() + 4..];
+        let mut body = String::new();
+        loop {
+            let (size, after) = rest.split_once("\r\n").unwrap();
+            let size = usize::from_str_radix(size.trim(), 16).unwrap();
+            if size == 0 {
+                return body;
+            }
+            body.push_str(&after[..size]);
+            rest = &after[size + 2..];
+        }
+    }
+
+    fn ndjson_lines(response: &str) -> Vec<serde_json::Value> {
+        dechunked(response)
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    const STREAMED: &str = "accept: application/x-ndjson\r\n";
+
+    #[tokio::test]
+    async fn a_streamed_ask_sends_the_facts_each_piece_and_the_figures() {
+        let (assistant, _) = crate::ask::tests::stub_assistant(Ok("Twice a day.".into()), false);
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(assistant);
+        arrive_and_leave(&with_model.status);
+        let addr = start_with(with_model).await;
+        let reply = post_with(addr, "/ask", STREAMED, r#"{"question":"How often?"}"#).await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(
+            reply.contains("content-type: application/x-ndjson"),
+            "{reply}"
+        );
+        let lines = ndjson_lines(&reply);
+        assert!(
+            lines[0]["facts"].as_str().unwrap().contains("1 visits"),
+            "{lines:?}"
+        );
+        let pieces: Vec<&str> = lines[1..lines.len() - 1]
+            .iter()
+            .map(|line| line["piece"].as_str().unwrap())
+            .collect();
+        assert_eq!(pieces, ["Twice ", "a ", "day."]);
+        let done = &lines[lines.len() - 1]["done"];
+        assert_eq!(done["finish_reason"], "stop");
+        assert_eq!(
+            (
+                done["prompt_tokens"].as_u64(),
+                done["completion_tokens"].as_u64()
+            ),
+            (Some(11), Some(2))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_streamed_ask_refused_before_the_model_starts_keeps_its_status() {
+        let (assistant, _) = crate::ask::tests::held_assistant();
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(assistant);
+        let addr = start_with(with_model).await;
+        let first = tokio::spawn(post(
+            addr,
+            "/ask",
+            "application/json",
+            r#"{"question":"hi"}"#,
+        ));
+        // Long enough for the held model to take the lock.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let reply = post_with(addr, "/ask", STREAMED, r#"{"question":"hi"}"#).await;
+        assert!(reply.starts_with("HTTP/1.1 503"), "{reply}");
+        assert_eq!(body_text(&reply), "still answering another question");
+        first.abort();
+    }
+
+    #[tokio::test]
+    async fn a_streamed_answer_without_words_ends_with_an_error_line() {
+        let (assistant, _) = crate::ask::tests::stub_assistant(Ok("  ".into()), false);
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(assistant);
+        let addr = start_with(with_model).await;
+        let reply = post_with(addr, "/ask", STREAMED, r#"{"question":"hi"}"#).await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let lines = ndjson_lines(&reply);
+        let last = &lines[lines.len() - 1];
+        assert_eq!(last["status"], 502, "{lines:?}");
+        assert!(
+            last["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("the model gave no answer"),
+            "{lines:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_client_that_leaves_a_stream_cancels_its_answer() {
+        let (assistant, saw_cancel) = crate::ask::tests::held_assistant();
+        let mut with_model = site(4, Vec::new(), 9);
+        with_model.assistant = Some(assistant);
+        let addr = start_with(with_model).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let body = r#"{"question":"hi"}"#;
+        let request = format!(
+            "POST /ask HTTP/1.1\r\nhost: cat.local\r\n{STREAMED}content-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        // The held model's one piece arrives before it waits; the client leaves after it.
+        let mut seen = Vec::new();
+        let mut chunk = [0u8; 1024];
+        while !String::from_utf8_lossy(&seen).contains("\"piece\"") {
+            let n = stream.read(&mut chunk).await.unwrap();
+            assert!(n > 0, "the stream ended before a piece");
+            seen.extend_from_slice(&chunk[..n]);
+        }
+        drop(stream);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while !saw_cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the model still decodes for a client that left its stream"
             );
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }

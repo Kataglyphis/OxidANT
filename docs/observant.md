@@ -60,9 +60,14 @@ page cache, measured 2026-11-15); 0 keeps it loaded, and an endpoint holds nothi
 | Request | Answer |
 | --- | --- |
 | `POST /ask` `{"question", "tz_offset_min"?, "language"?}` | `answer`, the `facts` it was given, `finish_reason`, `prompt_tokens`, `completion_tokens`, `thinking_chars`, `time_to_first_token_ms`, `decode_tokens_per_second` |
+| The same with `Accept: application/x-ndjson` | One JSON object per line as the model decodes: `{"facts": ...}`, then `{"piece": ...}` for each piece, then `{"done": {...}}` with the figures above, or `{"error": ..., "status": ...}` |
 | `GET /summary?day=YYYY-MM-DD&tz=<minutes>` | `day`, `visits`, `first`, `last`, `longest_stay_s`, `total_stay_s`; no model runs |
 | `POST /summary` `{"day"?, "tz_offset_min"?, "language"?}` | The same figures plus `summary`, `finish_reason`, `time_to_first_token_ms` and `decode_tokens_per_second`; a day without visits has `summary: null` and asks no model |
 
+- **A streamed answer shows its words as they come.** A refusal before the model starts (busy, no model, a model
+  that does not load) keeps its status and text, as the JSON reply has them; once the stream is open, a failure, a
+  timeout or a reply without words is its last line, `error` with the status the JSON reply would have had. A
+  client that closes the connection cancels the answer.
 - **The model sees the log, not the picture.** `facts` is one line about the camera and one per day
   with visits, at most seven, so a month of history cannot outgrow its context. An answer is
   the model's reading of those lines and may be wrong; show `facts` beside it. The figures in

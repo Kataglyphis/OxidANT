@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use bytes::Bytes;
 use chrono::{DateTime, Days, FixedOffset, NaiveDate, Utc};
-use http_body_util::Full;
+use http_body_util::BodyExt as _;
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
@@ -20,7 +20,7 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::status::{Status, Stay};
-use crate::web::{plain, Body};
+use crate::web::{full, plain, Body};
 
 /// `POST {"question": "..."}`: the model's answer and the facts it was given.
 pub const ASK_PATH: &str = "/ask";
@@ -28,6 +28,10 @@ pub const ASK_PATH: &str = "/ask";
 pub const SUMMARY_PATH: &str = "/summary";
 
 const BODY_LIMIT: usize = 4096;
+/// What a client puts in `Accept` to get `/ask`'s answer as it is decoded, one JSON object per line.
+const NDJSON: &str = "application/x-ndjson";
+/// Lines waiting for a slow client before the model waits for it.
+const STREAM_BUFFER: usize = 64;
 const QUESTION_LIMIT: usize = 1000;
 /// Days of figures `/ask` hands the model, today included.
 const ASK_DAYS: u64 = 7;
@@ -169,6 +173,17 @@ impl Assistant {
         messages: &[ChatMessage],
         cancel: &CancelToken,
     ) -> Result<GenerationResult, Refusal> {
+        self.run_with(messages, cancel, &mut || {}, &mut |_| {})
+    }
+
+    /// [`Self::run`] with `on_start` once the model is loaded and about to answer, and `on_text` for each piece.
+    fn run_with(
+        &self,
+        messages: &[ChatMessage],
+        cancel: &CancelToken,
+        on_start: &mut dyn FnMut(),
+        on_text: &mut dyn FnMut(&str),
+    ) -> Result<GenerationResult, Refusal> {
         let mut backend = match self.backend.try_lock() {
             Ok(backend) => backend,
             // A panic in an earlier answer must not read as busy for the rest of the service's life.
@@ -190,7 +205,10 @@ impl Assistant {
                 }
                 Ok(slot.as_mut().expect("opened above"))
             },
-            |model| model.generate(messages, &options, cancel, &mut |_| {}),
+            |model| {
+                on_start();
+                model.generate(messages, &options, cancel, on_text)
+            },
         );
         *self
             .last_used
@@ -209,23 +227,120 @@ impl Assistant {
         let timeout = self.timeout;
         let work = tokio::task::spawn_blocking(move || self.run(&messages, &cancel));
         match tokio::time::timeout(timeout, work).await {
-            Ok(Ok(result)) => {
-                if let Ok(done) = &result {
-                    log::info!(
-                        "answer: {} tokens, {:.0} ms to the first, {:.1} tokens/s",
-                        done.completion_tokens,
-                        done.time_to_first_token_ms,
-                        done.decode_tokens_per_second
-                    );
-                }
-                result
-            }
-            Ok(Err(joined)) => Err(Refusal::Text(TextError::GenerationFailed(
-                joined.to_string(),
-            ))),
+            Ok(joined) => joined_result(joined),
             Err(_) => Err(Refusal::TimedOut),
         }
     }
+
+    /// The answer as NDJSON lines: facts, pieces, then `done` or `error`; a refusal before the start keeps its status.
+    async fn stream(self: Arc<Self>, messages: Vec<ChatMessage>, facts: String) -> Response<Body> {
+        let guard = CancelOnDrop(CancelToken::default());
+        let cancel = guard.0.clone();
+        let deadline = tokio::time::Instant::now() + self.timeout;
+        let (lines, body) = tokio::sync::mpsc::channel::<Bytes>(STREAM_BUFFER);
+        // The buffer is empty, so the facts always fit.
+        let _ = lines.try_send(ndjson(&serde_json::json!({ "facts": facts })));
+        let (started, has_started) = tokio::sync::oneshot::channel::<()>();
+        let pieces = lines.clone();
+        let mut work = tokio::task::spawn_blocking(move || {
+            let mut started = Some(started);
+            let piece_cancel = cancel.clone();
+            self.run_with(
+                &messages,
+                &cancel,
+                &mut || {
+                    if let Some(started) = started.take() {
+                        let _ = started.send(());
+                    }
+                },
+                &mut |piece| {
+                    // A client that left closed the channel: the rest would be decoded for nobody.
+                    if pieces
+                        .blocking_send(ndjson(&serde_json::json!({ "piece": piece })))
+                        .is_err()
+                    {
+                        piece_cancel.cancel();
+                    }
+                },
+            )
+        });
+        tokio::select! {
+            joined = &mut work => return match joined_result(joined) {
+                Err(refusal) => refused(refusal),
+                Ok(_) => plain(StatusCode::BAD_GATEWAY, "the model ended before it started"),
+            },
+            Ok(()) = has_started => {}
+            () = tokio::time::sleep_until(deadline) => return refused(Refusal::TimedOut),
+        }
+        tokio::spawn(async move {
+            let _cancel_when_done = guard;
+            let last = tokio::select! {
+                joined = tokio::time::timeout_at(deadline, work) => match joined {
+                    Ok(joined) => outcome_line(joined_result(joined)),
+                    Err(_) => error_line(Refusal::TimedOut),
+                },
+                () = lines.closed() => return,
+            };
+            let _ = lines.send(last).await;
+        });
+        ndjson_reply(body)
+    }
+}
+
+/// A finished blocking run as the answer or its refusal; a panic in it is a failed generation.
+fn joined_result(
+    joined: Result<Result<GenerationResult, Refusal>, tokio::task::JoinError>,
+) -> Result<GenerationResult, Refusal> {
+    let result = joined.unwrap_or_else(|panicked| {
+        Err(Refusal::Text(TextError::GenerationFailed(
+            panicked.to_string(),
+        )))
+    });
+    if let Ok(done) = &result {
+        log::info!(
+            "answer: {} tokens, {:.0} ms to the first, {:.1} tokens/s",
+            done.completion_tokens,
+            done.time_to_first_token_ms,
+            done.decode_tokens_per_second
+        );
+    }
+    result
+}
+
+fn ndjson(value: &serde_json::Value) -> Bytes {
+    Bytes::from(format!("{value}\n"))
+}
+
+/// The stream's last line: `done` with the figures, or `error` with the status a whole reply would have had.
+fn outcome_line(result: Result<GenerationResult, Refusal>) -> Bytes {
+    let result = match result {
+        Ok(result) => result,
+        Err(refusal) => return error_line(refusal),
+    };
+    if let Some(text) = no_words_text(&result) {
+        return ndjson(&serde_json::json!({ "error": text, "status": 502 }));
+    }
+    ndjson(&serde_json::json!({ "done": {
+        "finish_reason": result.finish_reason.as_str(),
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+        "thinking_chars": result.thinking_chars,
+        "time_to_first_token_ms": result.time_to_first_token_ms,
+        "decode_tokens_per_second": result.decode_tokens_per_second,
+    }}))
+}
+
+fn error_line(refusal: Refusal) -> Bytes {
+    let (status, text) = refusal_parts(refusal);
+    ndjson(&serde_json::json!({ "error": text, "status": status.as_u16() }))
+}
+
+fn ndjson_reply(lines: tokio::sync::mpsc::Receiver<Bytes>) -> Response<Body> {
+    let mut response = Response::new(crate::web::ChannelBody(lines).boxed_unsync());
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(NDJSON));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 /// Asks now and then whether the in-process model rested long enough to unload; ends with the assistant.
@@ -377,7 +492,7 @@ struct SummaryBody {
 }
 
 fn json_reply(status: StatusCode, value: &serde_json::Value) -> Response<Body> {
-    let mut response = Response::new(Full::new(Bytes::from(value.to_string())));
+    let mut response = Response::new(full(Bytes::from(value.to_string())));
     *response.status_mut() = status;
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -387,7 +502,7 @@ fn json_reply(status: StatusCode, value: &serde_json::Value) -> Response<Body> {
 }
 
 fn text_reply(status: StatusCode, text: String) -> Response<Body> {
-    let mut response = Response::new(Full::new(Bytes::from(text)));
+    let mut response = Response::new(full(Bytes::from(text)));
     *response.status_mut() = status;
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -401,19 +516,28 @@ fn bad_request(err: &anyhow::Error) -> Response<Body> {
 }
 
 fn refused(refusal: Refusal) -> Response<Body> {
+    let (status, text) = refusal_parts(refusal);
+    text_reply(status, text)
+}
+
+/// A refusal's status and words, the same in a whole reply and in a stream's `error` line.
+fn refusal_parts(refusal: Refusal) -> (StatusCode, String) {
     match refusal {
-        Refusal::Busy => plain(
+        Refusal::Busy => (
             StatusCode::SERVICE_UNAVAILABLE,
-            "still answering another question",
+            "still answering another question".into(),
         ),
-        Refusal::TimedOut => plain(StatusCode::GATEWAY_TIMEOUT, "the model took too long"),
-        Refusal::Cancelled => plain(
+        Refusal::TimedOut => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "the model took too long".into(),
+        ),
+        Refusal::Cancelled => (
             StatusCode::SERVICE_UNAVAILABLE,
-            "the question was cancelled",
+            "the question was cancelled".into(),
         ),
         Refusal::Text(err) => {
             log::warn!("language model ({}): {err}", err.kind());
-            text_reply(status_of(&err), err.to_string())
+            (status_of(&err), err.to_string())
         }
     }
 }
@@ -432,13 +556,17 @@ fn status_of(err: &TextError) -> StatusCode {
 
 /// The refusal for a reply without words: a model that spent its budget thinking answers nothing, and 200 would show it as an answer.
 fn no_words(result: &GenerationResult) -> Option<Response<Body>> {
+    no_words_text(result).map(|text| text_reply(StatusCode::BAD_GATEWAY, text))
+}
+
+fn no_words_text(result: &GenerationResult) -> Option<String> {
     result.text.trim().is_empty().then(|| {
         let reason = result.finish_reason.as_str();
         let mut text = format!("the model gave no answer (finish_reason {reason})");
         if result.thinking_chars > 0 {
             text.push_str(&thinking_hint(result));
         }
-        text_reply(StatusCode::BAD_GATEWAY, text)
+        text
     })
 }
 
@@ -503,6 +631,11 @@ pub(crate) async fn ask(
     if req.method() != Method::POST {
         return plain(StatusCode::METHOD_NOT_ALLOWED, "POST only");
     }
+    let streamed = req
+        .headers()
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.contains(NDJSON));
     let body: AskBody = match read_body(req).await {
         Ok(body) => body,
         Err(response) => return *response,
@@ -531,6 +664,9 @@ pub(crate) async fn ask(
         ChatMessage::new("system", format!("{SYSTEM}\n{facts}{language}")),
         ChatMessage::user(body.question),
     ];
+    if streamed {
+        return assistant.stream(messages, facts).await;
+    }
     match assistant.answer(messages).await {
         Ok(result) => no_words(&result).unwrap_or_else(|| {
             json_reply(
@@ -665,9 +801,12 @@ pub(crate) mod tests {
             messages: &[ChatMessage],
             _: &GenerationOptions,
             cancel: &CancelToken,
-            _: &mut dyn FnMut(&str),
+            on_text: &mut dyn FnMut(&str),
         ) -> Result<GenerationResult, TextError> {
             *self.seen.lock().unwrap() = messages.to_vec();
+            if let Ok(reply) = &self.reply {
+                reply.split_inclusive(' ').for_each(&mut *on_text);
+            }
             let deadline = std::time::Instant::now() + Duration::from_secs(10);
             while self.hold && !cancel.is_cancelled() && std::time::Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(2));

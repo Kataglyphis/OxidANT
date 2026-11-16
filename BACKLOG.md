@@ -179,14 +179,6 @@ Empty on 2026-11-17: nothing else is in the queue.
       BACKLOG CON191 (an image chain). Then `cpu_accelerators.rs` and `check-backend-parity.sh`
       require DNNL to run and match the CPU provider on amd64; nothing here changes.
 
-- [b] **`/ask` shows no text until the whole answer is there** (L, ★★). Audit 2026-11-12:
-      `Assistant::run` in `crates/observant/src/ask.rs` throws the pieces away and `web.rs` has
-      `Body = Full<Bytes>`, so the Stream page waits up to 310 s behind one empty bubble.
-      Blocked on the owner's decision: streaming the reply (the facts first, then the pieces,
-      then a done line, with the JSON reply kept for clients that do not ask) changes the body
-      type of the whole web module, the Dart client and their tests. It is not part of the
-      timeout work (2026-11-15).
-
 - [b] **A push type-checks Rust for the host target only** (L, ★★). Audit 2026-11-12: the
       `fmt-clippy` step lints the host target, and no workflow or step calls
       `scripts/linux/clippy-windows.sh`. Code that fails on Windows alone is first compiled when

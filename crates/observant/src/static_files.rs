@@ -8,12 +8,11 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
 
-use crate::web::{plain, Body};
+use crate::web::{full, plain, Body};
 
 /// Smaller files go out as they are: gzip's header would eat most of the saving.
 pub const MIN_GZIP_BYTES: u64 = 1024;
@@ -145,7 +144,7 @@ pub(crate) async fn static_file(
     let Ok(body) = body else {
         return plain(StatusCode::NOT_FOUND, "not found");
     };
-    let mut response = Response::new(Full::new(body));
+    let mut response = Response::new(full(body));
     if fresh {
         *response.status_mut() = StatusCode::NOT_MODIFIED;
     }

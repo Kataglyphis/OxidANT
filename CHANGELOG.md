@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, `/ask` streams its answer to a client that asks)
+- `POST /ask` with `Accept: application/x-ndjson` answers one JSON line at a time as the model decodes: the
+  `facts`, each `piece`, then `done` with the figures or `error` with the status a JSON reply would have had (owner
+  decision). A refusal before the model starts keeps its own status, and a client that leaves cancels the answer;
+  every other client gets the JSON reply as before. The web module's body is now a boxed body, whole or fed from a
+  channel (`ChannelBody`). Four tests in `web.rs` cover the stream, a busy refusal, a reply without words and a
+  client that leaves; `docs/observant.md` lists the lines. OmniAccelerANT's Stream page reads it next.
+
 ### Changed (2026-11-17, `code-complexity.allow` is empty)
 - **The NVIDIA promotion test**: `test_selected_producers_control_all_downstream_jobs` (cc 16, nesting 6) asks
   `assert_downstream_job_gated` per job and `assert_rejected_unless_succeeded` per need, with the producers per
