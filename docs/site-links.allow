@@ -24,6 +24,7 @@ missing	kataglyphis_webgpu_renderer/asset/skybox/dispatcher
 missing	kataglyphis_webgpu_renderer/context/dispatcher
 missing	kataglyphis_webgpu_renderer/render/bloom/dispatcher
 missing	kataglyphis_webgpu_renderer/render/clouds/dispatcher
+missing	kataglyphis_webgpu_renderer/render/draw_cull/dispatcher
 missing	kataglyphis_webgpu_renderer/render/forward/dispatcher
 missing	kataglyphis_webgpu_renderer/render/frame_clock/dispatcher
 missing	kataglyphis_webgpu_renderer/render/fxaa/dispatcher
