@@ -6,7 +6,7 @@ use glam::Vec3;
 
 use super::frame::FrameView;
 use super::readback::{read_texture, TextureRegion};
-use super::ForwardRenderer;
+use super::{ForwardRenderer, RasterPath};
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::buffer_desc;
@@ -28,6 +28,8 @@ struct CloudFrameUniforms {
     to_sun: [f32; 4],
     sun_radiance: [f32; 4],
     params: CloudParams,
+    /// x: 1 while binding 4 holds this frame's MSAA depth spread.
+    depth_spread: [f32; 4],
 }
 
 /// The march's render pipeline and the noise's compute pipeline with their layouts, from one pair of WGSL modules.
@@ -48,13 +50,13 @@ struct NoiseVolume {
     pending: bool,
 }
 
-/// The march's output at the frame's size, and its bind group over the depth it was made for.
+/// The march's output at the frame's size, and its bind group over the depths it was made for.
 struct CloudTarget {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     size: (u32, u32),
     /// Compared by identity: resized targets can come back at an old size with a new depth texture.
-    depth: wgpu::TextureView,
+    depths: SceneDepths,
     bind_group: wgpu::BindGroup,
 }
 
@@ -66,6 +68,13 @@ pub(super) struct CloudPass {
     placeholder: wgpu::TextureView,
     /// A shader reload's pipelines from before clouds first ran, which that first frame then builds on.
     reloaded: Option<CloudPipelines>,
+}
+
+/// The single-sample depth and the forward path's MSAA spread beside it, which the march reads.
+#[derive(Clone, PartialEq)]
+struct SceneDepths {
+    depth: wgpu::TextureView,
+    spread: wgpu::TextureView,
 }
 
 /// The pipelines, the march's inputs and the noise volume it samples.
@@ -115,7 +124,7 @@ impl CloudPass {
         march.noise.pending = true;
         march.pipelines = pipelines;
         if let Some(target) = self.target.as_mut() {
-            target.bind_group = march_bind_group(device, march, &target.depth);
+            target.bind_group = march_bind_group(device, march, &target.depths);
         }
     }
 }
@@ -183,6 +192,7 @@ fn march_pipeline(
             bind_layout::sampler(2, fragment, wgpu::SamplerBindingType::Filtering),
             // Unfilterable float: a depth texture binds so without a depth-texture patch of the WGSL.
             bind_layout::texture_2d(3, fragment, false),
+            bind_layout::texture_2d(4, fragment, false),
         ],
     });
     let pipeline_layout =
@@ -309,12 +319,7 @@ fn noise_bind_group(
 }
 
 impl CloudTarget {
-    fn new(
-        device: &wgpu::Device,
-        march: &March,
-        size: (u32, u32),
-        depth: &wgpu::TextureView,
-    ) -> Self {
+    fn new(device: &wgpu::Device, march: &March, size: (u32, u32), depths: &SceneDepths) -> Self {
         let texture = create_2d_texture(
             device,
             Some("cloud_target"),
@@ -331,18 +336,14 @@ impl CloudTarget {
             view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
             texture,
             size,
-            depth: depth.clone(),
-            bind_group: march_bind_group(device, march, depth),
+            depths: depths.clone(),
+            bind_group: march_bind_group(device, march, depths),
         }
     }
 }
 
-/// The march's group 0: its uniforms, the noise volume and its sampler, and the scene depth.
-fn march_bind_group(
-    device: &wgpu::Device,
-    march: &March,
-    depth: &wgpu::TextureView,
-) -> wgpu::BindGroup {
+/// The march's group 0: its uniforms, the noise volume and its sampler, the scene depth and its spread.
+fn march_bind_group(device: &wgpu::Device, march: &March, depths: &SceneDepths) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("cloud_march_bind_group"),
         layout: &march.pipelines.march_layout,
@@ -361,7 +362,11 @@ fn march_bind_group(
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: wgpu::BindingResource::TextureView(depth),
+                resource: wgpu::BindingResource::TextureView(&depths.depth),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(&depths.spread),
             },
         ],
     })
@@ -378,30 +383,40 @@ impl ForwardRenderer {
             let shipped = || CloudPipelines::shipped(&gpu.device);
             March::new(&gpu.device, pass.reloaded.take().unwrap_or_else(shipped))
         });
-        let depth = &self.targets.depth;
+        let depths = SceneDepths {
+            depth: self.targets.depth.clone(),
+            spread: self.targets.depth_spread.clone(),
+        };
         let current = pass
             .target
             .as_ref()
-            .is_some_and(|target| target.size == (width, height) && target.depth == *depth);
+            .is_some_and(|target| target.size == (width, height) && target.depths == depths);
         if current {
             return;
         }
-        pass.target = Some(CloudTarget::new(&gpu.device, march, (width, height), depth));
+        pass.target = Some(CloudTarget::new(
+            &gpu.device,
+            march,
+            (width, height),
+            &depths,
+        ));
         // Bloom's bright pass and every tonemap sample the new target.
         self.post.rebuild_needed = true;
     }
 
-    /// The noise on the first cloud frame, then the march of every pixel to its scene depth.
+    /// The noise on the first cloud frame, then the march of every pixel to its scene depth; `traced` when no resolve ran.
     pub(super) fn encode_clouds(
         &mut self,
         gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
-        view: &FrameView,
+        (view, traced): (&FrameView, bool),
     ) {
         if !self.clouds.enabled {
             return;
         }
-        let uniforms = self.cloud_uniforms(view);
+        // Only the forward path resolves MSAA, so only its frames have a spread to march to.
+        let spread = !traced && self.raster_path == RasterPath::Forward;
+        let uniforms = self.cloud_uniforms(view, spread);
         let pass = &mut self.cloud_pass;
         let (Some(march), Some(target)) = (pass.march.as_mut(), pass.target.as_ref()) else {
             return;
@@ -432,7 +447,7 @@ impl ForwardRenderer {
     }
 
     /// The camera, the sun and the cloud settings as `cloud_march.slang` reads them.
-    fn cloud_uniforms(&self, view: &FrameView) -> CloudFrameUniforms {
+    fn cloud_uniforms(&self, view: &FrameView, spread: bool) -> CloudFrameUniforms {
         let to_sun = self
             .light_dir_ambient
             .truncate()
@@ -445,6 +460,7 @@ impl ForwardRenderer {
             to_sun: to_sun.extend(0.0).to_array(),
             sun_radiance: (colour.truncate() * colour.w).extend(0.0).to_array(),
             params: self.clouds.params(),
+            depth_spread: [f32::from(u8::from(spread)), 0.0, 0.0, 0.0],
         }
     }
 

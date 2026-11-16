@@ -472,7 +472,7 @@ impl ForwardRenderer {
         // Before bloom: its bright pass thresholds at this frame's exposure, as the tonemap exposes.
         self.encode_exposure(&mut encoder, view.width, view.height);
         // Before bloom too: its bright pass thresholds the clouded scene.
-        self.encode_clouds(gpu, &mut encoder, &view);
+        self.encode_clouds(gpu, &mut encoder, (&view, traced));
         self.encode_bloom(&mut encoder);
         if !traced {
             self.encode_ssao(&mut encoder);

@@ -656,8 +656,8 @@ fn flat_cloud_shaders() -> (String, String) {
     );
     let march = edited(
         shipped.cloud_march,
-        "pixelOutput_0( march_clouds_0(",
-        "pixelOutput_0( vec4<f32>(0.25f) + 0.0f * march_clouds_0(",
+        "pixelOutput_0( ",
+        "pixelOutput_0( vec4<f32>(0.25f) + 0.0f * ",
     );
     (noise, march)
 }
@@ -828,5 +828,60 @@ fn a_light_the_clouds_hide_does_not_bloom_around_them() {
     assert!(
         hidden * 4 < clear,
         "the clouds hide the card, yet its halo still spills past them: {hidden} of {clear} levels"
+    );
+}
+
+/// A wall in front of the box: the pixels its left and right silhouettes half cover still show the cloud behind.
+#[test]
+fn silhouette_pixels_in_front_of_a_cloud_are_clouded() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
+    let camera = facing_minus_z(20.0);
+    let (wall_centre, wall_half) = (Vec3::ZERO, Vec3::new(3.0, 2.0, 0.1));
+    upload_box(&gpu, &mut renderer, wall_centre, wall_half);
+    renderer.clouds = clouds_in_box(Vec3::new(0.0, 0.0, -10.0), Vec3::new(8.0, 5.0, 3.0), 1.0);
+    render(&gpu, &mut renderer, &camera);
+    let cloud = renderer
+        .read_cloud_target(&gpu)
+        .expect("cloud readback must succeed")
+        .expect("clouds ran");
+    let alpha = |x: usize, y: usize| half_to_f32(cloud[(y * SIZE as usize + x) * 4 + 3]);
+
+    let wall = PixelRect::of_box(&camera, wall_centre, wall_half);
+    let (left, right) = (wall.min.x, wall.max.x);
+    for edge in [left, right] {
+        let share = edge.fract();
+        assert!(
+            (0.05..0.95).contains(&share),
+            "the silhouette at x = {edge} must cut a pixel, not run between two"
+        );
+    }
+    // Each edge column, and the sky column two pixels further out.
+    let columns = [
+        (left as usize, left as usize - 2),
+        (right as usize, right as usize + 2),
+    ];
+    let rows = (wall.min.y as usize + 2)..(wall.max.y as usize - 2);
+    let (mut edge_sum, mut sky_sum, mut bare) = (0.0, 0.0, 0);
+    for y in rows.clone() {
+        for &(edge, sky) in &columns {
+            edge_sum += alpha(edge, y);
+            sky_sum += alpha(sky, y);
+            bare += usize::from(alpha(edge, y) == 0.0);
+        }
+    }
+    let count = (rows.len() * columns.len()) as f32;
+    let (edge_mean, sky_mean) = (edge_sum / count, sky_sum / count);
+    eprintln!("cloud alpha on the silhouette {edge_mean:.3}, beside it {sky_mean:.3}, {bare} bare");
+    assert!(sky_mean > 0.1, "too little cloud beside the wall to judge");
+    assert_eq!(
+        bare, 0,
+        "silhouette pixels got no cloud: the march stopped at the nearest sample"
+    );
+    assert!(
+        edge_mean > sky_mean * 0.4,
+        "the silhouette shows {edge_mean} alpha against {sky_mean} beside it"
     );
 }

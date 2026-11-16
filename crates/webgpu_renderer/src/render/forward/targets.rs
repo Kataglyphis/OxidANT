@@ -1,17 +1,25 @@
 //! The size-dependent render targets and the pass that resolves MSAA depth to single-sample.
+//! The resolve keeps the nearest sample as the depth, and the farthest with its share for the cloud march.
 
 use super::readback::{read_texture, TextureRegion};
 use super::{ForwardRenderer, DEPTH_FORMAT, HDR_FORMAT, MSAA_SAMPLE_COUNT};
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::pipeline_desc;
-use crate::render::texture::{create_2d_texture, create_depth_texture, create_hdr_texture};
+use crate::render::texture::{
+    create_2d_texture, create_2d_view, create_depth_texture, create_hdr_texture,
+};
+
+/// The farthest MSAA depth and the share of samples at it; float32, as depth near 1 needs its precision.
+pub(super) const DEPTH_SPREAD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
 
 /// The forward pass's MSAA targets and the single-sample ones the later passes read.
 pub(super) struct RenderTargets {
     /// The single-sample depth: resolved, the G-buffer pass's or the traced primary hit's; only tests copy it out.
     depth_texture: wgpu::Texture,
     pub(super) depth: wgpu::TextureView,
+    /// The forward path's farthest sample per pixel and its share, written by the depth resolve beside `depth`.
+    pub(super) depth_spread: wgpu::TextureView,
     /// The resolved HDR colour; `hdr_view` samples it, and only tests copy it out.
     hdr: wgpu::Texture,
     pub(super) hdr_view: wgpu::TextureView,
@@ -51,6 +59,16 @@ impl RenderTargets {
         Self {
             depth: depth_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             depth_texture,
+            depth_spread: create_2d_view(
+                device,
+                Some("depth_spread"),
+                width,
+                height,
+                DEPTH_SPREAD_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                1,
+                1,
+            ),
             hdr_view: hdr.create_view(&wgpu::TextureViewDescriptor::default()),
             hdr,
             depth_msaa: create_depth_texture(device, width, height, MSAA_SAMPLE_COUNT),
@@ -134,11 +152,19 @@ impl ForwardRenderer {
         Ok(bytemuck::pod_collect_to_vec(&bytes))
     }
 
-    /// Depth resolve: MSAA depth to single-sample (min over samples) for SSAO and occlusion.
+    /// Depth resolve: MSAA depth to single-sample (min over samples) for SSAO and occlusion, and the spread.
     pub(super) fn encode_depth_resolve(&self, encoder: &mut wgpu::CommandEncoder) {
         let mut resolve = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("depth_resolve"),
-            color_attachments: &[],
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.targets.depth_spread,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &self.targets.depth,
                 depth_ops: Some(wgpu::Operations {
@@ -206,7 +232,7 @@ fn create_depth_resolve_pipeline(
         fragment: Some(wgpu::FragmentState {
             module: &shader,
             entry_point: Some("fs_main"),
-            targets: &[],
+            targets: &[Some(DEPTH_SPREAD_FORMAT.into())],
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState::default(),

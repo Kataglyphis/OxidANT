@@ -18,10 +18,13 @@ struct CloudFrame_std140_0
     @align(16) to_sun_0 : vec4<f32>,
     @align(16) sun_radiance_0 : vec4<f32>,
     @align(16) params_0 : CloudParams_std140_0,
+    @align(16) depth_spread_0 : vec4<f32>,
 };
 
 @binding(0) @group(0) var<uniform> frame_0 : CloudFrame_std140_0;
 @binding(3) @group(0) var sceneDepth_0 : texture_2d<f32>;
+
+@binding(4) @group(0) var depthSpread_0 : texture_2d<f32>;
 
 @binding(1) @group(0) var noiseTex_0 : texture_3d<f32>;
 
@@ -280,11 +283,34 @@ fn fs_main( _S21 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) ->
     var nearPoint_0 : vec4<f32> = (((vec4<f32>(ndc_1, 0.0f, 1.0f)) * (mat4x4<f32>(frame_0.inv_view_proj_0.data_0[i32(0)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(3)]))));
     var farPoint_0 : vec4<f32> = (((vec4<f32>(ndc_1, 1.0f, 1.0f)) * (mat4x4<f32>(frame_0.inv_view_proj_0.data_0[i32(0)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(3)]))));
     var rayDirection_1 : vec3<f32> = normalize(farPoint_0.xyz / vec3<f32>(farPoint_0.w) - nearPoint_0.xyz / vec3<f32>(nearPoint_0.w));
-    var _S22 : vec3<i32> = vec3<i32>(vec2<i32>(svPosition_1.xy), i32(0));
-    var sceneDistance_1 : f32 = cloud_scene_distance_0(mat4x4<f32>(frame_0.inv_view_proj_0.data_0[i32(0)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(3)]), ndc_1, (textureLoad((sceneDepth_0), ((_S22)).xy, ((_S22)).z)).x, frame_0.eye_0.xyz);
-    var _S23 : CloudParams_std140_0 = frame_0.params_0;
-    var _S24 : Clouds_0 = cloud_unpack_0(&(_S23));
-    var _S25 : pixelOutput_0 = pixelOutput_0( march_clouds_0(frame_0.eye_0.xyz, rayDirection_1, sceneDistance_1, _S24, frame_0.to_sun_0.xyz, frame_0.sun_radiance_0.xyz) );
-    return _S25;
+    var pixel_0 : vec3<i32> = vec3<i32>(vec2<i32>(svPosition_1.xy), i32(0));
+    var depth_1 : f32 = (textureLoad((sceneDepth_0), ((pixel_0)).xy, ((pixel_0)).z)).x;
+    var sceneDistance_1 : f32 = cloud_scene_distance_0(mat4x4<f32>(frame_0.inv_view_proj_0.data_0[i32(0)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(3)]), ndc_1, depth_1, frame_0.eye_0.xyz);
+    var _S22 : CloudParams_std140_0 = frame_0.params_0;
+    var _S23 : Clouds_0 = cloud_unpack_0(&(_S22));
+    var _S24 : vec4<f32> = march_clouds_0(frame_0.eye_0.xyz, rayDirection_1, sceneDistance_1, _S23, frame_0.to_sun_0.xyz, frame_0.sun_radiance_0.xyz);
+    if((frame_0.depth_spread_0.x) < 0.5f)
+    {
+        var _S25 : pixelOutput_0 = pixelOutput_0( _S24 );
+        return _S25;
+    }
+    var spread_0 : vec2<f32> = (textureLoad((depthSpread_0), ((pixel_0)).xy, ((pixel_0)).z)).xy;
+    var _S26 : f32 = spread_0.y;
+    var _S27 : bool;
+    if(_S26 <= 0.0f)
+    {
+        _S27 = true;
+    }
+    else
+    {
+        _S27 = (spread_0.x) <= depth_1;
+    }
+    if(_S27)
+    {
+        var _S28 : pixelOutput_0 = pixelOutput_0( _S24 );
+        return _S28;
+    }
+    var _S29 : pixelOutput_0 = pixelOutput_0( mix(_S24, march_clouds_0(frame_0.eye_0.xyz, rayDirection_1, cloud_scene_distance_0(mat4x4<f32>(frame_0.inv_view_proj_0.data_0[i32(0)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(3)]), ndc_1, spread_0.x, frame_0.eye_0.xyz), _S23, frame_0.to_sun_0.xyz, frame_0.sun_radiance_0.xyz), vec4<f32>(_S26)) );
+    return _S29;
 }
 

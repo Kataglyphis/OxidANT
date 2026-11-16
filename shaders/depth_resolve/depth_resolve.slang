@@ -4,6 +4,13 @@ import fullscreen;
 
 [vk::binding(0, 0)] Texture2DMS<float> msaaDepth;
 
+struct ResolveOut
+{
+    // The farthest sample and the share of samples nearer to it than to the nearest, for the cloud march.
+    float2 spread : SV_Target0;
+    float depth : SV_Depth;
+};
+
 [shader("vertex")]
 FullscreenVsOut vs_main(uint vid : SV_VertexID)
 {
@@ -12,16 +19,25 @@ FullscreenVsOut vs_main(uint vid : SV_VertexID)
 }
 
 [shader("fragment")]
-float fs_main(FullscreenVsOut In) : SV_Depth
+ResolveOut fs_main(FullscreenVsOut In)
 {
     uint w, h, samples;
     msaaDepth.GetDimensions(w, h, samples);
     int2 coords = int2(In.uv * float2(float(w), float(h)));
     float minDepth = 1.0;
+    float maxDepth = 0.0;
     for (uint i = 0u; i < samples; i++)
     {
-        float d = msaaDepth.Load(int2(coords), i);
+        float d = msaaDepth.Load(coords, i);
         minDepth = min(minDepth, d);
+        maxDepth = max(maxDepth, d);
     }
-    return minDepth;
+    float middle = 0.5 * (minDepth + maxDepth);
+    uint far = 0u;
+    for (uint j = 0u; j < samples; j++)
+        far += msaaDepth.Load(coords, j) > middle ? 1u : 0u;
+    ResolveOut o;
+    o.depth = minDepth;
+    o.spread = float2(maxDepth, float(far) / float(samples));
+    return o;
 }

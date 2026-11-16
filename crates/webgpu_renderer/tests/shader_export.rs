@@ -248,7 +248,7 @@ fn every_pipeline_entry_point_is_exported() {
     }
 }
 
-/// Pins the post-emit patch to `@builtin(frag_depth)`: Slang emits a colour output wgpu drops.
+/// Pins `fs_main`'s outputs: the nearest sample to `@builtin(frag_depth)`, the spread to the one colour target.
 #[test]
 fn depth_resolve_fragment_writes_frag_depth() {
     let source = include_str!("../src/shaders/depth_resolve.wgsl");
@@ -275,11 +275,17 @@ fn depth_resolve_fragment_writes_frag_depth() {
         )),
         "fs_main must write @builtin(frag_depth); result members are {members:?}"
     );
-    assert!(
-        !members
-            .iter()
-            .any(|m| matches!(m.binding, Some(naga::Binding::Location { .. }))),
-        "fs_main must not emit a colour @location output; result members are {members:?}"
+    let colours: Vec<_> = members
+        .iter()
+        .filter_map(|m| match m.binding {
+            Some(naga::Binding::Location { location, .. }) => Some(location),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        colours,
+        [0],
+        "fs_main must write the depth spread to its one colour target; result members are {members:?}"
     );
 }
 

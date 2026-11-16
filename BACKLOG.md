@@ -135,9 +135,6 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       as the raster's IBL ambient does, which moves this further from C++. Owner decision;
       if it should match, the C++ side changes, since its raster has no ambient term to follow.
 
-- [ ] **A one-pixel rim without clouds at silhouettes** (S). The march stops at the resolved depth, the nearest
-      of the four MSAA samples (`shaders/depth_resolve/depth_resolve.slang`), so an edge pixel half sky gets no cloud.
-
 - [ ] **egui text renders heavier natively than in the browser** (S). The native surface is sRGB
       (`surface_config` in `crates/webgpu_renderer/src/context.rs`), so egui's coverage blends in linear light;
       the browser canvas is not, so it blends in sRGB. Next: paint egui into a non-sRGB view of the frame.

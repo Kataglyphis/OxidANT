@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, clouds reach the pixels a silhouette half covers)
+- **A silhouette pixel marches to both of its depths.** The forward path's depth resolve
+  (`shaders/depth_resolve/depth_resolve.slang`) writes, beside the nearest sample, the farthest one and the share of
+  samples nearer to it than to the nearest into `depth_spread` (`Rg32Float`, 8 bytes a pixel). Where they differ the
+  cloud march (`shaders/clouds/cloud_march.slang`) marches a second time to the farthest and mixes the two results by
+  that share, so a pixel half sky behind an edge no longer shows a one-pixel rim without cloud. Deferred and traced
+  frames have no MSAA and march once (`depth_spread.x` in the cloud uniforms). Slang now emits the resolve's
+  `@builtin(frag_depth)` from the output struct itself, so the manifest's retargeting patch went.
+- Tests: `tests/clouds.rs` `silhouette_pixels_in_front_of_a_cloud_are_clouded` reads the cloud alpha on the columns
+  a wall's left and right edges cut: 0.107 against 0.162 beside them, where the old march left all 54 at 0;
+  `shader_export` pins the resolve's one colour output beside its depth.
+
 ### Fixed (2026-11-16, bloom no longer glows through clouds)
 - **Bloom's bright pass thresholds the clouded scene.** The clouds march before bloom now, and `fs_brightpass`
   (`shaders/bloom/bloom.slang`) composites their premultiplied target over the HDR first, as the tonemap does, so a
