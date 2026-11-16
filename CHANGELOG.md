@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, a new `set_instances` count reaches the built traced scene)
+- **`set_instances` with a new count re-instances a built traced scene** instead of waiting for the next upload. Each
+  instanced primitive keeps a template (`TraceScene::templates`, moved with its node), and `set_instance_extras`
+  rebuilds the top level from it, returning `InstanceChange::{Moved, Recounted, Refused}`. A new count gets new records
+  and node-maxima buffers, a new scene uniform and bind group (`TraceGpuScene::write_records`); the meshes' nodes stay
+  on the CPU and the vertex, triangle and texture buffers on the GPU. A primitive merged into the world-space mesh is
+  still refused and flagged by `instances_current()`, now per primitive.
+- Tests: `tests/feature_matrix.rs` adds a second traced cube where raster adds it (the centroid shift within 0.05 px
+  of raster's) and goes back to one, and a merged cube stays put, flagged; keeping the old bind group after a recount
+  draws no cube at all. On the CPU three, then moved, then one instance trace as brute force over unchanged meshes.
+
 ### Added (2026-11-16, the traced scene follows skins and morphs)
 - **A skin whose joints an animation moves, or a morph whose weights one drives, traces as its own mesh** and follows
   the raster's pose: `Tracer::pose_deformed`, called with the animation's node matrices and each primitive's weights,

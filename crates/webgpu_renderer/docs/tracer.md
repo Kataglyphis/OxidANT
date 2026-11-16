@@ -268,10 +268,15 @@ only its vertices and nodes and the top level are written to the GPU. The model 
 (`Tracer::set_root_transform` on every change); the tracer keeps it, so a transform set before
 the build applies to the built scene, and an upload resets it with the renderer's.
 `ForwardRenderer::set_instances` reaches `Tracer::set_instances`: a build takes the transforms as
-explicit instances (a running one starts over), and a built scene moves them in place when it
-traces the primitive as that many instances. A new count cannot change the uploaded buffers'
-layout, and the CPU scene is gone after the build, so the old instances stay traced until the next
-upload: `Tracer::instances_current()` turns false and the tracer warns once.
+explicit instances (a running one starts over). A built scene re-instances an instanced primitive
+from its template (`TraceScene::templates`, one per instanced primitive, moved with its node) and
+rebuilds the top level (`set_instance_extras`): as many instances as before are rewritten in place,
+a new count (`InstanceChange::Recounted`) gets new records and node-maxima buffers at the new
+layout, with the mesh nodes and materials written again from the CPU arrays, a new scene uniform and
+bind group; the vertex and triangle buffers and the texture arrays stay. A primitive the build
+merged into the world-space mesh has no instances to change, so it keeps its place until the next
+upload: `Tracer::instances_current()` turns false and the tracer warns once for it. A count whose
+records pass the device's binding limit fails the traced scene (`TraceStatus::Failed`).
 
 **Shader reload.** F5's `ForwardRenderer::reload_shaders` builds both kernels, the resolve and
 the ray tracer's one-sample sky from `ShaderSources::traced`, `trace_resolve` and `sky` inside its
@@ -323,7 +328,7 @@ environment turns the card blue (0.36, 0.80, 1.99 of the environment): each fail
 `tests/feature_matrix.rs` runs the traced modes over the deferred path beside both raster paths:
 the clouds stop at a wall in front (0 wall pixels change in either mode while 10743 and 10748 of
 13332 sky pixels do), the traced depth against the raster one, the cube map, navy and procedural
-sky on a ray-traced miss, the model transform and `set_instances` moving the traced cube as raster
+sky on a ray-traced miss, the model transform and `set_instances` moving and adding a traced cube as raster
 moves it, the passes each mode times, and raster frames bit-identical after a trip through both
 modes. The modes' pure parts are unit-tested in place; the Slang
 uniforms and workgroup size are pinned in `tests/tracer.rs`. Headless Chrome 157 on SwiftShader

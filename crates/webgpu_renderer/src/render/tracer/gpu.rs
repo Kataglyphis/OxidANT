@@ -3,7 +3,7 @@
 use wgpu::util::DeviceExt as _;
 
 use super::layers::LayerArray;
-use super::limits::{self, TraceLimitError};
+use super::limits::{self, TraceBufferSizes, TraceLimitError};
 use super::scene::{RecordLayout, TraceScene, TraceStats};
 use crate::context::GpuContext;
 use crate::render::texture::create_sampler;
@@ -47,9 +47,13 @@ impl TraceSceneInfo {
 pub struct TraceGpuScene {
     records: wgpu::Buffer,
     node_max: wgpu::Buffer,
+    triangles: wgpu::Buffer,
     positions: wgpu::Buffer,
     vertices: wgpu::Buffer,
     vertex_extras: wgpu::Buffer,
+    info: wgpu::Buffer,
+    layers: [wgpu::TextureView; 2],
+    samplers: [wgpu::Sampler; 2],
     layout: RecordLayout,
     bind_group: wgpu::BindGroup,
     pub stats: TraceStats,
@@ -91,26 +95,9 @@ impl TraceGpuScene {
     pub fn upload(gpu: &GpuContext, scene: &TraceScene) -> Result<Self, TraceLimitError> {
         limits::check(scene, &gpu.device.limits())?;
         let device = &gpu.device;
-        let layout = scene.layout();
-        let queue = &gpu.queue;
-        let nodes: &[[u32; 8]] = bytemuck::cast_slice(&scene.nodes);
-        let records = buffer_desc::storage_dst(
-            device,
-            "tracer_records",
-            (u64::from(layout.records) * 16).max(16),
-        );
-        write_half(queue, &records, 0, nodes, 0);
-        let materials = u64::from(layout.material_base) * 16;
-        queue.write_buffer(&records, materials, bytemuck::cast_slice(&scene.materials));
-        let half_buffer = |label: &str, entries: &[[u32; 8]], half: usize| {
-            let buffer =
-                buffer_desc::storage_dst(device, label, (entries.len() as u64 * 16).max(16));
-            write_half(queue, &buffer, 0, entries, half);
-            buffer
-        };
-        let node_max = half_buffer("tracer_node_max", nodes, 1);
-        let vertices = half_buffer("tracer_vertices", &scene.vertices, 0);
-        let vertex_extras = half_buffer("tracer_vertex_extras", &scene.vertices, 1);
+        let [records, node_max] = record_buffers(gpu, scene);
+        let vertices = half_buffer(gpu, "tracer_vertices", &scene.vertices, 0);
+        let vertex_extras = half_buffer(gpu, "tracer_vertex_extras", &scene.vertices, 1);
         let storage = |label: &str, bytes: &[u8]| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
@@ -125,20 +112,19 @@ impl TraceGpuScene {
             "tracer_info",
             std::mem::size_of::<TraceSceneInfo>() as u64,
         );
-        gpu.queue
-            .write_buffer(&info, 0, bytemuck::bytes_of(&TraceSceneInfo::of(scene)));
-        let srgb = upload_layers(
-            gpu,
-            &scene.srgb,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            "tracer_srgb_layers",
-        );
-        let linear = upload_layers(
-            gpu,
-            &scene.linear,
-            wgpu::TextureFormat::Rgba8Unorm,
-            "tracer_linear_layers",
-        );
+        let layers = [
+            (
+                &scene.srgb,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                "tracer_srgb_layers",
+            ),
+            (
+                &scene.linear,
+                wgpu::TextureFormat::Rgba8Unorm,
+                "tracer_linear_layers",
+            ),
+        ]
+        .map(|(array, format, label)| upload_layers(gpu, array, format, label));
         let samplers = [false, true].map(|nearest| {
             create_sampler(
                 device,
@@ -152,19 +138,62 @@ impl TraceGpuScene {
         });
         let buffers = [&records, &triangles, &positions, &vertices, &info];
         let extra = [&node_max, &vertex_extras];
-        let bind_group = create_bind_group(device, (buffers, extra), [&srgb, &linear], &samplers);
+        let bind_group = create_bind_group(device, (buffers, extra), &layers, &samplers);
         let uploaded = Self {
             records,
             node_max,
+            triangles,
             positions,
             vertices,
             vertex_extras,
-            layout,
+            info,
+            layers,
+            samplers,
+            layout: scene.layout(),
             bind_group,
             stats: scene.stats.clone(),
         };
-        uploaded.write_instances(gpu, scene);
+        uploaded.write_top_level(gpu, scene);
         Ok(uploaded)
+    }
+
+    /// Rebuilds the records after a new instance count ([`super::scene::InstanceChange::Recounted`]); the vertex buffers stay.
+    pub fn write_records(
+        &mut self,
+        gpu: &GpuContext,
+        scene: &TraceScene,
+    ) -> Result<(), TraceLimitError> {
+        limits::check_buffers(&TraceBufferSizes::of(scene), &gpu.device.limits())?;
+        [self.records, self.node_max] = record_buffers(gpu, scene);
+        let buffers = [
+            &self.records,
+            &self.triangles,
+            &self.positions,
+            &self.vertices,
+            &self.info,
+        ];
+        let extra = [&self.node_max, &self.vertex_extras];
+        self.bind_group =
+            create_bind_group(&gpu.device, (buffers, extra), &self.layers, &self.samplers);
+        self.layout = scene.layout();
+        self.stats = scene.stats.clone();
+        self.write_top_level(gpu, scene);
+        Ok(())
+    }
+
+    /// The top level, the instances and the uniform that counts them, at a new layout.
+    fn write_top_level(&self, gpu: &GpuContext, scene: &TraceScene) {
+        gpu.queue.write_buffer(
+            &self.info,
+            0,
+            bytemuck::bytes_of(&TraceSceneInfo::of(scene)),
+        );
+        self.write_instances(gpu, scene);
+    }
+
+    /// The record layout the buffers hold.
+    pub fn layout(&self) -> RecordLayout {
+        self.layout
     }
 
     pub fn bind_group(&self) -> &wgpu::BindGroup {
@@ -229,6 +258,35 @@ impl TraceGpuScene {
     }
 }
 
+/// The records and node-maxima buffers at `scene`'s layout, with the mesh nodes and the materials; the top level follows.
+fn record_buffers(gpu: &GpuContext, scene: &TraceScene) -> [wgpu::Buffer; 2] {
+    let layout = scene.layout();
+    let meshes: &[[u32; 8]] = bytemuck::cast_slice(&scene.nodes[..scene.blas_node_count as usize]);
+    let records = buffer_desc::storage_dst(
+        &gpu.device,
+        "tracer_records",
+        (u64::from(layout.records) * 16).max(16),
+    );
+    write_half(&gpu.queue, &records, 0, meshes, 0);
+    let materials = u64::from(layout.material_base) * 16;
+    gpu.queue
+        .write_buffer(&records, materials, bytemuck::cast_slice(&scene.materials));
+    let node_max = buffer_desc::storage_dst(
+        &gpu.device,
+        "tracer_node_max",
+        (scene.nodes.len() as u64 * 16).max(16),
+    );
+    write_half(&gpu.queue, &node_max, 0, meshes, 1);
+    [records, node_max]
+}
+
+/// A storage buffer of one half of each of `entries`.
+fn half_buffer(gpu: &GpuContext, label: &str, entries: &[[u32; 8]], half: usize) -> wgpu::Buffer {
+    let buffer = buffer_desc::storage_dst(&gpu.device, label, (entries.len() as u64 * 16).max(16));
+    write_half(&gpu.queue, &buffer, 0, entries, half);
+    buffer
+}
+
 /// Float4 slots [`write_half`] deinterleaves per call: 1 MiB.
 const WRITE_CHUNK: usize = 1 << 16;
 
@@ -254,7 +312,7 @@ fn write_half(
 fn create_bind_group(
     device: &wgpu::Device,
     (buffers, extra): ([&wgpu::Buffer; 5], [&wgpu::Buffer; 2]),
-    layers: [&wgpu::TextureView; 2],
+    layers: &[wgpu::TextureView; 2],
     samplers: &[wgpu::Sampler; 2],
 ) -> wgpu::BindGroup {
     let bindings = (0..5).chain(9..11);

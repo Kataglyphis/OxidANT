@@ -42,6 +42,8 @@ pub struct Gathered {
     pub meshes: Vec<MeshBuild>,
     pub instances: Vec<InstanceSource>,
     pub deformed: Vec<DeformedSource>,
+    /// One untransformed instance per instanced primitive, from which a new instance count is built.
+    pub templates: Vec<InstanceSource>,
 }
 
 /// Splits `scene` into meshes; `explicit[i]`, when not empty, instances primitive `i` like `ForwardRenderer::set_instances`.
@@ -92,7 +94,7 @@ pub fn gather(scene: &CpuScene, table: &MaterialTable, explicit: &[Vec<Mat4>]) -
     if !build.triangles.is_empty() {
         // First, so assembling the arrays can take over the largest mesh's vectors without a copy.
         gathered.meshes.insert(0, build);
-        for instance in &mut gathered.instances {
+        for instance in gathered.instances.iter_mut().chain(&mut gathered.templates) {
             instance.mesh += 1;
         }
         for source in &mut gathered.deformed {
@@ -141,22 +143,35 @@ fn push_instances(
     member: usize,
 ) {
     let transform = scene.primitives[member].transform;
-    let extras = match explicit.get(member).filter(|e| !e.is_empty()) {
-        Some(instances) => instances.clone(),
-        None => vec![Mat4::IDENTITY],
+    let template = InstanceSource {
+        mesh,
+        primitive: member as u32,
+        extra: Mat4::IDENTITY,
+        base: transform,
+        local: transform,
     };
-    for extra in extras {
-        let local = extra * transform;
-        // A zero scale hides a node; its singular matrix has no inverse to carry rays into it.
-        if local.is_finite() && local.determinant().abs() > f32::MIN_POSITIVE {
-            gathered.instances.push(InstanceSource {
-                mesh,
-                primitive: member as u32,
+    gathered.templates.push(template);
+    let extras = match explicit.get(member).filter(|e| !e.is_empty()) {
+        Some(instances) => instances.as_slice(),
+        None => &[Mat4::IDENTITY],
+    };
+    gathered.instances.extend(template.with_extras(extras));
+}
+
+impl InstanceSource {
+    /// This primitive's instance at each of `extras` that can be traced.
+    pub fn with_extras(self, extras: &[Mat4]) -> impl Iterator<Item = Self> + '_ {
+        extras
+            .iter()
+            .map(move |&extra| Self {
                 extra,
-                base: transform,
-                local,
-            });
-        }
+                local: extra * self.base,
+                ..self
+            })
+            // A zero scale hides a node; its singular matrix has no inverse to carry rays into it.
+            .filter(|source| {
+                source.local.is_finite() && source.local.determinant().abs() > f32::MIN_POSITIVE
+            })
     }
 }
 

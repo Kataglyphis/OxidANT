@@ -135,10 +135,6 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       as the raster's IBL ambient does, which moves this further from C++. Owner decision;
       if it should match, the C++ side changes, since its raster has no ambient term to follow.
 
-- [ ] **A new `set_instances` count waits for the next upload** (S). A count change flags
-      `Tracer::instances_current` false and the traced scene keeps the old instances until a scene upload;
-      the same count moves in place. Next: rebuild the top level on a count change.
-
 - [ ] **Bloom glows through clouds** (S). The bright pass reads the HDR before the clouds, and the tonemap only
       scales it by the cloud's transmittance (`shaders/tonemap/tonemap.slang`), so a hidden sun's halo shows
       at a cloud's edge. Next: bloom after the cloud composite, if the cost is acceptable.

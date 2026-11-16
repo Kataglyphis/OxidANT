@@ -8,7 +8,7 @@ use super::scenes::{self, build, rays};
 use crate::render::tracer::build::{TraceBuildOptions, TraceSceneBuilder};
 use crate::render::tracer::bvh::Aabb;
 use crate::render::tracer::query::{TraceRay, FAR};
-use crate::render::tracer::scene::TraceScene;
+use crate::render::tracer::scene::{InstanceChange, TraceScene};
 use crate::scene::{ChannelValues, CpuAnimation, CpuAnimationChannel, CpuScene, Interpolation};
 
 fn named_scenes() -> Vec<(&'static str, CpuScene)> {
@@ -389,4 +389,64 @@ fn animated_morph_weights_re_pose_their_mesh() {
     assert!(top(&scene) < full - 0.5, "{full} -> {}", top(&scene));
     assert_mesh_bounds(&scene, mesh);
     assert_matches_brute_force("morphed cube", &scene, 500);
+}
+
+/// A new instance count rebuilds the top level over the kept meshes; a merged primitive has no instances to change.
+#[test]
+fn a_new_instance_count_rebuilds_the_top_level_and_keeps_the_meshes() {
+    let at = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
+    let mut cubes = CpuScene {
+        primitives: vec![
+            scenes::cube_primitive(Mat4::IDENTITY),
+            scenes::cube_primitive(at(-9.0)),
+        ],
+        ..CpuScene::default()
+    };
+    cubes.primitives[1].vertices[0].position[1] += 0.25;
+    let explicit = vec![vec![at(0.0), at(3.0)]];
+    let mut scene = TraceSceneBuilder::new(Arc::new(cubes), explicit, TraceBuildOptions::default())
+        .run()
+        .expect("finishes");
+    let (meshes, blas) = (scene.meshes.clone(), scene.blas_node_count);
+    assert_eq!(
+        scene.instances.len(),
+        3,
+        "the merged cube and two instances"
+    );
+    let down = |x: f32| TraceRay {
+        origin: Vec3::new(x, 10.0, 0.0),
+        tmin: 0.0,
+        direction: Vec3::NEG_Y,
+        tmax: FAR,
+    };
+    assert!(scene.trace_closest(&down(6.0)).is_none());
+    let three = [at(0.0), at(3.0), at(6.0)];
+    assert_eq!(
+        scene.set_instance_extras(0, &three),
+        InstanceChange::Recounted
+    );
+    assert_eq!(scene.instances.len(), 4);
+    assert_eq!(
+        (scene.meshes.clone(), scene.blas_node_count),
+        (meshes, blas),
+        "the meshes stay"
+    );
+    assert!(
+        scene.trace_closest(&down(6.0)).is_some(),
+        "the third cube traces"
+    );
+    assert_matches_brute_force("three cubes", &scene, 400);
+    let moved = [at(0.0), at(3.0), at(12.0)];
+    assert_eq!(scene.set_instance_extras(0, &moved), InstanceChange::Moved);
+    assert!(
+        scene.trace_closest(&down(6.0)).is_none() && scene.trace_closest(&down(12.0)).is_some()
+    );
+    assert_eq!(scene.set_instance_extras(0, &[]), InstanceChange::Recounted);
+    assert_eq!(scene.instances.len(), 2, "no transforms: drawn once");
+    let before = scene.instances.clone();
+    assert_eq!(
+        scene.set_instance_extras(1, &three),
+        InstanceChange::Refused
+    );
+    assert_eq!(scene.instances, before, "the merged cube stays");
 }

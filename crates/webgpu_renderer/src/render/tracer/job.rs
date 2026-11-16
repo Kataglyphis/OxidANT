@@ -1,12 +1,13 @@
 //! The traced scene, built the first time a traced mode wants it: on a worker thread natively, a budget per frame in the browser.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::Mat4;
 
 use super::build::{BuildProgress, TraceBuildOptions, TraceProgress, TraceSceneBuilder};
 use super::gpu::TraceGpuScene;
-use super::scene::{TraceScene, TraceStats};
+use super::scene::{InstanceChange, TraceScene, TraceStats};
 use crate::context::GpuContext;
 use crate::scene::CpuScene;
 
@@ -173,8 +174,8 @@ pub struct Tracer {
     root: Mat4,
     /// `set_instances`' transforms by scene primitive, which the next build instances.
     explicit: Vec<Vec<Mat4>>,
-    /// The built scene lacks instances `set_instances` asked for; warned once.
-    stale_instances: bool,
+    /// Primitives whose `set_instances` the built scene could not follow, each warned once.
+    stale_instances: BTreeSet<usize>,
 }
 
 impl Default for Tracer {
@@ -186,7 +187,7 @@ impl Default for Tracer {
             generation: 0,
             root: Mat4::IDENTITY,
             explicit: Vec::new(),
-            stale_instances: false,
+            stale_instances: BTreeSet::new(),
         }
     }
 }
@@ -204,7 +205,7 @@ impl Tracer {
         self.state = State::Idle;
         self.root = Mat4::IDENTITY;
         self.explicit.clear();
-        self.stale_instances = false;
+        self.stale_instances.clear();
     }
 
     /// Starts the build unless one ran or runs; without a source there is nothing to build.
@@ -235,6 +236,7 @@ impl Tracer {
     fn finish(&mut self, gpu: &GpuContext, result: Result<TraceScene, String>) {
         // Built or refused, the CPU scene is not read again; its memory goes back now.
         self.source = None;
+        self.stale_instances.clear();
         self.generation += 1;
         let root = self.root;
         let placed = result.map(|mut scene| {
@@ -308,36 +310,59 @@ impl Tracer {
         self.root
     }
 
-    /// Instances primitive `primitive` by `transforms` (none: drawn once) as `ForwardRenderer::set_instances` does.
-    /// A build in flight starts over with them; a built scene moves them in place when it traces the primitive as that
-    /// many instances, and otherwise keeps tracing the old ones until the next upload, warned once.
+    /// Instances `primitive` by `transforms` as `ForwardRenderer::set_instances`: a build restarts, a built scene re-instances.
     pub fn set_instances(&mut self, gpu: &GpuContext, primitive: usize, transforms: &[Mat4]) {
         if self.explicit.len() <= primitive {
             self.explicit.resize(primitive + 1, Vec::new());
         }
         self.explicit[primitive] = transforms.to_vec();
-        match &mut self.state {
-            State::Building(_) => self.state = State::Idle,
-            State::Ready(ready) => {
-                let (scene, uploaded) = &mut **ready;
-                if scene.set_instance_extras(primitive as u32, transforms) {
-                    uploaded.write_instances(gpu, scene);
-                    self.generation += 1;
-                } else if !std::mem::replace(&mut self.stale_instances, true) {
+        let ready = match &mut self.state {
+            State::Building(_) => {
+                self.state = State::Idle;
+                return;
+            }
+            State::Ready(ready) => ready,
+            State::Idle | State::Failed(_) => return,
+        };
+        let (scene, uploaded) = &mut **ready;
+        let written = match scene.set_instance_extras(primitive as u32, transforms) {
+            InstanceChange::Moved => {
+                uploaded.write_instances(gpu, scene);
+                Ok(())
+            }
+            InstanceChange::Recounted => {
+                remeasure(scene);
+                uploaded
+                    .write_records(gpu, scene)
+                    .map_err(|why| why.to_string())
+            }
+            InstanceChange::Refused => Err("it is merged into the world-space mesh".to_owned()),
+        };
+        match written {
+            Ok(()) => {
+                self.generation += 1;
+                self.stale_instances.remove(&primitive);
+            }
+            Err(why) if scene.layout() != uploaded.layout() => {
+                log::warn!(
+                    "tracer: {} instances of primitive {primitive} do not fit: {why}",
+                    transforms.len()
+                );
+                self.state = State::Failed(why);
+            }
+            Err(why) => {
+                if self.stale_instances.insert(primitive) {
                     log::warn!(
-                        "tracer: primitive {primitive} cannot take {} instances in place; the traced scene keeps its \
-                         old ones until the next upload",
-                        transforms.len()
+                        "tracer: primitive {primitive} keeps its traced place until the next upload: {why}"
                     );
                 }
             }
-            State::Idle | State::Failed(_) => {}
         }
     }
 
     /// Whether the built scene traces every instance `set_instances` asked for.
     pub fn instances_current(&self) -> bool {
-        !self.stale_instances
+        self.stale_instances.is_empty()
     }
 
     /// Moves instanced primitives to their new world transforms, by scene primitive; see [`TraceScene::set_primitive_transforms`].
@@ -370,6 +395,13 @@ impl Tracer {
     pub fn generation(&self) -> u64 {
         self.generation
     }
+}
+
+/// The scene's counts after its instances changed, keeping the build's times.
+fn remeasure(scene: &mut TraceScene) {
+    let (seconds, stages) = (scene.stats.build_seconds, scene.stats.stage_seconds);
+    scene.measure(seconds);
+    scene.stats.stage_seconds = stages;
 }
 
 fn upload(gpu: &GpuContext, mut scene: TraceScene) -> Result<(TraceScene, TraceGpuScene), String> {

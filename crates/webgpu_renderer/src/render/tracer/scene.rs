@@ -63,6 +63,17 @@ fn affine(rows: [[f32; 4]; 3]) -> Mat4 {
     Mat4::from_cols_array_2d(&[rows[0], rows[1], rows[2], [0.0, 0.0, 0.0, 1.0]]).transpose()
 }
 
+/// What [`TraceScene::set_instance_extras`] did to the record layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstanceChange {
+    /// The primitive is merged into the world-space mesh, so it has no instances to change.
+    Refused,
+    /// As many instances as before moved: every section stays in place.
+    Moved,
+    /// The count changed, and with it the top level's size and the sections after it.
+    Recounted,
+}
+
 /// Where one bottom-level mesh sits in the flat arrays.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeshInfo {
@@ -129,6 +140,8 @@ pub struct TraceScene {
     pub sources: Vec<InstanceSource>,
     /// The meshes an animation deforms, re-posed by [`TraceScene::pose_deformed`].
     pub deformed: Vec<DeformedSource>,
+    /// One untransformed instance per instanced primitive, which [`TraceScene::set_instance_extras`] copies.
+    pub templates: Vec<InstanceSource>,
     pub(crate) root: Mat4,
     pub stats: TraceStats,
 }
@@ -148,6 +161,7 @@ impl TraceScene {
             linear,
             sources: gathered.instances,
             deformed: gathered.deformed,
+            templates: gathered.templates,
             root: Mat4::IDENTITY,
             ..Self::default()
         };
@@ -199,7 +213,7 @@ impl TraceScene {
 
     /// Moves each instanced primitive to `transforms[primitive]` (an animated node's) and rebuilds the top level; merged ones stay.
     pub fn set_primitive_transforms(&mut self, transforms: &[Mat4]) {
-        for source in &mut self.sources {
+        for source in self.sources.iter_mut().chain(&mut self.templates) {
             if let Some(transform) = transforms.get(source.primitive as usize) {
                 source.base = *transform;
                 source.local = source.extra * *transform;
@@ -208,33 +222,24 @@ impl TraceScene {
         self.rebuild_tlas();
     }
 
-    /// Moves primitive `primitive`'s explicit instances to `extras` (none: one identity) and rebuilds the top level.
-    /// False, changing nothing, unless it is traced as that many instances: the buffers' layout cannot change in place.
-    pub fn set_instance_extras(&mut self, primitive: u32, extras: &[Mat4]) -> bool {
+    /// Instances primitive `primitive` at `extras` (none: one identity) and rebuilds the top level; the meshes stay.
+    pub fn set_instance_extras(&mut self, primitive: u32, extras: &[Mat4]) -> InstanceChange {
+        let Some(template) = self.templates.iter().find(|t| t.primitive == primitive) else {
+            return InstanceChange::Refused;
+        };
         let identity = [Mat4::IDENTITY];
         let extras = if extras.is_empty() { &identity } else { extras };
-        let slots: Vec<usize> = (0..self.sources.len())
-            .filter(|&i| self.sources[i].primitive == primitive)
-            .collect();
-        let Some(&first) = slots.first() else {
-            return false;
+        let kept: Vec<InstanceSource> = template.with_extras(extras).collect();
+        let before = self.sources.len();
+        self.sources.retain(|source| source.primitive != primitive);
+        let change = if before - self.sources.len() == kept.len() {
+            InstanceChange::Moved
+        } else {
+            InstanceChange::Recounted
         };
-        let base = self.sources[first].base;
-        let traceable = |extra: &&Mat4| {
-            let local = **extra * base;
-            local.is_finite() && local.determinant().abs() > f32::MIN_POSITIVE
-        };
-        let kept: Vec<Mat4> = extras.iter().filter(traceable).copied().collect();
-        if kept.len() != slots.len() {
-            return false;
-        }
-        for (slot, extra) in slots.into_iter().zip(kept) {
-            let source = &mut self.sources[slot];
-            source.extra = extra;
-            source.local = extra * base;
-        }
+        self.sources.extend(kept);
         self.rebuild_tlas();
-        true
+        change
     }
 
     /// Re-poses each deformed mesh whose joints or `weights[primitive]` moved and refits it; the meshes it changed.

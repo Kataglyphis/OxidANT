@@ -983,10 +983,9 @@ fn the_model_transform_moves_the_traced_scene_with_raster_and_restarts_the_mean(
     );
 }
 
-/// `set_instances` before the build is traced as explicit instances; after it, a move of as many instances happens in
-/// place, and a new count keeps the built ones, flagged, until the next upload.
+/// `set_instances` before the build is traced as explicit instances; after it, a move or a new count re-instances it.
 #[test]
-fn set_instances_reaches_the_traced_scene_in_place_or_says_it_waits() {
+fn set_instances_reaches_the_traced_scene_moved_or_recounted() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -1019,14 +1018,44 @@ fn set_instances_reaches_the_traced_scene_in_place_or_says_it_waits() {
     );
     renderer.set_instances(&gpu, 0, &[at(-2.0), at(2.0)]);
     assert!(
-        !renderer.tracer().instances_current(),
-        "a second instance cannot join the built buffers"
+        renderer.tracer().instances_current(),
+        "a second instance joins the built scene"
     );
-    let kept = red_centroid(&gpu, &mut renderer, RenderMode::RayTraced, &camera);
+    let both = red_centroid(&gpu, &mut renderer, RenderMode::RayTraced, &camera);
+    let raster_both = red_centroid(&gpu, &mut renderer, RenderMode::Raster, &camera);
+    eprintln!("two cubes: ray traced {both}, raster {raster_both}");
     assert!(
-        kept.distance(right) < 0.5,
-        "the traced scene changed: {kept}"
+        (both - right).distance(raster_both - raster_right) < 1.0,
+        "{both} - {right} against raster {raster_both} - {raster_right}"
     );
+    assert!(
+        (both - right).x < -10.0,
+        "the left cube did not join: {both}"
+    );
+    renderer.set_instances(&gpu, 0, &[at(2.0)]);
+    let back = red_centroid(&gpu, &mut renderer, RenderMode::RayTraced, &camera);
+    assert!(
+        back.distance(right) < 0.5,
+        "one cube again: {back} against {right}"
+    );
+}
+
+/// A primitive merged into the world-space mesh cannot be re-instanced: it keeps its place, flagged, until an upload.
+#[test]
+fn set_instances_on_a_merged_primitive_says_it_waits() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = scene("cube.gltf");
+    let camera = facing_minus_z(12.0);
+    let mut renderer = plain(&gpu, &scene, RasterPath::Forward);
+    trace(&mut renderer, &scene);
+    build(&gpu, &mut renderer);
+    let home = red_centroid(&gpu, &mut renderer, RenderMode::RayTraced, &camera);
+    renderer.set_instances(&gpu, 0, &[Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0))]);
+    assert!(!renderer.tracer().instances_current());
+    let kept = red_centroid(&gpu, &mut renderer, RenderMode::RayTraced, &camera);
+    assert!(kept.distance(home) < 0.5, "the merged cube moved: {kept}");
 }
 
 /// A switch of mode, raster path or FXAA drops the passes the new frames do not record at once, so a traced frame lists its
