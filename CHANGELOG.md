@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Security (2026-11-16, an audit ignore for ruzstd, which is locked but not built)
+- `.cargo/audit.toml` ignores RUSTSEC-2026-0344 (owner decision), which had stopped the Linux lane since 216b0a1:
+  `ruzstd` 0.7.3 comes only through `basisu` 0.1.0, whose only release requires `ruzstd ^0.7`, and the renderer
+  enables `basisu` without `zstd`, so cargo-deny does not meet the crate in the built graph. A BACKLOG entry drops
+  the ignore once basisu releases on `ruzstd` 0.9.1.
+
 ### Changed (2026-11-16, owner decision: the renderer builds at opt-level 1 in debug)
 - **`[profile.dev.package.kataglyphis_webgpu_renderer] opt-level = 1`** in the workspace `Cargo.toml`; dependencies stay
   at 2. Measured in `:latest` on the 8-core arm64 host, `CARGO_BUILD_JOBS=2`, with a throwaway example over 5.9 M random

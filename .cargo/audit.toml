@@ -4,4 +4,5 @@ ignore = [
   # Built, but cargo-deny 0.20.2 reports neither unmaintained notice since 2026-10-20 (advisory-not-detected), so deny.toml dropped them
   "RUSTSEC-2024-0436", # paste: unmaintained (a proc macro of burn-dispatch)
   "RUSTSEC-2026-0192", # ttf-parser: unmaintained (plotters' ab_glyph); informational, not a vulnerability
+  "RUSTSEC-2026-0344", # ruzstd 0.7.3 (decompression bomb): locked by basisu 0.1.0 but not built, its zstd feature is off; no basisu on >= 0.9.1 yet (basisu#1)
 ]

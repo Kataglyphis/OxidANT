@@ -104,6 +104,12 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
 
 ## P3 — ideas, chores and blocked work
 
+- [b] **An audit ignore waits for basisu to move to ruzstd 0.9.1** (S, ★). Since 2026-11-16 `.cargo/audit.toml`
+      ignores RUSTSEC-2026-0344 (owner decision): `ruzstd` 0.7.3 has a decompression bomb, fixed in 0.9.1, and
+      `basisu` 0.1.0, the only release, requires `^0.7` (upstream issue marcogomez/basisu#1). The renderer enables
+      `basisu` without its `zstd` feature, so `ruzstd` is locked but not built, and cargo-deny never meets it.
+      Blocked on a basisu release. Then: `cargo update -p basisu` and delete the ignore. Done when the ignore is gone.
+
 - [ ] **Texture streaming past the mip tail** (L, ★). BeschleunigerBallett's "[P3] Texture streaming / bindless".
       Since 2026-11-16 the renderer streams material mips by screen-space need (roadmap, *Texture streaming*), a
       step copies the resident levels on the GPU (the GL backend keeps the CPU path for compressed textures), and a
