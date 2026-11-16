@@ -156,7 +156,8 @@ impl Drop for Job {
 
 enum State {
     Idle,
-    Building(Job),
+    // Boxed: the browser's job holds the whole scene builder inline.
+    Building(Box<Job>),
     Ready(Box<(TraceScene, TraceGpuScene)>),
     Failed(String),
 }
@@ -213,7 +214,7 @@ impl Tracer {
         };
         let explicit = self.explicit.clone();
         self.state = match Job::start(Arc::clone(source), explicit, self.options) {
-            Ok(job) => State::Building(job),
+            Ok(job) => State::Building(Box::new(job)),
             Err(why) => State::Failed(why),
         };
     }

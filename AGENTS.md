@@ -173,6 +173,9 @@ unformatted and with 12 clippy errors; the step gates now.
 - **Scope:** `scripts/linux/ci-container-steps.sh` sets `CARGO_CLIPPY_ARGS` to
   `--workspace --locked`, the whole workspace with nothing left out.
 - **Positional arguments reach `cargo fmt` only**, not both tools.
+- **Then the renderer on wasm32**: `cargo clippy -p kataglyphis_webgpu_renderer --locked --target
+  wasm32-unknown-unknown -- -D warnings`, since the browser's code (`cfg(target_arch = "wasm32")`) gets no
+  lint from the host run; 1 min 49 s from a cold target directory at two jobs.
 - **The step first fails a stale `src/frb_generated.rs`.** `scripts/linux/frb-codegen.sh` is the
   one flutter_rust_bridge input and flag set, also used by OmniAccelerANT's generator; regenerate
   there after changing `src/api`: [the bridge bindings](docs/testing.md#the-bridge-bindings).

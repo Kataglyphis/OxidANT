@@ -20,7 +20,7 @@ usage: ci-container-steps.sh <step>
 
   debug       cargo_debug.sh            - dev profile build
   security    cargo_security_checks.sh  - cargo audit + cargo deny (GATING)
-  fmt-clippy  cargo_fmt_clippy.sh         - bridge freshness + fmt --check + clippy -D warnings (GATING)
+  fmt-clippy  cargo_fmt_clippy.sh         - bridge freshness + fmt --check + clippy -D warnings, renderer on wasm32 too (GATING)
   test        cargo_test.sh             - unit + integration + proptest + doc, then ORT/tract/XNNPACK/DNNL parity
   coverage    cargo_coverage.sh         - tarpaulin over the workspace
   bench       cargo_bench.sh
@@ -114,7 +114,9 @@ case "$step" in
         python3 "${SCRIPT_DIR}/../generate-texture-abi.py" --check
         bash "${SCRIPT_DIR}/frb-codegen.sh" check --hub "${ANTFRASTRUCTURE_DIR}"
         export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked}"
-        antfrastructure_exec "${RUST_DRIVERS}/cargo_fmt_clippy.sh" "$@"
+        bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_fmt_clippy.sh")" "$@"
+        # The renderer's wasm32-only code (the browser's tracer build) gets no lint from the host clippy above.
+        exec cargo clippy -p kataglyphis_webgpu_renderer --locked --target wasm32-unknown-unknown -- -D warnings
         ;;
 
     # GPU suites skip unless RISCV64_GPU_TESTS=1: lavapipe under QEMU is the long pole. See docs/ci.md § The riscv64 lane

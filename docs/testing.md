@@ -107,7 +107,9 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 That is the scope of the lanes' `fmt-clippy` step (`CARGO_CLIPPY_ARGS` in
-`scripts/linux/ci-container-steps.sh`); `bash scripts/linux/ci-container-steps.sh fmt-clippy`
+`scripts/linux/ci-container-steps.sh`), which then lints the renderer for the browser too:
+`cargo clippy -p kataglyphis_webgpu_renderer --locked --target wasm32-unknown-unknown -- -D warnings`.
+`bash scripts/linux/ci-container-steps.sh fmt-clippy`
 inside the image reproduces the step itself. The shell, workflow, secret and config gates
 are `bash scripts/linux/run-lint-gates.sh`; with the hub's hook pair switched on (`AGENTS.md` § 5) a push
 runs them and `scripts/linux/pre-push-checks.sh`, the script suites of the lint lane.

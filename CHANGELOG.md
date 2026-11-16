@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, clippy on the renderer's wasm32 build)
+- `cargo clippy -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown -- -D warnings` failed on
+  `large_enum_variant`: the browser's tracer job holds its whole `TraceSceneBuilder` inline, so `State::Building`
+  dwarfed the other variants (`render/tracer/job.rs`). It boxes the job now. The `fmt-clippy` step runs that
+  invocation after the workspace clippy, so the browser-only code is linted in CI: 1 min 49 s from a cold target
+  directory at two jobs.
+
 ### Added (2026-11-16, FXAA on the deferred path)
 - **The deferred path is anti-aliased.** `render::fxaa` runs FXAA 3.11's quality edge walk (`shaders/fxaa/fxaa.slang`,
   the generated `fxaa.wgsl`, a manifest row) after the tonemap: on a filtered frame the tonemap draws into an
