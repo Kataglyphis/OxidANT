@@ -11,6 +11,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github/workflows/linux-nvidia-gpu.yml"
@@ -64,24 +65,67 @@ def evaluate_condition(
     )
 
 
-def valid(workflow: str, build: str) -> bool:
-    trigger = workflow.split("\npermissions:", 1)[0]
-    select = job(workflow, "select")
-    x64 = job(workflow, "build-x64")
-    arm = job(workflow, "build-arm64")
-    clean = job(workflow, "clean-host")
-    gpu = job(workflow, "gpu-profile")
-    stage = job(workflow, "stage-verified")
+class Jobs(NamedTuple):
+    """The workflow sections `valid` checks, cut once from the two workflow texts."""
+
+    workflow: str
+    build: str
+    trigger: str
+    select: str
+    x64: str
+    arm: str
+    clean: str
+    gpu: str
+    stage: str
+    producer: str
+    guard: str
+    parity: str
+
+
+def step(text: str, name: str) -> str:
+    """The step named `name` up to the next step, or all of `text` when it is missing."""
+    return text.split(f"name: {name}", 1)[-1].split("\n      - ", 1)[0]
+
+
+def jobs_of(workflow: str, build: str) -> Jobs:
     producer = job(build, "build")
-    guard = producer.split("name: Require hardware profiling for promotion", 1)[
-        -1
-    ].split("\n      - ", 1)[0]
-    parity = producer.split(
-        "name: Require CPU and GPU detector parity for promotion", 1
-    )[-1].split("\n      - ", 1)[0]
+    return Jobs(
+        workflow=workflow,
+        build=build,
+        trigger=workflow.split("\npermissions:", 1)[0],
+        select=job(workflow, "select"),
+        x64=job(workflow, "build-x64"),
+        arm=job(workflow, "build-arm64"),
+        clean=job(workflow, "clean-host"),
+        gpu=job(workflow, "gpu-profile"),
+        stage=job(workflow, "stage-verified"),
+        producer=producer,
+        guard=step(producer, "Require hardware profiling for promotion"),
+        parity=step(producer, "Require CPU and GPU detector parity for promotion"),
+    )
+
+
+def valid(workflow: str, build: str) -> bool:
+    jobs = jobs_of(workflow, build)
+    return all(
+        check(jobs)
+        for check in (
+            callers_valid,
+            matrix_outputs_valid,
+            attempt_guards_valid,
+            trigger_and_select_valid,
+            producer_valid,
+            clean_host_valid,
+            gpu_profile_valid,
+            stage_valid,
+        )
+    )
+
+
+def callers_valid(jobs: Jobs) -> bool:
     entries = (
-        (x64, "x64", "linux/amd64", "ubuntu-26.04"),
-        (arm, "arm64", "linux/arm64", "ubuntu-26.04-arm"),
+        (jobs.x64, "x64", "linux/amd64", "ubuntu-26.04"),
+        (jobs.arm, "arm64", "linux/arm64", "ubuntu-26.04-arm"),
     )
     for caller, arch, platform, runner in entries:
         if not all(
@@ -101,6 +145,11 @@ def valid(workflow: str, build: str) -> bool:
             )
         ):
             return False
+    return True
+
+
+def matrix_outputs_valid(jobs: Jobs) -> bool:
+    clean, gpu, stage = jobs.clean, jobs.gpu, jobs.stage
     if not all(
         "matrix: ${{ fromJSON(needs.select.outputs.matrix) }}" in j
         for j in (clean, gpu, stage)
@@ -115,9 +164,13 @@ def valid(workflow: str, build: str) -> bool:
             return False
         if stage.count(token) != (2 if output == "artifact_id" else 1):
             return False
-        if f"jobs.build.outputs.{output}" not in build:
+        if f"jobs.build.outputs.{output}" not in jobs.build:
             return False
-    for j in (clean, gpu, stage):
+    return True
+
+
+def attempt_guards_valid(jobs: Jobs) -> bool:
+    for j in (jobs.clean, jobs.gpu, jobs.stage):
         if (
             not all(
                 token in j
@@ -129,112 +182,280 @@ def valid(workflow: str, build: str) -> bool:
             or "always()" in j
         ):
             return False
+    return True
+
+
+def trigger_and_select_valid(jobs: Jobs) -> bool:
+    trigger, select = jobs.trigger, jobs.select
+    return all(
+        (
+            trigger.count(
+                "promote-verified:\n        type: boolean\n        default: false"
+            )
+            == 1,
+            re.search(
+                r"(?ms)^      promote-verified:\n(?:        [^\n]+\n)*        default: false$",
+                trigger,
+            )
+            is not None,
+            "      architecture:\n        type: string\n        default: both"
+            in trigger,
+            "options: [both, x64, arm64]\n        default: both" in trigger,
+            "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py"
+            in select,
+            "GPU_INVOCATION_SCOPE: ${{ inputs.invocation-scope }}" in select,
+            '"arch":"x64","producer":"build-x64","runner":"ubuntu-26.04","runner-arch":"X64"'
+            in select,
+            '"arch":"arm64","producer":"build-arm64","runner":"ubuntu-26.04-arm","runner-arch":"ARM64"'
+            in select,
+            "*) echo '::error::architecture must be both, x64 or arm64'; exit 1"
+            in select,
+            "permissions:\n  contents: read" in jobs.workflow
+            and "permissions:\n  contents: read" in jobs.build,
+            "group: linux-nvidia-gpu-${{ github.ref }}-${{ github.workflow }}"
+            in jobs.workflow,
+        )
+    )
+
+
+def producer_valid(jobs: Jobs) -> bool:
+    producer, parity, guard = jobs.producer, jobs.parity, jobs.guard
+    input_name = "oxidant-linux-${{ inputs.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ steps.scope.outputs.suffix }}"
+    return all(
+        (
+            "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py"
+            in producer,
+            "GPU_INVOCATION_SCOPE: ${{ inputs.invocation-scope }}" in producer,
+            producer.count(input_name) == 2,
+            "name: Require CPU and GPU detector parity for promotion" in producer,
+            "        if: ${{ inputs.promote-verified }}" in parity.splitlines(),
+            "          exit 1" in parity.splitlines(),
+            "continue-on-error" not in parity,
+            "if: ${{ inputs.promote-verified && !inputs.verify-gpu }}" in guard,
+            "          exit 1" in guard.splitlines(),
+            "x64:linux/amd64:ubuntu-26.04|arm64:linux/arm64:ubuntu-26.04-arm"
+            in producer,
+            "*) echo '::error::Unsupported NVIDIA build tuple'; exit 1" in producer,
+            "producer_attempt: ${{ steps.name.outputs.producer_attempt }}" in producer,
+            "artifact_id: ${{ steps.promotion_upload.outputs.artifact-id }}"
+            in producer,
+            "artifact_digest: ${{ steps.promotion_upload.outputs.artifact-digest }}"
+            in producer,
+            "artifact_files: ${{ steps.promotion_files.outputs.files }}" in producer,
+            "if: ${{ !inputs.promote-verified }}" in producer
+            and "path: dist/**" in producer,
+            "if: ${{ inputs.promote-verified }}" in producer
+            and producer.count("overwrite: false") == 2,
+            "shared/python/verify_locked_files.py" in producer,
+            "third_party/ANTfrastructure/shared/python/compare_detector_parity.py"
+            in producer,
+            'python3 -I "$parity_tests"' in producer,
+            "python3 -I \"$parity_comparator\" --help | grep -q -- --pairwise || { echo 'Pinned ANTfrastructure lacks pairwise detector comparison' >&2; exit 1; }"
+            in producer,
+            "python3 -I \"$ort_profile\" --help | grep -q -- --min-runs || { echo 'Pinned ANTfrastructure lacks per-run ORT profiling' >&2; exit 1; }"
+            in producer,
+            "bash scripts/linux/tests/test-check-gpu-detector-parity.sh" in producer,
+            "bash scripts/linux/tests/test-profile-parity-mutations.sh" in producer,
+            "python3 scripts/linux/tests/test-detector-parity.py" in producer,
+        )
+    )
+
+
+def clean_host_valid(jobs: Jobs) -> bool:
+    clean = jobs.clean
+    consumer_name = "oxidant-linux-${{ matrix.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}"
+    return all(
+        (
+            clean.count(consumer_name) == 3 and jobs.gpu.count(consumer_name) == 1,
+            "if: ${{ !inputs.promote-verified }}" in clean,
+            "actions/clean-host-package-check@develop" in clean,
+            f"actions/clean-host-package-check@{HUB_SHA}" in clean,
+            clean.count(
+                'bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia'
+            )
+            == 3,
+            all(
+                line in clean.splitlines()
+                for line in (
+                    '          deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia oxidant',
+                    '          tarball-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia ./oxidant',
+                    '          appimage-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia "$APPIMAGE"',
+                )
+            ),
+            "needs: [select, build-x64, build-arm64]" in clean,
+            f"if: ${{{{ !cancelled() && {SELECTED_BUILDS} }}}}" in clean,
+        )
+    )
+
+
+def gpu_profile_valid(jobs: Jobs) -> bool:
+    gpu = jobs.gpu
+    gpu_file = "oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}${{ needs.select.outputs.suffix }}-gpu-receipt.json"
+    return all(
+        (
+            gpu.count(gpu_file) == 2 and gpu_file in jobs.stage,
+            "needs: [select, build-x64, build-arm64, clean-host]" in gpu,
+            f"if: ${{{{ !cancelled() && inputs.verify-gpu && {SELECTED_BUILDS} && needs.clean-host.result == 'success' }}}}"
+            in gpu,
+            f"actions/gpu-package-check@{HUB_SHA}" in gpu,
+            re.search(
+                r"(?m)^      - uses: actions/checkout@[^\n]+\n        with:\n          submodules: true$",
+                gpu,
+            )
+            is not None,
+            '          command: env ANTFRASTRUCTURE_DIR="$GITHUB_WORKSPACE/third_party/ANTfrastructure" bash scripts/linux/profile-gpu-packages.sh "$GPU_PACKAGE_DIR" cuda "$GITHUB_WORKSPACE/crates/inference/tests/fixtures/two_cats.jpg"'
+            in gpu.splitlines(),
+        )
+    )
+
+
+def stage_valid(jobs: Jobs) -> bool:
+    clean, gpu, stage = jobs.clean, jobs.gpu, jobs.stage
     clean_receipt = "unverified-oxidant-nvidia-${{ matrix.arch }}-clean-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}"
     gpu_receipt = "unverified-oxidant-nvidia-${{ matrix.arch }}-gpu-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}"
-    gpu_file = "oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}${{ needs.select.outputs.suffix }}-gpu-receipt.json"
-    input_name = "oxidant-linux-${{ inputs.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ steps.scope.outputs.suffix }}"
-    consumer_name = "oxidant-linux-${{ matrix.arch }}-nvidia-host-runtime-candidate-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}"
-    checks = (
-        gpu.count(gpu_file) == 2 and gpu_file in stage,
-        trigger.count(
-            "promote-verified:\n        type: boolean\n        default: false"
+    return all(
+        (
+            "verified-oxidant-linux-${{ matrix.arch }}-nvidia-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}"
+            in stage,
+            "needs: [select, build-x64, build-arm64, clean-host, gpu-profile]" in stage,
+            f"if: ${{{{ !cancelled() && inputs.promote-verified && inputs.verify-gpu && {SELECTED_BUILDS} && needs.clean-host.result == 'success' && needs.gpu-profile.result == 'success' }}}}"
+            in stage,
+            f"actions/stage-gpu-artifact@{HUB_SHA}" in stage,
+            "skip-decompress: true" in stage
+            and stage.count("digest-mismatch: error") == 3,
+            clean_receipt in clean and clean_receipt in stage,
+            gpu_receipt in gpu and gpu_receipt in stage,
+            all("gpu-arch: ${{ matrix.arch }}" in j for j in (clean, gpu, stage)),
+            all("gpu-vendor: nvidia" in j for j in (clean, gpu, stage)),
+            "verified-oxidant-linux-${{ matrix.arch }}-nvidia-" in stage,
+            0
+            <= stage.find(f"actions/stage-gpu-artifact@{HUB_SHA}")
+            < stage.find("Upload the checked NVIDIA packages"),
+            "release" not in stage.lower(),
         )
-        == 1,
-        re.search(
-            r"(?ms)^      promote-verified:\n(?:        [^\n]+\n)*        default: false$",
-            trigger,
-        )
-        is not None,
-        "      architecture:\n        type: string\n        default: both" in trigger,
-        "options: [both, x64, arm64]\n        default: both" in trigger,
-        "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py" in select,
-        "GPU_INVOCATION_SCOPE: ${{ inputs.invocation-scope }}" in select,
-        "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py" in producer,
-        "GPU_INVOCATION_SCOPE: ${{ inputs.invocation-scope }}" in producer,
-        producer.count(input_name) == 2,
-        clean.count(consumer_name) == 3 and gpu.count(consumer_name) == 1,
-        "verified-oxidant-linux-${{ matrix.arch }}-nvidia-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.select.outputs.suffix }}"
-        in stage,
-        '"arch":"x64","producer":"build-x64","runner":"ubuntu-26.04","runner-arch":"X64"'
-        in select,
-        '"arch":"arm64","producer":"build-arm64","runner":"ubuntu-26.04-arm","runner-arch":"ARM64"'
-        in select,
-        "*) echo '::error::architecture must be both, x64 or arm64'; exit 1" in select,
-        "permissions:\n  contents: read" in workflow
-        and "permissions:\n  contents: read" in build,
-        "group: linux-nvidia-gpu-${{ github.ref }}-${{ github.workflow }}" in workflow,
-        "name: Require CPU and GPU detector parity for promotion" in producer,
-        "        if: ${{ inputs.promote-verified }}" in parity.splitlines(),
-        "          exit 1" in parity.splitlines(),
-        "continue-on-error" not in parity,
-        "if: ${{ inputs.promote-verified && !inputs.verify-gpu }}" in guard,
-        "          exit 1" in guard.splitlines(),
-        "x64:linux/amd64:ubuntu-26.04|arm64:linux/arm64:ubuntu-26.04-arm" in producer,
-        "*) echo '::error::Unsupported NVIDIA build tuple'; exit 1" in producer,
-        "producer_attempt: ${{ steps.name.outputs.producer_attempt }}" in producer,
-        "artifact_id: ${{ steps.promotion_upload.outputs.artifact-id }}" in producer,
-        "artifact_digest: ${{ steps.promotion_upload.outputs.artifact-digest }}"
-        in producer,
-        "artifact_files: ${{ steps.promotion_files.outputs.files }}" in producer,
-        "if: ${{ !inputs.promote-verified }}" in producer
-        and "path: dist/**" in producer,
-        "if: ${{ inputs.promote-verified }}" in producer
-        and producer.count("overwrite: false") == 2,
-        "shared/python/verify_locked_files.py" in producer,
-        "third_party/ANTfrastructure/shared/python/compare_detector_parity.py"
-        in producer,
-        'python3 -I "$parity_tests"' in producer,
-        "python3 -I \"$parity_comparator\" --help | grep -q -- --pairwise || { echo 'Pinned ANTfrastructure lacks pairwise detector comparison' >&2; exit 1; }"
-        in producer,
-        "python3 -I \"$ort_profile\" --help | grep -q -- --min-runs || { echo 'Pinned ANTfrastructure lacks per-run ORT profiling' >&2; exit 1; }"
-        in producer,
-        "bash scripts/linux/tests/test-check-gpu-detector-parity.sh" in producer,
-        "bash scripts/linux/tests/test-profile-parity-mutations.sh" in producer,
-        "python3 scripts/linux/tests/test-detector-parity.py" in producer,
-        "if: ${{ !inputs.promote-verified }}" in clean,
-        "actions/clean-host-package-check@develop" in clean,
-        f"actions/clean-host-package-check@{HUB_SHA}" in clean,
-        clean.count(
-            'bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia'
-        )
-        == 3,
-        all(
-            line in clean.splitlines()
-            for line in (
-                '          deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia oxidant',
-                '          tarball-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia ./oxidant',
-                '          appimage-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia "$APPIMAGE"',
-            )
-        ),
-        "needs: [select, build-x64, build-arm64]" in clean,
-        f"if: ${{{{ !cancelled() && {SELECTED_BUILDS} }}}}" in clean,
-        "needs: [select, build-x64, build-arm64, clean-host]" in gpu,
-        f"if: ${{{{ !cancelled() && inputs.verify-gpu && {SELECTED_BUILDS} && needs.clean-host.result == 'success' }}}}"
-        in gpu,
-        f"actions/gpu-package-check@{HUB_SHA}" in gpu,
-        re.search(
-            r"(?m)^      - uses: actions/checkout@[^\n]+\n        with:\n          submodules: true$",
-            gpu,
-        )
-        is not None,
-        '          command: env ANTFRASTRUCTURE_DIR="$GITHUB_WORKSPACE/third_party/ANTfrastructure" bash scripts/linux/profile-gpu-packages.sh "$GPU_PACKAGE_DIR" cuda "$GITHUB_WORKSPACE/crates/inference/tests/fixtures/two_cats.jpg"'
-        in gpu.splitlines(),
-        "needs: [select, build-x64, build-arm64, clean-host, gpu-profile]" in stage,
-        f"if: ${{{{ !cancelled() && inputs.promote-verified && inputs.verify-gpu && {SELECTED_BUILDS} && needs.clean-host.result == 'success' && needs.gpu-profile.result == 'success' }}}}"
-        in stage,
-        f"actions/stage-gpu-artifact@{HUB_SHA}" in stage,
-        "skip-decompress: true" in stage and stage.count("digest-mismatch: error") == 3,
-        clean_receipt in clean and clean_receipt in stage,
-        gpu_receipt in gpu and gpu_receipt in stage,
-        all("gpu-arch: ${{ matrix.arch }}" in j for j in (clean, gpu, stage)),
-        all("gpu-vendor: nvidia" in j for j in (clean, gpu, stage)),
-        "verified-oxidant-linux-${{ matrix.arch }}-nvidia-" in stage,
-        0
-        <= stage.find(f"actions/stage-gpu-artifact@{HUB_SHA}")
-        < stage.find("Upload the checked NVIDIA packages"),
-        "release" not in stage.lower(),
     )
-    return all(checks)
+
+
+# Single-occurrence edits of linux-nvidia-gpu.yml that `valid` must reject.
+WORKFLOW_MUTATIONS = (
+    (
+        "oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}${{ needs.select.outputs.suffix }}-gpu-receipt.json",
+        "oxidant-nvidia-gpu-receipt.json",
+    ),
+    (
+        "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py",
+        "missing-scope-validator.py",
+    ),
+    ("needs.select.outputs.suffix", "inputs.invocation-scope"),
+    ('"producer":"build-x64"', '"producer":"build-arm64"'),
+    ('"producer":"build-arm64"', '"producer":"build-x64"'),
+    ("needs.select.result == 'success'", "true"),
+    ("needs.build-x64.result == 'success'", "true"),
+    ("needs.build-arm64.result == 'success'", "true"),
+    ("needs.clean-host.result == 'success'", "true"),
+    ("needs.gpu-profile.result == 'success'", "true"),
+    ("!cancelled()", "true"),
+    (
+        "needs.select.outputs.architecture == 'both' || needs.select.outputs.architecture == 'x64'",
+        "true",
+    ),
+    ("needs[matrix.producer].outputs.artifact_id", "untrusted-id"),
+    ("needs[matrix.producer].outputs.artifact_digest", "untrusted-digest"),
+    ("needs[matrix.producer].outputs.artifact_files", "untrusted-files"),
+    ('test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"', "true"),
+    ("gpu-arch: ${{ matrix.arch }}", "gpu-arch: x64"),
+    ("gpu-vendor: nvidia", "gpu-vendor: amd"),
+    ("digest-mismatch: error", "digest-mismatch: warn"),
+    ("skip-decompress: true", "skip-decompress: false"),
+    ('"$GPU_PACKAGE_DIR" cuda', '"$GPU_PACKAGE_DIR" cpu'),
+    ('"$GPU_PACKAGE_DIR" cuda', '"$GPU_PACKAGE_DIR" cuda || true'),
+    (
+        'deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia oxidant',
+        'deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia oxidant || true',
+    ),
+    ('"runner-arch":"ARM64"', '"runner-arch":"X64"'),
+    (
+        "needs: [select, build-x64, build-arm64, clean-host, gpu-profile]",
+        "needs: [select, build-x64, build-arm64, clean-host]",
+    ),
+    ("GHCR_PAT: ${{ secrets.GHCR_PAT }}", "GHCR_PAT: ''"),
+    (
+        f"actions/stage-gpu-artifact@{HUB_SHA}",
+        "actions/stage-gpu-artifact@develop",
+    ),
+)
+# Edits of linux-nvidia-gpu-build.yml, every occurrence replaced, that `valid` must reject.
+BUILD_MUTATIONS = (
+    (
+        "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py",
+        "missing-scope-validator.py",
+    ),
+    ("steps.scope.outputs.suffix", "inputs.invocation-scope"),
+    (
+        "python3 -I \"$parity_comparator\" --help | grep -q -- --pairwise || { echo 'Pinned ANTfrastructure lacks pairwise detector comparison' >&2; exit 1; }",
+        "true # skipped pairwise comparison API check",
+    ),
+    (
+        "python3 -I \"$ort_profile\" --help | grep -q -- --min-runs || { echo 'Pinned ANTfrastructure lacks per-run ORT profiling' >&2; exit 1; }",
+        "true # skipped per-run ORT API check",
+    ),
+    (
+        "steps.promotion_upload.outputs.artifact-id",
+        "steps.other.outputs.artifact-id",
+    ),
+    (
+        "steps.promotion_upload.outputs.artifact-digest",
+        "steps.other.outputs.artifact-digest",
+    ),
+    ("steps.promotion_files.outputs.files", "steps.other.outputs.files"),
+    (
+        "inputs.promote-verified && !inputs.verify-gpu",
+        "inputs.promote-verified && inputs.verify-gpu",
+    ),
+    (
+        "echo '::error::Promotion requires verify-gpu and the hardware profile.'\n          exit 1",
+        "echo '::error::Promotion requires verify-gpu and the hardware profile.'\n          true",
+    ),
+    (
+        "arm64:linux/arm64:ubuntu-26.04-arm",
+        "arm64:linux/amd64:ubuntu-26.04-arm",
+    ),
+    ("shared/python/verify_locked_files.py", "shared/python/missing.py"),
+    (
+        "name: Require CPU and GPU detector parity for promotion",
+        "name: Removed parity gate",
+    ),
+    (
+        "echo '::error::Promotion is disabled until CPU and GPU detector output parity is verified.'\n          exit 1",
+        "echo '::error::Promotion is disabled until CPU and GPU detector output parity is verified.'\n          true",
+    ),
+    (
+        "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}",
+        "name: Require CPU and GPU detector parity for promotion\n        if: ${{ !inputs.promote-verified }}",
+    ),
+    (
+        "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}",
+        "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}\n        continue-on-error: true",
+    ),
+)
+# Tokens every consumer job must carry: replacing any single occurrence must fail.
+CONSUMER_TOKENS = (
+    "needs[matrix.producer].outputs.artifact_id",
+    "needs[matrix.producer].outputs.artifact_digest",
+    "needs[matrix.producer].outputs.artifact_files",
+    'test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"',
+    "gpu-arch: ${{ matrix.arch }}",
+    "gpu-vendor: nvidia",
+)
+# Result guards: turning any single occurrence into `true` must fail.
+RESULT_GUARDS = (
+    "needs.select.result == 'success'",
+    "needs.build-x64.result == 'success'",
+    "needs.build-arm64.result == 'success'",
+    "needs.clean-host.result == 'success'",
+    "needs.gpu-profile.result == 'success'",
+    "!cancelled()",
+)
 
 
 class NvidiaPromotionTests(unittest.TestCase):
@@ -367,152 +588,38 @@ class NvidiaPromotionTests(unittest.TestCase):
         )
         self.assertNotEqual(gpu, without_submodules)
         self.assertFalse(valid(workflow.replace(gpu, without_submodules, 1), build))
-        mutations = (
-            (
-                "oxidant-nvidia-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}${{ needs.select.outputs.suffix }}-gpu-receipt.json",
-                "oxidant-nvidia-gpu-receipt.json",
-            ),
-            (
-                "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py",
-                "missing-scope-validator.py",
-            ),
-            ("needs.select.outputs.suffix", "inputs.invocation-scope"),
-            ('"producer":"build-x64"', '"producer":"build-arm64"'),
-            ('"producer":"build-arm64"', '"producer":"build-x64"'),
-            ("needs.select.result == 'success'", "true"),
-            ("needs.build-x64.result == 'success'", "true"),
-            ("needs.build-arm64.result == 'success'", "true"),
-            ("needs.clean-host.result == 'success'", "true"),
-            ("needs.gpu-profile.result == 'success'", "true"),
-            ("!cancelled()", "true"),
-            (
-                "needs.select.outputs.architecture == 'both' || needs.select.outputs.architecture == 'x64'",
-                "true",
-            ),
-            ("needs[matrix.producer].outputs.artifact_id", "untrusted-id"),
-            ("needs[matrix.producer].outputs.artifact_digest", "untrusted-digest"),
-            ("needs[matrix.producer].outputs.artifact_files", "untrusted-files"),
-            ('test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"', "true"),
-            ("gpu-arch: ${{ matrix.arch }}", "gpu-arch: x64"),
-            ("gpu-vendor: nvidia", "gpu-vendor: amd"),
-            ("digest-mismatch: error", "digest-mismatch: warn"),
-            ("skip-decompress: true", "skip-decompress: false"),
-            ('"$GPU_PACKAGE_DIR" cuda', '"$GPU_PACKAGE_DIR" cpu'),
-            ('"$GPU_PACKAGE_DIR" cuda', '"$GPU_PACKAGE_DIR" cuda || true'),
-            (
-                'deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia oxidant',
-                'deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" nvidia oxidant || true',
-            ),
-            ('"runner-arch":"ARM64"', '"runner-arch":"X64"'),
-            (
-                "needs: [select, build-x64, build-arm64, clean-host, gpu-profile]",
-                "needs: [select, build-x64, build-arm64, clean-host]",
-            ),
-            ("GHCR_PAT: ${{ secrets.GHCR_PAT }}", "GHCR_PAT: ''"),
-            (
-                f"actions/stage-gpu-artifact@{HUB_SHA}",
-                "actions/stage-gpu-artifact@develop",
-            ),
-        )
-        for original, replacement in mutations:
+        for original, replacement in WORKFLOW_MUTATIONS:
             with self.subTest(original=original):
                 self.assertIn(original, workflow)
                 self.assertFalse(
                     valid(workflow.replace(original, replacement, 1), build)
                 )
-        for original, replacement in (
-            (
-                "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py",
-                "missing-scope-validator.py",
-            ),
-            ("steps.scope.outputs.suffix", "inputs.invocation-scope"),
-            (
-                "python3 -I \"$parity_comparator\" --help | grep -q -- --pairwise || { echo 'Pinned ANTfrastructure lacks pairwise detector comparison' >&2; exit 1; }",
-                "true # skipped pairwise comparison API check",
-            ),
-            (
-                "python3 -I \"$ort_profile\" --help | grep -q -- --min-runs || { echo 'Pinned ANTfrastructure lacks per-run ORT profiling' >&2; exit 1; }",
-                "true # skipped per-run ORT API check",
-            ),
-            (
-                "steps.promotion_upload.outputs.artifact-id",
-                "steps.other.outputs.artifact-id",
-            ),
-            (
-                "steps.promotion_upload.outputs.artifact-digest",
-                "steps.other.outputs.artifact-digest",
-            ),
-            ("steps.promotion_files.outputs.files", "steps.other.outputs.files"),
-            (
-                "inputs.promote-verified && !inputs.verify-gpu",
-                "inputs.promote-verified && inputs.verify-gpu",
-            ),
-            (
-                "echo '::error::Promotion requires verify-gpu and the hardware profile.'\n          exit 1",
-                "echo '::error::Promotion requires verify-gpu and the hardware profile.'\n          true",
-            ),
-            (
-                "arm64:linux/arm64:ubuntu-26.04-arm",
-                "arm64:linux/amd64:ubuntu-26.04-arm",
-            ),
-            ("shared/python/verify_locked_files.py", "shared/python/missing.py"),
-            (
-                "name: Require CPU and GPU detector parity for promotion",
-                "name: Removed parity gate",
-            ),
-            (
-                "echo '::error::Promotion is disabled until CPU and GPU detector output parity is verified.'\n          exit 1",
-                "echo '::error::Promotion is disabled until CPU and GPU detector output parity is verified.'\n          true",
-            ),
-            (
-                "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}",
-                "name: Require CPU and GPU detector parity for promotion\n        if: ${{ !inputs.promote-verified }}",
-            ),
-            (
-                "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}",
-                "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}\n        continue-on-error: true",
-            ),
-        ):
+        for original, replacement in BUILD_MUTATIONS:
             with self.subTest(original=original):
                 self.assertIn(original, build)
                 self.assertFalse(valid(workflow, build.replace(original, replacement)))
+        for original in CONSUMER_TOKENS:
+            self.assert_each_occurrence_rejected(
+                workflow, build, "original", original, "invalid", minimum=4
+            )
+        for guard in RESULT_GUARDS:
+            self.assert_each_occurrence_rejected(
+                workflow, build, "guard", guard, "true", minimum=2
+            )
 
-        for original in (
-            "needs[matrix.producer].outputs.artifact_id",
-            "needs[matrix.producer].outputs.artifact_digest",
-            "needs[matrix.producer].outputs.artifact_files",
-            'test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"',
-            "gpu-arch: ${{ matrix.arch }}",
-            "gpu-vendor: nvidia",
-        ):
-            parts = workflow.split(original)
-            self.assertGreaterEqual(len(parts), 4, original)
-            for index in range(len(parts) - 1):
-                with self.subTest(original=original, occurrence=index):
-                    mutant = (
-                        original.join(parts[: index + 1])
-                        + "invalid"
-                        + original.join(parts[index + 1 :])
-                    )
-                    self.assertFalse(valid(mutant, build))
-        for guard in (
-            "needs.select.result == 'success'",
-            "needs.build-x64.result == 'success'",
-            "needs.build-arm64.result == 'success'",
-            "needs.clean-host.result == 'success'",
-            "needs.gpu-profile.result == 'success'",
-            "!cancelled()",
-        ):
-            parts = workflow.split(guard)
-            self.assertGreaterEqual(len(parts), 2, guard)
-            for index in range(len(parts) - 1):
-                with self.subTest(guard=guard, occurrence=index):
-                    mutant = (
-                        guard.join(parts[: index + 1])
-                        + "true"
-                        + guard.join(parts[index + 1 :])
-                    )
-                    self.assertFalse(valid(mutant, build))
+    def assert_each_occurrence_rejected(
+        self, workflow, build, label, original, replacement, *, minimum
+    ) -> None:
+        parts = workflow.split(original)
+        self.assertGreaterEqual(len(parts), minimum, original)
+        for index in range(len(parts) - 1):
+            with self.subTest(**{label: original}, occurrence=index):
+                mutant = (
+                    original.join(parts[: index + 1])
+                    + replacement
+                    + original.join(parts[index + 1 :])
+                )
+                self.assertFalse(valid(mutant, build))
 
     def test_attempt_receipts_are_unique_per_architecture(self) -> None:
         for kind in ("clean", "gpu"):

@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, the NVIDIA promotion test checks its contract per job)
+- **`scripts/linux/tests/test-nvidia-gpu-promotion.py`: `valid` (171 lines, cc 21) and `test_wiring_and_mutations`
+  (156) fall under the limits**, and their rows leave `function-size.allow` and `code-complexity.allow`. `valid` cuts
+  the sections once (`jobs_of`) and asks one checker per concern: the callers, the matrix outputs, the attempt guards,
+  trigger and select, the producer, clean-host, gpu-profile and stage. The mutation tables are module constants and
+  `assert_each_occurrence_rejected` mutates one occurrence at a time. The old and new `valid` agreed on 574 workflow
+  variants (the mutation tables plus every single-line deletion of both workflows).
+
 ### Changed (2026-11-16, the OBJ converter's two largest functions are split)
 - **`asset/obj_to_gltf.rs`: `to_gltf` (281 lines) and `parse_obj_with_materials` (171) fall under the 80-line limit**,
   their rows leave `rust-function-size.allow`. `to_gltf` assembles the document from `write_buffer`,
