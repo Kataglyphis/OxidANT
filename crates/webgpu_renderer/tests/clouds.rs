@@ -540,7 +540,7 @@ fn a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it() {
         return;
     };
     let mut renderer = plain_renderer(&gpu);
-    renderer.clouds = clouds_in_box(Vec3::new(0.0, 0.0, -5.0), Vec3::new(6.0, 4.0, 10.0), 1.0);
+    renderer.clouds = clouds_in_box(Vec3::new(0.0, 0.0, -5.0), Vec3::new(6.0, 4.0, 10.0), 1.5);
     let frame = composite_frame(&gpu, &mut renderer, &facing_minus_z(20.0));
 
     let (mut dense, mut cloud_sum, mut sky_sum) = (0, 0.0, 0.0);
@@ -747,6 +747,61 @@ fn the_noise_volume_fills_every_channel_the_march_reads() {
         "the coarse and fine Worley channels are one"
     );
     assert!(mean_gap(1, 3) > 0.02, "the two fBm channels are one");
+}
+
+/// Mean step between texels `at(k - 1)` and `at(k)` of one channel, over every row along `axis`.
+fn mean_step(volume: &[u16], channel: usize, axis: usize, pairs: &[(usize, usize)]) -> f32 {
+    let n = NOISE_VOLUME_EXTENT as usize;
+    let index = |along: usize, u: usize, v: usize| {
+        let mut xyz = [0; 3];
+        xyz[axis] = along;
+        xyz[(axis + 1) % 3] = u;
+        xyz[(axis + 2) % 3] = v;
+        ((xyz[2] * n + xyz[1]) * n + xyz[0]) * 4 + channel
+    };
+    let mut sum = 0.0;
+    let mut count = 0;
+    for u in (0..n).step_by(3) {
+        for v in (0..n).step_by(3) {
+            for &(a, b) in pairs {
+                sum += (half_to_f32(volume[index(a, u, v)]) - half_to_f32(volume[index(b, u, v)]))
+                    .abs();
+                count += 1;
+            }
+        }
+    }
+    sum / count as f32
+}
+
+/// The march wraps box-local coordinates with `frac`, so a channel that does not tile shows a seam at every wrap.
+#[test]
+fn every_noise_channel_tiles_across_the_volume_faces() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut renderer = ForwardRenderer::new(&gpu, 16, 16);
+    renderer.clouds.enabled = true;
+    renderer
+        .render_to_pixels(&gpu, 16, 16, &facing_minus_z(20.0))
+        .expect("render");
+    let volume = noise_volume(&gpu, &renderer);
+    let n = NOISE_VOLUME_EXTENT as usize;
+    let inner: Vec<(usize, usize)> = (8..n).step_by(8).map(|k| (k - 1, k)).collect();
+    let mut seams = Vec::new();
+    for channel in 0..4 {
+        for axis in 0..3 {
+            let wrap = mean_step(&volume, channel, axis, &[(n - 1, 0)]);
+            let step = mean_step(&volume, channel, axis, &inner);
+            eprintln!("channel {channel}, axis {axis}: wrap step {wrap:.4}, inner step {step:.4}");
+            if wrap > 2.0 * step {
+                seams.push((channel, axis, wrap, step));
+            }
+        }
+    }
+    assert!(
+        seams.is_empty(),
+        "(channel, axis, wrap step, inner step) where the volume does not continue across its face: {seams:?}"
+    );
 }
 
 #[derive(Debug)]

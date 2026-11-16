@@ -13,6 +13,25 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, the cloud noise tiles, so no seam crosses a cloud box)
+- **Every channel of the noise volume tiles** (`noise_volume_texel`, `shaders/common/volumetric_clouds.slang`). The
+  march wraps box-local coordinates with `frac`, so a channel that does not continue across the volume's faces showed
+  a faint cross through the box centre, as looking up at the default slab. `fbm_value` takes x's period and
+  `valueNoise` wraps its lattice cells into it per octave (`wrap_cell`), each octave hashing the cells the old
+  `x * 2 + 100` recurrence hashed. Worley did not tile either: it wrapped neighbour cells with `fmod`, which keeps the
+  dividend's sign, so cell -1 was not cell `numCells - 1`. Across a face the mean step was 7 to 27 times an inner texel
+  step for all four channels (0.10 to 0.17 against 0.006 to 0.031); now within 1.1 times, and below it for the fBm
+  channels, whose lattice points meet at the face.
+- **The box centre reads the volume's middle** (`sample_density` adds 0.5 inside both `frac`s). The tiled noise at the
+  face, where every small box sat, held about two thirds of the old density (a CPU replica's mean over the tests'
+  16 x 10 x 8 box: 0.026 against 0.039); the middle, which tiling leaves as it was, holds 0.037. Without the shift five
+  cloud tests found too little cloud to judge.
+- **The C++ engine reads both**: its `noise_volume.slang` writes `noise_volume_texel` and its march calls
+  `sample_density`, so its cloud goldens move with the next pin bump (`BACKLOG.md`).
+- Tests: `every_noise_channel_tiles_across_the_volume_faces` (each channel's step across each face under twice its
+  inner step; all twelve failed before). `a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it` marches density
+  1.5, as its box at 1.0 now holds 604 dense pixels, under its floor of 819; it shows 77 % of the sky (79 % before).
+
 ### Changed (2026-11-16, ObservANT's capture loop keeps its camera apart from its logic)
 - **`crates/observant/src/capture.rs` holds only what needs a camera**: the worker, its pipelines, the bus and the
   inference thread. `capture/logic.rs` holds the rest, which a test drives with set values: `Timing`, `Backoff` and

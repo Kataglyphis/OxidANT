@@ -171,10 +171,11 @@ fn SampledNoise_sample_noise_0( uvw_0 : vec3<f32>) -> vec4<f32>
 fn sample_density_0( position_1 : vec3<f32>,  cloud_5 : Clouds_0) -> f32
 {
     var local_0 : vec3<f32> = position_1 - cloud_5.offset_0;
-    var _S11 : vec4<f32> = SampledNoise_sample_noise_0(fract(local_0 / vec3<f32>(256.0f)));
-    var _S12 : f32 = (1.0f - cloud_5.pillowness_0) * 0.125f;
-    var _S13 : vec4<f32> = SampledNoise_sample_noise_0(fract(local_0 / vec3<f32>(64.0f)));
-    return (cloud_5.pillowness_0 * 0.25f * max(0.0f, _S11.x - cloud_5.threshold_0) * cloud_5.scale_0 + _S12 * max(0.0f, _S11.y - cloud_5.threshold_0) * cloud_5.scale_0 + _S12 * max(0.0f, _S11.z - cloud_5.threshold_0) * cloud_5.scale_0) * (1.0f - cloud_5.cirrus_effect_0) + max(0.0f, _S11.w - cloud_5.threshold_0) * cloud_5.scale_0 * cloud_5.cirrus_effect_0 + (0.60000002384185791f * max(0.0f, _S13.x - cloud_5.threshold_0) * cloud_5.scale_0 + 0.15000000596046448f * max(0.0f, _S13.y - cloud_5.threshold_0) * cloud_5.scale_0 + 0.15000000596046448f * max(0.0f, _S13.z - cloud_5.threshold_0) * cloud_5.scale_0) * 0.30000001192092896f;
+    var _S11 : vec3<f32> = vec3<f32>(0.5f);
+    var _S12 : vec4<f32> = SampledNoise_sample_noise_0(fract(local_0 / vec3<f32>(256.0f) + _S11));
+    var _S13 : f32 = (1.0f - cloud_5.pillowness_0) * 0.125f;
+    var _S14 : vec4<f32> = SampledNoise_sample_noise_0(fract(local_0 / vec3<f32>(64.0f) + _S11));
+    return (cloud_5.pillowness_0 * 0.25f * max(0.0f, _S12.x - cloud_5.threshold_0) * cloud_5.scale_0 + _S13 * max(0.0f, _S12.y - cloud_5.threshold_0) * cloud_5.scale_0 + _S13 * max(0.0f, _S12.z - cloud_5.threshold_0) * cloud_5.scale_0) * (1.0f - cloud_5.cirrus_effect_0) + max(0.0f, _S12.w - cloud_5.threshold_0) * cloud_5.scale_0 * cloud_5.cirrus_effect_0 + (0.60000002384185791f * max(0.0f, _S14.x - cloud_5.threshold_0) * cloud_5.scale_0 + 0.15000000596046448f * max(0.0f, _S14.y - cloud_5.threshold_0) * cloud_5.scale_0 + 0.15000000596046448f * max(0.0f, _S14.z - cloud_5.threshold_0) * cloud_5.scale_0) * 0.30000001192092896f;
 }
 
 fn light_optical_depth_0( samplePos_0 : vec3<f32>,  directionToLight_0 : vec3<f32>,  cloud_6 : Clouds_0) -> f32
@@ -185,8 +186,8 @@ fn light_optical_depth_0( samplePos_0 : vec3<f32>,  directionToLight_0 : vec3<f3
     {
         return 0.0f;
     }
-    var _S14 : f32 = max(oT_2.x, 0.0f);
-    var _S15 : f32 = (oT_2.y - _S14) / f32(cloud_6.num_march_steps_to_light_0);
+    var _S15 : f32 = max(oT_2.x, 0.0f);
+    var _S16 : f32 = (oT_2.y - _S15) / f32(cloud_6.num_march_steps_to_light_0);
     var i_0 : i32 = i32(0);
     var totalDensity_0 : f32 = 0.0f;
     for(;;)
@@ -198,7 +199,7 @@ fn light_optical_depth_0( samplePos_0 : vec3<f32>,  directionToLight_0 : vec3<f3
         {
             break;
         }
-        var totalDensity_1 : f32 = totalDensity_0 + sample_density_0(samplePos_0 + directionToLight_0 * vec3<f32>((_S14 + (f32(i_0) + 0.5f) * _S15)), cloud_6) * _S15;
+        var totalDensity_1 : f32 = totalDensity_0 + sample_density_0(samplePos_0 + directionToLight_0 * vec3<f32>((_S15 + (f32(i_0) + 0.5f) * _S16)), cloud_6) * _S16;
         i_0 = i_0 + i32(1);
         totalDensity_0 = totalDensity_1;
     }
@@ -207,9 +208,9 @@ fn light_optical_depth_0( samplePos_0 : vec3<f32>,  directionToLight_0 : vec3<f3
 
 fn phase_HG_0( cosTheta_0 : f32,  g_0 : f32) -> f32
 {
-    var _S16 : f32 = g_0 * g_0;
-    var denom_0 : f32 = 1.0f + _S16 - 2.0f * g_0 * cosTheta_0;
-    return 0.07957746833562851f * ((1.0f - _S16) / (denom_0 * sqrt(denom_0)));
+    var _S17 : f32 = g_0 * g_0;
+    var denom_0 : f32 = 1.0f + _S17 - 2.0f * g_0 * cosTheta_0;
+    return 0.07957746833562851f * ((1.0f - _S17) / (denom_0 * sqrt(denom_0)));
 }
 
 fn cloud_sun_scattering_0( cosTheta_1 : f32,  lightDepth_0 : f32) -> f32
@@ -259,30 +260,30 @@ fn march_clouds_0( eyePosition_0 : vec3<f32>,  rayDirection_0 : vec3<f32>,  scen
     var oT_3 : vec2<f32>;
     var intersection_1 : bool = box_intersect_1(eyePosition_0, rayDirection_0, settings_0, &(oT_3));
     oT_3[i32(1)] = min(oT_3.y, sceneDistance_0);
-    var _S17 : vec3<f32> = vec3<f32>(0.0f);
-    var _S18 : f32 = dot(normalize(rayDirection_0), toLight_0);
-    var _S19 : bool;
+    var _S18 : vec3<f32> = vec3<f32>(0.0f);
+    var _S19 : f32 = dot(normalize(rayDirection_0), toLight_0);
+    var _S20 : bool;
     if(intersection_1)
     {
-        _S19 = (oT_3.y) > (max(oT_3.x, 0.0f));
+        _S20 = (oT_3.y) > (max(oT_3.x, 0.0f));
     }
     else
     {
-        _S19 = false;
+        _S20 = false;
     }
     var transmittance_0 : f32;
     var radiance_0 : vec3<f32>;
-    if(_S19)
+    if(_S20)
     {
         oT_3[i32(0)] = max(0.0f, oT_3.x);
         var marchLength_1 : f32 = oT_3.y - oT_3.x;
-        var _S20 : f32 = cloud_thinnest_extent_0(cloud_8) / f32(cloud_8.num_march_steps_0);
-        var _S21 : i32 = cloud_march_steps_0(settings_0, marchLength_1);
-        cloud_8.num_march_steps_0 = _S21;
-        var _S22 : f32 = marchLength_1 / f32(_S21);
+        var _S21 : f32 = cloud_thinnest_extent_0(cloud_8) / f32(cloud_8.num_march_steps_0);
+        var _S22 : i32 = cloud_march_steps_0(settings_0, marchLength_1);
+        cloud_8.num_march_steps_0 = _S22;
+        var _S23 : f32 = marchLength_1 / f32(_S22);
         var i_1 : i32 = i32(0);
         transmittance_0 = 1.0f;
-        radiance_0 = _S17;
+        radiance_0 = _S18;
         for(;;)
         {
             if(i_1 < (cloud_8.num_march_steps_0))
@@ -292,21 +293,21 @@ fn march_clouds_0( eyePosition_0 : vec3<f32>,  rayDirection_0 : vec3<f32>,  scen
             {
                 break;
             }
-            var samplePos_1 : vec3<f32> = eyePosition_0 + rayDirection_0 * vec3<f32>((oT_3.x + (f32(i_1) + 0.5f) * _S22));
-            var _S23 : f32 = sample_density_0(samplePos_1, cloud_8);
-            var _S24 : f32 = light_optical_depth_0(samplePos_1, toLight_0, cloud_8);
+            var samplePos_1 : vec3<f32> = eyePosition_0 + rayDirection_0 * vec3<f32>((oT_3.x + (f32(i_1) + 0.5f) * _S23));
+            var _S24 : f32 = sample_density_0(samplePos_1, cloud_8);
+            var _S25 : f32 = light_optical_depth_0(samplePos_1, toLight_0, cloud_8);
             var powder_0 : f32;
             if(cloud_8.powder_effect_0)
             {
-                powder_0 = 1.0f - exp(- _S23 * _S20 * 2.0f);
+                powder_0 = 1.0f - exp(- _S24 * _S21 * 2.0f);
             }
             else
             {
                 powder_0 = 1.0f;
             }
-            var _S25 : f32 = exp(- _S23 * _S22);
-            var radiance_1 : vec3<f32> = radiance_0 + vec3<f32>((transmittance_0 * (1.0f - _S25))) * (sunRadiance_0 * vec3<f32>((cloud_sun_scattering_0(_S18, _S24) * powder_0)) + cloud_ambient_at_0(ambient_1, cloud_8, samplePos_1));
-            var transmittance_1 : f32 = transmittance_0 * _S25;
+            var _S26 : f32 = exp(- _S24 * _S23);
+            var radiance_1 : vec3<f32> = radiance_0 + vec3<f32>((transmittance_0 * (1.0f - _S26))) * (sunRadiance_0 * vec3<f32>((cloud_sun_scattering_0(_S19, _S25) * powder_0)) + cloud_ambient_at_0(ambient_1, cloud_8, samplePos_1));
+            var transmittance_1 : f32 = transmittance_0 * _S26;
             if(transmittance_1 < 0.00999999977648258f)
             {
                 radiance_0 = radiance_1;
@@ -320,7 +321,7 @@ fn march_clouds_0( eyePosition_0 : vec3<f32>,  rayDirection_0 : vec3<f32>,  scen
     }
     else
     {
-        radiance_0 = _S17;
+        radiance_0 = _S18;
         transmittance_0 = 1.0f;
     }
     return vec4<f32>(radiance_0, 1.0f - transmittance_0);
@@ -337,43 +338,43 @@ struct pixelInput_0
 };
 
 @fragment
-fn fs_main( _S26 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
+fn fs_main( _S27 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
-    var ndc_1 : vec2<f32> = fullscreen_uv_to_ndc_0(_S26.uv_2);
+    var ndc_1 : vec2<f32> = fullscreen_uv_to_ndc_0(_S27.uv_2);
     var nearPoint_0 : vec4<f32> = (((vec4<f32>(ndc_1, 0.0f, 1.0f)) * (mat4x4<f32>(frame_0.inv_view_proj_0.data_0[i32(0)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(3)]))));
     var farPoint_0 : vec4<f32> = (((vec4<f32>(ndc_1, 1.0f, 1.0f)) * (mat4x4<f32>(frame_0.inv_view_proj_0.data_0[i32(0)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(3)]))));
     var rayDirection_1 : vec3<f32> = normalize(farPoint_0.xyz / vec3<f32>(farPoint_0.w) - nearPoint_0.xyz / vec3<f32>(nearPoint_0.w));
     var pixel_0 : vec3<i32> = vec3<i32>(vec2<i32>(svPosition_1.xy), i32(0));
     var depth_1 : f32 = (textureLoad((sceneDepth_0), ((pixel_0)).xy, ((pixel_0)).z)).x;
     var sceneDistance_1 : f32 = cloud_scene_distance_0(mat4x4<f32>(frame_0.inv_view_proj_0.data_0[i32(0)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(3)]), ndc_1, depth_1, frame_0.eye_0.xyz);
-    var _S27 : CloudParams_std140_0 = frame_0.params_0;
-    var _S28 : Clouds_0 = cloud_unpack_0(&(_S27));
+    var _S28 : CloudParams_std140_0 = frame_0.params_0;
+    var _S29 : Clouds_0 = cloud_unpack_0(&(_S28));
     var ambient_2 : CloudAmbient_0;
     ambient_2.top_0 = frame_0.ambient_top_0.xyz;
     ambient_2.bottom_0 = frame_0.ambient_bottom_0.xyz;
-    var _S29 : vec4<f32> = march_clouds_0(frame_0.eye_0.xyz, rayDirection_1, sceneDistance_1, _S28, frame_0.to_sun_0.xyz, frame_0.sun_radiance_0.xyz, ambient_2);
+    var _S30 : vec4<f32> = march_clouds_0(frame_0.eye_0.xyz, rayDirection_1, sceneDistance_1, _S29, frame_0.to_sun_0.xyz, frame_0.sun_radiance_0.xyz, ambient_2);
     if((frame_0.depth_spread_0.x) < 0.5f)
     {
-        var _S30 : pixelOutput_0 = pixelOutput_0( _S29 );
-        return _S30;
+        var _S31 : pixelOutput_0 = pixelOutput_0( _S30 );
+        return _S31;
     }
     var spread_0 : vec2<f32> = (textureLoad((depthSpread_0), ((pixel_0)).xy, ((pixel_0)).z)).xy;
-    var _S31 : f32 = spread_0.y;
-    var _S32 : bool;
-    if(_S31 <= 0.0f)
+    var _S32 : f32 = spread_0.y;
+    var _S33 : bool;
+    if(_S32 <= 0.0f)
     {
-        _S32 = true;
+        _S33 = true;
     }
     else
     {
-        _S32 = (spread_0.x) <= depth_1;
+        _S33 = (spread_0.x) <= depth_1;
     }
-    if(_S32)
+    if(_S33)
     {
-        var _S33 : pixelOutput_0 = pixelOutput_0( _S29 );
-        return _S33;
+        var _S34 : pixelOutput_0 = pixelOutput_0( _S30 );
+        return _S34;
     }
-    var _S34 : pixelOutput_0 = pixelOutput_0( mix(_S29, march_clouds_0(frame_0.eye_0.xyz, rayDirection_1, cloud_scene_distance_0(mat4x4<f32>(frame_0.inv_view_proj_0.data_0[i32(0)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(3)]), ndc_1, spread_0.x, frame_0.eye_0.xyz), _S28, frame_0.to_sun_0.xyz, frame_0.sun_radiance_0.xyz, ambient_2), vec4<f32>(_S31)) );
-    return _S34;
+    var _S35 : pixelOutput_0 = pixelOutput_0( mix(_S30, march_clouds_0(frame_0.eye_0.xyz, rayDirection_1, cloud_scene_distance_0(mat4x4<f32>(frame_0.inv_view_proj_0.data_0[i32(0)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(0)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(1)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(2)], frame_0.inv_view_proj_0.data_0[i32(0)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(1)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(2)][i32(3)], frame_0.inv_view_proj_0.data_0[i32(3)][i32(3)]), ndc_1, spread_0.x, frame_0.eye_0.xyz), _S29, frame_0.to_sun_0.xyz, frame_0.sun_radiance_0.xyz, ambient_2), vec4<f32>(_S32)) );
+    return _S35;
 }
 

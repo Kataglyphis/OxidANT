@@ -83,6 +83,12 @@ float3 hash33(float3 p3)
     return frac((p3.xxy + p3.yxx) * p3.zyx);
 }
 
+// A lattice cell in [0, period): fmod keeps the dividend's sign, which would make cell -1 differ from period - 1.
+float3 wrap_cell(float3 cell, float period)
+{
+    return cell - period * floor(cell / period);
+}
+
 // Worley noise in [0, 1]: minDist starts at 1.0 and only decreases.
 float worley(float3 p, float numCells)
 {
@@ -98,7 +104,7 @@ float worley(float3 p, float numCells)
             for (int x = -1; x <= 1; x++)
             {
                 float3 neighbor = float3(float(x), float(y), float(z));
-                float3 neighborWorld = fmod(i + neighbor, numCells);
+                float3 neighborWorld = wrap_cell(i + neighbor, numCells);
                 float3 point = hash33(neighborWorld);
                 float3 diff = neighbor + point - f;
                 float dist = length(diff);
@@ -116,26 +122,33 @@ float hash13(float3 p3)
     return frac((p3.x + p3.y) * p3.z);
 }
 
-float valueNoise(float3 x)
+// Value noise whose lattice repeats every `period` cells, so a volume of whole periods tiles; `seed` sets an octave apart.
+float valueNoise(float3 x, float period, float seed)
 {
     float3 i = floor(x);
     float3 f = frac(x);
     f = f * f * (3.0 - 2.0 * f);
-    return lerp(lerp(lerp(hash13(i + float3(0, 0, 0)), hash13(i + float3(1, 0, 0)), f.x),
-                     lerp(hash13(i + float3(0, 1, 0)), hash13(i + float3(1, 1, 0)), f.x), f.y),
-                 lerp(lerp(hash13(i + float3(0, 0, 1)), hash13(i + float3(1, 0, 1)), f.x),
-                     lerp(hash13(i + float3(0, 1, 1)), hash13(i + float3(1, 1, 1)), f.x), f.y), f.z);
+    float3 c0 = wrap_cell(i, period) + seed;
+    float3 c1 = wrap_cell(i + 1.0, period) + seed;
+    return lerp(lerp(lerp(hash13(c0), hash13(float3(c1.x, c0.y, c0.z)), f.x),
+                     lerp(hash13(float3(c0.x, c1.y, c0.z)), hash13(float3(c1.x, c1.y, c0.z)), f.x), f.y),
+                 lerp(lerp(hash13(float3(c0.x, c0.y, c1.z)), hash13(float3(c1.x, c0.y, c1.z)), f.x),
+                     lerp(hash13(float3(c0.x, c1.y, c1.z)), hash13(c1), f.x), f.y), f.z);
 }
 
-// Already in [0, 1]: the geometric weights 0.5, 0.25, ... sum below 1.
-float fbm_value(float3 x, int octaves)
+// Already in [0, 1]: the geometric weights 0.5, 0.25, ... sum below 1. x repeats every `period`, a whole number.
+float fbm_value(float3 x, float period, int octaves)
 {
     float v = 0.0;
     float a = 0.5;
+    // The cells the unwrapped x * 2 + 100 recurrence hashed, so only each octave's last cell changes.
+    float seed = 0.0;
     for (int i = 0; i < octaves; ++i)
     {
-        v += a * valueNoise(x);
-        x = x * 2.0 + float3(100.0);
+        v += a * valueNoise(x, period, seed);
+        x *= 2.0;
+        period *= 2.0;
+        seed = seed * 2.0 + 100.0;
         a *= 0.5;
     }
     return v;
@@ -147,18 +160,18 @@ float4 noise_volume_texel(uint3 texel)
     float3 uvw = float3(texel) / NOISE_VOLUME_EXTENT;
 
     float worleyVal = worley(uvw, 4.0);
-    float fbmVal = fbm_value(uvw * 3.0, 4);
+    float fbmVal = fbm_value(uvw * 3.0, 3.0, 4);
     float worleyFine = worley(uvw, 8.0);
-    float cirrusVal = fbm_value(uvw * 6.0, 5);
+    float cirrusVal = fbm_value(uvw * 6.0, 6.0, 5);
 
     return float4(worleyVal, fbmVal, worleyFine, cirrusVal);
 }
 
 float sample_density(ICloudNoise noise, float3 position, Clouds cloud)
 {
-    // Box-local, so Offset carries the clouds with the box; frac() also wraps the negative half correctly.
+    // Box-local, so Offset carries the box's clouds; its centre reads the volume's middle, which tiling left as it was.
     float3 local = position - cloud.offset;
-    float3 uvwCoarse = frac(local / 256.0);
+    float3 uvwCoarse = frac(local / 256.0 + 0.5);
     float4 noiseCoarse = noise.sample_noise(uvwCoarse);
 
     float baseDensity = ((cloud.pillowness * 0.25)) * max(0.0, noiseCoarse.r - cloud.threshold) * cloud.scale
@@ -168,7 +181,7 @@ float sample_density(ICloudNoise noise, float3 position, Clouds cloud)
     baseDensity = baseDensity * (1.0 - cloud.cirrus_effect)
                 + max(0.0, noiseCoarse.a - cloud.threshold) * cloud.scale * cloud.cirrus_effect;
 
-    float3 uvwFine = frac(local / 64.0);
+    float3 uvwFine = frac(local / 64.0 + 0.5);
     float4 noiseFine = noise.sample_noise(uvwFine);
 
     float fineDensity = 0.6 * max(0.0, noiseFine.r - cloud.threshold) * cloud.scale

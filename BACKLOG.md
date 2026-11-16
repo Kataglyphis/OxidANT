@@ -69,9 +69,10 @@ its open work is here.
       not its DOOM2016 cube map's or the navy's. Next, in BeschleunigerBallett with the pin bump: pass its own sky's
       per-hemisphere mean through the eight-argument overload, re-check its eight cloud goldens
       (`GoldenRender.*Cloud*`) on the host GPU and lavapipe, and update its `docs/source/clouds.md`
-      (`light_optical_depth`, the ambient, the step count, powder's length). Guard: a C++ golden comparing a dense
-      cloud's luminance with the sky behind it, as `a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it` does
-      here.
+      (`light_optical_depth`, the ambient, the step count, powder's length, and since 2026-11-16 the tiling noise
+      volume and the box centre at the volume's middle, which move every cloud's shape). Guard: a C++ golden
+      comparing a dense cloud's luminance with the sky behind it, as
+      `a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it` does here.
 
 - [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
       nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
