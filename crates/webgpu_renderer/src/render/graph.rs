@@ -135,16 +135,6 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
             writes: &[Resource::Exposure],
         },
         PassDesc {
-            name: "bloom",
-            reads: &[Resource::HdrColor, Resource::Exposure],
-            writes: &[Resource::Bloom],
-        },
-        PassDesc {
-            name: "ssao",
-            reads: &[Resource::Depth],
-            writes: &[Resource::Ambient],
-        },
-        PassDesc {
             name: "cloud_noise",
             reads: &[],
             writes: &[Resource::NoiseVolume],
@@ -153,6 +143,16 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
             name: "clouds",
             reads: &[Resource::Depth, Resource::NoiseVolume],
             writes: &[Resource::CloudColor],
+        },
+        PassDesc {
+            name: "bloom",
+            reads: &[Resource::HdrColor, Resource::Exposure, Resource::CloudColor],
+            writes: &[Resource::Bloom],
+        },
+        PassDesc {
+            name: "ssao",
+            reads: &[Resource::Depth],
+            writes: &[Resource::Ambient],
         },
         PassDesc {
             name: "tonemap",
@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn the_clouds_march_after_the_depth_and_before_the_tonemap_in_every_frame() {
+    fn the_clouds_march_after_the_depth_and_before_bloom_and_the_tonemap_in_every_frame() {
         for graph in every_frame_graph() {
             let at = |name: &str| graph.iter().position(|pass| pass.name == name);
             let writer = graph
@@ -394,6 +394,8 @@ mod tests {
             };
             assert!(writer < clouds && noise < clouds && clouds < tonemap);
             assert!(graph[tonemap].reads.contains(&Resource::CloudColor));
+            let bloom = at("bloom").expect("every frame blooms");
+            assert!(clouds < bloom && graph[bloom].reads.contains(&Resource::CloudColor));
         }
     }
 

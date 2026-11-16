@@ -57,9 +57,9 @@ impl TimedPass {
         TimedPass::TraceResolve,
         TimedPass::Histogram,
         TimedPass::ExposureReduce,
+        TimedPass::Clouds,
         TimedPass::Bloom,
         TimedPass::Ssao,
-        TimedPass::Clouds,
         TimedPass::Tonemap,
         TimedPass::Fxaa,
     ];

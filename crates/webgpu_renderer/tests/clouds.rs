@@ -771,3 +771,62 @@ fn the_first_cloud_frame_after_a_reload_builds_on_the_reloaded_shaders() {
         .expect("render");
     assert!(noise_volume(&gpu, &renderer).iter().all(|&h| h == QUARTER));
 }
+
+/// A card glowing far past bloom's threshold, at `centre` facing the camera.
+fn upload_glowing_card(gpu: &GpuContext, renderer: &mut ForwardRenderer, centre: Vec3, half: Vec3) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
+    let mut scene = load_gltf(path).expect("cube.gltf must load");
+    scene.primitives[0].material.emissive_factor = [40.0; 3];
+    renderer.upload_scene(gpu, &scene);
+    let placement = Mat4::from_scale_rotation_translation(half * 2.0, Quat::IDENTITY, centre);
+    renderer.set_instances(gpu, 0, &[placement]);
+}
+
+/// Summed colour levels bloom adds to the pixels outside `rect` (grown by 3 pixels).
+fn halo_outside(
+    gpu: &GpuContext,
+    renderer: &mut ForwardRenderer,
+    camera: &OrbitCamera,
+    rect: PixelRect,
+) -> u64 {
+    renderer.bloom_strength = 0.0;
+    let plain = render(gpu, renderer, camera);
+    renderer.bloom_strength = 0.6;
+    let bloomed = render(gpu, renderer, camera);
+    (0..PIXELS)
+        .filter(|&p| !rect.contains(p, 3.0))
+        .flat_map(|p| (0..3).map(move |c| p * 4 + c))
+        .map(|i| u64::from(bloomed[i].saturating_sub(plain[i])))
+        .sum()
+}
+
+/// A glowing card hidden in a dense box: bloom thresholds what the tonemap shows, so no halo spills past the box.
+#[test]
+fn a_light_the_clouds_hide_does_not_bloom_around_them() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    // Far off, so the deep box is barely wider than the card on screen and the card's halo would reach past it.
+    let camera = facing_minus_z(60.0);
+    let (card_centre, card_half) = (Vec3::new(0.0, 0.0, -10.0), Vec3::new(6.0, 6.0, 0.1));
+    let (box_centre, box_half) = (Vec3::new(0.0, 0.0, -5.5), Vec3::new(6.6, 6.6, 4.0));
+    let rect = PixelRect::of_box(&camera, box_centre, box_half);
+    let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
+    upload_glowing_card(&gpu, &mut renderer, card_centre, card_half);
+    // A dim sun, so the sunlit cloud itself stays below the threshold.
+    renderer.light_color_intensity.w = 0.5;
+    renderer.clouds = clouds_in_box(box_centre, box_half, 12.0);
+    renderer.clouds.enabled = false;
+    let clear = halo_outside(&gpu, &mut renderer, &camera, rect);
+    renderer.clouds.enabled = true;
+    let hidden = halo_outside(&gpu, &mut renderer, &camera, rect);
+    eprintln!("bloom outside the box: {clear} levels without clouds, {hidden} with them");
+    assert!(
+        clear > 5000,
+        "the bare card must glow past the box's outline, or nothing is tested"
+    );
+    assert!(
+        hidden * 4 < clear,
+        "the clouds hide the card, yet its halo still spills past them: {hidden} of {clear} levels"
+    );
+}

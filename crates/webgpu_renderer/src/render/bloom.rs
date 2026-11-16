@@ -2,10 +2,19 @@
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
+use crate::render::buffer_desc;
 use crate::render::forward::HDR_FORMAT;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
 use crate::render::texture::create_2d_view;
+
+/// What the bright pass reads: the HDR scene, the exposure and the clouds it composites first.
+#[derive(Clone, Copy)]
+pub struct BloomInputs<'a> {
+    pub hdr: &'a wgpu::TextureView,
+    pub exposure: &'a wgpu::Buffer,
+    pub cloud: &'a wgpu::TextureView,
+}
 
 pub struct BloomPass {
     brightpass: wgpu::RenderPipeline,
@@ -13,6 +22,8 @@ pub struct BloomPass {
     blur_v: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    /// Whether the bright pass composites the clouds first, written every frame.
+    uniform_buffer: wgpu::Buffer,
     texture_a: Option<wgpu::TextureView>,
     texture_b: Option<wgpu::TextureView>,
     bg_bright: Option<wgpu::BindGroup>,
@@ -40,6 +51,8 @@ impl BloomPass {
                 ),
                 // Exposure: only fs_brightpass reads it, but all three pipelines share one layout.
                 bind_layout::storage_buffer(2, wgpu::ShaderStages::FRAGMENT, true),
+                bind_layout::texture_2d(3, wgpu::ShaderStages::FRAGMENT, true),
+                bind_layout::uniform(4, wgpu::ShaderStages::FRAGMENT),
             ],
         });
         let layout =
@@ -75,6 +88,7 @@ impl BloomPass {
             blur_v: make("fs_blur_v", "bloom_blur_v"),
             bind_group_layout,
             sampler,
+            uniform_buffer: buffer_desc::uniform(device, "bloom_uniforms", 16),
             texture_a: None,
             texture_b: None,
             bg_bright: None,
@@ -84,15 +98,8 @@ impl BloomPass {
         }
     }
 
-    /// (Re)creates the half-res chain; `exposure_buffer` is the one `TonemapPass::set_input` takes.
-    pub fn rebuild(
-        &mut self,
-        gpu: &GpuContext,
-        width: u32,
-        height: u32,
-        hdr: &wgpu::TextureView,
-        exposure_buffer: &wgpu::Buffer,
-    ) {
+    /// (Re)creates the half-res chain over `inputs`, the views and buffer `TonemapPass::set_input` takes too.
+    pub fn rebuild(&mut self, gpu: &GpuContext, width: u32, height: u32, inputs: BloomInputs<'_>) {
         let (w, h) = ((width / 2).max(1), (height / 2).max(1));
         self.size = (w, h);
         let make_tex = |label: &str| {
@@ -125,16 +132,30 @@ impl BloomPass {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: exposure_buffer.as_entire_binding(),
+                        resource: inputs.exposure.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(inputs.cloud),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.uniform_buffer.as_entire_binding(),
                     },
                 ],
             })
         };
-        self.bg_bright = Some(bind(hdr, "bloom_bg_bright"));
+        self.bg_bright = Some(bind(inputs.hdr, "bloom_bg_bright"));
         self.bg_h = Some(bind(&a, "bloom_bg_h"));
         self.bg_v = Some(bind(&b, "bloom_bg_v"));
         self.texture_a = Some(a);
         self.texture_b = Some(b);
+    }
+
+    /// Per frame: whether the bright pass composites the cloud input over the HDR first.
+    pub fn set_clouds(&self, queue: &wgpu::Queue, clouds: bool) {
+        let params = [if clouds { 1.0_f32 } else { 0.0 }, 0.0, 0.0, 0.0];
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
     }
 
     /// The blurred bloom output (valid after `rebuild` + `encode`).

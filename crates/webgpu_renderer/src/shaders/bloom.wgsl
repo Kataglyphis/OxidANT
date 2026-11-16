@@ -2,6 +2,14 @@
 
 @binding(1) @group(0) var srcSampler_0 : sampler;
 
+struct BloomUniforms_std140_0
+{
+    @align(16) params_0 : vec4<f32>,
+};
+
+@binding(4) @group(0) var<uniform> bloomUniforms_0 : BloomUniforms_std140_0;
+@binding(3) @group(0) var cloudTex_0 : texture_2d<f32>;
+
 @binding(2) @group(0) var<storage, read> exposureState_0 : array<f32>;
 
 struct FullscreenVsOut_0
@@ -40,7 +48,18 @@ struct pixelInput_0
 fn fs_brightpass( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
     var _S2 : vec3<f32> = vec3<f32>(65000.0f);
-    var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(clamp(min((textureSample((srcTex_0), (srcSampler_0), (_S1.uv_1))).xyz, _S2) * vec3<f32>(exp2(exposureState_0[i32(0)])) - vec3<f32>(1.0f), vec3<f32>(0.0f), _S2), 1.0f) );
+    var scene_0 : vec3<f32> = min((textureSample((srcTex_0), (srcSampler_0), (_S1.uv_1))).xyz, _S2);
+    var scene_1 : vec3<f32>;
+    if((bloomUniforms_0.params_0.x) > 0.5f)
+    {
+        var cloud_0 : vec4<f32> = (textureSample((cloudTex_0), (srcSampler_0), (_S1.uv_1)));
+        scene_1 = cloud_0.xyz + scene_0 * vec3<f32>((1.0f - cloud_0.w));
+    }
+    else
+    {
+        scene_1 = scene_0;
+    }
+    var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(clamp(min(scene_1, _S2) * vec3<f32>(exp2(exposureState_0[i32(0)])) - vec3<f32>(1.0f), vec3<f32>(0.0f), _S2), 1.0f) );
     return _S3;
 }
 

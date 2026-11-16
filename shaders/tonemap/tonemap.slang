@@ -42,7 +42,7 @@ float4 fs_main(FullscreenVsOut In) : SV_Target
     float transmittance = 1.0 - cloud.a;
     // ACES saturates long before 1e4, and capping there keeps its x*x terms off Inf/Inf = NaN.
     float3 scene = min((cloud.rgb + hdr * ao * transmittance) * exposure
-                       + bloom * tonemapUniforms.params.x * transmittance, float3(1e4));
+                       + bloom * tonemapUniforms.params.x, float3(1e4));
     float3 mapped = aces_tonemap(scene);
 
     // WebGPU canvases have no sRGB surface format, so the web encodes here (docs/shaders.md#color-space).

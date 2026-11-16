@@ -135,10 +135,6 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       as the raster's IBL ambient does, which moves this further from C++. Owner decision;
       if it should match, the C++ side changes, since its raster has no ambient term to follow.
 
-- [ ] **Bloom glows through clouds** (S). The bright pass reads the HDR before the clouds, and the tonemap only
-      scales it by the cloud's transmittance (`shaders/tonemap/tonemap.slang`), so a hidden sun's halo shows
-      at a cloud's edge. Next: bloom after the cloud composite, if the cost is acceptable.
-
 - [ ] **A one-pixel rim without clouds at silhouettes** (S). The march stops at the resolved depth, the nearest
       of the four MSAA samples (`shaders/depth_resolve/depth_resolve.slang`), so an edge pixel half sky gets no cloud.
 

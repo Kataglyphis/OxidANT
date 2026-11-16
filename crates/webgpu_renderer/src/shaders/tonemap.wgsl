@@ -75,14 +75,13 @@ fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> 
     {
         cloud_0 = _S2;
     }
-    var _S3 : vec3<f32> = vec3<f32>((1.0f - cloud_0.w));
-    var mapped_0 : vec3<f32> = aces_tonemap_0(min((cloud_0.xyz + hdr_0 * vec3<f32>(ao_0) * _S3) * vec3<f32>(exposure_0) + bloom_0 * vec3<f32>(tonemapUniforms_0.params_0.x) * _S3, vec3<f32>(10000.0f)));
+    var mapped_0 : vec3<f32> = aces_tonemap_0(min((cloud_0.xyz + hdr_0 * vec3<f32>(ao_0) * vec3<f32>((1.0f - cloud_0.w))) * vec3<f32>(exposure_0) + bloom_0 * vec3<f32>(tonemapUniforms_0.params_0.x), vec3<f32>(10000.0f)));
     if((tonemapUniforms_0.params_0.w) > 0.5f)
     {
-        var _S4 : pixelOutput_0 = pixelOutput_0( vec4<f32>(linear_to_srgb_0(mapped_0), 1.0f) );
-        return _S4;
+        var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(linear_to_srgb_0(mapped_0), 1.0f) );
+        return _S3;
     }
-    var _S5 : pixelOutput_0 = pixelOutput_0( vec4<f32>(mapped_0, 1.0f) );
-    return _S5;
+    var _S4 : pixelOutput_0 = pixelOutput_0( vec4<f32>(mapped_0, 1.0f) );
+    return _S4;
 }
 

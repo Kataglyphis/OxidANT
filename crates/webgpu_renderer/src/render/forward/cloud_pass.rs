@@ -1,5 +1,6 @@
 //! The volumetric clouds: a noise volume generated once, then per frame a full-screen march to the scene depth.
-//! The tonemap composites the march's premultiplied output, in linear HDR, over sky and geometry alike.
+//! The tonemap composites the march's premultiplied output, in linear HDR, over sky and geometry alike;
+//! bloom's bright pass does the same first, so only what shows through the clouds glows.
 
 use glam::Vec3;
 
@@ -386,7 +387,8 @@ impl ForwardRenderer {
             return;
         }
         pass.target = Some(CloudTarget::new(&gpu.device, march, (width, height), depth));
-        self.post.tonemap_inputs_changed();
+        // Bloom's bright pass and every tonemap sample the new target.
+        self.post.rebuild_needed = true;
     }
 
     /// The noise on the first cloud frame, then the march of every pixel to its scene depth.

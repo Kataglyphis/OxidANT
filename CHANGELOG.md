@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, bloom no longer glows through clouds)
+- **Bloom's bright pass thresholds the clouded scene.** The clouds march before bloom now, and `fs_brightpass`
+  (`shaders/bloom/bloom.slang`) composites their premultiplied target over the HDR first, as the tonemap does, so a
+  sun or lamp they hide spills no halo past their edge. The tonemap no longer scales bloom by the transmittance. The
+  cost is one more sample per half-resolution texel; `BloomPass::rebuild` takes `BloomInputs` with the cloud view, and
+  `TimedPass::Clouds` reports before `Bloom`.
+- Tests: `tests/clouds.rs` `a_light_the_clouds_hide_does_not_bloom_around_them` hides a glowing card in a dense box:
+  the halo outside the box falls from 14100 colour levels to 110 (the old shaders: 2362 of 2362 in the first layout,
+  and the bright pass with its cloud flag ignored, 14100 of 14100); the graph test puts the clouds before bloom.
+
 ### Added (2026-11-16, a new `set_instances` count reaches the built traced scene)
 - **`set_instances` with a new count re-instances a built traced scene** instead of waiting for the next upload. Each
   instanced primitive keeps a template (`TraceScene::templates`, moved with its node), and `set_instance_extras`

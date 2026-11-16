@@ -7,6 +7,15 @@ import fullscreen;
 
 // [adapted EV, target EV] from cs_reduce_exposure, shared with tonemap.slang as the one exposure source.
 [vk::binding(2, 0)] StructuredBuffer<float> exposureState;
+// Premultiplied cloud colour and 1 - transmittance from cloud_march.slang; read only while params.x is set.
+[vk::binding(3, 0)] Texture2D<float4> cloudTex;
+
+struct BloomUniforms
+{
+    // x: 1.0 to composite the clouds before thresholding.
+    float4 params;
+};
+[vk::binding(4, 0)] ConstantBuffer<BloomUniforms> bloomUniforms;
 
 static const float THRESHOLD = 1.0;
 
@@ -45,7 +54,14 @@ FullscreenVsOut vs_main(uint vid : SV_VertexID)
 [shader("fragment")]
 float4 fs_brightpass(FullscreenVsOut In) : SV_Target
 {
-    float3 hdr = min(srcTex.Sample(srcSampler, In.uv).rgb, float3(HDR_MAX)) * exp2(exposureState[0]);
+    float3 scene = min(srcTex.Sample(srcSampler, In.uv).rgb, float3(HDR_MAX));
+    // Thresholds what the tonemap shows: a sun the clouds hide must not glow around them.
+    if (bloomUniforms.params.x > 0.5)
+    {
+        float4 cloud = cloudTex.Sample(srcSampler, In.uv);
+        scene = cloud.rgb + scene * (1.0 - cloud.a);
+    }
+    float3 hdr = min(scene, float3(HDR_MAX)) * exp2(exposureState[0]);
     float3 bright = clamp(hdr - float3(THRESHOLD), float3(0.0), float3(HDR_MAX));
     return float4(bright, 1.0);
 }

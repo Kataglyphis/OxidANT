@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::frame::FrameView;
 use super::{ForwardRenderer, RasterPath};
 use crate::context::GpuContext;
-use crate::render::bloom::BloomPass;
+use crate::render::bloom::{BloomInputs, BloomPass};
 use crate::render::gpu_timing::TimedPass;
 use crate::render::histogram::{ExposureSettings, HistogramPass};
 use crate::render::ssao::SsaoPass;
@@ -39,27 +39,21 @@ impl PostChain {
             inputs_id: 0,
         }
     }
-
-    /// A tonemap input outside this chain changed, such as the cloud target: every tonemap must rebind.
-    pub(super) fn tonemap_inputs_changed(&mut self) {
-        self.inputs_id = next_inputs_id();
-    }
 }
 
 impl ForwardRenderer {
-    /// Rebuilds bloom and SSAO on the current targets after those were recreated.
+    /// Rebuilds bloom and SSAO on the current targets, and bloom on a new cloud target, after those were recreated.
     pub(super) fn rebuild_post_inputs(&mut self, gpu: &GpuContext, width: u32, height: u32) {
         if !self.post.rebuild_needed {
             return;
         }
         let post = &mut self.post;
-        post.bloom.rebuild(
-            gpu,
-            width,
-            height,
-            &self.targets.hdr_view,
-            post.histogram.exposure_buffer(),
-        );
+        let inputs = BloomInputs {
+            hdr: &self.targets.hdr_view,
+            exposure: post.histogram.exposure_buffer(),
+            cloud: self.cloud_pass.composite_view(),
+        };
+        post.bloom.rebuild(gpu, width, height, inputs);
         post.ssao.rebuild(gpu, width, height, &self.targets.depth);
         post.inputs_id = next_inputs_id();
         post.rebuild_needed = false;
@@ -96,6 +90,7 @@ impl ForwardRenderer {
             self.ssao_strength
         };
         tonemap.set_params(&gpu.queue, self.bloom_strength, ssao, self.clouds.enabled);
+        self.post.bloom.set_clouds(&gpu.queue, self.clouds.enabled);
         self.post.histogram.set_exposure_settings(
             &gpu.queue,
             ExposureSettings {
