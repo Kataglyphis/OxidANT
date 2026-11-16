@@ -116,11 +116,12 @@ its open work is here.
 
 The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md; re-sync when it moves.
 
-- [ ] `large-files.allow:3` budget 2031 (allow_budget_total)
-- [ ] `rust-function-size.allow:15` budget 281 (allow_budget_total)
-- [ ] `function-size.allow:6` budget 171 (allow_budget_total)
-- [ ] `rust-function-size.allow:14` budget 171 (allow_budget_total)
-- [ ] `function-size.allow:5` budget 156 (allow_budget_total)
+- [ ] `large-files.allow:3` budget 2031 (allow_budget_total); left 2026-11-16: `images/Rust.webp`'s 136 frames are
+      lossy VP8 already, and a quarter of the size is a visibly worse hero image, the owner's call
+- [ ] `rust-function-size.allow:8` budget 143 (allow_budget_total)
+- [ ] `rust-function-size.allow:17` budget 135 (allow_budget_total)
+- [ ] `function-size.allow:4` budget 127 (allow_budget_total)
+- [ ] `rust-function-size.allow:5` budget 114 (allow_budget_total)
 
 ## P3 — ideas, chores and blocked work
 
