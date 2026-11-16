@@ -118,11 +118,10 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
 ## P3 — ideas, chores and blocked work
 
 - [ ] **Texture streaming past the mip tail** (L, ★). BeschleunigerBallett's "[P3] Texture streaming / bindless".
-      Since 2026-11-16 the renderer streams material mips by screen-space need (roadmap, *Texture streaming*). Open:
+      Since 2026-11-16 the renderer streams material mips by screen-space need (roadmap, *Texture streaming*), and a
+      step copies the resident levels on the GPU (the GL backend keeps the CPU path for compressed textures). Open:
       (1) eviction: a texture never drops a level once the camera leaves, so a long session ends at what the closest
-      view needed; (2) a step re-writes every resident level from the CPU, about 1.3x the new level's bytes, where a
-      `copy_texture_to_texture` of the old levels would write only the new one (the GL backend copies no
-      compressed texture, so it keeps the CPU path); (3) a pending texture keeps its whole chain in CPU memory until it
+      view needed; (3) a pending texture keeps its whole chain in CPU memory until it
       is fully resident; (4) bindless material textures (`TEXTURE_BINDING_ARRAY`, runtime detection with the
       per-primitive groups as the fallback) for scenes with thousands of materials, which needs the forward shader's
       Slang source to index an array. Guard: `tests/texture_streaming.rs`.

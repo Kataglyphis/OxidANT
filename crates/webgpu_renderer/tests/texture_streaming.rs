@@ -314,3 +314,67 @@ fn a_tail_upload_holds_a_fraction_of_the_bytes() {
     assert!(tail.resident_bytes * 100 < whole.resident_bytes);
     assert_eq!(tail.streaming, 16);
 }
+
+fn renderer_with(
+    gpu: &GpuContext,
+    scene: &CpuScene,
+    streaming: TextureStreaming,
+) -> ForwardRenderer {
+    let mut renderer = ForwardRenderer::new(gpu, SIZE, SIZE);
+    renderer.texture_streaming = streaming;
+    renderer.upload_scene(gpu, scene);
+    renderer
+}
+
+/// `frames` frames from `camera`; the last one.
+fn frames(
+    renderer: &mut ForwardRenderer,
+    gpu: &GpuContext,
+    camera: &OrbitCamera,
+    frames: usize,
+) -> Vec<u8> {
+    let mut last = Vec::new();
+    for _ in 0..frames {
+        last = render(renderer, gpu, camera);
+    }
+    last
+}
+
+/// The copy path and the CPU path end in the same frame; the copy path writes only each step's new level.
+#[test]
+fn copying_resident_levels_renders_identically_and_writes_only_the_new_level() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    for (name, texture) in [("RGBA8", checker(1024, 20)), ("BC1", bc1_noise(1024, 3))] {
+        let scene = cube_with(texture);
+        let near = camera_at(1.0);
+        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut copied = renderer_with(&gpu, &scene, TextureStreaming::INTERACTIVE);
+        let cpu_path = TextureStreaming {
+            gpu_copies: false,
+            ..TextureStreaming::INTERACTIVE
+        };
+        let mut written = renderer_with(&gpu, &scene, cpu_path);
+        let copied_frame = frames(&mut copied, &gpu, &near, 4);
+        let written_frame = frames(&mut written, &gpu, &near, 4);
+        let error = pollster::block_on(scope.pop());
+        assert!(error.is_none(), "copying failed validation: {error:?}");
+        assert!(copied_frame == written_frame, "the two paths must agree");
+        let (c, w) = (copied.texture_residency(), written.texture_residency());
+        assert_eq!((c.streaming, w.streaming), (0, 0));
+        eprintln!(
+            "{name} 128 -> 1024 in three steps: CPU path writes {} B, copy path writes {} B and copies {} B",
+            w.step_written_bytes,
+            c.step_written_bytes,
+            c.step_copied_bytes,
+        );
+        // Three steps write 256, 512 and 1024 once each, against every resident level again on the CPU path.
+        assert_eq!(
+            c.step_written_bytes + c.step_copied_bytes,
+            w.step_written_bytes
+        );
+        assert_eq!(w.step_copied_bytes, 0);
+        assert!(c.step_written_bytes * 10 < w.step_written_bytes * 8);
+    }
+}

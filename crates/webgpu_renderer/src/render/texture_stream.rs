@@ -15,14 +15,17 @@ pub struct TextureStreaming {
     pub tail_side: u32,
     /// Bytes one frame may write into streamed textures; the first step always runs, so a larger level still lands.
     pub bytes_per_frame: u64,
+    /// A step copies the levels already resident on the GPU instead of writing them again from the CPU.
+    pub gpu_copies: bool,
 }
 
 impl TextureStreaming {
-    /// The interactive app's choice: a 128-texel tail and 8 MiB a frame.
+    /// The interactive app's choice: a 128-texel tail, 8 MiB a frame, resident levels copied on the GPU.
     pub const INTERACTIVE: Self = Self {
         enabled: true,
         tail_side: 128,
         bytes_per_frame: 8 << 20,
+        gpu_copies: true,
     };
 }
 
@@ -47,6 +50,10 @@ pub struct TextureResidency {
     pub resident_bytes: u64,
     /// Bytes every texture would hold with its finest level resident.
     pub full_bytes: u64,
+    /// Bytes steps have written from the CPU since the upload, its own writes excluded.
+    pub step_written_bytes: u64,
+    /// Bytes steps have copied between GPU textures since the upload.
+    pub step_copied_bytes: u64,
 }
 
 /// One level of a [`LevelChain`].
@@ -112,6 +119,11 @@ pub(crate) fn next_base(candidates: &[usize], resident: usize, wanted: usize) ->
         return None;
     }
     candidates.iter().copied().rfind(|&level| level < resident)
+}
+
+/// Whether a step may copy resident levels between GPU textures: GL copies no compressed texture.
+pub(crate) fn gpu_copy_allowed(backend: wgpu::Backend, format: wgpu::TextureFormat) -> bool {
+    !(backend == wgpu::Backend::Gl && format.is_compressed())
 }
 
 /// Mip level a surface needs at `distance`: log2 of texels per pixel there, 0 when magnified.
@@ -192,7 +204,7 @@ pub(crate) struct StreamRequest {
     pub(crate) visible: bool,
     /// Levels between the resident base and the wanted one.
     pub(crate) levels_short: usize,
-    /// Bytes the step uploads.
+    /// Bytes the step writes into the new texture, from the CPU or by copy.
     pub(crate) step_bytes: u64,
 }
 
@@ -363,6 +375,22 @@ mod tests {
         let requests = vec![request(7, true, 1, 1 << 30), request(8, true, 1, 1 << 30)];
         assert_eq!(plan_steps(requests, 1 << 20), vec![7]);
         assert!(plan_steps(Vec::new(), 1 << 20).is_empty());
+    }
+
+    #[test]
+    fn gl_keeps_the_cpu_path_for_compressed_textures_only() {
+        use wgpu::{Backend, TextureFormat as F};
+        assert!(!gpu_copy_allowed(Backend::Gl, F::Bc1RgbaUnormSrgb));
+        assert!(!gpu_copy_allowed(Backend::Gl, F::Etc2Rgba8Unorm));
+        assert!(gpu_copy_allowed(Backend::Gl, F::Rgba8UnormSrgb));
+        for backend in [
+            Backend::Vulkan,
+            Backend::Metal,
+            Backend::Dx12,
+            Backend::BrowserWebGpu,
+        ] {
+            assert!(gpu_copy_allowed(backend, F::Bc7RgbaUnorm));
+        }
     }
 
     #[test]

@@ -176,43 +176,93 @@ pub(crate) fn write_chain(
     label: Option<&str>,
 ) -> wgpu::Texture {
     let levels = &chain.levels[base..];
-    let gpu_texture = create_2d_texture(
-        &gpu.device,
-        label,
-        levels[0].width,
-        levels[0].height,
-        chain.format,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        levels.len() as u32,
-        1,
-    );
-    let (block_w, block_h) = chain.format.block_dimensions();
-    let block_bytes = chain.format.block_copy_size(None).unwrap_or(4);
+    let size = (levels[0].width, levels[0].height);
+    let gpu_texture = chain_texture(&gpu.device, chain.format, size, levels.len(), label);
     for (level, data) in levels.iter().enumerate() {
-        let blocks_wide = data.width.div_ceil(block_w);
-        let blocks_high = data.height.div_ceil(block_h);
-        gpu.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &gpu_texture,
-                mip_level: level as u32,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &data.data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(blocks_wide * block_bytes),
-                rows_per_image: Some(blocks_high),
-            },
-            // wgpu copies whole blocks: a 2x2 or 1x1 level is one block, 4x4 physical texels.
-            wgpu::Extent3d {
-                width: blocks_wide * block_w,
-                height: blocks_high * block_h,
-                depth_or_array_layers: 1,
-            },
-        );
+        write_level(gpu, &gpu_texture, level as u32, data);
     }
     gpu_texture
+}
+
+/// An empty streamed material texture: sampled, written from the CPU, and the source of the next step's copies.
+pub(crate) fn chain_texture(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    (width, height): (u32, u32),
+    levels: usize,
+    label: Option<&str>,
+) -> wgpu::Texture {
+    create_2d_texture(
+        device,
+        label,
+        width,
+        height,
+        format,
+        wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC,
+        levels as u32,
+        1,
+    )
+}
+
+/// The extent a copy of a `width` x `height` level spans: whole blocks, as wgpu copies them.
+fn block_extent(format: wgpu::TextureFormat, width: u32, height: u32) -> wgpu::Extent3d {
+    let (block_w, block_h) = format.block_dimensions();
+    // A 2x2 or 1x1 level of a 4x4-block format is one block, 4x4 physical texels.
+    wgpu::Extent3d {
+        width: width.div_ceil(block_w) * block_w,
+        height: height.div_ceil(block_h) * block_h,
+        depth_or_array_layers: 1,
+    }
+}
+
+/// Writes one chain level into `texture`'s mip `mip_level`.
+pub(crate) fn write_level(
+    gpu: &GpuContext,
+    texture: &wgpu::Texture,
+    mip_level: u32,
+    data: &ChainLevel,
+) {
+    let format = texture.format();
+    let (block_w, block_h) = format.block_dimensions();
+    let block_bytes = format.block_copy_size(None).unwrap_or(4);
+    let blocks_wide = data.width.div_ceil(block_w);
+    gpu.queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &data.data,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(blocks_wide * block_bytes),
+            rows_per_image: Some(data.height.div_ceil(block_h)),
+        },
+        block_extent(format, data.width, data.height),
+    );
+}
+
+/// Records a GPU copy of `src`'s mip `src_level` into `dst`'s mip `dst_level`, both `width` x `height`.
+pub(crate) fn copy_level(
+    encoder: &mut wgpu::CommandEncoder,
+    (src, src_level): (&wgpu::Texture, u32),
+    (dst, dst_level): (&wgpu::Texture, u32),
+    (width, height): (u32, u32),
+) {
+    let at = |texture, mip_level| wgpu::TexelCopyTextureInfo {
+        texture,
+        mip_level,
+        origin: wgpu::Origin3d::ZERO,
+        aspect: wgpu::TextureAspect::All,
+    };
+    encoder.copy_texture_to_texture(
+        at(src, src_level),
+        at(dst, dst_level),
+        block_extent(dst.format(), width, height),
+    );
 }
 
 /// Why a block-compressed payload cannot become a valid wgpu texture, or `None` when it can.

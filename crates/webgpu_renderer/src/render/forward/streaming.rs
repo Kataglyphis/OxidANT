@@ -5,99 +5,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::frame::FrameView;
+use super::primitive::GpuPrimitive;
+use super::streamed_texture::{StepCounters, StreamUser, StreamedTexture};
 use super::upload::{MaterialDefaults, MaterialSlots};
 use super::ForwardRenderer;
 use crate::context::GpuContext;
-use crate::render::texture::{create_sampler, material_chain, material_view, write_chain};
+use crate::render::texture::{create_sampler, material_chain, material_view};
 use crate::render::texture_stream::{
-    distance_to_aabb, initial_base, max_axis_scale, next_base, plan_steps, uv_density,
-    uv_transform_scale, wanted_level, LevelChain, StreamRequest, TextureResidency,
-    TextureStreaming,
+    distance_to_aabb, max_axis_scale, next_base, plan_steps, uv_density, uv_transform_scale,
+    wanted_level, StreamRequest, TextureResidency, TextureStreaming,
 };
 use crate::scene::{CpuPrimitive, CpuSampler, CpuTextureRef};
-
-/// One material slot that samples a streamed texture.
-struct StreamUser {
-    primitive: usize,
-    slot: usize,
-    sampler: CpuSampler,
-    /// UV units per local unit of the primitive, its slot's texture transform applied.
-    uv_per_unit: f32,
-}
-
-/// The chain a texture still streams from, kept until its finest candidate is resident.
-struct PendingChain {
-    chain: LevelChain,
-    /// Levels that can be the texture's level 0, finest first.
-    candidates: Vec<usize>,
-}
-
-/// One GPU material texture and the slots that sample it.
-struct StreamedTexture {
-    texture: wgpu::Texture,
-    label: String,
-    /// The chain level the GPU texture's level 0 holds.
-    base: usize,
-    pending: Option<PendingChain>,
-    resident_bytes: u64,
-    full_bytes: u64,
-    users: Vec<StreamUser>,
-}
-
-impl StreamedTexture {
-    /// Uploads `chain` from the tail `streaming` asks for, or whole; `None` if no level fits the device.
-    fn upload(
-        gpu: &GpuContext,
-        chain: LevelChain,
-        label: String,
-        streaming: &TextureStreaming,
-    ) -> Option<Self> {
-        let max_side = gpu.device.limits().max_texture_dimension_2d;
-        let candidates = chain.base_candidates(max_side);
-        let Some(&finest) = candidates.first() else {
-            log::warn!("{label}: no mip level fits the device; the slot keeps its default");
-            return None;
-        };
-        if finest > 0 {
-            let (w, h) = (chain.levels[0].width, chain.levels[0].height);
-            let (fw, fh) = (chain.levels[finest].width, chain.levels[finest].height);
-            log::warn!("{label}: {w}x{h} exceeds the device's {max_side}-texel side; uploaded at {fw}x{fh}");
-        }
-        let base = if streaming.enabled {
-            initial_base(&candidates, &chain.sizes(), streaming.tail_side)?
-        } else {
-            finest
-        };
-        let texture = write_chain(gpu, &chain, base, Some(&label));
-        Some(Self {
-            texture,
-            label,
-            base,
-            resident_bytes: chain.bytes_from(base),
-            full_bytes: chain.bytes_from(finest),
-            pending: (base != finest).then_some(PendingChain { chain, candidates }),
-            users: Vec::new(),
-        })
-    }
-
-    /// Replaces the GPU texture with one whose level 0 is chain level `base`; drops the chain once it is the finest.
-    fn raise(&mut self, gpu: &GpuContext, base: usize) {
-        let Some(pending) = self.pending.as_ref() else {
-            return;
-        };
-        self.texture = write_chain(gpu, &pending.chain, base, Some(&self.label));
-        self.base = base;
-        self.resident_bytes = pending.chain.bytes_from(base);
-        if pending.candidates.first() == Some(&base) {
-            self.pending = None;
-        }
-    }
-
-    /// The finest candidate, for a texture that skips the remaining steps.
-    fn finest(&self) -> Option<usize> {
-        self.pending.as_ref()?.candidates.first().copied()
-    }
-}
 
 /// The scene's material textures: one upload per (image, colour space), not per referencing slot.
 #[derive(Default)]
@@ -106,6 +24,7 @@ pub(super) struct MaterialTextures {
     keys: HashMap<(usize, bool), Option<usize>>,
     entries: Vec<StreamedTexture>,
     samplers: HashMap<CpuSampler, wgpu::Sampler>,
+    counters: StepCounters,
 }
 
 impl MaterialTextures {
@@ -114,16 +33,15 @@ impl MaterialTextures {
         self.entries.len()
     }
 
-    fn has_pending(&self) -> bool {
-        self.entries.iter().any(|e| e.pending.is_some())
-    }
-
     pub(super) fn residency(&self) -> TextureResidency {
+        let entries = &self.entries;
         TextureResidency {
-            textures: self.entries.len(),
-            streaming: self.entries.iter().filter(|e| e.pending.is_some()).count(),
-            resident_bytes: self.entries.iter().map(|e| e.resident_bytes).sum(),
-            full_bytes: self.entries.iter().map(|e| e.full_bytes).sum(),
+            textures: entries.len(),
+            streaming: entries.iter().filter(|e| e.pending()).count(),
+            resident_bytes: entries.iter().map(|e| e.bytes_from(e.base)).sum(),
+            full_bytes: entries.iter().map(|e| e.bytes_from(e.finest())).sum(),
+            step_written_bytes: self.counters.written,
+            step_copied_bytes: self.counters.copied,
         }
     }
 
@@ -228,9 +146,6 @@ impl MaterialTextures {
 impl ForwardRenderer {
     /// Uploads this frame's finer levels: within the budget while streaming, every pending one once it is off.
     pub(super) fn stream_textures(&mut self, gpu: &GpuContext, view: &FrameView) {
-        if !self.textures.has_pending() {
-            return;
-        }
         let steps = if self.texture_streaming.enabled {
             self.plan_texture_steps(view)
         } else {
@@ -253,7 +168,8 @@ impl ForwardRenderer {
     fn finishing_steps(&self) -> Vec<(usize, usize)> {
         let entries = self.textures.entries.iter().enumerate();
         entries
-            .filter_map(|(id, entry)| Some((id, entry.finest()?)))
+            .filter(|(_, entry)| entry.pending())
+            .map(|(id, entry)| (id, entry.finest()))
             .collect()
     }
 
@@ -261,14 +177,12 @@ impl ForwardRenderer {
     fn plan_texture_steps(&self, view: &FrameView) -> Vec<(usize, usize)> {
         // Pixels one world unit covers at distance 1; `projection` carries the dock's viewport remap.
         let pixels_per_unit = view.projection.y_axis.y.abs() * view.height as f32 * 0.5;
+        let streaming = self.texture_streaming;
         let mut next = HashMap::new();
         let mut requests = Vec::new();
         for (id, entry) in self.textures.entries.iter().enumerate() {
-            let Some(pending) = entry.pending.as_ref() else {
-                continue;
-            };
-            let (wanted, visible) = self.texture_need(entry, &pending.chain, view, pixels_per_unit);
-            let Some(base) = next_base(&pending.candidates, entry.base, wanted) else {
+            let (wanted, visible) = texture_need(&self.primitives, entry, view, pixels_per_unit);
+            let Some(base) = next_base(&entry.candidates, entry.base, wanted) else {
                 continue;
             };
             next.insert(id, base);
@@ -276,44 +190,38 @@ impl ForwardRenderer {
                 id,
                 visible,
                 levels_short: entry.base - wanted,
-                step_bytes: pending.chain.bytes_from(base),
+                step_bytes: entry.step_bytes(base),
             });
         }
-        plan_steps(requests, self.texture_streaming.bytes_per_frame)
+        plan_steps(requests, streaming.bytes_per_frame)
             .into_iter()
             .map(|id| (id, next[&id]))
             .collect()
     }
 
-    /// The finest level any user needs from this view, and whether any user is in the frustum.
-    fn texture_need(
-        &self,
-        entry: &StreamedTexture,
-        chain: &LevelChain,
-        view: &FrameView,
-        pixels_per_unit: f32,
-    ) -> (usize, bool) {
-        let side = chain.levels[0].width.max(chain.levels[0].height) as f32;
-        let (mut wanted, mut visible) = (usize::MAX, false);
-        for user in &entry.users {
-            let Some(prim) = self.primitives.get(user.primitive) else {
-                continue;
-            };
-            let scale = max_axis_scale(&(prim.root * prim.model));
-            let texels_per_unit = side * user.uv_per_unit / scale;
-            let distance = distance_to_aabb(view.eye, prim.aabb_min, prim.aabb_max);
-            wanted = wanted.min(wanted_level(texels_per_unit, distance, pixels_per_unit));
-            visible |= view.frustum.intersects_aabb(prim.aabb_min, prim.aabb_max);
-        }
-        (wanted, visible)
-    }
-
-    /// Raises each texture to its new base and rebinds the primitives that sample it.
+    /// Steps each texture to its new base and rebinds the primitives that sample it; one submit for the copies.
     fn apply_texture_steps(&mut self, gpu: &GpuContext, steps: &[(usize, usize)]) {
+        let streaming = self.texture_streaming;
+        let textures = &mut self.textures;
+        if steps.is_empty() {
+            return;
+        }
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("texture_streaming_copies"),
+            });
         let mut touched = Vec::new();
         for &(id, base) in steps {
-            let entry = &mut self.textures.entries[id];
-            entry.raise(gpu, base);
+            let entry = &mut textures.entries[id];
+            if !entry.step(
+                gpu,
+                &mut encoder,
+                base,
+                (streaming.gpu_copies, &mut textures.counters),
+            ) {
+                continue;
+            }
             for user in &entry.users {
                 let view = material_view(&entry.texture, &user.sampler);
                 self.primitives[user.primitive]
@@ -322,6 +230,7 @@ impl ForwardRenderer {
                 touched.push(user.primitive);
             }
         }
+        gpu.queue.submit([encoder.finish()]);
         touched.sort_unstable();
         touched.dedup();
         self.rebind_primitives(&gpu.device, &touched);
@@ -349,4 +258,26 @@ impl ForwardRenderer {
             }
         }
     }
+}
+
+/// The finest level any user of `entry` needs from this view, and whether any user is in the frustum.
+fn texture_need(
+    primitives: &[GpuPrimitive],
+    entry: &StreamedTexture,
+    view: &FrameView,
+    pixels_per_unit: f32,
+) -> (usize, bool) {
+    let side = entry.side() as f32;
+    let (mut wanted, mut visible) = (usize::MAX, false);
+    for user in &entry.users {
+        let Some(prim) = primitives.get(user.primitive) else {
+            continue;
+        };
+        let scale = max_axis_scale(&(prim.root * prim.model));
+        let texels_per_unit = side * user.uv_per_unit / scale;
+        let distance = distance_to_aabb(view.eye, prim.aabb_min, prim.aabb_max);
+        wanted = wanted.min(wanted_level(texels_per_unit, distance, pixels_per_unit));
+        visible |= view.frustum.intersects_aabb(prim.aabb_min, prim.aabb_max);
+    }
+    (wanted, visible)
 }

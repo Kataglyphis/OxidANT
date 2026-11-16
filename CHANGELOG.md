@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, a streaming step copies the resident levels on the GPU)
+- **A finer step writes only its new levels** (`render/forward/streamed_texture.rs`): the new texture gets the
+  levels the old one lacks from the CPU chain and the rest by `copy_texture_to_texture` from the old texture, in one
+  submit a frame. Before, every resident level was written again from the CPU. A backend that cannot copy the format
+  (GL with a compressed texture, `gpu_copy_allowed`, checked at run time) keeps the CPU path, as does
+  `TextureStreaming::gpu_copies = false`. `TextureResidency` counts `step_written_bytes` and `step_copied_bytes`.
+- **Measured** (`tests/texture_streaming.rs`, lavapipe): one 1024x1024 texture from its 128-texel tail to the full
+  chain in three steps. RGBA8: 5.25 MiB written from the CPU and 1.75 MiB copied, against 7.0 MiB written; BC1:
+  0.66 MiB and 0.22 MiB against 0.88 MiB. Both paths render byte-identical frames.
+
 ### Added (2026-11-16, mip-tail texture streaming in the WebGPU renderer)
 - **`ForwardRenderer::texture_streaming`** (`TextureStreaming`, off by default; the app sets
   `TextureStreaming::INTERACTIVE`): an upload writes each material texture's levels up to 128 texels a side and

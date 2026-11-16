@@ -20,6 +20,7 @@ mod reload;
 mod shadow;
 mod shadow_casters;
 mod sky;
+mod streamed_texture;
 mod streaming;
 mod targets;
 mod traced;
