@@ -1,6 +1,12 @@
-// The C++ path tracer's estimator pieces, ported from BeschleunigerBallett's path_tracing.slang: its RNG and both lobes' sampling.
+// Both path tracers' estimator: the RNG, Russian roulette and the bounce over both lobes; target-independent, the C++ kernel imports it too.
 
 import brdf;
+
+// A pixel's RNG state: the stream offset by the golden-ratio constant, so every stream starts far from the others.
+uint path_rng_seed(uint pixel_index, uint stream)
+{
+    return pixel_index + stream * 2654435769u;
+}
 
 // PCG RNG: condensed pcg_output_rxs_mxs_32_32.
 float rng_next(inout uint state)
@@ -9,6 +15,18 @@ float rng_next(inout uint state)
     uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     word = (word >> 22u) ^ word;
     return float(word) / 4294967295.0;
+}
+
+// Russian roulette from the fourth segment, survival in [0.05, 0.95]; the 1/survival reweight keeps it unbiased.
+bool russian_roulette_survives(uint bounce, inout float3 throughput, inout uint rng)
+{
+    if (bounce < 3u)
+        return true;
+    float survival = clamp(max(throughput.r, max(throughput.g, throughput.b)), 0.05, 0.95);
+    if (rng_next(rng) > survival)
+        return false;
+    throughput /= survival;
+    return true;
 }
 
 // Unit t and b completing n to a right-handed frame, without a branch on n (Duff et al. 2017).

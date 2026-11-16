@@ -1206,6 +1206,11 @@ fn cs_ray_trace(@builtin(global_invocation_id) id_0 : vec3<u32>)
     return;
 }
 
+fn path_rng_seed_0( pixel_index_1 : u32,  stream_0 : u32) -> u32
+{
+    return pixel_index_1 + stream_0 * u32(2654435769);
+}
+
 fn rng_next_0( state_0 : ptr<function, u32>) -> f32
 {
     var _S64 : u32 = (*state_0) * u32(747796405) + u32(1);
@@ -1222,7 +1227,7 @@ fn rng_next_1( state_1 : ptr<function, u32>) -> f32
     return f32((((word_2 >> (u32(22)))) ^ (word_2))) / 4.294967296e+09f;
 }
 
-fn survives_0( bounce_0 : u32,  throughput_0 : ptr<function, vec3<f32>>,  rng_0 : ptr<function, u32>) -> bool
+fn russian_roulette_survives_0( bounce_0 : u32,  throughput_0 : ptr<function, vec3<f32>>,  rng_0 : ptr<function, u32>) -> bool
 {
     if(bounce_0 < u32(3))
     {
@@ -1560,7 +1565,7 @@ fn trace_path_0( pixel_5 : vec2<u32>,  rng_4 : ptr<function, u32>) -> vec3<f32>
         {
             break;
         }
-        var _S94 : bool = survives_0(bounce_2, &(throughput_1), &((*rng_4)));
+        var _S94 : bool = russian_roulette_survives_0(bounce_2, &(throughput_1), &((*rng_4)));
         if(!_S94)
         {
             break;
@@ -1614,7 +1619,7 @@ fn cs_path_trace(@builtin(global_invocation_id) id_1 : vec3<u32>)
         return;
     }
     var index_4 : u32 = pixel_index_0(pixel_7);
-    var rng_5 : u32 = index_4 + traceTile_0.samples_0.z * u32(2654435769);
+    var rng_5 : u32 = path_rng_seed_0(index_4, traceTile_0.samples_0.z);
     var _S97 : vec3<f32> = vec3<f32>(0.0f);
     var i_1 : u32 = u32(0);
     var sum_0 : vec3<f32> = _S97;

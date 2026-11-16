@@ -49,6 +49,14 @@ the statement that samples, where the C++ suite's
 `BuildIntegrity.EveryPcfKernelBoundsChecksItsTaps` looks for the check;
 `tests/shadow_pcf_test.slang` is the SPIR-V guard.
 
+`common/path_estimator.slang` is both path tracers' estimator, ported from the
+C++ `path_tracing.slang`: the PCG RNG and its per-pixel seed, Russian roulette,
+the branchless orthonormal basis, visible-normal GGX sampling and its density,
+the lobe probability and `sample_bounce`, which picks a lobe, draws the next
+direction and weights it by `brdf_sampled` over the mixture's density. It names
+no binding, so `tracer/traced.slang` and the C++ kernel each trace their own
+rays around it. `tests/path_estimator_test.slang` emits it to SPIR-V and WGSL.
+
 Instance vertex attributes contain matrix columns. `instance_matrix` transposes
 the Slang row constructor so instances and equivalent node transforms agree.
 `skinned_bounds::a_non_uniform_instance_scale_shades_like_the_same_node_scale`

@@ -74,6 +74,14 @@ its open work is here.
       comparing a dense cloud's luminance with the sky behind it, as
       `a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it` does here.
 
+- [ ] **The C++ path tracer imports the shared estimator with the next pin bump** (S, ★★). Since 2026-11-16
+      `shaders/common/path_estimator.slang` holds both path tracers' RNG, seed, roulette, basis, GGX sampling, pdf,
+      lobe probability and `sample_bounce` (`CHANGELOG.md`). BeschleunigerBallett's `path_tracing.slang` still keeps
+      its own copies, identical but for the bounce weight: `brdf_direct`'s analytic Smith remap, where the shared
+      bounce takes `brdf_sampled`. Next, in BeschleunigerBallett with the pin bump: delete the copies, `import
+      path_estimator` and call `sample_bounce`, `russian_roulette_survives` and `path_rng_seed`, then re-check its
+      path-traced goldens (`GoldenRender.PathTracing*`, the furnace's energy bounds) on the host GPU and lavapipe.
+
 - [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
       nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
       in `.github/workflows/reusable-linux.yml` fails only on a doubling. On a Pi 5 the model is

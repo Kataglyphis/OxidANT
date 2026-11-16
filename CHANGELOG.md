@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, one path estimator for both path tracers)
+- **`shaders/tracer/path_estimator.slang` moves to `shaders/common/path_estimator.slang`**, so the C++
+  `path_tracing.slang` can import it with the next pin bump instead of keeping its own copies. Russian roulette
+  (`russian_roulette_survives`, was `traced.slang`'s `survives`) and the per-pixel seed (`path_rng_seed`) join the
+  RNG, the basis, the visible-normal GGX sampling, its pdf, the lobe probability and `sample_bounce`. Diffed against
+  the C++ kernel: RNG constants, seed, basis, sampler, pdf, lobe probability, clamps and roulette are the same; the
+  C++ bounce still weights by `brdf_direct`'s analytic Smith remap, which over-masks a sampled lobe, so its goldens
+  move when it takes the shared `sample_bounce` and `brdf_sampled`. The emitted `traced.wgsl` changes only by those
+  two names.
+- Tests: `shaders/tests/path_estimator_test.slang` calls every function and emits to SPIR-V and WGSL.
+
 ### Changed (2026-11-16, the NVIDIA promotion test checks its contract per job)
 - **`scripts/linux/tests/test-nvidia-gpu-promotion.py`: `valid` (171 lines, cc 21) and `test_wiring_and_mutations`
   (156) fall under the limits**, and their rows leave `function-size.allow` and `code-complexity.allow`. `valid` cuts

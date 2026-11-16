@@ -77,18 +77,6 @@ float3 next_event(TracedSurface s, float3 v, inout uint rng)
     return lit;
 }
 
-// Russian roulette from the fourth segment, survival in [0.05, 0.95]; the 1/survival reweight keeps it unbiased.
-bool survives(uint bounce, inout float3 throughput, inout uint rng)
-{
-    if (bounce < 3u)
-        return true;
-    float survival = clamp(max(throughput.r, max(throughput.g, throughput.b)), 0.05, 0.95);
-    if (rng_next(rng) > survival)
-        return false;
-    throughput /= survival;
-    return true;
-}
-
 // One path of at most the bounce cap's segments from a point jittered inside the pixel, the C++ estimator.
 float3 trace_path(uint2 pixel, inout uint rng)
 {
@@ -98,7 +86,7 @@ float3 trace_path(uint2 pixel, inout uint rng)
     float3 radiance = float3(0.0);
     for (uint bounce = 0u; bounce < traceFrame.size.z; bounce++)
     {
-        if (!survives(bounce, throughput, rng))
+        if (!russian_roulette_survives(bounce, throughput, rng))
             break;
         TraceHit hit = trace_closest(ray);
         if (hit.instance == TRACE_NO_HIT)
@@ -137,7 +125,7 @@ void cs_path_trace(uint3 id : SV_DispatchThreadID)
         return;
     uint index = pixel_index(pixel);
     // The samples already accumulated pick the stream, so each dispatch of each frame draws new ones.
-    uint rng = index + traceTile.samples.z * 2654435769u;
+    uint rng = path_rng_seed(index, traceTile.samples.z);
     float3 sum = float3(0.0);
     for (uint i = 0u; i < traceTile.samples.y; i++)
         sum += hdr_safe(trace_path(pixel, rng));

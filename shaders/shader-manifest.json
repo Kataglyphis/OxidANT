@@ -328,6 +328,16 @@
       ]
     },
     {
+      "_comment": "CI guard: the shared path estimator emits SPIR-V, as the C++ path_tracing.slang will import it, and WGSL.",
+      "file": "tests/path_estimator_test.slang",
+      "entry": "path_estimator_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
       "_comment": "Rust/WebGPU tracer: the BVH traversal (tracer/bvh_traverse.slang) over a ray buffer, for its GPU tests (WGSL emit).",
       "file": "tracer/trace_debug.slang",
       "entry": "cs_trace_closest",

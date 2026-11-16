@@ -196,7 +196,8 @@ frames. The profiler lists the kernel, the resolve and the post passes in record
 mode or raster path drops the rows of passes the new frames do not record at once. Camera rays run
 from the near to the far plane through `inverse(view_proj)`: the raster camera, the docked
 viewport's lens shift included. Code: `src/render/tracer/modes/`, `src/render/forward/traced.rs`;
-shading shared by both kernels: `trace_shading.slang`; the estimator: `path_estimator.slang`.
+shading shared by both kernels: `trace_shading.slang`; the estimator: `shaders/common/path_estimator.slang`,
+which the C++ `path_tracing.slang` imports from its pin bump on ([`docs/shaders.md`](../../../docs/shaders.md)).
 
 **Ray traced**, the C++ mode: one ray through each pixel centre; base colour times texture
 times vertex colour, the metallic-roughness and normal maps at level 0, the forward pass's
