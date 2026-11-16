@@ -14,6 +14,7 @@ pub mod material;
 pub mod modes;
 pub mod query;
 pub mod scene;
+pub mod upload;
 
 pub use build::{TraceBuildOptions, TraceProgress, TraceSceneBuilder, TraceStage};
 pub use debug::{DebugHit, TraceDebugPass};
@@ -23,6 +24,7 @@ pub use limits::TraceLimitError;
 pub use modes::{FurnaceSettings, TraceSettings};
 pub use query::{TraceHit, TraceRay, NO_HIT};
 pub use scene::{TraceScene, TraceStats};
+pub use upload::{TraceUpload, UPLOAD_BYTES_PER_FRAME};
 
 #[cfg(test)]
 mod tests;

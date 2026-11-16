@@ -36,8 +36,8 @@ impl TraceBufferSizes {
             nodes: scene.nodes.len() as u64,
             instances: scene.instances.len() as u64,
             materials: scene.materials.len() as u64,
-            triangles: scene.triangles.len() as u64,
-            vertices: scene.vertices.len() as u64,
+            triangles: scene.triangle_count(),
+            vertices: scene.vertex_count(),
         })
     }
 

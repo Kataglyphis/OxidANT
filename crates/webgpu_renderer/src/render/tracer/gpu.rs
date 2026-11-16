@@ -1,10 +1,8 @@
 //! The traced scene on the GPU: six storage buffers, a uniform, two texture arrays and two samplers in one bind group.
 
-use wgpu::util::DeviceExt as _;
-
-use super::layers::LayerArray;
 use super::limits::{self, TraceBufferSizes, TraceLimitError};
 use super::scene::{RecordLayout, TraceScene, TraceStats};
+use super::upload::TraceUpload;
 use crate::context::GpuContext;
 use crate::render::texture::create_sampler;
 use crate::render::{bind_layout, buffer_desc};
@@ -39,6 +37,38 @@ impl TraceSceneInfo {
             srgb_layer_size: scene.srgb.size,
             linear_layer_size: scene.linear.size,
             flags: 0,
+        }
+    }
+}
+
+/// The scene's buffers at their full sizes, made empty and filled by [`TraceUpload`].
+pub(super) struct SceneBuffers {
+    pub(super) records: wgpu::Buffer,
+    pub(super) node_max: wgpu::Buffer,
+    pub(super) triangles: wgpu::Buffer,
+    pub(super) positions: wgpu::Buffer,
+    pub(super) vertices: wgpu::Buffer,
+    pub(super) vertex_extras: wgpu::Buffer,
+    pub(super) info: wgpu::Buffer,
+}
+
+impl SceneBuffers {
+    pub(super) fn allocate(device: &wgpu::Device, scene: &TraceScene) -> Self {
+        let sizes = TraceBufferSizes::of(scene);
+        let storage =
+            |label: &str, bytes: u64| buffer_desc::storage_dst(device, label, bytes.max(16));
+        Self {
+            records: storage("tracer_records", sizes.records),
+            node_max: storage("tracer_node_max", sizes.node_max),
+            triangles: storage("tracer_triangles", sizes.triangles),
+            positions: storage("tracer_positions", sizes.positions),
+            vertices: storage("tracer_vertices", sizes.vertices),
+            vertex_extras: storage("tracer_vertex_extras", sizes.vertex_extras),
+            info: buffer_desc::uniform(
+                device,
+                "tracer_info",
+                std::mem::size_of::<TraceSceneInfo>() as u64,
+            ),
         }
     }
 }
@@ -91,40 +121,21 @@ impl TraceGpuScene {
         })
     }
 
-    /// Uploads `scene`, or says which limit of this device it exceeds.
+    /// Uploads `scene` in one go, or says which limit of this device it exceeds; [`TraceUpload`] spreads it over frames.
     pub fn upload(gpu: &GpuContext, scene: &TraceScene) -> Result<Self, TraceLimitError> {
-        limits::check(scene, &gpu.device.limits())?;
+        let mut upload = TraceUpload::new(gpu, scene)?;
+        upload.step(gpu, scene, u64::MAX);
+        Ok(upload.finish(gpu, scene))
+    }
+
+    /// The scene over buffers [`TraceUpload`] filled, with its top level written now.
+    pub(super) fn from_buffers(
+        gpu: &GpuContext,
+        scene: &TraceScene,
+        buffers: SceneBuffers,
+        layers: [wgpu::TextureView; 2],
+    ) -> Self {
         let device = &gpu.device;
-        let [records, node_max] = record_buffers(gpu, scene);
-        let vertices = half_buffer(gpu, "tracer_vertices", &scene.vertices, 0);
-        let vertex_extras = half_buffer(gpu, "tracer_vertex_extras", &scene.vertices, 1);
-        let storage = |label: &str, bytes: &[u8]| {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents: if bytes.is_empty() { &[0; 16] } else { bytes },
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            })
-        };
-        let triangles = storage("tracer_triangles", bytemuck::cast_slice(&scene.triangles));
-        let positions = storage("tracer_positions", bytemuck::cast_slice(&scene.positions));
-        let info = buffer_desc::uniform(
-            device,
-            "tracer_info",
-            std::mem::size_of::<TraceSceneInfo>() as u64,
-        );
-        let layers = [
-            (
-                &scene.srgb,
-                wgpu::TextureFormat::Rgba8UnormSrgb,
-                "tracer_srgb_layers",
-            ),
-            (
-                &scene.linear,
-                wgpu::TextureFormat::Rgba8Unorm,
-                "tracer_linear_layers",
-            ),
-        ]
-        .map(|(array, format, label)| upload_layers(gpu, array, format, label));
         let samplers = [false, true].map(|nearest| {
             create_sampler(
                 device,
@@ -136,9 +147,22 @@ impl TraceGpuScene {
                 },
             )
         });
-        let buffers = [&records, &triangles, &positions, &vertices, &info];
-        let extra = [&node_max, &vertex_extras];
-        let bind_group = create_bind_group(device, (buffers, extra), &layers, &samplers);
+        let SceneBuffers {
+            records,
+            node_max,
+            triangles,
+            positions,
+            vertices,
+            vertex_extras,
+            info,
+        } = buffers;
+        let main = [&records, &triangles, &positions, &vertices, &info];
+        let bind_group = create_bind_group(
+            device,
+            (main, [&node_max, &vertex_extras]),
+            &layers,
+            &samplers,
+        );
         let uploaded = Self {
             records,
             node_max,
@@ -154,7 +178,7 @@ impl TraceGpuScene {
             stats: scene.stats.clone(),
         };
         uploaded.write_top_level(gpu, scene);
-        Ok(uploaded)
+        uploaded
     }
 
     /// Rebuilds the records after a new instance count ([`super::scene::InstanceChange::Recounted`]); the vertex buffers stay.
@@ -280,18 +304,11 @@ fn record_buffers(gpu: &GpuContext, scene: &TraceScene) -> [wgpu::Buffer; 2] {
     [records, node_max]
 }
 
-/// A storage buffer of one half of each of `entries`.
-fn half_buffer(gpu: &GpuContext, label: &str, entries: &[[u32; 8]], half: usize) -> wgpu::Buffer {
-    let buffer = buffer_desc::storage_dst(&gpu.device, label, (entries.len() as u64 * 16).max(16));
-    write_half(&gpu.queue, &buffer, 0, entries, half);
-    buffer
-}
-
 /// Float4 slots [`write_half`] deinterleaves per call: 1 MiB.
-const WRITE_CHUNK: usize = 1 << 16;
+pub(super) const WRITE_CHUNK: usize = 1 << 16;
 
 /// Writes one float4 half of each entry, a node's or a packed vertex's, from slot `first` on, a chunk at a time.
-fn write_half(
+pub(super) fn write_half(
     queue: &wgpu::Queue,
     buffer: &wgpu::Buffer,
     first: usize,
@@ -339,63 +356,5 @@ fn create_bind_group(
         label: Some("tracer_scene"),
         layout: &TraceGpuScene::bind_group_layout(device),
         entries: &entries,
-    })
-}
-
-/// One array texture with every layer's mip chain written.
-fn upload_layers(
-    gpu: &GpuContext,
-    array: &LayerArray,
-    format: wgpu::TextureFormat,
-    label: &str,
-) -> wgpu::TextureView {
-    let size = array.size.max(1);
-    let layers = array.layers.len().max(1) as u32;
-    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-        // TEXTURE_2D_SHAPE_OK: an array of material layers, not the single-layer shape of create_2d_texture.
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: layers,
-        },
-        mip_level_count: array.mip_count(),
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    for (layer, levels) in array.layers.iter().enumerate() {
-        for (level, data) in levels.iter().enumerate() {
-            let side = (size >> level).max(1);
-            gpu.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: level as u32,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: layer as u32,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                data,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * side),
-                    rows_per_image: Some(side),
-                },
-                wgpu::Extent3d {
-                    width: side,
-                    height: side,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
-    }
-    texture.create_view(&wgpu::TextureViewDescriptor {
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        ..Default::default()
     })
 }

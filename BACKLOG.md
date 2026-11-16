@@ -139,10 +139,6 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       only dependencies), so building the full Colosseum's BVH in a debug viewer takes about half a minute.
       Owner decision: `[profile.dev.package.kataglyphis_webgpu_renderer] opt-level = 1`.
 
-- [ ] **The tracer uploads in one frame and keeps its CPU arrays** (M). About 0.5 GB for the full Colosseum goes
-      to the GPU in one frame (a hitch), and about 480 MB of CPU arrays stay for queries and top-level rebuilds.
-      Next: spread the upload over frames; free the arrays a build no longer needs.
-
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
       `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially all pass. Re-dispatch
       `windows-arm64-cross.yml` with `parallel-renderer-tests` after a runner image update.

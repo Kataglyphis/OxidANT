@@ -109,6 +109,11 @@ const SOURCES: &[(&str, &str, bool)] = &[
         false,
     ),
     (
+        "render/tracer/upload.rs",
+        include_str!("../src/render/tracer/upload.rs"),
+        false,
+    ),
+    (
         "render/tracer/modes/passes.rs",
         include_str!("../src/render/tracer/modes/passes.rs"),
         false,

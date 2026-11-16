@@ -58,6 +58,10 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../src/render/forward/post.rs"),
     ),
     (
+        "render/forward/reload.rs",
+        include_str!("../src/render/forward/reload.rs"),
+    ),
+    (
         "render/forward/primitive.rs",
         include_str!("../src/render/forward/primitive.rs"),
     ),
@@ -110,6 +114,10 @@ const SOURCES: &[(&str, &str)] = &[
     (
         "render/tracer/gpu.rs",
         include_str!("../src/render/tracer/gpu.rs"),
+    ),
+    (
+        "render/tracer/upload.rs",
+        include_str!("../src/render/tracer/upload.rs"),
     ),
     (
         "render/tracer/debug.rs",

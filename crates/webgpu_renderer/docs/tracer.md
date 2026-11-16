@@ -18,7 +18,8 @@ the limits and the kernel API) and then [the modes](#the-modes). Code: `src/rend
 | `scene` | `TraceScene`: the flat arrays, the top level, the record layout |
 | `build` | `TraceSceneBuilder`: stages, progress, cancellation |
 | `job` | `Tracer` (the lazy build the renderer owns), `TraceStatus`, `RenderMode` |
-| `gpu` | `TraceGpuScene`: upload and the bind group |
+| `gpu` | `TraceGpuScene`: the buffers, the bind group and the writes after the upload |
+| `upload` | `TraceUpload`: the first upload, a byte budget per frame |
 | `limits` | Buffer sizes against device limits; the limits the device requests |
 | `query` | The traversal on the CPU, step for step as the shader runs it |
 | `debug` | `TraceDebugPass`: traces a ray buffer on the GPU (`trace_debug.slang`), for tests |
@@ -30,12 +31,21 @@ the limits and the kernel API) and then [the modes](#the-modes). Code: `src/rend
 uploaded `CpuScene` over with `set_trace_source(Arc<CpuScene>)` (`StudioApp` does for each
 scene it uploads), and the tracer drops it once the traced scene is built. The first frame with `render_mode` traced starts the build: natively on a
 `tracer-build` thread, in the browser `job::WEB_STEP_BUDGET` work units per frame. The frame
-rasters until the scene is uploaded. `trace_status()` (`StudioApp::trace_status`, the
-Renderer tab) reports `Building { stage, fraction }`, `Ready(TraceStats)` or `Failed(why)`;
-a new source cancels a running build at its next stage boundary. Tests and snapshots block
-with `tracer_mut().finish_build(gpu, timeout)`. After the upload the tracer keeps the CPU
-arrays (`cpu_scene()`, for CPU queries and top-level rebuilds) and the sRGB layers' first
-level, which the CPU alpha test reads.
+rasters until the scene is uploaded. The finished scene uploads over frames (`TraceUpload`):
+every buffer and texture array is made at once, then filled at most
+`TraceBuildOptions::upload_bytes_per_frame` a frame (`UPLOAD_BYTES_PER_FRAME`, 64 MiB, so the
+full Colosseum's half gigabyte takes about eight frames instead of one hitch), in pieces of at
+most 64 K entries or one mip level. `trace_status()` (`StudioApp::trace_status`, the
+Renderer tab) reports `Building { stage, fraction }` (the stage `Uploading` meanwhile),
+`Ready(TraceStats)` or `Failed(why)`; a new source cancels a running build at its next stage
+boundary, and `set_instances` during the build or the upload starts it over. Tests and snapshots
+block with `tracer_mut().finish_build(gpu, timeout)`, which uploads in one go. After the upload
+the tracer keeps the nodes, instances and materials, which a new root or instance count rebuilds
+the top level from, and drops the triangles, positions, packed vertices and texels
+(`TraceScene::release_geometry`): for the full Colosseum about 175 MiB of nodes stay of the about
+480 MiB of arrays. A scene with a deformed mesh keeps them, since a pose re-skins and refits from
+them, and `TraceBuildOptions::keep_cpu_geometry` keeps them (and the sRGB layers' first level, which
+the CPU alpha test reads) for CPU queries of the uploaded scene (`cpu_scene()`).
 
 **Two levels.** Primitives with equal vertices, indices and material share one
 object-space mesh, instanced once per copy (the Colosseum's 1112 repeated primitives, its
@@ -117,7 +127,8 @@ size (`TraceLimitError`), which `TraceStatus::Failed` shows. The full Colosseum 
 5.87 M stored triangles, 4.68 M vertices) needs 90 MiB of triangles, 88 MiB for each node half and
 71 MiB for each vertex half: lavapipe (128 MiB) traces it since 2026-11-16, where a node or a
 vertex whole in one binding needed 175 and 143 MiB. Uploads write a split buffer 64 K entries at
-a time, so the CPU arrays are not copied whole once more.
+a time, so the CPU arrays are not copied whole once more; the same pieces spread the first upload
+over frames.
 
 ## Kernel API
 
@@ -272,7 +283,7 @@ explicit instances (a running one starts over). A built scene re-instances an in
 from its template (`TraceScene::templates`, one per instanced primitive, moved with its node) and
 rebuilds the top level (`set_instance_extras`): as many instances as before are rewritten in place,
 a new count (`InstanceChange::Recounted`) gets new records and node-maxima buffers at the new
-layout, with the mesh nodes and materials written again from the CPU arrays, a new scene uniform and
+layout, with the mesh nodes and materials written again from the kept CPU nodes, a new scene uniform and
 bind group; the vertex and triangle buffers and the texture arrays stay. A primitive the build
 merged into the world-space mesh has no instances to change, so it keeps its place until the next
 upload: `Tracer::instances_current()` turns false and the tracer warns once for it. A count whose

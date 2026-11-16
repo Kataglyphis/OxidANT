@@ -1,13 +1,18 @@
 //! The traced scene, built the first time a traced mode wants it: on a worker thread natively, a budget per frame in the browser.
+//! The finished scene then uploads a byte budget per frame, and drops the CPU arrays only the upload read.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::Mat4;
 
-use super::build::{BuildProgress, TraceBuildOptions, TraceProgress, TraceSceneBuilder};
+use super::build::{
+    BuildProgress, TraceBuildOptions, TraceProgress, TraceSceneBuilder, TraceStage,
+};
 use super::gpu::TraceGpuScene;
+use super::limits::{TraceBufferSizes, TraceCounts};
 use super::scene::{InstanceChange, TraceScene, TraceStats};
+use super::upload::TraceUpload;
 use crate::context::GpuContext;
 use crate::scene::CpuScene;
 
@@ -159,6 +164,8 @@ enum State {
     Idle,
     // Boxed: the browser's job holds the whole scene builder inline.
     Building(Box<Job>),
+    /// Built, and going to the GPU a budget a frame.
+    Uploading(Box<(TraceScene, TraceUpload)>),
     Ready(Box<(TraceScene, TraceGpuScene)>),
     Failed(String),
 }
@@ -220,38 +227,76 @@ impl Tracer {
         };
     }
 
-    /// Once per frame: starts the build when `wanted`, and uploads a finished one.
+    /// Once per frame: starts the build when `wanted`, starts the upload of a finished one and continues it.
     pub fn advance(&mut self, gpu: &GpuContext, wanted: bool) {
         if wanted {
             self.request();
         }
-        let State::Building(job) = &mut self.state else {
-            return;
-        };
-        if let Some(result) = job.poll() {
-            self.finish(gpu, result);
+        if let State::Building(job) = &mut self.state {
+            if let Some(result) = job.poll() {
+                self.start_upload(gpu, result);
+            }
         }
+        self.continue_upload(gpu, self.options.upload_bytes_per_frame);
     }
 
-    fn finish(&mut self, gpu: &GpuContext, result: Result<TraceScene, String>) {
-        // Built or refused, the CPU scene is not read again; its memory goes back now.
-        self.source = None;
+    fn start_upload(&mut self, gpu: &GpuContext, result: Result<TraceScene, String>) {
         self.stale_instances.clear();
         self.generation += 1;
-        let root = self.root;
-        let placed = result.map(|mut scene| {
-            if root != Mat4::IDENTITY {
-                scene.set_root_transform(root);
-            }
-            scene
+        let started = result.and_then(|scene| {
+            let upload = TraceUpload::new(gpu, &scene).map_err(|error| error.to_string())?;
+            Ok((scene, upload))
         });
-        self.state = match placed.and_then(|scene| upload(gpu, scene)) {
-            Ok(ready) => State::Ready(Box::new(ready)),
-            Err(why) => {
-                log::warn!("tracer: {why}");
-                State::Failed(why)
-            }
+        self.state = match started {
+            Ok(uploading) => State::Uploading(Box::new(uploading)),
+            Err(why) => self.fail(why),
         };
+    }
+
+    /// Writes up to `budget` bytes of the upload in flight; the last write makes the scene ready.
+    fn continue_upload(&mut self, gpu: &GpuContext, budget: u64) {
+        let State::Uploading(uploading) = &mut self.state else {
+            return;
+        };
+        let (scene, upload) = &mut **uploading;
+        if !upload.step(gpu, scene, budget) {
+            return;
+        }
+        let State::Uploading(uploading) = std::mem::replace(&mut self.state, State::Idle) else {
+            unreachable!("the state was uploading a moment ago");
+        };
+        let (mut scene, upload) = *uploading;
+        // The root may have moved while the upload ran.
+        if self.root != Mat4::IDENTITY {
+            scene.set_root_transform(self.root);
+        }
+        let uploaded = upload.finish(gpu, &scene);
+        self.state = State::Ready(Box::new(self.settle(scene, uploaded)));
+    }
+
+    /// The uploaded scene with what only the upload read dropped, and the source it was built from.
+    fn settle(
+        &mut self,
+        mut scene: TraceScene,
+        uploaded: TraceGpuScene,
+    ) -> (TraceScene, TraceGpuScene) {
+        // The CPU scene is not read again; its memory goes back now.
+        self.source = None;
+        if self.options.keep_cpu_geometry {
+            // The CPU alpha test reads level 0 of the sRGB layers; the GPU holds the rest.
+            scene.srgb.keep_base_level();
+            scene.linear.layers.clear();
+        } else {
+            scene.release_geometry();
+        }
+        log_upload(&scene.stats);
+        (scene, uploaded)
+    }
+
+    fn fail(&mut self, why: String) -> State {
+        self.source = None;
+        log::warn!("tracer: {why}");
+        State::Failed(why)
     }
 
     /// Blocks until the requested build is done and uploaded, at most `timeout`; true when it is ready.
@@ -261,13 +306,14 @@ impl Tracer {
         let deadline = std::time::Instant::now() + timeout;
         while let State::Building(job) = &mut self.state {
             if let Some(result) = job.poll() {
-                self.finish(gpu, result);
+                self.start_upload(gpu, result);
             } else if std::time::Instant::now() >= deadline {
                 return false;
             } else {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         }
+        self.continue_upload(gpu, u64::MAX);
         matches!(self.state, State::Ready(_))
     }
 
@@ -275,6 +321,10 @@ impl Tracer {
         match &self.state {
             State::Idle => TraceStatus::Idle,
             State::Building(job) => TraceStatus::Building(job.progress.snapshot()),
+            State::Uploading(uploading) => TraceStatus::Building(TraceProgress {
+                stage: TraceStage::Uploading,
+                fraction: uploading.1.fraction(),
+            }),
             State::Ready(ready) => TraceStatus::Ready(ready.0.stats.clone()),
             State::Failed(why) => TraceStatus::Failed(why.clone()),
         }
@@ -317,7 +367,8 @@ impl Tracer {
         }
         self.explicit[primitive] = transforms.to_vec();
         let ready = match &mut self.state {
-            State::Building(_) => {
+            // The source is kept until the upload ends, so the build restarts with these instances.
+            State::Building(_) | State::Uploading(_) => {
                 self.state = State::Idle;
                 return;
             }
@@ -397,19 +448,32 @@ impl Tracer {
     }
 }
 
-/// The scene's counts after its instances changed, keeping the build's times.
+/// The scene's counts after its instances changed, keeping the build's times and the uploaded layers.
 fn remeasure(scene: &mut TraceScene) {
-    let (seconds, stages) = (scene.stats.build_seconds, scene.stats.stage_seconds);
-    scene.measure(seconds);
-    scene.stats.stage_seconds = stages;
+    let before = scene.stats.clone();
+    // The layer arrays were trimmed or dropped after the upload; their bytes are the upload's.
+    let layer_bytes = before.gpu_bytes.saturating_sub(buffer_bytes(&before));
+    scene.measure(before.build_seconds);
+    let stats = &mut scene.stats;
+    stats.gpu_bytes = buffer_bytes(stats) + layer_bytes;
+    stats.layers = before.layers;
+    stats.layer_sizes = before.layer_sizes;
+    stats.stage_seconds = before.stage_seconds;
 }
 
-fn upload(gpu: &GpuContext, mut scene: TraceScene) -> Result<(TraceScene, TraceGpuScene), String> {
-    let uploaded = TraceGpuScene::upload(gpu, &scene).map_err(|error| error.to_string())?;
-    // The CPU alpha test reads level 0 of the sRGB layers; the GPU holds the rest.
-    scene.srgb.keep_base_level();
-    scene.linear.layers.clear();
-    let stats = &scene.stats;
+/// The storage buffers' bytes at `stats`' counts.
+fn buffer_bytes(stats: &TraceStats) -> u64 {
+    TraceBufferSizes::of_counts(TraceCounts {
+        nodes: u64::from(stats.nodes),
+        instances: u64::from(stats.instances),
+        materials: u64::from(stats.materials),
+        triangles: stats.unique_triangles,
+        vertices: stats.vertices,
+    })
+    .total()
+}
+
+fn log_upload(stats: &TraceStats) {
     log::info!(
         "tracer: {} triangles ({} stored) in {} instances of {} meshes, {} nodes, {:.1} MiB on the GPU, built in {:?} s",
         stats.triangles,
@@ -420,7 +484,6 @@ fn upload(gpu: &GpuContext, mut scene: TraceScene) -> Result<(TraceScene, TraceG
         stats.gpu_bytes as f64 / f64::from(1u32 << 20),
         stats.build_seconds
     );
-    Ok((scene, uploaded))
 }
 
 #[cfg(test)]

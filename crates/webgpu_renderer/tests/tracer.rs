@@ -9,7 +9,7 @@ use kataglyphis_webgpu_renderer::render::tracer::material::{flags, GpuMaterial, 
 use kataglyphis_webgpu_renderer::render::tracer::query::{TraceRay, STACK_SIZE};
 use kataglyphis_webgpu_renderer::render::tracer::scene::{GpuInstance, INSTANCE_MIRRORED};
 use kataglyphis_webgpu_renderer::render::tracer::{
-    RenderMode, TraceDebugPass, TraceStatus, TRACE_SCENE_GROUP,
+    RenderMode, TraceDebugPass, TraceStage, TraceStats, TraceStatus, TRACE_SCENE_GROUP,
 };
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
@@ -270,6 +270,8 @@ fn the_full_colosseum_traces_on_this_device() {
     let mut renderer = ForwardRenderer::new(&gpu, size, size);
     renderer.upload_scene(&gpu, &scene);
     renderer.set_trace_source(Arc::new(scene));
+    // The CPU traversal below reads the triangles the upload would otherwise drop.
+    renderer.tracer_mut().options.keep_cpu_geometry = true;
     let built = renderer
         .tracer_mut()
         .finish_build(&gpu, Duration::from_secs(3600));
@@ -315,4 +317,137 @@ fn the_full_colosseum_traces_on_this_device() {
         .render_to_pixels(&gpu, size, size, &camera)
         .expect("renders");
     assert_eq!(renderer.drawn_mode(), RenderMode::RayTraced);
+}
+
+fn renderer_tracing(gpu: &GpuContext, asset: &str) -> ForwardRenderer {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/assets")
+        .join(asset);
+    let scene = load_gltf(&path).expect("the test scene loads");
+    let mut renderer = ForwardRenderer::new(gpu, 64, 64);
+    renderer.upload_scene(gpu, &scene);
+    renderer.set_trace_source(Arc::new(scene));
+    renderer
+}
+
+/// Frames until the traced scene is ready, and the upload's fraction on each frame it was uploading.
+fn frames_to_ready(gpu: &GpuContext, renderer: &mut ForwardRenderer) -> Vec<f32> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    let mut fractions = Vec::new();
+    loop {
+        let tracer = renderer.tracer_mut();
+        tracer.advance(gpu, true);
+        match tracer.status() {
+            TraceStatus::Ready(_) => return fractions,
+            TraceStatus::Building(progress) if progress.stage == TraceStage::Uploading => {
+                assert!(tracer.gpu_scene().is_none(), "a half-uploaded scene traced");
+                fractions.push(progress.fraction);
+            }
+            TraceStatus::Building(_) => std::thread::sleep(Duration::from_millis(2)),
+            other => panic!("the build stopped: {other:?}"),
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no traced scene in two minutes"
+        );
+    }
+}
+
+/// A small budget spreads the first upload over frames; the scene then traces as one upload does, without its CPU geometry.
+#[test]
+fn the_first_upload_spreads_over_frames_and_then_frees_the_cpu_geometry() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let asset = "cube_textured.gltf";
+    let mut spread = renderer_tracing(&gpu, asset);
+    spread.tracer_mut().options.upload_bytes_per_frame = 256;
+    let fractions = frames_to_ready(&gpu, &mut spread);
+    eprintln!(
+        "uploaded over {} frames: {fractions:?}",
+        fractions.len() + 1
+    );
+    assert!(
+        fractions.len() >= 4,
+        "the upload took {} frames",
+        fractions.len() + 1
+    );
+    assert!(fractions.windows(2).all(|w| w[0] <= w[1]) && fractions.iter().all(|&f| f < 1.0));
+
+    let mut whole = renderer_tracing(&gpu, asset);
+    whole.tracer_mut().options.keep_cpu_geometry = true;
+    assert!(whole
+        .tracer_mut()
+        .finish_build(&gpu, Duration::from_secs(120)));
+    let (released, kept) = (
+        spread.tracer().cpu_scene().expect("ready"),
+        whole.tracer().cpu_scene().expect("ready"),
+    );
+    assert!(released.geometry_released() && !kept.geometry_released());
+    assert!(
+        released.triangles.is_empty()
+            && released.positions.is_empty()
+            && released.vertices.is_empty()
+    );
+    assert!(released.srgb.layers.is_empty() && !kept.srgb.layers.is_empty());
+    assert_eq!(
+        released.nodes, kept.nodes,
+        "the top level rebuilds from the nodes, so they stay"
+    );
+    let untimed = |stats: &TraceStats| TraceStats {
+        build_seconds: None,
+        stage_seconds: None,
+        ..stats.clone()
+    };
+    assert_eq!(untimed(&released.stats), untimed(&kept.stats));
+
+    let (min, max) = spread.scene_bounds().expect("bounds");
+    let eye = (min + max) * 0.5 + glam::Vec3::new(0.3, 0.4, (max.z - min.z) * 3.0);
+    let rays = rays_through(eye, (min - 0.2, max + 0.2));
+    let pass = TraceDebugPass::new(&gpu.device);
+    let traced = |renderer: &ForwardRenderer| {
+        let scene = renderer.tracer().gpu_scene().expect("uploaded");
+        pass.trace_closest(&gpu, scene, &rays).expect("traces")
+    };
+    let (from_spread, from_whole) = (traced(&spread), traced(&whole));
+    let mut hits = 0;
+    for ((ray, a), b) in rays.iter().zip(&from_spread).zip(&from_whole) {
+        let expected = kept
+            .trace_closest(ray)
+            .map(|hit| (hit.instance, hit.triangle));
+        hits += usize::from(expected.is_some());
+        assert_eq!(
+            (a.instance, a.triangle),
+            (b.instance, b.triangle),
+            "{ray:?}"
+        );
+        assert_eq!(
+            a.is_hit().then_some((a.instance, a.triangle)),
+            expected,
+            "{ray:?}"
+        );
+    }
+    assert!(
+        hits > rays.len() / 4,
+        "only {hits} of {} rays hit the cube",
+        rays.len()
+    );
+}
+
+/// A mesh an animation deforms is re-posed from the triangles and vertices, so those stay after the upload.
+#[test]
+fn a_scene_with_a_deformed_mesh_keeps_its_cpu_geometry() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut renderer = renderer_tracing(&gpu, "skinned_bar.gltf");
+    assert!(renderer
+        .tracer_mut()
+        .finish_build(&gpu, Duration::from_secs(120)));
+    let scene = renderer.tracer().cpu_scene().expect("ready");
+    assert!(
+        !scene.deformed.is_empty(),
+        "skinned_bar.gltf must deform, or this test proves nothing"
+    );
+    assert!(!scene.geometry_released() && !scene.triangles.is_empty());
 }

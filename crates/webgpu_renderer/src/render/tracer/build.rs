@@ -20,6 +20,8 @@ pub enum TraceStage {
     Bvh,
     Textures,
     Assembling,
+    /// Not a build stage: the finished scene going to the GPU over a few frames.
+    Uploading,
 }
 
 impl TraceStage {
@@ -31,6 +33,7 @@ impl TraceStage {
             Self::Bvh => "building BVHs",
             Self::Textures => "resampling textures",
             Self::Assembling => "assembling",
+            Self::Uploading => "uploading to the GPU",
         }
     }
 }
@@ -91,6 +94,10 @@ pub struct TraceBuildOptions {
     pub layer_budget: u64,
     pub max_layers: usize,
     pub threads: usize,
+    /// Bytes the first upload writes a frame, at least one piece.
+    pub upload_bytes_per_frame: u64,
+    /// Keeps the triangles, vertices and texels on the CPU after the upload, for CPU queries of the uploaded scene.
+    pub keep_cpu_geometry: bool,
 }
 
 impl Default for TraceBuildOptions {
@@ -106,6 +113,8 @@ impl Default for TraceBuildOptions {
             } else {
                 std::thread::available_parallelism().map_or(1, usize::from)
             },
+            upload_bytes_per_frame: super::upload::UPLOAD_BYTES_PER_FRAME,
+            keep_cpu_geometry: false,
         }
     }
 }

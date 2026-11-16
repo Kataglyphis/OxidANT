@@ -144,6 +144,8 @@ pub struct TraceScene {
     pub templates: Vec<InstanceSource>,
     pub(crate) root: Mat4,
     pub stats: TraceStats,
+    /// The triangle and vertex counts once [`TraceScene::release_geometry`] dropped those arrays.
+    pub(crate) released: Option<[u64; 2]>,
 }
 
 impl TraceScene {
@@ -327,6 +329,37 @@ impl TraceScene {
         }
     }
 
+    /// Triangles stored, released or not.
+    pub fn triangle_count(&self) -> u64 {
+        self.released
+            .map_or(self.triangles.len() as u64, |[triangles, _]| triangles)
+    }
+
+    /// Vertices stored, released or not.
+    pub fn vertex_count(&self) -> u64 {
+        self.released
+            .map_or(self.positions.len() as u64, |[_, vertices]| vertices)
+    }
+
+    /// Whether the triangles, vertices and texture texels went after the upload: CPU queries need them.
+    pub fn geometry_released(&self) -> bool {
+        self.released.is_some()
+    }
+
+    /// Drops what only the upload and CPU queries read; a deformed mesh is re-posed from them, so they stay then.
+    /// The nodes, instances and materials stay: a new root or instance count rebuilds the top level from them.
+    pub fn release_geometry(&mut self) {
+        if !self.deformed.is_empty() || self.released.is_some() {
+            return;
+        }
+        self.released = Some([self.triangle_count(), self.vertex_count()]);
+        self.triangles = Vec::new();
+        self.positions = Vec::new();
+        self.vertices = Vec::new();
+        self.srgb.layers = Vec::new();
+        self.linear.layers = Vec::new();
+    }
+
     /// Fills in [`TraceScene::stats`] from the arrays.
     pub fn measure(&mut self, build_seconds: Option<f64>) {
         let triangles = self
@@ -338,8 +371,8 @@ impl TraceScene {
             TraceBufferSizes::of(self).total() + self.srgb.byte_size() + self.linear.byte_size();
         self.stats = TraceStats {
             triangles,
-            unique_triangles: self.triangles.len() as u64,
-            vertices: self.positions.len() as u64,
+            unique_triangles: self.triangle_count(),
+            vertices: self.vertex_count(),
             meshes: self.meshes.len() as u32,
             instances: self.instances.len() as u32,
             nodes: self.nodes.len() as u32,

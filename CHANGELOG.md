@@ -13,6 +13,23 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, the traced scene uploads over frames and frees its CPU geometry)
+- **The first upload of a traced scene spreads over frames.** `TraceUpload` (`render/tracer/upload.rs`) makes every
+  buffer and texture array at once, then writes at most `TraceBuildOptions::upload_bytes_per_frame` a frame
+  (`UPLOAD_BYTES_PER_FRAME`, 64 MiB: the full Colosseum's half gigabyte in about eight frames, not one), in pieces of at
+  most 64 K entries or one mip level; the frame rasters meanwhile and `TraceStatus::Building` reports
+  `TraceStage::Uploading` with the share written. `set_instances` during the upload restarts the build as during the
+  build, and a model transform set meanwhile reaches the top level when the upload ends. `TraceGpuScene::upload` and
+  `finish_build` still upload in one go.
+- **After the upload the CPU keeps only what the top level is rebuilt from.** `TraceScene::release_geometry` drops the
+  triangles, positions, packed vertices and texels (the full Colosseum: about 175 MiB of nodes stay of about 480 MiB),
+  unless a mesh deforms, which re-poses from them, or `TraceBuildOptions::keep_cpu_geometry` keeps them for CPU queries;
+  `triangle_count`, `vertex_count` and the stats keep the counts, and a recount keeps the uploaded layers' bytes.
+- Tests: `tests/tracer.rs` uploads a textured cube at 256 bytes a frame over 8 frames, untraced until the last, then
+  finds its CPU geometry gone, its nodes and stats equal to a one-shot upload's and every one of 1600 rays hitting the
+  same triangle on both GPUs and on the CPU; a skinned bar keeps its geometry. Mutants: ignoring the budget, never
+  writing the triangles and never releasing each fail it.
+
 ### Fixed (2026-11-16, no tofu in egui's debug windows)
 - **egui's Style editor and inspection windows draw their symbols.** Two subsets of the fonts egui itself ships
   (epaint_default_fonts 0.37.0) follow Roboto and Cousine in both families: Noto Emoji (OFL-1.1) cut to the 18 symbols
