@@ -1,5 +1,5 @@
-//! One streamed material texture: the levels its GPU texture holds, the CPU chain it steps from, and a finer
-//! step. Which steps run is `streaming.rs`; the policy is `render/texture_stream.rs`.
+//! One streamed material texture: the levels its GPU texture holds, the CPU chain it steps from, and a step
+//! in either direction. Which steps run is `streaming.rs`; the policy is `render/texture_stream.rs`.
 
 use crate::context::GpuContext;
 use crate::render::texture::{chain_texture, copy_level, write_chain, write_level};
@@ -20,6 +20,7 @@ pub(super) struct StreamUser {
 pub(super) struct StepCounters {
     pub(super) written: u64,
     pub(super) copied: u64,
+    pub(super) evictions: u64,
 }
 
 /// One GPU material texture and the slots that sample it.
@@ -32,12 +33,16 @@ pub(super) struct StreamedTexture {
     level_bytes: Vec<u64>,
     /// Levels that can be the texture's level 0, finest first.
     pub(super) candidates: Vec<usize>,
+    /// The upload's base: eviction never drops past it.
+    pub(super) tail: usize,
     /// The chain level the GPU texture's level 0 holds.
     pub(super) base: usize,
-    /// The CPU levels, until the finest is resident.
+    /// The CPU levels, while streaming may step this texture again.
     chain: Option<LevelChain>,
     /// This backend copies the format between textures.
     copies_allowed: bool,
+    /// Frames in a row this texture has held more than it needs.
+    pub(super) over_frames: u32,
     pub(super) users: Vec<StreamUser>,
 }
 
@@ -61,11 +66,8 @@ impl StreamedTexture {
             log::warn!("{label}: {w}x{h} exceeds the device's {max_side}-texel side; uploaded at {fw}x{fh}");
         }
         let sizes = chain.sizes();
-        let base = if streaming.enabled {
-            initial_base(&candidates, &sizes, streaming.tail_side)?
-        } else {
-            finest
-        };
+        let tail = initial_base(&candidates, &sizes, streaming.tail_side)?;
+        let base = if streaming.enabled { tail } else { finest };
         Some(Self {
             texture: write_chain(gpu, &chain, base, Some(&label)),
             label,
@@ -73,9 +75,12 @@ impl StreamedTexture {
             level_bytes: chain.levels.iter().map(|l| l.data.len() as u64).collect(),
             sizes,
             candidates,
+            tail,
             base,
             copies_allowed: gpu_copy_allowed(gpu.adapter_info.backend, chain.format),
-            chain: (base != finest).then_some(chain),
+            // Off, or a tail that is its finest level, never steps again.
+            chain: (streaming.enabled && tail != finest).then_some(chain),
+            over_frames: 0,
             users: Vec::new(),
         })
     }
@@ -97,6 +102,15 @@ impl StreamedTexture {
         self.level_bytes[level..].iter().sum()
     }
 
+    /// Whether a later step can stream back what an eviction drops.
+    pub(super) fn holds_chain(&self) -> bool {
+        self.chain.is_some()
+    }
+
+    pub(super) fn drop_chain(&mut self) {
+        self.chain = None;
+    }
+
     /// Whether a step to `base` copies the resident levels rather than writing them.
     fn copies(&self, gpu_copies: bool) -> bool {
         gpu_copies && self.copies_allowed
@@ -107,7 +121,7 @@ impl StreamedTexture {
         self.bytes_from(base)
     }
 
-    /// Replaces the GPU texture with one whose finer level 0 is chain level `base`; drops the chain once that is the finest.
+    /// Replaces the GPU texture with one whose level 0 is chain level `base`, finer or coarser.
     /// Levels the old texture holds are copied on the GPU when `gpu_copies` and the backend allow it.
     pub(super) fn step(
         &mut self,
@@ -124,11 +138,9 @@ impl StreamedTexture {
         let Some(texture) = texture else {
             return false;
         };
+        counters.evictions += u64::from(base > self.base);
         self.texture = texture;
         self.base = base;
-        if base == self.finest() {
-            self.chain = None;
-        }
         true
     }
 

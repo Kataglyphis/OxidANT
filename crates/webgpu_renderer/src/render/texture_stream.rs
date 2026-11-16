@@ -15,16 +15,19 @@ pub struct TextureStreaming {
     pub tail_side: u32,
     /// Bytes one frame may write into streamed textures; the first step always runs, so a larger level still lands.
     pub bytes_per_frame: u64,
+    /// Frames a texture must hold more than one level finer than any user needs before it drops one; 0 never evicts.
+    pub evict_after_frames: u32,
     /// A step copies the levels already resident on the GPU instead of writing them again from the CPU.
     pub gpu_copies: bool,
 }
 
 impl TextureStreaming {
-    /// The interactive app's choice: a 128-texel tail, 8 MiB a frame, resident levels copied on the GPU.
+    /// The interactive app's choice: a 128-texel tail, 8 MiB a frame, eviction after two seconds at 60 Hz.
     pub const INTERACTIVE: Self = Self {
         enabled: true,
         tail_side: 128,
         bytes_per_frame: 8 << 20,
+        evict_after_frames: 120,
         gpu_copies: true,
     };
 }
@@ -54,6 +57,8 @@ pub struct TextureResidency {
     pub step_written_bytes: u64,
     /// Bytes steps have copied between GPU textures since the upload.
     pub step_copied_bytes: u64,
+    /// Steps that dropped a level since the upload.
+    pub evictions: u64,
 }
 
 /// One level of a [`LevelChain`].
@@ -119,6 +124,37 @@ pub(crate) fn next_base(candidates: &[usize], resident: usize, wanted: usize) ->
         return None;
     }
     candidates.iter().copied().rfind(|&level| level < resident)
+}
+
+/// Levels a texture may hold finer than its users need before it drops one.
+pub(crate) const EVICTION_MARGIN: usize = 1;
+
+/// The next candidate coarser than `resident`, when it holds more than [`EVICTION_MARGIN`] levels finer than `wanted`.
+/// Never coarser than `wanted` itself, which would stream it back, nor than the upload's `tail`.
+pub(crate) fn coarser_base(
+    candidates: &[usize],
+    resident: usize,
+    wanted: usize,
+    tail: usize,
+) -> Option<usize> {
+    if resident.saturating_add(EVICTION_MARGIN) >= wanted {
+        return None;
+    }
+    candidates
+        .iter()
+        .copied()
+        .find(|&level| level > resident)
+        .filter(|&level| level <= wanted && level <= tail)
+}
+
+/// Frames in a row a texture has wanted to drop a level; it drops one a frame once `after` is reached.
+pub(crate) fn evict_now(over_frames: &mut u32, wants_coarser: bool, after: u32) -> bool {
+    if !wants_coarser || after == 0 {
+        *over_frames = 0;
+        return false;
+    }
+    *over_frames = over_frames.saturating_add(1);
+    *over_frames >= after
 }
 
 /// Whether a step may copy resident levels between GPU textures: GL copies no compressed texture.
@@ -196,10 +232,12 @@ pub(crate) fn distance_to_aabb(eye: Vec3, min: Vec3, max: Vec3) -> f32 {
     (eye.clamp(min, max) - eye).length()
 }
 
-/// One texture's case for a finer level this frame.
+/// One texture's case for a finer, or with `finer` false a coarser, level this frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StreamRequest {
     pub(crate) id: usize,
+    /// A finer step; an eviction otherwise, which runs after every finer step.
+    pub(crate) finer: bool,
     /// A user is in the camera frustum.
     pub(crate) visible: bool,
     /// Levels between the resident base and the wanted one.
@@ -208,12 +246,13 @@ pub(crate) struct StreamRequest {
     pub(crate) step_bytes: u64,
 }
 
-/// The requests one frame runs: visible first, then the furthest short, then the cheapest.
+/// The requests one frame runs: finer steps before evictions, visible first, then the furthest off, then the cheapest.
 /// Greedy within `budget`; the first always runs, so no level is too large to ever land.
 pub(crate) fn plan_steps(mut requests: Vec<StreamRequest>, budget: u64) -> Vec<usize> {
     requests.sort_by(|a, b| {
-        b.visible
-            .cmp(&a.visible)
+        b.finer
+            .cmp(&a.finer)
+            .then(b.visible.cmp(&a.visible))
             .then(b.levels_short.cmp(&a.levels_short))
             .then(a.step_bytes.cmp(&b.step_bytes))
             .then(a.id.cmp(&b.id))
@@ -350,6 +389,7 @@ mod tests {
     fn request(id: usize, visible: bool, levels_short: usize, step_bytes: u64) -> StreamRequest {
         StreamRequest {
             id,
+            finer: true,
             visible,
             levels_short,
             step_bytes,
@@ -375,6 +415,53 @@ mod tests {
         let requests = vec![request(7, true, 1, 1 << 30), request(8, true, 1, 1 << 30)];
         assert_eq!(plan_steps(requests, 1 << 20), vec![7]);
         assert!(plan_steps(Vec::new(), 1 << 20).is_empty());
+    }
+
+    #[test]
+    fn evictions_run_after_every_finer_step() {
+        let evict = |id, bytes| StreamRequest {
+            finer: false,
+            ..request(id, false, 3, bytes)
+        };
+        let requests = vec![evict(0, 5), request(1, false, 1, 40), evict(2, 1)];
+        assert_eq!(plan_steps(requests.clone(), 46), vec![1, 2, 0]);
+        assert_eq!(plan_steps(requests.clone(), 41), vec![1, 2]);
+        // The first runs whatever its kind, so a frame with only evictions still drops one.
+        assert_eq!(plan_steps(vec![evict(4, 1 << 30)], 1), vec![4]);
+    }
+
+    #[test]
+    fn a_texture_drops_a_level_only_past_the_margin() {
+        let candidates = [0, 1, 2, 3, 4];
+        // One level finer than needed is within the margin: no eviction, no thrash at a boundary.
+        assert_eq!(coarser_base(&candidates, 1, 2, 3), None);
+        assert_eq!(coarser_base(&candidates, 1, 1, 3), None);
+        assert_eq!(coarser_base(&candidates, 1, 0, 3), None);
+        assert_eq!(coarser_base(&candidates, 1, 3, 3), Some(2));
+        assert_eq!(coarser_base(&candidates, 0, usize::MAX, 3), Some(1));
+        // The upload's tail stays: never coarser than it.
+        assert_eq!(coarser_base(&candidates, 3, usize::MAX, 3), None);
+        // A gap that would cross the wanted level is not taken: the texture would stream straight back.
+        assert_eq!(coarser_base(&[0, 3], 0, 2, 3), None);
+        assert_eq!(coarser_base(&[0, 3], 0, 3, 3), Some(3));
+    }
+
+    #[test]
+    fn an_eviction_waits_for_its_frames_and_resets_when_the_need_returns() {
+        let mut over = 0;
+        let run: Vec<bool> = [true, true, true, true]
+            .iter()
+            .map(|&w| evict_now(&mut over, w, 3))
+            .collect();
+        assert_eq!(run, [false, false, true, true]);
+        assert!(!evict_now(&mut over, false, 3));
+        assert_eq!(over, 0);
+        assert!(!evict_now(&mut over, true, 3), "the wait starts over");
+        assert!(!evict_now(&mut over, true, 0), "0 never evicts");
+        assert_eq!(over, 0);
+        // Alternating need never reaches the wait: a camera hovering at a boundary does not thrash.
+        let mut over = 0;
+        assert!((0..100).all(|i| !evict_now(&mut over, i % 2 == 0, 2)));
     }
 
     #[test]

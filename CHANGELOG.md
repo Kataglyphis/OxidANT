@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, streamed textures drop the levels the camera left behind)
+- **Eviction** (`render/texture_stream.rs`, `coarser_base`, `evict_now`): a texture holding more than one level
+  finer than any user needs (the margin, `EVICTION_MARGIN`) for `TextureStreaming::evict_after_frames` frames in a
+  row (120 in `INTERACTIVE`, two seconds at 60 Hz; 0 never evicts) drops one level a frame, never past its upload's
+  tail and never past the level it wants. Evictions share the frame's byte budget and run after every finer step;
+  with the copy path an eviction copies its levels and writes nothing from the CPU. The margin keeps a camera at a
+  level boundary from thrashing, the frame count one that comes and goes. A streaming texture now keeps its CPU
+  chain for as long as streaming is on, since an evicted level may be needed again. `TextureResidency::evictions`
+  counts them.
+- **Measured** (`tests/texture_streaming.rs`, lavapipe): sixteen 1024x1024 RGBA8 textures, all resident (85.3 MiB),
+  then the camera flies 400 units away. Residency per frame: 61.3, 37.3, 13.3, 3.3, then the 1.33 MiB tails from the
+  fifth frame on, in 48 evictions that copied 29.3 MiB and wrote nothing. A texture evicted to its tail and streamed
+  back renders byte-identical to the whole upload.
+
 ### Changed (2026-11-16, a streaming step copies the resident levels on the GPU)
 - **A finer step writes only its new levels** (`render/forward/streamed_texture.rs`): the new texture gets the
   levels the old one lacks from the CPU chain and the rest by `copy_texture_to_texture` from the old texture, in one

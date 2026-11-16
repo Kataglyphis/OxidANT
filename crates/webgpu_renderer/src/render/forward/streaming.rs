@@ -12,8 +12,8 @@ use super::ForwardRenderer;
 use crate::context::GpuContext;
 use crate::render::texture::{create_sampler, material_chain, material_view};
 use crate::render::texture_stream::{
-    distance_to_aabb, max_axis_scale, next_base, plan_steps, uv_density, uv_transform_scale,
-    wanted_level, StreamRequest, TextureResidency, TextureStreaming,
+    coarser_base, distance_to_aabb, evict_now, max_axis_scale, next_base, plan_steps, uv_density,
+    uv_transform_scale, wanted_level, StreamRequest, TextureResidency, TextureStreaming,
 };
 use crate::scene::{CpuPrimitive, CpuSampler, CpuTextureRef};
 
@@ -42,6 +42,7 @@ impl MaterialTextures {
             full_bytes: entries.iter().map(|e| e.bytes_from(e.finest())).sum(),
             step_written_bytes: self.counters.written,
             step_copied_bytes: self.counters.copied,
+            evictions: self.counters.evictions,
         }
     }
 
@@ -144,7 +145,7 @@ impl MaterialTextures {
 }
 
 impl ForwardRenderer {
-    /// Uploads this frame's finer levels: within the budget while streaming, every pending one once it is off.
+    /// This frame's steps: finer levels and evictions within the budget while streaming, every pending level once it is off.
     pub(super) fn stream_textures(&mut self, gpu: &GpuContext, view: &FrameView) {
         let steps = if self.texture_streaming.enabled {
             self.plan_texture_steps(view)
@@ -173,23 +174,34 @@ impl ForwardRenderer {
             .collect()
     }
 
-    /// One step finer for each texture the camera needs sharper, as many as the budget holds.
-    fn plan_texture_steps(&self, view: &FrameView) -> Vec<(usize, usize)> {
+    /// One step finer for each texture the camera needs sharper, then one coarser for each that has held more
+    /// than it needs for long enough, as many as the budget holds.
+    fn plan_texture_steps(&mut self, view: &FrameView) -> Vec<(usize, usize)> {
         // Pixels one world unit covers at distance 1; `projection` carries the dock's viewport remap.
         let pixels_per_unit = view.projection.y_axis.y.abs() * view.height as f32 * 0.5;
         let streaming = self.texture_streaming;
         let mut next = HashMap::new();
         let mut requests = Vec::new();
-        for (id, entry) in self.textures.entries.iter().enumerate() {
+        for (id, entry) in self.textures.entries.iter_mut().enumerate() {
             let (wanted, visible) = texture_need(&self.primitives, entry, view, pixels_per_unit);
-            let Some(base) = next_base(&entry.candidates, entry.base, wanted) else {
+            let finer = next_base(&entry.candidates, entry.base, wanted);
+            // Without its chain a texture could not stream back what it drops.
+            let coarser = coarser_base(&entry.candidates, entry.base, wanted, entry.tail)
+                .filter(|_| entry.holds_chain());
+            let evict = evict_now(
+                &mut entry.over_frames,
+                coarser.is_some(),
+                streaming.evict_after_frames,
+            );
+            let Some(base) = finer.or(coarser.filter(|_| evict)) else {
                 continue;
             };
             next.insert(id, base);
             requests.push(StreamRequest {
                 id,
+                finer: finer.is_some(),
                 visible,
-                levels_short: entry.base - wanted,
+                levels_short: entry.base.abs_diff(wanted),
                 step_bytes: entry.step_bytes(base),
             });
         }
@@ -231,6 +243,13 @@ impl ForwardRenderer {
             }
         }
         gpu.queue.submit([encoder.finish()]);
+        if !streaming.enabled {
+            // Off steps nothing again: the chains are done.
+            textures
+                .entries
+                .iter_mut()
+                .for_each(StreamedTexture::drop_chain);
+        }
         touched.sort_unstable();
         touched.dedup();
         self.rebind_primitives(&gpu.device, &touched);

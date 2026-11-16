@@ -340,6 +340,83 @@ fn frames(
     last
 }
 
+/// Streaming that evicts after two frames, so a test sees it without a hundred renders.
+const QUICK_EVICTION: TextureStreaming = TextureStreaming {
+    evict_after_frames: 2,
+    ..TextureStreaming::INTERACTIVE
+};
+
+#[test]
+fn moving_away_drops_the_finer_levels_and_coming_back_restreams_them() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = cube_with(checker(1024, 70));
+    let near = camera_at(1.0);
+    let mut whole = ForwardRenderer::new(&gpu, SIZE, SIZE);
+    whole.upload_scene(&gpu, &scene);
+    let expected = render(&mut whole, &gpu, &near);
+    let cpu_path = TextureStreaming {
+        gpu_copies: false,
+        ..QUICK_EVICTION
+    };
+    for streaming in [QUICK_EVICTION, cpu_path] {
+        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut renderer = renderer_with(&gpu, &scene, streaming);
+        frames(&mut renderer, &gpu, &near, 4);
+        let full = renderer.texture_residency();
+        assert_eq!(full.resident_bytes, full.full_bytes);
+
+        // Far away, after the two-frame wait, one level a frame back to the tail, and never past it.
+        let far = camera_at(200.0);
+        let mut resident = Vec::new();
+        for _ in 0..6 {
+            render(&mut renderer, &gpu, &far);
+            resident.push(renderer.texture_residency().resident_bytes);
+        }
+        let steps = [1024, 512, 256, 128, 128, 128].map(rgba8_chain_bytes);
+        assert_eq!(
+            resident, steps,
+            "a wait of two frames, then one level a frame"
+        );
+        let evicted = renderer.texture_residency();
+        assert_eq!((evicted.evictions, evicted.streaming), (3, 1));
+        // A copied eviction writes nothing from the CPU.
+        assert_eq!(
+            evicted.step_written_bytes == full.step_written_bytes,
+            streaming.gpu_copies
+        );
+
+        let back = frames(&mut renderer, &gpu, &near, 4);
+        assert_eq!(renderer.texture_residency().streaming, 0);
+        assert!(
+            back == expected,
+            "a texture evicted and streamed back must render as the whole upload"
+        );
+        let error = pollster::block_on(scope.pop());
+        assert!(error.is_none(), "eviction failed validation: {error:?}");
+    }
+}
+
+#[test]
+fn a_camera_at_the_boundary_does_not_thrash() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut renderer = renderer_with(&gpu, &cube_with(checker(1024, 0)), QUICK_EVICTION);
+    frames(&mut renderer, &gpu, &camera_at(1.0), 4);
+    // A small range stays within the margin; far every other frame restarts the wait each time.
+    for (near, far) in [(1.0, 1.6), (1.0, 200.0)] {
+        for i in 0..12 {
+            let radius = if i % 2 == 0 { near } else { far };
+            render(&mut renderer, &gpu, &camera_at(radius));
+        }
+    }
+    let residency = renderer.texture_residency();
+    assert_eq!(residency.evictions, 0, "{residency:?}");
+    assert_eq!(residency.resident_bytes, residency.full_bytes);
+}
+
 /// The copy path and the CPU path end in the same frame; the copy path writes only each step's new level.
 #[test]
 fn copying_resident_levels_renders_identically_and_writes_only_the_new_level() {
@@ -377,4 +454,36 @@ fn copying_resident_levels_renders_identically_and_writes_only_the_new_level() {
         assert_eq!(w.step_copied_bytes, 0);
         assert!(c.step_written_bytes * 10 < w.step_written_bytes * 8);
     }
+}
+
+/// The measured effect of eviction: sixteen 1024-texel textures, all resident, then the camera flies away.
+/// Prints residency per frame; the 8 MiB budget spreads the evictions over a few frames.
+#[test]
+fn a_fly_away_returns_residency_to_the_tail() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = sixteen_cubes(|i| checker(1024, (i * 15) as u8));
+    let mut renderer = renderer_with(&gpu, &scene, QUICK_EVICTION);
+    let row = |radius| OrbitCamera {
+        target: Vec3::new(15.0, 0.0, 0.0),
+        ..camera_at(radius)
+    };
+    renderer.finish_texture_streaming(&gpu);
+    render(&mut renderer, &gpu, &row(4.0));
+    let close = renderer.texture_residency();
+    assert_eq!(close.resident_bytes, close.full_bytes);
+    let mut trace = vec![mib(close.resident_bytes)];
+    for _ in 0..12 {
+        render(&mut renderer, &gpu, &row(400.0));
+        trace.push(mib(renderer.texture_residency().resident_bytes));
+    }
+    let away = renderer.texture_residency();
+    eprintln!(
+        "16 x 1024^2 RGBA8 fly-away, MiB resident per frame: {trace:.2?}; {} evictions, \
+         {} B copied, {} B written by steps",
+        away.evictions, away.step_copied_bytes, away.step_written_bytes
+    );
+    assert_eq!(away.resident_bytes, 16 * rgba8_chain_bytes(128));
+    assert!(close.resident_bytes > 20 * away.resident_bytes);
 }
