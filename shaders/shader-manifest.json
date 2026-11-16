@@ -310,6 +310,14 @@
       ]
     },
     {
+      "file": "clouds/cloud_march.slang",
+      "entry": "fs_upsample",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
       "_comment": "CI guard: the shared cloud module emits SPIR-V as the C++ engine's clouds_main imports it.",
       "file": "tests/volumetric_clouds_test.slang",
       "entry": "clouds_test_main",

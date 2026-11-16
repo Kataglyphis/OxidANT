@@ -35,6 +35,11 @@ fn steps(ui: &mut Ui, clouds: &mut CloudSettings) {
     property_row(ui, "Light steps", Some(tooltip), |ui| {
         ui.add(FillSlider::new(&mut clouds.light_steps, LIGHT_STEPS))
     });
+    let tooltip =
+        "March a quarter of the pixels and fill the rest by depth: faster, softer at cloud edges";
+    property_row(ui, "Half resolution", Some(tooltip), |ui| {
+        toggle(ui, &mut clouds.half_resolution)
+    });
 }
 
 fn shape(ui: &mut Ui, clouds: &mut CloudSettings) {

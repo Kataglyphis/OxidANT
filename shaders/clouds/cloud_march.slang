@@ -12,7 +12,7 @@ struct CloudFrame
     // The sun's colour times its intensity.
     float4 sun_radiance;
     CloudParams params;
-    // x: 1.0 while depthSpread holds this frame's MSAA spread, the forward path's.
+    // x: 1.0 while depthSpread holds this frame's MSAA spread, the forward path's; y: 1.0 for a half-resolution march.
     float4 depth_spread;
     // The mean radiance of the sky this frame draws, over its upper (top) and lower (bottom) hemisphere.
     float4 ambient_top;
@@ -25,6 +25,8 @@ struct CloudFrame
 [vk::binding(3, 0)] Texture2D<float4> sceneDepth;
 // The farthest MSAA sample and the share of samples at it, from depth_resolve.slang.
 [vk::binding(4, 0)] Texture2D<float4> depthSpread;
+// The half-resolution march, which only fs_upsample reads.
+[vk::binding(5, 0)] Texture2D<float4> halfClouds;
 
 struct SampledNoise : ICloudNoise
 {
@@ -34,6 +36,21 @@ struct SampledNoise : ICloudNoise
         return noiseTex.SampleLevel(noiseSampler, uvw, 0.0);
     }
 };
+
+// The nearest scene depth of the 2x2 pixels a half-resolution texel covers; fs_upsample recomputes it, so no target holds it.
+float half_texel_depth(int2 texel)
+{
+    uint width, height;
+    sceneDepth.GetDimensions(width, height);
+    int2 last = int2(int(width), int(height)) - 1;
+    float nearest = 1.0;
+    for (int i = 0; i < 4; i++)
+    {
+        int2 pixel = min(texel * 2 + int2(i & 1, i >> 1), last);
+        nearest = min(nearest, sceneDepth.Load(int3(pixel, 0)).r);
+    }
+    return nearest;
+}
 
 // Returned directly: a copy into a local struct makes Slang emit FullscreenVsOut with two @location(0), which Tint rejects.
 [shader("vertex")]
@@ -51,7 +68,7 @@ float4 fs_main(FullscreenVsOut In) : SV_Target
     float3 rayDirection = normalize(farPoint.xyz / farPoint.w - nearPoint.xyz / nearPoint.w);
 
     int3 pixel = int3(int2(In.svPosition.xy), 0);
-    float depth = sceneDepth.Load(pixel).r;
+    float depth = frame.depth_spread.y > 0.5 ? half_texel_depth(pixel.xy) : sceneDepth.Load(pixel).r;
     float sceneDistance = cloud_scene_distance(frame.inv_view_proj, ndc, depth, frame.eye.xyz);
 
     SampledNoise noise;
@@ -71,4 +88,41 @@ float4 fs_main(FullscreenVsOut In) : SV_Target
     float4 farthest = march_clouds(noise, frame.eye.xyz, rayDirection, farDistance, cloud, frame.to_sun.xyz,
                                    frame.sun_radiance.rgb, ambient);
     return lerp(nearest, farthest, spread.y);
+}
+
+// The half-resolution march at full resolution: its four nearest texels, each weighted bilinearly and by depth.
+[shader("fragment")]
+float4 fs_upsample(FullscreenVsOut In) : SV_Target
+{
+    float2 ndc = fullscreen_uv_to_ndc(In.uv);
+    int2 pixel = int2(In.svPosition.xy);
+    float pixelDistance = cloud_scene_distance(frame.inv_view_proj, ndc, sceneDepth.Load(int3(pixel, 0)).r, frame.eye.xyz);
+
+    uint width, height;
+    halfClouds.GetDimensions(width, height);
+    int2 last = int2(int(width), int(height)) - 1;
+    // This pixel's centre in half-resolution texels, whose centres sit at whole numbers.
+    float2 position = (float2(pixel) + 0.5) * 0.5 - 0.5;
+    int2 base = int2(floor(position));
+    float2 f = position - float2(base);
+
+    float4 weighted = float4(0.0);
+    float4 bilinear = float4(0.0);
+    float weightSum = 0.0;
+    for (int i = 0; i < 4; i++)
+    {
+        int2 corner = int2(i & 1, i >> 1);
+        int2 texel = clamp(base + corner, int2(0), last);
+        float2 axis = lerp(1.0 - f, f, float2(corner));
+        float w = axis.x * axis.y;
+        float4 value = halfClouds.Load(int3(texel, 0));
+        // The texel's depth along this pixel's ray: neighbours' rays differ by less than the depth edges matter.
+        float texelDistance = cloud_scene_distance(frame.inv_view_proj, ndc, half_texel_depth(texel), frame.eye.xyz);
+        float depthWeight = w * cloud_upsample_depth_weight(pixelDistance, texelDistance);
+        weighted += value * depthWeight;
+        weightSum += depthWeight;
+        bilinear += value * w;
+    }
+    // No neighbour at this pixel's depth, a lone sliver: the plain bilinear blend beats a division by almost zero.
+    return weightSum > 1e-4 ? weighted / weightSum : bilinear;
 }

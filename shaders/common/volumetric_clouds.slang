@@ -56,6 +56,9 @@ CloudAmbient cloud_ambient_analytic_sky()
     return ambient;
 }
 
+// How fast a half-resolution texel's weight falls with its relative depth difference to the pixel it fills.
+static const float CLOUD_UPSAMPLE_DEPTH_SHARPNESS = 16.0;
+
 // The longest path through the box takes at most this many times the slider's steps.
 static const int CLOUD_MAX_STEP_FACTOR = 4;
 // Scattering octaves of Wrenninge et al.'s multiple-scattering approximation; each halves energy, depth and g.
@@ -228,6 +231,13 @@ float cloud_scene_distance(float4x4 ndcToSpace, float2 ndc, float depth, float3 
     if (depth == 1.0) return 3.0e38;
     float4 position = mul(ndcToSpace, float4(ndc, depth, 1.0));
     return length(position.xyz / position.w - eye);
+}
+
+// A half-resolution march texel's say in a pixel: 1 at the pixel's distance, near 0 across a depth edge; sky is 3e38.
+float cloud_upsample_depth_weight(float pixelDistance, float texelDistance)
+{
+    float relative = abs(pixelDistance - texelDistance) / max(min(pixelDistance, texelDistance), 1e-4);
+    return exp(-min(relative, 100.0) * CLOUD_UPSAMPLE_DEPTH_SHARPNESS);
 }
 
 // The box's shortest full extent.

@@ -28,17 +28,19 @@ struct CloudFrameUniforms {
     to_sun: [f32; 4],
     sun_radiance: [f32; 4],
     params: CloudParams,
-    /// x: 1 while binding 4 holds this frame's MSAA depth spread.
+    /// x: 1 while binding 4 holds this frame's MSAA depth spread; y: 1 for a half-resolution march.
     depth_spread: [f32; 4],
     /// The drawn sky's mean radiance over its upper and its lower hemisphere.
     ambient_top: [f32; 4],
     ambient_bottom: [f32; 4],
 }
 
-/// The march's render pipeline and the noise's compute pipeline with their layouts, from one pair of WGSL modules.
+/// The march, upsample and noise pipelines with their layouts, from one pair of WGSL modules.
 pub(super) struct CloudPipelines {
     march: wgpu::RenderPipeline,
     march_layout: wgpu::BindGroupLayout,
+    upsample: wgpu::RenderPipeline,
+    upsample_layout: wgpu::BindGroupLayout,
     noise: wgpu::ComputePipeline,
     noise_layout: wgpu::BindGroupLayout,
 }
@@ -53,7 +55,7 @@ struct NoiseVolume {
     pending: bool,
 }
 
-/// The march's output at the frame's size, and its bind group over the depths it was made for.
+/// The clouds the tonemap composites, at the frame's size, and the march's bind group over its depths.
 struct CloudTarget {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -61,6 +63,14 @@ struct CloudTarget {
     /// Compared by identity: resized targets can come back at an old size with a new depth texture.
     depths: SceneDepths,
     bind_group: wgpu::BindGroup,
+    /// Where the march writes instead when it runs at half resolution.
+    half: Option<HalfTarget>,
+}
+
+/// The half-resolution march, and the upsample's bind group that reads it into the full-size target.
+struct HalfTarget {
+    view: wgpu::TextureView,
+    upsample: wgpu::BindGroup,
 }
 
 pub(super) struct CloudPass {
@@ -128,18 +138,28 @@ impl CloudPass {
         march.pipelines = pipelines;
         if let Some(target) = self.target.as_mut() {
             target.bind_group = march_bind_group(device, march, &target.depths);
+            if let Some(half) = target.half.as_mut() {
+                half.upsample = upsample_bind_group(device, march, &target.depths, &half.view);
+            }
         }
     }
 }
 
 impl CloudPipelines {
-    /// Both pipelines from `march_wgsl` and `noise_wgsl`; a shader reload builds them inside its error scope.
+    /// Every pipeline from `march_wgsl` and `noise_wgsl`; a shader reload builds them inside its error scope.
     pub(super) fn new(device: &wgpu::Device, march_wgsl: &str, noise_wgsl: &str) -> Self {
-        let (march, march_layout) = march_pipeline(device, march_wgsl);
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("cloud_march_shader"),
+            source: wgpu::ShaderSource::Wgsl(march_wgsl.into()),
+        });
+        let (march, march_layout) = march_pipeline(device, &module);
+        let (upsample, upsample_layout) = upsample_pipeline(device, &module);
         let (noise, noise_layout) = noise_pipeline(device, noise_wgsl);
         Self {
             march,
             march_layout,
+            upsample,
+            upsample_layout,
             noise,
             noise_layout,
         }
@@ -174,12 +194,8 @@ impl March {
 /// `fs_main` over the uniforms, the noise volume and its sampler, and the scene depth.
 fn march_pipeline(
     device: &wgpu::Device,
-    wgsl: &str,
+    shader: &wgpu::ShaderModule,
 ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("cloud_march_shader"),
-        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
-    });
     let fragment = wgpu::ShaderStages::FRAGMENT;
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("cloud_march_bind_group_layout"),
@@ -205,9 +221,40 @@ fn march_pipeline(
         FullscreenPipeline {
             label: "cloud_march_pipeline",
             layout: &pipeline_layout,
-            module: &shader,
+            module: shader,
             vs_entry: "vs_main",
             fs_entry: "fs_main",
+            format: CLOUD_FORMAT,
+            blend: None,
+        },
+    );
+    (pipeline, layout)
+}
+
+/// `fs_upsample` over the uniforms, the scene depth and the half-resolution march.
+fn upsample_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let fragment = wgpu::ShaderStages::FRAGMENT;
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("cloud_upsample_bind_group_layout"),
+        entries: &[
+            bind_layout::uniform(0, fragment),
+            bind_layout::texture_2d(3, fragment, false),
+            bind_layout::texture_2d(5, fragment, false),
+        ],
+    });
+    let pipeline_layout =
+        pipeline_desc::single_layout(device, "cloud_upsample_pipeline_layout", &layout);
+    let pipeline = pipeline_desc::create_fullscreen_pipeline(
+        device,
+        FullscreenPipeline {
+            label: "cloud_upsample_pipeline",
+            layout: &pipeline_layout,
+            module: shader,
+            vs_entry: "vs_main",
+            fs_entry: "fs_upsample",
             format: CLOUD_FORMAT,
             blend: None,
         },
@@ -322,27 +369,80 @@ fn noise_bind_group(
 }
 
 impl CloudTarget {
-    fn new(device: &wgpu::Device, march: &March, size: (u32, u32), depths: &SceneDepths) -> Self {
-        let texture = create_2d_texture(
-            device,
-            Some("cloud_target"),
-            size.0,
-            size.1,
-            CLOUD_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-            1,
-            1,
-        );
+    /// At `size`, and with a half-resolution march beneath it when `half`.
+    fn new(
+        device: &wgpu::Device,
+        march: &March,
+        (size, half): ((u32, u32), bool),
+        depths: &SceneDepths,
+    ) -> Self {
+        let texture = cloud_texture(device, "cloud_target", size);
+        let half = half.then(|| {
+            let half_size = (size.0.div_ceil(2), size.1.div_ceil(2));
+            let view = cloud_texture(device, "cloud_half_target", half_size)
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            HalfTarget {
+                upsample: upsample_bind_group(device, march, depths, &view),
+                view,
+            }
+        });
         Self {
             view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
             texture,
             size,
             depths: depths.clone(),
             bind_group: march_bind_group(device, march, depths),
+            half,
         }
     }
+
+    /// Where the march writes: the half-resolution texture when there is one.
+    fn march_view(&self) -> &wgpu::TextureView {
+        self.half.as_ref().map_or(&self.view, |half| &half.view)
+    }
+}
+
+/// A target the march or the upsample renders into and the next pass samples or reads back.
+fn cloud_texture(device: &wgpu::Device, label: &str, (width, height): (u32, u32)) -> wgpu::Texture {
+    create_2d_texture(
+        device,
+        Some(label),
+        width,
+        height,
+        CLOUD_FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        1,
+        1,
+    )
+}
+
+/// The upsample's group 0: the march's uniforms, the scene depth and the half-resolution march.
+fn upsample_bind_group(
+    device: &wgpu::Device,
+    march: &March,
+    depths: &SceneDepths,
+    half: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("cloud_upsample_bind_group"),
+        layout: &march.pipelines.upsample_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: march.uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&depths.depth),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(half),
+            },
+        ],
+    })
 }
 
 /// The march's group 0: its uniforms, the noise volume and its sampler, the scene depth and its spread.
@@ -390,17 +490,19 @@ impl ForwardRenderer {
             depth: self.targets.depth.clone(),
             spread: self.targets.depth_spread.clone(),
         };
-        let current = pass
-            .target
-            .as_ref()
-            .is_some_and(|target| target.size == (width, height) && target.depths == depths);
+        let half = self.clouds.half_resolution;
+        let current = pass.target.as_ref().is_some_and(|target| {
+            target.size == (width, height)
+                && target.depths == depths
+                && target.half.is_some() == half
+        });
         if current {
             return;
         }
         pass.target = Some(CloudTarget::new(
             &gpu.device,
             march,
-            (width, height),
+            ((width, height), half),
             &depths,
         ));
         // Bloom's bright pass and every tonemap sample the new target.
@@ -408,6 +510,7 @@ impl ForwardRenderer {
     }
 
     /// The noise on the first cloud frame, then the march of every pixel to its scene depth; `traced` when no resolve ran.
+    /// A half-resolution march marches a quarter of them, and the upsample fills the full-size target from it.
     pub(super) fn encode_clouds(
         &mut self,
         gpu: &GpuContext,
@@ -417,8 +520,9 @@ impl ForwardRenderer {
         if !self.clouds.enabled {
             return;
         }
-        // Only the forward path resolves MSAA, so only its frames have a spread to march to.
-        let spread = !traced && self.raster_path == RasterPath::Forward;
+        // Only the forward path resolves MSAA, so only its full-resolution frames have a spread to march to.
+        let spread =
+            !traced && self.raster_path == RasterPath::Forward && !self.clouds.half_resolution;
         let uniforms = self.cloud_uniforms(view, spread);
         let pass = &mut self.cloud_pass;
         let (Some(march), Some(target)) = (pass.march.as_mut(), pass.target.as_ref()) else {
@@ -428,25 +532,21 @@ impl ForwardRenderer {
             .write_buffer(&march.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         march.noise.generate(encoder, &march.pipelines.noise);
         let scope = self.gpu_timing.scope(TimedPass::Clouds);
-        let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("cloud_march_pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &target.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: scope.render_writes(0, 1),
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        render.set_pipeline(&march.pipelines.march);
-        render.set_bind_group(0, &target.bind_group, &[]);
-        render.draw(0..3, 0..1);
+        let passes = 1 + usize::from(target.half.is_some());
+        fullscreen_pass(
+            encoder,
+            ("cloud_march_pass", target.march_view()),
+            (&march.pipelines.march, &target.bind_group),
+            scope.render_writes(0, passes),
+        );
+        if let Some(half) = target.half.as_ref() {
+            fullscreen_pass(
+                encoder,
+                ("cloud_upsample_pass", &target.view),
+                (&march.pipelines.upsample, &half.upsample),
+                scope.render_writes(1, passes),
+            );
+        }
     }
 
     /// The camera, the sun and the cloud settings as `cloud_march.slang` reads them.
@@ -464,7 +564,12 @@ impl ForwardRenderer {
             to_sun: to_sun.extend(0.0).to_array(),
             sun_radiance: (colour.truncate() * colour.w).extend(0.0).to_array(),
             params: self.clouds.params_at(self.cloud_time_seconds),
-            depth_spread: [f32::from(u8::from(spread)), 0.0, 0.0, 0.0],
+            depth_spread: [
+                f32::from(u8::from(spread)),
+                f32::from(u8::from(self.clouds.half_resolution)),
+                0.0,
+                0.0,
+            ],
             ambient_top: ambient.top.extend(0.0).to_array(),
             ambient_bottom: ambient.bottom.extend(0.0).to_array(),
         }
@@ -498,6 +603,34 @@ impl ForwardRenderer {
         )?;
         Ok(Some(bytemuck::pod_collect_to_vec(&bytes)))
     }
+}
+
+/// One full-screen triangle of `pipeline` into `target`, cleared to transparent first.
+fn fullscreen_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    (label, target): (&str, &wgpu::TextureView),
+    (pipeline, bind_group): (&wgpu::RenderPipeline, &wgpu::BindGroup),
+    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
+) {
+    let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: wgpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    render.set_pipeline(pipeline);
+    render.set_bind_group(0, bind_group, &[]);
+    render.draw(0..3, 0..1);
 }
 
 /// `layers` slices of RGBA half floats.

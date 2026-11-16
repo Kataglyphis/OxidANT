@@ -1,10 +1,12 @@
 //! Renders headlessly and writes per-pass GPU timings as JSON in the C++ engine's schema.
-//! Usage: `cargo run --example dump_gpu_timings -- <out.json> [scene.gltf [width height]] [--deferred]`
+//! Usage: `cargo run --example dump_gpu_timings -- <out.json> [scene.gltf [width height]] [--deferred] [--clouds|--half-res-clouds]`
 //! `frames_measured` counts the frames whose timestamps arrived, 0 without timestamps; a pass is the renderer's mean.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
+use glam::Vec3;
+use kataglyphis_webgpu_renderer::render::clouds::CloudSettings;
 use kataglyphis_webgpu_renderer::render::forward::RasterPath;
 use kataglyphis_webgpu_renderer::{
     load_gltf, ForwardRenderer, GpuContext, OrbitCamera, TonemapPass,
@@ -19,12 +21,14 @@ type Passes = Vec<(&'static str, f32)>;
 fn main() -> anyhow::Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     // The C++ export times its forward path, so the deferred one is asked for by name.
-    let path = if args.iter().any(|arg| arg == "--deferred") {
+    let flag = |name: &str| args.iter().any(|arg| arg == name);
+    let path = if flag("--deferred") {
         RasterPath::Deferred
     } else {
         RasterPath::Forward
     };
-    args.retain(|arg| arg != "--deferred");
+    let clouds = (flag("--clouds") || flag("--half-res-clouds")).then(|| flag("--half-res-clouds"));
+    args.retain(|arg| !arg.starts_with("--"));
     let mut args = args.into_iter();
     let out_path = args
         .next()
@@ -41,21 +45,34 @@ fn main() -> anyhow::Result<()> {
         return write(&out_path, &timings_json(false, 0, &[]));
     };
     gpu.check_target_size(width, height)?;
-    let (supported, measured, passes) = measure(&gpu, &scene_path, [width, height], path)?;
+    let (supported, measured, passes) =
+        measure(&gpu, &scene_path, [width, height], (path, clouds))?;
     write(&out_path, &timings_json(supported, measured, &passes))?;
     eprintln!("wrote {out_path} ({} passes)", passes.len());
     Ok(())
 }
 
 /// Renders [`FRAMES`] frames: whether timestamps work, how many frames delivered them, and each pass's mean.
+/// `clouds` puts the camera inside a thin cloud box, so every pixel marches; `Some(true)` at half resolution.
 fn measure(
     gpu: &GpuContext,
     scene: &Path,
     [width, height]: [u32; 2],
-    path: RasterPath,
+    (path, clouds): (RasterPath, Option<bool>),
 ) -> anyhow::Result<(bool, u32, Passes)> {
     let mut renderer = ForwardRenderer::new(gpu, width, height);
     renderer.raster_path = path;
+    if let Some(half_resolution) = clouds {
+        renderer.clouds = CloudSettings {
+            enabled: true,
+            coverage: 0.3,
+            half_resolution,
+            ..CloudSettings::default()
+        };
+        renderer
+            .clouds
+            .place_box(Vec3::ZERO, Vec3::splat(20.0), 0.05);
+    }
     let supported = renderer.enable_gpu_timing(gpu);
     renderer.upload_scene(gpu, &load_gltf(scene).context("scene must load")?);
     let camera = OrbitCamera::default();

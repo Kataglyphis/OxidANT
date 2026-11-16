@@ -13,6 +13,27 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, clouds at half resolution, off by default)
+- **`CloudSettings::half_resolution` marches a quarter of the pixels** (`render/forward/cloud_pass.rs`,
+  `shaders/clouds/cloud_march.slang`): the march writes a target half as wide and high, each texel marching to the
+  nearest scene depth of the 2x2 pixels it covers, and `fs_upsample` fills the full-size cloud target from the four
+  nearest texels, weighted bilinearly and by `cloud_upsample_depth_weight` (`volumetric_clouds.slang`: the relative
+  distance difference, so a texel across a depth edge counts for nothing). The tonemap and bloom read the full-size
+  target as before; such a frame marches once per pixel, without the MSAA spread. Off by default, so no image moves;
+  the Sky tab's CLOUDS section has the switch. `dump_gpu_timings` takes `--clouds` and `--half-res-clouds` (the camera
+  inside a thin box, so every pixel marches).
+- **Measured on lavapipe** (1280x720, 96 frames, the `Clouds` span covering march and upsample; another build shared
+  the host, so absolute times are loose, the ratios less so): the camera inside a thin box over `cube_on_plane`
+  320.7 to 65.6 ms (-80 %), the image 0.002 levels apart on average; the default slab seen from below at a grazing
+  angle 356.8 to 108.0 ms (-70 %), mean 0.87 levels, 7.5 % of pixels more than 2 levels and 0.40 % more than 8 apart,
+  at most 25; the dense low slab of `enabling_clouds_changes_the_frame_and_adds_detail` 146.7 to 54.8 ms (-63 %), mean
+  1.18 levels, 11.3 % over 2, 2.9 % over 8, 0.17 % over 24, at most 40, where the fine noise's thin streaks show
+  stair steps. The default stays off for the owner to decide (`BACKLOG.md`).
+- Tests: `half_resolution_clouds_keep_off_the_wall_and_close_to_the_full_march` (`tests/clouds.rs`, 128x128): no cloud
+  over a wall in front of the box, the sky just beside it keeps 1.01 of the full march's alpha (a plain bilinear
+  upsample: 0.85), the shown frame 0.05 levels apart on average, none over 8; switching it off restores the full
+  march exactly. `gpu_timing.rs` times the deferred run at half resolution.
+
 ### Added (2026-11-16, the wind moves the clouds)
 - **The noise drifts through the cloud box with time** (`sample_density`, `shaders/common/volumetric_clouds.slang`):
   `cloud_unpack` reads a wind offset from `cloudLightMarch.yzw`, which the C++ engine packs as zero, and the noise

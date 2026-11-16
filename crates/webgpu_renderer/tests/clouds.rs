@@ -538,6 +538,88 @@ fn the_wind_moves_the_clouds_with_time_and_a_pinned_time_repeats() {
     assert_eq!(outside, 0, "the wind must not move the box");
 }
 
+/// The shown frame and the cloud target of `clouds`.
+fn frame_and_cloud(
+    gpu: &GpuContext,
+    renderer: &mut ForwardRenderer,
+    clouds: CloudSettings,
+    camera: &OrbitCamera,
+) -> (Vec<u8>, Vec<u16>) {
+    renderer.clouds = clouds;
+    let frame = render(gpu, renderer, camera);
+    let cloud = renderer
+        .read_cloud_target(gpu)
+        .expect("cloud readback must succeed")
+        .expect("clouds ran, so their target exists");
+    (frame, cloud)
+}
+
+/// Half resolution, off by default, marches a quarter of the pixels and fills the rest from the four nearest at the
+/// same depth: no cloud reaches a wall in front of the box, and the shown frame stays close to the full march.
+#[test]
+fn half_resolution_clouds_keep_off_the_wall_and_close_to_the_full_march() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    assert!(!CloudSettings::default().half_resolution);
+    let mut renderer = plain_renderer(&gpu);
+    let camera = facing_minus_z(20.0);
+    let (wall_centre, wall_half) = (Vec3::ZERO, Vec3::new(3.0, 2.0, 0.1));
+    upload_box(&gpu, &mut renderer, wall_centre, wall_half);
+    let full = clouds_in_box(Vec3::new(0.0, 0.0, -10.0), Vec3::new(8.0, 5.0, 3.0), 1.0);
+    let half = CloudSettings {
+        half_resolution: true,
+        ..full
+    };
+    let (full_frame, full_cloud) = frame_and_cloud(&gpu, &mut renderer, full, &camera);
+    let (half_frame, half_cloud) = frame_and_cloud(&gpu, &mut renderer, half, &camera);
+    let (again_frame, _) = frame_and_cloud(&gpu, &mut renderer, full, &camera);
+    assert!(
+        again_frame == full_frame,
+        "switching half resolution off must restore the full march"
+    );
+
+    let wall = PixelRect::of_box(&camera, wall_centre, wall_half);
+    let clouded_wall = (0..PIXELS)
+        .filter(|&p| wall.contains(p, -1.0) && texel(&half_cloud, p)[3] > 0.0)
+        .count();
+    // Sky just outside the wall: a texel half over the wall marched to it, so only the depth weight keeps it out.
+    let rim: Vec<usize> = (0..PIXELS)
+        .filter(|&p| wall.contains(p, 2.0) && !wall.contains(p, 0.5))
+        .collect();
+    let rim_alpha = |cloud: &[u16]| rim.iter().map(|&p| texel(cloud, p)[3]).sum::<f32>();
+    let rim_kept = rim_alpha(&half_cloud) / rim_alpha(&full_cloud);
+    let deltas: Vec<u8> = (0..PIXELS)
+        .map(|p| channel_delta(&full_frame, &half_frame, p))
+        .collect();
+    let mean = deltas.iter().map(|&d| f64::from(d)).sum::<f64>() / PIXELS as f64;
+    let over = |levels: u8| deltas.iter().filter(|&&d| d > levels).count();
+    let alpha_error = (0..PIXELS)
+        .map(|p| f64::from((texel(&full_cloud, p)[3] - texel(&half_cloud, p)[3]).abs()))
+        .sum::<f64>()
+        / PIXELS as f64;
+    eprintln!(
+        "half resolution: mean {mean:.3} levels, {} px over 2, {} over 8, max {}; mean alpha error {alpha_error:.4}; \
+         {rim_kept:.3} of the rim's alpha over {} px",
+        over(2),
+        over(8),
+        deltas.iter().max().copied().unwrap_or(0),
+        rim.len()
+    );
+    assert_eq!(clouded_wall, 0, "the upsample drew cloud over the wall");
+    // A plain bilinear upsample kept 0.85 of it.
+    assert!(
+        rim_kept > 0.95,
+        "the sky beside the wall kept only {rim_kept} of its cloud"
+    );
+    assert!(mean < 0.5, "the half march is {mean} levels off on average");
+    assert!(
+        over(8) < PIXELS / 200,
+        "{} pixels are more than 8 levels off",
+        over(8)
+    );
+}
+
 /// ACES (Narkowicz) and the exact sRGB encode, as `aces.slang` and an sRGB target apply them.
 fn displayed(linear: f32) -> f32 {
     let x = linear.min(1e4);

@@ -77,6 +77,13 @@ its open work is here.
       comparing a dense cloud's luminance with the sky behind it, as
       `a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it` does here.
 
+- [ ] **Owner decision: clouds at half resolution by default?** (S, ★). Since 2026-11-16
+      `CloudSettings::half_resolution` marches a quarter of the pixels and upsamples by depth, off by default. On
+      lavapipe at 1280x720 it cut the cloud pass by 63 to 80 % at a mean of 0.002 to 1.18 levels, at most 0.4 to 2.9 %
+      of pixels more than 8 levels off and stair steps on thin streaks (`CHANGELOG.md`). Turning it on moves every cloud
+      image here; the C++ engine would need its own half-size `clouds_main` dispatch and an upsample, which can import
+      `cloud_upsample_depth_weight`.
+
 - [ ] **The C++ path tracer imports the shared estimator with the next pin bump** (S, ★★). Since 2026-11-16
       `shaders/common/path_estimator.slang` holds both path tracers' RNG, seed, roulette, basis, GGX sampling, pdf,
       lobe probability and `sample_bounce` (`CHANGELOG.md`). BeschleunigerBallett's `path_tracing.slang` still keeps
