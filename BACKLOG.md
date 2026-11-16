@@ -121,9 +121,20 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       Since 2026-11-16 the renderer streams material mips by screen-space need (roadmap, *Texture streaming*), a
       step copies the resident levels on the GPU (the GL backend keeps the CPU path for compressed textures), and a
       texture drops levels it has not needed for a while; the CPU chains fit a budget and rebuild from the scene's
-      images past it. Open: (4) bindless material textures (`TEXTURE_BINDING_ARRAY`, runtime detection with the
-      per-primitive groups as the fallback) for scenes with thousands of materials, which needs the forward shader's
-      Slang source to index an array. Guard: `tests/texture_streaming.rs`.
+      images past it. Open: (4) bindless material textures for scenes with thousands of materials. Measured blockers,
+      2026-11-16, slangc 2026.17 in `:latest`: a WGSL target emits `Texture2D t[64]` as `array<texture_2d<f32>, 64>`,
+      which WGSL forbids (naga takes texture arrays only as `binding_array<..>`), and refuses
+      `NonUniformResourceIndex` outright, so `shaders/forward/forward.slang` cannot index an array as is. The work:
+      (a) a bindless variant of the eight `forward.slang` entry points (`vs_main`/`fs_main`,
+      `vs_shadow_masked`/`fs_shadow_masked`, `fs_gbuffer`, ...;
+      group 0 bindings 3-12 become one texture and one sampler array in their own group plus a per-primitive
+      material index in `PrimUniforms`), emitted as a second WGSL map entry and rewritten to `binding_array` by the
+      shader build, with `scripts/check-slang-imports.py` and the generated-WGSL check covering it; (b) runtime
+      detection of `TEXTURE_BINDING_ARRAY` and `SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING` in
+      `context.rs` (never in a browser: WebGPU has neither), the per-primitive groups staying the fallback; (c) the
+      main, G-buffer, masked-shadow and mirrored pipelines in both layouts; (d) streaming swapping one array slot
+      per step instead of rebuilding each user's group 0 (`rebind_primitives`); (e) a GPU test that the two paths
+      render identical frames. Guard: `tests/texture_streaming.rs`.
 
 - [ ] **An amd64 crash of the GPU tests is unreproduced** (S). On 2026-10-19 the headless tests segfaulted now and
       then in parallel on the Ryzen 9950X dev host. The arm64 crash has its cause, llvmpipe at 256-bit vectors, which
