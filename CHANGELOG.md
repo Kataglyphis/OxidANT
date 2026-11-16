@@ -13,6 +13,22 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, owner decision: clouds march at half resolution by default)
+- **`CloudSettings::half_resolution` defaults on** (`render/clouds.rs`, the one place the default is set; the Sky tab,
+  the web demo and `editor_snapshot` take it from there), so every cloud image moves: a quarter of the pixels march
+  and the depth-aware upsample fills the rest, 63 to 80 % less cloud time on lavapipe (the measurements of the entry
+  that added the switch). A half-resolution frame marches once per pixel without the forward path's MSAA spread, so a
+  silhouette pixel in front of a cloud shows bare again unless the switch is off. The C++ engine flips its default in a
+  separate BeschleunigerBallett change.
+- Tests: three cloud tests measure what only the full march shows and now set `half_resolution: false`:
+  `silhouette_pixels_in_front_of_a_cloud_are_clouded` tests the spread (at half resolution its 54 silhouette pixels
+  showed no cloud); `enabling_clouds_changes_the_frame_and_adds_detail`, the C++ test's port, still passed but only
+  by 0.0001 (detail 0.0063 without clouds, 0.0186 with the full march, 0.0064 with the half); and
+  `a_grazing_view_through_the_slab_is_not_grainy` tests the estimator's grain, which the upsample smooths (luminance
+  contrast 0.044 full, 0.019 half, both under its 0.15). The rest pass at the default with their thresholds untouched. `half_resolution_clouds_keep_off_the_wall_...` now
+  asserts the default is on and switches the full march on explicitly: mean 0.049 levels, 40 of 16384 px over 2, none
+  over 8, 1.011 of the rim's alpha. `gpu_timing.rs` keeps timing forward at full and deferred at half resolution.
+
 ### Changed (2026-11-16, owner decision: the C++ path tracer's bounce misses follow this one)
 - **A path-traced bounce that misses keeps this renderer's sky**: the gradient, or the loaded environment, times the
   ambient strength and the environment's intensity. The owner decided that the C++ path tracer changes to match, not
@@ -267,7 +283,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   angle 356.8 to 108.0 ms (-70 %), mean 0.87 levels, 7.5 % of pixels more than 2 levels and 0.40 % more than 8 apart,
   at most 25; the dense low slab of `enabling_clouds_changes_the_frame_and_adds_detail` 146.7 to 54.8 ms (-63 %), mean
   1.18 levels, 11.3 % over 2, 2.9 % over 8, 0.17 % over 24, at most 40, where the fine noise's thin streaks show
-  stair steps. The default stays off for the owner to decide (`BACKLOG.md`).
+  stair steps. The default stayed off for the owner to decide; it is on since the owner's decision the same day.
 - Tests: `half_resolution_clouds_keep_off_the_wall_and_close_to_the_full_march` (`tests/clouds.rs`, 128x128): no cloud
   over a wall in front of the box, the sky just beside it keeps 1.01 of the full march's alpha (a plain bilinear
   upsample: 0.85), the shown frame 0.05 levels apart on average, none over 8; switching it off restores the full

@@ -54,7 +54,7 @@ pub struct CloudSettings {
     pub offset: Vec3,
     /// World units per second the noise drifts through the box; the renderer's `cloud_time_seconds` drives it.
     pub wind: Vec3,
-    /// March a quarter of the pixels and upsample by depth; off, so every pixel marches as the C++ engine's do.
+    /// March a quarter of the pixels and upsample by depth; on by default, as in the C++ engine.
     pub half_resolution: bool,
 }
 
@@ -75,7 +75,7 @@ impl Default for CloudSettings {
             offset: Vec3::new(-0.364, 367.0, -18.351),
             // Not the C++ engine's, which has no wind: a fine noise tile (64 units) every 15 s.
             wind: Vec3::new(4.0, 0.0, 1.5),
-            half_resolution: false,
+            half_resolution: true,
         }
     }
 }
@@ -242,7 +242,7 @@ mod tests {
             ],
             [0.63, 0.493, 0.966, 0.034]
         );
-        assert!(clouds.powder && !clouds.half_resolution);
+        assert!(clouds.powder && clouds.half_resolution);
         assert_eq!(clouds.scale, Vec3::new(630.0, 3.15, 630.0));
         assert_eq!(clouds.offset, Vec3::new(-0.364, 367.0, -18.351));
         assert!(

@@ -181,6 +181,8 @@ fn enabling_clouds_changes_the_frame_and_adds_detail() {
         // The box Density 2 gave the default Scale while it sized the box.
         scale: Vec3::new(2000.0, 10.0, 2000.0),
         offset: Vec3::new(-0.364, 6.0, -18.351),
+        // The C++ test's full march: the half march's upsample smooths the detail away (0.0063 -> 0.0064 on lavapipe).
+        half_resolution: false,
         ..CloudSettings::default()
     };
     let off = render(&gpu, &mut renderer, &camera);
@@ -191,7 +193,7 @@ fn enabling_clouds_changes_the_frame_and_adds_detail() {
     let swung = changed(&off, &on, 5).iter().filter(|&&p| p < upper).count();
     let swung = swung as f64 / upper as f64;
     let (detail_off, detail_on) = (detail_fraction(&off), detail_fraction(&on));
-    eprintln!("swung {swung:.3}, detail {detail_off:.3} -> {detail_on:.3}");
+    eprintln!("swung {swung:.3}, detail {detail_off:.4} -> {detail_on:.4}");
     assert!(
         swung > 0.05,
         "enabling clouds barely changed the sky: {swung}"
@@ -554,22 +556,22 @@ fn frame_and_cloud(
     (frame, cloud)
 }
 
-/// Half resolution, off by default, marches a quarter of the pixels and fills the rest from the four nearest at the
+/// Half resolution, the default, marches a quarter of the pixels and fills the rest from the four nearest at the
 /// same depth: no cloud reaches a wall in front of the box, and the shown frame stays close to the full march.
 #[test]
 fn half_resolution_clouds_keep_off_the_wall_and_close_to_the_full_march() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    assert!(!CloudSettings::default().half_resolution);
+    assert!(CloudSettings::default().half_resolution);
     let mut renderer = plain_renderer(&gpu);
     let camera = facing_minus_z(20.0);
     let (wall_centre, wall_half) = (Vec3::ZERO, Vec3::new(3.0, 2.0, 0.1));
     upload_box(&gpu, &mut renderer, wall_centre, wall_half);
-    let full = clouds_in_box(Vec3::new(0.0, 0.0, -10.0), Vec3::new(8.0, 5.0, 3.0), 1.0);
-    let half = CloudSettings {
-        half_resolution: true,
-        ..full
+    let half = clouds_in_box(Vec3::new(0.0, 0.0, -10.0), Vec3::new(8.0, 5.0, 3.0), 1.0);
+    let full = CloudSettings {
+        half_resolution: false,
+        ..half
     };
     let (full_frame, full_cloud) = frame_and_cloud(&gpu, &mut renderer, full, &camera);
     let (half_frame, half_cloud) = frame_and_cloud(&gpu, &mut renderer, half, &camera);
@@ -864,6 +866,8 @@ fn grazing_slab(gpu: &GpuContext, march_steps: i32) -> Vec<u16> {
         enabled: true,
         march_steps,
         offset: Vec3::new(0.0, 367.0, 0.0),
+        // The estimator's grain, which the half march's upsample would smooth over.
+        half_resolution: false,
         ..CloudSettings::default()
     };
     let camera = OrbitCamera {
@@ -1296,6 +1300,7 @@ fn a_light_the_clouds_hide_does_not_bloom_around_them() {
 }
 
 /// A wall in front of the box: the pixels its left and right silhouettes half cover still show the cloud behind.
+/// Only a full-resolution march reads the MSAA spread; the half march (the default) shows those pixels bare.
 #[test]
 fn silhouette_pixels_in_front_of_a_cloud_are_clouded() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -1305,7 +1310,10 @@ fn silhouette_pixels_in_front_of_a_cloud_are_clouded() {
     let camera = facing_minus_z(20.0);
     let (wall_centre, wall_half) = (Vec3::ZERO, Vec3::new(3.0, 2.0, 0.1));
     upload_box(&gpu, &mut renderer, wall_centre, wall_half);
-    renderer.clouds = clouds_in_box(Vec3::new(0.0, 0.0, -10.0), Vec3::new(8.0, 5.0, 3.0), 1.0);
+    renderer.clouds = CloudSettings {
+        half_resolution: false,
+        ..clouds_in_box(Vec3::new(0.0, 0.0, -10.0), Vec3::new(8.0, 5.0, 3.0), 1.0)
+    };
     render(&gpu, &mut renderer, &camera);
     let cloud = renderer
         .read_cloud_target(&gpu)

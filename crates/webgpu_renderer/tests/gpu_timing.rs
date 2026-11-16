@@ -41,7 +41,7 @@ fn measured_timings(gpu: &GpuContext, path: RasterPath) -> Vec<(&'static str, f3
     renderer.occlusion_queries_enabled = true;
     renderer.auto_exposure = true;
     renderer.clouds.enabled = true;
-    // The deferred run times the half-resolution march and its upsample as one Clouds span.
+    // The deferred run times the half-resolution march and its upsample as one Clouds span, forward the full march.
     renderer.clouds.half_resolution = path == RasterPath::Deferred;
     renderer.raster_path = path;
     let camera = OrbitCamera::default();
