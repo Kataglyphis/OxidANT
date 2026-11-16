@@ -101,9 +101,14 @@ impl DepthResolve {
 
 impl ForwardRenderer {
     /// Compiles this frame's graph and backs its targets; a moved target rebinds every group that samples it.
-    pub(super) fn plan_frame(&mut self, gpu: &GpuContext, width: u32, height: u32) -> FramePlan {
-        self.targets.size = (width, height);
-        let config = self.frame_config();
+    pub(super) fn plan_frame(
+        &mut self,
+        gpu: &GpuContext,
+        output_format: wgpu::TextureFormat,
+        size: (u32, u32),
+    ) -> FramePlan {
+        self.targets.size = size;
+        let config = self.frame_config(output_format);
         let plan = frame_graph::plan(&config)
             .unwrap_or_else(|error| panic!("frame graph of {config:?}: {error}"));
         if self.targets.pool.acquire(&gpu.device, &plan.graph) {
@@ -113,12 +118,13 @@ impl ForwardRenderer {
     }
 
     /// What decides this frame's passes, from the settings and the drawn mode.
-    fn frame_config(&self) -> FrameConfig {
+    fn frame_config(&self, output_format: wgpu::TextureFormat) -> FrameConfig {
         let mode = self.drawn_mode();
         let traced = mode.is_traced();
         let culls = self.gpu_culling_enabled || self.occlusion_queries_enabled;
         FrameConfig {
             size: self.targets.size,
+            output_format,
             mode,
             path: self.raster_path,
             clouds: self.clouds.enabled.then(|| CloudShape {

@@ -91,14 +91,12 @@ impl ForwardRenderer {
         self.apply_model_transform(gpu);
         // Before the plan: whether the noise still has to be filled decides its row.
         self.ensure_cloud_march(gpu);
-        let plan = self.plan_frame(gpu, width, height);
+        let plan = self.plan_frame(gpu, tonemap.output_format(), (width, height));
         self.prepare_traced();
         self.prepare_clouds(gpu);
-        self.rebuild_post_inputs(gpu, width, height);
+        self.rebuild_post_inputs(gpu);
         self.bind_tonemap_inputs(gpu, tonemap);
-        if plan.runs(FramePass::Fxaa) {
-            tonemap.prepare_fxaa(gpu, width, height);
-        }
+        self.prepare_fxaa(gpu, tonemap);
         self.write_post_settings(gpu, tonemap);
         self.write_ibl_uniforms(gpu);
 

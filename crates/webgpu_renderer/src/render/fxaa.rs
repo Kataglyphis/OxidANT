@@ -1,11 +1,10 @@
-//! FXAA after the tonemap: the tonemap draws into an intermediate of the output's format, this pass filters it out.
+//! FXAA after the tonemap: the tonemap draws into a pooled intermediate of the output's format, this pass filters it out.
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::buffer_desc;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
-use crate::render::texture::create_2d_texture;
 
 /// Which frames FXAA smooths; the deferred path shades one sample, the forward one resolves 4x MSAA.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -40,7 +39,7 @@ impl FxaaMode {
     }
 }
 
-/// The tonemapped frame FXAA reads, sized to the output.
+/// The tonemapped frame FXAA reads, sized to the output, and the group that samples it.
 struct Intermediate {
     size: (u32, u32),
     view: wgpu::TextureView,
@@ -106,30 +105,29 @@ impl FxaaPass {
         }
     }
 
-    /// (Re)allocates the intermediate for a `width` x `height` output; a no-op at the same size.
-    pub fn prepare(&mut self, gpu: &GpuContext, width: u32, height: u32) {
+    /// Binds `input`, the pool's intermediate for a `width` x `height` output; a no-op when bound already.
+    pub fn prepare(
+        &mut self,
+        gpu: &GpuContext,
+        input: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) {
         let size = (width.max(1), height.max(1));
-        if self.intermediate.as_ref().is_some_and(|i| i.size == size) {
+        if self
+            .intermediate
+            .as_ref()
+            .is_some_and(|i| i.size == size && i.view == *input)
+        {
             return;
         }
-        let texture = create_2d_texture(
-            &gpu.device,
-            Some("fxaa_input"),
-            size.0,
-            size.1,
-            self.format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            1,
-            1,
-        );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("fxaa_bind_group"),
             layout: &self.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
+                    resource: wgpu::BindingResource::TextureView(input),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -147,14 +145,14 @@ impl FxaaPass {
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
         self.intermediate = Some(Intermediate {
             size,
-            view,
+            view: input.clone(),
             bind_group,
         });
     }
 
-    /// The target the tonemap draws into while FXAA is on; `None` before [`Self::prepare`].
-    pub fn input_view(&self) -> Option<&wgpu::TextureView> {
-        self.intermediate.as_ref().map(|i| &i.view)
+    /// Lets the bound intermediate go, on a frame without FXAA.
+    pub fn release(&mut self) {
+        self.intermediate = None;
     }
 
     /// Filters the intermediate into `output_view`, which must be the size [`Self::prepare`] was given.

@@ -1,4 +1,4 @@
-//! Half-resolution bloom (bright-pass, H blur, V blur) over two ping-ponged Rgba16Float textures.
+//! Half-resolution bloom (bright-pass, H blur, V blur) over two ping-ponged Rgba16Float textures the frame graph's pool backs.
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
@@ -6,7 +6,6 @@ use crate::render::buffer_desc;
 use crate::render::forward::HDR_FORMAT;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
-use crate::render::texture::create_2d_view;
 
 /// What the bright pass reads: the HDR scene, the exposure and the clouds it composites first.
 #[derive(Clone, Copy)]
@@ -14,6 +13,22 @@ pub struct BloomInputs<'a> {
     pub hdr: &'a wgpu::TextureView,
     pub exposure: &'a wgpu::Buffer,
     pub cloud: &'a wgpu::TextureView,
+}
+
+/// The half-resolution pair the chain ping-pongs through: `output` ends blurred, `scratch` holds the horizontal blur.
+#[derive(Clone, Copy)]
+pub struct BloomTargets<'a> {
+    pub output: &'a wgpu::TextureView,
+    pub scratch: &'a wgpu::TextureView,
+}
+
+/// The chain's targets and the groups that read them, held while the frame graph backs them.
+struct Bound {
+    output: wgpu::TextureView,
+    scratch: wgpu::TextureView,
+    bright: wgpu::BindGroup,
+    blur_h: wgpu::BindGroup,
+    blur_v: wgpu::BindGroup,
 }
 
 /// The bright pass and both blurs, from one WGSL module; a shader reload builds them inside its error scope.
@@ -58,12 +73,7 @@ pub struct BloomPass {
     sampler: wgpu::Sampler,
     /// Whether the bright pass composites the clouds first, written every frame.
     uniform_buffer: wgpu::Buffer,
-    texture_a: Option<wgpu::TextureView>,
-    texture_b: Option<wgpu::TextureView>,
-    bg_bright: Option<wgpu::BindGroup>,
-    bg_h: Option<wgpu::BindGroup>,
-    bg_v: Option<wgpu::BindGroup>,
-    size: (u32, u32),
+    bound: Option<Bound>,
 }
 
 impl BloomPass {
@@ -101,36 +111,23 @@ impl BloomPass {
             bind_group_layout,
             sampler,
             uniform_buffer: buffer_desc::uniform(device, "bloom_uniforms", 16),
-            texture_a: None,
-            texture_b: None,
-            bg_bright: None,
-            bg_h: None,
-            bg_v: None,
-            size: (0, 0),
+            bound: None,
         }
     }
 
-    /// (Re)creates the half-res chain over `inputs`, the views and buffer `TonemapPass::set_input` takes too.
-    pub fn rebuild(&mut self, gpu: &GpuContext, width: u32, height: u32, inputs: BloomInputs<'_>) {
-        let (w, h) = ((width / 2).max(1), (height / 2).max(1));
-        self.size = (w, h);
-        let make_tex = |label: &str| {
-            create_2d_view(
-                &gpu.device,
-                Some(label),
-                w,
-                h,
-                HDR_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                1,
-                1,
-            )
+    /// Binds the chain over `inputs` into `targets`, the pool's this frame; `None` lets the bound ones go.
+    pub fn bind(
+        &mut self,
+        device: &wgpu::Device,
+        inputs: BloomInputs<'_>,
+        targets: Option<BloomTargets<'_>>,
+    ) {
+        let Some(targets) = targets else {
+            self.bound = None;
+            return;
         };
-        let a = make_tex("bloom_a");
-        let b = make_tex("bloom_b");
-
         let bind = |src: &wgpu::TextureView, label: &str| {
-            gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout: &self.bind_group_layout,
                 entries: &[
@@ -157,11 +154,13 @@ impl BloomPass {
                 ],
             })
         };
-        self.bg_bright = Some(bind(inputs.hdr, "bloom_bg_bright"));
-        self.bg_h = Some(bind(&a, "bloom_bg_h"));
-        self.bg_v = Some(bind(&b, "bloom_bg_v"));
-        self.texture_a = Some(a);
-        self.texture_b = Some(b);
+        self.bound = Some(Bound {
+            bright: bind(inputs.hdr, "bloom_bg_bright"),
+            blur_h: bind(targets.output, "bloom_bg_h"),
+            blur_v: bind(targets.scratch, "bloom_bg_v"),
+            output: targets.output.clone(),
+            scratch: targets.scratch.clone(),
+        });
     }
 
     /// The pipelines `wgsl` builds against this pass's layout, for [`Self::replace_pipelines`].
@@ -180,25 +179,16 @@ impl BloomPass {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
     }
 
-    /// The blurred bloom output (valid after `rebuild` + `encode`).
-    pub fn output(&self) -> Option<&wgpu::TextureView> {
-        self.texture_a.as_ref()
-    }
-
+    /// Records the chain into the bound targets; nothing while none are bound.
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, scope: PassScope<'_>) {
-        let (Some(a), Some(b), Some(bg_bright), Some(bg_h), Some(bg_v)) = (
-            self.texture_a.as_ref(),
-            self.texture_b.as_ref(),
-            self.bg_bright.as_ref(),
-            self.bg_h.as_ref(),
-            self.bg_v.as_ref(),
-        ) else {
+        let Some(bound) = self.bound.as_ref() else {
+            log::error!("bloom ran on a frame that backs no bloom targets");
             return;
         };
         let steps: [(&wgpu::RenderPipeline, &wgpu::BindGroup, &wgpu::TextureView); 3] = [
-            (&self.pipelines.brightpass, bg_bright, a),
-            (&self.pipelines.blur_h, bg_h, b),
-            (&self.pipelines.blur_v, bg_v, a),
+            (&self.pipelines.brightpass, &bound.bright, &bound.output),
+            (&self.pipelines.blur_h, &bound.blur_h, &bound.scratch),
+            (&self.pipelines.blur_v, &bound.blur_v, &bound.output),
         ];
         let step_count = steps.len();
         for (step, (pipeline, bind_group, target)) in steps.into_iter().enumerate() {

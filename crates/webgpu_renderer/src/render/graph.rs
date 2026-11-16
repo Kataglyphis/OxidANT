@@ -34,10 +34,14 @@ pub enum Resource {
     HdrColor,
     /// Cull-pass visibility; the *next* frame's forward pass reads it, so nothing here does.
     Visibility,
-    /// Blurred bloom contribution.
+    /// Blurred bloom contribution, at half resolution.
     Bloom,
-    /// Blurred ambient occlusion factor.
+    /// Bloom's horizontal blur, which the vertical one reads back into `Bloom`.
+    BloomScratch,
+    /// Blurred ambient occlusion factor, at half resolution.
     Ambient,
+    /// SSAO's occlusion before its blur into `Ambient`.
+    AmbientRaw,
     /// Luminance histogram bins.
     Histogram,
     /// Adapted exposure value reduced from `Histogram`.

@@ -11,7 +11,8 @@ use crate::render::gpu_timing::TimedPass;
 use crate::render::graph::Resource;
 use crate::render::tracer::modes::{
     accumulation_bytes, accumulation_limit, plan, Accumulation, AccumulationKey, AfterResolve,
-    Kernel, TraceDispatch, TraceFrameUniforms, TraceLights, TracedFrame, TracedPasses,
+    Kernel, TraceDispatch, TraceFrameUniforms, TraceLights, TraceResolve, TracedFrame,
+    TracedPasses,
 };
 use crate::render::tracer::{RenderMode, TraceSettings, TraceStatus, Tracer};
 use crate::scene::CpuScene;
@@ -31,6 +32,8 @@ pub(super) struct TracedState {
     accumulation_limit: u64,
     /// The kind of frame the timings last measured: the drawn mode, the raster path while it rasters, and FXAA.
     timed_as: Option<(RenderMode, RasterPath, bool)>,
+    /// The kernel this frame recorded, whose accumulation the resolve row reads; `None` when it recorded none.
+    resolve_pending: Option<Kernel>,
 }
 
 impl TracedState {
@@ -181,7 +184,10 @@ impl ForwardRenderer {
         let settings = self.trace_settings.clamped();
         let (kernel, timed, dispatches) = self.plan_traced_frame(mode, settings, view);
         let uniforms = self.trace_uniforms(view, settings);
-        if !self.encode_traced_passes(gpu, encoder, (kernel, timed), uniforms, &dispatches) {
+        let encoded =
+            self.encode_traced_kernel(gpu, encoder, (kernel, timed), uniforms, &dispatches);
+        self.traced.resolve_pending = encoded.then_some(kernel);
+        if !encoded {
             return;
         }
         if kernel == Kernel::Path {
@@ -262,8 +268,8 @@ impl ForwardRenderer {
         self.light_dir_ambient.w * environment
     }
 
-    /// Records the kernel and the resolve; false when this output's accumulation does not fit the device.
-    fn encode_traced_passes(
+    /// Records the kernel; false when this output's accumulation does not fit the device.
+    fn encode_traced_kernel(
         &mut self,
         gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
@@ -275,20 +281,10 @@ impl ForwardRenderer {
             return false;
         };
         let device = &gpu.device;
-        let traced = &mut self.traced;
-        let passes = traced
+        let passes = self
+            .traced
             .passes
             .get_or_insert_with(|| TracedPasses::new(device));
-        let sky_res = &self.sky;
-        // The C++ ray-traced mode shows the sky pass where its rays miss; the path tracer keeps its own sky, as in C++.
-        let sky_pipeline = (kernel == Kernel::Ray).then(|| {
-            &*traced.sky.get_or_insert_with(|| {
-                sky::sky_pipeline(device, &sky_res.shader, &sky_res.pipeline_layout, 1)
-            })
-        });
-        let draw_sky = sky_pipeline.map(|pipeline| {
-            move |pass: &mut wgpu::RenderPass<'_>| sky_res.draw_with(pass, pipeline)
-        });
         let lights = TraceLights {
             punctual: &self.lights.storage_buffer,
             environment: self
@@ -305,19 +301,45 @@ impl ForwardRenderer {
             lights,
             uniforms,
             dispatches,
-            hdr_view: self.targets.view(Resource::HdrColor),
-            depth_view: self.targets.view(Resource::Depth),
-            after_resolve: draw_sky.as_ref().map(|draw| draw as AfterResolve<'_>),
         };
-        let scopes = (
-            self.gpu_timing.scope(timed),
-            self.gpu_timing.scope(TimedPass::TraceResolve),
-        );
-        if let Err(why) = passes.encode(gpu, encoder, &frame, scopes) {
+        if let Err(why) = passes.encode(gpu, encoder, &frame, self.gpu_timing.scope(timed)) {
             log::error!("tracer: {why}, although the drawn mode said it fits");
             return false;
         }
         true
+    }
+
+    /// The accumulation this frame's kernel wrote into the HDR target and the primary hit's depth.
+    pub(super) fn encode_trace_resolve(
+        &mut self,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let traced = &mut self.traced;
+        let (Some(kernel), Some(passes)) = (traced.resolve_pending.take(), traced.passes.as_ref())
+        else {
+            return;
+        };
+        let sky_res = &self.sky;
+        // The C++ ray-traced mode shows the sky pass where its rays miss; the path tracer keeps its own sky, as in C++.
+        let sky_pipeline = (kernel == Kernel::Ray).then(|| {
+            &*traced.sky.get_or_insert_with(|| {
+                sky::sky_pipeline(&gpu.device, &sky_res.shader, &sky_res.pipeline_layout, 1)
+            })
+        });
+        let draw_sky = sky_pipeline.map(|pipeline| {
+            move |pass: &mut wgpu::RenderPass<'_>| sky_res.draw_with(pass, pipeline)
+        });
+        let resolve = TraceResolve {
+            hdr_view: self.targets.view(Resource::HdrColor),
+            depth_view: self.targets.view(Resource::Depth),
+            after_resolve: draw_sky.as_ref().map(|draw| draw as AfterResolve<'_>),
+        };
+        passes.encode_resolve(
+            encoder,
+            &resolve,
+            self.gpu_timing.scope(TimedPass::TraceResolve),
+        );
     }
 
     /// Logs once per output size that a traced pick rasters because its accumulation does not fit.

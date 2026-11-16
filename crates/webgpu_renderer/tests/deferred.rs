@@ -852,9 +852,11 @@ fn each_path_holds_only_its_own_targets_and_deferred_clouds_alias_the_gbuffer() 
     };
     let forward = bytes_of(RasterPath::Forward);
     let deferred = bytes_of(RasterPath::Deferred);
-    // MSAA HDR 32 and depth 16, HDR 8, depth 4, spread 8 and clouds 8 bytes a pixel.
-    assert_eq!(forward, 76 * w * h);
-    // HDR 8, depth 4, the G-buffer 20; the clouds' 8 reuse the G-buffer normal's texture.
-    assert_eq!(deferred, 32 * w * h);
+    // Bloom's pair 16 and SSAO's pair 2 bytes a half-size pixel, on either path.
+    let post = 18 * (w / 2) * (h / 2);
+    // MSAA HDR 32 and depth 16, HDR 8, depth 4, spread 8 and clouds 8 bytes a pixel; no FXAA by default.
+    assert_eq!(forward, 76 * w * h + post);
+    // HDR 8, depth 4, the G-buffer 20 and FXAA's input 4; the clouds' 8 reuse the G-buffer normal's texture.
+    assert_eq!(deferred, 36 * w * h + post);
     assert_eq!(bytes_of(RasterPath::Forward), forward);
 }

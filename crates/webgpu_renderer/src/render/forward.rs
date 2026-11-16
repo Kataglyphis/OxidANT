@@ -48,7 +48,6 @@ use deferred::DeferredResources;
 pub use deferred::RasterPath;
 use environment::{create_ibl_bind_group, IblBinding};
 use frame::FrameBinding;
-use frame_graph::FramePass;
 use light_grid::LightResources;
 use main_pass::MainPipelines;
 use post::PostChain;
@@ -434,7 +433,6 @@ impl ForwardRenderer {
             tonemap,
             output: output_view,
             view: &view,
-            fxaa: plan.runs(FramePass::Fxaa),
         };
         for &pass in &plan.passes {
             self.record_pass(pass, &mut frame);

@@ -2,21 +2,26 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::cloud_pass::placeholder;
 use super::frame::FrameView;
-use super::{ForwardRenderer, RasterPath};
+use super::{ForwardRenderer, RasterPath, HDR_FORMAT};
 use crate::context::GpuContext;
-use crate::render::bloom::{BloomInputs, BloomPass};
+use crate::render::bloom::{BloomInputs, BloomPass, BloomTargets};
 use crate::render::gpu_timing::TimedPass;
 use crate::render::graph::Resource;
 use crate::render::histogram::{ExposureSettings, HistogramPass};
-use crate::render::ssao::SsaoPass;
+use crate::render::ssao::{SsaoPass, SsaoTargets, AO_FORMAT};
 use crate::render::tonemap::TonemapPass;
 
 pub(super) struct PostChain {
     pub(super) bloom: BloomPass,
     pub(super) ssao: SsaoPass,
     pub(super) histogram: HistogramPass,
-    /// Bloom and SSAO must rebuild on the current HDR and depth targets before the next frame.
+    /// What the tonemap samples for bloom on a frame without it, whose bloom strength is zero.
+    no_bloom: wgpu::TextureView,
+    /// What the tonemap samples for AO on a frame without SSAO, whose AO strength is zero.
+    no_ambient: wgpu::TextureView,
+    /// Bloom and SSAO must rebind to the current targets before the next frame.
     pub(super) rebuild_needed: bool,
     /// Names the current HDR, bloom, AO and exposure set; unique across renderers.
     inputs_id: u64,
@@ -35,6 +40,8 @@ impl PostChain {
             bloom: BloomPass::new(gpu),
             ssao: SsaoPass::new(gpu),
             histogram: HistogramPass::new(gpu),
+            no_bloom: placeholder(&gpu.device, "bloom_placeholder", HDR_FORMAT),
+            no_ambient: placeholder(&gpu.device, "ssao_placeholder", AO_FORMAT),
             rebuild_needed: true,
             inputs_id: 0,
         }
@@ -42,22 +49,31 @@ impl PostChain {
 }
 
 impl ForwardRenderer {
-    /// Rebuilds bloom and SSAO on this frame's targets after the pool moved any of them.
-    pub(super) fn rebuild_post_inputs(&mut self, gpu: &GpuContext, width: u32, height: u32) {
+    /// Rebinds bloom and SSAO to this frame's targets after the pool moved any of them, or lets them go without their rows.
+    pub(super) fn rebuild_post_inputs(&mut self, gpu: &GpuContext) {
         if !self.post.rebuild_needed {
             return;
         }
-        let post = &mut self.post;
+        let (post, targets) = (&mut self.post, &self.targets);
         let inputs = BloomInputs {
-            hdr: self.targets.view(Resource::HdrColor),
+            hdr: targets.view(Resource::HdrColor),
             exposure: post.histogram.exposure_buffer(),
-            cloud: self
-                .cloud_pass
-                .composite(self.targets.get(Resource::CloudColor)),
+            cloud: self.cloud_pass.composite(targets.get(Resource::CloudColor)),
         };
-        post.bloom.rebuild(gpu, width, height, inputs);
-        let depth = self.targets.view(Resource::Depth);
-        post.ssao.rebuild(gpu, width, height, depth);
+        let bloom = targets
+            .get(Resource::Bloom)
+            .zip(targets.get(Resource::BloomScratch))
+            .map(|(output, scratch)| BloomTargets { output, scratch });
+        post.bloom.bind(&gpu.device, inputs, bloom);
+        let ssao = targets
+            .get(Resource::AmbientRaw)
+            .zip(targets.get(Resource::Ambient))
+            .map(|(raw, blurred)| SsaoTargets {
+                depth: targets.view(Resource::Depth),
+                raw,
+                blurred,
+            });
+        post.ssao.bind(&gpu.device, ssao);
         post.inputs_id = next_inputs_id();
         post.rebuild_needed = false;
     }
@@ -73,12 +89,10 @@ impl ForwardRenderer {
         tonemap.set_input(
             gpu,
             self.targets.view(Resource::HdrColor),
-            post.bloom
-                .output()
-                .expect("bloom output exists after rebuild"),
-            post.ssao
-                .output()
-                .expect("ssao output exists after rebuild"),
+            self.targets.get(Resource::Bloom).unwrap_or(&post.no_bloom),
+            self.targets
+                .get(Resource::Ambient)
+                .unwrap_or(&post.no_ambient),
             post.histogram.exposure_buffer(),
             self.cloud_view(),
         );
@@ -157,16 +171,29 @@ impl ForwardRenderer {
             .encode_reduce(encoder, self.gpu_timing.scope(TimedPass::ExposureReduce));
     }
 
-    /// ACES over HDR, bloom and AO into `output_view`, or into FXAA's input when `fxaa` filters it next.
+    /// ACES over HDR, bloom and AO into `output_view`, or into FXAA's input when the frame's graph backs one.
     pub(super) fn encode_tonemap(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         tonemap: &TonemapPass,
         output_view: &wgpu::TextureView,
-        fxaa: bool,
     ) {
-        let target = tonemap.fxaa_input().filter(|_| fxaa).unwrap_or(output_view);
+        let target = self
+            .targets
+            .get(Resource::Tonemapped)
+            .unwrap_or(output_view);
         tonemap.render(encoder, target, self.gpu_timing.scope(TimedPass::Tonemap));
+    }
+
+    /// Binds FXAA's input to the pool's intermediate on a frame that filters, and lets it go on one that does not.
+    pub(super) fn prepare_fxaa(&self, gpu: &GpuContext, tonemap: &mut TonemapPass) {
+        match self.targets.get(Resource::Tonemapped) {
+            Some(input) => {
+                let (width, height) = self.targets.size;
+                tonemap.prepare_fxaa(gpu, input, width, height);
+            }
+            None => tonemap.release_fxaa(),
+        }
     }
 
     /// FXAA over the tonemapped frame into `output_view`.

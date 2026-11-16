@@ -154,7 +154,7 @@ impl CloudPass {
 }
 
 /// One texel nothing writes, bound where a frame has no target to bind.
-fn placeholder(
+pub(super) fn placeholder(
     device: &wgpu::Device,
     label: &str,
     format: wgpu::TextureFormat,

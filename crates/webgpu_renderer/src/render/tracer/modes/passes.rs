@@ -68,13 +68,17 @@ pub struct TraceLights<'a> {
     pub environment: &'a wgpu::TextureView,
 }
 
-/// One traced frame: what it traces, how, and the HDR and single-sample depth targets it resolves into.
+/// One traced frame's kernel: what it traces and how.
 pub struct TracedFrame<'a> {
     pub kernel: Kernel,
     pub scene: &'a TraceGpuScene,
     pub lights: TraceLights<'a>,
     pub uniforms: TraceFrameUniforms,
     pub dispatches: &'a [TraceDispatch],
+}
+
+/// The HDR and single-sample depth targets the resolve writes, and what draws against that depth after it.
+pub struct TraceResolve<'a> {
     pub hdr_view: &'a wgpu::TextureView,
     pub depth_view: &'a wgpu::TextureView,
     pub after_resolve: Option<AfterResolve<'a>>,
@@ -248,13 +252,13 @@ impl TracedPasses {
         }
     }
 
-    /// Records the frame's dispatches and the resolve; an output this device cannot hold an accumulation for is refused.
+    /// Records the frame's dispatches into the accumulation; an output this device cannot hold one for is refused.
     pub fn encode(
         &mut self,
         gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
         frame: &TracedFrame<'_>,
-        (trace_scope, resolve_scope): (PassScope<'_>, PassScope<'_>),
+        scope: PassScope<'_>,
     ) -> Result<(), String> {
         let size = (frame.uniforms.size[0], frame.uniforms.size[1]);
         self.prepare(gpu, size, frame.dispatches.len())?;
@@ -263,8 +267,7 @@ impl TracedPasses {
             .write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame.uniforms));
         self.tiles.write(gpu, frame.dispatches);
         self.lights_group = Some(self.bind_lights(&gpu.device, frame.lights));
-        self.encode_kernel(encoder, frame, trace_scope);
-        self.encode_resolve(encoder, frame, resolve_scope);
+        self.encode_kernel(encoder, frame, scope);
         Ok(())
     }
 
@@ -355,14 +358,14 @@ impl TracedPasses {
         }
     }
 
-    /// The accumulation into the HDR and depth targets, every pixel written, then what draws against that depth.
-    fn encode_resolve(
+    /// The accumulation [`Self::encode`] wrote into the HDR and depth targets, every pixel, then what draws against that depth.
+    pub fn encode_resolve(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        frame: &TracedFrame<'_>,
+        frame: &TraceResolve<'_>,
         scope: PassScope<'_>,
     ) {
-        let target = self.target.as_ref().expect("prepared before the kernels");
+        let target = self.target.as_ref().expect("encoded before the resolve");
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("traced_resolve"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

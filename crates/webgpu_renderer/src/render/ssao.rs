@@ -1,13 +1,13 @@
-//! Half-resolution depth-only SSAO with a 3x3 blur; the tonemap pass multiplies it into HDR.
+//! Half-resolution depth-only SSAO with a 3x3 blur into targets the frame graph's pool backs; the tonemap multiplies it into HDR.
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::buffer_desc;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
-use crate::render::texture::create_2d_view;
 
-const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+/// SSAO's raw and blurred occlusion.
+pub(crate) const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -51,14 +51,27 @@ impl SsaoPipelines {
     }
 }
 
+/// What SSAO reads and writes this frame: the scene depth, the raw occlusion and the blurred one the tonemap samples.
+#[derive(Clone, Copy)]
+pub struct SsaoTargets<'a> {
+    pub depth: &'a wgpu::TextureView,
+    pub raw: &'a wgpu::TextureView,
+    pub blurred: &'a wgpu::TextureView,
+}
+
+/// The targets and the groups that read them, held while the frame graph backs them.
+struct Bound {
+    raw: wgpu::TextureView,
+    blurred: wgpu::TextureView,
+    ssao: wgpu::BindGroup,
+    blur: wgpu::BindGroup,
+}
+
 pub struct SsaoPass {
     pipelines: SsaoPipelines,
     bind_group_layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
-    raw: Option<wgpu::TextureView>,
-    blurred: Option<wgpu::TextureView>,
-    bg_ssao: Option<wgpu::BindGroup>,
-    bg_blur: Option<wgpu::BindGroup>,
+    bound: Option<Bound>,
 }
 
 impl SsaoPass {
@@ -91,10 +104,7 @@ impl SsaoPass {
             pipelines,
             bind_group_layout,
             uniform_buffer,
-            raw: None,
-            blurred: None,
-            bg_ssao: None,
-            bg_blur: None,
+            bound: None,
         }
     }
 
@@ -108,38 +118,20 @@ impl SsaoPass {
         self.pipelines = pipelines;
     }
 
-    /// (Re)creates the half-res AO chain for a new depth buffer.
-    pub fn rebuild(
-        &mut self,
-        gpu: &GpuContext,
-        width: u32,
-        height: u32,
-        depth: &wgpu::TextureView,
-    ) {
-        let (w, h) = ((width / 2).max(1), (height / 2).max(1));
-        let make_tex = |label: &str| {
-            create_2d_view(
-                &gpu.device,
-                Some(label),
-                w,
-                h,
-                AO_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                1,
-                1,
-            )
+    /// Binds `targets`, the pool's this frame; `None` lets the bound ones go.
+    pub fn bind(&mut self, device: &wgpu::Device, targets: Option<SsaoTargets<'_>>) {
+        let Some(targets) = targets else {
+            self.bound = None;
+            return;
         };
-        let raw = make_tex("ssao_raw");
-        let blurred = make_tex("ssao_blurred");
-
         let bind = |ao_input: &wgpu::TextureView, label: &str| {
-            gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout: &self.bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(depth),
+                        resource: wgpu::BindingResource::TextureView(targets.depth),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -153,10 +145,12 @@ impl SsaoPass {
             })
         };
         // The ssao pass ignores binding 2; any non-target texture satisfies the layout.
-        self.bg_ssao = Some(bind(&blurred, "ssao_bg"));
-        self.bg_blur = Some(bind(&raw, "ssao_blur_bg"));
-        self.raw = Some(raw);
-        self.blurred = Some(blurred);
+        self.bound = Some(Bound {
+            ssao: bind(targets.blurred, "ssao_bg"),
+            blur: bind(targets.raw, "ssao_blur_bg"),
+            raw: targets.raw.clone(),
+            blurred: targets.blurred.clone(),
+        });
     }
 
     /// Per-frame camera matrices + tuning.
@@ -176,23 +170,15 @@ impl SsaoPass {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
-    /// The blurred AO output (valid after `rebuild` + `encode`).
-    pub fn output(&self) -> Option<&wgpu::TextureView> {
-        self.blurred.as_ref()
-    }
-
+    /// Records the occlusion and its blur into the bound targets; nothing while none are bound.
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, scope: PassScope<'_>) {
-        let (Some(raw), Some(blurred), Some(bg_ssao), Some(bg_blur)) = (
-            self.raw.as_ref(),
-            self.blurred.as_ref(),
-            self.bg_ssao.as_ref(),
-            self.bg_blur.as_ref(),
-        ) else {
+        let Some(bound) = self.bound.as_ref() else {
+            log::error!("SSAO ran on a frame that backs no AO targets");
             return;
         };
         let steps: [(&wgpu::RenderPipeline, &wgpu::BindGroup, &wgpu::TextureView); 2] = [
-            (&self.pipelines.ssao, bg_ssao, raw),
-            (&self.pipelines.blur, bg_blur, blurred),
+            (&self.pipelines.ssao, &bound.ssao, &bound.raw),
+            (&self.pipelines.blur, &bound.blur, &bound.blurred),
         ];
         let step_count = steps.len();
         for (step, (pipeline, bind_group, target)) in steps.into_iter().enumerate() {

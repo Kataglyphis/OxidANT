@@ -121,17 +121,30 @@ impl TonemapPass {
         self.shaders.id
     }
 
-    /// Readies FXAA for a `width` x `height` output, building it on first use.
-    pub fn prepare_fxaa(&mut self, gpu: &GpuContext, width: u32, height: u32) {
+    /// The format of the view [`Self::render`] draws into, which FXAA's intermediate shares.
+    pub fn output_format(&self) -> wgpu::TextureFormat {
+        self.output_format
+    }
+
+    /// Readies FXAA to filter `input`, the intermediate of a `width` x `height` output, building it on first use.
+    pub fn prepare_fxaa(
+        &mut self,
+        gpu: &GpuContext,
+        input: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) {
         let format = self.output_format;
         self.fxaa
             .get_or_insert_with(|| FxaaPass::new(gpu, format, &self.shaders.fxaa))
-            .prepare(gpu, width, height);
+            .prepare(gpu, input, width, height);
     }
 
-    /// FXAA's intermediate, which the tonemap renders into when FXAA filters next; `None` before [`Self::prepare_fxaa`].
-    pub fn fxaa_input(&self) -> Option<&wgpu::TextureView> {
-        self.fxaa.as_ref().and_then(FxaaPass::input_view)
+    /// Lets FXAA's intermediate go, on a frame that does not filter.
+    pub fn release_fxaa(&mut self) {
+        if let Some(fxaa) = self.fxaa.as_mut() {
+            fxaa.release();
+        }
     }
 
     /// Filters FXAA's intermediate into `output_view`; nothing before [`Self::prepare_fxaa`].
@@ -141,8 +154,9 @@ impl TonemapPass {
         output_view: &wgpu::TextureView,
         scope: PassScope<'_>,
     ) {
-        if let Some(fxaa) = self.fxaa.as_ref().filter(|f| f.input_view().is_some()) {
-            fxaa.render(encoder, output_view, scope);
+        match self.fxaa.as_ref() {
+            Some(fxaa) => fxaa.render(encoder, output_view, scope),
+            None => log::error!("FXAA ran before prepare_fxaa"),
         }
     }
 

@@ -13,6 +13,27 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, render graph v2: the post chain)
+- **Bloom, SSAO and FXAA render into the frame graph's pool** (`render/forward/frame_graph.rs`'s
+  `transient_targets`): bloom's half-resolution output and scratch (`Bloom`, `BloomScratch`), SSAO's raw and blurred
+  occlusion (`AmbientRaw`, `Ambient`) and FXAA's input (`Tonemapped`, in the tonemap's output format, which
+  `FrameConfig::output_format` carries). `BloomPass::bind`, `SsaoPass::bind` and `FxaaPass::prepare` take the pool's
+  views and rebind when it moves one; a frame without the row backs none, and the tonemap samples a zero texel in
+  their place, as their strength is zero there. On an even output bloom's output takes the half-resolution cloud
+  march's texture. 1920x1080 deferred + clouds + bloom, SSAO and FXAA: 206.7 MiB of these targets before the graph,
+  95.9 MiB with a texture each, 80.1 MiB aliased (scene and clouds 63.3, bloom 7.9, SSAO 1.0, FXAA 7.9); with the
+  half-resolution march 210.6, 99.9 and still 80.1 MiB.
+- **The trace resolve records in its own row**: `TracedPasses::encode` records the kernel and `encode_resolve` the
+  resolve (`TraceResolve` holds its targets and the sky that draws after it), so `trace_resolve` no longer rides on
+  the kernel's row. `TimedPass` and its names are unchanged.
+- No image moves: frame, HDR, depth and cloud hashes over 21 settings (forward, deferred, clouds full and half, FXAA
+  off and always, bloom or SSAO off, auto exposure, both cullers, an odd output, ray and path traced with and
+  without clouds), two frames each on a fresh renderer and again in one renderer switching through all of them, were
+  bit-identical before and after.
+- Tests: `frame_graph::tests` (the post targets exist exactly when their rows run, bloom takes the half march only
+  when the sizes agree, the measurement above with a row per pass); `tests/deferred.rs`'s pool bytes count bloom,
+  SSAO and FXAA.
+
 ### Changed (2026-11-16, render graph v2)
 - **The frame is compiled from a render graph every frame** (`crates/webgpu_renderer/src/render/graph.rs`). Passes
   declare what they read and write; `FrameGraph::compile` orders them by those edges (Kahn, ties to the order rows were

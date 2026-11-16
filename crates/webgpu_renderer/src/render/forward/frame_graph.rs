@@ -14,6 +14,7 @@ use crate::render::gpu_timing::TimedPass;
 use crate::render::graph::{
     CompiledGraph, FrameGraph, GraphError, PassDesc, Resource, TextureDesc,
 };
+use crate::render::ssao::AO_FORMAT;
 use crate::render::tracer::RenderMode;
 use Resource::*;
 
@@ -100,6 +101,8 @@ pub(super) struct CloudShape {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) struct FrameConfig {
     pub(super) size: (u32, u32),
+    /// The tonemap's target format, which FXAA's input shares.
+    pub(super) output_format: wgpu::TextureFormat,
     /// The drawn mode, which rasters while a traced pick's scene is not ready.
     pub(super) mode: RenderMode,
     /// Read only while the frame rasters.
@@ -147,7 +150,7 @@ pub(super) fn plan(config: &FrameConfig) -> Result<FramePlan, GraphError> {
             writes,
         });
     }
-    declare_resources(&mut graph, config.size);
+    declare_resources(&mut graph, config.size, config.output_format);
     let compiled = graph.compile()?;
     Ok(FramePlan {
         passes: compiled.order.iter().map(|&row| rows[row].0).collect(),
@@ -248,12 +251,12 @@ fn post_rows(config: &FrameConfig) -> Vec<Row> {
     let mut tonemap_reads = [&[HdrColor, Exposure][..], clouds].concat();
     if config.bloom {
         let reads = [&[HdrColor, Exposure][..], clouds].concat();
-        rows.push((FramePass::Bloom, reads, vec![Bloom]));
+        rows.push((FramePass::Bloom, reads, vec![Bloom, BloomScratch]));
         tonemap_reads.push(Bloom);
     }
     // A traced frame never ran SSAO, so its tonemap reads no ambient term.
     if config.ssao && !config.mode.is_traced() {
-        rows.push((FramePass::Ssao, vec![Depth], vec![Ambient]));
+        rows.push((FramePass::Ssao, vec![Depth], vec![AmbientRaw, Ambient]));
         tonemap_reads.push(Ambient);
     }
     let tonemapped = if config.fxaa { Tonemapped } else { Output };
@@ -265,7 +268,7 @@ fn post_rows(config: &FrameConfig) -> Vec<Row> {
 }
 
 /// What the frame keeps or reads back afterwards, and the transient targets at the output `size`.
-fn declare_resources(graph: &mut FrameGraph<'_>, size: (u32, u32)) {
+fn declare_resources(graph: &mut FrameGraph<'_>, size: (u32, u32), output: wgpu::TextureFormat) {
     graph.import(NoiseVolume);
     // The test and diagnostic readbacks read HDR, depth and clouds after the frame.
     for kept in [
@@ -279,13 +282,16 @@ fn declare_resources(graph: &mut FrameGraph<'_>, size: (u32, u32)) {
     ] {
         graph.export(kept);
     }
-    for (resource, desc) in transient_targets(size) {
+    for (resource, desc) in transient_targets(size, output) {
         graph.transient(resource, desc);
     }
 }
 
 /// Every target the pool may back, by resource; a frame allocates only those its running passes use.
-pub(super) fn transient_targets(size: (u32, u32)) -> [(Resource, TextureDesc); 10] {
+pub(super) fn transient_targets(
+    size: (u32, u32),
+    output: wgpu::TextureFormat,
+) -> [(Resource, TextureDesc); 15] {
     use wgpu::TextureUsages as U;
     let sampled = U::RENDER_ATTACHMENT | U::TEXTURE_BINDING;
     // One usage for every single-sample colour target, so a G-buffer target and the clouds can share a texture.
@@ -300,6 +306,11 @@ pub(super) fn transient_targets(size: (u32, u32)) -> [(Resource, TextureDesc); 1
         size: (size.0.div_ceil(2), size.1.div_ceil(2)),
         ..target(CLOUD_FORMAT, 1, read_back)
     };
+    // Bloom and SSAO round down, so an even output's bloom chain can take the cloud march's half target.
+    let post_half = |format, usage| TextureDesc {
+        size: ((size.0 / 2).max(1), (size.1 / 2).max(1)),
+        ..target(format, 1, usage)
+    };
     [
         (HdrMsaa, target(HDR_FORMAT, MSAA_SAMPLE_COUNT, sampled)),
         (DepthMsaa, target(DEPTH_FORMAT, MSAA_SAMPLE_COUNT, sampled)),
@@ -311,5 +322,10 @@ pub(super) fn transient_targets(size: (u32, u32)) -> [(Resource, TextureDesc); 1
         (GBufferMaterial, target(GBUFFER_FORMATS[2], 1, read_back)),
         (CloudColor, target(CLOUD_FORMAT, 1, read_back)),
         (CloudHalf, half),
+        (Bloom, post_half(HDR_FORMAT, read_back)),
+        (BloomScratch, post_half(HDR_FORMAT, read_back)),
+        (AmbientRaw, post_half(AO_FORMAT, sampled)),
+        (Ambient, post_half(AO_FORMAT, sampled)),
+        (Tonemapped, target(output, 1, sampled)),
     ]
 }

@@ -1,9 +1,13 @@
 use super::*;
 
+/// The headless readback's format, 4 bytes a pixel.
+const OUTPUT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
 /// Every optional pass on, so each mode and path records its maximal frame.
 fn maximal(mode: RenderMode, path: RasterPath) -> FrameConfig {
     FrameConfig {
         size: (1920, 1080),
+        output_format: OUTPUT,
         mode,
         path,
         clouds: Some(CloudShape {
@@ -50,6 +54,7 @@ fn every_config() -> Vec<FrameConfig> {
                     let bit = |n: u8| flags & (1 << n) != 0;
                     configs.push(FrameConfig {
                         size: (640, 360),
+                        output_format: OUTPUT,
                         mode,
                         path,
                         clouds: cloud.map(|(half, noise)| CloudShape { half, noise }),
@@ -203,10 +208,40 @@ fn a_deferred_frame_marches_its_clouds_into_a_gbuffer_texture() {
     assert!(graph.slot(CloudHalf).is_some());
 }
 
+#[test]
+fn the_post_chain_allocates_only_the_targets_of_its_running_rows() {
+    for config in every_config() {
+        let graph = plan(&config).expect("compiles").graph;
+        let has = |resource| graph.slot(resource).is_some();
+        let ssao = config.ssao && !config.mode.is_traced();
+        assert_eq!(has(Bloom) && has(BloomScratch), config.bloom, "{config:?}");
+        assert_eq!(has(Bloom) || has(BloomScratch), config.bloom, "{config:?}");
+        assert_eq!(has(AmbientRaw) && has(Ambient), ssao, "{config:?}");
+        assert_eq!(has(AmbientRaw) || has(Ambient), ssao, "{config:?}");
+        assert_eq!(has(Tonemapped), config.fxaa, "{config:?}");
+    }
+}
+
+#[test]
+fn bloom_takes_the_half_resolution_cloud_march_when_the_sizes_agree() {
+    let mut config = maximal(RenderMode::Raster, RasterPath::Deferred);
+    config.clouds = Some(CloudShape {
+        half: true,
+        noise: false,
+    });
+    let graph = plan(&config).expect("compiles").graph;
+    assert_eq!(graph.slot(Bloom), graph.slot(CloudHalf));
+    assert_ne!(graph.slot(BloomScratch), graph.slot(Bloom));
+    // An odd output's march rounds up and bloom rounds down, so they cannot share a texture.
+    config.size = (1919, 1079);
+    let graph = plan(&config).expect("compiles").graph;
+    assert_ne!(graph.slot(Bloom), graph.slot(CloudHalf));
+}
+
 /// What the targets took before the graph: the forward targets always, the G-buffer after the first deferred
-/// frame, the cloud target after the first cloud frame, each its own texture.
+/// frame, the cloud target after the first cloud frame, bloom's pair, SSAO's pair and FXAA's input, each its own texture.
 fn before_the_graph(size: (u32, u32), half_clouds: bool) -> u64 {
-    let targets = transient_targets(size);
+    let targets = transient_targets(size, OUTPUT);
     let bytes = |resource| {
         let (_, desc) = targets
             .iter()
@@ -216,13 +251,29 @@ fn before_the_graph(size: (u32, u32), half_clouds: bool) -> u64 {
     };
     let always = [HdrMsaa, DepthMsaa, HdrColor, Depth, DepthSpread];
     let deferred = [GBufferNormal, GBufferAlbedo, GBufferMaterial, CloudColor];
+    let post = [Bloom, BloomScratch, AmbientRaw, Ambient, Tonemapped];
     let half = if half_clouds { bytes(CloudHalf) } else { 0 };
-    always.into_iter().chain(deferred).map(bytes).sum::<u64>() + half
+    always
+        .into_iter()
+        .chain(deferred)
+        .chain(post)
+        .map(bytes)
+        .sum::<u64>()
+        + half
+}
+
+/// Bytes of the transients `resources` name, as the graph backs them, each counted once per slot.
+fn slot_bytes(graph: &CompiledGraph, resources: &[Resource]) -> u64 {
+    let mut slots: Vec<usize> = resources.iter().filter_map(|&r| graph.slot(r)).collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots.iter().map(|&slot| graph.slots[slot].bytes()).sum()
 }
 
 #[test]
-fn a_deferred_frame_with_clouds_and_post_holds_a_third_of_the_old_target_memory() {
+fn a_deferred_frame_with_clouds_and_post_holds_two_fifths_of_the_old_target_memory() {
     let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+    let (pixels, quarter) = (1920 * 1080, 960 * 540);
     for half in [false, true] {
         let mut config = maximal(RenderMode::Raster, RasterPath::Deferred);
         config.clouds = Some(CloudShape { half, noise: false });
@@ -235,10 +286,29 @@ fn a_deferred_frame_with_clouds_and_post_holds_a_third_of_the_old_target_memory(
             mib(unaliased),
             mib(after)
         );
-        let pixels = 1920 * 1080;
-        // HDR 8, depth 4 and the G-buffer 20 bytes a pixel; the clouds' 8 alias the G-buffer normal.
-        assert_eq!(after, 32 * pixels + if half { 8 * 960 * 540 } else { 0 });
-        assert_eq!(unaliased - after, 8 * pixels);
-        assert_eq!(before, 96 * pixels + if half { 8 * 960 * 540 } else { 0 });
+        let rows = [
+            (
+                "scene + clouds",
+                &[
+                    HdrColor,
+                    Depth,
+                    GBufferNormal,
+                    GBufferAlbedo,
+                    GBufferMaterial,
+                    CloudColor,
+                ][..],
+            ),
+            ("bloom", &[Bloom, BloomScratch][..]),
+            ("ssao", &[AmbientRaw, Ambient][..]),
+            ("fxaa", &[Tonemapped][..]),
+        ];
+        for (name, resources) in rows {
+            eprintln!("  {name}: {:.1} MiB", mib(slot_bytes(&graph, resources)));
+        }
+        let half_march = if half { 8 * quarter } else { 0 };
+        // Bytes a pixel: HDR 8, depth 4, G-buffer 20, FXAA 4; a half pixel: bloom 16, SSAO 2; clouds alias.
+        assert_eq!(after, 36 * pixels + 18 * quarter);
+        assert_eq!(unaliased - after, 8 * pixels + half_march);
+        assert_eq!(before, 100 * pixels + 18 * quarter + half_march);
     }
 }
