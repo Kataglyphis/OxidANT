@@ -23,6 +23,7 @@ pub mod pipeline_desc;
 pub mod shadow_settings;
 pub mod ssao;
 pub mod texture;
+pub mod texture_stream;
 pub mod tile_grid;
 pub mod tonemap;
 pub mod tracer;

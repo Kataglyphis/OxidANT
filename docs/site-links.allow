@@ -38,6 +38,7 @@ missing	kataglyphis_webgpu_renderer/render/overlay/dispatcher
 missing	kataglyphis_webgpu_renderer/render/pipeline_desc/dispatcher
 missing	kataglyphis_webgpu_renderer/render/shadow_settings/dispatcher
 missing	kataglyphis_webgpu_renderer/render/ssao/dispatcher
+missing	kataglyphis_webgpu_renderer/render/texture_stream/dispatcher
 missing	kataglyphis_webgpu_renderer/render/tonemap/dispatcher
 missing	kataglyphis_webgpu_renderer/render/tracer/build/dispatcher
 missing	kataglyphis_webgpu_renderer/render/tracer/bvh/dispatcher

@@ -21,6 +21,7 @@ pub use render::forward::ForwardRenderer;
 pub use render::frame_clock::FrameClock;
 pub use render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
 pub use render::overlay::Overlay;
+pub use render::texture_stream::{TextureResidency, TextureStreaming};
 pub use render::tonemap::TonemapPass;
 pub use scene::camera::OrbitCamera;
 pub use scene::controller::OrbitController;

@@ -13,6 +13,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, mip-tail texture streaming in the WebGPU renderer)
+- **`ForwardRenderer::texture_streaming`** (`TextureStreaming`, off by default; the app sets
+  `TextureStreaming::INTERACTIVE`): an upload writes each material texture's levels up to 128 texels a side and
+  keeps the finer ones on the CPU. Each frame works out, per texture, the finest level any primitive using it needs:
+  log2 of texels per pixel at the nearest point of the primitive's world AABB, from the slot's UV density (UV area
+  over surface area), its `KHR_texture_transform` and the model's largest axis scale. Visible textures step first,
+  then the furthest from what they need, then the cheapest; one level a frame each, within 8 MiB, the first step
+  always. A step writes a new texture from the finer base (whole 4x4 blocks for BC/ETC2/ASTC, never past the device's
+  side) and rebuilds the bind groups of the primitives that sample it, the MASK casters' shadow bundles included.
+  Switching streaming off finishes every texture on the next frame; `finish_texture_streaming` does it at once,
+  `texture_residency` reports resident and full bytes. Plain WebGPU, so the browser streams as well.
+- **The upload path is one level chain** (`render/texture.rs`): RGBA8 box-filtered, BC passthrough, Basis
+  retargeted to ETC2/ASTC or BC decoded on the CPU all become a `LevelChain` written by `write_chain` from any base.
+- **Measured** (`tests/texture_streaming.rs`, release, lavapipe on arm64 WSL): sixteen 2048x2048 textures after the
+  upload. RGBA8: 1.33 MiB on the GPU instead of 341.3 MiB, but 2.15 s against 2.27 s, as the CPU box filter, which
+  the tail needs too, is nearly all of it. BC1 (no filter): 0.17 MiB instead of 42.7 MiB, in 2.6 ms instead of
+  17.4 ms. A fully streamed frame is byte-identical to the whole upload's.
+
 ### Changed (2026-11-16, indirect draws from a GPU draw cull in the WebGPU renderer)
 - **Every scene draw is `draw_indexed_indirect`** (`crates/webgpu_renderer/src/render/draw_cull.rs`,
   `shaders/draw_cull/draw_cull.slang`). A compute pass, `FramePass::DrawCull` first in every raster frame

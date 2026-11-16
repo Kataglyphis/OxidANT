@@ -20,6 +20,7 @@ mod reload;
 mod shadow;
 mod shadow_casters;
 mod sky;
+mod streaming;
 mod targets;
 mod traced;
 mod upload;
@@ -36,6 +37,7 @@ pub use crate::render::lights::MAX_PUNCTUAL_LIGHTS;
 use crate::render::model_transform::ModelTransform;
 use crate::render::shadow_settings::ShadowSettings;
 use crate::render::texture::create_2d_texture;
+pub use crate::render::texture_stream::{TextureResidency, TextureStreaming};
 use crate::render::tonemap::{TonemapPass, TonemapShaders};
 use crate::render::tracer::{RenderMode, TraceSettings, Tracer};
 use crate::scene::camera::OrbitCamera;
@@ -58,9 +60,10 @@ pub use reload::ShaderSources;
 use shadow::ShadowResources;
 pub use sky::SkyMode;
 use sky::SkyResources;
+use streaming::MaterialTextures;
 use targets::{DepthResolve, RenderTargets};
 use traced::TracedState;
-use upload::{MaterialDefaults, MaterialTextureCache};
+use upload::MaterialDefaults;
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -102,8 +105,10 @@ pub struct ForwardRenderer {
     deferred: Option<DeferredResources>,
     primitives: Vec<GpuPrimitive>,
     scene_bounds: Option<(Vec3, Vec3)>,
-    /// GPU textures created by the last `upload_scene`, so tests can prove the dedup.
-    uploaded_texture_count: usize,
+    /// The material textures of the last `upload_scene`, and how far each has streamed.
+    textures: MaterialTextures,
+    /// Whether material textures upload whole or as a tail that sharpens with the camera.
+    pub texture_streaming: TextureStreaming,
     animation: SceneAnimation,
     /// Bloom contribution mixed in by the tonemap pass.
     pub bloom_strength: f32,
@@ -191,7 +196,8 @@ impl ForwardRenderer {
             deferred: None,
             primitives: Vec::new(),
             scene_bounds: None,
-            uploaded_texture_count: 0,
+            textures: MaterialTextures::default(),
+            texture_streaming: TextureStreaming::default(),
             animation: SceneAnimation::default(),
             bloom_strength: 0.6,
             ssao_strength: 0.7,
@@ -248,7 +254,7 @@ impl ForwardRenderer {
 
     /// GPU textures created by the last [`Self::upload_scene`]; shared images count once.
     pub fn uploaded_texture_count(&self) -> usize {
-        self.uploaded_texture_count
+        self.textures.len()
     }
 
     /// Whole-scene world bounds as cascade fitting reads them; `None` before any upload.
@@ -395,13 +401,15 @@ impl ForwardRenderer {
         self.reset_exposure(gpu);
         // Skinned primitives need the joint nodes' world matrices to size their bounds.
         let upload_node_world = CpuScene::compute_world_transforms(&scene.nodes);
-        let mut textures = MaterialTextureCache::default();
+        // Dropping the old textures before the new ones upload keeps the peak to one scene's.
+        self.textures = MaterialTextures::default();
+        let mut textures = MaterialTextures::default();
         for (i, prim) in scene.primitives.iter().enumerate() {
             let primitive =
                 self.upload_primitive(gpu, scene, i, prim, &upload_node_world, &mut textures);
             self.primitives.push(primitive);
         }
-        self.uploaded_texture_count = textures.uploaded;
+        self.textures = textures;
         self.settle_uploaded_pose(scene, upload_node_world);
     }
 

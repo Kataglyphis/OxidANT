@@ -3,6 +3,7 @@
 use crate::asset::basis::{basis_target, retarget_basis};
 use crate::asset::bc_decode::decode_level;
 use crate::context::GpuContext;
+use crate::render::texture_stream::{ChainLevel, LevelChain};
 use crate::scene::{CompressedFormat, CompressedTexture, CpuSampler, CpuTexture, CpuWrap};
 
 pub(crate) fn create_sampler(device: &wgpu::Device, desc: &CpuSampler) -> wgpu::Sampler {
@@ -129,14 +130,8 @@ pub(crate) fn compressed_wgpu_format(format: CompressedFormat, srgb: bool) -> wg
     }
 }
 
-/// Uploads a block-compressed mip chain without touching the pixels.
-pub(crate) fn create_compressed_texture(
-    gpu: &GpuContext,
-    texture: &CpuTexture,
-    compressed: &CompressedTexture,
-    srgb: bool,
-    label: Option<&str>,
-) -> wgpu::Texture {
+/// Warns when the KTX2 container's colour space disagrees with the slot's: usage decides the format.
+fn warn_declared_colour_space(compressed: &CompressedTexture, srgb: bool, label: Option<&str>) {
     if let Some(declared) = compressed.declared_srgb {
         if declared != srgb {
             log::warn!(
@@ -148,24 +143,54 @@ pub(crate) fn create_compressed_texture(
             );
         }
     }
-    let format = compressed_wgpu_format(compressed.format, srgb);
+}
+
+/// A block-compressed mip chain as it uploads, its pixels untouched.
+fn compressed_chain(
+    texture: &CpuTexture,
+    format: CompressedFormat,
+    mips: Vec<Vec<u8>>,
+    srgb: bool,
+) -> LevelChain {
     // `compressed_upload_problem` already checked the base and every level's byte count.
-    let block_bytes = compressed.format.block_bytes();
+    let levels = mips
+        .into_iter()
+        .enumerate()
+        .map(|(level, data)| ChainLevel {
+            width: (texture.width >> level).max(1),
+            height: (texture.height >> level).max(1),
+            data,
+        })
+        .collect();
+    LevelChain {
+        format: compressed_wgpu_format(format, srgb),
+        levels,
+    }
+}
+
+/// A texture holding `chain`'s levels from `base` on, `base` as its level 0.
+pub(crate) fn write_chain(
+    gpu: &GpuContext,
+    chain: &LevelChain,
+    base: usize,
+    label: Option<&str>,
+) -> wgpu::Texture {
+    let levels = &chain.levels[base..];
     let gpu_texture = create_2d_texture(
         &gpu.device,
         label,
-        texture.width,
-        texture.height,
-        format,
+        levels[0].width,
+        levels[0].height,
+        chain.format,
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        compressed.mips.len() as u32,
+        levels.len() as u32,
         1,
     );
-    for (level, data) in compressed.mips.iter().enumerate() {
-        let w = (texture.width >> level).max(1);
-        let h = (texture.height >> level).max(1);
-        let blocks_wide = w.div_ceil(4);
-        let blocks_high = h.div_ceil(4);
+    let (block_w, block_h) = chain.format.block_dimensions();
+    let block_bytes = chain.format.block_copy_size(None).unwrap_or(4);
+    for (level, data) in levels.iter().enumerate() {
+        let blocks_wide = data.width.div_ceil(block_w);
+        let blocks_high = data.height.div_ceil(block_h);
         gpu.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &gpu_texture,
@@ -173,7 +198,7 @@ pub(crate) fn create_compressed_texture(
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            data,
+            &data.data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(blocks_wide * block_bytes),
@@ -181,8 +206,8 @@ pub(crate) fn create_compressed_texture(
             },
             // wgpu copies whole blocks: a 2x2 or 1x1 level is one block, 4x4 physical texels.
             wgpu::Extent3d {
-                width: blocks_wide * 4,
-                height: blocks_high * 4,
+                width: blocks_wide * block_w,
+                height: blocks_high * block_h,
                 depth_or_array_layers: 1,
             },
         );
@@ -238,8 +263,14 @@ pub(crate) fn create_material_texture(
     srgb: bool,
     label: Option<&str>,
 ) -> wgpu::TextureView {
-    create_rgba8_texture(gpu, texture, srgb, label)
-        .create_view(&wgpu::TextureViewDescriptor::default())
+    let chain = rgba8_chain(texture, srgb);
+    let max_side = gpu.device.limits().max_texture_dimension_2d;
+    let base = chain
+        .base_candidates(max_side)
+        .first()
+        .copied()
+        .unwrap_or(chain.levels.len() - 1);
+    write_chain(gpu, &chain, base, label).create_view(&wgpu::TextureViewDescriptor::default())
 }
 
 /// A view of a material texture for `sampler`: glTF's mipmap-less filters see level 0 alone.
@@ -251,23 +282,23 @@ pub(crate) fn material_view(texture: &wgpu::Texture, sampler: &CpuSampler) -> wg
     })
 }
 
-/// Uploads a material texture and its mips, decoding a BCn payload the device refuses; `None` if even that fails.
-pub(crate) fn upload_material_texture(
+/// A material texture's chain as this adapter uploads it, decoding a BCn payload the device refuses; `None` if even that fails.
+pub(crate) fn material_chain(
     gpu: &GpuContext,
     texture: &CpuTexture,
     srgb: bool,
     label: Option<&str>,
-) -> Option<wgpu::Texture> {
+) -> Option<LevelChain> {
     let Some(compressed) = texture.compressed.as_ref() else {
-        return Some(create_rgba8_texture(gpu, texture, srgb, label));
+        return Some(rgba8_chain(texture, srgb));
     };
-    if let Some(uploaded) = upload_retargeted_basis(gpu, texture, compressed, srgb, label) {
-        return Some(uploaded);
+    if let Some(chain) = retargeted_basis_chain(gpu, texture, compressed, srgb, label) {
+        return Some(chain);
     }
     let Some(problem) = compressed_upload_problem(gpu, texture, compressed) else {
-        return Some(create_compressed_texture(
-            gpu, texture, compressed, srgb, label,
-        ));
+        warn_declared_colour_space(compressed, srgb, label);
+        let mips = compressed.mips.clone();
+        return Some(compressed_chain(texture, compressed.format, mips, srgb));
     };
     let name = label.unwrap_or("<unlabeled texture>");
     let Some(levels) = decoded_levels(texture, compressed) else {
@@ -279,27 +310,27 @@ pub(crate) fn upload_material_texture(
     let srgb = compressed_wgpu_format(compressed.format, srgb).is_srgb();
     let max_side = gpu.device.limits().max_texture_dimension_2d;
     if texture.width > max_side || texture.height > max_side {
-        let (width, height) = (texture.width, texture.height);
+        // The decoded chain may stop short of the side limit; the base's own mips reach 1x1.
         let base = levels.into_iter().next().map(|(_, _, rgba8)| rgba8)?;
         let decoded = CpuTexture {
-            width,
-            height,
+            width: texture.width,
+            height: texture.height,
             rgba8: base,
             compressed: None,
         };
-        return Some(create_rgba8_texture(gpu, &decoded, srgb, label));
+        return Some(rgba8_chain(&decoded, srgb));
     }
-    Some(write_rgba8_levels(gpu, &levels, srgb, label))
+    Some(rgba8_levels(levels, srgb))
 }
 
 /// A Basis payload retargeted for an adapter with ETC2 or ASTC but no BC; `None` leaves the BC7 path to decide.
-fn upload_retargeted_basis(
+fn retargeted_basis_chain(
     gpu: &GpuContext,
     texture: &CpuTexture,
     compressed: &CompressedTexture,
     srgb: bool,
     label: Option<&str>,
-) -> Option<wgpu::Texture> {
+) -> Option<LevelChain> {
     let target = basis_target(gpu.supports_bc, gpu.supports_etc2, gpu.supports_astc)?;
     let name = label.unwrap_or("<unlabeled texture>");
     let retargeted = match retarget_basis(compressed, target)? {
@@ -314,12 +345,12 @@ fn upload_retargeted_basis(
         return None;
     }
     log::info!("{name}: Basis transcoded to {target:?} for this adapter");
-    Some(create_compressed_texture(
-        gpu,
+    warn_declared_colour_space(&retargeted, srgb, label);
+    Some(compressed_chain(
         texture,
-        &retargeted,
+        retargeted.format,
+        retargeted.mips,
         srgb,
-        label,
     ))
 }
 
@@ -343,77 +374,27 @@ fn decoded_levels(
     (!levels.is_empty()).then_some(levels)
 }
 
-/// A CPU mip chain whose first level within the device's side limit becomes the base.
-fn create_rgba8_texture(
-    gpu: &GpuContext,
-    texture: &CpuTexture,
-    srgb: bool,
-    label: Option<&str>,
-) -> wgpu::Texture {
-    let mips = generate_mips(texture, srgb);
-    // A side over the limit fails texture creation, a panic on native; the chain holds the downsampled image.
-    let max_side = gpu.device.limits().max_texture_dimension_2d;
-    let first = mips
-        .iter()
-        .position(|(w, h, _)| *w <= max_side && *h <= max_side)
-        .unwrap_or(mips.len() - 1);
-    if first > 0 {
-        log::warn!(
-            "{}: {}x{} exceeds the device's {max_side}-texel side; uploaded at {}x{}",
-            label.unwrap_or("<unlabeled texture>"),
-            texture.width,
-            texture.height,
-            mips[first].0,
-            mips[first].1
-        );
-    }
-    write_rgba8_levels(gpu, &mips[first..], srgb, label)
+/// The CPU box-filtered chain of an RGBA8 image, down to 1x1.
+pub(crate) fn rgba8_chain(texture: &CpuTexture, srgb: bool) -> LevelChain {
+    rgba8_levels(generate_mips(texture, srgb), srgb)
 }
 
-/// An RGBA8 texture holding `mips`, level 0 first.
-fn write_rgba8_levels(
-    gpu: &GpuContext,
-    mips: &[(u32, u32, Vec<u8>)],
-    srgb: bool,
-    label: Option<&str>,
-) -> wgpu::Texture {
-    let format = if srgb {
-        wgpu::TextureFormat::Rgba8UnormSrgb
-    } else {
-        wgpu::TextureFormat::Rgba8Unorm
-    };
-    let gpu_texture = create_2d_texture(
-        &gpu.device,
-        label,
-        mips[0].0,
-        mips[0].1,
-        format,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        mips.len() as u32,
-        1,
-    );
-    for (level, (w, h, data)) in mips.iter().enumerate() {
-        gpu.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &gpu_texture,
-                mip_level: level as u32,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * w),
-                rows_per_image: Some(*h),
-            },
-            wgpu::Extent3d {
-                width: *w,
-                height: *h,
-                depth_or_array_layers: 1,
-            },
-        );
+fn rgba8_levels(levels: Vec<(u32, u32, Vec<u8>)>, srgb: bool) -> LevelChain {
+    LevelChain {
+        format: if srgb {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        },
+        levels: levels
+            .into_iter()
+            .map(|(width, height, data)| ChainLevel {
+                width,
+                height,
+                data,
+            })
+            .collect(),
     }
-    gpu_texture
 }
 
 /// The crate's single-layer 2D texture; clamps `width`/`height` to 1, as zero is a wgpu error.

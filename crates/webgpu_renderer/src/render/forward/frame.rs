@@ -106,6 +106,8 @@ impl ForwardRenderer {
         self.reset_culling_on_mode_change();
 
         let view = self.prepare_view(gpu, camera, width, height);
+        // Before any pass records: a finer level swaps views in the primitives' bind groups.
+        self.stream_textures(gpu, &view);
         if plan.runs(FramePass::DrawCull) {
             self.prepare_draw_cull(gpu, &view);
         }

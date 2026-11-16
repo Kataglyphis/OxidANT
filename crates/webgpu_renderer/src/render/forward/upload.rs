@@ -1,12 +1,11 @@
 //! `upload_scene`'s per-primitive work: buffers, material textures, bind groups and LOD chains.
 
-use std::collections::HashMap;
-
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt as _;
 
 use super::animate::JOINT_MATRIX_BYTES;
 use super::primitive::{is_mirrored, GpuPrimitive, LodLevel, PrimMaterial, PrimUniforms};
+use super::streaming::MaterialTextures;
 use super::{ForwardRenderer, MAX_PUNCTUAL_LIGHTS};
 use crate::context::GpuContext;
 use crate::render::bounds::{
@@ -16,18 +15,13 @@ use crate::render::bounds::{
 use crate::render::buffer_desc;
 use crate::render::lights::pack_punctual_lights;
 use crate::render::model_transform::ModelTransform;
-use crate::render::texture::{
-    create_material_texture, create_sampler, material_view, upload_material_texture,
-};
-use crate::scene::{
-    AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef,
-    InstanceRaw,
-};
+use crate::render::texture::create_material_texture;
+use crate::scene::{AlphaMode, CpuMaterial, CpuPrimitive, CpuScene, CpuTexture, InstanceRaw};
 
 /// 1x1 stand-ins for the material slots a primitive leaves empty.
 pub(super) struct MaterialDefaults {
-    white: wgpu::TextureView,
-    flat_normal: wgpu::TextureView,
+    pub(super) white: wgpu::TextureView,
+    pub(super) flat_normal: wgpu::TextureView,
 }
 
 impl MaterialDefaults {
@@ -53,92 +47,28 @@ impl MaterialDefaults {
     }
 }
 
-/// One upload and mip build per (image `Arc` pointer, sRGB), not per referencing primitive.
-#[derive(Default)]
-pub(super) struct MaterialTextureCache {
-    /// `None` for a payload that does not decode: its slots keep their defaults.
-    textures: HashMap<(usize, bool), Option<wgpu::Texture>>,
-    samplers: HashMap<CpuSampler, wgpu::Sampler>,
-    /// GPU textures created so far; the cache hits do not count.
-    pub(super) uploaded: usize,
-}
-
 /// The five material slots' views and samplers, in binding order.
 pub(super) struct MaterialSlots {
     views: Vec<wgpu::TextureView>,
     samplers: Vec<wgpu::Sampler>,
 }
 
-impl MaterialTextureCache {
-    /// Base color, metallic-roughness, normal, emissive and occlusion, each falling back alone.
-    fn material_slots(
-        &mut self,
-        gpu: &GpuContext,
-        defaults: &MaterialDefaults,
-        material: &CpuMaterial,
-        i: usize,
-    ) -> MaterialSlots {
-        let slots = [
-            (&material.base_color_texture, &defaults.white),
-            (&material.metallic_roughness_texture, &defaults.white),
-            (&material.normal_texture, &defaults.flat_normal),
-            (&material.emissive_texture, &defaults.white),
-            (&material.occlusion_texture, &defaults.white),
-        ];
-        let mut out = MaterialSlots {
-            views: Vec::with_capacity(5),
-            samplers: Vec::with_capacity(5),
-        };
-        for (slot_index, (texture_ref, fallback)) in slots.iter().enumerate() {
-            match texture_ref {
-                Some(tex_ref) => {
-                    let view = self.texture_view(gpu, tex_ref, i, slot_index);
-                    out.views.push(view.unwrap_or_else(|| (*fallback).clone()));
-                    out.samplers
-                        .push(self.sampler(&gpu.device, tex_ref.sampler));
-                }
-                None => {
-                    out.views.push((*fallback).clone());
-                    out.samplers
-                        .push(self.sampler(&gpu.device, CpuSampler::default()));
-                }
-            }
+impl MaterialSlots {
+    pub(super) fn with_capacity(slots: usize) -> Self {
+        Self {
+            views: Vec::with_capacity(slots),
+            samplers: Vec::with_capacity(slots),
         }
-        out
     }
 
-    fn texture_view(
-        &mut self,
-        gpu: &GpuContext,
-        tex_ref: &CpuTextureRef,
-        i: usize,
-        slot_index: usize,
-    ) -> Option<wgpu::TextureView> {
-        let key = (
-            std::sync::Arc::as_ptr(&tex_ref.texture) as usize,
-            tex_ref.srgb,
-        );
-        if !self.textures.contains_key(&key) {
-            let texture = upload_material_texture(
-                gpu,
-                &tex_ref.texture,
-                tex_ref.srgb,
-                Some(&format!("material_{i}_slot_{slot_index}")),
-            );
-            self.uploaded += usize::from(texture.is_some());
-            self.textures.insert(key, texture);
-        }
-        // The view, not the texture, follows the sampler: one upload serves both filter kinds.
-        self.textures[&key]
-            .as_ref()
-            .map(|texture| material_view(texture, &tex_ref.sampler))
+    pub(super) fn push(&mut self, view: wgpu::TextureView, sampler: wgpu::Sampler) {
+        self.views.push(view);
+        self.samplers.push(sampler);
     }
 
-    fn sampler(&mut self, device: &wgpu::Device, desc: CpuSampler) -> wgpu::Sampler {
-        self.samplers
-            .entry(desc)
-            .or_insert_with(|| create_sampler(device, &desc))
-            .clone()
+    /// A streamed texture's new view; the bind groups that bound the old one need rebuilding.
+    pub(super) fn set_view(&mut self, slot: usize, view: wgpu::TextureView) {
+        self.views[slot] = view;
     }
 }
 
@@ -234,13 +164,14 @@ impl ForwardRenderer {
         i: usize,
         prim: &CpuPrimitive,
         node_world: &[Mat4],
-        textures: &mut MaterialTextureCache,
+        textures: &mut MaterialTextures,
     ) -> GpuPrimitive {
         let device = &gpu.device;
         let buffers = PrimitiveBuffers::new(device, prim, i);
         let local_bounds = primitive_local_aabb(prim);
         let prim_bounds = posed_world_bounds(scene, prim, local_bounds, node_world);
-        let slots = textures.material_slots(gpu, &self.materials, &prim.material, i);
+        let slots =
+            textures.material_slots(gpu, &self.materials, (prim, i), &self.texture_streaming);
         let joint_buffer = create_joint_buffer(device, scene, prim, i);
         let groups = self.create_primitive_bind_groups(
             device,
@@ -340,7 +271,7 @@ impl ForwardRenderer {
     }
 
     /// Uniforms, the shadow map and its comparison sampler, five material slots and the joints.
-    fn create_material_bind_group(
+    pub(super) fn create_material_bind_group(
         &self,
         device: &wgpu::Device,
         i: usize,
@@ -385,7 +316,7 @@ impl ForwardRenderer {
         })
     }
 
-    fn create_masked_shadow_bind_group(
+    pub(super) fn create_masked_shadow_bind_group(
         &self,
         device: &wgpu::Device,
         i: usize,

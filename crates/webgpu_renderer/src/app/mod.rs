@@ -23,7 +23,7 @@ pub use frame::OffscreenFrame;
 pub use scenes::Notice;
 
 use crate::context::GpuContext;
-use crate::render::forward::ForwardRenderer;
+use crate::render::forward::{ForwardRenderer, TextureStreaming};
 use crate::render::frame_clock::FrameClock;
 use crate::render::ibl::EquirectImage;
 use crate::render::overlay::Overlay;
@@ -126,6 +126,8 @@ impl StudioApp {
     ) -> Self {
         let mut renderer = ForwardRenderer::new(&gpu, size[0], size[1]);
         renderer.enable_gpu_timing(&gpu);
+        // A large scene opens on its coarse levels and sharpens where the camera looks.
+        renderer.texture_streaming = TextureStreaming::INTERACTIVE;
         // IBL baked from the background's own sky; 256x128 suffices for low-frequency lighting.
         renderer.set_environment(&gpu, &EquirectImage::sky(256, 128));
         let mut app = Self {

@@ -93,6 +93,11 @@ const SOURCES: &[(&str, &str, bool)] = &[
         false,
     ),
     (
+        "render/forward/streaming.rs",
+        include_str!("../src/render/forward/streaming.rs"),
+        false,
+    ),
+    (
         "render/forward/targets.rs",
         include_str!("../src/render/forward/targets.rs"),
         false,
