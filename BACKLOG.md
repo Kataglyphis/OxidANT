@@ -102,7 +102,8 @@ its open work is here.
       raised floor, and a `kind = "count"` artifact over `mutants.out/missed.txt` in
       `quality-report.toml`. The capture loop got six tests on 2026-11-15 (the real model, a late
       file, the stall, the re-probe, the engine's two end reasons): the first run after CON238 writes
-      `capture.rs`'s new count into `docs/testing.md` and adds `src/session_slot.rs` to its file list.
+      `capture.rs`'s and `capture/logic.rs`'s new counts into `docs/testing.md` and adds `src/session_slot.rs` to its
+      file list.
 
 - [ ] **No packaged ObservANT has answered 502 to a panicking question yet** (S, ★★). Since 2026-11-14 every
       ObservANT build uses its own profile (`[profile.observant]`, release with `panic = "unwind"`, owner decision of
@@ -146,15 +147,13 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
 - [ ] **A model run that hangs cannot be ended** (S, ★). A run in flight for over 20 s shows in `/healthz`, its
       boxes are dropped and a start in the app gives up after 10 s, but the run itself goes on: nothing calls
       `RunOptions::terminate`. Leave it until a GPU provider ships; on the CPU no hung run is on record. The four
-      guards of 2026-11-13 are unit tests; add `capture.rs` and `src/session_slot.rs` to the `cargo mutants` file
+      guards of 2026-11-13 are unit tests; add `capture.rs`, `capture/logic.rs` and `src/session_slot.rs` to the `cargo mutants` file
       list in `docs/testing.md` at the next mutation run (75 minutes on a Pi 5, not run for this change).
 
-- [ ] **`capture.rs` mixes the camera with pure logic** (M, ★). Audit 2026-11-12; its first half, `to_json` holding
-      `detected` while it took other locks, is done (2026-11-15, a test that deadlocked on the old order). Left:
-      split `crates/observant/src/capture.rs` into the part that needs a camera and the pure part (`Visits`,
-      `counted`, `Backoff`, geometry), which helps the weakest mutation score; split `status.rs` (31 fields) when the
-      next feature adds one. Guard: the tests move unchanged, and the file names in the `cargo mutants` commands of
-      `docs/testing.md` change in the same commit.
+- [ ] **`status.rs` holds 31 fields** (S, ★). Audit 2026-11-12; `capture.rs` is split since 2026-11-16 (the camera
+      half and `capture/logic.rs`). Split `crates/observant/src/status.rs` when the next feature adds a field. Guard: the
+      tests move unchanged, and the file names in the `cargo mutants` commands of `docs/testing.md` change in the same
+      commit.
 
 - [b] **CUDA still loads the old way; move it to the plugin row when the hub publishes its new NVIDIA image** (S, ★★).
       Owner, 2026-11-12: only AMD now. The hub's contract (`docs/consumer-image-contract.md`, *The CUDA plugin EP*)

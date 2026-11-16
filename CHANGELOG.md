@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, ObservANT's capture loop keeps its camera apart from its logic)
+- **`crates/observant/src/capture.rs` holds only what needs a camera**: the worker, its pipelines, the bus and the
+  inference thread. `capture/logic.rs` holds the rest, which a test drives with set values: `Timing`, `Backoff` and
+  the pause, the boxes' lifetime, `Visits` (now built by `Visits::new` from the config) and `counted`, the arrival
+  photo, and the frame geometry (`capture_size`, `I420Layout`, `isp_scales`, `flip_method`, `exact_frame`).
+  `capture::Timing` stays where `main.rs` names it. The tests of the moved code moved with it, unchanged; the
+  `cargo mutants` row and file list in `docs/testing.md` name both files.
+
 ### Fixed (2026-11-16, the clouds are lit by the sky and no longer grainy at a grazing angle)
 - **The shared estimator scatters the sky as ambient** (`shaders/common/volumetric_clouds.slang`). It lit a cloud by
   the sun's single scattering alone, so dense cloud showed 48 % of the luminance of the sky behind it (the default sun
