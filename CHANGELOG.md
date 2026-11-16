@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, owner decision: the renderer builds at opt-level 1 in debug)
+- **`[profile.dev.package.kataglyphis_webgpu_renderer] opt-level = 1`** in the workspace `Cargo.toml`; dependencies stay
+  at 2. Measured in `:latest` on the 8-core arm64 host, `CARGO_BUILD_JOBS=2`, with a throwaway example over 5.9 M random
+  boxes (the Colosseum's triangle count) through `tracer::bvh`: `build_parallel` on 8 threads 16.1-21.3 s at
+  opt-level 0, 1.31-1.63 s at 1; the single-threaded `build` 75.6-76.7 s, then 4.2-4.4 s.
+- **The cost is compile time**: the renderer's lib from clean 20 to 35 s, `cargo test -p kataglyphis_webgpu_renderer
+  --no-run` after it 208 to 296 s; the whole suite then ran in 159 s instead of 186 (855 passed).
+
 ### Changed (2026-11-16, owner decision: clouds march at half resolution by default)
 - **`CloudSettings::half_resolution` defaults on** (`render/clouds.rs`, the one place the default is set; the Sky tab,
   the web demo and `editor_snapshot` take it from there), so every cloud image moves: a quarter of the pixels march

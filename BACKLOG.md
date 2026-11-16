@@ -129,10 +129,6 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       the JUnit record names the binary and its `ADAPTER:` line the width: loop that binary at `--test-threads 4`
       under `gdb -batch -ex run -ex "thread apply all bt"` and record the stack here.
 
-- [ ] **Debug builds trace slowly** (S). The dev profile builds the renderer at opt-level 0 (`Cargo.toml` raises
-      only dependencies), so building the full Colosseum's BVH in a debug viewer takes about half a minute.
-      Owner decision: `[profile.dev.package.kataglyphis_webgpu_renderer] opt-level = 1`.
-
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
       `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially all pass. Re-dispatch
       `windows-arm64-cross.yml` with `parallel-renderer-tests` after a runner image update.
