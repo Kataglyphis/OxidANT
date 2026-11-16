@@ -5,6 +5,7 @@ use glam::{Mat3, Mat4, Vec3, Vec3A};
 use super::bvh::{self, Aabb, Bvh, BvhNode, BvhParams};
 use super::geometry::{Gathered, InstanceSource};
 use super::layers::LayerArray;
+use super::limits::TraceBufferSizes;
 use super::material::{GpuMaterial, MaterialTable};
 use crate::render::bounds::transform_aabb;
 
@@ -73,7 +74,7 @@ pub struct MeshInfo {
     pub bounds: Aabb,
 }
 
-/// Float4 offsets of the sections in the records buffer: nodes first, then instances, then materials.
+/// Float4 offsets of the sections in the records buffer: each node's min half first, then instances, then materials.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RecordLayout {
     pub tlas_root: u32,
@@ -272,7 +273,7 @@ impl TraceScene {
     }
 
     pub fn layout(&self) -> RecordLayout {
-        let instance_base = (self.nodes.len() * 2) as u32;
+        let instance_base = self.nodes.len() as u32;
         let material_base = instance_base + (self.instances.len() * GpuInstance::RECORDS) as u32;
         RecordLayout {
             tlas_root: self.tlas_root(),
@@ -289,13 +290,8 @@ impl TraceScene {
             .iter()
             .map(|s| u64::from(self.meshes[s.mesh as usize].triangle_count))
             .sum();
-        let layout = self.layout();
-        let gpu_bytes = u64::from(layout.records) * 16
-            + self.triangles.len() as u64 * 16
-            + self.positions.len() as u64 * 16
-            + self.vertices.len() as u64 * 32
-            + self.srgb.byte_size()
-            + self.linear.byte_size();
+        let gpu_bytes =
+            TraceBufferSizes::of(self).total() + self.srgb.byte_size() + self.linear.byte_size();
         self.stats = TraceStats {
             triangles,
             unique_triangles: self.triangles.len() as u64,

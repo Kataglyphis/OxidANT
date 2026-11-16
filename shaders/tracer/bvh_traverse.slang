@@ -2,7 +2,6 @@
 
 // render::tracer::query::STACK_SIZE: a top-level path (32) and a bottom-level path (64) below it.
 static const uint TRACE_STACK_SIZE = 96;
-static const uint NODE_STRIDE = 2;
 static const uint INSTANCE_STRIDE = 7;
 static const uint MATERIAL_STRIDE = 14;
 static const uint TRACE_NO_HIT = 0xFFFFFFFFu;
@@ -40,6 +39,7 @@ struct TraceSceneInfo
     uint flags;
 };
 
+// A node's max half and a vertex's UV1 and colour bind apart, so no binding passes WebGPU's 128 MiB on a large scene.
 [vk::binding(0, 1)] StructuredBuffer<float4> tracerRecords;
 [vk::binding(1, 1)] StructuredBuffer<uint4> tracerTriangles;
 [vk::binding(2, 1)] StructuredBuffer<float4> tracerPositions;
@@ -49,6 +49,8 @@ struct TraceSceneInfo
 [vk::binding(6, 1)] Texture2DArray<float4> tracerLinearLayers;
 [vk::binding(7, 1)] SamplerState tracerLinearSampler;
 [vk::binding(8, 1)] SamplerState tracerNearestSampler;
+[vk::binding(9, 1)] StructuredBuffer<float4> tracerNodeMax;
+[vk::binding(10, 1)] StructuredBuffer<uint4> tracerVertexExtras;
 
 struct TraceRay
 {
@@ -123,8 +125,8 @@ struct TraceSurface
 
 BvhNode load_node(uint index)
 {
-    float4 a = tracerRecords[index * NODE_STRIDE];
-    float4 b = tracerRecords[index * NODE_STRIDE + 1u];
+    float4 a = tracerRecords[index];
+    float4 b = tracerNodeMax[index];
     BvhNode node;
     node.lo = a.xyz;
     node.first = asuint(a.w);
@@ -191,8 +193,8 @@ float3 oct_decode(float2 e)
 // geometry::pack_vertex: the bitangent sign rides in bit 16 of the tangent word.
 TraceVertex load_vertex(uint index)
 {
-    uint4 a = tracerVertices[index * 2u];
-    uint4 b = tracerVertices[index * 2u + 1u];
+    uint4 a = tracerVertices[index];
+    uint4 b = tracerVertexExtras[index];
     TraceVertex v;
     v.normal = oct_decode(unpack_snorm2(a.x));
     float handedness = (a.y & 0x10000u) != 0u ? -1.0 : 1.0;

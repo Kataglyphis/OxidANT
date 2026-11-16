@@ -4,10 +4,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kataglyphis_webgpu_renderer::render::tracer::geometry::{TRIANGLE_MASKED, TRIANGLE_MATERIAL};
+use kataglyphis_webgpu_renderer::render::tracer::limits::TraceBufferSizes;
 use kataglyphis_webgpu_renderer::render::tracer::material::{flags, GpuMaterial, NO_LAYER};
-use kataglyphis_webgpu_renderer::render::tracer::query::STACK_SIZE;
+use kataglyphis_webgpu_renderer::render::tracer::query::{TraceRay, STACK_SIZE};
 use kataglyphis_webgpu_renderer::render::tracer::scene::{GpuInstance, INSTANCE_MIRRORED};
-use kataglyphis_webgpu_renderer::render::tracer::{RenderMode, TraceStatus, TRACE_SCENE_GROUP};
+use kataglyphis_webgpu_renderer::render::tracer::{
+    RenderMode, TraceDebugPass, TraceStatus, TRACE_SCENE_GROUP,
+};
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
 const TRAVERSE: &str = include_str!("../../../shaders/tracer/bvh_traverse.slang");
@@ -36,9 +39,8 @@ fn constant(name: &str) -> u64 {
 
 #[test]
 fn the_slang_constants_match_the_rust_layout() {
-    let pairs: [(&str, u64); 15] = [
+    let pairs: [(&str, u64); 14] = [
         ("TRACE_STACK_SIZE", STACK_SIZE as u64),
-        ("NODE_STRIDE", 2),
         ("INSTANCE_STRIDE", GpuInstance::RECORDS as u64),
         ("MATERIAL_STRIDE", GpuMaterial::RECORDS as u64),
         ("TRACE_NO_LAYER", u64::from(NO_LAYER)),
@@ -62,13 +64,15 @@ fn the_slang_constants_match_the_rust_layout() {
 #[test]
 fn the_scene_binds_at_its_group_in_the_emitted_wgsl() {
     let names = [
-        "tracerRecords",
-        "tracerTriangles",
-        "tracerPositions",
-        "tracerVertices",
-        "tracerInfo",
+        (0, "tracerRecords"),
+        (1, "tracerTriangles"),
+        (2, "tracerPositions"),
+        (3, "tracerVertices"),
+        (4, "tracerInfo"),
+        (9, "tracerNodeMax"),
+        (10, "tracerVertexExtras"),
     ];
-    for (binding, name) in names.iter().enumerate() {
+    for (binding, name) in names {
         let declared = format!("@binding({binding}) @group({TRACE_SCENE_GROUP}) var<");
         let line = DEBUG_WGSL
             .lines()
@@ -223,4 +227,92 @@ fn the_traced_kernels_read_the_rust_uniforms_and_workgroups() {
         2,
         "both kernels are {group}"
     );
+}
+
+/// Rays from `eye` towards a 40 x 40 grid over the far face of the box.
+fn rays_through(eye: glam::Vec3, (min, max): (glam::Vec3, glam::Vec3)) -> Vec<TraceRay> {
+    let mut rays = Vec::new();
+    for i in 0..40 {
+        for j in 0..40 {
+            let (u, v) = ((i as f32 + 0.5) / 40.0, (j as f32 + 0.5) / 40.0);
+            let target = glam::Vec3::new(
+                min.x + (max.x - min.x) * u,
+                min.y + (max.y - min.y) * v,
+                max.z,
+            );
+            rays.push(TraceRay {
+                origin: eye,
+                tmin: 0.0,
+                direction: target - eye,
+                tmax: 2.0,
+            });
+        }
+    }
+    rays
+}
+
+/// The full Colosseum builds, fits the device and traces as on the CPU; on request only (`docs/testing.md`).
+#[test]
+#[ignore = "needs resources/scenes/Colosseum-gltf and about 3 GiB"]
+fn the_full_colosseum_traces_on_this_device() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../resources/scenes/Colosseum-gltf/Colosseum-gltf.gltf");
+    let scene = load_gltf(&path).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e:?}; scripts/linux/fetch-models.sh --scenes fetches it",
+            path.display()
+        )
+    });
+    let size = 160;
+    let mut renderer = ForwardRenderer::new(&gpu, size, size);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.set_trace_source(Arc::new(scene));
+    let built = renderer
+        .tracer_mut()
+        .finish_build(&gpu, Duration::from_secs(3600));
+    assert!(built, "{:?}", renderer.trace_status());
+    let traced = renderer.tracer().cpu_scene().expect("built");
+    let binding = gpu.device.limits().max_storage_buffer_binding_size;
+    eprintln!(
+        "COLOSSEUM: {} nodes, {} instances, {} materials, {} triangles, {} vertices; {:?}; binding limit {binding}",
+        traced.nodes.len(),
+        traced.instances.len(),
+        traced.materials.len(),
+        traced.triangles.len(),
+        traced.vertices.len(),
+        TraceBufferSizes::of(traced)
+    );
+    let (min, max) = renderer.scene_bounds().expect("bounds");
+    let eye = (min + max) * 0.5 + glam::Vec3::new(0.0, (max.y - min.y) * 0.5, min.z - max.z);
+    let rays = rays_through(eye, (min, max));
+    let pass = TraceDebugPass::new(&gpu.device);
+    let gpu_scene = renderer.tracer().gpu_scene().expect("uploaded");
+    let hits = pass.trace_closest(&gpu, gpu_scene, &rays).expect("traces");
+    let (mut agree, mut hit) = (0, 0);
+    for (ray, got) in rays.iter().zip(&hits) {
+        let expected = traced.trace_closest(ray);
+        hit += usize::from(expected.is_some());
+        agree += usize::from(match expected {
+            Some(e) => (got.instance, got.triangle) == (e.instance, e.triangle),
+            None => !got.is_hit(),
+        });
+    }
+    eprintln!("COLOSSEUM: {agree} of {} rays agree, {hit} hit", rays.len());
+    // The ground spans kilometres, so most rays towards its box pass over the arena.
+    assert!(hit >= 100, "only {hit} rays hit");
+    assert!(agree * 100 >= rays.len() * 99, "only {agree} rays agree");
+    let camera = OrbitCamera {
+        target: (min + max) * 0.5,
+        radius: (max - min).length() * 0.7,
+        far: (max - min).length() * 4.0,
+        ..OrbitCamera::default()
+    };
+    renderer.render_mode = RenderMode::RayTraced;
+    renderer
+        .render_to_pixels(&gpu, size, size, &camera)
+        .expect("renders");
+    assert_eq!(renderer.drawn_mode(), RenderMode::RayTraced);
 }

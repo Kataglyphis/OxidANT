@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, lavapipe traces the full Colosseum)
+- **A node's and a packed vertex's two 16-byte halves bind apart** (`tracerNodeMax`, `tracerVertexExtras` at
+  bindings 9 and 10 of the scene group), so every tracer buffer holds 16 bytes an entry. The full Colosseum needed
+  175 MiB of records and 143 MiB of vertices, past lavapipe's and the browser's 128 MiB per storage binding; now its
+  largest buffer is the triangles' 90 MiB, and a browser scene holds about 8.4 M stored triangles, vertices and nodes.
+  The scene binds 6 storage buffers, so the modes' kernels use all 8 of WebGPU's default per stage. Uploads write the
+  split buffers 64 K entries at a time. `TraceBufferSizes` names six buffers; `check_buffers` checks counts alone.
+- Tests: a scene behind 4.3 M padding nodes and vertices traces and decodes on lavapipe as on the CPU (writing every
+  upload chunk at the first chunk's offset fails it, and only it); the limits test at the full Colosseum's counts;
+  `the_full_colosseum_traces_on_this_device`, ignored by default (`docs/testing.md`): 1600 of 1600 rays agree with
+  the CPU traversal on lavapipe, whose binding limit is 128 MiB, in 84 s unoptimised.
+
 ### Added (2026-11-16, the path tracer's punctual lights and environment)
 - **The path tracer lights with the scene's `KHR_lights_punctual` lights.** Each segment picks one light uniformly
   and divides its term by the pick's chance, 1 / count, through one shadow ray that stops just short of the light, so

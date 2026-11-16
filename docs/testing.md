@@ -182,6 +182,18 @@ its buffers against the defaults ([tracer.md](../crates/webgpu_renderer/docs/tra
 `tests/shader_export.rs` checks the WGSL without a GPU: no `@group` past 3, and no struct
 that repeats a `@location`, which naga accepts and Tint, the browsers' WGSL compiler, rejects.
 
+**The full Colosseum traces only on request.** `tests/tracer.rs`'s
+`the_full_colosseum_traces_on_this_device` is ignored by default: it needs the scene
+(`bash scripts/linux/fetch-models.sh --scenes`), about 3 GiB of memory and a minute and a half
+unoptimised. It builds the 5.9 M-triangle scene, checks that every tracer buffer fits the
+device (lavapipe binds 128 MiB; the largest buffer is 90 MiB), traces 1600 rays on the GPU
+against the CPU traversal and draws one ray-traced frame. Run it alone, since lavapipe holds
+about 850 MiB of the scene:
+
+```bash
+cargo test -p kataglyphis_webgpu_renderer --test tracer the_full_colosseum -- --ignored --nocapture
+```
+
 ## The web demo in a browser
 
 `bash scripts/linux/ci-container-steps.sh web-browser [--frames DIR]` in the family image builds

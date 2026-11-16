@@ -4,9 +4,11 @@ use glam::{Vec2, Vec3, Vec4};
 
 use super::scenes::{self, build, rays};
 use crate::context::GpuContext;
+use crate::render::tracer::bvh::BvhNode;
 use crate::render::tracer::debug::{DebugHit, TraceDebugPass};
 use crate::render::tracer::geometry::{unpack_vertex, TRIANGLE_MATERIAL};
 use crate::render::tracer::gpu::TraceGpuScene;
+use crate::render::tracer::limits;
 use crate::render::tracer::query::{TraceHit, TraceRay, FAR};
 use crate::render::tracer::scene::TraceScene;
 
@@ -211,20 +213,15 @@ fn expected_surface(scene: &TraceScene, ray: &TraceRay, hit: &DebugHit) -> (Vec3
     )
 }
 
-#[test]
-fn gpu_surfaces_decode_the_packed_attributes() {
-    let Some(gpu) = GpuContext::headless_or_skip() else {
-        return;
-    };
-    let scene = build(scenes::instanced(4));
-    let pass = TraceDebugPass::new(&gpu.device);
-    let probe = rays(&scene, 600, 41);
+/// Every hit's decoded surface equals the CPU's unpacking of its vertices.
+fn assert_surfaces(gpu: &GpuContext, pass: &TraceDebugPass, scene: &TraceScene) {
+    let probe = rays(scene, 600, 41);
     let hits = pass
-        .trace_closest(&gpu, &upload(&gpu, &scene), &probe)
+        .trace_closest(gpu, &upload(gpu, scene), &probe)
         .expect("traces");
     let mut seen = 0;
     for (ray, hit) in probe.iter().zip(&hits).filter(|(_, h)| h.is_hit()) {
-        let (normal, uv, material, front) = expected_surface(&scene, ray, hit);
+        let (normal, uv, material, front) = expected_surface(scene, ray, hit);
         assert!(
             (hit.normal - normal).length() < 2e-3,
             "{} vs {normal}",
@@ -242,4 +239,66 @@ fn gpu_surfaces_decode_the_packed_attributes() {
         seen += 1;
     }
     assert!(seen > 200, "{seen} hits");
+}
+
+#[test]
+fn gpu_surfaces_decode_the_packed_attributes() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let pass = TraceDebugPass::new(&gpu.device);
+    assert_surfaces(&gpu, &pass, &build(scenes::instanced(4)));
+}
+
+/// `scene` behind `pad` nodes and `pad` vertices that no ray reaches, every index into them moved past the padding.
+fn padded(mut scene: TraceScene, pad: usize) -> TraceScene {
+    let shift = pad as u32;
+    let mut nodes = vec![BvhNode::default(); pad];
+    nodes.extend(
+        scene.nodes[..scene.blas_node_count as usize]
+            .iter()
+            .map(|node| {
+                let mut node = *node;
+                if !node.is_leaf() {
+                    node.first += shift;
+                }
+                node
+            }),
+    );
+    scene.nodes = nodes;
+    scene.blas_node_count += shift;
+    let mut positions = vec![[0.0; 4]; pad];
+    positions.append(&mut scene.positions);
+    scene.positions = positions;
+    let mut vertices = vec![[0; 8]; pad];
+    vertices.append(&mut scene.vertices);
+    scene.vertices = vertices;
+    for tri in &mut scene.triangles {
+        for corner in &mut tri[..3] {
+            *corner += shift;
+        }
+    }
+    for mesh in &mut scene.meshes {
+        mesh.root += shift;
+        mesh.first_vertex += shift;
+    }
+    scene.rebuild_tlas();
+    scene
+}
+
+/// Nodes and vertices that would each pass WebGPU's 128 MiB whole in one binding trace and decode as on the CPU.
+#[test]
+fn a_scene_past_one_binding_a_node_and_a_vertex_traces_on_the_gpu() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = padded(build(scenes::instanced(4)), 4_300_000);
+    let defaults = wgpu::Limits::default();
+    let binding = defaults.max_storage_buffer_binding_size;
+    assert!(scene.nodes.len() as u64 * 32 > binding);
+    assert!(scene.vertices.len() as u64 * 32 > binding);
+    assert_eq!(limits::check(&scene, &defaults), Ok(()));
+    let pass = TraceDebugPass::new(&gpu.device);
+    assert_gpu_matches("padded", &gpu, &pass, &scene);
+    assert_surfaces(&gpu, &pass, &scene);
 }

@@ -73,13 +73,6 @@ its open work is here.
 
 ## P2 — medium
 
-- [ ] **lavapipe refuses the full Colosseum's traced scene** (M, ★★). lavapipe binds at most 128 MiB per
-      storage buffer, and the full Colosseum's vertex buffer is larger, so `check`
-      (`crates/webgpu_renderer/src/render/tracer/limits.rs`) ends the build in `TraceStatus::Failed` with the
-      buffer named; desktop GPUs bind it and the browser takes Colosseum-web. Next, if CI or a software host
-      should trace it: drop uv1 when no material samples it (24 bytes a vertex instead of 32) or split the
-      vertices over two bindings. Guard: a limits test at the full Colosseum's counts.
-
 - [ ] **Skins and morph targets are traced at their first pose** (M, ★★). `sync_animated_instances`
       (`crates/webgpu_renderer/src/render/forward/traced.rs`) moves rigid instances only; a skinned or morphed mesh keeps the pose the
       build saw, so its traced frame and shadow disagree with raster once it moves. Next: refit that mesh's

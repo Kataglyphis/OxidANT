@@ -1,4 +1,4 @@
-//! The traced scene on the GPU: four storage buffers, a uniform, two texture arrays and two samplers in one bind group.
+//! The traced scene on the GPU: six storage buffers, a uniform, two texture arrays and two samplers in one bind group.
 
 use wgpu::util::DeviceExt as _;
 
@@ -46,6 +46,7 @@ impl TraceSceneInfo {
 /// Uploaded scene data, bound as group [`TRACE_SCENE_GROUP`] of a compute pipeline.
 pub struct TraceGpuScene {
     records: wgpu::Buffer,
+    node_max: wgpu::Buffer,
     layout: RecordLayout,
     bind_group: wgpu::BindGroup,
     pub stats: TraceStats,
@@ -77,6 +78,8 @@ impl TraceGpuScene {
                 layers(6),
                 bind_layout::sampler(7, compute, filtering),
                 bind_layout::sampler(8, compute, filtering),
+                bind_layout::storage_buffer(9, compute, true),
+                bind_layout::storage_buffer(10, compute, true),
             ],
         })
     }
@@ -86,11 +89,25 @@ impl TraceGpuScene {
         limits::check(scene, &gpu.device.limits())?;
         let device = &gpu.device;
         let layout = scene.layout();
+        let queue = &gpu.queue;
+        let nodes: &[[u32; 8]] = bytemuck::cast_slice(&scene.nodes);
         let records = buffer_desc::storage_dst(
             device,
             "tracer_records",
             (u64::from(layout.records) * 16).max(16),
         );
+        write_half(queue, &records, 0, nodes, 0);
+        let materials = u64::from(layout.material_base) * 16;
+        queue.write_buffer(&records, materials, bytemuck::cast_slice(&scene.materials));
+        let half_buffer = |label: &str, entries: &[[u32; 8]], half: usize| {
+            let buffer =
+                buffer_desc::storage_dst(device, label, (entries.len() as u64 * 16).max(16));
+            write_half(queue, &buffer, 0, entries, half);
+            buffer
+        };
+        let node_max = half_buffer("tracer_node_max", nodes, 1);
+        let vertices = half_buffer("tracer_vertices", &scene.vertices, 0);
+        let vertex_extras = half_buffer("tracer_vertex_extras", &scene.vertices, 1);
         let storage = |label: &str, bytes: &[u8]| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
@@ -100,7 +117,6 @@ impl TraceGpuScene {
         };
         let triangles = storage("tracer_triangles", bytemuck::cast_slice(&scene.triangles));
         let positions = storage("tracer_positions", bytemuck::cast_slice(&scene.positions));
-        let vertices = storage("tracer_vertices", bytemuck::cast_slice(&scene.vertices));
         let info = buffer_desc::uniform(
             device,
             "tracer_info",
@@ -132,14 +148,16 @@ impl TraceGpuScene {
             )
         });
         let buffers = [&records, &triangles, &positions, &vertices, &info];
-        let bind_group = create_bind_group(device, buffers, [&srgb, &linear], &samplers);
+        let extra = [&node_max, &vertex_extras];
+        let bind_group = create_bind_group(device, (buffers, extra), [&srgb, &linear], &samplers);
         let uploaded = Self {
             records,
+            node_max,
             layout,
             bind_group,
             stats: scene.stats.clone(),
         };
-        uploaded.write_records(gpu, scene);
+        uploaded.write_instances(gpu, scene);
         Ok(uploaded)
     }
 
@@ -154,10 +172,11 @@ impl TraceGpuScene {
             self.layout,
             "a top-level rebuild keeps every section in place"
         );
-        let tlas = &scene.nodes[scene.blas_node_count as usize..];
-        let offset = u64::from(scene.blas_node_count) * 32;
-        gpu.queue
-            .write_buffer(&self.records, offset, bytemuck::cast_slice(tlas));
+        self.write_nodes(
+            gpu,
+            scene,
+            scene.blas_node_count as usize..scene.nodes.len(),
+        );
         let instances = u64::from(self.layout.instance_base) * 16;
         gpu.queue.write_buffer(
             &self.records,
@@ -166,30 +185,47 @@ impl TraceGpuScene {
         );
     }
 
-    fn write_records(&self, gpu: &GpuContext, scene: &TraceScene) {
-        gpu.queue
-            .write_buffer(&self.records, 0, bytemuck::cast_slice(&scene.nodes));
-        self.write_instances(gpu, scene);
-        let materials = u64::from(self.layout.material_base) * 16;
-        gpu.queue.write_buffer(
-            &self.records,
-            materials,
-            bytemuck::cast_slice(&scene.materials),
-        );
+    /// Writes both halves of `range`'s nodes.
+    fn write_nodes(&self, gpu: &GpuContext, scene: &TraceScene, range: std::ops::Range<usize>) {
+        let nodes: &[[u32; 8]] = bytemuck::cast_slice(&scene.nodes[range.clone()]);
+        write_half(&gpu.queue, &self.records, range.start, nodes, 0);
+        write_half(&gpu.queue, &self.node_max, range.start, nodes, 1);
     }
 }
 
+/// Float4 slots [`write_half`] deinterleaves per call: 1 MiB.
+const WRITE_CHUNK: usize = 1 << 16;
+
+/// Writes one float4 half of each entry, a node's or a packed vertex's, from slot `first` on, a chunk at a time.
+fn write_half(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    first: usize,
+    entries: &[[u32; 8]],
+    half: usize,
+) {
+    for (index, chunk) in entries.chunks(WRITE_CHUNK).enumerate() {
+        let slots: Vec<[u32; 4]> = chunk
+            .iter()
+            .map(|entry| entry.as_chunks::<4>().0[half])
+            .collect();
+        let offset = (first + index * WRITE_CHUNK) as u64 * 16;
+        queue.write_buffer(buffer, offset, bytemuck::cast_slice(&slots));
+    }
+}
+
+/// Bindings 0-4 are `buffers`, 9 and 10 `extra`: the node maxima and the vertex extras.
 fn create_bind_group(
     device: &wgpu::Device,
-    buffers: [&wgpu::Buffer; 5],
+    (buffers, extra): ([&wgpu::Buffer; 5], [&wgpu::Buffer; 2]),
     layers: [&wgpu::TextureView; 2],
     samplers: &[wgpu::Sampler; 2],
 ) -> wgpu::BindGroup {
-    let mut entries: Vec<wgpu::BindGroupEntry> = buffers
-        .iter()
-        .enumerate()
+    let bindings = (0..5).chain(9..11);
+    let mut entries: Vec<wgpu::BindGroupEntry> = bindings
+        .zip(buffers.iter().chain(&extra))
         .map(|(binding, buffer)| wgpu::BindGroupEntry {
-            binding: binding as u32,
+            binding,
             resource: buffer.as_entire_binding(),
         })
         .collect();

@@ -70,17 +70,21 @@ Group 1 (`TRACE_SCENE_GROUP`), compute-visible; a kernel keeps group 0 for itsel
 
 | Binding | WGSL | Content |
 | --- | --- | --- |
-| 0 `tracerRecords` | `array<vec4<f32>>` | Mesh nodes, top-level nodes, instances, materials |
+| 0 `tracerRecords` | `array<vec4<f32>>` | Each node's first half (mesh nodes, then top-level ones), instances, materials |
 | 1 `tracerTriangles` | `array<vec4<u32>>` | Three global vertex indices; material in bits 0-23, MASK in bit 31; in leaf order |
 | 2 `tracerPositions` | `array<vec4<f32>>` | Vertex position, xyz |
-| 3 `tracerVertices` | `array<vec4<u32>>` | Two per vertex: oct normal (snorm16 x2), oct tangent (snorm16 x2, bitangent sign in bit 16), UV0 (f32 x2); UV1 (f32 x2), colour (unorm16 x4) |
+| 3 `tracerVertices` | `array<vec4<u32>>` | Oct normal (snorm16 x2), oct tangent (snorm16 x2, bitangent sign in bit 16), UV0 (f32 x2) |
 | 4 `tracerInfo` | uniform | `tlas_root`, `instance_base`, `material_base`, counts, both layer sides |
 | 5, 6 | `texture_2d_array<f32>` | sRGB layers (base colour, emissive) and linear layers (metallic-roughness, normal, occlusion); square, power of two, full mips |
 | 7, 8 | `sampler` | Repeat, linear and nearest |
+| 9 `tracerNodeMax` | `array<vec4<f32>>` | Each node's second half, by node index |
+| 10 `tracerVertexExtras` | `array<vec4<u32>>` | UV1 (f32 x2), colour (unorm16 x4), by vertex index |
 
-Records, in float4 units: a node is 2 (`min.xyz, first; max.xyz, count`; a leaf has
-`count > 0` and indexes triangles or one instance, an inner node's children are `first` and
-`first + 1`). An instance is 7: three rows of world-to-object, three of object-to-world,
+A node and a packed vertex are 32 bytes, each split into two 16-byte halves in two bindings,
+so no binding outgrows 128 MiB before the triangles do ([Limits](#limits)). Records, in float4
+units: a node's first half is 1 (`min.xyz, first`; its `max.xyz, count` sits at the same index of
+`tracerNodeMax`; a leaf has `count > 0` and indexes triangles or one instance, an inner node's
+children are `first` and `first + 1`), so `instance_base` is the node count. An instance is 7: three rows of world-to-object, three of object-to-world,
 then `blas_root, flags (bit 0 mirrored), primitive, mesh`. A material is 14: base colour;
 emissive rgb and MASK cutoff (-1 when not MASK); metallic, roughness, occlusion strength,
 normal scale; flags and layers; two `KHR_texture_transform` rows per slot. Material flags:
@@ -97,17 +101,20 @@ array render with their factor alone.
 
 ## Limits
 
-The scene binds 4 storage buffers, so a kernel keeps 4 of WebGPU's default 8 per stage,
-plus 2 sampled textures and 2 samplers. The modes' kernels use 6 of the 8: the scene's 4, the
+The scene binds 6 storage buffers, so a kernel keeps 2 of WebGPU's default 8 per stage,
+plus 2 sampled textures and 2 samplers. The modes' kernels use all 8: the scene's 6, the
 accumulation and the punctual lights; 3 sampled textures (the environment cube is the third) and
-the scene's 2 samplers. In the browser the device has WebGPU's defaults:
-128 MiB per storage binding, room for about 4 M vertices. Natively `GpuContext` requests the
-adapter's `max_storage_buffer_binding_size` and `max_buffer_size` and every other limit at
-the web's default, so native tests still fail where the browser would. `TraceGpuScene::upload`
-checks every buffer and array first and fails with the buffer's name and size
-(`TraceLimitError`), which `TraceStatus::Failed` shows. The full Colosseum needs 175 MiB of
-records and 143 MiB of vertices: desktop GPUs bind that, lavapipe (128 MiB) does not, and
-the browser takes Colosseum-web.
+the scene's 2 samplers. A further kernel buffer has to share one of those. Every binding holds
+16 bytes an entry, so in the browser, at WebGPU's 128 MiB per storage binding, a scene holds
+about 8.4 M stored triangles, vertices and nodes, and 1.1 M instances. Natively `GpuContext`
+requests the adapter's `max_storage_buffer_binding_size` and `max_buffer_size` and every other
+limit at the web's default, so native tests still fail where the browser would.
+`TraceGpuScene::upload` checks every buffer and array first and fails with the buffer's name and
+size (`TraceLimitError`), which `TraceStatus::Failed` shows. The full Colosseum (5.74 M nodes,
+5.87 M stored triangles, 4.68 M vertices) needs 90 MiB of triangles, 88 MiB for each node half and
+71 MiB for each vertex half: lavapipe (128 MiB) traces it since 2026-11-16, where a node or a
+vertex whole in one binding needed 175 and 143 MiB. Uploads write a split buffer 64 K entries at
+a time, so the CPU arrays are not copied whole once more.
 
 ## Kernel API
 
@@ -149,8 +156,12 @@ rays over seven scenes (soup, slivers, a height field's shared edges, 30 instanc
 with a mirrored one, MASK cards, two glTF assets); the GPU kernel equals the CPU traversal
 in triangle and within 1e-4 in distance on every ray rounding cannot flip; the alpha test
 on both; decoded surfaces; a stepped build equals a threaded one; the root transform; a
-build-time budget. `tests/tracer.rs` pins the Slang constants and bindings and the lazy
-build through `ForwardRenderer`; `limits.rs` the browser and native limits.
+build-time budget; a scene behind 4.3 M padding nodes and vertices, which whole in one binding
+would pass 128 MiB each, traces and decodes on the GPU as on the CPU (it fails when an upload
+writes every chunk at the first one's offset). `tests/tracer.rs` pins the Slang constants and
+bindings and the lazy build through `ForwardRenderer`, and traces the full Colosseum on request
+([testing.md](../../../docs/testing.md#the-gpu-tests-must-render)); `limits.rs` the browser and
+native limits, the Colosseum's counts among them.
 
 ## The modes
 
