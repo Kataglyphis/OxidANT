@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use kataglyphis_webgpu_renderer::asset::ktx2_loader::load_ktx2;
 use kataglyphis_webgpu_renderer::scene::{
-    CompressedFormat, CompressedTexture, CpuSampler, CpuTexture, CpuTextureRef,
+    CompressedFormat, CompressedTexture, CpuSampler, CpuScene, CpuTexture, CpuTextureRef,
 };
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
@@ -57,9 +57,13 @@ fn render_cube_with(gpu: &GpuContext, texture: CpuTexture) -> (Option<wgpu::Erro
         sampler: CpuSampler::default(),
         srgb: true,
     });
+    render_scene(gpu, &scene)
+}
+
+fn render_scene(gpu: &GpuContext, scene: &CpuScene) -> (Option<wgpu::Error>, Vec<u8>) {
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut renderer = ForwardRenderer::new(gpu, 128, 128);
-    renderer.upload_scene(gpu, &scene);
+    renderer.upload_scene(gpu, scene);
     let pixels = renderer
         .render_to_pixels(gpu, 128, 128, &OrbitCamera::default())
         .expect("render");
@@ -280,6 +284,7 @@ fn a_payload_the_device_refuses_is_decoded_instead_of_failing_validation() {
             format: CompressedFormat::Bc1RgbaUnorm,
             mips: vec![green_blocks(4)],
             declared_srgb: Some(true),
+            basis_source: None,
         }),
     };
     let (error, pixels) = render_cube_with(&gpu, six);
@@ -335,6 +340,7 @@ fn the_cpu_decode_of_every_bc_format_draws_like_the_adapters_own() {
                 format,
                 mips: vec![random_blocks(format, 64)],
                 declared_srgb: None,
+                basis_source: None,
             }),
         };
         gpu.supports_bc = true;
@@ -374,6 +380,7 @@ fn flat_bc5_normal_map() -> kataglyphis_webgpu_renderer::scene::CpuTextureRef {
                 format: CompressedFormat::Bc5RgUnorm,
                 mips: vec![[128, 128, 0, 0, 0, 0, 0, 0, 128, 128, 0, 0, 0, 0, 0, 0].to_vec()],
                 declared_srgb: None,
+                basis_source: None,
             }),
         }),
         sampler: CpuSampler::default(),
@@ -480,6 +487,7 @@ fn tilted_bc5_normal_map() -> CpuTextureRef {
                 format: CompressedFormat::Bc5RgUnorm,
                 mips: vec![[51, 51, 0, 0, 0, 0, 0, 0, 128, 128, 0, 0, 0, 0, 0, 0].to_vec()],
                 declared_srgb: None,
+                basis_source: None,
             }),
         }),
         sampler: CpuSampler::default(),
@@ -533,6 +541,7 @@ fn an_undecodable_normal_map_leaves_the_normal_flat() {
                 format: CompressedFormat::Bc5RgUnorm,
                 mips: vec![vec![0; 8]],
                 declared_srgb: None,
+                basis_source: None,
             }),
         }),
         sampler: CpuSampler::default(),
@@ -544,4 +553,92 @@ fn an_undecodable_normal_map_leaves_the_normal_flat() {
         (undecodable - flat).abs() < flat * 0.01,
         "an undecodable normal map shades {undecodable:.1} where no map shades {flat:.1}"
     );
+}
+
+/// Pixels whose red, green or blue channel leads the other two: the corners of the ramp.
+fn dominant_pixels(pixels: &[u8]) -> [usize; 3] {
+    let mut counts = [0; 3];
+    for p in pixels.as_chunks::<4>().0 {
+        for (channel, count) in counts.iter_mut().enumerate() {
+            let (lead, others) = (i32::from(p[channel]), [0, 1, 2].map(|c| i32::from(p[c])));
+            if lead > 60 && others.iter().all(|&o| o == lead || lead > o + 40) {
+                *count += 1;
+            }
+        }
+    }
+    counts
+}
+
+fn basisu_scene(name: &str) -> CpuScene {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/assets")
+        .join(name);
+    load_gltf(path).unwrap_or_else(|err| panic!("{name}: {err:#}"))
+}
+
+/// A glTF whose base colour is `ramp_uastc.ktx2` through KHR_texture_basisu draws the ramp, with BC or decoded.
+#[test]
+fn a_khr_texture_basisu_cube_draws_its_ramp() {
+    let Some(mut gpu) = bc_gpu() else {
+        return;
+    };
+    let scene = basisu_scene("cube_basisu.gltf");
+    for supports_bc in [true, false] {
+        gpu.supports_bc = supports_bc;
+        let (error, pixels) = render_scene(&gpu, &scene);
+        assert!(
+            error.is_none(),
+            "BC {supports_bc}: validation failed: {error:?}"
+        );
+        let [red, green, blue] = dominant_pixels(&pixels);
+        eprintln!("BC {supports_bc}: {red} red, {green} green, {blue} blue pixels");
+        assert!(
+            red > 200 && green > 200 && blue > 200,
+            "BC {supports_bc}: the ramp's red, green and blue corners must show, got {red}/{green}/{blue}"
+        );
+    }
+}
+
+/// The same cube with a KTX2 the loader declines draws its red PNG fallback, none of the ramp.
+#[test]
+fn a_declined_khr_texture_basisu_image_draws_its_png_fallback() {
+    let Some(gpu) = bc_gpu() else {
+        return;
+    };
+    let (error, pixels) = render_scene(&gpu, &basisu_scene("cube_basisu_fallback.gltf"));
+    assert!(error.is_none(), "validation failed: {error:?}");
+    let [red, green, blue] = dominant_pixels(&pixels);
+    assert!(
+        red > 500 && green == 0 && blue == 0,
+        "the red fallback must show alone, got {red}/{green}/{blue}"
+    );
+}
+
+/// With BC off, an adapter sampling ETC2 or ASTC draws the ramp from that transcode; llvmpipe and lavapipe skip (neither).
+#[test]
+fn a_khr_texture_basisu_cube_draws_its_ramp_from_etc2_or_astc() {
+    let Some(mut gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let (etc2, astc) = (gpu.supports_etc2, gpu.supports_astc);
+    if !etc2 && !astc {
+        eprintln!("SKIP: adapter samples neither ETC2 nor ASTC");
+        return;
+    }
+    let scene = basisu_scene("cube_basisu.gltf");
+    gpu.supports_bc = false;
+    for (name, use_etc2, use_astc) in [("ETC2", etc2, false), ("ASTC", false, astc)] {
+        if !use_etc2 && !use_astc {
+            continue;
+        }
+        gpu.supports_etc2 = use_etc2;
+        gpu.supports_astc = use_astc;
+        let (error, pixels) = render_scene(&gpu, &scene);
+        assert!(error.is_none(), "{name}: validation failed: {error:?}");
+        let [red, green, blue] = dominant_pixels(&pixels);
+        assert!(
+            red > 200 && green > 200 && blue > 200,
+            "{name}: the ramp must show, got {red}/{green}/{blue}"
+        );
+    }
 }

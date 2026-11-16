@@ -1,5 +1,6 @@
 //! Texture, sampler and mip-chain creation, split out of `forward.rs`.
 
+use crate::asset::basis::{basis_target, retarget_basis};
 use crate::asset::bc_decode::decode_level;
 use crate::context::GpuContext;
 use crate::scene::{CompressedFormat, CompressedTexture, CpuSampler, CpuTexture, CpuWrap};
@@ -115,10 +116,20 @@ pub(crate) fn compressed_wgpu_format(format: CompressedFormat, srgb: bool) -> wg
         (F::Bc5RgUnorm, _) => wgpu::TextureFormat::Bc5RgUnorm,
         (F::Bc7RgbaUnorm, false) => wgpu::TextureFormat::Bc7RgbaUnorm,
         (F::Bc7RgbaUnorm, true) => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+        (F::Etc2Rgba8Unorm, false) => wgpu::TextureFormat::Etc2Rgba8Unorm,
+        (F::Etc2Rgba8Unorm, true) => wgpu::TextureFormat::Etc2Rgba8UnormSrgb,
+        (F::Astc4x4RgbaUnorm, false) => wgpu::TextureFormat::Astc {
+            block: wgpu::AstcBlock::B4x4,
+            channel: wgpu::AstcChannel::Unorm,
+        },
+        (F::Astc4x4RgbaUnorm, true) => wgpu::TextureFormat::Astc {
+            block: wgpu::AstcBlock::B4x4,
+            channel: wgpu::AstcChannel::UnormSrgb,
+        },
     }
 }
 
-/// Uploads a pre-compressed (BCn) mip chain without touching the pixels.
+/// Uploads a block-compressed mip chain without touching the pixels.
 pub(crate) fn create_compressed_texture(
     gpu: &GpuContext,
     texture: &CpuTexture,
@@ -179,14 +190,22 @@ pub(crate) fn create_compressed_texture(
     gpu_texture
 }
 
-/// Why a BCn payload cannot become a valid wgpu texture, or `None` when it can.
+/// Why a block-compressed payload cannot become a valid wgpu texture, or `None` when it can.
 fn compressed_upload_problem(
     gpu: &GpuContext,
     texture: &CpuTexture,
     compressed: &CompressedTexture,
 ) -> Option<String> {
-    if !gpu.supports_bc {
-        return Some("the adapter has no BC support".to_string());
+    use CompressedFormat as F;
+    let (sampled, family) = match compressed.format {
+        F::Bc1RgbaUnorm | F::Bc3RgbaUnorm | F::Bc5RgUnorm | F::Bc7RgbaUnorm => {
+            (gpu.supports_bc, "BC")
+        }
+        F::Etc2Rgba8Unorm => (gpu.supports_etc2, "ETC2"),
+        F::Astc4x4RgbaUnorm => (gpu.supports_astc, "ASTC"),
+    };
+    if !sampled {
+        return Some(format!("the adapter has no {family} support"));
     }
     let max_side = gpu.device.limits().max_texture_dimension_2d;
     if texture.width > max_side || texture.height > max_side {
@@ -242,6 +261,9 @@ pub(crate) fn upload_material_texture(
     let Some(compressed) = texture.compressed.as_ref() else {
         return Some(create_rgba8_texture(gpu, texture, srgb, label));
     };
+    if let Some(uploaded) = upload_retargeted_basis(gpu, texture, compressed, srgb, label) {
+        return Some(uploaded);
+    }
     let Some(problem) = compressed_upload_problem(gpu, texture, compressed) else {
         return Some(create_compressed_texture(
             gpu, texture, compressed, srgb, label,
@@ -268,6 +290,37 @@ pub(crate) fn upload_material_texture(
         return Some(create_rgba8_texture(gpu, &decoded, srgb, label));
     }
     Some(write_rgba8_levels(gpu, &levels, srgb, label))
+}
+
+/// A Basis payload retargeted for an adapter with ETC2 or ASTC but no BC; `None` leaves the BC7 path to decide.
+fn upload_retargeted_basis(
+    gpu: &GpuContext,
+    texture: &CpuTexture,
+    compressed: &CompressedTexture,
+    srgb: bool,
+    label: Option<&str>,
+) -> Option<wgpu::Texture> {
+    let target = basis_target(gpu.supports_bc, gpu.supports_etc2, gpu.supports_astc)?;
+    let name = label.unwrap_or("<unlabeled texture>");
+    let retargeted = match retarget_basis(compressed, target)? {
+        Ok(retargeted) => retargeted,
+        Err(err) => {
+            log::warn!("{name}: Basis to {target:?} failed ({err:#}); falling back to BC7");
+            return None;
+        }
+    };
+    if let Some(problem) = compressed_upload_problem(gpu, texture, &retargeted) {
+        log::warn!("{name}: Basis as {target:?} cannot upload ({problem}); falling back to BC7");
+        return None;
+    }
+    log::info!("{name}: Basis transcoded to {target:?} for this adapter");
+    Some(create_compressed_texture(
+        gpu,
+        texture,
+        &retargeted,
+        srgb,
+        label,
+    ))
 }
 
 /// The payload's mip chain as RGBA8, up to its first level too short to decode; `None` if that is the base.
@@ -518,9 +571,34 @@ mod tests {
             (F::Bc5RgUnorm, false, wgpu::TextureFormat::Bc5RgUnorm),
             (F::Bc7RgbaUnorm, false, wgpu::TextureFormat::Bc7RgbaUnorm),
             (F::Bc7RgbaUnorm, true, wgpu::TextureFormat::Bc7RgbaUnormSrgb),
+            (
+                F::Etc2Rgba8Unorm,
+                false,
+                wgpu::TextureFormat::Etc2Rgba8Unorm,
+            ),
+            (
+                F::Etc2Rgba8Unorm,
+                true,
+                wgpu::TextureFormat::Etc2Rgba8UnormSrgb,
+            ),
+            (
+                F::Astc4x4RgbaUnorm,
+                true,
+                wgpu::TextureFormat::Astc {
+                    block: wgpu::AstcBlock::B4x4,
+                    channel: wgpu::AstcChannel::UnormSrgb,
+                },
+            ),
         ];
         for (format, srgb, expected) in cases {
             assert_eq!(compressed_wgpu_format(format, srgb), expected);
+            // The upload's bytes-per-row comes from `block_bytes`; it must match wgpu's own block size.
+            assert_eq!(
+                expected.block_copy_size(None),
+                Some(format.block_bytes()),
+                "{format:?}"
+            );
+            assert_eq!(expected.block_dimensions(), (4, 4), "{format:?}");
         }
     }
 

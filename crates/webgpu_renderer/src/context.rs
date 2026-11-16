@@ -18,6 +18,10 @@ pub struct GpuContext {
     pub queue: wgpu::Queue,
     /// TEXTURE_COMPRESSION_BC was available and enabled on this device.
     pub supports_bc: bool,
+    /// TEXTURE_COMPRESSION_ETC2 was available and enabled: the Basis target where BC is missing (mobile).
+    pub supports_etc2: bool,
+    /// TEXTURE_COMPRESSION_ASTC was available and enabled: the Basis target where BC and ETC2 are missing.
+    pub supports_astc: bool,
     /// TIMESTAMP_QUERY was available and enabled; browsers rarely expose it, so GPU timings are desktop-only.
     pub supports_timestamps: bool,
     /// The adapter the device was created on.
@@ -64,7 +68,7 @@ impl GpuContext {
         let adapter_info = adapter.get_info();
         check_adapter(&adapter_info)?;
 
-        let (device, queue, supports_bc, supports_timestamps) = request_device(&adapter).await?;
+        let (device, queue, features) = request_device(&adapter).await?;
         let downlevel = adapter.get_downlevel_capabilities().flags;
         let srgb_twin_views = downlevel.contains(
             wgpu::DownlevelFlags::VIEW_FORMATS | wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS,
@@ -75,8 +79,10 @@ impl GpuContext {
         Ok(Self {
             device,
             queue,
-            supports_bc,
-            supports_timestamps,
+            supports_bc: features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
+            supports_etc2: features.contains(wgpu::Features::TEXTURE_COMPRESSION_ETC2),
+            supports_astc: features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC),
+            supports_timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
             adapter_info,
             srgb_twin_views,
             surface: Some(surface),
@@ -115,12 +121,14 @@ impl GpuContext {
             .get_downlevel_capabilities()
             .flags
             .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
-        let (device, queue, supports_bc, supports_timestamps) = request_device(&adapter).await?;
+        let (device, queue, features) = request_device(&adapter).await?;
         Ok(Self {
             device,
             queue,
-            supports_bc,
-            supports_timestamps,
+            supports_bc: features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
+            supports_etc2: features.contains(wgpu::Features::TEXTURE_COMPRESSION_ETC2),
+            supports_astc: features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC),
+            supports_timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
             adapter_info,
             srgb_twin_views,
             surface: None,
@@ -162,13 +170,15 @@ impl GpuContext {
     fn report_adapter(&self) {
         let info = &self.adapter_info;
         let line = format!(
-            "ADAPTER: {} ({:?}, {:?}, driver '{}' '{}') bc={} timestamps={}\n",
+            "ADAPTER: {} ({:?}, {:?}, driver '{}' '{}') bc={} etc2={} astc={} timestamps={}\n",
             info.name,
             info.backend,
             info.device_type,
             info.driver,
             info.driver_info,
             self.supports_bc,
+            self.supports_etc2,
+            self.supports_astc,
             self.supports_timestamps
         );
         // A direct write: libtest captures eprintln!, and a crash in the first render must not hide the adapter.
@@ -403,19 +413,13 @@ fn surface_config(
 
 async fn request_device(
     adapter: &wgpu::Adapter,
-) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, bool)> {
+) -> anyhow::Result<(wgpu::Device, wgpu::Queue, wgpu::Features)> {
     // Request only features the adapter reports: naming a missing one fails the whole device request.
-    let supports_bc = adapter
-        .features()
-        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
-    let supports_timestamps = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
-    let mut required_features = wgpu::Features::empty();
-    if supports_bc {
-        required_features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
-    }
-    if supports_timestamps {
-        required_features |= wgpu::Features::TIMESTAMP_QUERY;
-    }
+    let required_features = adapter.features()
+        & (wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC
+            | wgpu::Features::TIMESTAMP_QUERY);
 
     // WebGPU's defaults, so native tests fail where the web would; natively the tracer's buffer sizes come from the adapter.
     let required_limits = crate::render::tracer::limits::device_limits(
@@ -433,7 +437,7 @@ async fn request_device(
             experimental_features: wgpu::ExperimentalFeatures::default(),
         })
         .await
-        .map(|(device, queue)| (device, queue, supports_bc, supports_timestamps))
+        .map(|(device, queue)| (device, queue, required_features))
         .context("Failed to create device")
 }
 

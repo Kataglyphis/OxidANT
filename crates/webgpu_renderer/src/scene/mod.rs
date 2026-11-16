@@ -103,13 +103,17 @@ pub enum CpuWrap {
     ClampToEdge,
 }
 
-/// GPU block-compressed formats: KTX2 BCn as stored, Basis ETC1S/UASTC transcoded to BC7.
+/// GPU block-compressed formats: KTX2 BCn as stored, Basis ETC1S/UASTC transcoded to BC7, ETC2 or ASTC.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CompressedFormat {
     Bc1RgbaUnorm,
     Bc3RgbaUnorm,
     Bc5RgUnorm,
     Bc7RgbaUnorm,
+    /// ETC2 RGB plus EAC alpha; only a Basis payload transcodes to it, for an adapter without BC.
+    Etc2Rgba8Unorm,
+    /// ASTC 4x4 LDR; only a Basis payload transcodes to it, for an adapter without BC or ETC2.
+    Astc4x4RgbaUnorm,
 }
 
 impl CompressedFormat {
@@ -130,6 +134,8 @@ pub struct CompressedTexture {
     pub mips: Vec<Vec<u8>>,
     /// Colour space the KTX2 vkFormat declares (`None` for data formats); only warns on mismatch.
     pub declared_srgb: Option<bool>,
+    /// The Basis KTX2 these mips came from, so an adapter without BC can transcode it to ETC2 or ASTC.
+    pub basis_source: Option<Arc<[u8]>>,
 }
 
 /// Decoded RGBA8 texture, or a compressed payload.

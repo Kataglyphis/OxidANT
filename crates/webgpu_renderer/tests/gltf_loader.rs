@@ -497,3 +497,118 @@ fn an_embedded_image_with_a_wrong_mime_type_loads_by_its_bytes() {
     let scene = load_gltf_slice(&glb).expect("the PNG bytes decide");
     assert!(scene.primitives[0].material.base_color_texture.is_some());
 }
+
+mod basisu {
+    use kataglyphis_webgpu_renderer::asset::gltf_loader::{load_gltf, load_gltf_slice};
+    use kataglyphis_webgpu_renderer::scene::{CompressedFormat, CpuScene};
+
+    fn asset(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/assets")
+            .join(name)
+    }
+
+    fn fallback_text() -> String {
+        std::fs::read_to_string(asset("cube_basisu_fallback.gltf")).expect("fixture")
+    }
+
+    fn base_colour(scene: &CpuScene) -> &kataglyphis_webgpu_renderer::scene::CpuTexture {
+        &scene.primitives[0]
+            .material
+            .base_color_texture
+            .as_ref()
+            .expect("a base colour texture")
+            .texture
+    }
+
+    /// A required extension with no core source: the KTX2 is the texture, kept as BC7 with its Basis source.
+    #[test]
+    fn a_required_basisu_texture_loads_its_ktx2() {
+        let scene = load_gltf(asset("cube_basisu.gltf")).expect("cube_basisu.gltf must load");
+        let texture = base_colour(&scene);
+        assert_eq!((texture.width, texture.height), (32, 32));
+        let compressed = texture.compressed.as_ref().expect("a Basis payload");
+        assert_eq!(compressed.format, CompressedFormat::Bc7RgbaUnorm);
+        assert_eq!(compressed.mips.len(), 6);
+        assert!(compressed.basis_source.is_some());
+    }
+
+    /// A KTX2 the loader declines falls back to the core source, a 2x2 red PNG.
+    #[test]
+    fn a_declined_ktx2_falls_back_to_the_png() {
+        let scene = load_gltf(asset("cube_basisu_fallback.gltf")).expect("the fallback must load");
+        let texture = base_colour(&scene);
+        assert!(texture.compressed.is_none());
+        assert_eq!(texture.rgba8, [255, 0, 0, 255].repeat(4));
+    }
+
+    /// Standard padded base64, for a data URI the in-memory import reads.
+    fn base64(bytes: &[u8]) -> String {
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let word = chunk
+                .iter()
+                .enumerate()
+                .fold(0u32, |acc, (i, &b)| acc | u32::from(b) << (16 - 8 * i));
+            for i in 0..4 {
+                out.push(if i <= chunk.len() {
+                    char::from(ALPHABET[(word >> (18 - 6 * i) & 63) as usize])
+                } else {
+                    '='
+                });
+            }
+        }
+        out
+    }
+
+    /// With a KTX2 that loads, the extension's image wins over the fallback.
+    #[test]
+    fn a_loadable_ktx2_wins_over_the_fallback() {
+        assert_eq!(base64(b"not a KTX2"), "bm90IGEgS1RYMg==");
+        let text = fallback_text().replace(
+            &base64(b"not a KTX2"),
+            &base64(include_bytes!("assets/green_uastc.ktx2")),
+        );
+        assert_ne!(
+            text,
+            fallback_text(),
+            "the broken KTX2 URI must be replaced"
+        );
+        let scene = load_gltf_slice(text.as_bytes()).expect("a loadable KTX2 must load");
+        let texture = base_colour(&scene);
+        assert_eq!((texture.width, texture.height), (8, 8));
+        assert!(texture.compressed.is_some(), "the KTX2, not the PNG");
+    }
+
+    /// Only KHR_texture_basisu is accepted as required; another unsupported one still fails validation.
+    #[test]
+    fn another_required_extension_still_fails() {
+        let text = std::fs::read_to_string(asset("cube_basisu.gltf"))
+            .unwrap()
+            .replacen(
+                "\"extensionsRequired\": [\n  \"KHR_texture_basisu\"",
+                "\"extensionsRequired\": [\n  \"KHR_texture_basisu\",\n  \"KHR_draco_mesh_compression\"",
+                1,
+            );
+        assert!(text.contains("KHR_draco_mesh_compression"));
+        let err = load_gltf_slice(text.as_bytes()).expect_err("draco is not supported");
+        assert!(
+            format!("{err:#}").contains("KHR_draco_mesh_compression"),
+            "{err:#}"
+        );
+    }
+
+    /// The extension's source must name an image.
+    #[test]
+    fn a_basisu_source_past_the_images_is_an_error() {
+        let text = fallback_text().replacen(
+            "\"KHR_texture_basisu\": {\n     \"source\": 0",
+            "\"KHR_texture_basisu\": {\n     \"source\": 7",
+            1,
+        );
+        assert_ne!(text, fallback_text());
+        let err = load_gltf_slice(text.as_bytes()).expect_err("source 7 does not exist");
+        assert!(format!("{err:#}").contains("past the 2 images"), "{err:#}");
+    }
+}

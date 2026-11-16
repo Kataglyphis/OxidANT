@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use glam::{Mat4, Vec2, Vec3};
 
+use super::gltf_images;
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuCamera, CpuCameraProjection,
     CpuLight, CpuLightKind, CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin,
@@ -14,16 +15,40 @@ use crate::scene::{
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
     let path = path.as_ref();
-    let (document, buffers, images) = gltf::import(path)
+    let (document, buffers, textures) = import_file(path)
         .with_context(|| format!("Failed to import glTF file: {}", path.display()))?;
-    build_scene(document, buffers, images)
+    build_scene(document, buffers, textures)
         .with_context(|| format!("Failed to build scene from {}", path.display()))
+}
+
+/// `gltf::import` with `KHR_texture_basisu`: the document, its buffers and each texture's image.
+fn import_file(
+    path: &Path,
+) -> anyhow::Result<(
+    gltf::Document,
+    Vec<gltf::buffer::Data>,
+    Vec<Arc<CpuTexture>>,
+)> {
+    let bytes = std::fs::read(path)?;
+    let base = path.parent().unwrap_or_else(|| Path::new("./"));
+    let gltf_images::Parsed {
+        document,
+        blob,
+        sources,
+    } = gltf_images::parse(&bytes)?;
+    let buffers = gltf::import_buffers(&document, Some(base), blob)?;
+    let images = gltf_images::import_images(&document, Some(base), &buffers)?;
+    let textures = gltf_images::resolve_textures(&sources, images)?;
+    Ok((document, buffers, textures))
 }
 
 /// In-memory variant for wasm32 and embedded assets; buffers and images must be embedded (data URIs or GLB).
 pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
-    let gltf::Gltf { document, blob } =
-        gltf::Gltf::from_slice(bytes).context("Failed to import glTF from memory")?;
+    let gltf_images::Parsed {
+        document,
+        blob,
+        sources,
+    } = gltf_images::parse(bytes).context("Failed to import glTF from memory")?;
     let buffers = gltf::import_buffers(&document, None, blob)
         .context("Failed to import glTF buffers from memory")?;
     if let Some(uri) = document.images().find_map(|image| match image.source() {
@@ -35,21 +60,19 @@ pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
         );
     }
     // gltf 1.4's import_slice refuses a data: image too (it wants a base path); every image left is data: or GLB, so none reads the base.
-    let images = gltf::import_images(&document, Some(Path::new("")), &buffers)
+    let images = gltf_images::import_images(&document, Some(Path::new("")), &buffers)
         .context("Failed to import glTF images from memory")?;
-    build_scene(document, buffers, images)
+    let textures = gltf_images::resolve_textures(&sources, images)
+        .context("Failed to import glTF images from memory")?;
+    build_scene(document, buffers, textures)
 }
 
+/// `textures` is index-aligned with the document's textures.
 fn build_scene(
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
-    images: Vec<gltf::image::Data>,
+    textures: Vec<Arc<CpuTexture>>,
 ) -> anyhow::Result<CpuScene> {
-    let textures: Vec<Arc<CpuTexture>> = images
-        .into_iter()
-        .map(|img| to_rgba8(img).map(Arc::new))
-        .collect::<anyhow::Result<_>>()?;
-
     let mut scene = CpuScene {
         nodes: read_nodes(&document),
         animations: read_animations(&document, &buffers),
@@ -346,7 +369,7 @@ fn drop_out_of_range_triangles(indices: Vec<u32>, vertex_count: usize) -> (Vec<u
 }
 
 /// Converts a decoded glTF image into tightly packed RGBA8.
-fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
+pub(super) fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
     use gltf::image::Format;
 
     let pixel_count = (img.width * img.height) as usize;
@@ -449,7 +472,7 @@ fn texture_ref(
     srgb: bool,
 ) -> Option<CpuTextureRef> {
     textures
-        .get(info.source().index())
+        .get(info.index())
         .cloned()
         .map(|texture| CpuTextureRef {
             texture,

@@ -13,6 +13,28 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, glTF `KHR_texture_basisu` and ETC2/ASTC Basis targets in the WebGPU renderer)
+- **glTF `KHR_texture_basisu`**: `load_gltf` and `load_gltf_slice` no longer go through `gltf::import`, which
+  decodes every image itself and refuses `image/ktx2`. `src/asset/gltf_images.rs` parses without gltf's
+  validation, accepts the extension in `extensionsRequired` and as a texture's only source, then validates the
+  rest as gltf does. A KTX2 image (by MIME type or `.ktx2` URI; GLB view, data URI or file) loads through
+  `load_ktx2`, every other image through gltf's own `image::Data::from_source`, so every existing glTF imports
+  the same images. A texture takes its extension image when that loads, else its core `source` with a warning;
+  without a fallback the failure fails the load. Fixtures: `cube_basisu.gltf` (required, no fallback,
+  `ramp_uastc.ktx2`) and `cube_basisu_fallback.gltf` (a KTX2 that is not one, and a 2x2 red PNG fallback). On
+  llvmpipe the first draws the ramp's red, green and blue corners (555/452/624 dominant pixels at 128x128, with
+  BC and decoded alike), the second only red.
+- **Basis targets by adapter**: `CompressedFormat::Etc2Rgba8Unorm` and `Astc4x4RgbaUnorm`; the device requests
+  `TEXTURE_COMPRESSION_ETC2` and `_ASTC` where offered (`GpuContext::supports_etc2`, `supports_astc`). The load
+  still transcodes to BC7 and keeps the KTX2 (`CompressedTexture::basis_source`); an upload without BC
+  transcodes it again to ETC2, else ASTC 4x4, and only without either decodes BC7 on the CPU. A failed
+  transcode or upload problem falls back to that BC7 path.
+- **Tested on the CPU only**: llvmpipe and lavapipe expose neither ETC2 nor ASTC, so the GPU test of that path
+  skips there. `basis.rs` decodes the transcoded blocks: ETC2 through a test decoder written from the
+  specification (ETC1 modes plus EAC alpha; it panics on T, H and planar), ASTC through basisu's own LDR block
+  decoder. Level 0 against the source ramp: ETC1S to ETC2 7.0 mean, identical to basisu's RGBA32; ETC1S to
+  ASTC 7.0 (0.35 from RGBA32); UASTC to ETC2 4.1 (its ETC1 hint); UASTC to ASTC 1.3, identical to RGBA32.
+
 ### Added (2026-11-16, Basis KTX2 transcoding in the WebGPU renderer)
 - **`load_ktx2` transcodes Basis Universal KTX2**: ETC1S (BasisLZ) and UASTC LDR (uncompressed; Zstandard levels
   go through `ruzstd`, untested here) become a BC7 mip chain (`src/asset/basis.rs`), or RGBA8 when the base is not whole 4x4 blocks. An adapter
@@ -27,8 +49,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   source on level 0: ETC1S to BC7 5.1 mean (34 max) of 255, to RGBA32 7.0; UASTC to BC7 1.3 (9 max). The tests
   bound ETC1S at 10 and UASTC at 2, with the transposed ramp as a negative control, and upload both, with and
   without BC, inside a validation scope.
-- **Not yet**: ETC2/ASTC targets for a web adapter without BC (it decodes BC7 on the CPU instead), and glTF
-  `KHR_texture_basisu`: `gltf::import` decodes every image itself and refuses `image/ktx2`.
+- **ETC2/ASTC targets and glTF `KHR_texture_basisu`** followed the same day (next entry).
 
 ### Added (2026-11-16, ObservANT's visit rules replay against scenarios)
 - **Five hard cases replay through the visit rules in the `test` step**: `crates/observant/tests/scenarios.rs`

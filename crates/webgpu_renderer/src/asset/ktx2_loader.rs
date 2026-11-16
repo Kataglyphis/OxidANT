@@ -134,6 +134,7 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
             format,
             mips,
             declared_srgb,
+            basis_source: None,
         }),
     })
 }

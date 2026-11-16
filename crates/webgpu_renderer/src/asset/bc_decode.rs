@@ -3,7 +3,7 @@
 
 use crate::scene::CompressedFormat;
 
-/// RGBA8 texels of one `width` x `height` level, or `None` when `data` holds fewer blocks than it covers.
+/// RGBA8 texels of one `width` x `height` level, or `None` when `data` holds fewer blocks than it covers or is not BCn.
 pub(crate) fn decode_level(
     format: CompressedFormat,
     width: u32,
@@ -22,7 +22,7 @@ pub(crate) fn decode_level(
         .take(blocks_wide * blocks_high)
         .enumerate()
     {
-        let texels = decode_block(format, block);
+        let texels = decode_block(format, block)?;
         let (bx, by) = (index % blocks_wide * 4, index / blocks_wide * 4);
         for (i, texel) in texels.iter().enumerate() {
             let (x, y) = (bx + i % 4, by + i / 4);
@@ -36,9 +36,9 @@ pub(crate) fn decode_level(
     Some(rgba8)
 }
 
-/// The 16 texels of one block, row by row.
-fn decode_block(format: CompressedFormat, block: &[u8]) -> [[u8; 4]; 16] {
-    match format {
+/// The 16 texels of one block, row by row; `None` for ETC2 and ASTC, which only exist where the adapter samples them.
+fn decode_block(format: CompressedFormat, block: &[u8]) -> Option<[[u8; 4]; 16]> {
+    Some(match format {
         CompressedFormat::Bc1RgbaUnorm => bc1_block(block, false),
         CompressedFormat::Bc3RgbaUnorm => {
             let alpha = bc4_block(&block[..8]);
@@ -58,7 +58,8 @@ fn decode_block(format: CompressedFormat, block: &[u8]) -> [[u8; 4]; 16] {
             bytes.copy_from_slice(block);
             bc7_block(&bytes)
         }
-    }
+        CompressedFormat::Etc2Rgba8Unorm | CompressedFormat::Astc4x4RgbaUnorm => return None,
+    })
 }
 
 fn expand_565(color: u16) -> [u32; 3] {
