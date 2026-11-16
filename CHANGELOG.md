@@ -33,8 +33,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   pre-cull, close (441 drawn) and overview (1449 drawn), frustum only / with the compute culler / with queries: before
   5.96 / 6.02 / 6.14 and 7.01 / 7.13 / 7.38 ms, after 6.38 / 8.74 / 9.54 and 9.29 / 12.49 / 10.09 ms. Most of it is
   wgpu's default indirect-call validation (`InstanceFlags::VALIDATION_INDIRECT_CALL`, a check pass per indirect draw):
-  with `WGPU_VALIDATION_INDIRECT_CALL=0` the same run took 6.23 / 6.42 / 6.89 and 7.45 / 7.72 / 8.04 ms. The flag stays
-  on. Occlusion-culled draws are still encoded, since only the GPU knows them.
+  with `WGPU_VALIDATION_INDIRECT_CALL=0` the same run took 6.23 / 6.42 / 6.89 and 7.45 / 7.72 / 8.04 ms. Release builds
+  therefore switch it off (`context::instance_flags`; the variable set to 1 restores it), debug builds and the tests keep
+  it. Occlusion-culled draws are still encoded, since only the GPU knows them.
 - One draw per slot, natively and on the web: every draw rebinds its material group and buffers, so
   `multi_draw_indexed_indirect` needs a shared vertex/index buffer and bindless materials first.
 - Images: a hash of the frame, HDR, depth and shadow map with the Visibility counts over 72 settings (forward and

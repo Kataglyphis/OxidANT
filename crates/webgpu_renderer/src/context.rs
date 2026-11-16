@@ -358,10 +358,20 @@ pub fn check_target_size(width: u32, height: u32, max_side: u32) -> anyhow::Resu
     anyhow::bail!("{width}x{height} is not a render size this device takes: each side must be 1 to {max_side}")
 }
 
+/// Release builds skip wgpu's indirect-call validation: the draw cull writes in-range
+/// arguments, and the per-draw check cost up to 5 ms a frame. `WGPU_VALIDATION_INDIRECT_CALL=1` restores it.
+pub fn instance_flags() -> wgpu::InstanceFlags {
+    let mut flags = wgpu::InstanceFlags::default();
+    if !cfg!(debug_assertions) {
+        flags.remove(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
+    }
+    flags.with_env()
+}
+
 fn new_instance() -> wgpu::Instance {
     wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: BACKENDS,
-        flags: wgpu::InstanceFlags::default(),
+        flags: instance_flags(),
         memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         backend_options: wgpu::BackendOptions::default(),
         display: None,
@@ -444,6 +454,15 @@ async fn request_device(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indirect_call_validation_follows_the_build_type() {
+        if std::env::var_os("WGPU_VALIDATION_INDIRECT_CALL").is_some() {
+            return;
+        }
+        let validated = instance_flags().contains(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
+        assert_eq!(validated, cfg!(debug_assertions));
+    }
 
     fn llvmpipe(bits: u32) -> wgpu::AdapterInfo {
         let mut info = wgpu::AdapterInfo::new(wgpu::DeviceType::Cpu, wgpu::Backend::Vulkan);
