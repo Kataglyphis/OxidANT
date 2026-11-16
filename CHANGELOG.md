@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, the browser test judges the traced modes by their shadows)
+- **A traced frame must draw its own shadow, not just change 1 % of the viewport**, which the ray and path tracers
+  cleared by 2.6 and 3.2 %. In the cube's sun shadow, which the ray tracer leaves black for want of an ambient term,
+  the ray-traced frame must hold 0.05 % of the viewport at every channel under 48 and ten times forward's count; the
+  path-traced frame must be sky-lit there (mean brightest channel 80) and tinted by the cube's red bounce and the
+  blue sky (mean (r + b) / 2 − g 10). Measured on SwiftShader at 960x528: a black shadow of 0.174 % (forward none),
+  165.7 bright and tinted 28.3 at 88 samples (forward 0.8, the ray tracer 32 bright). Clouds keep their 1 % floor
+  against deferred (33.0 %). `webgpu-demo-browser.js` exports `shadowSignature`; `test-webgpu-demo-browser.sh` checks
+  it and the new verdicts.
+
 ### Fixed (2026-11-16, clippy on the renderer's wasm32 build)
 - `cargo clippy -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown -- -D warnings` failed on
   `large_enum_variant`: the browser's tracer job holds its whole `TraceSceneBuilder` inline, so `State::Building`

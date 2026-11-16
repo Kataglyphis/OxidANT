@@ -196,19 +196,27 @@ second frame back, and fails when:
 
 - the frame drew another mode than asked (`drawn_mode`, the chip's), or the tracer failed;
 - the scene viewport, 2 % in from its edges, has fewer than 256 colours or one colour over 90 %;
-- clouds change under 1 % of pixels against deferred, or a traced frame under 1 % against forward;
+- clouds change under 1 % of pixels against deferred;
 - the deferred frame ran no FXAA or the forward frame did (`demo_view().fxaa`);
+- the ray-traced frame lacks its own shadow: the cube's sun shadow, black without an ambient term
+  (every channel under 48), covers under 0.05 % of the viewport, or forward has a tenth as many such pixels;
+- in that shadow the path-traced frame is not lit by the sky (mean brightest channel under 80) or not
+  tinted by the cube's red bounce and the blue sky (mean (r + b) / 2 − g under 10, forward's is about 0);
 - the page logged any console error or warning, a browser log error or warning (WebGPU's
   validation messages arrive there) or an uncaught exception; Chrome's favicon 404 alone is let pass.
+
+The traced modes are judged by those shadows, not by a share of changed pixels: a traced frame differs
+from forward by only 2.6 to 3.2 %, too close to any floor.
 
 `--frames DIR` keeps each read-back as a PNG. `web-browser.yml` runs it on request (`[ci web]`,
 `[ci browser]`) and by hand, and uploads the frames. `scripts/linux/tests/test-webgpu-demo-browser.sh`
 checks the verdicts and the console filter without a browser.
 
 Receipt, 2026-11-16 (Chrome for Testing 157.0.8103.38 in `:latest`, arm64 host, canvas 960x528):
-forward 1095 colours, deferred 1099, clouds 3678 and 32.9 % changed, ray traced 2.6 % and path
-traced 3.2 % changed against forward at 72 samples; no console or WebGPU message. The path-tracing
-kernel's first frame took most of its 132 s step, the others 4-9 s. The same views from
+forward 1095 colours, deferred with FXAA 1474, clouds 4449 and 33.0 % changed; the ray tracer's black
+shadow 0.174 % of the viewport (forward none), and in it the path tracer at 88 samples 165.7 bright and
+tinted 28.3 (forward 0.8); no console or WebGPU message. The path-tracing kernel's first frame took most
+of its 124 s step, the others 3-7 s. The same views from
 `editor_snapshot` on lavapipe look alike, the clouds' grain included (the C++ estimator's, see
 [BACKLOG.md](../BACKLOG.md)).
 
