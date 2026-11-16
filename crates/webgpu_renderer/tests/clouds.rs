@@ -2,7 +2,10 @@
 //! Each test names its box with `CloudSettings::place_box`, as the C++ goldens do with `place_cloud_box`.
 
 use glam::{Mat4, Quat, Vec3};
-use kataglyphis_webgpu_renderer::render::clouds::{CloudSettings, NOISE_VOLUME_EXTENT};
+use kataglyphis_webgpu_renderer::asset::skybox::CubemapFaces;
+use kataglyphis_webgpu_renderer::render::clouds::{
+    CloudAmbient, CloudSettings, NOISE_VOLUME_EXTENT,
+};
 use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
@@ -100,15 +103,26 @@ fn changed(reference: &[u8], frame: &[u8], threshold: u8) -> Vec<usize> {
         .collect()
 }
 
+/// Under the navy, as the C++ goldens: lit by the horizon's own ambient, a cloud barely differs from it.
+fn navy_sky_renderer(gpu: &GpuContext) -> ForwardRenderer {
+    let mut renderer = ForwardRenderer::new(gpu, SIZE, SIZE);
+    renderer.skybox_enabled = false;
+    renderer
+}
+
 #[test]
 fn clouds_appear_when_enabled_and_vanish_when_disabled() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
+    let mut renderer = navy_sky_renderer(&gpu);
     let camera = facing_minus_z(20.0);
     let (centre, half) = (Vec3::new(0.0, 0.0, -10.0), Vec3::new(6.0, 4.0, 4.0));
-    renderer.clouds = clouds_in_box(centre, half, 1.0);
+    // Without powder, which leaves this thin box's sunlight barely above the navy it scatters as ambient.
+    renderer.clouds = CloudSettings {
+        powder: false,
+        ..clouds_in_box(centre, half, 1.0)
+    };
     renderer.clouds.enabled = false;
     let off = render(&gpu, &mut renderer, &camera);
     renderer.clouds.enabled = true;
@@ -282,7 +296,7 @@ fn geometry_in_front_of_the_clouds_hides_them() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
+    let mut renderer = navy_sky_renderer(&gpu);
     let camera = facing_minus_z(20.0);
     let (wall_centre, wall_half) = (Vec3::ZERO, Vec3::new(3.0, 2.0, 0.1));
     upload_box(&gpu, &mut renderer, wall_centre, wall_half);
@@ -497,6 +511,160 @@ fn a_cloud_composites_over_the_sky_as_over_geometry() {
     assert_eq!(
         crossed, 0,
         "the cloud measured over the sky does not composite over the card as shown"
+    );
+}
+
+/// Relative luminance of linear RGB.
+fn luminance(rgb: [f32; 3]) -> f32 {
+    0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
+}
+
+/// One pixel of a half-float RGBA target.
+fn texel(target: &[u16], pixel: usize) -> [f32; 4] {
+    std::array::from_fn(|c| half_to_f32(target[pixel * 4 + c]))
+}
+
+/// A renderer without bloom or AO, so a target's pixels are what the tonemap composes.
+fn plain_renderer(gpu: &GpuContext) -> ForwardRenderer {
+    let mut renderer = ForwardRenderer::new(gpu, SIZE, SIZE);
+    renderer.bloom_strength = 0.0;
+    renderer.ssao_strength = 0.0;
+    renderer
+}
+
+/// Under the default sun and procedural sky, dense cloud shows at least 70 % of the sky behind it.
+/// Lit by the sun's single scattering alone it showed 48 %; the sky's ambient and the scattering octaves lift it.
+#[test]
+fn a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut renderer = plain_renderer(&gpu);
+    renderer.clouds = clouds_in_box(Vec3::new(0.0, 0.0, -5.0), Vec3::new(6.0, 4.0, 10.0), 1.0);
+    let frame = composite_frame(&gpu, &mut renderer, &facing_minus_z(20.0));
+
+    let (mut dense, mut cloud_sum, mut sky_sum) = (0, 0.0, 0.0);
+    for pixel in 0..PIXELS {
+        let [r, g, b, alpha] = texel(&frame.cloud, pixel);
+        if alpha < 0.5 {
+            continue;
+        }
+        let [sr, sg, sb, _] = texel(&frame.hdr, pixel);
+        let shown = [
+            r + sr * (1.0 - alpha),
+            g + sg * (1.0 - alpha),
+            b + sb * (1.0 - alpha),
+        ];
+        dense += 1;
+        cloud_sum += luminance(shown);
+        sky_sum += luminance([sr, sg, sb]);
+    }
+    let ratio = cloud_sum / sky_sum;
+    eprintln!("{dense} dense px: cloud luminance {cloud_sum:.1}, sky behind {sky_sum:.1}, ratio {ratio:.3}");
+    assert!(
+        dense > PIXELS / 20,
+        "too little dense cloud to judge: {dense} px"
+    );
+    assert!(
+        ratio > 0.7,
+        "a daylit cloud shows {ratio} of the sky's luminance behind it: is the ambient term gone?"
+    );
+}
+
+/// The clouds' ambient is the sky the frame draws: a solid cube map or the navy, as the sky pass shows it.
+#[test]
+fn the_cloud_ambient_is_the_drawn_sky() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let camera = facing_minus_z(20.0);
+    let mut renderer = plain_renderer(&gpu);
+    let faces = CubemapFaces::solid([[200, 120, 40, 255]; 6]);
+    renderer.set_skybox(&gpu, &faces);
+    let cases = [
+        ("cube map", true, CloudAmbient::of_cubemap(&faces)),
+        ("navy", false, CloudAmbient::sky_off()),
+    ];
+    for (name, skybox_enabled, ambient) in cases {
+        renderer.skybox_enabled = skybox_enabled;
+        render(&gpu, &mut renderer, &camera);
+        let hdr = renderer.read_hdr_target(&gpu).expect("HDR readback");
+        let sky = Vec3::from_slice(&texel(&hdr, PIXELS / 2)[..3]);
+        eprintln!("{name}: sky {sky}, ambient {ambient:?}");
+        assert!(
+            ambient.top.abs_diff_eq(sky, 2e-2 * sky.max_element())
+                && ambient.bottom.abs_diff_eq(sky, 2e-2 * sky.max_element()),
+            "the {name} ambient {ambient:?} is not the sky the pass draws, {sky}"
+        );
+    }
+}
+
+/// Mean step between horizontal neighbours over the mean, where there is cloud: of the luminance, or of alpha.
+fn neighbour_contrast(cloud: &[u16], value: impl Fn([f32; 4]) -> f32) -> f64 {
+    let size = SIZE as usize;
+    let (mut steps, mut total) = (0.0, 0.0);
+    for y in 0..size {
+        for x in 0..size - 1 {
+            let (a, b) = (texel(cloud, y * size + x), texel(cloud, y * size + x + 1));
+            if a[3] <= 0.0 && b[3] <= 0.0 {
+                continue;
+            }
+            steps += f64::from((value(a) - value(b)).abs());
+            total += f64::from(value(a));
+        }
+    }
+    steps / total.max(f64::MIN_POSITIVE)
+}
+
+/// The default slab seen from below at 3 to 34 degrees, marched with `march_steps`: its cloud target.
+fn grazing_slab(gpu: &GpuContext, march_steps: i32) -> Vec<u16> {
+    let mut renderer = plain_renderer(gpu);
+    renderer.clouds = CloudSettings {
+        enabled: true,
+        march_steps,
+        offset: Vec3::new(0.0, 367.0, 0.0),
+        ..CloudSettings::default()
+    };
+    let camera = OrbitCamera {
+        target: Vec3::new(0.0, 10.0, -100.0),
+        radius: 100.0,
+        yaw_deg: 90.0,
+        pitch_deg: -12.0,
+        far: 100_000.0,
+        ..OrbitCamera::default()
+    };
+    render(gpu, &mut renderer, &camera);
+    renderer
+        .read_cloud_target(gpu)
+        .expect("cloud readback must succeed")
+        .expect("clouds ran")
+}
+
+/// Paths of 120 to 1200 units through the 63-unit slab: 8 fixed steps showed neighbours 42 % of the luminance
+/// apart (128 steps: 31 %), and alpha 1.6 times as rough as at 128 steps.
+#[test]
+fn a_grazing_view_through_the_slab_is_not_grainy() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let cloud = grazing_slab(&gpu, CloudSettings::default().march_steps);
+    let reference = grazing_slab(&gpu, 128);
+    let clouded = (0..PIXELS).filter(|&p| texel(&cloud, p)[3] > 0.1).count();
+    let shown = neighbour_contrast(&cloud, |t| luminance([t[0], t[1], t[2]]));
+    let alpha = neighbour_contrast(&cloud, |t| t[3]);
+    let reference_alpha = neighbour_contrast(&reference, |t| t[3]);
+    eprintln!("{clouded} clouded px; luminance contrast {shown:.3}, alpha {alpha:.4} against {reference_alpha:.4}");
+    assert!(
+        clouded > PIXELS / 3,
+        "the slab fills too little of the view: {clouded} px"
+    );
+    assert!(
+        shown < 0.15,
+        "neighbouring pixels differ by {shown} of the cloud's luminance: the march aliases the noise"
+    );
+    assert!(
+        alpha < reference_alpha * 1.25,
+        "the default march's alpha is {alpha} rough, 128 steps' {reference_alpha}: long paths need more steps"
     );
 }
 

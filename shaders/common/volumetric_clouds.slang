@@ -1,5 +1,7 @@
 // Volumetric clouds for both renderers: the noise volume's texels, the axis-aligned cloud box and the ray march.
 
+import sky_model;
+
 static const float CLOUD_PI = 3.14159265358979323846;
 
 // Each renderer allocates the volume at this extent per axis; its own constants are pinned to it by a test.
@@ -34,6 +36,27 @@ struct Clouds
     float cirrus_effect;
     bool powder_effect;
 };
+
+// Mean sky radiance over the upper and the lower hemisphere: the light a cloud scatters from everywhere but the sun.
+struct CloudAmbient
+{
+    float3 top;
+    float3 bottom;
+};
+
+// sky_model's gradient averaged per hemisphere over solid angle: the integrals of pow(y, 0.7) and clamp(3y, 0, 1).
+CloudAmbient cloud_ambient_analytic_sky()
+{
+    CloudAmbient ambient;
+    ambient.top = lerp(SKY_HORIZON, SKY_ZENITH, 1.0 / 1.7);
+    ambient.bottom = lerp(SKY_HORIZON, SKY_GROUND, 5.0 / 6.0);
+    return ambient;
+}
+
+// The longest path through the box takes at most this many times the slider's steps.
+static const int CLOUD_MAX_STEP_FACTOR = 4;
+// Scattering octaves of Wrenninge et al.'s multiple-scattering approximation; each halves energy, depth and g.
+static const int CLOUD_SCATTER_OCTAVES = 3;
 
 // A shader must not trust a uniform: both step counts are clamped again, to the hosts' bounds.
 Clouds cloud_unpack(CloudParams scene)
@@ -190,14 +213,28 @@ float cloud_scene_distance(float4x4 ndcToSpace, float2 ndc, float depth, float3 
     return length(position.xyz / position.w - eye);
 }
 
-// directionToLight must be normalized: the step lengths below are distances along it.
-float light_march(ICloudNoise noise, float3 samplePos, float3 directionToLight, Clouds cloud)
+// The box's shortest full extent.
+float cloud_thinnest_extent(Clouds cloud)
+{
+    return 2.0 * min(min(cloud.radius.x, cloud.radius.y), cloud.radius.z);
+}
+
+// The slider's steps span the box's thinnest extent; a longer path takes more, up to CLOUD_MAX_STEP_FACTOR times.
+int cloud_march_steps(Clouds cloud, float marchLength)
+{
+    float wanted = ceil(float(cloud.num_march_steps) * marchLength / cloud_thinnest_extent(cloud));
+    float most = min(float(cloud.num_march_steps * CLOUD_MAX_STEP_FACTOR), 128.0);
+    return int(clamp(wanted, float(cloud.num_march_steps), most));
+}
+
+// Optical depth from samplePos to the box's edge toward the light; directionToLight must be normalized.
+float light_optical_depth(ICloudNoise noise, float3 samplePos, float3 directionToLight, Clouds cloud)
 {
     float totalDensity = 0.0;
     float2 oT;
     bool intersection = box_intersect(samplePos, directionToLight, cloud, oT);
 
-    if (!intersection) return 1.0;
+    if (!intersection) return 0.0;
 
     // samplePos is inside the box, so the near intersection can be behind it.
     float t0 = max(oT.x, 0.0);
@@ -208,38 +245,69 @@ float light_march(ICloudNoise noise, float3 samplePos, float3 directionToLight, 
         float3 p = samplePos + directionToLight * (t0 + (float(i) + 0.5) * dtL);
         totalDensity += sample_density(noise, p, cloud) * dtL;
     }
-    return exp(-totalDensity);
+    return totalDensity;
+}
+
+// Sun light scattered toward the eye per unit sun radiance: single scattering plus the halved octaves.
+float cloud_sun_scattering(float cosTheta, float lightDepth)
+{
+    float energy = 0.0;
+    float weight = 1.0;
+    float depthScale = 1.0;
+    float g = 0.5;
+    for (int octave = 0; octave < CLOUD_SCATTER_OCTAVES; octave++)
+    {
+        energy += weight * phase_HG(cosTheta, g) * exp(-lightDepth * depthScale);
+        weight *= 0.5;
+        depthScale *= 0.5;
+        g *= 0.5;
+    }
+    return energy;
+}
+
+// The ambient a sample sees: the sky above near the box's top, the lower hemisphere near its bottom.
+float3 cloud_ambient_at(CloudAmbient ambient, Clouds cloud, float3 position)
+{
+    float height = saturate((position.y - cloud.offset.y) / (2.0 * cloud.radius.y) + 0.5);
+    return lerp(ambient.bottom, ambient.top, height);
 }
 
 // Premultiplied cloud colour and 1 - transmittance along one ray, ending at the scene surface sceneDistance away.
-float4 march_clouds(ICloudNoise noise, float3 eyePosition, float3 rayDirection, float sceneDistance, Clouds cloud,
-                    float3 directionToLight, float3 sunRadiance)
+float4 march_clouds(ICloudNoise noise, float3 eyePosition, float3 rayDirection, float sceneDistance, Clouds settings,
+                    float3 directionToLight, float3 sunRadiance, CloudAmbient ambient)
 {
     float3 toLight = normalize(directionToLight);
+    Clouds cloud = settings;
     float2 oT;
     bool intersection = box_intersect(eyePosition, rayDirection, cloud, oT);
     // The march ends at the first surface the main pass drew, so geometry in front of the box hides it.
     oT.y = min(oT.y, sceneDistance);
 
-    float lightEnergy = 0.0;
+    float3 radiance = float3(0.0);
     float transmittance = 1.0;
-    float phase = phase_HG(dot(normalize(rayDirection), toLight), 0.5);
+    float cosTheta = dot(normalize(rayDirection), toLight);
 
     if (intersection && oT.y > max(oT.x, 0.0))
     {
         oT.x = max(0.0, oT.x);
         float marchLength = oT.y - oT.x;
+        // Powder reads the slider's step through the thinnest extent, so the adaptive count does not change it.
+        float powderLength = cloud_thinnest_extent(cloud) / float(cloud.num_march_steps);
+        cloud.num_march_steps = cloud_march_steps(settings, marchLength);
         float dt = marchLength / float(cloud.num_march_steps);
         for (int i = 0; i < cloud.num_march_steps; i++)
         {
             float3 samplePos = eyePosition + rayDirection * (oT.x + (float(i) + 0.5) * dt);
 
             float densityOfSample = sample_density(noise, samplePos, cloud);
-            float lightTransmittance = light_march(noise, samplePos, toLight, cloud);
-            // Powder only dims in-scattering; transmittance changes solely through the `*=` below.
-            float powder = cloud.powder_effect ? (1.0 - exp(-densityOfSample * dt * 2.0)) : 1.0;
+            float lightDepth = light_optical_depth(noise, samplePos, toLight, cloud);
+            // Powder only dims the sun's in-scattering; transmittance changes solely through the `*=` below.
+            float powder = cloud.powder_effect ? (1.0 - exp(-densityOfSample * powderLength * 2.0)) : 1.0;
+            float3 source = sunRadiance * (cloud_sun_scattering(cosTheta, lightDepth) * powder)
+                          + cloud_ambient_at(ambient, cloud, samplePos);
 
-            lightEnergy += densityOfSample * dt * transmittance * lightTransmittance * powder * phase;
+            // The step's in-scattering integrated exactly for albedo 1, so a long step cannot overshoot.
+            radiance += transmittance * (1.0 - exp(-densityOfSample * dt)) * source;
 
             transmittance *= exp(-densityOfSample * dt);
 
@@ -247,5 +315,13 @@ float4 march_clouds(ICloudNoise noise, float3 eyePosition, float3 rayDirection, 
         }
     }
 
-    return float4(lightEnergy * sunRadiance, 1.0 - transmittance);
+    return float4(radiance, 1.0 - transmittance);
+}
+
+// The C++ engine's entry, lit by the analytic sky until it passes its own sky's ambient.
+float4 march_clouds(ICloudNoise noise, float3 eyePosition, float3 rayDirection, float sceneDistance, Clouds cloud,
+                    float3 directionToLight, float3 sunRadiance)
+{
+    return march_clouds(noise, eyePosition, rayDirection, sceneDistance, cloud, directionToLight, sunRadiance,
+                        cloud_ambient_analytic_sky());
 }

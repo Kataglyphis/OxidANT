@@ -333,3 +333,33 @@ fn the_shader_unpacks_the_box_and_steps_the_host_packs() {
         assert_eq!(unpacked[3][0], if clouds.powder { 1.0 } else { 0.0 });
     }
 }
+
+/// A long path through the box takes more steps, never fewer than the slider's, nor past four times them or 128.
+#[test]
+fn a_longer_path_takes_more_steps_within_a_bound() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    // Slider steps, the thinnest half extent and the path length; then the expected step count.
+    let cases: [([f32; 4], i32); 6] = [
+        ([8.0, 1.0, 1.0, 0.0], 8),
+        ([8.0, 1.0, 2.0, 0.0], 8),
+        ([8.0, 1.0, 5.0, 0.0], 20),
+        ([8.0, 1.0, 100.0, 0.0], 32),
+        ([64.0, 1.0, 100.0, 0.0], 128),
+        ([128.0, 30.0, 61.0, 0.0], 128),
+    ];
+    let inputs: Vec<[f32; 4]> = cases.iter().map(|case| case.0).collect();
+    let body = "var cloud: Clouds_0;\ncloud.num_march_steps_0 = i32(inputs[i].x);\n\
+                cloud.radius_0 = inputs[i].y * vec3<f32>(3.0, 1.0, 2.0);\n\
+                outputs[o] = vec4<f32>(f32(cloud_march_steps_0(cloud, inputs[i].z)), 0.0, 0.0, 0.0);";
+    let items = [
+        extract("struct Clouds_0"),
+        extract("fn cloud_thinnest_extent_0("),
+        extract("fn cloud_march_steps_0("),
+    ];
+    let results = probe(&gpu, &items, body, &inputs, (1, 1));
+    let steps: Vec<i32> = results.iter().map(|r| r[0] as i32).collect();
+    let expected: Vec<i32> = cases.iter().map(|case| case.1).collect();
+    assert_eq!(steps, expected, "steps per path");
+}

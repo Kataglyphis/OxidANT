@@ -30,6 +30,9 @@ struct CloudFrameUniforms {
     params: CloudParams,
     /// x: 1 while binding 4 holds this frame's MSAA depth spread.
     depth_spread: [f32; 4],
+    /// The drawn sky's mean radiance over its upper and its lower hemisphere.
+    ambient_top: [f32; 4],
+    ambient_bottom: [f32; 4],
 }
 
 /// The march's render pipeline and the noise's compute pipeline with their layouts, from one pair of WGSL modules.
@@ -454,6 +457,7 @@ impl ForwardRenderer {
             .try_normalize()
             .unwrap_or(Vec3::Y);
         let colour = self.light_color_intensity;
+        let ambient = self.cloud_ambient();
         CloudFrameUniforms {
             inv_view_proj: view.view_proj.inverse().to_cols_array_2d(),
             eye: view.eye.extend(1.0).to_array(),
@@ -461,6 +465,8 @@ impl ForwardRenderer {
             sun_radiance: (colour.truncate() * colour.w).extend(0.0).to_array(),
             params: self.clouds.params(),
             depth_spread: [f32::from(u8::from(spread)), 0.0, 0.0, 0.0],
+            ambient_top: ambient.top.extend(0.0).to_array(),
+            ambient_bottom: ambient.bottom.extend(0.0).to_array(),
         }
     }
 

@@ -257,8 +257,8 @@ forward 1095 colours, deferred with FXAA 1474, clouds 4449 and 33.0 % changed; t
 shadow 0.174 % of the viewport (forward none), and in it the path tracer at 88 samples 165.7 bright and
 tinted 28.3 (forward 0.8); no console or WebGPU message. The path-tracing kernel's first frame took most
 of its 124 s step, the others 3-7 s. The same views from
-`editor_snapshot` on lavapipe look alike, the clouds' grain included (the C++ estimator's, see
-[BACKLOG.md](../BACKLOG.md)).
+`editor_snapshot` on lavapipe look alike, the clouds' grain included (the shared estimator's, fixed the
+same day: `CHANGELOG.md`).
 
 ## Where the suites live
 

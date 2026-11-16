@@ -56,7 +56,9 @@ licence from their rights holder and a row there first.
 ([`shaders/common/volumetric_clouds.slang`](../../shaders/common/volumetric_clouds.slang)):
 a 128³ noise volume generated once, then per frame a ray march through an
 axis-aligned box (Offset, Scale × Density × 10) with a light march toward the
-sun, Henyey-Greenstein phase and powder term. It stops at the single-sample scene
+sun, Henyey-Greenstein phase in three scattering octaves and a powder term, lit
+besides by the drawn sky's mean radiance per hemisphere (`CloudAmbient`); a path
+longer than the box's thinnest extent takes up to four times the slider's steps. It stops at the single-sample scene
 depth either raster path leaves, or in a traced frame at the primary hit's depth the
 kernel writes, and the tonemap composites it in linear HDR, the same over sky and geometry. Off by default (`ForwardRenderer::clouds`), with the C++
 ranges in the Sky tab.

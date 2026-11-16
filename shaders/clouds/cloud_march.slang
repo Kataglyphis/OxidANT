@@ -14,6 +14,9 @@ struct CloudFrame
     CloudParams params;
     // x: 1.0 while depthSpread holds this frame's MSAA spread, the forward path's.
     float4 depth_spread;
+    // The mean radiance of the sky this frame draws, over its upper (top) and lower (bottom) hemisphere.
+    float4 ambient_top;
+    float4 ambient_bottom;
 };
 [vk::binding(0, 0)] ConstantBuffer<CloudFrame> frame;
 [vk::binding(1, 0)] Texture3D<float4> noiseTex;
@@ -53,8 +56,11 @@ float4 fs_main(FullscreenVsOut In) : SV_Target
 
     SampledNoise noise;
     Clouds cloud = cloud_unpack(frame.params);
+    CloudAmbient ambient;
+    ambient.top = frame.ambient_top.rgb;
+    ambient.bottom = frame.ambient_bottom.rgb;
     float4 nearest = march_clouds(noise, frame.eye.xyz, rayDirection, sceneDistance, cloud, frame.to_sun.xyz,
-                                  frame.sun_radiance.rgb);
+                                  frame.sun_radiance.rgb, ambient);
     if (frame.depth_spread.x < 0.5)
         return nearest;
     float2 spread = depthSpread.Load(pixel).rg;
@@ -63,6 +69,6 @@ float4 fs_main(FullscreenVsOut In) : SV_Target
     // A silhouette pixel: the samples behind the nearest surface see the cloud beyond it.
     float farDistance = cloud_scene_distance(frame.inv_view_proj, ndc, spread.x, frame.eye.xyz);
     float4 farthest = march_clouds(noise, frame.eye.xyz, rayDirection, farDistance, cloud, frame.to_sun.xyz,
-                                   frame.sun_radiance.rgb);
+                                   frame.sun_radiance.rgb, ambient);
     return lerp(nearest, farthest, spread.y);
 }

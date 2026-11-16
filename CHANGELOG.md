@@ -13,6 +13,39 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, the clouds are lit by the sky and no longer grainy at a grazing angle)
+- **The shared estimator scatters the sky as ambient** (`shaders/common/volumetric_clouds.slang`). It lit a cloud by
+  the sun's single scattering alone, so dense cloud showed 48 % of the luminance of the sky behind it (the default sun
+  and procedural sky, a box at the horizon, linear HDR). A sample now also scatters `CloudAmbient`, the drawn sky's
+  mean radiance over the upper and the lower hemisphere, blended by its height in the box: a conservatively scattering
+  medium under uniform sky light shows that sky's radiance. The host fills it per sky mode
+  (`render::clouds::CloudAmbient`): the procedural gradient's per-hemisphere integrals in closed form, a cube map's
+  faces sRGB-decoded and untonemapped as the sky pass draws them (64 texels a face edge at most), or the navy; a
+  path-traced frame always takes the procedural one, which its camera misses keep. The sun
+  adds Wrenninge et al.'s scattering octaves (three, each halving energy, light depth and g), and each step's
+  in-scattering is integrated exactly (`1 - exp(-density * dt)`), so a long step cannot overshoot. The same box now
+  shows 79 %; with powder off 109 %.
+- **A long path through the box takes more steps.** The slider's count spans the box's thinnest extent; a longer path
+  takes proportionally more, at most four times the slider's and 128 (`cloud_march_steps`), so the default 8 become
+  at most 32. Powder reads the slider's step through that extent instead of the step taken, so the count does not
+  change it. Looking up through the default slab at 3 to 34 degrees, neighbouring pixels differed by 42 % of the
+  cloud's luminance (8 steps) and 31 % at 128; now 4.5 % (128 steps: 2.0 %), and alpha's neighbour roughness went
+  from 1.58 to 1.11 times the 128-step march's. Sampling the coarse noise in place of the fine one on long steps was
+  measured too and dropped: at a fixed count it took alpha from 1.58 to 2.2 times the 128-step roughness.
+- **The C++ engine keeps its call.** `march_clouds` keeps its seven-argument overload, which lights by the analytic
+  sky; the eight-argument one takes `CloudAmbient`. `light_march` became `light_optical_depth`, which the octaves need.
+  The engine's cloud goldens move with the next pin bump (`BACKLOG.md`).
+- Tests: `a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it` (above 70 %),
+  `a_grazing_view_through_the_slab_is_not_grainy` (luminance roughness under 15 %, alpha within 1.25 times 128
+  steps'; 1.58 with the step count fixed), `the_cloud_ambient_is_the_drawn_sky` (the cube map's and the navy's
+  ambient against the HDR sky the pass drew), `a_longer_path_takes_more_steps_within_a_bound` (`cloud_math.rs`), and
+  the closed forms against the panorama's integral and a solid cube map (`render::clouds`).
+  `clouds_appear_when_enabled_and_vanish_when_disabled`, `geometry_in_front_of_the_clouds_hides_them` and
+  `feature_matrix.rs`'s cloud scene now look at the navy, as the C++ goldens do, the first and the last without
+  powder: over the horizon, the procedural sky's brightest band, an ambient-lit cloud changed only 191 of 2992
+  pixels by more than 5 levels. The path-traced frame keeps that horizon, so the matrix checks its march against
+  forward's alone there.
+
 ### Fixed (2026-11-16, the headless GPU tests' intermittent crash has a cause on arm64)
 - **llvmpipe at 256-bit vectors corrupts the heap on aarch64.** Looping every renderer GPU test binary at
   `--test-threads 4` in the image on the arm64 dev host (Mesa 26.0.8, LLVM 21.1.8): at the image's

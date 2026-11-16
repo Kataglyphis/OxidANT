@@ -6,7 +6,9 @@ use crate::asset::skybox::CubemapFaces;
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::buffer_desc;
+use crate::render::clouds::CloudAmbient;
 use crate::render::pipeline_desc;
+use crate::render::tracer::RenderMode;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -38,6 +40,8 @@ pub(super) struct SkyResources {
     placeholder: wgpu::TextureView,
     /// The loaded skybox.
     cubemap: Option<wgpu::TextureView>,
+    /// The loaded skybox's mean radiance per hemisphere, the clouds' ambient while it shows.
+    cubemap_ambient: CloudAmbient,
 }
 
 impl SkyResources {
@@ -81,6 +85,7 @@ impl SkyResources {
             sampler,
             placeholder,
             cubemap: None,
+            cubemap_ambient: CloudAmbient::sky_off(),
         }
     }
 
@@ -118,6 +123,7 @@ impl ForwardRenderer {
     /// Shows `faces` as the skybox from the next frame on, the C++ DOOM2016 cube map.
     pub fn set_skybox(&mut self, gpu: &GpuContext, faces: &CubemapFaces) {
         let view = create_cube_view(gpu, faces);
+        self.sky.cubemap_ambient = CloudAmbient::of_cubemap(faces);
         self.sky.bind(&gpu.device, Some(view));
     }
 
@@ -137,6 +143,19 @@ impl ForwardRenderer {
             (false, _) => SkyMode::Off,
             (true, true) => SkyMode::Cubemap,
             (true, false) => SkyMode::Procedural,
+        }
+    }
+
+    /// What the clouds scatter as ambient: the mean radiance of the sky this frame draws.
+    pub(super) fn cloud_ambient(&self) -> CloudAmbient {
+        // The path tracer's camera misses keep the procedural sky whatever the sky pass would draw.
+        if self.drawn_mode() == RenderMode::PathTraced {
+            return CloudAmbient::analytic_sky();
+        }
+        match self.sky_mode() {
+            SkyMode::Procedural => CloudAmbient::analytic_sky(),
+            SkyMode::Cubemap => self.sky.cubemap_ambient,
+            SkyMode::Off => CloudAmbient::sky_off(),
         }
     }
 

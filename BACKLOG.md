@@ -62,11 +62,16 @@ its open work is here.
 
 ## P2 — medium
 
-- [ ] **Clouds are dark and grainy in both renderers** (M, ★★). The shared estimator
-      (`shaders/common/volumetric_clouds.slang`) has no ambient term, so a cloud is darker than the sky
-      around it, and 8 steps through a slab seen at a grazing angle undersample the fine noise. Fixing it moves
-      the C++ cloud goldens too, so change both renderers in one pin bump. Guard: a cloud's mean luminance
-      against the sky behind it in `crates/webgpu_renderer/tests/clouds.rs` and the C++ golden.
+- [ ] **The C++ clouds take the lit, adaptive estimator with the next pin bump** (S, ★★). The shared
+      `shaders/common/volumetric_clouds.slang` scatters the sky as ambient and steps a long path more often since
+      2026-11-16 (`CHANGELOG.md`); the Rust renderer passes its drawn sky's `CloudAmbient`. BeschleunigerBallett's
+      `clouds_main` still calls the seven-argument `march_clouds`, so its clouds take the procedural sky's ambient,
+      not its DOOM2016 cube map's or the navy's. Next, in BeschleunigerBallett with the pin bump: pass its own sky's
+      per-hemisphere mean through the eight-argument overload, re-check its eight cloud goldens
+      (`GoldenRender.*Cloud*`) on the host GPU and lavapipe, and update its `docs/source/clouds.md`
+      (`light_optical_depth`, the ambient, the step count, powder's length). Guard: a C++ golden comparing a dense
+      cloud's luminance with the sky behind it, as `a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it` does
+      here.
 
 - [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
       nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
