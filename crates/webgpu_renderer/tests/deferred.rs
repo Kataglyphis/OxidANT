@@ -831,3 +831,30 @@ fn a_reload_before_the_first_deferred_frame_still_checks_the_deferred_entry_poin
     );
     assert!(mean_luma(&deferred) > 0.0, "the deferred frame is black");
 }
+
+/// The frame graph's pool holds only the targets the drawn path uses, and a deferred frame's clouds share a G-buffer
+/// texture: forward keeps no G-buffer, deferred no MSAA, and switching back reallocates the same bytes.
+#[test]
+fn each_path_holds_only_its_own_targets_and_deferred_clouds_alias_the_gbuffer() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let (w, h) = (64u64, 48u64);
+    let mut renderer = ForwardRenderer::new(&gpu, w as u32, h as u32);
+    renderer.upload_scene(&gpu, &scene("cube_on_plane.gltf"));
+    renderer.clouds.enabled = true;
+    let mut bytes_of = |path| {
+        renderer.raster_path = path;
+        renderer
+            .render_to_pixels(&gpu, w as u32, h as u32, &top_down(6.0, 35.0))
+            .expect("renders");
+        renderer.transient_texture_bytes()
+    };
+    let forward = bytes_of(RasterPath::Forward);
+    let deferred = bytes_of(RasterPath::Deferred);
+    // MSAA HDR 32 and depth 16, HDR 8, depth 4, spread 8 and clouds 8 bytes a pixel.
+    assert_eq!(forward, 76 * w * h);
+    // HDR 8, depth 4, the G-buffer 20; the clouds' 8 reuse the G-buffer normal's texture.
+    assert_eq!(deferred, 32 * w * h);
+    assert_eq!(bytes_of(RasterPath::Forward), forward);
+}

@@ -1,100 +1,87 @@
-//! The size-dependent render targets and the pass that resolves MSAA depth to single-sample.
-//! The resolve keeps the nearest sample as the depth, and the farthest with its share for the cloud march.
+//! The size-dependent render targets, backed by the frame graph's transient pool, and the pass that resolves
+//! MSAA depth to single-sample: the nearest sample as the depth, and the farthest with its share for the cloud march.
 
+use super::frame_graph::{self, CloudShape, FrameConfig, FramePass, FramePlan};
 use super::readback::{read_texture, TextureRegion};
-use super::{ForwardRenderer, DEPTH_FORMAT, HDR_FORMAT, MSAA_SAMPLE_COUNT};
+use super::{ForwardRenderer, DEPTH_FORMAT};
 use crate::context::GpuContext;
 use crate::render::bind_layout;
+use crate::render::graph::{Resource, TransientPool};
 use crate::render::pipeline_desc;
-use crate::render::texture::{
-    create_2d_texture, create_2d_view, create_depth_texture, create_hdr_texture,
-};
 
 /// The farthest MSAA depth and the share of samples at it; float32, as depth near 1 needs its precision.
 pub(super) const DEPTH_SPREAD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
 
-/// The forward pass's MSAA targets and the single-sample ones the later passes read.
+/// The frame's targets: the textures the pool backs this frame's transients with, at the output size.
 pub(super) struct RenderTargets {
-    /// The single-sample depth: resolved, the G-buffer pass's or the traced primary hit's; only tests copy it out.
-    depth_texture: wgpu::Texture,
-    pub(super) depth: wgpu::TextureView,
-    /// The forward path's farthest sample per pixel and its share, written by the depth resolve beside `depth`.
-    pub(super) depth_spread: wgpu::TextureView,
-    /// The resolved HDR colour; `hdr_view` samples it, and only tests copy it out.
-    hdr: wgpu::Texture,
-    pub(super) hdr_view: wgpu::TextureView,
-    /// MSAA depth of the forward pass, resolved into `depth` by the depth-resolve pass.
-    pub(super) depth_msaa: wgpu::TextureView,
-    /// MSAA HDR color of the forward pass, auto-resolved into `hdr_view`.
-    pub(super) hdr_msaa: wgpu::TextureView,
+    pool: TransientPool,
     pub(super) size: (u32, u32),
 }
 
 impl RenderTargets {
-    pub(super) fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
-        let hdr = create_2d_texture(
-            device,
-            Some("hdr_color"),
-            width,
-            height,
-            HDR_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-            1,
-            1,
-        );
-        let depth_texture = create_2d_texture(
-            device,
-            Some("depth"),
-            width,
-            height,
-            DEPTH_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-            1,
-            1,
-        );
+    pub(super) fn new(width: u32, height: u32) -> Self {
         Self {
-            depth: depth_texture.create_view(&wgpu::TextureViewDescriptor::default()),
-            depth_texture,
-            depth_spread: create_2d_view(
-                device,
-                Some("depth_spread"),
-                width,
-                height,
-                DEPTH_SPREAD_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                1,
-                1,
-            ),
-            hdr_view: hdr.create_view(&wgpu::TextureViewDescriptor::default()),
-            hdr,
-            depth_msaa: create_depth_texture(device, width, height, MSAA_SAMPLE_COUNT),
-            hdr_msaa: create_hdr_texture(device, width, height, MSAA_SAMPLE_COUNT),
+            pool: TransientPool::default(),
             size: (width.max(1), height.max(1)),
         }
+    }
+
+    /// `resource`'s target this frame; only a pass the frame's graph declares it for asks, so the pool backs it.
+    pub(super) fn view(&self, resource: Resource) -> &wgpu::TextureView {
+        self.pool
+            .view(resource)
+            .unwrap_or_else(|| panic!("this frame's graph allocates no {resource:?}"))
+    }
+
+    /// `resource`'s target this frame, if the frame's graph allocates one.
+    pub(super) fn get(&self, resource: Resource) -> Option<&wgpu::TextureView> {
+        self.pool.view(resource)
+    }
+
+    /// The last frame's `resource` texture, for the readbacks.
+    pub(super) fn texture(&self, resource: Resource) -> anyhow::Result<&wgpu::Texture> {
+        self.pool
+            .texture(resource)
+            .ok_or_else(|| anyhow::anyhow!("the last frame allocated no {resource:?}"))
     }
 }
 
 /// Pipeline and bind group for the MSAA depth → single-sample resolve.
 pub(super) struct DepthResolve {
     pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
+    /// The bind group over this frame's MSAA depth, compared by identity; `None` while no frame resolves.
+    bound: Option<(wgpu::TextureView, wgpu::BindGroup)>,
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl DepthResolve {
-    pub(super) fn new(device: &wgpu::Device, depth_msaa: &wgpu::TextureView) -> Self {
+    pub(super) fn new(device: &wgpu::Device) -> Self {
         let bind_group_layout = create_depth_resolve_layout(device);
         let shipped = include_str!("../../shaders/depth_resolve.wgsl");
         let pipeline = create_depth_resolve_pipeline(device, &bind_group_layout, shipped);
         Self {
             pipeline,
-            bind_group: create_depth_resolve_bind_group(device, &bind_group_layout, depth_msaa),
+            bound: None,
             bind_group_layout,
         }
+    }
+
+    /// Binds `depth_msaa`, or drops the bind group, and with it the texture, on a frame without one.
+    fn bind(&mut self, device: &wgpu::Device, depth_msaa: Option<&wgpu::TextureView>) {
+        let Some(depth_msaa) = depth_msaa else {
+            self.bound = None;
+            return;
+        };
+        if self
+            .bound
+            .as_ref()
+            .is_some_and(|(view, _)| view == depth_msaa)
+        {
+            return;
+        }
+        let bind_group =
+            create_depth_resolve_bind_group(device, &self.bind_group_layout, depth_msaa);
+        self.bound = Some((depth_msaa.clone(), bind_group));
     }
 }
 
@@ -113,21 +100,58 @@ impl DepthResolve {
 }
 
 impl ForwardRenderer {
-    /// Recreates the size-dependent targets when the output size changed.
-    pub(super) fn resize_targets(&mut self, gpu: &GpuContext, width: u32, height: u32) {
-        if self.targets.size == (width, height) {
-            return;
+    /// Compiles this frame's graph and backs its targets; a moved target rebinds every group that samples it.
+    pub(super) fn plan_frame(&mut self, gpu: &GpuContext, width: u32, height: u32) -> FramePlan {
+        self.targets.size = (width, height);
+        let config = self.frame_config();
+        let plan = frame_graph::plan(&config)
+            .unwrap_or_else(|error| panic!("frame graph of {config:?}: {error}"));
+        if self.targets.pool.acquire(&gpu.device, &plan.graph) {
+            self.rebind_targets(gpu, &plan);
         }
-        self.targets = RenderTargets::new(&gpu.device, width, height);
-        // Recreate depth resolve bind group with new MSAA depth view.
-        self.depth_resolve.bind_group = create_depth_resolve_bind_group(
-            &gpu.device,
-            &self.depth_resolve.bind_group_layout,
-            &self.targets.depth_msaa,
-        );
-        // A stale view here reads a destroyed texture.
-        self.post.histogram.set_input(gpu, &self.targets.hdr_view);
+        plan
+    }
+
+    /// What decides this frame's passes, from the settings and the drawn mode.
+    fn frame_config(&self) -> FrameConfig {
+        let mode = self.drawn_mode();
+        let traced = mode.is_traced();
+        let culls = self.gpu_culling_enabled || self.occlusion_queries_enabled;
+        FrameConfig {
+            size: self.targets.size,
+            mode,
+            path: self.raster_path,
+            clouds: self.clouds.enabled.then(|| CloudShape {
+                half: self.clouds.half_resolution,
+                noise: self.cloud_pass.noise_pending(),
+            }),
+            bloom: self.bloom_strength > 0.0,
+            ssao: self.ssao_strength > 0.0,
+            histogram: self.auto_exposure,
+            occlusion: !traced && culls && !self.primitives.is_empty(),
+            fxaa: self.fxaa_filters(traced),
+        }
+    }
+
+    /// After the pool moved a target: what samples one rebinds, and what holds one this frame lacks lets it go.
+    fn rebind_targets(&mut self, gpu: &GpuContext, plan: &FramePlan) {
+        let msaa = self.targets.get(Resource::DepthMsaa);
+        self.depth_resolve.bind(&gpu.device, msaa);
+        let hdr = self.targets.view(Resource::HdrColor);
+        self.post.histogram.set_input(gpu, hdr);
         self.post.rebuild_needed = true;
+        if !plan.runs(FramePass::GBuffer) {
+            self.drop_gbuffer_bindings();
+        }
+        if !plan.runs(FramePass::Clouds) {
+            self.cloud_pass.drop_target();
+        }
+    }
+
+    /// Bytes of the textures the transient pool holds after the last frame.
+    #[doc(hidden)]
+    pub fn transient_texture_bytes(&self) -> u64 {
+        self.targets.pool.bytes()
     }
 
     /// The last frame's resolved HDR colour as raw half-float bits, RGBA and row-major.
@@ -137,7 +161,7 @@ impl ForwardRenderer {
         let (width, height) = self.targets.size;
         let bytes = read_texture(
             gpu,
-            &self.targets.hdr,
+            self.targets.texture(Resource::HdrColor)?,
             &TextureRegion {
                 aspect: wgpu::TextureAspect::All,
                 width,
@@ -156,7 +180,7 @@ impl ForwardRenderer {
         let (width, height) = self.targets.size;
         let bytes = read_texture(
             gpu,
-            &self.targets.depth_texture,
+            self.targets.texture(Resource::Depth)?,
             &TextureRegion {
                 aspect: wgpu::TextureAspect::DepthOnly,
                 width,
@@ -170,10 +194,14 @@ impl ForwardRenderer {
 
     /// Depth resolve: MSAA depth to single-sample (min over samples) for SSAO and occlusion, and the spread.
     pub(super) fn encode_depth_resolve(&self, encoder: &mut wgpu::CommandEncoder) {
+        let Some((_, bind_group)) = self.depth_resolve.bound.as_ref() else {
+            log::error!("the depth resolve ran on a frame without MSAA depth");
+            return;
+        };
         let mut resolve = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("depth_resolve"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.targets.depth_spread,
+                view: self.targets.view(Resource::DepthSpread),
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -182,7 +210,7 @@ impl ForwardRenderer {
                 depth_slice: None,
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.targets.depth,
+                view: self.targets.view(Resource::Depth),
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -194,7 +222,7 @@ impl ForwardRenderer {
             multiview_mask: None,
         });
         resolve.set_pipeline(&self.depth_resolve.pipeline);
-        resolve.set_bind_group(0, &self.depth_resolve.bind_group, &[]);
+        resolve.set_bind_group(0, bind_group, &[]);
         resolve.draw(0..3, 0..1);
     }
 }

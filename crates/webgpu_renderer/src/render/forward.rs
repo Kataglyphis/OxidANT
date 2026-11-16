@@ -7,12 +7,14 @@ mod culling;
 mod deferred;
 mod environment;
 mod frame;
+mod frame_graph;
 mod light_grid;
 mod main_pass;
 mod placement;
 mod post;
 mod primitive;
 pub(crate) mod readback;
+mod record;
 #[cfg(not(target_arch = "wasm32"))]
 mod reload;
 mod shadow;
@@ -46,10 +48,12 @@ use deferred::DeferredResources;
 pub use deferred::RasterPath;
 use environment::{create_ibl_bind_group, IblBinding};
 use frame::FrameBinding;
+use frame_graph::FramePass;
 use light_grid::LightResources;
 use main_pass::MainPipelines;
 use post::PostChain;
 use primitive::GpuPrimitive;
+use record::FrameRecord;
 #[cfg(not(target_arch = "wasm32"))]
 pub use reload::ShaderSources;
 use shadow::ShadowResources;
@@ -168,9 +172,9 @@ impl ForwardRenderer {
         let ibl = IblBinding::new(device);
         let shadow = ShadowResources::new(device, &shader, &frame.layout);
         let main = MainPipelines::new(device, shader, &ibl.layout, &frame.layout, &lights.layout);
-        let targets = RenderTargets::new(device, width, height);
-        let depth_resolve = DepthResolve::new(device, &targets.depth_msaa);
-        let post = PostChain::new(gpu, &targets.hdr_view);
+        let targets = RenderTargets::new(width, height);
+        let depth_resolve = DepthResolve::new(device);
+        let post = PostChain::new(gpu);
         Self {
             main,
             sky: SkyResources::new(gpu),
@@ -412,7 +416,7 @@ impl ForwardRenderer {
         camera: &OrbitCamera,
     ) {
         self.tracer.advance(gpu, self.render_mode.is_traced());
-        let view = self.prepare_frame(gpu, tonemap, width, height, camera);
+        let (view, plan) = self.prepare_frame(gpu, tonemap, width, height, camera);
         self.forget_timings_of_another_frame();
 
         // Before any scope: begin_frame picks the ring slot every scope below writes into.
@@ -423,27 +427,18 @@ impl ForwardRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("forward_encoder"),
             });
-        // Pass wiring is validated once by the `graph` tests, per mode and path, not per frame.
-        let traced = self.encode_traced(gpu, &mut encoder, &view);
-        if !traced {
-            self.encode_shadow_cascades(gpu, &mut encoder);
-            if self.raster_path == RasterPath::Deferred {
-                self.encode_deferred(gpu, &mut encoder, &view);
-            } else {
-                self.encode_forward_pass(&mut encoder, &view);
-                self.encode_depth_resolve(&mut encoder);
-            }
-            self.encode_occlusion(gpu, &mut encoder, &view);
+        // The graph ordered the passes by what they read; its tests prove that order is the hand-written one.
+        let mut frame = FrameRecord {
+            gpu,
+            encoder: &mut encoder,
+            tonemap,
+            output: output_view,
+            view: &view,
+            fxaa: plan.runs(FramePass::Fxaa),
+        };
+        for &pass in &plan.passes {
+            self.record_pass(pass, &mut frame);
         }
-        // Before bloom: its bright pass thresholds at this frame's exposure, as the tonemap exposes.
-        self.encode_exposure(&mut encoder, view.width, view.height);
-        // Before bloom too: its bright pass thresholds the clouded scene.
-        self.encode_clouds(gpu, &mut encoder, (&view, traced));
-        self.encode_bloom(&mut encoder);
-        if !traced {
-            self.encode_ssao(&mut encoder);
-        }
-        self.encode_tonemap(gpu, &mut encoder, tonemap, output_view, (&view, traced));
         self.finish_frame(gpu, encoder);
     }
 

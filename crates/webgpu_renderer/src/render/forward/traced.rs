@@ -8,6 +8,7 @@ use super::frame::FrameView;
 use super::{sky, ForwardRenderer, RasterPath};
 use crate::context::GpuContext;
 use crate::render::gpu_timing::TimedPass;
+use crate::render::graph::Resource;
 use crate::render::tracer::modes::{
     accumulation_bytes, accumulation_limit, plan, Accumulation, AccumulationKey, AfterResolve,
     Kernel, TraceDispatch, TraceFrameUniforms, TraceLights, TracedFrame, TracedPasses,
@@ -42,7 +43,7 @@ impl TracedState {
 }
 
 /// Whether a frame of `mode` over `path` records `pass` (with its optional passes on); `fxaa` when it filters.
-fn records(pass: TimedPass, mode: RenderMode, path: RasterPath, fxaa: bool) -> bool {
+pub(super) fn records(pass: TimedPass, mode: RenderMode, path: RasterPath, fxaa: bool) -> bool {
     match (mode, pass) {
         (_, TimedPass::Fxaa) => fxaa,
         (RenderMode::Raster, TimedPass::Forward) => path == RasterPath::Forward,
@@ -156,13 +157,8 @@ impl ForwardRenderer {
         self.traced.accumulation.reset();
     }
 
-    /// Traces this frame into the HDR target once a traced mode is ready; false leaves the frame to raster.
-    pub(super) fn encode_traced(
-        &mut self,
-        gpu: &GpuContext,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &FrameView,
-    ) -> bool {
+    /// Before the frame's graph records: a frame other than a path-traced one drops the mean, a refused one says why.
+    pub(super) fn prepare_traced(&mut self) {
         let mode = self.drawn_mode();
         if mode != RenderMode::PathTraced {
             // The ray tracer writes the same buffer, and a raster frame may outlive the scene it held.
@@ -170,14 +166,23 @@ impl ForwardRenderer {
         }
         if !mode.is_traced() {
             self.log_traced_fallback();
-            return false;
         }
+    }
+
+    /// Traces this frame into the HDR target; the frame graph records it only once a traced mode is ready.
+    pub(super) fn encode_traced(
+        &mut self,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &FrameView,
+    ) {
+        let mode = self.drawn_mode();
         self.sync_animated_instances(gpu);
         let settings = self.trace_settings.clamped();
         let (kernel, timed, dispatches) = self.plan_traced_frame(mode, settings, view);
         let uniforms = self.trace_uniforms(view, settings);
         if !self.encode_traced_passes(gpu, encoder, (kernel, timed), uniforms, &dispatches) {
-            return false;
+            return;
         }
         if kernel == Kernel::Path {
             self.traced
@@ -188,7 +193,6 @@ impl ForwardRenderer {
         (self.culling.drawn, self.culling.considered) = (0, 0);
         self.culling.primitives = (0, 0);
         (self.shadow.casters_drawn, self.shadow.casters_considered) = (0, 0);
-        true
     }
 
     /// The kernel, its timed pass and its dispatches; a path-traced frame adds to the samples its history kept.
@@ -301,8 +305,8 @@ impl ForwardRenderer {
             lights,
             uniforms,
             dispatches,
-            hdr_view: &self.targets.hdr_view,
-            depth_view: &self.targets.depth,
+            hdr_view: self.targets.view(Resource::HdrColor),
+            depth_view: self.targets.view(Resource::Depth),
             after_resolve: draw_sky.as_ref().map(|draw| draw as AfterResolve<'_>),
         };
         let scopes = (

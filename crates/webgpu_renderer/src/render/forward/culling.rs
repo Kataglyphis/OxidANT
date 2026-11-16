@@ -7,6 +7,7 @@ use super::ForwardRenderer;
 use crate::context::GpuContext;
 use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::TimedPass;
+use crate::render::graph::Resource;
 use crate::render::occlusion::OcclusionQueries;
 
 pub(super) struct Culling {
@@ -93,7 +94,7 @@ impl ForwardRenderer {
                 &gpu.device,
                 &gpu.queue,
                 encoder,
-                &self.targets.depth,
+                self.targets.view(Resource::Depth),
                 view.view_proj,
                 &aabbs,
                 view.eye,
@@ -120,7 +121,7 @@ impl ForwardRenderer {
         gpu_cull.cull(
             gpu,
             encoder,
-            &self.targets.depth,
+            self.targets.view(Resource::Depth),
             width,
             height,
             bytemuck::cast_ref(&view.view_proj),

@@ -84,7 +84,8 @@ animated nodes and `set_instances` move the traced instances: [`docs/tracer.md`]
 **Runtime** — GPU skinning, morph-target and TRS animation playback, GPU
 instancing, a model transform over the whole scene (the C++ Model tab's), frustum
 culling that can be switched off plus occlusion culling (hardware queries, or an
-opt-in compute pass), LOD simplification, a validated render graph, hot shader reload
+opt-in compute pass), LOD simplification, a render graph that orders the passes and aliases their
+transient targets, hot shader reload
 and screenshot capture.
 
 **Editor** — BeschleunigerBallett's docked C++ editor ("Studio Pro") in egui

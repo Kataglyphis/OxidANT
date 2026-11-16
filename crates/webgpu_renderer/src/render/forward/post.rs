@@ -7,6 +7,7 @@ use super::{ForwardRenderer, RasterPath};
 use crate::context::GpuContext;
 use crate::render::bloom::{BloomInputs, BloomPass};
 use crate::render::gpu_timing::TimedPass;
+use crate::render::graph::Resource;
 use crate::render::histogram::{ExposureSettings, HistogramPass};
 use crate::render::ssao::SsaoPass;
 use crate::render::tonemap::TonemapPass;
@@ -28,13 +29,12 @@ fn next_inputs_id() -> u64 {
 }
 
 impl PostChain {
-    pub(super) fn new(gpu: &GpuContext, hdr_view: &wgpu::TextureView) -> Self {
-        let mut histogram = HistogramPass::new(gpu);
-        histogram.set_input(gpu, hdr_view);
+    /// The histogram binds the HDR target the first frame's graph allocates.
+    pub(super) fn new(gpu: &GpuContext) -> Self {
         Self {
             bloom: BloomPass::new(gpu),
             ssao: SsaoPass::new(gpu),
-            histogram,
+            histogram: HistogramPass::new(gpu),
             rebuild_needed: true,
             inputs_id: 0,
         }
@@ -42,19 +42,22 @@ impl PostChain {
 }
 
 impl ForwardRenderer {
-    /// Rebuilds bloom and SSAO on the current targets, and bloom on a new cloud target, after those were recreated.
+    /// Rebuilds bloom and SSAO on this frame's targets after the pool moved any of them.
     pub(super) fn rebuild_post_inputs(&mut self, gpu: &GpuContext, width: u32, height: u32) {
         if !self.post.rebuild_needed {
             return;
         }
         let post = &mut self.post;
         let inputs = BloomInputs {
-            hdr: &self.targets.hdr_view,
+            hdr: self.targets.view(Resource::HdrColor),
             exposure: post.histogram.exposure_buffer(),
-            cloud: self.cloud_pass.composite_view(),
+            cloud: self
+                .cloud_pass
+                .composite(self.targets.get(Resource::CloudColor)),
         };
         post.bloom.rebuild(gpu, width, height, inputs);
-        post.ssao.rebuild(gpu, width, height, &self.targets.depth);
+        let depth = self.targets.view(Resource::Depth);
+        post.ssao.rebuild(gpu, width, height, depth);
         post.inputs_id = next_inputs_id();
         post.rebuild_needed = false;
     }
@@ -69,7 +72,7 @@ impl ForwardRenderer {
         }
         tonemap.set_input(
             gpu,
-            &self.targets.hdr_view,
+            self.targets.view(Resource::HdrColor),
             post.bloom
                 .output()
                 .expect("bloom output exists after rebuild"),
@@ -77,7 +80,7 @@ impl ForwardRenderer {
                 .output()
                 .expect("ssao output exists after rebuild"),
             post.histogram.exposure_buffer(),
-            self.cloud_pass.composite_view(),
+            self.cloud_view(),
         );
         tonemap.bound_inputs = Some(post.inputs_id);
     }
@@ -123,63 +126,57 @@ impl ForwardRenderer {
         self.post.histogram.read_back_exposure(gpu)
     }
 
-    /// At zero strength the tonemap provably ignores the output, so the pass is skipped.
+    /// The frame graph adds the row only above zero strength: at zero the tonemap provably ignores the output.
     pub(super) fn encode_bloom(&self, encoder: &mut wgpu::CommandEncoder) {
-        if self.bloom_strength > 0.0 {
-            self.post
-                .bloom
-                .encode(encoder, self.gpu_timing.scope(TimedPass::Bloom));
-        }
+        self.post
+            .bloom
+            .encode(encoder, self.gpu_timing.scope(TimedPass::Bloom));
     }
 
-    /// At zero strength the tonemap provably ignores the output, so the pass is skipped.
+    /// The frame graph adds the row only above zero strength on a raster frame, the only one with SSAO's depth.
     pub(super) fn encode_ssao(&self, encoder: &mut wgpu::CommandEncoder) {
-        if self.ssao_strength > 0.0 {
-            self.post
-                .ssao
-                .encode(encoder, self.gpu_timing.scope(TimedPass::Ssao));
-        }
+        self.post
+            .ssao
+            .encode(encoder, self.gpu_timing.scope(TimedPass::Ssao));
     }
 
-    /// The histogram build in auto mode, then the reduce into the exposure the tonemap reads.
-    pub(super) fn encode_exposure(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        width: u32,
-        height: u32,
-    ) {
-        // Manual exposure never reads the bins, so the full-res histogram build is auto-mode only.
-        if self.auto_exposure {
-            self.post.histogram.encode(
-                encoder,
-                width,
-                height,
-                self.gpu_timing.scope(TimedPass::Histogram),
-            );
-        }
-        // Always reduce: manual mode copies its EV into the one buffer the tonemap reads.
+    /// The full-resolution histogram build, which only auto exposure reads.
+    pub(super) fn encode_histogram(&self, encoder: &mut wgpu::CommandEncoder, view: &FrameView) {
+        self.post.histogram.encode(
+            encoder,
+            view.width,
+            view.height,
+            self.gpu_timing.scope(TimedPass::Histogram),
+        );
+    }
+
+    /// Every frame: manual mode copies its EV into the one buffer the tonemap reads.
+    pub(super) fn encode_exposure_reduce(&self, encoder: &mut wgpu::CommandEncoder) {
         self.post
             .histogram
             .encode_reduce(encoder, self.gpu_timing.scope(TimedPass::ExposureReduce));
     }
 
-    /// ACES over HDR, bloom and AO into `output_view`, through FXAA when this frame filters.
+    /// ACES over HDR, bloom and AO into `output_view`, or into FXAA's input when `fxaa` filters it next.
     pub(super) fn encode_tonemap(
         &self,
-        gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
-        tonemap: &mut TonemapPass,
+        tonemap: &TonemapPass,
         output_view: &wgpu::TextureView,
-        (view, traced): (&FrameView, bool),
+        fxaa: bool,
     ) {
-        let scope = self.gpu_timing.scope(TimedPass::Tonemap);
-        if !self.fxaa_filters(traced) {
-            tonemap.render(encoder, output_view, scope);
-            return;
-        }
-        tonemap.prepare_fxaa(gpu, view.width, view.height);
-        let fxaa_scope = self.gpu_timing.scope(TimedPass::Fxaa);
-        tonemap.render_with_fxaa(encoder, output_view, scope, fxaa_scope);
+        let target = tonemap.fxaa_input().filter(|_| fxaa).unwrap_or(output_view);
+        tonemap.render(encoder, target, self.gpu_timing.scope(TimedPass::Tonemap));
+    }
+
+    /// FXAA over the tonemapped frame into `output_view`.
+    pub(super) fn encode_fxaa(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tonemap: &TonemapPass,
+        output_view: &wgpu::TextureView,
+    ) {
+        tonemap.render_fxaa(encoder, output_view, self.gpu_timing.scope(TimedPass::Fxaa));
     }
 
     /// Whether the frame [`Self::drawn_mode`] draws runs FXAA.

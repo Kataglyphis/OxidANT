@@ -2,7 +2,6 @@
 
 use crate::asset::bc_decode::decode_level;
 use crate::context::GpuContext;
-use crate::render::forward::{DEPTH_FORMAT, HDR_FORMAT};
 use crate::scene::{CompressedFormat, CompressedTexture, CpuSampler, CpuTexture, CpuWrap};
 
 pub(crate) fn create_sampler(device: &wgpu::Device, desc: &CpuSampler) -> wgpu::Sampler {
@@ -362,42 +361,6 @@ fn write_rgba8_levels(
         );
     }
     gpu_texture
-}
-
-pub(crate) fn create_depth_texture(
-    device: &wgpu::Device,
-    width: u32,
-    height: u32,
-    sample_count: u32,
-) -> wgpu::TextureView {
-    create_2d_view(
-        device,
-        Some("depth"),
-        width,
-        height,
-        DEPTH_FORMAT,
-        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        1,
-        sample_count,
-    )
-}
-
-pub(crate) fn create_hdr_texture(
-    device: &wgpu::Device,
-    width: u32,
-    height: u32,
-    sample_count: u32,
-) -> wgpu::TextureView {
-    create_2d_view(
-        device,
-        Some("hdr_color"),
-        width,
-        height,
-        HDR_FORMAT,
-        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        1,
-        sample_count,
-    )
 }
 
 /// The crate's single-layer 2D texture; clamps `width`/`height` to 1, as zero is a wgpu error.

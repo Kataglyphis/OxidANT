@@ -129,21 +129,21 @@ impl TonemapPass {
             .prepare(gpu, width, height);
     }
 
-    /// Tonemaps into FXAA's intermediate, then filters that into `output_view`; without [`Self::prepare_fxaa`], tonemaps straight to it.
-    pub fn render_with_fxaa(
+    /// FXAA's intermediate, which the tonemap renders into when FXAA filters next; `None` before [`Self::prepare_fxaa`].
+    pub fn fxaa_input(&self) -> Option<&wgpu::TextureView> {
+        self.fxaa.as_ref().and_then(FxaaPass::input_view)
+    }
+
+    /// Filters FXAA's intermediate into `output_view`; nothing before [`Self::prepare_fxaa`].
+    pub fn render_fxaa(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         output_view: &wgpu::TextureView,
         scope: PassScope<'_>,
-        fxaa_scope: PassScope<'_>,
     ) {
-        let fxaa = self.fxaa.as_ref();
-        let Some((fxaa, input)) = fxaa.and_then(|f| f.input_view().map(|input| (f, input))) else {
-            self.render(encoder, output_view, scope);
-            return;
-        };
-        self.render(encoder, input, scope);
-        fxaa.render(encoder, output_view, fxaa_scope);
+        if let Some(fxaa) = self.fxaa.as_ref().filter(|f| f.input_view().is_some()) {
+            fxaa.render(encoder, output_view, scope);
+        }
     }
 
     /// Per-frame parameters; `clouds` composites the cloud input over the scene.

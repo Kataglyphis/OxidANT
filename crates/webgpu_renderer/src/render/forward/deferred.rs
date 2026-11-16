@@ -11,7 +11,7 @@ use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::buffer_desc;
 use crate::render::gpu_timing::TimedPass;
-use crate::render::texture::create_2d_view;
+use crate::render::graph::Resource;
 
 /// The C++ engine's two raster paths, switched at run time like its Forward/Deferred control.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -37,10 +37,17 @@ impl RasterPath {
 }
 
 /// `fs_gbuffer`'s targets in order: normal and metallic, albedo and occlusion, roughness and emissive.
-const GBUFFER_FORMATS: [wgpu::TextureFormat; 3] = [
+pub(super) const GBUFFER_FORMATS: [wgpu::TextureFormat; 3] = [
     wgpu::TextureFormat::Rgba16Float,
     wgpu::TextureFormat::Rgba8UnormSrgb,
     wgpu::TextureFormat::Rgba16Float,
+];
+
+/// The G-buffer targets in `GBUFFER_FORMATS` order.
+const GBUFFER: [Resource; 3] = [
+    Resource::GBufferNormal,
+    Resource::GBufferAlbedo,
+    Resource::GBufferMaterial,
 ];
 
 /// Group 0 binding 18 of the lighting pass, mirroring `DeferredUniforms` in forward.slang.
@@ -74,12 +81,13 @@ pub(super) struct DeferredResources {
     pipelines: DeferredPipelines,
     lighting_layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
-    /// The G-buffer at the output size; `None` until a deferred frame needs it.
+    /// The lighting group over this frame's G-buffer; `None` while no frame defers.
     targets: Option<GBufferTargets>,
 }
 
-/// The G-buffer and the lighting pass's group 0 over it.
+/// The pool's G-buffer views and the lighting pass's group 0 over them.
 struct GBufferTargets {
+    /// Compared by identity with the pool's, so a moved target rebuilds the group.
     views: [wgpu::TextureView; 3],
     /// The depth target `bind_group` reads, compared by identity so a resize rebuilds both.
     depth: wgpu::TextureView,
@@ -89,7 +97,6 @@ struct GBufferTargets {
 /// What the lighting pass's group 0 binds besides the G-buffer itself.
 struct LightingInputs<'a> {
     layout: &'a wgpu::BindGroupLayout,
-    size: (u32, u32),
     depth: &'a wgpu::TextureView,
     shadow_map: &'a wgpu::TextureView,
     shadow_sampler: &'a wgpu::Sampler,
@@ -97,12 +104,11 @@ struct LightingInputs<'a> {
 }
 
 impl GBufferTargets {
-    fn new(device: &wgpu::Device, inputs: &LightingInputs<'_>) -> Self {
-        let (width, height) = inputs.size;
-        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
-        let views = GBUFFER_FORMATS.map(|format| {
-            create_2d_view(device, Some("gbuffer"), width, height, format, usage, 1, 1)
-        });
+    fn new(
+        device: &wgpu::Device,
+        inputs: &LightingInputs<'_>,
+        views: [wgpu::TextureView; 3],
+    ) -> Self {
         let bind_group = lighting_bind_group(device, inputs, &views);
         Self {
             views,
@@ -128,19 +134,24 @@ impl GBufferTargets {
 }
 
 impl ForwardRenderer {
-    /// The deferred path's two passes, in place of the forward pass and its depth resolve.
-    pub(super) fn encode_deferred(
-        &mut self,
-        gpu: &GpuContext,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &FrameView,
-    ) {
-        self.prepare_deferred(gpu, view);
+    /// The G-buffer pass: culled opaque draws, which report what the camera drew.
+    pub(super) fn encode_gbuffer(&mut self, encoder: &mut wgpu::CommandEncoder, view: &FrameView) {
         let (drawn, considered) = self.encode_gbuffer_pass(encoder, view);
         self.culling.drawn = drawn;
         self.culling.considered = considered;
+    }
+
+    /// The lighting pass, in place of the forward pass's shading; its blended draws add to the G-buffer's.
+    pub(super) fn encode_lighting(&mut self, encoder: &mut wgpu::CommandEncoder, view: &FrameView) {
         let blended = self.encode_deferred_lighting(encoder, view);
-        self.culling.primitives = (drawn + blended, self.primitives.len() as u32);
+        self.culling.primitives = (self.culling.drawn + blended, self.primitives.len() as u32);
+    }
+
+    /// Lets the last deferred frame's G-buffer go, which the lighting group would keep alive.
+    pub(super) fn drop_gbuffer_bindings(&mut self) {
+        if let Some(deferred) = self.deferred.as_mut() {
+            deferred.targets = None;
+        }
     }
 
     /// The lighting group around the shadow map `sync_shadow_map` reallocated; nothing before the first deferred frame.
@@ -153,7 +164,6 @@ impl ForwardRenderer {
         };
         let inputs = LightingInputs {
             layout: &deferred.lighting_layout,
-            size: self.targets.size,
             depth: &gbuffer.depth,
             shadow_map: &self.shadow.view,
             shadow_sampler: &self.shadow.sampler,
@@ -204,7 +214,7 @@ impl ForwardRenderer {
     }
 
     /// Builds what this frame needs, follows a resize and a mirrored primitive, and writes the view inverse.
-    fn prepare_deferred(&mut self, gpu: &GpuContext, view: &FrameView) {
+    pub(super) fn prepare_deferred(&mut self, gpu: &GpuContext, view: &FrameView) {
         let device = &gpu.device;
         if self.deferred.is_none() {
             self.deferred = Some(self.build_deferred(device, &self.main.shader, &self.sky.shader));
@@ -219,17 +229,18 @@ impl ForwardRenderer {
             let set = create_deferred_pipeline_set(device, &source, wgpu::FrontFace::Cw);
             deferred.pipelines.mirrored = Some(set);
         }
-        let depth = &self.targets.depth;
-        if deferred.targets.as_ref().is_none_or(|t| t.depth != *depth) {
+        let depth = self.targets.view(Resource::Depth);
+        let views = GBUFFER.map(|resource| self.targets.view(resource).clone());
+        let stale = |t: &GBufferTargets| t.depth != *depth || t.views != views;
+        if deferred.targets.as_ref().is_none_or(stale) {
             let inputs = LightingInputs {
                 layout: &deferred.lighting_layout,
-                size: self.targets.size,
                 depth,
                 shadow_map: &self.shadow.view,
                 shadow_sampler: &self.shadow.sampler,
                 uniforms: &deferred.uniform_buffer,
             };
-            deferred.targets = Some(GBufferTargets::new(device, &inputs));
+            deferred.targets = Some(GBufferTargets::new(device, &inputs, views));
         }
         let uniforms = DeferredUniforms {
             inv_view_proj: view.view_proj.inverse().to_cols_array_2d(),
@@ -260,7 +271,7 @@ impl ForwardRenderer {
             color_attachments: &gbuffer.color_attachments(),
             // The single-sample target SSAO and culling read, so the forward path's resolve has nothing to do.
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.targets.depth,
+                view: self.targets.view(Resource::Depth),
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -288,7 +299,7 @@ impl ForwardRenderer {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("deferred_lighting_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.targets.hdr_view,
+                view: self.targets.view(Resource::HdrColor),
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(HDR_CLEAR),
@@ -298,7 +309,7 @@ impl ForwardRenderer {
             })],
             // Read-only, so the lighting draw can sample the depth the sky and blended draws test.
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.targets.depth,
+                view: self.targets.view(Resource::Depth),
                 depth_ops: None,
                 stencil_ops: None,
             }),

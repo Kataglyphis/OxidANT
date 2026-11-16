@@ -2,6 +2,7 @@
 
 use glam::{Mat4, Vec3};
 
+use super::frame_graph::{FramePass, FramePlan};
 use super::ForwardRenderer;
 use crate::context::GpuContext;
 use crate::render::bind_layout;
@@ -76,7 +77,7 @@ pub(super) struct FrameView {
 }
 
 impl ForwardRenderer {
-    /// Everything the passes read, written before the frame's encoder exists.
+    /// Everything the passes read, written before the frame's encoder exists, and the frame's graph.
     pub(super) fn prepare_frame(
         &mut self,
         gpu: &GpuContext,
@@ -84,14 +85,20 @@ impl ForwardRenderer {
         width: u32,
         height: u32,
         camera: &OrbitCamera,
-    ) -> FrameView {
+    ) -> (FrameView, FramePlan) {
         let (width, height) = (width.max(1), height.max(1));
-        self.resize_targets(gpu, width, height);
         self.sync_shadow_map(&gpu.device);
         self.apply_model_transform(gpu);
-        self.prepare_clouds(gpu, width, height);
+        // Before the plan: whether the noise still has to be filled decides its row.
+        self.ensure_cloud_march(gpu);
+        let plan = self.plan_frame(gpu, width, height);
+        self.prepare_traced();
+        self.prepare_clouds(gpu);
         self.rebuild_post_inputs(gpu, width, height);
         self.bind_tonemap_inputs(gpu, tonemap);
+        if plan.runs(FramePass::Fxaa) {
+            tonemap.prepare_fxaa(gpu, width, height);
+        }
         self.write_post_settings(gpu, tonemap);
         self.write_ibl_uniforms(gpu);
 
@@ -101,11 +108,14 @@ impl ForwardRenderer {
         self.reset_culling_on_mode_change();
 
         let view = self.prepare_view(gpu, camera, width, height);
+        if plan.runs(FramePass::GBuffer) {
+            self.prepare_deferred(gpu, &view);
+        }
         self.write_sky_uniforms(gpu, &view);
         self.write_frame_uniforms(gpu, &view);
         self.write_light_grid(gpu, &view);
         self.write_dirty_prim_uniforms(gpu);
-        view
+        (view, plan)
     }
 
     /// The camera's view for this frame, plus the SSAO projection and the cascade fit it drives.

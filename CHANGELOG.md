@@ -13,6 +13,31 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, render graph v2)
+- **The frame is compiled from a render graph every frame** (`crates/webgpu_renderer/src/render/graph.rs`). Passes
+  declare what they read and write; `FrameGraph::compile` orders them by those edges (Kahn, ties to the order rows were
+  added in), culls passes no exported resource needs, fails a cycle, an undefined read or a second writer, and packs
+  transient textures into slots: equal descriptions, lifetimes that never meet. wgpu places the barriers itself, so the
+  graph's job is order and lifetimes. `TransientPool` backs the slots, reuses textures of equal description across
+  frames, drops the rest, and says when a target moved, which rebinds what samples it.
+- **The renderer's frame is a graph of its settings** (`render/forward/frame_graph.rs`): drawn mode, raster path,
+  clouds (half resolution, noise pending), bloom, SSAO, auto exposure, culling and FXAA choose the rows; each row is one
+  `ForwardRenderer` method (`render/forward/record.rs`). The rows are added in the old record order, so the derived
+  order is that order and no image moves: a hash of the frame, HDR, depth and cloud targets over 16 settings (forward,
+  deferred, clouds full and half, FXAA off, SSAO and bloom off, auto exposure, both cullers, ray and path traced) was
+  bit-identical before and after. `TimedPass` and its names are unchanged.
+- **Transients**: the forward MSAA HDR and depth, the HDR and depth targets, the depth spread, the G-buffer and the
+  cloud targets. A deferred frame holds no MSAA targets, a forward one no G-buffer, a traced one neither, and a
+  deferred frame's clouds reuse the G-buffer normal's texture. At 1920x1080, deferred + clouds + bloom, SSAO and FXAA:
+  189.8 MiB of these targets before, 79.1 MiB with a texture each, 63.3 MiB aliased; forward + clouds stays 150.3 MiB,
+  a traced frame with clouds takes 39.6. Bloom's chain, SSAO's targets and FXAA's intermediate stay their passes'
+  own (`BACKLOG.md`). `read_cloud_target` returns `None` after a frame without clouds, where it returned the last march.
+- Tests: `graph::tests` (derived order, stable tie-break, culling, exported side outputs, the cycle, undefined read and
+  double write errors, aliasing, and 2000 random graphs whose aliased transients never overlap);
+  `frame_graph::tests` (all 960 setting combinations compile and record every row, the hand-written order, the
+  v1 timing and cloud/FXAA order checks, only the drawn path's targets, the measurement above); `tests/deferred.rs`
+  `each_path_holds_only_its_own_targets_and_deferred_clouds_alias_the_gbuffer` (the pool's bytes on a device).
+
 ### Removed (2026-11-16, shader leftovers)
 - **`traced.slang` drops its dead `import sky_model`**: unused since 18e178a, as `trace_shading.slang` imports
   `sky_model` for `sky_with_sun` and `bounce_sky` itself. No WGSL changes.

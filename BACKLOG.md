@@ -130,6 +130,17 @@ its open work is here.
       proof in the field. Done when a packaged service answers 502 to a question whose answer panics and keeps
       streaming (`crates/observant/src/ask.rs`, the poisoned-lock recovery and the failed-task reply).
 
+- [ ] **Render graph v2: the post chain's own targets into the pool** (M, ★). Since 2026-11-16 the frame graph
+      (`crates/webgpu_renderer/src/render/forward/frame_graph.rs`) backs the scene targets, the depth spread, the
+      G-buffer and the clouds from `TransientPool`. Still pass-owned and so never aliased: bloom's half-resolution
+      chain (`render/bloom.rs`, rebuilt in `BloomPass::rebuild`), SSAO's raw and blurred AO (`render/ssao.rs`) and
+      FXAA's intermediate (`render/fxaa.rs`, inside `TonemapPass`). Next: declare each as a transient in
+      `transient_targets` (bloom's chain at half size can alias the half-resolution cloud march, SSAO's raw AO its
+      blurred one's predecessor), have each pass take the pool's views and rebuild its bind groups when
+      `TransientPool::acquire` reports a move, and split the tracer's kernel and resolve into two calls so the
+      `trace_resolve` row records itself instead of riding on the kernel's. Guard: `frame_graph::tests`'s byte
+      measurement grows a row per pass, and the frame/HDR/depth hash of every setting stays bit-identical.
+
 ### Quality queue
 
 The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md; re-sync when it moves.

@@ -9,6 +9,7 @@ use super::{ForwardRenderer, DEPTH_FORMAT, HDR_FORMAT, MSAA_SAMPLE_COUNT};
 use crate::render::bind_layout;
 use crate::render::bounds::aabb_contains_point;
 use crate::render::gpu_timing::TimedPass;
+use crate::render::graph::Resource;
 use crate::scene::{InstanceRaw, Vertex};
 
 /// Where the sky's background starts before anything draws, in both raster paths.
@@ -190,8 +191,8 @@ impl ForwardRenderer {
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("forward_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.targets.hdr_msaa,
-                resolve_target: Some(&self.targets.hdr_view),
+                view: self.targets.view(Resource::HdrMsaa),
+                resolve_target: Some(self.targets.view(Resource::HdrColor)),
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(HDR_CLEAR),
                     store: wgpu::StoreOp::Discard,
@@ -199,7 +200,7 @@ impl ForwardRenderer {
                 depth_slice: None,
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.targets.depth_msaa,
+                view: self.targets.view(Resource::DepthMsaa),
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     // Not Discard: the depth resolve is a later, separate pass that reads this.

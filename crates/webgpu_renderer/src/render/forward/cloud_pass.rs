@@ -6,6 +6,7 @@ use glam::Vec3;
 
 use super::frame::FrameView;
 use super::readback::{read_texture, TextureRegion};
+use super::targets::DEPTH_SPREAD_FORMAT;
 use super::{ForwardRenderer, RasterPath};
 use crate::context::GpuContext;
 use crate::render::bind_layout;
@@ -14,11 +15,12 @@ use crate::render::clouds::{
     CloudParams, NOISE_VOLUME_EXTENT, NOISE_VOLUME_FORMAT, NOISE_WORKGROUP_SIZE,
 };
 use crate::render::gpu_timing::TimedPass;
+use crate::render::graph::Resource;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
 use crate::render::texture::create_2d_texture;
 
 /// Premultiplied cloud colour and 1 - transmittance; the C++ engine's `cloudOutputTexture` format.
-const CLOUD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub(super) const CLOUD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -55,12 +57,9 @@ struct NoiseVolume {
     pending: bool,
 }
 
-/// The clouds the tonemap composites, at the frame's size, and the march's bind group over its depths.
+/// The march's bind group over this frame's depths; the frame graph's pool backs the targets it writes.
 struct CloudTarget {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    size: (u32, u32),
-    /// Compared by identity: resized targets can come back at an old size with a new depth texture.
+    /// Compared by identity: the pool can back the depth with another texture at the same size.
     depths: SceneDepths,
     bind_group: wgpu::BindGroup,
     /// Where the march writes instead when it runs at half resolution.
@@ -69,6 +68,7 @@ struct CloudTarget {
 
 /// The half-resolution march, and the upsample's bind group that reads it into the full-size target.
 struct HalfTarget {
+    /// The pool's half-resolution target, compared by identity.
     view: wgpu::TextureView,
     upsample: wgpu::BindGroup,
 }
@@ -77,8 +77,10 @@ pub(super) struct CloudPass {
     /// Made the first frame clouds are on, so a renderer that never shows them compiles neither shader.
     march: Option<March>,
     target: Option<CloudTarget>,
-    /// What the tonemap binds until clouds first run: one transparent texel.
+    /// What the tonemap and bloom bind on a frame without clouds: one transparent texel.
     placeholder: wgpu::TextureView,
+    /// What the march binds for the spread on a frame without one, which it then never reads.
+    spread_placeholder: wgpu::TextureView,
     /// A shader reload's pipelines from before clouds first ran, which that first frame then builds on.
     reloaded: Option<CloudPipelines>,
 }
@@ -103,26 +105,32 @@ impl CloudPass {
         Self {
             march: None,
             target: None,
-            placeholder: create_2d_texture(
+            placeholder: placeholder(device, "cloud_placeholder", CLOUD_FORMAT),
+            spread_placeholder: placeholder(
                 device,
-                Some("cloud_placeholder"),
-                1,
-                1,
-                CLOUD_FORMAT,
-                wgpu::TextureUsages::TEXTURE_BINDING,
-                1,
-                1,
-            )
-            .create_view(&wgpu::TextureViewDescriptor::default()),
+                "cloud_spread_placeholder",
+                DEPTH_SPREAD_FORMAT,
+            ),
             reloaded: None,
         }
     }
 
-    /// The texture the tonemap composites: the last march, or one transparent texel before the first.
-    pub(super) fn composite_view(&self) -> &wgpu::TextureView {
-        self.target
-            .as_ref()
-            .map_or(&self.placeholder, |target| &target.view)
+    /// `march`, the frame's cloud target, or the placeholder on a frame without one.
+    pub(super) fn composite<'a>(
+        &'a self,
+        march: Option<&'a wgpu::TextureView>,
+    ) -> &'a wgpu::TextureView {
+        march.unwrap_or(&self.placeholder)
+    }
+
+    /// Whether the noise volume still has to be filled, so the frame graph adds its row.
+    pub(super) fn noise_pending(&self) -> bool {
+        self.march.as_ref().is_some_and(|march| march.noise.pending)
+    }
+
+    /// Lets the bind groups go, and the pool textures they hold, on a frame without clouds.
+    pub(super) fn drop_target(&mut self) {
+        self.target = None;
     }
 
     /// A reload's pipelines: the target rebinds and the volume refills from them on the next cloud frame.
@@ -143,6 +151,25 @@ impl CloudPass {
             }
         }
     }
+}
+
+/// One texel nothing writes, bound where a frame has no target to bind.
+fn placeholder(
+    device: &wgpu::Device,
+    label: &str,
+    format: wgpu::TextureFormat,
+) -> wgpu::TextureView {
+    create_2d_texture(
+        device,
+        Some(label),
+        1,
+        1,
+        format,
+        wgpu::TextureUsages::TEXTURE_BINDING,
+        1,
+        1,
+    )
+    .create_view(&wgpu::TextureViewDescriptor::default())
 }
 
 impl CloudPipelines {
@@ -369,53 +396,23 @@ fn noise_bind_group(
 }
 
 impl CloudTarget {
-    /// At `size`, and with a half-resolution march beneath it when `half`.
+    /// The march's group over `depths`, and the upsample's over the half-resolution target when there is one.
     fn new(
         device: &wgpu::Device,
         march: &March,
-        (size, half): ((u32, u32), bool),
         depths: &SceneDepths,
+        half: Option<&wgpu::TextureView>,
     ) -> Self {
-        let texture = cloud_texture(device, "cloud_target", size);
-        let half = half.then(|| {
-            let half_size = (size.0.div_ceil(2), size.1.div_ceil(2));
-            let view = cloud_texture(device, "cloud_half_target", half_size)
-                .create_view(&wgpu::TextureViewDescriptor::default());
-            HalfTarget {
-                upsample: upsample_bind_group(device, march, depths, &view),
-                view,
-            }
+        let half = half.map(|view| HalfTarget {
+            upsample: upsample_bind_group(device, march, depths, view),
+            view: view.clone(),
         });
         Self {
-            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
-            texture,
-            size,
             depths: depths.clone(),
             bind_group: march_bind_group(device, march, depths),
             half,
         }
     }
-
-    /// Where the march writes: the half-resolution texture when there is one.
-    fn march_view(&self) -> &wgpu::TextureView {
-        self.half.as_ref().map_or(&self.view, |half| &half.view)
-    }
-}
-
-/// A target the march or the upsample renders into and the next pass samples or reads back.
-fn cloud_texture(device: &wgpu::Device, label: &str, (width, height): (u32, u32)) -> wgpu::Texture {
-    create_2d_texture(
-        device,
-        Some(label),
-        width,
-        height,
-        CLOUD_FORMAT,
-        wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC,
-        1,
-        1,
-    )
 }
 
 /// The upsample's group 0: the march's uniforms, the scene depth and the half-resolution march.
@@ -476,73 +473,89 @@ fn march_bind_group(device: &wgpu::Device, march: &March, depths: &SceneDepths) 
 }
 
 impl ForwardRenderer {
-    /// Before the tonemap binds its inputs: clouds that are on need the noise and a target over this frame's depth.
-    pub(super) fn prepare_clouds(&mut self, gpu: &GpuContext, width: u32, height: u32) {
+    /// Builds the march and its noise volume the first frame clouds are on.
+    pub(super) fn ensure_cloud_march(&mut self, gpu: &GpuContext) {
         if !self.clouds.enabled {
             return;
         }
         let pass = &mut self.cloud_pass;
-        let march = pass.march.get_or_insert_with(|| {
+        pass.march.get_or_insert_with(|| {
             let shipped = || CloudPipelines::shipped(&gpu.device);
             March::new(&gpu.device, pass.reloaded.take().unwrap_or_else(shipped))
         });
-        let depths = SceneDepths {
-            depth: self.targets.depth.clone(),
-            spread: self.targets.depth_spread.clone(),
-        };
-        let half = self.clouds.half_resolution;
-        let current = pass.target.as_ref().is_some_and(|target| {
-            target.size == (width, height)
-                && target.depths == depths
-                && target.half.is_some() == half
-        });
-        if current {
-            return;
-        }
-        pass.target = Some(CloudTarget::new(
-            &gpu.device,
-            march,
-            ((width, height), half),
-            &depths,
-        ));
-        // Bloom's bright pass and every tonemap sample the new target.
-        self.post.rebuild_needed = true;
     }
 
-    /// The noise on the first cloud frame, then the march of every pixel to its scene depth; `traced` when no resolve ran.
-    /// A half-resolution march marches a quarter of them, and the upsample fills the full-size target from it.
-    pub(super) fn encode_clouds(
-        &mut self,
-        gpu: &GpuContext,
-        encoder: &mut wgpu::CommandEncoder,
-        (view, traced): (&FrameView, bool),
-    ) {
+    /// The march's groups over this frame's depths and half-resolution target, unless they are bound already.
+    pub(super) fn prepare_clouds(&mut self, gpu: &GpuContext) {
+        let Some(march) = self.cloud_pass.march.as_ref() else {
+            return;
+        };
         if !self.clouds.enabled {
             return;
         }
+        let spread = self.targets.get(Resource::DepthSpread);
+        let depths = SceneDepths {
+            depth: self.targets.view(Resource::Depth).clone(),
+            spread: spread
+                .unwrap_or(&self.cloud_pass.spread_placeholder)
+                .clone(),
+        };
+        let half = self.targets.get(Resource::CloudHalf);
+        let current = self.cloud_pass.target.as_ref().is_some_and(|target| {
+            target.depths == depths && target.half.as_ref().map(|h| &h.view) == half
+        });
+        if !current {
+            let target = CloudTarget::new(&gpu.device, march, &depths, half);
+            self.cloud_pass.target = Some(target);
+        }
+    }
+
+    /// What the tonemap and bloom composite: this frame's march, or one transparent texel on a frame without clouds.
+    pub(super) fn cloud_view(&self) -> &wgpu::TextureView {
+        self.cloud_pass
+            .composite(self.targets.get(Resource::CloudColor))
+    }
+
+    /// Fills the noise volume, on the first cloud frame and after a reload.
+    pub(super) fn encode_cloud_noise(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        if let Some(march) = self.cloud_pass.march.as_mut() {
+            march.noise.generate(encoder, &march.pipelines.noise);
+        }
+    }
+
+    /// The march of every pixel to its scene depth.
+    /// A half-resolution march marches a quarter of them, and the upsample fills the full-size target from it.
+    pub(super) fn encode_clouds(
+        &self,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &FrameView,
+    ) {
         // Only the forward path resolves MSAA, so only its full-resolution frames have a spread to march to.
-        let spread =
-            !traced && self.raster_path == RasterPath::Forward && !self.clouds.half_resolution;
+        let spread = !self.drawn_mode().is_traced()
+            && self.raster_path == RasterPath::Forward
+            && !self.clouds.half_resolution;
         let uniforms = self.cloud_uniforms(view, spread);
-        let pass = &mut self.cloud_pass;
-        let (Some(march), Some(target)) = (pass.march.as_mut(), pass.target.as_ref()) else {
+        let pass = &self.cloud_pass;
+        let (Some(march), Some(target)) = (pass.march.as_ref(), pass.target.as_ref()) else {
             return;
         };
         gpu.queue
             .write_buffer(&march.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-        march.noise.generate(encoder, &march.pipelines.noise);
+        let output = self.targets.view(Resource::CloudColor);
         let scope = self.gpu_timing.scope(TimedPass::Clouds);
         let passes = 1 + usize::from(target.half.is_some());
+        let march_view = target.half.as_ref().map_or(output, |half| &half.view);
         fullscreen_pass(
             encoder,
-            ("cloud_march_pass", target.march_view()),
+            ("cloud_march_pass", march_view),
             (&march.pipelines.march, &target.bind_group),
             scope.render_writes(0, passes),
         );
         if let Some(half) = target.half.as_ref() {
             fullscreen_pass(
                 encoder,
-                ("cloud_upsample_pass", &target.view),
+                ("cloud_upsample_pass", output),
                 (&march.pipelines.upsample, &half.upsample),
                 scope.render_writes(1, passes),
             );
@@ -575,16 +588,16 @@ impl ForwardRenderer {
         }
     }
 
-    /// The last march as raw half-float bits, RGBA and row-major; `None` before clouds first ran.
+    /// The last frame's march as raw half-float bits, RGBA and row-major; `None` when that frame had no clouds.
     /// Stalls on a readback, so tests and diagnostics only.
     #[doc(hidden)]
     pub fn read_cloud_target(&self, gpu: &GpuContext) -> anyhow::Result<Option<Vec<u16>>> {
-        let Some(target) = self.cloud_pass.target.as_ref() else {
+        let Ok(texture) = self.targets.texture(Resource::CloudColor) else {
             return Ok(None);
         };
-        let (width, height) = target.size;
+        let (width, height) = self.targets.size;
         let region = half_float_region(width, height, 1);
-        let bytes = read_texture(gpu, &target.texture, &region)?;
+        let bytes = read_texture(gpu, texture, &region)?;
         Ok(Some(bytemuck::pod_collect_to_vec(&bytes)))
     }
 
