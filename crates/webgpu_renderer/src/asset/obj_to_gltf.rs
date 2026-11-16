@@ -214,27 +214,10 @@ pub fn parse_obj(source: &str) -> Result<ObjMesh> {
 }
 
 /// As [`parse_obj`], with materials already loaded from the companion `.mtl`.
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Result<ObjMesh> {
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut normals: Vec<[f32; 3]> = Vec::new();
-    let mut uvs: Vec<[f32; 2]> = Vec::new();
-    let mut colors: Vec<[f32; 4]> = Vec::new();
-
-    let mut mesh = ObjMesh {
-        materials,
-        ..ObjMesh::default()
-    };
-    // Without `vn`, corners at one position share a vertex and one flat normal, as in the C++ loaders.
-    let mut seen: HashMap<(i64, i64, i64), u32> = HashMap::new();
-    let mut active_material: usize = 0;
-    let mut run_start: u32 = 0;
-
+    let mut parser = ObjParser::new(materials);
     for (line_number, raw_line) in source.lines().enumerate() {
         let line = raw_line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
         let mut parts = line.split_whitespace();
         let Some(keyword) = parts.next() else {
             continue;
@@ -243,121 +226,11 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
         let at = line_number + 1;
 
         match keyword {
-            "v" => {
-                if values.len() != 3 && values.len() != 6 && values.len() != 7 {
-                    bail!(
-                        "line {at}: 'v' needs 3, 6 or 7 components, got {}",
-                        values.len()
-                    );
-                }
-                positions.push([
-                    parse_f32(values[0], at)?,
-                    parse_f32(values[1], at)?,
-                    parse_f32(values[2], at)?,
-                ]);
-                if values.len() >= 6 {
-                    let alpha = if values.len() == 7 {
-                        parse_f32(values[6], at)?
-                    } else {
-                        1.0
-                    };
-                    colors.push([
-                        parse_f32(values[3], at)?,
-                        parse_f32(values[4], at)?,
-                        parse_f32(values[5], at)?,
-                        alpha,
-                    ]);
-                    mesh.has_vertex_colors = true;
-                } else {
-                    colors.push([1.0, 1.0, 1.0, 1.0]);
-                }
-            }
-            "vn" => {
-                if values.len() < 3 {
-                    bail!("line {at}: 'vn' needs 3 components, got {}", values.len());
-                }
-                normals.push([
-                    parse_f32(values[0], at)?,
-                    parse_f32(values[1], at)?,
-                    parse_f32(values[2], at)?,
-                ]);
-                mesh.has_normals = true;
-            }
-            "vt" => {
-                if values.len() < 2 {
-                    bail!("line {at}: 'vt' needs 2 components, got {}", values.len());
-                }
-                // OBJ's V points up and glTF's down; flipping here keeps the asset right for any consumer.
-                uvs.push([parse_f32(values[0], at)?, 1.0 - parse_f32(values[1], at)?]);
-            }
-            "f" => {
-                if values.len() < 3 {
-                    bail!(
-                        "line {at}: 'f' needs at least 3 vertices, got {}",
-                        values.len()
-                    );
-                }
-                let mut face: Vec<u32> = Vec::with_capacity(values.len());
-                for value in &values {
-                    let key = parse_face_vertex(value, at)?;
-                    let index = match seen.get(&key) {
-                        Some(&existing) => existing,
-                        None => {
-                            let position = resolve(key.0, positions.len(), at, "position")?;
-                            mesh.positions.push(positions[position]);
-                            mesh.colors.push(colors[position]);
-
-                            if key.1 > 0 {
-                                let uv = resolve(key.1, uvs.len(), at, "texcoord")?;
-                                mesh.uvs.push(uvs[uv]);
-                            } else {
-                                mesh.uvs.push([0.0, 0.0]);
-                            }
-
-                            if key.2 > 0 {
-                                let normal = resolve(key.2, normals.len(), at, "normal")?;
-                                mesh.normals.push(normals[normal]);
-                            } else {
-                                // Zero marks the corner for `fill_missing_flat_normals`.
-                                mesh.normals.push([0.0, 0.0, 0.0]);
-                            }
-
-                            let index = (mesh.positions.len() - 1) as u32;
-                            seen.insert(key, index);
-                            index
-                        }
-                    };
-                    face.push(index);
-                }
-
-                // Fan triangulation: correct for the convex faces OBJ exporters emit.
-                for i in 1..face.len() - 1 {
-                    mesh.indices
-                        .extend_from_slice(&[face[0], face[i], face[i + 1]]);
-                }
-            }
-            "usemtl" => {
-                // Skip empty runs, which would become primitives drawing nothing.
-                let current = mesh.indices.len() as u32;
-                if current > run_start {
-                    mesh.submeshes
-                        .push((run_start, current - run_start, active_material));
-                    run_start = current;
-                }
-                let name = values.first().copied().unwrap_or("");
-                active_material = mesh
-                    .materials
-                    .iter()
-                    .position(|material| material.name == name)
-                    .unwrap_or_else(|| {
-                        // Undeclared: keep the name so the mismatch shows instead of collapsing onto material 0.
-                        mesh.materials.push(ObjMaterial {
-                            name: name.to_string(),
-                            ..ObjMaterial::default()
-                        });
-                        mesh.materials.len() - 1
-                    });
-            }
+            "v" => parser.vertex(&values, at)?,
+            "vn" => parser.normal(&values, at)?,
+            "vt" => parser.texcoord(&values, at)?,
+            "f" => parser.face(&values, at)?,
+            "usemtl" => parser.use_material(values.first().copied().unwrap_or("")),
             // Ignored rather than fatal: almost every real OBJ carries them.
             "mtllib" | "o" | "g" | "s" => {}
             other => {
@@ -365,26 +238,189 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
             }
         }
     }
+    parser.finish()
+}
 
-    // Close the final run.
-    let total = mesh.indices.len() as u32;
-    if total > run_start {
-        mesh.submeshes
-            .push((run_start, total - run_start, active_material));
+/// The state of one OBJ parse: the file's own attribute lists and the mesh its faces build.
+struct ObjParser {
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    uvs: Vec<[f32; 2]>,
+    colors: Vec<[f32; 4]>,
+    mesh: ObjMesh,
+    // Without `vn`, corners at one position share a vertex and one flat normal, as in the C++ loaders.
+    seen: HashMap<(i64, i64, i64), u32>,
+    active_material: usize,
+    run_start: u32,
+}
+
+impl ObjParser {
+    fn new(materials: Vec<ObjMaterial>) -> Self {
+        Self {
+            positions: Vec::new(),
+            normals: Vec::new(),
+            uvs: Vec::new(),
+            colors: Vec::new(),
+            mesh: ObjMesh {
+                materials,
+                ..ObjMesh::default()
+            },
+            seen: HashMap::new(),
+            active_material: 0,
+            run_start: 0,
+        }
     }
 
-    fill_missing_flat_normals(&mut mesh);
+    fn vertex(&mut self, values: &[&str], at: usize) -> Result<()> {
+        if values.len() != 3 && values.len() != 6 && values.len() != 7 {
+            bail!(
+                "line {at}: 'v' needs 3, 6 or 7 components, got {}",
+                values.len()
+            );
+        }
+        self.positions.push([
+            parse_f32(values[0], at)?,
+            parse_f32(values[1], at)?,
+            parse_f32(values[2], at)?,
+        ]);
+        if values.len() >= 6 {
+            let alpha = if values.len() == 7 {
+                parse_f32(values[6], at)?
+            } else {
+                1.0
+            };
+            self.colors.push([
+                parse_f32(values[3], at)?,
+                parse_f32(values[4], at)?,
+                parse_f32(values[5], at)?,
+                alpha,
+            ]);
+            self.mesh.has_vertex_colors = true;
+        } else {
+            self.colors.push([1.0, 1.0, 1.0, 1.0]);
+        }
+        Ok(())
+    }
 
-    if mesh.positions.is_empty() {
-        bail!("the OBJ contained no geometry");
+    fn normal(&mut self, values: &[&str], at: usize) -> Result<()> {
+        if values.len() < 3 {
+            bail!("line {at}: 'vn' needs 3 components, got {}", values.len());
+        }
+        self.normals.push([
+            parse_f32(values[0], at)?,
+            parse_f32(values[1], at)?,
+            parse_f32(values[2], at)?,
+        ]);
+        self.mesh.has_normals = true;
+        Ok(())
     }
-    if mesh.materials.is_empty() {
-        mesh.materials.push(ObjMaterial::default());
+
+    fn texcoord(&mut self, values: &[&str], at: usize) -> Result<()> {
+        if values.len() < 2 {
+            bail!("line {at}: 'vt' needs 2 components, got {}", values.len());
+        }
+        // OBJ's V points up and glTF's down; flipping here keeps the asset right for any consumer.
+        self.uvs
+            .push([parse_f32(values[0], at)?, 1.0 - parse_f32(values[1], at)?]);
+        Ok(())
     }
-    if mesh.submeshes.is_empty() {
-        mesh.submeshes.push((0, mesh.indices.len() as u32, 0));
+
+    fn face(&mut self, values: &[&str], at: usize) -> Result<()> {
+        if values.len() < 3 {
+            bail!(
+                "line {at}: 'f' needs at least 3 vertices, got {}",
+                values.len()
+            );
+        }
+        let mut face: Vec<u32> = Vec::with_capacity(values.len());
+        for value in values {
+            face.push(self.face_vertex(value, at)?);
+        }
+        // Fan triangulation: correct for the convex faces OBJ exporters emit.
+        for i in 1..face.len() - 1 {
+            self.mesh
+                .indices
+                .extend_from_slice(&[face[0], face[i], face[i + 1]]);
+        }
+        Ok(())
     }
-    Ok(mesh)
+
+    /// The mesh vertex for one `position/uv/normal` triple, appended the first time it appears.
+    fn face_vertex(&mut self, text: &str, at: usize) -> Result<u32> {
+        let key = parse_face_vertex(text, at)?;
+        if let Some(&existing) = self.seen.get(&key) {
+            return Ok(existing);
+        }
+        let mesh = &mut self.mesh;
+        let position = resolve(key.0, self.positions.len(), at, "position")?;
+        mesh.positions.push(self.positions[position]);
+        mesh.colors.push(self.colors[position]);
+
+        if key.1 > 0 {
+            let uv = resolve(key.1, self.uvs.len(), at, "texcoord")?;
+            mesh.uvs.push(self.uvs[uv]);
+        } else {
+            mesh.uvs.push([0.0, 0.0]);
+        }
+
+        if key.2 > 0 {
+            let normal = resolve(key.2, self.normals.len(), at, "normal")?;
+            mesh.normals.push(self.normals[normal]);
+        } else {
+            // Zero marks the corner for `fill_missing_flat_normals`.
+            mesh.normals.push([0.0, 0.0, 0.0]);
+        }
+
+        let index = (mesh.positions.len() - 1) as u32;
+        self.seen.insert(key, index);
+        Ok(index)
+    }
+
+    /// Ends the current material run; empty runs are skipped, as they would become primitives drawing nothing.
+    fn close_run(&mut self) {
+        let current = self.mesh.indices.len() as u32;
+        if current > self.run_start {
+            self.mesh.submeshes.push((
+                self.run_start,
+                current - self.run_start,
+                self.active_material,
+            ));
+            self.run_start = current;
+        }
+    }
+
+    fn use_material(&mut self, name: &str) {
+        self.close_run();
+        let materials = &mut self.mesh.materials;
+        self.active_material = materials
+            .iter()
+            .position(|material| material.name == name)
+            .unwrap_or_else(|| {
+                // Undeclared: keep the name so the mismatch shows instead of collapsing onto material 0.
+                materials.push(ObjMaterial {
+                    name: name.to_string(),
+                    ..ObjMaterial::default()
+                });
+                materials.len() - 1
+            });
+    }
+
+    fn finish(mut self) -> Result<ObjMesh> {
+        self.close_run();
+        let mut mesh = self.mesh;
+        fill_missing_flat_normals(&mut mesh);
+
+        if mesh.positions.is_empty() {
+            bail!("the OBJ contained no geometry");
+        }
+        if mesh.materials.is_empty() {
+            mesh.materials.push(ObjMaterial::default());
+        }
+        if mesh.submeshes.is_empty() {
+            mesh.submeshes.push((0, mesh.indices.len() as u32, 0));
+        }
+        Ok(mesh)
+    }
 }
 
 /// Fills zero corner normals (no `vn` index) with their triangle's flat face normal.
@@ -480,50 +516,110 @@ fn resolve(index: i64, available: usize, line: usize, what: &str) -> Result<usiz
 }
 
 /// Serialises a mesh as `(gltf_json, bin)`; the JSON references `bin_uri`, so the caller picks the layout.
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
-    let mut bin: Vec<u8> = Vec::new();
+    let (bin, layout) = write_buffer(mesh);
+    let (index_accessors, primitives) = primitives_json(mesh);
+    let image_uris = image_uris(mesh);
+    let texture_arrays = texture_arrays_json(&image_uris);
+    let (materials_json, extensions_used_json) = materials_json(&mesh.materials, &image_uris);
+    let (color_buffer_view_json, color_accessor_json) = color_json(mesh, layout.colors);
 
-    let positions_offset = bin.len();
-    for p in &mesh.positions {
-        for component in p {
+    let vertex_count = mesh.positions.len();
+    let buffer_length = bin.len();
+    let positions_length = vertex_count * 12;
+    let normals_length = vertex_count * 12;
+    let uvs_length = vertex_count * 8;
+    let indices_length = mesh.indices.len() * 4;
+    let BufferLayout {
+        positions: positions_offset,
+        normals: normals_offset,
+        uvs: uvs_offset,
+        indices: indices_offset,
+        ..
+    } = layout;
+    let (min, max) = mesh.bounds();
+    // An empty mesh's bounds are +/-infinity, which is not valid JSON.
+    let [min0, min1, min2] = min.map(|component| finite_or(component, 0.0));
+    let [max0, max1, max2] = max.map(|component| finite_or(component, 0.0));
+
+    let json = format!(
+        r#"{{
+  "asset": {{ "version": "2.0", "generator": "kataglyphis obj_to_gltf" }},
+  "scene": 0,
+  "scenes": [{{ "nodes": [0] }}],
+  "nodes": [{{ "mesh": 0 }}],
+  "meshes": [{{ "primitives": [{primitives}] }}],
+  "materials": [{materials_json}],{texture_arrays}
+  "buffers": [{{ "uri": "{bin_uri}", "byteLength": {buffer_length} }}],
+  "bufferViews": [
+    {{ "buffer": 0, "byteOffset": {positions_offset}, "byteLength": {positions_length}, "target": 34962 }},
+    {{ "buffer": 0, "byteOffset": {normals_offset}, "byteLength": {normals_length}, "target": 34962 }},
+    {{ "buffer": 0, "byteOffset": {uvs_offset}, "byteLength": {uvs_length}, "target": 34962 }}{color_buffer_view_json},
+    {{ "buffer": 0, "byteOffset": {indices_offset}, "byteLength": {indices_length}, "target": 34963 }}
+  ],
+  "accessors": [
+    {{ "bufferView": 0, "componentType": 5126, "count": {vertex_count}, "type": "VEC3", "min": [{min0}, {min1}, {min2}], "max": [{max0}, {max1}, {max2}] }},
+    {{ "bufferView": 1, "componentType": 5126, "count": {vertex_count}, "type": "VEC3" }},
+    {{ "bufferView": 2, "componentType": 5126, "count": {vertex_count}, "type": "VEC2" }}{color_accessor_json},
+    {index_accessors}
+  ]{extensions_used_json}
+}}"#
+    );
+
+    (json, bin)
+}
+
+/// Byte offsets of each attribute and of the indices in the buffer `write_buffer` fills.
+struct BufferLayout {
+    positions: usize,
+    normals: usize,
+    uvs: usize,
+    colors: usize,
+    indices: usize,
+}
+
+fn push_f32_components<const N: usize>(bin: &mut Vec<u8>, values: &[[f32; N]]) {
+    for value in values {
+        for component in value {
             bin.extend_from_slice(&component.to_le_bytes());
         }
     }
-    let normals_offset = bin.len();
-    for n in &mesh.normals {
-        for component in n {
-            bin.extend_from_slice(&component.to_le_bytes());
-        }
-    }
-    let uvs_offset = bin.len();
-    for uv in &mesh.uvs {
-        for component in uv {
-            bin.extend_from_slice(&component.to_le_bytes());
-        }
-    }
+}
+
+/// The binary buffer: positions, normals, uvs, colours if any, then the indices.
+fn write_buffer(mesh: &ObjMesh) -> (Vec<u8>, BufferLayout) {
+    let mut bin: Vec<u8> = Vec::new();
+    let positions = bin.len();
+    push_f32_components(&mut bin, &mesh.positions);
+    let normals = bin.len();
+    push_f32_components(&mut bin, &mesh.normals);
+    let uvs = bin.len();
+    push_f32_components(&mut bin, &mesh.uvs);
     // Colours only when the source had them, so a colourless OBJ's buffer layout stays unchanged.
-    let colors_offset = bin.len();
+    let colors = bin.len();
     if mesh.has_vertex_colors {
-        for c in &mesh.colors {
-            for component in c {
-                bin.extend_from_slice(&component.to_le_bytes());
-            }
-        }
+        push_f32_components(&mut bin, &mesh.colors);
     }
     // u32 indices need 4-byte alignment; padded in case a non-float attribute is ever added.
     while !bin.len().is_multiple_of(4) {
         bin.push(0);
     }
-    let indices_offset = bin.len();
+    let indices = bin.len();
     for index in &mesh.indices {
         bin.extend_from_slice(&index.to_le_bytes());
     }
+    let layout = BufferLayout {
+        positions,
+        normals,
+        uvs,
+        colors,
+        indices,
+    };
+    (bin, layout)
+}
 
-    let (min, max) = mesh.bounds();
-    let vertex_count = mesh.positions.len();
-    let index_count = mesh.indices.len();
-
+/// `(index_accessors, primitives)`, one of each per `usemtl` run.
+fn primitives_json(mesh: &ObjMesh) -> (String, String) {
     // Slots 0-2 are POSITION/NORMAL/TEXCOORD_0 and COLOR_0 takes 3; indices follow the computed base.
     let indices_buffer_view = if mesh.has_vertex_colors { 4 } else { 3 };
     let index_accessor_base = indices_buffer_view;
@@ -554,213 +650,199 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
             material
         ));
     }
+    (index_accessors, primitives)
+}
 
-    // Deduplicated, or a shared map is decoded and uploaded once per material.
+/// The texture files a material names that glTF carries; `map_d` is composited only into the GLB.
+fn material_texture_uris(material: &ObjMaterial) -> impl Iterator<Item = &String> {
+    [
+        &material.base_color_texture,
+        &material.normal_texture,
+        &material.emissive_texture,
+    ]
+    .into_iter()
+    .flatten()
+}
+
+/// Deduplicated, or a shared map is decoded and uploaded once per material.
+fn image_uris(mesh: &ObjMesh) -> Vec<String> {
     let mut image_uris: Vec<String> = Vec::new();
-    for material in &mesh.materials {
-        for uri in [
-            &material.base_color_texture,
-            &material.normal_texture,
-            &material.emissive_texture,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if !image_uris.iter().any(|existing| existing == uri) {
-                image_uris.push(uri.clone());
-            }
+    for uri in mesh.materials.iter().flat_map(material_texture_uris) {
+        if !image_uris.iter().any(|existing| existing == uri) {
+            image_uris.push(uri.clone());
         }
     }
+    image_uris
+}
 
-    let images_json = images_json(&image_uris);
+/// The `images`, `samplers` and `textures` arrays, or nothing for an untextured model.
+fn texture_arrays_json(image_uris: &[String]) -> String {
+    if image_uris.is_empty() {
+        return String::new();
+    }
+    let images_json = images_json(image_uris);
     let textures_json = (0..image_uris.len())
         .map(|index| format!(r#"{{ "source": {index}, "sampler": 0 }}"#))
         .collect::<Vec<_>>()
         .join(", ");
     // Explicit REPEAT (10497), OBJ's tiling convention, rather than relying on loader defaults.
-    let samplers_json = if image_uris.is_empty() {
-        String::new()
-    } else {
-        r#"{ "wrapS": 10497, "wrapT": 10497 }"#.to_string()
-    };
+    let samplers_json = r#"{ "wrapS": 10497, "wrapT": 10497 }"#;
+    format!(
+        "
+  \"images\": [{images_json}],
+  \"samplers\": [{samplers_json}],
+  \"textures\": [{textures_json}],"
+    )
+}
 
-    let material_entries: Vec<(String, bool)> = mesh
-        .materials
+/// `(materials, extensions_used)`: the joined `materials` entries and the document's `extensionsUsed`.
+fn materials_json(materials: &[ObjMaterial], image_uris: &[String]) -> (String, String) {
+    let entries: Vec<(String, bool)> = materials
         .iter()
-        .map(|material| {
-            // Non-finite colour falls back to glTF's default white.
-            let [r, g, b, a] = material.base_color.map(|component| finite_or(component, 1.0));
-            // Plain-diffuse fallback as literal "0.0"/"1.0" (`Display` prints "0"/"1"); tests pin the output.
-            let metallic_factor = match material.metallic {
-                Some(value) => format!("{}", finite_or(value, 0.0)),
-                None => "0.0".to_string(),
-            };
-            // Without Pr, Ns maps through the C++ material_roughness() curve so both renderers agree.
-            let roughness_factor = match material.roughness {
-                Some(value) => format!("{}", finite_or(value, 1.0)),
-                None => match material.shininess {
-                    Some(shininess) if shininess.is_finite() && shininess >= 0.0 => {
-                        format!("{}", (2.0 / (shininess + 2.0)).sqrt().clamp(0.045, 1.0))
-                    }
-                    _ => "1.0".to_string(),
-                },
-            };
-            let texture_json = match &material.base_color_texture {
-                Some(uri) => {
-                    let index = image_uris.iter().position(|existing| existing == uri).unwrap_or(0);
-                    format!(r#", "baseColorTexture": {{ "index": {index} }}"#)
-                }
-                None => String::new(),
-            };
-            let normal_texture_json = match &material.normal_texture {
-                Some(uri) => {
-                    let index = image_uris.iter().position(|existing| existing == uri).unwrap_or(0);
-                    let scale = finite_or(material.normal_scale, 1.0);
-                    format!(r#", "normalTexture": {{ "index": {index}, "scale": {scale} }}"#)
-                }
-                None => String::new(),
-            };
-            let emissive_texture_json = match &material.emissive_texture {
-                Some(uri) => {
-                    let index = image_uris.iter().position(|existing| existing == uri).unwrap_or(0);
-                    format!(r#", "emissiveTexture": {{ "index": {index} }}"#)
-                }
-                None => String::new(),
-            };
-            let [er, eg, eb] = material.emissive.map(|component| finite_or(component, 0.0));
-            // `emissiveFactor` is [0,1], so an HDR `Ke` moves its magnitude into KHR_materials_emissive_strength.
-            let strength = er.max(eg).max(eb);
-            let uses_emissive_strength = strength > 1.0;
-            let (er, eg, eb, extensions_json) = if uses_emissive_strength {
-                (
-                    er / strength,
-                    eg / strength,
-                    eb / strength,
-                    format!(
-                        r#", "extensions": {{ "KHR_materials_emissive_strength": {{ "emissiveStrength": {strength} }} }}"#
-                    ),
-                )
-            } else {
-                (er, eg, eb, String::new())
-            };
-            // glTF's default factor is [0,0,0], so a map_Ke without Ke needs an explicit [1,1,1].
-            let emissive_json = if er != 0.0 || eg != 0.0 || eb != 0.0 {
-                format!(r#", "emissiveFactor": [{er}, {eg}, {eb}]"#)
-            } else if material.emissive_texture.is_some() {
-                r#", "emissiveFactor": [1, 1, 1]"#.to_string()
-            } else {
-                String::new()
-            };
-            let json = format!(
-                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": {}, "roughnessFactor": {} }}{}{}{}{}{} }}"#,
-                json_escape(&material.name),
-                r, g, b, a,
-                texture_json,
-                metallic_factor,
-                roughness_factor,
-                if a < 1.0 { r#", "alphaMode": "BLEND""# } else { "" },
-                normal_texture_json,
-                emissive_texture_json,
-                emissive_json,
-                extensions_json
-            );
-            (json, uses_emissive_strength)
-        })
+        .map(|material| material_json(material, image_uris))
         .collect();
-
-    let materials_json = material_entries
+    let materials_json = entries
         .iter()
         .map(|(json, _)| json.as_str())
         .collect::<Vec<_>>()
         .join(", ");
     // Only when a material needs it: tests compare the generated JSON.
-    let extensions_used_json = if material_entries.iter().any(|(_, used)| *used) {
+    let extensions_used_json = if entries.iter().any(|(_, used)| *used) {
         r#",
   "extensionsUsed": ["KHR_materials_emissive_strength"]"#
             .to_string()
     } else {
         String::new()
     };
+    (materials_json, extensions_used_json)
+}
 
-    let color_buffer_view_json = if mesh.has_vertex_colors {
-        format!(
-            r#",
-    {{ "buffer": 0, "byteOffset": {colors_offset}, "byteLength": {colors_length}, "target": 34962 }}"#,
-            colors_offset = colors_offset,
-            colors_length = vertex_count * 16,
-        )
-    } else {
-        String::new()
+/// One `materials` entry, and whether it uses KHR_materials_emissive_strength.
+fn material_json(material: &ObjMaterial, image_uris: &[String]) -> (String, bool) {
+    // Non-finite colour falls back to glTF's default white.
+    let [r, g, b, a] = material
+        .base_color
+        .map(|component| finite_or(component, 1.0));
+    let texture_index = |uri: &String| {
+        image_uris
+            .iter()
+            .position(|existing| existing == uri)
+            .unwrap_or(0)
     };
-    let color_accessor_json = if mesh.has_vertex_colors {
-        format!(
-            r#",
-    {{ "bufferView": 3, "componentType": 5126, "count": {vertex_count}, "type": "VEC4" }}"#,
-            vertex_count = vertex_count,
-        )
-    } else {
-        String::new()
+    let texture_json = match &material.base_color_texture {
+        Some(uri) => format!(
+            r#", "baseColorTexture": {{ "index": {} }}"#,
+            texture_index(uri)
+        ),
+        None => String::new(),
     };
-
-    let json = format!(
-        r#"{{
-  "asset": {{ "version": "2.0", "generator": "kataglyphis obj_to_gltf" }},
-  "scene": 0,
-  "scenes": [{{ "nodes": [0] }}],
-  "nodes": [{{ "mesh": 0 }}],
-  "meshes": [{{ "primitives": [{primitives}] }}],
-  "materials": [{materials_json}],{texture_arrays}
-  "buffers": [{{ "uri": "{bin_uri}", "byteLength": {buffer_length} }}],
-  "bufferViews": [
-    {{ "buffer": 0, "byteOffset": {positions_offset}, "byteLength": {positions_length}, "target": 34962 }},
-    {{ "buffer": 0, "byteOffset": {normals_offset}, "byteLength": {normals_length}, "target": 34962 }},
-    {{ "buffer": 0, "byteOffset": {uvs_offset}, "byteLength": {uvs_length}, "target": 34962 }}{color_buffer_view_json},
-    {{ "buffer": 0, "byteOffset": {indices_offset}, "byteLength": {indices_length}, "target": 34963 }}
-  ],
-  "accessors": [
-    {{ "bufferView": 0, "componentType": 5126, "count": {vertex_count}, "type": "VEC3", "min": [{min0}, {min1}, {min2}], "max": [{max0}, {max1}, {max2}] }},
-    {{ "bufferView": 1, "componentType": 5126, "count": {vertex_count}, "type": "VEC3" }},
-    {{ "bufferView": 2, "componentType": 5126, "count": {vertex_count}, "type": "VEC2" }}{color_accessor_json},
-    {index_accessors}
-  ]{extensions_used_json}
-}}"#,
-        bin_uri = bin_uri,
-        buffer_length = bin.len(),
-        positions_offset = positions_offset,
-        positions_length = vertex_count * 12,
-        normals_offset = normals_offset,
-        normals_length = vertex_count * 12,
-        uvs_offset = uvs_offset,
-        uvs_length = vertex_count * 8,
-        color_buffer_view_json = color_buffer_view_json,
-        color_accessor_json = color_accessor_json,
-        indices_offset = indices_offset,
-        indices_length = index_count * 4,
-        vertex_count = vertex_count,
-        index_accessors = index_accessors,
-        primitives = primitives,
-        materials_json = materials_json,
-        extensions_used_json = extensions_used_json,
-        texture_arrays = if image_uris.is_empty() {
-            String::new()
-        } else {
+    let normal_texture_json = match &material.normal_texture {
+        Some(uri) => {
+            let scale = finite_or(material.normal_scale, 1.0);
             format!(
-                "
-  \"images\": [{images_json}],
-  \"samplers\": [{samplers_json}],
-  \"textures\": [{textures_json}],"
+                r#", "normalTexture": {{ "index": {}, "scale": {scale} }}"#,
+                texture_index(uri)
             )
+        }
+        None => String::new(),
+    };
+    let emissive_texture_json = match &material.emissive_texture {
+        Some(uri) => format!(
+            r#", "emissiveTexture": {{ "index": {} }}"#,
+            texture_index(uri)
+        ),
+        None => String::new(),
+    };
+    let (emissive_json, extensions_json, uses_emissive_strength) = emissive_json(material);
+    let json = format!(
+        r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": {}, "roughnessFactor": {} }}{}{}{}{}{} }}"#,
+        json_escape(&material.name),
+        r,
+        g,
+        b,
+        a,
+        texture_json,
+        metallic_factor_json(material),
+        roughness_factor_json(material),
+        if a < 1.0 {
+            r#", "alphaMode": "BLEND""#
+        } else {
+            ""
         },
-        // An empty mesh's bounds are +/-infinity, which is not valid JSON.
-        min0 = finite_or(min[0], 0.0),
-        min1 = finite_or(min[1], 0.0),
-        min2 = finite_or(min[2], 0.0),
-        max0 = finite_or(max[0], 0.0),
-        max1 = finite_or(max[1], 0.0),
-        max2 = finite_or(max[2], 0.0),
+        normal_texture_json,
+        emissive_texture_json,
+        emissive_json,
+        extensions_json
     );
+    (json, uses_emissive_strength)
+}
 
-    (json, bin)
+fn metallic_factor_json(material: &ObjMaterial) -> String {
+    // Plain-diffuse fallback as literal "0.0"/"1.0" (`Display` prints "0"/"1"); tests pin the output.
+    match material.metallic {
+        Some(value) => format!("{}", finite_or(value, 0.0)),
+        None => "0.0".to_string(),
+    }
+}
+
+fn roughness_factor_json(material: &ObjMaterial) -> String {
+    // Without Pr, Ns maps through the C++ material_roughness() curve so both renderers agree.
+    match material.roughness {
+        Some(value) => format!("{}", finite_or(value, 1.0)),
+        None => match material.shininess {
+            Some(shininess) if shininess.is_finite() && shininess >= 0.0 => {
+                format!("{}", (2.0 / (shininess + 2.0)).sqrt().clamp(0.045, 1.0))
+            }
+            _ => "1.0".to_string(),
+        },
+    }
+}
+
+/// `(emissiveFactor, extensions, uses_emissive_strength)` for one material.
+fn emissive_json(material: &ObjMaterial) -> (String, String, bool) {
+    let [er, eg, eb] = material.emissive.map(|component| finite_or(component, 0.0));
+    // `emissiveFactor` is [0,1], so an HDR `Ke` moves its magnitude into KHR_materials_emissive_strength.
+    let strength = er.max(eg).max(eb);
+    let uses_emissive_strength = strength > 1.0;
+    let (er, eg, eb, extensions_json) = if uses_emissive_strength {
+        (
+            er / strength,
+            eg / strength,
+            eb / strength,
+            format!(
+                r#", "extensions": {{ "KHR_materials_emissive_strength": {{ "emissiveStrength": {strength} }} }}"#
+            ),
+        )
+    } else {
+        (er, eg, eb, String::new())
+    };
+    // glTF's default factor is [0,0,0], so a map_Ke without Ke needs an explicit [1,1,1].
+    let emissive_json = if er != 0.0 || eg != 0.0 || eb != 0.0 {
+        format!(r#", "emissiveFactor": [{er}, {eg}, {eb}]"#)
+    } else if material.emissive_texture.is_some() {
+        r#", "emissiveFactor": [1, 1, 1]"#.to_string()
+    } else {
+        String::new()
+    };
+    (emissive_json, extensions_json, uses_emissive_strength)
+}
+
+/// `(bufferView, accessor)` for COLOR_0, both empty when the OBJ had no vertex colour.
+fn color_json(mesh: &ObjMesh, colors_offset: usize) -> (String, String) {
+    if !mesh.has_vertex_colors {
+        return (String::new(), String::new());
+    }
+    let vertex_count = mesh.positions.len();
+    let colors_length = vertex_count * 16;
+    let buffer_view = format!(
+        r#",
+    {{ "buffer": 0, "byteOffset": {colors_offset}, "byteLength": {colors_length}, "target": 34962 }}"#
+    );
+    let accessor = format!(
+        r#",
+    {{ "bufferView": 3, "componentType": 5126, "count": {vertex_count}, "type": "VEC4" }}"#
+    );
+    (buffer_view, accessor)
 }
 
 /// Parses `obj_path` with the materials of every `mtllib` it names.
@@ -813,22 +895,8 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     std::fs::write(&bin_path, bin).with_context(|| format!("writing {}", bin_path.display()))?;
 
     // Copy textures beside the glTF: a URI into the source tree would only load on this machine.
-    let mut copied: Vec<&str> = Vec::new();
-    for material in &mesh.materials {
-        for uri in [
-            &material.base_color_texture,
-            &material.normal_texture,
-            &material.emissive_texture,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if copied.iter().any(|existing| *existing == uri) {
-                continue;
-            }
-            copied.push(uri);
-            copy_texture_beside_gltf(uri, obj_path, gltf_path);
-        }
+    for uri in image_uris(&mesh) {
+        copy_texture_beside_gltf(&uri, obj_path, gltf_path);
     }
 
     Ok(mesh)
@@ -862,14 +930,7 @@ fn image_mime_type(uri: &str) -> Option<&'static str> {
 /// Refuses a texture glTF cannot carry: the converted file would fail to load as a whole.
 fn check_texture_formats(mesh: &ObjMesh) -> Result<()> {
     for material in &mesh.materials {
-        for uri in [
-            &material.base_color_texture,
-            &material.normal_texture,
-            &material.emissive_texture,
-        ]
-        .into_iter()
-        .flatten()
-        {
+        for uri in material_texture_uris(material) {
             if image_mime_type(uri).is_none() {
                 bail!(
                     "material '{}' uses texture '{uri}', which is neither PNG nor JPEG, the only images glTF carries",

@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, the OBJ converter's two largest functions are split)
+- **`asset/obj_to_gltf.rs`: `to_gltf` (281 lines) and `parse_obj_with_materials` (171) fall under the 80-line limit**,
+  their rows leave `rust-function-size.allow`. `to_gltf` assembles the document from `write_buffer`,
+  `primitives_json`, `image_uris`, `texture_arrays_json`, `materials_json` (one `material_json` per material, with
+  `metallic_factor_json`, `roughness_factor_json` and `emissive_json`) and `color_json`; the parser keeps its
+  keyword match and hands each directive to an `ObjParser`. `material_texture_uris` replaces the three copies of the
+  texture-slot list. The output is byte-identical to the old code's on 17 OBJs (with and without materials, the
+  error messages included); the tests are unchanged.
+
 ### Fixed (2026-11-16, a path-traced bounce masks with the Smith remap for sampled light)
 - **The path tracer's bounces take Epic's `k = alpha / 2`** (`brdf_sampled`, `shaders/common/brdf.slang`;
   `sample_bounce`, `shaders/tracer/path_estimator.slang`). The bounce weight evaluated `brdf_direct`, whose
