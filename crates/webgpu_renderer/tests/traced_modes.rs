@@ -193,14 +193,46 @@ fn scene_of(primitives: Vec<CpuPrimitive>) -> CpuScene {
     }
 }
 
-/// `brdf.slang`'s `brdf_direct` for a white surface times n.l, integrated over the hemisphere: a convex furnace pixel's value.
-fn directional_albedo(mu: f64, metallic: f64, roughness: f64) -> f64 {
+/// The Smith masking-shadowing term a furnace integral takes.
+#[derive(Clone, Copy)]
+enum Smith {
+    /// `brdf.slang`'s Schlick-GGX with remap k: `smith_k_analytic` or `smith_k_sampled`.
+    Remap(f64),
+    /// The exact height-correlated GGX term, the lobe the remaps approximate.
+    Exact,
+}
+
+impl Smith {
+    /// `brdf_sampled`'s remap, which the path tracer's bounces take.
+    fn sampled(roughness: f64) -> Self {
+        Self::Remap(roughness * roughness / 2.0)
+    }
+
+    /// `brdf_direct`'s remap, for analytic lights.
+    fn analytic(roughness: f64) -> Self {
+        Self::Remap((roughness + 1.0).powi(2) / 8.0)
+    }
+
+    fn g2(self, n_dot_v: f64, n_dot_l: f64, a2: f64) -> f64 {
+        match self {
+            Self::Remap(k) => {
+                let g1 = |c: f64| c / (c * (1.0 - k) + k).max(1e-6);
+                g1(n_dot_v) * g1(n_dot_l)
+            }
+            Self::Exact => {
+                let lambda = |c: f64| ((1.0 + a2 * (1.0 - c * c) / (c * c)).sqrt() - 1.0) * 0.5;
+                1.0 / (1.0 + lambda(n_dot_v) + lambda(n_dot_l))
+            }
+        }
+    }
+}
+
+/// `brdf.slang`'s BRDF for a white surface times n.l, integrated over the hemisphere: a convex furnace pixel's value.
+fn directional_albedo(mu: f64, metallic: f64, roughness: f64, smith: Smith) -> f64 {
     const STEPS: usize = 160;
     let f0 = 0.04 * (1.0 - metallic) + metallic;
     let v = DVec3::new((1.0 - mu * mu).max(0.0).sqrt(), 0.0, mu);
     let a2 = roughness.max(0.045).powi(4);
-    let k = (roughness + 1.0).powi(2) / 8.0;
-    let smith = |c: f64| c / (c * (1.0 - k) + k).max(1e-6);
     let n_dot_v = mu.max(1e-4);
     let mut sum = 0.0;
     for i in 0..STEPS {
@@ -216,7 +248,7 @@ fn directional_albedo(mu: f64, metallic: f64, roughness: f64) -> f64 {
             let d = h.z * h.z * (a2 - 1.0) + 1.0;
             let ndf = a2 / (PI * (d * d).max(1e-20));
             let f = f0 + (1.0 - f0) * (1.0 - h.dot(v).max(0.0)).clamp(0.0, 1.0).powi(5);
-            let specular = ndf * smith(n_dot_v) * smith(l.z) * f / (4.0 * n_dot_v * l.z).max(1e-6);
+            let specular = ndf * smith.g2(n_dot_v, l.z, a2) * f / (4.0 * n_dot_v * l.z).max(1e-6);
             let diffuse = (1.0 - f) * (1.0 - metallic) / PI;
             sum += (specular + diffuse) * l.z * theta.sin();
         }
@@ -398,7 +430,7 @@ fn the_white_furnace_converges_to_the_sky_through_the_post_chain() {
         "furnace HDR mean {mean} of the sky, {uniform} of {} within 0.1",
         relative.len()
     );
-    // The C++ bounds: E(mu) <= 1 at roughness 0.5 caps the mean at 1, and 1 % lost a bounce stays above 0.98.
+    // The C++ bounds: 1 % lost a bounce stays above 0.98; E(mu) passes 1 only at grazing views (1.04 at mu 0.2).
     assert!((0.98..1.002).contains(&mean), "{mean}");
     assert!(
         uniform * 100 > relative.len() * 98,
@@ -411,7 +443,7 @@ fn the_white_furnace_converges_to_the_sky_through_the_post_chain() {
     assert!((mean8 - expected).abs() < 3.0, "{mean8} against {expected}");
 }
 
-/// A lone white card's centre radiance in the furnace, seen at `mu` (1 or 0.5), and its analytic E(mu).
+/// A lone white card's centre radiance in the furnace, seen at `mu` (1 or 0.5), and E(mu) of the lobe its bounces sample.
 fn card_albedo(rig: &mut Rig, metallic: f32, roughness: f32, mu: f64) -> (f64, f64) {
     rig.renderer.trace_settings = TraceSettings {
         samples_per_pixel: 8,
@@ -432,7 +464,8 @@ fn card_albedo(rig: &mut Rig, metallic: f32, roughness: f32, mu: f64) -> (f64, f
     };
     rig.frames(RenderMode::PathTraced, 16);
     let measured = f64::from(rig.centre_radiance(16));
-    let expected = directional_albedo(mu, f64::from(metallic), f64::from(roughness));
+    let r = f64::from(roughness);
+    let expected = directional_albedo(mu, f64::from(metallic), r, Smith::sampled(r));
     eprintln!("white card, metallic {metallic}, roughness {roughness}, mu {mu}: {measured:.4}, E(mu) {expected:.4}");
     (measured, expected)
 }
@@ -451,12 +484,21 @@ fn a_white_metal_card_reflects_its_directional_albedo() {
     let Some(mut rig) = lone_card() else {
         return;
     };
-    for roughness in [0.3, 0.7] {
+    for roughness in [0.3_f32, 0.7] {
         for mu in [1.0, 0.5] {
             let (measured, expected) = card_albedo(&mut rig, 1.0, roughness, mu);
             assert!(
                 (measured - expected).abs() < 0.03,
                 "{measured} against {expected}"
+            );
+            // The analytic remap lost a third of the sky at roughness 0.3 and 60 degrees (0.668 against 0.975).
+            let roughness = f64::from(roughness);
+            let exact = directional_albedo(mu, 1.0, roughness, Smith::Exact);
+            let analytic = directional_albedo(mu, 1.0, roughness, Smith::analytic(roughness));
+            eprintln!("  exact Smith {exact:.4}, analytic remap {analytic:.4}");
+            assert!(
+                (measured - exact).abs() < (analytic - exact).abs(),
+                "a bounce masks as an analytic light does: {measured} against the exact {exact}"
             );
         }
     }

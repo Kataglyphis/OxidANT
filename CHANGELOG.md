@@ -13,6 +13,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, a path-traced bounce masks with the Smith remap for sampled light)
+- **The path tracer's bounces take Epic's `k = alpha / 2`** (`brdf_sampled`, `shaders/common/brdf.slang`;
+  `sample_bounce`, `shaders/tracer/path_estimator.slang`). The bounce weight evaluated `brdf_direct`, whose
+  `k = (r + 1)^2 / 8` is meant for analytic lights and over-masks a sampled lobe at grazing angles. A white metal card
+  in the furnace, roughness 0.3: 0.974 to 0.987 at `mu` 1 and 0.668 to 0.899 at `mu` 0.5 (the exact height-correlated
+  Smith lobe: 0.991 and 0.975); roughness 0.7: 0.638 to 0.671 and 0.524 to 0.613 (exact 0.698 and 0.704). NEE and the
+  raster keep `brdf_direct`, bit-identical in the emitted WGSL; the shadow rig's furnace mean moves from 0.987 to 0.994.
+- **New in `brdf.slang`, `brdf_direct` and `geometry_smith` unchanged**: `smith_k_analytic`, `smith_k_sampled`,
+  `geometry_smith_k` and `brdf_smith_k` (the BRDF with a given remap), and `brdf_sampled`. The C++ path tracer's
+  bounce (`path_tracing.slang`) should switch to `brdf_sampled` with the next pin bump, and its furnace oracle with it.
+- Tests: the furnace quadrature takes the remap (`Smith`), the cards expect `brdf_sampled`'s E(mu), and the metal card
+  must land closer to the exact Smith lobe than the analytic remap (failed before at roughness 0.3, `mu` 1: 0.974
+  against the remap's 0.976 and the exact 0.991). The dielectric card at roughness 0.25, `mu` 0.5 now reads 1.024
+  (E(mu) 1.022, against the analytic remap's 1.004): Epic's diffuse does not shrink with the masking.
+
 ### Fixed (2026-11-16, PCF taps compare at the receiver plane's depth)
 - **A receiver sloped against the light no longer shadows itself at larger PCF radii** (`shadow_visibility`,
   `shaders/forward/forward_lighting.slang`). Every tap compared against the centre's depth with one bias, so an outer
