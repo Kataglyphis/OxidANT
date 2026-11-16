@@ -1,5 +1,5 @@
 The renderer's editor embeds two of Dear ImGui's fonts, the same files BeschleunigerBallett's
-C++ editor loads from third_party/IMGUI/misc/fonts. Each font's copyright and license come
+C++ editor loads from third_party/IMGUI/misc/fonts, and two subsets of egui's emoji fonts. Each font's copyright and license come
 from its own name table; the texts beside this notice are the licenses those entries name,
 copied unchanged from the sources listed.
 
@@ -19,3 +19,30 @@ OFL-1.1.txt: https://openfontlicense.org/documents/OFL.txt
   SHA-256: 1d361a8f8e8ce6e68457dcd93fb56e162e6baa3bbb7e7573a290d44399f6b57e
 Font list and licenses as Dear ImGui records them:
 https://github.com/ocornut/imgui/blob/8c36ecfb61733a3e6172d97b9e1fdb7caf9147f9/docs/FONTS.md
+
+Symbol subsets, for the glyphs egui's style and inspection windows draw. Both are cut from the
+fonts of the epaint_default_fonts 0.37.0 crate (crates.io) with fontTools 4.66.1:
+
+NotoEmoji-Subset.ttf: from NotoEmoji-Regular.ttf, Copyright 2013 Google Inc. All Rights Reserved.
+  License: SIL Open Font License, Version 1.1 (OFL-1.1.txt); a Modified Version under the same
+  license, keeping the name, as the font reserves none.
+  Source SHA-256: 415dc6290378574135b64c808dc640c1df7531973290c4970c51fdeb849cb0c5
+  pyftsubset NotoEmoji-Regular.ttf --unicodes=2195,2600,261D,26A0,2712,1F319,1F391,1F3A8,1F41B,1F4BB,1F4CA,1F4CB,1F4CF,1F4E5,1F503,1F504,1F520,1F525 --no-hinting --desubroutinize --output-file=NotoEmoji-Subset.ttf
+  SHA-256: 4b987c39e020f32176272c3de2a09036339b17b497451f2923b33df879219a54
+EmojiIcon-Subset.ttf: from emoji-icon-font.ttf, https://github.com/jslegers/emoji-icon-font
+  License: MIT, the text below, from the crate's emoji-icon-font-mit-license.txt.
+  Source SHA-256: f426bec371f484646d002717e2c555a95cd5145e635d83a48bbef83f3abf18ca
+  pyftsubset emoji-icon-font.ttf --unicodes=23F4,23F5,23F6,23F7,2699,27F2,1F5B1,1F5BC --no-hinting --desubroutinize --output-file=EmojiIcon-Subset.ttf
+  SHA-256: 273ab4ce72295371d872a362d92a836cbffdfe5e08e06d264c012ae30a87c5d8
+
+Fonts: https://github.com/emilk/egui/tree/0.37.0/crates/epaint_default_fonts/fonts
+
+MIT License
+
+Copyright (c) 2014 John Slegers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

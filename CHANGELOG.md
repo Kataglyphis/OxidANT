@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, no tofu in egui's debug windows)
+- **egui's Style editor and inspection windows draw their symbols.** Two subsets of the fonts egui itself ships
+  (epaint_default_fonts 0.37.0) follow Roboto and Cousine in both families: Noto Emoji (OFL-1.1) cut to the 18 symbols
+  of those windows it has, and emoji-icon-font (MIT) cut to the 8 it lacks (`assets/fonts/NotoEmoji-Subset.ttf`,
+  `EmojiIcon-Subset.ttf`, 11 KiB together). `assets/fonts/NOTICE` records each source, its hash, the `pyftsubset`
+  command that reproduces the subset and the MIT text, so the files BeschleunigerBallett's docs build stages beside
+  the demo (`NOTICE`, `OFL-1.1.txt`, `Apache-2.0.txt`) still carry every licence.
+- Tests: `ui::fonts` renders both windows and finds no character without a glyph (the old chain drew 12 as tofu),
+  checks the 26 symbols in both families, and pins both subsets' hashes to the ones `NOTICE` records.
+
 ### Fixed (2026-11-16, egui text weighs natively what it weighs in the browser)
 - **egui paints through the output's linear twin.** On an sRGB surface egui's coverage blended in linear light, so
   text came out a different weight than on the browser's non-sRGB canvas. The surface now carries its non-sRGB view

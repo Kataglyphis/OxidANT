@@ -135,10 +135,6 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       as the raster's IBL ambient does, which moves this further from C++. Owner decision;
       if it should match, the C++ side changes, since its raster has no ambient term to follow.
 
-- [ ] **egui's Style editor and inspection windows show tofu** (S). The studio fonts
-      (`crates/webgpu_renderer/src/ui/fonts.rs`, `FontDefinitions::empty()`) carry no emoji, which those two debug windows
-      (`crates/webgpu_renderer/src/ui/editor/windows.rs`) draw. Next: add egui's emoji face as the last fallback, inside the wasm budget.
-
 - [ ] **Debug builds trace slowly** (S). The dev profile builds the renderer at opt-level 0 (`Cargo.toml` raises
       only dependencies), so building the full Colosseum's BVH in a debug viewer takes about half a minute.
       Owner decision: `[profile.dev.package.kataglyphis_webgpu_renderer] opt-level = 1`.

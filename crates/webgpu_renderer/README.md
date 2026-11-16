@@ -89,7 +89,8 @@ and screenshot capture.
 (`ui::Editor`): menu bar, status bar, a scene dock (outliner and model library),
 an inspector with the Model, Sun, Camera, Sky and Renderer tabs, a profiler, the
 viewport chip and an About modal, in the C++ palette, metrics and fonts (Roboto
-Medium and Cousine, embedded from `assets/fonts/` with their licences). The docks
+Medium and Cousine, plus two small subsets of egui's emoji faces for egui's own debug
+windows, embedded from `assets/fonts/` with their licences). The docks
 take the C++ sizes, caps and drop order, and custom splitters inside the scene's
 edge resize them. The native viewer and the browser demo run one host,
 `app::StudioApp`; its camera centres on the rect the docks leave free

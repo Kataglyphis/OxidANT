@@ -1,4 +1,5 @@
 //! The C++ editor's faces: Roboto Medium for the UI, Cousine for paths and figures; licences in `assets/fonts/`.
+//! Two small subsets of egui's own emoji faces follow both, for the symbols egui's debug windows draw.
 
 use std::sync::Arc;
 
@@ -8,6 +9,10 @@ use egui::{FontData, FontDefinitions, FontFamily, FontId};
 pub const ROBOTO_MEDIUM: &[u8] = include_bytes!("../../assets/fonts/Roboto-Medium.ttf");
 /// Byte for byte BeschleunigerBallett's `third_party/IMGUI/misc/fonts/Cousine-Regular.ttf` (OFL-1.1).
 pub const COUSINE_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Cousine-Regular.ttf");
+/// Noto Emoji (OFL-1.1) cut to the symbols egui's style and inspection windows draw that it has; see `NOTICE`.
+pub const NOTO_EMOJI_SUBSET: &[u8] = include_bytes!("../../assets/fonts/NotoEmoji-Subset.ttf");
+/// emoji-icon-font (MIT) cut to the rest of those symbols, the ones Noto Emoji lacks; see `NOTICE`.
+pub const EMOJI_ICON_SUBSET: &[u8] = include_bytes!("../../assets/fonts/EmojiIcon-Subset.ttf");
 
 /// The C++ editor's 15 px body line, in points: one row of body text.
 pub const LINE_HEIGHT: f32 = 15.0;
@@ -23,16 +28,28 @@ pub const FIGURE_SCALE: f32 = 1.8;
 
 const UI_FACE: &str = "Roboto-Medium";
 const MONO_FACE: &str = "Cousine-Regular";
+const NOTO_FACE: &str = "NotoEmoji-Subset";
+const ICON_FACE: &str = "EmojiIcon-Subset";
 
-/// Each family falls back on the other face, so a glyph one lacks still draws.
+/// Each family falls back on the other face, then on the symbol subsets, so a glyph one lacks still draws.
 pub fn studio_fonts() -> FontDefinitions {
     let mut fonts = FontDefinitions::empty();
-    for (name, bytes) in [(UI_FACE, ROBOTO_MEDIUM), (MONO_FACE, COUSINE_REGULAR)] {
+    let faces = [
+        (UI_FACE, ROBOTO_MEDIUM),
+        (MONO_FACE, COUSINE_REGULAR),
+        (NOTO_FACE, NOTO_EMOJI_SUBSET),
+        (ICON_FACE, EMOJI_ICON_SUBSET),
+    ];
+    for (name, bytes) in faces {
         fonts
             .font_data
             .insert(name.to_owned(), Arc::new(FontData::from_static(bytes)));
     }
-    let chain = |first: &str, second: &str| vec![first.to_owned(), second.to_owned()];
+    let chain = |first: &str, second: &str| {
+        [first, second, NOTO_FACE, ICON_FACE]
+            .map(str::to_owned)
+            .to_vec()
+    };
     fonts
         .families
         .insert(FontFamily::Proportional, chain(UI_FACE, MONO_FACE));
@@ -89,6 +106,87 @@ mod tests {
     }
 
     #[test]
+    fn the_symbol_subsets_are_the_ones_notice_records() {
+        // The pyftsubset commands in NOTICE reproduce these from epaint_default_fonts 0.37.0.
+        assert_eq!(
+            sha256_hex(NOTO_EMOJI_SUBSET),
+            "4b987c39e020f32176272c3de2a09036339b17b497451f2923b33df879219a54"
+        );
+        assert_eq!(
+            sha256_hex(EMOJI_ICON_SUBSET),
+            "273ab4ce72295371d872a362d92a836cbffdfe5e08e06d264c012ae30a87c5d8"
+        );
+        let notice = include_str!("../../assets/fonts/NOTICE");
+        for hash in [sha256_hex(NOTO_EMOJI_SUBSET), sha256_hex(EMOJI_ICON_SUBSET)] {
+            assert!(notice.contains(&hash), "NOTICE does not record {hash}");
+        }
+    }
+
+    /// The symbols egui 0.37's style, settings, memory, texture and input UIs put in their labels and headers.
+    const DEBUG_WINDOW_SYMBOLS: &str = "↕☀☝⚠✒🌙🎑🎨🐛💻📊📋📏📥🔃🔄🔠🔥⏴⏵⏶⏷⚙⟲🖱🖼";
+
+    #[test]
+    fn every_symbol_egui_s_debug_windows_use_has_a_glyph_in_both_families() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(studio_fonts());
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for font in [body_font(), mono_font()] {
+                let missing: String = DEBUG_WINDOW_SYMBOLS
+                    .chars()
+                    .filter(|&c| !ui.ctx().fonts_mut(|f| f.has_glyph(&font, c)))
+                    .collect();
+                assert!(missing.is_empty(), "{:?} lacks {missing}", font.family);
+            }
+        });
+        output.drop_without_applying_deltas();
+    }
+
+    /// Every character of every galley in `shapes` that its section's font has no glyph for.
+    fn tofu(ctx: &egui::Context, shapes: &[egui::epaint::ClippedShape]) -> String {
+        let mut galleys = Vec::new();
+        let mut stack: Vec<&egui::Shape> = shapes.iter().map(|clipped| &clipped.shape).collect();
+        while let Some(shape) = stack.pop() {
+            match shape {
+                egui::Shape::Text(text) => galleys.push(text.galley.clone()),
+                egui::Shape::Vec(inner) => stack.extend(inner),
+                _ => {}
+            }
+        }
+        let mut missing = String::new();
+        for galley in galleys {
+            for section in &galley.job.sections {
+                let range = &section.byte_range;
+                let text = &galley.job.text[range.start.0..range.end.0];
+                let font = &section.format.font_id;
+                let lacking = text
+                    .chars()
+                    .filter(|&c| !c.is_whitespace() && c != '\u{FE0F}')
+                    .filter(|&c| !ctx.fonts_mut(|f| f.has_glyph(font, c)));
+                missing.extend(lacking);
+            }
+        }
+        missing
+    }
+
+    #[test]
+    fn egui_s_style_and_inspection_windows_draw_no_tofu() {
+        let ctx = crate::render::overlay::studio_context();
+        let mut missing = String::new();
+        // The first pass lays the windows out, the second paints them at their sizes.
+        for _ in 0..2 {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let ctx = ui.ctx().clone();
+                egui::Window::new("Style editor")
+                    .show(&ctx, |ui| ctx.style_ui(ui, egui::Theme::Dark));
+                egui::Window::new("egui inspection").show(&ctx, |ui| ctx.inspection_ui(ui));
+            });
+            missing = tofu(&ctx, &output.shapes);
+            output.drop_without_applying_deltas();
+        }
+        assert!(missing.is_empty(), "drawn without a glyph: {missing}");
+    }
+
+    #[test]
     fn the_licence_texts_beside_the_fonts_are_the_originals() {
         // Embedded, because the Windows arm64 lane stages no assets/ beside the test binary.
         assert_eq!(
@@ -125,6 +223,9 @@ mod tests {
         let fonts = studio_fonts();
         assert_eq!(fonts.families[&FontFamily::Proportional][0], UI_FACE);
         assert_eq!(fonts.families[&FontFamily::Monospace][0], MONO_FACE);
-        assert_eq!(fonts.font_data.len(), 2);
+        assert_eq!(fonts.font_data.len(), 4);
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            assert_eq!(fonts.families[&family][2..], [NOTO_FACE, ICON_FACE]);
+        }
     }
 }
