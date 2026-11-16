@@ -9,12 +9,10 @@ web="crates/webgpu_renderer/web"
 
 # cargo install puts the pinned CLI here, which the image's PATH leaves out.
 export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"
-# wasm-bindgen-cli refuses a module from any other wasm-bindgen than its own, so it is pinned to Cargo.lock's.
-wb_ver="$(tr -d '\r' <Cargo.lock | awk '$0 == "name = \"wasm-bindgen\"" { getline; if (sub(/^version = "/, "") && sub(/"$/, "")) print; exit }')"
-[ -n "${wb_ver}" ] || { echo "webgpu-demo-browser.sh: no wasm-bindgen in Cargo.lock" >&2; exit 2; }
-if [ "$(wasm-bindgen --version 2>/dev/null | awk '{print $2}')" != "${wb_ver}" ]; then
-    cargo install --locked wasm-bindgen-cli --version "${wb_ver}"
-fi
+# shellcheck source=lib/antfrastructure.sh
+source "${script_dir}/lib/antfrastructure.sh"
+antfrastructure_source linux/scripts/lib/rust-toolchain.sh
+ensure_wasm_bindgen Cargo.lock || exit 2
 
 # The release profile, as the docs site publishes it.
 cargo build --locked -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown --release

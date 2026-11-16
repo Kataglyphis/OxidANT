@@ -7,10 +7,8 @@ const path = require('node:path');
 
 const hubScripts = path.join(process.env.ANTFRASTRUCTURE_DIR || path.join(__dirname, '../../third_party/ANTfrastructure'), 'linux/scripts');
 const { findChrome, launch, serve, sleep } = require(path.join(hubScripts, 'check-docs-sidebars.js'));
-const { install } = require(path.join(hubScripts, 'webgpu-canvas-readback.js'));
+const { install, WEBGPU_FLAGS } = require(path.join(hubScripts, 'webgpu-canvas-readback.js'));
 
-// The hub's read-back flags (webgpu-canvas-readback.js does not export them): SwiftShader backs the adapter.
-const WEBGPU_FLAGS = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=swiftshader', '--use-webgpu-adapter=swiftshader'];
 // SwiftShader compiles the path-tracing kernel in about two minutes before its first sample.
 const STEP_TIMEOUT_MS = 10 * 60 * 1000;
 const READY_TIMEOUT_MS = 3 * 60 * 1000;
