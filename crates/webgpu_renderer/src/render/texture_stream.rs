@@ -17,19 +17,33 @@ pub struct TextureStreaming {
     pub bytes_per_frame: u64,
     /// Frames a texture must hold more than one level finer than any user needs before it drops one; 0 never evicts.
     pub evict_after_frames: u32,
+    /// Bytes of CPU level chains kept for later steps; the rest regenerate from the scene's source image.
+    pub cpu_bytes: u64,
     /// A step copies the levels already resident on the GPU instead of writing them again from the CPU.
     pub gpu_copies: bool,
 }
 
 impl TextureStreaming {
-    /// The interactive app's choice: a 128-texel tail, 8 MiB a frame, eviction after two seconds at 60 Hz.
+    /// The interactive app's choice: a 128-texel tail, 8 MiB a frame, eviction after two seconds at 60 Hz, 256 MiB of chains.
     pub const INTERACTIVE: Self = Self {
         enabled: true,
         tail_side: 128,
         bytes_per_frame: 8 << 20,
         evict_after_frames: 120,
+        cpu_bytes: 256 << 20,
         gpu_copies: true,
     };
+}
+
+impl TextureStreaming {
+    /// Bytes of CPU chains to keep: none while off, since nothing steps then.
+    pub(crate) fn chain_budget(&self) -> u64 {
+        if self.enabled {
+            self.cpu_bytes
+        } else {
+            0
+        }
+    }
 }
 
 impl Default for TextureStreaming {
@@ -53,12 +67,16 @@ pub struct TextureResidency {
     pub resident_bytes: u64,
     /// Bytes every texture would hold with its finest level resident.
     pub full_bytes: u64,
+    /// Bytes of level chains held on the CPU for later steps.
+    pub cpu_bytes: u64,
     /// Bytes steps have written from the CPU since the upload, its own writes excluded.
     pub step_written_bytes: u64,
     /// Bytes steps have copied between GPU textures since the upload.
     pub step_copied_bytes: u64,
     /// Steps that dropped a level since the upload.
     pub evictions: u64,
+    /// Chains rebuilt from the source image since the upload, after the CPU budget dropped them.
+    pub regenerated: u64,
 }
 
 /// One level of a [`LevelChain`].
@@ -162,6 +180,22 @@ pub(crate) fn gpu_copy_allowed(backend: wgpu::Backend, format: wgpu::TextureForm
     !(backend == wgpu::Backend::Gl && format.is_compressed())
 }
 
+/// Which held chains to drop so the rest fit `budget`: least recently stepped first, then the earliest uploaded.
+/// `held` is (texture, last frame it stepped, chain bytes).
+pub(crate) fn chains_over_budget(mut held: Vec<(usize, u64, u64)>, budget: u64) -> Vec<usize> {
+    let mut total: u64 = held.iter().map(|&(_, _, bytes)| bytes).sum();
+    held.sort_by_key(|&(id, last_used, _)| (last_used, id));
+    let mut dropped = Vec::new();
+    for (id, _, bytes) in held {
+        if total <= budget {
+            break;
+        }
+        total -= bytes;
+        dropped.push(id);
+    }
+    dropped
+}
+
 /// Mip level a surface needs at `distance`: log2 of texels per pixel there, 0 when magnified.
 /// Head-on, so a grazing surface, which the anisotropic sampler reads finer, is never starved.
 pub(crate) fn wanted_level(
@@ -242,7 +276,7 @@ pub(crate) struct StreamRequest {
     pub(crate) visible: bool,
     /// Levels between the resident base and the wanted one.
     pub(crate) levels_short: usize,
-    /// Bytes the step writes into the new texture, from the CPU or by copy.
+    /// Bytes the step writes into the new texture, plus the chain it regenerates first.
     pub(crate) step_bytes: u64,
 }
 
@@ -478,6 +512,15 @@ mod tests {
         ] {
             assert!(gpu_copy_allowed(backend, F::Bc7RgbaUnorm));
         }
+    }
+
+    #[test]
+    fn the_cpu_budget_drops_the_least_recently_stepped_chains() {
+        let held = vec![(0, 5, 100), (1, 2, 100), (2, 9, 100), (3, 2, 50)];
+        assert_eq!(chains_over_budget(held.clone(), 350), Vec::<usize>::new());
+        assert_eq!(chains_over_budget(held.clone(), 300), vec![1]);
+        assert_eq!(chains_over_budget(held.clone(), 120), vec![1, 3, 0]);
+        assert_eq!(chains_over_budget(held, 0), vec![1, 3, 0, 2]);
     }
 
     #[test]

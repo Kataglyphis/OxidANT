@@ -1,4 +1,4 @@
-//! Mip-tail streaming's GPU half: each material texture, the levels it holds, and the finer steps a frame uploads.
+//! Mip-tail streaming's GPU half: each material texture, the levels it holds, and the steps a frame runs either way.
 //! The policy (tail, wanted level, budget) is `render/texture_stream.rs`.
 
 use std::collections::HashMap;
@@ -6,14 +6,15 @@ use std::sync::Arc;
 
 use super::frame::FrameView;
 use super::primitive::GpuPrimitive;
-use super::streamed_texture::{StepCounters, StreamUser, StreamedTexture};
+use super::streamed_texture::{StepCounters, StreamUser, StreamedTexture, TextureSource};
 use super::upload::{MaterialDefaults, MaterialSlots};
 use super::ForwardRenderer;
 use crate::context::GpuContext;
 use crate::render::texture::{create_sampler, material_chain, material_view};
 use crate::render::texture_stream::{
-    coarser_base, distance_to_aabb, evict_now, max_axis_scale, next_base, plan_steps, uv_density,
-    uv_transform_scale, wanted_level, StreamRequest, TextureResidency, TextureStreaming,
+    chains_over_budget, coarser_base, distance_to_aabb, evict_now, max_axis_scale, next_base,
+    plan_steps, uv_density, uv_transform_scale, wanted_level, StreamRequest, TextureResidency,
+    TextureStreaming,
 };
 use crate::scene::{CpuPrimitive, CpuSampler, CpuTextureRef};
 
@@ -24,6 +25,8 @@ pub(super) struct MaterialTextures {
     keys: HashMap<(usize, bool), Option<usize>>,
     entries: Vec<StreamedTexture>,
     samplers: HashMap<CpuSampler, wgpu::Sampler>,
+    /// Frames streamed since the upload, the CPU budget's clock.
+    frame: u64,
     counters: StepCounters,
 }
 
@@ -40,9 +43,23 @@ impl MaterialTextures {
             streaming: entries.iter().filter(|e| e.pending()).count(),
             resident_bytes: entries.iter().map(|e| e.bytes_from(e.base)).sum(),
             full_bytes: entries.iter().map(|e| e.bytes_from(e.finest())).sum(),
+            cpu_bytes: entries.iter().map(StreamedTexture::cpu_bytes).sum(),
             step_written_bytes: self.counters.written,
             step_copied_bytes: self.counters.copied,
             evictions: self.counters.evictions,
+            regenerated: self.counters.regenerated,
+        }
+    }
+
+    /// Drops the least recently stepped chains until the rest fit `budget`.
+    fn enforce_cpu_budget(&mut self, budget: u64) {
+        let held = self.entries.iter().enumerate();
+        let held = held
+            .filter(|(_, e)| e.cpu_bytes() > 0)
+            .map(|(id, e)| (id, e.last_used, e.cpu_bytes()))
+            .collect();
+        for id in chains_over_budget(held, budget) {
+            self.entries[id].drop_chain();
         }
     }
 
@@ -126,13 +143,19 @@ impl MaterialTextures {
         if let Some(&id) = self.keys.get(&key) {
             return id;
         }
+        let source = TextureSource {
+            image: Arc::clone(&tex_ref.texture),
+            srgb: tex_ref.srgb,
+        };
         let id = material_chain(gpu, &tex_ref.texture, tex_ref.srgb, Some(&label))
-            .and_then(|chain| StreamedTexture::upload(gpu, chain, label, streaming))
+            .and_then(|chain| StreamedTexture::upload(gpu, chain, source, label, streaming))
             .map(|entry| {
                 self.entries.push(entry);
                 self.entries.len() - 1
             });
         self.keys.insert(key, id);
+        // Per texture, so the upload's peak holds one chain past the budget, not the scene's.
+        self.enforce_cpu_budget(streaming.chain_budget());
         id
     }
 
@@ -147,6 +170,7 @@ impl MaterialTextures {
 impl ForwardRenderer {
     /// This frame's steps: finer levels and evictions within the budget while streaming, every pending level once it is off.
     pub(super) fn stream_textures(&mut self, gpu: &GpuContext, view: &FrameView) {
+        self.textures.frame += 1;
         let steps = if self.texture_streaming.enabled {
             self.plan_texture_steps(view)
         } else {
@@ -185,9 +209,7 @@ impl ForwardRenderer {
         for (id, entry) in self.textures.entries.iter_mut().enumerate() {
             let (wanted, visible) = texture_need(&self.primitives, entry, view, pixels_per_unit);
             let finer = next_base(&entry.candidates, entry.base, wanted);
-            // Without its chain a texture could not stream back what it drops.
-            let coarser = coarser_base(&entry.candidates, entry.base, wanted, entry.tail)
-                .filter(|_| entry.holds_chain());
+            let coarser = coarser_base(&entry.candidates, entry.base, wanted, entry.tail);
             let evict = evict_now(
                 &mut entry.over_frames,
                 coarser.is_some(),
@@ -202,7 +224,7 @@ impl ForwardRenderer {
                 finer: finer.is_some(),
                 visible,
                 levels_short: entry.base.abs_diff(wanted),
-                step_bytes: entry.step_bytes(base),
+                step_bytes: entry.step_bytes(base, streaming.gpu_copies),
             });
         }
         plan_steps(requests, streaming.bytes_per_frame)
@@ -216,6 +238,7 @@ impl ForwardRenderer {
         let streaming = self.texture_streaming;
         let textures = &mut self.textures;
         if steps.is_empty() {
+            textures.enforce_cpu_budget(streaming.chain_budget());
             return;
         }
         let mut encoder = gpu
@@ -234,6 +257,7 @@ impl ForwardRenderer {
             ) {
                 continue;
             }
+            entry.last_used = textures.frame;
             for user in &entry.users {
                 let view = material_view(&entry.texture, &user.sampler);
                 self.primitives[user.primitive]
@@ -243,13 +267,7 @@ impl ForwardRenderer {
             }
         }
         gpu.queue.submit([encoder.finish()]);
-        if !streaming.enabled {
-            // Off steps nothing again: the chains are done.
-            textures
-                .entries
-                .iter_mut()
-                .for_each(StreamedTexture::drop_chain);
-        }
+        textures.enforce_cpu_budget(streaming.chain_budget());
         touched.sort_unstable();
         touched.dedup();
         self.rebind_primitives(&gpu.device, &touched);

@@ -1,10 +1,12 @@
 //! One streamed material texture: the levels its GPU texture holds, the CPU chain it steps from, and a step
 //! in either direction. Which steps run is `streaming.rs`; the policy is `render/texture_stream.rs`.
 
+use std::sync::Arc;
+
 use crate::context::GpuContext;
-use crate::render::texture::{chain_texture, copy_level, write_chain, write_level};
+use crate::render::texture::{chain_texture, copy_level, material_chain, write_chain, write_level};
 use crate::render::texture_stream::{gpu_copy_allowed, initial_base, LevelChain, TextureStreaming};
-use crate::scene::CpuSampler;
+use crate::scene::{CpuSampler, CpuTexture};
 
 /// One material slot that samples a streamed texture.
 pub(super) struct StreamUser {
@@ -21,12 +23,20 @@ pub(super) struct StepCounters {
     pub(super) written: u64,
     pub(super) copied: u64,
     pub(super) evictions: u64,
+    pub(super) regenerated: u64,
+}
+
+/// The scene image a texture came from, and the colour space it uploads in, to rebuild a dropped chain.
+pub(super) struct TextureSource {
+    pub(super) image: Arc<CpuTexture>,
+    pub(super) srgb: bool,
 }
 
 /// One GPU material texture and the slots that sample it.
 pub(super) struct StreamedTexture {
     pub(super) texture: wgpu::Texture,
     label: String,
+    source: TextureSource,
     format: wgpu::TextureFormat,
     /// Every chain level's size and byte count, kept when the chain itself is dropped.
     sizes: Vec<(u32, u32)>,
@@ -37,12 +47,14 @@ pub(super) struct StreamedTexture {
     pub(super) tail: usize,
     /// The chain level the GPU texture's level 0 holds.
     pub(super) base: usize,
-    /// The CPU levels, while streaming may step this texture again.
+    /// The CPU levels, while the budget holds them; a step that needs them rebuilds them from `source`.
     chain: Option<LevelChain>,
     /// This backend copies the format between textures.
     copies_allowed: bool,
     /// Frames in a row this texture has held more than it needs.
     pub(super) over_frames: u32,
+    /// The frame counter at its last step, for the CPU budget's order.
+    pub(super) last_used: u64,
     pub(super) users: Vec<StreamUser>,
 }
 
@@ -51,6 +63,7 @@ impl StreamedTexture {
     pub(super) fn upload(
         gpu: &GpuContext,
         chain: LevelChain,
+        source: TextureSource,
         label: String,
         streaming: &TextureStreaming,
     ) -> Option<Self> {
@@ -71,6 +84,7 @@ impl StreamedTexture {
         Some(Self {
             texture: write_chain(gpu, &chain, base, Some(&label)),
             label,
+            source,
             format: chain.format,
             level_bytes: chain.levels.iter().map(|l| l.data.len() as u64).collect(),
             sizes,
@@ -78,9 +92,10 @@ impl StreamedTexture {
             tail,
             base,
             copies_allowed: gpu_copy_allowed(gpu.adapter_info.backend, chain.format),
-            // Off, or a tail that is its finest level, never steps again.
-            chain: (streaming.enabled && tail != finest).then_some(chain),
+            // A texture whose tail is its finest level never steps.
+            chain: (tail != finest).then_some(chain),
             over_frames: 0,
+            last_used: 0,
             users: Vec::new(),
         })
     }
@@ -102,9 +117,9 @@ impl StreamedTexture {
         self.level_bytes[level..].iter().sum()
     }
 
-    /// Whether a later step can stream back what an eviction drops.
-    pub(super) fn holds_chain(&self) -> bool {
-        self.chain.is_some()
+    /// Bytes of the CPU chain this texture holds.
+    pub(super) fn cpu_bytes(&self) -> u64 {
+        self.chain.as_ref().map_or(0, |chain| chain.bytes_from(0))
     }
 
     pub(super) fn drop_chain(&mut self) {
@@ -116,9 +131,42 @@ impl StreamedTexture {
         gpu_copies && self.copies_allowed
     }
 
-    /// Bytes a step to `base` writes into the new texture, from the CPU or by copy.
-    pub(super) fn step_bytes(&self, base: usize) -> u64 {
-        self.bytes_from(base)
+    /// Bytes a step to `base` writes into the new texture, plus the chain it rebuilds first when it needs one.
+    pub(super) fn step_bytes(&self, base: usize, gpu_copies: bool) -> u64 {
+        let needs_chain = !self.copies(gpu_copies) || base < self.base;
+        let rebuild = if needs_chain && self.chain.is_none() {
+            self.bytes_from(0)
+        } else {
+            0
+        };
+        self.bytes_from(base) + rebuild
+    }
+
+    /// The CPU chain, rebuilt from the source image when the budget dropped it; `None` if that fails.
+    fn ensure_chain(
+        &mut self,
+        gpu: &GpuContext,
+        counters: &mut StepCounters,
+    ) -> Option<&LevelChain> {
+        if self.chain.is_none() {
+            let rebuilt =
+                material_chain(gpu, &self.source.image, self.source.srgb, Some(&self.label))
+                    .filter(|chain| chain.format == self.format && chain.sizes() == self.sizes);
+            if rebuilt.is_none() {
+                log::warn!(
+                    "{}: its chain does not rebuild as uploaded; it keeps its levels",
+                    self.label
+                );
+                // Frozen where it is, so the step is not retried every frame.
+                let base = self.base;
+                self.candidates.retain(|&level| level >= base);
+                self.tail = base;
+                return None;
+            }
+            counters.regenerated += 1;
+            self.chain = rebuilt;
+        }
+        self.chain.as_ref()
     }
 
     /// Replaces the GPU texture with one whose level 0 is chain level `base`, finer or coarser.
@@ -157,7 +205,7 @@ impl StreamedTexture {
         let label = Some(self.label.as_str());
         let texture = chain_texture(&gpu.device, self.format, self.sizes[base], levels, label);
         if base < resident {
-            let chain = self.chain.as_ref()?;
+            let chain = self.ensure_chain(gpu, counters)?;
             for level in base..resident {
                 write_level(gpu, &texture, (level - base) as u32, &chain.levels[level]);
                 counters.written += chain.levels[level].data.len() as u64;
@@ -174,9 +222,10 @@ impl StreamedTexture {
         base: usize,
         counters: &mut StepCounters,
     ) -> Option<wgpu::Texture> {
-        let chain = self.chain.as_ref()?;
+        let label = self.label.clone();
+        let chain = self.ensure_chain(gpu, counters)?;
         counters.written += chain.bytes_from(base);
-        Some(write_chain(gpu, chain, base, Some(&self.label)))
+        Some(write_chain(gpu, chain, base, Some(&label)))
     }
 
     /// Copies chain levels `from..` of the current texture into `texture`, whose level 0 is chain level `new_base`.

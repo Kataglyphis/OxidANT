@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, streamed textures keep their CPU chains within a budget)
+- **`TextureStreaming::cpu_bytes`** (256 MiB in `INTERACTIVE`) bounds the level chains streaming keeps on the CPU.
+  Past it the least recently stepped chains are dropped, during the upload already, one texture at a time, so its
+  peak is the budget plus one chain. A step that needs a dropped chain rebuilds it from the scene's image through
+  the upload's own `material_chain`; the app keeps that image alive as the traced scene anyway, so the bound costs
+  no second copy; the rebuild counts toward the frame's byte budget. A chain that no longer rebuilds as uploaded
+  freezes the texture at its levels. A texture whose tail is its finest level, and every texture while streaming is
+  off, keeps no chain. `TextureResidency` reports `cpu_bytes` and `regenerated`.
+- **Measured** (`tests/texture_streaming.rs`, release, lavapipe on arm64 WSL): sixteen 2048x2048 RGBA8 textures keep
+  256.0 MiB of chains instead of 341.3 MiB. A rebuild costs what the upload's own chain did: a CPU box filter of
+  about 0.13 s for a 2048x2048 RGBA8 image (2.1 s for sixteen), a copy for BC. Thirteen rebuilt chains of sixteen
+  render byte-identical to chains kept whole.
+
 ### Added (2026-11-16, streamed textures drop the levels the camera left behind)
 - **Eviction** (`render/texture_stream.rs`, `coarser_base`, `evict_now`): a texture holding more than one level
   finer than any user needs (the margin, `EVICTION_MARGIN`) for `TextureStreaming::evict_after_frames` frames in a

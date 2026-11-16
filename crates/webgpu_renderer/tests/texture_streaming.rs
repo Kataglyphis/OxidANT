@@ -293,10 +293,15 @@ fn a_tail_upload_holds_a_fraction_of_the_bytes() {
     let (whole_time, whole) = measure_upload(&gpu, &rgba8, TextureStreaming::default());
     let (tail_time, tail) = measure_upload(&gpu, &rgba8, TextureStreaming::INTERACTIVE);
     eprintln!(
-        "16 x 2048^2 RGBA8: whole {:.1} MiB in {whole_time:?}, tail {:.2} MiB in {tail_time:?}",
+        "16 x 2048^2 RGBA8: whole {:.1} MiB in {whole_time:?}, tail {:.2} MiB in {tail_time:?}, \
+         {:.1} MiB of chains kept on the CPU",
         mib(whole.resident_bytes),
         mib(tail.resident_bytes),
+        mib(tail.cpu_bytes),
     );
+    // The chains past the CPU budget are dropped, to be rebuilt from the scene's images.
+    assert!(tail.cpu_bytes <= TextureStreaming::INTERACTIVE.cpu_bytes);
+    assert_eq!(whole.cpu_bytes, 0);
     assert_eq!(whole.resident_bytes, 16 * rgba8_chain_bytes(2048));
     assert_eq!(tail.resident_bytes, 16 * rgba8_chain_bytes(128));
     assert_eq!(tail.full_bytes, whole.full_bytes);
@@ -454,6 +459,51 @@ fn copying_resident_levels_renders_identically_and_writes_only_the_new_level() {
         assert_eq!(w.step_copied_bytes, 0);
         assert!(c.step_written_bytes * 10 < w.step_written_bytes * 8);
     }
+}
+
+/// Sixteen cubes whose chains do not all fit the CPU budget: the dropped ones rebuild from the scene's images.
+#[test]
+fn chains_past_the_cpu_budget_rebuild_and_render_identically() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = sixteen_cubes(|i| checker(256, (i * 15) as u8));
+    let budget = 3 * rgba8_chain_bytes(256);
+    let bounded = TextureStreaming {
+        cpu_bytes: budget,
+        ..TextureStreaming::INTERACTIVE
+    };
+    let mut renderer = renderer_with(&gpu, &scene, bounded);
+    let residency = renderer.texture_residency();
+    assert_eq!(residency.cpu_bytes, budget, "three of sixteen chains stay");
+    let mut unbounded = renderer_with(&gpu, &scene, TextureStreaming::INTERACTIVE);
+    assert_eq!(
+        unbounded.texture_residency().cpu_bytes,
+        16 * rgba8_chain_bytes(256)
+    );
+
+    // Every texture steps to its finest: thirteen of them from a rebuilt chain.
+    renderer.finish_texture_streaming(&gpu);
+    unbounded.finish_texture_streaming(&gpu);
+    let camera = OrbitCamera {
+        target: Vec3::new(15.0, 0.0, 0.0),
+        ..camera_at(4.0)
+    };
+    let bounded_frame = render(&mut renderer, &gpu, &camera);
+    let unbounded_frame = render(&mut unbounded, &gpu, &camera);
+    let after = renderer.texture_residency();
+    assert_eq!(after.streaming, 0, "{after:?}");
+    assert_eq!(after.regenerated, 13, "{after:?}");
+    assert!(after.cpu_bytes <= budget, "{after:?}");
+    assert_eq!(unbounded.texture_residency().regenerated, 0);
+    assert!(
+        bounded_frame == unbounded_frame,
+        "a rebuilt chain must upload the same levels"
+    );
+
+    // Off keeps no chain at all.
+    let off = renderer_with(&gpu, &scene, TextureStreaming::default());
+    assert_eq!(off.texture_residency().cpu_bytes, 0);
 }
 
 /// The measured effect of eviction: sixteen 1024-texel textures, all resident, then the camera flies away.
