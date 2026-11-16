@@ -219,7 +219,7 @@ A plain Ubuntu box (e.g. the WSL recipe below) *does* need the distro packages, 
 
 ### Known gaps
 
-- **On arm64 the renderer tests run llvmpipe at 128-bit vectors**. The image sets `LP_NATIVE_VECTOR_WIDTH=256` on every arch for Mesa's BVH sort (hub CON44), and at that width LLVM's AArch64 JIT killed a renderer test binary in about one arm64 run in five: `LLVM ERROR: Do not know how to split this operator's operand!` (SIGABRT; runs 37367760093, 37382902869, 37005853556) and a SIGSEGV in `forward_ambient` (run 37428962397). Nothing here uses ray tracing or subgroups, so `scripts/linux/ci-container-steps.sh` exports 128, arm64's native width, for every step on an aarch64 host.
+- **On arm64 the renderer tests run llvmpipe at 128-bit vectors**. The image sets `LP_NATIVE_VECTOR_WIDTH=256` on every arch for Mesa's BVH sort (hub CON44), and at that width LLVM's AArch64 JIT killed a renderer test binary in about one arm64 run in five: `LLVM ERROR: Do not know how to split this operator's operand!` (SIGABRT; runs 37367760093, 37382902869, 37005853556) and a SIGSEGV in `forward_ambient` (run 37428962397). Nothing here uses ray tracing or subgroups, so `scripts/linux/ci-container-steps.sh` exports 128, arm64's native width, for every step on an aarch64 host. Since 2026-11-16 the GPU tests refuse llvmpipe wider than 128 bits on aarch64, after a local loop reproduced the heap corruption at 256 and none at 128 ([testing.md § The GPU tests must render](docs/testing.md#the-gpu-tests-must-render)).
 - **The Linux lanes render the golden tests on a software Vulkan device.** The
   image supplies lavapipe on amd64 and arm64. `KATAGLYPHIS_REQUIRE_GPU=1` fails rather
   than silently passing a test that found no adapter; Windows uses WARP. The formerly

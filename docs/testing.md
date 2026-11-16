@@ -174,6 +174,34 @@ timestamp queries. Every CI adapter reports `bc=true timestamps=true`, so under 
 without them. Since when each lane sets it, and the one test it cannot hold:
 [AGENTS.md § Known gaps](../AGENTS.md#known-gaps).
 
+**On arm64 llvmpipe runs at 128-bit vectors, or the tests refuse it.** The image sets
+`LP_NATIVE_VECTOR_WIDTH=256`, twice NEON's width, and at 256 bits LLVM 21's AArch64 backend
+corrupts the heap while it compiles llvmpipe's shaders. Measured 2026-11-16 on the 8-core arm64
+dev host in the image (Mesa 26.0.8, LLVM 21.1.8), every GPU test binary once per pass at
+`--test-threads 4`:
+
+| Width | Binary runs | Crashed |
+| --- | --- | --- |
+| 128 | 405 | 0 |
+| 256 | 270 | 6 |
+
+At 256 a run dies with a SIGSEGV in `llvm::SelectionDAG::createOperands` under MCJIT on an
+llvmpipe thread, or with glibc's `double free or corruption` or `free(): invalid size` when a
+test thread exits and frees its arena. Serially, 25 runs each of `deferred` and `occlusion` at
+256 passed, so it takes concurrent shader compiles at 256 bits, which points at a race in LLVM's
+AArch64 backend; the same concurrency at 128 never crashed. `GpuContext::headless_or_skip` therefore
+refuses llvmpipe wider than 128 bits on aarch64 (`check_test_adapter`), so the GPU tests fail at
+once naming `LP_NATIVE_VECTOR_WIDTH=128`, or skip without `KATAGLYPHIS_REQUIRE_GPU`, instead of
+crashing one run in a few; the app does not refuse it. `scripts/linux/ci-container-steps.sh`
+exports 128 on an aarch64 host, so only a bare `cargo test` in the image needs it by hand:
+
+```bash
+LP_NATIVE_VECTOR_WIDTH=128 KATAGLYPHIS_REQUIRE_GPU=1 cargo test -p kataglyphis_webgpu_renderer
+```
+
+No amd64 crash has been reproduced. A binary that dies in CI is named by the JUnit record
+(above), and its `ADAPTER:` line gives the vector width.
+
 **They render under the browser's limits.** `GpuContext` requests `wgpu::Limits::default()`,
 WebGPU's defaults, on native too: a browser grants no more whatever the adapter offers, so a
 layout the web demo would reject (a fifth bind group, say) fails these tests. The two buffer

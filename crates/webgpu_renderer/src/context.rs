@@ -90,10 +90,11 @@ impl GpuContext {
 
     /// Creates a surfaceless context for render-to-texture (tests, CI).
     pub fn new_headless() -> anyhow::Result<Self> {
-        pollster::block_on(Self::new_headless_async())
+        pollster::block_on(Self::new_headless_async(false))
     }
 
-    async fn new_headless_async() -> anyhow::Result<Self> {
+    /// `for_tests` also refuses an adapter the tests cannot trust ([`check_test_adapter`]) before it makes a device.
+    async fn new_headless_async(for_tests: bool) -> anyhow::Result<Self> {
         let adapter = new_instance()
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -106,6 +107,9 @@ impl GpuContext {
             .context("No GPU adapter found (headless)")?;
         let adapter_info = adapter.get_info();
         check_adapter(&adapter_info)?;
+        if for_tests {
+            check_test_adapter(&adapter_info, std::env::consts::ARCH)?;
+        }
 
         let srgb_twin_views = adapter
             .get_downlevel_capabilities()
@@ -133,7 +137,7 @@ impl GpuContext {
     #[doc(hidden)]
     pub fn headless_or_skip() -> Option<Self> {
         static REPORTED: std::sync::Once = std::sync::Once::new();
-        match Self::new_headless() {
+        match pollster::block_on(Self::new_headless_async(true)) {
             Ok(gpu) => {
                 REPORTED.call_once(|| gpu.report_adapter());
                 Some(gpu)
@@ -300,6 +304,25 @@ pub fn check_adapter(info: &wgpu::AdapterInfo) -> anyhow::Result<()> {
     )
 }
 
+/// Refuses llvmpipe wider than 128 bits on aarch64, where LLVM's AArch64 backend corrupts the heap (docs/testing.md).
+#[doc(hidden)]
+pub fn check_test_adapter(info: &wgpu::AdapterInfo, arch: &str) -> anyhow::Result<()> {
+    let bits = info
+        .name
+        .strip_prefix("llvmpipe (")
+        .and_then(|rest| rest.split_once(" bits)"))
+        .and_then(|(head, _)| head.rsplit(' ').next())
+        .and_then(|bits| bits.parse::<u32>().ok());
+    match bits {
+        Some(bits) if arch == "aarch64" && bits > 128 => anyhow::bail!(
+            "'{}' runs {bits}-bit vectors on aarch64, where LLVM's AArch64 backend corrupts the heap \
+             and crashes the test binary now and then; set LP_NATIVE_VECTOR_WIDTH=128",
+            info.name
+        ),
+        _ => Ok(()),
+    }
+}
+
 /// The largest surface within `max_side` that keeps the window's aspect; `None` for a zero side.
 pub fn surface_extent(width: u32, height: u32, max_side: u32) -> Option<(u32, u32)> {
     if width == 0 || height == 0 {
@@ -417,6 +440,28 @@ async fn request_device(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn llvmpipe(bits: u32) -> wgpu::AdapterInfo {
+        let mut info = wgpu::AdapterInfo::new(wgpu::DeviceType::Cpu, wgpu::Backend::Vulkan);
+        info.name = format!("llvmpipe (LLVM 21.1.8, {bits} bits)");
+        info
+    }
+
+    #[test]
+    fn llvmpipe_wider_than_neon_is_refused_on_aarch64_only() {
+        let err =
+            check_test_adapter(&llvmpipe(256), "aarch64").expect_err("256 bits crash on aarch64");
+        assert!(
+            err.to_string().contains("LP_NATIVE_VECTOR_WIDTH=128"),
+            "{err}"
+        );
+        check_test_adapter(&llvmpipe(128), "aarch64").expect("128 bits are NEON's own width");
+        check_test_adapter(&llvmpipe(256), "x86_64").expect("256 bits are AVX2's own width");
+        check_test_adapter(&llvmpipe(512), "x86_64").expect("only aarch64 is refused");
+        let mut gpu = wgpu::AdapterInfo::new(wgpu::DeviceType::DiscreteGpu, wgpu::Backend::Vulkan);
+        gpu.name = "AMD Radeon RX 9070 XT (RADV GFX1201)".to_owned();
+        check_test_adapter(&gpu, "aarch64").expect("a hardware adapter has no vector width");
+    }
 
     #[test]
     fn a_gl_adapter_is_refused_with_its_reason_and_the_primary_backends_pass() {

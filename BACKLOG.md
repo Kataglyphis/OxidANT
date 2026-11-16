@@ -46,17 +46,6 @@ its open work is here.
 
 ## P1 — high value
 
-- [ ] **Diagnose the intermittent headless GPU-test SIGSEGV** (M). A full default-parallel
-      workspace run at `38b1c597` crashed in the `occlusion` test binary after 7/11 cases
-      (SIGSEGV 11, exit 101). The same ELF then passed default and serial runs and five
-      further default repeats; source CI on `920ca1b7` passed. The crash remains unexplained.
-      Next: capture the GPU backend/driver and all-thread stack or core, distinguish test
-      resource lifetime from a driver fault, then add a regression for the proven cause.
-      Do not serialize all tests or call it fixed solely because CI is green.
-      Attempts: 2026-11-03, 100 runs of the `occlusion` binary without a crash (5 at a time, llvmpipe, 15 min bound).
-      Since 2026-11-14 the Linux test step's JUnit record (`scripts/linux/cargo-test-junit.py`) names a binary
-      that ended early, so the next crash in CI says which one.
-
 - [ ] **Detection quality has no regression set** (M, ★★★). Audit 2026-11-12
       (not double-checked): `crates/inference/tests/fixtures` holds one photo, checked loosely
       (two cats, one at 0.8 or more). The rules in `crates/observant/src/presence.rs` and
@@ -127,6 +116,12 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
 - [ ] `function-size.allow:5` budget 156 (allow_budget_total)
 
 ## P3 — ideas, chores and blocked work
+
+- [ ] **An amd64 crash of the GPU tests is unreproduced** (S). On 2026-10-19 the headless tests segfaulted now and
+      then in parallel on the Ryzen 9950X dev host. The arm64 crash has its cause, llvmpipe at 256-bit vectors, which
+      the tests now refuse ([testing.md](docs/testing.md#the-gpu-tests-must-render)); amd64 has none. When one dies,
+      the JUnit record names the binary and its `ADAPTER:` line the width: loop that binary at `--test-threads 4`
+      under `gdb -batch -ex run -ex "thread apply all bt"` and record the stack here.
 
 - [ ] **Decide whether the path tracer's bounce misses match the C++ sky** (S). On purpose, a bounce that misses
       gets the renderer's sky gradient times the ambient strength and the environment intensity, where the C++

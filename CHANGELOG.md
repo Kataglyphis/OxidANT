@@ -13,6 +13,23 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-16, the headless GPU tests' intermittent crash has a cause on arm64)
+- **llvmpipe at 256-bit vectors corrupts the heap on aarch64.** Looping every renderer GPU test binary at
+  `--test-threads 4` in the image on the arm64 dev host (Mesa 26.0.8, LLVM 21.1.8): at the image's
+  `LP_NATIVE_VECTOR_WIDTH=256`, 6 of 270 binary runs crashed (`occlusion` 4 of 10), plus 4 in about 50 under gdb;
+  at 128, none of 405, nor `occlusion` 100 times at 14 threads. The `occlusion` crash of 2026-10-22, after 7 of 11
+  cases, has this shape; its width was not recorded. The stacks: a SIGSEGV in
+  `llvm::SelectionDAG::createOperands` under MCJIT on an llvmpipe thread, and glibc's `double free or corruption` and
+  `free(): invalid size` when a test thread frees its arena on exit. Serially, 25 runs each of `deferred` and
+  `occlusion` at 256 passed: it takes concurrent compiles at 256 bits, which points at a race in LLVM's AArch64 backend.
+- **The tests refuse that adapter.** `GpuContext::headless_or_skip` checks the adapter before it makes a device and
+  refuses llvmpipe wider than 128 bits on aarch64 (`check_test_adapter`), naming `LP_NATIVE_VECTOR_WIDTH=128`: under
+  `KATAGLYPHIS_REQUIRE_GPU` every GPU test fails at once instead of a binary crashing one run in a few. CI already
+  exported 128 on arm64; a bare `cargo test` in the image did not. The app keeps the adapter.
+  Afterwards, 405 more binary runs at 128 passed, and at 256 all 270 failed at once with that message, none by a signal.
+- Tests: `llvmpipe_wider_than_neon_is_refused_on_aarch64_only` (256 refused on aarch64; 128 there, 256 and 512 on
+  x86_64 and a hardware adapter pass). The amd64 crash of 2026-10-19 stays unreproduced (BACKLOG P3).
+
 ### Changed (2026-11-16, the traced scene uploads over frames and frees its CPU geometry)
 - **The first upload of a traced scene spreads over frames.** `TraceUpload` (`render/tracer/upload.rs`) makes every
   buffer and texture array at once, then writes at most `TraceBuildOptions::upload_bytes_per_frame` a frame
