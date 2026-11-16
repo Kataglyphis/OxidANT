@@ -62,35 +62,12 @@ its open work is here.
 
 ## P2 — medium
 
-- [ ] **The C++ clouds take the lit, adaptive estimator with the next pin bump** (S, ★★). The shared
-      `shaders/common/volumetric_clouds.slang` scatters the sky as ambient and steps a long path more often since
-      2026-11-16 (`CHANGELOG.md`); the Rust renderer passes its drawn sky's `CloudAmbient`. BeschleunigerBallett's
-      `clouds_main` still calls the seven-argument `march_clouds`, so its clouds take the procedural sky's ambient,
-      not its DOOM2016 cube map's or the navy's. Next, in BeschleunigerBallett with the pin bump: pass its own sky's
-      per-hemisphere mean through the eight-argument overload, re-check its eight cloud goldens
-      (`GoldenRender.*Cloud*`) on the host GPU and lavapipe, and update its `docs/source/clouds.md`
-      (`light_optical_depth`, the ambient, the step count, powder's length, and since 2026-11-16 the tiling noise
-      volume and the box centre at the volume's middle, which move every cloud's shape). Since 2026-11-16 Scale
-      alone sizes the box: its default `cloud_mesh_scale` becomes (630, 3.15, 630), `place_cloud_box` divides by 10
-      only, and the Density tooltip drops "and the box's extent". The wind it may take later: pack the wrapped
-      offset into `cloudLightMarch.yzw` (zero keeps its clouds still). Guard: a C++ golden
-      comparing a dense cloud's luminance with the sky behind it, as
-      `a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it` does here.
-
 - [ ] **Owner decision: clouds at half resolution by default?** (S, ★). Since 2026-11-16
       `CloudSettings::half_resolution` marches a quarter of the pixels and upsamples by depth, off by default. On
       lavapipe at 1280x720 it cut the cloud pass by 63 to 80 % at a mean of 0.002 to 1.18 levels, at most 0.4 to 2.9 %
       of pixels more than 8 levels off and stair steps on thin streaks (`CHANGELOG.md`). Turning it on moves every cloud
       image here; the C++ engine would need its own half-size `clouds_main` dispatch and an upsample, which can import
       `cloud_upsample_depth_weight`.
-
-- [ ] **The C++ path tracer imports the shared estimator with the next pin bump** (S, ★★). Since 2026-11-16
-      `shaders/common/path_estimator.slang` holds both path tracers' RNG, seed, roulette, basis, GGX sampling, pdf,
-      lobe probability and `sample_bounce` (`CHANGELOG.md`). BeschleunigerBallett's `path_tracing.slang` still keeps
-      its own copies, identical but for the bounce weight: `brdf_direct`'s analytic Smith remap, where the shared
-      bounce takes `brdf_sampled`. Next, in BeschleunigerBallett with the pin bump: delete the copies, `import
-      path_estimator` and call `sample_bounce`, `russian_roulette_survives` and `path_rng_seed`, then re-check its
-      path-traced goldens (`GoldenRender.PathTracing*`, the furnace's energy bounds) on the host GPU and lavapipe.
 
 - [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
       nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
