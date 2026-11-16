@@ -300,7 +300,8 @@ refuses keeps the old pipelines, an accepted one replaces them and restarts the 
 
 **On purpose unlike the C++ engine:** a path-traced bounce that misses gets the renderer's sky
 gradient, or the loaded environment, times the ambient strength and the environment's intensity
-(C++: an RTIOW gradient at half intensity, whose raster has no ambient term to match); the path
+(C++: an RTIOW gradient at half intensity, whose raster has no ambient term to match; owner
+decision 2026-11-16: the C++ path tracer follows this one, tracked in BeschleunigerBallett); the path
 tracer lights with the scene's punctual lights (C++: neither of its traced modes has any, so the
 ray-traced mode keeps none here); and a path-traced camera miss sees
 that procedural sky with its sun disk, not the cube map; offsets and side tests take the

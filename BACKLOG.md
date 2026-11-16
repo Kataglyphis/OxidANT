@@ -137,13 +137,6 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       the JUnit record names the binary and its `ADAPTER:` line the width: loop that binary at `--test-threads 4`
       under `gdb -batch -ex run -ex "thread apply all bt"` and record the stack here.
 
-- [ ] **Decide whether the path tracer's bounce misses match the C++ sky** (S). On purpose, a bounce that misses
-      gets the renderer's sky gradient times the ambient strength and the environment intensity, where the C++
-      path tracer uses a fixed gradient at half intensity (roadmap, ray- and path-traced row). Since 2026-11-16 a
-      loaded environment replaces that gradient on a bounce miss (`bounce_sky` in `shaders/tracer/trace_shading.slang`),
-      as the raster's IBL ambient does, which moves this further from C++. Owner decision;
-      if it should match, the C++ side changes, since its raster has no ambient term to follow.
-
 - [ ] **Debug builds trace slowly** (S). The dev profile builds the renderer at opt-level 0 (`Cargo.toml` raises
       only dependencies), so building the full Colosseum's BVH in a debug viewer takes about half a minute.
       Owner decision: `[profile.dev.package.kataglyphis_webgpu_renderer] opt-level = 1`.

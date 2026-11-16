@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-16, owner decision: the C++ path tracer's bounce misses follow this one)
+- **A path-traced bounce that misses keeps this renderer's sky**: the gradient, or the loaded environment, times the
+  ambient strength and the environment's intensity. The owner decided that the C++ path tracer changes to match, not
+  this one; BeschleunigerBallett tracks that work, so the `BACKLOG.md` item is gone. `tracer.md` and the roadmap's
+  traced row say so.
+
 ### Security (2026-11-16, Zstandard KTX2 levels without ruzstd 0.7, RUSTSEC-2026-0344)
 - **`ruzstd` 0.7.3 is out of the lock**: its decoder never bounded a block's decompressed size, so a file under
   128 KiB could allocate gigabytes (RUSTSEC-2026-0344, fixed in 0.9.1). It came only from `basisu` 0.1.0's default
