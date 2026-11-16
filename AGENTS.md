@@ -367,6 +367,7 @@ code only those lanes build asks for its lane. Lane by lane: [`docs/ci.md`](docs
 | `linux-riscv64.yml` | Cross-built on amd64, tested under QEMU; the GPU suites weekly |
 | `windows-x64.yml`, `windows-arm64-cross.yml` | Thin callers of the hub's `container-ci-windows.yml` |
 | `on-request.yml` | Reads the commit message's `[ci ...]` tokens and starts those lanes |
+| `web-browser.yml` | On request (`[ci web]`, `[ci browser]`): the wasm demo's every render mode drawn in headless Chrome ([testing.md](docs/testing.md#the-web-demo-in-a-browser)) |
 | `release.yml` | Every push to `main`: all five lanes, then `v<version>` |
 | `retry-disk-refusal.yml` | Re-runs one job the hub's `prepare-linux-ci-host` refused for runner disk; never `On request`, `release.yml` or a GPU candidate lane |
 | `docs.yml` | The rustdoc site and the `docs/` guides |

@@ -13,6 +13,22 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, the web demo's every render mode drawn in headless Chrome)
+- **A browser has drawn a traced frame, the deferred path and the clouds.** `scripts/linux/webgpu-demo-browser.js`
+  opens the release wasm demo in the image's Chrome for Testing 157 on SwiftShader's WebGPU (the hub's
+  `webgpu-canvas-readback.js` read-back and `check-docs-sidebars.js` launcher), turns the camera to 5°, and steps through
+  forward, deferred, deferred with clouds, ray traced and path traced through two new wasm exports, `set_demo_view` and
+  `set_demo_camera`, plus `demo_view()`, which reports the drawn mode (`drawn_mode`), the path, the clouds, the tracer
+  and the samples (`app/web.rs`, `wasm_demo.rs`). Each frame is read back and must hold 256 colours with none over
+  90 % in the scene viewport; clouds must change 1 % of it against deferred and a traced frame 1 % against forward;
+  any console error or warning, browser log warning or uncaught exception fails the run. Measured: 3678 colours and
+  32.9 % changed with clouds, 2.6 % ray traced, 3.2 % path traced at 72 samples, no WebGPU message; the five frames
+  look as `editor_snapshot` draws them on lavapipe, so Tint and SwiftShader found no bug to fix. `ci-container-steps.sh
+  web-browser` builds and runs it; `web-browser.yml` runs that on request (`[ci web]`, `[ci browser]`) or by hand and
+  uploads the frames; `test-webgpu-demo-browser.sh` checks its verdicts and console filter
+  ([testing.md](docs/testing.md#the-web-demo-in-a-browser)). Closes the P1 item "No browser has drawn a traced frame,
+  the deferred path or the clouds".
+
 ### Fixed (2026-11-16, an OBJ opened in memory keeps its masks and its TGA and BMP textures)
 - **An OBJ opened in memory drew its `map_d` cut-outs as solid cards and dropped every texture that was not PNG or
   JPEG** (Sponza's vase plant and chain). `parse_mtl` reads `map_d` into `ObjMaterial::alpha_texture`; `obj_to_glb`

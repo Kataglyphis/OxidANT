@@ -201,14 +201,14 @@ fn auto_orbit_yaw(home_yaw_deg: f32, elapsed_s: f64) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::app) mod tests {
     use super::*;
     use crate::app::HostCaps;
     use crate::scene::camera::OrbitCamera;
     use crate::scene::viewport::SceneViewport;
     use crate::{load_gltf, GpuContext};
 
-    fn studio() -> Option<StudioApp> {
+    pub(in crate::app) fn studio() -> Option<StudioApp> {
         studio_of("cube_on_plane.gltf")
     }
 

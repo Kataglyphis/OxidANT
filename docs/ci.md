@@ -39,7 +39,9 @@ into `main` and the release:
 Here `on-request.yml` offers four lanes: `[ci windows]` runs both Windows lanes, `[ci arm64]`
 both arm64 ones, `[ci linux]` arm64 and riscv64, `[ci riscv64]` and `[ci x64]` one each, and
 `[ci all]` all four. A change to Windows-, arm64- or riscv64-only code asks for its lane in
-its commit message. `[build-arm]` and `[build-win]` are dead tokens.
+its commit message. `[ci web]` or `[ci browser]` starts `web-browser.yml`, the wasm demo drawn in
+headless Chrome ([testing.md](testing.md#the-web-demo-in-a-browser)). `[build-arm]` and `[build-win]`
+are dead tokens.
 
 **Every push to `main` is a release** (`release.yml`): all five lanes once more, then
 `v<version>` with the Linux packages for both arches (each flatpak named for its arch), the

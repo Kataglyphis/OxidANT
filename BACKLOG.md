@@ -57,13 +57,6 @@ its open work is here.
       Since 2026-11-14 the Linux test step's JUnit record (`scripts/linux/cargo-test-junit.py`) names a binary
       that ended early, so the next crash in CI says which one.
 
-- [ ] **No browser has drawn a traced frame, the deferred path or the clouds** (M, ★★★). Tint (headless
-      Chrome on SwiftShader) compiles every traced kernel and the resolve (`crates/webgpu_renderer/docs/tracer.md`
-      § Tests); the deferred and cloud WGSL have had only naga and the wasm32 check. Next: a headless Chrome run
-      of the web demo that draws Forward, Deferred, clouds on, Ray traced and Path traced over `cube_on_plane`
-      and reads each frame back: not the clear colour, no WebGPU error on the console. Guard: that run as a
-      job on request, or its receipt in `docs/testing.md`.
-
 - [ ] **Detection quality has no regression set** (M, ★★★). Audit 2026-11-12
       (not double-checked): `crates/inference/tests/fixtures` holds one photo, checked loosely
       (two cats, one at 0.8 or more). The rules in `crates/observant/src/presence.rs` and

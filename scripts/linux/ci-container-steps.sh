@@ -29,6 +29,7 @@ usage: ci-container-steps.sh <step>
   rustdoc-log cargo_build_doc.sh        - docs, logged to logs/code-quality/rustdoc.txt for quality-report
   ort-chain-only  check-ort-chain-only.sh - no downloaded ONNX Runtime (GATING)
   riscv64-test    the workspace tests, cross-built for riscv64 and run under QEMU
+  web-browser     webgpu-demo-browser.sh    - the web demo's every mode drawn in headless Chrome
 
 Run inside the family Linux CI image, from the repository root.
 USAGE
@@ -137,6 +138,8 @@ case "$step" in
         # ORT's RVV MatMulNBits gets null scales from a 4-bit model; scalar MLAS for this one test: docs/ci.md § The riscv64 lane
         ORT_MLAS_RISCV_FORCE_SCALAR=1 KATAGLYPHIS_REQUIRE_GENAI=1 exec cargo test -p kataglyphis_text --locked --target riscv64gc-unknown-linux-gnu --test contract
         ;;
+
+    web-browser) exec bash "${SCRIPT_DIR}/webgpu-demo-browser.sh" "$@" ;;
 
     -h|--help|help) usage; exit 0 ;;
     *)

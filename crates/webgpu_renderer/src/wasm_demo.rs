@@ -27,9 +27,14 @@ enum PageRequest {
 /// The slot the drop zone and the page's scene picker fill.
 type DroppedScene = Rc<RefCell<Option<PageRequest>>>;
 
+/// The app once the device resolves, shared with the render loop.
+type AppSlot = Rc<RefCell<Option<StudioApp>>>;
+
 thread_local! {
     /// The drag-drop slot, shared so [`select_demo_scene`] reuses the dropped-file path.
     static SCENE_SLOT: RefCell<Option<DroppedScene>> = const { RefCell::new(None) };
+    /// The app, for [`set_demo_view`] and [`demo_view`]; a page call runs between frames, never inside one.
+    static APP_SLOT: RefCell<Option<AppSlot>> = const { RefCell::new(None) };
 }
 
 /// Drag-and-drop via the DOM File API, since winit's web backend never sends `DroppedFile`.
@@ -144,7 +149,7 @@ fn scene_base() -> String {
 }
 
 /// WebGPU init is async-only in browsers: the app lands in `slot` once the device resolves.
-fn spawn_app_init(slot: Rc<RefCell<Option<StudioApp>>>, window: Arc<Window>, size: (u32, u32)) {
+fn spawn_app_init(slot: AppSlot, window: Arc<Window>, size: (u32, u32)) {
     wasm_bindgen_futures::spawn_local(async move {
         let mut gpu = match GpuContext::new_windowed_async(Arc::clone(&window)).await {
             Ok(gpu) => gpu,
@@ -194,7 +199,7 @@ fn follow_canvas_size(window: &Window, gpu: &mut GpuContext) {
 struct DemoApp {
     window: Option<Arc<Window>>,
     /// Filled asynchronously once the WebGPU adapter/device resolve.
-    app: Rc<RefCell<Option<StudioApp>>>,
+    app: AppSlot,
     /// Filled asynchronously by the drop-zone listeners.
     dropped_scene: DroppedScene,
     /// egui had focus last frame, so the browser-key listener lets winit hand it Tab and friends.
@@ -214,6 +219,7 @@ impl ApplicationHandler for DemoApp {
         SCENE_SLOT.with(|slot| {
             slot.borrow_mut().replace(Rc::clone(&self.dropped_scene));
         });
+        APP_SLOT.with(|slot| slot.borrow_mut().replace(Rc::clone(&self.app)));
         let canvas = window.canvas().expect("winit window must expose a canvas");
         let size = canvas_device_size(&canvas);
         spawn_app_init(Rc::clone(&self.app), Arc::clone(&window), size);
@@ -262,6 +268,38 @@ pub fn select_demo_scene(index: u32) {
         }
         None => log::warn!("select_demo_scene: called before the demo initialized - ignored"),
     });
+}
+
+/// Runs `f` on the app once it is up; a page call between frames finds it free.
+fn with_app<T>(f: impl FnOnce(&mut StudioApp) -> T) -> Result<T, JsValue> {
+    APP_SLOT.with(|slot| {
+        let slot = slot.borrow();
+        let app = slot.as_ref().ok_or("the demo has no window yet")?;
+        let mut app = app.try_borrow_mut().map_err(|_| "the demo is mid-frame")?;
+        let app = app
+            .as_mut()
+            .ok_or("the WebGPU device has not resolved yet")?;
+        Ok(f(app))
+    })
+}
+
+/// The browser test's switch: `mode` raster, ray or path, `path` forward or deferred, clouds on or off; the spin stops.
+#[wasm_bindgen]
+pub fn set_demo_view(mode: &str, path: &str, clouds: bool) -> Result<(), JsValue> {
+    let view = web::DemoView::parse(mode, path, clouds).map_err(|e| JsValue::from_str(&e))?;
+    with_app(|app| app.apply_demo_view(view))
+}
+
+/// The browser test's camera: the orbit's yaw and pitch in degrees; the spin stops.
+#[wasm_bindgen]
+pub fn set_demo_camera(yaw_deg: f32, pitch_deg: f32) -> Result<(), JsValue> {
+    with_app(|app| app.apply_demo_camera(yaw_deg, pitch_deg))
+}
+
+/// What the demo draws now: `{drawn, picked, path, clouds, trace, detail, samples, viewport}`.
+#[wasm_bindgen]
+pub fn demo_view() -> Result<JsValue, JsValue> {
+    with_app(|app| web::report_to_js(&app.demo_report()))
 }
 
 #[wasm_bindgen(start)]

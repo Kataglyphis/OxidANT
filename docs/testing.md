@@ -180,6 +180,35 @@ its buffers against the defaults ([tracer.md](../crates/webgpu_renderer/docs/tra
 `tests/shader_export.rs` checks the WGSL without a GPU: no `@group` past 3, and no struct
 that repeats a `@location`, which naga accepts and Tint, the browsers' WGSL compiler, rejects.
 
+## The web demo in a browser
+
+`bash scripts/linux/ci-container-steps.sh web-browser [--frames DIR]` in the family image builds
+the wasm demo (release, `wasm-bindgen` pinned to `Cargo.lock`) and runs
+`scripts/linux/webgpu-demo-browser.js` against it: the image's headless Chrome on SwiftShader's
+WebGPU (the hub's `webgpu-canvas-readback.js` flags and read-back, `check-docs-sidebars.js`'s launcher).
+It turns the camera to 5° so half the scene is sky, then sets five views through the demo's
+`set_demo_view(mode, path, clouds)` and `set_demo_camera(yaw, pitch)` exports (`src/wasm_demo.rs`,
+a test hook the page never calls): forward, deferred, deferred with clouds, ray traced and path
+traced (2 samples at least). Each step waits until `demo_view()` reports that mode drawn, reads the
+second frame back, and fails when:
+
+- the frame drew another mode than asked (`drawn_mode`, the chip's), or the tracer failed;
+- the scene viewport, 2 % in from its edges, has fewer than 256 colours or one colour over 90 %;
+- clouds change under 1 % of pixels against deferred, or a traced frame under 1 % against forward;
+- the page logged any console error or warning, a browser log error or warning (WebGPU's
+  validation messages arrive there) or an uncaught exception; Chrome's favicon 404 alone is let pass.
+
+`--frames DIR` keeps each read-back as a PNG. `web-browser.yml` runs it on request (`[ci web]`,
+`[ci browser]`) and by hand, and uploads the frames. `scripts/linux/tests/test-webgpu-demo-browser.sh`
+checks the verdicts and the console filter without a browser.
+
+Receipt, 2026-11-16 (Chrome for Testing 157.0.8103.38 in `:latest`, arm64 host, canvas 960x528):
+forward 1095 colours, deferred 1099, clouds 3678 and 32.9 % changed, ray traced 2.6 % and path
+traced 3.2 % changed against forward at 72 samples; no console or WebGPU message. The path-tracing
+kernel's first frame took most of its 132 s step, the others 4-9 s. The same views from
+`editor_snapshot` on lavapipe look alike, the clouds' grain included (the C++ estimator's, see
+[BACKLOG.md](../BACKLOG.md)).
+
 ## Where the suites live
 
 - Unit tests inside the workspace crates (`kataglyphis_telemetry`, `kataglyphis_inference`,

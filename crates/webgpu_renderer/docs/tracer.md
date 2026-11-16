@@ -271,6 +271,6 @@ the clouds stop at a wall in front (0 wall pixels change in either mode while 10
 sky on a ray-traced miss, the model transform and `set_instances` moving the traced cube as raster
 moves it, the passes each mode times, and raster frames bit-identical after a trip through both
 modes. The modes' pure parts are unit-tested in place; the Slang
-uniforms and workgroup size are pinned in `tests/tracer.rs`. Tint (headless Chrome 157 on
-SwiftShader) compiles every traced kernel and the resolve; no browser has rendered a traced
-frame yet.
+uniforms and workgroup size are pinned in `tests/tracer.rs`. Headless Chrome 157 on SwiftShader
+draws both traced modes, the deferred path and the clouds in the web demo and reads each frame back
+(`scripts/linux/webgpu-demo-browser.js`, [testing.md](../../../docs/testing.md#the-web-demo-in-a-browser)).

@@ -29,7 +29,7 @@ jobs:
         id: pick
         uses: Kataglyphis/ANTfrastructure/.github/actions/requested-lanes@develop
         with:
-          lanes: linux-arm64 linux-riscv64 windows-x64 windows-arm64-cross gpu-lin gpu-win
+          lanes: linux-arm64 linux-riscv64 windows-x64 windows-arm64-cross gpu-lin gpu-win web-browser
           request: ${{ inputs.lanes }}
 
   # Each calling job grants what its lane's jobs ask for; less makes GitHub reject the whole run.
@@ -97,4 +97,14 @@ jobs:
       packages: read
       actions: write
     uses: ./.github/workflows/windows-gpu-candidates.yml
+    secrets: inherit
+
+  # [ci web] or [ci browser]: the wasm demo drawn in headless Chrome.
+  web-browser:
+    needs: request
+    if: contains(needs.request.outputs.lanes, ' web-browser ')
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/web-browser.yml
     secrets: inherit
