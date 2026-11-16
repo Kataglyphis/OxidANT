@@ -43,12 +43,6 @@ float geometry_smith_k(float n_dot_v, float n_dot_l, float k)
     return g1 * g2;
 }
 
-// Smith geometry function (Epic Games approximation with k = (r+1)^2/8).
-float geometry_smith(float n_dot_v, float n_dot_l, float roughness)
-{
-    return geometry_smith_k(n_dot_v, n_dot_l, smith_k_analytic(roughness));
-}
-
 // Schlick Fresnel. cos_theta: dot(H, V), f0: reflectance at normal incidence.
 float3 fresnel_schlick(float cos_theta, float3 f0)
 {

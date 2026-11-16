@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Removed (2026-11-16, shader leftovers)
+- **`traced.slang` drops its dead `import sky_model`**: unused since 18e178a, as `trace_shading.slang` imports
+  `sky_model` for `sky_with_sun` and `bounce_sky` itself. No WGSL changes.
+- **`brdf.slang` drops `geometry_smith`**: no shader called it after 7354e2d; `geometry_smith_k` with
+  `smith_k_analytic` is the same value. A consumer calling it (BeschleunigerBallett's `tests/brdf_test.slang`) passes
+  `smith_k_analytic(roughness)` to `geometry_smith_k` instead.
+
+### Added (2026-11-16, Slang import gate)
+- **`scripts/check-slang-imports.py` fails a dead Slang `import`** (a module none of whose top-level names the
+  importer mentions), run by `pre-push-checks.sh` and so by `lint-gates.yml`'s script suites; fixtures in
+  `scripts/linux/tests/test-slang-imports.sh`. `docs/testing.md` says what counts as a use.
+
 ### Added (2026-11-16, clouds at half resolution, off by default)
 - **`CloudSettings::half_resolution` marches a quarter of the pixels** (`render/forward/cloud_pass.rs`,
   `shaders/clouds/cloud_march.slang`): the march writes a target half as wide and high, each texel marching to the

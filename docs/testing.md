@@ -126,6 +126,12 @@ fails. Shrink a frozen function and lower its row; split it and drop the row and
 On a small host check one crate at a time:
 `cargo clippy -p kataglyphis_observant --all-targets -- -D warnings`.
 
+**A dead Slang `import` fails the lint lane.** `scripts/check-slang-imports.py`, run by
+`pre-push-checks.sh`, fails an `import` under `shaders/` when the importing file names nothing the module
+declares at top level (function, struct, interface, constant, global, `#define`); an `__exported import`
+counts for its importers. Slang compiles such an import silently, and `traced.slang` carried one from
+18e178a until 2026-11-16. Its fixture suite is `scripts/linux/tests/test-slang-imports.sh`.
+
 The `lint-gates.yml` script-test job also runs `test-burn-lock-graph.sh` with Python 3.11+
 `tomllib`: it checks the real `Cargo.lock` and seven synthetic Torch/ZIP/Zstd reintroductions.
 The gate is also run after local Renovate `--apply`. Cargo audit and deny remain the security
