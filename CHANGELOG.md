@@ -13,6 +13,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, the wind moves the clouds)
+- **The noise drifts through the cloud box with time** (`sample_density`, `shaders/common/volumetric_clouds.slang`):
+  `cloud_unpack` reads a wind offset from `cloudLightMarch.yzw`, which the C++ engine packs as zero, and the noise
+  lookup subtracts it; the box stays put. The host packs wind velocity times time, wrapped in f64 to the noise's
+  256-unit period (`CloudSettings::wind_offset`, `NOISE_PERIOD`), so a long run keeps f32 precision and an offset of
+  zero is today's image. `ForwardRenderer::cloud_time_seconds` is the clock: the app sets it from its own each frame,
+  everything else leaves it at 0, so every test and snapshot stays deterministic. The default wind is (4, 0, 1.5)
+  units per second (a fine noise tile every 15 s); the Sky tab's CLOUDS section has a Wind row. The march costs one
+  subtraction more.
+- Tests: `the_wind_moves_the_clouds_with_time_and_a_pinned_time_repeats` (`tests/clouds.rs`): time 0 draws the still
+  cloud bit for bit, a pinned time repeats its frame, 20 units of wind move the alpha of 1671 of the box's 1792 pixels
+  by more than 0.02 with no cloud outside the box, and 256 units later the frame is the same again;
+  `the_wind_wraps_at_a_period_both_noise_lookups_share` (`cloud_constants.rs`), the offset's unpack
+  (`cloud_math.rs`), its wrap after a day (`render::clouds`) and the app's clock (`app::frame`).
+
 ### Changed (2026-11-16, Scale alone sizes the cloud box)
 - **Density no longer resizes the cloud box** (`cloud_unpack`, `shaders/common/volumetric_clouds.slang`): the half
   extents are `cloudMeshScale.xyz * 10`, where they were that times Density (`cloudMeshScale.w`), so a thinner cloud

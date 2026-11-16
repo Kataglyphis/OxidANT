@@ -1,9 +1,10 @@
-//! The Sky tab's CLOUDS section: the C++ switch and its nine controls, with the C++ ranges, formats and tooltips.
+//! The Sky tab's CLOUDS section: the C++ switch and its nine controls, with the C++ ranges, formats and tooltips,
+//! and the Wind this renderer adds.
 
 use egui::Ui;
 
 use crate::render::clouds::{
-    CloudSettings, DENSITY_RANGE, LIGHT_STEPS, MARCH_STEPS, OFFSET_RANGE, SCALE_RANGE,
+    CloudSettings, DENSITY_RANGE, LIGHT_STEPS, MARCH_STEPS, OFFSET_RANGE, SCALE_RANGE, WIND_RANGE,
 };
 use crate::ui::widgets::{
     drag_axes, drag_axes_logarithmic, enabled_ui, property_row, section_header, toggle, FillSlider,
@@ -12,6 +13,8 @@ use crate::ui::widgets::{
 /// The C++ drag steps: Scale crosses its range in about 400 px on a log scale, Offset moves a unit per pixel.
 const SCALE_STEP: f64 = 2.5;
 const OFFSET_STEP: f64 = 1.0;
+/// A tenth of a unit per second per pixel, so a slow breeze is reachable.
+const WIND_STEP: f64 = 0.1;
 
 pub(super) fn show(ui: &mut Ui, clouds: &mut CloudSettings) {
     section_header(ui, "CLOUDS", Some(&mut clouds.enabled));
@@ -67,6 +70,14 @@ fn placement(ui: &mut Ui, clouds: &mut CloudSettings) {
         let mut offset = clouds.offset.to_array();
         let response = drag_axes(ui, &mut offset, OFFSET_STEP, OFFSET_RANGE, 1, "");
         clouds.offset = offset.into();
+        response
+    });
+    let tooltip =
+        "Units per second the noise drifts through the box, which stays put (cloud.wind_offset)";
+    property_row(ui, "Wind", Some(tooltip), |ui| {
+        let mut wind = clouds.wind.to_array();
+        let response = drag_axes(ui, &mut wind, WIND_STEP, WIND_RANGE, 1, "");
+        clouds.wind = wind.into();
         response
     });
 }

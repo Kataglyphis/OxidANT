@@ -80,6 +80,7 @@ struct Clouds_0
      pillowness_0 : f32,
      cirrus_effect_0 : f32,
      powder_effect_0 : bool,
+     wind_offset_0 : vec3<f32>,
 };
 
 fn cloud_unpack_0( scene_0 : ptr<function, CloudParams_std140_0>) -> Clouds_0
@@ -94,6 +95,7 @@ fn cloud_unpack_0( scene_0 : ptr<function, CloudParams_std140_0>) -> Clouds_0
     cloud_0.powder_effect_0 = ((*scene_0).cloudParameters_0.z) > 0.5f;
     cloud_0.radius_0 = (*scene_0).cloudMeshScale_0.xyz * vec3<f32>(10.0f);
     cloud_0.offset_0 = (*scene_0).cloudMeshOffset_0.xyz;
+    cloud_0.wind_offset_0 = (*scene_0).cloudLightMarch_0.yzw;
     return cloud_0;
 }
 
@@ -169,7 +171,7 @@ fn SampledNoise_sample_noise_0( uvw_0 : vec3<f32>) -> vec4<f32>
 
 fn sample_density_0( position_1 : vec3<f32>,  cloud_5 : Clouds_0) -> f32
 {
-    var local_0 : vec3<f32> = position_1 - cloud_5.offset_0;
+    var local_0 : vec3<f32> = position_1 - cloud_5.offset_0 - cloud_5.wind_offset_0;
     var _S10 : vec3<f32> = vec3<f32>(0.5f);
     var _S11 : vec4<f32> = SampledNoise_sample_noise_0(fract(local_0 / vec3<f32>(256.0f) + _S10));
     var _S12 : f32 = (1.0f - cloud_5.pillowness_0) * 0.125f;

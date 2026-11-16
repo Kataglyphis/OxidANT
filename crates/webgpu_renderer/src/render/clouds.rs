@@ -27,6 +27,10 @@ pub const SCALE_RANGE: RangeInclusive<f32> = 0.001..=1000.0;
 pub const OFFSET_RANGE: RangeInclusive<f32> = -200.0..=400.0;
 /// World units of box half extent per unit of Scale (`cloud_unpack`'s `* 10.0`).
 pub const BOX_EXTENT_PER_SCALE: f32 = 10.0;
+/// World units after which the march's noise repeats: `sample_density`'s coarse `/ 256.0`, which its fine `/ 64.0` divides.
+pub const NOISE_PERIOD: f64 = 256.0;
+/// The Wind drag, world units per second along each axis.
+pub const WIND_RANGE: RangeInclusive<f32> = -100.0..=100.0;
 
 /// The C++ editor's CLOUDS section: the switch and its nine controls.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -48,6 +52,8 @@ pub struct CloudSettings {
     pub scale: Vec3,
     /// The centre of the box.
     pub offset: Vec3,
+    /// World units per second the noise drifts through the box; the renderer's `cloud_time_seconds` drives it.
+    pub wind: Vec3,
 }
 
 impl Default for CloudSettings {
@@ -65,6 +71,8 @@ impl Default for CloudSettings {
             powder: true,
             scale: Vec3::new(630.0, 3.15, 630.0),
             offset: Vec3::new(-0.364, 367.0, -18.351),
+            // Not the C++ engine's, which has no wind: a fine noise tile (64 units) every 15 s.
+            wind: Vec3::new(4.0, 0.0, 1.5),
         }
     }
 }
@@ -79,18 +87,24 @@ pub struct CloudParams {
     pub mesh_offset: [f32; 4],
     /// Pillowness, Cirrus, Powder as 0 or 1, March steps.
     pub parameters: [f32; 4],
-    /// Light steps (x).
+    /// Light steps (x) and the wind's noise offset (yzw), zero where the C++ engine packs it.
     pub light_march: [f32; 4],
 }
 
 impl CloudSettings {
-    /// The settings as the shader reads them, clamped where the C++ `SceneUboMarshal` clamps.
+    /// The settings as the shader reads them at time zero, where the wind has not moved the noise.
     pub fn params(&self) -> CloudParams {
+        self.params_at(0.0)
+    }
+
+    /// The settings `time_s` seconds into the wind, clamped where the C++ `SceneUboMarshal` clamps.
+    pub fn params_at(&self, time_s: f64) -> CloudParams {
         let scale = self.scale.max(Vec3::splat(*SCALE_RANGE.start()));
         let density = self.density.max(*DENSITY_RANGE.start());
         let steps = |value: i32, range: &RangeInclusive<i32>| {
             value.clamp(*range.start(), *range.end()) as f32
         };
+        let wind = self.wind_offset(time_s);
         CloudParams {
             mesh_scale: scale.extend(density).to_array(),
             mesh_offset: self.offset.extend(self.coverage).to_array(),
@@ -100,8 +114,19 @@ impl CloudSettings {
                 if self.powder { 1.0 } else { 0.0 },
                 steps(self.march_steps, &MARCH_STEPS),
             ],
-            light_march: [steps(self.light_steps, &LIGHT_STEPS), 0.0, 0.0, 0.0],
+            light_march: [
+                steps(self.light_steps, &LIGHT_STEPS),
+                wind.x,
+                wind.y,
+                wind.z,
+            ],
         }
+    }
+
+    /// How far the wind has moved the noise after `time_s`, wrapped in f64 to its period so hours keep f32 precision.
+    pub fn wind_offset(&self, time_s: f64) -> Vec3 {
+        let wrap = |velocity: f32| (f64::from(velocity) * time_s).rem_euclid(NOISE_PERIOD) as f32;
+        Vec3::new(wrap(self.wind.x), wrap(self.wind.y), wrap(self.wind.z))
     }
 
     /// The box's world-space half extents, as `cloud_unpack` derives them; Density plays no part.
@@ -228,7 +253,11 @@ mod tests {
         assert_eq!(params.mesh_scale, [630.0, 3.15, 630.0, 0.63]);
         assert_eq!(params.mesh_offset, [-0.364, 367.0, -18.351, 0.493]);
         assert_eq!(params.parameters, [0.966, 0.034, 1.0, 8.0]);
-        assert_eq!(params.light_march, [3.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            params.light_march,
+            [3.0, 0.0, 0.0, 0.0],
+            "time zero packs no wind, as the C++ engine"
+        );
         let without_powder = CloudSettings {
             powder: false,
             ..CloudSettings::default()
@@ -271,6 +300,25 @@ mod tests {
             .half_extents()
             .abs_diff_eq(Vec3::new(3.0, 2.0, 0.5), 1e-5));
         assert_eq!(placed.params().mesh_scale[3], 0.25);
+    }
+
+    #[test]
+    fn the_wind_offset_is_velocity_times_time_wrapped_to_the_noise_period() {
+        let clouds = CloudSettings {
+            wind: Vec3::new(4.0, -2.0, 0.5),
+            ..CloudSettings::default()
+        };
+        assert_eq!(clouds.wind_offset(0.0), Vec3::ZERO);
+        assert_eq!(clouds.wind_offset(10.0), Vec3::new(40.0, 236.0, 5.0));
+        assert_eq!(clouds.params_at(10.0).light_march, [3.0, 40.0, 236.0, 5.0]);
+        // A day in: f32 seconds would step 8 ms, but the f64 wrap lands on the same offset as 3.25 s.
+        let day = 86_400.0;
+        assert_eq!(clouds.wind_offset(day + 3.25).x, clouds.wind_offset(3.25).x);
+        let still = CloudSettings {
+            wind: Vec3::ZERO,
+            ..clouds
+        };
+        assert_eq!(still.params_at(1.0e6), still.params());
     }
 
     #[test]

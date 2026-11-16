@@ -72,7 +72,8 @@ its open work is here.
       (`light_optical_depth`, the ambient, the step count, powder's length, and since 2026-11-16 the tiling noise
       volume and the box centre at the volume's middle, which move every cloud's shape). Since 2026-11-16 Scale
       alone sizes the box: its default `cloud_mesh_scale` becomes (630, 3.15, 630), `place_cloud_box` divides by 10
-      only, and the Density tooltip drops "and the box's extent". Guard: a C++ golden
+      only, and the Density tooltip drops "and the box's extent". The wind it may take later: pack the wrapped
+      offset into `cloudLightMarch.yzw` (zero keeps its clouds still). Guard: a C++ golden
       comparing a dense cloud's luminance with the sky behind it, as
       `a_daylit_cloud_is_not_much_darker_than_the_sky_behind_it` does here.
 

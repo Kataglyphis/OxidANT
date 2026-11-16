@@ -463,7 +463,7 @@ impl ForwardRenderer {
             eye: view.eye.extend(1.0).to_array(),
             to_sun: to_sun.extend(0.0).to_array(),
             sun_radiance: (colour.truncate() * colour.w).extend(0.0).to_array(),
-            params: self.clouds.params(),
+            params: self.clouds.params_at(self.cloud_time_seconds),
             depth_spread: [f32::from(u8::from(spread)), 0.0, 0.0, 0.0],
             ambient_top: ambient.top.extend(0.0).to_array(),
             ambient_bottom: ambient.bottom.extend(0.0).to_array(),

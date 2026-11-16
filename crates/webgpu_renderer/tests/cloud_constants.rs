@@ -2,7 +2,8 @@
 //! Pure CPU, so it runs where no adapter exists.
 
 use kataglyphis_webgpu_renderer::render::clouds::{
-    BOX_EXTENT_PER_SCALE, LIGHT_STEPS, MARCH_STEPS, NOISE_VOLUME_EXTENT, NOISE_WORKGROUP_SIZE,
+    BOX_EXTENT_PER_SCALE, LIGHT_STEPS, MARCH_STEPS, NOISE_PERIOD, NOISE_VOLUME_EXTENT,
+    NOISE_WORKGROUP_SIZE,
 };
 
 const SHARED: &str = include_str!("../../../shaders/common/volumetric_clouds.slang");
@@ -67,4 +68,31 @@ fn the_box_extent_factor_matches_the_shader() {
         .and_then(|last| last.trim().trim_end_matches(';').parse::<f32>().ok())
         .expect("cloud.radius ends in its factor");
     assert_eq!(factor, BOX_EXTENT_PER_SCALE);
+}
+
+/// The host wraps the wind's offset to `NOISE_PERIOD`, which is exact only while both noise lookups repeat within it.
+#[test]
+fn the_wind_wraps_at_a_period_both_noise_lookups_share() {
+    let divisors = ["uvwCoarse = frac(local / ", "uvwFine = frac(local / "].map(|needle| {
+        let at = SHARED
+            .find(needle)
+            .unwrap_or_else(|| panic!("sample_density no longer has `{needle}`"))
+            + needle.len();
+        SHARED[at..]
+            .split(|c: char| c != '.' && !c.is_ascii_digit())
+            .next()
+            .and_then(|n| n.parse::<f64>().ok())
+            .expect("each lookup divides by a literal")
+    });
+    assert_eq!(divisors[0], NOISE_PERIOD, "the coarse lookup's period");
+    assert_eq!(
+        NOISE_PERIOD % divisors[1],
+        0.0,
+        "the fine period {} must divide it",
+        divisors[1]
+    );
+    assert!(
+        SHARED.contains("position - cloud.offset - cloud.wind_offset"),
+        "the wind must shift the noise lookup, not the box"
+    );
 }

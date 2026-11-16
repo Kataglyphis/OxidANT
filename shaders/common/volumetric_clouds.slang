@@ -36,6 +36,8 @@ struct Clouds
     float pillowness;
     float cirrus_effect;
     bool powder_effect;
+    // Wind velocity times time, wrapped by the host to the noise's period; it moves the noise, never the box.
+    float3 wind_offset;
 };
 
 // Mean sky radiance over the upper and the lower hemisphere: the light a cloud scatters from everywhere but the sun.
@@ -73,6 +75,7 @@ Clouds cloud_unpack(CloudParams scene)
     // Scale alone sizes the box, so Density thins the cloud without moving its edges; the hosts keep Scale above zero.
     cloud.radius = scene.cloudMeshScale.xyz * 10.0;
     cloud.offset = scene.cloudMeshOffset.xyz;
+    cloud.wind_offset = scene.cloudLightMarch.yzw;
     return cloud;
 }
 
@@ -171,7 +174,7 @@ float4 noise_volume_texel(uint3 texel)
 float sample_density(ICloudNoise noise, float3 position, Clouds cloud)
 {
     // Box-local, so Offset carries the box's clouds; its centre reads the volume's middle, which tiling left as it was.
-    float3 local = position - cloud.offset;
+    float3 local = position - cloud.offset - cloud.wind_offset;
     float3 uvwCoarse = frac(local / 256.0 + 0.5);
     float4 noiseCoarse = noise.sample_noise(uvwCoarse);
 

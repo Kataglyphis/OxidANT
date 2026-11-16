@@ -30,7 +30,9 @@ Slang specializes per caller, so each renderer binds the noise volume its own
 way: `clouds/cloud_march.slang` a texture and a sampler, the C++ `clouds_main` a
 combined `Sampler3D`. `march_clouds` takes the sky's ambient as a `CloudAmbient`,
 which the Rust host fills from the sky it draws; the seven-argument overload the
-C++ engine calls lights by the procedural sky's closed-form means.
+C++ engine calls lights by the procedural sky's closed-form means. The block's
+`cloudLightMarch.yzw` is the wind's offset of the noise, which the C++ engine
+packs as zero, so its clouds stand still.
 `tests/volumetric_clouds_test.slang` compiles the C++ way to SPIR-V, so a change
 that breaks that target fails here before it reaches the pin. WebGPU writes
 `rgba16float` only through a write-only storage texture, which Slang emits from

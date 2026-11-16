@@ -474,6 +474,70 @@ fn density_and_scale_change_apart() {
     );
 }
 
+/// The cloud target of `clouds` after `time_s` seconds of wind.
+fn marched_at(
+    gpu: &GpuContext,
+    renderer: &mut ForwardRenderer,
+    (clouds, time_s): (CloudSettings, f64),
+    camera: &OrbitCamera,
+) -> Vec<u16> {
+    renderer.cloud_time_seconds = time_s;
+    marched(gpu, renderer, clouds, camera)
+}
+
+/// The wind moves the noise through a box that stays put: a pinned time repeats its frame bit for bit, time 0 is the
+/// still cloud, another time moves it, and a time one noise period of travel later draws the same cloud again.
+#[test]
+fn the_wind_moves_the_clouds_with_time_and_a_pinned_time_repeats() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut renderer = plain_renderer(&gpu);
+    let camera = facing_minus_z(20.0);
+    let (centre, half) = (Vec3::new(0.0, 0.0, -10.0), Vec3::new(5.0, 3.0, 4.0));
+    let windy = CloudSettings {
+        wind: Vec3::new(8.0, 0.0, 0.0),
+        ..clouds_in_box(centre, half, 1.0)
+    };
+    let still = CloudSettings {
+        wind: Vec3::ZERO,
+        ..windy
+    };
+    let mut at = |clouds, time_s| marched_at(&gpu, &mut renderer, (clouds, time_s), &camera);
+    let resting = at(still, 2.5);
+    let start = at(windy, 0.0);
+    let later = at(windy, 2.5);
+    let later_again = at(windy, 2.5);
+    // 32 s at 8 units per second is the noise's 256-unit period.
+    let a_period_later = at(windy, 34.5);
+
+    assert!(start == resting, "time 0 must draw the still cloud");
+    assert!(later == later_again, "a pinned time must repeat its frame");
+    assert!(
+        later == a_period_later,
+        "a whole noise period of travel must draw the same cloud"
+    );
+    let rect = PixelRect::of_box(&camera, centre, half);
+    let inside: Vec<usize> = (0..PIXELS).filter(|&p| rect.contains(p, -2.0)).collect();
+    let moved = inside
+        .iter()
+        .filter(|&&p| (texel(&start, p)[3] - texel(&later, p)[3]).abs() > 0.02)
+        .count();
+    let outside = (0..PIXELS)
+        .filter(|&p| !rect.contains(p, 2.0) && texel(&later, p)[3] > 0.0)
+        .count();
+    eprintln!(
+        "20 units of wind moved the alpha of {moved} of {} pixels in the box",
+        inside.len()
+    );
+    assert!(
+        moved > inside.len() / 4,
+        "20 units of wind moved only {moved} of {} pixels",
+        inside.len()
+    );
+    assert_eq!(outside, 0, "the wind must not move the box");
+}
+
 /// ACES (Narkowicz) and the exact sRGB encode, as `aces.slang` and an sRGB target apply them.
 fn displayed(linear: f32) -> f32 {
     let x = linear.min(1e4);

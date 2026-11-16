@@ -270,7 +270,10 @@ fn the_phase_function_peaks_toward_the_sun_and_integrates_to_one() {
     );
 }
 
-/// What the host packs is what the shader unpacks: the C++ SceneUBO layout, its clamps and the box.
+/// Seconds of wind the unpack test packs: 7 s at the default wind leaves a non-zero offset on two axes.
+const WIND_TIME_S: f64 = 7.0;
+
+/// What the host packs is what the shader unpacks: the C++ SceneUBO layout, its clamps, the box and the wind.
 #[test]
 fn the_shader_unpacks_the_box_and_steps_the_host_packs() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -291,7 +294,7 @@ fn the_shader_unpacks_the_box_and_steps_the_host_packs() {
     let inputs: Vec<[f32; 4]> = settings
         .iter()
         .flat_map(|s| {
-            let p = s.params();
+            let p = s.params_at(WIND_TIME_S);
             [p.mesh_scale, p.mesh_offset, p.parameters, p.light_march]
         })
         .collect();
@@ -301,7 +304,7 @@ fn the_shader_unpacks_the_box_and_steps_the_host_packs() {
                 outputs[o + 1u] = vec4<f32>(cloud.offset_0, f32(cloud.num_march_steps_to_light_0));\n\
                 outputs[o + 2u] = vec4<f32>(cloud.threshold_0, cloud.scale_0,\n\
                                             cloud.pillowness_0, cloud.cirrus_effect_0);\n\
-                outputs[o + 3u] = vec4<f32>(select(0.0, 1.0, cloud.powder_effect_0), 0.0, 0.0, 0.0);";
+                outputs[o + 3u] = vec4<f32>(select(0.0, 1.0, cloud.powder_effect_0), cloud.wind_offset_0);";
     let items = [
         extract("struct CloudParams_std140_0"),
         extract("struct Clouds_0"),
@@ -340,6 +343,10 @@ fn the_shader_unpacks_the_box_and_steps_the_host_packs() {
             ]
         );
         assert_eq!(unpacked[3][0], if clouds.powder { 1.0 } else { 0.0 });
+        assert_eq!(
+            Vec3::from_slice(&unpacked[3][1..]),
+            clouds.wind_offset(WIND_TIME_S)
+        );
     }
 }
 

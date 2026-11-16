@@ -147,6 +147,8 @@ pub struct ForwardRenderer {
     pub fxaa: FxaaMode,
     /// The volumetric clouds, off by default as in the C++ engine; the noise is made the first frame they are on.
     pub clouds: CloudSettings,
+    /// Seconds the clouds' wind has blown; the app advances it, and at 0, a test's, the wind has moved nothing.
+    pub cloud_time_seconds: f64,
     /// The root matrix the instances and lights carry now.
     placed_root: Mat4,
     /// A traced mode builds the traced scene on first use; until it is ready the frame rasters.
@@ -210,6 +212,7 @@ impl ForwardRenderer {
             raster_path: RasterPath::Forward,
             fxaa: FxaaMode::default(),
             clouds: CloudSettings::default(),
+            cloud_time_seconds: 0.0,
             placed_root: Mat4::IDENTITY,
             render_mode: RenderMode::Raster,
             tracer: Tracer::default(),

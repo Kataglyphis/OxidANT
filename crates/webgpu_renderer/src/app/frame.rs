@@ -155,7 +155,7 @@ impl StudioApp {
         signals
     }
 
-    /// The frame's time step: the fly camera's held keys, the idle spin and the animation clock.
+    /// The frame's time step: the fly camera's held keys, the idle spin, the animation clock and the clouds' wind.
     fn advance(&mut self, now_s: f64) {
         let elapsed_s = now_s - *self.epoch_s.get_or_insert(now_s);
         let step_s = self.clock.tick_at(now_s);
@@ -171,6 +171,7 @@ impl StudioApp {
         if self.renderer.has_animations() {
             self.renderer.set_animation_time(elapsed_s);
         }
+        self.renderer.cloud_time_seconds = elapsed_s;
     }
 
     /// The frame's view egui paints through, [`Overlay::format`].
@@ -348,6 +349,24 @@ pub(in crate::app) mod tests {
         assert!(
             worst <= Some(2),
             "a menu bar texel differs by {worst:?} levels between the targets"
+        );
+    }
+
+    #[test]
+    fn the_clouds_wind_follows_the_app_clock_from_its_first_frame() {
+        let Some(mut app) = studio() else {
+            return;
+        };
+        app.render_offscreen(&frame(100.0, Vec::new()))
+            .expect("renders");
+        assert_eq!(app.renderer.cloud_time_seconds, 0.0);
+        app.render_offscreen(&frame(102.5, Vec::new()))
+            .expect("renders");
+        assert_eq!(app.renderer.cloud_time_seconds, 2.5);
+        assert_ne!(
+            app.renderer.clouds.wind,
+            glam::Vec3::ZERO,
+            "the app's clouds drift by default"
         );
     }
 
