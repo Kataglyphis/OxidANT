@@ -13,6 +13,33 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-16, FXAA on the deferred path)
+- **The deferred path is anti-aliased.** `render::fxaa` runs FXAA 3.11's quality edge walk (`shaders/fxaa/fxaa.slang`,
+  the generated `fxaa.wgsl`, a manifest row) after the tonemap: on a filtered frame the tonemap draws into an
+  intermediate of the output's format and FXAA filters that into the output. Luma comes from the encoded values on the
+  web canvas and from the square root of the linear ones an sRGB target hands back. `ForwardRenderer::fxaa`
+  (`FxaaMode`): `Off`, `Deferred` (the default: deferred raster frames, which shade one sample) and `Always` (forward
+  on top of its 4x MSAA, and the traced modes). The Renderer tab's FXAA row (live in every mode) and
+  `RendererSettings::fxaa` through `Default`, `of` and `apply`. `TonemapPass::prepare_fxaa` builds it the first
+  filtered frame and reallocates the intermediate on a resize.
+- **Measured** (`tests/fxaa.rs`, lavapipe, 256x256): a dark card whose edge runs 8.6° off vertical against the sky.
+  One sample per pixel leaves no blended pixel in any of 128 rows; FXAA blends all 128 on an sRGB target and 102 on
+  the web's `Rgba8Unorm` (forward's MSAA 74 and 75) and cuts the edge band's squared luma steps from 3.11 M to 1.80 M
+  (MSAA 2.36 M). No pixel more than two from a step moves by more than one level, and forward frames at the default
+  stay bit-identical to FXAA off. On cube_on_plane the deferred frame's gradient energy goes from 1.42 times forward's
+  to 0.83, and its mean channel difference to forward within two pixels of an edge from 2.58 to 2.28 levels, 0.02
+  elsewhere either way. Headless Chrome draws the deferred step with FXAA (1474 colours, was 1099).
+- `TimedPass::Fxaa` (index 14, profiler label "FXAA") after `Tonemap`; `name()` stays first and its existing arms
+  unchanged. **BeschleunigerBallett's `Compare-RendererTimings.ps1` must treat `Fxaa` as optional** beside `GBuffer`,
+  `DeferredLighting`, `Clouds`, `RayTrace`, `PathTrace` and `TraceResolve`: a default `dump_gpu_timings` run draws
+  forward, which FXAA leaves alone. The profiler drops the row at once when FXAA stops filtering, as on a switch of
+  mode or path.
+- `tests/deferred.rs`'s parity views turn FXAA off and keep comparing the shading: FXAA also smooths the texture steps
+  MSAA keeps, which took cube_textured's mean channel difference to forward to 1.15 levels, over the 1.0 bound.
+- Render graph: the tonemap writes `Tonemapped` and a last `fxaa` row reads it into `Output`, in every frame.
+- Web demo: `demo_view()` reports `fxaa`, and the browser test fails a deferred frame without FXAA or a forward one
+  with it.
+
 ### Added (2026-11-16, the web demo's every render mode drawn in headless Chrome)
 - **A browser has drawn a traced frame, the deferred path and the clouds.** `scripts/linux/webgpu-demo-browser.js`
   opens the release wasm demo in the image's Chrome for Testing 157 on SwiftShader's WebGPU (the hub's

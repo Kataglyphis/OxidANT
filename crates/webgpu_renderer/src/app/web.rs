@@ -63,6 +63,8 @@ pub(crate) struct DemoReport {
     pub(crate) picked: &'static str,
     pub(crate) path: &'static str,
     pub(crate) clouds: bool,
+    /// Whether the drawn frame runs FXAA.
+    pub(crate) fxaa: bool,
     /// idle, building, ready or failed.
     pub(crate) trace: &'static str,
     /// The tracer's status line, or why a traced pick rasters.
@@ -100,6 +102,7 @@ impl StudioApp {
             picked: name_of(&MODE_NAMES, self.renderer.render_mode),
             path: name_of(&PATH_NAMES, self.renderer.raster_path),
             clouds: self.renderer.clouds.enabled,
+            fxaa: self.renderer.fxaa_runs(),
             trace,
             detail: self
                 .renderer
@@ -151,11 +154,12 @@ mod dom {
             .into_iter()
             .map(|f| JsValue::from_f64(f64::from(f)))
             .collect();
-        let fields: [(&str, JsValue); 8] = [
+        let fields: [(&str, JsValue); 9] = [
             ("drawn", report.drawn.into()),
             ("picked", report.picked.into()),
             ("path", report.path.into()),
             ("clouds", report.clouds.into()),
+            ("fxaa", report.fxaa.into()),
             ("trace", report.trace.into()),
             ("detail", report.detail.as_str().into()),
             ("samples", JsValue::from_f64(report.samples as f64)),
@@ -231,8 +235,8 @@ mod tests {
             ("raster", "raster", "forward")
         );
         assert_eq!(
-            (raster.clouds, raster.trace, raster.samples),
-            (false, "idle", 0)
+            (raster.clouds, raster.fxaa, raster.trace, raster.samples),
+            (false, false, "idle", 0)
         );
         assert!(
             app.controller.auto_orbit,
@@ -247,6 +251,7 @@ mod tests {
             ("raster", "path", "deferred", true),
             "a traced pick rasters until its scene is built"
         );
+        assert!(waiting.fxaa, "the deferred raster frame runs FXAA");
         let built = app
             .renderer
             .tracer_mut()
@@ -255,7 +260,10 @@ mod tests {
         app.apply_demo_camera(10.0, 5.0);
         assert_eq!((app.camera.yaw_deg, app.camera.pitch_deg), (10.0, 5.0));
         let ready = app.demo_report();
-        assert_eq!((ready.drawn, ready.trace), ("path", "ready"));
+        assert_eq!(
+            (ready.drawn, ready.trace, ready.fxaa),
+            ("path", "ready", false)
+        );
         assert!(ready.detail.starts_with("Tracer ready"), "{}", ready.detail);
     }
 

@@ -6,6 +6,7 @@ use super::super::menu_bar::RENDER_MODES;
 use super::super::render_mode::{mode_switch, pending_note};
 use super::super::{EditorAction, EditorContext};
 use crate::render::forward::RasterPath;
+use crate::render::fxaa::FxaaMode;
 use crate::render::tracer::modes::{MAX_BOUNCES, SAMPLES_PER_PIXEL};
 use crate::render::tracer::RenderMode;
 use crate::ui::widgets::{
@@ -18,6 +19,7 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>, actions: &mut Vec<Ed
     let note = pending_note(cx).unwrap_or_else(|| cx.stats.trace.text());
     muted_wrapped(ui, note);
     raster_path(ui, cx);
+    anti_aliasing(ui, cx);
     path_tracing(ui, cx);
     post(ui, cx);
     culling(ui, cx);
@@ -42,6 +44,22 @@ fn raster_path(ui: &mut Ui, cx: &mut EditorContext<'_>) {
         );
     });
     settings.raster_path = RasterPath::ALL[path];
+}
+
+/// FXAA after the tonemap; live in every mode, since Always filters traced frames too.
+fn anti_aliasing(ui: &mut Ui, cx: &mut EditorContext<'_>) {
+    let settings = &mut *cx.settings;
+    let mut mode = FxaaMode::ALL
+        .iter()
+        .position(|mode| *mode == settings.fxaa)
+        .unwrap_or(0);
+    property_row(
+        ui,
+        "FXAA",
+        Some("Smooths edges after the tonemap: deferred frames only, which have no MSAA, or every frame"),
+        |ui| Segmented::new(&FxaaMode::ALL.map(FxaaMode::label)).show(ui, &mut mode),
+    );
+    settings.fxaa = FxaaMode::ALL[mode];
 }
 
 /// The C++ PATH TRACING rows, live while the path tracer draws, then the white furnace and the accumulation.

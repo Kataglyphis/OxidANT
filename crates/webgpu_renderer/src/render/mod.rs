@@ -8,6 +8,7 @@ pub mod cascades;
 pub mod clouds;
 pub mod forward;
 pub mod frame_clock;
+pub mod fxaa;
 pub mod gpu_occlusion;
 pub mod gpu_timing;
 pub mod graph;

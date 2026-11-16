@@ -9,6 +9,7 @@ use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 use kataglyphis_webgpu_renderer::asset::skybox::CubemapFaces;
 use kataglyphis_webgpu_renderer::render::clouds::CloudSettings;
 use kataglyphis_webgpu_renderer::render::forward::{RasterPath, SkyMode};
+use kataglyphis_webgpu_renderer::render::fxaa::FxaaMode;
 use kataglyphis_webgpu_renderer::render::gpu_timing::TimedPass;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
 use kataglyphis_webgpu_renderer::render::model_transform::ModelTransform;
@@ -622,9 +623,11 @@ fn culling_counts_the_same_on_both_paths_with_frustum_culling_on_and_off() {
 }
 
 /// The passes `mode` records with every optional pass on: a raster path all but the other path's and the traced
-/// passes; a traced mode its kernel, the resolve and the post chain without SSAO.
-fn passes_in((path, mode): (RasterPath, RenderMode)) -> Vec<&'static str> {
+/// passes; a traced mode its kernel, the resolve and the post chain without SSAO. FXAA as `fxaa` decides.
+fn passes_in((path, mode): (RasterPath, RenderMode), fxaa: FxaaMode) -> Vec<&'static str> {
+    let deferred_raster = mode == RenderMode::Raster && path == RasterPath::Deferred;
     let runs = |pass: &TimedPass| match (mode, pass) {
+        (_, TimedPass::Fxaa) => fxaa.filters(deferred_raster),
         (RenderMode::Raster, TimedPass::GBuffer | TimedPass::DeferredLighting) => {
             path == RasterPath::Deferred
         }
@@ -685,11 +688,12 @@ fn each_path_and_mode_reports_exactly_the_passes_it_runs_with_every_feature_on()
         renderer.occlusion_queries_enabled = true;
         renderer.auto_exposure = true;
         renderer.clouds.enabled = true;
+        renderer.fxaa = FxaaMode::Always;
         renderer.shadows.cascade_count = 2;
         renderer.set_skybox(&gpu, &CubemapFaces::solid(FACES));
         renderer.model_transform.position = Vec3::new(0.5, 0.0, 0.0);
         let reported = timed(&gpu, &mut renderer);
-        assert_eq!(reported, passes_in(mode), "{mode:?}");
+        assert_eq!(reported, passes_in(mode, FxaaMode::Always), "{mode:?}");
     }
 }
 
@@ -1025,7 +1029,7 @@ fn set_instances_reaches_the_traced_scene_in_place_or_says_it_waits() {
     );
 }
 
-/// A switch of mode or raster path drops the passes the new frames do not record at once, so a traced frame lists its
+/// A switch of mode, raster path or FXAA drops the passes the new frames do not record at once, so a traced frame lists its
 /// kernel and resolve in record order instead of the raster rows a 32-frame average would keep.
 #[test]
 fn the_timings_follow_every_switch_of_mode_and_path_within_four_frames() {
@@ -1051,6 +1055,16 @@ fn the_timings_follow_every_switch_of_mode_and_path_within_four_frames() {
     for mode in [MODES[0], MODES[2], MODES[3], MODES[1], MODES[2], MODES[0]] {
         (renderer.raster_path, renderer.render_mode) = mode;
         let reported = timed_after(&gpu, &mut renderer, 4);
-        assert_eq!(reported, passes_in(mode), "after switching to {mode:?}");
+        let fxaa = renderer.fxaa;
+        assert_eq!(
+            reported,
+            passes_in(mode, fxaa),
+            "after switching to {mode:?}"
+        );
     }
+    // FXAA switched off on a deferred frame drops its row as fast.
+    (renderer.raster_path, renderer.render_mode) = MODES[1];
+    renderer.fxaa = FxaaMode::Off;
+    let reported = timed_after(&gpu, &mut renderer, 4);
+    assert_eq!(reported, passes_in(MODES[1], FxaaMode::Off), "FXAA off");
 }

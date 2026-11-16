@@ -28,6 +28,8 @@ pub enum Resource {
     Histogram,
     /// Adapted exposure value reduced from `Histogram`.
     Exposure,
+    /// The tonemapped frame FXAA filters; with FXAA off the tonemap writes `Output` itself.
+    Tonemapped,
     /// Final display target (swapchain frame or readback texture).
     Output,
     /// The clouds' 3D noise, generated on the first frame with clouds and kept.
@@ -161,10 +163,18 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
                 Resource::Exposure,
                 Resource::CloudColor,
             ],
-            writes: &[Resource::Output],
+            writes: &[Resource::Tonemapped],
         },
+        FXAA_ROW,
     ]
 }
+
+/// FXAA, the last row of every frame; it runs on deferred raster frames by default.
+const FXAA_ROW: PassDesc<'static> = PassDesc {
+    name: "fxaa",
+    reads: &[Resource::Tonemapped],
+    writes: &[Resource::Output],
+};
 
 /// The deferred path's maximal frame: the G-buffer and lighting passes replace forward+sky and the resolve.
 pub fn deferred_frame_graph() -> Vec<PassDesc<'static>> {
@@ -217,8 +227,9 @@ pub fn traced_frame_graph(kernel: &'static str) -> Vec<PassDesc<'static>> {
             Resource::Exposure,
             Resource::CloudColor,
         ],
-        writes: &[Resource::Output],
+        writes: &[Resource::Tonemapped],
     });
+    passes.push(FXAA_ROW);
     passes
 }
 
@@ -251,6 +262,7 @@ fn graph_pass_name(pass: TimedPass) -> &'static str {
         TimedPass::RayTrace => "ray_trace",
         TimedPass::PathTrace => "path_trace",
         TimedPass::TraceResolve => "trace_resolve",
+        TimedPass::Fxaa => "fxaa",
     }
 }
 
@@ -382,6 +394,18 @@ mod tests {
             };
             assert!(writer < clouds && noise < clouds && clouds < tonemap);
             assert!(graph[tonemap].reads.contains(&Resource::CloudColor));
+        }
+    }
+
+    #[test]
+    fn fxaa_filters_the_tonemapped_frame_last_in_every_frame() {
+        for graph in every_frame_graph() {
+            let names: Vec<&str> = graph.iter().map(|pass| pass.name).collect();
+            assert_eq!(names[names.len() - 2..], ["tonemap", "fxaa"], "{names:?}");
+            let writers = graph
+                .iter()
+                .filter(|pass| pass.writes.contains(&Resource::Output));
+            assert_eq!(writers.map(|pass| pass.name).collect::<Vec<_>>(), ["fxaa"]);
         }
     }
 

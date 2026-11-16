@@ -39,12 +39,14 @@ pub enum TimedPass {
     PathTrace,
     /// The traced modes' copy of their accumulation into the HDR target.
     TraceResolve,
+    /// FXAA over the tonemapped frame into the output target (deferred frames by default).
+    Fxaa,
 }
 
 impl TimedPass {
     /// Every pass in record order: a raster frame's skip the traced passes, a traced frame's skip shadows to SSAO.
     /// Iteration order is the reporting order, so either kind of frame lists its passes as it records them.
-    pub const ALL: [TimedPass; 14] = [
+    pub const ALL: [TimedPass; 15] = [
         TimedPass::ShadowCascades,
         TimedPass::Forward,
         TimedPass::GBuffer,
@@ -59,6 +61,7 @@ impl TimedPass {
         TimedPass::Ssao,
         TimedPass::Clouds,
         TimedPass::Tonemap,
+        TimedPass::Fxaa,
     ];
 
     /// Stable identifier for reports and for matching against the C++ engine.
@@ -78,6 +81,7 @@ impl TimedPass {
             TimedPass::RayTrace => "RayTrace",
             TimedPass::PathTrace => "PathTrace",
             TimedPass::TraceResolve => "TraceResolve",
+            TimedPass::Fxaa => "Fxaa",
         }
     }
 
@@ -98,6 +102,7 @@ impl TimedPass {
             TimedPass::RayTrace => "Ray trace",
             TimedPass::PathTrace => "Path trace",
             TimedPass::TraceResolve => "Trace resolve",
+            TimedPass::Fxaa => "FXAA",
         }
     }
 
@@ -125,6 +130,7 @@ impl TimedPass {
             TimedPass::RayTrace => 11,
             TimedPass::PathTrace => 12,
             TimedPass::TraceResolve => 13,
+            TimedPass::Fxaa => 14,
         }
     }
 }

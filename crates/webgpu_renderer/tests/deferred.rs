@@ -1,11 +1,13 @@
 //! The deferred raster path against the forward one on the same renderer: structure, not exact
 //! pixels, because forward resolves 4x MSAA and deferred shades one sample. Every bound is measured.
+//! The parity views turn FXAA off; the rest draw deferred as the editor does, with it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use glam::Vec4;
 use kataglyphis_webgpu_renderer::render::forward::{RasterPath, ShaderSources};
+use kataglyphis_webgpu_renderer::render::fxaa::FxaaMode;
 use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuSampler, CpuTextureRef, Vertex};
 use kataglyphis_webgpu_renderer::{
     load_gltf, CpuMaterial, CpuPrimitive, CpuScene, CpuTexture, EquirectImage, ForwardRenderer,
@@ -145,6 +147,8 @@ fn measure(
     let renderer_for = |scene: &CpuScene| {
         let mut renderer = ForwardRenderer::new(gpu, W, H);
         renderer.upload_scene(gpu, scene);
+        // These compare the shading; FXAA also smooths texture steps MSAA keeps, and tests/fxaa.rs measures it.
+        renderer.fxaa = FxaaMode::Off;
         setup(gpu, &mut renderer);
         renderer
     };

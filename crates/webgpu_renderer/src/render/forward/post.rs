@@ -2,7 +2,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::ForwardRenderer;
+use super::frame::FrameView;
+use super::{ForwardRenderer, RasterPath};
 use crate::context::GpuContext;
 use crate::render::bloom::BloomPass;
 use crate::render::gpu_timing::TimedPass;
@@ -166,17 +167,33 @@ impl ForwardRenderer {
             .encode_reduce(encoder, self.gpu_timing.scope(TimedPass::ExposureReduce));
     }
 
-    /// ACES over HDR, bloom and AO into `output_view`.
+    /// ACES over HDR, bloom and AO into `output_view`, through FXAA when this frame filters.
     pub(super) fn encode_tonemap(
         &self,
+        gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
-        tonemap: &TonemapPass,
+        tonemap: &mut TonemapPass,
         output_view: &wgpu::TextureView,
+        (view, traced): (&FrameView, bool),
     ) {
-        tonemap.render(
-            encoder,
-            output_view,
-            self.gpu_timing.scope(TimedPass::Tonemap),
-        );
+        let scope = self.gpu_timing.scope(TimedPass::Tonemap);
+        if !self.fxaa_filters(traced) {
+            tonemap.render(encoder, output_view, scope);
+            return;
+        }
+        tonemap.prepare_fxaa(gpu, view.width, view.height);
+        let fxaa_scope = self.gpu_timing.scope(TimedPass::Fxaa);
+        tonemap.render_with_fxaa(encoder, output_view, scope, fxaa_scope);
+    }
+
+    /// Whether the frame [`Self::drawn_mode`] draws runs FXAA.
+    pub fn fxaa_runs(&self) -> bool {
+        self.fxaa_filters(self.drawn_mode().is_traced())
+    }
+
+    /// Whether this frame runs FXAA; `traced` when it was traced rather than rastered.
+    pub(super) fn fxaa_filters(&self, traced: bool) -> bool {
+        self.fxaa
+            .filters(!traced && self.raster_path == RasterPath::Deferred)
     }
 }

@@ -7,6 +7,7 @@ use crate::app::loader::LoadProgress;
 use crate::app::Notice;
 use crate::render::clouds::CloudSettings;
 use crate::render::forward::{ForwardRenderer, RasterPath};
+use crate::render::fxaa::FxaaMode;
 use crate::render::gpu_timing::TimedPass;
 use crate::render::model_transform::ModelTransform;
 use crate::render::shadow_settings::ShadowSettings;
@@ -32,6 +33,7 @@ pub struct RendererSettings {
     pub skybox_enabled: bool,
     pub model_transform: ModelTransform,
     pub raster_path: RasterPath,
+    pub fxaa: FxaaMode,
     pub clouds: CloudSettings,
     /// The user's pick; [`SceneStats::drawn_mode`] is what the frame draws.
     pub render_mode: RenderMode,
@@ -59,6 +61,7 @@ impl Default for RendererSettings {
             skybox_enabled: true,
             model_transform: ModelTransform::default(),
             raster_path: RasterPath::Forward,
+            fxaa: FxaaMode::Deferred,
             clouds: CloudSettings::default(),
             render_mode: RenderMode::Raster,
             trace: TraceSettings::default(),
@@ -85,6 +88,7 @@ impl RendererSettings {
             skybox_enabled: renderer.skybox_enabled,
             model_transform: renderer.model_transform,
             raster_path: renderer.raster_path,
+            fxaa: renderer.fxaa,
             clouds: renderer.clouds,
             render_mode: renderer.render_mode,
             trace: renderer.trace_settings,
@@ -108,6 +112,7 @@ impl RendererSettings {
         renderer.skybox_enabled = self.skybox_enabled;
         renderer.model_transform = self.model_transform;
         renderer.raster_path = self.raster_path;
+        renderer.fxaa = self.fxaa;
         renderer.clouds = self.clouds;
         renderer.render_mode = self.render_mode;
         renderer.trace_settings = self.trace.clamped();
@@ -426,6 +431,7 @@ mod tests {
                 rotation_deg: glam::Vec3::new(0.0, 90.0, 0.0),
             },
             raster_path: RasterPath::Deferred,
+            fxaa: FxaaMode::Always,
             clouds: CloudSettings {
                 enabled: true,
                 march_steps: 16,
@@ -463,6 +469,7 @@ mod tests {
             skybox_enabled,
             model_transform,
             raster_path,
+            fxaa,
             clouds,
             render_mode,
             trace,

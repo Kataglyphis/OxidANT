@@ -296,7 +296,7 @@ pub fn set_demo_camera(yaw_deg: f32, pitch_deg: f32) -> Result<(), JsValue> {
     with_app(|app| app.apply_demo_camera(yaw_deg, pitch_deg))
 }
 
-/// What the demo draws now: `{drawn, picked, path, clouds, trace, detail, samples, viewport}`.
+/// What the demo draws now: `{drawn, picked, path, clouds, fxaa, trace, detail, samples, viewport}`.
 #[wasm_bindgen]
 pub fn demo_view() -> Result<JsValue, JsValue> {
     with_app(|app| web::report_to_js(&app.demo_report()))

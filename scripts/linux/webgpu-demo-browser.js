@@ -18,8 +18,8 @@ const FRAME_TIMEOUT_MS = 5 * 60 * 1000;
 
 // Clouds over deferred against plain deferred, traced against forward raster: a mode that drew nothing new fails `differsFrom`.
 const STEPS = [
-  { name: 'forward', mode: 'raster', path: 'forward', clouds: false },
-  { name: 'deferred', mode: 'raster', path: 'deferred', clouds: false },
+  { name: 'forward', mode: 'raster', path: 'forward', clouds: false, fxaa: false },
+  { name: 'deferred', mode: 'raster', path: 'deferred', clouds: false, fxaa: true },
   { name: 'clouds', mode: 'raster', path: 'deferred', clouds: true, differsFrom: 'deferred' },
   { name: 'ray traced', mode: 'ray', path: 'forward', clouds: false, differsFrom: 'forward' },
   { name: 'path traced', mode: 'path', path: 'forward', clouds: false, differsFrom: 'forward', samples: 2 },
@@ -164,6 +164,7 @@ function verdicts({ step, frame, after, m }) {
   if (step.differsFrom && m.changed !== null && m.changed < MIN_CHANGED) {
     out.push(`${(m.changed * 100).toFixed(2)} % of pixels differ from ${step.differsFrom}, under ${MIN_CHANGED * 100} %: the ${step.name} pass drew nothing of its own`);
   }
+  if (step.fxaa !== undefined && after.fxaa !== step.fxaa) out.push(`FXAA ${after.fxaa ? 'ran' : 'did not run'}, expected it ${step.fxaa ? 'on' : 'off'}`);
   if (frame.format && !/^(rgba|bgra)8unorm/.test(frame.format)) out.push(`canvas format ${frame.format}`);
   return out;
 }
@@ -171,7 +172,7 @@ function verdicts({ step, frame, after, m }) {
 function report({ step, frame, after, m }) {
   const changed = m.changed === null ? '' : `, ${(m.changed * 100).toFixed(1)} % changed against ${step.differsFrom}`;
   const samples = after.samples ? `, ${after.samples} spp` : '';
-  return `${step.name}: drew ${after.drawn}/${after.path}${after.clouds ? '+clouds' : ''}${samples}, ${m.width}x${m.height} ${frame.format}, ${m.colours} colours, dominant ${(m.dominant * 100).toFixed(1)} %${changed}`;
+  return `${step.name}: drew ${after.drawn}/${after.path}${after.clouds ? '+clouds' : ''}${after.fxaa ? '+fxaa' : ''}${samples}, ${m.width}x${m.height} ${frame.format}, ${m.colours} colours, dominant ${(m.dominant * 100).toFixed(1)} %${changed}`;
 }
 
 async function openDemo(browser, url, opts) {

@@ -12,9 +12,14 @@ fn cube_path() -> std::path::PathBuf {
 }
 
 /// The passes `path` records with occlusion culling, the histogram and the clouds on: all but the other path's and the traced modes'.
+/// FXAA at its default filters deferred frames only.
 fn passes_of(path: RasterPath) -> Vec<TimedPass> {
     let other: &[TimedPass] = match path {
-        RasterPath::Forward => &[TimedPass::GBuffer, TimedPass::DeferredLighting],
+        RasterPath::Forward => &[
+            TimedPass::GBuffer,
+            TimedPass::DeferredLighting,
+            TimedPass::Fxaa,
+        ],
         RasterPath::Deferred => &[TimedPass::Forward],
     };
     TimedPass::ALL

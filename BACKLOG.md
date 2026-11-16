@@ -92,11 +92,6 @@ its open work is here.
       Next: punctual lights in NEE, then the environment as the miss term. Guard: a lone card lit by a point
       light, traced against raster within a tolerance.
 
-- [ ] **The deferred path has no anti-aliasing** (M, ★★). The G-buffer is one sample, as in the C++ engine, so
-      the Colosseum's sub-pixel crowd aliases where forward's 4x MSAA does not (`crates/webgpu_renderer/tests/deferred.rs`; 6.4
-      levels apart on average, `CHANGELOG.md`). Next: FXAA after the lighting pass, off with forward.
-      Guard: the deferred-against-forward edge measurements in `crates/webgpu_renderer/tests/deferred.rs` shrink.
-
 - [ ] **Clouds are dark and grainy in both renderers** (M, ★★). The shared estimator
       (`shaders/common/volumetric_clouds.slang`) has no ambient term, so a cloud is darker than the sky
       around it, and 8 steps through a slab seen at a grazing angle undersample the fine noise. Fixing it moves

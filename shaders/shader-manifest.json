@@ -19,6 +19,23 @@
       ]
     },
     {
+      "_comment": "Rust/WebGPU FXAA after the tonemap (WGSL emit).",
+      "file": "fxaa/fxaa.slang",
+      "entry": "vs_main",
+      "stage": "vertex",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "fxaa/fxaa.slang",
+      "entry": "fs_main",
+      "stage": "fragment",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
       "_comment": "Rust/WebGPU forward PBR pass (WGSL emit).",
       "file": "forward/forward.slang",
       "entry": "vs_main",
@@ -386,6 +403,11 @@
     {
       "src": "tonemap/tonemap.slang",
       "out": "tonemap.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "fxaa/fxaa.slang",
+      "out": "fxaa.wgsl",
       "dst": "crates/webgpu_renderer/src/shaders"
     },
     {

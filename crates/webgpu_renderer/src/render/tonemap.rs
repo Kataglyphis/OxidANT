@@ -3,6 +3,7 @@
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::buffer_desc;
+use crate::render::fxaa::FxaaPass;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
 
@@ -16,6 +17,9 @@ pub struct TonemapPass {
     pub(crate) bound_inputs: Option<u64>,
     /// Whether the shader must gamma-encode itself: WebGPU canvases have no sRGB surface format.
     encode_srgb: bool,
+    output_format: wgpu::TextureFormat,
+    /// Built the first frame FXAA filters, and kept.
+    fxaa: Option<FxaaPass>,
 }
 
 impl TonemapPass {
@@ -78,7 +82,34 @@ impl TonemapPass {
             bind_group: None,
             bound_inputs: None,
             encode_srgb: !output_format.is_srgb(),
+            output_format,
+            fxaa: None,
         }
+    }
+
+    /// Readies FXAA for a `width` x `height` output, building it on first use.
+    pub fn prepare_fxaa(&mut self, gpu: &GpuContext, width: u32, height: u32) {
+        let format = self.output_format;
+        self.fxaa
+            .get_or_insert_with(|| FxaaPass::new(gpu, format))
+            .prepare(gpu, width, height);
+    }
+
+    /// Tonemaps into FXAA's intermediate, then filters that into `output_view`; without [`Self::prepare_fxaa`], tonemaps straight to it.
+    pub fn render_with_fxaa(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: &wgpu::TextureView,
+        scope: PassScope<'_>,
+        fxaa_scope: PassScope<'_>,
+    ) {
+        let fxaa = self.fxaa.as_ref();
+        let Some((fxaa, input)) = fxaa.and_then(|f| f.input_view().map(|input| (f, input))) else {
+            self.render(encoder, output_view, scope);
+            return;
+        };
+        self.render(encoder, input, scope);
+        fxaa.render(encoder, output_view, fxaa_scope);
     }
 
     /// Per-frame parameters; `clouds` composites the cloud input over the scene.

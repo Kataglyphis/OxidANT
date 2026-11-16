@@ -7,6 +7,7 @@ const SHADERS: &[(&str, &str)] = &[
     ("forward", include_str!("../src/shaders/forward.wgsl")),
     ("sky", include_str!("../src/shaders/sky.wgsl")),
     ("tonemap", include_str!("../src/shaders/tonemap.wgsl")),
+    ("fxaa", include_str!("../src/shaders/fxaa.wgsl")),
     ("bloom", include_str!("../src/shaders/bloom.wgsl")),
     ("ssao", include_str!("../src/shaders/ssao.wgsl")),
     ("ibl", include_str!("../src/shaders/ibl.wgsl")),

@@ -65,6 +65,21 @@ fn the_renderer_tab_switches_the_raster_path_and_frustum_culling_together() {
     );
 }
 
+/// FXAA stays live under a traced frame: Always filters traced frames too.
+#[test]
+fn the_renderer_tab_picks_fxaa_in_every_mode() {
+    use crate::render::fxaa::FxaaMode;
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.editor.select(SceneObject::Renderer);
+    studio.stats.drawn_mode = RenderMode::PathTraced;
+    studio.frame(Vec::new());
+    assert_eq!(studio.settings.fxaa, FxaaMode::Deferred);
+    click_text(&mut studio, "Always");
+    assert_eq!(studio.settings.fxaa, FxaaMode::Always);
+    click_text(&mut studio, "Deferred only");
+    assert_eq!(studio.settings.fxaa, FxaaMode::Deferred);
+}
+
 #[test]
 fn the_sky_tab_switches_the_skybox_and_the_clouds_apart() {
     let mut studio = Harness::new((1600.0, 900.0), 1.0);
@@ -120,7 +135,7 @@ fn the_profiler_scrolls_every_timed_pass_and_keeps_the_culling_counts() {
         .collect();
     studio.stats.primitives = (3, 7);
     studio.frame(Vec::new());
-    let last = TimedPass::Tonemap.label();
+    let last = TimedPass::ALL[TimedPass::ALL.len() - 1].label();
     let (first, first_clip) =
         text_and_clip(&mut studio, "Shadow cascades").expect("the first pass");
     let (row, clip) = text_and_clip(&mut studio, last).expect("the last pass is laid out");

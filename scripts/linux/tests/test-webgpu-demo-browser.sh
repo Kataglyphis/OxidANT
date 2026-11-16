@@ -11,7 +11,7 @@ judge() {
 const { verdicts, problemOf, STEPS } = require(process.argv[1]);
 const step = STEPS.find((s) => s.name === process.argv[2]);
 const m = { colours: 1000, dominant: 0.4, changed: 0.05, sameSize: true, ...JSON.parse(process.argv[3]) };
-const after = { drawn: step.mode, detail: '', ...JSON.parse(process.argv[4] || '{}') };
+const after = { drawn: step.mode, fxaa: Boolean(step.fxaa), detail: '', ...JSON.parse(process.argv[4] || '{}') };
 for (const v of verdicts({ step, frame: { format: 'rgba8unorm' }, after, m })) console.log('VERDICT ' + v);
 console.log('DONE');
 " "${check}" "$@"
@@ -30,6 +30,10 @@ t_assert_grep "${work}/out" '^VERDICT one colour covers 100.0 %'
 judge 'clouds' '{"changed": 0.001}'
 t_case 'clouds that change nothing against deferred fail'
 t_assert_grep "${work}/out" '^VERDICT 0.10 % of pixels differ from deferred'
+
+judge 'deferred' '{}' '{"fxaa": false}'
+t_case 'a deferred frame without FXAA fails'
+t_assert_grep "${work}/out" '^VERDICT FXAA did not run, expected it on$'
 
 judge 'ray traced' '{}' '{"drawn": "raster", "detail": "accumulation does not fit"}'
 t_case 'a traced pick that rastered fails and says why'

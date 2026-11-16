@@ -28,8 +28,8 @@ pub(super) struct TracedState {
     refused: Option<(u32, u32)>,
     /// The largest accumulation the device binds, in bytes; an output past it rasters.
     accumulation_limit: u64,
-    /// The kind of frame the timings last measured: the drawn mode, and the raster path while it rasters.
-    timed_as: Option<(RenderMode, RasterPath)>,
+    /// The kind of frame the timings last measured: the drawn mode, the raster path while it rasters, and FXAA.
+    timed_as: Option<(RenderMode, RasterPath, bool)>,
 }
 
 impl TracedState {
@@ -41,9 +41,10 @@ impl TracedState {
     }
 }
 
-/// Whether a frame of `mode` over `path` records `pass` (with its optional passes on).
-fn records(pass: TimedPass, mode: RenderMode, path: RasterPath) -> bool {
+/// Whether a frame of `mode` over `path` records `pass` (with its optional passes on); `fxaa` when it filters.
+fn records(pass: TimedPass, mode: RenderMode, path: RasterPath, fxaa: bool) -> bool {
     match (mode, pass) {
+        (_, TimedPass::Fxaa) => fxaa,
         (RenderMode::Raster, TimedPass::Forward) => path == RasterPath::Forward,
         (RenderMode::Raster, TimedPass::GBuffer | TimedPass::DeferredLighting) => {
             path == RasterPath::Deferred
@@ -142,10 +143,12 @@ impl ForwardRenderer {
         } else {
             self.raster_path
         };
-        if self.traced.timed_as.replace((mode, path)) == Some((mode, path)) {
+        let fxaa = self.fxaa_filters(mode.is_traced());
+        if self.traced.timed_as.replace((mode, path, fxaa)) == Some((mode, path, fxaa)) {
             return;
         }
-        self.gpu_timing.forget(|pass| records(pass, mode, path));
+        self.gpu_timing
+            .forget(|pass| records(pass, mode, path, fxaa));
     }
 
     /// Starts the path tracer's mean over: the hook for anything that changes what it traces in place.

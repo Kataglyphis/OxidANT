@@ -61,9 +61,10 @@ depth either raster path leaves, or in a traced frame at the primary hit's depth
 kernel writes, and the tonemap composites it in linear HDR, the same over sky and geometry. Off by default (`ForwardRenderer::clouds`), with the C++
 ranges in the Sky tab.
 
-**Post** — 4× MSAA on the forward path (deferred renders one sample, so its
-silhouettes, creases and sub-pixel detail differ; `tests/deferred.rs` measures
-it), HDR `Rgba16Float` target, bloom (bright-pass + separable
+**Post** — 4× MSAA on the forward path; deferred renders one sample and FXAA
+smooths its edges after the tonemap (`render::fxaa`, on deferred frames by default,
+selectable for every frame; sub-pixel detail still differs, `tests/deferred.rs` and
+`tests/fxaa.rs` measure it), HDR `Rgba16Float` target, bloom (bright-pass + separable
 Gaussian), SSAO (depth reconstruction), manual or histogram auto-exposure, ACES
 tonemapping.
 

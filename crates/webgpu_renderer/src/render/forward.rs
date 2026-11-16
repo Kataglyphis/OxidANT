@@ -24,6 +24,7 @@ use glam::{Mat4, Vec3, Vec4};
 
 use crate::context::GpuContext;
 use crate::render::clouds::CloudSettings;
+use crate::render::fxaa::FxaaMode;
 use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::GpuTiming;
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
@@ -74,7 +75,7 @@ pub const SHADOW_MAP_SIZE: u32 = 2048;
 pub const CASCADE_COUNT: usize = 3;
 
 /// The WGSL a shader reload rebuilds the scene, shadow, sky, deferred, cloud and traced pipelines from.
-/// The tonemap, bloom, SSAO, histogram and depth-resolve passes keep the WGSL the crate was built with.
+/// The tonemap, FXAA, bloom, SSAO, histogram and depth-resolve passes keep the WGSL the crate was built with.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug)]
 pub struct ShaderSources<'a> {
@@ -180,6 +181,8 @@ pub struct ForwardRenderer {
     pub model_transform: ModelTransform,
     /// Forward or deferred shading, read every frame.
     pub raster_path: RasterPath,
+    /// Which frames FXAA smooths after the tonemap, read every frame.
+    pub fxaa: FxaaMode,
     /// The volumetric clouds, off by default as in the C++ engine; the noise is made the first frame they are on.
     pub clouds: CloudSettings,
     /// The root matrix the instances and lights carry now.
@@ -242,6 +245,7 @@ impl ForwardRenderer {
             skybox_enabled: true,
             model_transform: ModelTransform::default(),
             raster_path: RasterPath::Forward,
+            fxaa: FxaaMode::default(),
             clouds: CloudSettings::default(),
             placed_root: Mat4::IDENTITY,
             render_mode: RenderMode::Raster,
@@ -470,7 +474,7 @@ impl ForwardRenderer {
             self.encode_ssao(&mut encoder);
         }
         self.encode_clouds(gpu, &mut encoder, &view);
-        self.encode_tonemap(&mut encoder, tonemap, output_view);
+        self.encode_tonemap(gpu, &mut encoder, tonemap, output_view, (&view, traced));
         self.finish_frame(gpu, encoder);
     }
 

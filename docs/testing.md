@@ -195,6 +195,7 @@ second frame back, and fails when:
 - the frame drew another mode than asked (`drawn_mode`, the chip's), or the tracer failed;
 - the scene viewport, 2 % in from its edges, has fewer than 256 colours or one colour over 90 %;
 - clouds change under 1 % of pixels against deferred, or a traced frame under 1 % against forward;
+- the deferred frame ran no FXAA or the forward frame did (`demo_view().fxaa`);
 - the page logged any console error or warning, a browser log error or warning (WebGPU's
   validation messages arrive there) or an uncaught exception; Chrome's favicon 404 alone is let pass.
 
