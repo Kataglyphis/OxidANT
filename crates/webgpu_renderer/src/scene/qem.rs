@@ -572,6 +572,7 @@ impl WeldedMesh {
             node_index: source.node_index,
             skin_index: source.skin_index,
             material: source.material.clone(),
+            // Morph deltas cannot survive a new vertex count; morphed primitives never get a LOD.
             morph_targets: Vec::new(),
             morph_weights: Vec::new(),
         }
