@@ -13,7 +13,7 @@ use crate::render::bind_layout;
 use crate::render::cascades::{fit_cascades, CascadeLens};
 use crate::render::gpu_timing::TimedPass;
 use crate::scene::camera::OrbitCamera;
-use crate::scene::{InstanceRaw, Vertex};
+use crate::scene::{InstanceRaw, Vertex, VertexLayout as _};
 
 /// The caster pipelines: back-culled, unculled for double-sided materials, alpha-tested for MASK.
 pub(super) struct ShadowPipelines {

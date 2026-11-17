@@ -44,7 +44,7 @@ fn declared_srgb_for(vk_format: u32) -> Option<bool> {
 }
 
 /// Rejects an empty mip chain, too many levels, or a level too small for its block dimensions.
-pub(crate) fn validate_mip_chain(
+pub fn validate_mip_chain(
     width: u32,
     height: u32,
     format: CompressedFormat,
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn loads_a_valid_bc1_container() {
-        let bytes = include_bytes!("../../tests/assets/red_bc1.ktx2");
+        let bytes = include_bytes!("../../webgpu_renderer/tests/assets/red_bc1.ktx2");
         let tex = load_ktx2(bytes).expect("red_bc1.ktx2 should load");
         assert!(
             tex.width >= 1 && tex.height >= 1,

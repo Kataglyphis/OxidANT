@@ -5107,6 +5107,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kataglyphis_assets"
+version = "3.0.0"
+dependencies = [
+ "anyhow",
+ "basisu",
+ "bevy_mikktspace",
+ "bytemuck",
+ "glam",
+ "gltf",
+ "ktx2",
+ "log",
+ "ruzstd",
+]
+
+[[package]]
 name = "kataglyphis_burn_demos"
 version = "3.0.0"
 dependencies = [
@@ -5289,8 +5304,6 @@ name = "kataglyphis_webgpu_renderer"
 version = "3.0.0"
 dependencies = [
  "anyhow",
- "basisu",
- "bevy_mikktspace",
  "bytemuck",
  "console_error_panic_hook",
  "console_log",
@@ -5302,11 +5315,10 @@ dependencies = [
  "gltf",
  "image 0.25.10",
  "js-sys",
- "ktx2",
+ "kataglyphis_assets",
  "log",
  "naga",
  "pollster",
- "ruzstd",
  "sha2",
  "wasm-bindgen",
  "wasm-bindgen-futures",

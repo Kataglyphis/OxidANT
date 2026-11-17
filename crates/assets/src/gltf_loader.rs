@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use glam::{Mat4, Vec2, Vec3};
 
-use super::gltf_images;
+use crate::gltf_images;
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuCamera, CpuCameraProjection,
     CpuLight, CpuLightKind, CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin,
@@ -369,7 +369,7 @@ fn drop_out_of_range_triangles(indices: Vec<u32>, vertex_count: usize) -> (Vec<u
 }
 
 /// Converts a decoded glTF image into tightly packed RGBA8.
-pub(super) fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
+pub(crate) fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
     use gltf::image::Format;
 
     let pixel_count = (img.width * img.height) as usize;

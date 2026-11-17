@@ -7,7 +7,7 @@ use super::{ForwardRenderer, DEPTH_FORMAT, HDR_FORMAT, MSAA_SAMPLE_COUNT};
 use crate::render::bind_layout;
 use crate::render::gpu_timing::TimedPass;
 use crate::render::graph::Resource;
-use crate::scene::{InstanceRaw, Vertex};
+use crate::scene::{InstanceRaw, Vertex, VertexLayout as _};
 
 /// Where the sky's background starts before anything draws, in both raster paths.
 pub(super) const HDR_CLEAR: wgpu::Color = wgpu::Color {

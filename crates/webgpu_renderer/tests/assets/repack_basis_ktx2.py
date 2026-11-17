@@ -3,7 +3,7 @@
 
 `ramp_etc1s.ktx2` and `ramp_uastc.ktx2` come from the crates.io `basis-universal` 0.3.1 encoder
 (basisu 1.16), whose bindings write `.basis` only: a 32x32 RGBA ramp (`encoded_ramp` in
-`src/asset/basis.rs`), `ColorSpace::Srgb`, `set_generate_mipmaps(true)`, default quality, then
+`crates/assets/src/basis.rs`), `ColorSpace::Srgb`, `set_generate_mipmaps(true)`, default quality, then
 `python3 repack_basis_ktx2.py ramp_etc1s.basis ramp_etc1s.ktx2`.
 """
 

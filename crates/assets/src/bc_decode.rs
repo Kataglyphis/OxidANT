@@ -4,7 +4,7 @@
 use crate::scene::CompressedFormat;
 
 /// RGBA8 texels of one `width` x `height` level, or `None` when `data` holds fewer blocks than it covers or is not BCn.
-pub(crate) fn decode_level(
+pub fn decode_level(
     format: CompressedFormat,
     width: u32,
     height: u32,

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 
-use super::ktx2_loader::load_ktx2;
+use crate::ktx2_loader::load_ktx2;
 use crate::scene::CpuTexture;
 
 const BASISU: &str = "KHR_texture_basisu";
@@ -92,7 +92,7 @@ pub(crate) fn import_images(
                 return Ok(texture.map(Arc::new));
             }
             let data = gltf::image::Data::from_source(image.source(), base, buffers)?;
-            Ok(Ok(Arc::new(super::gltf_loader::to_rgba8(data)?)))
+            Ok(Ok(Arc::new(crate::gltf_loader::to_rgba8(data)?)))
         })
         .collect()
 }

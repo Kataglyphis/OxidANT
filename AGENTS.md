@@ -30,7 +30,7 @@ The root `Cargo.toml` is both the workspace and the root package `oxidant`: a li
 2026-10-20): every target builds what it can run ([§ Targets and their system
 dependencies](#targets-and-their-system-dependencies)). Every crate, what `src/` and
 `tests/` hold, and the three documented vendored crates under `third_party/`:
-[`docs/crates.md`](docs/crates.md). The crates are `crates/burn_demos`, `crates/cli`, `crates/core`,
+[`docs/crates.md`](docs/crates.md). The crates are `crates/assets`, `crates/burn_demos`, `crates/cli`, `crates/core`,
 `crates/cxx_bridge`, `crates/esp32`, `crates/esp32-protocol`, `crates/gui`, `crates/inference`,
 `crates/media`, `crates/observant`, `crates/telemetry`, `crates/text` and `crates/webgpu_renderer`;
 the root package's modules are `src/api` (the flutter_rust_bridge surface) and `src/platform`. The tooling submodule, `third_party/ANTfrastructure`,
