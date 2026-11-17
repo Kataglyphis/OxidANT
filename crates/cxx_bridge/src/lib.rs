@@ -124,11 +124,15 @@ pub fn rusty_cxxbridge_integer() -> i32 {
 
 /// Never unwinds into C++: an error or a panic becomes `ok == false` with the reason.
 pub fn load_gltf_flat(path: &[u8]) -> ffi::GltfModel {
-    let loaded = std::panic::catch_unwind(|| {
+    guarded(|| {
         let path = std::str::from_utf8(path).map_err(|_| "the path is not UTF-8".to_owned())?;
         load_flat(path).map_err(|err| format!("{err:#}"))
-    });
-    match loaded {
+    })
+}
+
+/// A panic under `panic = "unwind"` is caught here; the release profile's `abort` ends the process instead.
+fn guarded(load: impl FnOnce() -> Result<FlatModel, String>) -> ffi::GltfModel {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(load)) {
         Ok(Ok(model)) => to_ffi(model, true, String::new()),
         Ok(Err(error)) => to_ffi(FlatModel::default(), false, error),
         Err(panic) => to_ffi(FlatModel::default(), false, panic_message(panic.as_ref())),
@@ -313,6 +317,13 @@ mod tests {
         assert!(panic_message(owned.as_ref()).ends_with("owned"));
         let other = std::panic::catch_unwind(|| std::panic::panic_any(7)).unwrap_err();
         assert!(panic_message(other.as_ref()).ends_with("panicked: "));
+    }
+
+    #[test]
+    fn a_panicking_load_comes_back_as_an_error() {
+        let model = guarded(|| panic!("broken accessor"));
+        assert!(!model.ok);
+        assert_eq!(model.error, "the glTF loader panicked: broken accessor");
     }
 
     #[test]
