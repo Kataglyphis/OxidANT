@@ -97,10 +97,10 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
 
 - [ ] `large-files.allow:3` budget 2031 (allow_budget_total); left 2026-11-16: `images/Rust.webp`'s 136 frames are
       lossy VP8 already, and a quarter of the size is a visibly worse hero image, the owner's call
-- [ ] `rust-function-size.allow:8` budget 143 (allow_budget_total)
-- [ ] `rust-function-size.allow:17` budget 135 (allow_budget_total)
-- [ ] `function-size.allow:4` budget 127 (allow_budget_total)
-- [ ] `rust-function-size.allow:5` budget 114 (allow_budget_total)
+- [ ] `rust-function-size.allow:13` budget 111 (allow_budget_total)
+- [ ] `rust-function-size.allow:9` budget 108 (allow_budget_total)
+- [ ] `rust-function-size.allow:12` budget 108 (allow_budget_total)
+- [ ] `rust-function-size.allow:16` budget 107 (allow_budget_total)
 
 ## P3 — ideas, chores and blocked work
 
