@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-17, `code-complexity.allow` is empty)
+- **The NVIDIA promotion test**: `test_selected_producers_control_all_downstream_jobs` (cc 16, nesting 6) asks
+  `assert_downstream_job_gated` per job and `assert_rejected_unless_succeeded` per need, with the producers per
+  architecture in `SELECTED_PRODUCERS`; `test_both_architectures_stage_and_reject_wrong_identity` (nesting 6) hands
+  each receipt to `reject_tampered_receipt`. Old and new made the same 141 and 262 assertions in the same order (the
+  last differs only in the archive digests, which change from run to run).
+- **The GPU workflow test's nested `valid` (cc 16)** is the module function `reusable_inputs_valid`, with
+  `scope_suffix` and `gpu_profile_gated`; old and new agreed on 3908 variants (the mutation table plus every
+  single-line deletion of the three workflows, under each group and platform branch).
+- **The candidate archive test (nesting 6)** rewrites its archive through `rewrite_archive`; `MODEL_FILES` replaces
+  the two copies of the model-file list.
+
 ### Changed (2026-11-17, the function-size freezes are down to one row)
 - **`function-size.allow` is empty**: the AMD promotion test's mutation table is the module constant `MUTATIONS`.
 - **`rust-function-size.allow` keeps one row of eleven**, burn_demos' `main` at 83 lines (was 93): its ONNX

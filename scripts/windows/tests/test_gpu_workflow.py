@@ -17,6 +17,50 @@ WORKFLOW = (
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def scope_suffix(group: str, windows: bool) -> str:
+    """The job output each concurrency group of a reusable GPU workflow must end in."""
+    if windows:
+        return "needs.preflight.outputs.suffix"
+    if group == "linux-nvidia-gpu":
+        return "needs.select.outputs.suffix"
+    return "needs.scope.outputs.suffix"
+
+
+def gpu_profile_gated(content: str, group: str, windows: bool) -> bool:
+    """The GPU profile runs only when verify-gpu asks for it."""
+    profile = content.split("\n  gpu-profile:\n", 1)[-1]
+    if windows or group == "linux-nvidia-gpu":
+        return "&& inputs.verify-gpu &&" in profile
+    return "if: ${{ inputs.verify-gpu }}" in profile
+
+
+def reusable_inputs_valid(content: str, group: str, windows: bool) -> bool:
+    """A callable GPU workflow: inputs default off, scoped concurrency, a gated GPU profile."""
+    if "  workflow_call:\n" not in content:
+        return False
+    call = content.split("  workflow_call:\n", 1)[1].split("\npermissions:", 1)[0]
+    suffix = scope_suffix(group, windows)
+    groups = re.findall(r"(?m)^\s+group: (.+)$", content)
+    return (
+        "      verify-gpu:\n        type: boolean\n        default: false" in call
+        and "      GHCR_PAT:\n        required: false" in call
+        and f"group: {group}-${{{{ github.ref }}}}-${{{{ github.workflow }}}}" in content
+        and "      invocation-scope:\n        type: string\n        default: default"
+        in call
+        and "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py"
+        in content
+        and bool(groups)
+        and all(
+            suffix in line and "inputs.invocation-scope" not in line for line in groups
+        )
+        and gpu_profile_gated(content, group, windows)
+        and (
+            not windows
+            or "      amd-device-index:\n        type: string\n        default: '0'"
+            in call
+        )
+    )
+
 def matrix_is_valid(content: str) -> bool:
     candidate = content.split("\n  candidate:\n", 1)[-1].split("\n  gpu-profile:\n", 1)[
         0
@@ -132,49 +176,6 @@ class GpuWorkflow(unittest.TestCase):
                 self.assertIn("exit 1", preflight)
 
     def test_reusable_candidate_inputs_are_default_off(self) -> None:
-        def valid(content: str, group: str, windows: bool) -> bool:
-            if "  workflow_call:\n" not in content:
-                return False
-            call = content.split("  workflow_call:\n", 1)[1].split("\npermissions:", 1)[
-                0
-            ]
-            suffix = (
-                "needs.preflight.outputs.suffix"
-                if windows
-                else "needs.select.outputs.suffix"
-                if group == "linux-nvidia-gpu"
-                else "needs.scope.outputs.suffix"
-            )
-            groups = re.findall(r"(?m)^\s+group: (.+)$", content)
-            return (
-                "      verify-gpu:\n        type: boolean\n        default: false"
-                in call
-                and "      GHCR_PAT:\n        required: false" in call
-                and f"group: {group}-${{{{ github.ref }}}}-${{{{ github.workflow }}}}"
-                in content
-                and "      invocation-scope:\n        type: string\n        default: default"
-                in call
-                and "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py"
-                in content
-                and bool(groups)
-                and all(
-                    suffix in line and "inputs.invocation-scope" not in line
-                    for line in groups
-                )
-                and (
-                    "&& inputs.verify-gpu &&"
-                    in content.split("\n  gpu-profile:\n", 1)[-1]
-                    if windows or group == "linux-nvidia-gpu"
-                    else "if: ${{ inputs.verify-gpu }}"
-                    in content.split("\n  gpu-profile:\n", 1)[-1]
-                )
-                and (
-                    not windows
-                    or "      amd-device-index:\n        type: string\n        default: '0'"
-                    in call
-                )
-            )
-
         workflows = {
             "linux-nvidia-gpu.yml": "linux-nvidia-gpu",
             "linux-x64-amd-gpu.yml": "linux-x64-amd-gpu",
@@ -186,7 +187,7 @@ class GpuWorkflow(unittest.TestCase):
             )
             with self.subTest(workflow=filename):
                 windows = filename.startswith("windows-")
-                self.assertTrue(valid(content, group, windows))
+                self.assertTrue(reusable_inputs_valid(content, group, windows))
                 for original, replacement in (
                     ("  workflow_call:\n", "  workflow_disabled:\n"),
                     (
@@ -202,9 +203,8 @@ class GpuWorkflow(unittest.TestCase):
                         "if: true",
                     ),
                 ):
-                    self.assertFalse(
-                        valid(content.replace(original, replacement), group, windows)
-                    )
+                    mutant = content.replace(original, replacement)
+                    self.assertFalse(reusable_inputs_valid(mutant, group, windows))
 
     @unittest.skipUnless(os.name == "nt", "runs a native Windows launcher fixture")
     def test_candidate_zip_smoke_requires_inference_and_media(self) -> None:

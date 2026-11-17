@@ -18,6 +18,24 @@ HUB = Path(
     os.environ.get("ANTFRASTRUCTURE_DIR", ROOT / "third_party" / "ANTfrastructure")
 )
 
+# The model files a finished archive must carry unchanged.
+MODEL_FILES = (
+    "resources/models/deim_dfine_n_coco.onnx",
+    "resources/models/deim_dfine_n_coco.LICENSE",
+    "resources/models/deim_dfine_n_coco.NOTICE",
+)
+
+
+def rewrite_archive(
+    archive: Path, files: dict[str, bytes], name: str, *, drop: bool
+) -> None:
+    """Writes `files` back to `archive` with `name` dropped, or with its bytes changed."""
+    with zipfile.ZipFile(archive, "w") as output:
+        for entry, content in files.items():
+            if entry == name and drop:
+                continue
+            output.writestr(entry, b"changed" if entry == name else content)
+
 
 def plain_diagnostic(text: str) -> str:
     """Normalize PowerShell colour and wrapped diagnostic gutters."""
@@ -607,20 +625,10 @@ class GpuPreflight(unittest.TestCase):
         bundle, archive = self.make_archive_fixture()
         with zipfile.ZipFile(archive) as original:
             files = {name: original.read(name) for name in original.namelist()}
-        for name in (
-            "resources/models/deim_dfine_n_coco.onnx",
-            "resources/models/deim_dfine_n_coco.LICENSE",
-            "resources/models/deim_dfine_n_coco.NOTICE",
-        ):
+        for name in MODEL_FILES:
             for mutation in ("missing", "changed"):
                 with self.subTest(name=name, mutation=mutation):
-                    with zipfile.ZipFile(archive, "w") as output:
-                        for entry, content in files.items():
-                            if entry == name and mutation == "missing":
-                                continue
-                            output.writestr(
-                                entry, b"changed" if entry == name else content
-                            )
+                    rewrite_archive(archive, files, name, drop=mutation == "missing")
                     result = self.run_archive_check(bundle, archive)
                     self.assertNotEqual(
                         result.returncode, 0, result.stdout + result.stderr
@@ -630,11 +638,7 @@ class GpuPreflight(unittest.TestCase):
         bundle, archive = self.make_archive_fixture()
         with zipfile.ZipFile(archive) as original:
             files = {name: original.read(name) for name in original.namelist()}
-        for name in (
-            "resources/models/deim_dfine_n_coco.onnx",
-            "resources/models/deim_dfine_n_coco.LICENSE",
-            "resources/models/deim_dfine_n_coco.NOTICE",
-        ):
+        for name in MODEL_FILES:
             with self.subTest(name=name):
                 path = bundle / name
                 path.write_bytes(b"changed in both")

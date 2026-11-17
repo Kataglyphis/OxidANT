@@ -99,9 +99,6 @@ The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh
       lossy VP8 already, and a quarter of the size is a visibly worse hero image, the owner's call
 - [ ] `rust-function-size.allow:3` budget 83 (allow_budget_total); kept 2026-11-17: burn_demos' `main` is the
       subcommand dispatch alone, one arm per demo forwarding its flags, and clippy counts it under 80
-- [ ] `code-complexity.allow:11` budget 16 (allow_budget_total)
-- [ ] `code-complexity.allow:12` budget 16 (allow_budget_total)
-- [ ] `code-complexity.allow:13` budget 6 (allow_budget_total)
 
 ## P3 — ideas, chores and blocked work
 

@@ -23,6 +23,12 @@ SELECTED_BUILDS = (
     "(needs.select.outputs.architecture == 'x64' || needs.build-arm64.result == 'success')"
 )
 
+# The producers each architecture request builds, whose failure must stop every downstream job.
+SELECTED_PRODUCERS = {
+    "x64": ("build-x64",),
+    "arm64": ("build-arm64",),
+    "both": ("build-x64", "build-arm64"),
+}
 
 def job(text: str, name: str) -> str:
     match = re.search(
@@ -458,6 +464,31 @@ RESULT_GUARDS = (
 )
 
 
+def reject_tampered_receipt(fixture, receipt: Path, arch: str) -> None:
+    """Each identity field changed or dropped, each file hash changed, or the receipt gone fails staging."""
+    original = receipt.read_text()
+    for key, value in (
+        ("artifact_id", "99"),
+        ("artifact_digest", "f" * 64),
+        ("run_attempt", "1"),
+        ("arch", "arm64" if arch == "x64" else "x64"),
+    ):
+        changed = json.loads(original)
+        changed["identity"][key] = value
+        receipt.write_text(json.dumps(changed))
+        fixture.rejected()
+        del changed["identity"][key]
+        receipt.write_text(json.dumps(changed))
+        fixture.rejected()
+    for filename in fixture.data:
+        changed = json.loads(original)
+        changed["files"][filename] = "f" * 64
+        receipt.write_text(json.dumps(changed))
+        fixture.rejected()
+    receipt.unlink()
+    fixture.rejected()
+    receipt.write_text(original)
+
 class NvidiaPromotionTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "the selector runs in Linux Bash")
     def test_actual_selector_accepts_only_supported_architectures(self) -> None:
@@ -523,60 +554,30 @@ class NvidiaPromotionTests(unittest.TestCase):
             }
             for producer in ("build-x64", "build-arm64"):
                 selected = arch == "both" or producer == "build-" + arch
-                self.assertEqual(
-                    evaluate_condition(job(workflow, producer), arch, base), selected
-                )
-                for failed_selector in ("failure", "cancelled", "skipped"):
-                    self.assertFalse(
-                        evaluate_condition(
-                            job(workflow, producer),
-                            arch,
-                            {**base, "select": failed_selector},
-                        )
-                    )
+                text = job(workflow, producer)
+                self.assertEqual(evaluate_condition(text, arch, base), selected)
+                self.assert_rejected_unless_succeeded(text, arch, base, "select")
             for name, text in jobs.items():
                 with self.subTest(arch=arch, job=name):
-                    self.assertTrue(evaluate_condition(text, arch, base))
-                    self.assertFalse(
-                        evaluate_condition(text, arch, base, cancelled=True)
-                    )
-                    for chosen in (
-                        ["build-x64"]
-                        if arch == "x64"
-                        else ["build-arm64"]
-                        if arch == "arm64"
-                        else ["build-x64", "build-arm64"]
-                    ):
-                        for failure in ("failure", "cancelled", "skipped"):
-                            self.assertFalse(
-                                evaluate_condition(
-                                    text, arch, {**base, chosen: failure}
-                                )
-                            )
-                    for status in ("failure", "cancelled", "skipped"):
-                        self.assertFalse(
-                            evaluate_condition(text, arch, {**base, "select": status})
-                        )
-                    if name != "clean-host":
-                        for status in ("failure", "cancelled", "skipped"):
-                            self.assertFalse(
-                                evaluate_condition(
-                                    text, arch, {**base, "clean-host": status}
-                                )
-                            )
-                        self.assertFalse(
-                            evaluate_condition(text, arch, base, verify=False)
-                        )
-                    if name == "stage-verified":
-                        for status in ("failure", "cancelled", "skipped"):
-                            self.assertFalse(
-                                evaluate_condition(
-                                    text, arch, {**base, "gpu-profile": status}
-                                )
-                            )
-                        self.assertFalse(
-                            evaluate_condition(text, arch, base, promote=False)
-                        )
+                    self.assert_downstream_job_gated(name, text, arch, base)
+
+    def assert_downstream_job_gated(self, name, text, arch, base) -> None:
+        """`name` runs on `base` and on nothing less: every need it has must have succeeded."""
+        self.assertTrue(evaluate_condition(text, arch, base))
+        self.assertFalse(evaluate_condition(text, arch, base, cancelled=True))
+        for chosen in SELECTED_PRODUCERS[arch]:
+            self.assert_rejected_unless_succeeded(text, arch, base, chosen)
+        self.assert_rejected_unless_succeeded(text, arch, base, "select")
+        if name != "clean-host":
+            self.assert_rejected_unless_succeeded(text, arch, base, "clean-host")
+            self.assertFalse(evaluate_condition(text, arch, base, verify=False))
+        if name == "stage-verified":
+            self.assert_rejected_unless_succeeded(text, arch, base, "gpu-profile")
+            self.assertFalse(evaluate_condition(text, arch, base, promote=False))
+
+    def assert_rejected_unless_succeeded(self, text, arch, base, need) -> None:
+        for status in ("failure", "cancelled", "skipped"):
+            self.assertFalse(evaluate_condition(text, arch, {**base, need: status}))
 
     def test_wiring_and_mutations(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -667,28 +668,7 @@ class NvidiaPromotionTests(unittest.TestCase):
                         (artifact_id, fixture.identity["artifact-digest"])
                     )
                     for receipt in (fixture.clean, fixture.gpu):
-                        original = receipt.read_text()
-                        for key, value in (
-                            ("artifact_id", "99"),
-                            ("artifact_digest", "f" * 64),
-                            ("run_attempt", "1"),
-                            ("arch", "arm64" if arch == "x64" else "x64"),
-                        ):
-                            changed = json.loads(original)
-                            changed["identity"][key] = value
-                            receipt.write_text(json.dumps(changed))
-                            fixture.rejected()
-                            del changed["identity"][key]
-                            receipt.write_text(json.dumps(changed))
-                            fixture.rejected()
-                        for filename in fixture.data:
-                            changed = json.loads(original)
-                            changed["files"][filename] = "f" * 64
-                            receipt.write_text(json.dumps(changed))
-                            fixture.rejected()
-                        receipt.unlink()
-                        fixture.rejected()
-                        receipt.write_text(original)
+                        reject_tampered_receipt(fixture, receipt, arch)
                     fixture.rejected("--run-attempt", "3")
                     fixture.test_matching_receipts_and_archive_stage_exact_bytes()
                 finally:
