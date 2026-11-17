@@ -1,6 +1,26 @@
 #[path = "../../../tests/integration/integration.rs"]
 mod integration;
 
+/// `--resource-log` starts the sampler for the run, which opens its log file before the first sample.
+#[test]
+fn resource_log_opens_its_file_and_the_command_still_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.txt");
+    std::fs::write(&input, "one two\n").unwrap();
+    let log = dir.path().join("resources.log");
+
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kataglyphis_cli");
+    cmd.args(["--resource-log", "--resource-log-interval-ms", "1"])
+        .arg("--resource-log-file")
+        .arg(&log)
+        .args(["--resource-log-gpu", "false", "stats", "--path"])
+        .arg(&input);
+    cmd.assert()
+        .success()
+        .stdout(predicates::str::contains("Words: 2"));
+    assert!(log.is_file(), "no resource log at {}", log.display());
+}
+
 #[cfg(target_os = "linux")]
 mod gui_smoke {
     use std::io::{BufRead, BufReader, Read};
