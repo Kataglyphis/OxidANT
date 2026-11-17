@@ -116,6 +116,17 @@ distance to twice its distance to the target, never under the C++ 60 m. The menu
 switch, the Render menu and the Renderer tab pick raster, ray or path tracing, and the
 Renderer tab's PATH TRACING rows set its samples, bounces and white furnace.
 
+**Performance and adapters** — the Renderer tab's QUALITY presets (Low, Medium, High,
+Ultra; Custom after an edit) set the raster path, FXAA, SSAO, bloom, the shadow maps and
+the render scale (`render::quality`). The render scale (0.25 to 1) sizes the scene
+targets and the tonemap upsamples to the output; Auto steers it toward a frame rate
+(`render::render_scale`), and the viewport chip names the internal size. The browser
+starts at Medium on an integrated or unknown GPU and High on a discrete one; natively
+the start is High. The viewer picks discrete over integrated over a CPU rasterizer,
+takes `--adapter <name>` or `KATAGLYPHIS_ADAPTER`, and the Renderer tab's ADAPTER list
+restarts it on another (`adapter`). The status bar names a browser adapter from its
+vendor and architecture and hints where Windows chooses Chrome's GPU.
+
 **Camera** — the C++ engine's fly camera (`scene::fly`) and the orbit controller
 share one `OrbitCamera`: flying moves eye and target together and turns about the
 eye, orbiting turns about the target and the wheel changes the distance between
@@ -132,7 +143,7 @@ which the start view fits to the scene, so an 8 km scene zooms from where it sta
 ```bash
 # Native viewer: the fetched Colosseum, or a .gltf, .glb or .obj (drop one on the window to load it)
 scripts/linux/fetch-models.sh --scenes
-cargo run -p kataglyphis_webgpu_renderer --example viewer [model]
+cargo run -p kataglyphis_webgpu_renderer --example viewer [model] [--adapter <name>]
 
 # Headless + unit tests (GPU tests self-skip without an adapter)
 cargo test -p kataglyphis_webgpu_renderer

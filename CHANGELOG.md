@@ -13,6 +13,30 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-17, the WebGPU renderer picks its adapter, names it in a browser and scales to a frame rate)
+- **Adapter identity** (`crates/webgpu_renderer/src/adapter.rs`): wgpu leaves a browser adapter's name empty, so the
+  demo reads `GPUAdapterInfo` itself and the status bar shows `WebGPU · intel gen-12lp`; a native adapter without a
+  name is labelled from its PCI vendor, device id and driver. Each adapter is classified discrete, integrated,
+  virtual, CPU or unknown (in a browser from Dawn's vendor and architecture names). An integrated browser GPU gets a
+  status-bar hint whose tooltip names the Windows setting that picks Chrome's GPU, since Chrome ignores the page's
+  power preference there (crbug.com/369219127).
+- **Native adapter selection** (`context.rs`): every adapter is logged, then the viewer takes `--adapter <name>`,
+  else `KATAGLYPHIS_ADAPTER` or wgpu's `WGPU_ADAPTER_NAME` (a case-insensitive part of `name (API)`), else discrete
+  over integrated over virtual over unknown over a CPU rasterizer; `WGPU_POWER_PREF=low` and `WGPU_BACKEND` are
+  honoured within the GL-free backends. The Renderer tab's ADAPTER list marks the adapter in use, and *Use* restarts
+  the viewer on another with its original arguments (`AppSignal::UseAdapter`, `HostCaps::relaunch`).
+- **Render scale** (`render/render_scale.rs`): the scene targets render at 0.25 to 1 of the output and the tonemap
+  upsamples; FXAA filters at the output size. Auto steers the scale toward a target frame rate (60 FPS by default)
+  from the GPU's pass times, else the median frame time, with a dead band, a one-second and 40-frame interval, and a
+  doubling wait after a step up it had to take back. The viewport chip shows the internal size.
+- **Quality presets** (`render/quality.rs`): Low, Medium, High (the defaults) and Ultra over existing knobs; Low and
+  Medium render deferred with FXAA instead of 4x MSAA and run Auto. The browser starts at Medium on an integrated or
+  unknown GPU, Low on a CPU one and High on a discrete one; the viewer at High.
+- **GPU timings in a browser** needed no change: the device requests `TIMESTAMP_QUERY` wherever the adapter has it,
+  Chrome's `timestamp-query` included, and the readback ring maps asynchronously there too; the stale "desktop-only"
+  comment is corrected. Unit tests cover the labels, classes, hint, choice, relaunch arguments, presets and the
+  Auto controller; `tests/render_scale.rs` renders both raster paths at half scale on the GPU.
+
 ### Added (2026-11-16, `/ask` streams its answer to a client that asks)
 - `POST /ask` with `Accept: application/x-ndjson` answers one JSON line at a time as the model decodes: the
   `facts`, each `piece`, then `done` with the figures or `error` with the status a JSON reply would have had (owner

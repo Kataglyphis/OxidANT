@@ -223,8 +223,38 @@ BeschleunigerBallett's scene fetch uses too. No package and no CI step fetches t
 
 ```bash
 scripts/linux/fetch-models.sh --scenes   # Windows: scripts\windows\Get-Models.ps1 -Scenes
-cargo run -p kataglyphis_webgpu_renderer --example viewer [scene.gltf|scene.glb|model.obj]
+cargo run -p kataglyphis_webgpu_renderer --example viewer [scene.gltf|scene.glb|model.obj] [--adapter <name>]
 ```
+
+**The adapter.** The viewer logs every adapter at startup (`RUST_LOG=info`) and takes the first
+that matches, case-insensitively, a part of its `name (API)` label:
+
+1. `--adapter <name>` (or `--adapter=<name>`);
+2. `KATAGLYPHIS_ADAPTER`, else wgpu's `WGPU_ADAPTER_NAME`;
+3. else the best usable one: discrete, integrated, virtual, unknown, then a CPU rasterizer, never
+   a CPU one while hardware is usable. wgpu's `WGPU_POWER_PREF=low` puts integrated first, and
+   `WGPU_BACKEND` narrows Vulkan, Metal and Direct3D 12; GL stays refused.
+
+A name that matches nothing logs a warning and falls back to 3. The Renderer tab's ADAPTER list
+marks the one in use; *Use* on another starts the viewer again with `--adapter <label>` and the
+original arguments, then exits. The browser offers one adapter: Chrome ignores the page's power
+preference on Windows (crbug.com/369219127) and takes the GPU set under Windows Settings > System >
+Display > Graphics > Chrome. The status bar names it from `GPUAdapterInfo` (`WebGPU · intel
+gen-12lp`) and marks an integrated one with that hint.
+
+**Quality.** The Renderer tab's presets: Low (deferred and FXAA instead of 4x MSAA, no SSAO or
+bloom, one 1024 cascade, Auto scale from 0.75), Medium (deferred and FXAA, SSAO and bloom, two 1024
+cascades, Auto scale from 1), High (the defaults: forward at 4x MSAA, three 2048 cascades, scale 1)
+and Ultra (High with 4096 cascades, PCF radius 3 and FXAA on every frame). Editing a setting a
+preset owns shows Custom. The browser starts at Medium on an integrated or unknown GPU, Low on a
+CPU one and High on a discrete one; the viewer starts at High. Nothing is persisted.
+**Render scale** renders the scene at 0.25 to 1 of the viewport's size and upsamples in the
+tonemap; the chip shows the internal size. **Auto** steers it toward a target frame rate (60 FPS by
+default) on raster frames: down by the root of the over-run when a frame takes 15 % over the
+target, up a 0.05 step after two seconds of headroom, at most once a second and 40 frames. It
+reads the GPU's pass times where timestamps exist (Chrome included), else the median frame time,
+which vsync caps, so a frame that meets the target counts as headroom there; a step up taken back
+within four seconds doubles the wait before the next (up to 32 s).
 
 The startup scene is the first that exists of:
 
