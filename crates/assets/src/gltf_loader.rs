@@ -498,17 +498,25 @@ fn texture_ref(
         })
 }
 
-/// Every node a load draws, with its world transform: the default scene's, else the first scene's.
+/// Every node a load draws, with its world transform: the default scene's, else the first scene's, else all.
 /// BeschleunigerBallett's C++ loader walks the same nodes (its docs/source/model-loading.md); change both together.
 pub(crate) fn walk_nodes(
     document: &gltf::Document,
-    visit: impl FnMut(&gltf::Node, Mat4) -> anyhow::Result<()>,
+    mut visit: impl FnMut(&gltf::Node, Mat4) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    let gltf_scene = document
+    if let Some(gltf_scene) = document
         .default_scene()
         .or_else(|| document.scenes().next())
-        .context("glTF file contains no scenes")?;
-    walk_scene(&gltf_scene, document.nodes().len(), visit)
+    {
+        return walk_scene(&gltf_scene, document.nodes().len(), visit);
+    }
+    // Without scenes every node is all the geometry there is; each is posed by its parent chain, not walked into.
+    log::warn!("glTF document has no scenes; loading every node");
+    let world = CpuScene::compute_world_transforms(&read_nodes(document));
+    for node in document.nodes() {
+        visit(&node, world[node.index()])?;
+    }
+    Ok(())
 }
 
 /// Depth-first over the scene's node trees with an explicit stack, each node visited once with its world transform.
@@ -682,10 +690,12 @@ pub(crate) fn primitive_geometry(
         has_normals: reader.read_normals().is_some(),
         has_tangents: reader.read_tangents().is_some(),
         // glTF generates tangents from the UV set the normal texture samples.
-        tangent_uv_set: primitive
-            .material()
-            .normal_texture()
-            .map_or(0, |info| info.tex_coord()),
+        tangent_uv_set: primitive.material().normal_texture().map_or(0, |info| {
+            let transform = info
+                .extensions()
+                .and_then(|ext| ext.get("KHR_texture_transform"));
+            raw_tex_coord(info.tex_coord(), transform)
+        }),
         mikktspace: mikktspace_tangents_enabled(),
     };
     let geometry = finish_geometry(
@@ -991,19 +1001,40 @@ fn slot_uv_transforms(material: &gltf::Material) -> [[[f32; 3]; 2]; 5] {
 fn uv_set_mask(material: &gltf::Material) -> u32 {
     let pbr = material.pbr_metallic_roughness();
     pbr.base_color_texture()
-        .map_or(0, |i| uv_set_bit("base color", i.tex_coord(), 0))
-        | pbr
-            .metallic_roughness_texture()
-            .map_or(0, |i| uv_set_bit("metallic-roughness", i.tex_coord(), 1))
-        | material
-            .normal_texture()
-            .map_or(0, |i| uv_set_bit("normal", i.tex_coord(), 2))
+        .map_or(0, |i| uv_set_bit("base color", info_tex_coord(&i), 0))
+        | pbr.metallic_roughness_texture().map_or(0, |i| {
+            uv_set_bit("metallic-roughness", info_tex_coord(&i), 1)
+        })
+        | material.normal_texture().map_or(0, |i| {
+            let transform = i
+                .extensions()
+                .and_then(|ext| ext.get("KHR_texture_transform"));
+            uv_set_bit("normal", raw_tex_coord(i.tex_coord(), transform), 2)
+        })
         | material
             .emissive_texture()
-            .map_or(0, |i| uv_set_bit("emissive", i.tex_coord(), 3))
-        | material
-            .occlusion_texture()
-            .map_or(0, |i| uv_set_bit("occlusion", i.tex_coord(), 4))
+            .map_or(0, |i| uv_set_bit("emissive", info_tex_coord(&i), 3))
+        | material.occlusion_texture().map_or(0, |i| {
+            let transform = i
+                .extensions()
+                .and_then(|ext| ext.get("KHR_texture_transform"));
+            uv_set_bit("occlusion", raw_tex_coord(i.tex_coord(), transform), 4)
+        })
+}
+
+/// A typed slot's UV set: KHR_texture_transform's `texCoord` overrides the textureInfo's, as that extension says.
+fn info_tex_coord(info: &gltf::texture::Info) -> u32 {
+    info.texture_transform()
+        .and_then(|t| t.tex_coord())
+        .unwrap_or_else(|| info.tex_coord())
+}
+
+/// [`info_tex_coord`] for the normal and occlusion slots, whose extension `gltf` leaves as raw JSON.
+fn raw_tex_coord(tex_coord: u32, transform: Option<&gltf::json::Value>) -> u32 {
+    transform
+        .and_then(|t| t.get("texCoord"))
+        .and_then(gltf::json::Value::as_u64)
+        .map_or(tex_coord, |set| set as u32)
 }
 
 fn compute_flat_normals(vertices: &mut [Vertex], indices: &[u32]) {

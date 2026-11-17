@@ -183,6 +183,11 @@ pub(crate) fn encoded_bytes(
                 let (_, payload) = data
                     .split_once(";base64,")
                     .context("a data URI image that is not base64")?;
+                // Padded base64 only: a truncated payload is a broken image, not a shorter one.
+                anyhow::ensure!(
+                    !payload.is_empty() && payload.len().is_multiple_of(4),
+                    "a data URI image whose base64 is truncated"
+                );
                 return decode_base64(payload);
             }
             anyhow::ensure!(

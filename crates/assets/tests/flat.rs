@@ -259,3 +259,74 @@ fn a_file_without_triangles_is_an_error() {
         "{err:#}"
     );
 }
+
+/// The PNG data URI `cube_textured.gltf` embeds, so a test material has a decodable image.
+fn embedded_png_uri() -> String {
+    let json = std::fs::read_to_string(renderer_asset("cube_textured.gltf")).unwrap();
+    let start = json.find("data:image/png;base64,").unwrap();
+    let end = start + json[start..].find('"').unwrap();
+    json[start..end].to_owned()
+}
+
+#[test]
+fn a_texture_transform_tex_coord_overrides_the_slots_uv_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let transform = r#""extensions":{"KHR_texture_transform":{"texCoord":1}}"#;
+    let extra = format!(
+        r#","images":[{{"uri":"{}"}}],"textures":[{{"source":0}}],"extensionsUsed":["KHR_texture_transform"],
+        "materials":[{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0,{transform}}}}},
+                       "normalTexture":{{"index":0,{transform}}},"occlusionTexture":{{"index":0,"texCoord":1}}}}]"#,
+        embedded_png_uri()
+    );
+    let nodes = r#"{"mesh":0}"#;
+    let path = triangle_gltf(dir.path(), "uv1.gltf", nodes, &extra);
+    let json = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        json.replace(r#""attributes":{"#, r#""material":0,"attributes":{"#),
+    )
+    .unwrap();
+    let flat = load_flat(&path).unwrap();
+    assert_eq!(
+        flat.materials[0].uv1_slot_mask, 0b0101,
+        "base colour and normal"
+    );
+    let scene = kataglyphis_assets::load_gltf(&path).unwrap();
+    assert_eq!(
+        scene.primitives[0].material.uv_set_mask, 0b1_0101,
+        "plus occlusion"
+    );
+}
+
+#[test]
+fn a_document_without_scenes_loads_every_node_posed_by_its_parents() {
+    let dir = tempfile::tempdir().unwrap();
+    let nodes = r#"{"translation":[0,0,3],"children":[1]},{"mesh":0,"translation":[1,0,0]}"#;
+    let path = triangle_gltf(dir.path(), "sceneless.gltf", nodes, "");
+    let json = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        json.replace(r#""scene":0,"scenes":[{"nodes":[0]}],"#, ""),
+    )
+    .unwrap();
+    let flat = load_flat(&path).unwrap();
+    assert_eq!(flat.vertices[0].position, [1.0, 0.0, 3.0]);
+    assert_eq!(flat.ranges.len(), 1, "the child is not visited twice");
+    let scene = kataglyphis_assets::load_gltf(&path).unwrap();
+    assert_eq!(scene.primitives.len(), 1);
+}
+
+#[test]
+fn a_truncated_base64_image_gets_no_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let extra = r#","images":[{"uri":"data:image/png;base64,QQ"}],"textures":[{"source":0}],
+        "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}]"#;
+    let model = load_flat(triangle_gltf(
+        dir.path(),
+        "short.gltf",
+        r#"{"mesh":0}"#,
+        extra,
+    ))
+    .unwrap();
+    assert!(model.textures.is_empty());
+}
