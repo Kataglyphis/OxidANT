@@ -2,10 +2,8 @@
 # path | function | lines | why it is not split yet
 crates/observant/src/clip.rs | encode_mp4 | 97 | one encoder pipeline from appsrc to the file; #[expect] in the source
 crates/observant/src/main.rs | run | 91 | the service's start order; #[expect] in the source
-crates/observant/src/web.rs | handle | 114 | the route table of ObservANT's web server; #[expect] in the source
 crates/cli/src/main.rs | main | 96 | the CLI's subcommand dispatch; #[expect] in the source
 crates/telemetry/src/resource_monitor.rs | run_monitor_loop | 84 | one sampling loop; clippy counts it under 80 without comments, the hub counts them
-crates/gui/src/gui.rs | try_build_ui | 143 | the GTK window, its widgets and the pipeline in one builder; #[expect] in the source
 crates/burn_demos/src/main.rs | main | 93 | the demo subcommand dispatch; #[expect] in the source
 crates/burn_demos/src/onnx_detector.rs | onnx_detector_demo | 87 | one detector run from model to output shape; clippy counts it under 80 without comments, the hub counts them
 crates/webgpu_renderer/src/asset/hdr.rs | every_malformed_input_is_a_typed_error_not_a_panic | 108 | one table of malformed HDR files; a row only: clippy counts it under 80, or it is outside the crate root's lint
@@ -14,6 +12,5 @@ crates/webgpu_renderer/src/render/gpu_occlusion.rs | cull | 92 | the occlusion p
 crates/webgpu_renderer/src/render/ibl.rs | bake | 108 | the IBL bake's three passes; #[expect] in the source
 crates/webgpu_renderer/src/scene/lod.rs | simplify_primitive | 111 | one LOD level of a primitive; #[expect] in the source
 crates/webgpu_renderer/tests/headless.rs | morph_weight_lifts_the_silhouette | 90 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint
-crates/webgpu_renderer/tests/headless.rs | masked_card_casts_half_the_shadow_of_an_opaque_one | 135 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint
 crates/webgpu_renderer/tests/headless.rs | vertex_colors_tint_the_surface | 88 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint
 crates/webgpu_renderer/tests/headless.rs | texture_slot_samples_its_declared_uv_set | 107 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint

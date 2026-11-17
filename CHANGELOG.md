@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-17, four quality-queue functions are split under the 80-line limit)
+- **`observant/src/web.rs`: `handle` (114 lines)** keeps the route table and hands its longer branches to
+  `signalling`, `json_response`, `arrival` and `clip`; `add_page_headers` sets the CORS and isolation headers.
+- **`gui/src/gui.rs`: `try_build_ui` (143)** builds from `build_pipeline`, `build_layout`, `set_state_on_click` and
+  `watch_bus`.
+- **`webgpu_renderer/tests/headless.rs`: `masked_card_casts_half_the_shadow_of_an_opaque_one` (135)** takes its card,
+  texture, render and shadow count from `shadow_card`, `half_cut_texture`, `render_card_shadow_scene` and
+  `darkened_to_shadow`; its assertions are unchanged.
+- **`scripts/linux/tests/test-amd-gpu-promotion.py`: `valid_promotion` (127 lines, cc 65)** asks one checker per
+  concern in the old order: trigger, build, attempt binding, clean-host, gpu-profile, stage. The old and new
+  function agreed on 422 workflow variants (the test's mutation tables plus every single-line deletion).
+- The four rows leave `rust-function-size.allow`, `function-size.allow` and `code-complexity.allow`, and the two
+  `#[expect(clippy::too_many_lines)]` go with them.
+
 ### Security (2026-11-16, an audit ignore for ruzstd, which is locked but not built)
 - `.cargo/audit.toml` ignores RUSTSEC-2026-0344 (owner decision), which had stopped the Linux lane since 216b0a1:
   `ruzstd` 0.7.3 comes only through `basisu` 0.1.0, whose only release requires `ruzstd ^0.7`, and the renderer

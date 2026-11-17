@@ -1771,10 +1771,7 @@ fn a_shared_texture_uploads_once() {
 /// A quad, not a cube: a cube's silhouette survives cutting half of every face.
 #[test]
 fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
-    use kataglyphis_webgpu_renderer::scene::{
-        AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuTexture, CpuTextureRef, Vertex,
-    };
-    use std::sync::Arc;
+    use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial};
 
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
@@ -1790,92 +1787,13 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
         .find(|p| p.vertices.len() == 4)
         .expect("the ground plane is the 4-vertex primitive")
         .clone();
+    let cutout = half_cut_texture();
 
-    // A 2x2 card at the proven shadow test's cube top, so its shadow lands where that camera looks.
-    let card_vertices: Vec<Vertex> = [
-        ([-1.0f32, 1.4, -1.0], [0.0f32, 0.0]),
-        ([1.0, 1.4, -1.0], [1.0, 0.0]),
-        ([1.0, 1.4, 1.0], [1.0, 1.0]),
-        ([-1.0, 1.4, 1.0], [0.0, 1.0]),
-    ]
-    .iter()
-    .map(|(pos, uv)| Vertex {
-        position: *pos,
-        normal: [0.0, 1.0, 0.0],
-        uv: *uv,
-        tangent: [1.0, 0.0, 0.0, 1.0],
-        joints: [0.0; 4],
-        weights: [0.0; 4],
-        color: [1.0, 1.0, 1.0, 1.0],
-        uv1: [0.0, 0.0],
-    })
-    .collect();
-
-    // Opaque left texel, transparent right: nearest filtering cuts the right half away.
-    let cutout = CpuTextureRef {
-        texture: Arc::new(CpuTexture {
-            width: 2,
-            height: 1,
-            rgba8: vec![255, 255, 255, 255, 255, 255, 255, 0],
-            compressed: None,
-        }),
-        sampler: CpuSampler {
-            mag_nearest: true,
-            min_nearest: true,
-            ..CpuSampler::default()
-        },
-        srgb: true,
-    };
-
-    let card = |material: CpuMaterial| CpuPrimitive {
-        vertices: card_vertices.clone(),
-        // Wound to face the light: the shadow pipeline backface-culls.
-        indices: vec![0, 2, 1, 0, 3, 2],
-        transform: glam::Mat4::IDENTITY,
-        node_index: None,
-        skin_index: None,
-        material,
-        morph_targets: Vec::new(),
-        morph_weights: Vec::new(),
-    };
-
-    let render = |primitives: Vec<CpuPrimitive>| -> Vec<u8> {
-        let mut scene = base.clone();
-        scene.primitives = primitives;
-
-        let (width, height) = (256u32, 256u32);
-        let mut renderer = ForwardRenderer::new(&gpu, width, height);
-        renderer.upload_scene(&gpu, &scene);
-        renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
-        renderer.shadows.strength = 1.0;
-        // SSAO off: it darkens from forward depth, which the forward alpha test already halves.
-        renderer.ssao_strength = 0.0;
-
-        let camera = OrbitCamera {
-            radius: 6.0,
-            pitch_deg: 55.0,
-            ..OrbitCamera::default()
-        };
-        renderer
-            .render_to_pixels(&gpu, width, height, &camera)
-            .expect("headless render must succeed")
-    };
-
-    // Pixels the caster darkens to near-black: the shadow is, the mid-gray card body is not.
-    let baseline = render(vec![plane.clone()]);
+    let baseline = render_card_shadow_scene(&gpu, &base, vec![plane.clone()]);
     let shadowed_count = |caster_material: CpuMaterial| -> usize {
-        let with_card = render(vec![plane.clone(), card(caster_material)]);
-        baseline
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(with_card.as_chunks::<4>().0)
-            .filter(|(b, w)| {
-                let lum_b = (b[0] as i32 * 3 + b[1] as i32 * 6 + b[2] as i32) / 10;
-                let lum_w = (w[0] as i32 * 3 + w[1] as i32 * 6 + w[2] as i32) / 10;
-                lum_b - lum_w > 40 && lum_w < 30
-            })
-            .count()
+        let primitives = vec![plane.clone(), shadow_card(caster_material)];
+        let with_card = render_card_shadow_scene(&gpu, &base, primitives);
+        darkened_to_shadow(&baseline, &with_card)
     };
 
     let opaque = shadowed_count(CpuMaterial {
@@ -1904,6 +1822,105 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
         "masked shadow ({masked}) nearly vanished vs opaque ({opaque}) - \
          the cut-out should keep about half"
     );
+}
+
+/// A 2x2 card at the proven shadow test's cube top, so its shadow lands where that camera looks.
+fn shadow_card(
+    material: kataglyphis_webgpu_renderer::scene::CpuMaterial,
+) -> kataglyphis_webgpu_renderer::scene::CpuPrimitive {
+    use kataglyphis_webgpu_renderer::scene::{CpuPrimitive, Vertex};
+
+    let vertices: Vec<Vertex> = [
+        ([-1.0f32, 1.4, -1.0], [0.0f32, 0.0]),
+        ([1.0, 1.4, -1.0], [1.0, 0.0]),
+        ([1.0, 1.4, 1.0], [1.0, 1.0]),
+        ([-1.0, 1.4, 1.0], [0.0, 1.0]),
+    ]
+    .iter()
+    .map(|(pos, uv)| Vertex {
+        position: *pos,
+        normal: [0.0, 1.0, 0.0],
+        uv: *uv,
+        tangent: [1.0, 0.0, 0.0, 1.0],
+        joints: [0.0; 4],
+        weights: [0.0; 4],
+        color: [1.0, 1.0, 1.0, 1.0],
+        uv1: [0.0, 0.0],
+    })
+    .collect();
+    CpuPrimitive {
+        vertices,
+        // Wound to face the light: the shadow pipeline backface-culls.
+        indices: vec![0, 2, 1, 0, 3, 2],
+        transform: glam::Mat4::IDENTITY,
+        node_index: None,
+        skin_index: None,
+        material,
+        morph_targets: Vec::new(),
+        morph_weights: Vec::new(),
+    }
+}
+
+/// Opaque left texel, transparent right: nearest filtering cuts the right half away.
+fn half_cut_texture() -> kataglyphis_webgpu_renderer::scene::CpuTextureRef {
+    use kataglyphis_webgpu_renderer::scene::{CpuSampler, CpuTexture, CpuTextureRef};
+
+    CpuTextureRef {
+        texture: std::sync::Arc::new(CpuTexture {
+            width: 2,
+            height: 1,
+            rgba8: vec![255, 255, 255, 255, 255, 255, 255, 0],
+            compressed: None,
+        }),
+        sampler: CpuSampler {
+            mag_nearest: true,
+            min_nearest: true,
+            ..CpuSampler::default()
+        },
+        srgb: true,
+    }
+}
+
+/// `base` with `primitives` in place of its own, under a full-strength shadow and no SSAO.
+fn render_card_shadow_scene(
+    gpu: &GpuContext,
+    base: &kataglyphis_webgpu_renderer::scene::CpuScene,
+    primitives: Vec<kataglyphis_webgpu_renderer::scene::CpuPrimitive>,
+) -> Vec<u8> {
+    let mut scene = base.clone();
+    scene.primitives = primitives;
+
+    let (width, height) = (256u32, 256u32);
+    let mut renderer = ForwardRenderer::new(gpu, width, height);
+    renderer.upload_scene(gpu, &scene);
+    renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+    renderer.shadows.strength = 1.0;
+    // SSAO off: it darkens from forward depth, which the forward alpha test already halves.
+    renderer.ssao_strength = 0.0;
+
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    renderer
+        .render_to_pixels(gpu, width, height, &camera)
+        .expect("headless render must succeed")
+}
+
+/// Pixels the caster darkens to near-black: the shadow is, the mid-gray card body is not.
+fn darkened_to_shadow(baseline: &[u8], with_card: &[u8]) -> usize {
+    baseline
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(with_card.as_chunks::<4>().0)
+        .filter(|(b, w)| {
+            let lum_b = (b[0] as i32 * 3 + b[1] as i32 * 6 + b[2] as i32) / 10;
+            let lum_w = (w[0] as i32 * 3 + w[1] as i32 * 6 + w[2] as i32) / 10;
+            lum_b - lum_w > 40 && lum_w < 30
+        })
+        .count()
 }
 
 /// COLOR_0 multiplies the base colour: green vertices on a white unlit material render green.

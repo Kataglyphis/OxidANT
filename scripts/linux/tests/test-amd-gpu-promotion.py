@@ -17,52 +17,42 @@ def job(text: str, name: str) -> str:
     return match.group(1) if match else ""
 
 
+LEGACY_STEP = "name: Install, unpack, and run packaged CPU inference"
+ISOLATED_STEP = "name: Check immutable packages with isolated CPU inference"
+SHARED = (
+    "needs.build.outputs.artifact_id",
+    "needs.build.outputs.artifact_digest",
+    "needs.build.outputs.artifact_files",
+)
+
+
+def step(text: str, name: str) -> str:
+    return text.split(f"name: {name}", 1)[-1].split("\n      - ", 1)[0]
+
+
 def valid_promotion(text: str) -> bool:
     scope = job(text, "scope")
     build = job(text, "build")
     clean = job(text, "clean-host")
     gpu = job(text, "gpu-profile")
     stage = job(text, "stage-verified")
-    if (
-        "name: Install, unpack, and run packaged CPU inference" not in clean
-        or "name: Check immutable packages with isolated CPU inference" not in clean
-    ):
+    if LEGACY_STEP not in clean or ISOLATED_STEP not in clean:
         return False
-    legacy = clean.split("name: Install, unpack, and run packaged CPU inference", 1)[
-        1
-    ].split("name: Check immutable packages with isolated CPU inference", 1)[0]
-    isolated = clean.split(
-        "name: Check immutable packages with isolated CPU inference", 1
-    )[1].split("name: Upload the clean-host receipt", 1)[0]
+    return (
+        trigger_defaults_off(text)
+        and build_gates_promotion(scope, build)
+        and binds_current_attempt(clean, gpu, stage)
+        and clean_host_splits_on_promotion(clean)
+        and gpu_profile_wired(gpu, stage)
+        and stage_takes_checked_receipts(clean, gpu, stage)
+    )
+
+
+def trigger_defaults_off(text: str) -> bool:
     trigger = text.split("\npermissions:", 1)[0]
     dispatch = trigger.split("  workflow_dispatch:\n", 1)[-1].split(
         "  workflow_call:\n", 1
     )[0]
-    guard = build.split("name: Require hardware profiling for promotion", 1)[-1].split(
-        "\n      - ", 1
-    )[0]
-    parity = build.split("name: Require CPU and GPU detector parity for promotion", 1)[
-        -1
-    ].split("\n      - ", 1)[0]
-    isolated_lines = isolated.splitlines()
-    profile_line = '          command: env ANTFRASTRUCTURE_DIR="$GITHUB_WORKSPACE/third_party/ANTfrastructure" bash scripts/linux/profile-gpu-packages.sh "$GPU_PACKAGE_DIR" migraphx "$GITHUB_WORKSPACE/crates/inference/tests/fixtures/two_cats.jpg"'
-    clean_commands = (
-        '          deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd oxidant',
-        '          tarball-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd ./oxidant',
-        '          appimage-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd "$APPIMAGE"',
-    )
-    shared = (
-        "needs.build.outputs.artifact_id",
-        "needs.build.outputs.artifact_digest",
-        "needs.build.outputs.artifact_files",
-    )
-    attempt = (
-        "PRODUCER_ATTEMPT: ${{ needs.build.outputs.producer_attempt }}",
-        'test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"',
-    )
-    clean_name = "unverified-oxidant-amd-clean-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.scope.outputs.suffix }}"
-    gpu_name = "unverified-oxidant-amd-gpu-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.scope.outputs.suffix }}"
-    gpu_file = "oxidant-amd-${{ github.run_id }}-${{ github.run_attempt }}${{ needs.scope.outputs.suffix }}-gpu-receipt.json"
     return (
         trigger.count(
             "promote-verified:\n        type: boolean\n        default: false"
@@ -74,48 +64,83 @@ def valid_promotion(text: str) -> bool:
         )
         is not None
         and "description: Stage checked AMD packages" in trigger
-        and "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py" in scope
+    )
+
+
+BUILD_MARKERS = (
+    "needs: scope",
+    "${{ needs.scope.outputs.suffix }}",
+    "name: Require CPU and GPU detector parity for promotion",
+    "producer_attempt: ${{ steps.name.outputs.producer_attempt }}",
+    "artifact_id: ${{ steps.promotion_upload.outputs.artifact-id }}",
+    "artifact_digest: ${{ steps.promotion_upload.outputs.artifact-digest }}",
+    "artifact_files: ${{ steps.promotion_files.outputs.files }}",
+    "shared/python/verify_locked_files.py",
+    "linux/scripts/lib/fetch-data-lock.py",
+    "grep -q '^def read_lock('",
+    "grep -q '^def matches('",
+    "bash scripts/linux/tests/test-check-gpu-detector-parity.sh",
+    "bash scripts/linux/tests/test-profile-parity-mutations.sh",
+    "third_party/ANTfrastructure/shared/python/compare_detector_parity.py",
+    'python3 -I "$parity_tests"',
+    "python3 -I \"$parity_comparator\" --help | grep -q -- --pairwise || { echo 'Pinned ANTfrastructure lacks pairwise detector comparison' >&2; exit 1; }",
+    "python3 -I \"$ort_profile\" --help | grep -q -- --min-runs || { echo 'Pinned ANTfrastructure lacks per-run ORT profiling' >&2; exit 1; }",
+    "python3 scripts/linux/tests/test-detector-parity.py",
+)
+
+
+def build_gates_promotion(scope: str, build: str) -> bool:
+    guard = step(build, "Require hardware profiling for promotion")
+    parity = step(build, "Require CPU and GPU detector parity for promotion")
+    return (
+        "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py" in scope
         and "GPU_INVOCATION_SCOPE: ${{ inputs.invocation-scope }}" in scope
-        and "needs: scope" in build
-        and "${{ needs.scope.outputs.suffix }}" in build
-        and "name: Require CPU and GPU detector parity for promotion" in build
+        and all(marker in build for marker in BUILD_MARKERS)
         and "        if: ${{ inputs.promote-verified }}" in parity.splitlines()
         and "          exit 1" in parity.splitlines()
         and "continue-on-error" not in parity
         and "if: ${{ inputs.promote-verified && !inputs.verify-gpu }}" in guard
         and "          exit 1" in guard.splitlines()
-        and "producer_attempt: ${{ steps.name.outputs.producer_attempt }}" in build
-        and "artifact_id: ${{ steps.promotion_upload.outputs.artifact-id }}" in build
-        and "artifact_digest: ${{ steps.promotion_upload.outputs.artifact-digest }}"
-        in build
-        and "artifact_files: ${{ steps.promotion_files.outputs.files }}" in build
-        and "shared/python/verify_locked_files.py" in build
-        and "linux/scripts/lib/fetch-data-lock.py" in build
-        and "grep -q '^def read_lock('" in build
-        and "grep -q '^def matches('" in build
-        and "bash scripts/linux/tests/test-check-gpu-detector-parity.sh" in build
-        and "bash scripts/linux/tests/test-profile-parity-mutations.sh" in build
-        and "third_party/ANTfrastructure/shared/python/compare_detector_parity.py"
-        in build
-        and 'python3 -I "$parity_tests"' in build
-        and "python3 -I \"$parity_comparator\" --help | grep -q -- --pairwise || { echo 'Pinned ANTfrastructure lacks pairwise detector comparison' >&2; exit 1; }"
-        in build
-        and "python3 -I \"$ort_profile\" --help | grep -q -- --min-runs || { echo 'Pinned ANTfrastructure lacks per-run ORT profiling' >&2; exit 1; }"
-        in build
-        and "python3 scripts/linux/tests/test-detector-parity.py" in build
-        and all(part in clean and part in gpu and part in stage for part in attempt)
-        and all(part in clean and part in gpu and part in stage for part in shared)
-        and "if: ${{ !inputs.promote-verified }}" in legacy
+    )
+
+
+def binds_current_attempt(clean: str, gpu: str, stage: str) -> bool:
+    attempt = (
+        "PRODUCER_ATTEMPT: ${{ needs.build.outputs.producer_attempt }}",
+        'test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"',
+    )
+    jobs = (clean, gpu, stage)
+    return all(part in section for part in attempt + SHARED for section in jobs)
+
+
+def clean_host_splits_on_promotion(clean: str) -> bool:
+    legacy = clean.split(LEGACY_STEP, 1)[1].split(ISOLATED_STEP, 1)[0]
+    isolated = clean.split(ISOLATED_STEP, 1)[1].split(
+        "name: Upload the clean-host receipt", 1
+    )[0]
+    clean_commands = (
+        '          deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd oxidant',
+        '          tarball-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd ./oxidant',
+        '          appimage-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd "$APPIMAGE"',
+    )
+    return (
+        "if: ${{ !inputs.promote-verified }}" in legacy
         and "actions/clean-host-package-check@develop" in legacy
         and "if: ${{ inputs.promote-verified }}" in isolated
         and f"actions/clean-host-package-check@{HUB_SHA}" in isolated
-        and all(part in isolated for part in shared)
+        and all(part in isolated for part in SHARED)
         and isolated.count(
             'bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd'
         )
         == 3
-        and all(command in isolated_lines for command in clean_commands)
-        and "if: ${{ inputs.verify-gpu }}" in gpu
+        and all(command in isolated.splitlines() for command in clean_commands)
+    )
+
+
+def gpu_profile_wired(gpu: str, stage: str) -> bool:
+    profile_line = '          command: env ANTFRASTRUCTURE_DIR="$GITHUB_WORKSPACE/third_party/ANTfrastructure" bash scripts/linux/profile-gpu-packages.sh "$GPU_PACKAGE_DIR" migraphx "$GITHUB_WORKSPACE/crates/inference/tests/fixtures/two_cats.jpg"'
+    return (
+        "if: ${{ inputs.verify-gpu }}" in gpu
         and "needs: [scope, build, clean-host]" in gpu
         and "    if: ${{ inputs.promote-verified && inputs.verify-gpu }}"
         in stage.splitlines()
@@ -129,7 +154,15 @@ def valid_promotion(text: str) -> bool:
         is not None
         and profile_line in gpu.splitlines()
         and f"actions/gpu-package-check@{HUB_SHA}" in gpu
-        and f"actions/stage-gpu-artifact@{HUB_SHA}" in stage
+    )
+
+
+def stage_takes_checked_receipts(clean: str, gpu: str, stage: str) -> bool:
+    clean_name = "unverified-oxidant-amd-clean-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.scope.outputs.suffix }}"
+    gpu_name = "unverified-oxidant-amd-gpu-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}${{ needs.scope.outputs.suffix }}"
+    gpu_file = "oxidant-amd-${{ github.run_id }}-${{ github.run_attempt }}${{ needs.scope.outputs.suffix }}-gpu-receipt.json"
+    return (
+        f"actions/stage-gpu-artifact@{HUB_SHA}" in stage
         and "skip-decompress: true" in stage
         and "digest-mismatch: error" in stage
         and clean_name in clean

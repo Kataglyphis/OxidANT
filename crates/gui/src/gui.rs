@@ -53,8 +53,47 @@ impl Drop for GuiSession {
     }
 }
 
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn try_build_ui(app: &Application) -> Result<GuiSession> {
+    let (pipeline, paintable) = build_pipeline()?;
+
+    let play_button = Button::with_label("Play");
+    let pause_button = Button::with_label("Pause");
+    let stop_button = Button::with_label("Stop");
+    let main_box = build_layout(paintable, [&play_button, &pause_button, &stop_button]);
+
+    let window = ApplicationWindow::builder()
+        .application(app)
+        .title("OxidANT — GTK4 camera")
+        .default_width(640)
+        .default_height(540)
+        .child(&main_box)
+        .build();
+
+    let pipeline = Arc::new(pipeline);
+    set_state_on_click(&play_button, &pipeline, gst::State::Playing, "Playing");
+    set_state_on_click(&pause_button, &pipeline, gst::State::Paused, "Paused");
+    set_state_on_click(&stop_button, &pipeline, gst::State::Null, "Null");
+
+    let bus_watch = watch_bus(&pipeline)?;
+
+    let pipeline_cleanup = Arc::clone(&pipeline);
+    window.connect_close_request(move |_| {
+        if let Err(err) = pipeline_cleanup.set_state(gst::State::Null) {
+            error!("Failed to stop pipeline on close: {err}");
+        }
+        glib::Propagation::Proceed
+    });
+
+    window.present();
+    Ok(GuiSession {
+        window,
+        pipeline,
+        _bus_watch: bus_watch,
+    })
+}
+
+/// The camera, a converter and the sink, linked; the paintable is `None` for a native sink window.
+fn build_pipeline() -> Result<(gst::Pipeline, Option<gtk::gdk::Paintable>)> {
     let pipeline = gst::Pipeline::with_name("video-pipeline");
 
     let src = gst::ElementFactory::make("autovideosrc")
@@ -72,11 +111,11 @@ fn try_build_ui(app: &Application) -> Result<GuiSession> {
         .context("Failed to add elements to pipeline")?;
 
     gst::Element::link_many([&src, &convert, &sink]).context("Failed to link elements")?;
+    Ok((pipeline, paintable))
+}
 
-    let play_button = Button::with_label("Play");
-    let pause_button = Button::with_label("Pause");
-    let stop_button = Button::with_label("Stop");
-
+/// The video, or a note that it plays in its own window, above a centred row of buttons.
+fn build_layout(paintable: Option<gtk::gdk::Paintable>, buttons: [&Button; 3]) -> Box {
     let button_box = Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
@@ -87,9 +126,9 @@ fn try_build_ui(app: &Application) -> Result<GuiSession> {
         .halign(gtk::Align::Center)
         .build();
 
-    button_box.append(&play_button);
-    button_box.append(&pause_button);
-    button_box.append(&stop_button);
+    for button in buttons {
+        button_box.append(button);
+    }
 
     let main_box = Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -112,90 +151,61 @@ fn try_build_ui(app: &Application) -> Result<GuiSession> {
         main_box.append(&info);
     }
     main_box.append(&button_box);
+    main_box
+}
 
-    let window = ApplicationWindow::builder()
-        .application(app)
-        .title("OxidANT — GTK4 camera")
-        .default_width(640)
-        .default_height(540)
-        .child(&main_box)
-        .build();
-
-    let pipeline = Arc::new(pipeline);
-
-    let pipeline_play = Arc::clone(&pipeline);
-    play_button.connect_clicked(move |_| {
-        if let Err(err) = pipeline_play.set_state(gst::State::Playing) {
-            error!("Failed to set pipeline to Playing: {err}");
+fn set_state_on_click(
+    button: &Button,
+    pipeline: &Arc<gst::Pipeline>,
+    state: gst::State,
+    name: &'static str,
+) {
+    let pipeline = Arc::clone(pipeline);
+    button.connect_clicked(move |_| {
+        if let Err(err) = pipeline.set_state(state) {
+            error!("Failed to set pipeline to {name}: {err}");
         }
     });
+}
 
-    let pipeline_pause = Arc::clone(&pipeline);
-    pause_button.connect_clicked(move |_| {
-        if let Err(err) = pipeline_pause.set_state(gst::State::Paused) {
-            error!("Failed to set pipeline to Paused: {err}");
-        }
-    });
-
-    let pipeline_stop = Arc::clone(&pipeline);
-    stop_button.connect_clicked(move |_| {
-        if let Err(err) = pipeline_stop.set_state(gst::State::Null) {
-            error!("Failed to set pipeline to Null: {err}");
-        }
-    });
-
+/// Logs the pipeline's errors and warnings, and stops it at the end of the stream.
+fn watch_bus(pipeline: &Arc<gst::Pipeline>) -> Result<gst::bus::BusWatchGuard> {
     let bus = pipeline.bus().context("Pipeline has no bus")?;
     let pipeline_weak = pipeline.downgrade();
 
-    let bus_watch = bus
-        .add_watch_local(move |_, msg| {
-            use gst::MessageView;
+    bus.add_watch_local(move |_, msg| {
+        use gst::MessageView;
 
-            match msg.view() {
-                MessageView::Error(err) => {
-                    error!(
-                        "Error from {:?}: {} ({:?})",
-                        err.src().map(|s| s.path_string()),
-                        err.error(),
-                        err.debug()
-                    );
-                }
-                MessageView::Warning(warning) => {
-                    warn!(
-                        "Warning from {:?}: {} ({:?})",
-                        warning.src().map(|s| s.path_string()),
-                        warning.error(),
-                        warning.debug()
-                    );
-                }
-                MessageView::Eos(..) => {
-                    if let Some(pipeline) = pipeline_weak.upgrade() {
-                        if let Err(err) = pipeline.set_state(gst::State::Null) {
-                            error!("Failed to stop pipeline on EOS: {err}");
-                        }
+        match msg.view() {
+            MessageView::Error(err) => {
+                error!(
+                    "Error from {:?}: {} ({:?})",
+                    err.src().map(|s| s.path_string()),
+                    err.error(),
+                    err.debug()
+                );
+            }
+            MessageView::Warning(warning) => {
+                warn!(
+                    "Warning from {:?}: {} ({:?})",
+                    warning.src().map(|s| s.path_string()),
+                    warning.error(),
+                    warning.debug()
+                );
+            }
+            MessageView::Eos(..) => {
+                if let Some(pipeline) = pipeline_weak.upgrade() {
+                    if let Err(err) = pipeline.set_state(gst::State::Null) {
+                        error!("Failed to stop pipeline on EOS: {err}");
                     }
                 }
-                _ => (),
             }
-
-            glib::ControlFlow::Continue
-        })
-        .context("Failed to add bus watch")?;
-
-    let pipeline_cleanup = Arc::clone(&pipeline);
-    window.connect_close_request(move |_| {
-        if let Err(err) = pipeline_cleanup.set_state(gst::State::Null) {
-            error!("Failed to stop pipeline on close: {err}");
+            _ => (),
         }
-        glib::Propagation::Proceed
-    });
 
-    window.present();
-    Ok(GuiSession {
-        window,
-        pipeline,
-        _bus_watch: bus_watch,
+        glib::ControlFlow::Continue
     })
+    .context("Failed to add bus watch")
 }
 
 fn make_video_sink() -> Result<(gst::Element, Option<gtk::gdk::Paintable>)> {

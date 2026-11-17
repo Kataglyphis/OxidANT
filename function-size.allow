@@ -1,4 +1,3 @@
 # Existing GPU verification checks and their mutation fixtures; keep exact sizes ratcheted.
 # Format: <path> | <function> | <line count> | <reason>
 scripts/linux/tests/test-amd-gpu-promotion.py | PromotionTest.test_default_off_and_all_checks_bind_current_attempt | 102 | Exercises the full promotion wiring and its failure mutations together
-scripts/linux/tests/test-amd-gpu-promotion.py | valid_promotion | 127 | Checks the complete AMD promotion contract against workflow mutations

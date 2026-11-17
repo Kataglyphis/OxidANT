@@ -206,7 +206,6 @@ fn acting_post(path: &str) -> bool {
     [SETTINGS_PATH, ask::ASK_PATH, ask::SUMMARY_PATH].contains(&path)
 }
 
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_owned();
     let origin = req.headers().get(header::ORIGIN).cloned();
@@ -228,25 +227,7 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
         log::warn!("{path}: {why}");
         plain(StatusCode::FORBIDDEN, why)
     } else if path == SIGNALLING_PATH {
-        match site.status.viewer(site.max_viewers) {
-            None => {
-                log::warn!(
-                    "{SIGNALLING_PATH}: {} viewers already, refused one",
-                    site.max_viewers
-                );
-                plain(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "too many viewers: close another tab, or raise max_viewers",
-                )
-            }
-            Some(viewer) => match forward_upgrade(req, &site.signalling, viewer).await {
-                Ok(response) => response,
-                Err(err) => {
-                    log::warn!("{SIGNALLING_PATH}: {err:#}");
-                    plain(StatusCode::BAD_GATEWAY, "signalling server unreachable")
-                }
-            },
-        }
+        signalling(req, &site).await
     } else if path == SETTINGS_PATH {
         settings(req, &site.status).await
     } else if path == ask::ASK_PATH {
@@ -255,47 +236,89 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
         ask::summary(req, site.assistant.clone(), site.status.clone()).await
     } else if req.method() != Method::GET && req.method() != Method::HEAD {
         plain(StatusCode::METHOD_NOT_ALLOWED, "GET or HEAD only")
-    } else if path == HEALTHZ_PATH || path == VISITS_PATH {
-        let json = if path == HEALTHZ_PATH {
-            site.status.to_json()
-        } else {
-            site.status.visits_json()
-        };
-        let mut response = Response::new(Full::new(Bytes::from(json)));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
-        );
-        response
+    } else if path == HEALTHZ_PATH {
+        json_response(site.status.to_json())
+    } else if path == VISITS_PATH {
+        json_response(site.status.visits_json())
     } else if path == SNAPSHOT_PATH {
         snapshot(site.status.clone()).await
     } else if path == ARRIVAL_PATH {
-        // ?t= names the arrival, so a notification's picture is never a later, false visit's.
-        let at = query_u64(req.uri().query(), "t");
-        match (site.status.arrival_jpeg(at), at) {
-            (Some(jpeg), _) => jpeg_response(jpeg),
-            (None, None) => plain(StatusCode::NOT_FOUND, "no cat has arrived yet"),
-            (None, Some(_)) => plain(
-                StatusCode::NOT_FOUND,
-                "that arrival's picture is no longer kept",
-            ),
-        }
+        arrival(&req, &site.status)
     } else if path == CLIP_PATH {
-        // ?t= names the arrival, so a link in an older notification never plays a newer visit.
-        let at = query_u64(req.uri().query(), "t");
-        match (site.status.clip_mp4(at), at) {
-            (Some(mp4), _) => mp4_response(req.headers(), mp4),
-            (None, None) => plain(StatusCode::NOT_FOUND, "no arrival clip yet"),
-            (None, Some(_)) => plain(
-                StatusCode::NOT_FOUND,
-                "that arrival's clip is no longer kept",
-            ),
-        }
+        clip(&req, &site.status)
     } else {
         static_file(&req, site.web_root.as_deref(), &site.gzip).await
     };
-    let headers = response.headers_mut();
-    if let Some(peer) = peer_origin(origin.as_ref(), &site.peers).filter(|_| reads) {
+    add_page_headers(response.headers_mut(), origin.as_ref(), &site.peers, reads);
+    Ok(response)
+}
+
+/// The signalling socket, once a viewer place is free.
+async fn signalling(req: Request<Incoming>, site: &Site) -> Response<Body> {
+    match site.status.viewer(site.max_viewers) {
+        None => {
+            log::warn!(
+                "{SIGNALLING_PATH}: {} viewers already, refused one",
+                site.max_viewers
+            );
+            plain(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "too many viewers: close another tab, or raise max_viewers",
+            )
+        }
+        Some(viewer) => match forward_upgrade(req, &site.signalling, viewer).await {
+            Ok(response) => response,
+            Err(err) => {
+                log::warn!("{SIGNALLING_PATH}: {err:#}");
+                plain(StatusCode::BAD_GATEWAY, "signalling server unreachable")
+            }
+        },
+    }
+}
+
+fn json_response(json: String) -> Response<Body> {
+    let mut response = Response::new(Full::new(Bytes::from(json)));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
+/// ?t= names the arrival, so a notification's picture is never a later, false visit's.
+fn arrival(req: &Request<Incoming>, status: &Status) -> Response<Body> {
+    let at = query_u64(req.uri().query(), "t");
+    match (status.arrival_jpeg(at), at) {
+        (Some(jpeg), _) => jpeg_response(jpeg),
+        (None, None) => plain(StatusCode::NOT_FOUND, "no cat has arrived yet"),
+        (None, Some(_)) => plain(
+            StatusCode::NOT_FOUND,
+            "that arrival's picture is no longer kept",
+        ),
+    }
+}
+
+/// ?t= names the arrival, so a link in an older notification never plays a newer visit.
+fn clip(req: &Request<Incoming>, status: &Status) -> Response<Body> {
+    let at = query_u64(req.uri().query(), "t");
+    match (status.clip_mp4(at), at) {
+        (Some(mp4), _) => mp4_response(req.headers(), mp4),
+        (None, None) => plain(StatusCode::NOT_FOUND, "no arrival clip yet"),
+        (None, Some(_)) => plain(
+            StatusCode::NOT_FOUND,
+            "that arrival's clip is no longer kept",
+        ),
+    }
+}
+
+/// The headers every response carries, and the CORS pair a peer's read gets.
+fn add_page_headers(
+    headers: &mut HeaderMap,
+    origin: Option<&HeaderValue>,
+    peers: &[String],
+    reads: bool,
+) {
+    if let Some(peer) = peer_origin(origin, peers).filter(|_| reads) {
         // Another ObservANT's page reads this one for its overview; under COEP its pictures need CORP too.
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, peer.clone());
         headers.insert(
@@ -319,7 +342,6 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
-    Ok(response)
 }
 
 /// The settings page's endpoint. A change is JSON only: another site's form cannot send it, and a
