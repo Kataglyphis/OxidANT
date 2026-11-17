@@ -10,6 +10,8 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 cxx = "1.0"
+# The CPU glTF loader without the renderer's wgpu, winit and egui, which the engine would link for nothing.
+kataglyphis_assets = { path = "../assets" }
 
 [lints]
 workspace = true

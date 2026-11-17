@@ -29,6 +29,23 @@ fn import_file(
     Vec<gltf::buffer::Data>,
     Vec<Arc<CpuTexture>>,
 )> {
+    let imported = import_document(path)?;
+    let base = Some(imported.base.as_path());
+    let images = gltf_images::import_images(&imported.document, base, &imported.buffers)?;
+    let textures = gltf_images::resolve_textures(&imported.sources, images)?;
+    Ok((imported.document, imported.buffers, textures))
+}
+
+/// A glTF file's document, buffers and texture sources, with its images left undecoded.
+pub(crate) struct Imported {
+    pub document: gltf::Document,
+    pub buffers: Vec<gltf::buffer::Data>,
+    pub sources: Vec<gltf_images::TextureSource>,
+    /// The directory relative URIs resolve against.
+    pub base: std::path::PathBuf,
+}
+
+pub(crate) fn import_document(path: &Path) -> anyhow::Result<Imported> {
     let bytes = std::fs::read(path)?;
     let base = path.parent().unwrap_or_else(|| Path::new("./"));
     let gltf_images::Parsed {
@@ -37,9 +54,12 @@ fn import_file(
         sources,
     } = gltf_images::parse(&bytes)?;
     let buffers = gltf::import_buffers(&document, Some(base), blob)?;
-    let images = gltf_images::import_images(&document, Some(base), &buffers)?;
-    let textures = gltf_images::resolve_textures(&sources, images)?;
-    Ok((document, buffers, textures))
+    Ok(Imported {
+        document,
+        buffers,
+        sources,
+        base: base.to_path_buf(),
+    })
 }
 
 /// In-memory variant for wasm32 and embedded assets; buffers and images must be embedded (data URIs or GLB).
@@ -81,12 +101,9 @@ fn build_scene(
         ..CpuScene::default()
     };
 
-    let gltf_scene = document
-        .default_scene()
-        .or_else(|| document.scenes().next())
-        .context("glTF file contains no scenes")?;
-
-    visit_scene(&gltf_scene, &buffers, &textures, &mut scene)?;
+    walk_nodes(&document, |node, world| {
+        visit_node(node, world, &buffers, &textures, &mut scene)
+    })?;
 
     anyhow::ensure!(
         !scene.primitives.is_empty(),
@@ -437,7 +454,7 @@ pub(crate) fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
     })
 }
 
-fn to_cpu_sampler(sampler: &gltf::texture::Sampler) -> CpuSampler {
+pub(crate) fn to_cpu_sampler(sampler: &gltf::texture::Sampler) -> CpuSampler {
     use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 
     let wrap = |mode: WrappingMode| match mode {
@@ -481,15 +498,27 @@ fn texture_ref(
         })
 }
 
-/// Depth-first over the scene's node trees with an explicit stack, each node visited once.
-/// A cycle or a second parent is invalid glTF; recursion overflowed the stack on it, and on deep chains.
-fn visit_scene(
-    gltf_scene: &gltf::Scene,
-    buffers: &[gltf::buffer::Data],
-    textures: &[Arc<CpuTexture>],
-    scene: &mut CpuScene,
+/// Every node a load draws, with its world transform: the default scene's, else the first scene's.
+/// BeschleunigerBallett's C++ loader walks the same nodes (its docs/source/model-loading.md); change both together.
+pub(crate) fn walk_nodes(
+    document: &gltf::Document,
+    visit: impl FnMut(&gltf::Node, Mat4) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    let mut visited = vec![false; scene.nodes.len()];
+    let gltf_scene = document
+        .default_scene()
+        .or_else(|| document.scenes().next())
+        .context("glTF file contains no scenes")?;
+    walk_scene(&gltf_scene, document.nodes().len(), visit)
+}
+
+/// Depth-first over the scene's node trees with an explicit stack, each node visited once with its world transform.
+/// A cycle or a second parent is invalid glTF; recursion overflowed the stack on it, and on deep chains.
+fn walk_scene(
+    gltf_scene: &gltf::Scene,
+    node_count: usize,
+    mut visit: impl FnMut(&gltf::Node, Mat4) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let mut visited = vec![false; node_count];
     let mut stack: Vec<(gltf::Node, Mat4)> = gltf_scene
         .nodes()
         .map(|node| (node, Mat4::IDENTITY))
@@ -504,7 +533,7 @@ fn visit_scene(
             continue;
         }
         let world = parent_world * Mat4::from_cols_array_2d(&node.transform().matrix());
-        visit_node(&node, world, buffers, textures, scene)?;
+        visit(&node, world)?;
         let first_child = stack.len();
         stack.extend(node.children().map(|child| (child, world)));
         // Reversed, so children pop in document order as they did in the recursive walk.
@@ -514,7 +543,7 @@ fn visit_scene(
 }
 
 /// The node's KHR_lights_punctual light, posed by its `world` transform and tied to the node.
-fn read_light(node: &gltf::Node, world: Mat4) -> Option<CpuLight> {
+pub(crate) fn read_light(node: &gltf::Node, world: Mat4) -> Option<CpuLight> {
     use gltf::khr_lights_punctual::Kind;
     let light = node.light()?;
     let kind = match light.kind() {
@@ -554,20 +583,7 @@ fn visit_node(
     }
 
     if let Some(mesh) = node.mesh() {
-        for primitive in mesh.primitives() {
-            // Strips and fans are triangulated on load; points and lines have nothing to draw.
-            use gltf::mesh::Mode;
-            if !matches!(
-                primitive.mode(),
-                Mode::Triangles | Mode::TriangleStrip | Mode::TriangleFan
-            ) {
-                log::warn!(
-                    "Skipping non-triangle primitive (mode {:?}) in mesh {:?}",
-                    primitive.mode(),
-                    mesh.name().unwrap_or("<unnamed>")
-                );
-                continue;
-            }
+        for primitive in mesh.primitives().filter(draws_triangles) {
             if let Some(mut cpu) = load_primitive(&primitive, world, buffers, textures)? {
                 cpu.node_index = Some(node.index());
                 cpu.skin_index = node.skin().map(|s| s.index());
@@ -586,6 +602,23 @@ fn visit_node(
         }
     }
     Ok(())
+}
+
+/// Strips and fans are triangulated on load; points and lines have nothing to draw, and warn.
+pub(crate) fn draws_triangles(primitive: &gltf::Primitive) -> bool {
+    use gltf::mesh::Mode;
+    let mode = primitive.mode();
+    let triangles = matches!(
+        mode,
+        Mode::Triangles | Mode::TriangleStrip | Mode::TriangleFan
+    );
+    if !triangles {
+        log::warn!(
+            "Skipping non-triangle primitive {} (mode {mode:?})",
+            primitive.index()
+        );
+    }
+    triangles
 }
 
 /// Drops skin influences the shader cannot resolve: every one without a skin, and joints past its end.
@@ -615,6 +648,29 @@ fn load_primitive(
     buffers: &[gltf::buffer::Data],
     textures: &[Arc<CpuTexture>],
 ) -> anyhow::Result<Option<CpuPrimitive>> {
+    let Some(geometry) = primitive_geometry(primitive, buffers)? else {
+        return Ok(None);
+    };
+    // Weights start at zero: the caller applies mesh/node defaults, and animation drives them.
+    let morph_weights = vec![0.0f32; geometry.morph_targets.len()];
+
+    Ok(Some(CpuPrimitive {
+        vertices: geometry.vertices,
+        indices: geometry.indices,
+        transform,
+        node_index: None,
+        skin_index: None,
+        material: load_material(&primitive.material(), textures),
+        morph_targets: geometry.morph_targets,
+        morph_weights,
+    }))
+}
+
+/// A primitive's triangle list with generated normals and tangents, in its mesh's space; `None` when nothing draws.
+pub(crate) fn primitive_geometry(
+    primitive: &gltf::Primitive,
+    buffers: &[gltf::buffer::Data],
+) -> anyhow::Result<Option<Geometry>> {
     let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
     let Some(vertices) = read_vertices(primitive, buffers)? else {
         return Ok(None);
@@ -640,26 +696,14 @@ fn load_primitive(
         },
         &options,
     );
-    // Weights start at zero: the caller applies mesh/node defaults, and animation drives them.
-    let morph_weights = vec![0.0f32; geometry.morph_targets.len()];
-
-    Ok(Some(CpuPrimitive {
-        vertices: geometry.vertices,
-        indices: geometry.indices,
-        transform,
-        node_index: None,
-        skin_index: None,
-        material: load_material(&primitive.material(), textures),
-        morph_targets: geometry.morph_targets,
-        morph_weights,
-    }))
+    Ok(Some(geometry))
 }
 
 /// A primitive's vertices, triangle list and morph targets, kept together while vertices are rebuilt.
-struct Geometry {
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
-    morph_targets: Vec<MorphTarget>,
+pub(crate) struct Geometry {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
+    pub morph_targets: Vec<MorphTarget>,
 }
 
 /// Which attributes the file supplied, and how missing tangents are generated.
@@ -854,7 +898,10 @@ fn read_morph_targets(
 }
 
 /// The metallic-roughness material with each slot's texture, sampler, UV set and transform.
-fn load_material(material: &gltf::Material, textures: &[Arc<CpuTexture>]) -> CpuMaterial {
+pub(crate) fn load_material(
+    material: &gltf::Material,
+    textures: &[Arc<CpuTexture>],
+) -> CpuMaterial {
     let pbr = material.pbr_metallic_roughness();
     let alpha_mode = match material.alpha_mode() {
         gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,

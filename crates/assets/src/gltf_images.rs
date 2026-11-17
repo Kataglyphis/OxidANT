@@ -140,13 +140,9 @@ fn ktx2_bytes(
     buffers: &[gltf::buffer::Data],
 ) -> Option<anyhow::Result<Vec<u8>>> {
     match image.source() {
-        gltf::image::Source::View { view, mime_type } => (mime_type == "image/ktx2").then(|| {
-            let buffer = &buffers[view.buffer().index()].0;
-            buffer
-                .get(view.offset()..view.offset() + view.length())
-                .map(<[u8]>::to_vec)
-                .context("the buffer view runs past its buffer")
-        }),
+        gltf::image::Source::View { view, mime_type } => {
+            (mime_type == "image/ktx2").then(|| view_bytes(&view, buffers))
+        }
         gltf::image::Source::Uri { uri, mime_type } => {
             if let Some(data) = uri.strip_prefix("data:") {
                 let (media, payload) = data.split_once(";base64,")?;
@@ -161,6 +157,63 @@ fn ktx2_bytes(
             }
         }
     }
+}
+
+fn view_bytes(
+    view: &gltf::buffer::View,
+    buffers: &[gltf::buffer::Data],
+) -> anyhow::Result<Vec<u8>> {
+    buffers
+        .get(view.buffer().index())
+        .and_then(|buffer| buffer.0.get(view.offset()..view.offset() + view.length()))
+        .map(<[u8]>::to_vec)
+        .context("the buffer view runs past its buffer")
+}
+
+/// An image's bytes as stored, for a consumer that decodes them itself; a file must lie inside `base`.
+pub(crate) fn encoded_bytes(
+    image: &gltf::Image,
+    base: &Path,
+    buffers: &[gltf::buffer::Data],
+) -> anyhow::Result<Vec<u8>> {
+    match image.source() {
+        gltf::image::Source::View { view, .. } => view_bytes(&view, buffers),
+        gltf::image::Source::Uri { uri, .. } => {
+            if let Some(data) = uri.strip_prefix("data:") {
+                let (_, payload) = data
+                    .split_once(";base64,")
+                    .context("a data URI image that is not base64")?;
+                return decode_base64(payload);
+            }
+            anyhow::ensure!(
+                !uri.starts_with("http:") && !uri.starts_with("https:"),
+                "glTF image '{uri}' is remote"
+            );
+            read_confined(base, uri)
+        }
+    }
+}
+
+/// Reads a relative URI that must resolve inside `base`, so an untrusted file cannot name `../../secret`.
+fn read_confined(base: &Path, uri: &str) -> anyhow::Result<Vec<u8>> {
+    let base = if base.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        base
+    };
+    let root = base
+        .canonicalize()
+        .with_context(|| format!("resolving {}", base.display()))?;
+    let decoded = percent_decode(uri)?.replace('\\', "/");
+    let file = base
+        .join(decoded)
+        .canonicalize()
+        .with_context(|| format!("glTF image '{uri}' does not resolve to a file"))?;
+    anyhow::ensure!(
+        file.starts_with(&root),
+        "glTF image '{uri}' resolves outside the document's directory"
+    );
+    std::fs::read(&file).with_context(|| format!("reading {}", file.display()))
 }
 
 fn read_relative(base: Option<&Path>, uri: &str) -> anyhow::Result<Vec<u8>> {

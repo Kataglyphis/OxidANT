@@ -5119,6 +5119,7 @@ dependencies = [
  "ktx2",
  "log",
  "ruzstd",
+ "tempfile",
 ]
 
 [[package]]
@@ -5168,6 +5169,7 @@ name = "kataglyphis_cxx_bridge"
 version = "3.0.0"
 dependencies = [
  "cxx",
+ "kataglyphis_assets",
 ]
 
 [[package]]

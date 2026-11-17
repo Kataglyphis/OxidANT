@@ -22,3 +22,6 @@ ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }

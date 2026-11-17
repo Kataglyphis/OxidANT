@@ -7,6 +7,7 @@
 pub mod basis;
 #[doc(hidden)]
 pub mod bc_decode;
+pub mod flat;
 mod gltf_images;
 pub mod gltf_loader;
 pub mod ktx2_loader;
