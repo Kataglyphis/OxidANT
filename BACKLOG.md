@@ -93,12 +93,11 @@ its open work is here.
 
 ### Quality queue
 
-The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md; re-sync when it moves.
+The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md,
+and two rows the owner kept on 2026-11-17: `large-files.allow`'s `images/Rust.webp` (lossy VP8 already; smaller is a visibly worse hero image)
+and `rust-function-size.allow`'s burn_demos `main` (the subcommand dispatch alone). Re-sync when it moves.
 
-- [ ] `large-files.allow:3` budget 2031 (allow_budget_total); left 2026-11-16: `images/Rust.webp`'s 136 frames are
-      lossy VP8 already, and a quarter of the size is a visibly worse hero image, the owner's call
-- [ ] `rust-function-size.allow:3` budget 83 (allow_budget_total); kept 2026-11-17: burn_demos' `main` is the
-      subcommand dispatch alone, one arm per demo forwarding its flags, and clippy counts it under 80
+Empty on 2026-11-17: nothing else is in the queue.
 
 ## P3 — ideas, chores and blocked work
 
