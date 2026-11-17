@@ -13,7 +13,10 @@ targets = [
 version = 2
 yanked = "deny"
 # .cargo/audit.toml holds these plus lockfile-only ones this tool never sees; `advisory-not-detected` means an ignore is stale, so delete it.
-ignore = []
+ignore = [
+  # chrono: unmaintained since 2026-11-17, no successor release; kataglyphis_core's timestamps and wmi's need it until a move to jiff or time
+  "RUSTSEC-2026-0543",
+]
 
 [licenses]
 version = 2

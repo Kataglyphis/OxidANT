@@ -12,6 +12,7 @@ missing	kataglyphis_burn_demos/yolo/ModuleMapper
 missing	kataglyphis_burn_demos/yolo/ModuleVisitor
 missing	kataglyphis_cli/cli/dispatcher
 missing	kataglyphis_gui/gui_wgpu/dispatcher
+missing	kataglyphis_webgpu_renderer/adapter/dispatcher
 missing	kataglyphis_webgpu_renderer/app/discovery/dispatcher
 missing	kataglyphis_webgpu_renderer/app/dispatcher
 missing	kataglyphis_webgpu_renderer/app/framing/dispatcher
@@ -37,6 +38,8 @@ missing	kataglyphis_webgpu_renderer/render/model_transform/dispatcher
 missing	kataglyphis_webgpu_renderer/render/occlusion/dispatcher
 missing	kataglyphis_webgpu_renderer/render/overlay/dispatcher
 missing	kataglyphis_webgpu_renderer/render/pipeline_desc/dispatcher
+missing	kataglyphis_webgpu_renderer/render/quality/dispatcher
+missing	kataglyphis_webgpu_renderer/render/render_scale/dispatcher
 missing	kataglyphis_webgpu_renderer/render/shadow_settings/dispatcher
 missing	kataglyphis_webgpu_renderer/render/ssao/dispatcher
 missing	kataglyphis_webgpu_renderer/render/texture_stream/dispatcher

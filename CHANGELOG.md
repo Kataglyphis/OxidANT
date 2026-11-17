@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Security (2026-11-17, RUSTSEC-2026-0543 ignored: chrono is unmaintained)
+
+- RustSec marked `chrono` (0.4.45, through `kataglyphis_core` and `wmi`) unmaintained on 2026-11-17, with no safe
+  upgrade, and `cargo deny` failed on it. `deny.toml` and `.cargo/audit.toml` ignore it until the move to `jiff` or
+  `time` (BACKLOG). The rustdoc site's link freeze takes the three new modules' `dispatcher` links.
+
 ### Added (2026-11-17, the WebGPU renderer picks its adapter, names it in a browser and scales to a frame rate)
 - **Adapter identity** (`crates/webgpu_renderer/src/adapter.rs`): wgpu leaves a browser adapter's name empty, so the
   demo reads `GPUAdapterInfo` itself and the status bar shows `WebGPU · intel gen-12lp`; a native adapter without a
