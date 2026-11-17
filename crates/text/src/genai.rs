@@ -459,6 +459,23 @@ struct Live {
     room: usize,
 }
 
+/// A load's decoder threads without a count: the text rule of the usable CPUs, or none if the model names its own.
+pub fn default_text_threads(model_dir: &Path) -> Option<u32> {
+    let names_its_own = std::fs::read_to_string(model_dir.join("genai_config.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|config| {
+            config
+                .pointer("/model/decoder/session_options/intra_op_num_threads")
+                .is_some()
+        });
+    if names_its_own {
+        return None;
+    }
+    let usable = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    u32::try_from(kataglyphis_core::config::text_threads(usable)).ok()
+}
+
 /// The GenAI config overlay that holds the decoder session to `threads` intra-op threads.
 pub fn thread_overlay(threads: u32) -> String {
     serde_json::json!({ "model": { "decoder": { "session_options": { "intra_op_num_threads": threads } } } })
@@ -528,6 +545,11 @@ impl GenaiGenerator {
             )
             .map_err(TextError::ProviderUnavailable)?;
         }
+        // Without a count, the text rule where this GenAI can take one and the model names none of its own.
+        let threads = threads.or_else(|| {
+            api.config_overlay
+                .and_then(|_| default_text_threads(model_dir))
+        });
         if let Some(threads) = threads {
             let overlay = api.config_overlay.ok_or_else(|| {
                 TextError::ModelLoadFailed(

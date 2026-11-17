@@ -110,6 +110,11 @@ pub fn family_threads(usable: usize) -> usize {
     usable.saturating_sub(1).clamp(1, 8)
 }
 
+/// A GenAI decoder's pool: half of [`family_threads`], 1 to 4, as decoding is memory-bound (owner decision, hub CON218).
+pub fn text_threads(usable: usize) -> usize {
+    (family_threads(usable) / 2).clamp(1, 4)
+}
+
 /// A set count wins, `0` included; unset or unreadable takes [`family_threads`] of `usable`.
 fn threads_from(raw: Option<&str>, usable: usize) -> usize {
     raw.and_then(|v| v.trim().parse().ok())
@@ -187,6 +192,15 @@ mod tests {
         assert_eq!(threads_from(Some("many"), 4), 3);
         assert_eq!(threads_from(Some(" 2 "), 4), 2);
         assert_eq!(threads_from(Some("0"), 4), 0, "0 keeps ORT's own default");
+    }
+
+    #[test]
+    fn a_text_decoder_takes_half_the_family_pool_from_one_to_four() {
+        assert_eq!(
+            [1, 2, 4, 8, 16, 32].map(text_threads),
+            [1, 1, 1, 3, 4, 4],
+            "a Pi 5 decodes on one thread, a host pinned to 8 CPUs on three"
+        );
     }
 
     #[test]

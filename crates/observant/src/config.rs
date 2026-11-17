@@ -129,7 +129,7 @@ pub struct Config {
     /// Overrides the endpoint's or backend's model.
     pub llm_model: Option<String>,
     pub llm_max_new_tokens: u32,
-    /// Intra-op threads of `llm_model_dir`'s decoder, beside the detector's two; 0 leaves GenAI's own count.
+    /// Intra-op threads of `llm_model_dir`'s decoder, 1 beside the detector (owner decision); 0 takes the text rule.
     pub llm_threads: u32,
     /// Seconds without a question after which `llm_model_dir`'s model is unloaded; 0 keeps it loaded.
     pub llm_idle_unload_s: u32,
@@ -192,7 +192,7 @@ impl Default for Config {
             llm_backend: None,
             llm_model: None,
             llm_max_new_tokens: 128,
-            llm_threads: 2,
+            llm_threads: 1,
             llm_idle_unload_s: 600,
             llm_timeout_s: 300,
             record_scenario: None,
@@ -372,7 +372,7 @@ mod tests {
             ),
             (Some(Path::new("/m")), 9, 3)
         );
-        assert_eq!(Config::default().llm_threads, 2);
+        assert_eq!(Config::default().llm_threads, 1);
         assert_eq!(with(parsed), Ok(()));
         let url = Some("http://x".to_string());
         for (bad, says) in [

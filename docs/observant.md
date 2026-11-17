@@ -48,9 +48,11 @@ exits; a packager runs it once, and the server then sends those files as they ar
 `llm_model_dir` (a GenAI directory on the chain's GenAI, with `llm_provider` `cpu`, `cuda` or
 `dml`), `llm_base_url` or `llm_backend` (an OpenAI-compatible server; `backends.json` comes from
 `LLM_BACKENDS`), which exclude each other, and `llm_model` to override an endpoint's model.
-`llm_max_new_tokens` bounds an answer (128). `llm_threads` (2) holds `llm_model_dir`'s decoder to that many
-intra-op threads beside the detector's two, laid over the model's `genai_config.json` at load; 0 leaves GenAI's
-own count, one per core. Nothing loads until the first question. `llm_idle_unload_s` (600) unloads
+`llm_max_new_tokens` bounds an answer (128). `llm_threads` (1) holds `llm_model_dir`'s decoder to that many
+intra-op threads beside the detector's two, laid over the model's `genai_config.json` at load; 0 takes the text
+rule, half the family's ORT pool, 1 to 4 (`kataglyphis_core::config::text_threads`). On a Pi 5 one text thread
+slowed the DEIM detector beside it by 36-44 % and answered fastest, the detector's rule of three by 87 % (owner
+decision, 2026-11-17). Nothing loads until the first question. `llm_idle_unload_s` (600) unloads
 `llm_model_dir`'s model after that many seconds without a question and the next question loads it again
 (a fresh CLI process that loads SmolLM2-135M and gives one token takes 0.7 s on a Pi 5, 1.3 s with a cold
 page cache, measured 2026-11-15); 0 keeps it loaded, and an endpoint holds nothing here (owner decision

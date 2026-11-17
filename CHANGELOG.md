@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-17, a text decoder's own thread rule)
+- `kataglyphis_core::config::text_threads` is half the family's ORT pool, 1 to 4 (hub CON218, owner decision on a
+  Pi 5 measurement: one text thread slowed a DEIM detector beside it by 36-44 % and answered fastest, three by
+  87 %). `GenaiGenerator` takes it when no count is given, the model names none in its `genai_config.json`, and the
+  GenAI has `OgaConfigOverlay`; GenAI's own default ignored the affinity mask. ObservANT's `llm_threads` defaults
+  to 1 beside its detector (was 2), and 0 now takes the text rule instead of GenAI's default.
+
 ### Security (2026-11-17, RUSTSEC-2026-0543 ignored: chrono is unmaintained)
 
 - RustSec marked `chrono` (0.4.45, through `kataglyphis_core` and `wmi`) unmaintained on 2026-11-17, with no safe
