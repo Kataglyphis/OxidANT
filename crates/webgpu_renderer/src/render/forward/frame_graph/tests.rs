@@ -7,6 +7,7 @@ const OUTPUT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 fn maximal(mode: RenderMode, path: RasterPath) -> FrameConfig {
     FrameConfig {
         size: (1920, 1080),
+        output_size: (1920, 1080),
         output_format: OUTPUT,
         mode,
         path,
@@ -54,6 +55,7 @@ fn every_config() -> Vec<FrameConfig> {
                     let bit = |n: u8| flags & (1 << n) != 0;
                     configs.push(FrameConfig {
                         size: (640, 360),
+                        output_size: (640, 360),
                         output_format: OUTPUT,
                         mode,
                         path,
@@ -248,7 +250,7 @@ fn bloom_takes_the_half_resolution_cloud_march_when_the_sizes_agree() {
 /// What the targets took before the graph: the forward targets always, the G-buffer after the first deferred
 /// frame, the cloud target after the first cloud frame, bloom's pair, SSAO's pair and FXAA's input, each its own texture.
 fn before_the_graph(size: (u32, u32), half_clouds: bool) -> u64 {
-    let targets = transient_targets(size, OUTPUT);
+    let targets = transient_targets(size, size, OUTPUT);
     let bytes = |resource| {
         let (_, desc) = targets
             .iter()
@@ -318,4 +320,32 @@ fn a_deferred_frame_with_clouds_and_post_holds_two_fifths_of_the_old_target_memo
         assert_eq!(unaliased - after, 8 * pixels + half_march);
         assert_eq!(before, 100 * pixels + 18 * quarter + half_march);
     }
+}
+
+#[test]
+fn a_scaled_frame_renders_the_scene_small_and_filters_at_the_output_size() {
+    let targets = transient_targets((964, 604), (1928, 1207), OUTPUT);
+    let size = |resource| {
+        targets
+            .iter()
+            .find(|(r, _)| *r == resource)
+            .map(|(_, desc)| desc.size)
+            .expect("declared")
+    };
+    assert_eq!(
+        size(Tonemapped),
+        (1928, 1207),
+        "FXAA reads the output's pixels"
+    );
+    for scene in [
+        HdrMsaa,
+        DepthMsaa,
+        HdrColor,
+        Depth,
+        GBufferAlbedo,
+        CloudColor,
+    ] {
+        assert_eq!(size(scene), (964, 604), "{scene:?}");
+    }
+    assert_eq!(size(Bloom), (482, 302));
 }

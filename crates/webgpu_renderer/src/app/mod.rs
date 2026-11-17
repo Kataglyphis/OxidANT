@@ -27,6 +27,8 @@ use crate::render::forward::{ForwardRenderer, TextureStreaming};
 use crate::render::frame_clock::FrameClock;
 use crate::render::ibl::EquirectImage;
 use crate::render::overlay::Overlay;
+use crate::render::quality::QualityPreset;
+use crate::render::render_scale::AutoScaler;
 use crate::render::tonemap::TonemapPass;
 use crate::render::tracer::TraceStatus;
 use crate::scene::camera::OrbitCamera;
@@ -34,7 +36,7 @@ use crate::scene::controller::OrbitController;
 use crate::scene::fly::FlyController;
 use crate::scene::viewport::SceneViewport;
 use crate::scene::CpuScene;
-use crate::ui::editor::{DeviceInfo, Editor, FrameHistory, ModelSource};
+use crate::ui::editor::{DeviceInfo, Editor, FrameHistory, ModelSource, RendererSettings};
 use scene_meta::SceneMeta;
 
 /// What the shell can do for the app; each is off where the target cannot do it.
@@ -81,6 +83,8 @@ pub struct StudioApp {
     clock: FrameClock,
     /// When the scene's animation and auto-orbit started, in the shell's seconds.
     epoch_s: Option<f64>,
+    /// Auto render scale's state between frames.
+    scaler: AutoScaler,
     scene: scenes::SceneState,
 }
 
@@ -129,6 +133,7 @@ impl StudioApp {
         overlay: Overlay,
     ) -> Self {
         let mut renderer = ForwardRenderer::new(&gpu, size[0], size[1]);
+        start_preset(&gpu, &mut renderer);
         renderer.enable_gpu_timing(&gpu);
         // A large scene opens on its coarse levels and sharpens where the camera looks.
         renderer.texture_streaming = TextureStreaming::INTERACTIVE;
@@ -150,6 +155,7 @@ impl StudioApp {
             ui_format: overlay.format(),
             clock: FrameClock::new(),
             epoch_s: None,
+            scaler: AutoScaler::default(),
             gpu,
             renderer,
             overlay,
@@ -190,4 +196,19 @@ impl StudioApp {
     pub fn editor_mut(&mut self) -> &mut Editor {
         &mut self.editor
     }
+}
+
+/// The preset the adapter starts at ([`QualityPreset::for_adapter`]): natively High, the renderer's defaults.
+fn start_preset(gpu: &GpuContext, renderer: &mut ForwardRenderer) {
+    let browser = gpu.adapter_info.backend == wgpu::Backend::BrowserWebGpu;
+    let preset = QualityPreset::for_adapter(gpu.identity.class, browser);
+    log::info!(
+        "Quality preset {} for {} ({:?})",
+        preset.label(),
+        gpu.identity.label,
+        gpu.identity.class
+    );
+    let mut settings = RendererSettings::of(renderer);
+    settings.apply_preset(preset);
+    settings.apply(renderer);
 }

@@ -5,9 +5,13 @@ use winit::window::Window;
 use super::{AppSignal, StudioApp};
 use crate::context::AcquireRetry;
 use crate::render::forward::readback;
+use crate::render::render_scale::FrameCost;
 use crate::render::texture::create_viewable_2d_texture;
 use crate::render::tracer::RenderMode;
 use crate::ui::editor::{EditorAction, EditorContext, RendererSettings, SceneStats};
+
+/// Frames whose median frame time Auto reads when nothing is GPU-timed.
+const AUTO_SCALE_WINDOW: usize = 15;
 
 /// Auto-orbit turn rate until the first drag.
 const AUTO_ORBIT_DEG_PER_S: f32 = 30.0;
@@ -133,6 +137,7 @@ impl StudioApp {
             .overlay
             .run(raw, |ui| editor.show(ui, &mut cx, esc_armed));
         settings.apply(&mut self.renderer);
+        self.steer_render_scale(now_s);
         self.camera.viewport = editor_output.viewport;
         let signals = self.act(editor_output.actions);
         self.advance(now_s);
@@ -154,6 +159,35 @@ impl StudioApp {
             }
         }
         signals
+    }
+
+    /// Auto render scale on a raster frame: against the GPU's pass time where it is timed, else the median frame.
+    fn steer_render_scale(&mut self, now_s: f64) {
+        let settings = self.renderer.render_scale;
+        let raster = self.renderer.drawn_mode() == RenderMode::Raster;
+        if !settings.auto || !raster || self.is_loading() {
+            return;
+        }
+        let gpu_ms: f32 = self
+            .renderer
+            .gpu_timings_ms()
+            .iter()
+            .map(|(_, ms)| ms)
+            .sum();
+        let cost = if gpu_ms > 0.0 {
+            FrameCost::Gpu(gpu_ms)
+        } else if let Some(ms) = self.frames.median_ms(AUTO_SCALE_WINDOW) {
+            FrameCost::Frame(ms)
+        } else {
+            return;
+        };
+        if let Some(scale) = self.scaler.update(&settings, cost, now_s) {
+            log::info!(
+                "Auto render scale {:.2} -> {scale:.2} ({cost:?})",
+                settings.scale
+            );
+            self.renderer.render_scale.scale = scale;
+        }
     }
 
     /// The frame's time step: the fly camera's held keys, the idle spin, the animation clock and the clouds' wind.

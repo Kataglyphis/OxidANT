@@ -36,6 +36,7 @@ use crate::render::gpu_timing::GpuTiming;
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
 pub use crate::render::lights::MAX_PUNCTUAL_LIGHTS;
 use crate::render::model_transform::ModelTransform;
+use crate::render::render_scale::RenderScale;
 use crate::render::shadow_settings::ShadowSettings;
 use crate::render::texture::create_2d_texture;
 pub use crate::render::texture_stream::{TextureResidency, TextureStreaming};
@@ -154,6 +155,8 @@ pub struct ForwardRenderer {
     pub raster_path: RasterPath,
     /// Which frames FXAA smooths after the tonemap, read every frame.
     pub fxaa: FxaaMode,
+    /// The scene targets' share of the output; the tonemap upsamples. Read every frame.
+    pub render_scale: RenderScale,
     /// The volumetric clouds, off by default as in the C++ engine; the noise is made the first frame they are on.
     pub clouds: CloudSettings,
     /// Seconds the clouds' wind has blown; the app advances it, and at 0, a test's, the wind has moved nothing.
@@ -221,6 +224,7 @@ impl ForwardRenderer {
             model_transform: ModelTransform::default(),
             raster_path: RasterPath::Forward,
             fxaa: FxaaMode::default(),
+            render_scale: RenderScale::default(),
             clouds: CloudSettings::default(),
             cloud_time_seconds: 0.0,
             placed_root: Mat4::IDENTITY,
@@ -414,7 +418,7 @@ impl ForwardRenderer {
         self.settle_uploaded_pose(scene, upload_node_world);
     }
 
-    /// Renders the scene HDR->tonemap into `output_view`, which must be `width` x `height`.
+    /// Renders the scene HDR->tonemap into `output_view`, which must be `width` x `height`; the scene at [`Self::render_scale`].
     pub fn render_tonemapped(
         &mut self,
         gpu: &GpuContext,
@@ -425,7 +429,8 @@ impl ForwardRenderer {
         camera: &OrbitCamera,
     ) {
         self.tracer.advance(gpu, self.render_mode.is_traced());
-        let (view, plan) = self.prepare_frame(gpu, tonemap, width, height, camera);
+        let scene = self.render_scale.extent((width, height));
+        let (view, plan) = self.prepare_frame(gpu, tonemap, (scene, (width, height)), camera);
         self.forget_timings_of_another_frame();
 
         // Before any scope: begin_frame picks the ring slot every scope below writes into.

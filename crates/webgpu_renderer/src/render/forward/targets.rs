@@ -12,10 +12,12 @@ use crate::render::pipeline_desc;
 /// The farthest MSAA depth and the share of samples at it; float32, as depth near 1 needs its precision.
 pub(super) const DEPTH_SPREAD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
 
-/// The frame's targets: the textures the pool backs this frame's transients with, at the output size.
+/// The frame's targets: the textures the pool backs this frame's transients with, at the scene size.
 pub(super) struct RenderTargets {
     pool: TransientPool,
+    /// The scene targets' size, the output's at render scale.
     pub(super) size: (u32, u32),
+    pub(super) output_size: (u32, u32),
 }
 
 impl RenderTargets {
@@ -23,6 +25,7 @@ impl RenderTargets {
         Self {
             pool: TransientPool::default(),
             size: (width.max(1), height.max(1)),
+            output_size: (width.max(1), height.max(1)),
         }
     }
 
@@ -105,9 +108,10 @@ impl ForwardRenderer {
         &mut self,
         gpu: &GpuContext,
         output_format: wgpu::TextureFormat,
-        size: (u32, u32),
+        (size, output_size): ((u32, u32), (u32, u32)),
     ) -> FramePlan {
         self.targets.size = size;
+        self.targets.output_size = output_size;
         let config = self.frame_config(output_format);
         let plan = frame_graph::plan(&config)
             .unwrap_or_else(|error| panic!("frame graph of {config:?}: {error}"));
@@ -124,6 +128,7 @@ impl ForwardRenderer {
         let culls = self.gpu_culling_enabled || self.occlusion_queries_enabled;
         FrameConfig {
             size: self.targets.size,
+            output_size: self.targets.output_size,
             output_format,
             mode,
             path: self.raster_path,

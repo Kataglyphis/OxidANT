@@ -20,6 +20,8 @@ pub mod model_transform;
 pub mod occlusion;
 pub mod overlay;
 pub mod pipeline_desc;
+pub mod quality;
+pub mod render_scale;
 pub mod shadow_settings;
 pub mod ssao;
 pub mod texture;

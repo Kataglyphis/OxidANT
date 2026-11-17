@@ -599,4 +599,5 @@ fn the_outliner_eye_switches_the_clouds_and_their_row_opens_the_clouds_section()
 
 mod adapter;
 mod combined;
+mod quality;
 mod settings;

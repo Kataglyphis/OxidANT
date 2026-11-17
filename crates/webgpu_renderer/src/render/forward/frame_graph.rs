@@ -103,7 +103,10 @@ pub(super) struct CloudShape {
 /// Everything that decides a frame's passes and targets.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) struct FrameConfig {
+    /// The scene targets' size: the output's at render scale.
     pub(super) size: (u32, u32),
+    /// The output's size, which the tonemap upsamples to and FXAA filters at.
+    pub(super) output_size: (u32, u32),
     /// The tonemap's target format, which FXAA's input shares.
     pub(super) output_format: wgpu::TextureFormat,
     /// The drawn mode, which rasters while a traced pick's scene is not ready.
@@ -153,7 +156,7 @@ pub(super) fn plan(config: &FrameConfig) -> Result<FramePlan, GraphError> {
             writes,
         });
     }
-    declare_resources(&mut graph, config.size, config.output_format);
+    declare_resources(&mut graph, config);
     let compiled = graph.compile()?;
     Ok(FramePlan {
         passes: compiled.order.iter().map(|&row| rows[row].0).collect(),
@@ -273,8 +276,8 @@ fn post_rows(config: &FrameConfig) -> Vec<Row> {
     rows
 }
 
-/// What the frame keeps or reads back afterwards, and the transient targets at the output `size`.
-fn declare_resources(graph: &mut FrameGraph<'_>, size: (u32, u32), output: wgpu::TextureFormat) {
+/// What the frame keeps or reads back afterwards, and the transient targets at their sizes.
+fn declare_resources(graph: &mut FrameGraph<'_>, config: &FrameConfig) {
     graph.import(NoiseVolume);
     // The test and diagnostic readbacks read HDR, depth and clouds after the frame.
     for kept in [
@@ -288,14 +291,17 @@ fn declare_resources(graph: &mut FrameGraph<'_>, size: (u32, u32), output: wgpu:
     ] {
         graph.export(kept);
     }
-    for (resource, desc) in transient_targets(size, output) {
+    let targets = transient_targets(config.size, config.output_size, config.output_format);
+    for (resource, desc) in targets {
         graph.transient(resource, desc);
     }
 }
 
 /// Every target the pool may back, by resource; a frame allocates only those its running passes use.
+/// The scene's at `size`, FXAA's input at the output's.
 pub(super) fn transient_targets(
     size: (u32, u32),
+    output_size: (u32, u32),
     output: wgpu::TextureFormat,
 ) -> [(Resource, TextureDesc); 15] {
     use wgpu::TextureUsages as U;
@@ -332,6 +338,12 @@ pub(super) fn transient_targets(
         (BloomScratch, post_half(HDR_FORMAT, read_back)),
         (AmbientRaw, post_half(AO_FORMAT, sampled)),
         (Ambient, post_half(AO_FORMAT, sampled)),
-        (Tonemapped, target(output, 1, sampled)),
+        (
+            Tonemapped,
+            TextureDesc {
+                size: output_size,
+                ..target(output, 1, sampled)
+            },
+        ),
     ]
 }

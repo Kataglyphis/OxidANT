@@ -13,7 +13,7 @@ const SWEEP_S: f64 = 1.5;
 /// Painted on the root's background layer and never allocated, so the scene under it stays the camera's.
 pub(super) fn paint(ui: &Ui, scene: Rect, cx: &EditorContext<'_>) {
     let pixels = scene.size() * ui.ctx().pixels_per_point();
-    let extent = format!("{} × {}", pixels.x.round() as u32, pixels.y.round() as u32);
+    let extent = extent_text([pixels.x.round() as u32, pixels.y.round() as u32], cx);
     let font = TextStyle::Body.resolve(ui.style());
     let loading = cx.scene.loading;
     let (text, dot_colour) = match loading {
@@ -63,6 +63,17 @@ pub(super) fn paint(ui: &Ui, scene: Rect, cx: &EditorContext<'_>) {
             now,
         );
     }
+}
+
+/// `1928 × 1207`, or the scene's internal size at a render scale under 1: `1446 × 905 (75 %)`.
+pub(super) fn extent_text([width, height]: [u32; 2], cx: &EditorContext<'_>) -> String {
+    let scale = cx.settings.render_scale;
+    if scale.clamped() >= 1.0 {
+        return format!("{width} × {height}");
+    }
+    let (inner_w, inner_h) = scale.extent((width, height));
+    let percent = (scale.clamped() * 100.0).round();
+    format!("{inner_w} × {inner_h} ({percent} %)")
 }
 
 /// A mint line along the chip's foot: filled to the fraction, or a sweeping quarter while nothing is counted.

@@ -1,4 +1,5 @@
-//! The Renderer tab: the C++ mode switch, raster path and path-tracing controls, then the WebGPU renderer's post and culling settings.
+//! The Renderer tab: the C++ mode switch, the quality presets and render scale, raster path and path-tracing controls,
+//! the WebGPU renderer's post and culling settings, then the adapter.
 
 use egui::{vec2, Button, Ui};
 
@@ -7,6 +8,8 @@ use super::super::render_mode::{mode_switch, pending_note};
 use super::super::{EditorAction, EditorContext};
 use crate::render::forward::RasterPath;
 use crate::render::fxaa::FxaaMode;
+use crate::render::quality::QualityPreset;
+use crate::render::render_scale::{RENDER_SCALE_RANGE, TARGET_FPS_RANGE};
 use crate::render::tracer::modes::{MAX_BOUNCES, SAMPLES_PER_PIXEL};
 use crate::render::tracer::RenderMode;
 use crate::ui::widgets::{
@@ -18,6 +21,8 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>, actions: &mut Vec<Ed
     mode_switch(ui, Segmented::new(&RENDER_MODES), cx);
     let note = pending_note(cx).unwrap_or_else(|| cx.stats.trace.text());
     muted_wrapped(ui, note);
+    quality(ui, cx);
+    render_scale(ui, cx);
     raster_path(ui, cx);
     anti_aliasing(ui, cx);
     path_tracing(ui, cx);
@@ -27,6 +32,64 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>, actions: &mut Vec<Ed
     if shaders(ui, cx) {
         actions.push(EditorAction::ReloadShaders);
     }
+}
+
+/// The preset the settings are at, Custom after an edit of one it sets; Custom itself cannot be picked.
+fn quality(ui: &mut Ui, cx: &mut EditorContext<'_>) {
+    section_header(ui, "QUALITY", None);
+    let settings = &mut *cx.settings;
+    let custom = QualityPreset::ALL.len();
+    let mut picked = settings
+        .quality_preset()
+        .and_then(|preset| QualityPreset::ALL.iter().position(|p| *p == preset))
+        .unwrap_or(custom);
+    let labels = QualityPreset::ALL.map(QualityPreset::label);
+    let labels = [&labels[..], &["Custom"]].concat();
+    let enabled = [true, true, true, true, false];
+    let changed = property_row(
+        ui,
+        "Preset",
+        Some("Low and Medium render deferred with FXAA instead of 4x MSAA and steer the render scale; High is the default"),
+        |ui| Segmented::new(&labels).enabled(&enabled).show(ui, &mut picked),
+    )
+    .changed();
+    if let Some(preset) = QualityPreset::ALL.get(picked).filter(|_| changed) {
+        settings.apply_preset(*preset);
+    }
+}
+
+/// The scene's share of the viewport, by hand or steered toward a frame rate.
+fn render_scale(ui: &mut Ui, cx: &mut EditorContext<'_>) {
+    let scale = &mut cx.settings.render_scale;
+    enabled_ui(ui, !scale.auto, |ui| {
+        property_row(
+            ui,
+            "Render scale",
+            Some("The scene's resolution against the viewport; the tonemap upsamples it"),
+            |ui| ui.add(FillSlider::new(&mut scale.scale, RENDER_SCALE_RANGE).decimals(2)),
+        );
+    });
+    property_row(
+        ui,
+        "Auto scale",
+        Some("Lowers the scale while frames miss the target and raises it while they have room"),
+        |ui| toggle(ui, &mut scale.auto),
+    );
+    enabled_ui(ui, scale.auto, |ui| {
+        property_row(ui, "Target", Some("The frame rate Auto aims at"), |ui| {
+            ui.add(
+                FillSlider::new(&mut scale.target_fps, TARGET_FPS_RANGE)
+                    .decimals(0)
+                    .suffix(" FPS"),
+            )
+        });
+    });
+    let [width, height] = cx.surface_px;
+    let (inner_w, inner_h) = scale.extent((width, height));
+    muted_wrapped(
+        ui,
+        format!("Renders {inner_w} × {inner_h} of {width} × {height}."),
+    );
 }
 
 /// Forward or deferred, live while the frame rasters; a traced frame shades neither way.

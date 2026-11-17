@@ -13,6 +13,8 @@ use crate::render::forward::{ForwardRenderer, RasterPath};
 use crate::render::fxaa::FxaaMode;
 use crate::render::gpu_timing::TimedPass;
 use crate::render::model_transform::ModelTransform;
+use crate::render::quality::{QualityKnobs, QualityPreset};
+use crate::render::render_scale::RenderScale;
 use crate::render::shadow_settings::ShadowSettings;
 use crate::render::tracer::{RenderMode, TraceSettings, TraceStatus};
 
@@ -37,6 +39,7 @@ pub struct RendererSettings {
     pub model_transform: ModelTransform,
     pub raster_path: RasterPath,
     pub fxaa: FxaaMode,
+    pub render_scale: RenderScale,
     pub clouds: CloudSettings,
     /// The user's pick; [`SceneStats::drawn_mode`] is what the frame draws.
     pub render_mode: RenderMode,
@@ -65,6 +68,7 @@ impl Default for RendererSettings {
             model_transform: ModelTransform::default(),
             raster_path: RasterPath::Forward,
             fxaa: FxaaMode::Deferred,
+            render_scale: RenderScale::default(),
             clouds: CloudSettings::default(),
             render_mode: RenderMode::Raster,
             trace: TraceSettings::default(),
@@ -92,6 +96,7 @@ impl RendererSettings {
             model_transform: renderer.model_transform,
             raster_path: renderer.raster_path,
             fxaa: renderer.fxaa,
+            render_scale: renderer.render_scale,
             clouds: renderer.clouds,
             render_mode: renderer.render_mode,
             trace: renderer.trace_settings,
@@ -116,12 +121,44 @@ impl RendererSettings {
         renderer.model_transform = self.model_transform;
         renderer.raster_path = self.raster_path;
         renderer.fxaa = self.fxaa;
+        renderer.render_scale = self.render_scale;
         renderer.clouds = self.clouds;
         renderer.render_mode = self.render_mode;
         renderer.trace_settings = self.trace.clamped();
         if self.reset_accumulation {
             renderer.reset_accumulation();
         }
+    }
+}
+
+impl RendererSettings {
+    /// The knobs the quality presets set.
+    pub fn quality_knobs(&self) -> QualityKnobs {
+        QualityKnobs::of(
+            (self.raster_path, self.fxaa),
+            (self.ssao_strength, self.bloom_strength),
+            &self.shadows,
+            self.render_scale,
+        )
+    }
+
+    /// The preset the settings are at, or `None` (Custom).
+    pub fn quality_preset(&self) -> Option<QualityPreset> {
+        QualityPreset::matching(&self.quality_knobs())
+    }
+
+    /// Sets what `preset` owns; Auto's target frame rate stays the user's.
+    pub fn apply_preset(&mut self, preset: QualityPreset) {
+        let knobs = preset.knobs();
+        self.raster_path = knobs.raster_path;
+        self.fxaa = knobs.fxaa;
+        self.ssao_strength = knobs.ssao_strength;
+        self.bloom_strength = knobs.bloom_strength;
+        knobs.apply_shadows(&mut self.shadows);
+        self.render_scale = RenderScale {
+            target_fps: self.render_scale.target_fps,
+            ..knobs.render_scale
+        };
     }
 }
 
@@ -267,6 +304,14 @@ impl FrameHistory {
         let newest = self.samples_ms().skip(self.len - count);
         Some(newest.sum::<f32>() / count as f32)
     }
+
+    /// The median of the newest `count` samples, which one hitch does not move; `None` before the first.
+    pub fn median_ms(&self, count: usize) -> Option<f32> {
+        let count = count.min(self.len);
+        let mut newest: Vec<f32> = self.samples_ms().skip(self.len - count).collect();
+        newest.sort_by(f32::total_cmp);
+        newest.get(count / 2).copied()
+    }
 }
 
 /// What the status bar, About and the Renderer tab say about the adapter.
@@ -383,6 +428,7 @@ mod tests {
         assert_eq!(history.double_click_delay_s(), 0.3);
         history.record_ms(900.0);
         assert_eq!(history.double_click_delay_s(), 1.47);
+        assert_eq!(history.median_ms(3), Some(80.0), "20, 80 and 900");
         history.tick(9.0);
         assert_eq!(
             history.samples_ms().last(),
@@ -457,6 +503,11 @@ mod tests {
             },
             raster_path: RasterPath::Deferred,
             fxaa: FxaaMode::Always,
+            render_scale: RenderScale {
+                scale: 0.5,
+                auto: true,
+                target_fps: 30.0,
+            },
             clouds: CloudSettings {
                 enabled: true,
                 march_steps: 16,
@@ -495,6 +546,7 @@ mod tests {
             model_transform,
             raster_path,
             fxaa,
+            render_scale,
             clouds,
             render_mode,
             trace,

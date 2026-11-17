@@ -64,7 +64,7 @@ impl FrameBinding {
     }
 }
 
-/// What every pass of one frame reads from the camera and the output size.
+/// What every pass of one frame reads from the camera and the scene targets' size.
 pub(super) struct FrameView {
     pub(super) width: u32,
     pub(super) height: u32,
@@ -82,16 +82,16 @@ impl ForwardRenderer {
         &mut self,
         gpu: &GpuContext,
         tonemap: &mut TonemapPass,
-        width: u32,
-        height: u32,
+        (scene, output): ((u32, u32), (u32, u32)),
         camera: &OrbitCamera,
     ) -> (FrameView, FramePlan) {
-        let (width, height) = (width.max(1), height.max(1));
+        let (width, height) = (scene.0.max(1), scene.1.max(1));
+        let output = (output.0.max(1), output.1.max(1));
         self.sync_shadow_map(&gpu.device);
         self.apply_model_transform(gpu);
         // Before the plan: whether the noise still has to be filled decides its row.
         self.ensure_cloud_march(gpu);
-        let plan = self.plan_frame(gpu, tonemap.output_format(), (width, height));
+        let plan = self.plan_frame(gpu, tonemap.output_format(), ((width, height), output));
         self.prepare_traced();
         self.prepare_clouds(gpu);
         self.rebuild_post_inputs(gpu);

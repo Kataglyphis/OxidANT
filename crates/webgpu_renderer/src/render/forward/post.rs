@@ -189,7 +189,7 @@ impl ForwardRenderer {
     pub(super) fn prepare_fxaa(&self, gpu: &GpuContext, tonemap: &mut TonemapPass) {
         match self.targets.get(Resource::Tonemapped) {
             Some(input) => {
-                let (width, height) = self.targets.size;
+                let (width, height) = self.targets.output_size;
                 tonemap.prepare_fxaa(gpu, input, width, height);
             }
             None => tonemap.release_fxaa(),
