@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-17, four more renderer functions are split under the 80-line limit)
+- **`scene/lod.rs`: `simplify_primitive` (111 lines)** reads as its steps: `cell_size`, `cluster_vertices` (centroid
+  and averaged normal per cell, into a `Clusters`), `copy_medoid_attributes` and `collapse_indices`.
+- **`render/ibl.rs`: `IblEnvironment::bake` (108)** records its passes through a `BakeEncoder`: `environment` (the
+  panorama and its mip chain), `irradiance` and `prefilter`, in the old order and one submit.
+- **`asset/hdr.rs`: `every_malformed_input_is_a_typed_error_not_a_panic` (108)** loops over two tables,
+  `malformed_headers` and `malformed_scanlines`, the same 18 files and errors, each row named for what it breaks.
+- **`tests/headless.rs`: `texture_slot_samples_its_declared_uv_set` (107)** renders through `render_uv_set_quad` and
+  `red_blue_texture`; its assertions are unchanged.
+- The four rows leave `rust-function-size.allow`, and the two `#[expect(clippy::too_many_lines)]` go with them.
+
 ### Changed (2026-11-17, four quality-queue functions are split under the 80-line limit)
 - **`observant/src/web.rs`: `handle` (114 lines)** keeps the route table and hands its longer branches to
   `signalling`, `json_response`, `arrival` and `clip`; `add_page_headers` sets the CORS and isolation headers.

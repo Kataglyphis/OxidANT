@@ -585,114 +585,120 @@ mod tests {
         assert_eq!(cancelled.rgba32f, plain.rgba32f);
     }
 
+    /// A malformed file: what it gets wrong, its bytes, and the error it must decode to.
+    type Malformed = (&'static str, Vec<u8>, fn(&HdrError) -> bool);
+
+    fn case(what: &'static str, bytes: Vec<u8>, expected: fn(&HdrError) -> bool) -> Malformed {
+        (what, bytes, expected)
+    }
+
+    /// Files whose magic, FORMAT, resolution line, dimensions or EXPOSURE is wrong.
+    fn malformed_headers() -> Vec<Malformed> {
+        let rgbe =
+            |rest: &str| format!("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n{rest}").into_bytes();
+        let exposure = |line: &str| encode_flat(1, 1, &[[1.0, 1.0, 1.0]], &[line]);
+        vec![
+            case("bad magic", b"\x89PNG\r\n\x1a\n".to_vec(), |e| {
+                *e == HdrError::BadMagic
+            }),
+            case(
+                "a FORMAT this decoder does not speak",
+                b"#?RADIANCE\nFORMAT=32-bit_rle_xyze\n\n-Y 1 +X 1\n\0\0\0\0".to_vec(),
+                |e| matches!(e, HdrError::UnsupportedFormat(f) if f == "32-bit_rle_xyze"),
+            ),
+            case(
+                "no FORMAT at all",
+                b"#?RADIANCE\n\n-Y 1 +X 1\n\0\0\0\0".to_vec(),
+                |e| *e == HdrError::MissingFormat,
+            ),
+            case(
+                "header ends at EOF before any resolution line",
+                rgbe(""),
+                |e| matches!(e, HdrError::TruncatedInput { .. }),
+            ),
+            case(
+                "a real orientation, refused by name rather than decoded flipped",
+                rgbe("+Y 1 +X 1\n\0\0\0\0"),
+                |e| matches!(e, HdrError::UnsupportedOrientation { orientation } if orientation == "+Y +X"),
+            ),
+            case(
+                "not a resolution line at all",
+                rgbe("four score and seven\n"),
+                |e| matches!(e, HdrError::BadResolution { .. }),
+            ),
+            case("dimensions of zero", rgbe("-Y 0 +X 4\n"), |e| {
+                matches!(e, HdrError::BadDimensions { .. })
+            }),
+            case(
+                "dimensions whose product blows the cap",
+                rgbe("-Y 65535 +X 65535\n"),
+                |e| matches!(e, HdrError::BadDimensions { .. }),
+            ),
+            case(
+                "a malformed EXPOSURE value",
+                exposure("EXPOSURE=zero"),
+                |e| matches!(e, HdrError::BadHeaderValue { .. }),
+            ),
+            case(
+                "a negative EXPOSURE value",
+                exposure("EXPOSURE=-2.0"),
+                |e| matches!(e, HdrError::BadHeaderValue { .. }),
+            ),
+        ]
+    }
+
+    /// Files whose header is fine and whose pixel data is short, mis-sized or a bad run.
+    fn malformed_scanlines() -> Vec<Malformed> {
+        let width_8 = |body: &[u8]| [header(8, 1, &[]), body.to_vec()].concat();
+        let gray = encode_rgbe([0.5, 0.5, 0.5]);
+        vec![
+            case(
+                "truncated mid-scanline: a 2x1 flat file with one pixel missing",
+                [header(2, 1, &[]), encode_rgbe([1.0, 1.0, 1.0]).to_vec()].concat(),
+                |e| matches!(e, HdrError::TruncatedInput { .. }),
+            ),
+            case(
+                "new-style scanline declaring the wrong width",
+                width_8(&[2, 2, 0, 9]),
+                |e| {
+                    *e == HdrError::ScanlineWidthMismatch {
+                        declared: 9,
+                        expected: 8,
+                    }
+                },
+            ),
+            case(
+                "a run longer than the scanline",
+                width_8(&[2, 2, 0, 8, 128 + 9, 0xaa]),
+                |e| *e == HdrError::RleOverrun,
+            ),
+            case(
+                "a zero-length literal, which would never advance",
+                width_8(&[2, 2, 0, 8, 0]),
+                |e| *e == HdrError::ZeroLengthRleLiteral,
+            ),
+            case(
+                "an old-style repeat with nothing to repeat",
+                width_8(&[1, 1, 1, 3]),
+                |e| *e == HdrError::RepeatBeforeFirstPixel,
+            ),
+            case(
+                "an old-style repeat overrunning its scanline",
+                width_8(&[&gray[..], &[1, 1, 1, 200]].concat()),
+                |e| *e == HdrError::RleOverrun,
+            ),
+        ]
+    }
+
     #[test]
     fn every_malformed_input_is_a_typed_error_not_a_panic() {
-        // Bad magic.
-        assert_eq!(
-            decode_hdr(b"\x89PNG\r\n\x1a\n").err(),
-            Some(HdrError::BadMagic)
-        );
-
-        // A FORMAT this decoder does not speak.
-        let xyze = b"#?RADIANCE\nFORMAT=32-bit_rle_xyze\n\n-Y 1 +X 1\n\0\0\0\0";
-        assert!(
-            matches!(decode_hdr(xyze), Err(HdrError::UnsupportedFormat(f)) if f == "32-bit_rle_xyze")
-        );
-
-        // No FORMAT at all.
-        let no_format = b"#?RADIANCE\n\n-Y 1 +X 1\n\0\0\0\0";
-        assert_eq!(decode_hdr(no_format).err(), Some(HdrError::MissingFormat));
-
-        // Header ends at EOF before any resolution line.
-        let no_resolution = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n";
-        assert!(matches!(
-            decode_hdr(no_resolution),
-            Err(HdrError::TruncatedInput { .. })
-        ));
-
-        // A real orientation, refused by name rather than decoded flipped.
-        let flipped = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n+Y 1 +X 1\n\0\0\0\0";
-        assert!(matches!(
-            decode_hdr(flipped),
-            Err(HdrError::UnsupportedOrientation { orientation }) if orientation == "+Y +X"
-        ));
-
-        // Not a resolution line at all.
-        let garbage = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\nfour score and seven\n";
-        assert!(matches!(
-            decode_hdr(garbage),
-            Err(HdrError::BadResolution { .. })
-        ));
-
-        // Dimensions of zero, and dimensions whose product blows the cap.
-        let zero = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 0 +X 4\n";
-        assert!(matches!(
-            decode_hdr(zero),
-            Err(HdrError::BadDimensions { .. })
-        ));
-        let huge = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 65535 +X 65535\n";
-        assert!(matches!(
-            decode_hdr(huge),
-            Err(HdrError::BadDimensions { .. })
-        ));
-
-        // Truncated mid-scanline: a 2x1 flat file with one pixel missing.
-        let mut truncated = header(2, 1, &[]);
-        truncated.extend_from_slice(&encode_rgbe([1.0, 1.0, 1.0]));
-        assert!(matches!(
-            decode_hdr(&truncated),
-            Err(HdrError::TruncatedInput { .. })
-        ));
-
-        // New-style scanline declaring the wrong width.
-        let mut mismatch = header(8, 1, &[]);
-        mismatch.extend_from_slice(&[2, 2, 0, 9]);
-        assert_eq!(
-            decode_hdr(&mismatch).err(),
-            Some(HdrError::ScanlineWidthMismatch {
-                declared: 9,
-                expected: 8
-            })
-        );
-
-        // A run longer than the scanline.
-        let mut overrun = header(8, 1, &[]);
-        overrun.extend_from_slice(&[2, 2, 0, 8, 128 + 9, 0xaa]);
-        assert_eq!(decode_hdr(&overrun).err(), Some(HdrError::RleOverrun));
-
-        // A zero-length literal, which would never advance.
-        let mut stuck = header(8, 1, &[]);
-        stuck.extend_from_slice(&[2, 2, 0, 8, 0]);
-        assert_eq!(
-            decode_hdr(&stuck).err(),
-            Some(HdrError::ZeroLengthRleLiteral)
-        );
-
-        // An old-style repeat with nothing to repeat.
-        let mut orphan = header(8, 1, &[]);
-        orphan.extend_from_slice(&[1, 1, 1, 3]);
-        assert_eq!(
-            decode_hdr(&orphan).err(),
-            Some(HdrError::RepeatBeforeFirstPixel)
-        );
-
-        // An old-style repeat overrunning its scanline.
-        let mut long = header(8, 1, &[]);
-        long.extend_from_slice(&encode_rgbe([0.5, 0.5, 0.5]));
-        long.extend_from_slice(&[1, 1, 1, 200]);
-        assert_eq!(decode_hdr(&long).err(), Some(HdrError::RleOverrun));
-
-        // A malformed EXPOSURE value.
-        let bad_exposure = encode_flat(1, 1, &[[1.0, 1.0, 1.0]], &["EXPOSURE=zero"]);
-        assert!(matches!(
-            decode_hdr(&bad_exposure),
-            Err(HdrError::BadHeaderValue { .. })
-        ));
-        let negative = encode_flat(1, 1, &[[1.0, 1.0, 1.0]], &["EXPOSURE=-2.0"]);
-        assert!(matches!(
-            decode_hdr(&negative),
-            Err(HdrError::BadHeaderValue { .. })
-        ));
+        for (what, bytes, expected) in malformed_headers().into_iter().chain(malformed_scanlines())
+        {
+            match decode_hdr(&bytes) {
+                Err(err) => assert!(expected(&err), "{what}: decoded to the wrong error {err:?}"),
+                Ok(_) => panic!("{what}: decoded without an error"),
+            }
+        }
     }
 
     #[test]

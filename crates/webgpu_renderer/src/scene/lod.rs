@@ -16,31 +16,63 @@ pub struct Lod {
 }
 
 /// Clusters vertices onto a grid whose cell is `cell_ratio` of the bbox diagonal.
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive {
+    let Some(cell) = cell_size(&prim.vertices, cell_ratio) else {
+        return prim.clone();
+    };
+    let mut clusters = cluster_vertices(&prim.vertices, cell);
+    copy_medoid_attributes(&prim.vertices, &mut clusters);
+    let indices = collapse_indices(&prim.indices, &clusters.remap);
+
+    CpuPrimitive {
+        vertices: clusters.vertices,
+        indices,
+        transform: prim.transform,
+        node_index: prim.node_index,
+        skin_index: prim.skin_index,
+        material: prim.material.clone(),
+        // Per-vertex morph deltas cannot survive a new vertex count; LODs render unmorphed.
+        morph_targets: Vec::new(),
+        morph_weights: Vec::new(),
+    }
+}
+
+/// The grid cell, `cell_ratio` of the bbox diagonal; `None` for a degenerate or non-finite bbox.
+fn cell_size(source: &[Vertex], cell_ratio: f32) -> Option<f32> {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
-    for v in &prim.vertices {
+    for v in source {
         let p = Vec3::from_array(v.position);
         min = min.min(p);
         max = max.max(p);
     }
     let diagonal = (max - min).length();
     if !diagonal.is_finite() || diagonal <= 0.0 {
-        return prim.clone();
+        return None;
     }
-    let cell = (diagonal * cell_ratio).max(1e-6);
+    Some((diagonal * cell_ratio).max(1e-6))
+}
 
+/// One merged vertex per occupied grid cell, and the cell each source vertex fell into.
+struct Clusters {
+    vertices: Vec<Vertex>,
+    // f64: order-dependent f32 rounding could flip the medoid argmin below.
+    position_sums: Vec<DVec3>,
+    merge_counts: Vec<f32>,
+    remap: Vec<u32>,
+}
+
+/// Merges the vertices of each cell at their centroid, with their normals averaged.
+fn cluster_vertices(source: &[Vertex], cell: f32) -> Clusters {
     // Centroid, not first-wins, which made the result depend on vertex order.
     let mut cell_to_index: HashMap<(i64, i64, i64), u32> = HashMap::new();
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut normal_sums: Vec<Vec3> = Vec::new();
-    // f64: order-dependent f32 rounding could flip the medoid argmin below.
     let mut position_sums: Vec<DVec3> = Vec::new();
     let mut merge_counts: Vec<f32> = Vec::new();
-    let mut remap: Vec<u32> = Vec::with_capacity(prim.vertices.len());
+    let mut remap: Vec<u32> = Vec::with_capacity(source.len());
 
-    for v in &prim.vertices {
+    for v in source {
         let p = Vec3::from_array(v.position);
         let key = (
             (p.x / cell).floor() as i64,
@@ -70,15 +102,25 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
             vertex.position = (position_sums[index] / count as f64).as_vec3().to_array();
         }
     }
+    Clusters {
+        vertices,
+        position_sums,
+        merge_counts,
+        remap,
+    }
+}
 
+/// Gives each merged vertex the uv, tangent, colour and skin of its cell's medoid.
+fn copy_medoid_attributes(source: &[Vertex], clusters: &mut Clusters) {
     // Medoid, in f64 against the centroid sum; ties break on position, as index order is not stable.
-    let mut medoid_index: Vec<u32> = vec![0; vertices.len()];
-    let mut medoid_dist_sq: Vec<f64> = vec![f64::INFINITY; vertices.len()];
-    let mut medoid_position: Vec<DVec3> = vec![DVec3::ZERO; vertices.len()];
-    for (i, v) in prim.vertices.iter().enumerate() {
-        let cell = remap[i] as usize;
+    let count = clusters.vertices.len();
+    let mut medoid_index: Vec<u32> = vec![0; count];
+    let mut medoid_dist_sq: Vec<f64> = vec![f64::INFINITY; count];
+    let mut medoid_position: Vec<DVec3> = vec![DVec3::ZERO; count];
+    for (i, v) in source.iter().enumerate() {
+        let cell = clusters.remap[i] as usize;
         let p = Vec3::from_array(v.position).as_dvec3();
-        let centroid = position_sums[cell] / merge_counts[cell] as f64;
+        let centroid = clusters.position_sums[cell] / clusters.merge_counts[cell] as f64;
         let dist_sq = (p - centroid).length_squared();
         let is_better = dist_sq < medoid_dist_sq[cell]
             || (dist_sq == medoid_dist_sq[cell]
@@ -93,8 +135,8 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
             medoid_position[cell] = p;
         }
     }
-    for (cell, vertex) in vertices.iter_mut().enumerate() {
-        let source = &prim.vertices[medoid_index[cell] as usize];
+    for (cell, vertex) in clusters.vertices.iter_mut().enumerate() {
+        let source = &source[medoid_index[cell] as usize];
         vertex.uv = source.uv;
         vertex.uv1 = source.uv1;
         vertex.tangent = source.tangent;
@@ -102,10 +144,12 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
         vertex.joints = source.joints;
         vertex.weights = source.weights;
     }
+}
 
-    // Rebuild indices, dropping triangles that collapsed to a line/point.
-    let mut indices = Vec::with_capacity(prim.indices.len());
-    for tri in prim.indices.as_chunks::<3>().0 {
+/// Rebuilds indices through `remap`, dropping triangles that collapsed to a line/point.
+fn collapse_indices(source: &[u32], remap: &[u32]) -> Vec<u32> {
+    let mut indices = Vec::with_capacity(source.len());
+    for tri in source.as_chunks::<3>().0 {
         let (a, b, c) = (
             remap[tri[0] as usize],
             remap[tri[1] as usize],
@@ -115,18 +159,7 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
             indices.extend_from_slice(&[a, b, c]);
         }
     }
-
-    CpuPrimitive {
-        vertices,
-        indices,
-        transform: prim.transform,
-        node_index: prim.node_index,
-        skin_index: prim.skin_index,
-        material: prim.material.clone(),
-        // Per-vertex morph deltas cannot survive a new vertex count; LODs render unmorphed.
-        morph_targets: Vec::new(),
-        morph_weights: Vec::new(),
-    }
+    indices
 }
 
 /// Builds a clustering LOD chain, one level per switch distance, each twice as aggressive.

@@ -6,11 +6,7 @@ crates/cli/src/main.rs | main | 96 | the CLI's subcommand dispatch; #[expect] in
 crates/telemetry/src/resource_monitor.rs | run_monitor_loop | 84 | one sampling loop; clippy counts it under 80 without comments, the hub counts them
 crates/burn_demos/src/main.rs | main | 93 | the demo subcommand dispatch; #[expect] in the source
 crates/burn_demos/src/onnx_detector.rs | onnx_detector_demo | 87 | one detector run from model to output shape; clippy counts it under 80 without comments, the hub counts them
-crates/webgpu_renderer/src/asset/hdr.rs | every_malformed_input_is_a_typed_error_not_a_panic | 108 | one table of malformed HDR files; a row only: clippy counts it under 80, or it is outside the crate root's lint
 crates/webgpu_renderer/src/asset/obj_to_gltf.rs | parse_mtl | 102 | the MTL keywords in one match; #[expect] in the source
 crates/webgpu_renderer/src/render/gpu_occlusion.rs | cull | 92 | the occlusion pass and its readback; a row only: clippy counts it under 80, or it is outside the crate root's lint
-crates/webgpu_renderer/src/render/ibl.rs | bake | 108 | the IBL bake's three passes; #[expect] in the source
-crates/webgpu_renderer/src/scene/lod.rs | simplify_primitive | 111 | one LOD level of a primitive; #[expect] in the source
 crates/webgpu_renderer/tests/headless.rs | morph_weight_lifts_the_silhouette | 90 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint
 crates/webgpu_renderer/tests/headless.rs | vertex_colors_tint_the_surface | 88 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint
-crates/webgpu_renderer/tests/headless.rs | texture_slot_samples_its_declared_uv_set | 107 | one headless scene and its check; a row only: clippy counts it under 80, or it is outside the crate root's lint

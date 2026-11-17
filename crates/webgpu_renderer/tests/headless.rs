@@ -2265,85 +2265,11 @@ fn vertex_colors_tint_the_surface() {
 /// A slot declaring TEXCOORD_1 samples UV1; constant UV0 would show one flat colour.
 #[test]
 fn texture_slot_samples_its_declared_uv_set() {
-    use kataglyphis_webgpu_renderer::scene::{
-        AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuTexture, CpuTextureRef, Vertex,
-    };
-    use std::sync::Arc;
-
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
-    // 2x1 texture: left half red, right half blue.
-    let tex = CpuTextureRef {
-        texture: Arc::new(CpuTexture {
-            width: 2,
-            height: 1,
-            rgba8: vec![255, 0, 0, 255, 0, 0, 255, 255],
-            compressed: None,
-        }),
-        sampler: CpuSampler {
-            mag_nearest: true,
-            min_nearest: true,
-            ..CpuSampler::default()
-        },
-        srgb: true,
-    };
-
-    // UV0 is (0,0) everywhere (the red texel); UV1 spans 0..1 (red, then blue).
-    let corners = [
-        ([-2.0f32, -2.0, 0.0], [0.0f32, 0.0]),
-        ([2.0, -2.0, 0.0], [1.0, 0.0]),
-        ([2.0, 2.0, 0.0], [1.0, 1.0]),
-        ([-2.0, 2.0, 0.0], [0.0, 1.0]),
-    ];
-    let verts: Vec<Vertex> = corners
-        .iter()
-        .map(|(p, uv1)| Vertex {
-            position: *p,
-            normal: [0.0, 0.0, 1.0],
-            uv: [0.0, 0.0], // constant UV0
-            tangent: [1.0, 0.0, 0.0, 1.0],
-            joints: [0.0; 4],
-            weights: [0.0; 4],
-            color: [1.0, 1.0, 1.0, 1.0],
-            uv1: *uv1, // spanning UV1
-        })
-        .collect();
-
-    let render = |uv_set_mask: u32| -> Vec<u8> {
-        let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
-        scene.primitives = vec![CpuPrimitive {
-            vertices: verts.clone(),
-            indices: vec![0, 1, 2, 0, 2, 3],
-            transform: glam::Mat4::IDENTITY,
-            node_index: None,
-            skin_index: None,
-            material: CpuMaterial {
-                base_color: [1.0, 1.0, 1.0, 1.0],
-                alpha_mode: AlphaMode::Opaque,
-                unlit: true,
-                base_color_texture: Some(tex.clone()),
-                uv_set_mask,
-                ..CpuMaterial::default()
-            },
-            morph_targets: Vec::new(),
-            morph_weights: Vec::new(),
-        }];
-        let (w, h) = (128u32, 128u32);
-        let mut renderer = ForwardRenderer::new(&gpu, w, h);
-        renderer.upload_scene(&gpu, &scene);
-        let camera = OrbitCamera {
-            radius: 5.0,
-            yaw_deg: 90.0,
-            pitch_deg: 0.0,
-            ..OrbitCamera::default()
-        };
-        renderer
-            .render_to_pixels(&gpu, w, h, &camera)
-            .expect("headless render must succeed")
-    };
-
+    let render = |uv_set_mask: u32| render_uv_set_quad(&gpu, uv_set_mask);
     let sample = |px: &[u8], x: usize| -> (i32, i32, i32) {
         let idx = ((64usize * 128) + x) * 4;
         (px[idx] as i32, px[idx + 1] as i32, px[idx + 2] as i32)
@@ -2370,6 +2296,83 @@ fn texture_slot_samples_its_declared_uv_set() {
         l0r > l0b + 40 && r0r > r0b + 40,
         "on UV0 the whole quad is red (l r={l0r} b={l0b}, r r={r0r} b={r0b})"
     );
+}
+
+/// A 2x1 texture, left half red, right half blue, sampled nearest.
+fn red_blue_texture() -> kataglyphis_webgpu_renderer::scene::CpuTextureRef {
+    use kataglyphis_webgpu_renderer::scene::{CpuSampler, CpuTexture, CpuTextureRef};
+
+    CpuTextureRef {
+        texture: std::sync::Arc::new(CpuTexture {
+            width: 2,
+            height: 1,
+            rgba8: vec![255, 0, 0, 255, 0, 0, 255, 255],
+            compressed: None,
+        }),
+        sampler: CpuSampler {
+            mag_nearest: true,
+            min_nearest: true,
+            ..CpuSampler::default()
+        },
+        srgb: true,
+    }
+}
+
+/// A 4x4 unlit quad facing the camera whose base texture reads the UV set `uv_set_mask` names.
+/// UV0 is (0,0) everywhere (the red texel); UV1 spans 0..1 (red, then blue).
+fn render_uv_set_quad(gpu: &GpuContext, uv_set_mask: u32) -> Vec<u8> {
+    use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial, CpuPrimitive, Vertex};
+
+    let corners = [
+        ([-2.0f32, -2.0, 0.0], [0.0f32, 0.0]),
+        ([2.0, -2.0, 0.0], [1.0, 0.0]),
+        ([2.0, 2.0, 0.0], [1.0, 1.0]),
+        ([-2.0, 2.0, 0.0], [0.0, 1.0]),
+    ];
+    let vertices: Vec<Vertex> = corners
+        .iter()
+        .map(|(p, uv1)| Vertex {
+            position: *p,
+            normal: [0.0, 0.0, 1.0],
+            uv: [0.0, 0.0], // constant UV0
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            joints: [0.0; 4],
+            weights: [0.0; 4],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv1: *uv1, // spanning UV1
+        })
+        .collect();
+
+    let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    scene.primitives = vec![CpuPrimitive {
+        vertices,
+        indices: vec![0, 1, 2, 0, 2, 3],
+        transform: glam::Mat4::IDENTITY,
+        node_index: None,
+        skin_index: None,
+        material: CpuMaterial {
+            base_color: [1.0, 1.0, 1.0, 1.0],
+            alpha_mode: AlphaMode::Opaque,
+            unlit: true,
+            base_color_texture: Some(red_blue_texture()),
+            uv_set_mask,
+            ..CpuMaterial::default()
+        },
+        morph_targets: Vec::new(),
+        morph_weights: Vec::new(),
+    }];
+    let (w, h) = (128u32, 128u32);
+    let mut renderer = ForwardRenderer::new(gpu, w, h);
+    renderer.upload_scene(gpu, &scene);
+    let camera = OrbitCamera {
+        radius: 5.0,
+        yaw_deg: 90.0,
+        pitch_deg: 0.0,
+        ..OrbitCamera::default()
+    };
+    renderer
+        .render_to_pixels(gpu, w, h, &camera)
+        .expect("headless render must succeed")
 }
 
 /// The readback returns RGBA8 bytes, so a format whose texels differ must be refused, not mislabelled.

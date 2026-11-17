@@ -382,7 +382,6 @@ pub struct IblEnvironment {
 
 impl IblEnvironment {
     /// Bakes every environment-dependent map from `equirect`, in one submit.
-    #[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
     pub fn bake(gpu: &GpuContext, equirect: &EquirectImage) -> Self {
         let device = &gpu.device;
         let precompute = Precompute::new(device);
@@ -395,91 +394,15 @@ impl IblEnvironment {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("ibl_bake_encoder"),
         });
-
-        // 1. Panorama -> cube, mip 0.
-        for face in 0..6u32 {
-            draw_fullscreen(
-                device,
-                &mut encoder,
-                &precompute,
-                &precompute.equirect_to_cube,
-                &face_view(&environment, face, 0),
-                IblParams {
-                    face_roughness_samples_mip: [face as f32, 0.0, 0.0, 0.0],
-                    source_resolution: [equirect.width as f32, 0.0, 0.0, 0.0],
-                },
-                &source,
-                &precompute.dummy_cube,
-                "ibl_equirect_to_cube_pass",
-            );
-        }
-
-        // 2. Mip chain; bind only the source mip, the whole chain would be a usage conflict.
-        for mip in 1..ENV_MIPS {
-            let source_mip = cube_view_of_mip(&environment, mip - 1);
-            for face in 0..6u32 {
-                draw_fullscreen(
-                    device,
-                    &mut encoder,
-                    &precompute,
-                    &precompute.downsample_cube,
-                    &face_view(&environment, face, mip),
-                    IblParams {
-                        face_roughness_samples_mip: [face as f32, 0.0, 0.0, 0.0],
-                        source_resolution: [(ENV_SIZE >> (mip - 1)) as f32, 0.0, 0.0, 0.0],
-                    },
-                    &precompute.dummy_equirect,
-                    &source_mip,
-                    "ibl_downsample_pass",
-                );
-            }
-        }
-
-        // 3. Diffuse irradiance, from mip 0 of the environment.
+        let mut bake = BakeEncoder {
+            device,
+            encoder: &mut encoder,
+            precompute: &precompute,
+        };
+        bake.environment(&environment, &source, equirect.width);
         let environment_all_mips = cube_view_all_mips(&environment);
-        for face in 0..6u32 {
-            draw_fullscreen(
-                device,
-                &mut encoder,
-                &precompute,
-                &precompute.irradiance,
-                &face_view(&irradiance, face, 0),
-                IblParams {
-                    face_roughness_samples_mip: [face as f32, 0.0, 0.0, 0.0],
-                    source_resolution: [ENV_SIZE as f32, 0.0, 0.0, 0.0],
-                },
-                &precompute.dummy_equirect,
-                &environment_all_mips,
-                "ibl_irradiance_pass",
-            );
-        }
-
-        // 4. Prefiltered specular, one mip per roughness level.
-        for mip in 0..PREFILTER_MIPS {
-            let roughness = prefilter_roughness(mip);
-            for face in 0..6u32 {
-                draw_fullscreen(
-                    device,
-                    &mut encoder,
-                    &precompute,
-                    &precompute.prefilter,
-                    &face_view(&prefiltered, face, mip),
-                    IblParams {
-                        face_roughness_samples_mip: [
-                            face as f32,
-                            roughness,
-                            PREFILTER_SAMPLES as f32,
-                            0.0,
-                        ],
-                        source_resolution: [ENV_SIZE as f32, 0.0, 0.0, 0.0],
-                    },
-                    &precompute.dummy_equirect,
-                    &environment_all_mips,
-                    "ibl_prefilter_pass",
-                );
-            }
-        }
-
+        bake.irradiance(&irradiance, &environment_all_mips);
+        bake.prefilter(&prefiltered, &environment_all_mips);
         gpu.queue.submit(Some(encoder.finish()));
 
         Self {
@@ -552,6 +475,107 @@ fn create_cube(device: &wgpu::Device, label: &str, size: u32, mips: u32) -> wgpu
             | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     })
+}
+
+/// The bake's passes, recorded into one encoder.
+struct BakeEncoder<'a> {
+    device: &'a wgpu::Device,
+    encoder: &'a mut wgpu::CommandEncoder,
+    precompute: &'a Precompute,
+}
+
+impl BakeEncoder<'_> {
+    /// Panorama -> cube at mip 0, then its mip chain.
+    fn environment(&mut self, environment: &wgpu::Texture, source: &wgpu::TextureView, width: u32) {
+        let precompute = self.precompute;
+        for face in 0..6u32 {
+            draw_fullscreen(
+                self.device,
+                self.encoder,
+                precompute,
+                &precompute.equirect_to_cube,
+                &face_view(environment, face, 0),
+                IblParams {
+                    face_roughness_samples_mip: [face as f32, 0.0, 0.0, 0.0],
+                    source_resolution: [width as f32, 0.0, 0.0, 0.0],
+                },
+                source,
+                &precompute.dummy_cube,
+                "ibl_equirect_to_cube_pass",
+            );
+        }
+
+        // Bind only the source mip; the whole chain would be a usage conflict.
+        for mip in 1..ENV_MIPS {
+            let source_mip = cube_view_of_mip(environment, mip - 1);
+            for face in 0..6u32 {
+                draw_fullscreen(
+                    self.device,
+                    self.encoder,
+                    precompute,
+                    &precompute.downsample_cube,
+                    &face_view(environment, face, mip),
+                    IblParams {
+                        face_roughness_samples_mip: [face as f32, 0.0, 0.0, 0.0],
+                        source_resolution: [(ENV_SIZE >> (mip - 1)) as f32, 0.0, 0.0, 0.0],
+                    },
+                    &precompute.dummy_equirect,
+                    &source_mip,
+                    "ibl_downsample_pass",
+                );
+            }
+        }
+    }
+
+    /// Diffuse irradiance, from mip 0 of the environment.
+    fn irradiance(&mut self, irradiance: &wgpu::Texture, environment: &wgpu::TextureView) {
+        let precompute = self.precompute;
+        for face in 0..6u32 {
+            draw_fullscreen(
+                self.device,
+                self.encoder,
+                precompute,
+                &precompute.irradiance,
+                &face_view(irradiance, face, 0),
+                IblParams {
+                    face_roughness_samples_mip: [face as f32, 0.0, 0.0, 0.0],
+                    source_resolution: [ENV_SIZE as f32, 0.0, 0.0, 0.0],
+                },
+                &precompute.dummy_equirect,
+                environment,
+                "ibl_irradiance_pass",
+            );
+        }
+    }
+
+    /// Prefiltered specular, one mip per roughness level.
+    fn prefilter(&mut self, prefiltered: &wgpu::Texture, environment: &wgpu::TextureView) {
+        let precompute = self.precompute;
+        for mip in 0..PREFILTER_MIPS {
+            let roughness = prefilter_roughness(mip);
+            for face in 0..6u32 {
+                draw_fullscreen(
+                    self.device,
+                    self.encoder,
+                    precompute,
+                    &precompute.prefilter,
+                    &face_view(prefiltered, face, mip),
+                    IblParams {
+                        face_roughness_samples_mip: [
+                            face as f32,
+                            roughness,
+                            PREFILTER_SAMPLES as f32,
+                            0.0,
+                        ],
+                        source_resolution: [ENV_SIZE as f32, 0.0, 0.0, 0.0],
+                    },
+                    &precompute.dummy_equirect,
+                    environment,
+                    "ibl_prefilter_pass",
+                );
+            }
+        }
+    }
 }
 
 /// Render-target view of one face at one mip (a 2D view of one array layer).
