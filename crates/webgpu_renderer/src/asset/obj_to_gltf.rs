@@ -94,7 +94,6 @@ impl ObjMesh {
 }
 
 /// Parses the `.mtl` subset glTF can represent; unknown Phong-era directives are ignored, not rejected.
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
     let mut materials: Vec<ObjMaterial> = Vec::new();
 
@@ -109,93 +108,65 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
         };
         let values: Vec<&str> = parts.collect();
 
-        match keyword {
-            "newmtl" => materials.push(ObjMaterial {
+        if keyword == "newmtl" {
+            materials.push(ObjMaterial {
                 name: values.first().copied().unwrap_or("unnamed").to_string(),
                 ..ObjMaterial::default()
-            }),
-            "Kd" if values.len() >= 3 => {
-                if let Some(material) = materials.last_mut() {
-                    for (axis, value) in values.iter().take(3).enumerate() {
-                        if let Ok(component) = value.parse::<f32>() {
-                            material.base_color[axis] = component;
-                        }
-                    }
-                }
-            }
-            // Stored unclamped: `to_gltf` carries values above 1 via KHR_materials_emissive_strength.
-            "Ke" if values.len() >= 3 => {
-                if let Some(material) = materials.last_mut() {
-                    for (axis, value) in values.iter().take(3).enumerate() {
-                        if let Ok(component) = value.parse::<f32>() {
-                            material.emissive[axis] = component;
-                        }
-                    }
-                }
-            }
-            // `d` is opacity and `Tr` its inverse; mixing them up swaps opaque and transparent.
-            "d" if !values.is_empty() => {
-                if let (Some(material), Ok(opacity)) =
-                    (materials.last_mut(), values[0].parse::<f32>())
-                {
-                    material.base_color[3] = opacity.clamp(0.0, 1.0);
-                }
-            }
-            "map_Kd" | "map_Ke" | "map_d" if !values.is_empty() => {
-                if let Some(material) = materials.last_mut() {
-                    let slot = match keyword {
-                        "map_Kd" => &mut material.base_color_texture,
-                        "map_Ke" => &mut material.emissive_texture,
-                        _ => &mut material.alpha_texture,
-                    };
-                    // Last token, past any options; `\` becomes `/` so Windows-authored paths resolve on Linux.
-                    *slot = values.last().map(|name| name.replace('\\', "/"));
-                }
-            }
-            "Tr" if !values.is_empty() => {
-                if let (Some(material), Ok(transparency)) =
-                    (materials.last_mut(), values[0].parse::<f32>())
-                {
-                    material.base_color[3] = (1.0 - transparency).clamp(0.0, 1.0);
-                }
-            }
-            "Pm" if !values.is_empty() => {
-                if let Some(material) = materials.last_mut() {
-                    if let Ok(metallic) = values[0].parse::<f32>() {
-                        material.metallic = Some(metallic);
-                    }
-                }
-            }
-            "Pr" if !values.is_empty() => {
-                if let Some(material) = materials.last_mut() {
-                    if let Ok(roughness) = values[0].parse::<f32>() {
-                        material.roughness = Some(roughness);
-                    }
-                }
-            }
-            "Ns" if !values.is_empty() => {
-                if let Some(material) = materials.last_mut() {
-                    if let Ok(shininess) = values[0].parse::<f32>() {
-                        material.shininess = Some(shininess);
-                    }
-                }
-            }
-            // `norm` wins whatever the order; bump directives only fill an empty slot.
-            "norm" | "map_Bump" | "map_bump" | "bump" if !values.is_empty() => {
-                if let Some(material) = materials.last_mut() {
-                    if keyword == "norm" || material.normal_texture.is_none() {
-                        material.normal_texture = values.last().map(|name| name.replace('\\', "/"));
-                        if let Some(scale) = bump_scale_option(&values) {
-                            material.normal_scale = scale;
-                        }
-                    }
-                }
-            }
-            _ => {}
+            });
+        } else if let Some(material) = materials.last_mut() {
+            apply_mtl_directive(material, keyword, &values);
         }
     }
 
     materials
+}
+
+/// One directive after `newmtl`, applied to the material it belongs to.
+fn apply_mtl_directive(material: &mut ObjMaterial, keyword: &str, values: &[&str]) {
+    let first = || values.first().and_then(|value| value.parse::<f32>().ok());
+    // Last token, past any options; `\` becomes `/` so Windows-authored paths resolve on Linux.
+    let path = || values.last().map(|name| name.replace('\\', "/"));
+    match keyword {
+        "Kd" if values.len() >= 3 => parse_rgb_into(&mut material.base_color, values),
+        // Stored unclamped: `to_gltf` carries values above 1 via KHR_materials_emissive_strength.
+        "Ke" if values.len() >= 3 => parse_rgb_into(&mut material.emissive, values),
+        // `d` is opacity and `Tr` its inverse; mixing them up swaps opaque and transparent.
+        "d" => {
+            if let Some(opacity) = first() {
+                material.base_color[3] = opacity.clamp(0.0, 1.0);
+            }
+        }
+        "Tr" => {
+            if let Some(transparency) = first() {
+                material.base_color[3] = (1.0 - transparency).clamp(0.0, 1.0);
+            }
+        }
+        "map_Kd" if !values.is_empty() => material.base_color_texture = path(),
+        "map_Ke" if !values.is_empty() => material.emissive_texture = path(),
+        "map_d" if !values.is_empty() => material.alpha_texture = path(),
+        "Pm" => material.metallic = first().or(material.metallic),
+        "Pr" => material.roughness = first().or(material.roughness),
+        "Ns" => material.shininess = first().or(material.shininess),
+        // `norm` wins whatever the order; bump directives only fill an empty slot.
+        "norm" | "map_Bump" | "map_bump" | "bump"
+            if !values.is_empty() && (keyword == "norm" || material.normal_texture.is_none()) =>
+        {
+            material.normal_texture = path();
+            if let Some(scale) = bump_scale_option(values) {
+                material.normal_scale = scale;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The first three values into `rgb`'s first three channels; a component that does not parse is kept.
+fn parse_rgb_into(rgb: &mut [f32], values: &[&str]) {
+    for (axis, value) in values.iter().take(3).enumerate() {
+        if let Ok(component) = value.parse::<f32>() {
+            rgb[axis] = component;
+        }
+    }
 }
 
 /// Finds a bump directive's `-bm <factor>` option, e.g. `bump -bm 0.5 rock_normal.png`.

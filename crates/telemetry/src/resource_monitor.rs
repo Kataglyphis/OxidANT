@@ -241,14 +241,6 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
         sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
         sys.refresh_memory();
 
-        let (proc_cpu_pct, proc_rss_bytes) = sys
-            .process(pid)
-            .map(|p| (p.cpu_usage() as f64, p.memory()))
-            .unwrap_or((0.0, 0));
-
-        let sys_total_bytes = sys.total_memory();
-        let sys_used_bytes = sys.used_memory();
-
         let gpu = if config.include_gpu {
             #[cfg(target_os = "windows")]
             {
@@ -264,19 +256,7 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
 
         let rates = counters.tick(sample_instant);
 
-        let mut line = format!(
-            "resource cpu={cpu:.1}% rss={rss:.1}MiB sys_used={sys_used:.1}MiB \
-             sys_total={sys_total:.1}MiB cam_fps={cam_fps:.2} infer_fps={infer_fps:.2} \
-             infer_ms={infer_ms:.2} infer_capacity_fps={infer_cap:.2}",
-            cpu = proc_cpu_pct,
-            rss = bytes_to_mib(proc_rss_bytes),
-            sys_used = bytes_to_mib(sys_used_bytes),
-            sys_total = bytes_to_mib(sys_total_bytes),
-            cam_fps = rates.cam_fps,
-            infer_fps = rates.infer_fps,
-            infer_ms = rates.infer_latency_ms,
-            infer_cap = rates.infer_capacity_fps,
-        );
+        let mut line = resource_line(&sys, pid, &rates);
 
         if let Some(sample) = gpu {
             append_gpu_metrics(&mut line, &sample);
@@ -295,6 +275,31 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
             log::warn!("Failed to flush resource log file: {e}");
         }
     }
+}
+
+/// The sample's log line without the GPU part: this process's CPU and memory, the system's, and the rates.
+fn resource_line(sys: &System, pid: Pid, rates: &Rates) -> String {
+    let (proc_cpu_pct, proc_rss_bytes) = sys
+        .process(pid)
+        .map(|p| (p.cpu_usage() as f64, p.memory()))
+        .unwrap_or((0.0, 0));
+
+    let sys_total_bytes = sys.total_memory();
+    let sys_used_bytes = sys.used_memory();
+
+    format!(
+        "resource cpu={cpu:.1}% rss={rss:.1}MiB sys_used={sys_used:.1}MiB \
+         sys_total={sys_total:.1}MiB cam_fps={cam_fps:.2} infer_fps={infer_fps:.2} \
+         infer_ms={infer_ms:.2} infer_capacity_fps={infer_cap:.2}",
+        cpu = proc_cpu_pct,
+        rss = bytes_to_mib(proc_rss_bytes),
+        sys_used = bytes_to_mib(sys_used_bytes),
+        sys_total = bytes_to_mib(sys_total_bytes),
+        cam_fps = rates.cam_fps,
+        infer_fps = rates.infer_fps,
+        infer_ms = rates.infer_latency_ms,
+        infer_cap = rates.infer_capacity_fps,
+    )
 }
 
 fn write_line(writer: &mut Option<BufWriter<std::fs::File>>, line: &str) {

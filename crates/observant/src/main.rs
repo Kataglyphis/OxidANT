@@ -175,18 +175,9 @@ fn main() -> ExitCode {
     }
 }
 
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn run(args: Args) -> anyhow::Result<()> {
     if let Some(dir) = &args.precompress {
-        let done = precompress::precompress(dir)?;
-        println!(
-            "precompressed {} files in {}: {} -> {} bytes",
-            done.files,
-            dir.display(),
-            done.raw_bytes,
-            done.gz_bytes
-        );
-        return Ok(());
+        return precompress_web_build(dir);
     }
     let (mut config, source) = Config::load(args.config.as_deref())?;
     apply_args(&args, &mut config)?;
@@ -212,21 +203,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         .set_state(gst::State::Playing)
         .context("output pipeline to PLAYING")?;
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .thread_name("cat-web")
-        .enable_all()
-        .build()
-        .context("tokio runtime")?;
-    if config.http_port != 0 {
-        start_web(&runtime, &config, status.clone())?;
-    }
-    let for_signals = pipeline.clone();
-    runtime.spawn(async move {
-        shutdown_signal().await;
-        log::info!("shutting down");
-        output::request_shutdown(&for_signals);
-    });
+    let runtime = start_runtime(&config, status.clone(), &pipeline)?;
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let notifier = start_notifier(&config, detector.is_some(), status.clone());
@@ -266,6 +243,43 @@ fn run(args: Args) -> anyhow::Result<()> {
     at_exit.persist();
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
     outcome
+}
+
+/// `--precompress`: gzip a web build's files beside them and say what it saved.
+fn precompress_web_build(dir: &std::path::Path) -> anyhow::Result<()> {
+    let done = precompress::precompress(dir)?;
+    println!(
+        "precompressed {} files in {}: {} -> {} bytes",
+        done.files,
+        dir.display(),
+        done.raw_bytes,
+        done.gz_bytes
+    );
+    Ok(())
+}
+
+/// The async side: the web server when it has a port, and the signal handler that ends `pipeline`.
+fn start_runtime(
+    config: &Config,
+    status: Arc<status::Status>,
+    pipeline: &gst::Pipeline,
+) -> anyhow::Result<tokio::runtime::Runtime> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("cat-web")
+        .enable_all()
+        .build()
+        .context("tokio runtime")?;
+    if config.http_port != 0 {
+        start_web(&runtime, config, status)?;
+    }
+    let for_signals = pipeline.clone();
+    runtime.spawn(async move {
+        shutdown_signal().await;
+        log::info!("shutting down");
+        output::request_shutdown(&for_signals);
+    });
+    Ok(runtime)
 }
 
 /// What `/healthz` starts from: the config's settings, the model's engine, and the state kept across restarts.

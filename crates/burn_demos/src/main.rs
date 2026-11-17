@@ -100,7 +100,6 @@ enum Command {
     SaveLoad,
 }
 
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -172,25 +171,43 @@ fn main() -> anyhow::Result<()> {
             train_adapter_steps,
             lr,
             model_path,
-        } => {
-            let model_path = model_path.unwrap_or_else(|| {
-                kataglyphis_inference::person_detection::resolve_model_path(None).into()
-            });
-
-            let device = kataglyphis_burn_demos::training_device();
-            kataglyphis_burn_demos::onnx_detector::onnx_detector_demo(
-                &model_path,
-                warmup,
-                runs,
-                print_topk,
-                train_adapter_steps,
-                lr,
-                &device,
-            )
-            .map(drop)
-            .with_context(|| format!("onnx-detector demo failed (model={})", model_path.display()))
-        }
+        } => run_onnx_detector(
+            warmup,
+            runs,
+            print_topk,
+            train_adapter_steps,
+            lr,
+            model_path,
+        ),
 
         Command::SaveLoad => kataglyphis_burn_demos::simple::save_load_demo().map(drop),
     }
+}
+
+/// The detector demo on `model_path`, or on the model the person detector would load.
+#[cfg(any(target_os = "linux", windows))]
+fn run_onnx_detector(
+    warmup: usize,
+    runs: usize,
+    print_topk: usize,
+    train_adapter_steps: usize,
+    lr: f64,
+    model_path: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    let model_path = model_path.unwrap_or_else(|| {
+        kataglyphis_inference::person_detection::resolve_model_path(None).into()
+    });
+
+    let device = kataglyphis_burn_demos::training_device();
+    kataglyphis_burn_demos::onnx_detector::onnx_detector_demo(
+        &model_path,
+        warmup,
+        runs,
+        print_topk,
+        train_adapter_steps,
+        lr,
+        &device,
+    )
+    .map(drop)
+    .with_context(|| format!("onnx-detector demo failed (model={})", model_path.display()))
 }

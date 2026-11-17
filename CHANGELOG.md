@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-17, the function-size freezes are down to one row)
+- **`function-size.allow` is empty**: the AMD promotion test's mutation table is the module constant `MUTATIONS`.
+- **`rust-function-size.allow` keeps one row of eleven**, burn_demos' `main` at 83 lines (was 93): its ONNX
+  detector arm is `run_onnx_detector`, and what is left is the subcommand dispatch, one arm per demo.
+- Split under 80 lines: `parse_mtl` (one `apply_mtl_directive` per line after `newmtl`, `parse_rgb_into` for `Kd`
+  and `Ke`); `encode_mp4` (`encode_pipeline`, `push_until_eos`); the CLI's `main` (`start_resource_monitor`,
+  `onnx_check`); ObservANT's `run` (`precompress_web_build`, `start_runtime`); `run_monitor_loop`
+  (`resource_line`); `onnx_detector_demo` (`load_session`, `warm_up_and_time`); `GpuOcclusion::cull`
+  (`bind_group`, `copy_to_free_slot`); the headless tests `morph_weight_lifts_the_silhouette`
+  (`cube_with_lifting_morph`, `red_pixel_stats`) and `vertex_colors_tint_the_surface`, which now shares
+  `facing_quad` and `render_facing_quad` with `texture_slot_samples_its_declared_uv_set`. The tests assert what
+  they did; behaviour and messages are unchanged. The `#[expect(clippy::too_many_lines)]` of the split functions go.
+
 ### Changed (2026-11-17, four more renderer functions are split under the 80-line limit)
 - **`scene/lod.rs`: `simplify_primitive` (111 lines)** reads as its steps: `cell_size`, `cluster_vertices` (centroid
   and averaged normal per cell, into a `Clusters`), `copy_medoid_attributes` and `collapse_indices`.

@@ -179,6 +179,98 @@ def stage_takes_checked_receipts(clean: str, gpu: str, stage: str) -> bool:
     )
 
 
+# Each edit breaks one promotion guarantee, so valid_promotion must reject it.
+MUTATIONS = (
+    (
+        "oxidant-amd-${{ github.run_id }}-${{ github.run_attempt }}${{ needs.scope.outputs.suffix }}-gpu-receipt.json",
+        "oxidant-amd-gpu-receipt.json",
+    ),
+    (
+        "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py",
+        "missing-scope-validator.py",
+    ),
+    ("needs: scope", "needs: []"),
+    ("needs.scope.outputs.suffix", "inputs.invocation-scope"),
+    (
+        "python3 -I \"$parity_comparator\" --help | grep -q -- --pairwise || { echo 'Pinned ANTfrastructure lacks pairwise detector comparison' >&2; exit 1; }",
+        "true # skipped pairwise comparison API check",
+    ),
+    (
+        "python3 -I \"$ort_profile\" --help | grep -q -- --min-runs || { echo 'Pinned ANTfrastructure lacks per-run ORT profiling' >&2; exit 1; }",
+        "true # skipped per-run ORT API check",
+    ),
+    (
+        "promote-verified:\n        type: boolean\n        default: false",
+        "promote-verified:\n        type: boolean\n        default: true",
+    ),
+    (
+        "inputs.promote-verified && !inputs.verify-gpu",
+        "inputs.promote-verified && inputs.verify-gpu",
+    ),
+    (
+        "echo '::error::Promotion requires verify-gpu and the hardware profile.'\n          exit 1",
+        "echo '::error::Promotion requires verify-gpu and the hardware profile.'\n          true",
+    ),
+    (
+        "name: Require CPU and GPU detector parity for promotion",
+        "name: Removed parity gate",
+    ),
+    (
+        "echo '::error::Promotion is disabled until CPU and GPU detector output parity is verified.'\n          exit 1",
+        "echo '::error::Promotion is disabled until CPU and GPU detector output parity is verified.'\n          true",
+    ),
+    (
+        "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}",
+        "name: Require CPU and GPU detector parity for promotion\n        if: ${{ !inputs.promote-verified }}",
+    ),
+    (
+        "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}",
+        "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}\n        continue-on-error: true",
+    ),
+    (
+        "needs: [scope, build, clean-host, gpu-profile]",
+        "needs: [scope, build, clean-host]",
+    ),
+    ("shared/python/verify_locked_files.py", "shared/python/missing.py"),
+    ("grep -q '^def read_lock('", "grep -q '^def missing_lock('"),
+    ("grep -q '^def matches('", "grep -q '^def missing_matches('"),
+    (
+        'bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd',
+        "unsafe-check",
+    ),
+    (
+        'deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd oxidant',
+        'deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd oxidant || true',
+    ),
+    ('test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"', "true"),
+    ("needs.build.outputs.artifact_digest", "untrusted-digest"),
+    ("needs.build.outputs.artifact_id", "untrusted-id"),
+    ("needs.build.outputs.artifact_files", "untrusted-files"),
+    ("gpu-vendor: amd", "gpu-vendor: nvidia"),
+    ("gpu-arch: x64", "gpu-arch: arm64"),
+    ("digest-mismatch: error", "digest-mismatch: warn"),
+    ("skip-decompress: true", "skip-decompress: false"),
+    ('"$GPU_PACKAGE_DIR" migraphx', '"$GPU_PACKAGE_DIR" cpu'),
+    ('"$GPU_PACKAGE_DIR" migraphx', '"$GPU_PACKAGE_DIR" migraphx || true'),
+    (
+        f"actions/clean-host-package-check@{HUB_SHA}",
+        "actions/clean-host-package-check@develop",
+    ),
+    (
+        f"actions/gpu-package-check@{HUB_SHA}",
+        "actions/gpu-package-check@develop",
+    ),
+    (
+        f"actions/stage-gpu-artifact@{HUB_SHA}",
+        "actions/stage-gpu-artifact@develop",
+    ),
+    (
+        "if: ${{ inputs.promote-verified && inputs.verify-gpu }}",
+        "if: ${{ always() }}",
+    ),
+)
+
+
 class PromotionTest(unittest.TestCase):
     def test_default_off_and_all_checks_bind_current_attempt(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
@@ -189,96 +281,7 @@ class PromotionTest(unittest.TestCase):
         )
         self.assertNotEqual(gpu, without_submodules)
         self.assertFalse(valid_promotion(text.replace(gpu, without_submodules, 1)))
-        mutations = (
-            (
-                "oxidant-amd-${{ github.run_id }}-${{ github.run_attempt }}${{ needs.scope.outputs.suffix }}-gpu-receipt.json",
-                "oxidant-amd-gpu-receipt.json",
-            ),
-            (
-                "third_party/ANTfrastructure/shared/python/gpu_invocation_scope.py",
-                "missing-scope-validator.py",
-            ),
-            ("needs: scope", "needs: []"),
-            ("needs.scope.outputs.suffix", "inputs.invocation-scope"),
-            (
-                "python3 -I \"$parity_comparator\" --help | grep -q -- --pairwise || { echo 'Pinned ANTfrastructure lacks pairwise detector comparison' >&2; exit 1; }",
-                "true # skipped pairwise comparison API check",
-            ),
-            (
-                "python3 -I \"$ort_profile\" --help | grep -q -- --min-runs || { echo 'Pinned ANTfrastructure lacks per-run ORT profiling' >&2; exit 1; }",
-                "true # skipped per-run ORT API check",
-            ),
-            (
-                "promote-verified:\n        type: boolean\n        default: false",
-                "promote-verified:\n        type: boolean\n        default: true",
-            ),
-            (
-                "inputs.promote-verified && !inputs.verify-gpu",
-                "inputs.promote-verified && inputs.verify-gpu",
-            ),
-            (
-                "echo '::error::Promotion requires verify-gpu and the hardware profile.'\n          exit 1",
-                "echo '::error::Promotion requires verify-gpu and the hardware profile.'\n          true",
-            ),
-            (
-                "name: Require CPU and GPU detector parity for promotion",
-                "name: Removed parity gate",
-            ),
-            (
-                "echo '::error::Promotion is disabled until CPU and GPU detector output parity is verified.'\n          exit 1",
-                "echo '::error::Promotion is disabled until CPU and GPU detector output parity is verified.'\n          true",
-            ),
-            (
-                "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}",
-                "name: Require CPU and GPU detector parity for promotion\n        if: ${{ !inputs.promote-verified }}",
-            ),
-            (
-                "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}",
-                "name: Require CPU and GPU detector parity for promotion\n        if: ${{ inputs.promote-verified }}\n        continue-on-error: true",
-            ),
-            (
-                "needs: [scope, build, clean-host, gpu-profile]",
-                "needs: [scope, build, clean-host]",
-            ),
-            ("shared/python/verify_locked_files.py", "shared/python/missing.py"),
-            ("grep -q '^def read_lock('", "grep -q '^def missing_lock('"),
-            ("grep -q '^def matches('", "grep -q '^def missing_matches('"),
-            (
-                'bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd',
-                "unsafe-check",
-            ),
-            (
-                'deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd oxidant',
-                'deb-command: bash "$GITHUB_WORKSPACE/scripts/linux/check-gpu-clean-host.sh" amd oxidant || true',
-            ),
-            ('test "$PRODUCER_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"', "true"),
-            ("needs.build.outputs.artifact_digest", "untrusted-digest"),
-            ("needs.build.outputs.artifact_id", "untrusted-id"),
-            ("needs.build.outputs.artifact_files", "untrusted-files"),
-            ("gpu-vendor: amd", "gpu-vendor: nvidia"),
-            ("gpu-arch: x64", "gpu-arch: arm64"),
-            ("digest-mismatch: error", "digest-mismatch: warn"),
-            ("skip-decompress: true", "skip-decompress: false"),
-            ('"$GPU_PACKAGE_DIR" migraphx', '"$GPU_PACKAGE_DIR" cpu'),
-            ('"$GPU_PACKAGE_DIR" migraphx', '"$GPU_PACKAGE_DIR" migraphx || true'),
-            (
-                f"actions/clean-host-package-check@{HUB_SHA}",
-                "actions/clean-host-package-check@develop",
-            ),
-            (
-                f"actions/gpu-package-check@{HUB_SHA}",
-                "actions/gpu-package-check@develop",
-            ),
-            (
-                f"actions/stage-gpu-artifact@{HUB_SHA}",
-                "actions/stage-gpu-artifact@develop",
-            ),
-            (
-                "if: ${{ inputs.promote-verified && inputs.verify-gpu }}",
-                "if: ${{ always() }}",
-            ),
-        )
-        for original, replacement in mutations:
+        for original, replacement in MUTATIONS:
             with self.subTest(original=original):
                 self.assertIn(original, text)
                 self.assertFalse(valid_promotion(text.replace(original, replacement)))

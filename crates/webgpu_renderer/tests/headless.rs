@@ -224,16 +224,55 @@ fn world_up_is_screen_up() {
 /// A morph weight ramping 0 -> 1 must re-blend, re-upload and visibly lift the cube.
 #[test]
 fn morph_weight_lifts_the_silhouette() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+
+    let scene = cube_with_lifting_morph();
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    let camera = OrbitCamera::default();
+
+    renderer.set_animation_time(0.0);
+    let base = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render at weight 0");
+    let (lit0, cy0) = red_pixel_stats(&base, width);
+
+    renderer.set_animation_time(1.0);
+    let morphed = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render at weight 1");
+    let (lit1, cy1) = red_pixel_stats(&morphed, width);
+
+    eprintln!("morph golden: lit {lit0}->{lit1}, centroid_y {cy0:.1}->{cy1:.1}");
+
+    // The cube stays clearly visible in both poses...
+    let total = (width * height) as usize;
+    assert!(
+        lit0 > total / 40 && lit1 > total / 40,
+        "cube must be visible at both weights, got {lit0}/{lit1} lit"
+    );
+    // ...the frame actually changes (the re-blend + re-upload happened)...
+    assert!(
+        base != morphed,
+        "weight 1 must produce a different frame than weight 0"
+    );
+    // ...and the +Y morph lifts the silhouette (centroid rises, i.e. smaller row).
+    assert!(
+        cy1 + 6.0 < cy0,
+        "the +Y morph should raise the cube: centroid_y {cy0:.1} -> {cy1:.1}"
+    );
+}
+
+/// The cube with one +Y morph target driven by a linear weight channel, 0 at t=0 and 1 at t=1.
+fn cube_with_lifting_morph() -> kataglyphis_webgpu_renderer::scene::CpuScene {
     use glam::{Quat, Vec3};
     use kataglyphis_webgpu_renderer::scene::{
         ChannelValues, CpuAnimation, CpuAnimationChannel, CpuNode, Interpolation, MorphTarget,
     };
 
-    let Some(gpu) = GpuContext::headless_or_skip() else {
-        return;
-    };
-
-    // One +Y morph target driven by a linear weight channel, 0 at t=0 and 1 at t=1.
     let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
     let mut prim = scene.primitives[0].clone();
     let vcount = prim.vertices.len();
@@ -262,56 +301,21 @@ fn morph_weight_lifts_the_silhouette() {
             interpolation: Interpolation::Linear,
         }],
     }];
+    scene
+}
 
-    let (width, height) = (256, 256);
-    let mut renderer = ForwardRenderer::new(&gpu, width, height);
-    renderer.upload_scene(&gpu, &scene);
-    let camera = OrbitCamera::default();
-
-    // Count and mean row of the red cube pixels; rows grow downward, so lifting lowers it.
-    let cube_stats = |pixels: &[u8]| -> (usize, f64) {
-        let mut count = 0usize;
-        let mut sum_y = 0f64;
-        for (i, p) in pixels.as_chunks::<4>().0.iter().enumerate() {
-            let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
-            if r > 110 && r > g + 40 && r > b + 40 {
-                count += 1;
-                sum_y += (i as u32 / width) as f64;
-            }
+/// Count and mean row of the red cube pixels; rows grow downward, so lifting lowers it.
+fn red_pixel_stats(pixels: &[u8], width: u32) -> (usize, f64) {
+    let mut count = 0usize;
+    let mut sum_y = 0f64;
+    for (i, p) in pixels.as_chunks::<4>().0.iter().enumerate() {
+        let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+        if r > 110 && r > g + 40 && r > b + 40 {
+            count += 1;
+            sum_y += (i as u32 / width) as f64;
         }
-        (count, if count > 0 { sum_y / count as f64 } else { 0.0 })
-    };
-
-    renderer.set_animation_time(0.0);
-    let base = renderer
-        .render_to_pixels(&gpu, width, height, &camera)
-        .expect("render at weight 0");
-    let (lit0, cy0) = cube_stats(&base);
-
-    renderer.set_animation_time(1.0);
-    let morphed = renderer
-        .render_to_pixels(&gpu, width, height, &camera)
-        .expect("render at weight 1");
-    let (lit1, cy1) = cube_stats(&morphed);
-
-    eprintln!("morph golden: lit {lit0}->{lit1}, centroid_y {cy0:.1}->{cy1:.1}");
-
-    // The cube stays clearly visible in both poses...
-    let total = (width * height) as usize;
-    assert!(
-        lit0 > total / 40 && lit1 > total / 40,
-        "cube must be visible at both weights, got {lit0}/{lit1} lit"
-    );
-    // ...the frame actually changes (the re-blend + re-upload happened)...
-    assert!(
-        base != morphed,
-        "weight 1 must produce a different frame than weight 0"
-    );
-    // ...and the +Y morph lifts the silhouette (centroid rises, i.e. smaller row).
-    assert!(
-        cy1 + 6.0 < cy0,
-        "the +Y morph should raise the cube: centroid_y {cy0:.1} -> {cy1:.1}"
-    );
+    }
+    (count, if count > 0 { sum_y / count as f64 } else { 0.0 })
 }
 
 #[test]
@@ -2174,66 +2178,22 @@ fn vertex_alpha_cut_outs_of_an_untextured_mask_cast_no_shadow() {
 
 #[test]
 fn vertex_colors_tint_the_surface() {
-    use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial, CpuPrimitive, Vertex};
+    use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial};
 
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
-    // A quad facing the camera at the origin, all four vertices GREEN.
-    let make_quad = |color: [f32; 4]| -> CpuPrimitive {
-        let verts: Vec<Vertex> = [
-            ([-2.0f32, -2.0, 0.0], [0.0f32, 0.0]),
-            ([2.0, -2.0, 0.0], [1.0, 0.0]),
-            ([2.0, 2.0, 0.0], [1.0, 1.0]),
-            ([-2.0, 2.0, 0.0], [0.0, 1.0]),
-        ]
-        .iter()
-        .map(|(p, uv)| Vertex {
-            position: *p,
-            normal: [0.0, 0.0, 1.0],
-            uv: *uv,
-            tangent: [1.0, 0.0, 0.0, 1.0],
-            joints: [0.0; 4],
-            weights: [0.0; 4],
-            color,
-            uv1: *uv,
-        })
-        .collect();
-        CpuPrimitive {
-            vertices: verts,
-            indices: vec![0, 1, 2, 0, 2, 3],
-            transform: glam::Mat4::IDENTITY,
-            node_index: None,
-            skin_index: None,
-            material: CpuMaterial {
-                // White unlit: the only colour source is the vertex colour.
-                base_color: [1.0, 1.0, 1.0, 1.0],
-                alpha_mode: AlphaMode::Opaque,
-                unlit: true,
-                ..CpuMaterial::default()
-            },
-            morph_targets: Vec::new(),
-            morph_weights: Vec::new(),
-        }
-    };
-
+    // A quad facing the camera at the origin, all four vertices one colour.
     let render = |color: [f32; 4]| -> Vec<u8> {
-        let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
-        scene.primitives = vec![make_quad(color)];
-        let (w, h) = (128u32, 128u32);
-        let mut renderer = ForwardRenderer::new(&gpu, w, h);
-        renderer.upload_scene(&gpu, &scene);
-        // Camera on +Z looking at the quad (yaw 90, pitch 0).
-        let camera = OrbitCamera {
-            radius: 5.0,
-            yaw_deg: 90.0,
-            pitch_deg: 0.0,
-            ..OrbitCamera::default()
+        let material = CpuMaterial {
+            // White unlit: the only colour source is the vertex colour.
+            base_color: [1.0, 1.0, 1.0, 1.0],
+            alpha_mode: AlphaMode::Opaque,
+            unlit: true,
+            ..CpuMaterial::default()
         };
-        renderer
-            .render_to_pixels(&gpu, w, h, &camera)
-            .expect("headless render must succeed")
+        render_facing_quad(&gpu, facing_quad(color, true, material))
     };
 
     // Centre pixel of a green-vertex quad: green dominates both other channels.
@@ -2260,6 +2220,67 @@ fn vertex_colors_tint_the_surface() {
         (wr - wg).abs() < 30 && (wg - wb).abs() < 30,
         "white vertex colour should render neutral (got r={wr} g={wg} b={wb})"
     );
+}
+
+/// A 4x4 quad at the origin facing +Z in one vertex `color`; UV1 spans 0..1, and UV0 does too
+/// unless `uv0_spans` is false, which pins it to (0,0).
+fn facing_quad(
+    color: [f32; 4],
+    uv0_spans: bool,
+    material: kataglyphis_webgpu_renderer::scene::CpuMaterial,
+) -> kataglyphis_webgpu_renderer::scene::CpuPrimitive {
+    use kataglyphis_webgpu_renderer::scene::{CpuPrimitive, Vertex};
+
+    let corners = [
+        ([-2.0f32, -2.0, 0.0], [0.0f32, 0.0]),
+        ([2.0, -2.0, 0.0], [1.0, 0.0]),
+        ([2.0, 2.0, 0.0], [1.0, 1.0]),
+        ([-2.0, 2.0, 0.0], [0.0, 1.0]),
+    ];
+    let vertices: Vec<Vertex> = corners
+        .iter()
+        .map(|(p, uv)| Vertex {
+            position: *p,
+            normal: [0.0, 0.0, 1.0],
+            uv: if uv0_spans { *uv } else { [0.0, 0.0] },
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            joints: [0.0; 4],
+            weights: [0.0; 4],
+            color,
+            uv1: *uv,
+        })
+        .collect();
+    CpuPrimitive {
+        vertices,
+        indices: vec![0, 1, 2, 0, 2, 3],
+        transform: glam::Mat4::IDENTITY,
+        node_index: None,
+        skin_index: None,
+        material,
+        morph_targets: Vec::new(),
+        morph_weights: Vec::new(),
+    }
+}
+
+/// `quad` alone in the cube scene, 128x128, from a camera on +Z looking at it (yaw 90, pitch 0).
+fn render_facing_quad(
+    gpu: &GpuContext,
+    quad: kataglyphis_webgpu_renderer::scene::CpuPrimitive,
+) -> Vec<u8> {
+    let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    scene.primitives = vec![quad];
+    let (w, h) = (128u32, 128u32);
+    let mut renderer = ForwardRenderer::new(gpu, w, h);
+    renderer.upload_scene(gpu, &scene);
+    let camera = OrbitCamera {
+        radius: 5.0,
+        yaw_deg: 90.0,
+        pitch_deg: 0.0,
+        ..OrbitCamera::default()
+    };
+    renderer
+        .render_to_pixels(gpu, w, h, &camera)
+        .expect("headless render must succeed")
 }
 
 /// A slot declaring TEXCOORD_1 samples UV1; constant UV0 would show one flat colour.
@@ -2318,61 +2339,20 @@ fn red_blue_texture() -> kataglyphis_webgpu_renderer::scene::CpuTextureRef {
     }
 }
 
-/// A 4x4 unlit quad facing the camera whose base texture reads the UV set `uv_set_mask` names.
+/// A white unlit quad whose base texture reads the UV set `uv_set_mask` names.
 /// UV0 is (0,0) everywhere (the red texel); UV1 spans 0..1 (red, then blue).
 fn render_uv_set_quad(gpu: &GpuContext, uv_set_mask: u32) -> Vec<u8> {
-    use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial, CpuPrimitive, Vertex};
+    use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial};
 
-    let corners = [
-        ([-2.0f32, -2.0, 0.0], [0.0f32, 0.0]),
-        ([2.0, -2.0, 0.0], [1.0, 0.0]),
-        ([2.0, 2.0, 0.0], [1.0, 1.0]),
-        ([-2.0, 2.0, 0.0], [0.0, 1.0]),
-    ];
-    let vertices: Vec<Vertex> = corners
-        .iter()
-        .map(|(p, uv1)| Vertex {
-            position: *p,
-            normal: [0.0, 0.0, 1.0],
-            uv: [0.0, 0.0], // constant UV0
-            tangent: [1.0, 0.0, 0.0, 1.0],
-            joints: [0.0; 4],
-            weights: [0.0; 4],
-            color: [1.0, 1.0, 1.0, 1.0],
-            uv1: *uv1, // spanning UV1
-        })
-        .collect();
-
-    let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
-    scene.primitives = vec![CpuPrimitive {
-        vertices,
-        indices: vec![0, 1, 2, 0, 2, 3],
-        transform: glam::Mat4::IDENTITY,
-        node_index: None,
-        skin_index: None,
-        material: CpuMaterial {
-            base_color: [1.0, 1.0, 1.0, 1.0],
-            alpha_mode: AlphaMode::Opaque,
-            unlit: true,
-            base_color_texture: Some(red_blue_texture()),
-            uv_set_mask,
-            ..CpuMaterial::default()
-        },
-        morph_targets: Vec::new(),
-        morph_weights: Vec::new(),
-    }];
-    let (w, h) = (128u32, 128u32);
-    let mut renderer = ForwardRenderer::new(gpu, w, h);
-    renderer.upload_scene(gpu, &scene);
-    let camera = OrbitCamera {
-        radius: 5.0,
-        yaw_deg: 90.0,
-        pitch_deg: 0.0,
-        ..OrbitCamera::default()
+    let material = CpuMaterial {
+        base_color: [1.0, 1.0, 1.0, 1.0],
+        alpha_mode: AlphaMode::Opaque,
+        unlit: true,
+        base_color_texture: Some(red_blue_texture()),
+        uv_set_mask,
+        ..CpuMaterial::default()
     };
-    renderer
-        .render_to_pixels(gpu, w, h, &camera)
-        .expect("headless render must succeed")
+    render_facing_quad(gpu, facing_quad([1.0, 1.0, 1.0, 1.0], false, material))
 }
 
 /// The readback returns RGBA8 bytes, so a format whose texels differ must be refused, not mislabelled.

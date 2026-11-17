@@ -21,57 +21,8 @@ pub fn onnx_detector_demo(
     lr: f64,
     train_device: &Device,
 ) -> anyhow::Result<Vec<usize>> {
-    kataglyphis_inference::ort_runtime::ensure_ort_loaded()?;
-    // `commit_from_file` takes `&mut self`; reassign rather than shadow, or DirectML hits `unused_mut`.
-    let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
-
-    #[cfg(windows)]
-    {
-        use ort::execution_providers::DirectML;
-        builder = builder
-            .with_execution_providers([DirectML::default().build()])
-            .with_ort_context("Failed to configure ORT DirectML execution provider")?;
-    }
-
-    let mut session = builder
-        .commit_from_file(model_path)
-        .with_ort_context("Failed to load ONNX model")?;
-
-    println!("ONNX model loaded: {}", model_path.display());
-    for (i, input) in session.inputs().iter().enumerate() {
-        println!("input[{i}] name={:?}", input.name());
-    }
-    for (i, output) in session.outputs().iter().enumerate() {
-        println!("output[{i}] name={:?}", output.name());
-    }
-
-    // Fresh input per warmup iteration warms the allocator as well as the ORT session.
-    for i in 0..warmup {
-        let input = make_demo_image_1x3x640x640(i as u64);
-        let out = run_once(&mut session, input).context("warmup run")?;
-        if i == 0 {
-            println!("warmup output0 shape: {:?}", out.0);
-        }
-    }
-
-    // Inputs are pre-allocated so the timed runs measure inference only.
-    let inputs: Vec<Array4<f32>> = (0..runs.max(1))
-        .map(|i| make_demo_image_1x3x640x640(1234 + i as u64))
-        .collect();
-
-    let mut last_output = None;
-    let start = Instant::now();
-    for input in inputs {
-        last_output = Some(run_once(&mut session, input).context("timed run")?);
-    }
-    let elapsed = start.elapsed();
-
-    if runs > 0 {
-        println!(
-            "runs={runs} elapsed={elapsed:?} per_run={:?}",
-            elapsed / (runs as u32)
-        );
-    }
+    let mut session = load_session(model_path)?;
+    let last_output = warm_up_and_time(&mut session, warmup, runs)?;
 
     let (shape, out) = last_output.context("missing output")?;
     println!("output0 shape: {shape:?}");
@@ -98,6 +49,70 @@ pub fn onnx_detector_demo(
     }
 
     Ok(shape)
+}
+
+/// The model in a chain-ORT session (DirectML on Windows), with its input and output names printed.
+fn load_session(model_path: &Path) -> anyhow::Result<Session> {
+    kataglyphis_inference::ort_runtime::ensure_ort_loaded()?;
+    // `commit_from_file` takes `&mut self`; reassign rather than shadow, or DirectML hits `unused_mut`.
+    let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
+
+    #[cfg(windows)]
+    {
+        use ort::execution_providers::DirectML;
+        builder = builder
+            .with_execution_providers([DirectML::default().build()])
+            .with_ort_context("Failed to configure ORT DirectML execution provider")?;
+    }
+
+    let session = builder
+        .commit_from_file(model_path)
+        .with_ort_context("Failed to load ONNX model")?;
+
+    println!("ONNX model loaded: {}", model_path.display());
+    for (i, input) in session.inputs().iter().enumerate() {
+        println!("input[{i}] name={:?}", input.name());
+    }
+    for (i, output) in session.outputs().iter().enumerate() {
+        println!("output[{i}] name={:?}", output.name());
+    }
+    Ok(session)
+}
+
+/// `warmup` untimed runs, then `runs` timed ones (at least one); returns the last run's output.
+fn warm_up_and_time(
+    session: &mut Session,
+    warmup: usize,
+    runs: usize,
+) -> anyhow::Result<Option<(Vec<usize>, ndarray::ArrayD<f32>)>> {
+    // Fresh input per warmup iteration warms the allocator as well as the ORT session.
+    for i in 0..warmup {
+        let input = make_demo_image_1x3x640x640(i as u64);
+        let out = run_once(session, input).context("warmup run")?;
+        if i == 0 {
+            println!("warmup output0 shape: {:?}", out.0);
+        }
+    }
+
+    // Inputs are pre-allocated so the timed runs measure inference only.
+    let inputs: Vec<Array4<f32>> = (0..runs.max(1))
+        .map(|i| make_demo_image_1x3x640x640(1234 + i as u64))
+        .collect();
+
+    let mut last_output = None;
+    let start = Instant::now();
+    for input in inputs {
+        last_output = Some(run_once(session, input).context("timed run")?);
+    }
+    let elapsed = start.elapsed();
+
+    if runs > 0 {
+        println!(
+            "runs={runs} elapsed={elapsed:?} per_run={:?}",
+            elapsed / (runs as u32)
+        );
+    }
+    Ok(last_output)
 }
 
 fn run_once(

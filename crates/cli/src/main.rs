@@ -16,25 +16,11 @@ use cli::{Cli, Commands};
 use oxidant::{logging, resource_monitor, utils};
 
 #[tokio::main]
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     logging::init_logger();
 
-    let _resource_monitor = if cli.resource_log {
-        Some(resource_monitor::ResourceMonitor::start(
-            resource_monitor::ResourceMonitorConfig {
-                interval: std::time::Duration::from_millis(
-                    cli.resource_log_interval_ms
-                        .max(MIN_RESOURCE_LOG_INTERVAL_MS),
-                ),
-                log_file: cli.resource_log_file.clone(),
-                include_gpu: cli.resource_log_gpu,
-            },
-        ))
-    } else {
-        None
-    };
+    let _resource_monitor = start_resource_monitor(&cli);
 
     match cli.command {
         Commands::Read { path } => {
@@ -63,22 +49,7 @@ async fn main() -> Result<()> {
             println!("ONNX Runtime: {}", path.display());
         }
         #[cfg(any(target_os = "linux", windows))]
-        Commands::OnnxCheck { profile } => {
-            let model = oxidant::person_detection::resolve_model_path(None);
-            let mut detector = match profile {
-                Some(ref prefix) => {
-                    oxidant::person_detection::PersonDetector::with_ort_profiling(&model, prefix)?
-                }
-                None => {
-                    oxidant::person_detection::PersonDetector::with_backend(&model, Some("ort"))?
-                }
-            };
-            let detections = detector.infer_rgba(&[0; 64 * 64 * 4], 64, 64, 0.5, None)?;
-            println!("ONNX inference completed ({} detections)", detections.len());
-            if profile.is_some() {
-                println!("ONNX profile: {}", detector.end_ort_profiling()?);
-            }
-        }
+        Commands::OnnxCheck { profile } => onnx_check(profile.as_deref())?,
         #[cfg(any(target_os = "linux", windows))]
         Commands::OnnxDetect {
             image,
@@ -110,6 +81,38 @@ async fn main() -> Result<()> {
             provider,
             endpoint,
         } => text::embed(texts, model_dir, provider, endpoint)?,
+    }
+    Ok(())
+}
+
+/// The `--resource-log` sampler, kept alive for the whole run; `None` without the flag.
+fn start_resource_monitor(cli: &Cli) -> Option<resource_monitor::ResourceMonitor> {
+    cli.resource_log.then(|| {
+        resource_monitor::ResourceMonitor::start(resource_monitor::ResourceMonitorConfig {
+            interval: std::time::Duration::from_millis(
+                cli.resource_log_interval_ms
+                    .max(MIN_RESOURCE_LOG_INTERVAL_MS),
+            ),
+            log_file: cli.resource_log_file.clone(),
+            include_gpu: cli.resource_log_gpu,
+        })
+    })
+}
+
+/// One ONNX Runtime inference on a blank 64x64 frame, profiled to `profile` when it names a prefix.
+#[cfg(any(target_os = "linux", windows))]
+fn onnx_check(profile: Option<&std::path::Path>) -> Result<()> {
+    let model = oxidant::person_detection::resolve_model_path(None);
+    let mut detector = match profile {
+        Some(prefix) => {
+            oxidant::person_detection::PersonDetector::with_ort_profiling(&model, prefix)?
+        }
+        None => oxidant::person_detection::PersonDetector::with_backend(&model, Some("ort"))?,
+    };
+    let detections = detector.infer_rgba(&[0; 64 * 64 * 4], 64, 64, 0.5, None)?;
+    println!("ONNX inference completed ({} detections)", detections.len());
+    if profile.is_some() {
+        println!("ONNX profile: {}", detector.end_ort_profiling()?);
     }
     Ok(())
 }

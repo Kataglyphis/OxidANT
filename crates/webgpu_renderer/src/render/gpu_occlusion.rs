@@ -190,8 +190,28 @@ impl GpuCulling {
         gpu.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
-        // Create ad-hoc bind group (changes per frame: depth view)
-        let bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        // Ad-hoc bind group: the depth view changes per frame.
+        let bg = self.bind_group(&gpu.device, depth_view);
+
+        // Dispatch
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("gpu_cull"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.pipeline);
+            cpass.set_bind_group(0, &bg, &[]);
+            let wg_count = (count as u32).div_ceil(CULL_WORKGROUP);
+            cpass.dispatch_workgroups(wg_count, 1, 1);
+        }
+
+        self.copy_to_free_slot(encoder, count);
+        count as u32
+    }
+
+    /// The cull pass's bindings: `depth_view`, the params, the boxes and the visibility output.
+    fn bind_group(&self, device: &wgpu::Device, depth_view: &wgpu::TextureView) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gpu_cull_bg"),
             layout: &self.bind_group_layout,
             entries: &[
@@ -212,20 +232,11 @@ impl GpuCulling {
                     resource: self.visibility_buffer.as_entire_binding(),
                 },
             ],
-        });
+        })
+    }
 
-        // Dispatch
-        {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("gpu_cull"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&self.pipeline);
-            cpass.set_bind_group(0, &bg, &[]);
-            let wg_count = (count as u32).div_ceil(CULL_WORKGROUP);
-            cpass.dispatch_workgroups(wg_count, 1, 1);
-        }
-
+    /// Copies `count` visibility words into a free readback slot and marks this frame as recording.
+    fn copy_to_free_slot(&mut self, encoder: &mut wgpu::CommandEncoder, count: usize) {
         // Every slot still mapping: skip this frame's copy rather than stall.
         if let Some(slot_index) = self.free_slot() {
             self.current = slot_index;
@@ -240,7 +251,6 @@ impl GpuCulling {
             );
             self.recording = true;
         }
-        count as u32
     }
 
     /// One u32 per tested primitive, non-zero where its box passed the depth test.

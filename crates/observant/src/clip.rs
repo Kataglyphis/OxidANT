@@ -190,7 +190,6 @@ fn frames_kept(seconds: u32, fps: u32) -> (u32, usize, usize) {
 }
 
 /// I420 frames at `rate` to an MP4 with its index first, so a browser plays it before the end arrives.
-#[expect(clippy::too_many_lines, reason = "frozen in rust-function-size.allow")]
 pub fn encode_mp4(
     frames: &[gst::Buffer],
     width: u32,
@@ -210,8 +209,21 @@ pub fn encode_mp4(
     }
     // Declared before the pipeline, so it drops after it: Windows deletes no file a filesink holds.
     let scratch = Scratch(tempfile_dir()?);
-    let dir = &scratch.0;
-    let out = dir.join("clip.mp4");
+    let out = scratch.0.join("clip.mp4");
+    let (pipeline, src) = encode_pipeline(&scratch.0, &out, width, height, rate)?;
+    let result = push_until_eos(&pipeline, &src, frames, rate);
+    let _ = pipeline.set_state(gst::State::Null);
+    result.and_then(|()| std::fs::read(&out).with_context(|| format!("read {}", out.display())))
+}
+
+/// appsrc -> openh264enc -> h264parse -> mp4mux -> filesink at `out`, linked and not yet playing.
+fn encode_pipeline(
+    dir: &std::path::Path,
+    out: &std::path::Path,
+    width: u32,
+    height: u32,
+    rate: gst::Fraction,
+) -> anyhow::Result<(gst::Pipeline, gst_app::AppSrc)> {
     let pipeline = gst::Pipeline::new();
     let src = gst::ElementFactory::make("appsrc")
         .build()
@@ -249,44 +261,50 @@ pub fn encode_mp4(
         .context("filesink")?;
     pipeline.add_many([src.upcast_ref(), &encoder, &parse, &mux, &sink])?;
     gst::Element::link_many([src.upcast_ref(), &encoder, &parse, &mux, &sink])?;
-    let result = (|| {
-        pipeline
-            .set_state(gst::State::Playing)
-            .context("clip pipeline to PLAYING")?;
-        // mul_div_floor panics on a zero denominator, which would end the encoder thread for good.
-        let (num, den) = (rate.numer(), rate.denom());
-        if num <= 0 || den <= 0 {
-            bail!("frame rate {num}/{den}");
+    Ok((pipeline, src))
+}
+
+/// Plays the pipeline, pushes every frame at `rate` and waits for the end of the stream or an error.
+fn push_until_eos(
+    pipeline: &gst::Pipeline,
+    src: &gst_app::AppSrc,
+    frames: &[gst::Buffer],
+    rate: gst::Fraction,
+) -> anyhow::Result<()> {
+    pipeline
+        .set_state(gst::State::Playing)
+        .context("clip pipeline to PLAYING")?;
+    // mul_div_floor panics on a zero denominator, which would end the encoder thread for good.
+    let (num, den) = (rate.numer(), rate.denom());
+    if num <= 0 || den <= 0 {
+        bail!("frame rate {num}/{den}");
+    }
+    let step = gst::ClockTime::SECOND
+        .mul_div_floor(den as u64, num as u64)
+        .context("frame duration")?;
+    for (i, frame) in frames.iter().enumerate() {
+        let mut buffer = frame.copy();
+        {
+            let buffer = buffer.get_mut().context("clip buffer")?;
+            buffer.set_pts(step * i as u64);
+            buffer.set_duration(step);
         }
-        let step = gst::ClockTime::SECOND
-            .mul_div_floor(den as u64, num as u64)
-            .context("frame duration")?;
-        for (i, frame) in frames.iter().enumerate() {
-            let mut buffer = frame.copy();
-            {
-                let buffer = buffer.get_mut().context("clip buffer")?;
-                buffer.set_pts(step * i as u64);
-                buffer.set_duration(step);
-            }
-            src.push_buffer(buffer)
-                .map_err(|err| anyhow!("clip push: {err:?}"))?;
-        }
-        src.end_of_stream()
-            .map_err(|err| anyhow!("clip end: {err:?}"))?;
-        let bus = pipeline.bus().context("clip pipeline has no bus")?;
-        match bus.timed_pop_filtered(
-            gst::ClockTime::from_seconds(ENCODE_TIMEOUT.as_secs()),
-            &[gst::MessageType::Eos, gst::MessageType::Error],
-        ) {
-            Some(msg) => match msg.view() {
-                gst::MessageView::Error(err) => bail!("{} ({:?})", err.error(), err.debug()),
-                _ => Ok(()),
-            },
-            None => bail!("encoding took over {} s", ENCODE_TIMEOUT.as_secs()),
-        }
-    })();
-    let _ = pipeline.set_state(gst::State::Null);
-    result.and_then(|()| std::fs::read(&out).with_context(|| format!("read {}", out.display())))
+        src.push_buffer(buffer)
+            .map_err(|err| anyhow!("clip push: {err:?}"))?;
+    }
+    src.end_of_stream()
+        .map_err(|err| anyhow!("clip end: {err:?}"))?;
+    let bus = pipeline.bus().context("clip pipeline has no bus")?;
+    match bus.timed_pop_filtered(
+        gst::ClockTime::from_seconds(ENCODE_TIMEOUT.as_secs()),
+        &[gst::MessageType::Eos, gst::MessageType::Error],
+    ) {
+        Some(msg) => match msg.view() {
+            gst::MessageView::Error(err) => bail!("{} ({:?})", err.error(), err.debug()),
+            _ => Ok(()),
+        },
+        None => bail!("encoding took over {} s", ENCODE_TIMEOUT.as_secs()),
+    }
 }
 
 /// One encode's scratch directory, removed however [`encode_mp4`] returns: a GStreamer without
