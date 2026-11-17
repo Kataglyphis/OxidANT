@@ -499,7 +499,7 @@ fn texture_ref(
 }
 
 /// Every node a load draws, with its world transform: the default scene's, else the first scene's, else all.
-/// BeschleunigerBallett's C++ loader walks the same nodes (its docs/source/model-loading.md); change both together.
+/// BeschleunigerBallett's C++ `GltfLoader` walks the same nodes; change both together.
 pub(crate) fn walk_nodes(
     document: &gltf::Document,
     mut visit: impl FnMut(&gltf::Node, Mat4) -> anyhow::Result<()>,

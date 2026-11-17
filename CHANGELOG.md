@@ -13,6 +13,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-17, one glTF loader for both renderers)
+- **`crates/assets`** (`kataglyphis_assets`): the renderer's glTF/KTX2/Basis loader and its `Cpu*` scene types,
+  moved out of `kataglyphis_webgpu_renderer` without wgpu, winit or egui. The renderer re-exports it under its old
+  paths (`asset::gltf_loader`, `asset::ktx2_loader`, `scene::*`); `Vertex::LAYOUT` is now the renderer's
+  `VertexLayout` trait.
+- **`load_gltf_flat`** in `kataglyphis_cxx_bridge`: the same loader flattened the way BeschleunigerBallett's C++
+  `GltfLoader` fills its arrays (world-space vertices, mirrored winding, a per-corner vertex for a primitive without
+  `NORMAL`, a material id per triangle, a range per primitive, the document's materials plus a neutral fallback,
+  lights posed by their nodes) with each texture's core image still encoded, deduped on (image, sampler, colour
+  space). Errors and caught panics return `ok == false`; a `KHR_texture_basisu`-only texture gets no slot, since the
+  engine decodes with stb. The engine's static library now links `gltf`, `image`, `ktx2`, `basisu`, `ruzstd` and
+  `bevy_mikktspace`, all in `packaging/cargo-license-policy.json` already.
+
+### Fixed (2026-11-17, found by BeschleunigerBallett's two-loader differential suite)
+- `KHR_texture_transform`'s `texCoord` overrides the `textureInfo`'s for the UV-set mask and for generated
+  tangents; a glTF without scenes loads every node instead of failing; an image URI must stay inside the document's
+  directory, and a truncated base64 image gets no slot, in `load_gltf_flat`.
+
 ### Changed (2026-11-17, a text decoder's own thread rule)
 - `kataglyphis_core::config::text_threads` is half the family's ORT pool, 1 to 4 (hub CON218, owner decision on a
   Pi 5 measurement: one text thread slowed a DEIM detector beside it by 36-44 % and answered fastest, three by
