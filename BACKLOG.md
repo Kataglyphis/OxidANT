@@ -114,7 +114,11 @@ Empty on 2026-11-17: nothing else is in the queue.
       images past it. Open: (4) bindless material textures for scenes with thousands of materials. Measured blockers,
       2026-11-16, slangc 2026.17 in `:latest`: a WGSL target emits `Texture2D t[64]` as `array<texture_2d<f32>, 64>`,
       which WGSL forbids (naga takes texture arrays only as `binding_array<..>`), and refuses
-      `NonUniformResourceIndex` outright, so `shaders/forward/forward.slang` cannot index an array as is. The work:
+      `NonUniformResourceIndex` outright, so `shaders/forward/forward.slang` cannot index an array as is. slangc
+      2026.22 (release binary, 2026-11-17) fixes both: it emits `binding_array<texture_2d<f32>, i32(64)>` and indexes
+      it, and naga 30 validates that once `enable wgpu_binding_array;` heads the file, which slangc does not write.
+      The image's slangc is the Vulkan SDK's (1.4.363.0 = 2026.17+25; 1.4.363.1 has no newer Slang tag), so it
+      arrives with the next SDK or a separate slangc pin in the hub. The work:
       (a) a bindless variant of the eight `forward.slang` entry points (`vs_main`/`fs_main`,
       `vs_shadow_masked`/`fs_shadow_masked`, `fs_gbuffer`, ...;
       group 0 bindings 3-12 become one texture and one sampler array in their own group plus a per-primitive
