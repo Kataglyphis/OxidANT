@@ -17,7 +17,7 @@ setup() {
   python3 -I "${fetcher}" --lock resources/models/models.lock
   python3 -I "${fetcher}" --lock resources/models/llm.lock --extract
   python3 -I "$(antfrastructure_path linux/scripts/lib/genai-model-threads.py)" \
-    --model resources/models/smollm2_135m_instruct-cpu --out "${LLM_MODEL}" --threads 7
+    --model resources/models/smollm2_135m_instruct-cpu --out "${LLM_MODEL}" --threads text
   cargo build --locked --release -p kataglyphis_cli
 }
 

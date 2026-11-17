@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-17, perf-host's text model takes the text thread rule)
+
+- `scripts/linux/perf-host.sh setup` copies the text model with `genai-model-threads.py --threads text` (half the
+  ORT pool, 1 to 4) instead of a fixed 7, so a baseline times what ships and a 4-CPU host is not oversubscribed.
+  The hub pin moves to 47eac65c for that flag. Text figures in an older baseline are not comparable until it is
+  re-recorded.
+
 ### Added (2026-11-17, one glTF loader for both renderers)
 - **`crates/assets`** (`kataglyphis_assets`): the renderer's glTF/KTX2/Basis loader and its `Cpu*` scene types,
   moved out of `kataglyphis_webgpu_renderer` without wgpu, winit or egui. The renderer re-exports it under its old
