@@ -3,6 +3,7 @@
 // The owner's hard gate on function size; clippy.toml holds the limit.
 #![warn(clippy::too_many_lines)]
 
+pub mod adapter;
 pub mod app;
 pub mod asset;
 pub mod context;

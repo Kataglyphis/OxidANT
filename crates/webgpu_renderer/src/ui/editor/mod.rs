@@ -138,6 +138,8 @@ pub enum EditorAction {
     LoadModel(usize),
     /// Back to the loaded scene's start view, with clip planes and fly speed for its size.
     FrameScene,
+    /// Restart the viewer on this row of [`DeviceInfo::adapters`].
+    UseAdapter(usize),
 }
 
 /// One pass's result: where the scene shows through, and what to do.

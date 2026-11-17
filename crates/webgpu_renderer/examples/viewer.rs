@@ -1,4 +1,5 @@
-//! The Studio editor: `cargo run -p kataglyphis_webgpu_renderer --example viewer [model]`; without one the fetched Colosseum.
+//! The Studio editor: `cargo run -p kataglyphis_webgpu_renderer --example viewer [model] [--adapter <name>]`;
+//! without a model the fetched Colosseum.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,6 +10,9 @@ use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
+use kataglyphis_webgpu_renderer::adapter::{
+    entry_label, relaunch_args, split_adapter_arg, AdapterRequest,
+};
 use kataglyphis_webgpu_renderer::app::discovery::{native_startup, skybox_dir};
 use kataglyphis_webgpu_renderer::app::library::EMBEDDED_SCENES;
 use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf_slice;
@@ -24,6 +28,8 @@ const WINDOW_SIZE: winit::dpi::LogicalSize<u32> = winit::dpi::LogicalSize::new(1
 struct Viewer {
     /// The command line's model, first in the startup chain.
     model_path: Option<PathBuf>,
+    /// The command line's `--adapter`, over `KATAGLYPHIS_ADAPTER`.
+    adapter: Option<String>,
     window: Option<Arc<Window>>,
     app: Option<StudioApp>,
     started: Instant,
@@ -47,9 +53,10 @@ fn shader_mtimes() -> Vec<(PathBuf, std::time::SystemTime)> {
 }
 
 impl Viewer {
-    fn new(model_path: Option<PathBuf>) -> Self {
+    fn new(model_path: Option<PathBuf>, adapter: Option<String>) -> Self {
         Self {
             model_path,
+            adapter,
             window: None,
             app: None,
             started: Instant::now(),
@@ -135,6 +142,34 @@ impl Viewer {
                 AppSignal::Quit => event_loop.exit(),
                 AppSignal::Screenshot => self.save_screenshot(),
                 AppSignal::ReloadShaders => self.reload_shaders(),
+                AppSignal::UseAdapter(row) => self.relaunch(event_loop, row),
+            }
+        }
+    }
+
+    /// Starts this viewer again on adapter `row` with the same arguments, then exits; a failed start keeps it running.
+    fn relaunch(&mut self, event_loop: &ActiveEventLoop, row: usize) {
+        let Some(app) = self.app.as_mut() else {
+            return;
+        };
+        let Some(entry) = app.gpu.adapters.get(row).map(entry_label) else {
+            return;
+        };
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let started = std::env::current_exe().and_then(|exe| {
+            std::process::Command::new(exe)
+                .args(relaunch_args(&args, &entry))
+                .spawn()
+        });
+        match started {
+            Ok(_) => {
+                log::info!("Restarting on {entry}");
+                event_loop.exit();
+            }
+            Err(err) => {
+                let text = format!("Could not restart on {entry}: {err}");
+                log::error!("{text}");
+                app.set_notice(Some(Notice::Error(text)));
             }
         }
     }
@@ -156,11 +191,14 @@ impl ApplicationHandler for Viewer {
                 )
                 .expect("failed to create window"),
         );
-        let gpu = GpuContext::new_windowed(Arc::clone(&window)).expect("failed to init wgpu");
+        let request = AdapterRequest::from_env().with_name(self.adapter.clone());
+        let gpu = GpuContext::new_windowed_with(Arc::clone(&window), &request)
+            .expect("failed to init wgpu");
         let caps = HostCaps {
             quit: true,
             screenshot: true,
             hot_reload: true,
+            relaunch: true,
         };
         // The embedded cube shows at once; the startup scene replaces it when its load is done.
         let (name, cube) = EMBEDDED_SCENES[0];
@@ -218,10 +256,12 @@ fn start_scene(app: &mut StudioApp, model_path: Option<&Path>) {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let model_path = std::env::args().nth(1).map(PathBuf::from);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (adapter, rest) = split_adapter_arg(&args);
+    let model_path = rest.first().map(PathBuf::from);
 
     let event_loop = EventLoop::new()?;
-    let mut viewer = Viewer::new(model_path);
+    let mut viewer = Viewer::new(model_path, adapter);
     event_loop.run_app(&mut viewer)?;
     Ok(())
 }

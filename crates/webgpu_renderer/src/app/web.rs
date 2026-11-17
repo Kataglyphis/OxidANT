@@ -124,7 +124,7 @@ pub(crate) fn is_browser_key(key: &str, command: bool) -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) use dom::{leave_browser_keys, notify_page, report_to_js};
+pub(crate) use dom::{adapter_info, leave_browser_keys, notify_page, report_to_js};
 
 #[cfg(target_arch = "wasm32")]
 mod dom {
@@ -144,6 +144,38 @@ mod dom {
                 log::error!("The page's {name} hook failed: {err:?}");
             }
         }
+    }
+
+    /// `GPUAdapterInfo`'s vendor and architecture, which wgpu drops; a second `requestAdapter` returns the same GPU.
+    pub(crate) async fn adapter_info() -> Option<crate::adapter::WebAdapterInfo> {
+        let get = |target: &JsValue, key: &str| {
+            js_sys::Reflect::get(target, &JsValue::from_str(key)).ok()
+        };
+        let gpu = get(&get(&js_sys::global(), "navigator")?, "gpu")?;
+        let request = get(&gpu, "requestAdapter")?
+            .dyn_into::<js_sys::Function>()
+            .ok()?;
+        let options = js_sys::Object::new();
+        let preference = JsValue::from_str("high-performance");
+        js_sys::Reflect::set(&options, &JsValue::from_str("powerPreference"), &preference).ok()?;
+        let promise = request
+            .call1(&gpu, &options)
+            .ok()?
+            .dyn_into::<js_sys::Promise>()
+            .ok()?;
+        let adapter = wasm_bindgen_futures::JsFuture::from(promise).await.ok()?;
+        let info = get(&adapter, "info").filter(|info| info.is_object())?;
+        let field = |key: &str| {
+            get(&info, key)
+                .and_then(|v| v.as_string())
+                .unwrap_or_default()
+        };
+        Some(crate::adapter::WebAdapterInfo {
+            vendor: field("vendor"),
+            architecture: field("architecture"),
+            device: field("device"),
+            description: field("description"),
+        })
     }
 
     /// A [`super::DemoReport`] as a plain object; `viewport` is `[x0, y0, x1, y1]` in fractions of the canvas.

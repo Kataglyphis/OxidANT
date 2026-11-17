@@ -2,6 +2,9 @@
 
 use glam::Vec4;
 
+use crate::adapter::{self, AdapterClass, AdapterHint, AdapterIdentity};
+use crate::context::GpuContext;
+
 use crate::app::library::ModelLibrary;
 use crate::app::loader::LoadProgress;
 use crate::app::Notice;
@@ -266,7 +269,7 @@ impl FrameHistory {
     }
 }
 
-/// What the status bar and About say about the adapter.
+/// What the status bar, About and the Renderer tab say about the adapter.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DeviceInfo {
     /// Vulkan, Metal, Direct3D 12, OpenGL or WebGPU.
@@ -275,24 +278,46 @@ pub struct DeviceInfo {
     pub driver: String,
     /// A software rasterizer, whose frame rates say nothing about the renderer.
     pub cpu: bool,
+    pub class: AdapterClass,
+    /// The status bar's word on an integrated adapter, with its tooltip.
+    pub hint: Option<AdapterHint>,
+    /// Natively, the adapters a relaunch can pick, by [`crate::adapter::entry_label`]; empty in a browser.
+    pub adapters: Vec<String>,
+    /// Which of `adapters` the renderer runs on.
+    pub current: Option<usize>,
 }
 
 impl DeviceInfo {
+    /// From the adapter alone, as a native context without a list describes it.
     pub fn of(info: &wgpu::AdapterInfo) -> Self {
-        let api = match info.backend {
-            wgpu::Backend::Vulkan => "Vulkan",
-            wgpu::Backend::Metal => "Metal",
-            wgpu::Backend::Dx12 => "Direct3D 12",
-            wgpu::Backend::Gl => "OpenGL",
-            wgpu::Backend::BrowserWebGpu => "WebGPU",
-            wgpu::Backend::Noop => "No-op",
-        };
+        Self::describe(info, &AdapterIdentity::of(info, None))
+    }
+
+    /// The context's adapter, its browser-side name, the hint and the adapters it was chosen from.
+    pub fn of_context(gpu: &GpuContext) -> Self {
+        let mut device = Self::describe(&gpu.adapter_info, &gpu.identity);
+        let browser = gpu.adapter_info.backend == wgpu::Backend::BrowserWebGpu;
+        let discrete = gpu
+            .adapters
+            .iter()
+            .any(|info| info.device_type == wgpu::DeviceType::DiscreteGpu);
+        device.hint = adapter::hint(device.class, browser, discrete);
+        device.adapters = gpu.adapters.iter().map(adapter::entry_label).collect();
+        device.current = gpu.adapter_index;
+        device
+    }
+
+    fn describe(info: &wgpu::AdapterInfo, identity: &AdapterIdentity) -> Self {
         let driver = format!("{} {}", info.driver, info.driver_info);
         Self {
-            api: api.to_owned(),
-            name: info.name.clone(),
+            api: adapter::api_name(info.backend).to_owned(),
+            name: identity.label.clone(),
             driver: driver.trim().to_owned(),
-            cpu: info.device_type == wgpu::DeviceType::Cpu,
+            cpu: identity.class == AdapterClass::Cpu,
+            class: identity.class,
+            hint: None,
+            adapters: Vec::new(),
+            current: None,
         }
     }
 }

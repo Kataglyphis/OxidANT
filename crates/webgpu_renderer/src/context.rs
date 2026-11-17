@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use winit::window::Window;
 
+use crate::adapter::{AdapterIdentity, AdapterRequest};
 pub use crate::surface_recovery::AcquireRetry;
 use crate::surface_recovery::{recovery, Repair};
 
@@ -22,10 +23,16 @@ pub struct GpuContext {
     pub supports_etc2: bool,
     /// TEXTURE_COMPRESSION_ASTC was available and enabled: the Basis target where BC and ETC2 are missing.
     pub supports_astc: bool,
-    /// TIMESTAMP_QUERY was available and enabled; browsers rarely expose it, so GPU timings are desktop-only.
+    /// TIMESTAMP_QUERY was available and enabled; Chrome exposes it too, at 100 µs resolution.
     pub supports_timestamps: bool,
     /// The adapter the device was created on.
     pub adapter_info: wgpu::AdapterInfo,
+    /// Its label and class; in a browser built from `GPUAdapterInfo`, since wgpu's name is empty there.
+    pub identity: AdapterIdentity,
+    /// Natively, every adapter this renderer could run on, in the order wgpu listed them; empty in a browser.
+    pub adapters: Vec<wgpu::AdapterInfo>,
+    /// Which of [`Self::adapters`] the device runs on.
+    pub adapter_index: Option<usize>,
     /// An sRGB texture, and on a windowed context the surface, can be viewed as its linear twin.
     pub srgb_twin_views: bool,
     /// Present target; `None` for headless (render-to-texture) contexts.
@@ -42,38 +49,43 @@ pub struct GpuContext {
 }
 
 impl GpuContext {
-    /// Creates a context that presents to `window` (native: blocks).
+    /// Creates a context that presents to `window` on the adapter the environment asks for (native: blocks).
     pub fn new_windowed(window: Arc<Window>) -> anyhow::Result<Self> {
-        pollster::block_on(Self::new_windowed_async(window))
+        Self::new_windowed_with(window, &AdapterRequest::from_env())
+    }
+
+    /// As [`Self::new_windowed`], on the adapter `request` names, else the best one.
+    pub fn new_windowed_with(
+        window: Arc<Window>,
+        request: &AdapterRequest,
+    ) -> anyhow::Result<Self> {
+        pollster::block_on(Self::open_windowed(window, request))
     }
 
     /// Async variant for platforms without block_on (wasm32/browsers).
     pub async fn new_windowed_async(window: Arc<Window>) -> anyhow::Result<Self> {
+        Self::open_windowed(window, &AdapterRequest::from_env()).await
+    }
+
+    async fn open_windowed(window: Arc<Window>, request: &AdapterRequest) -> anyhow::Result<Self> {
         let size = window.inner_size();
-        let instance = new_instance();
+        let instance = new_instance(request.backends);
         let surface = instance
             .create_surface(Arc::clone(&window))
             .context("Failed to create surface")?;
 
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-                // Bucketing is anti-fingerprinting for untrusted content; a trusted app wants the real limits.
-                apply_limit_buckets: false,
-            })
-            .await
-            .context("No suitable GPU adapter found")?;
+        let picked = pick_adapter(&instance, Some(&surface), request).await?;
+        let adapter = &picked.adapter;
         let adapter_info = adapter.get_info();
         check_adapter(&adapter_info)?;
+        let identity = identify(&adapter_info).await;
 
-        let (device, queue, features) = request_device(&adapter).await?;
+        let (device, queue, features) = request_device(adapter).await?;
         let downlevel = adapter.get_downlevel_capabilities().flags;
         let srgb_twin_views = downlevel.contains(
             wgpu::DownlevelFlags::VIEW_FORMATS | wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS,
         );
-        let surface_config = surface_config(&surface, &adapter, &device, size, srgb_twin_views)?;
+        let surface_config = surface_config(&surface, adapter, &device, size, srgb_twin_views)?;
         surface.configure(&device, &surface_config);
 
         Ok(Self {
@@ -84,6 +96,9 @@ impl GpuContext {
             supports_astc: features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC),
             supports_timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
             adapter_info,
+            identity,
+            adapters: picked.listed,
+            adapter_index: picked.index,
             srgb_twin_views,
             surface: Some(surface),
             surface_config: Some(surface_config),
@@ -101,16 +116,11 @@ impl GpuContext {
 
     /// `for_tests` also refuses an adapter the tests cannot trust ([`check_test_adapter`]) before it makes a device.
     async fn new_headless_async(for_tests: bool) -> anyhow::Result<Self> {
-        let adapter = new_instance()
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-                // Trusted application: real limits, as in the windowed path.
-                apply_limit_buckets: false,
-            })
+        let request = AdapterRequest::from_env();
+        let picked = pick_adapter(&new_instance(request.backends), None, &request)
             .await
             .context("No GPU adapter found (headless)")?;
+        let adapter = picked.adapter;
         let adapter_info = adapter.get_info();
         check_adapter(&adapter_info)?;
         if for_tests {
@@ -129,7 +139,10 @@ impl GpuContext {
             supports_etc2: features.contains(wgpu::Features::TEXTURE_COMPRESSION_ETC2),
             supports_astc: features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC),
             supports_timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
+            identity: AdapterIdentity::of(&adapter_info, None),
             adapter_info,
+            adapters: picked.listed,
+            adapter_index: picked.index,
             srgb_twin_views,
             surface: None,
             surface_config: None,
@@ -368,9 +381,15 @@ pub fn instance_flags() -> wgpu::InstanceFlags {
     flags.with_env()
 }
 
-fn new_instance() -> wgpu::Instance {
+/// An instance over `backends` within [`BACKENDS`], which never include GL.
+fn new_instance(backends: wgpu::Backends) -> wgpu::Instance {
+    let narrowed = backends & BACKENDS;
     wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: BACKENDS,
+        backends: if narrowed.is_empty() {
+            BACKENDS
+        } else {
+            narrowed
+        },
         flags: instance_flags(),
         memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         backend_options: wgpu::BackendOptions::default(),
@@ -419,6 +438,92 @@ fn surface_config(
         },
         desired_maximum_frame_latency: 2,
     })
+}
+
+/// The adapter a context opens, and natively the list it was chosen from.
+struct PickedAdapter {
+    adapter: wgpu::Adapter,
+    listed: Vec<wgpu::AdapterInfo>,
+    index: Option<usize>,
+}
+
+/// Every adapter logged, then `request`'s or the best usable one ([`crate::adapter::choose`]).
+#[cfg(not(target_arch = "wasm32"))]
+async fn pick_adapter(
+    instance: &wgpu::Instance,
+    surface: Option<&wgpu::Surface<'_>>,
+    request: &AdapterRequest,
+) -> anyhow::Result<PickedAdapter> {
+    let mut adapters = instance.enumerate_adapters(request.backends).await;
+    let infos: Vec<wgpu::AdapterInfo> = adapters.iter().map(wgpu::Adapter::get_info).collect();
+    let usable: Vec<bool> = adapters
+        .iter()
+        .zip(&infos)
+        .map(|(adapter, info)| {
+            check_adapter(info).is_ok() && surface.is_none_or(|s| adapter.is_surface_supported(s))
+        })
+        .collect();
+    for (index, (info, usable)) in infos.iter().zip(&usable).enumerate() {
+        let note = if *usable { "" } else { ", unusable" };
+        log::info!(
+            "Adapter {index}: {} [{:?}]{note}",
+            crate::adapter::entry_label(info),
+            info.device_type
+        );
+    }
+    let choice = crate::adapter::choose(&infos, &usable, request)
+        .context("No suitable GPU adapter found")?;
+    if choice.unmatched_request {
+        log::warn!(
+            "No usable adapter matches '{}'; choosing automatically",
+            request.name.as_deref().unwrap_or_default()
+        );
+    }
+    log::info!(
+        "Using adapter {}: {}",
+        choice.index,
+        crate::adapter::entry_label(&infos[choice.index])
+    );
+    let listed = (0..infos.len()).filter(|i| usable[*i]).collect::<Vec<_>>();
+    let index = listed.iter().position(|i| *i == choice.index);
+    Ok(PickedAdapter {
+        adapter: adapters.swap_remove(choice.index),
+        listed: listed.into_iter().map(|i| infos[i].clone()).collect(),
+        index,
+    })
+}
+
+/// The browser offers one adapter; its power preference is a request Chrome ignores on Windows.
+#[cfg(target_arch = "wasm32")]
+async fn pick_adapter(
+    instance: &wgpu::Instance,
+    surface: Option<&wgpu::Surface<'_>>,
+    _request: &AdapterRequest,
+) -> anyhow::Result<PickedAdapter> {
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: surface,
+            force_fallback_adapter: false,
+            // Bucketing is anti-fingerprinting for untrusted content; a trusted app wants the real limits.
+            apply_limit_buckets: false,
+        })
+        .await
+        .context("No suitable GPU adapter found")?;
+    Ok(PickedAdapter {
+        adapter,
+        listed: Vec::new(),
+        index: None,
+    })
+}
+
+/// The adapter's label and class; in a browser from `GPUAdapterInfo`'s vendor and architecture.
+async fn identify(info: &wgpu::AdapterInfo) -> AdapterIdentity {
+    #[cfg(target_arch = "wasm32")]
+    let web = crate::app::web::adapter_info().await;
+    #[cfg(not(target_arch = "wasm32"))]
+    let web = None;
+    AdapterIdentity::of(info, web.as_ref())
 }
 
 async fn request_device(

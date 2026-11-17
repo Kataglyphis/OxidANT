@@ -46,6 +46,8 @@ pub struct HostCaps {
     pub screenshot: bool,
     /// F5 asks the shell to reload the shaders.
     pub hot_reload: bool,
+    /// The Renderer tab's adapter list may ask the shell to restart itself on another adapter.
+    pub relaunch: bool,
 }
 
 /// What a frame asks its shell to do.
@@ -54,6 +56,8 @@ pub enum AppSignal {
     Quit,
     Screenshot,
     ReloadShaders,
+    /// Restart on this row of [`GpuContext::adapters`].
+    UseAdapter(usize),
 }
 
 pub struct StudioApp {
@@ -132,7 +136,7 @@ impl StudioApp {
         renderer.set_environment(&gpu, &EquirectImage::sky(256, 128));
         let mut app = Self {
             tonemap: TonemapPass::new(&gpu, format),
-            device: DeviceInfo::of(&gpu.adapter_info),
+            device: DeviceInfo::of_context(&gpu),
             controller: OrbitController::default(),
             fly: FlyController::default(),
             camera: home.clone(),

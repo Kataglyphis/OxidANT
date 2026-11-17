@@ -23,6 +23,7 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>, actions: &mut Vec<Ed
     path_tracing(ui, cx);
     post(ui, cx);
     culling(ui, cx);
+    adapter(ui, cx, actions);
     if shaders(ui, cx) {
         actions.push(EditorAction::ReloadShaders);
     }
@@ -184,6 +185,32 @@ fn culling(ui: &mut Ui, cx: &mut EditorContext<'_>) {
         "Off: every primitive in the frustum is drawn.".to_owned()
     };
     muted_wrapped(ui, text);
+}
+
+/// The adapter and its hint; natively every adapter the viewer can restart on, the one in use marked.
+fn adapter(ui: &mut Ui, cx: &EditorContext<'_>, actions: &mut Vec<EditorAction>) {
+    section_header(ui, "ADAPTER", None);
+    let device = cx.device;
+    muted_wrapped(ui, format!("{}  ·  {}", device.api, device.name));
+    if let Some(hint) = device.hint {
+        muted_wrapped(ui, hint.tooltip);
+    }
+    for (row, label) in device.adapters.iter().enumerate() {
+        ui.horizontal(|ui| {
+            if device.current == Some(row) {
+                muted(ui, "In use");
+            } else {
+                let button = enabled_ui(ui, cx.caps.relaunch, |ui| ui.button("Use")).inner;
+                let button = button
+                    .on_hover_text("Restarts the viewer on this adapter")
+                    .on_disabled_hover_text("Needs the native viewer");
+                if button.clicked() {
+                    actions.push(EditorAction::UseAdapter(row));
+                }
+            }
+            ui.label(label);
+        });
+    }
 }
 
 /// The reload button, live only where the shell can read shader files; true on a click.

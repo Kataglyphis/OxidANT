@@ -12,6 +12,7 @@ const NATIVE: HostCaps = HostCaps {
     quit: true,
     screenshot: true,
     hot_reload: true,
+    relaunch: true,
 };
 
 /// The editor, the data a host hands it, and a frame loop in the host's order.
@@ -62,6 +63,13 @@ impl Harness {
                 name: "llvmpipe (LLVM 21.1.8, 128 bits)".into(),
                 driver: "llvmpipe Mesa 26.0".into(),
                 cpu: true,
+                class: crate::adapter::AdapterClass::Cpu,
+                adapters: vec![
+                    "llvmpipe (LLVM 21.1.8, 128 bits) (Vulkan)".into(),
+                    "NVIDIA RTX 2000 Ada Generation Laptop GPU (Vulkan)".into(),
+                ],
+                current: Some(0),
+                ..DeviceInfo::default()
             },
             model: ModelSource::from_path(std::path::Path::new("Models/Dinosaurs/dinosaurs.glb")),
             library: library(),
@@ -589,5 +597,6 @@ fn the_outliner_eye_switches_the_clouds_and_their_row_opens_the_clouds_section()
     );
 }
 
+mod adapter;
 mod combined;
 mod settings;

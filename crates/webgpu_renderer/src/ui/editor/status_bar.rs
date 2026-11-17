@@ -16,7 +16,7 @@ pub(super) const BUILD: &str = if cfg!(debug_assertions) {
     "Release"
 };
 
-/// `Vulkan  ·  llvmpipe (...)`: the API and the adapter.
+/// `Vulkan  ·  llvmpipe (...)`, `WebGPU  ·  intel gen-12lp`: the API and the adapter.
 pub(super) fn device_text(cx: &EditorContext<'_>) -> String {
     format!("{}  ·  {}", cx.device.api, cx.device.name)
 }
@@ -87,7 +87,7 @@ pub(super) fn show(ui: &mut Ui, cx: &EditorContext<'_>) {
     );
 }
 
-/// The dot and the device, `short` the API alone; returns where they end.
+/// The dot, the device and its hint, `short` the API alone; returns where they end.
 fn device(ui: &mut Ui, cx: &EditorContext<'_>, short: bool) -> f32 {
     ui.horizontal_centered(|ui| {
         // Amber for a CPU rasterizer, whose frame rates say nothing about the renderer.
@@ -115,6 +115,10 @@ fn device(ui: &mut Ui, cx: &EditorContext<'_>, short: bool) -> f32 {
         }
         if !tip.is_empty() {
             device.on_hover_text(tip.join("\n"));
+        }
+        if let Some(hint) = cx.device.hint.filter(|_| !short) {
+            let text = egui::RichText::new(hint.text).color(pal::WARNING);
+            ui.label(text).on_hover_text(hint.tooltip);
         }
         ui.min_rect().right()
     })

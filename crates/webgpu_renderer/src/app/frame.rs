@@ -150,6 +150,7 @@ impl StudioApp {
                 EditorAction::Quit => signals.push(AppSignal::Quit),
                 EditorAction::Screenshot => signals.push(AppSignal::Screenshot),
                 EditorAction::ReloadShaders => signals.push(AppSignal::ReloadShaders),
+                EditorAction::UseAdapter(row) => signals.push(AppSignal::UseAdapter(row)),
             }
         }
         signals
@@ -241,6 +242,7 @@ pub(in crate::app) mod tests {
             quit: true,
             screenshot: true,
             hot_reload: true,
+            relaunch: true,
         };
         Some(StudioApp::headless(
             gpu,
@@ -557,11 +559,13 @@ pub(in crate::app) mod tests {
             EditorAction::Quit,
             EditorAction::Screenshot,
             EditorAction::ReloadShaders,
+            EditorAction::UseAdapter(1),
         ]);
         let shell = [
             AppSignal::Quit,
             AppSignal::Screenshot,
             AppSignal::ReloadShaders,
+            AppSignal::UseAdapter(1),
         ];
         assert_eq!(signals, shell);
         assert_eq!(app.camera.target, framing.camera.target);
