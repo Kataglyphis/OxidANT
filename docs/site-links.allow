@@ -23,6 +23,7 @@ missing	kataglyphis_webgpu_renderer/asset/hdr/dispatcher
 missing	kataglyphis_webgpu_renderer/asset/obj_to_gltf/dispatcher
 missing	kataglyphis_webgpu_renderer/asset/skybox/dispatcher
 missing	kataglyphis_webgpu_renderer/context/dispatcher
+missing	kataglyphis_webgpu_renderer/dispatcher
 missing	kataglyphis_webgpu_renderer/render/bloom/dispatcher
 missing	kataglyphis_webgpu_renderer/render/clouds/dispatcher
 missing	kataglyphis_webgpu_renderer/render/draw_cull/dispatcher
@@ -34,6 +35,7 @@ missing	kataglyphis_webgpu_renderer/render/gpu_timing/dispatcher
 missing	kataglyphis_webgpu_renderer/render/graph/dispatcher
 missing	kataglyphis_webgpu_renderer/render/histogram/dispatcher
 missing	kataglyphis_webgpu_renderer/render/ibl/dispatcher
+missing	kataglyphis_webgpu_renderer/render/lights/dispatcher
 missing	kataglyphis_webgpu_renderer/render/model_transform/dispatcher
 missing	kataglyphis_webgpu_renderer/render/occlusion/dispatcher
 missing	kataglyphis_webgpu_renderer/render/overlay/dispatcher
