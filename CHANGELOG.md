@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-18, the no-Cargo-feature rule fails the lint gates)
+
+- AGENTS.md's owner rule "no crate has a Cargo feature" held by habit. `quality-report.toml`'s
+  `cargo_features_tables` row now carries `max = 0`, so the hub's pattern-limits gate (ANTfrastructure CON245, on
+  the hub pin `ea0ba4b3`) fails a push that adds a `[features]` table outside `third_party/`, naming file and line.
+  `scripts/linux/tests/test-pattern-limits.sh` plants one; recipe `consumer.oxidant-no-cargo-features`.
+
 ### Fixed (2026-11-18, a fast streamed answer is no longer called unstarted)
 
 - A streamed `/ask` whose model is done before the server looks answered 502 `the model ended before it started`

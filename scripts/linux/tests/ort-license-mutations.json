@@ -765,5 +765,13 @@
   "replace": "        : \\\n",
   "test": "bash scripts/linux/tests/test-ci-container-steps.sh",
   "why": "The test step checks genai.rs's GenAI signatures against the image's header before any build."
+ },
+ {
+  "id": "consumer.oxidant-no-cargo-features",
+  "target": "quality-report.toml",
+  "find": "exclude = [\"third_party/*\"]\nmax = 0",
+  "replace": "exclude = [\"third_party/*\"]\nmax = 1",
+  "test": "bash scripts/linux/tests/test-pattern-limits.sh",
+  "why": "No crate may get a Cargo feature; one [features] table must fail the lint gates, not be counted."
  }
 ]

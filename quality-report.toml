@@ -53,6 +53,16 @@ pattern = '\bunsafe\s*\{'
 include = ["*.rs"]
 exclude = ["third_party/*", "src/frb_generated*.rs"]
 
+# AGENTS.md's owner rule: no crate has a Cargo feature; run-lint-gates.sh fails on a [features] table.
+[[metric]]
+name = "cargo_features_tables"
+kind = "pattern"
+unit = "tables"
+pattern = '^\s*\[features\]'
+include = ["Cargo.toml", "*/Cargo.toml"]
+exclude = ["third_party/*"]
+max = 0
+
 # quality-report.sh --perf-host, inside :latest; DNNL answers not_collected while the image lacks libdnnl.so.3.
 [perf]
 setup = "bash scripts/linux/perf-host.sh setup"
