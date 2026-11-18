@@ -18,7 +18,12 @@ setup() {
   python3 -I "${fetcher}" --lock resources/models/llm.lock --extract
   python3 -I "$(antfrastructure_path linux/scripts/lib/genai-model-threads.py)" \
     --model resources/models/smollm2_135m_instruct-cpu --out "${LLM_MODEL}" --threads text
-  cargo build --locked --release -p kataglyphis_cli
+  # The fat-LTO link of this CLI dies at a 6 GB cap; a host under 12 GB links it thin into its own CPU's baseline (owner 2026-11-18).
+  local lto=()
+  if [ "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)" -lt $((12 * 1024 * 1024)) ]; then
+    lto=(CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16)
+  fi
+  env "${lto[@]}" cargo build --locked --release -p kataglyphis_cli
 }
 
 # A fresh process's first reply is noisy, so one run is the per-metric median of five; the CLI prints `<n> tokens, <ms> ms to the first, <rate> tokens/s, finish <reason>` to stderr.

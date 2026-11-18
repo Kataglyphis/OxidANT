@@ -24,6 +24,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
   frustum. `ShadowSettings::punctual` and the Sun tab's LIGHT SHADOWS switch turn them off; the faces are timed as
   `ShadowCascades`. `tests/punctual_shadows.rs`; `traced_lights`' wall test now checks raster's shadow too.
 
+### Changed (2026-11-18, perf-host links thin on a host under 12 GB)
+
+- `scripts/linux/perf-host.sh setup` builds `kataglyphis_cli` with `CARGO_PROFILE_RELEASE_LTO=thin` and 16 codegen
+  units when the host has less than 12 GB RAM: the release profile's fat-LTO, single-unit link died three times at a
+  5 to 6 GB container cap on a Raspberry Pi 5. The timed work is ONNX Runtime and GenAI, and each CPU has its own
+  baseline file; an amd64 build host keeps the release profile (owner decision 2026-11-18).
+
 ### Changed (2026-11-17, perf-host's text model takes the text thread rule)
 
 - `scripts/linux/perf-host.sh setup` copies the text model with `genai-model-threads.py --threads text` (half the

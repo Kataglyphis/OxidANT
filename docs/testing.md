@@ -349,4 +349,6 @@ The lane's build and run sequence is in
 provider and `chat` through `crates/text` in the CI image, against `perf/baseline-<cpu>.json`:
 hub `docs/fleet-health.md` § perf-host. `detect-latency --image FILE --runs N` prints warm p50 and p95
 as one JSON line, or `not_collected` for a provider the runtime cannot load. It is not run in CI, whose
-hosted wall time varies too much to grade.
+hosted wall time varies too much to grade. On a host under 12 GB RAM the setup links the CLI with thin LTO and 16
+codegen units: the release profile's fat-LTO link needs more than 6 GB, and that host's figures go to its
+own CPU's baseline file.
