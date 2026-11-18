@@ -14,6 +14,7 @@ use winit::window::{Window, WindowId};
 use crate::app::library::{ModelLibrary, EMBEDDED_SCENES};
 use crate::app::{web, HostCaps, StudioApp};
 use crate::asset::gltf_loader::load_gltf_slice;
+use crate::asset::skybox::{CubemapFaces, SKYBOX_FACES, SKYBOX_NAME};
 use crate::context::GpuContext;
 use crate::scene::camera::OrbitCamera;
 use crate::ui::editor::{DockPrefs, ModelSource};
@@ -29,6 +30,9 @@ type DroppedScene = Rc<RefCell<Option<PageRequest>>>;
 
 /// The app once the device resolves, shared with the render loop.
 type AppSlot = Rc<RefCell<Option<StudioApp>>>;
+
+/// The skybox faces once their fetch finishes, taken by the render loop.
+type SkyboxSlot = Rc<RefCell<Option<CubemapFaces>>>;
 
 thread_local! {
     /// The drag-drop slot, shared so [`select_demo_scene`] reuses the dropped-file path.
@@ -148,6 +152,45 @@ fn scene_base() -> String {
     }
 }
 
+/// One file's bytes; any failure is a message, since a missing face only keeps the procedural sky.
+async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let window = web_sys::window().ok_or("no window")?;
+    let response: web_sys::Response =
+        wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url))
+            .await
+            .and_then(JsCast::dyn_into)
+            .map_err(|error| format!("{url}: {error:?}"))?;
+    if !response.ok() {
+        return Err(format!("{url}: HTTP {}", response.status()));
+    }
+    let buffer = response
+        .array_buffer()
+        .map_err(|error| format!("{url}: {error:?}"))?;
+    let buffer = wasm_bindgen_futures::JsFuture::from(buffer)
+        .await
+        .map_err(|error| format!("{url}: {error:?}"))?;
+    Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+}
+
+/// The C++ engine's sky, which the docs build stages in a folder beside the page; without it the procedural sky stays.
+fn spawn_skybox_fetch(slot: SkyboxSlot) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let mut files = Vec::with_capacity(SKYBOX_FACES.len());
+        for face in SKYBOX_FACES {
+            match fetch_bytes(&format!("{}{SKYBOX_NAME}/{face}", scene_base())).await {
+                Ok(bytes) => files.push(bytes),
+                Err(error) => return log::warn!("Keeping the procedural sky: {error}"),
+            }
+        }
+        match CubemapFaces::decode(std::array::from_fn(|face| files[face].as_slice())) {
+            Ok(faces) => {
+                slot.borrow_mut().replace(faces);
+            }
+            Err(error) => log::warn!("Keeping the procedural sky: {error:#}"),
+        }
+    });
+}
+
 /// WebGPU init is async-only in browsers: the app lands in `slot` once the device resolves.
 fn spawn_app_init(slot: AppSlot, window: Arc<Window>, size: (u32, u32)) {
     wasm_bindgen_futures::spawn_local(async move {
@@ -204,6 +247,8 @@ struct DemoApp {
     dropped_scene: DroppedScene,
     /// egui had focus last frame, so the browser-key listener lets winit hand it Tab and friends.
     egui_wants_keys: Rc<Cell<bool>>,
+    /// Filled once the skybox fetch decodes all six faces.
+    skybox: SkyboxSlot,
 }
 
 impl ApplicationHandler for DemoApp {
@@ -223,6 +268,7 @@ impl ApplicationHandler for DemoApp {
         let canvas = window.canvas().expect("winit window must expose a canvas");
         let size = canvas_device_size(&canvas);
         spawn_app_init(Rc::clone(&self.app), Arc::clone(&window), size);
+        spawn_skybox_fetch(Rc::clone(&self.skybox));
         self.window = Some(window);
     }
 
@@ -237,6 +283,9 @@ impl ApplicationHandler for DemoApp {
         app.window_event(window, &event);
         if matches!(event, WindowEvent::RedrawRequested) {
             take_page_request(app, &self.dropped_scene);
+            if let Some(faces) = self.skybox.borrow_mut().take() {
+                app.set_skybox_faces(&faces);
+            }
             follow_canvas_size(window, &mut app.gpu);
             // A browser tab never quits and has no file shortcuts, so a frame asks nothing of this shell.
             let _ = app.frame(window, performance_now_seconds());

@@ -4,6 +4,8 @@ use anyhow::Context as _;
 
 /// The C++ `SkyBox::loadCubeMap` files, in a cube texture's +X, -X, +Y, -Y, +Z, -Z layer order.
 pub const SKYBOX_FACES: [&str; 6] = ["RT.png", "LF.png", "UP.png", "DN.png", "FT.png", "BK.png"];
+/// The AssetANT archive the faces come from; the browser fetches them from a folder of this name beside its page.
+pub const SKYBOX_NAME: &str = "kloofendal_43d_clear_puresky";
 /// Where a BeschleunigerBallett checkout keeps them, from its root.
 pub const SKYBOX_DIR: &str = "Resources/Textures/Skybox/kloofendal_43d_clear_puresky";
 
@@ -70,6 +72,11 @@ impl CubemapFaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_checkout_folder_is_the_archive_name() {
+        assert!(SKYBOX_DIR.ends_with(&format!("/{SKYBOX_NAME}")));
+    }
 
     fn png(size: u32, rgba: [u8; 4]) -> Vec<u8> {
         let pixels: Vec<u8> = (0..size * size).flat_map(|_| rgba).collect();

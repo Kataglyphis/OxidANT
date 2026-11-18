@@ -63,6 +63,8 @@ pub(crate) struct DemoReport {
     pub(crate) picked: &'static str,
     pub(crate) path: &'static str,
     pub(crate) clouds: bool,
+    /// The fetched cube map is the sky; false while the procedural one stands in.
+    pub(crate) skybox: bool,
     /// Whether the drawn frame runs FXAA.
     pub(crate) fxaa: bool,
     /// idle, building, ready or failed.
@@ -102,6 +104,7 @@ impl StudioApp {
             picked: name_of(&MODE_NAMES, self.renderer.render_mode),
             path: name_of(&PATH_NAMES, self.renderer.raster_path),
             clouds: self.renderer.clouds.enabled,
+            skybox: self.renderer.skybox_loaded(),
             fxaa: self.renderer.fxaa_runs(),
             trace,
             detail: self
@@ -186,11 +189,12 @@ mod dom {
             .into_iter()
             .map(|f| JsValue::from_f64(f64::from(f)))
             .collect();
-        let fields: [(&str, JsValue); 9] = [
+        let fields: [(&str, JsValue); 10] = [
             ("drawn", report.drawn.into()),
             ("picked", report.picked.into()),
             ("path", report.path.into()),
             ("clouds", report.clouds.into()),
+            ("skybox", report.skybox.into()),
             ("fxaa", report.fxaa.into()),
             ("trace", report.trace.into()),
             ("detail", report.detail.as_str().into()),

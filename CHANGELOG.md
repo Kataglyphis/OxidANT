@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-18, the web demo shows the C++ engine's sky)
+- **`kataglyphis_webgpu_renderer`**: the browser demo fetches the six `kloofendal_43d_clear_puresky` faces (Poly
+  Haven's CC0 sky, `asset::skybox::SKYBOX_NAME`) from a folder of that name beside its page, or beside
+  `?scene-base=`, and draws them as the native viewer does; a face that does not arrive or decode keeps the
+  procedural sky and logs why. BeschleunigerBallett's docs build stages the folder with its CC0 notice.
+  `StudioApp::set_skybox_faces` is the one way in for both, and `demo_view()` reports `skybox`.
+
 ### Changed (2026-11-18, the skybox is CC0)
 - **`kataglyphis_webgpu_renderer`**: BeschleunigerBallett replaced its unlicensed DOOM2016 faces with Poly Haven's
   CC0 `kloofendal_43d_clear_puresky` (Greg Zaal), an AssetANT release it fetches into

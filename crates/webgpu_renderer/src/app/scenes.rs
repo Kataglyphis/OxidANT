@@ -149,7 +149,7 @@ impl StudioApp {
     pub fn load_skybox(&mut self, dir: &std::path::Path) -> bool {
         match crate::asset::skybox::CubemapFaces::load_dir(dir) {
             Ok(faces) => {
-                self.renderer.set_skybox(&self.gpu, &faces);
+                self.set_skybox_faces(&faces);
                 true
             }
             Err(error) => {
@@ -157,6 +157,11 @@ impl StudioApp {
                 false
             }
         }
+    }
+
+    /// Shows `faces` as the skybox from the next frame on; the browser's fetch lands here, the native folder too.
+    pub fn set_skybox_faces(&mut self, faces: &crate::asset::skybox::CubemapFaces) {
+        self.renderer.set_skybox(&self.gpu, faces);
     }
 
     /// Swaps in `scene` at once, framed and lit as a load would be; no library row holds it.
