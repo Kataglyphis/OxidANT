@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-18, the Windows parity run is the hub's)
+
+- `scripts/windows/check_gpu_detector_parity.py` keeps its launcher (`kataglyphis_cli.exe onnx-detect`) and its
+  lock-driven model check; the three clean processes, their profiles, the pairwise comparisons, the photo digest
+  and the DirectML adapter check come from the hub's `shared/python/check_detector_parity.py` (ANTfrastructure
+  CON252, pin `c5a5a637`). The packaged `onnxruntime.dll` must now also be a regular file in the stage.
+
 ### Added (2026-11-18, the no-Cargo-feature rule fails the lint gates)
 
 - AGENTS.md's owner rule "no crate has a Cargo feature" held by habit. `quality-report.toml`'s

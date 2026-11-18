@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
-"""Check real-image parity in three isolated processes from an extracted ZIP."""
+"""Check real-image parity in three isolated processes from an extracted ZIP; the run is the hub's."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import itertools
 import os
-import re
 import runpy
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
-FIXTURE_SHA256 = "6d375ac20fadfd400b3033084f8b0581dcc145f7c14e3b24b97975e379c52999"
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "third_party/ANTfrastructure/shared/python"))
+import check_detector_parity as shared
 
 
 def locked_files(fetcher: Path, lock: Path) -> list[str]:
@@ -66,99 +63,36 @@ def detector_command(
     return command + (["--repeat-output", str(repeat)] if repeat is not None else [])
 
 
-def child_environment(stage: Path, device: str, index: str) -> dict[str, str]:
-    """Select the bundled runtime and default detector settings for one process."""
-    env = os.environ.copy()
-    for key in list(env):
-        name = key.upper()
-        if name.startswith(("KATAGLYPHIS_", "ORT_", "MIGRAPHX_", "GST_")):
-            del env[key]
-    env["KATAGLYPHIS_ORT_DEVICE"] = device
-    env["ORT_DYLIB_PATH"] = str(stage / "onnxruntime.dll")
-    if device == "directml":
-        env["KATAGLYPHIS_DIRECTML_DEVICE_ID"] = index
-    if device == "cpu" and os.name == "nt":
-        env["PATH"] = os.pathsep.join(
-            (str(stage), str(Path(env["SYSTEMROOT"]) / "System32"))
-        )
-    return env
-
-
 def check(stage: Path, device: str, index: str, repo: Path, temp_root: Path) -> Path:
-    """Verify the locked ZIP payload, provider profiles and detector parity."""
-    if (
-        device not in {"cuda", "directml"}
-        or not re.fullmatch(r"0|[1-9][0-9]*", index)
-        or int(index) > 2147483647
-    ):
-        raise ValueError("invalid GPU provider or DirectML adapter index")
+    """Verify the locked ZIP payload, then the hub's provider profiles and detector parity."""
+    shared.validate_device(device, index)
     stage = stage.resolve(strict=True)
     repo = repo.resolve(strict=True)
     hub = repo / "third_party" / "ANTfrastructure"
     fixture = repo / "crates/inference/tests/fixtures/two_cats.jpg"
     locked = hub / "shared/python/verify_locked_files.py"
-    comparator = hub / "shared/python/compare_detector_parity.py"
-    intervals = hub / "shared/python/verify_ort_profile.py"
     fetcher = hub / "linux/scripts/lib/fetch-data-lock.py"
     lock = repo / "resources/models/models.lock"
-    dxgi = hub / "windows/scripts/diagnostics/verify-dxgi-adapter.py"
     executable = stage / "kataglyphis_cli.exe"
-    runtime = stage / "onnxruntime.dll"
-    for path in (
-        fixture,
-        locked,
-        comparator,
-        intervals,
-        fetcher,
-        lock,
-        executable,
-        runtime,
-    ):
+    for path in (fixture, locked, fetcher, lock, executable):
         if not path.is_file():
             raise ValueError(f"required packaged file or pinned helper missing: {path}")
-    if hashlib.sha256(fixture.read_bytes()).hexdigest() != FIXTURE_SHA256:
-        raise ValueError("two-cats fixture does not match its expected digest")
-    py = [sys.executable, "-I"]
-    run(py + model_check_arguments(locked, stage, lock, fetcher))
-    if device == "directml":
-        if not dxgi.is_file():
-            raise ValueError("pinned physical DXGI adapter verifier missing")
-        run(py + [str(dxgi), "--vendor", "amd", "--index", index])
-    work = Path(tempfile.mkdtemp(prefix="oxidant-windows-parity-", dir=temp_root))
-    for label, selected in (("cpu", "cpu"), ("gpu1", device), ("gpu2", device)):
-        output = work / f"{label}.json"
-        profile = work / f"{label}-profile"
-        repeat = work / f"{label}-repeat.json"
-        run(
-            detector_command(executable, fixture, output, profile, repeat),
-            cwd=stage,
-            env=child_environment(stage, selected, index),
-        )
-        profiles = list(work.glob(f"{label}-profile*.json"))
-        if len(profiles) != 1 or not output.is_file() or not repeat.is_file():
-            raise ValueError(
-                f"expected one {label} detector output and provider profile"
-            )
-        run(
-            py
-            + [
-                str(intervals),
-                str(profiles[0]),
-                "--device",
-                selected,
-                "--min-runs",
-                "2",
-            ]
-        )
-    labels = ("cpu", "cpu-repeat", "gpu1", "gpu1-repeat", "gpu2", "gpu2-repeat")
-    for left, right in itertools.combinations(labels, 2):
-        mode = [] if left == "cpu" else ["--pairwise"]
-        run(
-            py
-            + [str(comparator), str(work / f"{left}.json"), str(work / f"{right}.json")]
-            + mode
-        )
-    return work
+    shared.verify_runtime(stage)
+    shared.verify_fixture(fixture)
+    run([sys.executable, "-I"] + model_check_arguments(locked, stage, lock, fetcher))
+    shared.verify_adapter(hub, device, index, run)
+    work = shared.new_work("oxidant-windows-parity-", temp_root)
+    return shared.check_parity(
+        hub,
+        stage,
+        device,
+        index,
+        work,
+        lambda _label, output, repeat, profile: detector_command(
+            executable, fixture, output, profile, repeat
+        ),
+        lambda *a, **k: run(*a, **k),
+    )
 
 
 def main() -> int:
