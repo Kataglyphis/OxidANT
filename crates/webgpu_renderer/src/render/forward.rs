@@ -13,6 +13,7 @@ mod main_pass;
 mod placement;
 mod post;
 mod primitive;
+mod punctual_shadow;
 pub(crate) mod readback;
 mod record;
 #[cfg(not(target_arch = "wasm32"))]
@@ -56,6 +57,7 @@ use light_grid::LightResources;
 use main_pass::MainPipelines;
 use post::PostChain;
 use primitive::GpuPrimitive;
+use punctual_shadow::PunctualShadowResources;
 use record::FrameRecord;
 #[cfg(not(target_arch = "wasm32"))]
 pub use reload::ShaderSources;
@@ -87,6 +89,8 @@ pub struct ForwardRenderer {
     main: MainPipelines,
     sky: SkyResources,
     shadow: ShadowResources,
+    /// The punctual lights' cube faces, drawn after the cascades with their caster pipelines.
+    punctual_shadow: PunctualShadowResources,
     /// Group 2: per-frame uniforms shared by the forward and shadow pipelines.
     frame: FrameBinding,
     /// Group 3: punctual lights and the tile light grid.
@@ -143,7 +147,7 @@ pub struct ForwardRenderer {
     /// Camera distances at which successive LOD levels take over, ascending.
     /// Defaults suit unit-scale assets; a scene in metres wants larger values.
     pub lod_switch_distances: Vec<f32>,
-    /// The Sun's shadows; read every frame, a new resolution or cascade count reallocates the maps.
+    /// The Sun's shadows and the punctual lights' switch; read every frame, a new resolution or cascade count reallocates the maps.
     pub shadows: ShadowSettings,
     /// Skip what lies outside the camera frustum, and casters outside every cascade.
     pub frustum_culling: bool,
@@ -176,9 +180,10 @@ impl ForwardRenderer {
         let device = &gpu.device;
         let shader = main_pass::create_forward_shader(device);
         let frame = FrameBinding::new(device);
-        let lights = LightResources::new(device);
         let ibl = IblBinding::new(device);
         let shadow = ShadowResources::new(device, &shader, &frame.layout);
+        let punctual_shadow = PunctualShadowResources::new(device, &shadow.view_layout);
+        let lights = LightResources::new(device, &punctual_shadow.view);
         let main = MainPipelines::new(device, shader, &ibl.layout, &frame.layout, &lights.layout);
         let targets = RenderTargets::new(width, height);
         let depth_resolve = DepthResolve::new(device);
@@ -187,6 +192,7 @@ impl ForwardRenderer {
             main,
             sky: SkyResources::new(gpu),
             shadow,
+            punctual_shadow,
             frame,
             lights,
             ibl,

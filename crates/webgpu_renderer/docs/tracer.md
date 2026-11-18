@@ -231,8 +231,8 @@ bright sun in an `.hdr` converges slowly.
 uniformly, evaluates it as the raster does (`shaders/common/punctual_light.slang`, shared with
 `forward_lighting.slang`: inverse square, the KHR range window, the spot cone's smoothstep;
 directional lights unattenuated) and divides by the pick's chance, 1 / count, through a shadow ray
-that stops just short of the light. So a punctual light casts a traced shadow, which the raster's
-shadowless punctual lights do not. The kernels read the raster's light buffer itself, at
+that stops just short of the light. So a punctual light casts a traced shadow, as the raster's
+first four point and spot lights cast theirs through depth cubes. The kernels read the raster's light buffer itself, at
 `TRACE_LIGHTS_GROUP` (2): binding 0 the lights in `render::lights`' four rows, binding 1 the
 environment cube (the IBL's 1x1 stand-in without one); `TraceFrame::lights` carries the count and
 whether an environment is bound.
@@ -336,8 +336,8 @@ lights it (IoU of the pixels over a tenth of the peak above 0.9; measured 0.976)
 range windows, and the centre within 3 % of the analytic radiance (measured 0.5 % under; raster
 within 1 %, measured 0.1 %); a spot light's cone where raster cuts it (IoU 1.0), dark past the outer
 cone and lit inside the inner one; a wall between a point light and the ground leaving the ground
-behind it black (raster, shadowless, lights it) while the ground beside it matches raster within
-2 %; a white card under a constant coloured environment converging to its colour times E(1),
+behind it black, as raster's depth cube does (unshadowed raster lights it), while the ground beside
+it matches raster within 2 %; a white card under a constant coloured environment converging to its colour times E(1),
 0.994 in each channel. Dropping the 1/count halves the centre (0.390 against 0.784), dropping the
 shadow ray lights the wall's shadow (0.096 against 0.097 raster), and the gradient in place of the
 environment turns the card blue (0.36, 0.80, 1.99 of the environment): each fails its test.

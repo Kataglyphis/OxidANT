@@ -12,8 +12,8 @@ use crate::render::shadow_settings::{
 use crate::ui::palette as pal;
 use crate::ui::theme;
 use crate::ui::widgets::{
-    drag_axes, enabled_ui, frame_fill, frame_height, property_row, section_header, FillSlider,
-    Segmented,
+    drag_axes, enabled_ui, frame_fill, frame_height, muted_wrapped, property_row, section_header,
+    FillSlider, Segmented,
 };
 
 /// The C++ segment labels: `kShadowMapResolutions`, then the digits of the cascade and radius rows.
@@ -31,6 +31,11 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
     let tooltip = "Points from the sun into the scene; normalized before use";
     property_row(ui, "Direction", Some(tooltip), |ui| direction(ui, settings));
     shadows(ui, &mut settings.shadows);
+    section_header(ui, "LIGHT SHADOWS", Some(&mut settings.shadows.punctual));
+    muted_wrapped(
+        ui,
+        "A 512 px cube for each of the scene's first four point and spot lights, redrawn every frame.",
+    );
 }
 
 /// The SHADOWS header's switch, then the grid it disables.

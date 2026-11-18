@@ -305,7 +305,7 @@ fn a_spot_light_cuts_its_cone_where_raster_does() {
     assert_eq!(dark, 0, "dark inside the inner cone");
 }
 
-/// A wall between a point light and the ground: raster's punctual lights are shadowless, the traced one is shadowed.
+/// A wall between a point light and the ground: the traced shadow ray and raster's cube both darken the ground behind it.
 #[test]
 fn a_point_light_casts_a_traced_shadow_behind_an_occluder() {
     let wall = quad(
@@ -324,29 +324,47 @@ fn a_point_light_casts_a_traced_shadow_behind_an_occluder() {
     ) else {
         return;
     };
+    // The unshadowed raster frame is the reference both shadows are measured against.
+    rig.renderer.shadows.punctual = false;
     let raster = rig.radiance(RenderMode::Raster, 1);
+    rig.renderer.shadows.punctual = true;
+    let cube = rig.radiance(RenderMode::Raster, 1);
     let traced = rig.radiance(RenderMode::PathTraced, 8);
     let ground = rig.ground();
-    let patch = |centre: Vec2| -> (f32, f32) {
+    let patch = |frame: &[Vec3], centre: Vec2| -> f32 {
         let pixels: Vec<usize> = (0..ground.len())
             .filter(|&i| ground[i].distance(centre) < 0.25)
             .collect();
-        (
-            mean(pixels.iter().map(|&i| raster[i].x)),
-            mean(pixels.iter().map(|&i| traced[i].x)),
-        )
+        mean(pixels.iter().map(|&i| frame[i].x))
     };
     // The wall's shadow covers the origin; the rays to (0, 3.2) pass beside the wall.
-    let (raster_shadow, traced_shadow) = patch(Vec2::ZERO);
-    let (raster_lit, traced_lit) = patch(Vec2::new(0.0, 3.2));
-    eprintln!("behind the wall: raster {raster_shadow:.4}, traced {traced_shadow:.4}; beside it: raster {raster_lit:.4}, traced {traced_lit:.4}");
+    let (behind, beside) = (Vec2::ZERO, Vec2::new(0.0, 3.2));
+    let (raster_shadow, cube_shadow, traced_shadow) = (
+        patch(&raster, behind),
+        patch(&cube, behind),
+        patch(&traced, behind),
+    );
+    let (raster_lit, cube_lit, traced_lit) = (
+        patch(&raster, beside),
+        patch(&cube, beside),
+        patch(&traced, beside),
+    );
+    eprintln!("behind the wall: unshadowed {raster_shadow:.4}, cube {cube_shadow:.4}, traced {traced_shadow:.4}; beside it: unshadowed {raster_lit:.4}, cube {cube_lit:.4}, traced {traced_lit:.4}");
     assert!(
         traced_shadow < raster_shadow * 0.1,
         "no traced shadow: {traced_shadow} against {raster_shadow}"
     );
     assert!(
+        cube_shadow < raster_shadow * 0.1,
+        "no raster cube shadow: {cube_shadow} against {raster_shadow}"
+    );
+    assert!(
         (0.85..1.25).contains(&(traced_lit / raster_lit)),
         "the unshadowed ground: {traced_lit} against {raster_lit}"
+    );
+    assert!(
+        (cube_lit / raster_lit - 1.0).abs() < 0.02,
+        "the cube shadows the open ground: {cube_lit} against {raster_lit}"
     );
 }
 

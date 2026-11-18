@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-18, raster shadows for point and spot lights)
+- **`kataglyphis_webgpu_renderer`**: the first four point and spot lights get a 512 px depth cube, at parity with
+  BeschleunigerBallett's 152b5047: the same slots, depth range (the range, else 1.05 times the scene bounds' farthest
+  corner, 100 without geometry; near a thousandth of far in 0.01..0.5), face matrices and layer order, and the same
+  sampling (a texel of normal and light offset, five 2×2-PCF taps) in forward and deferred. Row 3 of a packed light is
+  now `[cos_outer, slot + 1, near, far]`. The 24 faces are layers of one 2D depth array, not a cube array, so a
+  WebGPU compatibility device samples them; `shaders/common/punctual_shadow.slang` selects the face. Each face is a
+  pass after the cascades through their caster pipelines, casters culled to the light's sphere and the face's
+  frustum. `ShadowSettings::punctual` and the Sun tab's LIGHT SHADOWS switch turn them off; the faces are timed as
+  `ShadowCascades`. `tests/punctual_shadows.rs`; `traced_lights`' wall test now checks raster's shadow too.
+
 ### Changed (2026-11-17, perf-host's text model takes the text thread rule)
 
 - `scripts/linux/perf-host.sh setup` copies the text model with `genai-model-threads.py --threads text` (half the

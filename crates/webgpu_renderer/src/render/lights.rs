@@ -1,5 +1,11 @@
 //! Packs punctual lights for `punctual_light.slang`, which the raster passes and the path tracer read; change both together.
-//! Four vec4 rows per light: [pos, kind], [color * intensity, range], [dir, cos_inner], [cos_outer].
+//! Four vec4 rows per light: [pos, kind], [color * intensity, range], [dir, cos_inner], [cos_outer, slot + 1, near, far].
+//! The shadow half is `PunctualLight.ixx`'s twin: the same slots, depth range and face matrices as the C++ engine.
+
+// glam's `directx` projection is glm's perspectiveRH_ZO: NDC Z in [0, 1], Y up.
+use glam::camera::rh::proj::directx as clip;
+use glam::camera::rh::view::look_at_mat4;
+use glam::{Mat4, Vec3};
 
 use crate::scene::{CpuLight, CpuLightKind};
 
@@ -42,6 +48,89 @@ pub(crate) fn pack_punctual_lights(
     }
     (packed, count as u32)
 }
+
+/// Point and spot lights that get a cube shadow map; the rest, and every directional light, stay unshadowed.
+pub const MAX_SHADOWED_PUNCTUAL_LIGHTS: usize = 4;
+
+/// One shadowed light's cube: where it sits and the depth range its six faces project.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PunctualShadowSlot {
+    pub position: Vec3,
+    pub near: f32,
+    pub far: f32,
+}
+
+/// The far plane of a light without a range: past the farthest corner of the scene, or 100 without geometry.
+pub fn unbounded_shadow_far(position: Vec3, bounds: Option<(Vec3, Vec3)>) -> f32 {
+    let Some((min, max)) = bounds.filter(|(min, max)| min.cmple(*max).all()) else {
+        return 100.0;
+    };
+    let farthest = (min - position).abs().max((max - position).abs());
+    (farthest.length() * 1.05).max(1.0)
+}
+
+/// Gives the first [`MAX_SHADOWED_PUNCTUAL_LIGHTS`] point and spot lights of `packed` a cube: row 3 becomes
+/// [cos_outer, slot + 1, near, far], and every other light's .yzw zero, meaning unshadowed.
+pub fn assign_punctual_shadow_slots(
+    packed: &mut [[f32; 4]],
+    count: u32,
+    bounds: Option<(Vec3, Vec3)>,
+) -> Vec<PunctualShadowSlot> {
+    let mut slots = Vec::new();
+    for light in packed
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .take(count as usize)
+    {
+        let directional = light[0][3] > 2.5;
+        if directional || slots.len() == MAX_SHADOWED_PUNCTUAL_LIGHTS {
+            light[3] = [light[3][0], 0.0, 0.0, 0.0];
+            continue;
+        }
+        let position = Vec3::new(light[0][0], light[0][1], light[0][2]);
+        let range = light[1][3];
+        let far = if range > 0.0 {
+            range
+        } else {
+            unbounded_shadow_far(position, bounds)
+        };
+        // A thousandth of the far plane keeps Depth32Float's precision at the far end finer than a texel.
+        let near = (far * 1.0e-3).clamp(0.01, 0.5);
+        light[3] = [light[3][0], (slots.len() + 1) as f32, near, far];
+        slots.push(PunctualShadowSlot {
+            position,
+            near,
+            far,
+        });
+    }
+    slots
+}
+
+/// Each face's view axis and up vector in cube layer order (+X, -X, +Y, -Y, +Z, -Z), as the C++ engine's.
+const FACES: [(Vec3, Vec3); 6] = [
+    (Vec3::X, Vec3::NEG_Y),
+    (Vec3::NEG_X, Vec3::NEG_Y),
+    (Vec3::Y, Vec3::Z),
+    (Vec3::NEG_Y, Vec3::NEG_Z),
+    (Vec3::Z, Vec3::NEG_Y),
+    (Vec3::NEG_Z, Vec3::NEG_Y),
+];
+
+/// View-projections of a cube's faces in layer order, each a 90-degree perspective whose NDC xy is the face's
+/// (sc, tc) / |ma| of the cube-map selection table, depth zero to one.
+pub fn punctual_shadow_face_matrices(slot: &PunctualShadowSlot) -> [Mat4; 6] {
+    let projection = clip::perspective(std::f32::consts::FRAC_PI_2, 1.0, slot.near, slot.far);
+    FACES.map(|(axis, up)| projection * look_at_mat4(slot.position, slot.position + axis, up))
+}
+
+/// The depth a face stores for a point `major_axis` along its axis; `punctual_shadow.slang`'s twin.
+pub fn punctual_shadow_depth(major_axis: f32, near: f32, far: f32) -> f32 {
+    far * (major_axis - near) / ((far - near) * major_axis)
+}
+
+#[cfg(test)]
+mod shadow_tests;
 
 #[cfg(test)]
 mod tests {

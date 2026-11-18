@@ -1,4 +1,4 @@
-//! Group 3 of the forward pipelines: the punctual lights and the per-tile light grid over them.
+//! Group 3 of the forward pipelines: the punctual lights, the per-tile light grid over them and their cube faces.
 
 use std::hash::{Hash as _, Hasher as _};
 
@@ -18,6 +18,8 @@ pub(super) struct LightResources {
     /// Tile-based light grid: offsets and counts for each screen tile (group 3 bindings 1 and 2).
     tile_grid_buffer: wgpu::Buffer,
     tile_indices_buffer: wgpu::Buffer,
+    /// The punctual cube faces (binding 3), fixed for the renderer's life.
+    shadow_faces: wgpu::TextureView,
     pub(super) tile_counts: (u32, u32),
     /// Reusable scratch for [`build_tile_light_grid`] — see its doc comment.
     scratch: TileLightGridScratch,
@@ -26,14 +28,21 @@ pub(super) struct LightResources {
 }
 
 impl LightResources {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
-        // Group 3, forward pipelines only: lights (0), per-tile offset + count (1), tile light indices (2).
+    pub(super) fn new(device: &wgpu::Device, shadow_faces: &wgpu::TextureView) -> Self {
+        // Group 3, forward pipelines only: lights (0), per-tile offset + count (1), tile light indices (2), cube faces (3).
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light_bind_group_layout"),
             entries: &[
                 bind_layout::storage_buffer(0, wgpu::ShaderStages::FRAGMENT, true),
                 bind_layout::storage_buffer(1, wgpu::ShaderStages::FRAGMENT, true),
                 bind_layout::storage_buffer(2, wgpu::ShaderStages::FRAGMENT, true),
+                bind_layout::texture(
+                    3,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::TextureSampleType::Depth,
+                    wgpu::TextureViewDimension::D2Array,
+                    false,
+                ),
             ],
         });
         let storage_buffer = buffer_desc::storage_dst(
@@ -56,9 +65,8 @@ impl LightResources {
         let bind_group = create_light_bind_group(
             device,
             &layout,
-            &storage_buffer,
-            &tile_grid_buffer,
-            &tile_indices_buffer,
+            [&storage_buffer, &tile_grid_buffer, &tile_indices_buffer],
+            shadow_faces,
         );
         Self {
             storage_buffer,
@@ -66,6 +74,7 @@ impl LightResources {
             bind_group,
             tile_grid_buffer,
             tile_indices_buffer,
+            shadow_faces: shadow_faces.clone(),
             tile_counts: (0, 0),
             scratch: TileLightGridScratch::default(),
             punctual: [[0.0; 4]; MAX_PUNCTUAL_LIGHTS * 4],
@@ -104,9 +113,12 @@ impl LightResources {
             self.bind_group = create_light_bind_group(
                 device,
                 &self.layout,
-                &self.storage_buffer,
-                &self.tile_grid_buffer,
-                &self.tile_indices_buffer,
+                [
+                    &self.storage_buffer,
+                    &self.tile_grid_buffer,
+                    &self.tile_indices_buffer,
+                ],
+                &self.shadow_faces,
             );
         }
     }
@@ -147,9 +159,8 @@ impl ForwardRenderer {
 fn create_light_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    lights: &wgpu::Buffer,
-    tile_grid: &wgpu::Buffer,
-    tile_indices: &wgpu::Buffer,
+    [lights, tile_grid, tile_indices]: [&wgpu::Buffer; 3],
+    shadow_faces: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("light_bind_group"),
@@ -166,6 +177,10 @@ fn create_light_bind_group(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: tile_indices.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(shadow_faces),
             },
         ],
     })

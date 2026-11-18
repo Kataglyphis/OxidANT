@@ -11,7 +11,7 @@ use super::{ForwardRenderer, CASCADE_COUNT, DEPTH_FORMAT, SHADOW_MAP_SIZE};
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::cascades::{fit_cascades, CascadeLens};
-use crate::render::gpu_timing::TimedPass;
+use crate::render::gpu_timing::{PassScope, TimedPass};
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{InstanceRaw, Vertex, VertexLayout as _};
 
@@ -107,6 +107,8 @@ pub(super) struct ShadowResources {
     /// Texels per side of `texture`.
     resolution: u32,
     pub(super) cascade_index_bind_groups: Vec<wgpu::BindGroup>,
+    /// Group 1 of the caster pipelines: which view they draw, a cascade's or a punctual cube face's.
+    pub(super) view_layout: wgpu::BindGroupLayout,
     pub(super) cascade_matrices: [Mat4; CASCADE_COUNT],
     pub(super) cascade_splits: [f32; 4],
     pub(super) bias_scales: [f32; CASCADE_COUNT],
@@ -168,6 +170,7 @@ impl ShadowResources {
             layer_views,
             resolution: SHADOW_MAP_SIZE,
             cascade_index_bind_groups,
+            view_layout: cascade_index_layout,
             cascade_matrices: [Mat4::IDENTITY; CASCADE_COUNT],
             // z, w (tile counts) are written per frame by `write_frame_uniforms`.
             cascade_splits: [10.0, 30.0, 0.0, 0.0],
@@ -187,28 +190,74 @@ impl ShadowResources {
         slots: impl Iterator<Item = (wgpu::BufferAddress, DrawSlot)>,
         args: &'a wgpu::Buffer,
     ) {
-        let pipelines = &self.pipelines;
-        let masked_group = prim
-            .shadow_masked_bind_group
-            .as_ref()
-            .filter(|_| prim.alpha_masked);
+        let masked_group = masked_group(prim);
         bundle.set_bind_group(0, masked_group.unwrap_or(&prim.shadow_bind_group), &[]);
         bundle.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
         bundle.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         for (offset, slot) in slots {
             bundle.set_vertex_buffer(1, prim.instance_buffer.slice(slot.instance_offset()..));
-            bundle.set_pipeline(match (masked_group.is_some(), prim.double_sided) {
-                (true, _) => &pipelines.masked,
-                (false, true) => &pipelines.double_sided,
-                (false, false) => pipelines.opaque_for(slot.clockwise),
-            });
+            bundle.set_pipeline(self.caster_pipeline(prim, masked_group.is_some(), slot.clockwise));
             bundle.draw_indexed_indirect(args, offset);
+        }
+    }
+
+    /// As [`Self::record_caster`], drawn directly: every instance run of `prim`, unculled by the draw cull.
+    pub(super) fn draw_caster(&self, pass: &mut wgpu::RenderPass<'_>, prim: &GpuPrimitive) {
+        let masked_group = masked_group(prim);
+        pass.set_bind_group(0, masked_group.unwrap_or(&prim.shadow_bind_group), &[]);
+        pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
+        pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        let stride = std::mem::size_of::<InstanceRaw>() as wgpu::BufferAddress;
+        for (instances, clockwise) in prim.instance_runs() {
+            // Bound at the run's offset, as the indirect draws are, so every draw starts at instance 0.
+            let offset = u64::from(instances.start) * stride;
+            pass.set_vertex_buffer(1, prim.instance_buffer.slice(offset..));
+            pass.set_pipeline(self.caster_pipeline(prim, masked_group.is_some(), clockwise));
+            pass.draw_indexed(0..prim.index_count, 0, 0..instances.len() as u32);
+        }
+    }
+
+    /// MASK casters alpha-test, double-sided ones are not culled, the rest cull back faces by their winding.
+    fn caster_pipeline(
+        &self,
+        prim: &GpuPrimitive,
+        masked: bool,
+        clockwise: bool,
+    ) -> &wgpu::RenderPipeline {
+        let pipelines = &self.pipelines;
+        match (masked, prim.double_sided) {
+            (true, _) => &pipelines.masked,
+            (false, true) => &pipelines.double_sided,
+            (false, false) => pipelines.opaque_for(clockwise),
         }
     }
 }
 
+/// The alpha-tested caster group of a MASK primitive that has one.
+fn masked_group(prim: &GpuPrimitive) -> Option<&wgpu::BindGroup> {
+    prim.shadow_masked_bind_group
+        .as_ref()
+        .filter(|_| prim.alpha_masked)
+}
+
+/// Group 1 of a caster pass: `index.x` is the cascade, or 3 for a punctual cube face drawn through `face`.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(super) struct ShadowViewRaw {
+    pub(super) index: [u32; 4],
+    pub(super) face: [[f32; 4]; 4],
+}
+
+/// `ShadowViewRaw::index.x` of a punctual cube face, `forward.slang`'s `shadow_view_proj`.
+pub(super) const PUNCTUAL_FACE_VIEW: u32 = 3;
+const _: () = assert!(
+    PUNCTUAL_FACE_VIEW as usize == CASCADE_COUNT,
+    "the face marker sits past the cascade indices"
+);
+
 impl ForwardRenderer {
-    /// One depth pass per active cascade, each replaying that cascade's caster bundle; none with shadows off.
+    /// One depth pass per active cascade, each replaying that cascade's caster bundle, then one per punctual cube face.
+    /// Both are timed as the cascades: a pass of their own would overflow the profiler's 16-pass stamp mask.
     pub(super) fn encode_shadow_cascades(
         &mut self,
         gpu: &GpuContext,
@@ -218,16 +267,32 @@ impl ForwardRenderer {
             .shadows
             .active_cascades()
             .min(self.shadow.layer_views.len());
-        if count == 0 {
+        let faces = self.punctual_shadow_faces();
+        if count + faces == 0 {
             return;
         }
-        self.ensure_shadow_caster_bundles(&gpu.device, count);
+        if count > 0 {
+            self.ensure_shadow_caster_bundles(&gpu.device, count);
+        }
+        let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
+        if count > 0 {
+            self.encode_cascade_passes(encoder, count, (shadow_scope, count + faces));
+        }
+        self.encode_punctual_shadow_faces(encoder, (shadow_scope, count, count + faces));
+    }
+
+    /// The cascades' passes, sub-passes 0 to `count` of the shadow scope's `total`.
+    fn encode_cascade_passes(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        count: usize,
+        (shadow_scope, total): (PassScope<'_>, usize),
+    ) {
         let shadow = &self.shadow;
         let caster_bundles = shadow
             .caster_bundles
             .as_ref()
             .expect("just built above when absent");
-        let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
         for cascade in 0..count {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow_pass"),
@@ -240,7 +305,7 @@ impl ForwardRenderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: shadow_scope.render_writes(cascade, count),
+                timestamp_writes: shadow_scope.render_writes(cascade, total),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -344,7 +409,10 @@ fn create_cascade_index_groups(
         .map(|cascade| {
             let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("shadow_cascade_index_{cascade}")),
-                contents: bytemuck::bytes_of(&[cascade, 0u32, 0u32, 0u32]),
+                contents: bytemuck::bytes_of(&ShadowViewRaw {
+                    index: [cascade, 0, 0, 0],
+                    face: Mat4::IDENTITY.to_cols_array_2d(),
+                }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
             device.create_bind_group(&wgpu::BindGroupDescriptor {

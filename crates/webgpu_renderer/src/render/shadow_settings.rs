@@ -27,6 +27,8 @@ pub struct ShadowSettings {
     pub distance: f32,
     /// 0 splits the cascades evenly, 1 logarithmically (Zhang's practical split scheme).
     pub split_lambda: f32,
+    /// A cube for each of the first four point and spot lights, the C++ LIGHT SHADOWS switch; independent of `enabled`.
+    pub punctual: bool,
 }
 
 impl Default for ShadowSettings {
@@ -39,6 +41,7 @@ impl Default for ShadowSettings {
             strength: 0.65,
             distance: DEFAULT_SHADOW_DISTANCE,
             split_lambda: 0.0,
+            punctual: true,
         }
     }
 }
@@ -58,6 +61,7 @@ impl ShadowSettings {
             distance: finite(self.distance, DEFAULT_SHADOW_DISTANCE)
                 .clamp(*SHADOW_DISTANCE_RANGE.start(), *SHADOW_DISTANCE_RANGE.end()),
             split_lambda: finite(self.split_lambda, 0.0).clamp(0.0, 1.0),
+            punctual: self.punctual,
         }
     }
 
@@ -94,6 +98,7 @@ mod tests {
         assert_eq!(settings.strength, 0.65);
         assert_eq!(settings.distance, 60.0);
         assert_eq!(settings.split_lambda, 0.0);
+        assert!(settings.punctual);
         assert_eq!(settings.sanitized(), settings);
         assert_eq!(settings.active_cascades(), 3);
     }
@@ -108,6 +113,7 @@ mod tests {
             strength: f32::NAN,
             distance: 0.5,
             split_lambda: 7.0,
+            punctual: false,
         }
         .sanitized();
         assert_eq!(wild.resolution, 2048, "3000 is nearer 2048 than 4096");
@@ -116,6 +122,7 @@ mod tests {
         assert_eq!(wild.strength, 1.0);
         assert_eq!(wild.distance, 5.0);
         assert_eq!(wild.split_lambda, 1.0);
+        assert!(!wild.punctual, "the switch passes through");
         let none = ShadowSettings {
             cascade_count: 0,
             resolution: 1,

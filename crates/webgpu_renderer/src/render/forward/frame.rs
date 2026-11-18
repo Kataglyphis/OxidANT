@@ -23,7 +23,7 @@ struct FrameUniforms {
     light_color_intensity: [f32; 4],
     camera_position: [f32; 4],
     cascade_splits: [f32; 4],
-    /// x: cascades (0 = off), y: PCF radius, z: strength.
+    /// x: cascades (0 = off), y: PCF radius, z: strength, w: punctual cubes drawn.
     shadow_params: [f32; 4],
     shadow_view_dir: [f32; 4],
     shadow_bias_scale: [f32; 4],
@@ -115,6 +115,7 @@ impl ForwardRenderer {
             self.prepare_deferred(gpu, &view);
         }
         self.write_sky_uniforms(gpu, &view);
+        self.prepare_punctual_shadows(gpu);
         self.write_frame_uniforms(gpu, &view);
         self.write_light_grid(gpu, &view);
         self.write_dirty_prim_uniforms(gpu);
@@ -177,7 +178,7 @@ impl ForwardRenderer {
                 self.shadows.active_cascades() as f32,
                 shadows.pcf_radius as f32,
                 shadows.strength,
-                0.0,
+                self.punctual_shadow_cubes() as f32,
             ],
             shadow_view_dir: self.shadow.view_dir.extend(0.0).to_array(),
             shadow_bias_scale: [bias_0, bias_1, bias_2, 0.0],

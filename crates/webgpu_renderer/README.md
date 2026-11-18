@@ -43,7 +43,8 @@ the sky and blended materials draw forward after it.
 the practical split scheme and texel-stabilised, 512 to 4096 texels, PCF radius 0 to 5,
 strength, distance and split lambda, its bias formula, casters culled per cascade) and
 per-pixel alpha-tested shadows for cut-out (MASK) materials, up to 256
-`KHR_lights_punctual` point/spot lights binned per 16×16-pixel screen tile,
+`KHR_lights_punctual` point/spot lights binned per 16×16-pixel screen tile, the first
+four with the C++ engine's 512 px depth-cube shadows (six layers of a 2D array each),
 the C++ DOOM2016 cube-map skybox natively (from BeschleunigerBallett's
 `Resources/Textures/Skybox`, shown untonemapped as the C++ draws it) or a procedural sky
 with an analytic sun elsewhere and in the browser, and image-based lighting: analytic

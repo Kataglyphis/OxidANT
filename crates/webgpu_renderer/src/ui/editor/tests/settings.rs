@@ -81,6 +81,23 @@ fn the_shadows_section_writes_every_cpp_control_and_its_switch_disables_them() {
 }
 
 #[test]
+fn the_light_shadows_switch_is_its_own_and_outlives_the_suns() {
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.editor.select(SceneObject::Sun);
+    studio.frame(Vec::new());
+    let knob = switch_of(&mut studio, "SHADOWS");
+    studio.frame(click(knob.x, knob.y));
+    assert!(!studio.settings.shadows.enabled);
+    assert!(
+        studio.settings.shadows.punctual,
+        "the sun's switch leaves the lights' alone"
+    );
+    let knob = switch_of(&mut studio, "LIGHT SHADOWS");
+    studio.frame(click(knob.x, knob.y));
+    assert!(!studio.settings.shadows.punctual);
+}
+
+#[test]
 fn the_skybox_eye_and_the_sky_tab_switch_both_toggle_the_skybox() {
     let mut studio = Harness::new((1600.0, 900.0), 1.0);
     studio.frame(Vec::new());

@@ -13,7 +13,7 @@ use crate::render::buffer_desc;
 pub enum TimedPass {
     /// The per-draw cull that writes every draw's indirect arguments (one compute pass; raster frames only).
     DrawCull,
-    /// All shadow cascades, one render pass each.
+    /// All shadow cascades, then every punctual cube face, one render pass each.
     ShadowCascades,
     /// Opaque geometry, sky, and blended geometry in one render pass.
     Forward,

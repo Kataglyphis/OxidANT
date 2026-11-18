@@ -494,6 +494,7 @@ mod tests {
                 strength: 0.2,
                 distance: 100.0,
                 split_lambda: 0.5,
+                punctual: false,
             },
             frustum_culling: !defaults.frustum_culling,
             skybox_enabled: !defaults.skybox_enabled,

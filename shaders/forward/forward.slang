@@ -92,8 +92,24 @@ float2 occlusion_uv(float2 uv0, float2 uv1)
 [vk::binding(12, 0)] SamplerState occlusionSampler;
 [vk::binding(13, 0)] StructuredBuffer<float4x4> jointMatrices;
 
+// Which view a shadow pass draws: index.x is the cascade, or 3 for a punctual cube face, whose matrix is `face`.
+struct ShadowView
+{
+    uint4 index;
+    float4x4 face;
+};
+
 // Shares set 1 binding 0 with iblParams: the forward and shadow pipelines use different bind-group layouts.
-[vk::binding(0, 1)] ConstantBuffer<uint4> shadowCascadeIndex;
+[vk::binding(0, 1)] ConstantBuffer<ShadowView> shadowView;
+
+float4x4 shadow_view_proj()
+{
+    uint view = shadowView.index.x;
+    if (view == 1u) return frame.light_space_1;
+    if (view == 2u) return frame.light_space_2;
+    if (view == 3u) return shadowView.face;
+    return frame.light_space;
+}
 
 // The deferred lighting pass's group 0 starts past the material's bindings, so no binding has two meanings.
 [vk::binding(14, 0)] Texture2D<float4> gbufferNormal;
@@ -207,10 +223,7 @@ VsOut vs_main(VsIn In)
 float4 vs_shadow(VsIn In) : SV_Position
 {
     float4 world = mul(mul(instance_matrix(In), skin_matrix(In)), float4(In.position, 1.0));
-    uint cascade = shadowCascadeIndex.x;
-    if (cascade == 1u) return mul(frame.light_space_1, world);
-    if (cascade == 2u) return mul(frame.light_space_2, world);
-    return mul(frame.light_space, world);
+    return mul(shadow_view_proj(), world);
 }
 
 struct VsShadowMaskedOut
@@ -225,10 +238,7 @@ VsShadowMaskedOut vs_shadow_masked(VsIn In)
 {
     VsShadowMaskedOut o;
     float4 world = mul(mul(instance_matrix(In), skin_matrix(In)), float4(In.position, 1.0));
-    uint cascade = shadowCascadeIndex.x;
-    if (cascade == 1u) o.pos = mul(frame.light_space_1, world);
-    else if (cascade == 2u) o.pos = mul(frame.light_space_2, world);
-    else o.pos = mul(frame.light_space, world);
+    o.pos = mul(shadow_view_proj(), world);
     o.uv = base_color_uv_select(In.uv, In.uv1);
     o.alpha = In.color.a;
     return o;

@@ -507,6 +507,11 @@
         "replacement": "${1}texture_depth_2d_array"
       },
       {
+        "_comment": "The punctual lights' cube faces, one depth layer each.",
+        "pattern": "(var punctualShadowMap_\\w+\\s*:\\s*)texture_2d_array<f32>",
+        "replacement": "${1}texture_depth_2d_array"
+      },
+      {
         "_comment": "The deferred lighting pass reads the G-buffer depth the geometry pass wrote.",
         "pattern": "(var gbufferDepth_\\w+\\s*:\\s*)texture_2d<f32>",
         "replacement": "${1}texture_depth_2d"
