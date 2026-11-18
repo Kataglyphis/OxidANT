@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-18, the skybox is CC0)
+- **`kataglyphis_webgpu_renderer`**: BeschleunigerBallett replaced its unlicensed DOOM2016 faces with Poly Haven's
+  CC0 `kloofendal_43d_clear_puresky` (Greg Zaal), an AssetANT release it fetches into
+  `Resources/Textures/Skybox/kloofendal_43d_clear_puresky` as `RT.png` ... `BK.png`. `asset::skybox::SKYBOX_FACES` and
+  `SKYBOX_DIR` (were `DOOM2016_FACES`, `DOOM2016_DIR`) name them; the native viewer and `editor_snapshot` find them
+  as before.
+
 ### Fixed (2026-11-18, malformed glTF accessors no longer panic)
 - **`kataglyphis_assets`**: gltf 1.4.1 panics on accessors its reader assumes valid: a POSITION naming a missing
   accessor (in validation), a format its semantic does not allow (`unreachable!`), no elements, or a range past its

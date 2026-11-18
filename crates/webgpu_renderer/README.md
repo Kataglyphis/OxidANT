@@ -45,8 +45,8 @@ strength, distance and split lambda, its bias formula, casters culled per cascad
 per-pixel alpha-tested shadows for cut-out (MASK) materials, up to 256
 `KHR_lights_punctual` point/spot lights binned per 16×16-pixel screen tile, the first
 four with the C++ engine's 512 px depth-cube shadows (six layers of a 2D array each),
-the C++ DOOM2016 cube-map skybox natively (from BeschleunigerBallett's
-`Resources/Textures/Skybox`, shown untonemapped as the C++ draws it) or a procedural sky
+the C++ cube-map skybox natively (Poly Haven's CC0 `kloofendal_43d_clear_puresky`, which
+BeschleunigerBallett fetches into `Resources/Textures/Skybox`, shown untonemapped as the C++ draws it) or a procedural sky
 with an analytic sun elsewhere and in the browser, and image-based lighting: analytic
 (hemisphere irradiance + sky reflections via the split-sum approximation), or
 from a Radiance `.hdr` environment map (irradiance and prefiltered specular

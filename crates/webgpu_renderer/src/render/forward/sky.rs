@@ -120,7 +120,7 @@ impl SkyResources {
 }
 
 impl ForwardRenderer {
-    /// Shows `faces` as the skybox from the next frame on, the C++ DOOM2016 cube map.
+    /// Shows `faces` as the skybox from the next frame on, the C++ engine's cube map.
     pub fn set_skybox(&mut self, gpu: &GpuContext, faces: &CubemapFaces) {
         let view = create_cube_view(gpu, faces);
         self.sky.cubemap_ambient = CloudAmbient::of_cubemap(faces);
