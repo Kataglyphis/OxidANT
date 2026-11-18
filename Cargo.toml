@@ -39,7 +39,7 @@ proptest = "1.11"
 log = "0.4"
 env_logger = "0.11.10"
 anyhow = "1"
-chrono = "0.4"
+jiff = "0.2"
 tokio = "1"
 clap = { version = "4", features = ["derive"] }
 # The dispatch patch and Burn family must advance together; Renovate requires review of this pin.
@@ -56,7 +56,8 @@ gstreamer-video = "0.25"
 libloading = "0.9"
 sysinfo = "0.39"
 flutter_rust_bridge = "=2.13.0"
-wmi = "0.18"
+# Without chrono (RUSTSEC-2026-0543): the GPU sampler reads no WMI datetime.
+wmi = { version = "0.18", default-features = false }
 
 [package]
 name = "oxidant"
@@ -82,7 +83,6 @@ env_logger = { workspace = true }
 
 flutter_rust_bridge = { workspace = true }
 anyhow = { workspace = true }
-chrono = { workspace = true }
 sysinfo = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -39,6 +39,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
   it replaces BeschleunigerBallett's retired cgltf FuzzTest target and found the panics above in its first run.
   `accessors_the_reader_would_panic_on_are_rejected` pins one case of each.
 
+### Changed (2026-11-18, off chrono)
+
+- `kataglyphis_core`'s log timestamps and ObservANT's `/ask` days use `jiff` instead of the unmaintained `chrono`
+  (RUSTSEC-2026-0543): the visit days, the `tz_offset_min` offset and a `day=YYYY-MM-DD` read as before. `wmi` runs
+  without its `chrono` default feature, as the GPU sampler reads no WMI datetime. `deny.toml` no longer ignores
+  the advisory; `.cargo/audit.toml` keeps it for a lockfile-only chrono that `cubecl-environment`'s optional `turso`
+  locks and this workspace never builds.
+
 ### Added (2026-11-18, raster shadows for point and spot lights)
 - **`kataglyphis_webgpu_renderer`**: the first four point and spot lights get a 512 px depth cube, at parity with
   BeschleunigerBallett's 152b5047: the same slots, depth range (the range, else 1.05 times the scene bounds' farthest

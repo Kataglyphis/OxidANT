@@ -101,9 +101,11 @@ Empty on 2026-11-17: nothing else is in the queue.
 
 ## P3 — ideas, chores and blocked work
 
-- [ ] **Move off chrono, then drop the RUSTSEC-2026-0543 ignore** (S). `chrono` is unmaintained since 2026-11-17;
-      `kataglyphis_core` uses it for timestamps and `wmi` 0.18 depends on it. Port `kataglyphis_core` to `jiff` or `time`;
-      `wmi` needs a release without chrono (or its feature off). Done when `deny.toml` and `.cargo/audit.toml` no longer ignore it.
+- [ ] **chrono is lockfile-only: drop the last RUSTSEC-2026-0543 ignore** (S). Since 2026-11-18 `kataglyphis_core`
+      and `observant` use `jiff` and `wmi` runs without its chrono default, so nothing built needs chrono and
+      `deny.toml` ignores nothing. `Cargo.lock` still holds it through `cubecl-environment`'s optional `turso`
+      (`turso_core` 0.8.3), which this workspace never builds, so `cargo audit` (lockfile) still needs the ignore in
+      `.cargo/audit.toml`. Done when a cubecl or turso release drops chrono and that ignore goes.
 
 - [b] **An audit ignore waits for basisu to move to ruzstd 0.9.1** (S, ★). Since 2026-11-16 `.cargo/audit.toml`
       ignores RUSTSEC-2026-0344 (owner decision): `ruzstd` 0.7.3 has a decompression bomb, fixed in 0.9.1, and

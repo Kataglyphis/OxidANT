@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use bytes::Bytes;
-use chrono::{DateTime, Days, FixedOffset, NaiveDate, Utc};
+use jiff::civil::{Date, DateTime};
+use jiff::tz::{Offset, TimeZone};
+use jiff::{Timestamp, ToSpan, Zoned};
 use http_body_util::BodyExt as _;
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderValue};
@@ -362,7 +364,7 @@ pub async fn unload_when_idle(assistant: Weak<Assistant>) {
 /// One local day of the visit log; a stay still running counts toward the visits only.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct DayFacts {
-    day: NaiveDate,
+    day: Date,
     visits: usize,
     first: Option<String>,
     last: Option<String>,
@@ -370,19 +372,19 @@ pub(crate) struct DayFacts {
     total_s: u64,
 }
 
-fn local(arrived: u64, offset: FixedOffset) -> Option<DateTime<FixedOffset>> {
-    DateTime::<Utc>::from_timestamp(i64::try_from(arrived).ok()?, 0)
-        .map(|t| t.with_timezone(&offset))
+fn local(arrived: u64, offset: Offset) -> Option<Zoned> {
+    let at = Timestamp::from_second(i64::try_from(arrived).ok()?).ok()?;
+    Some(at.to_zoned(TimeZone::fixed(offset)))
 }
 
 /// `stays` is newest first, as the log keeps it.
-pub(crate) fn day_facts(stays: &[Stay], day: NaiveDate, offset: FixedOffset) -> DayFacts {
-    let of_day: Vec<(DateTime<FixedOffset>, Option<u64>)> = stays
+pub(crate) fn day_facts(stays: &[Stay], day: Date, offset: Offset) -> DayFacts {
+    let of_day: Vec<(DateTime, Option<u64>)> = stays
         .iter()
-        .filter_map(|(arrived, stayed)| Some((local(*arrived, offset)?, *stayed)))
-        .filter(|(at, _)| at.date_naive() == day)
+        .filter_map(|(arrived, stayed)| Some((local(*arrived, offset)?.datetime(), *stayed)))
+        .filter(|(at, _)| at.date() == day)
         .collect();
-    let clock = |at: &DateTime<FixedOffset>| at.format("%H:%M").to_string();
+    let clock = |at: &DateTime| at.strftime("%H:%M").to_string();
     DayFacts {
         day,
         visits: of_day.len(),
@@ -424,12 +426,12 @@ pub(crate) fn facts_text(
     watching: &str,
     in_view: bool,
     stays: &[Stay],
-    now: DateTime<FixedOffset>,
+    now: &Zoned,
 ) -> String {
-    let today = now.date_naive();
+    let today = now.date();
     let days: Vec<String> = (0..ASK_DAYS)
-        .filter_map(|back| today.checked_sub_days(Days::new(back)))
-        .map(|day| day_facts(stays, day, *now.offset()))
+        .filter_map(|back| today.checked_sub(i64::try_from(back).ok()?.days()).ok())
+        .map(|day| day_facts(stays, day, now.offset()))
         .filter(|facts| facts.visits > 0)
         .map(|facts| facts.line())
         .collect();
@@ -440,17 +442,17 @@ pub(crate) fn facts_text(
     };
     format!(
         "Camera {camera:?} watches for {watching}. Now {}. In view now: {}.\n{log}",
-        now.format("%Y-%m-%d %H:%M %:z"),
+        now.strftime("%Y-%m-%d %H:%M %:z"),
         if in_view { "yes" } else { "no" },
     )
 }
 
-fn offset_of(minutes: i32) -> anyhow::Result<FixedOffset> {
+fn offset_of(minutes: i32) -> anyhow::Result<Offset> {
     anyhow::ensure!(
         minutes.abs() <= LONGEST_OFFSET_MIN,
         "tz_offset_min must lie within {LONGEST_OFFSET_MIN} minutes of UTC"
     );
-    FixedOffset::east_opt(minutes * 60).context("tz_offset_min is not an offset")
+    Offset::from_seconds(minutes * 60).context("tz_offset_min is not an offset")
 }
 
 fn language_line(language: Option<&str>) -> anyhow::Result<&'static str> {
@@ -463,14 +465,14 @@ fn language_line(language: Option<&str>) -> anyhow::Result<&'static str> {
 }
 
 /// The local date now, or `day` when one is given.
-fn chosen_day(day: Option<&str>, now: DateTime<FixedOffset>) -> anyhow::Result<NaiveDate> {
-    day.map_or(Ok(now.date_naive()), |text| {
-        NaiveDate::parse_from_str(text, "%Y-%m-%d").context("day must be YYYY-MM-DD")
+fn chosen_day(day: Option<&str>, now: &Zoned) -> anyhow::Result<Date> {
+    day.map_or(Ok(now.date()), |text| {
+        Date::strptime("%Y-%m-%d", text).context("day must be YYYY-MM-DD")
     })
 }
 
-fn now_at(offset: FixedOffset) -> DateTime<FixedOffset> {
-    Utc::now().with_timezone(&offset)
+fn now_at(offset: Offset) -> Zoned {
+    Timestamp::now().to_zoned(TimeZone::fixed(offset))
 }
 
 #[derive(Deserialize)]
@@ -652,7 +654,7 @@ pub(crate) async fn ask(
                 &status.watching_text(),
                 status.anything_seen(),
                 &status.stays(),
-                now_at(offset),
+                &now_at(offset),
             );
             Ok((facts, language))
         });
@@ -703,7 +705,7 @@ fn summary_figures(query: Option<&str>, status: &Status) -> anyhow::Result<serde
         .context("tz must be whole minutes")?
         .unwrap_or(0);
     let offset = offset_of(minutes)?;
-    let day = chosen_day(query_value(query, "day"), now_at(offset))?;
+    let day = chosen_day(query_value(query, "day"), &now_at(offset))?;
     Ok(day_facts(&status.stays(), day, offset).json())
 }
 
@@ -722,7 +724,7 @@ async fn summary_words(
     };
     let chosen = offset_of(body.tz_offset_min).and_then(|offset| {
         let language = language_line(body.language.as_deref())?;
-        let day = chosen_day(body.day.as_deref(), now_at(offset))?;
+        let day = chosen_day(body.day.as_deref(), &now_at(offset))?;
         Ok((day_facts(&status.stays(), day, offset), language))
     });
     let (facts, language) = match chosen {
@@ -960,8 +962,8 @@ pub(crate) mod tests {
         Arc::new(Assistant::with_opener(open, 16))
     }
 
-    fn utc_plus_one() -> FixedOffset {
-        FixedOffset::east_opt(3600).unwrap()
+    fn utc_plus_one() -> Offset {
+        Offset::from_hours(1).unwrap()
     }
 
     /// 2026-11-04 00:30 UTC, which is 01:30 in UTC+1 and still 2026-11-03 at UTC-1.
@@ -974,7 +976,7 @@ pub(crate) mod tests {
             (NIGHT, Some(60)),
             (NIGHT - 2 * 3600, Some(40)),
         ];
-        let day = NaiveDate::from_ymd_opt(2026, 11, 4).unwrap();
+        let day = jiff::civil::date(2026, 11, 4);
         let facts = day_facts(&stays, day, utc_plus_one());
         assert_eq!(
             facts,
@@ -987,13 +989,13 @@ pub(crate) mod tests {
                 total_s: 60,
             }
         );
-        let west = day_facts(&stays, day, FixedOffset::west_opt(3600).unwrap());
+        let west = day_facts(&stays, day, Offset::from_hours(-1).unwrap());
         assert_eq!(west.visits, 1, "{west:?}");
     }
 
     #[test]
     fn an_empty_day_has_no_clock_and_no_stay() {
-        let day = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let day = jiff::civil::date(2026, 1, 1);
         let facts = day_facts(&[(NIGHT, Some(5))], day, utc_plus_one());
         assert_eq!((facts.visits, facts.first, facts.total_s), (0, None, 0));
         assert_eq!(facts.day.to_string(), "2026-01-01",);
@@ -1013,7 +1015,7 @@ pub(crate) mod tests {
                 (older, Some(5)),
                 (past_the_window, Some(9)),
             ],
-            now,
+            &now,
         );
         assert!(text.contains("\"Garden\" watches for cat"), "{text}");
         assert!(text.contains("Now 2026-11-04 01:30 +01:00"), "{text}");
@@ -1025,7 +1027,7 @@ pub(crate) mod tests {
         assert!(text.contains("2026-11-02: 1 visits"), "{text}");
         assert!(!text.contains("total stay 9 s"), "{text}");
         assert_eq!(text.lines().count(), 3, "{text}");
-        let none = facts_text("Garden", "cat", false, &[], now);
+        let none = facts_text("Garden", "cat", false, &[], &now);
         assert!(none.contains("No visits in the last 7 days."), "{none}");
         assert!(none.contains("In view now: no"), "{none}");
     }
@@ -1034,7 +1036,7 @@ pub(crate) mod tests {
     fn a_full_history_keeps_the_facts_bounded() {
         let now = local(NIGHT, utc_plus_one()).unwrap();
         let stays: Vec<Stay> = (0..10_000).map(|i| (NIGHT - i * 300, Some(5))).collect();
-        let text = facts_text("Garden", "cat", false, &stays, now);
+        let text = facts_text("Garden", "cat", false, &stays, &now);
         assert_eq!(text.lines().count(), 1 + ASK_DAYS as usize, "{text}");
         assert!(text.len() < 1000, "{}", text.len());
     }
@@ -1049,12 +1051,12 @@ pub(crate) mod tests {
         assert!(language_line(Some("en")).unwrap().contains("English"));
         assert!(language_line(Some("fr")).is_err());
         let now = local(NIGHT, utc_plus_one()).unwrap();
-        assert_eq!(chosen_day(None, now).unwrap().to_string(), "2026-11-04");
+        assert_eq!(chosen_day(None, &now).unwrap().to_string(), "2026-11-04");
         assert_eq!(
-            chosen_day(Some("2026-01-02"), now).unwrap().to_string(),
+            chosen_day(Some("2026-01-02"), &now).unwrap().to_string(),
             "2026-01-02"
         );
-        assert!(chosen_day(Some("yesterday"), now).is_err());
+        assert!(chosen_day(Some("yesterday"), &now).is_err());
         assert!(check_question("how many?").is_ok());
         assert!(check_question(" \n").is_err());
         assert!(check_question(&"x".repeat(QUESTION_LIMIT)).is_ok());

@@ -8,7 +8,7 @@ pub fn init_logger() {
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default());
 
     builder.format(|buf, record| {
-        let ts = chrono::Local::now().format("%H:%M:%S");
+        let ts = jiff::Zoned::now().strftime("%H:%M:%S");
         let level = if record.target() == "SUCCESS" {
             "SUCCESS"
         } else {

@@ -14,7 +14,6 @@ kataglyphis_inference = { path = "../inference" }
 kataglyphis_media = { path = "../media" }
 kataglyphis_telemetry = { path = "../telemetry" }
 tokio = { version = "1", features = ["sync", "time"] }
-chrono = { workspace = true }
 
 # Workspace-pinned so this and crates/media never link two GStreamer versions against one libgstreamer.
 gstreamer = { workspace = true }
