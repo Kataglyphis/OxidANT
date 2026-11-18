@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-18, a fast streamed answer is no longer called unstarted)
+
+- A streamed `/ask` whose model is done before the server looks answered 502 `the model ended before it started`
+  now and then: both the start signal and the finished run were ready, and `tokio::select!` picked one at random. It
+  is biased to the start now. Seen once in CI (`a_streamed_answer_without_words_ends_with_an_error_line` on 4417f31).
+  The jiff imports are in rustfmt's order.
+
 ### Added (2026-11-18, the web demo shows the C++ engine's sky)
 - **`kataglyphis_webgpu_renderer`**: the browser demo fetches the six `kloofendal_43d_clear_puresky` faces (Poly
   Haven's CC0 sky, `asset::skybox::SKYBOX_NAME`) from a folder of that name beside its page, or beside

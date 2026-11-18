@@ -6,13 +6,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use bytes::Bytes;
-use jiff::civil::{Date, DateTime};
-use jiff::tz::{Offset, TimeZone};
-use jiff::{Timestamp, ToSpan, Zoned};
 use http_body_util::BodyExt as _;
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
+use jiff::civil::{Date, DateTime};
+use jiff::tz::{Offset, TimeZone};
+use jiff::{Timestamp, ToSpan, Zoned};
 use kataglyphis_text::endpoint::EndpointChoice;
 use kataglyphis_text::{
     CancelToken, ChatMessage, FinishReason, GenerationOptions, GenerationResult, TextBackend,
@@ -266,12 +266,14 @@ impl Assistant {
                 },
             )
         });
+        // Biased, start first: a fast run is done by the time it is polled, and a random pick then called it unstarted.
         tokio::select! {
+            biased;
+            Ok(()) = has_started => {}
             joined = &mut work => return match joined_result(joined) {
                 Err(refusal) => refused(refusal),
                 Ok(_) => plain(StatusCode::BAD_GATEWAY, "the model ended before it started"),
             },
-            Ok(()) = has_started => {}
             () = tokio::time::sleep_until(deadline) => return refused(Refusal::TimedOut),
         }
         tokio::spawn(async move {
