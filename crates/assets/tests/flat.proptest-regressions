@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a542e76be6f248f14ba8229357c25b674fbf0fe18d100b2f246d133dcf587413 # shrinks to seed = 5, mutations = [Digit(Index(4627318852388158711), 2)]

@@ -5118,6 +5118,7 @@ dependencies = [
  "gltf",
  "ktx2",
  "log",
+ "proptest",
  "ruzstd",
  "tempfile",
 ]

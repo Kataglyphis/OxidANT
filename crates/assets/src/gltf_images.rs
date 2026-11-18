@@ -45,12 +45,31 @@ pub(crate) fn parse(bytes: &[u8]) -> anyhow::Result<Parsed> {
         sources.push(TextureSource { basisu, fallback });
     }
     root.extensions_required.retain(|name| name != BASISU);
+    reject_dangling_positions(&root)?;
     let document = gltf::Document::from_json(root)?;
+    crate::accessor_check::check_primitive_accessors(&document)?;
     Ok(Parsed {
         document,
         blob,
         sources,
     })
+}
+
+/// gltf-json 1.4.1's primitive hook indexes `accessors` by POSITION before validation reports it out of range: a panic.
+fn reject_dangling_positions(root: &gltf::json::Root) -> anyhow::Result<()> {
+    let positions = gltf::json::validation::Checked::Valid(gltf::json::mesh::Semantic::Positions);
+    for (m, mesh) in root.meshes.iter().enumerate() {
+        for (p, primitive) in mesh.primitives.iter().enumerate() {
+            if let Some(index) = primitive.attributes.get(&positions) {
+                anyhow::ensure!(
+                    index.value() < root.accessors.len(),
+                    "meshes[{m}].primitives[{p}].attributes.POSITION names accessor {}, which does not exist",
+                    index.value()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn basisu_source(

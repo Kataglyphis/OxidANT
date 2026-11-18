@@ -145,7 +145,7 @@ fn read_materials(imported: &Imported, textures: &mut Vec<FlatTexture>) -> Vec<F
     materials
 }
 
-/// Dedups slots on (image, sampler, colour space), as the C++ loader's `imageSlot` map does.
+/// Dedups slots on (image, sampler, colour space): an image sampled two ways gets one slot per way.
 struct Slots<'a> {
     imported: &'a Imported,
     keys: HashMap<(usize, Option<usize>, bool), i32>,

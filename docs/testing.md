@@ -288,7 +288,9 @@ same day: `CHANGELOG.md`).
   check, request path, camera spec, config file), 256 random inputs per property and run,
   in the `mod properties` of `web.rs`, `static_files.rs`, `camera.rs` and `config.rs`;
   and on the ESP32 frame codec (any split into reads, noise before a frame, a single bit
-  error) in `crates/esp32-protocol/tests/framing.rs`.
+  error) in `crates/esp32-protocol/tests/framing.rs`; and on `load_flat`, the glTF loader
+  BeschleunigerBallett's engine calls, over mutated copies of eight self-contained renderer
+  assets (512 per run, `crates/assets/tests/flat.rs`): a mutant is an error or consistent arrays.
   There is no `cargo-fuzz`/libFuzzer target.
 
 - Script suites: `scripts/linux/tests/test-*.sh`. A harness suite sources `lib-suite.sh`

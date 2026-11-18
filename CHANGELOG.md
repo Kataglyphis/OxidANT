@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-18, malformed glTF accessors no longer panic)
+- **`kataglyphis_assets`**: gltf 1.4.1 panics on accessors its reader assumes valid: a POSITION naming a missing
+  accessor (in validation), a format its semantic does not allow (`unreachable!`), no elements, or a range past its
+  buffer view. Through BeschleunigerBallett's bridge, whose release profile aborts on a panic, one such file in the
+  model picker ended the engine. `accessor_check.rs` rejects each with an error before the reader runs, for
+  `load_gltf`, `load_gltf_slice` and `load_flat` alike; the 31 glTF files under this repo's and
+  BeschleunigerBallett's resources still load.
+- **Fuzzing**: `a_mutated_file_is_rejected_or_flattens_consistently` in `crates/assets/tests/flat.rs` mutates
+  eight renderer assets (byte overwrites, digit swaps, truncation) and asserts an error or consistent flat arrays;
+  it replaces BeschleunigerBallett's retired cgltf FuzzTest target and found the panics above in its first run.
+  `accessors_the_reader_would_panic_on_are_rejected` pins one case of each.
+
 ### Added (2026-11-18, raster shadows for point and spot lights)
 - **`kataglyphis_webgpu_renderer`**: the first four point and spot lights get a 512 px depth cube, at parity with
   BeschleunigerBallett's 152b5047: the same slots, depth range (the range, else 1.05 times the scene bounds' farthest

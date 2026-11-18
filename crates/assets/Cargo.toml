@@ -24,4 +24,5 @@ ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 workspace = true
 
 [dev-dependencies]
+proptest = { workspace = true }
 tempfile = { workspace = true }

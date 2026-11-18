@@ -330,3 +330,121 @@ fn a_truncated_base64_image_gets_no_slot() {
     .unwrap();
     assert!(model.textures.is_empty());
 }
+
+/// Self-contained seeds: every buffer and image is embedded, so a mutant read from a temp dir resolves nothing outside it.
+const FUZZ_SEEDS: [&str; 8] = [
+    "cube.glb",
+    "cube.gltf",
+    "cube_textured.gltf",
+    "cube_alpha.gltf",
+    "cube_normal_transform.gltf",
+    "cube_on_plane.gltf",
+    "point_light.gltf",
+    "skinned_bar.gltf",
+];
+
+#[derive(Clone, Debug)]
+enum Mutation {
+    Overwrite(proptest::sample::Index, u8),
+    /// A digit for a digit keeps the JSON parseable and moves a count, offset or index instead.
+    Digit(proptest::sample::Index, u8),
+    Truncate(proptest::sample::Index),
+}
+
+fn mutation() -> impl proptest::strategy::Strategy<Value = Mutation> {
+    use proptest::prelude::*;
+    prop_oneof![
+        3 => (any::<proptest::sample::Index>(), any::<u8>()).prop_map(|(i, b)| Mutation::Overwrite(i, b)),
+        6 => (any::<proptest::sample::Index>(), 0u8..10).prop_map(|(i, d)| Mutation::Digit(i, d)),
+        1 => any::<proptest::sample::Index>().prop_map(Mutation::Truncate),
+    ]
+}
+
+fn mutate(mut bytes: Vec<u8>, mutations: &[Mutation]) -> Vec<u8> {
+    for m in mutations {
+        if bytes.is_empty() {
+            break;
+        }
+        match m {
+            Mutation::Overwrite(i, b) => {
+                let at = i.index(bytes.len());
+                bytes[at] = *b;
+            }
+            Mutation::Digit(i, d) => {
+                let digits: Vec<usize> = (0..bytes.len())
+                    .filter(|&k| bytes[k].is_ascii_digit())
+                    .collect();
+                if !digits.is_empty() {
+                    bytes[digits[i.index(digits.len())]] = b'0' + d;
+                }
+            }
+            Mutation::Truncate(i) => bytes.truncate(i.index(bytes.len())),
+        }
+    }
+    bytes
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(512))]
+
+    /// The cgltf fuzz target's successor: a mutated file is an error or consistent arrays, never a panic.
+    #[test]
+    fn a_mutated_file_is_rejected_or_flattens_consistently(
+        seed in 0..FUZZ_SEEDS.len(),
+        mutations in proptest::collection::vec(mutation(), 1..8),
+    ) {
+        let name = FUZZ_SEEDS[seed];
+        let bytes = mutate(std::fs::read(renderer_asset(name)).unwrap(), &mutations);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        if let Ok(model) = load_flat(&path) {
+            assert_consistent(&model);
+            let materials = model.materials.len();
+            for material in &model.materials {
+                for slot in [material.base_texture, material.metallic_roughness_texture, material.normal_texture, material.emissive_texture] {
+                    proptest::prop_assert!(slot >= -1 && (slot as i64) < model.textures.len() as i64);
+                }
+            }
+            proptest::prop_assert!(materials > 0, "the neutral fallback is always last");
+        }
+    }
+}
+
+/// Each case once made gltf 1.4.1 panic, which aborts the C++ engine through the bridge; now each is an error.
+#[test]
+fn accessors_the_reader_would_panic_on_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = triangle_gltf(dir.path(), "base.gltf", r#"{"mesh":0}"#, "");
+    let json = std::fs::read_to_string(&path).unwrap();
+    let cases = [
+        ("dangling POSITION", r#""POSITION":0"#, r#""POSITION":7"#),
+        (
+            "float indices",
+            r#""TEXCOORD_0":1}}"#,
+            r#""TEXCOORD_0":1},"indices":1}"#,
+        ),
+        (
+            "VEC3 texcoords",
+            r#""count":3,"type":"VEC2""#,
+            r#""count":3,"type":"VEC3""#,
+        ),
+        (
+            "no elements",
+            r#""count":3,"type":"VEC2""#,
+            r#""count":0,"type":"VEC2""#,
+        ),
+        (
+            "overrun",
+            r#""count":3,"type":"VEC2""#,
+            r#""count":9,"type":"VEC2""#,
+        ),
+    ];
+    for (name, from, to) in cases {
+        assert!(json.contains(from), "{name}: the fixture changed");
+        let case = dir.path().join("case.gltf");
+        std::fs::write(&case, json.replacen(from, to, 1)).unwrap();
+        assert!(load_flat(&case).is_err(), "{name} loaded");
+    }
+    assert!(load_flat(&path).is_ok());
+}
