@@ -45,8 +45,8 @@ mod tests {
         let Some(gpu) = GpuContext::headless_or_skip() else {
             return;
         };
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/point_light.gltf");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../assets/tests/assets/point_light.gltf");
         let scene = crate::load_gltf(&path).expect("point_light.gltf must load");
         let mut renderer = ForwardRenderer::new(&gpu, 4, 4);
         renderer.upload_scene(&gpu, &scene);

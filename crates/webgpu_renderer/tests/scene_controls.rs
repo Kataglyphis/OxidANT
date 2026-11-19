@@ -19,8 +19,8 @@ const FACES: [[u8; 4]; 6] = [
 ];
 
 fn cube_on_plane() -> CpuScene {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     load_gltf(path).expect("cube_on_plane.gltf must load")
 }
 

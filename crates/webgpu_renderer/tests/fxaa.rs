@@ -275,7 +275,8 @@ fn fxaa_brings_the_deferred_edges_towards_forwards_msaa() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube_on_plane.gltf");
     let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
     let off = deferred_against_forward(&gpu, &scene, FxaaMode::Off);
     let on = deferred_against_forward(&gpu, &scene, FxaaMode::Deferred);

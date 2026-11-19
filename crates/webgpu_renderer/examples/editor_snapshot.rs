@@ -20,7 +20,7 @@ const DEFAULT_SHOTS: &[&str] = &[
     "2400x1350@1.5",
     "800x600@1,web",
 ];
-const MODEL: &str = "tests/assets/cube_on_plane.gltf";
+const MODEL: &str = "../assets/tests/assets/cube_on_plane.gltf";
 /// Frames before the shot: egui lays a new window out in an unseen first pass, and the FPS needs two ticks.
 const WARM_UP_FRAMES: u32 = 4;
 /// Lavapipe parses and uploads the 5.9 M-triangle Colosseum in minutes, not seconds.

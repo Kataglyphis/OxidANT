@@ -195,7 +195,8 @@ mod tests {
     #[test]
     fn a_non_finite_vertex_cannot_poison_the_bounds() {
         // One bad vertex would otherwise break shadows for every object in the scene.
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../assets/tests/assets/cube.gltf");
         let scene = crate::load_gltf(path).expect("cube.gltf must load");
         let mut prim = scene.primitives[0].clone();
         prim.vertices[0].position = [f32::NAN, 1.0, f32::INFINITY];
@@ -220,8 +221,8 @@ mod tests {
     #[test]
     fn morph_targets_expand_the_culling_bounds() {
         // cube_morph.gltf: the unit cube plus one target lifting every vertex +1.0 in Y.
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_morph.gltf");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../assets/tests/assets/cube_morph.gltf");
         let scene = crate::load_gltf(path).expect("cube_morph.gltf must load");
         let prim = &scene.primitives[0];
         assert_eq!(prim.morph_targets.len(), 1, "fixture must carry a target");

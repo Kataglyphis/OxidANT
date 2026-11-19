@@ -6,7 +6,7 @@ use kataglyphis_webgpu_renderer::{
 };
 
 fn cube_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf")
 }
 
 fn render(renderer: &mut ForwardRenderer, gpu: &GpuContext) -> Vec<u8> {

@@ -18,7 +18,7 @@ fn red_share(pixels: &[u8]) -> f64 {
 
 fn render(gpu: &GpuContext, path: RasterPath, scale: f32) -> (Vec<u8>, usize) {
     let path_to_cube =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf");
     let scene = load_gltf(path_to_cube).expect("cube.gltf must load");
     let mut renderer = ForwardRenderer::new(gpu, SIZE.0, SIZE.1);
     renderer.upload_scene(gpu, &scene);

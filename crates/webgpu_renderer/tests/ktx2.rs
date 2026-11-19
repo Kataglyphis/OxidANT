@@ -8,9 +8,9 @@ use kataglyphis_webgpu_renderer::scene::{
 };
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
-const RED_BC1: &[u8] = include_bytes!("assets/red_bc1.ktx2");
+const RED_BC1: &[u8] = include_bytes!("../../assets/tests/assets/red_bc1.ktx2");
 /// 8x8 solid-green UASTC with a full mip chain; `basis.rs`'s unit tests rebuild it byte for byte.
-const GREEN_UASTC: &[u8] = include_bytes!("assets/green_uastc.ktx2");
+const GREEN_UASTC: &[u8] = include_bytes!("../../assets/tests/assets/green_uastc.ktx2");
 
 /// One BC1 block whose every texel is pure green (RGB565 0x07E0).
 const GREEN_BC1_BLOCK: [u8; 8] = [0xE0, 0x07, 0xE0, 0x07, 0, 0, 0, 0];
@@ -48,7 +48,8 @@ fn bc1_ktx2(width: u32, height: u32, levels: &[Vec<u8>]) -> Vec<u8> {
 
 /// The test cube with `texture` as its base colour, rendered inside a validation scope.
 fn render_cube_with(gpu: &GpuContext, texture: CpuTexture) -> (Option<wgpu::Error>, Vec<u8>) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf");
     let mut scene = load_gltf(path).expect("cube.gltf must load");
     let material = &mut scene.primitives[0].material;
     material.base_color = [1.0; 4];
@@ -193,8 +194,14 @@ fn encoded_basis_textures_upload_with_and_without_bc() {
         return;
     };
     let fixtures: [(&str, &[u8]); 2] = [
-        ("ETC1S", include_bytes!("assets/ramp_etc1s.ktx2")),
-        ("UASTC", include_bytes!("assets/ramp_uastc.ktx2")),
+        (
+            "ETC1S",
+            include_bytes!("../../assets/tests/assets/ramp_etc1s.ktx2"),
+        ),
+        (
+            "UASTC",
+            include_bytes!("../../assets/tests/assets/ramp_uastc.ktx2"),
+        ),
     ];
     for (name, file) in fixtures {
         for supports_bc in [true, false] {
@@ -571,7 +578,7 @@ fn dominant_pixels(pixels: &[u8]) -> [usize; 3] {
 
 fn basisu_scene(name: &str) -> CpuScene {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/assets")
+        .join("../assets/tests/assets")
         .join(name);
     load_gltf(path).unwrap_or_else(|err| panic!("{name}: {err:#}"))
 }

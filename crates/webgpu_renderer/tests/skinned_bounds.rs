@@ -6,7 +6,7 @@ use kataglyphis_webgpu_renderer::scene::{CpuMaterial, CpuNode, CpuPrimitive, Cpu
 use kataglyphis_webgpu_renderer::{load_gltf, CpuScene, ForwardRenderer, GpuContext};
 
 fn cube_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf")
 }
 
 /// The cube fully weighted to a one-joint skin whose joint (node 1) sits at `joint_translation`.

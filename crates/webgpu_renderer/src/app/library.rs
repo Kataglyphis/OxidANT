@@ -7,23 +7,23 @@ use std::path::{Path, PathBuf};
 pub const EMBEDDED_SCENES: &[(&str, &[u8])] = &[
     (
         "cube_on_plane",
-        include_bytes!("../../tests/assets/cube_on_plane.gltf"),
+        include_bytes!("../../../assets/tests/assets/cube_on_plane.gltf"),
     ),
     (
         "cube_textured",
-        include_bytes!("../../tests/assets/cube_textured.gltf"),
+        include_bytes!("../../../assets/tests/assets/cube_textured.gltf"),
     ),
     (
         "cube_animated",
-        include_bytes!("../../tests/assets/cube_animated.gltf"),
+        include_bytes!("../../../assets/tests/assets/cube_animated.gltf"),
     ),
     (
         "cube_morph",
-        include_bytes!("../../tests/assets/cube_morph.gltf"),
+        include_bytes!("../../../assets/tests/assets/cube_morph.gltf"),
     ),
     (
         "cube_unlit",
-        include_bytes!("../../tests/assets/cube_unlit.gltf"),
+        include_bytes!("../../../assets/tests/assets/cube_unlit.gltf"),
     ),
 ];
 

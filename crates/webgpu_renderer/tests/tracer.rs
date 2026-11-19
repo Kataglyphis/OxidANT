@@ -91,8 +91,8 @@ fn the_scene_binds_at_its_group_in_the_emitted_wgsl() {
 }
 
 fn renderer_with_cube(gpu: &GpuContext) -> ForwardRenderer {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let scene = load_gltf(&path).expect("the test scene loads");
     let mut renderer = ForwardRenderer::new(gpu, 64, 64);
     renderer.upload_scene(gpu, &scene);
@@ -142,9 +142,10 @@ fn a_traced_mode_builds_the_scene_once_and_raster_never_does() {
         matches!(renderer.trace_status(), TraceStatus::Ready(_)),
         "it builds once"
     );
-    let scene =
-        load_gltf(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf"))
-            .expect("loads");
+    let scene = load_gltf(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf"),
+    )
+    .expect("loads");
     renderer.upload_scene(&gpu, &scene);
     assert_eq!(
         renderer.trace_status(),
@@ -159,7 +160,8 @@ fn a_scene_upload_without_a_trace_source_leaves_the_traced_modes_idle() {
         return;
     };
     let mut renderer = renderer_with_cube(&gpu);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf");
     renderer.upload_scene(&gpu, &load_gltf(&path).expect("loads"));
     renderer.render_mode = RenderMode::RayTraced;
     renderer
@@ -370,7 +372,7 @@ fn the_full_colosseum_traces_on_this_device() {
 
 fn renderer_tracing(gpu: &GpuContext, asset: &str) -> ForwardRenderer {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/assets")
+        .join("../assets/tests/assets")
         .join(asset);
     let scene = load_gltf(&path).expect("the test scene loads");
     let mut renderer = ForwardRenderer::new(gpu, 64, 64);

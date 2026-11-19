@@ -34,9 +34,10 @@ fn clouds_in_box(centre: Vec3, half_extents: Vec3, density: f32) -> CloudSetting
     clouds
 }
 
-/// The unit cube of `tests/assets`, scaled to `half_extents` around `centre`: a wall or a card.
+/// The unit cube of `crates/assets/tests/assets`, scaled to `half_extents` around `centre`: a wall or a card.
 fn upload_box(gpu: &GpuContext, renderer: &mut ForwardRenderer, centre: Vec3, half_extents: Vec3) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf");
     renderer.upload_scene(gpu, &load_gltf(path).expect("cube.gltf must load"));
     let placement =
         Mat4::from_scale_rotation_translation(half_extents * 2.0, Quat::IDENTITY, centre);
@@ -161,8 +162,8 @@ fn enabling_clouds_changes_the_frame_and_adds_detail() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
     renderer.upload_scene(
         &gpu,
@@ -1242,7 +1243,8 @@ fn the_first_cloud_frame_after_a_reload_builds_on_the_reloaded_shaders() {
 
 /// A card glowing far past bloom's threshold, at `centre` facing the camera.
 fn upload_glowing_card(gpu: &GpuContext, renderer: &mut ForwardRenderer, centre: Vec3, half: Vec3) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf");
     let mut scene = load_gltf(path).expect("cube.gltf must load");
     scene.primitives[0].material.emissive_factor = [40.0; 3];
     renderer.upload_scene(gpu, &scene);

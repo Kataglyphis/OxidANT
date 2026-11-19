@@ -377,10 +377,7 @@ mod tests {
                 vec![[0, 255, 0, 255]],
             ],
         );
-        assert_eq!(
-            built,
-            include_bytes!("../../webgpu_renderer/tests/assets/green_uastc.ktx2")
-        );
+        assert_eq!(built, include_bytes!("../tests/assets/green_uastc.ktx2"));
     }
 
     /// The 32x32 source of `ramp_etc1s.ktx2` and `ramp_uastc.ktx2`.
@@ -399,12 +396,12 @@ mod tests {
         let fixtures: [(&str, &[u8], f64); 2] = [
             (
                 "ETC1S",
-                include_bytes!("../../webgpu_renderer/tests/assets/ramp_etc1s.ktx2"),
+                include_bytes!("../tests/assets/ramp_etc1s.ktx2"),
                 10.0,
             ),
             (
                 "UASTC",
-                include_bytes!("../../webgpu_renderer/tests/assets/ramp_uastc.ktx2"),
+                include_bytes!("../tests/assets/ramp_uastc.ktx2"),
                 2.0,
             ),
         ];
@@ -578,12 +575,12 @@ mod tests {
         let cases: [(&str, &[u8], [Target; 2]); 2] = [
             (
                 "ETC1S",
-                include_bytes!("../../webgpu_renderer/tests/assets/ramp_etc1s.ktx2"),
+                include_bytes!("../tests/assets/ramp_etc1s.ktx2"),
                 [(etc2.0, etc2.1, 10.0, 0.0), (astc.0, astc.1, 10.0, 1.0)],
             ),
             (
                 "UASTC",
-                include_bytes!("../../webgpu_renderer/tests/assets/ramp_uastc.ktx2"),
+                include_bytes!("../tests/assets/ramp_uastc.ktx2"),
                 [(etc2.0, etc2.1, 6.0, 6.0), (astc.0, astc.1, 2.0, 0.0)],
             ),
         ];
@@ -634,10 +631,7 @@ mod tests {
 
     #[test]
     fn a_bcn_payload_has_no_basis_source_to_retarget() {
-        let texture = load_ktx2(include_bytes!(
-            "../../webgpu_renderer/tests/assets/red_bc1.ktx2"
-        ))
-        .unwrap();
+        let texture = load_ktx2(include_bytes!("../tests/assets/red_bc1.ktx2")).unwrap();
         let compressed = texture.compressed.unwrap();
         assert!(compressed.basis_source.is_none());
         assert!(retarget_basis(&compressed, CompressedFormat::Etc2Rgba8Unorm).is_none());

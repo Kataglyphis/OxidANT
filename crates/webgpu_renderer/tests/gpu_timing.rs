@@ -8,7 +8,7 @@ use kataglyphis_webgpu_renderer::{
 
 /// The same cube the golden tests use, so every pass has real work to do.
 fn cube_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf")
 }
 
 /// The passes `path` records with occlusion culling, the histogram and the clouds on: all but the other path's and the traced modes'.

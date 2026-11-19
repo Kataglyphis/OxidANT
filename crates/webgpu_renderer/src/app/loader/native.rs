@@ -110,7 +110,7 @@ mod tests {
 
     fn asset(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/assets")
+            .join("../assets/tests/assets")
             .join(name)
     }
 

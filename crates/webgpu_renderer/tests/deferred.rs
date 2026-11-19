@@ -23,7 +23,7 @@ const VISIBLE: u8 = 24;
 
 fn asset(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/assets")
+        .join("../assets/tests/assets")
         .join(name)
 }
 

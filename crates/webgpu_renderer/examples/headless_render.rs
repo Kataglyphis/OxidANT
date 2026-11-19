@@ -9,7 +9,7 @@ fn main() -> anyhow::Result<()> {
 
     let model = args.next().unwrap_or_else(|| {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/assets/cube_on_plane.gltf")
+            .join("../assets/tests/assets/cube_on_plane.gltf")
             .to_string_lossy()
             .into_owned()
     });

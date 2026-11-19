@@ -10,7 +10,8 @@ use wgpu::util::DrawIndexedIndirectArgs;
 const SIZE: u32 = 128;
 
 fn cube(transform: Mat4) -> CpuPrimitive {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf");
     let mut prim = load_gltf(path).expect("cube.gltf must load").primitives[0].clone();
     prim.transform = transform;
     prim

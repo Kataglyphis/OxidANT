@@ -269,7 +269,7 @@ pub(in crate::app) mod tests {
     fn studio_in(asset: &str, format: wgpu::TextureFormat) -> Option<StudioApp> {
         let gpu = GpuContext::headless_or_skip()?;
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/assets")
+            .join("../assets/tests/assets")
             .join(asset);
         let scene = load_gltf(&path).expect("the test scene loads");
         let caps = HostCaps {

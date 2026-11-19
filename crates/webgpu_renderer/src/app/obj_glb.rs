@@ -300,9 +300,10 @@ mod tests {
         assert!(format!("{error:#}").contains("model.obj"), "{error:#}");
     }
 
-    /// `tests/assets/obj_mask`: a 2x2 card, `map_Kd red.bmp`, and `map_d half_mask.tga` clearing its left half.
+    /// `crates/assets/tests/assets/obj_mask`: a 2x2 card, `map_Kd red.bmp`, and `map_d half_mask.tga` clearing its left half.
     fn mask_card() -> CpuScene {
-        let obj = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/obj_mask/card.obj");
+        let obj =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/obj_mask/card.obj");
         load_gltf_slice(&obj_to_glb(&obj).expect("converts")).expect("the GLB loads")
     }
 

@@ -8,7 +8,7 @@ use kataglyphis_webgpu_renderer::{load_gltf, CpuScene, ForwardRenderer, GpuConte
 
 fn asset(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/assets")
+        .join("../assets/tests/assets")
         .join(name)
 }
 

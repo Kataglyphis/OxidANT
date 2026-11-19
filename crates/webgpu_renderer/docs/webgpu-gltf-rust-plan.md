@@ -15,7 +15,7 @@ from the *acquired* frame texture, never the window), glTF loader
 normal synthesis), forward pass with a directional light, orbit camera, a
 `viewer` example (`cargo run -p kataglyphis_webgpu_renderer --example viewer
 [model.gltf]`), and headless golden tests against a bundled generated
-`tests/assets/cube.gltf` (structural pixel assertions in sRGB space).
+`cube.gltf`, in `crates/assets/tests/assets` since 2026-11-19 (structural pixel assertions in sRGB space).
 Milestone 3 (2026-07-18): sRGB base-color textures with a white fallback
 (glTF images decoded to RGBA8; a checkered `cube_textured.gltf` golden test
 proves sampling), HDR Rgba16Float offscreen target, and an ACES tonemap

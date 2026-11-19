@@ -33,10 +33,9 @@ fn main() -> anyhow::Result<()> {
     let out_path = args
         .next()
         .unwrap_or_else(|| "gpu-timings-rust.json".to_string());
-    let scene_path = args
-        .next()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf"));
+    let scene_path = args.next().map(PathBuf::from).unwrap_or_else(|| {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf")
+    });
     let width: u32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(1280);
     let height: u32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(720);
 

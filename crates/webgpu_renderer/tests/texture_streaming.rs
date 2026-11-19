@@ -57,7 +57,8 @@ fn texture_ref(texture: CpuTexture) -> Option<CpuTextureRef> {
 
 /// The unit test cube (UV 0..1 a face) with `texture` as its base colour.
 fn cube_with(texture: CpuTexture) -> CpuScene {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf");
     let mut scene = load_gltf(path).expect("cube.gltf must load");
     let material = &mut scene.primitives[0].material;
     material.base_color = [1.0; 4];

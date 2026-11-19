@@ -303,7 +303,7 @@ mod tests {
 
     fn asset(name: &str) -> Vec<u8> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../webgpu_renderer/tests/assets")
+            .join("../assets/tests/assets")
             .join(name);
         bytes(&path)
     }

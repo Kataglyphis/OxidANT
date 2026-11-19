@@ -504,7 +504,7 @@ mod basisu {
 
     fn asset(name: &str) -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/assets")
+            .join("../assets/tests/assets")
             .join(name)
     }
 
@@ -568,7 +568,7 @@ mod basisu {
         assert_eq!(base64(b"not a KTX2"), "bm90IGEgS1RYMg==");
         let text = fallback_text().replace(
             &base64(b"not a KTX2"),
-            &base64(include_bytes!("assets/green_uastc.ktx2")),
+            &base64(include_bytes!("../../assets/tests/assets/green_uastc.ktx2")),
         );
         assert_ne!(
             text,

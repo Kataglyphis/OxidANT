@@ -4,7 +4,7 @@ use glam::{Mat4, Vec3};
 use kataglyphis_webgpu_renderer::{load_gltf, CpuScene, ForwardRenderer, GpuContext, OrbitCamera};
 
 fn cube_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf")
 }
 
 /// The bundled unit cube (positions in [-0.5, 0.5]) transformed by `transform`.

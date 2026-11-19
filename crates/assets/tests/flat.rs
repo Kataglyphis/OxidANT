@@ -5,15 +5,15 @@ use std::path::{Path, PathBuf};
 use kataglyphis_assets::flat::{load_flat, FlatModel};
 use kataglyphis_assets::LoadOptions;
 
-fn renderer_asset(name: &str) -> PathBuf {
+fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../webgpu_renderer/tests/assets")
+        .join("tests/assets")
         .join(name)
 }
 
 /// A quad whose second triangle mirrors its UVs: MikkTSpace splits the two shared corners, Lengyel's tangents do not.
 fn mirrored_uv_quad() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/mirrored_uv_quad.gltf")
+    fixture("mirrored_uv_quad.gltf")
 }
 
 const MIKKTSPACE: LoadOptions = LoadOptions {
@@ -98,7 +98,7 @@ fn assert_consistent(model: &FlatModel) {
 
 #[test]
 fn the_cube_flattens_into_consistent_arrays() {
-    let model = load_flat(renderer_asset("cube.gltf"), &LoadOptions::default()).unwrap();
+    let model = load_flat(fixture("cube.gltf"), &LoadOptions::default()).unwrap();
     assert_consistent(&model);
     assert_eq!(model.ranges.len(), 1);
     assert_eq!(model.indices.len(), 36);
@@ -140,18 +140,14 @@ fn the_load_options_reach_the_tangent_generator() {
 
 #[test]
 fn a_glb_reads_its_buffer_from_the_binary_chunk() {
-    let model = load_flat(renderer_asset("cube.glb"), &LoadOptions::default()).unwrap();
+    let model = load_flat(fixture("cube.glb"), &LoadOptions::default()).unwrap();
     assert_consistent(&model);
     assert_eq!(model.indices.len(), 36);
 }
 
 #[test]
 fn a_textured_material_gets_the_encoded_image_and_its_sampler() {
-    let model = load_flat(
-        renderer_asset("cube_textured.gltf"),
-        &LoadOptions::default(),
-    )
-    .unwrap();
+    let model = load_flat(fixture("cube_textured.gltf"), &LoadOptions::default()).unwrap();
     assert_eq!(model.textures.len(), 1);
     let texture = &model.textures[0];
     assert!(texture.encoded.starts_with(b"\x89PNG"), "bytes as stored");
@@ -164,14 +160,14 @@ fn a_textured_material_gets_the_encoded_image_and_its_sampler() {
 
 #[test]
 fn a_basisu_only_texture_has_no_slot_and_a_fallback_uses_its_core_image() {
-    let only = load_flat(renderer_asset("cube_basisu.gltf"), &LoadOptions::default()).unwrap();
+    let only = load_flat(fixture("cube_basisu.gltf"), &LoadOptions::default()).unwrap();
     assert!(
         only.textures.is_empty(),
         "stb cannot decode KTX2, so no slot"
     );
     assert_eq!(only.materials[0].base_texture, -1);
     let fallback = load_flat(
-        renderer_asset("cube_basisu_fallback.gltf"),
+        fixture("cube_basisu_fallback.gltf"),
         &LoadOptions::default(),
     )
     .unwrap();
@@ -181,7 +177,7 @@ fn a_basisu_only_texture_has_no_slot_and_a_fallback_uses_its_core_image() {
 
 #[test]
 fn lights_are_posed_by_their_nodes() {
-    let model = load_flat(renderer_asset("point_light.gltf"), &LoadOptions::default()).unwrap();
+    let model = load_flat(fixture("point_light.gltf"), &LoadOptions::default()).unwrap();
     assert_eq!(model.lights.len(), 2);
     let point = &model.lights[0];
     assert_eq!(point.kind, 1);
@@ -337,7 +333,7 @@ fn a_file_without_triangles_is_an_error() {
 
 /// The PNG data URI `cube_textured.gltf` embeds, so a test material has a decodable image.
 fn embedded_png_uri() -> String {
-    let json = std::fs::read_to_string(renderer_asset("cube_textured.gltf")).unwrap();
+    let json = std::fs::read_to_string(fixture("cube_textured.gltf")).unwrap();
     let start = json.find("data:image/png;base64,").unwrap();
     let end = start + json[start..].find('"').unwrap();
     json[start..end].to_owned()
@@ -468,7 +464,7 @@ proptest::proptest! {
         mikktspace_tangents in proptest::bool::ANY,
     ) {
         let name = FUZZ_SEEDS[seed];
-        let bytes = mutate(std::fs::read(renderer_asset(name)).unwrap(), &mutations);
+        let bytes = mutate(std::fs::read(fixture(name)).unwrap(), &mutations);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(name);
         std::fs::write(&path, bytes).unwrap();

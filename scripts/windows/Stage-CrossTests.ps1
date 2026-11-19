@@ -110,8 +110,8 @@ $closure = foreach ($dir in @($binaries | ForEach-Object { Split-Path -Parent $_
 }
 # The real-model tests read the model through CARGO_MANIFEST_DIR, which the run job's C:\ws junction maps here.
 & (Join-Path $PSScriptRoot 'Get-Models.ps1') -Destination (Join-Path $Destination 'resources\models')
-# The renderer reads these sources and fixtures through its embedded CARGO_MANIFEST_DIR.
-foreach ($rel in 'crates\webgpu_renderer\src', 'crates\webgpu_renderer\tests\assets', 'shaders\forward') {
+# The renderer, the loader and the bridge read these sources and fixtures through their embedded CARGO_MANIFEST_DIR.
+foreach ($rel in 'crates\webgpu_renderer\src', 'crates\assets\tests\assets', 'shaders\forward') {
   Copy-Item -LiteralPath (Join-Path $repoRoot $rel) -Destination (Join-Path $Destination $rel) -Recurse -Force
 }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'third_party\ANTfrastructure\windows\scripts\build\Invoke-StagedTests.ps1') -Destination $Destination

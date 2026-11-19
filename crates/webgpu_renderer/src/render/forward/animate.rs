@@ -318,8 +318,8 @@ mod tests {
         let Some(gpu) = GpuContext::headless_or_skip() else {
             return;
         };
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/point_light.gltf");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../assets/tests/assets/point_light.gltf");
         let mut scene = crate::load_gltf(&path).expect("point_light.gltf must load");
         let point_node = scene.lights[0].node.expect("a KHR light carries its node");
         let spot_node = scene.lights[1].node.expect("a KHR light carries its node");

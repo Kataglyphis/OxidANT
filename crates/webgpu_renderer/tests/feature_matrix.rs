@@ -34,7 +34,7 @@ const FACES: [[u8; 4]; 6] = [
 
 fn scene(name: &str) -> CpuScene {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/assets")
+        .join("../assets/tests/assets")
         .join(name);
     load_gltf(path).unwrap_or_else(|e| panic!("{name} must load: {e:#}"))
 }

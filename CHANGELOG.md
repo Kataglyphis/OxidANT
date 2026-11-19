@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-19, the glTF fixtures belong to the loader)
+
+- The glTF, GLB, KTX2 and OBJ fixtures moved from `crates/webgpu_renderer/tests/assets` to
+  `crates/assets/tests/assets`, beside the loader they test and the one fixture set BeschleunigerBallett's C++ round
+  trip will read (plan X5). The renderer's tests, examples and `EMBEDDED_SCENES` (the web demo's scenes), the
+  loader's unit and `tests/flat.rs` suites and the bridge's tests read them there; `Stage-CrossTests.ps1` stages the
+  new folder for the arm64 device, and `CrossTestSources.Tests.ps1` fails a copy loop without it.
+
 ### Changed (2026-11-19, the bridged crates have no unsafe code and no explicit panic)
 
 - **`kataglyphis_assets`** and **`kataglyphis_render_core`**: `#![forbid(unsafe_code)]`, and outside its tests clippy denies `unwrap_used`,

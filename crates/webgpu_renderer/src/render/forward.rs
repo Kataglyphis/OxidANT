@@ -569,7 +569,7 @@ mod tests {
         };
 
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/assets/cube_animated.gltf");
+            .join("../assets/tests/assets/cube_animated.gltf");
         let scene = crate::load_gltf(&path).expect("cube_animated.gltf must load");
         let mut renderer = ForwardRenderer::new(&gpu, 4, 4);
         renderer.upload_scene(&gpu, &scene);

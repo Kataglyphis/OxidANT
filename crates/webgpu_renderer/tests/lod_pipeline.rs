@@ -6,7 +6,7 @@ use kataglyphis_webgpu_renderer::{
 };
 
 fn cube_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf")
 }
 
 /// The bundled cube uploaded into a renderer with LOD in the requested state.
@@ -121,8 +121,8 @@ fn morphed_primitives_are_excluded_from_lod() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let morph_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_morph.gltf");
+    let morph_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_morph.gltf");
     let scene = load_gltf(&morph_path).expect("cube_morph.gltf must load");
     assert_eq!(
         scene.primitives[0].morph_targets.len(),

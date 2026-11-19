@@ -174,7 +174,7 @@ pub(crate) fn masked() -> CpuScene {
 
 pub(crate) fn asset(name: &str) -> CpuScene {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/assets")
+        .join("../assets/tests/assets")
         .join(name);
     crate::load_gltf(&path).unwrap_or_else(|e| panic!("{name}: {e:#}"))
 }

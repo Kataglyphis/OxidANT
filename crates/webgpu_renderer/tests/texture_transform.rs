@@ -26,7 +26,7 @@ fn assert_non_identity(t: [[f32; 3]; 2], slot: &str) {
 #[test]
 fn texture_transform_on_normal_slot_does_not_leak_to_other_slots() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/assets/cube_normal_transform.gltf");
+        .join("../assets/tests/assets/cube_normal_transform.gltf");
     let scene = load_gltf(path).expect("cube_normal_transform.gltf must load");
     let material = &scene.primitives[0].material;
 
@@ -40,8 +40,8 @@ fn texture_transform_on_normal_slot_does_not_leak_to_other_slots() {
 #[test]
 fn texture_transform_on_base_color_slot_does_not_leak_to_other_slots() {
     // cube_textured.gltf transforms baseColorTexture only.
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_textured.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_textured.gltf");
     let scene = load_gltf(path).expect("cube_textured.gltf must load");
     let material = &scene.primitives[0].material;
 

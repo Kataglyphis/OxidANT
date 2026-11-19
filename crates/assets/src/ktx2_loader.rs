@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn loads_a_valid_bc1_container() {
-        let bytes = include_bytes!("../../webgpu_renderer/tests/assets/red_bc1.ktx2");
+        let bytes = include_bytes!("../tests/assets/red_bc1.ktx2");
         let tex = load_ktx2(bytes).expect("red_bc1.ktx2 should load");
         assert!(
             tex.width >= 1 && tex.height >= 1,

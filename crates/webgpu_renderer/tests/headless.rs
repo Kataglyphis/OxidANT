@@ -4,11 +4,12 @@ use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
 fn cube_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf")
 }
 
 fn textured_cube_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_textured.gltf")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_textured.gltf")
 }
 
 #[test]
@@ -53,7 +54,7 @@ fn gltf_loader_reads_base_color_texture() {
 fn gltf_loader_applies_emissive_strength() {
     // emissiveFactor [0.5, 0.4, 0.3] times emissive_strength 3.0: HDR emitters exceed [0,1].
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/assets/cube_emissive_strength.gltf");
+        .join("../assets/tests/assets/cube_emissive_strength.gltf");
     let scene = load_gltf(path).expect("cube_emissive_strength.gltf must load");
     let e = scene.primitives[0].material.emissive_factor;
     assert!((e[0] - 1.5).abs() < 1e-5, "r: {}", e[0]);
@@ -64,8 +65,8 @@ fn gltf_loader_applies_emissive_strength() {
 #[test]
 fn gltf_loader_reads_morph_target_and_default_weight() {
     // One +Y morph target with a mesh default weight of 1.0, which must not load as zero.
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_morph.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_morph.gltf");
     let scene = load_gltf(path).expect("cube_morph.gltf must load");
     let prim = &scene.primitives[0];
     assert_eq!(prim.morph_targets.len(), 1, "one morph target expected");
@@ -324,8 +325,8 @@ fn shadow_darkens_plane_under_cube() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
     assert_eq!(scene.primitives.len(), 2);
 
@@ -377,8 +378,8 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
 
     let camera = OrbitCamera {
@@ -498,8 +499,8 @@ fn alpha_modes_blend_and_mask() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_alpha.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_alpha.gltf");
     let scene = load_gltf(&path).expect("cube_alpha.gltf must load");
     assert_eq!(scene.primitives.len(), 4);
 
@@ -557,8 +558,8 @@ fn punctual_lights_pool_on_plane() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/point_light.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/point_light.gltf");
     let scene = load_gltf(&path).expect("point_light.gltf must load");
     assert_eq!(scene.lights.len(), 2);
     use kataglyphis_webgpu_renderer::scene::CpuLightKind;
@@ -612,8 +613,8 @@ fn bloom_adds_energy_around_bright_sources() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/point_light.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/point_light.gltf");
     let scene = load_gltf(&path).expect("point_light.gltf must load");
     let (width, height) = (256, 256);
     let mut renderer = ForwardRenderer::new(&gpu, width, height);
@@ -650,8 +651,8 @@ fn ssao_darkens_geometry() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_alpha.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_alpha.gltf");
     let scene = load_gltf(&path).expect("cube_alpha.gltf must load");
     let (width, height) = (256, 256);
     let mut renderer = ForwardRenderer::new(&gpu, width, height);
@@ -688,8 +689,8 @@ fn ssao_leaves_a_flat_surface_unoccluded() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_alpha.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_alpha.gltf");
     let scene = load_gltf(&path).expect("cube_alpha.gltf must load");
     let (width, height) = (256, 256);
     let mut renderer = ForwardRenderer::new(&gpu, width, height);
@@ -739,8 +740,8 @@ fn animation_moves_the_cube() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_animated.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_animated.gltf");
     let scene = load_gltf(&path).expect("cube_animated.gltf must load");
     assert_eq!(scene.animations.len(), 1);
     assert!((scene.animations[0].duration - 2.0).abs() < 1e-5);
@@ -790,8 +791,8 @@ fn skinning_bends_the_bar() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/skinned_bar.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/skinned_bar.gltf");
     let scene = load_gltf(&path).expect("skinned_bar.gltf must load");
     assert_eq!(scene.skins.len(), 1);
     assert_eq!(scene.skins[0].joints.len(), 2);
@@ -849,7 +850,8 @@ fn skinning_bends_the_bar() {
 
 #[test]
 fn loads_binary_glb() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.glb");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.glb");
     let bytes = std::fs::read(&path).expect("cube.glb must exist");
     // GLB magic + version.
     assert_eq!(&bytes[0..4], b"glTF");
@@ -864,7 +866,7 @@ fn loads_binary_glb() {
 /// The web demo's "PBR textures" scene: a .gltf with a data: image, loaded from memory as the browser loads it.
 #[test]
 fn loads_gltf_with_a_data_uri_image_from_memory() {
-    let bytes = include_bytes!("assets/cube_textured.gltf");
+    let bytes = include_bytes!("../../assets/tests/assets/cube_textured.gltf");
     let scene = kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf_slice(bytes)
         .expect("cube_textured.gltf must load from memory");
     let texture = &scene.primitives[0]
@@ -879,7 +881,10 @@ fn loads_gltf_with_a_data_uri_image_from_memory() {
 
 #[test]
 fn an_external_image_is_refused_from_memory() {
-    let text = std::str::from_utf8(include_bytes!("assets/cube_textured.gltf")).expect("UTF-8");
+    let text = std::str::from_utf8(include_bytes!(
+        "../../assets/tests/assets/cube_textured.gltf"
+    ))
+    .expect("UTF-8");
     let start = text.find("data:image/png").expect("the asset embeds a PNG");
     let end = start + text[start..].find('"').expect("closing quote");
     let external = format!("{}checker.png{}", &text[..start], &text[end..]);
@@ -890,8 +895,8 @@ fn an_external_image_is_refused_from_memory() {
 
 #[test]
 fn reads_gltf_cameras() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_animated.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_animated.gltf");
     let scene = load_gltf(&path).expect("cube_animated.gltf must load");
     assert_eq!(scene.cameras.len(), 1);
     let camera = &scene.cameras[0];
@@ -918,7 +923,7 @@ fn reads_gltf_cameras() {
 #[test]
 fn reads_orthographic_gltf_cameras() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/assets/cube_ortho_camera.gltf");
+        .join("../assets/tests/assets/cube_ortho_camera.gltf");
     let scene = load_gltf(&path).expect("cube_ortho_camera.gltf must load");
     assert_eq!(scene.cameras.len(), 1);
     let camera = &scene.cameras[0];
@@ -1112,8 +1117,8 @@ fn uploading_a_scene_resets_the_adapted_exposure() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
     let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
     renderer.upload_scene(&gpu, &scene);
@@ -1146,8 +1151,8 @@ fn the_first_frame_blooms_at_its_own_manual_exposure() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
     let mut renderer = ForwardRenderer::new(&gpu, 96, 96);
     renderer.upload_scene(&gpu, &scene);
@@ -1309,8 +1314,8 @@ fn a_far_extra_caster_leaves_the_near_shadow_intact() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let mut scene = load_gltf(path).expect("cube_on_plane.gltf must load");
 
     // A third primitive far outside every cascade's fitted box.
@@ -1373,8 +1378,8 @@ fn shadow_caster_bundle_is_cached_across_frames() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_animated.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_animated.gltf");
     let scene = load_gltf(&path).expect("cube_animated.gltf must load");
 
     let (width, height) = (64, 64);
@@ -1489,8 +1494,8 @@ fn a_screenshot_at_the_window_size_leaves_the_window_post_inputs_live() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
     let size = 128;
     let mut renderer = ForwardRenderer::new(&gpu, size, size);
@@ -1536,8 +1541,8 @@ fn a_hot_spot_past_the_half_float_range_saturates_instead_of_turning_black() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let mut plane_only = load_gltf(path).expect("cube_on_plane.gltf must load");
     plane_only.primitives.retain(|p| p.vertices.len() == 4);
     // A lamp 2 cm above the plane: about 7e9 at the plane under it.
@@ -1591,8 +1596,8 @@ fn shrinking_or_clearing_instances_removes_their_shadows() {
         return;
     };
 
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
     let (width, height) = (128, 128);
     let camera = OrbitCamera {
@@ -1665,8 +1670,8 @@ fn reloading_shaders_rerecords_the_shadow_bundles() {
 
 #[test]
 fn gltf_loader_reads_unlit_flag() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_unlit.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_unlit.gltf");
     let scene = load_gltf(path).expect("cube_unlit.gltf must load");
     assert!(
         scene.primitives[0].material.unlit,
@@ -1710,8 +1715,8 @@ fn unlit_material_ignores_the_light() {
         out
     };
 
-    let unlit_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_unlit.gltf");
+    let unlit_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_unlit.gltf");
     let (ua, ub) = render_both_lights(unlit_path);
     assert_eq!(
         centre_window(&ua),
@@ -1782,8 +1787,8 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
     };
 
     // Receiver: cube_on_plane's ground plane, without its cube.
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let base = load_gltf(path).expect("cube_on_plane.gltf must load");
     let plane = base
         .primitives
@@ -1961,8 +1966,8 @@ fn ground_shadow_pixels(
     gpu: &GpuContext,
     primitives: Vec<kataglyphis_webgpu_renderer::CpuPrimitive>,
 ) -> usize {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let base = load_gltf(path).expect("cube_on_plane.gltf must load");
     let plane = base
         .primitives

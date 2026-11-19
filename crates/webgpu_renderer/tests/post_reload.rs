@@ -9,8 +9,8 @@ use kataglyphis_webgpu_renderer::{
 const SIZE: u32 = 64;
 
 fn renderer(gpu: &GpuContext) -> ForwardRenderer {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_on_plane.gltf");
     let mut renderer = ForwardRenderer::new(gpu, SIZE, SIZE);
     renderer.upload_scene(gpu, &load_gltf(path).expect("cube_on_plane.gltf must load"));
     renderer

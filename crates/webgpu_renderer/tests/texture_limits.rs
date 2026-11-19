@@ -20,7 +20,8 @@ fn a_material_texture_over_the_side_limit_uploads_downsampled() {
         rgba8: [255, 0, 0, 255].repeat((width * height) as usize),
         compressed: None,
     };
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf");
     let mut scene = load_gltf(path).expect("cube.gltf must load");
     let material = &mut scene.primitives[0].material;
     material.base_color = [1.0; 4];
