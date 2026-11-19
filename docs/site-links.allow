@@ -19,6 +19,7 @@ missing	kataglyphis_webgpu_renderer/app/framing/dispatcher
 missing	kataglyphis_webgpu_renderer/app/library/dispatcher
 missing	kataglyphis_webgpu_renderer/app/loader/dispatcher
 missing	kataglyphis_webgpu_renderer/app/scene_meta/dispatcher
+missing	kataglyphis_webgpu_renderer/asset/gltf_loader/dispatcher
 missing	kataglyphis_webgpu_renderer/asset/hdr/dispatcher
 missing	kataglyphis_webgpu_renderer/asset/obj_to_gltf/dispatcher
 missing	kataglyphis_webgpu_renderer/asset/skybox/dispatcher
