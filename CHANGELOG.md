@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-19, a perf baseline for the Raspberry Pi 5)
+
+- `perf/baseline-cortex-a76.json` (e893433), measured at 16890ff by the night run with thin LTO under a 5 GB cap: the
+  detector's p50 is 209 ms on the CPU provider and 275 ms on XNNPACK, so XNNPACK is about 1.3 times slower on the
+  Cortex-A76 too (3.7 times on x86); text decodes at 115 tok/s with a 171 ms first token on the shipped text thread
+  rule. The BACKLOG entry "No performance number is tracked for the Pi" is done.
+
 ### Changed (2026-11-19, the golden tests read ModelANT's lossless photo)
 
 - `crates/inference/tests` decode ModelANT's `contracts/fixtures/two_cats.png` (pin `bd4094a`), the lossless decode of

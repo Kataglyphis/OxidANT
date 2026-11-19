@@ -58,24 +58,6 @@ its open work is here.
 
 ## P2 — medium
 
-- [ ] **No performance number is tracked for the Pi** (M, ★★). Audit 2026-11-12, which measured
-      nothing: the only perf-host baseline in `perf/` is for a Ryzen 9 5950X, and the bench gate
-      in `.github/workflows/reusable-linux.yml` fails only on a doubling. On a Pi 5 the model is
-      about 99 % of a detection (261 ms against 1.6 ms and 1.8 ms for the two conversions,
-      `CHANGELOG.md`), so frame copies are not worth chasing. The number that exists is the one
-      `/healthz` serves; keeping a history of it is hub work (Home Assistant). Next: run the
-      service one evening with `KATAGLYPHIS_ORT_DEVICE=xnnpack`, read `stats.model_ms` and write
-      the result into `CHANGELOG.md`; on x86 XNNPACK is 3.7 times slower, on ARM nobody knows.
-      A Cortex-A76 perf-host baseline only if it is still wanted: its setup builds the release
-      CLI with fat LTO in the container and refuses a load above 2, a heavy job beside a live
-      camera. On himbeere2 that link does not fit `pi-ci`'s 5 GB at all: rustc was killed linking
-      `kataglyphis_cli` on 2026-11-15, and `CARGO_PROFILE_RELEASE_LTO=false
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16` built it; the setup needs that override, or a larger
-      `PI_CI_MEMORY`, before a Pi baseline. Then first give the detector commands in `quality-report.toml` ObservANT's two
-      threads without spinning, and record it on a quiet night as one `systemd-run` unit. If
-      one new gated bench is wanted: preprocessing at 1280x720, the app's default size. No
-      allocation-count tests.
-
 - [ ] **Rust mutation scores wait for cargo-mutants in the image** (S, ★★). The owner accepted a weekly job
       (2026-11-16): `rust-mutants.yml` runs the five per-file groups of `docs/testing.md` on Sundays through
       `scripts/linux/run-mutants.sh` and uploads `mutants.out`, but warns and runs nothing while the image lacks the
