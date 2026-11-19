@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-19, stream lines read as the hub's shared cases say)
+
+- `endpoint::parse_stream_line` reads a bare `error:` line as the server's error; it was read as nothing, so the
+  reply looked merely cut (owner decision 2026-11-19, ANTfrastructure CON237). `crates/text/tests/stream_lines.rs`
+  replays every case of the hub's `shared/contracts/openai-stream-lines.json` (pin `7e45cff3`), which OrchestrANT's
+  reader replays too.
+
 ### Added (2026-11-19, a perf baseline for the Raspberry Pi 5)
 
 - `perf/baseline-cortex-a76.json` (e893433), measured at 16890ff by the night run with thin LTO under a 5 GB cap: the

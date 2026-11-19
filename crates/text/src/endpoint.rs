@@ -362,6 +362,10 @@ fn delta_thinking(delta: &Value) -> Option<&str> {
 
 /// The events of one `data:` line; other lines, keep-alives and empty deltas carry none.
 pub fn parse_stream_line(line: &str) -> Result<Vec<StreamEvent>, TextError> {
+    // Some servers end a stream with a bare `error:` line; read as nothing, the reply looked merely cut (owner, CON237).
+    if let Some(message) = line.strip_prefix("error:") {
+        return Err(TextError::GenerationFailed(message.trim().to_string()));
+    }
     let Some(data) = line.strip_prefix("data:").map(str::trim) else {
         return Ok(Vec::new());
     };
