@@ -320,6 +320,95 @@ fn an_image_outside_the_document_directory_gets_no_slot() {
     assert_eq!(model.materials[0].base_texture, -1);
 }
 
+/// A 1x1 RGBA PNG of (200, 40, 0, 255).
+const PIXEL_PNG: [u8; 70] = [
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0x38, 0xA1, 0xC1, 0xF0,
+    0x1F, 0x00, 0x04, 0x9C, 0x01, 0xF0, 0xAA, 0x79, 0x40, 0x64, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+/// `dir`'s triangle drawn with one base colour texture whose image is `uri`.
+fn triangle_with_image(dir: &Path, uri: &str) -> PathBuf {
+    let extra = format!(
+        r#","images":[{{"uri":"{uri}"}}],"textures":[{{"source":0}}],
+        "materials":[{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0}}}}}}]"#
+    );
+    let path = triangle_gltf(dir, "image.gltf", r#"{"mesh":0}"#, &extra);
+    let json = std::fs::read_to_string(&path).unwrap();
+    let drawn = json.replacen(r#""TEXCOORD_0":1}}"#, r#""TEXCOORD_0":1},"material":0}"#, 1);
+    assert_ne!(drawn, json, "the primitive takes the material");
+    std::fs::write(&path, drawn).unwrap();
+    path
+}
+
+#[test]
+fn both_loaders_read_an_image_only_by_a_relative_uri_inside_the_document_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("model");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let ktx2 = include_bytes!("assets/green_uastc.ktx2");
+    for folder in [dir.as_path(), root.path()] {
+        std::fs::write(folder.join("pixel.png"), PIXEL_PNG).unwrap();
+        std::fs::write(folder.join("green.ktx2"), ktx2).unwrap();
+    }
+    let mut cases = vec![
+        ("pixel.png".to_owned(), None),
+        ("sub/../pixel.png".to_owned(), None),
+        ("green.ktx2".to_owned(), None),
+        (
+            "../pixel.png".to_owned(),
+            Some("outside the document's directory"),
+        ),
+        (
+            "sub/../../green.ktx2".to_owned(),
+            Some("outside the document's directory"),
+        ),
+        // A file: URI names no file beside the document, even one that lies inside its directory.
+        (
+            format!("file://{}", dir.join("pixel.png").display()),
+            Some("not a relative URI"),
+        ),
+        (
+            format!("file:{}", root.path().join("pixel.png").display()),
+            Some("not a relative URI"),
+        ),
+    ];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.path().join("pixel.png"), dir.join("link.png")).unwrap();
+        cases.push((
+            "link.png".to_owned(),
+            Some("outside the document's directory"),
+        ));
+    }
+    for (uri, refusal) in cases {
+        let path = triangle_with_image(&dir, &uri);
+        let scene = kataglyphis_assets::load_gltf(&path);
+        match refusal {
+            None => {
+                let scene = scene.unwrap();
+                let texture = scene.primitives[0].material.base_color_texture.as_ref();
+                let texture = &texture
+                    .unwrap_or_else(|| panic!("{uri}: no texture"))
+                    .texture;
+                if uri.ends_with(".png") {
+                    assert_eq!(texture.rgba8, [200, 40, 0, 255], "{uri}");
+                } else {
+                    assert!(texture.width > 0 && texture.height > 0, "{uri}");
+                }
+            }
+            Some(reason) => {
+                let err = format!("{:#}", scene.unwrap_err());
+                assert!(err.contains(reason), "{uri}: {err}");
+            }
+        }
+        let flat = load_flat(&path, &LoadOptions::default()).unwrap();
+        assert_eq!(flat.textures.len(), usize::from(refusal.is_none()), "{uri}");
+    }
+}
+
 #[test]
 fn a_file_without_triangles_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
@@ -801,7 +890,7 @@ mod fifos {
         let err = finishes(move || kataglyphis_assets::load_gltf(scene_image)).unwrap_err();
         assert!(format!("{err:#}").contains("not a regular file"), "{err:#}");
 
-        // A file: URI names the FIFO by its absolute path, which gltf's reader opens as written.
+        // A file: URI names the FIFO by its absolute path, which neither loader opens.
         let pipe = dir.path().join("pipe.png");
         for uri in [
             format!("file://{}", pipe.display()),
@@ -814,7 +903,7 @@ mod fifos {
             assert!(flat.textures.is_empty(), "{uri}: the image gets no slot");
             let err = finishes(move || kataglyphis_assets::load_gltf(scene_image)).unwrap_err();
             assert!(
-                format!("{err:#}").contains("not a regular file"),
+                format!("{err:#}").contains("not a relative URI"),
                 "{uri}: {err:#}"
             );
         }

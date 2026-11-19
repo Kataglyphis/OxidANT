@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-19, both glTF loaders read images from the document's folder only)
+
+- **`kataglyphis_assets`**: `load_gltf`, the Rust app's scene loader, reads an image file by the flat loader's rule
+  (owner decision 2026-11-19): `files::confined_file` resolves a relative URI inside the glTF file's directory,
+  canonically, so `../`, a symlink out of it and any `file:` URI are refused, as they already were for buffers in both
+  loaders. A PNG or JPEG reaches gltf's decoder as the checked file's `file:` path, a KTX2 is read from it directly.
+  A scene with such an image no longer loads in the app, as one with such a buffer did not; the flat loader still
+  gives the image no slot. `tests/flat.rs` runs each URI through both loaders.
+
 ### Added (2026-11-19, a benchmark for the bridge's glTF load)
 
 - **`kataglyphis_assets`**: `benches/load_flat.rs` times `load_flat` from a file, as BeschleunigerBallett's engine

@@ -1,6 +1,6 @@
 //! Reading what a glTF document names: regular files only, and relative URIs inside the document's directory.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 
@@ -45,6 +45,14 @@ pub(crate) fn is_windows_device_name(path: &Path) -> bool {
 
 /// Reads a relative URI that must resolve inside `base`, so an untrusted file cannot name `../../secret`.
 pub(crate) fn read_confined(base: &Path, uri: &str) -> anyhow::Result<Vec<u8>> {
+    let file = confined_file(base, uri)?;
+    std::fs::read(&file).with_context(|| format!("reading {}", file.display()))
+}
+
+/// The canonical regular file a relative URI names inside `base`, the one rule for every buffer and image.
+pub(crate) fn confined_file(base: &Path, uri: &str) -> anyhow::Result<PathBuf> {
+    // gltf reads `file:` paths and refuses every other scheme; neither names a file beside the document.
+    anyhow::ensure!(!uri.contains(':'), "'{uri}' is not a relative URI");
     let base = if base.as_os_str().is_empty() {
         Path::new(".")
     } else {
@@ -63,7 +71,8 @@ pub(crate) fn read_confined(base: &Path, uri: &str) -> anyhow::Result<Vec<u8>> {
         file.starts_with(&root),
         "'{uri}' resolves outside the document's directory"
     );
-    read_regular_file(&file).with_context(|| format!("reading {}", file.display()))
+    require_regular_file(&file).with_context(|| format!("reading {}", file.display()))?;
+    Ok(file)
 }
 
 /// `gltf::import_buffers` with its GLB chunk, data URIs, padding and byteLength check, but a file must be a regular
@@ -103,8 +112,6 @@ fn uri_bytes(base: Option<&Path>, uri: &str) -> anyhow::Result<Vec<u8>> {
             .context("a data URI that is not base64")?;
         return decode_base64(payload);
     }
-    // gltf reads `file:` paths and refuses every other scheme; neither names a file beside the document.
-    anyhow::ensure!(!uri.contains(':'), "'{uri}' is not a relative URI");
     let base = base.with_context(|| {
         format!("'{uri}' is an external file, which an in-memory import cannot read")
     })?;

@@ -1,11 +1,11 @@
 //! glTF import with `KHR_texture_basisu`, which `gltf::import` refuses: KTX2 through `load_ktx2`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context as _;
 
-use crate::files::{self, decode_base64, percent_decode, read_confined};
+use crate::files::{self, decode_base64, read_confined};
 use crate::ktx2_loader::load_ktx2;
 use crate::scene::CpuTexture;
 
@@ -111,32 +111,38 @@ pub(crate) fn import_images(
                     .with_context(|| format!("glTF image {} (KTX2)", image.index()));
                 return Ok(texture.map(Arc::new));
             }
-            if let (gltf::image::Source::Uri { uri, .. }, Some(base)) = (image.source(), base) {
-                check_image_file(base, uri)
-                    .with_context(|| format!("glTF image {}", image.index()))?;
-            }
-            let data = gltf::image::Data::from_source(image.source(), base, buffers)?;
+            let data = match image.source() {
+                gltf::image::Source::Uri { uri, mime_type } if !uri.starts_with("data:") => {
+                    let file = image_file(base, uri)
+                        .with_context(|| format!("glTF image {}", image.index()))?;
+                    let file = file_uri(&file)?;
+                    let source = gltf::image::Source::Uri {
+                        uri: &file,
+                        mime_type,
+                    };
+                    gltf::image::Data::from_source(source, base, buffers)?
+                }
+                source => gltf::image::Data::from_source(source, base, buffers)?,
+            };
             Ok(Ok(Arc::new(crate::gltf_loader::to_rgba8(data)?)))
         })
         .collect()
 }
 
-/// gltf's reader opens what a relative or `file:` URI names: a bad escape panics, a FIFO waits, `/dev/zero` never ends.
-fn check_image_file(base: &Path, uri: &str) -> anyhow::Result<()> {
-    let path = match file_uri_path(uri) {
-        Some(path) => path.to_path_buf(),
-        // A data URI carries its bytes, and gltf refuses every other scheme.
-        None if uri.contains(':') => return Ok(()),
-        None => base.join(percent_decode(uri)?),
-    };
-    files::require_regular_file(&path).with_context(|| format!("'{uri}'"))
+/// The file an image URI names beside the document, by `read_confined`'s rule; an in-memory import has none.
+fn image_file(base: Option<&Path>, uri: &str) -> anyhow::Result<PathBuf> {
+    let base = base.with_context(|| {
+        format!("glTF image '{uri}' is an external file, which an in-memory import cannot read")
+    })?;
+    files::confined_file(base, uri)
 }
 
-/// A `file:` URI's path as gltf's reader opens it: as written, without the base or percent-decoding.
-fn file_uri_path(uri: &str) -> Option<&Path> {
-    uri.strip_prefix("file://")
-        .or_else(|| uri.strip_prefix("file:"))
-        .map(Path::new)
+/// The checked file as a `file:` URI, so gltf's decoder opens that file and resolves nothing itself.
+fn file_uri(file: &Path) -> anyhow::Result<String> {
+    let path = file
+        .to_str()
+        .with_context(|| format!("{} is not UTF-8", file.display()))?;
+    Ok(format!("file:{path}"))
 }
 
 /// Each texture's image: its `KHR_texture_basisu` KTX2, else (with a warning on failure) its fallback.
@@ -195,7 +201,10 @@ fn ktx2_bytes(
                         .rsplit('.')
                         .next()
                         .is_some_and(|ext| ext.eq_ignore_ascii_case("ktx2"));
-                is_ktx2.then(|| read_relative(base, uri))
+                is_ktx2.then(|| {
+                    let file = image_file(base, uri)?;
+                    std::fs::read(&file).with_context(|| format!("reading {}", file.display()))
+                })
             }
         }
     }
@@ -232,24 +241,9 @@ pub(crate) fn encoded_bytes(
                 );
                 return decode_base64(payload);
             }
-            anyhow::ensure!(
-                !uri.starts_with("http:") && !uri.starts_with("https:"),
-                "'{uri}' is remote"
-            );
             read_confined(base, uri)
         }
     }
-}
-
-fn read_relative(base: Option<&Path>, uri: &str) -> anyhow::Result<Vec<u8>> {
-    let base = base.with_context(|| {
-        format!("glTF image '{uri}' is an external file, which an in-memory import cannot read")
-    })?;
-    let path = match file_uri_path(uri) {
-        Some(path) => path.to_path_buf(),
-        None => base.join(percent_decode(uri)?),
-    };
-    files::read_regular_file(&path).with_context(|| format!("reading {}", path.display()))
 }
 
 #[cfg(test)]

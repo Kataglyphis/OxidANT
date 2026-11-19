@@ -180,11 +180,6 @@ Empty on 2026-11-17: nothing else is in the queue.
 - [ ] **`obj_to_gltf` writes one draw per OBJ group** (S, ★). Merging the runs that share a material takes Sponza
       from 385 draws to 24. Left from the 2026-11-19 accessor compaction, which already removed the 6.4 GB blow-up.
 
-- [ ] **The scene loader reads images outside the glTF folder** (S, ★). Since 2026-11-19 the flat loader (the
-      bridge's) confines buffers and images to the glTF file's folder. `load_gltf`, the Rust app's scene loader,
-      still opens a relative `../` image or a `file:` URI anywhere; it refuses only non-regular files and bad percent
-      escapes. Confining it changes what the app can load: decide, then give both loaders one rule.
-
 - [ ] **An amd64 crash of the GPU tests is unreproduced** (S). On 2026-10-19 the headless tests segfaulted now and
       then in parallel on the Ryzen 9950X dev host. The arm64 crash has its cause, llvmpipe at 256-bit vectors, which
       the tests now refuse ([testing.md](docs/testing.md#the-gpu-tests-must-render)); amd64 has none. When one dies,
