@@ -146,9 +146,6 @@ t_case "after the tests, the CLI is built and the backend parity check runs on M
 t_assert_grep "${work}/out" '^CARGO-BUILD build --locked -p kataglyphis_cli$'
 t_assert_grep "${work}/out" '^ORT and tract agree$'
 t_assert_grep "${work}/out" '^ORT CPU and XNNPACK agree$'
-t_case "the test log, stderr included, becomes the JUnit record the quality report reads"
-t_assert_grep "${work}/logs/test-results/cargo-test.txt" '^test result: FAILED'
-t_assert_grep "${work}/logs/test-results/cargo-test.xml" '<testsuites name="cargo test" tests="2" failures="1" skipped="0">'
 t_case "all required services default to mandatory"
 t_assert_grep "${work}/out" '^GPU=1$'
 t_assert_grep "${work}/out" '^MODEL=1$'
@@ -162,8 +159,6 @@ run_step test 37
 t_case "the driver's failure status reaches CI"
 t_assert_grep "${work}/rc" '^37$'
 t_assert_no_grep "${work}/out" '^CARGO-BUILD'
-t_case "a failed run still leaves its JUnit record"
-t_assert_grep "${work}/logs/test-results/cargo-test.xml" 'name="a::fails"'
 t_case "caller overrides are preserved while GTK stays mandatory"
 t_assert_grep "${work}/out" '^GPU=caller-gpu$'
 t_assert_grep "${work}/out" '^MODEL=caller-model$'

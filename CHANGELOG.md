@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-19, the test JUnit comes from the hub)
+
+- The Linux `test` step no longer tees the log and converts it itself: the hub's `cargo_test.sh` (ANTfrastructure
+  CON250, pin `be5bc3fb`) writes `logs/test-results/cargo-test.txt` and `cargo-test.xml` with the same converter, moved
+  up from here, so `scripts/linux/cargo-test-junit.py`, its test and fixtures are gone. The record and the step's
+  status are unchanged.
+
 ### Fixed (2026-11-19, the strict Python lane passes again)
 - `scripts/windows/check_gpu_detector_parity.py` loads the hub's `check_detector_parity` through
   `importlib.import_module`: ty follows no `sys.path` entry, so the static import of 2026-11-18 failed

@@ -33,7 +33,7 @@ Each per-crate floor in `COVERAGE_FLOORS` stays within 3 points of its printed f
 that has no floor fails the step. The lane uploads `cobertura.xml`, the `rustdoc-log` step's
 `logs/code-quality/rustdoc.txt`, written without colours so its `warning:` lines count, and the
 `test` step's `logs/test-results/cargo-test.xml` as `lane-reports-<suffix>`, which quality-report reads.
-`scripts/linux/cargo-test-junit.py` writes that JUnit from the step's log, also after a failed run:
+The hub's `cargo_test.sh` (its `cargo-test-junit.py`, ANTfrastructure CON250) writes that JUnit from the step's log, also after a failed run:
 one case per test with its outcome, an ignored test's reason and a failed test's captured output, and
 one failed case `(binary ended early)` with the signal for a binary that died before its summary.
 Stable libtest prints no per-test time, so each suite carries its binary's total only.
