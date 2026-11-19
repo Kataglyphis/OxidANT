@@ -5187,6 +5187,8 @@ version = "3.0.0"
 dependencies = [
  "cxx",
  "kataglyphis_assets",
+ "log",
+ "tempfile",
 ]
 
 [[package]]

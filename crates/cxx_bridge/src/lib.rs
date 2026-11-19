@@ -1,7 +1,7 @@
 //! The cxx bridge BeschleunigerBallett's C++ engine calls; Corrosion's `corrosion_add_cxxbridge` generates its C++ half.
 //!
-//! One bridge file per area, each in the C++ namespace `kataglyphis::oxidant::<file stem>`: [`gltf`] so far.
-//! Every bridged function runs inside `guarded` and returns its errors as values, since the
+//! One bridge file per area, each in the C++ namespace `kataglyphis::oxidant::<file stem>`: [`gltf`] and
+//! [`diagnostics`]. Every bridged function runs inside `guarded` and returns its errors as values, since the
 //! engine builds without exceptions; a path arrives as UTF-8 bytes. `contract.rs` holds every bridge file to that.
 
 // The owner's hard gate on function size; clippy.toml holds the limit.
@@ -9,13 +9,20 @@
 
 #[cfg(test)]
 mod contract;
+pub mod diagnostics;
 pub mod gltf;
 
 /// Runs one bridged call: a panic would abort at cxx's boundary, so it becomes `on_panic(reason)` here.
 /// Caught under `panic = "unwind"`, which the dev, test and `bridge` profiles have; `release` aborts instead.
 pub(crate) fn guarded<T>(call: impl FnOnce() -> T, on_panic: impl FnOnce(String) -> T) -> T {
+    diagnostics::install();
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(call))
         .unwrap_or_else(|panic| on_panic(panic_reason(panic.as_ref())))
+}
+
+/// The panic fallback of a call that has no error to report: its type's empty value.
+pub(crate) fn nothing<T: Default>(_reason: String) -> T {
+    T::default()
 }
 
 /// `panic!`'s message, or nothing for a payload that is not text.
@@ -45,5 +52,8 @@ mod tests {
         assert_eq!(guarded(|| 7, |_| 0), 7);
         let reason = guarded(|| panic!("broken accessor"), |reason| reason);
         assert_eq!(reason, "broken accessor");
+        let empty: Vec<u8> = guarded(|| panic!("no value"), nothing);
+        assert!(empty.is_empty());
+        assert_eq!(nothing::<String>("ignored".to_owned()), "");
     }
 }

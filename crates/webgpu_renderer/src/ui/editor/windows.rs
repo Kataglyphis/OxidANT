@@ -85,8 +85,9 @@ fn scene_credit(ui: &mut Ui, credit: &str, font: f32) {
 
 /// The C++ About rows: a muted name in a 6.5-line column, then the value, one text line each.
 fn facts(ui: &mut Ui, cx: &EditorContext<'_>, font: f32) {
+    // OxidANT's version: the C++ About's Version row is BeschleunigerBallett's, which this build does not have.
     let rows = [
-        ("Version", env!("CARGO_PKG_VERSION").to_owned()),
+        ("OxidANT", env!("CARGO_PKG_VERSION").to_owned()),
         ("Build", BUILD.to_owned()),
         ("GPU", cx.device.name.clone()),
         ("API", cx.device.api.clone()),

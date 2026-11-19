@@ -515,6 +515,16 @@ fn the_camera_tab_frames_the_scene_and_keeps_far_beyond_near() {
 }
 
 #[test]
+fn the_about_modal_names_oxidants_version_not_beschleuniger_balletts() {
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.editor.show_about();
+    studio.frame(Vec::new());
+    assert!(studio.text_rect("OxidANT").is_some());
+    assert!(studio.text_rect(env!("CARGO_PKG_VERSION")).is_some());
+    assert!(studio.text_rect("Version").is_none());
+}
+
+#[test]
 fn the_about_modal_names_the_egui_this_crate_builds_against() {
     let manifest = include_str!("../../../Cargo.toml");
     assert!(manifest.contains(&format!("egui = \"{}\"", windows::EGUI_VERSION)));

@@ -252,6 +252,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+    use crate::diagnostics::{ffi::LogLevel, take_log_records};
 
     fn asset(name: &str) -> Vec<u8> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -262,6 +263,20 @@ mod tests {
 
     fn bytes(path: &Path) -> Vec<u8> {
         path.to_str().expect("a UTF-8 path").as_bytes().to_vec()
+    }
+
+    /// One triangle under node 0, then `nodes`, `scenes` and a top-level `extra`, written to `dir`.
+    fn triangle(dir: &Path, nodes: &str, scenes: &str, extra: &str) -> Vec<u8> {
+        let json = format!(
+            r#"{{"asset":{{"version":"2.0"}},{scenes}"nodes":[{{"mesh":0}}{nodes}],
+            "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}}}}]}}],
+            "accessors":[{{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}}],
+            "bufferViews":[{{"buffer":0,"byteLength":36}}],
+            "buffers":[{{"byteLength":36,"uri":"data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA"}}]{extra}}}"#
+        );
+        let path = dir.join("triangle.gltf");
+        std::fs::write(&path, json).unwrap();
+        bytes(&path)
     }
 
     #[test]
@@ -285,6 +300,22 @@ mod tests {
         assert!(model.ok, "{}", model.error);
         assert!(!model.lights.is_empty());
         assert!(model.lights.iter().all(|l| (1..=3).contains(&l.kind)));
+    }
+
+    #[test]
+    fn a_loader_warning_waits_on_the_calling_thread_for_the_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        take_log_records();
+        let model = load_gltf_flat(&triangle(dir.path(), "", "", ""));
+        assert!(model.ok, "{}", model.error);
+        let records = take_log_records();
+        let warning = records
+            .iter()
+            .find(|record| record.message.contains("no scenes"))
+            .expect("a document without scenes warns");
+        assert_eq!(warning.level, LogLevel::Warn);
+        assert_eq!(warning.target, "kataglyphis_assets::gltf_loader");
+        assert!(take_log_records().is_empty(), "drained");
     }
 
     #[test]
