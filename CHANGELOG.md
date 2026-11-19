@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-19, the bridged crates have no unsafe code and no explicit panic)
+
+- **`kataglyphis_assets`** and **`kataglyphis_render_core`**: `#![forbid(unsafe_code)]`, and outside its tests clippy denies `unwrap_used`,
+  `expect_used`, `panic`, `todo` and `unimplemented`, since the C++ engine links it where its sanitizers and FuzzTest
+  cannot reach. The one offender, `ktx2_zstd.rs`'s `level_entry`, splits the level index entry with `as_chunks`
+  instead of an `expect`. `kataglyphis_cxx_bridge`'s `contract.rs` fails when a workspace crate in its
+  `[dependencies]` drops either.
+
 ### Added (2026-11-19, the parity entries and the shared frustum verdicts)
 
 - **`kataglyphis_render_core`**: `viewport` (`SceneViewport`), `model_transform` (`ModelTransform`) and the culling

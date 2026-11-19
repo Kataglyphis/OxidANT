@@ -1,5 +1,6 @@
 //! The bridge contract, read from the source: each file in its area's namespace, every bridged function one `guarded`
-//! call with errors as values, text from C++ as bytes, no call into C++, and the profile `guarded` needs to catch.
+//! call with errors as values, text from C++ as bytes, no call into C++, the profile `guarded` needs to catch, and
+//! no unsafe code or explicit panic in the workspace crates the bridge links.
 
 use std::path::Path;
 
@@ -201,4 +202,82 @@ fn the_bridge_profile_unwinds_so_guarded_catches() {
         .collect();
     assert!(section.contains(&r#"inherits = "release""#), "{section:?}");
     assert!(section.contains(&r#"panic = "unwind""#), "{section:?}");
+}
+
+/// The lints each linked workspace crate denies outside its tests, besides `#![forbid(unsafe_code)]`.
+const PANIC_LINTS: [&str; 5] = [
+    "clippy::unwrap_used",
+    "clippy::expect_used",
+    "clippy::panic",
+    "clippy::todo",
+    "clippy::unimplemented",
+];
+
+/// Every way a linked crate's `lib.rs` misses the policy; empty when it keeps it.
+fn lint_policy_violations(name: &str, lib_rs: &str) -> Vec<String> {
+    let code: String = lib_rs
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut found = Vec::new();
+    if !code.contains("#![forbid(unsafe_code)]") {
+        found.push(format!("{name}: no #![forbid(unsafe_code)]"));
+    }
+    let denied = code
+        .find("deny(")
+        .and_then(|at| code[at..].find(')').map(|close| &code[at..at + close]))
+        .unwrap_or_default();
+    for lint in PANIC_LINTS {
+        if !denied.contains(lint) {
+            found.push(format!("{name}: does not deny {lint}"));
+        }
+    }
+    found
+}
+
+/// The workspace crates in the bridge's `[dependencies]`, as their directory names under `crates/`.
+fn linked_workspace_crates() -> Vec<String> {
+    let manifest =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
+    manifest
+        .lines()
+        .skip_while(|line| line.trim() != "[dependencies]")
+        .skip(1)
+        .take_while(|line| !line.starts_with('['))
+        .filter_map(|line| line.split_once("path = \"../")?.1.split_once('"'))
+        .map(|(dir, _)| dir.to_owned())
+        .collect()
+}
+
+#[test]
+fn the_linked_crates_forbid_unsafe_code_and_panics() {
+    let crates = linked_workspace_crates();
+    assert!(crates.contains(&"assets".to_owned()), "{crates:?}");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    for dir in crates {
+        let lib_rs = std::fs::read_to_string(root.join(&dir).join("src/lib.rs")).unwrap();
+        assert_eq!(lint_policy_violations(&dir, &lib_rs), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn the_lint_policy_checker_finds_each_gap() {
+    let gaps = "// #![forbid(unsafe_code)] in a comment counts for nothing.\n\
+                #![deny(clippy::unwrap_used, clippy::panic)]\n\
+                // clippy::expect_used\n";
+    assert_eq!(
+        lint_policy_violations("area", gaps),
+        [
+            "area: no #![forbid(unsafe_code)]",
+            "area: does not deny clippy::expect_used",
+            "area: does not deny clippy::todo",
+            "area: does not deny clippy::unimplemented",
+        ]
+    );
+    let kept = format!(
+        "#![forbid(unsafe_code)]\n#![cfg_attr(not(test), deny({}))]\n",
+        PANIC_LINTS.join(", ")
+    );
+    assert!(lint_policy_violations("area", &kept).is_empty());
 }

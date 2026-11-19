@@ -56,14 +56,21 @@ pub(crate) fn inflate_uastc_levels(reader: &ktx2::Reader<&[u8]>) -> anyhow::Resu
 /// Byte offset, byte length and uncompressed length of `level` in the level index.
 fn level_entry(bytes: &[u8], level: usize) -> anyhow::Result<(usize, usize, u64)> {
     let start = HEADER_BYTES + level * LEVEL_ENTRY_BYTES;
-    let entry = bytes
+    let (words, _) = bytes
         .get(start..start + LEVEL_ENTRY_BYTES)
-        .context("KTX2 level index is truncated")?;
-    let word = |index: usize| {
-        u64::from_le_bytes(entry[index * 8..index * 8 + 8].try_into().expect("8 bytes"))
+        .context("KTX2 level index is truncated")?
+        .as_chunks::<8>();
+    let &[offset, length, uncompressed] = words else {
+        anyhow::bail!("KTX2 level index entry is not three words");
     };
-    let to_usize = |value: u64| usize::try_from(value).context("KTX2 level offset overflows");
-    Ok((to_usize(word(0))?, to_usize(word(1))?, word(2)))
+    let to_usize = |word: [u8; 8]| {
+        usize::try_from(u64::from_le_bytes(word)).context("KTX2 level offset overflows")
+    };
+    Ok((
+        to_usize(offset)?,
+        to_usize(length)?,
+        u64::from_le_bytes(uncompressed),
+    ))
 }
 
 /// Each level's UASTC size, whole 4x4 blocks of 16 bytes, refused past `MAX_INFLATED_BYTES` in total.
@@ -172,6 +179,17 @@ mod tests {
         // Window byte exponent 31: a 128 TiB window for a 16-byte level.
         let frame = [0x28, 0xB5, 0x2F, 0xFD, 0x00, 31 << 3, 0x01, 0x00, 0x00];
         assert!(inflate_into(&frame, 16, &mut Vec::new()).is_err());
+    }
+
+    #[test]
+    fn a_level_entry_reads_its_three_words_and_a_short_index_fails() {
+        let mut file = vec![0u8; HEADER_BYTES];
+        for word in [104u64, 5, 16] {
+            file.extend_from_slice(&word.to_le_bytes());
+        }
+        assert_eq!(level_entry(&file, 0).unwrap(), (104, 5, 16));
+        assert!(level_entry(&file[..file.len() - 1], 0).is_err());
+        assert!(level_entry(&file, 1).is_err());
     }
 
     #[test]

@@ -2,6 +2,18 @@
 
 // The owner's hard gate on function size; clippy.toml holds the limit.
 #![warn(clippy::too_many_lines)]
+// The C++ engine links this crate through the bridge, where its sanitizers and FuzzTest cannot reach.
+#![forbid(unsafe_code)]
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented
+    )
+)]
 
 mod accessor_check;
 #[doc(hidden)]
