@@ -68,7 +68,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   FIFO or a device (Windows' `con` in any directory) blocked the load forever. A buffer file must lie inside the
   document's directory, as the flat loader's images already had to; `files::import_buffers` replaces
   `gltf::import_buffers` with its GLB chunk, data URIs, padding and byteLength check. gltf's reader panicked on a
-  percent escape that is not UTF-8, for buffers and for the scene loader's images, which are now checked first.
+  percent escape that is not UTF-8, for buffers and for the scene loader's images, which are now checked first,
+  `file:` URIs included: gltf opened those unchecked, so a FIFO hung the scene loader and `file:///dev/zero` read
+  until memory ran out.
 - **`kataglyphis_webgpu_renderer`**: `obj_to_gltf` matches texture paths without `.` segments and `dir/..` pairs, so
   `tex.png` and `./tex.png` are one image.
 

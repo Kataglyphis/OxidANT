@@ -721,5 +721,23 @@ mod fifos {
         assert!(flat.textures.is_empty(), "the image gets no slot");
         let err = finishes(move || kataglyphis_assets::load_gltf(scene_image)).unwrap_err();
         assert!(format!("{err:#}").contains("not a regular file"), "{err:#}");
+
+        // A file: URI names the FIFO by its absolute path, which gltf's reader opens as written.
+        let pipe = dir.path().join("pipe.png");
+        for uri in [
+            format!("file://{}", pipe.display()),
+            format!("file:{}", pipe.display()),
+        ] {
+            let extra = extra.replacen("\"pipe.png\"", &format!("\"{uri}\""), 1);
+            let image = triangle_gltf(dir.path(), "file_uri.gltf", r#"{"mesh":0}"#, &extra);
+            let scene_image = image.clone();
+            let flat = finishes(move || load_flat(image)).unwrap();
+            assert!(flat.textures.is_empty(), "{uri}: the image gets no slot");
+            let err = finishes(move || kataglyphis_assets::load_gltf(scene_image)).unwrap_err();
+            assert!(
+                format!("{err:#}").contains("not a regular file"),
+                "{uri}: {err:#}"
+            );
+        }
     }
 }

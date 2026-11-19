@@ -112,7 +112,7 @@ pub(crate) fn import_images(
                 return Ok(texture.map(Arc::new));
             }
             if let (gltf::image::Source::Uri { uri, .. }, Some(base)) = (image.source(), base) {
-                check_relative_image(base, uri)
+                check_image_file(base, uri)
                     .with_context(|| format!("glTF image {}", image.index()))?;
             }
             let data = gltf::image::Data::from_source(image.source(), base, buffers)?;
@@ -121,13 +121,22 @@ pub(crate) fn import_images(
         .collect()
 }
 
-/// gltf's own reader unwraps a relative URI's percent-decoding and opens what it names: a panic, or a FIFO's endless wait.
-fn check_relative_image(base: &Path, uri: &str) -> anyhow::Result<()> {
-    if uri.contains(':') {
-        return Ok(());
-    }
-    files::require_regular_file(&base.join(percent_decode(uri)?))
-        .with_context(|| format!("'{uri}'"))
+/// gltf's reader opens what a relative or `file:` URI names: a bad escape panics, a FIFO waits, `/dev/zero` never ends.
+fn check_image_file(base: &Path, uri: &str) -> anyhow::Result<()> {
+    let path = match file_uri_path(uri) {
+        Some(path) => path.to_path_buf(),
+        // A data URI carries its bytes, and gltf refuses every other scheme.
+        None if uri.contains(':') => return Ok(()),
+        None => base.join(percent_decode(uri)?),
+    };
+    files::require_regular_file(&path).with_context(|| format!("'{uri}'"))
+}
+
+/// A `file:` URI's path as gltf's reader opens it: as written, without the base or percent-decoding.
+fn file_uri_path(uri: &str) -> Option<&Path> {
+    uri.strip_prefix("file://")
+        .or_else(|| uri.strip_prefix("file:"))
+        .map(Path::new)
 }
 
 /// Each texture's image: its `KHR_texture_basisu` KTX2, else (with a warning on failure) its fallback.
@@ -236,11 +245,8 @@ fn read_relative(base: Option<&Path>, uri: &str) -> anyhow::Result<Vec<u8>> {
     let base = base.with_context(|| {
         format!("glTF image '{uri}' is an external file, which an in-memory import cannot read")
     })?;
-    let path = match uri
-        .strip_prefix("file://")
-        .or_else(|| uri.strip_prefix("file:"))
-    {
-        Some(path) => Path::new(path).to_path_buf(),
+    let path = match file_uri_path(uri) {
+        Some(path) => path.to_path_buf(),
         None => base.join(percent_decode(uri)?),
     };
     files::read_regular_file(&path).with_context(|| format!("reading {}", path.display()))
