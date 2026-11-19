@@ -117,9 +117,10 @@ Bounds are also where bad data does the most damage, because it *spreads*:
 - One non-finite vertex NaNs the primitive bounds → the scene bounds → the
   cascade radius → **all three cascade matrices**, so shadows break for every
   object in the scene, not just the bad mesh.
-- `Frustum::test_planes` treats NaN as *visible*, and so does the draw cull's
-  copy wherever the GPU keeps IEEE comparisons, so the offending primitive
-  also never culls.
+- `Frustum::intersects_aabb` treats a box with a NaN corner as unknown bounds
+  and *visible*, as the C++ engine does, and so does the draw cull's copy
+  wherever the GPU keeps IEEE comparisons, so the offending primitive also
+  never culls.
 
 Both AABB helpers therefore skip non-finite vertices rather than propagate them.
 

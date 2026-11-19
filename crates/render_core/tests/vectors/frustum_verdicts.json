@@ -1,8 +1,9 @@
 {
-  "about": "Frustum verdicts both renderers must reach: OxidANT's kataglyphis_render_core::frustum::Frustum (tests/frustum_vectors.rs) and BeschleunigerBallett's isVisible and isVisibleAsShadowCaster (frustumSuite.cpp). Each frustum is a right-handed look-at view times a projection with clip depth 0..1; visible tests all six planes, caster all but the near one. Boxes are world-space min and max corners.",
+  "about": "Frustum verdicts both renderers must reach: OxidANT's kataglyphis_render_core::frustum::Frustum (tests/frustum_vectors.rs) and draw_cull.slang (webgpu_renderer tests/draw_cull_vectors.rs), and BeschleunigerBallett's isVisible and isVisibleAsShadowCaster (frustumSuite.cpp). Each frustum is a right-handed look-at view times a projection with clip depth 0..1, or a view-projection given row by row (kind matrix); visible tests all six planes, caster all but the near one. Boxes are world-space min and max corners. The rules: an inverted box is unknown bounds and visible, planes are normalised and a box up to 1e-4 outside one still counts, a plane without a normal is skipped.",
   "frusta": {
     "camera": {"kind": "perspective", "eye": [0, 0, 0], "target": [0, 0, -1], "up": [0, 1, 0], "fov_y_deg": 45, "aspect": 1.7777778, "near": 0.1, "far": 100},
-    "light": {"kind": "orthographic", "eye": [0, 20, 0], "target": [0, 0, 0], "up": [0, 0, -1], "left": -10, "right": 10, "bottom": -10, "top": 10, "near": 1, "far": 40}
+    "light": {"kind": "orthographic", "eye": [0, 20, 0], "target": [0, 0, 0], "up": [0, 0, -1], "left": -10, "right": 10, "bottom": -10, "top": 10, "near": 1, "far": 40},
+    "no_right_normal": {"kind": "matrix", "rows": [[0, 0, 0, 2], [0, 0.1, 0, 0], [0, 0, -0.1, 0], [0, 0, 0, 1]]}
   },
   "cases": [
     {"name": "in front of the camera", "frustum": "camera", "min": [-1, -1, -11], "max": [1, 1, -9], "visible": true, "caster": true},
@@ -28,6 +29,12 @@
     {"name": "far along the light's -x", "frustum": "light", "min": [-101, -1, -1], "max": [-99, 1, 1], "visible": false, "caster": false},
     {"name": "far along the light's +x", "frustum": "light", "min": [99, -1, -1], "max": [101, 1, 1], "visible": false, "caster": false},
     {"name": "far along the light's y", "frustum": "light", "min": [-1, -1, 99], "max": [1, 1, 101], "visible": false, "caster": false},
-    {"name": "beyond the light's far plane", "frustum": "light", "min": [-1, -51, -1], "max": [1, -49, 1], "visible": false, "caster": false}
+    {"name": "beyond the light's far plane", "frustum": "light", "min": [-1, -51, -1], "max": [1, -49, 1], "visible": false, "caster": false},
+    {"name": "an inverted box behind the camera", "frustum": "camera", "min": [1, 1, 11], "max": [-1, -1, 9], "visible": true, "caster": true},
+    {"name": "5e-5 past the light's +x plane, inside the tolerance", "frustum": "light", "min": [10.00005, -1, -1], "max": [11, 1, 1], "visible": true, "caster": true},
+    {"name": "2e-4 past the light's +x plane, whose unnormalised form is 0.1 long", "frustum": "light", "min": [10.0002, -1, -1], "max": [11, 1, 1], "visible": false, "caster": false},
+    {"name": "inside a frustum whose right plane has no normal", "frustum": "no_right_normal", "min": [-1, -1, -2], "max": [1, 1, -1], "visible": true, "caster": true},
+    {"name": "below the bottom plane of that frustum", "frustum": "no_right_normal", "min": [-1, -21, -2], "max": [1, -19, -1], "visible": false, "caster": false},
+    {"name": "behind the near plane of that frustum", "frustum": "no_right_normal", "min": [-1, -1, 1], "max": [1, 1, 2], "visible": false, "caster": true}
   ]
 }

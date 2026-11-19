@@ -33,6 +33,10 @@ fn vec3(value: &Value, key: &str) -> Vec3 {
 
 /// A frustum's view-projection, built the way each renderer builds its own.
 fn view_projection(frustum: &Value) -> Mat4 {
+    if frustum["kind"].as_str() == Some("matrix") {
+        let rows: [[f32; 4]; 4] = serde_json::from_value(frustum["rows"].clone()).unwrap();
+        return Mat4::from_cols_array_2d(&rows).transpose();
+    }
     let view = look_at_mat4(
         vec3(frustum, "eye"),
         vec3(frustum, "target"),
@@ -72,6 +76,7 @@ fn every_shared_verdict_holds() {
         })
         .collect();
     let cases = vectors["cases"].as_array().unwrap();
+    assert!(cases.len() >= 30, "the shared file lost its cases");
     let mut verdicts = [0usize; 4];
     for case in cases {
         let name = case["name"].as_str().unwrap();
@@ -97,5 +102,5 @@ fn every_shared_verdict_holds() {
         "{verdicts:?}"
     );
     assert_eq!(verdicts[2], 0, "a visible box always casts");
-    assert_eq!(frusta.len(), 2);
+    assert_eq!(frusta.len(), 3);
 }

@@ -5353,6 +5353,7 @@ dependencies = [
  "log",
  "naga",
  "pollster",
+ "serde_json",
  "sha2",
  "wasm-bindgen",
  "wasm-bindgen-futures",

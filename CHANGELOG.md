@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-19, the bridge foundations' review rules)
+
+- **`kataglyphis_render_core`**: `Frustum` culls by the C++ engine's rules (owner decision 2026-11-19): an inverted
+  or NaN box is unknown bounds and visible, the planes are normalised and a box up to `PLANE_TOLERANCE` (1e-4) past
+  one still counts, a plane whose normal is shorter than 1e-8 is skipped. `draw_cull.slang` (and its generated
+  `draw_cull.wgsl`) applies the same rules to the planes `Frustum::planes` hands it. `tests/vectors/frustum_verdicts.json`
+  adds the cases the two engines used to decide differently, 30 in all: an inverted box, boxes 5e-5 and 2e-4 past a
+  plane whose unnormalised form is 0.1 long, and a frustum given row by row (`"kind": "matrix"`) whose right plane
+  has no normal. The renderer's new `tests/draw_cull_vectors.rs` dispatches the draw cull over every case and checks
+  each slot's instances; `serde_json` joins its dev-dependencies (already in the lock).
+
 ### Fixed (2026-11-20, the Windows lanes past the test count)
 
 - The ray-traced kernel compiles under FXC again: `load_instance` wrote a struct's matrix rows through a loop counter,

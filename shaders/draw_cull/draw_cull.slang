@@ -1,6 +1,6 @@
 // Rust/WebGPU per-draw culling into indirect draw arguments: the checked-in draw_cull.wgsl is generated from this file.
 
-// Camera planes, then each cascade's; Gribb-Hartmann, normals inward, as `render::bounds::Frustum`.
+// Camera planes, then each cascade's; Gribb-Hartmann, normals inward and normalised, as `render::bounds::Frustum`.
 struct CullViews
 {
     float4 camera_planes[6];
@@ -57,14 +57,26 @@ static const uint ARGS_WORDS = 5u;
 // Relative half-extent margin plus 1 cm, `render::occlusion::aabb_contains`'s box.
 static const float CONTAINMENT_MARGIN = 0.02;
 
+// `Frustum`'s `PLANE_TOLERANCE` and the squared normal length below which it skips a plane.
+static const float PLANE_TOLERANCE = 1e-4;
+static const float MIN_NORMAL_LENGTH_SQUARED = 1e-16;
+
 bool outside_plane(float4 plane, float3 lo, float3 hi)
 {
+    if (dot(plane.xyz, plane.xyz) < MIN_NORMAL_LENGTH_SQUARED) return false;
     float3 p = float3(plane.x >= 0.0 ? hi.x : lo.x, plane.y >= 0.0 ? hi.y : lo.y, plane.z >= 0.0 ? hi.z : lo.z);
-    return dot(plane.xyz, p) + plane.w < 0.0;
+    return dot(plane.xyz, p) + plane.w < -PLANE_TOLERANCE;
+}
+
+// An inverted or NaN box is unknown bounds, which render.
+bool known(float3 lo, float3 hi)
+{
+    return all(lo <= hi);
 }
 
 bool in_camera(float3 lo, float3 hi)
 {
+    if (!known(lo, hi)) return true;
     for (uint i = 0u; i < 6u; ++i)
     {
         if (outside_plane(views.camera_planes[i], lo, hi)) return false;
@@ -75,6 +87,7 @@ bool in_camera(float3 lo, float3 hi)
 // Without the near plane: casters between the light and the cascade box still shadow it.
 bool in_cascade(uint cascade, float3 lo, float3 hi)
 {
+    if (!known(lo, hi)) return true;
     for (uint i = 0u; i < 6u; ++i)
     {
         if (i == 4u) continue;
