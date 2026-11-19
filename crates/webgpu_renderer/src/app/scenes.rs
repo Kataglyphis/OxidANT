@@ -86,6 +86,13 @@ impl StudioApp {
         self.scene.notice = notice;
     }
 
+    /// The loader options every later load parses with; a shell reads them at its start ([`load_options_from_env`]).
+    ///
+    /// [`load_options_from_env`]: super::loader::load_options_from_env
+    pub fn set_load_options(&mut self, options: crate::asset::gltf_loader::LoadOptions) {
+        self.scene.loader.set_options(options);
+    }
+
     pub fn load_progress(&self) -> Option<&LoadProgress> {
         self.scene.loader.progress()
     }

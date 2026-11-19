@@ -9,7 +9,7 @@ use super::{
 };
 use crate::app::obj_glb::obj_to_glb;
 use crate::app::scene_meta::SceneMeta;
-use crate::asset::gltf_loader::load_gltf;
+use crate::asset::gltf_loader::{load_gltf_with, LoadOptions};
 
 pub(super) enum State {
     Parsing(Receiver<Result<LoadedScene, String>>),
@@ -18,15 +18,16 @@ pub(super) enum State {
 }
 
 impl SceneLoader {
-    pub(super) fn begin(request: SceneRequest) -> (State, LoadStage) {
+    pub(super) fn begin(request: SceneRequest, options: LoadOptions) -> (State, LoadStage) {
         let (sender, receiver) = mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("scene-loader".to_owned())
             .spawn(move || {
                 let started = Instant::now();
-                let result =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| load(request)))
-                        .unwrap_or_else(|_| Err("the loader panicked".to_owned()));
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    load(request, &options)
+                }))
+                .unwrap_or_else(|_| Err("the loader panicked".to_owned()));
                 if let Ok(loaded) = &result {
                     let seconds = started.elapsed().as_secs_f32();
                     let triangles = loaded.scene.triangle_count();
@@ -79,24 +80,24 @@ impl SceneLoader {
     }
 }
 
-fn load(request: SceneRequest) -> Result<LoadedScene, String> {
+fn load(request: SceneRequest, options: &LoadOptions) -> Result<LoadedScene, String> {
     match request {
-        SceneRequest::File(path) => load_file(&path),
-        SceneRequest::Bytes(bytes) => parse_bytes(&bytes),
+        SceneRequest::File(path) => load_file(&path, options),
+        SceneRequest::Bytes(bytes) => parse_bytes(&bytes, options),
         SceneRequest::Url(url) => Err(format!("{url}: only the browser fetches scenes")),
     }
 }
 
 /// An OBJ through the converter in memory; a glTF through the importer, which reads its files beside it.
-fn load_file(path: &Path) -> Result<LoadedScene, String> {
+fn load_file(path: &Path, options: &LoadOptions) -> Result<LoadedScene, String> {
     let is_obj = path
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("obj"));
     if is_obj {
         let glb = obj_to_glb(path).map_err(|error| format!("{error:#}"))?;
-        return parse_bytes(&glb);
+        return parse_bytes(&glb, options);
     }
-    let scene = load_gltf(path).map_err(|error| format!("{error:#}"))?;
+    let scene = load_gltf_with(path, options).map_err(|error| format!("{error:#}"))?;
     Ok(LoadedScene {
         scene,
         meta: SceneMeta::read(path),
@@ -179,5 +180,27 @@ mod tests {
             loader.wait(Duration::from_millis(50)).is_none(),
             "the first never arrives"
         );
+    }
+
+    #[test]
+    fn a_load_parses_with_the_options_it_started_with() {
+        // A quad whose second triangle mirrors its UVs: only MikkTSpace splits the two corners both share.
+        let quad = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../assets/tests/assets/mirrored_uv_quad.gltf");
+        let vertices = |loader: &mut SceneLoader, request: SceneRequest| {
+            loader.start(None, "quad", request);
+            let outcome = loader.wait(Duration::from_secs(30)).expect("finishes");
+            outcome.result.expect("loads").scene.primitives[0]
+                .vertices
+                .len()
+        };
+        let mut loader = SceneLoader::default();
+        assert_eq!(vertices(&mut loader, SceneRequest::File(quad.clone())), 4);
+        loader.set_options(LoadOptions {
+            mikktspace_tangents: true,
+        });
+        assert_eq!(vertices(&mut loader, SceneRequest::File(quad.clone())), 6);
+        let bytes = std::fs::read(&quad).unwrap();
+        assert_eq!(vertices(&mut loader, SceneRequest::Bytes(bytes.into())), 6);
     }
 }

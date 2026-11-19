@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use glam::{Mat3, Mat4, Vec3};
 
 use crate::gltf_images::{self, TextureSource};
-use crate::gltf_loader::{self, Geometry, Imported};
+use crate::gltf_loader::{self, Geometry, Imported, LoadOptions};
 use crate::scene::{self, AlphaMode, CpuLight, CpuLightKind, CpuMaterial, CpuSampler};
 
 /// One vertex in the C++ `Vertex`'s field order, in world space.
@@ -107,8 +107,8 @@ pub struct FlatModel {
     pub sun: Option<FlatLight>,
 }
 
-/// Loads `path` through the shared loader and flattens it; an error when nothing draws.
-pub fn load_flat(path: impl AsRef<Path>) -> anyhow::Result<FlatModel> {
+/// Loads `path` through the shared loader with `options` and flattens it; an error when nothing draws.
+pub fn load_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::Result<FlatModel> {
     let path = path.as_ref();
     let imported = gltf_loader::import_document(path)
         .with_context(|| format!("Failed to import glTF file: {}", path.display()))?;
@@ -121,7 +121,7 @@ pub fn load_flat(path: impl AsRef<Path>) -> anyhow::Result<FlatModel> {
     };
     let mut lights = Vec::new();
     gltf_loader::walk_nodes(&imported.document, |node, world| {
-        visit_node(&mut model, &mut lights, &imported, node, world)
+        visit_node(&mut model, &mut lights, &imported, options, node, world)
     })?;
     anyhow::ensure!(
         !model.vertices.is_empty(),
@@ -252,6 +252,7 @@ fn visit_node(
     model: &mut FlatModel,
     lights: &mut Vec<CpuLight>,
     imported: &Imported,
+    options: &LoadOptions,
     node: &gltf::Node,
     world: Mat4,
 ) -> anyhow::Result<()> {
@@ -267,7 +268,9 @@ fn visit_node(
     };
     let fallback = (model.materials.len() - 1) as u32;
     for primitive in mesh.primitives().filter(gltf_loader::draws_triangles) {
-        let Some(geometry) = gltf_loader::primitive_geometry(&primitive, &imported.buffers)? else {
+        let Some(geometry) =
+            gltf_loader::primitive_geometry(&primitive, &imported.buffers, options)?
+        else {
             continue;
         };
         let material = primitive.material().index().map_or(fallback, |i| i as u32);

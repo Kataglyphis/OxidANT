@@ -8,8 +8,22 @@ mod web;
 use std::path::PathBuf;
 
 use super::scene_meta::SceneMeta;
-use crate::asset::gltf_loader::load_gltf_slice;
+use crate::asset::gltf_loader::{load_gltf_slice_with, LoadOptions};
 use crate::scene::CpuScene;
+
+/// Set to anything, it turns on MikkTSpace tangents ([`LoadOptions::mikktspace_tangents`]).
+pub const MIKKTSPACE_TANGENTS_ENV: &str = "KATAGLYPHIS_MIKKTSPACE_TANGENTS";
+
+/// The loader options the environment asks for, which an application reads once at its start; wasm32 has none set.
+pub fn load_options_from_env() -> LoadOptions {
+    load_options_from(std::env::var_os(MIKKTSPACE_TANGENTS_ENV))
+}
+
+fn load_options_from(mikktspace_tangents: Option<std::ffi::OsString>) -> LoadOptions {
+    LoadOptions {
+        mikktspace_tangents: mikktspace_tangents.is_some(),
+    }
+}
 
 /// What to load.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,8 +83,8 @@ pub struct LoadOutcome {
 }
 
 /// Parses a whole .gltf or .glb in memory.
-pub(super) fn parse_bytes(bytes: &[u8]) -> Result<LoadedScene, String> {
-    let scene = load_gltf_slice(bytes).map_err(|error| format!("{error:#}"))?;
+pub(super) fn parse_bytes(bytes: &[u8], options: &LoadOptions) -> Result<LoadedScene, String> {
+    let scene = load_gltf_slice_with(bytes, options).map_err(|error| format!("{error:#}"))?;
     Ok(LoadedScene {
         scene,
         meta: SceneMeta::parse(bytes),
@@ -81,6 +95,8 @@ pub(super) fn parse_bytes(bytes: &[u8]) -> Result<LoadedScene, String> {
 #[derive(Default)]
 pub struct SceneLoader {
     job: Option<Job>,
+    /// What every load from now on parses with.
+    options: LoadOptions,
 }
 
 /// The running load: what it is for, and the platform's state of it.
@@ -96,7 +112,7 @@ struct Job {
 impl SceneLoader {
     /// Starts loading `request` for library row `entry`; the scene on screen stays until [`Self::poll`] hands this one out.
     pub fn start(&mut self, entry: Option<usize>, name: &str, request: SceneRequest) {
-        let (state, stage) = Self::begin(request);
+        let (state, stage) = Self::begin(request, self.options);
         self.job = Some(Job {
             entry,
             progress: LoadProgress {
@@ -106,6 +122,15 @@ impl SceneLoader {
             },
             state,
         });
+    }
+
+    /// The options the next [`Self::start`] parses with; a load already running keeps its own.
+    pub fn set_options(&mut self, options: LoadOptions) {
+        self.options = options;
+    }
+
+    pub fn options(&self) -> LoadOptions {
+        self.options
     }
 
     pub fn progress(&self) -> Option<&LoadProgress> {
@@ -149,5 +174,17 @@ mod tests {
         );
         progress.stage = LoadStage::Parsing;
         assert_eq!(progress.text(), "Loading Colosseum  ·  parsing");
+    }
+
+    #[test]
+    fn the_environment_asks_for_mikktspace_by_being_set() {
+        assert_eq!(load_options_from(None), LoadOptions::default());
+        let set = load_options_from(Some("".into()));
+        assert!(set.mikktspace_tangents, "set to anything, even empty");
+        assert_eq!(MIKKTSPACE_TANGENTS_ENV, "KATAGLYPHIS_MIKKTSPACE_TANGENTS");
+        let mut loader = SceneLoader::default();
+        assert_eq!(loader.options(), LoadOptions::default());
+        loader.set_options(set);
+        assert_eq!(loader.options(), set);
     }
 }

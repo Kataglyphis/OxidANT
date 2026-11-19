@@ -33,7 +33,7 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | ✅ glTF sampler filters + wrap modes | S | Done 2026-07-18: nearest/linear + repeat/mirror/clamp honored per material texture; the mipmap-less NEAREST and LINEAR min filters sample level 0 through a one-level view since 2026-11-15 |
 | ✅ Mipmap generation | M | Done 2026-07-18: CPU box-filter chains at upload, sRGB-aware averaging |
 | ✅ Normal matrix | S | Done 2026-07-18: inverse-transpose per primitive |
-| ✅ Normal mapping | M | Done 2026-07-18: glTF tangents or Lengyel-style generation; MikkTSpace opt-in since 2026-07-21 (`KATAGLYPHIS_MIKKTSPACE_TANGENTS`) |
+| ✅ Normal mapping | M | Done 2026-07-18: glTF tangents or Lengyel-style generation; MikkTSpace opt-in since 2026-07-21 (`LoadOptions::mikktspace_tangents`; since 2026-11-19 the viewer reads `KATAGLYPHIS_MIKKTSPACE_TANGENTS` at its start, the loader no environment) |
 | ✅ Full metallic-roughness BRDF | M | Done 2026-07-18: GGX + Smith + Fresnel-Schlick; metallic/roughness texture sampling |
 | ✅ Emissive + occlusion maps | S | Done 2026-07-18; `KHR_materials_emissive_strength` done 2026-07-21 (folded into `emissive_factor` at load for HDR emitters, GPU-free loader test) |
 | ✅ Alpha modes | M | Done 2026-07-18: MASK cutoff discard + sorted BLEND pass with transparency-aware shadow casting. Per-pixel alpha-tested shadows for textured MASK materials done 2026-07-22 (`0be3bb4`): MASK casters with a real base-color texture route through an alpha-testing shadow pipeline, so a cut-out foliage card casts the shadow of its silhouette, not the solid quad. Since 2026-11-15 every MASK caster does (vertex alpha cuts too), and double-sided casters render unculled, so a sheet shadows from either side |

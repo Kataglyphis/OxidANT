@@ -8,6 +8,7 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
 use super::{parse_bytes, LoadProgress, LoadStage, LoadedScene, SceneLoader, SceneRequest};
+use crate::asset::gltf_loader::LoadOptions;
 
 /// What the fetch task has delivered so far.
 #[derive(Default)]
@@ -17,22 +18,23 @@ pub(super) struct Fetch {
     done: Option<Result<Vec<u8>, String>>,
 }
 
+/// Each state that will parse carries the options its load started with.
 pub(super) enum State {
-    Fetching(Rc<RefCell<Fetch>>),
+    Fetching(Rc<RefCell<Fetch>>, LoadOptions),
     /// Bytes in hand, parsed on the next poll so `parsing` shows for a frame first.
-    Parse(Option<Arc<[u8]>>),
+    Parse(Option<Arc<[u8]>>, LoadOptions),
     /// Parsed, handed out on the next poll so `uploading` shows for a frame first.
     Ready(Option<Result<LoadedScene, String>>),
 }
 
 impl SceneLoader {
-    pub(super) fn begin(request: SceneRequest) -> (State, LoadStage) {
+    pub(super) fn begin(request: SceneRequest, options: LoadOptions) -> (State, LoadStage) {
         match request {
-            SceneRequest::Bytes(bytes) => (State::Parse(Some(bytes)), LoadStage::Parsing),
+            SceneRequest::Bytes(bytes) => (State::Parse(Some(bytes), options), LoadStage::Parsing),
             SceneRequest::Url(url) => {
                 let fetch = Rc::new(RefCell::new(Fetch::default()));
                 spawn_fetch(url, Rc::clone(&fetch));
-                (State::Fetching(fetch), LoadStage::Fetching)
+                (State::Fetching(fetch, options), LoadStage::Fetching)
             }
             SceneRequest::File(path) => {
                 let error = format!("{}: a browser tab reads no files", path.display());
@@ -46,7 +48,7 @@ impl SceneLoader {
         progress: &mut LoadProgress,
     ) -> Option<Result<LoadedScene, String>> {
         match state {
-            State::Fetching(fetch) => {
+            State::Fetching(fetch, options) => {
                 let done = {
                     let mut fetch = fetch.borrow_mut();
                     let received = fetch.received as f32;
@@ -60,13 +62,13 @@ impl SceneLoader {
                     Ok(bytes) => bytes,
                     Err(error) => return Some(Err(error)),
                 };
-                *state = State::Parse(Some(bytes.into()));
+                *state = State::Parse(Some(bytes.into()), *options);
                 progress.stage = LoadStage::Parsing;
                 progress.fraction = None;
                 None
             }
-            State::Parse(bytes) => {
-                let result = parse_bytes(&bytes.take()?);
+            State::Parse(bytes, options) => {
+                let result = parse_bytes(&bytes.take()?, options);
                 if result.is_err() {
                     return Some(result);
                 }

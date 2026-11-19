@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-19, load options instead of an environment read in the shared loader)
+
+- **`kataglyphis_assets`**: `LoadOptions` (`mikktspace_tangents`) reaches the tangent generator through
+  `load_gltf_with`, `load_gltf_slice_with` and `load_flat(path, &options)`; `load_gltf` and `load_gltf_slice` keep
+  their names with the defaults. The loader no longer reads `KATAGLYPHIS_MIKKTSPACE_TANGENTS`, which changed the C++
+  engine's geometry from inside it: the viewer reads it at its start (`app::loader::load_options_from_env`,
+  `StudioApp::set_load_options`), and a load keeps the options it started with. The flat proptest varies the option.
+- **`kataglyphis_cxx_bridge`**: the shared struct `GltfLoadOptions` and `load_gltf_flat_with(path, &options)`; a
+  zeroed `GltfLoadOptions{}` is `load_gltf_flat`'s defaults, so each later field's zero must be its default.
+  `crates/assets/tests/assets/mirrored_uv_quad.gltf` shows the option arriving: MikkTSpace splits its 4 vertices into 6.
+
 ### Added (2026-11-19, `kataglyphis_render_core` and the bridged settings)
 
 - **`kataglyphis_render_core`**, a wgpu-free crate (glam, bytemuck) the C++ bridge may link: the cloud and shadow

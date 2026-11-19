@@ -3,12 +3,22 @@
 use std::path::{Path, PathBuf};
 
 use kataglyphis_assets::flat::{load_flat, FlatModel};
+use kataglyphis_assets::LoadOptions;
 
 fn renderer_asset(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../webgpu_renderer/tests/assets")
         .join(name)
 }
+
+/// A quad whose second triangle mirrors its UVs: MikkTSpace splits the two shared corners, Lengyel's tangents do not.
+fn mirrored_uv_quad() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/mirrored_uv_quad.gltf")
+}
+
+const MIKKTSPACE: LoadOptions = LoadOptions {
+    mikktspace_tangents: true,
+};
 
 fn base64(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -88,7 +98,7 @@ fn assert_consistent(model: &FlatModel) {
 
 #[test]
 fn the_cube_flattens_into_consistent_arrays() {
-    let model = load_flat(renderer_asset("cube.gltf")).unwrap();
+    let model = load_flat(renderer_asset("cube.gltf"), &LoadOptions::default()).unwrap();
     assert_consistent(&model);
     assert_eq!(model.ranges.len(), 1);
     assert_eq!(model.indices.len(), 36);
@@ -102,15 +112,46 @@ fn the_cube_flattens_into_consistent_arrays() {
 }
 
 #[test]
+fn the_load_options_reach_the_tangent_generator() {
+    let lengyel = load_flat(mirrored_uv_quad(), &LoadOptions::default()).unwrap();
+    let mikktspace = load_flat(mirrored_uv_quad(), &MIKKTSPACE).unwrap();
+    assert_consistent(&mikktspace);
+    assert_eq!(
+        lengyel.vertices.len(),
+        4,
+        "the default never splits a vertex"
+    );
+    assert_eq!(
+        mikktspace.vertices.len(),
+        6,
+        "the corners both charts share split"
+    );
+    let handedness =
+        |model: &FlatModel| -> Vec<f32> { model.vertices.iter().map(|v| v.tangent[3]).collect() };
+    assert!(handedness(&mikktspace).contains(&-1.0) && handedness(&mikktspace).contains(&1.0));
+    let scene = kataglyphis_assets::load_gltf_with(mirrored_uv_quad(), &MIKKTSPACE).unwrap();
+    assert_eq!(scene.primitives[0].vertices.len(), 6);
+    let bytes = std::fs::read(mirrored_uv_quad()).unwrap();
+    let slice = kataglyphis_assets::load_gltf_slice_with(&bytes, &MIKKTSPACE).unwrap();
+    assert_eq!(slice.primitives[0].vertices.len(), 6);
+    let plain = kataglyphis_assets::load_gltf_slice(&bytes).unwrap();
+    assert_eq!(plain.primitives[0].vertices.len(), 4);
+}
+
+#[test]
 fn a_glb_reads_its_buffer_from_the_binary_chunk() {
-    let model = load_flat(renderer_asset("cube.glb")).unwrap();
+    let model = load_flat(renderer_asset("cube.glb"), &LoadOptions::default()).unwrap();
     assert_consistent(&model);
     assert_eq!(model.indices.len(), 36);
 }
 
 #[test]
 fn a_textured_material_gets_the_encoded_image_and_its_sampler() {
-    let model = load_flat(renderer_asset("cube_textured.gltf")).unwrap();
+    let model = load_flat(
+        renderer_asset("cube_textured.gltf"),
+        &LoadOptions::default(),
+    )
+    .unwrap();
     assert_eq!(model.textures.len(), 1);
     let texture = &model.textures[0];
     assert!(texture.encoded.starts_with(b"\x89PNG"), "bytes as stored");
@@ -123,20 +164,24 @@ fn a_textured_material_gets_the_encoded_image_and_its_sampler() {
 
 #[test]
 fn a_basisu_only_texture_has_no_slot_and_a_fallback_uses_its_core_image() {
-    let only = load_flat(renderer_asset("cube_basisu.gltf")).unwrap();
+    let only = load_flat(renderer_asset("cube_basisu.gltf"), &LoadOptions::default()).unwrap();
     assert!(
         only.textures.is_empty(),
         "stb cannot decode KTX2, so no slot"
     );
     assert_eq!(only.materials[0].base_texture, -1);
-    let fallback = load_flat(renderer_asset("cube_basisu_fallback.gltf")).unwrap();
+    let fallback = load_flat(
+        renderer_asset("cube_basisu_fallback.gltf"),
+        &LoadOptions::default(),
+    )
+    .unwrap();
     assert_eq!(fallback.textures.len(), 1);
     assert!(fallback.textures[0].encoded.starts_with(b"\x89PNG"));
 }
 
 #[test]
 fn lights_are_posed_by_their_nodes() {
-    let model = load_flat(renderer_asset("point_light.gltf")).unwrap();
+    let model = load_flat(renderer_asset("point_light.gltf"), &LoadOptions::default()).unwrap();
     assert_eq!(model.lights.len(), 2);
     let point = &model.lights[0];
     assert_eq!(point.kind, 1);
@@ -155,13 +200,20 @@ fn lights_are_posed_by_their_nodes() {
 #[test]
 fn a_mirroring_node_reverses_the_winding_and_flips_the_tangent_handedness() {
     let dir = tempfile::tempdir().unwrap();
-    let plain = load_flat(triangle_gltf(dir.path(), "plain.gltf", r#"{"mesh":0}"#, "")).unwrap();
-    let mirrored = load_flat(triangle_gltf(
-        dir.path(),
-        "mirrored.gltf",
-        r#"{"mesh":0,"scale":[-1,1,1]}"#,
-        "",
-    ))
+    let plain = load_flat(
+        triangle_gltf(dir.path(), "plain.gltf", r#"{"mesh":0}"#, ""),
+        &LoadOptions::default(),
+    )
+    .unwrap();
+    let mirrored = load_flat(
+        triangle_gltf(
+            dir.path(),
+            "mirrored.gltf",
+            r#"{"mesh":0,"scale":[-1,1,1]}"#,
+            "",
+        ),
+        &LoadOptions::default(),
+    )
     .unwrap();
     assert_eq!(plain.indices, [0, 1, 2]);
     assert_eq!(mirrored.indices, [0, 2, 1]);
@@ -180,20 +232,26 @@ fn a_mirroring_node_reverses_the_winding_and_flips_the_tangent_handedness() {
 fn a_skinned_node_keeps_its_bind_pose_and_a_plain_one_moves() {
     let dir = tempfile::tempdir().unwrap();
     let skin = r#","skins":[{"joints":[1]}]"#;
-    let skinned = load_flat(triangle_gltf(
-        dir.path(),
-        "skinned.gltf",
-        r#"{"mesh":0,"skin":0,"translation":[5,0,0]},{}"#,
-        skin,
-    ))
+    let skinned = load_flat(
+        triangle_gltf(
+            dir.path(),
+            "skinned.gltf",
+            r#"{"mesh":0,"skin":0,"translation":[5,0,0]},{}"#,
+            skin,
+        ),
+        &LoadOptions::default(),
+    )
     .unwrap();
     assert_eq!(skinned.vertices[0].position, [0.0, 0.0, 0.0]);
-    let moved = load_flat(triangle_gltf(
-        dir.path(),
-        "moved.gltf",
-        r#"{"mesh":0,"translation":[5,0,0]}"#,
-        "",
-    ))
+    let moved = load_flat(
+        triangle_gltf(
+            dir.path(),
+            "moved.gltf",
+            r#"{"mesh":0,"translation":[5,0,0]}"#,
+            "",
+        ),
+        &LoadOptions::default(),
+    )
     .unwrap();
     assert_eq!(moved.vertices[0].position, [5.0, 0.0, 0.0]);
 }
@@ -201,7 +259,11 @@ fn a_skinned_node_keeps_its_bind_pose_and_a_plain_one_moves() {
 #[test]
 fn a_primitive_without_a_material_draws_with_the_neutral_fallback() {
     let dir = tempfile::tempdir().unwrap();
-    let model = load_flat(triangle_gltf(dir.path(), "bare.gltf", r#"{"mesh":0}"#, "")).unwrap();
+    let model = load_flat(
+        triangle_gltf(dir.path(), "bare.gltf", r#"{"mesh":0}"#, ""),
+        &LoadOptions::default(),
+    )
+    .unwrap();
     assert_eq!(model.materials.len(), 1, "only the fallback");
     assert_eq!(model.material_index, [0]);
     assert_consistent(&model);
@@ -218,12 +280,10 @@ fn slots_dedup_on_image_sampler_and_colour_space() {
           {"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"normalTexture":{"index":1}},
           {"pbrMetallicRoughness":{"baseColorTexture":{"index":1}},"emissiveTexture":{"index":0}},
           {"pbrMetallicRoughness":{"baseColorTexture":{"index":2},"metallicRoughnessTexture":{"index":3}}}]"#;
-    let model = load_flat(triangle_gltf(
-        dir.path(),
-        "slots.gltf",
-        r#"{"mesh":0}"#,
-        extra,
-    ))
+    let model = load_flat(
+        triangle_gltf(dir.path(), "slots.gltf", r#"{"mesh":0}"#, extra),
+        &LoadOptions::default(),
+    )
     .unwrap();
     let ids: Vec<[i32; 4]> = model
         .materials
@@ -255,7 +315,11 @@ fn an_image_outside_the_document_directory_gets_no_slot() {
     let extra = r#","images":[{"uri":"../secret.png"},{"uri":"https://example.com/a.png"},{"uri":"missing.png"}],
         "textures":[{"source":0},{"source":1},{"source":2}],
         "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"normalTexture":{"index":1},"emissiveTexture":{"index":2}}]"#;
-    let model = load_flat(triangle_gltf(&dir, "escape.gltf", r#"{"mesh":0}"#, extra)).unwrap();
+    let model = load_flat(
+        triangle_gltf(&dir, "escape.gltf", r#"{"mesh":0}"#, extra),
+        &LoadOptions::default(),
+    )
+    .unwrap();
     assert!(model.textures.is_empty());
     assert_eq!(model.materials[0].base_texture, -1);
 }
@@ -264,7 +328,7 @@ fn an_image_outside_the_document_directory_gets_no_slot() {
 fn a_file_without_triangles_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let path = triangle_gltf(dir.path(), "empty.gltf", r#"{}"#, "");
-    let err = load_flat(path).unwrap_err();
+    let err = load_flat(path, &LoadOptions::default()).unwrap_err();
     assert!(
         format!("{err:#}").contains("no triangle primitives"),
         "{err:#}"
@@ -297,7 +361,7 @@ fn a_texture_transform_tex_coord_overrides_the_slots_uv_set() {
         json.replace(r#""attributes":{"#, r#""material":0,"attributes":{"#),
     )
     .unwrap();
-    let flat = load_flat(&path).unwrap();
+    let flat = load_flat(&path, &LoadOptions::default()).unwrap();
     assert_eq!(
         flat.materials[0].uv1_slot_mask, 0b0101,
         "base colour and normal"
@@ -320,7 +384,7 @@ fn a_document_without_scenes_loads_every_node_posed_by_its_parents() {
         json.replace(r#""scene":0,"scenes":[{"nodes":[0]}],"#, ""),
     )
     .unwrap();
-    let flat = load_flat(&path).unwrap();
+    let flat = load_flat(&path, &LoadOptions::default()).unwrap();
     assert_eq!(flat.vertices[0].position, [1.0, 0.0, 3.0]);
     assert_eq!(flat.ranges.len(), 1, "the child is not visited twice");
     let scene = kataglyphis_assets::load_gltf(&path).unwrap();
@@ -332,12 +396,10 @@ fn a_truncated_base64_image_gets_no_slot() {
     let dir = tempfile::tempdir().unwrap();
     let extra = r#","images":[{"uri":"data:image/png;base64,QQ"}],"textures":[{"source":0}],
         "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}]"#;
-    let model = load_flat(triangle_gltf(
-        dir.path(),
-        "short.gltf",
-        r#"{"mesh":0}"#,
-        extra,
-    ))
+    let model = load_flat(
+        triangle_gltf(dir.path(), "short.gltf", r#"{"mesh":0}"#, extra),
+        &LoadOptions::default(),
+    )
     .unwrap();
     assert!(model.textures.is_empty());
 }
@@ -403,13 +465,14 @@ proptest::proptest! {
     fn a_mutated_file_is_rejected_or_flattens_consistently(
         seed in 0..FUZZ_SEEDS.len(),
         mutations in proptest::collection::vec(mutation(), 1..8),
+        mikktspace_tangents in proptest::bool::ANY,
     ) {
         let name = FUZZ_SEEDS[seed];
         let bytes = mutate(std::fs::read(renderer_asset(name)).unwrap(), &mutations);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(name);
         std::fs::write(&path, bytes).unwrap();
-        if let Ok(model) = load_flat(&path) {
+        if let Ok(model) = load_flat(&path, &LoadOptions { mikktspace_tangents }) {
             assert_consistent(&model);
             let materials = model.materials.len();
             for material in &model.materials {
@@ -455,9 +518,12 @@ fn accessors_the_reader_would_panic_on_are_rejected() {
         assert!(json.contains(from), "{name}: the fixture changed");
         let case = dir.path().join("case.gltf");
         std::fs::write(&case, json.replacen(from, to, 1)).unwrap();
-        assert!(load_flat(&case).is_err(), "{name} loaded");
+        assert!(
+            load_flat(&case, &LoadOptions::default()).is_err(),
+            "{name} loaded"
+        );
     }
-    assert!(load_flat(&path).is_ok());
+    assert!(load_flat(&path, &LoadOptions::default()).is_ok());
 }
 
 /// Two primitives on one 1000-vertex POSITION and NORMAL accessor, drawing corners 0, 1, 10 and 987, 997, 998.
@@ -500,7 +566,7 @@ fn shared_accessor_gltf(dir: &Path) -> PathBuf {
 fn primitives_sharing_an_accessor_each_keep_only_the_corners_they_draw() {
     let dir = tempfile::tempdir().unwrap();
     let path = shared_accessor_gltf(dir.path());
-    let flat = load_flat(&path).unwrap();
+    let flat = load_flat(&path, &LoadOptions::default()).unwrap();
     assert_consistent(&flat);
     let counts: Vec<usize> = flat.ranges.iter().map(|r| r.vertex_count).collect();
     assert_eq!(counts, [3, 3], "not the whole accessor each");
@@ -534,7 +600,11 @@ fn the_first_directional_light_becomes_the_sun_and_leaves_the_lights() {
         {"extensions":{"KHR_lights_punctual":{"light":0}}}"#;
     let lights = r#","extensionsUsed":["KHR_lights_punctual"],"extensions":{"KHR_lights_punctual":{"lights":[
         {"type":"directional","color":[1,0.9,0.76],"intensity":4098},{"type":"point","intensity":5}]}}"#;
-    let flat = load_flat(triangle_gltf(dir.path(), "sun.gltf", nodes, lights)).unwrap();
+    let flat = load_flat(
+        triangle_gltf(dir.path(), "sun.gltf", nodes, lights),
+        &LoadOptions::default(),
+    )
+    .unwrap();
     let sun = flat.sun.expect("a directional light");
     assert_eq!(
         (sun.kind, sun.color, sun.intensity),
@@ -554,7 +624,11 @@ fn the_first_directional_light_becomes_the_sun_and_leaves_the_lights() {
         r#""scale":[0,0,0]"#,
         1,
     );
-    let flat = load_flat(triangle_gltf(dir.path(), "hidden.gltf", &hidden, lights)).unwrap();
+    let flat = load_flat(
+        triangle_gltf(dir.path(), "hidden.gltf", &hidden, lights),
+        &LoadOptions::default(),
+    )
+    .unwrap();
     assert_eq!(flat.sun, None);
     let kinds: Vec<u32> = flat.lights.iter().map(|l| l.kind).collect();
     assert_eq!(kinds, [1, 3]);
@@ -570,12 +644,10 @@ fn equal_samplers_share_a_slot_whatever_their_index() {
                      {{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":2}}}},"emissiveTexture":{{"index":3}}}}]"#,
         embedded_png_uri()
     );
-    let model = load_flat(triangle_gltf(
-        dir.path(),
-        "samplers.gltf",
-        r#"{"mesh":0}"#,
-        &extra,
-    ))
+    let model = load_flat(
+        triangle_gltf(dir.path(), "samplers.gltf", r#"{"mesh":0}"#, &extra),
+        &LoadOptions::default(),
+    )
     .unwrap();
     // Two clamping sampler objects are one sampler; no sampler and an empty one are glTF's default.
     assert_eq!(
@@ -632,7 +704,7 @@ fn a_buffer_must_be_a_regular_file_inside_the_document_directory() {
         (absolute.as_str(), false),
         ("https://example.com/tri.bin", false),
     ] {
-        let result = load_flat(triangle_with_buffer(&dir, uri));
+        let result = load_flat(triangle_with_buffer(&dir, uri), &LoadOptions::default());
         assert_eq!(result.is_ok(), loads, "{uri}: {:?}", result.err());
         assert_eq!(
             kataglyphis_assets::load_gltf(dir.join("external.gltf")).is_ok(),
@@ -640,14 +712,22 @@ fn a_buffer_must_be_a_regular_file_inside_the_document_directory() {
             "{uri}"
         );
     }
-    let err = load_flat(triangle_with_buffer(&dir, "../outside.bin")).unwrap_err();
+    let err = load_flat(
+        triangle_with_buffer(&dir, "../outside.bin"),
+        &LoadOptions::default(),
+    )
+    .unwrap_err();
     assert!(
         format!("{err:#}").contains("outside the document's directory"),
         "{err:#}"
     );
-    let err = load_flat(triangle_with_buffer(&dir, "folder.bin")).unwrap_err();
+    let err = load_flat(
+        triangle_with_buffer(&dir, "folder.bin"),
+        &LoadOptions::default(),
+    )
+    .unwrap_err();
     assert!(format!("{err:#}").contains("not a regular file"), "{err:#}");
-    let err = load_flat(&dir).unwrap_err();
+    let err = load_flat(&dir, &LoadOptions::default()).unwrap_err();
     assert!(
         format!("{err:#}").contains("not a regular file"),
         "the document itself: {err:#}"
@@ -676,7 +756,10 @@ fn an_image_whose_escape_is_not_utf8_fails_the_scene_load_instead_of_panicking()
     let err = kataglyphis_assets::load_gltf(&path).unwrap_err();
     assert!(format!("{err:#}").contains("not UTF-8"), "{err:#}");
     assert!(
-        load_flat(&path).unwrap().textures.is_empty(),
+        load_flat(&path, &LoadOptions::default())
+            .unwrap()
+            .textures
+            .is_empty(),
         "the flat load drops the image"
     );
 }
@@ -709,15 +792,15 @@ mod fifos {
         fifo(&dir.path().join("pipe.bin"));
         fifo(&dir.path().join("pipe.png"));
         let document = dir.path().join("pipe.gltf");
-        assert!(finishes(move || load_flat(document)).is_err());
+        assert!(finishes(move || load_flat(document, &LoadOptions::default())).is_err());
         let buffer = triangle_with_buffer(dir.path(), "pipe.bin");
-        assert!(finishes(move || load_flat(buffer)).is_err());
+        assert!(finishes(move || load_flat(buffer, &LoadOptions::default())).is_err());
 
         let extra = r#","images":[{"uri":"pipe.png"}],"textures":[{"source":0}],
             "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}]"#;
         let image = triangle_gltf(dir.path(), "image.gltf", r#"{"mesh":0}"#, extra);
         let scene_image = image.clone();
-        let flat = finishes(move || load_flat(image)).unwrap();
+        let flat = finishes(move || load_flat(image, &LoadOptions::default())).unwrap();
         assert!(flat.textures.is_empty(), "the image gets no slot");
         let err = finishes(move || kataglyphis_assets::load_gltf(scene_image)).unwrap_err();
         assert!(format!("{err:#}").contains("not a regular file"), "{err:#}");
@@ -731,7 +814,7 @@ mod fifos {
             let extra = extra.replacen("\"pipe.png\"", &format!("\"{uri}\""), 1);
             let image = triangle_gltf(dir.path(), "file_uri.gltf", r#"{"mesh":0}"#, &extra);
             let scene_image = image.clone();
-            let flat = finishes(move || load_flat(image)).unwrap();
+            let flat = finishes(move || load_flat(image, &LoadOptions::default())).unwrap();
             assert!(flat.textures.is_empty(), "{uri}: the image gets no slot");
             let err = finishes(move || kataglyphis_assets::load_gltf(scene_image)).unwrap_err();
             assert!(

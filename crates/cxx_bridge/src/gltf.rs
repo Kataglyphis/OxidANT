@@ -4,6 +4,7 @@ use kataglyphis_assets::flat::{
     load_flat, FlatLight, FlatMaterial, FlatModel, FlatRange, FlatTexture, FlatVertex,
 };
 use kataglyphis_assets::scene::{CpuSampler, CpuWrap};
+use kataglyphis_assets::LoadOptions;
 
 use crate::guarded;
 
@@ -115,20 +116,45 @@ pub mod ffi {
         sun: GltfLight,
     }
 
+    /// How the loader builds geometry; each field's zero is its default, so `GltfLoadOptions{}` is `load_gltf_flat`'s.
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
+    struct GltfLoadOptions {
+        /// MikkTSpace tangents where the file has none, the basis DCC tools bake against; false keeps Lengyel's.
+        mikktspace_tangents: bool,
+    }
+
     extern "Rust" {
         /// Parses the .gltf or .glb at the UTF-8 `path` with OxidANT's loader, flattened for the engine.
         fn load_gltf_flat(path: &[u8]) -> GltfModel;
+        /// `load_gltf_flat` with `options`, which the engine reads once at its start; the loader reads no environment.
+        fn load_gltf_flat_with(path: &[u8], options: &GltfLoadOptions) -> GltfModel;
     }
 }
 
 /// Never unwinds into C++: an error or a panic becomes `ok == false` with the reason.
 pub fn load_gltf_flat(path: &[u8]) -> ffi::GltfModel {
-    guarded(|| model(load(path)), loader_panicked)
+    guarded(
+        || model(load(path, &LoadOptions::default())),
+        loader_panicked,
+    )
 }
 
-fn load(path: &[u8]) -> Result<FlatModel, String> {
+pub fn load_gltf_flat_with(path: &[u8], options: &ffi::GltfLoadOptions) -> ffi::GltfModel {
+    guarded(
+        || model(load(path, &load_options(options))),
+        loader_panicked,
+    )
+}
+
+fn load_options(options: &ffi::GltfLoadOptions) -> LoadOptions {
+    LoadOptions {
+        mikktspace_tangents: options.mikktspace_tangents,
+    }
+}
+
+fn load(path: &[u8], options: &LoadOptions) -> Result<FlatModel, String> {
     let path = std::str::from_utf8(path).map_err(|_| "the path is not UTF-8".to_owned())?;
-    load_flat(path).map_err(|err| format!("{err:#}"))
+    load_flat(path, options).map_err(|err| format!("{err:#}"))
 }
 
 fn model(loaded: Result<FlatModel, String>) -> ffi::GltfModel {
@@ -366,6 +392,30 @@ mod tests {
         assert_eq!(warning.level, LogLevel::Warn);
         assert_eq!(warning.target, "kataglyphis_assets::gltf_loader");
         assert!(take_log_records().is_empty(), "drained");
+    }
+
+    #[test]
+    fn the_load_options_reach_the_loader_and_their_zero_is_the_default() {
+        let quad = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../assets/tests/assets/mirrored_uv_quad.gltf");
+        let quad = bytes(&quad);
+        let defaults = ffi::GltfLoadOptions::default();
+        assert_eq!(load_options(&defaults), LoadOptions::default());
+        let plain = load_gltf_flat(&quad);
+        assert!(plain.ok, "{}", plain.error);
+        assert_eq!(load_gltf_flat_with(&quad, &defaults), plain);
+        let mikktspace = ffi::GltfLoadOptions {
+            mikktspace_tangents: true,
+        };
+        let split = load_gltf_flat_with(&quad, &mikktspace);
+        assert!(split.ok, "{}", split.error);
+        assert_eq!(
+            (plain.vertices.len(), split.vertices.len()),
+            (4, 6),
+            "MikkTSpace splits the corners the mirrored charts share"
+        );
+        let missing = load_gltf_flat_with(b"/no/such/model.glb", &mikktspace);
+        assert!(!missing.ok && missing.error.contains("model.glb"));
     }
 
     #[test]

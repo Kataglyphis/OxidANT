@@ -15,7 +15,8 @@ use kataglyphis_webgpu_renderer::adapter::{
 };
 use kataglyphis_webgpu_renderer::app::discovery::{native_startup, skybox_dir};
 use kataglyphis_webgpu_renderer::app::library::EMBEDDED_SCENES;
-use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf_slice;
+use kataglyphis_webgpu_renderer::app::loader::load_options_from_env;
+use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf_slice_with;
 use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
 use kataglyphis_webgpu_renderer::ui::ModelSource;
 use kataglyphis_webgpu_renderer::{
@@ -200,11 +201,14 @@ impl ApplicationHandler for Viewer {
             hot_reload: true,
             relaunch: true,
         };
+        // The environment is read here, at the start, and nowhere in the shared loader.
+        let load_options = load_options_from_env();
         // The embedded cube shows at once; the startup scene replaces it when its load is done.
         let (name, cube) = EMBEDDED_SCENES[0];
-        let scene = load_gltf_slice(cube).unwrap_or_default();
+        let scene = load_gltf_slice_with(cube, &load_options).unwrap_or_default();
         let mut app = StudioApp::new(&window, gpu, &scene, OrbitCamera::default(), caps)
             .expect("failed to set up the renderer");
+        app.set_load_options(load_options);
         app.model = Some(ModelSource {
             name: name.to_owned(),
             path: format!("{name}.gltf (embedded)"),

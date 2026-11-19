@@ -13,11 +13,23 @@ use crate::scene::{
 };
 use crate::{files, gltf_images};
 
+/// How the loader builds geometry. An application reads its settings once at its start; the loader reads no environment.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LoadOptions {
+    /// MikkTSpace tangents where the file has none, the basis DCC tools bake against; off keeps Lengyel's.
+    pub mikktspace_tangents: bool,
+}
+
+/// [`load_gltf_with`] the default options.
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
+    load_gltf_with(path, &LoadOptions::default())
+}
+
+pub fn load_gltf_with(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::Result<CpuScene> {
     let path = path.as_ref();
     let (document, buffers, textures) = import_file(path)
         .with_context(|| format!("Failed to import glTF file: {}", path.display()))?;
-    build_scene(document, buffers, textures)
+    build_scene(document, buffers, textures, options)
         .with_context(|| format!("Failed to build scene from {}", path.display()))
 }
 
@@ -62,8 +74,13 @@ pub(crate) fn import_document(path: &Path) -> anyhow::Result<Imported> {
     })
 }
 
-/// In-memory variant for wasm32 and embedded assets; buffers and images must be embedded (data URIs or GLB).
+/// [`load_gltf_slice_with`] the default options.
 pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
+    load_gltf_slice_with(bytes, &LoadOptions::default())
+}
+
+/// In-memory variant for wasm32 and embedded assets; buffers and images must be embedded (data URIs or GLB).
+pub fn load_gltf_slice_with(bytes: &[u8], options: &LoadOptions) -> anyhow::Result<CpuScene> {
     let gltf_images::Parsed {
         document,
         blob,
@@ -84,7 +101,7 @@ pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
         .context("Failed to import glTF images from memory")?;
     let textures = gltf_images::resolve_textures(&sources, images)
         .context("Failed to import glTF images from memory")?;
-    build_scene(document, buffers, textures)
+    build_scene(document, buffers, textures, options)
 }
 
 /// `textures` is index-aligned with the document's textures.
@@ -92,6 +109,7 @@ fn build_scene(
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
     textures: Vec<Arc<CpuTexture>>,
+    options: &LoadOptions,
 ) -> anyhow::Result<CpuScene> {
     let mut scene = CpuScene {
         nodes: read_nodes(&document),
@@ -102,7 +120,7 @@ fn build_scene(
     };
 
     walk_nodes(&document, |node, world| {
-        visit_node(node, world, &buffers, &textures, &mut scene)
+        visit_node(node, world, &buffers, &textures, options, &mut scene)
     })?;
 
     anyhow::ensure!(
@@ -583,6 +601,7 @@ fn visit_node(
     world: Mat4,
     buffers: &[gltf::buffer::Data],
     textures: &[Arc<CpuTexture>],
+    options: &LoadOptions,
     scene: &mut CpuScene,
 ) -> anyhow::Result<()> {
     if let Some(light) = read_light(node, world) {
@@ -591,7 +610,7 @@ fn visit_node(
 
     if let Some(mesh) = node.mesh() {
         for primitive in mesh.primitives().filter(draws_triangles) {
-            if let Some(mut cpu) = load_primitive(&primitive, world, buffers, textures)? {
+            if let Some(mut cpu) = load_primitive(&primitive, world, buffers, textures, options)? {
                 cpu.node_index = Some(node.index());
                 cpu.skin_index = node.skin().map(|s| s.index());
                 let joint_count = node.skin().map(|skin| skin.joints().count());
@@ -654,8 +673,9 @@ fn load_primitive(
     transform: Mat4,
     buffers: &[gltf::buffer::Data],
     textures: &[Arc<CpuTexture>],
+    options: &LoadOptions,
 ) -> anyhow::Result<Option<CpuPrimitive>> {
-    let Some(geometry) = primitive_geometry(primitive, buffers)? else {
+    let Some(geometry) = primitive_geometry(primitive, buffers, options)? else {
         return Ok(None);
     };
     // Weights start at zero: the caller applies mesh/node defaults, and animation drives them.
@@ -677,6 +697,7 @@ fn load_primitive(
 pub(crate) fn primitive_geometry(
     primitive: &gltf::Primitive,
     buffers: &[gltf::buffer::Data],
+    load: &LoadOptions,
 ) -> anyhow::Result<Option<Geometry>> {
     let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
     let Some(vertices) = read_vertices(primitive, buffers)? else {
@@ -695,7 +716,7 @@ pub(crate) fn primitive_geometry(
                 .and_then(|ext| ext.get("KHR_texture_transform"));
             raw_tex_coord(info.tex_coord(), transform)
         }),
-        mikktspace: mikktspace_tangents_enabled(),
+        mikktspace: load.mikktspace_tangents,
     };
     let geometry = compacted(Geometry {
         vertices,
@@ -1184,11 +1205,6 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32], uv_set:
     }
 }
 
-/// Opt-in MikkTSpace via `KATAGLYPHIS_MIKKTSPACE_TANGENTS`; always off on wasm32, which has no environment.
-fn mikktspace_tangents_enabled() -> bool {
-    std::env::var_os("KATAGLYPHIS_MIKKTSPACE_TANGENTS").is_some()
-}
-
 /// The mesh as `bevy_mikktspace` reads it, collecting one tangent per triangle corner.
 struct MikkMesh<'a> {
     vertices: &'a [Vertex],
@@ -1233,7 +1249,7 @@ impl bevy_mikktspace::Geometry for MikkMesh<'_> {
     }
 }
 
-/// MikkTSpace tangents from `uv_set`, the basis DCC tools bake normal maps against (opt-in; [`compute_tangents`] is the default).
+/// MikkTSpace tangents from `uv_set`, the basis DCC tools bake normal maps against ([`LoadOptions::mikktspace_tangents`]).
 /// Splits vertices at seams, so it returns fresh buffers and each new vertex's source; `None` keeps the caller's.
 pub(crate) fn generate_tangents_mikktspace(
     vertices: &[Vertex],

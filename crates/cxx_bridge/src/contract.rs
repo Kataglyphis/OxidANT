@@ -136,6 +136,7 @@ fn every_bridge_file_keeps_the_contract() {
         [
             "default_scene_settings",
             "load_gltf_flat",
+            "load_gltf_flat_with",
             "oxidant_version",
             "sanitize",
             "setting_ranges",
