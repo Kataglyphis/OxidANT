@@ -81,7 +81,7 @@ pub mod ffi {
         alpha_blended: bool,
     }
 
-    /// A punctual light in world space; `kind` 1 point, 2 spot, 3 directional.
+    /// A punctual light in world space; `kind` 1 point, 2 spot, 3 directional, 0 for `GltfModel::sun`'s none.
     #[derive(Debug, PartialEq)]
     struct GltfLight {
         kind: u32,
@@ -89,6 +89,7 @@ pub mod ffi {
         intensity: f32,
         range: f32,
         position: [f32; 3],
+        /// The way the light travels, a unit vector.
         direction: [f32; 3],
         cos_inner: f32,
         cos_outer: f32,
@@ -106,7 +107,12 @@ pub mod ffi {
         materials: Vec<GltfMaterial>,
         textures: Vec<GltfTexture>,
         mesh_ranges: Vec<GltfMeshRange>,
+        /// Every punctual light but the Sun.
         lights: Vec<GltfLight>,
+        /// The first directional light, which the engine adopts as its Sun: direction and colour, not the glTF lux.
+        has_sun: bool,
+        /// Meaningful only with `has_sun`; all zero otherwise.
+        sun: GltfLight,
     }
 
     extern "Rust" {
@@ -152,6 +158,8 @@ fn to_ffi(model: FlatModel, ok: bool, error: String) -> ffi::GltfModel {
         textures: model.textures.into_iter().map(texture).collect(),
         mesh_ranges: model.ranges.into_iter().map(range).collect(),
         lights: model.lights.into_iter().map(light).collect(),
+        has_sun: model.sun.is_some(),
+        sun: model.sun.map_or_else(no_light, light),
     }
 }
 
@@ -247,6 +255,19 @@ fn light(l: FlatLight) -> ffi::GltfLight {
     }
 }
 
+fn no_light() -> ffi::GltfLight {
+    ffi::GltfLight {
+        kind: 0,
+        color: [0.0; 3],
+        intensity: 0.0,
+        range: 0.0,
+        position: [0.0; 3],
+        direction: [0.0; 3],
+        cos_inner: 0.0,
+        cos_outer: 0.0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -300,6 +321,35 @@ mod tests {
         assert!(model.ok, "{}", model.error);
         assert!(!model.lights.is_empty());
         assert!(model.lights.iter().all(|l| (1..=3).contains(&l.kind)));
+        assert!(
+            !model.has_sun,
+            "a point and a spot light, no directional one"
+        );
+        assert_eq!(model.sun, no_light());
+    }
+
+    #[test]
+    fn the_first_directional_light_crosses_as_the_sun_and_not_as_a_light() {
+        let dir = tempfile::tempdir().unwrap();
+        // Pitched -90 degrees about X, so the Sun's -Z travels straight down.
+        let nodes = r#",{"extensions":{"KHR_lights_punctual":{"light":0}},"rotation":[-0.7071068,0,0,0.7071068]},
+            {"extensions":{"KHR_lights_punctual":{"light":1}},"translation":[0,2,0]}"#;
+        let lights = r#","extensionsUsed":["KHR_lights_punctual"],"extensions":{"KHR_lights_punctual":{"lights":[
+            {"type":"directional","color":[1,0.9,0.76],"intensity":4098},{"type":"point","intensity":5}]}}"#;
+        let scenes = r#""scene":0,"scenes":[{"nodes":[0,1,2]}],"#;
+        let model = load_gltf_flat(&triangle(dir.path(), nodes, scenes, lights));
+        assert!(model.ok, "{}", model.error);
+        assert!(model.has_sun);
+        assert_eq!(model.sun.kind, 3);
+        assert_eq!(model.sun.color, [1.0, 0.9, 0.76]);
+        let [x, y, z] = model.sun.direction;
+        assert!(x.abs() < 1e-5 && (y + 1.0).abs() < 1e-5 && z.abs() < 1e-5);
+        assert_eq!(
+            model.lights.len(),
+            1,
+            "the point light stays, the Sun does not"
+        );
+        assert_eq!(model.lights[0].kind, 1);
     }
 
     #[test]
@@ -324,6 +374,7 @@ mod tests {
         assert!(!model.ok);
         assert!(model.error.contains("model.glb"), "{}", model.error);
         assert!(model.vertices.is_empty() && model.materials.is_empty());
+        assert!(!model.has_sun);
     }
 
     #[test]

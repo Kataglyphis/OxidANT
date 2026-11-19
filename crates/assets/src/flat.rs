@@ -9,7 +9,7 @@ use glam::{Mat3, Mat4, Vec3};
 
 use crate::gltf_images::{self, TextureSource};
 use crate::gltf_loader::{self, Geometry, Imported};
-use crate::scene::{AlphaMode, CpuLight, CpuLightKind, CpuMaterial, CpuSampler};
+use crate::scene::{self, AlphaMode, CpuLight, CpuLightKind, CpuMaterial, CpuSampler};
 
 /// One vertex in the C++ `Vertex`'s field order, in world space.
 #[repr(C)]
@@ -101,7 +101,10 @@ pub struct FlatModel {
     pub materials: Vec<FlatMaterial>,
     pub textures: Vec<FlatTexture>,
     pub ranges: Vec<FlatRange>,
+    /// Every punctual light but the Sun.
     pub lights: Vec<FlatLight>,
+    /// The first directional light, which the engine adopts as its Sun: [`crate::CpuScene::take_sun`]'s rule.
+    pub sun: Option<FlatLight>,
 }
 
 /// Loads `path` through the shared loader and flattens it; an error when nothing draws.
@@ -116,13 +119,16 @@ pub fn load_flat(path: impl AsRef<Path>) -> anyhow::Result<FlatModel> {
         textures,
         ..FlatModel::default()
     };
+    let mut lights = Vec::new();
     gltf_loader::walk_nodes(&imported.document, |node, world| {
-        visit_node(&mut model, &imported, node, world)
+        visit_node(&mut model, &mut lights, &imported, node, world)
     })?;
     anyhow::ensure!(
         !model.vertices.is_empty(),
         "glTF file contains no triangle primitives"
     );
+    model.sun = scene::take_sun(&mut lights).map(|sun| flat_light(&sun));
+    model.lights = lights.iter().map(flat_light).collect();
     Ok(model)
 }
 
@@ -241,9 +247,10 @@ fn flat_material(material: &CpuMaterial, ids: [i32; 4]) -> FlatMaterial {
     }
 }
 
-/// One visited node: its light, then each drawable primitive, baked by its world transform.
+/// One visited node: its light into `lights`, then each drawable primitive, baked by its world transform.
 fn visit_node(
     model: &mut FlatModel,
+    lights: &mut Vec<CpuLight>,
     imported: &Imported,
     node: &gltf::Node,
     world: Mat4,
@@ -254,9 +261,7 @@ fn visit_node(
     } else {
         world
     };
-    if let Some(light) = gltf_loader::read_light(node, world) {
-        model.lights.push(flat_light(&light));
-    }
+    lights.extend(gltf_loader::read_light(node, world));
     let Some(mesh) = node.mesh() else {
         return Ok(());
     };

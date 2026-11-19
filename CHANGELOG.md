@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-19, one Sun rule for both renderers)
+
+- **`kataglyphis_assets`**: `CpuScene::take_sun` takes a file's first directional light out of its lights, with a
+  unit direction, or not at all when its node leaves it none (a zero direction was the C++ light's -Z). `load_flat`
+  applies it: `FlatModel::sun`, the bridge's `GltfModel::has_sun` and `sun`, and `lights` without it, so
+  BeschleunigerBallett can adopt the Sun as this renderer does instead of shading the Colosseum's 4098 lx sun as a
+  second, unattenuated punctual light. The renderer's `upload_loaded` calls it in place of its own copy.
+
 ### Changed (2026-11-19, the C++ bridge: a file per area, errors as values, a panic profile)
 
 - **`kataglyphis_cxx_bridge`**: the bridge is `src/gltf.rs` (`load_gltf_flat`, C++ namespace

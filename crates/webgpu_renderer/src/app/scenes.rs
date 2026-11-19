@@ -11,7 +11,7 @@ use super::scene_meta::SceneMeta;
 use super::StudioApp;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::controller::OrbitController;
-use crate::scene::{CpuLight, CpuLightKind, CpuScene};
+use crate::scene::{CpuLight, CpuScene};
 use crate::ui::editor::{ModelSource, SceneStatus};
 
 /// A line the status bar shows until the next load.
@@ -217,7 +217,7 @@ impl StudioApp {
 
     /// A loaded scene's first directional light becomes the Sun, then the scene uploads without it.
     fn upload_loaded(&mut self, mut scene: CpuScene, meta: SceneMeta) {
-        if let Some(sun) = take_sun(&mut scene.lights) {
+        if let Some(sun) = scene.take_sun() {
             self.adopt_sun(&sun);
         }
         self.upload(&scene, meta);
@@ -226,10 +226,8 @@ impl StudioApp {
 
     /// The Sun takes the light's direction and colour and keeps its intensity: glTF gives lux, the renderer no exposure for it.
     fn adopt_sun(&mut self, sun: &CpuLight) {
-        let toward = -Vec3::from_array(sun.direction).normalize_or_zero();
-        if !toward.is_finite() || toward == Vec3::ZERO {
-            return;
-        }
+        // `take_sun` hands over a unit direction only.
+        let toward = -Vec3::from_array(sun.direction);
         let renderer = &mut self.renderer;
         renderer.light_dir_ambient = toward.extend(renderer.light_dir_ambient.w);
         let [red, green, blue] = sun.color;
@@ -269,14 +267,6 @@ impl StudioApp {
         self.fly.speed = framing.fly_speed;
         self.controller.radius_range = framing.radius_range;
     }
-}
-
-/// The scene's first directional light, taken out of `lights`; the renderer's own sun casts its shadows.
-fn take_sun(lights: &mut Vec<CpuLight>) -> Option<CpuLight> {
-    let index = lights
-        .iter()
-        .position(|light| matches!(light.kind, CpuLightKind::Directional))?;
-    Some(lights.remove(index))
 }
 
 #[cfg(test)]
@@ -360,36 +350,5 @@ mod tests {
             Some(Notice::Error(text)) => assert!(text.contains("broken"), "{text}"),
             other => panic!("expected an error notice, got {other:?}"),
         }
-    }
-}
-
-#[cfg(test)]
-mod sun_tests {
-    use super::*;
-
-    fn light(kind: CpuLightKind, direction: [f32; 3]) -> CpuLight {
-        CpuLight {
-            kind,
-            color: [1.0, 0.9, 0.76],
-            intensity: 4098.0,
-            range: 0.0,
-            position: [0.0; 3],
-            direction,
-            node: None,
-        }
-    }
-
-    #[test]
-    fn the_first_directional_light_is_taken_as_the_sun_and_the_rest_stay() {
-        let mut lights = vec![
-            light(CpuLightKind::Point, [0.0, -1.0, 0.0]),
-            light(CpuLightKind::Directional, [0.6, -0.53, -0.6]),
-            light(CpuLightKind::Directional, [0.0, -1.0, 0.0]),
-        ];
-        let sun = take_sun(&mut lights).expect("a directional light");
-        assert_eq!(sun.direction, [0.6, -0.53, -0.6]);
-        assert_eq!(lights.len(), 2);
-        assert!(matches!(lights[0].kind, CpuLightKind::Point));
-        assert!(take_sun(&mut vec![light(CpuLightKind::Point, [0.0; 3])]).is_none());
     }
 }

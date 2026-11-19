@@ -446,6 +446,16 @@ impl CpuScene {
     }
 }
 
+/// [`CpuScene::take_sun`] over a light list of its own, as the flat loader collects one.
+pub(crate) fn take_sun(lights: &mut Vec<CpuLight>) -> Option<CpuLight> {
+    let index = lights
+        .iter()
+        .position(|light| matches!(light.kind, CpuLightKind::Directional))?;
+    let mut sun = lights.remove(index);
+    sun.direction = Vec3::from_array(sun.direction).try_normalize()?.to_array();
+    Some(sun)
+}
+
 /// A node's local matrix; non-finite inputs would NaN every descendant through the product.
 /// Zero scale stays: it is how exporters hide a node, and the singular product is still finite.
 fn local_transform(node: &CpuNode) -> Mat4 {
@@ -468,6 +478,12 @@ fn local_transform(node: &CpuNode) -> Mat4 {
 }
 
 impl CpuScene {
+    /// Takes the first directional light out of `lights`: both renderers draw it as their Sun, which casts the shadows.
+    /// It comes with a unit direction, or not at all when its node leaves it none, which no renderer may adopt.
+    pub fn take_sun(&mut self) -> Option<CpuLight> {
+        take_sun(&mut self.lights)
+    }
+
     pub fn vertex_count(&self) -> usize {
         self.primitives.iter().map(|p| p.vertices.len()).sum()
     }
@@ -741,6 +757,57 @@ mod tests {
             (child - Vec3::new(1.0, 0.0, 2.0)).length() < 1e-5,
             "got {child:?}"
         );
+    }
+
+    fn light(kind: CpuLightKind, direction: [f32; 3]) -> CpuLight {
+        CpuLight {
+            kind,
+            color: [1.0, 0.9, 0.76],
+            intensity: 4098.0,
+            range: 0.0,
+            position: [0.0; 3],
+            direction,
+            node: None,
+        }
+    }
+
+    #[test]
+    fn the_first_directional_light_is_taken_as_the_sun_and_the_rest_stay() {
+        let mut scene = CpuScene {
+            lights: vec![
+                light(CpuLightKind::Point, [0.0, -1.0, 0.0]),
+                light(CpuLightKind::Directional, [0.0, -2.0, 0.0]),
+                light(CpuLightKind::Directional, [1.0, 0.0, 0.0]),
+            ],
+            ..CpuScene::default()
+        };
+        let sun = scene.take_sun().expect("a directional light");
+        assert_eq!(sun.direction, [0.0, -1.0, 0.0], "normalized");
+        assert_eq!(
+            sun.intensity, 4098.0,
+            "the file's lux, which each renderer ignores"
+        );
+        assert_eq!(scene.lights.len(), 2);
+        assert!(matches!(scene.lights[0].kind, CpuLightKind::Point));
+        assert!(matches!(scene.lights[1].kind, CpuLightKind::Directional));
+        assert!(take_sun(&mut vec![light(CpuLightKind::Point, [0.0; 3])]).is_none());
+    }
+
+    #[test]
+    fn a_sun_without_a_direction_is_dropped_not_adopted() {
+        // A node that scales the light to nothing: neither renderer may adopt a made-up direction.
+        let mut lights = vec![
+            light(CpuLightKind::Directional, [0.0; 3]),
+            light(CpuLightKind::Directional, [0.0, -1.0, 0.0]),
+        ];
+        assert!(take_sun(&mut lights).is_none());
+        assert_eq!(
+            lights.len(),
+            1,
+            "taken out all the same; the next one stays a light"
+        );
+        let mut nan = vec![light(CpuLightKind::Directional, [f32::NAN, 0.0, 0.0])];
+        assert!(take_sun(&mut nan).is_none());
     }
 
     #[test]

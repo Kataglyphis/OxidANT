@@ -525,6 +525,42 @@ fn primitives_sharing_an_accessor_each_keep_only_the_corners_they_draw() {
 }
 
 #[test]
+fn the_first_directional_light_becomes_the_sun_and_leaves_the_lights() {
+    let dir = tempfile::tempdir().unwrap();
+    // Node 1 pitches -90 degrees about X, so the Sun's -Z travels straight down.
+    let nodes = r#"{"mesh":0,"children":[1,2,3]},
+        {"extensions":{"KHR_lights_punctual":{"light":0}},"rotation":[-0.7071068,0,0,0.7071068]},
+        {"extensions":{"KHR_lights_punctual":{"light":1}},"translation":[0,2,0]},
+        {"extensions":{"KHR_lights_punctual":{"light":0}}}"#;
+    let lights = r#","extensionsUsed":["KHR_lights_punctual"],"extensions":{"KHR_lights_punctual":{"lights":[
+        {"type":"directional","color":[1,0.9,0.76],"intensity":4098},{"type":"point","intensity":5}]}}"#;
+    let flat = load_flat(triangle_gltf(dir.path(), "sun.gltf", nodes, lights)).unwrap();
+    let sun = flat.sun.expect("a directional light");
+    assert_eq!(
+        (sun.kind, sun.color, sun.intensity),
+        (3, [1.0, 0.9, 0.76], 4098.0)
+    );
+    assert!((glam::Vec3::from_array(sun.direction) - glam::Vec3::NEG_Y).length() < 1e-5);
+    let kinds: Vec<u32> = flat.lights.iter().map(|l| l.kind).collect();
+    assert_eq!(
+        kinds,
+        [1, 3],
+        "the point light and the second directional one stay"
+    );
+
+    // Scaled to nothing, the first directional light has no direction to adopt; it is dropped, not drawn along -Z.
+    let hidden = nodes.replacen(
+        r#""rotation":[-0.7071068,0,0,0.7071068]"#,
+        r#""scale":[0,0,0]"#,
+        1,
+    );
+    let flat = load_flat(triangle_gltf(dir.path(), "hidden.gltf", &hidden, lights)).unwrap();
+    assert_eq!(flat.sun, None);
+    let kinds: Vec<u32> = flat.lights.iter().map(|l| l.kind).collect();
+    assert_eq!(kinds, [1, 3]);
+}
+
+#[test]
 fn equal_samplers_share_a_slot_whatever_their_index() {
     let dir = tempfile::tempdir().unwrap();
     let extra = format!(
