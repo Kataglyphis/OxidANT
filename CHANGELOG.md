@@ -13,6 +13,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-19, the strict Python lane passes again)
+- `scripts/windows/check_gpu_detector_parity.py` loads the hub's `check_detector_parity` through
+  `importlib.import_module`: ty follows no `sys.path` entry, so the static import of 2026-11-18 failed
+  `Linux x64 · Python static analysis` with `import-not-found` (run 44403773623).
+
 ### Added (2026-11-19, the ray-traced mode lights the punctual lights)
 - **`kataglyphis_webgpu_renderer`**: the ray-traced mode adds every `KHR_lights_punctual` light, each through its own
   shadow ray that stops short of the light, as BeschleunigerBallett's closest-hit shader has since e43eb33e; it shaded
