@@ -354,6 +354,8 @@ fn both_loaders_read_an_image_only_by_a_relative_uri_inside_the_document_directo
         std::fs::write(folder.join("pixel.png"), PIXEL_PNG).unwrap();
         std::fs::write(folder.join("green.ktx2"), ktx2).unwrap();
     }
+    // Only unix adds the symlink case below.
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut cases = vec![
         ("pixel.png".to_owned(), None),
         ("sub/../pixel.png".to_owned(), None),

@@ -418,7 +418,6 @@ pub(super) mod tests {
     use std::sync::mpsc;
 
     use gstreamer as gst;
-    use gstreamer::prelude::*;
 
     use super::*;
     use crate::motion::{rate_period, Pacer};
@@ -550,6 +549,8 @@ pub(super) mod tests {
     #[cfg(unix)]
     #[test]
     fn rpicam_frames_are_read_with_their_padded_rows() {
+        use gstreamer::prelude::*;
+
         // Measured on tabblscatcam: 480x360 is 276480 bytes a frame, 640x480 460800.
         let turned = I420Layout::rpicam(480, 360);
         assert_eq!(turned.frame_size, 276_480);
