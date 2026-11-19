@@ -8,6 +8,7 @@ use crate::viewport::SceneViewport;
 
 /// A `fov_y_deg` lens from `near` to `far` on `viewport`, whose aspect it takes; `frame_aspect` is the whole frame's.
 /// WebGPU's clip space, Y up: the C++ engine's Vulkan projection is this matrix with row 1 negated.
+/// A zero-height frame (an infinite or NaN `frame_aspect`) takes aspect 1, as the C++ `viewportAspectRatio`.
 pub fn perspective(
     fov_y_deg: f32,
     frame_aspect: f32,
@@ -16,12 +17,13 @@ pub fn perspective(
     viewport: SceneViewport,
 ) -> Mat4 {
     let rect = viewport.sanitized();
-    let lens = clip::perspective(
-        fov_y_deg.to_radians(),
-        rect.aspect(frame_aspect).max(1e-6),
-        near,
-        far,
-    );
+    let aspect = rect.aspect(frame_aspect);
+    let aspect = if aspect.is_finite() {
+        aspect.max(1e-6)
+    } else {
+        1.0
+    };
+    let lens = clip::perspective(fov_y_deg.to_radians(), aspect, near, far);
     // Skipping the identity keeps a full-frame camera's matrix bit for bit what it was.
     if rect.is_full() {
         lens
@@ -63,6 +65,19 @@ mod tests {
         let unshifted = DOCKED.remap().inverse() * lens;
         let rect_aspect = DOCKED.aspect(1600.0 / 900.0);
         assert!((unshifted.y_axis.y / unshifted.x_axis.x - rect_aspect).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_zero_height_frame_has_aspect_one() {
+        let square = DOCKED.remap() * clip::perspective(45f32.to_radians(), 1.0, 0.1, 100.0);
+        for width in [1600.0f32, 0.0] {
+            let zero_height = width / 0.0;
+            assert_eq!(
+                perspective(45.0, zero_height, 0.1, 100.0, DOCKED),
+                square,
+                "{width} by 0"
+            );
+        }
     }
 
     #[test]

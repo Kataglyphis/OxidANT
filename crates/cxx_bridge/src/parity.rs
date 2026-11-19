@@ -189,6 +189,18 @@ mod tests {
             (0.0..=1.0).contains(&(clip.z / clip.w)),
             "depth 0..1 between the planes"
         );
+        let zero_height = ffi::Lens {
+            frame_aspect: 1600.0 / 0.0,
+            ..docked
+        };
+        let unit =
+            glam::camera::rh::proj::directx::perspective(45f32.to_radians(), 1.0, 0.1, 1000.0);
+        let square = viewport(DOCKED).remap() * unit;
+        assert_eq!(
+            mat4(parity_lens(zero_height)),
+            square,
+            "aspect 1, as the C++ engine"
+        );
     }
 
     #[test]

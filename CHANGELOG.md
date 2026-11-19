@@ -32,6 +32,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   white, radiance 5, ambient 0.35), which `ForwardRenderer::new`, `RendererSettings::default` and the tracer's
   accumulation tests read instead of three copies. **`kataglyphis_cxx_bridge`**: `default_scene_settings()` carries it
   (`SceneSettings::sun`, owner decision 2026-11-19); `sanitize` passes the Sun through.
+- **`kataglyphis_render_core`**: `lens::perspective` gives a zero-height frame, an infinite or NaN `frame_aspect`,
+  aspect 1, the C++ `viewportAspectRatio`'s rule (owner decision 2026-11-19); it clamped to 1e-6.
 
 ### Fixed (2026-11-20, the Windows lanes past the test count)
 
