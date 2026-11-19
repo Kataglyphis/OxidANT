@@ -23,6 +23,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
   plane whose unnormalised form is 0.1 long, and a frustum given row by row (`"kind": "matrix"`) whose right plane
   has no normal. The renderer's new `tests/draw_cull_vectors.rs` dispatches the draw cull over every case and checks
   each slot's instances; `serde_json` joins its dev-dependencies (already in the lock).
+- **`kataglyphis_render_core`**: `CloudSettings::sanitized`, which the bridge's `sanitize` returns, holds every field
+  to its editor range, and a non-finite one falls back to its default, as `ShadowSettings::sanitized` does (owner
+  decision 2026-11-19); it clamped only the step counts and the Scale and Density floors. The renderer's packing
+  (`params_at`) keeps those C++ marshal clamps alone: the goldens of both renderers march Density above the editor's
+  top of 1 (1.5, 2, 12), and three of `tests/clouds.rs` failed with the full clamp.
 
 ### Fixed (2026-11-20, the Windows lanes past the test count)
 

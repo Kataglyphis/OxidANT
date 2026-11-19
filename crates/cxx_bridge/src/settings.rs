@@ -106,7 +106,7 @@ pub mod ffi {
         fn default_scene_settings() -> SceneSettings;
         /// The editor's range for each setting.
         fn setting_ranges() -> SettingRanges;
-        /// `settings` as the renderers read them: each shadow field in its range, the clouds clamped where the shader would.
+        /// `settings` in the editor's ranges: each cloud and shadow field clamped, a NaN at a fallback.
         fn sanitize(settings: SceneSettings) -> SceneSettings;
     }
 }
@@ -293,6 +293,8 @@ mod tests {
         wild.clouds.light_steps = 1000;
         wild.clouds.density = 0.0;
         wild.clouds.scale = [0.0, -5.0, 2.0];
+        wild.clouds.coverage = 4.0;
+        wild.clouds.offset = [f32::NAN, 500.0, -500.0];
         wild.clouds.wind = [300.0, 0.0, 0.0];
         wild.shadows.resolution = 3000;
         wild.shadows.cascade_count = 9;
@@ -304,11 +306,13 @@ mod tests {
         assert_eq!((sane.clouds.march_steps, sane.clouds.light_steps), (4, 128));
         assert_eq!(sane.clouds.density, 0.001);
         assert_eq!(sane.clouds.scale, [0.001, 0.001, 2.0]);
+        assert_eq!(sane.clouds.coverage, 1.0);
         assert_eq!(
-            sane.clouds.wind,
-            [300.0, 0.0, 0.0],
-            "the shader does not clamp the wind"
+            sane.clouds.offset,
+            [-0.364, 400.0, -200.0],
+            "a NaN takes the default"
         );
+        assert_eq!(sane.clouds.wind, [100.0, 0.0, 0.0]);
         let expected = ffi::ShadowSettings {
             resolution: 2048,
             cascade_count: 3,

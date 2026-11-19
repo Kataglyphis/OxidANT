@@ -91,9 +91,43 @@ pub struct CloudParams {
 }
 
 impl CloudSettings {
-    /// What the renderer reads, clamped where the C++ `SceneUboMarshal` clamps: both step counts into their ranges,
-    /// Scale and Density onto their floors (a NaN onto the floor too); every other field passes through.
+    /// Every field in its editor range, a non-finite one at its default, as `ShadowSettings`; the bridge's `sanitize`.
     pub fn sanitized(&self) -> Self {
+        let defaults = Self::default();
+        let within = |value: f32, fallback: f32, range: &RangeInclusive<f32>| {
+            let finite = if value.is_finite() { value } else { fallback };
+            finite.clamp(*range.start(), *range.end())
+        };
+        let axes = |value: Vec3, fallback: Vec3, range: &RangeInclusive<f32>| {
+            Vec3::new(
+                within(value.x, fallback.x, range),
+                within(value.y, fallback.y, range),
+                within(value.z, fallback.z, range),
+            )
+        };
+        Self {
+            enabled: self.enabled,
+            march_steps: self
+                .march_steps
+                .clamp(*MARCH_STEPS.start(), *MARCH_STEPS.end()),
+            light_steps: self
+                .light_steps
+                .clamp(*LIGHT_STEPS.start(), *LIGHT_STEPS.end()),
+            density: within(self.density, defaults.density, &DENSITY_RANGE),
+            coverage: within(self.coverage, defaults.coverage, &COVERAGE_RANGE),
+            pillowness: within(self.pillowness, defaults.pillowness, &PILLOWNESS_RANGE),
+            cirrus: within(self.cirrus, defaults.cirrus, &CIRRUS_RANGE),
+            powder: self.powder,
+            scale: axes(self.scale, defaults.scale, &SCALE_RANGE),
+            offset: axes(self.offset, defaults.offset, &OFFSET_RANGE),
+            wind: axes(self.wind, defaults.wind, &WIND_RANGE),
+            half_resolution: self.half_resolution,
+        }
+    }
+
+    /// What the shader reads, clamped where the C++ `SceneUboMarshal` clamps: both step counts into their ranges,
+    /// Scale and Density onto their floors (a NaN onto the floor too); every other field passes through.
+    fn marshalled(&self) -> Self {
         Self {
             march_steps: self
                 .march_steps
@@ -112,9 +146,9 @@ impl CloudSettings {
         self.params_at(0.0)
     }
 
-    /// The [`Self::sanitized`] settings `time_s` seconds into the wind.
+    /// The settings `time_s` seconds into the wind, clamped as the C++ marshal clamps, not to the editor's ranges.
     pub fn params_at(&self, time_s: f64) -> CloudParams {
-        let clouds = self.sanitized();
+        let clouds = self.marshalled();
         let wind = clouds.wind_offset(time_s);
         CloudParams {
             mesh_scale: clouds.scale.extend(clouds.density).to_array(),
@@ -240,31 +274,95 @@ mod tests {
             (sane.density, sane.scale),
             (0.001, Vec3::new(0.001, 0.001, 2.0))
         );
-        let nan = CloudSettings {
-            density: f32::NAN,
-            scale: Vec3::splat(f32::NAN),
-            ..wild
-        }
-        .sanitized();
-        assert_eq!((nan.density, nan.scale), (0.001, Vec3::splat(0.001)));
     }
 
     #[test]
-    fn sanitizing_leaves_what_the_marshal_does_not_clamp() {
-        let free = CloudSettings {
+    fn every_field_is_held_to_its_editor_range() {
+        let wild = CloudSettings {
             enabled: true,
             density: 7.0,
             coverage: -3.0,
             pillowness: 2.0,
-            cirrus: f32::INFINITY,
+            cirrus: -0.5,
             powder: false,
-            scale: Vec3::splat(5000.0),
-            offset: Vec3::splat(-999.0),
-            wind: Vec3::splat(300.0),
+            scale: Vec3::new(5000.0, 0.5, -1.0),
+            offset: Vec3::new(-999.0, 999.0, 10.0),
+            wind: Vec3::new(300.0, -300.0, 50.0),
             half_resolution: false,
             ..CloudSettings::default()
+        }
+        .sanitized();
+        assert_eq!(
+            [wild.density, wild.coverage, wild.pillowness, wild.cirrus],
+            [1.0, 0.0, 1.0, 0.0]
+        );
+        assert_eq!(wild.scale, Vec3::new(1000.0, 0.5, 0.001));
+        assert_eq!(wild.offset, Vec3::new(-200.0, 400.0, 10.0));
+        assert_eq!(wild.wind, Vec3::new(100.0, -100.0, 50.0));
+        assert!(
+            wild.enabled && !wild.powder && !wild.half_resolution,
+            "the switches pass through"
+        );
+    }
+
+    #[test]
+    fn a_non_finite_field_falls_back_to_its_default() {
+        let defaults = CloudSettings::default();
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let sane = CloudSettings {
+                density: bad,
+                coverage: bad,
+                pillowness: bad,
+                cirrus: bad,
+                scale: Vec3::new(bad, 2.0, bad),
+                offset: Vec3::new(1.0, bad, 3.0),
+                wind: Vec3::splat(bad),
+                ..defaults
+            }
+            .sanitized();
+            assert_eq!(
+                [sane.density, sane.coverage, sane.pillowness, sane.cirrus],
+                [
+                    defaults.density,
+                    defaults.coverage,
+                    defaults.pillowness,
+                    defaults.cirrus
+                ],
+                "{bad}"
+            );
+            assert_eq!(
+                sane.scale,
+                Vec3::new(defaults.scale.x, 2.0, defaults.scale.z),
+                "{bad}"
+            );
+            assert_eq!(sane.offset, Vec3::new(1.0, defaults.offset.y, 3.0), "{bad}");
+            assert_eq!(sane.wind, defaults.wind, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_packing_clamps_only_what_the_cpp_marshal_clamps() {
+        // The goldens of both renderers march Density above the editor's top of 1.
+        let free = CloudSettings {
+            density: 12.0,
+            coverage: -3.0,
+            pillowness: 2.0,
+            cirrus: 1.5,
+            scale: Vec3::splat(5000.0),
+            offset: Vec3::splat(-999.0),
+            wind: Vec3::new(10.0, 0.0, 0.0),
+            ..CloudSettings::default()
         };
-        assert_eq!(free.sanitized(), free);
+        let params = free.params_at(1.0);
+        assert_eq!(params.mesh_scale, [5000.0, 5000.0, 5000.0, 12.0]);
+        assert_eq!(params.mesh_offset, [-999.0, -999.0, -999.0, -3.0]);
+        assert_eq!(params.parameters[..2], [2.0, 1.5]);
+        assert_eq!(params.light_march[1], 10.0);
+        assert_ne!(
+            free.sanitized().params_at(1.0),
+            params,
+            "the editor's clamp is the bridge's, not the packing's"
+        );
     }
 
     #[test]
