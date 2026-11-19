@@ -40,7 +40,7 @@ pub mod ffi {
         punctual: bool,
     }
 
-    /// Every shared setting. A C++ value starts zeroed, without member initialisers: begin from `default_scene_settings()`.
+    /// Every shared setting. A C++ value starts zeroed, not at these defaults: begin from `default_scene_settings()`.
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
     struct SceneSettings {
         clouds: CloudSettings,

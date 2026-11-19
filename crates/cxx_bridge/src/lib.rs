@@ -1,7 +1,7 @@
 //! The cxx bridge BeschleunigerBallett's C++ engine calls; Corrosion's `corrosion_add_cxxbridge` generates its C++ half.
 //!
-//! One bridge file per area, each in the C++ namespace `kataglyphis::oxidant::<file stem>`: [`gltf`], [`settings`]
-//! and [`diagnostics`]. Every bridged function runs inside `guarded` and returns its errors as values, since the
+//! One bridge file per area, each in the C++ namespace `kataglyphis::oxidant::<file stem>`: [`gltf`], [`settings`],
+//! [`parity`] and [`diagnostics`]. Every bridged function runs inside `guarded` and returns its errors as values, since the
 //! engine builds without exceptions; a path arrives as UTF-8 bytes. `contract.rs` holds every bridge file to that.
 
 // The owner's hard gate on function size; clippy.toml holds the limit.
@@ -11,6 +11,7 @@
 mod contract;
 pub mod diagnostics;
 pub mod gltf;
+pub mod parity;
 pub mod settings;
 
 /// Runs one bridged call: a panic would abort at cxx's boundary, so it becomes `on_panic(reason)` here.

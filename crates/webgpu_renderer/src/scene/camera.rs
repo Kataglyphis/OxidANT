@@ -1,9 +1,8 @@
 //! Orbit camera producing wgpu-convention (depth 0..1) view-projection matrices.
 
-// glam's `directx` convention is NDC Z in [0,1], Y up: wgpu's, and the old `Mat4::*_rh` exactly.
-use glam::camera::rh::proj::directx as clip;
 use glam::camera::rh::view::look_at_mat4;
 use glam::{Mat4, Vec3};
+use kataglyphis_render_core::lens;
 
 use crate::scene::viewport::SceneViewport;
 
@@ -56,19 +55,7 @@ impl OrbitCamera {
 
     /// Projection with wgpu/WebGPU clip space (depth 0..1); `aspect` is the whole frame's.
     pub fn projection(&self, aspect: f32) -> Mat4 {
-        let rect = self.viewport.sanitized();
-        let lens = clip::perspective(
-            self.fov_y_deg.to_radians(),
-            rect.aspect(aspect).max(1e-6),
-            self.near,
-            self.far,
-        );
-        // Skipping the identity keeps a full-frame camera's matrix bit for bit what it was.
-        if rect.is_full() {
-            lens
-        } else {
-            rect.remap() * lens
-        }
+        lens::perspective(self.fov_y_deg, aspect, self.near, self.far, self.viewport)
     }
 
     pub fn view_projection(&self, aspect: f32) -> Mat4 {
@@ -78,6 +65,8 @@ impl OrbitCamera {
 
 #[cfg(test)]
 mod tests {
+    // glam's `directx` convention is NDC Z in [0,1], Y up: wgpu's, and the old `Mat4::*_rh` exactly.
+    use glam::camera::rh::proj::directx as clip;
     use glam::Vec2;
 
     use super::*;

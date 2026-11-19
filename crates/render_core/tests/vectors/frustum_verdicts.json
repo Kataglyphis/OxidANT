@@ -1,0 +1,33 @@
+{
+  "about": "Frustum verdicts both renderers must reach: OxidANT's kataglyphis_render_core::frustum::Frustum (tests/frustum_vectors.rs) and BeschleunigerBallett's isVisible and isVisibleAsShadowCaster (frustumSuite.cpp). Each frustum is a right-handed look-at view times a projection with clip depth 0..1; visible tests all six planes, caster all but the near one. Boxes are world-space min and max corners.",
+  "frusta": {
+    "camera": {"kind": "perspective", "eye": [0, 0, 0], "target": [0, 0, -1], "up": [0, 1, 0], "fov_y_deg": 45, "aspect": 1.7777778, "near": 0.1, "far": 100},
+    "light": {"kind": "orthographic", "eye": [0, 20, 0], "target": [0, 0, 0], "up": [0, 0, -1], "left": -10, "right": 10, "bottom": -10, "top": 10, "near": 1, "far": 40}
+  },
+  "cases": [
+    {"name": "in front of the camera", "frustum": "camera", "min": [-1, -1, -11], "max": [1, 1, -9], "visible": true, "caster": true},
+    {"name": "straddling the near plane", "frustum": "camera", "min": [-1, -1, -0.5], "max": [1, 1, 0.5], "visible": true, "caster": true},
+    {"name": "enclosing the whole frustum", "frustum": "camera", "min": [-1000, -1000, -1000], "max": [1000, 1000, 1000], "visible": true, "caster": true},
+    {"name": "just inside the far plane", "frustum": "camera", "min": [-0.5, -0.5, -99.5], "max": [0.5, 0.5, -98.5], "visible": true, "caster": true},
+    {"name": "across the left edge", "frustum": "camera", "min": [-12, -1, -20], "max": [-6, 1, -18], "visible": true, "caster": true},
+    {"name": "spanning the frustum", "frustum": "camera", "min": [-18.4095, -10.3553, -60], "max": [18.4095, 10.3553, -40], "visible": true, "caster": true},
+    {"name": "between the near plane and half its distance", "frustum": "camera", "min": [-0.01, -0.01, -0.09], "max": [0.01, 0.01, -0.06], "visible": false, "caster": true},
+    {"name": "safely past the near plane", "frustum": "camera", "min": [-0.01, -0.01, -0.2], "max": [0.01, 0.01, -0.15], "visible": true, "caster": true},
+    {"name": "behind the camera", "frustum": "camera", "min": [-1, -1, 9], "max": [1, 1, 11], "visible": false, "caster": false},
+    {"name": "just behind the camera", "frustum": "camera", "min": [-0.01, -0.01, 0.04], "max": [0.01, 0.01, 0.06], "visible": false, "caster": false},
+    {"name": "behind the near plane", "frustum": "camera", "min": [-0.2, -0.2, 0.3], "max": [0.2, 0.2, 0.7], "visible": false, "caster": false},
+    {"name": "beyond the far plane", "frustum": "camera", "min": [-1, -1, -151], "max": [1, 1, -149], "visible": false, "caster": false},
+    {"name": "far left", "frustum": "camera", "min": [-101, -1, -11], "max": [-99, 1, -9], "visible": false, "caster": false},
+    {"name": "far right", "frustum": "camera", "min": [99, -1, -11], "max": [101, 1, -9], "visible": false, "caster": false},
+    {"name": "far below", "frustum": "camera", "min": [-1, -101, -11], "max": [1, -99, -9], "visible": false, "caster": false},
+    {"name": "far above", "frustum": "camera", "min": [-1, 99, -11], "max": [1, 101, -9], "visible": false, "caster": false},
+    {"name": "a unit box moved 20 ahead", "frustum": "camera", "min": [-1, -1, -21], "max": [1, 1, -19], "visible": true, "caster": true},
+    {"name": "a unit box moved 500 to the left", "frustum": "camera", "min": [-501, -1, -21], "max": [-499, 1, -19], "visible": false, "caster": false},
+    {"name": "inside the light's box", "frustum": "light", "min": [-1, -1, -1], "max": [1, 1, 1], "visible": true, "caster": true},
+    {"name": "between the light and its box", "frustum": "light", "min": [-1, 34, -1], "max": [1, 36, 1], "visible": false, "caster": true},
+    {"name": "far along the light's -x", "frustum": "light", "min": [-101, -1, -1], "max": [-99, 1, 1], "visible": false, "caster": false},
+    {"name": "far along the light's +x", "frustum": "light", "min": [99, -1, -1], "max": [101, 1, 1], "visible": false, "caster": false},
+    {"name": "far along the light's y", "frustum": "light", "min": [-1, -1, 99], "max": [1, 1, 101], "visible": false, "caster": false},
+    {"name": "beyond the light's far plane", "frustum": "light", "min": [-1, -51, -1], "max": [1, -49, 1], "visible": false, "caster": false}
+  ]
+}

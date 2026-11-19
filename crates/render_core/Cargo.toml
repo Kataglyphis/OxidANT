@@ -11,3 +11,7 @@ glam = { version = "0.34", features = ["bytemuck"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Reads the frustum verdicts tests/vectors/frustum_verdicts.json shares with the C++ engine.
+serde_json = "1"

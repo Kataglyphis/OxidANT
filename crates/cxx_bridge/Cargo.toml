@@ -14,6 +14,8 @@ cxx = "1.0"
 kataglyphis_assets = { path = "../assets" }
 # The settings, their ranges and sanitize rules, without the renderer's wgpu.
 kataglyphis_render_core = { path = "../render_core" }
+# The parity entries hand render_core's matrices over column by column.
+glam = "0.34"
 # The loader's warnings, which `diagnostics` keeps for the engine to drain.
 log = { workspace = true }
 

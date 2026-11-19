@@ -5186,6 +5186,7 @@ name = "kataglyphis_cxx_bridge"
 version = "3.0.0"
 dependencies = [
  "cxx",
+ "glam",
  "kataglyphis_assets",
  "kataglyphis_render_core",
  "log",
@@ -5304,6 +5305,7 @@ version = "3.0.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "serde_json",
 ]
 
 [[package]]

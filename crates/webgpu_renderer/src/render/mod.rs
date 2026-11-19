@@ -16,7 +16,8 @@ pub mod graph;
 pub mod histogram;
 pub mod ibl;
 pub mod lights;
-pub mod model_transform;
+// Moved to kataglyphis_render_core, which the C++ engine links without wgpu.
+pub use kataglyphis_render_core::model_transform;
 pub mod occlusion;
 pub mod overlay;
 pub mod pipeline_desc;

@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-19, the parity entries and the shared frustum verdicts)
+
+- **`kataglyphis_render_core`**: `viewport` (`SceneViewport`), `model_transform` (`ModelTransform`) and the culling
+  `Frustum` moved in, and the new `lens::perspective` is what `OrbitCamera::projection` returns; the renderer
+  re-exports each under its old path. `tests/vectors/frustum_verdicts.json`, 24 boxes against a perspective and an
+  orthographic light frustum with a visible and a caster verdict each, is checked by `tests/frustum_vectors.rs` and
+  read by BeschleunigerBallett's `frustumSuite.cpp` at `third_party/OxidANT/crates/render_core/tests/vectors/`.
+  It leaves out what the two tests do differently: an inverted box (C++ draws it, Rust tests its corners) and a box
+  within 1e-4 of a plane (C++ normalizes the planes and keeps that margin, Rust does not).
+- **`kataglyphis_cxx_bridge`**: `src/parity.rs` (C++ namespace `kataglyphis::oxidant::parity`) returns Rust's
+  `parity_viewport_remap`, `parity_lens` and `parity_model_transform` for given inputs, column-major in WebGPU's
+  clip space (the C++ Vulkan projection negates row 1), so the engine asserts `sanitizeViewportFraction`,
+  `makeViewportRemap`, `makeVulkanProjection` and `makeGuiModelTransform` against them.
+
 ### Changed (2026-11-19, load options instead of an environment read in the shared loader)
 
 - **`kataglyphis_assets`**: `LoadOptions` (`mikktspace_tangents`) reaches the tangent generator through

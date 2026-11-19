@@ -120,7 +120,7 @@ fn every_bridge_file_keeps_the_contract() {
     let stems: Vec<&str> = files.iter().map(|(stem, _)| stem.as_str()).collect();
     assert_eq!(
         stems,
-        ["diagnostics", "gltf", "settings"],
+        ["diagnostics", "gltf", "parity", "settings"],
         "BeschleunigerBallett lists each in corrosion_add_cxxbridge"
     );
     let mut bridged = Vec::new();
@@ -138,6 +138,9 @@ fn every_bridge_file_keeps_the_contract() {
             "load_gltf_flat",
             "load_gltf_flat_with",
             "oxidant_version",
+            "parity_lens",
+            "parity_model_transform",
+            "parity_viewport_remap",
             "sanitize",
             "setting_ranges",
             "take_log_records"

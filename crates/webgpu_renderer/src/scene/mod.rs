@@ -5,7 +5,8 @@ pub mod controller;
 pub mod fly;
 pub mod lod;
 pub mod qem;
-pub mod viewport;
+// The viewport moved to kataglyphis_render_core, which the C++ engine links without wgpu.
+pub use kataglyphis_render_core::viewport;
 
 // The CPU types live in kataglyphis_assets, which the C++ engine links without wgpu.
 pub use kataglyphis_assets::scene::*;

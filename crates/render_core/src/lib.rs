@@ -5,4 +5,8 @@
 #![warn(clippy::too_many_lines)]
 
 pub mod clouds;
+pub mod frustum;
+pub mod lens;
+pub mod model_transform;
 pub mod shadow_settings;
+pub mod viewport;

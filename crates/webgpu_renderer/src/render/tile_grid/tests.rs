@@ -1,5 +1,5 @@
 use super::*;
-// See render/bounds.rs's tests for why `directx` matches the old `Mat4::*_rh` constructors.
+// See scene/camera.rs's tests for why `directx` matches the old `Mat4::*_rh` constructors.
 use glam::camera::rh::proj::directx as clip;
 use glam::camera::rh::view::look_at_mat4;
 
