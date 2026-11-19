@@ -111,13 +111,6 @@ plan's). Its C++ and bridge work is in BB's `BACKLOG.md`.
       on SwiftShader renders at 25 % scale, so the test should pin the render scale to 1. Done when a `[ci web]` run
       is green.
 
-- [ ] **Criterion benchmarks for the loader C++ calls through the bridge** (M, ★). Plan X7. `kataglyphis_assets`
-      and `webgpu_renderer` have no `[[bench]]`, so a loader regression shows only as a slower C++ load after a pin
-      bump. `load_flat` on `cube.glb` (recorded) and on a generated mesh of a few hundred thousand triangles (gated:
-      bench-history gates only means from about 100 µs, and only a doubling); then QEM, the tile grid, the cascade
-      fit and the BVH build in the renderer, whose bench profile links with fat LTO. BB adds a `BM_` row with a
-      labelled placeholder baseline for each new bridge entry.
-
 ### Quality queue
 
 The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md,

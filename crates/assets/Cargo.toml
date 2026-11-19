@@ -24,5 +24,10 @@ ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
+
+[[bench]]
+name = "load_flat"
+harness = false

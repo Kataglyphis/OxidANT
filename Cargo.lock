@@ -5130,6 +5130,7 @@ dependencies = [
  "basisu",
  "bevy_mikktspace",
  "bytemuck",
+ "criterion",
  "glam",
  "gltf",
  "ktx2",

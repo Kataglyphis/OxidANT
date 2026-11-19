@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-19, a benchmark for the bridge's glTF load)
+
+- **`kataglyphis_assets`**: `benches/load_flat.rs` times `load_flat` from a file, as BeschleunigerBallett's engine
+  loads through the bridge (plan X7): `load_flat/cube_glb` (11.5 µs on an aarch64 WSL host, recorded) and
+  `load_flat/grid_295k_triangles`, a generated GLB grid of 294,912 triangles with normals and uvs (12.3 ms there),
+  which `bench-history` gates. The bench checks the grid's index count before timing it, so a failed or partial load
+  cannot pass as a fast one. criterion was already in the lock; no crate was added.
+
 ### Changed (2026-11-19, the glTF fixtures belong to the loader)
 
 - The glTF, GLB, KTX2 and OBJ fixtures moved from `crates/webgpu_renderer/tests/assets` to
