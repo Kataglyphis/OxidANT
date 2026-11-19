@@ -3,6 +3,7 @@
 
 use kataglyphis_render_core::clouds::{self, CloudSettings};
 use kataglyphis_render_core::shadow_settings::{self, ShadowSettings};
+use kataglyphis_render_core::sun::SunSettings;
 
 use crate::{guarded, nothing};
 
@@ -40,11 +41,22 @@ pub mod ffi {
         punctual: bool,
     }
 
+    /// The Sun, `kataglyphis_render_core::sun::SunSettings` field for field.
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
+    struct SunSettings {
+        /// Towards the Sun; the C++ editor's `directional_light_direction` is the way the light travels.
+        direction: [f32; 3],
+        color: [f32; 3],
+        radiance: f32,
+        ambient: f32,
+    }
+
     /// Every shared setting. A C++ value starts zeroed, not at these defaults: begin from `default_scene_settings()`.
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
     struct SceneSettings {
         clouds: CloudSettings,
         shadows: ShadowSettings,
+        sun: SunSettings,
     }
 
     /// Both ends included.
@@ -106,7 +118,7 @@ pub mod ffi {
         fn default_scene_settings() -> SceneSettings;
         /// The editor's range for each setting.
         fn setting_ranges() -> SettingRanges;
-        /// `settings` in the editor's ranges: each cloud and shadow field clamped, a NaN at a fallback.
+        /// `settings` in the editor's ranges: each cloud and shadow field clamped, a NaN at a fallback; the Sun as given.
         fn sanitize(settings: SceneSettings) -> SceneSettings;
     }
 }
@@ -114,7 +126,13 @@ pub mod ffi {
 /// Cannot panic; `guarded` keeps the bridge's contract all the same, as for every call.
 pub fn default_scene_settings() -> ffi::SceneSettings {
     guarded(
-        || scene(CloudSettings::default(), ShadowSettings::default()),
+        || {
+            scene(
+                CloudSettings::default(),
+                ShadowSettings::default(),
+                SunSettings::default(),
+            )
+        },
         nothing,
     )
 }
@@ -129,13 +147,14 @@ pub fn sanitize(settings: ffi::SceneSettings) -> ffi::SceneSettings {
             scene(
                 core_clouds(settings.clouds).sanitized(),
                 core_shadows(settings.shadows).sanitized(),
+                core_sun(settings.sun),
             )
         },
         nothing,
     )
 }
 
-fn scene(clouds: CloudSettings, shadows: ShadowSettings) -> ffi::SceneSettings {
+fn scene(clouds: CloudSettings, shadows: ShadowSettings, sun: SunSettings) -> ffi::SceneSettings {
     ffi::SceneSettings {
         clouds: ffi::CloudSettings {
             enabled: clouds.enabled,
@@ -160,6 +179,12 @@ fn scene(clouds: CloudSettings, shadows: ShadowSettings) -> ffi::SceneSettings {
             distance: shadows.distance,
             split_lambda: shadows.split_lambda,
             punctual: shadows.punctual,
+        },
+        sun: ffi::SunSettings {
+            direction: sun.direction.into(),
+            color: sun.color.into(),
+            radiance: sun.radiance,
+            ambient: sun.ambient,
         },
     }
 }
@@ -191,6 +216,15 @@ fn core_shadows(s: ffi::ShadowSettings) -> ShadowSettings {
         distance: s.distance,
         split_lambda: s.split_lambda,
         punctual: s.punctual,
+    }
+}
+
+fn core_sun(s: ffi::SunSettings) -> SunSettings {
+    SunSettings {
+        direction: s.direction.into(),
+        color: s.color.into(),
+        radiance: s.radiance,
+        ambient: s.ambient,
     }
 }
 
@@ -247,6 +281,7 @@ mod tests {
         let settings = default_scene_settings();
         assert_eq!(core_clouds(settings.clouds), CloudSettings::default());
         assert_eq!(core_shadows(settings.shadows), ShadowSettings::default());
+        assert_eq!(core_sun(settings.sun), SunSettings::default());
         assert_eq!(settings.clouds.wind, [4.0, 0.0, 1.5]);
         assert_eq!(settings.clouds.scale, [630.0, 3.15, 630.0]);
         assert_eq!(settings.clouds.offset, [-0.364, 367.0, -18.351]);
@@ -254,6 +289,12 @@ mod tests {
             (settings.shadows.resolution, settings.shadows.cascade_count),
             (2048, 3)
         );
+        let sun = settings.sun;
+        assert_eq!(
+            (sun.direction, sun.color),
+            ([0.5, 0.8, 0.3], [1.0, 0.97, 0.92])
+        );
+        assert_eq!((sun.radiance, sun.ambient), (5.0, 0.35), "the owner's Sun");
         assert_eq!(sanitize(settings), settings, "the defaults are sane");
     }
 
@@ -296,6 +337,7 @@ mod tests {
         wild.clouds.coverage = 4.0;
         wild.clouds.offset = [f32::NAN, 500.0, -500.0];
         wild.clouds.wind = [300.0, 0.0, 0.0];
+        wild.sun.radiance = 80.0;
         wild.shadows.resolution = 3000;
         wild.shadows.cascade_count = 9;
         wild.shadows.pcf_radius = 40;
@@ -313,6 +355,7 @@ mod tests {
             "a NaN takes the default"
         );
         assert_eq!(sane.clouds.wind, [100.0, 0.0, 0.0]);
+        assert_eq!(sane.sun, wild.sun, "the Sun passes through");
         let expected = ffi::ShadowSettings {
             resolution: 2048,
             cascade_count: 3,

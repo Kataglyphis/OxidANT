@@ -62,17 +62,20 @@ impl Accumulation {
 
 #[cfg(test)]
 mod tests {
+    use kataglyphis_render_core::sun::SunSettings;
+
     use super::*;
     use crate::render::tracer::modes::settings::FurnaceSettings;
 
     fn key() -> AccumulationKey {
+        let sun = SunSettings::default();
         AccumulationKey {
             view_proj: Mat4::IDENTITY,
             eye: Vec3::new(0.0, 1.0, 4.0),
             size: (64, 48),
-            light_dir: Vec3::new(0.5, 0.8, 0.3),
-            light_color_intensity: Vec4::new(1.0, 0.97, 0.92, 5.0),
-            sky_light: 0.35,
+            light_dir: sun.direction,
+            light_color_intensity: sun.light_color_intensity(),
+            sky_light: sun.ambient,
             settings: TraceSettings::default(),
             scene: 1,
             lights: 7,

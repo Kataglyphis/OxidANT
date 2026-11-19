@@ -1,6 +1,7 @@
 //! What the host hands the editor each frame, all plain data, so the editor runs and tests without a GPU.
 
 use glam::Vec4;
+use kataglyphis_render_core::sun::SunSettings;
 
 use crate::adapter::{self, AdapterClass, AdapterHint, AdapterIdentity};
 use crate::context::GpuContext;
@@ -52,8 +53,8 @@ impl Default for RendererSettings {
     /// `ForwardRenderer::new`'s values; a GPU test keeps the two equal.
     fn default() -> Self {
         Self {
-            light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.35),
-            light_color_intensity: Vec4::new(1.0, 0.97, 0.92, 5.0),
+            light_dir_ambient: SunSettings::default().light_dir_ambient(),
+            light_color_intensity: SunSettings::default().light_color_intensity(),
             ibl_intensity: 1.0,
             bloom_strength: 0.6,
             ssao_strength: 0.7,
@@ -559,6 +560,13 @@ mod tests {
             .map(|(name, _)| *name)
             .collect();
         assert!(unchanged.is_empty(), "still at the default: {unchanged:?}");
+    }
+
+    #[test]
+    fn the_default_sun_is_render_cores() {
+        let (defaults, sun) = (RendererSettings::default(), SunSettings::default());
+        assert_eq!(defaults.light_dir_ambient, sun.light_dir_ambient());
+        assert_eq!(defaults.light_color_intensity, sun.light_color_intensity());
     }
 
     #[test]

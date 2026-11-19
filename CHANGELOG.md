@@ -28,6 +28,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   decision 2026-11-19); it clamped only the step counts and the Scale and Density floors. The renderer's packing
   (`params_at`) keeps those C++ marshal clamps alone: the goldens of both renderers march Density above the editor's
   top of 1 (1.5, 2, 12), and three of `tests/clouds.rs` failed with the full clamp.
+- **`kataglyphis_render_core`**: `sun::SunSettings` holds the Sun's defaults (towards the Sun (0.5, 0.8, 0.3), warm
+  white, radiance 5, ambient 0.35), which `ForwardRenderer::new`, `RendererSettings::default` and the tracer's
+  accumulation tests read instead of three copies. **`kataglyphis_cxx_bridge`**: `default_scene_settings()` carries it
+  (`SceneSettings::sun`, owner decision 2026-11-19); `sanitize` passes the Sun through.
 
 ### Fixed (2026-11-20, the Windows lanes past the test count)
 

@@ -28,6 +28,7 @@ mod traced;
 mod upload;
 
 use glam::{Mat4, Vec3, Vec4};
+use kataglyphis_render_core::sun::SunSettings;
 
 use crate::context::GpuContext;
 use crate::render::clouds::CloudSettings;
@@ -214,9 +215,8 @@ impl ForwardRenderer {
             auto_exposure: false,
             auto_exposure_speed: 3.0,
             frame_delta_seconds: 1.0 / 60.0,
-            light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.35),
-            // ~5 because the BRDF divides diffuse by PI.
-            light_color_intensity: Vec4::new(1.0, 0.97, 0.92, 5.0),
+            light_dir_ambient: SunSettings::default().light_dir_ambient(),
+            light_color_intensity: SunSettings::default().light_color_intensity(),
             lod_enabled: false,
             ibl_intensity: 1.0,
             gpu_timing: GpuTiming::unavailable(),
