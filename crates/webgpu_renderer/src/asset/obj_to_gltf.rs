@@ -635,15 +635,39 @@ fn material_texture_uris(material: &ObjMaterial) -> impl Iterator<Item = &String
     .flatten()
 }
 
-/// Deduplicated, or a shared map is decoded and uploaded once per material.
+/// Deduplicated by file, or a shared map is decoded and uploaded once per material and per spelling.
 fn image_uris(mesh: &ObjMesh) -> Vec<String> {
     let mut image_uris: Vec<String> = Vec::new();
     for uri in mesh.materials.iter().flat_map(material_texture_uris) {
-        if !image_uris.iter().any(|existing| existing == uri) {
+        if !image_uris.iter().any(|existing| same_file(existing, uri)) {
             image_uris.push(uri.clone());
         }
     }
     image_uris
+}
+
+/// Whether two .mtl paths name one file once `.` segments and `dir/..` pairs are gone: `tex.png` and `./tex.png` do.
+fn same_file(a: &str, b: &str) -> bool {
+    normalized(a) == normalized(b)
+}
+
+fn normalized(path: &str) -> String {
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." if segments.last().is_some_and(|last| *last != "..") => {
+                segments.pop();
+            }
+            _ => segments.push(segment),
+        }
+    }
+    let relative = segments.join("/");
+    if path.starts_with('/') {
+        format!("/{relative}")
+    } else {
+        relative
+    }
 }
 
 /// The `images`, `samplers` and `textures` arrays, or nothing for an untextured model.
@@ -697,7 +721,7 @@ fn material_json(material: &ObjMaterial, image_uris: &[String]) -> (String, bool
     let texture_index = |uri: &String| {
         image_uris
             .iter()
-            .position(|existing| existing == uri)
+            .position(|existing| same_file(existing, uri))
             .unwrap_or(0)
     };
     let texture_json = match &material.base_color_texture {

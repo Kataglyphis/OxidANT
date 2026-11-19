@@ -444,6 +444,28 @@ fn material_runs_share_one_vertex_buffer() {
 }
 
 #[test]
+fn each_usemtl_run_loads_only_the_corners_it_draws() {
+    // Every run's primitive names the whole POSITION accessor.
+    let dir = temp_dir("run_corners");
+    std::fs::write(dir.join("pair.mtl"), PAIR_MTL).expect("write mtl");
+    let obj_path = dir.join("pair.obj");
+    std::fs::write(&obj_path, TWO_MATERIAL_OBJ).expect("write obj");
+    let gltf_path = dir.join("pair.gltf");
+    convert_file(&obj_path, &gltf_path).expect("convert");
+
+    let scene = load_gltf(&gltf_path).expect("load");
+    let counts: Vec<usize> = scene.primitives.iter().map(|p| p.vertices.len()).collect();
+    assert_eq!(
+        counts,
+        [3, 3],
+        "a triangle each, not the quad's four corners"
+    );
+    for primitive in &scene.primitives {
+        assert!(primitive.indices.iter().all(|&i| (i as usize) < 3));
+    }
+}
+
+#[test]
 fn an_obj_without_materials_still_gets_a_usable_default() {
     // glTF's default material (metallic 1, roughness 1) renders as a dark mirror.
     let dir = temp_dir("no_materials");
@@ -939,6 +961,38 @@ fn to_gltf_shares_one_image_when_map_kd_and_map_bump_name_the_same_file() {
         json.matches(r#""uri": "shared.png""#).count(),
         1,
         "the shared file must appear once in the images array, got: {json}"
+    );
+}
+
+#[test]
+fn to_gltf_shares_one_image_when_two_spellings_name_the_same_file() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    let materials = parse_mtl(
+        "newmtl a\nmap_Kd tex.png\nnewmtl b\nmap_Kd ./tex.png\nnewmtl c\nmap_Kd maps/../tex.png\n\
+         newmtl d\nmap_Kd maps/tex.png\n",
+    );
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+    assert_eq!(json.matches(r#""uri": "tex.png""#).count(), 1, "{json}");
+    assert_eq!(
+        json.matches(r#""uri": "maps/tex.png""#).count(),
+        1,
+        "{json}"
+    );
+    assert_eq!(json.matches(r#""uri": "./tex.png""#).count(), 0, "{json}");
+    assert_eq!(
+        json.matches(r#""baseColorTexture": { "index": 0 }"#)
+            .count(),
+        3,
+        "a, b and c share the first image: {json}"
+    );
+    assert!(
+        json.contains(r#""baseColorTexture": { "index": 1 }"#),
+        "{json}"
     );
 }
 

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 
+use crate::files::{self, decode_base64, percent_decode, read_confined};
 use crate::ktx2_loader::load_ktx2;
 use crate::scene::CpuTexture;
 
@@ -110,10 +111,23 @@ pub(crate) fn import_images(
                     .with_context(|| format!("glTF image {} (KTX2)", image.index()));
                 return Ok(texture.map(Arc::new));
             }
+            if let (gltf::image::Source::Uri { uri, .. }, Some(base)) = (image.source(), base) {
+                check_relative_image(base, uri)
+                    .with_context(|| format!("glTF image {}", image.index()))?;
+            }
             let data = gltf::image::Data::from_source(image.source(), base, buffers)?;
             Ok(Ok(Arc::new(crate::gltf_loader::to_rgba8(data)?)))
         })
         .collect()
+}
+
+/// gltf's own reader unwraps a relative URI's percent-decoding and opens what it names: a panic, or a FIFO's endless wait.
+fn check_relative_image(base: &Path, uri: &str) -> anyhow::Result<()> {
+    if uri.contains(':') {
+        return Ok(());
+    }
+    files::require_regular_file(&base.join(percent_decode(uri)?))
+        .with_context(|| format!("'{uri}'"))
 }
 
 /// Each texture's image: its `KHR_texture_basisu` KTX2, else (with a warning on failure) its fallback.
@@ -211,33 +225,11 @@ pub(crate) fn encoded_bytes(
             }
             anyhow::ensure!(
                 !uri.starts_with("http:") && !uri.starts_with("https:"),
-                "glTF image '{uri}' is remote"
+                "'{uri}' is remote"
             );
             read_confined(base, uri)
         }
     }
-}
-
-/// Reads a relative URI that must resolve inside `base`, so an untrusted file cannot name `../../secret`.
-fn read_confined(base: &Path, uri: &str) -> anyhow::Result<Vec<u8>> {
-    let base = if base.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        base
-    };
-    let root = base
-        .canonicalize()
-        .with_context(|| format!("resolving {}", base.display()))?;
-    let decoded = percent_decode(uri)?.replace('\\', "/");
-    let file = base
-        .join(decoded)
-        .canonicalize()
-        .with_context(|| format!("glTF image '{uri}' does not resolve to a file"))?;
-    anyhow::ensure!(
-        file.starts_with(&root),
-        "glTF image '{uri}' resolves outside the document's directory"
-    );
-    std::fs::read(&file).with_context(|| format!("reading {}", file.display()))
 }
 
 fn read_relative(base: Option<&Path>, uri: &str) -> anyhow::Result<Vec<u8>> {
@@ -251,79 +243,12 @@ fn read_relative(base: Option<&Path>, uri: &str) -> anyhow::Result<Vec<u8>> {
         Some(path) => Path::new(path).to_path_buf(),
         None => base.join(percent_decode(uri)?),
     };
-    std::fs::read(&path).with_context(|| format!("reading {}", path.display()))
-}
-
-/// RFC 3986 percent-decoding of a relative URI, as gltf applies to its own.
-fn percent_decode(uri: &str) -> anyhow::Result<String> {
-    let bytes = uri.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    while at < bytes.len() {
-        if bytes[at] == b'%' {
-            let hex = uri
-                .get(at + 1..at + 3)
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-                .with_context(|| format!("bad percent escape in '{uri}'"))?;
-            out.push(hex);
-            at += 3;
-        } else {
-            out.push(bytes[at]);
-            at += 1;
-        }
-    }
-    String::from_utf8(out).with_context(|| format!("'{uri}' is not UTF-8 once decoded"))
-}
-
-/// Standard base64 with optional padding.
-fn decode_base64(text: &str) -> anyhow::Result<Vec<u8>> {
-    let value = |byte: u8| match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    };
-    let digits = text.trim_end_matches('=').as_bytes();
-    let mut out = Vec::with_capacity(digits.len() * 3 / 4);
-    let (mut bits, mut count) = (0u32, 0);
-    for &byte in digits {
-        let six = value(byte).context("a base64 data URI holds a character outside base64")?;
-        bits = (bits << 6) | u32::from(six);
-        count += 6;
-        if count >= 8 {
-            count -= 8;
-            out.push((bits >> count) as u8);
-        }
-    }
-    Ok(out)
+    files::read_regular_file(&path).with_context(|| format!("reading {}", path.display()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn base64_decodes_every_padding_length() {
-        assert_eq!(decode_base64("").unwrap(), b"");
-        assert_eq!(decode_base64("TQ==").unwrap(), b"M");
-        assert_eq!(decode_base64("TWE=").unwrap(), b"Ma");
-        assert_eq!(decode_base64("TWFu").unwrap(), b"Man");
-        assert_eq!(
-            decode_base64("q83v/+A").unwrap(),
-            [0xAB, 0xCD, 0xEF, 0xFF, 0xE0]
-        );
-        assert!(decode_base64("TW F").is_err());
-    }
-
-    #[test]
-    fn percent_escapes_decode_and_bad_ones_error() {
-        assert_eq!(percent_decode("a%20b.ktx2").unwrap(), "a b.ktx2");
-        assert_eq!(percent_decode("plain.ktx2").unwrap(), "plain.ktx2");
-        assert!(percent_decode("bad%2").is_err());
-        assert!(percent_decode("bad%zz").is_err());
-    }
 
     fn texture(basisu: Option<usize>, fallback: Option<usize>) -> TextureSource {
         TextureSource { basisu, fallback }

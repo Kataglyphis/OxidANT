@@ -145,10 +145,11 @@ fn read_materials(imported: &Imported, textures: &mut Vec<FlatTexture>) -> Vec<F
     materials
 }
 
-/// Dedups slots on (image, sampler, colour space): an image sampled two ways gets one slot per way.
+/// Dedups slots on (image, sampler settings, colour space): an image sampled two ways gets one slot per way.
 struct Slots<'a> {
     imported: &'a Imported,
-    keys: HashMap<(usize, Option<usize>, bool), i32>,
+    /// The settings, not the sampler's index: two equal sampler objects, or none and a default one, share a slot.
+    keys: HashMap<(usize, CpuSampler, bool), i32>,
     textures: &'a mut Vec<FlatTexture>,
 }
 
@@ -177,7 +178,8 @@ impl Slots<'_> {
         else {
             return -1;
         };
-        let key = (image, texture.sampler().index(), srgb);
+        let sampler = gltf_loader::to_cpu_sampler(&texture.sampler());
+        let key = (image, sampler, srgb);
         if let Some(&slot) = self.keys.get(&key) {
             return slot;
         }
@@ -188,7 +190,7 @@ impl Slots<'_> {
         self.keys.insert(key, slot);
         self.textures.push(FlatTexture {
             encoded,
-            sampler: gltf_loader::to_cpu_sampler(&texture.sampler()),
+            sampler,
             srgb,
         });
         slot

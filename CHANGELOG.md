@@ -13,6 +13,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-19, shared accessors, sampler slots and the files a glTF names)
+
+- **`kataglyphis_assets`**: a primitive keeps only the vertices its indices use, with their morph deltas.
+  Primitives on one accessor each copied all of it: the OBJ path gives every `usemtl` run POSITION 0, so Sponza's
+  159,954 vertices would load 385 times (about 6.4 GB), and C++ meshes got the whole model's bounds.
+- **`kataglyphis_assets`**: the flat loader keys a texture slot on its sampler's settings, not its index, so two equal
+  sampler objects, or none and an empty one, no longer give one image two of the engine's 128 slots.
+- **`kataglyphis_assets`**: the document, its buffers and the flat loader's images are read as regular files only: a
+  FIFO or a device (Windows' `con` in any directory) blocked the load forever. A buffer file must lie inside the
+  document's directory, as the flat loader's images already had to; `files::import_buffers` replaces
+  `gltf::import_buffers` with its GLB chunk, data URIs, padding and byteLength check. gltf's reader panicked on a
+  percent escape that is not UTF-8, for buffers and for the scene loader's images, which are now checked first.
+- **`kataglyphis_webgpu_renderer`**: `obj_to_gltf` matches texture paths without `.` segments and `dir/..` pairs, so
+  `tex.png` and `./tex.png` are one image.
+
 ### Changed (2026-11-18, the Windows parity run is the hub's)
 
 - `scripts/windows/check_gpu_detector_parity.py` keeps its launcher (`kataglyphis_cli.exe onnx-detect`) and its

@@ -6,12 +6,12 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use glam::{Mat4, Vec2, Vec3};
 
-use crate::gltf_images;
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuCamera, CpuCameraProjection,
     CpuLight, CpuLightKind, CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin,
     CpuTexture, CpuTextureRef, CpuWrap, Interpolation, MorphTarget, Vertex,
 };
+use crate::{files, gltf_images};
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
     let path = path.as_ref();
@@ -46,14 +46,14 @@ pub(crate) struct Imported {
 }
 
 pub(crate) fn import_document(path: &Path) -> anyhow::Result<Imported> {
-    let bytes = std::fs::read(path)?;
+    let bytes = files::read_regular_file(path)?;
     let base = path.parent().unwrap_or_else(|| Path::new("./"));
     let gltf_images::Parsed {
         document,
         blob,
         sources,
     } = gltf_images::parse(&bytes)?;
-    let buffers = gltf::import_buffers(&document, Some(base), blob)?;
+    let buffers = files::import_buffers(&document, Some(base), blob)?;
     Ok(Imported {
         document,
         buffers,
@@ -69,7 +69,7 @@ pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
         blob,
         sources,
     } = gltf_images::parse(bytes).context("Failed to import glTF from memory")?;
-    let buffers = gltf::import_buffers(&document, None, blob)
+    let buffers = files::import_buffers(&document, None, blob)
         .context("Failed to import glTF buffers from memory")?;
     if let Some(uri) = document.images().find_map(|image| match image.source() {
         gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => Some(uri.to_owned()),
@@ -499,7 +499,6 @@ fn texture_ref(
 }
 
 /// Every node a load draws, with its world transform: the default scene's, else the first scene's, else all.
-/// BeschleunigerBallett's C++ `GltfLoader` walks the same nodes; change both together.
 pub(crate) fn walk_nodes(
     document: &gltf::Document,
     mut visit: impl FnMut(&gltf::Node, Mat4) -> anyhow::Result<()>,
@@ -698,15 +697,42 @@ pub(crate) fn primitive_geometry(
         }),
         mikktspace: mikktspace_tangents_enabled(),
     };
-    let geometry = finish_geometry(
-        Geometry {
-            vertices,
-            indices,
-            morph_targets: read_morph_targets(primitive, buffers),
-        },
-        &options,
-    );
-    Ok(Some(geometry))
+    let geometry = compacted(Geometry {
+        vertices,
+        indices,
+        morph_targets: read_morph_targets(primitive, buffers),
+    });
+    Ok(Some(finish_geometry(geometry, &options)))
+}
+
+/// Only the vertices the indices address, in file order: primitives sharing one accessor each copied all of it.
+fn compacted(geometry: Geometry) -> Geometry {
+    let mut used = vec![false; geometry.vertices.len()];
+    for &index in &geometry.indices {
+        used[index as usize] = true;
+    }
+    if used.iter().all(|&kept| kept) {
+        return geometry;
+    }
+    let sources: Vec<u32> = (0..geometry.vertices.len() as u32)
+        .filter(|&old| used[old as usize])
+        .collect();
+    let mut remap = vec![0u32; geometry.vertices.len()];
+    for (new, &old) in sources.iter().enumerate() {
+        remap[old as usize] = new as u32;
+    }
+    Geometry {
+        vertices: sources
+            .iter()
+            .map(|&old| geometry.vertices[old as usize])
+            .collect(),
+        indices: geometry
+            .indices
+            .iter()
+            .map(|&old| remap[old as usize])
+            .collect(),
+        morph_targets: gather_morph_targets(&geometry.morph_targets, &sources),
+    }
 }
 
 /// A primitive's vertices, triangle list and morph targets, kept together while vertices are rebuilt.
@@ -1515,6 +1541,58 @@ mod tests {
                 .expect("every output vertex comes from an input vertex");
             assert_eq!(*delta, deltas[source], "vertex at {:?}", vertex.position);
         }
+    }
+
+    #[test]
+    fn compaction_keeps_the_used_vertices_in_file_order_with_their_morph_deltas() {
+        let (mut vertices, _) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+        vertices.push(vertices[0]);
+        let deltas: Vec<Vec3> = (0..5).map(|i| Vec3::splat(i as f32)).collect();
+        let geometry = compacted(Geometry {
+            vertices: vertices.clone(),
+            indices: vec![3, 1, 4],
+            morph_targets: vec![MorphTarget {
+                position_deltas: deltas,
+                normal_deltas: Vec::new(),
+                tangent_deltas: vec![Vec3::X; 2],
+            }],
+        });
+        assert_eq!(geometry.indices, [1, 0, 2], "old 1, 3, 4 become 0, 1, 2");
+        let positions: Vec<[f32; 3]> = geometry.vertices.iter().map(|v| v.position).collect();
+        assert_eq!(
+            positions,
+            [
+                vertices[1].position,
+                vertices[3].position,
+                vertices[4].position
+            ]
+        );
+        let target = &geometry.morph_targets[0];
+        assert_eq!(
+            target.position_deltas,
+            [Vec3::splat(1.0), Vec3::splat(3.0), Vec3::splat(4.0)]
+        );
+        assert!(
+            target.normal_deltas.is_empty(),
+            "an absent attribute stays absent"
+        );
+        assert_eq!(
+            target.tangent_deltas,
+            [Vec3::X, Vec3::ZERO, Vec3::ZERO],
+            "a short list pads with zero"
+        );
+
+        let all = compacted(Geometry {
+            vertices: vertices.clone(),
+            indices: vec![0, 1, 2, 2, 3, 4],
+            morph_targets: Vec::new(),
+        });
+        assert_eq!(
+            all.indices,
+            [0, 1, 2, 2, 3, 4],
+            "nothing to drop leaves the geometry alone"
+        );
+        assert_eq!(all.vertices.len(), 5);
     }
 
     #[test]

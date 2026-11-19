@@ -8,6 +8,7 @@ mod accessor_check;
 pub mod basis;
 #[doc(hidden)]
 pub mod bc_decode;
+mod files;
 pub mod flat;
 mod gltf_images;
 pub mod gltf_loader;

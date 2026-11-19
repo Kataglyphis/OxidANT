@@ -28,15 +28,19 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
-/// One unindexed triangle in the xy plane, front face +Z, with the given nodes, materials and extras.
-fn triangle_gltf(dir: &Path, name: &str, nodes: &str, extra: &str) -> PathBuf {
+/// The 60 bytes of `triangle_gltf`'s buffer: three positions, then three uvs.
+fn triangle_bytes() -> Vec<u8> {
     let positions: [f32; 9] = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
     let uvs: [f32; 6] = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
-    let bytes: Vec<u8> = positions
+    positions
         .iter()
         .chain(&uvs)
         .flat_map(|f| f.to_le_bytes())
-        .collect();
+        .collect()
+}
+
+/// One unindexed triangle in the xy plane, front face +Z, with the given nodes, materials and extras.
+fn triangle_gltf(dir: &Path, name: &str, nodes: &str, extra: &str) -> PathBuf {
     let json = format!(
         r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{nodes}],
         "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"TEXCOORD_0":1}}}}]}}],
@@ -44,7 +48,7 @@ fn triangle_gltf(dir: &Path, name: &str, nodes: &str, extra: &str) -> PathBuf {
                      {{"bufferView":1,"componentType":5126,"count":3,"type":"VEC2"}}],
         "bufferViews":[{{"buffer":0,"byteLength":36}},{{"buffer":0,"byteOffset":36,"byteLength":24}}],
         "buffers":[{{"byteLength":60,"uri":"data:application/octet-stream;base64,{}"}}]{extra}}}"#,
-        base64(&bytes)
+        base64(&triangle_bytes())
     );
     let path = dir.join(name);
     std::fs::write(&path, json).unwrap();
@@ -95,6 +99,13 @@ fn the_cube_flattens_into_consistent_arrays() {
         assert!((n.length() - 1.0).abs() < 1e-4, "normal {n:?}");
         assert!(v.tangent[3] == 1.0 || v.tangent[3] == -1.0);
     }
+}
+
+#[test]
+fn a_glb_reads_its_buffer_from_the_binary_chunk() {
+    let model = load_flat(renderer_asset("cube.glb")).unwrap();
+    assert_consistent(&model);
+    assert_eq!(model.indices.len(), 36);
 }
 
 #[test]
@@ -447,4 +458,232 @@ fn accessors_the_reader_would_panic_on_are_rejected() {
         assert!(load_flat(&case).is_err(), "{name} loaded");
     }
     assert!(load_flat(&path).is_ok());
+}
+
+/// Two primitives on one 1000-vertex POSITION and NORMAL accessor, drawing corners 0, 1, 10 and 987, 997, 998.
+fn shared_accessor_gltf(dir: &Path) -> PathBuf {
+    let position = |i: u32| [(i % 10) as f32, ((i / 10) % 10) as f32, (i / 100) as f32];
+    let mut bytes: Vec<u8> = (0..1000)
+        .flat_map(position)
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    bytes.extend(
+        (0..1000)
+            .flat_map(|_| [0.0f32, 0.0, 1.0])
+            .flat_map(f32::to_le_bytes),
+    );
+    bytes.extend(
+        [0u32, 1, 10, 987, 997, 998]
+            .iter()
+            .flat_map(|i| i.to_le_bytes()),
+    );
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],
+        "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"NORMAL":1}},"indices":2}},
+                                 {{"attributes":{{"POSITION":0,"NORMAL":1}},"indices":3}}]}}],
+        "accessors":[{{"bufferView":0,"componentType":5126,"count":1000,"type":"VEC3","min":[0,0,0],"max":[9,9,9]}},
+                     {{"bufferView":1,"componentType":5126,"count":1000,"type":"VEC3"}},
+                     {{"bufferView":2,"componentType":5125,"count":3,"type":"SCALAR"}},
+                     {{"bufferView":2,"byteOffset":12,"componentType":5125,"count":3,"type":"SCALAR"}}],
+        "bufferViews":[{{"buffer":0,"byteLength":12000}},{{"buffer":0,"byteOffset":12000,"byteLength":12000}},
+                       {{"buffer":0,"byteOffset":24000,"byteLength":24}}],
+        "buffers":[{{"byteLength":{},"uri":"data:application/octet-stream;base64,{}"}}]}}"#,
+        bytes.len(),
+        base64(&bytes)
+    );
+    let path = dir.join("shared.gltf");
+    std::fs::write(&path, json).unwrap();
+    path
+}
+
+#[test]
+fn primitives_sharing_an_accessor_each_keep_only_the_corners_they_draw() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = shared_accessor_gltf(dir.path());
+    let flat = load_flat(&path).unwrap();
+    assert_consistent(&flat);
+    let counts: Vec<usize> = flat.ranges.iter().map(|r| r.vertex_count).collect();
+    assert_eq!(counts, [3, 3], "not the whole accessor each");
+    assert_eq!(flat.indices, [0, 1, 2, 3, 4, 5]);
+    let positions: Vec<[f32; 3]> = flat.vertices.iter().map(|v| v.position).collect();
+    assert_eq!(
+        positions,
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [7.0, 8.0, 9.0],
+            [7.0, 9.0, 9.0],
+            [8.0, 9.0, 9.0]
+        ],
+        "the used corners in file order"
+    );
+    let scene = kataglyphis_assets::load_gltf(&path).unwrap();
+    let counts: Vec<usize> = scene.primitives.iter().map(|p| p.vertices.len()).collect();
+    assert_eq!(counts, [3, 3]);
+    assert_eq!(scene.primitives[1].indices, [0, 1, 2]);
+}
+
+#[test]
+fn equal_samplers_share_a_slot_whatever_their_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let extra = format!(
+        r#","images":[{{"uri":"{}"}}],"samplers":[{{"wrapS":33071}},{{"wrapS":33071}},{{}}],
+        "textures":[{{"source":0,"sampler":0}},{{"source":0,"sampler":1}},{{"source":0}},{{"source":0,"sampler":2}}],
+        "materials":[{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0}}}},"emissiveTexture":{{"index":1}}}},
+                     {{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":2}}}},"emissiveTexture":{{"index":3}}}}]"#,
+        embedded_png_uri()
+    );
+    let model = load_flat(triangle_gltf(
+        dir.path(),
+        "samplers.gltf",
+        r#"{"mesh":0}"#,
+        &extra,
+    ))
+    .unwrap();
+    // Two clamping sampler objects are one sampler; no sampler and an empty one are glTF's default.
+    assert_eq!(
+        (
+            model.materials[0].base_texture,
+            model.materials[0].emissive_texture
+        ),
+        (0, 0)
+    );
+    assert_eq!(
+        (
+            model.materials[1].base_texture,
+            model.materials[1].emissive_texture
+        ),
+        (1, 1)
+    );
+    assert_eq!(model.textures.len(), 2);
+}
+
+/// `triangle_gltf` whose buffer is the URI `uri` instead of a data URI.
+fn triangle_with_buffer(dir: &Path, uri: &str) -> PathBuf {
+    let path = triangle_gltf(dir, "external.gltf", r#"{"mesh":0}"#, "");
+    let json = std::fs::read_to_string(&path).unwrap();
+    let start = json.find("data:application").unwrap();
+    let end = start + json[start..].find('"').unwrap();
+    std::fs::write(&path, format!("{}{uri}{}", &json[..start], &json[end..])).unwrap();
+    path
+}
+
+#[test]
+fn a_buffer_must_be_a_regular_file_inside_the_document_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("model");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("tri.bin"), triangle_bytes()).unwrap();
+    std::fs::write(root.path().join("outside.bin"), triangle_bytes()).unwrap();
+    std::fs::create_dir(dir.join("folder.bin")).unwrap();
+    let mut short = triangle_bytes();
+    short.truncate(58);
+    std::fs::write(dir.join("short2.bin"), &short).unwrap();
+    short.truncate(56);
+    std::fs::write(dir.join("short4.bin"), &short).unwrap();
+    let absolute = format!("file://{}", dir.join("tri.bin").display());
+    for (uri, loads) in [
+        ("tri.bin", true),
+        ("sub/../tri.bin", true),
+        // gltf pads a buffer to 4 bytes before it checks byteLength, so two bytes short still load.
+        ("short2.bin", true),
+        ("short4.bin", false),
+        ("../outside.bin", false),
+        ("folder.bin", false),
+        ("missing.bin", false),
+        ("%FF.bin", false),
+        (absolute.as_str(), false),
+        ("https://example.com/tri.bin", false),
+    ] {
+        let result = load_flat(triangle_with_buffer(&dir, uri));
+        assert_eq!(result.is_ok(), loads, "{uri}: {:?}", result.err());
+        assert_eq!(
+            kataglyphis_assets::load_gltf(dir.join("external.gltf")).is_ok(),
+            loads,
+            "{uri}"
+        );
+    }
+    let err = load_flat(triangle_with_buffer(&dir, "../outside.bin")).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("outside the document's directory"),
+        "{err:#}"
+    );
+    let err = load_flat(triangle_with_buffer(&dir, "folder.bin")).unwrap_err();
+    assert!(format!("{err:#}").contains("not a regular file"), "{err:#}");
+    let err = load_flat(&dir).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("not a regular file"),
+        "the document itself: {err:#}"
+    );
+}
+
+#[test]
+fn an_in_memory_import_reads_no_buffer_file_and_never_panics_on_its_uri() {
+    let dir = tempfile::tempdir().unwrap();
+    for uri in ["tri.bin", "%FF.bin"] {
+        let path = triangle_with_buffer(dir.path(), uri);
+        let bytes = std::fs::read(path).unwrap();
+        assert!(
+            kataglyphis_assets::load_gltf_slice(&bytes).is_err(),
+            "{uri}"
+        );
+    }
+}
+
+#[test]
+fn an_image_whose_escape_is_not_utf8_fails_the_scene_load_instead_of_panicking() {
+    let dir = tempfile::tempdir().unwrap();
+    let extra = r#","images":[{"uri":"%FF.png"}],"textures":[{"source":0}],
+        "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}]"#;
+    let path = triangle_gltf(dir.path(), "escape.gltf", r#"{"mesh":0}"#, extra);
+    let err = kataglyphis_assets::load_gltf(&path).unwrap_err();
+    assert!(format!("{err:#}").contains("not UTF-8"), "{err:#}");
+    assert!(
+        load_flat(&path).unwrap().textures.is_empty(),
+        "the flat load drops the image"
+    );
+}
+
+#[cfg(unix)]
+mod fifos {
+    use super::*;
+
+    fn fifo(path: &Path) {
+        let made = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(made.success());
+    }
+
+    /// Off this thread, so a load that opens a FIFO fails the test instead of hanging it.
+    fn finishes<T: Send + 'static>(load: impl FnOnce() -> T + Send + 'static) -> T {
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || send.send(load()));
+        receive
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("the load blocked on a FIFO")
+    }
+
+    #[test]
+    fn a_fifo_is_never_opened_as_a_document_buffer_or_image() {
+        let dir = tempfile::tempdir().unwrap();
+        fifo(&dir.path().join("pipe.gltf"));
+        fifo(&dir.path().join("pipe.bin"));
+        fifo(&dir.path().join("pipe.png"));
+        let document = dir.path().join("pipe.gltf");
+        assert!(finishes(move || load_flat(document)).is_err());
+        let buffer = triangle_with_buffer(dir.path(), "pipe.bin");
+        assert!(finishes(move || load_flat(buffer)).is_err());
+
+        let extra = r#","images":[{"uri":"pipe.png"}],"textures":[{"source":0}],
+            "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}]"#;
+        let image = triangle_gltf(dir.path(), "image.gltf", r#"{"mesh":0}"#, extra);
+        let scene_image = image.clone();
+        let flat = finishes(move || load_flat(image)).unwrap();
+        assert!(flat.textures.is_empty(), "the image gets no slot");
+        let err = finishes(move || kataglyphis_assets::load_gltf(scene_image)).unwrap_err();
+        assert!(format!("{err:#}").contains("not a regular file"), "{err:#}");
+    }
 }
