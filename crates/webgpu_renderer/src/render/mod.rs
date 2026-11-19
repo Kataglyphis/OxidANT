@@ -22,7 +22,8 @@ pub mod overlay;
 pub mod pipeline_desc;
 pub mod quality;
 pub mod render_scale;
-pub mod shadow_settings;
+// The settings moved to kataglyphis_render_core, which the C++ engine links without wgpu.
+pub use kataglyphis_render_core::shadow_settings;
 pub mod ssao;
 pub mod texture;
 pub mod texture_stream;

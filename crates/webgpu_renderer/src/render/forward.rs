@@ -81,8 +81,7 @@ const _: () = assert!(
 );
 /// The default texels per side of each cascade's map; [`ShadowSettings::resolution`] picks another.
 pub const SHADOW_MAP_SIZE: u32 = 2048;
-/// The most cascades, the C++ `MAX_CASCADES`; [`ShadowSettings::cascade_count`] renders 1 to this many.
-pub const CASCADE_COUNT: usize = 3;
+pub use kataglyphis_render_core::shadow_settings::CASCADE_COUNT;
 
 pub struct ForwardRenderer {
     /// The forward pass's four pipelines and its group 0 layout.

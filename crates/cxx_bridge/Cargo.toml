@@ -12,6 +12,8 @@ crate-type = ["staticlib", "rlib"]
 cxx = "1.0"
 # The CPU glTF loader without the renderer's wgpu, winit and egui, which the engine would link for nothing.
 kataglyphis_assets = { path = "../assets" }
+# The settings, their ranges and sanitize rules, without the renderer's wgpu.
+kataglyphis_render_core = { path = "../render_core" }
 # The loader's warnings, which `diagnostics` keeps for the engine to drain.
 log = { workspace = true }
 

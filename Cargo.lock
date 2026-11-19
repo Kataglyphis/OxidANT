@@ -5187,6 +5187,7 @@ version = "3.0.0"
 dependencies = [
  "cxx",
  "kataglyphis_assets",
+ "kataglyphis_render_core",
  "log",
  "tempfile",
 ]
@@ -5298,6 +5299,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kataglyphis_render_core"
+version = "3.0.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+]
+
+[[package]]
 name = "kataglyphis_telemetry"
 version = "3.0.0"
 dependencies = [
@@ -5336,6 +5345,7 @@ dependencies = [
  "image 0.25.10",
  "js-sys",
  "kataglyphis_assets",
+ "kataglyphis_render_core",
  "log",
  "naga",
  "pollster",

@@ -2,6 +2,8 @@
 
 use std::ops::RangeInclusive;
 
+/// The most cascades, the C++ `MAX_CASCADES`; [`ShadowSettings::cascade_count`] renders 1 to this many.
+pub const CASCADE_COUNT: usize = 3;
 /// The C++ `kShadowMapResolutions`: texels per side of each cascade's map.
 pub const SHADOW_MAP_RESOLUTIONS: [u32; 4] = [512, 1024, 2048, 4096];
 /// The C++ `MAX_PCF_RADIUS`: past 5 a step moves under 2 % of near-shadow pixels while taps grow as (2r+1)^2.
@@ -10,6 +12,10 @@ pub const MAX_PCF_RADIUS: u32 = 5;
 pub const SHADOW_DISTANCE_RANGE: RangeInclusive<f32> = 5.0..=500.0;
 /// The C++ default distance, fitted to its Sponza and Dinosaurs scenes.
 pub const DEFAULT_SHADOW_DISTANCE: f32 = 60.0;
+/// The Strength slider: 0 leaves shadowed areas lit, 1 takes all of the sun away.
+pub const STRENGTH_RANGE: RangeInclusive<f32> = 0.0..=1.0;
+/// The Split lambda slider: 0 splits evenly, 1 logarithmically.
+pub const SPLIT_LAMBDA_RANGE: RangeInclusive<f32> = 0.0..=1.0;
 
 /// What the cascaded shadow maps do; [`Self::sanitized`] is what the renderer reads.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -17,7 +23,7 @@ pub struct ShadowSettings {
     pub enabled: bool,
     /// One of [`SHADOW_MAP_RESOLUTIONS`]; a change reallocates the maps.
     pub resolution: u32,
-    /// 1 to `CASCADE_COUNT`; a change reallocates the maps.
+    /// 1 to [`CASCADE_COUNT`]; a change reallocates the maps.
     pub cascade_count: u32,
     /// (2r+1)^2 comparison taps, each a bilinear 2x2 PCF; 0 gives hard edges.
     pub pcf_radius: u32,
@@ -36,7 +42,7 @@ impl Default for ShadowSettings {
         Self {
             enabled: true,
             resolution: 2048,
-            cascade_count: crate::render::forward::CASCADE_COUNT as u32,
+            cascade_count: CASCADE_COUNT as u32,
             pcf_radius: 2,
             strength: 0.65,
             distance: DEFAULT_SHADOW_DISTANCE,
@@ -50,17 +56,19 @@ impl ShadowSettings {
     /// Every field in its C++ range; an unlisted resolution takes the nearest listed one.
     pub fn sanitized(&self) -> Self {
         let finite = |value: f32, fallback: f32| if value.is_finite() { value } else { fallback };
+        let within =
+            |value: f32, range: &RangeInclusive<f32>| value.clamp(*range.start(), *range.end());
         Self {
             enabled: self.enabled,
             resolution: nearest_resolution(self.resolution),
-            cascade_count: self
-                .cascade_count
-                .clamp(1, crate::render::forward::CASCADE_COUNT as u32),
+            cascade_count: self.cascade_count.clamp(1, CASCADE_COUNT as u32),
             pcf_radius: self.pcf_radius.min(MAX_PCF_RADIUS),
-            strength: finite(self.strength, 1.0).clamp(0.0, 1.0),
-            distance: finite(self.distance, DEFAULT_SHADOW_DISTANCE)
-                .clamp(*SHADOW_DISTANCE_RANGE.start(), *SHADOW_DISTANCE_RANGE.end()),
-            split_lambda: finite(self.split_lambda, 0.0).clamp(0.0, 1.0),
+            strength: within(finite(self.strength, 1.0), &STRENGTH_RANGE),
+            distance: within(
+                finite(self.distance, DEFAULT_SHADOW_DISTANCE),
+                &SHADOW_DISTANCE_RANGE,
+            ),
+            split_lambda: within(finite(self.split_lambda, 0.0), &SPLIT_LAMBDA_RANGE),
             punctual: self.punctual,
         }
     }
@@ -127,12 +135,15 @@ mod tests {
             cascade_count: 0,
             resolution: 1,
             distance: 1e9,
+            strength: -2.0,
+            split_lambda: f32::NAN,
             ..ShadowSettings::default()
         }
         .sanitized();
         assert_eq!(none.cascade_count, 1);
         assert_eq!(none.resolution, 512);
         assert_eq!(none.distance, 500.0);
+        assert_eq!((none.strength, none.split_lambda), (0.0, 0.0));
         let off = ShadowSettings {
             enabled: false,
             ..ShadowSettings::default()

@@ -15,6 +15,7 @@ members = [
     "crates/burn_demos",
     "crates/cxx_bridge",
     "crates/assets",
+    "crates/render_core",
 ]
 
 [workspace.package]

@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-19, `kataglyphis_render_core` and the bridged settings)
+
+- **`kataglyphis_render_core`**, a wgpu-free crate (glam, bytemuck) the C++ bridge may link: the cloud and shadow
+  settings moved there with their ranges and sanitize rules (`clouds`, `shadow_settings`, `CASCADE_COUNT`), and the
+  renderer re-exports them under their old paths. `CloudSettings::sanitized` is the clamp `params_at` applied inline;
+  the editor's unit sliders read named ranges (`COVERAGE_RANGE`, `PILLOWNESS_RANGE`, `CIRRUS_RANGE`,
+  `STRENGTH_RANGE`, `SPLIT_LAMBDA_RANGE`) that the bridge reports too.
+- **`kataglyphis_cxx_bridge`**: `src/settings.rs` (C++ namespace `kataglyphis::oxidant::settings`) bridges
+  `default_scene_settings`, `setting_ranges` and `sanitize`, by value, so BeschleunigerBallett can compare its
+  `GUISceneSharedVars{}` and GUI ranges with these field by field; BeschleunigerBallett lists the file in
+  `corrosion_add_cxxbridge`.
+
 ### Changed (2026-11-19, stream lines read as the hub's shared cases say)
 
 - `endpoint::parse_stream_line` reads a bare `error:` line as the server's error; it was read as nothing, so the

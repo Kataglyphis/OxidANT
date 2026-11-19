@@ -1,0 +1,13 @@
+[package]
+name = "kataglyphis_render_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The renderers' shared CPU half without wgpu, winit or egui: settings, their ranges and sanitize rules, which the C++ engine reads through kataglyphis_cxx_bridge."
+
+[dependencies]
+bytemuck = { version = "1.25", features = ["derive"] }
+glam = { version = "0.34", features = ["bytemuck"] }
+
+[lints]
+workspace = true

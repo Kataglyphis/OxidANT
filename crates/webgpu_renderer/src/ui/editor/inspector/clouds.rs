@@ -4,7 +4,8 @@
 use egui::Ui;
 
 use crate::render::clouds::{
-    CloudSettings, DENSITY_RANGE, LIGHT_STEPS, MARCH_STEPS, OFFSET_RANGE, SCALE_RANGE, WIND_RANGE,
+    CloudSettings, CIRRUS_RANGE, COVERAGE_RANGE, DENSITY_RANGE, LIGHT_STEPS, MARCH_STEPS,
+    OFFSET_RANGE, PILLOWNESS_RANGE, SCALE_RANGE, WIND_RANGE,
 };
 use crate::ui::widgets::{
     drag_axes, drag_axes_logarithmic, enabled_ui, property_row, section_header, toggle, FillSlider,
@@ -49,13 +50,13 @@ fn shape(ui: &mut Ui, clouds: &mut CloudSettings) {
     });
     let tooltip = "Noise below this threshold is clear sky (cloud.threshold)";
     property_row(ui, "Coverage", Some(tooltip), |ui| {
-        ui.add(FillSlider::new(&mut clouds.coverage, 0.0..=1.0))
+        ui.add(FillSlider::new(&mut clouds.coverage, COVERAGE_RANGE))
     });
     property_row(ui, "Pillowness", Some("cloud.pillowness"), |ui| {
-        ui.add(FillSlider::new(&mut clouds.pillowness, 0.0..=1.0))
+        ui.add(FillSlider::new(&mut clouds.pillowness, PILLOWNESS_RANGE))
     });
     property_row(ui, "Cirrus", Some("cloud.cirrus_effect"), |ui| {
-        ui.add(FillSlider::new(&mut clouds.cirrus, 0.0..=1.0))
+        ui.add(FillSlider::new(&mut clouds.cirrus, CIRRUS_RANGE))
     });
     property_row(ui, "Powder effect", Some("cloud.powder_effect"), |ui| {
         toggle(ui, &mut clouds.powder)

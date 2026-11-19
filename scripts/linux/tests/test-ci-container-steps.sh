@@ -55,7 +55,7 @@ import xml.etree.ElementTree as ET
 
 root = ET.Element("coverage")
 for area in ("observant", "webgpu_renderer", "inference", "text", "cli", "core", "telemetry",
-             "esp32", "esp32-protocol", "burn_demos", "cxx_bridge", "assets", "media", "gui", "src"):
+             "esp32", "esp32-protocol", "burn_demos", "cxx_bridge", "assets", "render_core", "media", "gui", "src"):
     filename = "src/lib.rs" if area == "src" else f"crates/{area}/src/lib.rs"
     cls = ET.SubElement(root, "class", filename=filename)
     hits = os.environ.get("CI_GUI_HITS", "1") if area == "gui" else "1"

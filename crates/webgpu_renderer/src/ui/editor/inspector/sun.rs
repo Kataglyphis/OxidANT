@@ -4,10 +4,9 @@ use egui::{vec2, Align2, Sense, TextStyle, Ui};
 use glam::Vec3;
 
 use super::super::{EditorContext, RendererSettings};
-use crate::render::forward::CASCADE_COUNT;
 use crate::render::shadow_settings::{
-    nearest_resolution, ShadowSettings, MAX_PCF_RADIUS, SHADOW_DISTANCE_RANGE,
-    SHADOW_MAP_RESOLUTIONS,
+    nearest_resolution, ShadowSettings, CASCADE_COUNT, MAX_PCF_RADIUS, SHADOW_DISTANCE_RANGE,
+    SHADOW_MAP_RESOLUTIONS, SPLIT_LAMBDA_RANGE, STRENGTH_RANGE,
 };
 use crate::ui::palette as pal;
 use crate::ui::theme;
@@ -79,7 +78,7 @@ fn shadows(ui: &mut Ui, shadows: &mut ShadowSettings) {
 fn filtering(ui: &mut Ui, shadows: &mut ShadowSettings) {
     let tooltip = "How dark shadowed areas get: 0 leaves them lit, 1 makes them black";
     property_row(ui, "Strength", Some(tooltip), |ui| {
-        ui.add(FillSlider::new(&mut shadows.strength, 0.0..=1.0).decimals(2))
+        ui.add(FillSlider::new(&mut shadows.strength, STRENGTH_RANGE).decimals(2))
     });
     let tooltip = "How far from the camera the cascades reach";
     property_row(ui, "Distance", Some(tooltip), |ui| {
@@ -90,7 +89,7 @@ fn filtering(ui: &mut Ui, shadows: &mut ShadowSettings) {
     });
     let tooltip = "0 splits the cascades evenly, 1 logarithmically";
     property_row(ui, "Split lambda", Some(tooltip), |ui| {
-        ui.add(FillSlider::new(&mut shadows.split_lambda, 0.0..=1.0).decimals(2))
+        ui.add(FillSlider::new(&mut shadows.split_lambda, SPLIT_LAMBDA_RANGE).decimals(2))
     });
 }
 

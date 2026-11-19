@@ -116,7 +116,7 @@ runs them and `scripts/linux/pre-push-checks.sh`, the script suites of the lint 
 
 **Function size is a hard gate in every crate.** `crates/observant`, `crates/inference`,
 `crates/media`, the root crate `src` and, since 2026-11-14, `crates/text`, `crates/core`, `crates/esp32`, `crates/esp32-protocol`,
-`crates/cli`, `crates/telemetry`, `crates/gui`, `crates/burn_demos`, `crates/cxx_bridge`, `crates/assets` and `crates/webgpu_renderer` set `#![warn(clippy::too_many_lines)]`, and `clippy.toml`
+`crates/cli`, `crates/telemetry`, `crates/gui`, `crates/burn_demos`, `crates/cxx_bridge`, `crates/assets`, `crates/render_core` and `crates/webgpu_renderer` set `#![warn(clippy::too_many_lines)]`, and `clippy.toml`
 holds the limit, 80 lines in clippy's count (code lines only), so `-D warnings` fails a new long
 function there. Those over it carry `#[expect(clippy::too_many_lines)]` where clippy's count passes 80. An
 `#[expect]` does not stop a function from growing, so `scripts/linux/check-rust-function-sizes.sh`,

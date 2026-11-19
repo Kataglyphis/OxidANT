@@ -12,6 +12,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 kataglyphis_assets = { path = "../assets" }
+# The settings and their sanitize rules, shared with the C++ engine through kataglyphis_cxx_bridge.
+kataglyphis_render_core = { path = "../render_core" }
 anyhow = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }

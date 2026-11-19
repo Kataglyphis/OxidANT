@@ -352,6 +352,16 @@
         }
       ]
     },
+    "kataglyphis_render_core@3.0.0": {
+      "files": [
+        {
+          "root": "workspace",
+          "path": "LICENSE",
+          "sha256": "586ec400195558a35f3895d08f8e089f3de6206ab8512fe58d6e4b47fb342e7b",
+          "provenance": "this repository's LICENSE; the workspace crates declare license.workspace = MIT"
+        }
+      ]
+    },
     "kataglyphis_telemetry@3.0.0": {
       "files": [
         {
