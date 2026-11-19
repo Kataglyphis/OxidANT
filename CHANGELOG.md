@@ -24,6 +24,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - The Windows arm64 cross lane runs the test binaries without the sources: `frustum_vectors.rs` embeds
   `tests/vectors/frustum_verdicts.json` (`include_str!`), and the bridge's three source-reading contract tests print
   `SKIP: no source tree` there, as `one_camera_pipeline` does (7d33f96).
+- `docs/crates.md` and the bridge's crate docs: a caught panic is `ok == false` from the loader's calls and the
+  zero value (`nothing`) from the settings, parity and diagnostics calls, which report no error.
 
 ### Changed (2026-11-19, both glTF loaders read images from the document's folder only)
 
