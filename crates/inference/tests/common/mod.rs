@@ -36,9 +36,13 @@ pub fn unavailable(result: anyhow::Result<PersonDetector>) -> ProviderUnavailabl
 }
 
 pub fn photo() -> (Vec<u8>, u32, u32) {
-    let photo = image::load_from_memory(include_bytes!("../fixtures/two_cats.jpg"))
-        .unwrap()
-        .to_rgba8();
+    // ModelANT's lossless decode of two_cats.jpg: the same pixels the C++ and Python golden tests read (CON234).
+    let photo = image::load_from_memory(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../third_party/ModelANT/contracts/fixtures/two_cats.png"
+    )))
+    .unwrap()
+    .to_rgba8();
     let (w, h) = photo.dimensions();
     (photo.into_raw(), w, h)
 }

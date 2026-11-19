@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-19, the golden tests read ModelANT's lossless photo)
+
+- `crates/inference/tests` decode ModelANT's `contracts/fixtures/two_cats.png` (pin `bd4094a`), the lossless decode of
+  `two_cats.jpg`, so the detector here gets the same pixels as AccelerANTgine's and OrchestrANT's golden tests
+  (ANTfrastructure CON234). `image`'s `png` feature is a dev-dependency only. All four `real_model` tests passed on
+  ORT and tract on a Raspberry Pi 5.
+
 ### Changed (2026-11-19, the test JUnit comes from the hub)
 
 - The Linux `test` step no longer tees the log and converts it itself: the hub's `cargo_test.sh` (ANTfrastructure

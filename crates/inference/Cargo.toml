@@ -35,7 +35,8 @@ workspace = true
 [dev-dependencies]
 libloading = { workspace = true }
 criterion = { workspace = true }
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# png: the golden tests read ModelANT's lossless two_cats.png, so every detector gets the same pixels.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 serde_json = "1"
 
 [[bench]]
