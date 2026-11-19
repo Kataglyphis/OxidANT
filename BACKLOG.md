@@ -91,6 +91,51 @@ its open work is here.
       proof in the field. Done when a packaged service answers 502 to a question whose answer panics and keeps
       streaming (`crates/observant/src/ask.rs`, the poisoned-lock recovery and the failed-task reply).
 
+The renderer entries below come from BeschleunigerBallett's bridge and feature plan (2026-11-18; the ids are the
+plan's). Its C++ and bridge work is in BB's `BACKLOG.md`.
+
+- [ ] **The renderer does not notice a lost device** (M, ★★). Plan R3. C++ detects a loss and ends the run;
+      `GpuContext` registers neither `Device::set_device_lost_callback` nor an `on_uncaptured_error` handler, so
+      natively the first failing wgpu call after a loss reaches wgpu's default handler, which panics, an abort under
+      `panic = "abort"`. Next: a loss sets a flag, `StudioApp::frame` stops submitting and returns a new `AppSignal`;
+      the native viewer exits with a failure code (or relaunches through the adapter-switch relaunch), the browser
+      shows a reload notice. Test with `device.destroy()`, which fires the callback with reason `Destroyed`.
+      Rebuilding in-process is a separate L item: nothing keeps the CPU scene or the skybox faces once uploaded.
+
+- [ ] **The IBL ignores the loaded skybox, and the traced modes drop compressed textures** (M, ★★). Plan R2.
+      (1) The IBL is baked once from the procedural panorama (`app/mod.rs`), so after the photographed cube loads,
+      reflections, diffuse ambient and the path tracer's bounce misses still show the gradient; C++'s bounce misses
+      sample the drawn cube since BB's 2026-11-16 decision. Bake from the cube in `StudioApp::set_skybox_faces` with
+      `CloudAmbient::of_cubemap`'s decode (`srgb_to_linear`, then `sky.slang`'s untonemapped) and `set_environment`;
+      keep it out of `ForwardRenderer::set_skybox` and the skybox switch, whose navy case `tests/scene_controls.rs`
+      pins. (2) `LayerAssigner::layer` (`render/tracer/material.rs`) drops BC textures, so KTX2 and Basis materials
+      trace with their factor alone: decode the mip level just above the layer side with `bc_decode::decode_level`,
+      one texture per step on wasm (`WEB_STEP_BUDGET`). Tests: a metallic sphere reflects the cube's colour; a KTX2
+      card shows its texture in both traced modes.
+
+- [ ] **Raster tilts the normal of a material without a normal map** (S, ★★). Found 2026-11-19 by the ray-traced
+      punctual-light tests: `forward.slang` always samples `normalTex`, and an untextured material gets
+      `flat_normal_fallback` (128, 128, 255), which decodes to about (0.0039, 0.0039, 1), a 0.32° tilt. On
+      `traced_lights`' grazing patch raster reads 0.02589 against the analytic 0.02533 (+2.2 %), while both traced
+      modes and C++ (which checks `normalTextureID >= 0`) match it. Next: a material flag so the forward and G-buffer
+      passes skip the map without a texture; the wall test can then compare with raster again.
+
+- [ ] **The browser lane fails on develop** (S, ★★). A local `ci-container-steps.sh web-browser` run on 2026-11-19
+      (Chrome 157 on SwiftShader) failed the same 4 checks with develop's kernel and with the ray-traced punctual
+      lights; the lane has not run in CI since (`[ci web]`). (a) The page serves no `kloofendal_43d_clear_puresky/`
+      folder, so the faces 404 and the demo's "Keeping the procedural sky" warning fails the console check: stage the
+      skybox as BB's docs build does, or allow that warning. (b) The ray tracer's black sun shadow covers 0.032 % of
+      the viewport against a 0.05 % floor (0.174 % on 2026-11-16): since the 2026-11-17 quality presets the browser
+      on SwiftShader renders at 25 % scale, so the test should pin the render scale to 1. Done when a `[ci web]` run
+      is green.
+
+- [ ] **Criterion benchmarks for the loader C++ calls through the bridge** (M, ★). Plan X7. `kataglyphis_assets`
+      and `webgpu_renderer` have no `[[bench]]`, so a loader regression shows only as a slower C++ load after a pin
+      bump. `load_flat` on `cube.glb` (recorded) and on a generated mesh of a few hundred thousand triangles (gated:
+      bench-history gates only means from about 100 µs, and only a doubling); then QEM, the tile grid, the cascade
+      fit and the BVH build in the renderer, whose bench profile links with fat LTO. BB adds a `BM_` row with a
+      labelled placeholder baseline for each new bridge entry.
+
 ### Quality queue
 
 The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md,
@@ -135,6 +180,35 @@ Empty on 2026-11-17: nothing else is in the queue.
       main, G-buffer, masked-shadow and mirrored pipelines in both layouts; (d) streaming swapping one array slot
       per step instead of rebuilding each user's group 0 (`rebind_primitives`); (e) a GPU test that the two paths
       render identical frames. Guard: `tests/texture_streaming.rs`.
+
+- [ ] **A twin of BB's all-maximum settings sweep** (M, ★). Plan X17; after the lost-device entry.
+      `tests/settings_sweep.rs`, env-gated and weekly, not per push. First the corner at 1200x768 (256 px reaches no
+      buffer limit): 3 cascades at 4096, PCF 5, 128/128 cloud steps at full resolution, deferred, clouds on, the path
+      tracer at 64 spp and 16 bounces, 4 shadowed point and spot lights. Then 16 seeded random `ui::RendererSettings`
+      across the 3 modes and 2 raster paths, a few frames each. Each case: no validation or uncaptured error (an
+      error-scope collector), no lost device, a non-empty frame. Negative control: a deliberate validation error on
+      the same device must be reported; an out-of-range setting cannot be one, since `apply()` clamps.
+
+- [ ] **Persist a pipeline cache in the native viewer, if it pays** (S, ★). Plan X16. Measure a cold against a warm
+      start on Vulkan first (RX 9070 XT, lavapipe): drivers keep their own shader caches, and naga's parse and SPIR-V
+      emission run at every start regardless. If it pays: `wgpu::Features::PIPELINE_CACHE` where offered, one
+      `PipelineCache` from `pipeline_cache/<pipeline_cache_key(&adapter_info)>` with `fallback: true` through the 15
+      `cache: None` sites, written on a graceful exit; the windowed native viewer only (not `new_headless`, so
+      `cargo test` never writes it), and `pipeline_cache/` in `.gitignore`.
+
+- [ ] **Vertex streams by use** (L, ★). Plan X12. Every primitive uploads the 104-byte `Vertex`, 32 bytes of it
+      joints and weights that static meshes leave zero, and the shadow passes read 44 bytes of that stride. Split at
+      upload into a 72-byte base stream (C++'s layout) and a 12-byte position stream for opaque casters; skinned
+      primitives read joints and weights from a per-primitive storage buffer by vertex index, which avoids doubling
+      every pipeline set. The morph re-blend, the tracer's CPU deformation and the LOD levels keep the CPU `Vertex`.
+
+- [ ] **`obj_to_gltf` writes one draw per OBJ group** (S, ★). Merging the runs that share a material takes Sponza
+      from 385 draws to 24. Left from the 2026-11-19 accessor compaction, which already removed the 6.4 GB blow-up.
+
+- [ ] **The scene loader reads images outside the glTF folder** (S, ★). Since 2026-11-19 the flat loader (the
+      bridge's) confines buffers and images to the glTF file's folder. `load_gltf`, the Rust app's scene loader,
+      still opens a relative `../` image or a `file:` URI anywhere; it refuses only non-regular files and bad percent
+      escapes. Confining it changes what the app can load: decide, then give both loaders one rule.
 
 - [ ] **An amd64 crash of the GPU tests is unreproduced** (S). On 2026-10-19 the headless tests segfaulted now and
       then in parallel on the Ryzen 9950X dev host. The arm64 crash has its cause, llvmpipe at 256-bit vectors, which
