@@ -11,7 +11,7 @@ use super::scene_meta::SceneMeta;
 use crate::asset::gltf_loader::{load_gltf_slice_with, LoadOptions};
 use crate::scene::CpuScene;
 
-/// Set to anything, it turns on MikkTSpace tangents ([`LoadOptions::mikktspace_tangents`]).
+/// Set to any non-empty value, it turns on MikkTSpace tangents ([`LoadOptions::mikktspace_tangents`]).
 pub const MIKKTSPACE_TANGENTS_ENV: &str = "KATAGLYPHIS_MIKKTSPACE_TANGENTS";
 
 /// The loader options the environment asks for, which an application reads once at its start; wasm32 has none set.
@@ -19,9 +19,10 @@ pub fn load_options_from_env() -> LoadOptions {
     load_options_from(std::env::var_os(MIKKTSPACE_TANGENTS_ENV))
 }
 
+/// An empty value counts as unset, as for the C++ engine's knobs.
 fn load_options_from(mikktspace_tangents: Option<std::ffi::OsString>) -> LoadOptions {
     LoadOptions {
-        mikktspace_tangents: mikktspace_tangents.is_some(),
+        mikktspace_tangents: mikktspace_tangents.is_some_and(|value| !value.is_empty()),
     }
 }
 
@@ -177,10 +178,18 @@ mod tests {
     }
 
     #[test]
-    fn the_environment_asks_for_mikktspace_by_being_set() {
+    fn the_environment_asks_for_mikktspace_by_a_value() {
         assert_eq!(load_options_from(None), LoadOptions::default());
-        let set = load_options_from(Some("".into()));
-        assert!(set.mikktspace_tangents, "set to anything, even empty");
+        assert_eq!(
+            load_options_from(Some("".into())),
+            LoadOptions::default(),
+            "empty is unset"
+        );
+        let set = load_options_from(Some("0".into()));
+        assert!(
+            set.mikktspace_tangents,
+            "any value, as the C++ engine's knobs"
+        );
         assert_eq!(MIKKTSPACE_TANGENTS_ENV, "KATAGLYPHIS_MIKKTSPACE_TANGENTS");
         let mut loader = SceneLoader::default();
         assert_eq!(loader.options(), LoadOptions::default());

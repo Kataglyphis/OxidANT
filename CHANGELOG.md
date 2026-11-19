@@ -34,6 +34,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   (`SceneSettings::sun`, owner decision 2026-11-19); `sanitize` passes the Sun through.
 - **`kataglyphis_render_core`**: `lens::perspective` gives a zero-height frame, an infinite or NaN `frame_aspect`,
   aspect 1, the C++ `viewportAspectRatio`'s rule (owner decision 2026-11-19); it clamped to 1e-6.
+- **`kataglyphis_webgpu_renderer`**: `load_options_from_env` reads an empty `KATAGLYPHIS_MIKKTSPACE_TANGENTS` as unset,
+  as the C++ engine reads its knobs (owner decision 2026-11-19); an empty value turned MikkTSpace on.
 
 ### Fixed (2026-11-20, the Windows lanes past the test count)
 
