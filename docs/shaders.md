@@ -29,10 +29,10 @@ box, the density and the march. Its functions take an `ICloudNoise`, which
 Slang specializes per caller, so each renderer binds the noise volume its own
 way: `clouds/cloud_march.slang` a texture and a sampler, the C++ `clouds_main` a
 combined `Sampler3D`. `march_clouds` takes the sky's ambient as a `CloudAmbient`,
-which the Rust host fills from the sky it draws; the seven-argument overload the
-C++ engine calls lights by the procedural sky's closed-form means. The block's
-`cloudLightMarch.yzw` is the wind's offset of the noise, which the C++ engine
-packs as zero, so its clouds stand still.
+which each host fills from the sky it draws. The block's `cloudLightMarch.yzw`
+is the wind's offset of the noise, its velocity times the app's clock wrapped to
+the noise's period, which both hosts pack (`CloudSettings::wind_offset`, the C++
+`cloudWindOffset`).
 `tests/volumetric_clouds_test.slang` compiles the C++ way to SPIR-V, so a change
 that breaks that target fails here before it reaches the pin. WebGPU writes
 `rgba16float` only through a write-only storage texture, which Slang emits from

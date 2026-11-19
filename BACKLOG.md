@@ -113,7 +113,7 @@ Empty on 2026-11-17: nothing else is in the queue.
       `basisu` without its `zstd` feature, so `ruzstd` is locked but not built, and cargo-deny never meets it.
       Blocked on a basisu release. Then: `cargo update -p basisu` and delete the ignore. Done when the ignore is gone.
 
-- [ ] **Texture streaming past the mip tail** (L, ★). BeschleunigerBallett's "[P3] Texture streaming / bindless".
+- [ ] **Texture streaming past the mip tail** (L, ★). BeschleunigerBallett's "[P3] Bindless material textures".
       Since 2026-11-16 the renderer streams material mips by screen-space need (roadmap, *Texture streaming*), a
       step copies the resident levels on the GPU (the GL backend keeps the CPU path for compressed textures), and a
       texture drops levels it has not needed for a while; the CPU chains fit a budget and rebuild from the scene's

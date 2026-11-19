@@ -5,6 +5,24 @@ import trace_shading;
 
 // The ray- and path-traced modes' kernels: each dispatch shades one tile into the accumulation, which trace_resolve.slang copies into the HDR target.
 
+// The ray tracer's light `index`: the sun first, then the punctual lights in the raster's order.
+LightSample direct_sample(TracedSurface s, float3 v, uint index)
+{
+    if (index == 0u)
+        return sun_sample(s, v);
+    return punctual_sample(s, v, index - 1u);
+}
+
+// The sun and every punctual light, each through its own shadow ray, as raytrace.rchit.slang lights a hit.
+float3 direct_light(TracedSurface s, float3 v)
+{
+    float3 lit = float3(0.0);
+    // One shadow-ray call site, as in next_event: SwiftShader inlines a whole traversal per call site.
+    for (uint i = 0u; i <= traceFrame.lights.x; i++)
+        lit += shadowed(s, direct_sample(s, v, i));
+    return lit;
+}
+
 // The C++ ray-traced mode, no ambient term; alpha is the hit's NDC depth for the clouds, as raytrace.rgen.slang writes it.
 float4 ray_trace_pixel(uint2 pixel)
 {
@@ -13,7 +31,7 @@ float4 ray_trace_pixel(uint2 pixel)
     if (hit.instance == TRACE_NO_HIT)
         return float4(sky_with_sun(ray.direction), 1.0);
     TracedSurface s = shade_hit(ray, hit);
-    float3 colour = s.unlit ? s.albedo : sun_light(s, -ray.direction) + s.emissive;
+    float3 colour = s.unlit ? s.albedo : direct_light(s, -ray.direction) + s.emissive;
     return float4(colour, ndc_depth(ray, hit));
 }
 

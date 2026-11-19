@@ -190,26 +190,16 @@ LightSample sun_sample(TracedSurface s, float3 v)
     return o;
 }
 
-// The sun's term, or nothing in its shadow.
-float3 sun_light(TracedSurface s, float3 v)
-{
-    return shadowed(s, sun_sample(s, v));
-}
-
 // The raster sky, sun disk included: what a camera ray that hits nothing sees.
 float3 sky_with_sun(float3 dir)
 {
     return sky_gradient(dir) + sun_disk(dir, traceFrame.light_dir.xyz, traceFrame.light_dir.w);
 }
 
-// One punctual light picked uniformly, lit as punctual_lighting lights it, over its 1/count chance.
-LightSample punctual_light_sample(TracedSurface s, float3 v, inout uint rng)
+// Punctual light `index` of the raster's buffer, lit as punctual_lighting lights it.
+LightSample punctual_sample(TracedSurface s, float3 v, uint index)
 {
     LightSample o = unlit_sample();
-    uint count = traceFrame.lights.x;
-    if (count == 0u)
-        return o;
-    uint index = min(uint(rng_next(rng) * float(count)), count - 1u);
     PunctualLight light = unpack_punctual_light(tracerLights[index * 4u], tracerLights[index * 4u + 1u],
         tracerLights[index * 4u + 2u], tracerLights[index * 4u + 3u]);
     PunctualIncidence incidence = punctual_incidence(light, s.position);
@@ -219,7 +209,18 @@ LightSample punctual_light_sample(TracedSurface s, float3 v, inout uint rng)
     if (incidence.attenuation <= 0.0 || dot(s.normal, incidence.l) <= 0.0)
         return o;
     float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);
-    o.radiance = brdf_direct(s.normal, v, incidence.l, s.albedo, s.metallic, s.roughness, f0, light.radiance * incidence.attenuation) * float(count);
+    o.radiance = brdf_direct(s.normal, v, incidence.l, s.albedo, s.metallic, s.roughness, f0, light.radiance * incidence.attenuation);
+    return o;
+}
+
+// One punctual light picked uniformly, over its 1/count chance.
+LightSample punctual_light_sample(TracedSurface s, float3 v, inout uint rng)
+{
+    uint count = traceFrame.lights.x;
+    if (count == 0u)
+        return unlit_sample();
+    LightSample o = punctual_sample(s, v, min(uint(rng_next(rng) * float(count)), count - 1u));
+    o.radiance *= float(count);
     return o;
 }
 

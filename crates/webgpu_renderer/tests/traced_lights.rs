@@ -1,4 +1,4 @@
-//! The path tracer's punctual lights and environment on a real adapter: lit where raster lights, the analytic radiance, traced shadows.
+//! The traced modes' punctual lights and the path tracer's environment on a real adapter: lit where raster lights, the analytic radiance, traced shadows.
 
 use std::f64::consts::PI;
 use std::sync::Arc;
@@ -217,19 +217,16 @@ fn point_radiance(light: &CpuLight, ground: Vec2, eye: Vec3) -> f64 {
     )
 }
 
-/// Two ranged point lights over the ground: the path tracer picks one a sample, so its 1/pdf decides the level.
-#[test]
-fn point_lights_light_the_discs_raster_lights_at_their_analytic_radiance() {
-    let lights = vec![
+/// Two point lights 1 above the ground, whose range windows end 2.29 and 1.73 from their feet.
+fn ranged_point_lights() -> Vec<CpuLight> {
+    vec![
         point_light(Vec3::new(0.0, 1.0, 0.0), 2.0, 2.5),
         point_light(Vec3::new(1.0, 1.0, 0.0), 4.0, 2.0),
-    ];
-    let Some(mut rig) = Rig::new(&scene(vec![ground_plane()], lights.clone()), from_above()) else {
-        return;
-    };
-    let raster = rig.radiance(RenderMode::Raster, 1);
-    let traced = rig.radiance(RenderMode::PathTraced, 12);
-    let overlap = iou(&lit(&raster), &lit(&traced));
+    ]
+}
+
+/// The pixels whose ground point lies within 0.35 of the origin, and the mean analytic radiance `lights` give them.
+fn centre_and_expected(rig: &Rig, lights: &[CpuLight]) -> (Vec<usize>, f32) {
     let ground = rig.ground();
     let eye = rig.camera.eye();
     let centre: Vec<usize> = (0..ground.len())
@@ -241,6 +238,30 @@ fn point_lights_light_the_discs_raster_lights_at_their_analytic_radiance() {
             .map(|l| point_radiance(l, ground[i], eye))
             .sum::<f64>() as f32
     }));
+    (centre, expected)
+}
+
+/// Pixels `frame` lights past both of `ranged_point_lights`' range windows.
+fn lit_past_range(rig: &Rig, frame: &[Vec3]) -> usize {
+    let ground = rig.ground();
+    // A pixel is wider than 0.13, and the path tracer jitters inside it.
+    (0..ground.len())
+        .filter(|&i| ground[i].length() > 2.29 + 0.2 && ground[i].distance(Vec2::X) > 1.73 + 0.2)
+        .filter(|&i| frame[i].x > 0.0)
+        .count()
+}
+
+/// Two ranged point lights over the ground: the path tracer picks one a sample, so its 1/pdf decides the level.
+#[test]
+fn point_lights_light_the_discs_raster_lights_at_their_analytic_radiance() {
+    let lights = ranged_point_lights();
+    let Some(mut rig) = Rig::new(&scene(vec![ground_plane()], lights.clone()), from_above()) else {
+        return;
+    };
+    let raster = rig.radiance(RenderMode::Raster, 1);
+    let traced = rig.radiance(RenderMode::PathTraced, 12);
+    let overlap = iou(&lit(&raster), &lit(&traced));
+    let (centre, expected) = centre_and_expected(&rig, &lights);
     let (raster_centre, traced_centre) = (
         mean(centre.iter().map(|&i| raster[i].x)),
         mean(centre.iter().map(|&i| traced[i].x)),
@@ -261,11 +282,42 @@ fn point_lights_light_the_discs_raster_lights_at_their_analytic_radiance() {
         (traced_centre / expected - 1.0).abs() < 0.03,
         "traced {traced_centre} against {expected}"
     );
-    // A pixel is wider than 0.13, and the path tracer jitters inside it.
-    let past_range = (0..ground.len())
-        .filter(|&i| ground[i].length() > 2.29 + 0.2 && ground[i].distance(Vec2::X) > 1.73 + 0.2);
-    let leaked = past_range.filter(|&i| traced[i].x > 0.0).count();
-    assert_eq!(leaked, 0, "light past the range windows");
+    assert_eq!(
+        lit_past_range(&rig, &traced),
+        0,
+        "light past the range windows"
+    );
+}
+
+/// The ray tracer adds every punctual light at the pixel centre, as the C++ closest-hit shader does: no pick, no noise.
+#[test]
+fn the_ray_traced_mode_lights_the_discs_raster_lights_at_their_analytic_radiance() {
+    let lights = ranged_point_lights();
+    let Some(mut rig) = Rig::new(&scene(vec![ground_plane()], lights.clone()), from_above()) else {
+        return;
+    };
+    let raster = rig.radiance(RenderMode::Raster, 1);
+    let traced = rig.radiance(RenderMode::RayTraced, 1);
+    let overlap = iou(&lit(&raster), &lit(&traced));
+    let (centre, expected) = centre_and_expected(&rig, &lights);
+    let traced_centre = mean(centre.iter().map(|&i| traced[i].x));
+    eprintln!(
+        "ray traced: lit IoU {overlap:.3}; centre over {} pixels: analytic {expected:.4}, traced {traced_centre:.4}",
+        centre.len()
+    );
+    assert!(
+        overlap > 0.95,
+        "the ray-traced discs are not raster's: IoU {overlap}"
+    );
+    assert!(
+        (traced_centre / expected - 1.0).abs() < 0.01,
+        "ray traced {traced_centre} against {expected}"
+    );
+    assert_eq!(
+        lit_past_range(&rig, &traced),
+        0,
+        "light past the range windows"
+    );
 }
 
 /// A spot cone's cut: nothing past the outer cone, everything inside the inner one, where raster lights it.
@@ -305,9 +357,8 @@ fn a_spot_light_cuts_its_cone_where_raster_does() {
     assert_eq!(dark, 0, "dark inside the inner cone");
 }
 
-/// A wall between a point light and the ground: the traced shadow ray and raster's cube both darken the ground behind it.
-#[test]
-fn a_point_light_casts_a_traced_shadow_behind_an_occluder() {
+/// The ground and a point light at (2.5, 1, 0) behind a wall at x = 1.5.
+fn walled_point_light() -> CpuScene {
     let wall = quad(
         [
             Vec3::new(1.5, 0.0, 1.0),
@@ -318,10 +369,29 @@ fn a_point_light_casts_a_traced_shadow_behind_an_occluder() {
         white(1.0),
     );
     let light = point_light(Vec3::new(2.5, 1.0, 0.0), 6.0, 0.0);
-    let Some(mut rig) = Rig::new(
-        &scene(vec![ground_plane(), wall], vec![light]),
-        from_above(),
-    ) else {
+    scene(vec![ground_plane(), wall], vec![light])
+}
+
+/// The wall's shadow covers the origin; the rays to (0, 3.2) pass beside the wall.
+const BEHIND_THE_WALL: Vec2 = Vec2::ZERO;
+const BESIDE_THE_WALL: Vec2 = Vec2::new(0.0, 3.2);
+
+/// The pixels whose ground point lies within 0.25 of `centre`.
+fn patch_pixels(ground: &[Vec2], centre: Vec2) -> Vec<usize> {
+    (0..ground.len())
+        .filter(|&i| ground[i].distance(centre) < 0.25)
+        .collect()
+}
+
+/// The mean of `frame` over `patch_pixels`.
+fn patch(ground: &[Vec2], frame: &[Vec3], centre: Vec2) -> f32 {
+    mean(patch_pixels(ground, centre).iter().map(|&i| frame[i].x))
+}
+
+/// A wall between a point light and the ground: the traced shadow ray and raster's cube both darken the ground behind it.
+#[test]
+fn a_point_light_casts_a_traced_shadow_behind_an_occluder() {
+    let Some(mut rig) = Rig::new(&walled_point_light(), from_above()) else {
         return;
     };
     // The unshadowed raster frame is the reference both shadows are measured against.
@@ -331,23 +401,16 @@ fn a_point_light_casts_a_traced_shadow_behind_an_occluder() {
     let cube = rig.radiance(RenderMode::Raster, 1);
     let traced = rig.radiance(RenderMode::PathTraced, 8);
     let ground = rig.ground();
-    let patch = |frame: &[Vec3], centre: Vec2| -> f32 {
-        let pixels: Vec<usize> = (0..ground.len())
-            .filter(|&i| ground[i].distance(centre) < 0.25)
-            .collect();
-        mean(pixels.iter().map(|&i| frame[i].x))
-    };
-    // The wall's shadow covers the origin; the rays to (0, 3.2) pass beside the wall.
-    let (behind, beside) = (Vec2::ZERO, Vec2::new(0.0, 3.2));
+    let (behind, beside) = (BEHIND_THE_WALL, BESIDE_THE_WALL);
     let (raster_shadow, cube_shadow, traced_shadow) = (
-        patch(&raster, behind),
-        patch(&cube, behind),
-        patch(&traced, behind),
+        patch(&ground, &raster, behind),
+        patch(&ground, &cube, behind),
+        patch(&ground, &traced, behind),
     );
     let (raster_lit, cube_lit, traced_lit) = (
-        patch(&raster, beside),
-        patch(&cube, beside),
-        patch(&traced, beside),
+        patch(&ground, &raster, beside),
+        patch(&ground, &cube, beside),
+        patch(&ground, &traced, beside),
     );
     eprintln!("behind the wall: unshadowed {raster_shadow:.4}, cube {cube_shadow:.4}, traced {traced_shadow:.4}; beside it: unshadowed {raster_lit:.4}, cube {cube_lit:.4}, traced {traced_lit:.4}");
     assert!(
@@ -365,6 +428,42 @@ fn a_point_light_casts_a_traced_shadow_behind_an_occluder() {
     assert!(
         (cube_lit / raster_lit - 1.0).abs() < 0.02,
         "the cube shadows the open ground: {cube_lit} against {raster_lit}"
+    );
+}
+
+/// The ray tracer's negative control: each punctual light's own shadow ray leaves the ground behind the wall black.
+#[test]
+fn the_ray_traced_mode_shadows_a_point_light_behind_an_occluder() {
+    let walled = walled_point_light();
+    let Some(mut rig) = Rig::new(&walled, from_above()) else {
+        return;
+    };
+    rig.renderer.shadows.punctual = false;
+    let raster = rig.radiance(RenderMode::Raster, 1);
+    let traced = rig.radiance(RenderMode::RayTraced, 1);
+    let ground = rig.ground();
+    let eye = rig.camera.eye();
+    let expected = mean(
+        patch_pixels(&ground, BESIDE_THE_WALL)
+            .iter()
+            .map(|&i| point_radiance(&walled.lights[0], ground[i], eye) as f32),
+    );
+    let (raster_shadow, traced_shadow) = (
+        patch(&ground, &raster, BEHIND_THE_WALL),
+        patch(&ground, &traced, BEHIND_THE_WALL),
+    );
+    let (raster_lit, traced_lit) = (
+        patch(&ground, &raster, BESIDE_THE_WALL),
+        patch(&ground, &traced, BESIDE_THE_WALL),
+    );
+    eprintln!("ray traced, behind the wall: unshadowed {raster_shadow:.4}, traced {traced_shadow:.4}; beside it: analytic {expected:.5}, unshadowed {raster_lit:.5}, traced {traced_lit:.5}");
+    assert!(
+        traced_shadow < raster_shadow * 0.1,
+        "no ray-traced shadow: {traced_shadow} against {raster_shadow}"
+    );
+    assert!(
+        (traced_lit / expected - 1.0).abs() < 0.01,
+        "the unshadowed ground: {traced_lit} against {expected}"
     );
 }
 

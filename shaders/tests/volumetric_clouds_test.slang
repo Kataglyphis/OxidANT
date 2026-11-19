@@ -29,7 +29,11 @@ void clouds_test_main(uint3 tid : SV_DispatchThreadID)
 
     CombinedNoise noise;
     float3 rayDirection = normalize(float3(ndc.x, 1.0, ndc.y));
+    // Two vectors, as the C++ clouds_main fills its ambient from the SceneUBO.
+    CloudAmbient ambient;
+    ambient.top = float3(0.3, 0.4, 0.6);
+    ambient.bottom = float3(0.2, 0.2, 0.2);
     outputImage[tid.xy] = march_clouds(noise, float3(0.0), rayDirection, sceneDistance, cloud_unpack(params),
-                                       float3(0.5, 0.8, 0.3), float3(5.0));
+                                       float3(0.5, 0.8, 0.3), float3(5.0), ambient);
     noiseVolume[uint3(tid.xy, 0)] = noise_volume_texel(uint3(tid.xy, 0));
 }

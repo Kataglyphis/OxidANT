@@ -1,5 +1,5 @@
-//! The Sky tab's CLOUDS section: the C++ switch and its nine controls, with the C++ ranges, formats and tooltips,
-//! and the Wind this renderer adds.
+//! The Sky tab's CLOUDS section: the C++ switch and its eleven controls, with the C++ ranges, formats and tooltips;
+//! the Wind alone differs, reaching 100 units a second each way (the C++ drag 50) and saying the box stays put.
 
 use egui::Ui;
 

@@ -105,7 +105,7 @@ bits 0-1 alpha mode (0 opaque, 1 MASK, 2 BLEND), bit 2 double-sided, bit 3 unlit
 the slots on TEXCOORD_1, from bit 9 four bits per slot for the U and V wrap (0 repeat,
 1 mirror, 2 clamp). Layers: base | metallic-roughness << 16, normal | emissive << 16,
 occlusion | nearest-filter mask << 16; `0xFFFF` means the factor alone. The untextured
-metallic factor is kept, unlike the C++ path tracer's texture-only branch.
+metallic factor is kept, as the C++ kernels' `resolved_metallic_roughness_lod0` keeps it.
 
 Per stored triangle about 16 bytes, per vertex 48, per node 32 (about one node per
 triangle); textures at most 1024 texels natively and 512 in the browser, each array within
@@ -201,9 +201,11 @@ which the C++ `path_tracing.slang` imports from its pin bump on ([`docs/shaders.
 
 **Ray traced**, the C++ mode: one ray through each pixel centre; base colour times texture
 times vertex colour, the metallic-roughness and normal maps at level 0, the forward pass's
-`brdf_direct` (GGX and Lambert) lit by the sun through one shadow ray (any-hit, MASK
-alpha-tested), plus emission. An unlit material returns its albedo. No ambient term and no
-punctual lights, as the C++ engine has neither; the path tracer has both. A miss is left to the sky pass, drawn in the
+`brdf_direct` (GGX and Lambert) lit by the sun and by every punctual light, each through its
+own shadow ray (any-hit, MASK alpha-tested; a punctual light's stops just short of it), plus
+emission, as the C++ closest-hit shader (`raytrace.rchit.slang`) lights a hit. An unlit
+material returns its albedo. No ambient term, as in the C++ mode; the path tracer's bounces
+bring the sky's. A miss is left to the sky pass, drawn in the
 resolve's render pass against the traced depth: the cube map, the C++ navy with the skybox
 switched off, or the procedural sky and its sun disk without a cube map, as raster draws it
 (the C++ ray-traced mode shows its skybox).
@@ -227,11 +229,12 @@ So the path tracer lights a scene as raster does, plus the bounces and the sky's
 environment is sampled only where a bounce happens to miss, with no importance sampling, so a small
 bright sun in an `.hdr` converges slowly.
 
-**Punctual lights.** Each segment picks one of the raster's `KHR_lights_punctual` lights
+**Punctual lights.** Each path-traced segment picks one of the raster's `KHR_lights_punctual` lights
 uniformly, evaluates it as the raster does (`shaders/common/punctual_light.slang`, shared with
 `forward_lighting.slang`: inverse square, the KHR range window, the spot cone's smoothstep;
 directional lights unattenuated) and divides by the pick's chance, 1 / count, through a shadow ray
-that stops just short of the light. So a punctual light casts a traced shadow, as the raster's
+that stops just short of the light; the ray tracer adds every light that way, undivided
+(`punctual_sample` is the term both share). So a punctual light casts a traced shadow, as the raster's
 first four point and spot lights cast theirs through depth cubes. The kernels read the raster's light buffer itself, at
 `TRACE_LIGHTS_GROUP` (2): binding 0 the lights in `render::lights`' four rows, binding 1 the
 environment cube (the IBL's 1x1 stand-in without one); `TraceFrame::lights` carries the count and
@@ -268,9 +271,10 @@ furnace, whose test zeroes the light instead.
 browser's GPU watchdog. Each dispatch binds its tile and samples at a dynamic uniform offset.
 Each kernel compiles the first time its mode draws: SwiftShader, which backs WebGPU in a
 GPU-less Chrome, takes about two minutes for the path-tracing kernel and three seconds for the
-ray-tracing one; lavapipe takes about a second. SwiftShader inlines a whole traversal at every call site, so the
-path tracer keeps one any-hit call: `next_event` traces the sun's and the punctual light's shadow
-rays from one loop. With a call each, the web demo's path-traced frame did not arrive within
+ray-tracing one; lavapipe takes about a second. SwiftShader inlines a whole traversal at every call site, so
+each kernel keeps one any-hit call: `next_event` traces the sun's and the punctual light's shadow
+rays from one loop, `direct_light` the sun's and every punctual light's (`tests/tracer.rs` counts
+each kernel's call paths to `trace_any`). With a call each, the web demo's path-traced frame did not arrive within
 the browser test's 300 s; with the loop it took 117 s, against 124 before the punctual lights.
 
 **Animation and placement.** The renderer moves the traced instances of rigid animated nodes to
@@ -300,12 +304,12 @@ refuses keeps the old pipelines, an accepted one replaces them and restarts the 
 
 **On purpose unlike the C++ engine:** a path-traced bounce that misses gets the renderer's sky
 gradient, or the loaded environment, times the ambient strength and the environment's intensity
-(C++: an RTIOW gradient at half intensity, whose raster has no ambient term to match; owner
-decision 2026-11-16: the C++ path tracer follows this one, tracked in BeschleunigerBallett); the path
-tracer lights with the scene's punctual lights (C++: neither of its traced modes has any, so the
-ray-traced mode keeps none here); and a path-traced camera miss sees
-that procedural sky with its sun disk, not the cube map; offsets and side tests take the
-triangle's face normal (C++: the interpolated one); camera rays clip to the near and far planes as raster does (C++: 0.001-10000
+(C++, since BeschleunigerBallett 7dd4669b: its skybox cube map, or the navy with the skybox off,
+times 0.35, the product of those two settings' defaults, which it lacks); a path-traced camera
+miss sees that procedural sky with its sun disk, not the cube map (C++: a soft gradient at half
+intensity); the ray tracer's shadow rays leave along the face normal and its side test reads the
+shading normal (C++'s closest-hit: the hit point itself, the interpolated normal), where both path
+tracers take the face normal for offsets; camera rays clip to the near and far planes as raster does (C++: 0.001-10000
 from the eye, which bounces keep). The whole frame is traced, docks included, as in C++.
 
 Measured on lavapipe, the 8-core arm64 host under WSL, shared with other builds:
@@ -334,19 +338,25 @@ the refit it fails) while a bend restarts the mean.
 `tests/traced_lights.rs` (lavapipe): two ranged point lights over a ground plane lit where raster
 lights it (IoU of the pixels over a tenth of the peak above 0.9; measured 0.976), nothing past their
 range windows, and the centre within 3 % of the analytic radiance (measured 0.5 % under; raster
-within 1 %, measured 0.1 %); a spot light's cone where raster cuts it (IoU 1.0), dark past the outer
+within 1 %, measured 0.1 %), and the ray-traced mode's discs within 1 % (IoU above 0.95; measured
+1.000 and 0.03 % under); a spot light's cone where raster cuts it (IoU 1.0), dark past the outer
 cone and lit inside the inner one; a wall between a point light and the ground leaving the ground
 behind it black, as raster's depth cube does (unshadowed raster lights it), while the ground beside
-it matches raster within 2 %; a white card under a constant coloured environment converging to its colour times E(1),
+it matches raster within 2 %; in the ray-traced mode the same black behind it and the ground beside
+it within 1 % of the analytic radiance (measured 0.04 % under, where unshadowed raster reads 2.2 %
+over: its flat-normal fallback texel, 128/255 for 0.5, tilts the normal); a white card under a constant coloured environment converging to its colour times E(1),
 0.994 in each channel. Dropping the 1/count halves the centre (0.390 against 0.784), dropping the
 shadow ray lights the wall's shadow (0.096 against 0.097 raster), and the gradient in place of the
-environment turns the card blue (0.36, 0.80, 1.99 of the environment): each fails its test.
+environment turns the card blue (0.36, 0.80, 1.99 of the environment): each fails its test. So
+do the ray tracer without the punctual lights (IoU 0) and without their shadow ray (0.0960 behind
+the wall).
 `tests/feature_matrix.rs` runs the traced modes over the deferred path beside both raster paths:
 the clouds stop at a wall in front (0 wall pixels change in either mode while 10743 and 10748 of
 13332 sky pixels do), the traced depth against the raster one, the cube map, navy and procedural
 sky on a ray-traced miss, the model transform and `set_instances` moving and adding a traced cube as raster
 moves it, the passes each mode times, and raster frames bit-identical after a trip through both
 modes. The modes' pure parts are unit-tested in place; the Slang
-uniforms and workgroup size are pinned in `tests/tracer.rs`. Headless Chrome 157 on SwiftShader
+uniforms, the workgroup size and each kernel's one any-hit call site are pinned in `tests/tracer.rs`
+(a second shadow-ray call in the ray tracer fails it). Headless Chrome 157 on SwiftShader
 draws both traced modes, the deferred path and the clouds in the web demo and reads each frame back
 (`scripts/linux/webgpu-demo-browser.js`, [testing.md](../../../docs/testing.md#the-web-demo-in-a-browser)).

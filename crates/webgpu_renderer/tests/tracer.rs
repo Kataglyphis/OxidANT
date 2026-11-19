@@ -229,6 +229,55 @@ fn the_traced_kernels_read_the_rust_uniforms_and_workgroups() {
     );
 }
 
+/// The calls to `callee` that inlining every call in `block` copies, as SwiftShader compiles a kernel.
+fn inlined_calls(module: &naga::Module, block: &naga::Block, callee: &str) -> usize {
+    use naga::Statement;
+    block
+        .iter()
+        .map(|statement| match statement {
+            Statement::Call { function, .. } => {
+                let called = &module.functions[*function];
+                if called.name.as_deref() == Some(callee) {
+                    1
+                } else {
+                    inlined_calls(module, &called.body, callee)
+                }
+            }
+            Statement::Block(inner) => inlined_calls(module, inner, callee),
+            Statement::If { accept, reject, .. } => {
+                inlined_calls(module, accept, callee) + inlined_calls(module, reject, callee)
+            }
+            Statement::Switch { cases, .. } => cases
+                .iter()
+                .map(|case| inlined_calls(module, &case.body, callee))
+                .sum(),
+            Statement::Loop {
+                body, continuing, ..
+            } => inlined_calls(module, body, callee) + inlined_calls(module, continuing, callee),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// SwiftShader inlines a whole traversal per call site, so each kernel traces all its shadow rays from one.
+#[test]
+fn each_traced_kernel_has_one_shadow_ray_call_site() {
+    let module =
+        naga::front::wgsl::parse_str(include_str!("../src/shaders/traced.wgsl")).expect("parses");
+    for kernel in ["cs_ray_trace", "cs_path_trace"] {
+        let entry = module
+            .entry_points
+            .iter()
+            .find(|entry| entry.name == kernel)
+            .unwrap_or_else(|| panic!("traced.wgsl has no {kernel}"));
+        assert_eq!(
+            inlined_calls(&module, &entry.function.body, "trace_any_0"),
+            1,
+            "{kernel} must reach trace_any from exactly one call site, a loop over its lights"
+        );
+    }
+}
+
 /// Rays from `eye` towards a 40 x 40 grid over the far face of the box.
 fn rays_through(eye: glam::Vec3, (min, max): (glam::Vec3, glam::Vec3)) -> Vec<TraceRay> {
     let mut rays = Vec::new();

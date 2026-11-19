@@ -57,7 +57,7 @@ cubemaps + a BRDF LUT). `demo_view().skybox` says which sky the browser draws.
 **Clouds** — the C++ engine's volumetric clouds, sharing its mathematics
 ([`shaders/common/volumetric_clouds.slang`](../../shaders/common/volumetric_clouds.slang)):
 a 128³ noise volume generated once, then per frame a ray march through an
-axis-aligned box (Offset, Scale × Density × 10) with a light march toward the
+axis-aligned box (Offset, Scale × 10) with a light march toward the
 sun, Henyey-Greenstein phase in three scattering octaves and a powder term, lit
 besides by the drawn sky's mean radiance per hemisphere (`CloudAmbient`); a path
 longer than the box's thinnest extent takes up to four times the slider's steps. It stops at the single-sample scene
@@ -72,8 +72,9 @@ selectable for every frame; sub-pixel detail still differs, `tests/deferred.rs` 
 Gaussian), SSAO (depth reconstruction), manual or histogram auto-exposure, ACES
 tonemapping.
 
-**Tracing** — the C++ engine's ray-traced mode (a primary ray, the sun through a traced
-shadow ray, emission) and path-traced mode (NEE to the sun, GGX and Lambert lobes, Russian
+**Tracing** — the C++ engine's ray-traced mode (a primary ray, the sun and every punctual
+light each through a traced shadow ray, emission) and path-traced mode (NEE to the sun and
+one punctual light, GGX and Lambert lobes, Russian
 roulette, a jittered, accumulated running mean, 1-64 samples and 1-16 bounces, a white
 furnace), over a CPU-built, binned-SAH BVH in two levels (repeated and moving meshes
 instanced) that compute kernels traverse natively and in the browser, alpha-testing MASK

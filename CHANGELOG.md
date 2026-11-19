@@ -13,6 +13,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-19, the ray-traced mode lights the punctual lights)
+- **`kataglyphis_webgpu_renderer`**: the ray-traced mode adds every `KHR_lights_punctual` light, each through its own
+  shadow ray that stops short of the light, as BeschleunigerBallett's closest-hit shader has since e43eb33e; it shaded
+  the sun and emission alone. `direct_light` (`traced.slang`) loops over the sun and the lights from one shadow-ray
+  call site, since SwiftShader inlines a whole traversal per call site; the path tracer's uniform pick now shares
+  `punctual_sample` (`trace_shading.slang`), its per-light term. `tests/traced_lights.rs`: the discs where raster draws
+  them (IoU 1.000) at the analytic radiance (0.03 % under), and a wall's shadow black; `tests/tracer.rs` counts each
+  kernel's call paths to `trace_any`.
+
+### Changed (2026-11-19, the documents agree with the C++ engine again)
+- `march_clouds` drops its seven-argument overload, which only `tests/volumetric_clouds_test.slang` still called
+  (BeschleunigerBallett passes its own `CloudAmbient` since 1a7475f0), and with it `cloud_ambient_analytic_sky` and
+  `volumetric_clouds.slang`'s `sky_model` import; the SPIR-V test passes an ambient of two vectors, as `clouds_main`
+  does. `tracer.md`, the roadmap, the crate README, `docs/shaders.md`, the cloud settings' comments and `BACKLOG.md`
+  no longer say that the C++ engine lacks traced punctual lights, the untextured metallic factor, the raster's sky on
+  a bounce, face-normal offsets, the wind, its own cloud ambient or the half-resolution default, that the web demo
+  has no skybox, or that Density sizes the cloud box.
+
 ### Fixed (2026-11-19, one Sun rule for both renderers)
 
 - **`kataglyphis_assets`**: `CpuScene::take_sun` takes a file's first directional light out of its lights, with a

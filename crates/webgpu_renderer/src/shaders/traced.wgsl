@@ -55,11 +55,11 @@ struct TraceSceneInfo_std140_0
 
 @binding(6) @group(1) var tracerLinearLayers_0 : texture_2d_array<f32>;
 
+@binding(0) @group(2) var<storage, read> tracerLights_0 : array<vec4<f32>>;
+
 @binding(1) @group(0) var<storage, read_write> traceAccumulation_0 : array<vec4<f32>>;
 
 @binding(1) @group(2) var tracerEnvironment_0 : texture_cube<f32>;
-
-@binding(0) @group(2) var<storage, read> tracerLights_0 : array<vec4<f32>>;
 
 fn tile_pixel_0( thread_0 : vec2<u32>,  pixel_0 : ptr<function, vec2<u32>>) -> bool
 {
@@ -1106,47 +1106,155 @@ fn sun_sample_0( s_4 : TracedSurface_0,  v_7 : vec3<f32>) -> LightSample_0
     return o_3;
 }
 
+struct PunctualLight_0
+{
+     position_2 : vec3<f32>,
+     kind_0 : f32,
+     radiance_3 : vec3<f32>,
+     range_0 : f32,
+     direction_6 : vec3<f32>,
+     cos_inner_0 : f32,
+     cos_outer_0 : f32,
+};
+
+fn unpack_punctual_light_0( a_6 : vec4<f32>,  b_6 : vec4<f32>,  c_4 : vec4<f32>,  d_2 : vec4<f32>) -> PunctualLight_0
+{
+    var light_0 : PunctualLight_0;
+    light_0.position_2 = a_6.xyz;
+    light_0.kind_0 = a_6.w;
+    light_0.radiance_3 = b_6.xyz;
+    light_0.range_0 = b_6.w;
+    light_0.direction_6 = c_4.xyz;
+    light_0.cos_inner_0 = c_4.w;
+    light_0.cos_outer_0 = d_2.x;
+    return light_0;
+}
+
+struct PunctualIncidence_0
+{
+     l_3 : vec3<f32>,
+     distance_1 : f32,
+     attenuation_0 : f32,
+};
+
+fn punctual_incidence_0( light_1 : PunctualLight_0,  position_3 : vec3<f32>) -> PunctualIncidence_0
+{
+    var o_4 : PunctualIncidence_0;
+    o_4.attenuation_0 = 1.0f;
+    if((light_1.kind_0) > 2.5f)
+    {
+        o_4.l_3 = normalize((vec3<f32>(0) - light_1.direction_6));
+        o_4.distance_1 = 3.00000000549775576e+38f;
+        return o_4;
+    }
+    var toLight_0 : vec3<f32> = light_1.position_2 - position_3;
+    var _S60 : f32 = max(length(toLight_0), 0.00009999999747379f);
+    o_4.distance_1 = _S60;
+    o_4.l_3 = toLight_0 / vec3<f32>(_S60);
+    o_4.attenuation_0 = 1.0f / (_S60 * _S60);
+    if((light_1.range_0) > 0.0f)
+    {
+        var k_2 : f32 = clamp(1.0f - pow(o_4.distance_1 / light_1.range_0, 4.0f), 0.0f, 1.0f);
+        o_4.attenuation_0 = o_4.attenuation_0 * (k_2 * k_2);
+    }
+    if((light_1.kind_0) > 1.5f)
+    {
+        o_4.attenuation_0 = o_4.attenuation_0 * smoothstep(light_1.cos_outer_0, light_1.cos_inner_0, dot(normalize(light_1.direction_6), (vec3<f32>(0) - o_4.l_3)));
+    }
+    return o_4;
+}
+
+fn punctual_sample_0( s_5 : TracedSurface_0,  v_8 : vec3<f32>,  index_4 : u32) -> LightSample_0
+{
+    var o_5 : LightSample_0 = unlit_sample_0();
+    var _S61 : u32 = index_4 * u32(4);
+    var light_2 : PunctualLight_0 = unpack_punctual_light_0(tracerLights_0[_S61], tracerLights_0[_S61 + u32(1)], tracerLights_0[_S61 + u32(2)], tracerLights_0[_S61 + u32(3)]);
+    var incidence_0 : PunctualIncidence_0 = punctual_incidence_0(light_2, s_5.position_1);
+    o_5.l_0 = incidence_0.l_3;
+    o_5.distance_0 = incidence_0.distance_1 * 0.99989998340606689f;
+    var _S62 : bool;
+    if((incidence_0.attenuation_0) <= 0.0f)
+    {
+        _S62 = true;
+    }
+    else
+    {
+        _S62 = (dot(s_5.normal_2, incidence_0.l_3)) <= 0.0f;
+    }
+    if(_S62)
+    {
+        return o_5;
+    }
+    o_5.radiance_0 = brdf_direct_0(s_5.normal_2, v_8, incidence_0.l_3, s_5.albedo_0, s_5.metallic_1, s_5.roughness_1, mix(vec3<f32>(0.03999999910593033f), s_5.albedo_0, vec3<f32>(s_5.metallic_1)), light_2.radiance_3 * vec3<f32>(incidence_0.attenuation_0));
+    return o_5;
+}
+
+fn direct_sample_0( s_6 : TracedSurface_0,  v_9 : vec3<f32>,  index_5 : u32) -> LightSample_0
+{
+    if(index_5 == u32(0))
+    {
+        return sun_sample_0(s_6, v_9);
+    }
+    return punctual_sample_0(s_6, v_9, index_5 - u32(1));
+}
+
 fn trace_any_0( ray_5 : TraceRay_0) -> bool
 {
     return (trace_scene_0(ray_5, true).instance_0) != u32(4294967295);
 }
 
-fn light_visible_0( s_5 : TracedSurface_0,  l_3 : vec3<f32>,  distance_1 : f32) -> bool
+fn light_visible_0( s_7 : TracedSurface_0,  l_4 : vec3<f32>,  distance_2 : f32) -> bool
 {
     var ray_6 : TraceRay_0;
-    ray_6.origin_0 = s_5.position_1 + s_5.face_normal_0 * vec3<f32>(0.00009999999747379f);
+    ray_6.origin_0 = s_7.position_1 + s_7.face_normal_0 * vec3<f32>(0.00009999999747379f);
     ray_6.tmin_0 = 0.00100000004749745f;
-    ray_6.direction_0 = l_3;
-    ray_6.tmax_0 = min(distance_1, 10000.0f);
+    ray_6.direction_0 = l_4;
+    ray_6.tmax_0 = min(distance_2, 10000.0f);
     return !trace_any_0(ray_6);
 }
 
-fn shadowed_0( s_6 : TracedSurface_0,  light_0 : LightSample_0) -> vec3<f32>
+fn shadowed_0( s_8 : TracedSurface_0,  light_3 : LightSample_0) -> vec3<f32>
 {
-    var _S60 : bool;
-    if((any(((light_0.radiance_0) > vec3<f32>(0.0f)))))
+    var _S63 : bool;
+    if((any(((light_3.radiance_0) > vec3<f32>(0.0f)))))
     {
-        _S60 = light_visible_0(s_6, light_0.l_0, light_0.distance_0);
+        _S63 = light_visible_0(s_8, light_3.l_0, light_3.distance_0);
     }
     else
     {
-        _S60 = false;
+        _S63 = false;
     }
-    var _S61 : vec3<f32>;
-    if(_S60)
+    var _S64 : vec3<f32>;
+    if(_S63)
     {
-        _S61 = light_0.radiance_0;
+        _S64 = light_3.radiance_0;
     }
     else
     {
-        _S61 = vec3<f32>(0.0f);
+        _S64 = vec3<f32>(0.0f);
     }
-    return _S61;
+    return _S64;
 }
 
-fn sun_light_0( s_7 : TracedSurface_0,  v_8 : vec3<f32>) -> vec3<f32>
+fn direct_light_0( s_9 : TracedSurface_0,  v_10 : vec3<f32>) -> vec3<f32>
 {
-    return shadowed_0(s_7, sun_sample_0(s_7, v_8));
+    var _S65 : vec3<f32> = vec3<f32>(0.0f);
+    var i_0 : u32 = u32(0);
+    var lit_0 : vec3<f32> = _S65;
+    for(;;)
+    {
+        if(i_0 <= (traceFrame_0.lights_0.x))
+        {
+        }
+        else
+        {
+            break;
+        }
+        var lit_1 : vec3<f32> = lit_0 + shadowed_0(s_9, direct_sample_0(s_9, v_10, i_0));
+        i_0 = i_0 + u32(1);
+        lit_0 = lit_1;
+    }
+    return lit_0;
 }
 
 fn ndc_depth_0( ray_7 : TraceRay_0,  hit_4 : TraceHit_0) -> f32
@@ -1167,15 +1275,15 @@ fn ray_trace_pixel_0( pixel_2 : vec2<u32>) -> vec4<f32>
     {
         return vec4<f32>(sky_with_sun_0(ray_8.direction_0), 1.0f);
     }
-    var s_8 : TracedSurface_0 = shade_hit_0(ray_8, hit_5);
+    var s_10 : TracedSurface_0 = shade_hit_0(ray_8, hit_5);
     var colour_0 : vec3<f32>;
-    if(s_8.unlit_0)
+    if(s_10.unlit_0)
     {
-        colour_0 = s_8.albedo_0;
+        colour_0 = s_10.albedo_0;
     }
     else
     {
-        colour_0 = sun_light_0(s_8, (vec3<f32>(0) - ray_8.direction_0)) + s_8.emissive_2;
+        colour_0 = direct_light_0(s_10, (vec3<f32>(0) - ray_8.direction_0)) + s_10.emissive_2;
     }
     return vec4<f32>(colour_0, ndc_depth_0(ray_8, hit_5));
 }
@@ -1185,10 +1293,10 @@ fn pixel_index_0( pixel_3 : vec2<u32>) -> u32
     return pixel_3.y * traceFrame_0.size_0.x + pixel_3.x;
 }
 
-fn hdr_safe_0( radiance_3 : vec3<f32>) -> vec3<f32>
+fn hdr_safe_0( radiance_4 : vec3<f32>) -> vec3<f32>
 {
-    var _S62 : vec3<f32> = vec3<f32>(0.0f);
-    return clamp(select(radiance_3, _S62, (((bitcast<vec3<u32>>((radiance_3))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S62, vec3<f32>(65000.0f));
+    var _S66 : vec3<f32> = vec3<f32>(0.0f);
+    return clamp(select(radiance_4, _S66, (((bitcast<vec3<u32>>((radiance_4))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S66, vec3<f32>(65000.0f));
 }
 
 @compute
@@ -1196,8 +1304,8 @@ fn hdr_safe_0( radiance_3 : vec3<f32>) -> vec3<f32>
 fn cs_ray_trace(@builtin(global_invocation_id) id_0 : vec3<u32>)
 {
     var pixel_4 : vec2<u32>;
-    var _S63 : bool = tile_pixel_0(id_0.xy, &(pixel_4));
-    if(!_S63)
+    var _S67 : bool = tile_pixel_0(id_0.xy, &(pixel_4));
+    if(!_S67)
     {
         return;
     }
@@ -1213,17 +1321,17 @@ fn path_rng_seed_0( pixel_index_1 : u32,  stream_0 : u32) -> u32
 
 fn rng_next_0( state_0 : ptr<function, u32>) -> f32
 {
-    var _S64 : u32 = (*state_0) * u32(747796405) + u32(1);
-    (*state_0) = _S64;
-    var word_1 : u32 = ((((_S64 >> ((((_S64 >> (u32(28)))) + u32(4))))) ^ (_S64))) * u32(277803737);
+    var _S68 : u32 = (*state_0) * u32(747796405) + u32(1);
+    (*state_0) = _S68;
+    var word_1 : u32 = ((((_S68 >> ((((_S68 >> (u32(28)))) + u32(4))))) ^ (_S68))) * u32(277803737);
     return f32((((word_1 >> (u32(22)))) ^ (word_1))) / 4.294967296e+09f;
 }
 
 fn rng_next_1( state_1 : ptr<function, u32>) -> f32
 {
-    var _S65 : u32 = (*state_1) * u32(747796405) + u32(1);
-    (*state_1) = _S65;
-    var word_2 : u32 = ((((_S65 >> ((((_S65 >> (u32(28)))) + u32(4))))) ^ (_S65))) * u32(277803737);
+    var _S69 : u32 = (*state_1) * u32(747796405) + u32(1);
+    (*state_1) = _S69;
+    var word_2 : u32 = ((((_S69 >> ((((_S69 >> (u32(28)))) + u32(4))))) ^ (_S69))) * u32(277803737);
     return f32((((word_2 >> (u32(22)))) ^ (word_2))) / 4.294967296e+09f;
 }
 
@@ -1234,8 +1342,8 @@ fn russian_roulette_survives_0( bounce_0 : u32,  throughput_0 : ptr<function, ve
         return true;
     }
     var survival_0 : f32 = clamp(max((*throughput_0).x, max((*throughput_0).y, (*throughput_0).z)), 0.05000000074505806f, 0.94999998807907104f);
-    var _S66 : f32 = rng_next_1(&((*rng_0)));
-    if(_S66 > survival_0)
+    var _S70 : f32 = rng_next_1(&((*rng_0)));
+    if(_S70 > survival_0)
     {
         return false;
     }
@@ -1268,148 +1376,72 @@ fn miss_radiance_0( dir_4 : vec3<f32>,  bounce_1 : u32) -> vec3<f32>
     {
         return vec3<f32>(traceFrame_0.furnace_0.x);
     }
-    var _S67 : vec3<f32>;
+    var _S71 : vec3<f32>;
     if(bounce_1 == u32(0))
     {
-        _S67 = sky_with_sun_0(dir_4);
+        _S71 = sky_with_sun_0(dir_4);
     }
     else
     {
-        _S67 = bounce_sky_0(dir_4);
+        _S71 = bounce_sky_0(dir_4);
     }
-    return _S67;
+    return _S71;
 }
 
 fn path_surface_0( ray_9 : TraceRay_0,  hit_6 : TraceHit_0) -> TracedSurface_0
 {
-    var s_9 : TracedSurface_0 = shade_hit_0(ray_9, hit_6);
+    var s_11 : TracedSurface_0 = shade_hit_0(ray_9, hit_6);
     if(furnace_on_0())
     {
-        s_9.albedo_0 = vec3<f32>(1.0f);
-        s_9.emissive_2 = vec3<f32>(0.0f);
-        s_9.unlit_0 = false;
-        s_9.metallic_1 = traceFrame_0.furnace_0.y;
-        s_9.roughness_1 = clamp(traceFrame_0.furnace_0.z, 0.04500000178813934f, 1.0f);
+        s_11.albedo_0 = vec3<f32>(1.0f);
+        s_11.emissive_2 = vec3<f32>(0.0f);
+        s_11.unlit_0 = false;
+        s_11.metallic_1 = traceFrame_0.furnace_0.y;
+        s_11.roughness_1 = clamp(traceFrame_0.furnace_0.z, 0.04500000178813934f, 1.0f);
     }
-    return s_9;
+    return s_11;
 }
 
-struct PunctualLight_0
+fn punctual_light_sample_0( s_12 : TracedSurface_0,  v_11 : vec3<f32>,  rng_1 : ptr<function, u32>) -> LightSample_0
 {
-     position_2 : vec3<f32>,
-     kind_0 : f32,
-     radiance_4 : vec3<f32>,
-     range_0 : f32,
-     direction_6 : vec3<f32>,
-     cos_inner_0 : f32,
-     cos_outer_0 : f32,
-};
-
-fn unpack_punctual_light_0( a_6 : vec4<f32>,  b_6 : vec4<f32>,  c_4 : vec4<f32>,  d_2 : vec4<f32>) -> PunctualLight_0
-{
-    var light_1 : PunctualLight_0;
-    light_1.position_2 = a_6.xyz;
-    light_1.kind_0 = a_6.w;
-    light_1.radiance_4 = b_6.xyz;
-    light_1.range_0 = b_6.w;
-    light_1.direction_6 = c_4.xyz;
-    light_1.cos_inner_0 = c_4.w;
-    light_1.cos_outer_0 = d_2.x;
-    return light_1;
-}
-
-struct PunctualIncidence_0
-{
-     l_4 : vec3<f32>,
-     distance_2 : f32,
-     attenuation_0 : f32,
-};
-
-fn punctual_incidence_0( light_2 : PunctualLight_0,  position_3 : vec3<f32>) -> PunctualIncidence_0
-{
-    var o_4 : PunctualIncidence_0;
-    o_4.attenuation_0 = 1.0f;
-    if((light_2.kind_0) > 2.5f)
-    {
-        o_4.l_4 = normalize((vec3<f32>(0) - light_2.direction_6));
-        o_4.distance_2 = 3.00000000549775576e+38f;
-        return o_4;
-    }
-    var toLight_0 : vec3<f32> = light_2.position_2 - position_3;
-    var _S68 : f32 = max(length(toLight_0), 0.00009999999747379f);
-    o_4.distance_2 = _S68;
-    o_4.l_4 = toLight_0 / vec3<f32>(_S68);
-    o_4.attenuation_0 = 1.0f / (_S68 * _S68);
-    if((light_2.range_0) > 0.0f)
-    {
-        var k_2 : f32 = clamp(1.0f - pow(o_4.distance_2 / light_2.range_0, 4.0f), 0.0f, 1.0f);
-        o_4.attenuation_0 = o_4.attenuation_0 * (k_2 * k_2);
-    }
-    if((light_2.kind_0) > 1.5f)
-    {
-        o_4.attenuation_0 = o_4.attenuation_0 * smoothstep(light_2.cos_outer_0, light_2.cos_inner_0, dot(normalize(light_2.direction_6), (vec3<f32>(0) - o_4.l_4)));
-    }
-    return o_4;
-}
-
-fn punctual_light_sample_0( s_10 : TracedSurface_0,  v_9 : vec3<f32>,  rng_1 : ptr<function, u32>) -> LightSample_0
-{
-    var o_5 : LightSample_0 = unlit_sample_0();
     var count_1 : u32 = traceFrame_0.lights_0.x;
     if(count_1 == u32(0))
     {
-        return o_5;
+        return unlit_sample_0();
     }
-    var _S69 : f32 = rng_next_0(&((*rng_1)));
-    var _S70 : f32 = f32(count_1);
-    var _S71 : u32 = min(u32(_S69 * _S70), count_1 - u32(1)) * u32(4);
-    var light_3 : PunctualLight_0 = unpack_punctual_light_0(tracerLights_0[_S71], tracerLights_0[_S71 + u32(1)], tracerLights_0[_S71 + u32(2)], tracerLights_0[_S71 + u32(3)]);
-    var incidence_0 : PunctualIncidence_0 = punctual_incidence_0(light_3, s_10.position_1);
-    o_5.l_0 = incidence_0.l_4;
-    o_5.distance_0 = incidence_0.distance_2 * 0.99989998340606689f;
-    var _S72 : bool;
-    if((incidence_0.attenuation_0) <= 0.0f)
-    {
-        _S72 = true;
-    }
-    else
-    {
-        _S72 = (dot(s_10.normal_2, incidence_0.l_4)) <= 0.0f;
-    }
-    if(_S72)
-    {
-        return o_5;
-    }
-    o_5.radiance_0 = brdf_direct_0(s_10.normal_2, v_9, incidence_0.l_4, s_10.albedo_0, s_10.metallic_1, s_10.roughness_1, mix(vec3<f32>(0.03999999910593033f), s_10.albedo_0, vec3<f32>(s_10.metallic_1)), light_3.radiance_4 * vec3<f32>(incidence_0.attenuation_0)) * vec3<f32>(_S70);
-    return o_5;
+    var _S72 : f32 = rng_next_0(&((*rng_1)));
+    var _S73 : f32 = f32(count_1);
+    var o_6 : LightSample_0 = punctual_sample_0(s_12, v_11, min(u32(_S72 * _S73), count_1 - u32(1)));
+    o_6.radiance_0 = o_6.radiance_0 * vec3<f32>(_S73);
+    return o_6;
 }
 
-fn next_event_0( s_11 : TracedSurface_0,  v_10 : vec3<f32>,  rng_2 : ptr<function, u32>) -> vec3<f32>
+fn next_event_0( s_13 : TracedSurface_0,  v_12 : vec3<f32>,  rng_2 : ptr<function, u32>) -> vec3<f32>
 {
     if(furnace_on_0())
     {
         return vec3<f32>(0.0f);
     }
-    var _S73 : LightSample_0 = sun_sample_0(s_11, v_10);
-    var _S74 : LightSample_0 = punctual_light_sample_0(s_11, v_10, &((*rng_2)));
-    var _S75 : array<LightSample_0, i32(2)> = array<LightSample_0, i32(2)>( _S73, _S74 );
-    var _S76 : vec3<f32> = vec3<f32>(0.0f);
-    var i_0 : u32 = u32(0);
-    var lit_0 : vec3<f32> = _S76;
+    var _S74 : LightSample_0 = sun_sample_0(s_13, v_12);
+    var _S75 : LightSample_0 = punctual_light_sample_0(s_13, v_12, &((*rng_2)));
+    var _S76 : array<LightSample_0, i32(2)> = array<LightSample_0, i32(2)>( _S74, _S75 );
+    var _S77 : vec3<f32> = vec3<f32>(0.0f);
+    var i_1 : u32 = u32(0);
+    var lit_2 : vec3<f32> = _S77;
     for(;;)
     {
-        if(i_0 < u32(2))
+        if(i_1 < u32(2))
         {
         }
         else
         {
             break;
         }
-        var lit_1 : vec3<f32> = lit_0 + shadowed_0(s_11, _S75[i_0]);
-        i_0 = i_0 + u32(1);
-        lit_0 = lit_1;
+        var lit_3 : vec3<f32> = lit_2 + shadowed_0(s_13, _S76[i_1]);
+        i_1 = i_1 + u32(1);
+        lit_2 = lit_3;
     }
-    return lit_0;
+    return lit_2;
 }
 
 fn specular_lobe_probability_0( albedo_4 : vec3<f32>,  metallic_4 : f32,  f0_3 : vec3<f32>,  n_dot_v_1 : f32) -> f32
@@ -1422,35 +1454,35 @@ fn specular_lobe_probability_0( albedo_4 : vec3<f32>,  metallic_4 : f32,  f0_3 :
 
 fn orthonormal_basis_0( n_6 : vec3<f32>,  t_4 : ptr<function, vec3<f32>>,  b_7 : ptr<function, vec3<f32>>)
 {
-    var _S77 : f32 = n_6.z;
-    var s_12 : f32;
-    if(_S77 >= 0.0f)
+    var _S78 : f32 = n_6.z;
+    var s_14 : f32;
+    if(_S78 >= 0.0f)
     {
-        s_12 = 1.0f;
+        s_14 = 1.0f;
     }
     else
     {
-        s_12 = -1.0f;
+        s_14 = -1.0f;
     }
-    var a_7 : f32 = -1.0f / (s_12 + _S77);
-    var _S78 : f32 = n_6.x;
-    var _S79 : f32 = n_6.y;
-    var c_5 : f32 = _S78 * _S79 * a_7;
-    (*t_4) = vec3<f32>(1.0f + s_12 * _S78 * _S78 * a_7, s_12 * c_5, - s_12 * _S78);
-    (*b_7) = vec3<f32>(c_5, s_12 + _S79 * _S79 * a_7, - _S79);
+    var a_7 : f32 = -1.0f / (s_14 + _S78);
+    var _S79 : f32 = n_6.x;
+    var _S80 : f32 = n_6.y;
+    var c_5 : f32 = _S79 * _S80 * a_7;
+    (*t_4) = vec3<f32>(1.0f + s_14 * _S79 * _S79 * a_7, s_14 * c_5, - s_14 * _S79);
+    (*b_7) = vec3<f32>(c_5, s_14 + _S80 * _S80 * a_7, - _S80);
     return;
 }
 
-fn sample_ggx_visible_normal_0( v_11 : vec3<f32>,  alpha_0 : f32,  u_1 : vec2<f32>) -> vec3<f32>
+fn sample_ggx_visible_normal_0( v_13 : vec3<f32>,  alpha_0 : f32,  u_1 : vec2<f32>) -> vec3<f32>
 {
-    var vh_0 : vec3<f32> = normalize(vec3<f32>(alpha_0 * v_11.x, alpha_0 * v_11.y, v_11.z));
-    var _S80 : f32 = vh_0.x;
-    var _S81 : f32 = vh_0.y;
-    var length_squared_0 : f32 = _S80 * _S80 + _S81 * _S81;
+    var vh_0 : vec3<f32> = normalize(vec3<f32>(alpha_0 * v_13.x, alpha_0 * v_13.y, v_13.z));
+    var _S81 : f32 = vh_0.x;
+    var _S82 : f32 = vh_0.y;
+    var length_squared_0 : f32 = _S81 * _S81 + _S82 * _S82;
     var t1_1 : vec3<f32>;
     if(length_squared_0 > 0.0f)
     {
-        t1_1 = vec3<f32>(- _S81, _S80, 0.0f) / vec3<f32>(sqrt(length_squared_0));
+        t1_1 = vec3<f32>(- _S82, _S81, 0.0f) / vec3<f32>(sqrt(length_squared_0));
     }
     else
     {
@@ -1459,10 +1491,10 @@ fn sample_ggx_visible_normal_0( v_11 : vec3<f32>,  alpha_0 : f32,  u_1 : vec2<f3
     var r_1 : f32 = sqrt(u_1.x);
     var phi_0 : f32 = 6.28318548202514648f * u_1.y;
     var p1_2 : f32 = r_1 * cos(phi_0);
-    var s_13 : f32 = 0.5f * (1.0f + vh_0.z);
-    var _S82 : f32 = 1.0f - p1_2 * p1_2;
-    var p2_2 : f32 = (1.0f - s_13) * sqrt(max(_S82, 0.0f)) + s_13 * (r_1 * sin(phi_0));
-    var nh_0 : vec3<f32> = vec3<f32>(p1_2) * t1_1 + vec3<f32>(p2_2) * cross(vh_0, t1_1) + vec3<f32>(sqrt(max(_S82 - p2_2 * p2_2, 0.0f))) * vh_0;
+    var s_15 : f32 = 0.5f * (1.0f + vh_0.z);
+    var _S83 : f32 = 1.0f - p1_2 * p1_2;
+    var p2_2 : f32 = (1.0f - s_15) * sqrt(max(_S83, 0.0f)) + s_15 * (r_1 * sin(phi_0));
+    var nh_0 : vec3<f32> = vec3<f32>(p1_2) * t1_1 + vec3<f32>(p2_2) * cross(vh_0, t1_1) + vec3<f32>(sqrt(max(_S83 - p2_2 * p2_2, 0.0f))) * vh_0;
     return normalize(vec3<f32>(alpha_0 * nh_0.x, alpha_0 * nh_0.y, max(nh_0.z, 9.99999997475242708e-07f)));
 }
 
@@ -1478,9 +1510,9 @@ fn smith_k_sampled_0( roughness_6 : f32) -> f32
     return roughness_6 * roughness_6 / 2.0f;
 }
 
-fn brdf_sampled_0( n_7 : vec3<f32>,  v_12 : vec3<f32>,  l_5 : vec3<f32>,  albedo_5 : vec3<f32>,  metallic_5 : f32,  roughness_7 : f32,  f0_4 : vec3<f32>) -> vec3<f32>
+fn brdf_sampled_0( n_7 : vec3<f32>,  v_14 : vec3<f32>,  l_5 : vec3<f32>,  albedo_5 : vec3<f32>,  metallic_5 : f32,  roughness_7 : f32,  f0_4 : vec3<f32>) -> vec3<f32>
 {
-    return brdf_smith_k_0(n_7, v_12, l_5, albedo_5, metallic_5, roughness_7, f0_4, vec3<f32>(1.0f), smith_k_sampled_0(roughness_7));
+    return brdf_smith_k_0(n_7, v_14, l_5, albedo_5, metallic_5, roughness_7, f0_4, vec3<f32>(1.0f), smith_k_sampled_0(roughness_7));
 }
 
 struct Bounce_0
@@ -1489,31 +1521,31 @@ struct Bounce_0
      weight_0 : vec3<f32>,
 };
 
-fn sample_bounce_0( n_8 : vec3<f32>,  face_normal_1 : vec3<f32>,  v_13 : vec3<f32>,  albedo_6 : vec3<f32>,  metallic_6 : f32,  roughness_8 : f32,  rng_3 : ptr<function, u32>) -> Bounce_0
+fn sample_bounce_0( n_8 : vec3<f32>,  face_normal_1 : vec3<f32>,  v_15 : vec3<f32>,  albedo_6 : vec3<f32>,  metallic_6 : f32,  roughness_8 : f32,  rng_3 : ptr<function, u32>) -> Bounce_0
 {
     var f0_5 : vec3<f32> = mix(vec3<f32>(0.03999999910593033f), albedo_6, vec3<f32>(metallic_6));
-    var _S83 : f32 = max(dot(n_8, v_13), 0.00009999999747379f);
-    var specular_1 : f32 = specular_lobe_probability_0(albedo_6, metallic_6, f0_5, _S83);
+    var _S84 : f32 = max(dot(n_8, v_15), 0.00009999999747379f);
+    var specular_1 : f32 = specular_lobe_probability_0(albedo_6, metallic_6, f0_5, _S84);
     var alpha_2 : f32 = roughness_8 * roughness_8;
     var t_5 : vec3<f32>;
     var b_8 : vec3<f32>;
     orthonormal_basis_0(n_8, &(t_5), &(b_8));
-    var _S84 : f32 = rng_next_0(&((*rng_3)));
+    var _S85 : f32 = rng_next_0(&((*rng_3)));
     var direction_8 : vec3<f32>;
-    if(_S84 < specular_1)
+    if(_S85 < specular_1)
     {
-        var local_0 : vec3<f32> = vec3<f32>(dot(v_13, t_5), dot(v_13, b_8), dot(v_13, n_8));
-        var _S85 : f32 = rng_next_0(&((*rng_3)));
+        var local_0 : vec3<f32> = vec3<f32>(dot(v_15, t_5), dot(v_15, b_8), dot(v_15, n_8));
         var _S86 : f32 = rng_next_0(&((*rng_3)));
-        var h_2 : vec3<f32> = sample_ggx_visible_normal_0(local_0, alpha_2, vec2<f32>(_S85, _S86));
-        direction_8 = reflect((vec3<f32>(0) - v_13), vec3<f32>(h_2.x) * t_5 + vec3<f32>(h_2.y) * b_8 + vec3<f32>(h_2.z) * n_8);
+        var _S87 : f32 = rng_next_0(&((*rng_3)));
+        var h_2 : vec3<f32> = sample_ggx_visible_normal_0(local_0, alpha_2, vec2<f32>(_S86, _S87));
+        direction_8 = reflect((vec3<f32>(0) - v_15), vec3<f32>(h_2.x) * t_5 + vec3<f32>(h_2.y) * b_8 + vec3<f32>(h_2.z) * n_8);
     }
     else
     {
-        var _S87 : f32 = rng_next_0(&((*rng_3)));
-        var theta_0 : f32 = 6.28318548202514648f * _S87;
         var _S88 : f32 = rng_next_0(&((*rng_3)));
-        var z_0 : f32 = 2.0f * _S88 - 1.0f;
+        var theta_0 : f32 = 6.28318548202514648f * _S88;
+        var _S89 : f32 = rng_next_0(&((*rng_3)));
+        var z_0 : f32 = 2.0f * _S89 - 1.0f;
         var r_2 : f32 = sqrt(max(1.0f - z_0 * z_0, 0.0f));
         var direction_9 : vec3<f32> = n_8 + vec3<f32>(r_2 * cos(theta_0), r_2 * sin(theta_0), z_0);
         if((dot(direction_9, direction_9)) < 9.99999993922529029e-09f)
@@ -1525,37 +1557,37 @@ fn sample_bounce_0( n_8 : vec3<f32>,  face_normal_1 : vec3<f32>,  v_13 : vec3<f3
             direction_8 = direction_9;
         }
     }
-    var o_6 : Bounce_0;
-    var _S89 : vec3<f32> = normalize(direction_8);
-    o_6.direction_7 = _S89;
-    o_6.weight_0 = vec3<f32>(0.0f);
-    var n_dot_l_1 : f32 = dot(n_8, _S89);
-    var _S90 : bool;
+    var o_7 : Bounce_0;
+    var _S90 : vec3<f32> = normalize(direction_8);
+    o_7.direction_7 = _S90;
+    o_7.weight_0 = vec3<f32>(0.0f);
+    var n_dot_l_1 : f32 = dot(n_8, _S90);
+    var _S91 : bool;
     if(n_dot_l_1 <= 0.0f)
     {
-        _S90 = true;
+        _S91 = true;
     }
     else
     {
-        _S90 = (dot(face_normal_1, o_6.direction_7)) <= 0.0f;
+        _S91 = (dot(face_normal_1, o_7.direction_7)) <= 0.0f;
     }
-    if(_S90)
+    if(_S91)
     {
-        return o_6;
+        return o_7;
     }
-    o_6.weight_0 = brdf_sampled_0(n_8, v_13, o_6.direction_7, albedo_6, metallic_6, roughness_8, f0_5) / vec3<f32>(max(specular_1 * ggx_visible_normal_pdf_0(_S83, max(dot(n_8, normalize(v_13 + o_6.direction_7)), 0.0f), alpha_2) + (1.0f - specular_1) * n_dot_l_1 / 3.14159274101257324f, 9.99999997475242708e-07f));
-    return o_6;
+    o_7.weight_0 = brdf_sampled_0(n_8, v_15, o_7.direction_7, albedo_6, metallic_6, roughness_8, f0_5) / vec3<f32>(max(specular_1 * ggx_visible_normal_pdf_0(_S84, max(dot(n_8, normalize(v_15 + o_7.direction_7)), 0.0f), alpha_2) + (1.0f - specular_1) * n_dot_l_1 / 3.14159274101257324f, 9.99999997475242708e-07f));
+    return o_7;
 }
 
 fn trace_path_0( pixel_5 : vec2<u32>,  rng_4 : ptr<function, u32>) -> vec3<f32>
 {
-    var _S91 : f32 = rng_next_0(&((*rng_4)));
     var _S92 : f32 = rng_next_0(&((*rng_4)));
-    var ray_10 : TraceRay_0 = camera_ray_0(vec2<f32>(pixel_5) + vec2<f32>(_S91, _S92));
+    var _S93 : f32 = rng_next_0(&((*rng_4)));
+    var ray_10 : TraceRay_0 = camera_ray_0(vec2<f32>(pixel_5) + vec2<f32>(_S92, _S93));
     var throughput_1 : vec3<f32> = vec3<f32>(1.0f);
-    var _S93 : vec3<f32> = vec3<f32>(0.0f);
+    var _S94 : vec3<f32> = vec3<f32>(0.0f);
     var bounce_2 : u32 = u32(0);
-    var radiance_5 : vec3<f32> = _S93;
+    var radiance_5 : vec3<f32> = _S94;
     for(;;)
     {
         if(bounce_2 < (traceFrame_0.size_0.z))
@@ -1565,8 +1597,8 @@ fn trace_path_0( pixel_5 : vec2<u32>,  rng_4 : ptr<function, u32>) -> vec3<f32>
         {
             break;
         }
-        var _S94 : bool = russian_roulette_survives_0(bounce_2, &(throughput_1), &((*rng_4)));
-        if(!_S94)
+        var _S95 : bool = russian_roulette_survives_0(bounce_2, &(throughput_1), &((*rng_4)));
+        if(!_S95)
         {
             break;
         }
@@ -1576,23 +1608,23 @@ fn trace_path_0( pixel_5 : vec2<u32>,  rng_4 : ptr<function, u32>) -> vec3<f32>
             radiance_5 = radiance_5 + throughput_1 * miss_radiance_0(ray_10.direction_0, bounce_2);
             break;
         }
-        var s_14 : TracedSurface_0 = path_surface_0(ray_10, hit_7);
-        if(s_14.unlit_0)
+        var s_16 : TracedSurface_0 = path_surface_0(ray_10, hit_7);
+        if(s_16.unlit_0)
         {
-            radiance_5 = radiance_5 + throughput_1 * s_14.albedo_0;
+            radiance_5 = radiance_5 + throughput_1 * s_16.albedo_0;
             break;
         }
-        var v_14 : vec3<f32> = (vec3<f32>(0) - ray_10.direction_0);
-        var _S95 : vec3<f32> = next_event_0(s_14, v_14, &((*rng_4)));
-        var radiance_6 : vec3<f32> = radiance_5 + throughput_1 * (s_14.emissive_2 + _S95);
-        var next_0 : Bounce_0 = sample_bounce_0(s_14.normal_2, s_14.face_normal_0, v_14, s_14.albedo_0, s_14.metallic_1, s_14.roughness_1, &((*rng_4)));
-        if((all(((next_0.weight_0) == _S93))))
+        var v_16 : vec3<f32> = (vec3<f32>(0) - ray_10.direction_0);
+        var _S96 : vec3<f32> = next_event_0(s_16, v_16, &((*rng_4)));
+        var radiance_6 : vec3<f32> = radiance_5 + throughput_1 * (s_16.emissive_2 + _S96);
+        var next_0 : Bounce_0 = sample_bounce_0(s_16.normal_2, s_16.face_normal_0, v_16, s_16.albedo_0, s_16.metallic_1, s_16.roughness_1, &((*rng_4)));
+        if((all(((next_0.weight_0) == _S94))))
         {
             radiance_5 = radiance_6;
             break;
         }
         throughput_1 = throughput_1 * next_0.weight_0;
-        ray_10.origin_0 = s_14.position_1 + s_14.face_normal_0 * vec3<f32>(0.00009999999747379f);
+        ray_10.origin_0 = s_16.position_1 + s_16.face_normal_0 * vec3<f32>(0.00009999999747379f);
         ray_10.tmin_0 = 0.00100000004749745f;
         ray_10.direction_0 = next_0.direction_7;
         ray_10.tmax_0 = 10000.0f;
@@ -1613,32 +1645,32 @@ fn primary_hit_depth_0( pixel_6 : vec2<u32>) -> f32
 fn cs_path_trace(@builtin(global_invocation_id) id_1 : vec3<u32>)
 {
     var pixel_7 : vec2<u32>;
-    var _S96 : bool = tile_pixel_0(id_1.xy, &(pixel_7));
-    if(!_S96)
+    var _S97 : bool = tile_pixel_0(id_1.xy, &(pixel_7));
+    if(!_S97)
     {
         return;
     }
-    var index_4 : u32 = pixel_index_0(pixel_7);
-    var rng_5 : u32 = path_rng_seed_0(index_4, traceTile_0.samples_0.z);
-    var _S97 : vec3<f32> = vec3<f32>(0.0f);
-    var i_1 : u32 = u32(0);
-    var sum_0 : vec3<f32> = _S97;
+    var index_6 : u32 = pixel_index_0(pixel_7);
+    var rng_5 : u32 = path_rng_seed_0(index_6, traceTile_0.samples_0.z);
+    var _S98 : vec3<f32> = vec3<f32>(0.0f);
+    var i_2 : u32 = u32(0);
+    var sum_0 : vec3<f32> = _S98;
     for(;;)
     {
-        if(i_1 < (traceTile_0.samples_0.y))
+        if(i_2 < (traceTile_0.samples_0.y))
         {
         }
         else
         {
             break;
         }
-        var _S98 : vec3<f32> = trace_path_0(pixel_7, &(rng_5));
-        var sum_1 : vec3<f32> = sum_0 + hdr_safe_0(_S98);
-        i_1 = i_1 + u32(1);
+        var _S99 : vec3<f32> = trace_path_0(pixel_7, &(rng_5));
+        var sum_1 : vec3<f32> = sum_0 + hdr_safe_0(_S99);
+        i_2 = i_2 + u32(1);
         sum_0 = sum_1;
     }
     var before_0 : f32 = f32(traceTile_0.samples_0.z);
-    var held_0 : vec4<f32> = traceAccumulation_0[index_4];
+    var held_0 : vec4<f32> = traceAccumulation_0[index_6];
     var previous_0 : vec3<f32>;
     if((traceTile_0.samples_0.z) > u32(0))
     {
@@ -1646,7 +1678,7 @@ fn cs_path_trace(@builtin(global_invocation_id) id_1 : vec3<u32>)
     }
     else
     {
-        previous_0 = _S97;
+        previous_0 = _S98;
     }
     var depth_0 : f32;
     if((traceTile_0.samples_0.x) == u32(0))
@@ -1657,7 +1689,7 @@ fn cs_path_trace(@builtin(global_invocation_id) id_1 : vec3<u32>)
     {
         depth_0 = held_0.w;
     }
-    traceAccumulation_0[index_4] = vec4<f32>((previous_0 * vec3<f32>(before_0) + sum_0) / vec3<f32>((before_0 + f32(traceTile_0.samples_0.y))), depth_0);
+    traceAccumulation_0[index_6] = vec4<f32>((previous_0 * vec3<f32>(before_0) + sum_0) / vec3<f32>((before_0 + f32(traceTile_0.samples_0.y))), depth_0);
     return;
 }
 

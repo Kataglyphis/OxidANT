@@ -32,7 +32,7 @@ pub const NOISE_PERIOD: f64 = 256.0;
 /// The Wind drag, world units per second along each axis.
 pub const WIND_RANGE: RangeInclusive<f32> = -100.0..=100.0;
 
-/// The C++ editor's CLOUDS section: the switch and its nine controls.
+/// The C++ editor's CLOUDS section: the switch and its eleven controls.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CloudSettings {
     pub enabled: bool,
@@ -73,7 +73,7 @@ impl Default for CloudSettings {
             powder: true,
             scale: Vec3::new(630.0, 3.15, 630.0),
             offset: Vec3::new(-0.364, 367.0, -18.351),
-            // Not the C++ engine's, which has no wind: a fine noise tile (64 units) every 15 s.
+            // A fine noise tile (64 units) every 15 s.
             wind: Vec3::new(4.0, 0.0, 1.5),
             half_resolution: true,
         }
@@ -90,7 +90,7 @@ pub struct CloudParams {
     pub mesh_offset: [f32; 4],
     /// Pillowness, Cirrus, Powder as 0 or 1, March steps.
     pub parameters: [f32; 4],
-    /// Light steps (x) and the wind's noise offset (yzw), zero where the C++ engine packs it.
+    /// Light steps (x) and the wind's noise offset (yzw).
     pub light_march: [f32; 4],
 }
 
@@ -160,7 +160,7 @@ pub struct CloudAmbient {
 }
 
 impl CloudAmbient {
-    /// The procedural sky, `cloud_ambient_analytic_sky`: the gradient's per-hemisphere integrals in closed form.
+    /// The procedural sky: `sky_gradient` averaged per hemisphere over solid angle, the integrals of pow(y, 0.7) and clamp(3y, 0, 1).
     pub fn analytic_sky() -> Self {
         let [horizon, zenith, ground] = [SKY_HORIZON, SKY_ZENITH, SKY_GROUND].map(Vec3::from);
         Self {

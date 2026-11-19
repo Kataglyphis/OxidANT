@@ -1,7 +1,5 @@
 // Volumetric clouds for both renderers: the noise volume's texels, the axis-aligned cloud box and the ray march.
 
-import sky_model;
-
 static const float CLOUD_PI = 3.14159265358979323846;
 
 // Each renderer allocates the volume at this extent per axis; its own constants are pinned to it by a test.
@@ -13,7 +11,7 @@ interface ICloudNoise
     float4 sample_noise(float3 uvw);
 };
 
-// The nine cloud controls as the C++ SceneUBO packs them, field for field, so both hosts fill one layout.
+// The cloud controls and the wind's offset as the C++ SceneUBO packs them, field for field, so both hosts fill one layout.
 struct CloudParams
 {
     float4 cloudMeshScale;
@@ -46,15 +44,6 @@ struct CloudAmbient
     float3 top;
     float3 bottom;
 };
-
-// sky_model's gradient averaged per hemisphere over solid angle: the integrals of pow(y, 0.7) and clamp(3y, 0, 1).
-CloudAmbient cloud_ambient_analytic_sky()
-{
-    CloudAmbient ambient;
-    ambient.top = lerp(SKY_HORIZON, SKY_ZENITH, 1.0 / 1.7);
-    ambient.bottom = lerp(SKY_HORIZON, SKY_GROUND, 5.0 / 6.0);
-    return ambient;
-}
 
 // How fast a half-resolution texel's weight falls with its relative depth difference to the pixel it fills.
 static const float CLOUD_UPSAMPLE_DEPTH_SHARPNESS = 16.0;
@@ -343,12 +332,4 @@ float4 march_clouds(ICloudNoise noise, float3 eyePosition, float3 rayDirection, 
     }
 
     return float4(radiance, 1.0 - transmittance);
-}
-
-// The C++ engine's entry, lit by the analytic sky until it passes its own sky's ambient.
-float4 march_clouds(ICloudNoise noise, float3 eyePosition, float3 rayDirection, float sceneDistance, Clouds cloud,
-                    float3 directionToLight, float3 sunRadiance)
-{
-    return march_clouds(noise, eyePosition, rayDirection, sceneDistance, cloud, directionToLight, sunRadiance,
-                        cloud_ambient_analytic_sky());
 }
