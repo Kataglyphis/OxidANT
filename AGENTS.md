@@ -51,9 +51,12 @@ into each of them **in the same change**:
   `scripts/linux/{docs-build-web,run-cargo-tests,wasm-size-budget}.sh` there). The import
   is in `Src/CMakeLists.txt`: `corrosion_import_crate(MANIFEST_PATH
   ../third_party/OxidANT/Cargo.toml CRATE_TYPES staticlib CRATES kataglyphis_cxx_bridge)`,
-  then `corrosion_add_cxxbridge(oxidant_bridge ...)` over the crate's `src/lib.rs`, so its
-  package name, the **staticlib** and the file name are part of that repository's build.
-  The bridge is a crate of its own: the root package links GStreamer and
+  then `corrosion_add_cxxbridge(oxidant_bridge ...)` over the crate's bridge files, one per
+  area (`src/gltf.rs`, each in the C++ namespace
+  `kataglyphis::oxidant::<file stem>`), so its package name, the **staticlib** and those file
+  names are part of that repository's build: a new bridge file joins its `FILES` in the same
+  change. Its non-Debug builds select `[profile.bridge]`, without which `guarded()` catches no
+  panic. The bridge is a crate of its own: the root package links GStreamer and
   the ORT loader, which the C++ engine would have linked and shipped for one function.
 
 ## 2. What ANTfrastructure owns — links only
@@ -294,6 +297,7 @@ cargo build --workspace --locked                      # dev/debug
 cargo build --workspace --locked --profile profile    # custom: release + debuginfo
 cargo build --workspace --locked --release            # fat LTO, codegen-units 1, panic=abort, stripped
 cargo build --locked --profile observant -p kataglyphis_observant  # the camera service: release, but a panic unwinds
+cargo build --locked --profile bridge -p kataglyphis_cxx_bridge    # the C++ engine's bridge: release, but a panic unwinds
 cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
 cargo run --bin kataglyphis_cli -- --help             # the CLI
 cargo run -p kataglyphis_burn_demos --bin burn_demos  # the burn demos

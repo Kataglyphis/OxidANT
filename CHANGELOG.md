@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-19, the C++ bridge: a file per area, errors as values, a panic profile)
+
+- **`kataglyphis_cxx_bridge`**: the bridge is a file per area, so far `src/gltf.rs` (`load_gltf_flat`, C++ namespace
+  `kataglyphis::oxidant::gltf`, header `oxidant_bridge/gltf.h`); `src/lib.rs` keeps the plumbing, and
+  BeschleunigerBallett names each file in `corrosion_add_cxxbridge`. `guarded()` is generic, and every bridged
+  function is one `guarded()` call.
+  `src/contract.rs` reads the bridge files and fails on a cxx `Result`, a `&str` or `String` parameter, a C++
+  function, a body that is not one `guarded()` call, and a namespace other than `kataglyphis::oxidant::<file stem>`.
+  `rusty_cxxbridge_integer`, the 42 probe, is gone.
+- **Workspace**: `[profile.bridge]`, release with `panic = "unwind"` (owner decision), for BeschleunigerBallett's
+  non-Debug builds: under the release profile's abort `guarded()`'s `catch_unwind` caught nothing, so a loader panic
+  ended the engine in Release and Profile. `contract.rs` checks the profile.
+
 ### Fixed (2026-11-19, shared accessors, sampler slots and the files a glTF names)
 
 - **`kataglyphis_assets`**: a primitive keeps only the vertices its indices use, with their morph deltas.
