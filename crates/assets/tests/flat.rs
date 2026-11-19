@@ -329,8 +329,9 @@ const PIXEL_PNG: [u8; 70] = [
     0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
 
-/// `dir`'s triangle drawn with one base colour texture whose image is `uri`.
+/// `dir`'s triangle drawn with one base colour texture whose image is `uri`, escaped for JSON: a Windows path has `\`.
 fn triangle_with_image(dir: &Path, uri: &str) -> PathBuf {
+    let uri = uri.replace('\\', r"\\").replace('"', r#"\""#);
     let extra = format!(
         r#","images":[{{"uri":"{uri}"}}],"textures":[{{"source":0}}],
         "materials":[{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0}}}}}}]"#
@@ -356,6 +357,7 @@ fn both_loaders_read_an_image_only_by_a_relative_uri_inside_the_document_directo
     let mut cases = vec![
         ("pixel.png".to_owned(), None),
         ("sub/../pixel.png".to_owned(), None),
+        (r"sub\..\pixel.png".to_owned(), None),
         ("green.ktx2".to_owned(), None),
         (
             "../pixel.png".to_owned(),
@@ -407,6 +409,23 @@ fn both_loaders_read_an_image_only_by_a_relative_uri_inside_the_document_directo
         let flat = load_flat(&path, &LoadOptions::default()).unwrap();
         assert_eq!(flat.textures.len(), usize::from(refusal.is_none()), "{uri}");
     }
+}
+
+/// A Linux folder name need not be UTF-8; both loaders read an image there by its path, not by a UTF-8 URI.
+#[cfg(target_os = "linux")]
+#[test]
+fn both_loaders_read_an_image_in_a_folder_whose_name_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(std::ffi::OsStr::from_bytes(b"model-\xff"));
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("pixel.png"), PIXEL_PNG).unwrap();
+    let path = triangle_with_image(&dir, "pixel.png");
+    let scene = kataglyphis_assets::load_gltf(&path).unwrap();
+    let texture = scene.primitives[0].material.base_color_texture.as_ref();
+    assert_eq!(texture.unwrap().texture.rgba8, [200, 40, 0, 255]);
+    let flat = load_flat(&path, &LoadOptions::default()).unwrap();
+    assert_eq!(flat.textures.len(), 1);
 }
 
 #[test]

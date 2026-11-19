@@ -13,12 +13,22 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-19, the bridge foundations' review)
+
+- **`kataglyphis_assets`**: `load_gltf` loads an external image in a folder whose name is not UTF-8 again; the
+  confinement passed gltf a `file:` URI, which needs a UTF-8 path, and failed the whole scene. `image` 0.25 with
+  gltf's own `png` and `jpeg` features becomes a direct dependency (already in the lock).
+  `both_loaders_read_an_image_in_a_folder_whose_name_is_not_utf8`.
+- `tests/flat.rs` escapes an image URI for JSON, so the `file:` cases name a Windows path as text instead of failing
+  the parse on its backslashes; a `sub\..\pixel.png` case loads on every host.
+
 ### Changed (2026-11-19, both glTF loaders read images from the document's folder only)
 
 - **`kataglyphis_assets`**: `load_gltf`, the Rust app's scene loader, reads an image file by the flat loader's rule
   (owner decision 2026-11-19): `files::confined_file` resolves a relative URI inside the glTF file's directory,
   canonically, so `../`, a symlink out of it and any `file:` URI are refused, as they already were for buffers in both
-  loaders. A PNG or JPEG reaches gltf's decoder as the checked file's `file:` path, a KTX2 is read from it directly.
+  loaders. A PNG or JPEG is decoded from the checked file's bytes as gltf decodes it (`decode_external`), a KTX2 is
+  read from it directly, so no path has to be UTF-8.
   A scene with such an image no longer loads in the app, as one with such a buffer did not; the flat loader still
   gives the image no slot. `tests/flat.rs` runs each URI through both loaders.
 

@@ -5133,6 +5133,7 @@ dependencies = [
  "criterion",
  "glam",
  "gltf",
+ "image 0.25.10",
  "ktx2",
  "log",
  "proptest",

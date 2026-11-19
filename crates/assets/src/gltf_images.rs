@@ -115,12 +115,10 @@ pub(crate) fn import_images(
                 gltf::image::Source::Uri { uri, mime_type } if !uri.starts_with("data:") => {
                     let file = image_file(base, uri)
                         .with_context(|| format!("glTF image {}", image.index()))?;
-                    let file = file_uri(&file)?;
-                    let source = gltf::image::Source::Uri {
-                        uri: &file,
-                        mime_type,
-                    };
-                    gltf::image::Data::from_source(source, base, buffers)?
+                    let encoded = std::fs::read(&file)
+                        .with_context(|| format!("reading {}", file.display()))?;
+                    decode_external(&encoded, uri, mime_type)
+                        .with_context(|| format!("glTF image {}", image.index()))?
                 }
                 source => gltf::image::Data::from_source(source, base, buffers)?,
             };
@@ -137,12 +135,50 @@ fn image_file(base: Option<&Path>, uri: &str) -> anyhow::Result<PathBuf> {
     files::confined_file(base, uri)
 }
 
-/// The checked file as a `file:` URI, so gltf's decoder opens that file and resolves nothing itself.
-fn file_uri(file: &Path) -> anyhow::Result<String> {
-    let path = file
-        .to_str()
-        .with_context(|| format!("{} is not UTF-8", file.display()))?;
-    Ok(format!("file:{path}"))
+/// gltf's decode of an external PNG or JPEG (its type by MIME type, else extension, else content), from its bytes,
+/// so a path need not be UTF-8 and gltf opens nothing `confined_file` did not check.
+fn decode_external(
+    encoded: &[u8],
+    uri: &str,
+    mime_type: Option<&str>,
+) -> anyhow::Result<gltf::image::Data> {
+    use gltf::image::Format;
+    use image::{DynamicImage, ImageFormat};
+    let named = match mime_type {
+        Some("image/png") => Some(ImageFormat::Png),
+        Some("image/jpeg") => Some(ImageFormat::Jpeg),
+        Some(_) => None,
+        None => match uri.rsplit('.').next() {
+            Some("png") => Some(ImageFormat::Png),
+            Some("jpg" | "jpeg") => Some(ImageFormat::Jpeg),
+            _ => None,
+        },
+    };
+    let format = named
+        .or_else(|| match image::guess_format(encoded) {
+            Ok(sniffed @ (ImageFormat::Png | ImageFormat::Jpeg)) => Some(sniffed),
+            _ => None,
+        })
+        .context("neither PNG nor JPEG")?;
+    let decoded = image::load_from_memory_with_format(encoded, format)?;
+    let (width, height) = (decoded.width(), decoded.height());
+    let format = match &decoded {
+        DynamicImage::ImageLuma8(_) => Format::R8,
+        DynamicImage::ImageLumaA8(_) => Format::R8G8,
+        DynamicImage::ImageRgb8(_) => Format::R8G8B8,
+        DynamicImage::ImageRgba8(_) => Format::R8G8B8A8,
+        DynamicImage::ImageLuma16(_) => Format::R16,
+        DynamicImage::ImageLumaA16(_) => Format::R16G16,
+        DynamicImage::ImageRgb16(_) => Format::R16G16B16,
+        DynamicImage::ImageRgba16(_) => Format::R16G16B16A16,
+        other => anyhow::bail!("a decoded {:?} image", other.color()),
+    };
+    Ok(gltf::image::Data {
+        pixels: decoded.into_bytes(),
+        format,
+        width,
+        height,
+    })
 }
 
 /// Each texture's image: its `KHR_texture_basisu` KTX2, else (with a warning on failure) its fallback.
