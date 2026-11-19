@@ -1,7 +1,6 @@
 //! The frustum verdicts BeschleunigerBallett's `frustumSuite.cpp` reads too, against this crate's `Frustum`.
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use glam::camera::rh::proj::directx as clip;
 use glam::camera::rh::view::look_at_mat4;
@@ -11,9 +10,9 @@ use kataglyphis_render_core::lens;
 use kataglyphis_render_core::viewport::SceneViewport;
 use serde_json::Value;
 
+/// Embedded: the Windows arm64 cross lane runs this binary on a device without the source tree.
 fn vectors() -> Value {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/frustum_verdicts.json");
-    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    serde_json::from_str(include_str!("vectors/frustum_verdicts.json")).unwrap()
 }
 
 fn float(value: &Value, key: &str) -> f32 {

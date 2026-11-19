@@ -4,9 +4,20 @@
 
 use std::path::Path;
 
+/// The bridge crate's directory, or `None` after a SKIP line: the Windows arm64 cross lane runs this binary on a
+/// device without the sources, which every lane that builds it has.
+fn source_tree() -> Option<&'static Path> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if dir.join("src").is_dir() {
+        return Some(dir);
+    }
+    eprintln!("SKIP: no source tree at {}", dir.display());
+    None
+}
+
 /// Every bridge file but this checker, as (file stem, text).
-fn bridge_files() -> Vec<(String, String)> {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+fn bridge_files(dir: &Path) -> Vec<(String, String)> {
+    let src = dir.join("src");
     let mut files: Vec<(String, String)> = std::fs::read_dir(src)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -117,7 +128,8 @@ fn violations(stem: &str, text: &str) -> Vec<String> {
 
 #[test]
 fn every_bridge_file_keeps_the_contract() {
-    let files = bridge_files();
+    let Some(dir) = source_tree() else { return };
+    let files = bridge_files(dir);
     let stems: Vec<&str> = files.iter().map(|(stem, _)| stem.as_str()).collect();
     assert_eq!(
         stems,
@@ -190,9 +202,8 @@ pub fn unguarded(path: &[u8]) -> u8 {{
 
 #[test]
 fn the_bridge_profile_unwinds_so_guarded_catches() {
-    let manifest =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"))
-            .unwrap();
+    let Some(dir) = source_tree() else { return };
+    let manifest = std::fs::read_to_string(dir.join("../../Cargo.toml")).unwrap();
     let section: Vec<&str> = manifest
         .lines()
         .skip_while(|line| line.trim() != "[profile.bridge]")
@@ -237,9 +248,8 @@ fn lint_policy_violations(name: &str, lib_rs: &str) -> Vec<String> {
 }
 
 /// The workspace crates in the bridge's `[dependencies]`, as their directory names under `crates/`.
-fn linked_workspace_crates() -> Vec<String> {
-    let manifest =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
+fn linked_workspace_crates(dir: &Path) -> Vec<String> {
+    let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
     manifest
         .lines()
         .skip_while(|line| line.trim() != "[dependencies]")
@@ -252,9 +262,10 @@ fn linked_workspace_crates() -> Vec<String> {
 
 #[test]
 fn the_linked_crates_forbid_unsafe_code_and_panics() {
-    let crates = linked_workspace_crates();
+    let Some(dir) = source_tree() else { return };
+    let crates = linked_workspace_crates(dir);
     assert!(crates.contains(&"assets".to_owned()), "{crates:?}");
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = dir.join("..");
     for dir in crates {
         let lib_rs = std::fs::read_to_string(root.join(&dir).join("src/lib.rs")).unwrap();
         assert_eq!(lint_policy_violations(&dir, &lib_rs), Vec::<String>::new());

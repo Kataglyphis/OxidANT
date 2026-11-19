@@ -21,6 +21,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `both_loaders_read_an_image_in_a_folder_whose_name_is_not_utf8`.
 - `tests/flat.rs` escapes an image URI for JSON, so the `file:` cases name a Windows path as text instead of failing
   the parse on its backslashes; a `sub\..\pixel.png` case loads on every host.
+- The Windows arm64 cross lane runs the test binaries without the sources: `frustum_vectors.rs` embeds
+  `tests/vectors/frustum_verdicts.json` (`include_str!`), and the bridge's three source-reading contract tests print
+  `SKIP: no source tree` there, as `one_camera_pipeline` does (7d33f96).
 
 ### Changed (2026-11-19, both glTF loaders read images from the document's folder only)
 
