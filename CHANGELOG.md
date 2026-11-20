@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-20, the genai suite replays the hub's fixture cases)
+
+- `crates/text/tests/genai.rs` replays every case of the hub tiny model's `fixture.json` (pin `14ea0aaf`, ANTfrastructure
+  CON237): greedy, the schema case, two schemas that are no object (`InvalidOptions`), an object the grammar compiler
+  refuses (`GenerationFailed`), no messages and no budget. AccelerANTgine and OrchestrANT replay the same list.
+
 ### Fixed (2026-11-19, the bridge foundations' review)
 
 - **`kataglyphis_assets`**: `load_gltf` loads an external image in a folder whose name is not UTF-8 again; the

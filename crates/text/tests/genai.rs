@@ -432,3 +432,62 @@ fn texts_that_cannot_be_embedded_are_errors_not_vectors() {
     let refused = embedder.embed(&["a".repeat(600)]).unwrap_err();
     assert!(refused.to_string().contains("context_length"), "{refused}");
 }
+
+/// The hub's `fixture.json` cases (ANTfrastructure CON237): each request's answer or its error kind, as every binding replays them.
+#[test]
+fn every_fixture_case_answers_as_the_hub_says() {
+    let Some(mut generator) = generator() else {
+        return;
+    };
+    let text = std::fs::read_to_string(tiny_model_dir().join("fixture.json")).unwrap();
+    let fixture: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let cases = fixture["cases"]
+        .as_array()
+        .expect("the fixture lists its cases");
+    assert!(cases.len() >= 7, "the case list shrank: {}", cases.len());
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let messages: Vec<ChatMessage> = case["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| ChatMessage::new(m["role"].as_str().unwrap(), m["content"].as_str().unwrap()))
+            .collect();
+        let options = GenerationOptions {
+            max_new_tokens: case["options"]["max_new_tokens"].as_u64().unwrap() as u32,
+            json_schema: case["options"]["json_schema"].as_str().map(str::to_string),
+            ..GenerationOptions::default()
+        };
+        let got = generator.generate(&messages, &options, &CancelToken::default(), &mut |_| {});
+        let expect = &case["expect"];
+        match expect["error"].as_str() {
+            Some("invalid_options") => {
+                assert!(
+                    matches!(got, Err(TextError::InvalidOptions(_))),
+                    "{name}: {got:?}"
+                )
+            }
+            Some("generation_failed") => {
+                assert!(
+                    matches!(got, Err(TextError::GenerationFailed(_))),
+                    "{name}: {got:?}"
+                )
+            }
+            Some(other) => panic!("{name}: an error kind this binding does not map: {other}"),
+            None => {
+                let result = got.unwrap_or_else(|e| panic!("{name}: {e}"));
+                assert_eq!(result.text, expect["text"].as_str().unwrap(), "{name}");
+                let finish = match result.finish_reason {
+                    FinishReason::Length => "length",
+                    FinishReason::Stop => "stop",
+                    other => panic!("{name}: {other:?}"),
+                };
+                assert_eq!(finish, expect["finish"].as_str().unwrap(), "{name}");
+                if let Some(ids) = expect["ids"].as_array() {
+                    let ids: Vec<i32> = ids.iter().map(|v| v.as_i64().unwrap() as i32).collect();
+                    assert_eq!(result.tokens, ids, "{name}");
+                }
+            }
+        }
+    }
+}
