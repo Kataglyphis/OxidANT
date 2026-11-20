@@ -121,14 +121,6 @@ Empty on 2026-11-17: nothing else is in the queue.
       per step instead of rebuilding each user's group 0 (`rebind_primitives`); (e) a GPU test that the two paths
       render identical frames. Guard: `tests/texture_streaming.rs`.
 
-- [ ] **A twin of BB's all-maximum settings sweep** (M, ★). Plan X17; the lost-device handling it waited for is in since 2026-11-20.
-      `tests/settings_sweep.rs`, env-gated and weekly, not per push. First the corner at 1200x768 (256 px reaches no
-      buffer limit): 3 cascades at 4096, PCF 5, 128/128 cloud steps at full resolution, deferred, clouds on, the path
-      tracer at 64 spp and 16 bounces, 4 shadowed point and spot lights. Then 16 seeded random `ui::RendererSettings`
-      across the 3 modes and 2 raster paths, a few frames each. Each case: no validation or uncaptured error (an
-      error-scope collector), no lost device, a non-empty frame. Negative control: a deliberate validation error on
-      the same device must be reported; an out-of-range setting cannot be one, since `apply()` clamps.
-
 - [ ] **Persist a pipeline cache in the native viewer, if it pays** (S, ★). Plan X16. Measure a cold against a warm
       start on Vulkan first (RX 9070 XT, lavapipe): drivers keep their own shader caches, and naga's parse and SPIR-V
       emission run at every start regardless. If it pays: `wgpu::Features::PIPELINE_CACHE` where offered, one

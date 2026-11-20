@@ -279,7 +279,11 @@ same day: `CHANGELOG.md`).
   the load errors); `crates/burn_demos/tests/` (each demo's result, the detector demo on the
   real model); and the renderer's 34 binaries under `crates/webgpu_renderer/tests/`, where
   `feature_matrix.rs` runs the shadow settings, the cube skybox, the clouds, the model transform and
-  frustum culling on both raster paths and in both traced modes.
+  frustum culling on both raster paths and in both traced modes. `settings_sweep.rs`, BeschleunigerBallett's twin,
+  renders every setting at its maximum at 1200x768 (3 cascades at 4096, PCF 5, 128/128 cloud steps, 64 spp at 16
+  bounces, 4 shadowed point and spot lights) and 16 seeded random settings over the 3 modes and 2 raster paths inside
+  a validation scope; it skips unless `KATAGLYPHIS_SETTINGS_SWEEP=1` and runs weekly in `settings-sweep.yml` (2.5 min
+  on lavapipe on a Pi 5).
 - Scenario replays: `crates/observant/tests/scenarios.rs` drives the model runs in
   `crates/observant/tests/scenarios/*.jsonl` through ObservANT's visit rules and asserts each
   scenario's visits and stays ([observant.md](observant.md)); a retuned rule fails the scenario

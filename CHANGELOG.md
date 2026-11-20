@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-20, the renderer settings sweep)
+
+- `crates/webgpu_renderer/tests/settings_sweep.rs`, BeschleunigerBallett's all-maximum sweep: the corner at 1200x768
+  in all three modes, then 16 seeded random settings over every mode and raster path, each inside a validation scope
+  with no device loss and more than one colour; a deliberate validation error is the negative control. It runs
+  weekly and by hand in `settings-sweep.yml`; 2.5 min on lavapipe on a Pi 5.
+
 ### Fixed (2026-11-20, compressed textures in the traced modes)
 
 - The tracer decodes a BC1/3/5/7 texture (KTX2, Basis on a BC adapter) from the mip level just above its layer side

@@ -1,0 +1,52 @@
+# The renderer's all-maximum settings sweep (tests/settings_sweep.rs, plan X17) on lavapipe, once a week and on demand.
+name: Renderer settings sweep
+
+on:
+  schedule:
+    - cron: "30 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: settings-sweep-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Settings sweep (lavapipe, x64)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - name: Prepare the CI host
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
+        with:
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GHCR_PAT }}
+
+      - name: Restore the cargo and compiler cache
+        id: cc
+        uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-restore@develop
+        with:
+          key: x64-settings-sweep
+          mounts: 'cargo-home:/tmp/cargo-home sccache:/var/cache/sccache'
+          env: 'SCCACHE_CACHE_SIZE=1500M RUSTC_WRAPPER=/workspace/third_party/ANTfrastructure/linux/scripts/01-core/sccache-launcher.sh'
+
+      - name: Run the sweep
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
+        with:
+          extra-args: --platform linux/amd64 -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always -e KATAGLYPHIS_SETTINGS_SWEEP=1 -e KATAGLYPHIS_REQUIRE_GPU=1 ${{ steps.cc.outputs.docker-args }}
+          script: bash -lc 'cargo test --locked -p kataglyphis_webgpu_renderer --test settings_sweep -- --test-threads 1'
+
+      - name: Trim the cargo home
+        if: always() && steps.cc.outputs.path != ''
+        env:
+          CACHE_PATH: ${{ steps.cc.outputs.path }}
+        run: rm -rf "${CACHE_PATH}/cargo-home/registry/src" "${CACHE_PATH}/cargo-home/git/checkouts"
+
+      - name: Save the cargo and compiler cache
+        if: always() && steps.cc.outputs.path != ''
+        uses: Kataglyphis/ANTfrastructure/.github/actions/compiler-cache-save@develop
+        with:
+          key: x64-settings-sweep
