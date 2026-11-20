@@ -102,14 +102,11 @@ Empty on 2026-11-17: nothing else is in the queue.
       Since 2026-11-16 the renderer streams material mips by screen-space need (roadmap, *Texture streaming*), a
       step copies the resident levels on the GPU (the GL backend keeps the CPU path for compressed textures), and a
       texture drops levels it has not needed for a while; the CPU chains fit a budget and rebuild from the scene's
-      images past it. Open: (4) bindless material textures for scenes with thousands of materials. Measured blockers,
-      2026-11-16, slangc 2026.17 in `:latest`: a WGSL target emits `Texture2D t[64]` as `array<texture_2d<f32>, 64>`,
-      which WGSL forbids (naga takes texture arrays only as `binding_array<..>`), and refuses
-      `NonUniformResourceIndex` outright, so `shaders/forward/forward.slang` cannot index an array as is. slangc
-      2026.22 (release binary, 2026-11-17) fixes both: it emits `binding_array<texture_2d<f32>, i32(64)>` and indexes
-      it, and naga 30 validates that once `enable wgpu_binding_array;` heads the file, which slangc does not write.
-      The image's slangc is the Vulkan SDK's (1.4.363.0 = 2026.17+25; 1.4.363.1 has no newer Slang tag), so it
-      arrives with the next SDK or a separate slangc pin in the hub. The work:
+      images past it. Open: (4) bindless material textures for scenes with thousands of materials. Blocked on the
+      image's slangc, measured 2026-11-16: 2026.17 can neither emit nor index a WGSL texture array, so
+      `shaders/forward/forward.slang` cannot index one as is; 2026.22 can, and its output validates in naga 30 once
+      the shader build prepends `enable wgpu_binding_array;`. The hub's CON287 owns that slangc
+      (`third_party/ANTfrastructure/BACKLOG.md`). The work:
       (a) a bindless variant of the eight `forward.slang` entry points (`vs_main`/`fs_main`,
       `vs_shadow_masked`/`fs_shadow_masked`, `fs_gbuffer`, ...;
       group 0 bindings 3-12 become one texture and one sampler array in their own group plus a per-primitive
@@ -140,8 +137,17 @@ Empty on 2026-11-17: nothing else is in the queue.
       the JUnit record names the binary and its `ADAPTER:` line the width: loop that binary at `--test-threads 4`
       under `gdb -batch -ex run -ex "thread apply all bt"` and record the stack here.
 
+- [ ] **The first traced test aborts on windows-11-arm, serially too** (M). The lane was last green on 2026-10-15,
+      before wgpu 30. Now the first test that traces exits `0xC0000409` (a fail-fast abort) right after its `test …`
+      line, with no panic text, so the abort is native (FXC, WARP or the D3D12 runtime), not Rust: `traced_modes`'
+      `a_mask_cutout_lets_the_sun_through_in_both_traced_modes` in run 44759227422, `ktx2`'s
+      `a_bc1_texture_colours_the_cube_in_both_traced_modes` in run 44782412041. WARP x64 passes all 24 traced tests
+      since 0abbb7d. WER named no module: the hub's staged runner looked once, and WER logs a fail-fast only after the
+      exit; the hub now waits up to 15 s. Next: run `[ci windows-arm64-cross]` with that hub pin and read
+      `WER: faulting module …`: `d3dcompiler_47.dll` points at FXC on the tracer's shader, `d3d10warp.dll` at WARP.
+
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
-      `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially all pass. Re-dispatch
+      `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially only the abort above. Re-dispatch
       `windows-arm64-cross.yml` with `parallel-renderer-tests` after a runner image update. Still there on
       2026-11-20 (run 44739816593, the runner image of that day): the same fault in `d3d10warp.dll`.
 
@@ -199,6 +205,13 @@ Empty on 2026-11-17: nothing else is in the queue.
       container runs as uid 1001. Once the image carries both: one `clippy-windows` step for
       `kataglyphis_observant`, `kataglyphis_text` and the root package, with the added minutes
       measured (about 5 a package, `docs/observant.md`) before it runs on every push.
+
+- [b] **The Pester suites still speak Pester 3.4** (M, ★). 10 suites under `scripts/windows/tests` hold
+      77 dash-less `Should Be` lines, so `lint-gates.yml` and `windows-gpu-candidates.yml` pin Pester 3.4.0, the runner's inbox copy, and nothing runs
+      them on Linux. The hub's next image carries Pester 6.2.0 in `pwsh` (hub CON273, CON283), which refuses that
+      dialect. Blocked on that chain. Then: `Should -Be` and its kin, setup moved into `BeforeAll` or `BeforeEach`
+      (Pester 5 and 6 discover a file before they run it), the `3.4.0` pins dropped, and the suites run in the image
+      as well. Done when no workflow pins 3.4.0.
 
 ## Recorded probes
 

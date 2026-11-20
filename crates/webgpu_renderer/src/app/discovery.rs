@@ -411,9 +411,10 @@ mod tests {
             .iter()
             .find(|e| e.display == "Dinosaurs/dinosaurs")
             .unwrap();
+        // The tooltip shows the platform's separators: Windows writes `Resources\Models\...`.
         assert_eq!(
-            dinosaurs.location,
-            "Resources/Models/Dinosaurs/dinosaurs.obj"
+            Path::new(&dinosaurs.location),
+            Path::new("Resources/Models/Dinosaurs/dinosaurs.obj")
         );
         let colosseum = library
             .entries()

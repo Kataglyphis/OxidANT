@@ -24,3 +24,6 @@ packaging/windows/*.cmd text eol=crlf
 
 # The COCO class list is parsed at compile time, line by line, and a CR would end up in every name.
 crates/core/src/coco-classes.txt text eol=lf
+
+# The glTF loader's tests patch the fixtures' JSON by its exact text, line ends included.
+crates/assets/tests/assets/*.gltf text eol=lf
