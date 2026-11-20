@@ -90,7 +90,7 @@ impl CloudAmbient {
 }
 
 /// `sky.slang`'s `untonemapped`: the radiance whose ACES curve shows `display`.
-fn untonemapped(display: f32) -> f32 {
+pub(crate) fn untonemapped(display: f32) -> f32 {
     let (a, b, c, d, e) = (2.51, 0.03, 2.43, 0.59, 0.14);
     let y = display.clamp(0.0, 1.0);
     let (qa, qb) = (a - c * y, b - d * y);

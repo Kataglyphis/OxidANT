@@ -63,6 +63,36 @@ fn a_constant_environment_convolves_to_its_own_radiance() {
     eprintln!("uniform-environment irradiance: worst relative error {worst:.6}");
 }
 
+/// A one-colour cube lights like that colour as the sky pass draws it: the cube bake reaches the irradiance map.
+#[test]
+fn a_one_colour_skybox_lights_with_its_drawn_radiance() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let faces =
+        kataglyphis_webgpu_renderer::asset::skybox::CubemapFaces::solid([[180, 120, 60, 255]; 6]);
+    let panorama = EquirectImage::from_cubemap(&faces, 64, 32);
+    let radiance: [f32; 3] = std::array::from_fn(|channel| panorama.rgba32f[channel]);
+    assert!(
+        radiance[0] > radiance[1] && radiance[1] > radiance[2],
+        "{radiance:?}"
+    );
+    let environment = IblEnvironment::bake(&gpu, &panorama);
+    for face in 0..6u32 {
+        for texel in environment.read_irradiance_face(&gpu, face) {
+            for channel in 0..3 {
+                let relative = (texel[channel] - radiance[channel]).abs() / radiance[channel];
+                assert!(
+                    relative < 0.001,
+                    "face {face} channel {channel}: {} against {}",
+                    texel[channel],
+                    radiance[channel]
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn a_constant_environment_prefilters_to_its_own_radiance_at_every_roughness() {
     let Some(gpu) = GpuContext::headless_or_skip() else {

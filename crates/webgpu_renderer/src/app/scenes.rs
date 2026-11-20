@@ -167,8 +167,11 @@ impl StudioApp {
     }
 
     /// Shows `faces` as the skybox from the next frame on; the browser's fetch lands here, the native folder too.
+    /// Also lights the scene with the cube: reflections, diffuse ambient and the path tracer's misses, as C++ does.
     pub fn set_skybox_faces(&mut self, faces: &crate::asset::skybox::CubemapFaces) {
         self.renderer.set_skybox(&self.gpu, faces);
+        let panorama = crate::render::ibl::EquirectImage::from_cubemap(faces, 256, 128);
+        self.renderer.set_environment(&self.gpu, &panorama);
     }
 
     /// Swaps in `scene` at once, framed and lit as a load would be; no library row holds it.

@@ -41,6 +41,30 @@ const LUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// Uploaded as f32; `Float32Filterable` is not requested, so `ibl.wgsl` filters it by hand.
 const EQUIRECT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
+/// The WebGPU cube face (+X, -X, +Y, -Y, +Z, -Z) `dir` hits and its texture coordinates, row 0 at the top.
+fn cube_face_st(dir: [f32; 3]) -> (usize, f32, f32) {
+    let [x, y, z] = dir;
+    let (ax, ay, az) = (x.abs(), y.abs(), z.abs());
+    let (face, sc, tc, ma) = if ax >= ay && ax >= az {
+        if x > 0.0 {
+            (0, -z, -y, ax)
+        } else {
+            (1, z, -y, ax)
+        }
+    } else if ay >= az {
+        if y > 0.0 {
+            (2, x, z, ay)
+        } else {
+            (3, x, -z, ay)
+        }
+    } else if z > 0.0 {
+        (4, x, -y, az)
+    } else {
+        (5, -x, -y, az)
+    };
+    (face, 0.5 * (sc / ma + 1.0), 0.5 * (tc / ma + 1.0))
+}
+
 /// A decoded equirectangular panorama: linear radiance, RGBA, row-major.
 #[derive(Clone, Debug)]
 pub struct EquirectImage {
@@ -67,6 +91,44 @@ impl EquirectImage {
             height,
             rgba32f,
         })
+    }
+
+    /// The cube map as the sky pass draws it (sRGB-decoded, then untonemapped), resampled to `width` x `height`.
+    /// Nearest texel: the bake's convolution smooths far more than one texel.
+    pub fn from_cubemap(
+        faces: &crate::asset::skybox::CubemapFaces,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        use crate::render::clouds::untonemapped;
+        use crate::render::texture::srgb_to_linear;
+        let size = faces.size.max(1) as usize;
+        let mut rgba32f = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            // The inverse of `equirect_uv` in ibl.slang: v = 0 is +Y, u = 0.5 looks along +X.
+            let latitude = (0.5 - (y as f32 + 0.5) / height as f32) * std::f32::consts::PI;
+            for x in 0..width {
+                let longitude = ((x as f32 + 0.5) / width as f32 - 0.5) * std::f32::consts::TAU;
+                let dir = [
+                    latitude.cos() * longitude.cos(),
+                    latitude.sin(),
+                    latitude.cos() * longitude.sin(),
+                ];
+                let (face, s, t) = cube_face_st(dir);
+                let column = ((s * size as f32) as usize).min(size - 1);
+                let row = ((t * size as f32) as usize).min(size - 1);
+                let texel = (face * size * size + row * size + column) * 4;
+                for channel in 0..3 {
+                    rgba32f.push(untonemapped(srgb_to_linear(faces.rgba8[texel + channel])));
+                }
+                rgba32f.push(1.0);
+            }
+        }
+        Self {
+            width,
+            height,
+            rgba32f,
+        }
     }
 
     /// A constant-radiance panorama, the one environment whose convolution has a closed form.
@@ -841,6 +903,51 @@ fn read_texture_halves(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One colour per face: each axis direction of the panorama reads its own face, as the sky pass samples the cube.
+    #[test]
+    fn a_cubemap_panorama_looks_along_each_axis_at_its_own_face() {
+        let colors = [
+            [255, 0, 0, 255],
+            [0, 255, 0, 255],
+            [0, 0, 255, 255],
+            [255, 255, 0, 255],
+            [0, 255, 255, 255],
+            [255, 0, 255, 255],
+        ];
+        let faces = crate::asset::skybox::CubemapFaces::solid(colors);
+        let (width, height) = (64, 32);
+        let image = EquirectImage::from_cubemap(&faces, width, height);
+        let at = |u: f32, v: f32| {
+            let (x, y) = (
+                (u * width as f32) as usize,
+                (v * height as f32).min(height as f32 - 1.0) as usize,
+            );
+            let i = (y * width as usize + x) * 4;
+            [
+                image.rgba32f[i] > 0.5,
+                image.rgba32f[i + 1] > 0.5,
+                image.rgba32f[i + 2] > 0.5,
+            ]
+        };
+        // Through ibl.slang's equirect_uv: +X at u 0.5, +Z at 0.75, -X at 0, -Z at 0.25, +Y at v 0, -Y at v 1.
+        assert_eq!(at(0.5, 0.5), [true, false, false], "+X");
+        assert_eq!(at(0.0, 0.5), [false, true, false], "-X");
+        assert_eq!(at(0.5, 0.0), [false, false, true], "+Y");
+        assert_eq!(at(0.5, 0.999), [true, true, false], "-Y");
+        assert_eq!(at(0.75, 0.5), [false, true, true], "+Z");
+        assert_eq!(at(0.25, 0.5), [true, false, true], "-Z");
+    }
+
+    #[test]
+    fn a_cube_face_coordinate_matches_webgpus_convention() {
+        // +X: s runs along -Z, t along -Y; the face centre is (0.5, 0.5).
+        assert_eq!(cube_face_st([1.0, 0.0, 0.0]), (0, 0.5, 0.5));
+        let (face, s, t) = cube_face_st([1.0, 0.5, -0.5]);
+        assert_eq!((face, s, t), (0, 0.75, 0.25));
+        let (face, s, t) = cube_face_st([0.5, 1.0, 0.5]);
+        assert_eq!((face, s, t), (2, 0.75, 0.75));
+    }
 
     #[test]
     fn half_decoding_covers_normals_subnormals_and_specials() {

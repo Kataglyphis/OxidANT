@@ -76,16 +76,11 @@ its open work is here.
 The renderer entries below come from BeschleunigerBallett's bridge and feature plan (2026-11-18; the ids are the
 plan's). Its C++ and bridge work is in BB's `BACKLOG.md`.
 
-- [ ] **The IBL ignores the loaded skybox, and the traced modes drop compressed textures** (M, ★★). Plan R2.
-      (1) The IBL is baked once from the procedural panorama (`app/mod.rs`), so after the photographed cube loads,
-      reflections, diffuse ambient and the path tracer's bounce misses still show the gradient; C++'s bounce misses
-      sample the drawn cube since BB's 2026-11-16 decision. Bake from the cube in `StudioApp::set_skybox_faces` with
-      `CloudAmbient::of_cubemap`'s decode (`srgb_to_linear`, then `sky.slang`'s untonemapped) and `set_environment`;
-      keep it out of `ForwardRenderer::set_skybox` and the skybox switch, whose navy case `tests/scene_controls.rs`
-      pins. (2) `LayerAssigner::layer` (`render/tracer/material.rs`) drops BC textures, so KTX2 and Basis materials
+- [ ] **The traced modes drop compressed textures** (M, ★★). Plan R2.
+      (1) Done 2026-11-20: `set_skybox_faces` bakes the IBL from the cube (`EquirectImage::from_cubemap`, the sky
+      pass's decode), outside `set_skybox` and the switch. Left: (2) `LayerAssigner::layer` (`render/tracer/material.rs`) drops BC textures, so KTX2 and Basis materials
       trace with their factor alone: decode the mip level just above the layer side with `bc_decode::decode_level`,
-      one texture per step on wasm (`WEB_STEP_BUDGET`). Tests: a metallic sphere reflects the cube's colour; a KTX2
-      card shows its texture in both traced modes.
+      one texture per step on wasm (`WEB_STEP_BUDGET`). Test: a KTX2 card shows its texture in both traced modes.
 
 ### Quality queue
 

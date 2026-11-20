@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-20, the cube sky lights the scene)
+
+- `StudioApp::set_skybox_faces` bakes the IBL from the loaded cube, so reflections, diffuse ambient and the path
+  tracer's misses see the photographed sky instead of the procedural gradient, as C++ does. `EquirectImage::from_cubemap`
+  resamples the faces with the sky pass's decode (sRGB, then untonemapped) along WebGPU's cube convention; tests hold
+  each axis to its face and a one-colour cube's irradiance to its drawn radiance.
+
 ### Fixed (2026-11-20, a lost GPU device)
 
 - `GpuContext` registers wgpu's device-lost callback: a loss sets a flag, `StudioApp::frame` stops drawing and sends the
