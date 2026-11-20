@@ -47,6 +47,7 @@ pub(crate) fn parse(bytes: &[u8]) -> anyhow::Result<Parsed> {
     }
     root.extensions_required.retain(|name| name != BASISU);
     reject_dangling_positions(&root)?;
+    reject_sourceless_images(&root)?;
     let document = gltf::Document::from_json(root)?;
     crate::accessor_check::check_primitive_accessors(&document)?;
     Ok(Parsed {
@@ -68,6 +69,21 @@ fn reject_dangling_positions(root: &gltf::json::Root) -> anyhow::Result<()> {
                     index.value()
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+/// gltf-json 1.4.1 validates neither: `Image::source` unwraps the uri, or a bufferView's mimeType, and panics.
+fn reject_sourceless_images(root: &gltf::json::Root) -> anyhow::Result<()> {
+    for (i, image) in root.images.iter().enumerate() {
+        match (&image.buffer_view, &image.uri) {
+            (Some(_), _) => anyhow::ensure!(
+                image.mime_type.is_some(),
+                "images[{i}] names a bufferView but no mimeType"
+            ),
+            (None, Some(_)) => {}
+            (None, None) => anyhow::bail!("images[{i}] has neither a uri nor a bufferView"),
         }
     }
     Ok(())
@@ -297,6 +313,32 @@ mod tests {
             rgba8: vec![value; 4],
             compressed: None,
         }))
+    }
+
+    /// Each shape made `Image::source` panic on a fuzzed file (Windows lane, 2026-11-20); now each is an error.
+    #[test]
+    fn an_image_without_a_source_is_an_error_not_a_panic() {
+        let doc = |images: &str| {
+            format!(
+                r#"{{"asset":{{"version":"2.0"}},"buffers":[{{"byteLength":4,"uri":"data:application/octet-stream;base64,AAAAAA=="}}],"bufferViews":[{{"buffer":0,"byteLength":4}}],"images":[{images}]}}"#
+            )
+        };
+        let no_source = parse(doc("{}").as_bytes())
+            .err()
+            .expect("an image with no source loaded");
+        assert!(
+            format!("{no_source:#}").contains("neither a uri nor a bufferView"),
+            "{no_source:#}"
+        );
+        let no_mime = parse(doc(r#"{"bufferView":0}"#).as_bytes())
+            .err()
+            .expect("a bufferView image without a mimeType loaded");
+        assert!(
+            format!("{no_mime:#}").contains("no mimeType"),
+            "{no_mime:#}"
+        );
+        assert!(parse(doc(r#"{"bufferView":0,"mimeType":"image/png"}"#).as_bytes()).is_ok());
+        assert!(parse(doc(r#"{"uri":"tex.png"}"#).as_bytes()).is_ok());
     }
 
     #[test]

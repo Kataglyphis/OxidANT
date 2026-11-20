@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-20, a glTF image without a source)
+
+- `gltf_images::parse` rejects an image with neither a `uri` nor a `bufferView`, and a `bufferView` image without a
+  `mimeType`, before `gltf::Document` exists: gltf-json 1.4.1 validates neither and `Image::source` unwraps them, so a
+  fuzzed file panicked the loader (`flat.rs`' mutation property on the `windows-x64` lane, seed 2). The case is in
+  `flat.proptest-regressions`, and a unit test holds both shapes to an error.
+
 ### Changed (2026-11-19, the bridge foundations' review rules)
 
 - **`kataglyphis_render_core`**: `Frustum` culls by the C++ engine's rules (owner decision 2026-11-19): an inverted

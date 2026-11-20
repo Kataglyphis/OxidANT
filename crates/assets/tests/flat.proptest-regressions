@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc a542e76be6f248f14ba8229357c25b674fbf0fe18d100b2f246d133dcf587413 # shrinks to seed = 5, mutations = [Digit(Index(4627318852388158711), 2)]
+cc 9fa738967e32761073d70556e1b7e06b33b0f19427bb1c2ff77d480671e6914c # shrinks to seed = 2, mutations = [Overwrite(Index(16355461250276637196), 32)], mikktspace_tangents = false
