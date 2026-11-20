@@ -58,7 +58,7 @@ pub(super) fn provider_label(provider: Option<&str>) -> &'static str {
 
 fn register_provider(
     builder: &mut SessionBuilder,
-    provider: &dyn ort::execution_providers::ExecutionProvider,
+    provider: &dyn crate::ort_ext::Provider,
 ) -> Result<()> {
     require_available(provider)?;
     if provider.name() == "CUDAExecutionProvider" {
@@ -80,7 +80,7 @@ fn register_provider(
     Ok(())
 }
 
-fn require_available(provider: &dyn ort::execution_providers::ExecutionProvider) -> Result<()> {
+fn require_available(provider: &dyn crate::ort_ext::Provider) -> Result<()> {
     // GetAvailableProviders never lists a plugin: its module on disk makes it available.
     #[cfg(target_os = "linux")]
     if let Some(plugin) = crate::ort_plugin::Plugin::named(provider.name()) {
@@ -118,10 +118,9 @@ fn parse_directml_device_id(value: Option<&str>) -> Result<Option<i32>> {
     Ok(Some(id))
 }
 
-fn providers_for_device(
-    device: Device,
-) -> Result<Vec<Box<dyn ort::execution_providers::ExecutionProvider>>> {
-    use ort::execution_providers::CUDA;
+fn providers_for_device(device: Device) -> Result<Vec<Box<dyn crate::ort_ext::Provider>>> {
+    use crate::ort_ext::Builtin;
+    use ort::ep::CUDA;
 
     if device == Device::Directml && !cfg!(windows) {
         return Err(anyhow!("DirectML is available only on Windows"));
@@ -137,9 +136,9 @@ fn providers_for_device(
         }
         .into());
     }
-    let mut providers: Vec<Box<dyn ort::execution_providers::ExecutionProvider>> = Vec::new();
+    let mut providers: Vec<Box<dyn crate::ort_ext::Provider>> = Vec::new();
     if matches!(device, Device::Auto | Device::Cuda) {
-        providers.push(Box::new(CUDA::default()));
+        providers.push(Box::new(Builtin(CUDA::default())));
     }
     #[cfg(target_os = "linux")]
     if matches!(device, Device::Auto | Device::Migraphx) {
@@ -148,10 +147,10 @@ fn providers_for_device(
         )));
     }
     if device == Device::Xnnpack {
-        providers.push(Box::new(ort::execution_providers::XNNPACK::default()));
+        providers.push(Box::new(Builtin(ort::ep::XNNPACK::default())));
     }
     if device == Device::Dnnl {
-        providers.push(Box::new(ort::execution_providers::OneDNN::default()));
+        providers.push(Box::new(Builtin(ort::ep::OneDNN::default())));
     }
     #[cfg(windows)]
     if matches!(device, Device::Auto | Device::Directml) {
@@ -162,11 +161,11 @@ fn providers_for_device(
                 return Err(anyhow!("KATAGLYPHIS_DIRECTML_DEVICE_ID must be Unicode"));
             }
         };
-        let mut provider = ort::execution_providers::DirectML::default();
+        let mut provider = ort::ep::DirectML::default();
         if let Some(id) = parse_directml_device_id(value.as_deref())? {
             provider = provider.with_device_id(id);
         }
-        providers.push(Box::new(provider));
+        providers.push(Box::new(Builtin(provider)));
     }
 
     Ok(providers)
@@ -174,7 +173,7 @@ fn providers_for_device(
 
 fn try_device<T>(
     device: Device,
-    mut attempt: impl FnMut(Option<&dyn ort::execution_providers::ExecutionProvider>) -> Result<T>,
+    mut attempt: impl FnMut(Option<&dyn crate::ort_ext::Provider>) -> Result<T>,
 ) -> Result<T> {
     for provider in providers_for_device(device)? {
         match attempt(Some(provider.as_ref())) {
@@ -188,11 +187,12 @@ fn try_device<T>(
 
 fn create_session(
     path: &std::path::Path,
-    provider: Option<&dyn ort::execution_providers::ExecutionProvider>,
+    provider: Option<&dyn crate::ort_ext::Provider>,
     profile: Option<&std::path::Path>,
 ) -> Result<Session> {
     // A new builder for each provider: a failed append leaves its options behind, and AMD's plugin refuses another provider's.
-    let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
+    let mut builder = Session::builder(crate::ort_runtime::environment()?)
+        .with_ort_context("Failed to create ORT SessionBuilder")?;
     if let Some(prefix) = profile {
         builder = builder
             .with_profiling(prefix)
@@ -352,20 +352,19 @@ mod device_tests {
 
     #[test]
     fn a_card_without_a_kernel_stops_a_named_cuda_and_leaves_auto_the_cpu() {
-        let attempt_without_a_gpu =
-            |attempts: &mut Vec<Option<&'static str>>,
-             p: Option<&dyn ort::execution_providers::ExecutionProvider>|
-             -> anyhow::Result<()> {
-                attempts.push(p.map(|p| p.name()));
-                match p {
-                    Some(p) => Err(ProviderUnavailable {
-                        provider: p.name(),
-                        reason: "has no kernel".into(),
-                    }
-                    .into()),
-                    None => Ok(()),
+        let attempt_without_a_gpu = |attempts: &mut Vec<Option<&'static str>>,
+                                     p: Option<&dyn crate::ort_ext::Provider>|
+         -> anyhow::Result<()> {
+            attempts.push(p.map(|p| p.name()));
+            match p {
+                Some(p) => Err(ProviderUnavailable {
+                    provider: p.name(),
+                    reason: "has no kernel".into(),
                 }
-            };
+                .into()),
+                None => Ok(()),
+            }
+        };
         let mut attempts = Vec::new();
         let named = try_device(Device::Cuda, |p| attempt_without_a_gpu(&mut attempts, p));
         assert!(named.unwrap_err().to_string().contains("has no kernel"));

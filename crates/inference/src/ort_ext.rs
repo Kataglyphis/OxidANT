@@ -35,3 +35,30 @@ pub fn extract_first_f32_output(
 
     Ok((dims, data.to_vec()))
 }
+
+/// An execution provider behind a pointer; `ort` 2.0.0-rc.15's own trait has a const name and a static check, so no `dyn`.
+pub trait Provider: Send + Sync {
+    /// ONNX Runtime's name, e.g. `CUDAExecutionProvider`.
+    fn name(&self) -> &'static str;
+    /// Whether the loaded ONNX Runtime was built with it; a plugin answers whether its module is on disk.
+    fn is_available(&self) -> ort::Result<bool>;
+    /// Appends it to `builder`'s session options.
+    fn register(&self, builder: &mut ort::session::builder::SessionBuilder) -> ort::Result<()>;
+}
+
+/// One of `ort`'s built-in providers as a [`Provider`].
+pub struct Builtin<E>(pub E);
+
+impl<E: ort::ep::ExecutionProvider> Provider for Builtin<E> {
+    fn name(&self) -> &'static str {
+        E::NAME
+    }
+
+    fn is_available(&self) -> ort::Result<bool> {
+        E::is_available()
+    }
+
+    fn register(&self, builder: &mut ort::session::builder::SessionBuilder) -> ort::Result<()> {
+        self.0.register(builder)
+    }
+}

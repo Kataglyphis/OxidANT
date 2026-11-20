@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-20, `ort` 2.0.0-rc.15)
+
+- `ort` moves from `=2.0.0-rc.13` to `=2.0.0-rc.15` (owner OK 2026-11-20; ANTfrastructure CON95 step 2). rc.15 renames
+  `execution_providers` to `ep`, makes its provider trait carry a const name and a static availability check, and
+  passes the environment to every `Session::builder`. `ort_ext::Provider` is the object-safe trait the detector's
+  provider list and the MIGraphX plugin share (`Builtin` wraps ort's own), and `ort_runtime::environment()` holds the
+  process's one environment, of which `ort` keeps only a weak reference.
+
 ### Fixed (2026-11-20, raster normals, OBJ draws and the native build)
 
 - Raster keeps the geometric normal of a material without a normal map: the flat fallback (128, 128, 255) decoded to a

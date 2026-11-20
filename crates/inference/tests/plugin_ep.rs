@@ -7,11 +7,11 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::{model, unavailable};
+use kataglyphis_inference::ort_ext::Provider;
 use kataglyphis_inference::ort_plugin::{PluginEp, MIGRAPHX};
 use kataglyphis_inference::ort_runtime::ensure_ort_loaded;
 use kataglyphis_inference::person_detection::PersonDetector;
 use kataglyphis_inference::provider::ProviderUnavailable;
-use ort::execution_providers::ExecutionProvider;
 
 /// A plugin root under the temp directory; `lib/` exists and is empty, as in every image without the plugin.
 fn root(name: &str) -> PathBuf {

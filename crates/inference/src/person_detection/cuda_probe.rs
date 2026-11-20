@@ -2,8 +2,9 @@
 
 use std::ffi::{c_char, c_int, c_uint, CStr};
 
+use crate::ort_ext::{Builtin, Provider};
 use anyhow::Result;
-use ort::execution_providers::{ExecutionProvider, CUDA};
+use ort::ep::CUDA;
 use ort::logging::LogLevel;
 use ort::session::Session;
 use ort::value::Tensor;
@@ -25,9 +26,11 @@ const CUDA_DRIVER: &str = "libcuda.so.1";
 
 /// Fails only when the card has no kernel. CUDA reports every other failure when the real session starts.
 pub(super) fn require_kernel(provider: &'static str) -> Result<()> {
-    verdict(provider, run_one_kernel(Some(&CUDA::default())), || {
-        card_on(CUDA_DRIVER)
-    })
+    verdict(
+        provider,
+        run_one_kernel(Some(&Builtin(CUDA::default()))),
+        || card_on(CUDA_DRIVER),
+    )
 }
 
 fn verdict(
@@ -51,13 +54,14 @@ fn no_kernel(provider: &'static str, card: Option<String>) -> ProviderUnavailabl
     }
 }
 
-fn run_one_kernel(provider: Option<&dyn ExecutionProvider>) -> Result<f32, String> {
+fn run_one_kernel(provider: Option<&dyn Provider>) -> Result<f32, String> {
     let text = |error: ort::Error| error.to_string();
     // The verdict below says it better than ONNX Runtime's red line about a failed node.
-    let mut builder = Session::builder()
-        .map_err(text)?
-        .with_log_level(LogLevel::Fatal)
-        .map_err(|error| error.to_string())?;
+    let mut builder =
+        Session::builder(crate::ort_runtime::environment().map_err(|e| format!("{e:#}"))?)
+            .map_err(text)?
+            .with_log_level(LogLevel::Fatal)
+            .map_err(|error| error.to_string())?;
     if let Some(provider) = provider {
         provider.register(&mut builder).map_err(text)?;
     }

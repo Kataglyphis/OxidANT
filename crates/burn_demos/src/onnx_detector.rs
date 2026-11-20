@@ -53,13 +53,14 @@ pub fn onnx_detector_demo(
 
 /// The model in a chain-ORT session (DirectML on Windows), with its input and output names printed.
 fn load_session(model_path: &Path) -> anyhow::Result<Session> {
-    kataglyphis_inference::ort_runtime::ensure_ort_loaded()?;
+    let environment = kataglyphis_inference::ort_runtime::environment()?;
     // `commit_from_file` takes `&mut self`; reassign rather than shadow, or DirectML hits `unused_mut`.
-    let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
+    let mut builder =
+        Session::builder(environment).with_ort_context("Failed to create ORT SessionBuilder")?;
 
     #[cfg(windows)]
     {
-        use ort::execution_providers::DirectML;
+        use ort::ep::DirectML;
         builder = builder
             .with_execution_providers([DirectML::default().build()])
             .with_ort_context("Failed to configure ORT DirectML execution provider")?;

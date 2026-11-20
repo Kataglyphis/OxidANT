@@ -54,14 +54,15 @@ fn the_default_session_runs_on_the_cpu_provider() {
 
 #[test]
 fn an_absent_gpu_provider_is_unavailable_not_a_cpu_session() {
+    use kataglyphis_inference::ort_ext::{Builtin, Provider};
     use kataglyphis_inference::ort_plugin::{PluginEp, MIGRAPHX};
-    use ort::execution_providers::{ExecutionProvider, CUDA};
+    use ort::ep::CUDA;
     let Some(path) = model() else { return };
     kataglyphis_inference::ort_runtime::ensure_ort_loaded().unwrap();
     let mut candidates = vec![(
         "cuda",
-        CUDA::default().name(),
-        CUDA::default().is_available(),
+        Builtin(CUDA::default()).name(),
+        Builtin(CUDA::default()).is_available(),
     )];
     // A plugin is available when its module is on disk; GetAvailableProviders never lists it.
     let migraphx = PluginEp(&MIGRAPHX);

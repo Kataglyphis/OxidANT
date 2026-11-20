@@ -5,8 +5,8 @@ use std::ffi::{CStr, CString, OsStr};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
+use crate::ort_ext::Provider;
 use ort::environment::Environment;
-use ort::execution_providers::ExecutionProvider;
 use ort::session::builder::SessionBuilder;
 use ort::AsPointer;
 
@@ -91,7 +91,7 @@ impl Plugin {
 #[derive(Debug)]
 pub struct PluginEp(pub &'static Plugin);
 
-impl ExecutionProvider for PluginEp {
+impl Provider for PluginEp {
     fn name(&self) -> &'static str {
         self.0.name
     }
@@ -108,19 +108,20 @@ impl ExecutionProvider for PluginEp {
             .map_err(|err| ort::Error::new(format!("{err:#}")))?;
         let about_module =
             |err: ort::Error| ort::Error::new(format!("{}: {err}", module.display()));
-        let env = Environment::current()?;
+        let env =
+            crate::ort_runtime::environment().map_err(|err| ort::Error::new(format!("{err:#}")))?;
         {
             let mut registered = REGISTERED.lock().unwrap_or_else(PoisonError::into_inner);
             register_once(
                 &mut registered,
                 self.0.name,
-                || lists_a_device(&env, self.0.name),
+                || lists_a_device(env, self.0.name),
                 // The handle has no Drop: the module stays registered until the process ends.
                 || env.register_ep_library(self.0.name, &module).map(drop),
             )
             .map_err(about_module)?;
         }
-        append_device(builder, &env, self.0.name, FIRST_DEVICE).map_err(about_module)
+        append_device(builder, env, self.0.name, FIRST_DEVICE).map_err(about_module)
     }
 }
 
@@ -323,17 +324,17 @@ mod tests {
         if crate::ort_runtime::ensure_ort_loaded().is_err() {
             return;
         }
-        let env = Environment::current().unwrap();
-        let builder = || ort::session::Session::builder().unwrap();
-        append_device(&mut builder(), &env, "CPUExecutionProvider", 0).unwrap();
-        let beyond = append_device(&mut builder(), &env, "CPUExecutionProvider", 1).unwrap_err();
+        let env = crate::ort_runtime::environment().unwrap();
+        let builder = || ort::session::Session::builder(env).unwrap();
+        append_device(&mut builder(), env, "CPUExecutionProvider", 0).unwrap();
+        let beyond = append_device(&mut builder(), env, "CPUExecutionProvider", 1).unwrap_err();
         assert!(
             beyond
                 .to_string()
                 .contains("lists 1 CPUExecutionProvider device(s), so there is no device 1"),
             "{beyond}"
         );
-        let none = append_device(&mut builder(), &env, "NoSuchProvider", 0).unwrap_err();
+        let none = append_device(&mut builder(), env, "NoSuchProvider", 0).unwrap_err();
         assert!(
             none.to_string()
                 .contains("lists 0 NoSuchProvider device(s)"),

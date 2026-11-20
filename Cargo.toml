@@ -50,7 +50,7 @@ ndarray = { version = "0.17" }
 plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ab_glyph"] }
 tempfile = { version = "3" }
 # load-dynamic on the declaration so no feature set can link ORT; scripts/linux/check-ort-chain-only.sh enforces it.
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-24"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["load-dynamic", "api-24"] }
 gstreamer = "0.25"
 gstreamer-app = "0.25"
 gstreamer-video = "0.25"

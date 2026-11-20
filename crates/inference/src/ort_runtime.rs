@@ -129,29 +129,36 @@ impl DylibSearch {
     }
 }
 
-static LOADED: OnceLock<std::result::Result<PathBuf, String>> = OnceLock::new();
+/// The loaded dylib and the process's one environment; `ort` keeps only a weak reference, so this one holds it.
+static LOADED: OnceLock<std::result::Result<(PathBuf, ort::environment::Environment), String>> =
+    OnceLock::new();
 
-/// Loads the chain ONNX Runtime once and returns its path; call it before any other `ort` API.
-pub fn ensure_ort_loaded() -> Result<PathBuf> {
+fn loaded() -> Result<&'static (PathBuf, ort::environment::Environment)> {
     LOADED
         .get_or_init(|| {
             let path = DylibSearch::from_process()
                 .resolve(Path::is_file)
                 .and_then(|path| verify_chain_build(&path).map(|()| path))
                 .map_err(|e| format!("{e:#}"))?;
-            let builder = ort::init_from(&path)
-                .map_err(|e| format!("failed to load {}: {e}", path.display()))?;
-            if !builder.commit() {
-                log::debug!(
-                    "an ORT environment already existed; the dylib is still {}",
-                    path.display()
-                );
-            }
+            let environment = ort::init_from(&path)
+                .map_err(|e| format!("failed to load {}: {e}", path.display()))?
+                .build()
+                .map_err(|e| format!("no ORT environment over {}: {e}", path.display()))?;
             log::info!("ONNX Runtime loaded from {}", path.display());
-            Ok(path)
+            Ok((path, environment))
         })
-        .clone()
-        .map_err(|e| anyhow!(e))
+        .as_ref()
+        .map_err(|e| anyhow!(e.clone()))
+}
+
+/// Loads the chain ONNX Runtime once and returns its path; call it before any other `ort` API.
+pub fn ensure_ort_loaded() -> Result<PathBuf> {
+    loaded().map(|(path, _)| path.clone())
+}
+
+/// The process's ORT environment over the chain ONNX Runtime, which every session builder takes.
+pub fn environment() -> Result<&'static ort::environment::Environment> {
+    loaded().map(|(_, environment)| environment)
 }
 
 #[cfg(test)]
