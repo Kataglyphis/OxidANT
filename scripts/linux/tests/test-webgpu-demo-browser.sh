@@ -82,14 +82,18 @@ const events = [
   { method: 'Runtime.consoleAPICalled', params: { type: 'log', args: [{ type: 'string', value: 'fine' }] } },
   { method: 'Log.entryAdded', params: { entry: { source: 'rendering', level: 'warning', text: 'Invalid ComputePipeline' } } },
   { method: 'Log.entryAdded', params: { entry: { source: 'network', level: 'error', text: '404', url: 'http://127.0.0.1:1/favicon.ico' } } },
+  { method: 'Runtime.consoleAPICalled', params: { type: 'warning', args: [{ type: 'string', value: 'Keeping the procedural sky: kloofendal_43d_clear_puresky/px.png: HTTP 404' }] } },
+  { method: 'Log.entryAdded', params: { entry: { source: 'network', level: 'error', text: '404', url: 'http://127.0.0.1:1/kloofendal_43d_clear_puresky/px.png' } } },
+  { method: 'Runtime.consoleAPICalled', params: { type: 'warning', args: [{ type: 'string', value: 'Keeping the procedural sky: px.png: no PNG' }] } },
   { method: 'Runtime.exceptionThrown', params: { exceptionDetails: { text: 'Uncaught', exception: { description: 'RuntimeError: unreachable' } } } },
 ];
 for (const e of events) console.log('PROBLEM ' + problemOf(e));
 " "${check}"
-t_case 'console errors, WebGPU warnings and exceptions count, a log line and the favicon do not'
+t_case 'console errors, WebGPU warnings, exceptions and a broken sky count; a log line, the favicon and an unserved sky do not'
 t_assert_grep "${work}/out" '^PROBLEM console.error: panicked at render$'
 t_assert_grep "${work}/out" '^PROBLEM rendering warning: Invalid ComputePipeline$'
 t_assert_grep "${work}/out" '^PROBLEM exception: RuntimeError: unreachable$'
-t_assert_eq "$(grep -c '^PROBLEM null$' "${work}/out")" 2
+t_assert_grep "${work}/out" '^PROBLEM console.warning: Keeping the procedural sky: px.png: no PNG$'
+t_assert_eq "$(grep -c '^PROBLEM null$' "${work}/out")" 4
 
 t_summary

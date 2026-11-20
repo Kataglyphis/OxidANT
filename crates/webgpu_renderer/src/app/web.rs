@@ -2,6 +2,7 @@
 
 use super::StudioApp;
 use crate::render::forward::RasterPath;
+use crate::render::render_scale::RENDER_SCALE_RANGE;
 use crate::render::tracer::{RenderMode, TraceStatus};
 use crate::scene::viewport::SceneViewport;
 
@@ -89,6 +90,18 @@ impl StudioApp {
         self.camera.yaw_deg = yaw_deg;
         self.camera.pitch_deg = pitch_deg;
         self.controller.auto_orbit = false;
+    }
+
+    /// A fixed render scale; the preset's auto scale would shrink SwiftShader's frames to a quarter.
+    pub(crate) fn apply_demo_render_scale(&mut self, scale: f32) -> Result<(), String> {
+        if !RENDER_SCALE_RANGE.contains(&scale) {
+            return Err(format!(
+                "render scale {scale} is outside {RENDER_SCALE_RANGE:?}"
+            ));
+        }
+        self.renderer.render_scale.scale = scale;
+        self.renderer.render_scale.auto = false;
+        Ok(())
     }
 
     pub(crate) fn demo_report(&self) -> DemoReport {

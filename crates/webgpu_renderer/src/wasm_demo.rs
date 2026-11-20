@@ -345,6 +345,12 @@ pub fn set_demo_camera(yaw_deg: f32, pitch_deg: f32) -> Result<(), JsValue> {
     with_app(|app| app.apply_demo_camera(yaw_deg, pitch_deg))
 }
 
+/// The browser test's render scale, fixed: 1 draws every viewport pixel, so a shadow's share does not depend on the preset.
+#[wasm_bindgen]
+pub fn set_demo_render_scale(scale: f32) -> Result<(), JsValue> {
+    with_app(|app| app.apply_demo_render_scale(scale))?.map_err(|e| JsValue::from_str(&e))
+}
+
 /// What the demo draws now: `{drawn, picked, path, clouds, fxaa, trace, detail, samples, viewport}`.
 #[wasm_bindgen]
 pub fn demo_view() -> Result<JsValue, JsValue> {

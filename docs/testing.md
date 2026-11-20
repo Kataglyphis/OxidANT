@@ -234,9 +234,10 @@ cargo test -p kataglyphis_webgpu_renderer --test tracer the_full_colosseum -- --
 the wasm demo (release, `wasm-bindgen` pinned to `Cargo.lock`) and runs
 `scripts/linux/webgpu-demo-browser.js` against it: the image's headless Chrome on SwiftShader's
 WebGPU (the hub's `webgpu-canvas-readback.js` flags and read-back, `check-docs-sidebars.js`'s launcher).
-It turns the camera to 5° so half the scene is sky, then sets five views through the demo's
-`set_demo_view(mode, path, clouds)` and `set_demo_camera(yaw, pitch)` exports (`src/wasm_demo.rs`,
-a test hook the page never calls): forward, deferred, deferred with clouds, ray traced and path
+It turns the camera to 5° so half the scene is sky and fixes the render scale at 1 (the browser
+presets steer it down to a quarter on SwiftShader), then sets five views through the demo's
+`set_demo_view(mode, path, clouds)`, `set_demo_camera(yaw, pitch)` and `set_demo_render_scale(scale)`
+exports (`src/wasm_demo.rs`, test hooks the page never calls): forward, deferred, deferred with clouds, ray traced and path
 traced (2 samples at least). Each step waits until `demo_view()` reports that mode drawn, reads the
 second frame back, and fails when:
 

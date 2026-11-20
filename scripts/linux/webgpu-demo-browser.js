@@ -31,6 +31,8 @@ const MIN_RAY_SHADOW = 0.0005;
 // In that shadow the path tracer gathers sky and the cube's red bounce: 165 bright and (r + b) / 2 - g of 28 measured, forward 0.8.
 const MIN_PATH_SHADOW_LIGHT = 80;
 const MIN_PATH_SHADOW_TINT = 10;
+// The demo's one warning when the sky folder is not served: a face that answered 404.
+const SKYBOX_MISSING = /Keeping the procedural sky: \S*kloofendal_43d_clear_puresky\/\S+: HTTP 404$/;
 
 function fail(message, code = 2) {
   process.stderr.write(`webgpu-demo-browser: ${message}\n`);
@@ -57,11 +59,14 @@ function parseArgs(argv) {
 // Every console error or warning, uncaught exception and browser log entry the page produced: none is expected.
 function problemOf(m) {
   const p = m.params || {};
+  // The cube sky comes from BeschleunigerBallett, which only its docs build stages beside the page; the procedural sky stays.
+  if (m.method === 'Runtime.consoleAPICalled' && p.type === 'warning' && SKYBOX_MISSING.test(p.args.map((a) => a.value ?? '').join(' '))) return null;
   if (m.method === 'Runtime.consoleAPICalled' && ['error', 'warning', 'assert'].includes(p.type)) {
     return `console.${p.type}: ${p.args.map((a) => a.value ?? a.description ?? a.type).join(' ')}`;
   }
   // Chrome asks every page for a favicon the demo does not ship.
   if (m.method === 'Log.entryAdded' && /\/favicon\.ico$/.test(p.entry.url || '')) return null;
+  if (m.method === 'Log.entryAdded' && /\/kloofendal_43d_clear_puresky\//.test(p.entry.url || '')) return null;
   if (m.method === 'Log.entryAdded' && ['error', 'warning'].includes(p.entry.level)) return `${p.entry.source} ${p.entry.level}: ${p.entry.text}${p.entry.url ? ` (${p.entry.url})` : ''}`;
   if (m.method === 'Runtime.exceptionThrown') return `exception: ${p.exceptionDetails.exception?.description ?? p.exceptionDetails.text}`;
   return null;
@@ -240,6 +245,8 @@ async function openDemo(browser, url, opts) {
   await evaluate(browser, "import('./pkg/kataglyphis_webgpu_renderer.js').then((m) => { window.__demo = m; return true; })");
   // Low enough that the upper half of the scene is sky, where the clouds draw.
   await evaluate(browser, `window.__demo.set_demo_camera(${CAMERA.yaw}, ${CAMERA.pitch})`);
+  // The browser presets steer the scale down on SwiftShader, which shrank the ray tracer's shadow under its floor.
+  await evaluate(browser, 'window.__demo.set_demo_render_scale(1)');
 }
 
 async function run(opts) {

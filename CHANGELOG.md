@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-20, the browser lane)
+
+- `webgpu-demo-browser.js` fixes the render scale at 1 through the new `set_demo_render_scale` export: since the
+  2026-11-17 quality presets SwiftShader rendered at 25 %, so the ray tracer's sun shadow covered 0.032 % of the viewport
+  against its 0.05 % floor (0.200 % again at scale 1). The demo's one warning for an unserved sky folder and its 404s no
+  longer count as page problems: the cube sky comes from BeschleunigerBallett, which only its docs build stages. A local
+  `ci-container-steps.sh web-browser` run passes every mode.
+
 ### Changed (2026-11-20, the genai suite replays the hub's fixture cases)
 
 - `crates/text/tests/genai.rs` replays every case of the hub tiny model's `fixture.json` (pin `14ea0aaf`, ANTfrastructure
