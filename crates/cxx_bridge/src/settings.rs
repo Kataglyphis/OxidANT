@@ -118,7 +118,7 @@ pub mod ffi {
         fn default_scene_settings() -> SceneSettings;
         /// The editor's range for each setting.
         fn setting_ranges() -> SettingRanges;
-        /// `settings` in the editor's ranges: each cloud and shadow field clamped, a NaN at a fallback; the Sun as given.
+        /// `settings` in the editor's ranges: each cloud and shadow field clamped, a NaN or inf at its default; the Sun as given.
         fn sanitize(settings: SceneSettings) -> SceneSettings;
     }
 }
@@ -360,7 +360,7 @@ mod tests {
             resolution: 2048,
             cascade_count: 3,
             pcf_radius: 5,
-            strength: 1.0,
+            strength: 0.65,
             distance: 5.0,
             split_lambda: 1.0,
             ..wild.shadows

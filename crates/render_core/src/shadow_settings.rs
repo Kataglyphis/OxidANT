@@ -53,8 +53,9 @@ impl Default for ShadowSettings {
 }
 
 impl ShadowSettings {
-    /// Every field in its C++ range; an unlisted resolution takes the nearest listed one.
+    /// Every field in its C++ range, a non-finite one at its default; an unlisted resolution takes the nearest listed one.
     pub fn sanitized(&self) -> Self {
+        let defaults = Self::default();
         let finite = |value: f32, fallback: f32| if value.is_finite() { value } else { fallback };
         let within =
             |value: f32, range: &RangeInclusive<f32>| value.clamp(*range.start(), *range.end());
@@ -63,12 +64,15 @@ impl ShadowSettings {
             resolution: nearest_resolution(self.resolution),
             cascade_count: self.cascade_count.clamp(1, CASCADE_COUNT as u32),
             pcf_radius: self.pcf_radius.min(MAX_PCF_RADIUS),
-            strength: within(finite(self.strength, 1.0), &STRENGTH_RANGE),
+            strength: within(finite(self.strength, defaults.strength), &STRENGTH_RANGE),
             distance: within(
-                finite(self.distance, DEFAULT_SHADOW_DISTANCE),
+                finite(self.distance, defaults.distance),
                 &SHADOW_DISTANCE_RANGE,
             ),
-            split_lambda: within(finite(self.split_lambda, 0.0), &SPLIT_LAMBDA_RANGE),
+            split_lambda: within(
+                finite(self.split_lambda, defaults.split_lambda),
+                &SPLIT_LAMBDA_RANGE,
+            ),
             punctual: self.punctual,
         }
     }
@@ -127,7 +131,10 @@ mod tests {
         assert_eq!(wild.resolution, 2048, "3000 is nearer 2048 than 4096");
         assert_eq!(wild.cascade_count, 3);
         assert_eq!(wild.pcf_radius, MAX_PCF_RADIUS);
-        assert_eq!(wild.strength, 1.0);
+        assert_eq!(
+            wild.strength, 0.65,
+            "a NaN takes the default, not the range's top"
+        );
         assert_eq!(wild.distance, 5.0);
         assert_eq!(wild.split_lambda, 1.0);
         assert!(!wild.punctual, "the switch passes through");
@@ -149,5 +156,20 @@ mod tests {
             ..ShadowSettings::default()
         };
         assert_eq!(off.active_cascades(), 0);
+    }
+
+    #[test]
+    fn a_non_finite_field_falls_back_to_its_default() {
+        let defaults = ShadowSettings::default();
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let sane = ShadowSettings {
+                strength: bad,
+                distance: bad,
+                split_lambda: bad,
+                ..defaults
+            }
+            .sanitized();
+            assert_eq!(sane, defaults, "{bad}");
+        }
     }
 }
