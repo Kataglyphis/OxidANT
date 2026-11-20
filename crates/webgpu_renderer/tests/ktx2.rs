@@ -649,3 +649,55 @@ fn a_khr_texture_basisu_cube_draws_its_ramp_from_etc2_or_astc() {
         );
     }
 }
+
+/// A BC1 base colour reaches both traced modes: the tracer decodes the blocks instead of falling back to the factor.
+#[test]
+fn a_bc1_texture_colours_the_cube_in_both_traced_modes() {
+    use kataglyphis_webgpu_renderer::render::tracer::{RenderMode, TraceSettings};
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube.gltf");
+    let mut scene = load_gltf(path).expect("cube.gltf must load");
+    let material = &mut scene.primitives[0].material;
+    material.base_color = [1.0; 4];
+    material.base_color_texture = Some(CpuTextureRef {
+        texture: Arc::new(CpuTexture {
+            width: 8,
+            height: 8,
+            rgba8: Vec::new(),
+            compressed: Some(CompressedTexture {
+                format: CompressedFormat::Bc1RgbaUnorm,
+                mips: vec![green_blocks(4), green_blocks(1)],
+                declared_srgb: Some(true),
+                basis_source: None,
+            }),
+        }),
+        sampler: CpuSampler::default(),
+        srgb: true,
+    });
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.set_trace_source(Arc::new(scene.clone()));
+    renderer.trace_settings = TraceSettings {
+        samples_per_pixel: 4,
+        max_bounces: 1,
+        furnace: None,
+    };
+    let built = renderer
+        .tracer_mut()
+        .finish_build(&gpu, std::time::Duration::from_secs(120));
+    assert!(built, "{:?}", renderer.trace_status());
+    for mode in [RenderMode::RayTraced, RenderMode::PathTraced] {
+        renderer.render_mode = mode;
+        let pixels = renderer
+            .render_to_pixels(&gpu, 128, 128, &OrbitCamera::default())
+            .expect("render");
+        let green = green_pixels(&pixels);
+        assert!(
+            green > 200,
+            "{mode:?}: {green} green pixels; the BC1 texture fell back to the white factor"
+        );
+    }
+}

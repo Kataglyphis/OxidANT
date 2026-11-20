@@ -98,7 +98,7 @@ pub struct MaterialTable {
     pub primitive_material: Vec<u32>,
     pub srgb_layers: Vec<Arc<CpuTexture>>,
     pub linear_layers: Vec<Arc<CpuTexture>>,
-    /// Textures left out: past the layer limit, or compressed with no RGBA8 to resample.
+    /// Textures left out: past the layer limit, or ETC2/ASTC, which only the GPU decodes.
     pub dropped_textures: usize,
 }
 
@@ -112,7 +112,7 @@ struct LayerAssigner {
 
 impl LayerAssigner {
     fn layer(&mut self, texture: &Arc<CpuTexture>, srgb: bool) -> u32 {
-        if texture.compressed.is_some() || texture.width == 0 || texture.height == 0 {
+        if !super::layers::traceable(texture) {
             self.dropped += 1;
             return NO_LAYER;
         }
@@ -157,7 +157,7 @@ impl MaterialTable {
         if assigner.dropped > 0 {
             log::warn!(
                 "tracer: {} material texture reference(s) render with their factor alone \
-                 (compressed, or past {max_layers} layers per array)",
+                 (ETC2 or ASTC, or past {max_layers} layers per array)",
                 assigner.dropped
             );
         }
@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn textures_past_the_layer_limit_or_compressed_fall_back_to_the_factor() {
+    fn textures_past_the_layer_limit_fall_back_to_the_factor() {
         let materials: Vec<CpuPrimitive> = (0..3)
             .map(|i| {
                 primitive(CpuMaterial {

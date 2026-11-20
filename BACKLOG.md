@@ -76,12 +76,6 @@ its open work is here.
 The renderer entries below come from BeschleunigerBallett's bridge and feature plan (2026-11-18; the ids are the
 plan's). Its C++ and bridge work is in BB's `BACKLOG.md`.
 
-- [ ] **The traced modes drop compressed textures** (M, ★★). Plan R2.
-      (1) Done 2026-11-20: `set_skybox_faces` bakes the IBL from the cube (`EquirectImage::from_cubemap`, the sky
-      pass's decode), outside `set_skybox` and the switch. Left: (2) `LayerAssigner::layer` (`render/tracer/material.rs`) drops BC textures, so KTX2 and Basis materials
-      trace with their factor alone: decode the mip level just above the layer side with `bc_decode::decode_level`,
-      one texture per step on wasm (`WEB_STEP_BUDGET`). Test: a KTX2 card shows its texture in both traced modes.
-
 ### Quality queue
 
 The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md,

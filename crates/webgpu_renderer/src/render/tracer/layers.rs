@@ -83,8 +83,65 @@ pub fn placeholder() -> LayerArray {
     }
 }
 
+/// Whether the tracer can read `texture`: RGBA8, or BC blocks the CPU decodes (ETC2 and ASTC only exist on the GPU).
+pub fn traceable(texture: &CpuTexture) -> bool {
+    texture.width > 0
+        && texture.height > 0
+        && texture.compressed.as_ref().is_none_or(|compressed| {
+            !matches!(
+                compressed.format,
+                crate::scene::CompressedFormat::Etc2Rgba8Unorm
+                    | crate::scene::CompressedFormat::Astc4x4RgbaUnorm
+            )
+        })
+}
+
+/// A compressed texture's smallest mip still at least `size` on both sides (or level 0), decoded to RGBA8.
+fn decoded_level(texture: &CpuTexture, size: u32) -> Option<CpuTexture> {
+    let compressed = texture.compressed.as_ref()?;
+    let extent = |level: usize| {
+        (
+            (texture.width >> level).max(1),
+            (texture.height >> level).max(1),
+        )
+    };
+    let level = (0..compressed.mips.len())
+        .take_while(|&level| {
+            let (width, height) = extent(level);
+            level == 0 || (width >= size && height >= size)
+        })
+        .last()?;
+    let (width, height) = extent(level);
+    let rgba8 = crate::asset::bc_decode::decode_level(
+        compressed.format,
+        width,
+        height,
+        &compressed.mips[level],
+    )?;
+    Some(CpuTexture {
+        width,
+        height,
+        rgba8,
+        compressed: None,
+    })
+}
+
 /// One image as a square mip chain: box halvings while it is twice too big, bilinear to the side, then halvings.
+/// A BC texture is decoded first, from the level just above the side, one texture per call, as the web's steps take it.
 pub fn resample_layer(texture: &CpuTexture, srgb: bool, size: u32) -> Vec<Vec<u8>> {
+    if texture.compressed.is_some() {
+        if let Some(decoded) = decoded_level(texture, size) {
+            return resample_layer(&decoded, srgb, size);
+        }
+        log::warn!("tracer: a compressed texture did not decode; its layer stays white");
+        let opaque_white = CpuTexture {
+            width: 1,
+            height: 1,
+            rgba8: vec![255; 4],
+            compressed: None,
+        };
+        return resample_layer(&opaque_white, srgb, size);
+    }
     let codec = Codec::new(srgb);
     let (width, height) = (texture.width.max(1), texture.height.max(1));
     let mut image = if width >= 2 * size || height >= 2 * size {
@@ -285,6 +342,43 @@ mod tests {
             rgba8: rgba.repeat((width * height) as usize),
             compressed: None,
         }
+    }
+
+    /// One BC1 block of pure red (RGB565 0xF800) per 4x4; the 4x4 level is the one just above a side of 4.
+    #[test]
+    fn a_bc1_texture_decodes_from_the_level_above_the_side() {
+        use crate::scene::{CompressedFormat, CompressedTexture};
+        let red = [0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0];
+        let texture = CpuTexture {
+            width: 8,
+            height: 8,
+            rgba8: Vec::new(),
+            compressed: Some(CompressedTexture {
+                format: CompressedFormat::Bc1RgbaUnorm,
+                mips: vec![red.repeat(4), red.to_vec()],
+                declared_srgb: None,
+                basis_source: None,
+            }),
+        };
+        assert!(traceable(&texture));
+        assert_eq!(
+            decoded_level(&texture, 4).map(|t| (t.width, t.height)),
+            Some((4, 4))
+        );
+        assert_eq!(
+            decoded_level(&texture, 8).map(|t| (t.width, t.height)),
+            Some((8, 8))
+        );
+        let level = &resample_layer(&texture, false, 4)[0];
+        assert_eq!(&level[..4], &[255, 0, 0, 255]);
+        let mut etc2 = texture.clone();
+        if let Some(compressed) = etc2.compressed.as_mut() {
+            compressed.format = CompressedFormat::Etc2Rgba8Unorm;
+        }
+        assert!(
+            !traceable(&etc2),
+            "ETC2 only exists where the adapter samples it"
+        );
     }
 
     #[test]

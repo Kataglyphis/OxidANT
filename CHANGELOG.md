@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-20, compressed textures in the traced modes)
+
+- The tracer decodes a BC1/3/5/7 texture (KTX2, Basis on a BC adapter) from the mip level just above its layer side
+  instead of tracing the material with its factor alone, one texture per step on the web; only ETC2 and ASTC, which
+  exist only where the adapter samples them, still fall back. A BC1 cube shows its green in both traced modes.
+
 ### Fixed (2026-11-20, the cube sky lights the scene)
 
 - `StudioApp::set_skybox_faces` bakes the IBL from the loaded cube, so reflections, diffuse ambient and the path
