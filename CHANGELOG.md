@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-20, raster normals, OBJ draws and the native build)
+
+- Raster keeps the geometric normal of a material without a normal map: the flat fallback (128, 128, 255) decoded to a
+  0.32° tilt that read +2.2 % on `traced_lights`' grazing patch. `PrimMaterial` sends normal scale 0 then, as C++ checks
+  `normalTextureID >= 0`; the wall test now holds raster to the analytic radiance within 1 % too.
+- `obj_to_gltf` writes one primitive per material: runs that share one are moved together in the index array, so
+  Sponza draws 24 primitives instead of 385, and every triangle keeps its material.
+- `apply_demo_render_scale` has a native caller in the demo test, so `Linux x64 · build + test`'s clippy passes again.
+
 ### Fixed (2026-11-20, the browser lane)
 
 - `webgpu-demo-browser.js` fixes the render scale at 1 through the new `set_demo_render_scale` export: since the

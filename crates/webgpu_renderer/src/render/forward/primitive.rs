@@ -67,7 +67,12 @@ impl PrimMaterial {
                 material.metallic_factor,
                 material.roughness_factor,
                 material.occlusion_strength,
-                material.normal_scale,
+                // The flat fallback decodes 128 to about 0.004, a 0.32 degree tilt; scale 0 keeps the geometric normal, as C++ does.
+                if material.normal_texture.is_some() {
+                    material.normal_scale
+                } else {
+                    0.0
+                },
             ],
             emissive_factor: [
                 material.emissive_factor[0],

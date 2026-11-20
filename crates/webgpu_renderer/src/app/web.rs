@@ -308,6 +308,20 @@ mod tests {
         assert!(built, "{:?}", app.trace_status());
         app.apply_demo_camera(10.0, 5.0);
         assert_eq!((app.camera.yaw_deg, app.camera.pitch_deg), (10.0, 5.0));
+        app.renderer.render_scale.auto = true;
+        app.apply_demo_render_scale(1.0).expect("1 is in range");
+        assert_eq!(
+            (
+                app.renderer.render_scale.scale,
+                app.renderer.render_scale.auto
+            ),
+            (1.0, false)
+        );
+        assert!(app.apply_demo_render_scale(0.1).is_err(), "under the range");
+        assert_eq!(
+            app.renderer.render_scale.scale, 1.0,
+            "a refused scale changes nothing"
+        );
         let ready = app.demo_report();
         assert_eq!(
             (ready.drawn, ready.trace, ready.fxaa),

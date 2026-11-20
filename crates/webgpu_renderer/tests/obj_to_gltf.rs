@@ -375,6 +375,21 @@ fn an_hdr_ke_round_trips_through_the_real_gltf_loader() {
     }
 }
 
+/// Red, blue, red again: three runs, two materials, so two draws; every triangle keeps its material.
+#[test]
+fn runs_that_share_a_material_become_one_primitive() {
+    let source = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nusemtl red\nf 1 2 3\nusemtl blue\nf 1 3 4\nusemtl red\nf 2 3 4\n";
+    let mesh = parse_obj(source).expect("the OBJ must parse");
+    let red = mesh.materials.iter().position(|m| m.name == "red").unwrap();
+    let blue = mesh
+        .materials
+        .iter()
+        .position(|m| m.name == "blue")
+        .unwrap();
+    assert_eq!(mesh.submeshes, vec![(0, 6, red), (6, 3, blue)]);
+    assert_eq!(mesh.indices, vec![0, 1, 2, 1, 2, 3, 0, 2, 3]);
+}
+
 #[test]
 fn each_usemtl_run_becomes_its_own_primitive() {
     let dir = temp_dir("materials");

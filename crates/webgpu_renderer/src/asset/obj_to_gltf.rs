@@ -69,7 +69,8 @@ pub struct ObjMesh {
     pub indices: Vec<u32>,
     /// Materials referenced by the file, in declaration order.
     pub materials: Vec<ObjMaterial>,
-    /// `(first_index, index_count, material_index)` per `usemtl` run, all into one index array.
+    /// `(first_index, index_count, material_index)` per material, all into one index array; runs that share a
+    /// material are moved together, so each material is one draw (Sponza: 385 groups, 24 draws).
     /// Splitting vertex data per material would duplicate shared vertices and change the geometry.
     pub submeshes: Vec<(u32, u32, usize)>,
 }
@@ -390,8 +391,35 @@ impl ObjParser {
         if mesh.submeshes.is_empty() {
             mesh.submeshes.push((0, mesh.indices.len() as u32, 0));
         }
+        merge_runs_by_material(&mut mesh);
         Ok(mesh)
     }
+}
+
+/// Reorders the index array so every material's runs are contiguous, in the order each material first appears.
+fn merge_runs_by_material(mesh: &mut ObjMesh) {
+    let mut order: Vec<usize> = Vec::new();
+    for &(_, _, material) in &mesh.submeshes {
+        if !order.contains(&material) {
+            order.push(material);
+        }
+    }
+    if order.len() == mesh.submeshes.len() {
+        return;
+    }
+    let mut indices = Vec::with_capacity(mesh.indices.len());
+    let mut merged = Vec::with_capacity(order.len());
+    for material in order {
+        let start = indices.len() as u32;
+        for &(first, count, run_material) in &mesh.submeshes {
+            if run_material == material {
+                indices.extend_from_slice(&mesh.indices[first as usize..(first + count) as usize]);
+            }
+        }
+        merged.push((start, indices.len() as u32 - start, material));
+    }
+    mesh.indices = indices;
+    mesh.submeshes = merged;
 }
 
 /// Fills zero corner normals (no `vn` index) with their triangle's flat face normal.
@@ -589,7 +617,7 @@ fn write_buffer(mesh: &ObjMesh) -> (Vec<u8>, BufferLayout) {
     (bin, layout)
 }
 
-/// `(index_accessors, primitives)`, one of each per `usemtl` run.
+/// `(index_accessors, primitives)`, one of each per material.
 fn primitives_json(mesh: &ObjMesh) -> (String, String) {
     // Slots 0-2 are POSITION/NORMAL/TEXCOORD_0 and COLOR_0 takes 3; indices follow the computed base.
     let indices_buffer_view = if mesh.has_vertex_colors { 4 } else { 3 };

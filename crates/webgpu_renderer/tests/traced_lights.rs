@@ -465,6 +465,11 @@ fn the_ray_traced_mode_shadows_a_point_light_behind_an_occluder() {
         (traced_lit / expected - 1.0).abs() < 0.01,
         "the unshadowed ground: {traced_lit} against {expected}"
     );
+    // Without a normal map raster keeps the geometric normal; the flat fallback's tilt read +2.2 % here.
+    assert!(
+        (raster_lit / expected - 1.0).abs() < 0.01,
+        "raster's unshadowed ground: {raster_lit} against {expected}"
+    );
 }
 
 /// A white card under a constant coloured environment: a bounce that misses sees that colour, so the card converges to it times E(mu) of about 0.99.

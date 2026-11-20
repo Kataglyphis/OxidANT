@@ -95,13 +95,6 @@ plan's). Its C++ and bridge work is in BB's `BACKLOG.md`.
       one texture per step on wasm (`WEB_STEP_BUDGET`). Tests: a metallic sphere reflects the cube's colour; a KTX2
       card shows its texture in both traced modes.
 
-- [ ] **Raster tilts the normal of a material without a normal map** (S, ★★). Found 2026-11-19 by the ray-traced
-      punctual-light tests: `forward.slang` always samples `normalTex`, and an untextured material gets
-      `flat_normal_fallback` (128, 128, 255), which decodes to about (0.0039, 0.0039, 1), a 0.32° tilt. On
-      `traced_lights`' grazing patch raster reads 0.02589 against the analytic 0.02533 (+2.2 %), while both traced
-      modes and C++ (which checks `normalTextureID >= 0`) match it. Next: a material flag so the forward and G-buffer
-      passes skip the map without a texture; the wall test can then compare with raster again.
-
 ### Quality queue
 
 The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md,
@@ -167,9 +160,6 @@ Empty on 2026-11-17: nothing else is in the queue.
       upload into a 72-byte base stream (C++'s layout) and a 12-byte position stream for opaque casters; skinned
       primitives read joints and weights from a per-primitive storage buffer by vertex index, which avoids doubling
       every pipeline set. The morph re-blend, the tracer's CPU deformation and the LOD levels keep the CPU `Vertex`.
-
-- [ ] **`obj_to_gltf` writes one draw per OBJ group** (S, ★). Merging the runs that share a material takes Sponza
-      from 385 draws to 24. Left from the 2026-11-19 accessor compaction, which already removed the 6.4 GB blow-up.
 
 - [ ] **An amd64 crash of the GPU tests is unreproduced** (S). On 2026-10-19 the headless tests segfaulted now and
       then in parallel on the Ryzen 9950X dev host. The arm64 crash has its cause, llvmpipe at 256-bit vectors, which
