@@ -32,8 +32,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   white, radiance 5, ambient 0.35), which `ForwardRenderer::new`, `RendererSettings::default` and the tracer's
   accumulation tests read instead of three copies. **`kataglyphis_cxx_bridge`**: `default_scene_settings()` carries it
   (`SceneSettings::sun`, owner decision 2026-11-19); `sanitize` passes the Sun through.
-- **`kataglyphis_render_core`**: `lens::perspective` gives a zero-height frame, an infinite or NaN `frame_aspect`,
-  aspect 1, the C++ `viewportAspectRatio`'s rule (owner decision 2026-11-19); it clamped to 1e-6.
+- **`kataglyphis_render_core`**: `lens::perspective` gives an empty frame aspect 1, the C++ `viewportAspectRatio`'s rule
+  (owner decisions 2026-11-19 and 2026-11-20): a zero height (an infinite or NaN `frame_aspect`) and a zero width (an
+  aspect of 0) alike; it clamped to 1e-6.
 - **`kataglyphis_webgpu_renderer`**: `load_options_from_env` reads an empty `KATAGLYPHIS_MIKKTSPACE_TANGENTS` as unset,
   as the C++ engine reads its knobs (owner decision 2026-11-19); an empty value turned MikkTSpace on.
 - **`kataglyphis_render_core`**: `ShadowSettings::sanitized` puts a NaN or infinite Strength, Distance or Split lambda
