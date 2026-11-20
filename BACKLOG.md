@@ -102,15 +102,6 @@ plan's). Its C++ and bridge work is in BB's `BACKLOG.md`.
       modes and C++ (which checks `normalTextureID >= 0`) match it. Next: a material flag so the forward and G-buffer
       passes skip the map without a texture; the wall test can then compare with raster again.
 
-- [ ] **The browser lane fails on develop** (S, ★★). A local `ci-container-steps.sh web-browser` run on 2026-11-19
-      (Chrome 157 on SwiftShader) failed the same 4 checks with develop's kernel and with the ray-traced punctual
-      lights; the lane has not run in CI since (`[ci web]`). (a) The page serves no `kloofendal_43d_clear_puresky/`
-      folder, so the faces 404 and the demo's "Keeping the procedural sky" warning fails the console check: stage the
-      skybox as BB's docs build does, or allow that warning. (b) The ray tracer's black sun shadow covers 0.032 % of
-      the viewport against a 0.05 % floor (0.174 % on 2026-11-16): since the 2026-11-17 quality presets the browser
-      on SwiftShader renders at 25 % scale, so the test should pin the render scale to 1. Done when a `[ci web]` run
-      is green.
-
 ### Quality queue
 
 The top 5 of `logs/code-quality/queue.md` (`bash scripts/linux/quality-report.sh`), leaving out `doc-dupes-hub.allow`, which the owner keeps in every AGENTS.md,
