@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-20, the Windows lanes past the test count)
+
+- The ray-traced kernel compiles under FXC again: `load_instance` wrote a struct's matrix rows through a loop counter,
+  which FXC cannot address (X3550) and so tried to unroll naga's 64-bit loop guard (X3511, `cs_ray_trace`); since
+  0cb3e9b put that load inside the per-light loop, every renderer test on `windows-x64` panicked. The rows are now
+  written with constant indices; `traced.wgsl` and `trace_debug.wgsl` are regenerated.
+- `crates/observant/tests/scenarios.rs` builds its five scenarios in with `include_str!`: the arm64 lane runs the
+  binary on a runner without the checkout, where reading `tests/scenarios` failed; the listing check runs where the
+  directory exists.
+
 ### Fixed (2026-11-20, the Windows lanes count the test examples)
 
 - `Invoke-DebugTests.ps1` and `Stage-CrossTests.ps1` expect one renderer test binary per `test = true` example too

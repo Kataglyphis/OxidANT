@@ -26,15 +26,38 @@ const EXPECTED: &[(&str, Expected)] = &[
     ("dark-room", &[(240.5, Some(51.0))]),
 ];
 
+/// Built in, since the arm64 lane runs this binary on a runner that holds no checkout (`C:\ws` is the container's).
+const SCENARIOS: &[(&str, &str)] = &[
+    (
+        "drying-rack-still",
+        include_str!("scenarios/drying-rack-still.jsonl"),
+    ),
+    (
+        "drying-rack-cat-in-front",
+        include_str!("scenarios/drying-rack-cat-in-front.jsonl"),
+    ),
+    (
+        "cat-behind-the-sofa",
+        include_str!("scenarios/cat-behind-the-sofa.jsonl"),
+    ),
+    ("feeding-hour", include_str!("scenarios/feeding-hour.jsonl")),
+    ("dark-room", include_str!("scenarios/dark-room.jsonl")),
+];
+
 fn dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scenarios")
 }
 
+fn text(name: &str) -> &'static str {
+    SCENARIOS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, text)| *text)
+        .unwrap_or_else(|| panic!("{name}: not built into the test"))
+}
+
 fn replayed(name: &str) -> Vec<Visit> {
-    let path = dir().join(format!("{name}.jsonl"));
-    let text =
-        std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
-    let scenario = Scenario::parse(&text).unwrap_or_else(|err| panic!("{name}: {err:#}"));
+    let scenario = Scenario::parse(text(name)).unwrap_or_else(|err| panic!("{name}: {err:#}"));
     replay(&scenario).unwrap_or_else(|err| panic!("{name}: {err:#}"))
 }
 
@@ -68,6 +91,22 @@ fn every_scenario_gives_its_visits_and_stays() {
 
 #[test]
 fn every_scenario_file_has_its_expected_visits() {
+    let mut built: Vec<&str> = SCENARIOS.iter().map(|(n, _)| *n).collect();
+    let mut expected: Vec<&str> = EXPECTED.iter().map(|(n, _)| *n).collect();
+    built.sort_unstable();
+    expected.sort_unstable();
+    assert_eq!(
+        built, expected,
+        "a built-in scenario without expected visits, or the reverse"
+    );
+    // Where the checkout is present, a new file on disk must be built in and expected too.
+    if !dir().is_dir() {
+        eprintln!(
+            "SKIP: no {} here (a staged test binary); the native lanes list it",
+            dir().display()
+        );
+        return;
+    }
     let mut files: Vec<String> = std::fs::read_dir(dir())
         .unwrap()
         .filter_map(|e| {
@@ -87,8 +126,7 @@ fn every_scenario_file_has_its_expected_visits() {
 #[test]
 fn each_scenario_says_where_its_frames_come_from() {
     for (name, _) in EXPECTED {
-        let text = std::fs::read_to_string(dir().join(format!("{name}.jsonl"))).unwrap();
-        let provenance = Scenario::parse(&text).unwrap().header.provenance;
+        let provenance = Scenario::parse(text(name)).unwrap().header.provenance;
         assert!(
             provenance.starts_with("recorded by ObservANT")
                 || provenance.starts_with("synthesised, not recorded"),

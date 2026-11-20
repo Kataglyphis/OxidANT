@@ -139,11 +139,13 @@ TraceInstance load_instance(uint index)
 {
     uint base = tracerInfo.instance_base + index * INSTANCE_STRIDE;
     TraceInstance inst;
-    for (uint row = 0u; row < 3u; row++)
-    {
-        inst.world_to_object[row] = tracerRecords[base + row];
-        inst.object_to_world[row] = tracerRecords[base + 3u + row];
-    }
+    // Constant indices: FXC cannot address a struct's array by a loop counter and then fails to unroll naga's bounded loop.
+    inst.world_to_object[0] = tracerRecords[base];
+    inst.world_to_object[1] = tracerRecords[base + 1u];
+    inst.world_to_object[2] = tracerRecords[base + 2u];
+    inst.object_to_world[0] = tracerRecords[base + 3u];
+    inst.object_to_world[1] = tracerRecords[base + 4u];
+    inst.object_to_world[2] = tracerRecords[base + 5u];
     uint4 tail = asuint(tracerRecords[base + 6u]);
     inst.blas_root = tail.x;
     inst.flags = tail.y;

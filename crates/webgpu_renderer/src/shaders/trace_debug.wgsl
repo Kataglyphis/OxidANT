@@ -162,20 +162,12 @@ fn load_instance_0( index_2 : u32) -> TraceInstance_0
 {
     var base_0 : u32 = tracerInfo_0.instance_base_0 + index_2 * u32(7);
     var inst_0 : TraceInstance_0;
-    var row_0 : u32 = u32(0);
-    for(;;)
-    {
-        if(row_0 < u32(3))
-        {
-        }
-        else
-        {
-            break;
-        }
-        inst_0.world_to_object_0[row_0] = tracerRecords_0[base_0 + row_0];
-        inst_0.object_to_world_0[row_0] = tracerRecords_0[base_0 + u32(3) + row_0];
-        row_0 = row_0 + u32(1);
-    }
+    inst_0.world_to_object_0[i32(0)] = tracerRecords_0[base_0];
+    inst_0.world_to_object_0[i32(1)] = tracerRecords_0[base_0 + u32(1)];
+    inst_0.world_to_object_0[i32(2)] = tracerRecords_0[base_0 + u32(2)];
+    inst_0.object_to_world_0[i32(0)] = tracerRecords_0[base_0 + u32(3)];
+    inst_0.object_to_world_0[i32(1)] = tracerRecords_0[base_0 + u32(4)];
+    inst_0.object_to_world_0[i32(2)] = tracerRecords_0[base_0 + u32(5)];
     var tail_0 : vec4<u32> = (bitcast<vec4<u32>>((tracerRecords_0[base_0 + u32(6)])));
     inst_0.blas_root_0 = tail_0.x;
     inst_0.flags_1 = tail_0.y;

@@ -142,7 +142,8 @@ Empty on 2026-11-17: nothing else is in the queue.
 
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
       `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially all pass. Re-dispatch
-      `windows-arm64-cross.yml` with `parallel-renderer-tests` after a runner image update.
+      `windows-arm64-cross.yml` with `parallel-renderer-tests` after a runner image update. Still there on
+      2026-11-20 (run 44739816593, the runner image of that day): the same fault in `d3d10warp.dll`.
 
 - [ ] **A model run that hangs cannot be ended** (S, ★). A run in flight for over 20 s shows in `/healthz`, its
       boxes are dropped and a start in the app gives up after 10 s, but the run itself goes on: nothing calls
