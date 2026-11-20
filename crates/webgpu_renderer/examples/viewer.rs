@@ -36,6 +36,8 @@ struct Viewer {
     started: Instant,
     frame: u64,
     shader_mtimes: Vec<(PathBuf, std::time::SystemTime)>,
+    /// The GPU device was lost, so the viewer exits with a failure, as C++ ends its run.
+    device_lost: bool,
 }
 
 fn shader_paths() -> Vec<PathBuf> {
@@ -63,6 +65,7 @@ impl Viewer {
             started: Instant::now(),
             frame: 0,
             shader_mtimes: shader_mtimes(),
+            device_lost: false,
         }
     }
 
@@ -144,6 +147,10 @@ impl Viewer {
                 AppSignal::Screenshot => self.save_screenshot(),
                 AppSignal::ReloadShaders => self.reload_shaders(),
                 AppSignal::UseAdapter(row) => self.relaunch(event_loop, row),
+                AppSignal::DeviceLost => {
+                    self.device_lost = true;
+                    event_loop.exit();
+                }
             }
         }
     }
@@ -267,5 +274,8 @@ fn main() -> anyhow::Result<()> {
     let event_loop = EventLoop::new()?;
     let mut viewer = Viewer::new(model_path, adapter);
     event_loop.run_app(&mut viewer)?;
+    if viewer.device_lost {
+        anyhow::bail!("the GPU device was lost; start the viewer again");
+    }
     Ok(())
 }

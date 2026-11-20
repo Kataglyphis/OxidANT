@@ -76,14 +76,6 @@ its open work is here.
 The renderer entries below come from BeschleunigerBallett's bridge and feature plan (2026-11-18; the ids are the
 plan's). Its C++ and bridge work is in BB's `BACKLOG.md`.
 
-- [ ] **The renderer does not notice a lost device** (M, ★★). Plan R3. C++ detects a loss and ends the run;
-      `GpuContext` registers neither `Device::set_device_lost_callback` nor an `on_uncaptured_error` handler, so
-      natively the first failing wgpu call after a loss reaches wgpu's default handler, which panics, an abort under
-      `panic = "abort"`. Next: a loss sets a flag, `StudioApp::frame` stops submitting and returns a new `AppSignal`;
-      the native viewer exits with a failure code (or relaunches through the adapter-switch relaunch), the browser
-      shows a reload notice. Test with `device.destroy()`, which fires the callback with reason `Destroyed`.
-      Rebuilding in-process is a separate L item: nothing keeps the CPU scene or the skybox faces once uploaded.
-
 - [ ] **The IBL ignores the loaded skybox, and the traced modes drop compressed textures** (M, ★★). Plan R2.
       (1) The IBL is baked once from the procedural panorama (`app/mod.rs`), so after the photographed cube loads,
       reflections, diffuse ambient and the path tracer's bounce misses still show the gradient; C++'s bounce misses
@@ -140,7 +132,7 @@ Empty on 2026-11-17: nothing else is in the queue.
       per step instead of rebuilding each user's group 0 (`rebind_primitives`); (e) a GPU test that the two paths
       render identical frames. Guard: `tests/texture_streaming.rs`.
 
-- [ ] **A twin of BB's all-maximum settings sweep** (M, ★). Plan X17; after the lost-device entry.
+- [ ] **A twin of BB's all-maximum settings sweep** (M, ★). Plan X17; the lost-device handling it waited for is in since 2026-11-20.
       `tests/settings_sweep.rs`, env-gated and weekly, not per push. First the corner at 1200x768 (256 px reaches no
       buffer limit): 3 cascades at 4096, PCF 5, 128/128 cloud steps at full resolution, deferred, clouds on, the path
       tracer at 64 spp and 16 bounces, 4 shadowed point and spot lights. Then 16 seeded random `ui::RendererSettings`

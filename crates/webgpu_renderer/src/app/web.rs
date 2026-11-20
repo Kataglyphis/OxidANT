@@ -10,6 +10,8 @@ use crate::scene::viewport::SceneViewport;
 pub(crate) const PAGE_READY: &str = "webgpuDemoReady";
 /// The page's hook for a browser with no usable adapter or device; its argument says why.
 pub(crate) const PAGE_FAILED: &str = "webgpuDemoFailed";
+/// The page's hook for a GPU device lost while the demo ran; only a reload makes a new one.
+pub(crate) const PAGE_LOST: &str = "webgpuDemoLost";
 /// The page's hook for a dropped file, which no picker entry names.
 pub(crate) const PAGE_DROPPED: &str = "webgpuDemoDropped";
 
@@ -248,7 +250,7 @@ mod tests {
 
     #[test]
     fn the_page_defines_every_hook_the_demo_calls() {
-        for hook in [PAGE_READY, PAGE_FAILED, PAGE_DROPPED] {
+        for hook in [PAGE_READY, PAGE_FAILED, PAGE_DROPPED, PAGE_LOST] {
             assert!(PAGE.contains(&format!("window.{hook} = ")), "{hook}");
         }
         assert!(

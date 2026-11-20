@@ -1,6 +1,7 @@
 //! Instance/adapter/device/queue management plus surface configuration and recovery.
 //! A failed acquire repairs the surface ([`GpuContext::acquire`]); a suboptimal one reconfigures after presenting.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -46,6 +47,8 @@ pub struct GpuContext {
     suboptimal: bool,
     /// Failed acquires in a row, so a surface that stays unusable logs once, not every frame.
     failed_acquires: u32,
+    /// Set by wgpu's device-lost callback; the app stops submitting once it is.
+    lost: Arc<AtomicBool>,
 }
 
 impl GpuContext {
@@ -88,6 +91,7 @@ impl GpuContext {
         let surface_config = surface_config(&surface, adapter, &device, size, srgb_twin_views)?;
         surface.configure(&device, &surface_config);
 
+        let lost = watch_device(&device);
         Ok(Self {
             device,
             queue,
@@ -106,6 +110,7 @@ impl GpuContext {
             requested_size: Some((size.width.max(1), size.height.max(1))),
             suboptimal: false,
             failed_acquires: 0,
+            lost,
         })
     }
 
@@ -132,6 +137,7 @@ impl GpuContext {
             .flags
             .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
         let (device, queue, features) = request_device(&adapter).await?;
+        let lost = watch_device(&device);
         Ok(Self {
             device,
             queue,
@@ -150,6 +156,7 @@ impl GpuContext {
             requested_size: None,
             suboptimal: false,
             failed_acquires: 0,
+            lost,
         })
     }
 
@@ -524,6 +531,36 @@ async fn identify(info: &wgpu::AdapterInfo) -> AdapterIdentity {
     #[cfg(not(target_arch = "wasm32"))]
     let web = None;
     AdapterIdentity::of(info, web.as_ref())
+}
+
+/// Whether wgpu reported this device lost (a reset, a removed card, `destroy`).
+impl GpuContext {
+    pub fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::SeqCst)
+    }
+}
+
+/// A flag the device-lost callback sets; natively, errors after a loss are logged instead of wgpu's panic, an abort here.
+fn watch_device(device: &wgpu::Device) -> Arc<AtomicBool> {
+    let lost = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&lost);
+    device.set_device_lost_callback(move |reason, message| {
+        log::error!("The GPU device was lost ({reason:?}): {message}");
+        flag.store(true, Ordering::SeqCst);
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let flag = Arc::clone(&lost);
+        device.on_uncaptured_error(Arc::new(move |error| {
+            if flag.load(Ordering::SeqCst) {
+                log::warn!("wgpu error after the device loss: {error}");
+            } else {
+                // wgpu's own default: any other uncaptured error stays fatal, so a validation bug still fails a test.
+                panic!("wgpu error: {error}\n");
+            }
+        }));
+    }
+    lost
 }
 
 async fn request_device(

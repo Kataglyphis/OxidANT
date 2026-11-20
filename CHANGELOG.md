@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-20, a lost GPU device)
+
+- `GpuContext` registers wgpu's device-lost callback: a loss sets a flag, `StudioApp::frame` stops drawing and sends the
+  new `AppSignal::DeviceLost` once, `render_offscreen` fails, the native viewer exits with an error and the browser
+  demo tells its page (`webgpuDemoLost`, a reload notice). Natively, uncaptured errors after the loss are logged
+  instead of wgpu's panic, an abort under `panic = "abort"`; before it they stay fatal. `device.destroy()` on lavapipe
+  fires the callback in the new test. Rebuilding in-process stays a separate item.
+
 ### Changed (2026-11-20, `ort` 2.0.0-rc.15)
 
 - `ort` moves from `=2.0.0-rc.13` to `=2.0.0-rc.15` (owner OK 2026-11-20; ANTfrastructure CON95 step 2). rc.15 renames

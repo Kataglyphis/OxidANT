@@ -12,7 +12,7 @@ use winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys};
 use winit::window::{Window, WindowId};
 
 use crate::app::library::{ModelLibrary, EMBEDDED_SCENES};
-use crate::app::{web, HostCaps, StudioApp};
+use crate::app::{web, AppSignal, HostCaps, StudioApp};
 use crate::asset::gltf_loader::load_gltf_slice;
 use crate::asset::skybox::{CubemapFaces, SKYBOX_FACES, SKYBOX_NAME};
 use crate::context::GpuContext;
@@ -287,8 +287,13 @@ impl ApplicationHandler for DemoApp {
                 app.set_skybox_faces(&faces);
             }
             follow_canvas_size(window, &mut app.gpu);
-            // A browser tab never quits and has no file shortcuts, so a frame asks nothing of this shell.
-            let _ = app.frame(window, performance_now_seconds());
+            // A browser tab never quits and has no file shortcuts; a frame asks this shell only to say a loss.
+            if app
+                .frame(window, performance_now_seconds())
+                .contains(&AppSignal::DeviceLost)
+            {
+                web::notify_page(web::PAGE_LOST, "");
+            }
             self.egui_wants_keys.set(app.wants_keyboard());
         }
     }

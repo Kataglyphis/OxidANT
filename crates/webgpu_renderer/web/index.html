@@ -165,6 +165,10 @@
       showUnsupported('no usable WebGPU adapter');
       console.error('WebGPU init failed: ' + reason);
     };
+    window.webgpuDemoLost = () => {
+      // The demo draws nothing after a loss; a new device needs a new page.
+      statusEl.textContent = 'The GPU device was lost: reload the page to start again.';
+    };
     window.webgpuDemoDropped = () => {
       // A dropped model is no listed scene: picking the startup scene again must fire `change`.
       select.selectedIndex = -1;

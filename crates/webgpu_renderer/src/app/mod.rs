@@ -60,6 +60,8 @@ pub enum AppSignal {
     ReloadShaders,
     /// Restart on this row of [`GpuContext::adapters`].
     UseAdapter(usize),
+    /// The GPU device is gone; nothing is drawn any more. Sent once.
+    DeviceLost,
 }
 
 pub struct StudioApp {
@@ -70,6 +72,8 @@ pub struct StudioApp {
     pub model: Option<ModelSource>,
     editor: Editor,
     frames: FrameHistory,
+    /// [`AppSignal::DeviceLost`] went out; a lost device sends it once.
+    lost_reported: bool,
     device: DeviceInfo,
     format: wgpu::TextureFormat,
     /// What egui paints through: `format`'s linear twin where the device can view it, so text blends as in the browser.
@@ -148,6 +152,7 @@ impl StudioApp {
             model: None,
             editor: Editor::default(),
             frames: FrameHistory::default(),
+            lost_reported: false,
             scene: scenes::SceneState::new(home.clone()),
             home,
             caps,

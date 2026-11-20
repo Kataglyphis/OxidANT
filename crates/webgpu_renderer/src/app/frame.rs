@@ -46,6 +46,9 @@ impl OffscreenFrame {
 impl StudioApp {
     /// Draws one frame and returns what the shell must do; a frame without a surface texture is skipped whole.
     pub fn frame(&mut self, window: &Window, now_s: f64) -> Vec<AppSignal> {
+        if let Some(lost) = self.device_lost_signal() {
+            return lost;
+        }
         // Acquired before the egui pass, so a skipped frame never strands a font atlas delta.
         let frame = match self.gpu.acquire() {
             Ok(frame) => frame,
@@ -75,11 +78,27 @@ impl StudioApp {
         signals
     }
 
+    /// After a loss, no frame: [`AppSignal::DeviceLost`] once, then nothing, since every wgpu call would fail.
+    fn device_lost_signal(&mut self) -> Option<Vec<AppSignal>> {
+        if !self.gpu.is_lost() {
+            return None;
+        }
+        let first = !std::mem::replace(&mut self.lost_reported, true);
+        Some(if first {
+            vec![AppSignal::DeviceLost]
+        } else {
+            Vec::new()
+        })
+    }
+
     /// One frame of scene and editor into an offscreen target, read back as tightly packed RGBA8 rows.
     pub fn render_offscreen(
         &mut self,
         frame: &OffscreenFrame,
     ) -> anyhow::Result<(Vec<u8>, Vec<AppSignal>)> {
+        if self.gpu.is_lost() {
+            anyhow::bail!("the GPU device was lost");
+        }
         let (output, signals) = self.pass(frame.raw_input(), frame.now_s, frame.size_px);
         let [width, height] = frame.size_px;
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
@@ -285,6 +304,28 @@ pub(in crate::app) mod tests {
             caps,
             format,
         ))
+    }
+
+    /// `destroy` fires the device-lost callback with reason `Destroyed`; nothing is submitted after it.
+    #[test]
+    fn a_lost_device_stops_the_frames_and_says_so_once() {
+        let Some(mut app) = studio() else { return };
+        assert!(app.render_offscreen(&frame(0.0, Vec::new())).is_ok());
+        assert!(!app.gpu.is_lost());
+        app.gpu.device.destroy();
+        let _ = app.gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        assert!(
+            app.gpu.is_lost(),
+            "destroy must reach the device-lost callback"
+        );
+        let err = app.render_offscreen(&frame(0.1, Vec::new())).unwrap_err();
+        assert!(err.to_string().contains("lost"), "{err:#}");
+        assert_eq!(app.device_lost_signal(), Some(vec![AppSignal::DeviceLost]));
+        assert_eq!(
+            app.device_lost_signal(),
+            Some(Vec::new()),
+            "once, then nothing"
+        );
     }
 
     fn frame(now_s: f64, events: Vec<egui::Event>) -> OffscreenFrame {
