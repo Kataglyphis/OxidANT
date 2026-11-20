@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-20, the Windows lanes count the test examples)
+
+- `Invoke-DebugTests.ps1` and `Stage-CrossTests.ps1` expect one renderer test binary per `test = true` example too
+  (`dump_gpu_timings`, `editor_snapshot`): since 2026-11-19 they counted 42 against cargo's 44 and failed the
+  `windows-x64` lane before any renderer test ran (runs 44633185513 and 44726780927).
+
 ### Added (2026-11-20, the renderer settings sweep)
 
 - `crates/webgpu_renderer/tests/settings_sweep.rs`, BeschleunigerBallett's all-maximum sweep: the corner at 1200x768

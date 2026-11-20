@@ -35,10 +35,10 @@ if ($LASTEXITCODE -ne 0) {
 $executables = @($messages | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { $_ | ConvertFrom-Json } |
     Where-Object { $_.reason -eq 'compiler-artifact' } |
     Where-Object { $_.profile.test -and $_.executable } | ForEach-Object executable | Select-Object -Unique)
-# The lib and one binary per tests\*.rs, so a target cargo stopped building cannot drop out unseen.
-$expected = 1 + @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'crates\webgpu_renderer\tests') -Filter '*.rs' -File).Count
+# The lib, one binary per tests\*.rs and one per `test = true` example, so a target cargo stopped building cannot drop out unseen.
+$expected = 1 + @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'crates\webgpu_renderer\tests') -Filter '*.rs' -File).Count + @(Select-String -LiteralPath (Join-Path $repoRoot 'crates\webgpu_renderer\Cargo.toml') -Pattern '^\s*test\s*=\s*true\s*$').Count
 if ($executables.Count -ne $expected) {
-  throw "Expected $expected WebGPU renderer test executables (the lib and one per tests\*.rs); cargo reported $($executables.Count)."
+  throw "Expected $expected WebGPU renderer test executables (the lib, one per tests\*.rs, one per test example); cargo reported $($executables.Count)."
 }
 
 # The hub's Invoke-StagedTests.ps1 reads this manifest on the host, as it reads the arm64 lane's on windows-11-arm.

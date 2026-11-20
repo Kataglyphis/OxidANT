@@ -47,9 +47,10 @@ function Get-CrossTestArtifact {
 function Assert-RendererTestCount {
   param([Parameter(Mandatory)][object[]]$Tests, [Parameter(Mandatory)][scriptblock]$IsRenderer)
   $rendererTests = @($Tests | Where-Object { & $IsRenderer $_ })
-  $expectedRenderer = 1 + @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'crates\webgpu_renderer\tests') -Filter '*.rs' -File).Count
+  # The `test = true` examples (dump_gpu_timings, editor_snapshot) build with --tests too.
+  $expectedRenderer = 1 + @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'crates\webgpu_renderer\tests') -Filter '*.rs' -File).Count + @(Select-String -LiteralPath (Join-Path $repoRoot 'crates\webgpu_renderer\Cargo.toml') -Pattern '^\s*test\s*=\s*true\s*$').Count
   if ($rendererTests.Count -ne $expectedRenderer) {
-    throw "Expected $expectedRenderer WebGPU renderer test binaries (the lib and one per tests\*.rs); cargo reported $($rendererTests.Count)."
+    throw "Expected $expectedRenderer WebGPU renderer test binaries (the lib, one per tests\*.rs, one per test example); cargo reported $($rendererTests.Count)."
   }
 }
 
