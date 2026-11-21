@@ -13,6 +13,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-21, FXAA in the C++ renderer)
+
+- `fxaa/fxaa.slang`'s `fs_main` is compiled to SPIR-V by BeschleunigerBallett, whose `FxaaStage` binds its texture,
+  sampler and `FxaaUniforms` as the Rust pass does; `docs/shaders.md` says so. No shader changed.
+
 ### Changed (2026-11-21, the C++ sky in its HDR target)
 
 - `sky/sky.slang` gains `vs_vulkan_main`, the same fullscreen triangle at depth 1 from `SV_VulkanVertexID`, so

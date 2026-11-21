@@ -29,6 +29,10 @@ the scene. The C++ renderer compiles `vs_vulkan_main` and `fs_main` to SPIR-V an
 subtracts the base vertex through draw parameters a Raspberry Pi 5's v3dv lacks. The
 combined `sky.wgsl` carries that entry too; the Rust renderer draws `vs_main`.
 
+`fxaa/fxaa.slang`'s `fs_main` is the C++ renderer's FXAA too, behind its own
+`SV_VulkanVertexID` fullscreen vertex, with the same three bindings and
+`FxaaUniforms`; a change to either reaches its `FxaaStage` with the pin.
+
 `common/volumetric_clouds.slang` is the volumetric clouds' mathematics for both
 renderers: the noise texels, the unpack of the C++ `SceneUBO` cloud block, the
 box, the density and the march. Its functions take an `ICloudNoise`, which
