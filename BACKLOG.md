@@ -142,9 +142,12 @@ Empty on 2026-11-17: nothing else is in the queue.
       line, with no panic text, so the abort is native (FXC, WARP or the D3D12 runtime), not Rust: `traced_modes`'
       `a_mask_cutout_lets_the_sun_through_in_both_traced_modes` in run 44759227422, `ktx2`'s
       `a_bc1_texture_colours_the_cube_in_both_traced_modes` in run 44782412041. WARP x64 passes all 24 traced tests
-      since 0abbb7d. WER named no module: the hub's staged runner looked once, and WER logs a fail-fast only after the
-      exit; the hub now waits up to 15 s. Next: run `[ci windows-arm64-cross]` with that hub pin and read
-      `WER: faulting module …`: `d3dcompiler_47.dll` points at FXC on the tracer's shader, `d3d10warp.dll` at WARP.
+      since 0abbb7d, and the x64 lane is green again (run 44804439631). WER names no module: in that run the hub's
+      staged runner waited the full 15 s after the abort (20:40:29 to 20:40:44) and found no event 1000, so WER does not
+      log this abort at all, while it did log the parallel run's access violation. Next: a stack from a debugger on
+      the arm64 runner, either `cdb` from the Windows SDK if the image has it, run on the first traced test, or WER
+      LocalDumps set before the run and the dump uploaded; `d3dcompiler_47.dll` on top points at FXC compiling the
+      tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
 
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
       `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially only the abort above. Re-dispatch

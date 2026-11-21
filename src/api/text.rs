@@ -76,7 +76,11 @@ pub fn text_generate(
     options: TextOptions,
     sink: StreamSink<TextEvent>,
 ) -> Result<(), String> {
-    enabled::generate(source, messages, options, sink).map_err(enabled::describe)
+    // Through the stream, not the return value: Dart holds only the stream, and a returned error only closes it.
+    if let Err(e) = enabled::generate(source, messages, options, &sink) {
+        let _ = sink.add_error(anyhow::anyhow!(enabled::describe(e)));
+    }
+    Ok(())
 }
 
 /// Ends the running generation after its current token; its `done` event says `cancelled`.
@@ -216,7 +220,7 @@ mod enabled {
         source: TextSource,
         messages: Vec<TextMessage>,
         options: TextOptions,
-        sink: StreamSink<TextEvent>,
+        sink: &StreamSink<TextEvent>,
     ) -> Result<(), TextError> {
         let (messages, options) = request(messages, &options);
         let mut cached = turn();
@@ -415,7 +419,7 @@ mod enabled {
         _: TextSource,
         _: Vec<TextMessage>,
         _: TextOptions,
-        _: StreamSink<TextEvent>,
+        _: &StreamSink<TextEvent>,
     ) -> Result<(), String> {
         Err(WEB.into())
     }

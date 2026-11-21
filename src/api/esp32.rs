@@ -165,15 +165,20 @@ pub fn esp32_list_devices() -> Result<Vec<Esp32Device>, String> {
 /// Opens the port and streams events until [`esp32_disconnect`]. Fails when a link is
 /// already open.
 pub fn esp32_connect(path: String, sink: StreamSink<Esp32Event>) -> Result<(), String> {
+    // Shared with the link's event callback, which keeps the stream open for as long as the link lives.
+    let sink = std::sync::Arc::new(sink);
     #[cfg(desktop)]
-    {
-        enabled::connect(path, sink)
-    }
+    let opened = enabled::connect(path, std::sync::Arc::clone(&sink));
     #[cfg(not(desktop))]
-    {
-        let _ = (path, sink);
+    let opened: Result<(), String> = {
+        let _ = path;
         Err("the ESP32 bridge needs a desktop build".into())
+    };
+    // Through the stream, not the return value: Dart holds only the stream, and a returned error only closes it.
+    if let Err(e) = opened {
+        let _ = sink.add_error(anyhow::anyhow!(e));
     }
+    Ok(())
 }
 
 /// Stops the link and drains its threads.
@@ -296,7 +301,10 @@ mod enabled {
             .map_err(|error| format!("listing serial ports failed: {error:#}"))
     }
 
-    pub(super) fn connect(path: String, sink: StreamSink<Esp32Event>) -> Result<(), String> {
+    pub(super) fn connect(
+        path: String,
+        sink: std::sync::Arc<StreamSink<Esp32Event>>,
+    ) -> Result<(), String> {
         install(&path, |path| {
             Link::open(path, move |event| {
                 let _ = sink.add(event.into());

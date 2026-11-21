@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-21, a failed text turn reaches the app)
+
+- `text_generate` returned its failure as the function's `Err`, which flutter_rust_bridge puts in a future the
+  generated Dart never awaits: the stream only closed, and OmniAccelerANT showed an empty answer for a missing model.
+  It now sends the `kind: text` failure into the stream with `add_error`, as `start_webcam_inference` does, and returns
+  `Ok`; `esp32_connect`'s "already open" and port errors take the same road. No binding changes: Dart's stream already
+  decodes an error as `AnyhowException`, whose `message` holds the `kind: text`. Found by the oxidation review of
+  2026-11-20 (roadmap step 0.5).
+
 ### Fixed (2026-11-20, a glTF image without a source)
 
 - `gltf_images::parse` rejects an image with neither a `uri` nor a `bufferView`, and a `bufferView` image without a
