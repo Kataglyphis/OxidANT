@@ -100,7 +100,9 @@ which a local container run executes too:
   traced test leaves no WER record (the runner sets `ForceQueue=1` and AeDebug to `-`), so the
   `debugger-stack` input runs that test under the image's arm64 `cdb.exe` first, with
   Microsoft's symbol server, and prints the faulting stack (the hub's
-  `windows-arm-debugger-probe.yml` found `cdb` there on 2026-11-21). No arm64 Windows
+  `windows-arm-debugger-probe.yml` found `cdb` there on 2026-11-21). Its first dispatch caught a
+  first-chance access violation in WARP's arm64 pixel JIT (`PixelJITProcessor::ExecuteJIT`); it now
+  stops only at a second-chance access violation and at the fail-fast itself. No arm64 Windows
   container image exists, so that job is the only place an arm64 binary of this repo executes.
 
 **Every Windows build compiles C and C++ with the image's clang-cl, never MSVC's `cl`**

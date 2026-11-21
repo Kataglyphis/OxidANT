@@ -73,7 +73,7 @@ jobs:
           Push-Location (Split-Path -Parent $traced.exe)
           try {
             & $cdb -lines -y 'srv*C:\symbols*https://msdl.microsoft.com/download/symbols' `
-              -c 'sxe -c ".echo FAIL-FAST; .exr -1; .ecxr; kn 80; lmv m d3d*; q" c0000409; sxe -c ".echo ACCESS-VIOLATION; .ecxr; kn 80; q" av; g; q' `
+              -c 'sxe -c ".echo FAIL-FAST; .exr -1; kn 80; lmv m d3d10warp; q" c0000409; sxd -c2 ".echo SECOND-CHANCE-AV; .exr -1; kn 80; lmv m d3d10warp; q" av; g; q' `
               (Split-Path -Leaf $traced.exe) a_mask_cutout_lets_the_sun_through_in_both_traced_modes --exact --nocapture --test-threads=1
             Write-Host "cdb exited $LASTEXITCODE"
           } finally {

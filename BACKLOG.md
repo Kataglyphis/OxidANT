@@ -172,8 +172,11 @@ Empty on 2026-11-17: nothing else is in the queue.
       probe (run 44933363575) found `cdb.exe` under `Windows Kits\10\Debuggers\arm64`, WER's service stopped,
       `ForceQueue=1` and AeDebug `-`. In source since 2026-11-21: `windows-arm64-cross.yml`'s dispatch-only
       `debugger-stack` input runs the first traced test under that `cdb` with `sxe c0000409` and Microsoft's symbols
-      before the staged run; left: one dispatch and the stack it prints. `d3dcompiler_47.dll` on top points at FXC
-      compiling the tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
+      before the staged run. Its first dispatch (run 44938484144, WARP 10.0.26100.9818) stopped at a first-chance
+      access violation in code WARP's arm64 pixel JIT generated: `d3d10warp!PixelJITProcessor::ExecuteJIT+0x2c` calls
+      into a frame with no module. Next: the input now stops only at a second-chance access violation and at the
+      fail-fast, to see whether WARP survives that fault and what raises `0xC0000409`. `d3dcompiler_47.dll` on top
+      points at FXC compiling the tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
 
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
       `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially only the abort above. Re-dispatch
