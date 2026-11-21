@@ -189,10 +189,11 @@ fn brdf_direct(n: DVec3, v: DVec3, l: DVec3, roughness: f64, radiance: f64) -> f
     let h = (l + v).normalize();
     let (n_dot_l, n_dot_v) = (n.dot(l).max(0.0), n.dot(v).max(1e-4));
     let (n_dot_h, h_dot_v) = (n.dot(h).max(0.0), h.dot(v).max(0.0));
-    let a2 = roughness.max(0.045).powi(4);
+    let r = roughness.max(0.045);
+    let a2 = r.powi(4);
     let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
     let d = a2 / (PI * (denom * denom).max(1e-20));
-    let k = (roughness + 1.0).powi(2) / 8.0;
+    let k = (r + 1.0).powi(2) / 8.0;
     let smith = |c: f64| c / (c * (1.0 - k) + k).max(1e-6);
     let f = 0.04 + 0.96 * (1.0 - h_dot_v).clamp(0.0, 1.0).powi(5);
     let energy = common::ggx_energy(n_dot_v, roughness);

@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-21, the energy compensation's review)
+
+- **`brdf.slang`'s Smith remaps take `MIN_ROUGHNESS`, as `distribution_ggx` and the energy fit do**:
+  `smith_k_analytic` and `smith_k_sampled` floor the roughness, and `brdf_smith_k` floors it once for the lobe and its
+  gain. Below 0.045 the remap masked the lobe less than the floor's gain assumed, so a white metal at roughness 0
+  returned 1.21 of a uniform sky at n.v 0.01 (1.65 at 0.003). No frame changes: every caller clamps the roughness
+  first. `brdf.json`'s two floor cases now hold for every output, and a white metal at roughness 0 seen at n.v 0.01
+  joins them; the module before the fix misses 12 of their components. The Rust f64 mirrors in `brdf_energy.rs`,
+  `traced_modes.rs` and `traced_lights.rs` floor their remaps too.
+- Docs: a refit names `generate-shader-vectors.py` beside the WGSL (`brdf_energy.rs`, the fit's header);
+  `docs/shaders.md` says the vector tolerances assume correctly rounded f32 `sin` and `cos`.
+
 ### Changed (2026-11-21, FXAA on every frame by default)
 
 - The renderer's FXAA defaults to `Always` instead of `Deferred` (owner decision 2026-11-21), as
@@ -43,9 +55,10 @@ on 2026-09-15, verbatim. Nothing was deleted.
   their `common/` module once per case of `shaders/tests/vectors/<module>.json`, which holds the inputs, the f64
   references and each output's tolerance (BeschleunigerBallett BACKLOG X3). The first two were BeschleunigerBallett's
   compile-only dual-target guards, the third replaces OxidANT's; all three emit SPIR-V and WGSL, the WGSL committed
-  under `crates/webgpu_renderer/tests/shaders/`. `scripts/shader_model.py` is the independent Python model the
-  references come from; `scripts/generate-shader-vectors.py` writes the files, rejects a case an f32 kernel cannot
-  meet, and `--check` joins `pre-push-checks.sh`. The renderer's new `tests/shader_vectors.rs` dispatches each kernel
+  under `crates/webgpu_renderer/tests/shaders/`. The references come from `scripts/shader_model.py`, a Python
+  transcription of each module: it proves that the compiler and the device reproduce the formulas, while the furnace
+  tests and `brdf_energy.rs`' quadrature check the formulas themselves. `scripts/generate-shader-vectors.py` writes
+  the files, rejects a case an f32 kernel cannot meet, and `--check` joins `pre-push-checks.sh`. The renderer's new `tests/shader_vectors.rs` dispatches each kernel
   on the test device and checks every component, and fails while a module defines a function without an output.
 
 ### Changed (2026-11-21, multiple-scattering GGX energy compensation)
@@ -70,7 +83,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   evaluating it four times take 12 to 14 ms (the storage-buffer table 1.2 to 2.8, the private one 28 to 42), its
   module 7 to 9 ms to create (the private table 150) and its first dispatch 16 to 30 ms. Polynomial fits missed by 7
   % (55 coefficients a channel) and 3.7 % (78), rational fits had poles, and Karis' `env_brdf_approx` misses this
-  lobe by -26 % to +52 %. `tests/brdf_energy_bake.slang` bakes the lobe from `ggx_single_scatter` with
+  lobe by about -27 % to +56 %. `tests/brdf_energy_bake.slang` bakes the lobe from `ggx_single_scatter` with
   BeschleunigerBallett's quadrature (`cs_bake`) and evaluates the fit (`cs_lookup`); its WGSL is
   `brdf_energy_bake.wgsl`, its SPIR-V a CI guard.
 - **`ibl_ambient`** takes the same compensation and diffuse share, from the BRDF LUT with a baked environment and

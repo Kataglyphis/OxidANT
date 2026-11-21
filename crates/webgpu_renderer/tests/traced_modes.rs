@@ -199,8 +199,8 @@ fn single_scatter_albedo(mu: f64, metallic: f64, roughness: f64) -> f64 {
     const STEPS: usize = 160;
     let f0 = 0.04 * (1.0 - metallic) + metallic;
     let v = DVec3::new((1.0 - mu * mu).max(0.0).sqrt(), 0.0, mu);
-    let a2 = roughness.max(0.045).powi(4);
-    let k = roughness * roughness / 2.0;
+    let r = roughness.max(0.045);
+    let (a2, k) = (r.powi(4), r * r / 2.0);
     let g1 = |c: f64| c / (c * (1.0 - k) + k).max(1e-6);
     let n_dot_v = mu.max(1e-4);
     let mut sum = 0.0;
@@ -464,7 +464,7 @@ fn cards_off_the_sky(rig: &mut Rig, metallic: f32, roughness: &[f32]) -> Vec<(f3
 }
 
 /// C++ `PathTracingPassesTheWhiteMetalFurnaceTest`: a white metal returns all of a uniform sky, the gain making up what
-/// single scattering lost (0.31 of it at roughness 1, mu 1).
+/// single scattering lost (0.69 of it at roughness 1, mu 1, where it returns 0.307).
 #[test]
 fn a_white_metal_card_reflects_the_whole_sky() {
     let Some(mut rig) = lone_card() else {

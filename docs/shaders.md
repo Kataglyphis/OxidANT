@@ -133,6 +133,13 @@ component that misses; under `KATAGLYPHIS_REQUIRE_GPU=1` a missing adapter
 fails it. BeschleunigerBallett checks the SPIR-V of the same kernels against
 the same files.
 
+The tolerances assume correctly rounded f32 `sin` and `cos`, as the model computes
+them. Vulkan and WGSL promise only 2^-11 absolute error inside [-pi, pi], and
+`sample_ggx_visible_normal` and `sample_bounce`'s diffuse lobe take both of an
+angle that reaches 2 pi, so those outputs and `sample_bounce`'s weight could miss
+on a conforming device with a coarse `sin`. They stay tight (owner decision
+2026-11-21): loosen one only when a device that runs correct code fails it.
+
 A new shared module adds the same four things: a kernel with a manifest row
 (`spirv`, `wgsl`) and a `wgslMap` row into `crates/webgpu_renderer/tests/shaders/`;
 its functions in `shader_model.py`; a `Module` with its cases and tolerances in

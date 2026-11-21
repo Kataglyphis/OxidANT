@@ -298,6 +298,9 @@ def brdf_cases() -> list[tuple[str, Values]]:
             "n_dot_v": [0.5], "n_dot_l": [0.35], "cos_theta": [0.95]}),
         ("roughness below the 0.045 floor evaluates as the floor", {"roughness": [0.01], "n_dot_h": [0.9], "k": [0.1]}),
         ("roughness zero evaluates as the floor too", {"roughness": [0.0], "n_dot_h": [0.99]}),
+        ("a white metal at roughness zero seen at n.v 0.01: an unfloored remap gave it an albedo of 1.21", {
+            "v": unit(0.99995, 0.01, 0.0), "l": unit(-0.6, 0.8, 0.0), "albedo": [1.0, 1.0, 1.0], "metallic": [1.0],
+            "roughness": [0.0], "f0": [1.0, 1.0, 1.0], "radiance": [4.0, 4.0, 4.0], "n_dot_v": [0.01]}),
         ("a rough dielectric, roughness one", {"roughness": [1.0], "n_dot_h": [0.3], "cos_theta": [0.1]}),
         ("light below the horizon contributes nothing", {"l": unit(0.3, -0.5, 0.1), "n_dot_l": [0.0]}),
         ("view below the horizon, n.v floored at 1e-4", {"v": unit(0.2, -0.1, 0.9), "n_dot_v": [0.0], "k": [0.0]}),

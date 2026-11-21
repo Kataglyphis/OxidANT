@@ -277,10 +277,14 @@ def lambert_diffuse(albedo: Vec) -> Vec:
     return albedo / PI
 
 
-def distribution_ggx(n_dot_h: Real, roughness: Real) -> Real:
+def min_roughness(roughness: Real) -> Real:
     if roughness.v < f32(0.045):
         visit("roughness floor")
-    r = rmax(roughness, 0.045)
+    return rmax(roughness, 0.045)
+
+
+def distribution_ggx(n_dot_h: Real, roughness: Real) -> Real:
+    r = min_roughness(roughness)
     a = r * r
     a2 = a * a
     denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0
@@ -288,12 +292,13 @@ def distribution_ggx(n_dot_h: Real, roughness: Real) -> Real:
 
 
 def smith_k_analytic(roughness: Real) -> Real:
-    r = roughness + 1.0
+    r = min_roughness(roughness) + 1.0
     return (r * r) / 8.0
 
 
 def smith_k_sampled(roughness: Real) -> Real:
-    return roughness * roughness / 2.0
+    r = min_roughness(roughness)
+    return r * r / 2.0
 
 
 def geometry_smith_k(n_dot_v: Real, n_dot_l: Real, k: Real) -> Real:
@@ -372,8 +377,9 @@ def brdf_smith_k(s: Surface, radiance: Vec, k: Real) -> Vec:
     n_dot_v = rmax(dot(s.n, s.v), 1e-4)
     n_dot_h = rmax(dot(s.n, h), 0.0)
     h_dot_v = rmax(dot(h, s.v), 0.0)
-    energy = ggx_energy(n_dot_v, s.roughness)
-    single = ggx_single_scatter(n_dot_v, n_dot_l, n_dot_h, h_dot_v, s.roughness, s.f0, k)
+    r = min_roughness(s.roughness)
+    energy = ggx_energy(n_dot_v, r)
+    single = ggx_single_scatter(n_dot_v, n_dot_l, n_dot_h, h_dot_v, r, s.f0, k)
     specular = multiscatter_gain(energy, s.f0) * single
     diffuse = each(saturate, 1.0 - specular_albedo(energy, s.f0)) * (1.0 - s.metallic) * lambert_diffuse(s.albedo)
     return (diffuse + specular) * radiance * n_dot_l

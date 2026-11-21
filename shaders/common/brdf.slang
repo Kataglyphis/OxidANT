@@ -24,17 +24,18 @@ float distribution_ggx(float n_dot_h, float roughness)
     return a2 / (PI * max(denom * denom, 1e-20));
 }
 
-// Epic's Smith remap k for analytic lights.
+// Epic's Smith remap k for analytic lights; both remaps take the NDF's floor, or the lobe outgrows its gain.
 float smith_k_analytic(float roughness)
 {
-    float r = roughness + 1.0;
+    float r = max(roughness, MIN_ROUGHNESS) + 1.0;
     return (r * r) / 8.0;
 }
 
 // Epic's k = alpha/2 for sampled and image-based light: the analytic remap over-masks a sampled lobe at grazing angles.
 float smith_k_sampled(float roughness)
 {
-    return roughness * roughness / 2.0;
+    float r = max(roughness, MIN_ROUGHNESS);
+    return r * r / 2.0;
 }
 
 // Schlick-GGX Smith masking-shadowing with remap k, uncorrelated.
@@ -108,9 +109,11 @@ float3 brdf_smith_k(float3 n, float3 v, float3 l, float3 albedo, float metallic,
     float n_dot_h = max(dot(n, h), 0.0);
     float h_dot_v = max(dot(h, v), 0.0);
 
+    // The NDF's floor, shared with smith_k_* and the energy fit: a lobe below it outgrew its gain (a white metal 1.21).
+    float r = max(roughness, MIN_ROUGHNESS);
     // brdf_sampled's energy for every remap: the analytic remap's extra masking shapes a highlight, it loses no bounce.
-    float2 energy = ggx_energy(n_dot_v, roughness);
-    float3 single = ggx_single_scatter(n_dot_v, n_dot_l, n_dot_h, h_dot_v, roughness, f0, k);
+    float2 energy = ggx_energy(n_dot_v, r);
+    float3 single = ggx_single_scatter(n_dot_v, n_dot_l, n_dot_h, h_dot_v, r, f0, k);
     float3 specular = multiscatter_gain(energy, f0) * single;
     float3 diffuse = saturate(float3(1.0) - specular_albedo(energy, f0)) * (1.0 - metallic) * lambert_diffuse(albedo);
     return (diffuse + specular) * radiance * n_dot_l;
