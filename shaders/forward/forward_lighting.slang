@@ -188,7 +188,7 @@ float punctual_shadow_visibility(PunctualShadow shadow, float3 lightPos, float3 
 }
 
 float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
-    float metallic, float roughness, float3 f0, float4 fragCoord)
+    float metallic, float roughness, float3 f0, float2 energy, float4 fragCoord)
 {
     float3 total = float3(0.0);
     uint tileX = uint(fragCoord.x) / TILE_SIZE;
@@ -226,36 +226,37 @@ float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
         if (shadow.slot >= 0 && uint(shadow.slot) < shadowCubes && dot(n, incidence.l) > 0.0)
             visibility = punctual_shadow_visibility(shadow, light.position, worldPos, n, incidence.l);
         total += brdf_direct(n, v, incidence.l, albedo, metallic, roughness, f0,
-            light.radiance * incidence.attenuation * visibility);
+            light.radiance * incidence.attenuation * visibility, energy);
     }
     return total;
 }
 
-// The ambient term from the baked environment, or from the analytic sky without one.
-float3 ibl_ambient(SurfacePoint s, float3 v, float3 f0)
+// The ambient term from the baked environment, or from the analytic sky and the surface's energy without one.
+float3 ibl_ambient(SurfacePoint s, float3 v, float3 f0, float2 surfaceEnergy)
 {
-    // Both IBL paths are evaluated and picked by ternary, keeping the no-environment path bit-identical to the goldens.
     float3 reflected = reflect(-v, s.n);
-    float nDotV = max(dot(s.n, v), 1e-4);
-    float envIntensity = iblParams.enabled_maxmip_intensity.z;
-    float iblStrength = frame.light_dir_ambient.w;
-    bool envEnabled = iblParams.enabled_maxmip_intensity.x > 0.5;
-
-    float3 irradianceAnalytic = hemisphere_irradiance(s.n);
-    float3 irradianceEnv = irradianceMap.SampleLevel(iblSampler, s.n, 0.0).xyz * envIntensity;
-    float3 irradiance = envEnabled ? irradianceEnv : irradianceAnalytic;
-
-    float3 prefiltered = prefilteredMap.SampleLevel(iblSampler, reflected, s.roughness * iblParams.enabled_maxmip_intensity.y).xyz * envIntensity;
-    // Level 0, the table's only mip: the deferred pass reaches here after a non-uniform return, where Sample is illegal.
-    float2 lutEnergy = brdfLut.SampleLevel(iblSampler, float2(max(dot(s.n, v), 0.0), s.roughness), 0.0).rg;
-    float3 envAnalytic = lerp(sky_radiance(reflected, true), irradianceAnalytic, s.roughness * s.roughness);
-    // The split sum's own table with the baked environment, so a uniform one returns exactly E_spec + the diffuse rest.
-    float2 energy = envEnabled ? lutEnergy : ggx_energy(nDotV, s.roughness);
+    float3 irradiance;
+    float3 reflection;
+    float2 energy = surfaceEnergy;
+    // A uniform flag: every fragment takes one side, so none pays for the other's samples or sky.
+    if (iblParams.enabled_maxmip_intensity.x > 0.5)
+    {
+        float envIntensity = iblParams.enabled_maxmip_intensity.z;
+        irradiance = irradianceMap.SampleLevel(iblSampler, s.n, 0.0).xyz * envIntensity;
+        reflection = prefilteredMap.SampleLevel(iblSampler, reflected, s.roughness * iblParams.enabled_maxmip_intensity.y).xyz * envIntensity;
+        // The split sum's own table, so a uniform one returns E_spec exactly; level 0, legal after the deferred early return.
+        energy = brdfLut.SampleLevel(iblSampler, float2(max(dot(s.n, v), 0.0), s.roughness), 0.0).rg;
+    }
+    else
+    {
+        irradiance = hemisphere_irradiance(s.n);
+        reflection = lerp(sky_radiance(reflected, true), irradiance, s.roughness * s.roughness);
+    }
     float3 specularAlbedo = specular_albedo(energy, f0);
     float3 diffuseIbl = saturate(float3(1.0) - specularAlbedo) * (1.0 - s.metallic) * s.albedo * irradiance;
-    float3 specularIbl = (envEnabled ? prefiltered : envAnalytic) * specularAlbedo;
+    float3 specularIbl = reflection * specularAlbedo;
 
-    return iblStrength * s.occlusion * (diffuseIbl + specularIbl);
+    return frame.light_dir_ambient.w * s.occlusion * (diffuseIbl + specularIbl);
 }
 
 // The lit HDR colour of `s`; fragCoord picks its light tile.
@@ -267,14 +268,16 @@ float3 shade_surface(SurfacePoint s, float4 fragCoord)
     float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);
     float3 radiance = frame.light_color_intensity.rgb * frame.light_color_intensity.w;
     float nDotL = max(dot(s.n, l), 0.0);
+    // The fit once per fragment, not once per light: the sun, every punctual light and the analytic ambient share it.
+    float2 energy = ggx_energy(dot(s.n, v), s.roughness);
 
-    float3 directLight = brdf_direct(s.n, v, l, s.albedo, s.metallic, s.roughness, f0, radiance);
+    float3 directLight = brdf_direct(s.n, v, l, s.albedo, s.metallic, s.roughness, f0, radiance, energy);
     // Per fragment: a per-vertex depth interpolates too far inside big triangles, picking coarse cascades.
     float visibility = shadow_visibility(s.position, s.n, nDotL);
     // The C++ color *= 1 - shadow * strength, on the sun alone.
     directLight *= lerp(1.0, visibility, frame.shadow_params.z);
 
-    float3 punctual = punctual_lighting(s.position, s.n, v, s.albedo, s.metallic, s.roughness, f0, fragCoord);
-    float3 color = directLight + punctual + ibl_ambient(s, v, f0) + s.emissive;
+    float3 punctual = punctual_lighting(s.position, s.n, v, s.albedo, s.metallic, s.roughness, f0, energy, fragCoord);
+    float3 color = directLight + punctual + ibl_ambient(s, v, f0, energy) + s.emissive;
     return clamp(color, float3(0.0), float3(HDR_MAX));
 }

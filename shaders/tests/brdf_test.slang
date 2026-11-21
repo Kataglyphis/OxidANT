@@ -37,7 +37,9 @@ void brdf_test_main(uint3 tid : SV_DispatchThreadID)
     outputs.put(ggx_energy(n_dot_v, roughness));
     outputs.put(multiscatter_gain(energy, f0));
     outputs.put(specular_albedo(energy, f0));
-    outputs.put(brdf_smith_k(n, v, l, albedo, metallic, roughness, f0, radiance, k));
-    outputs.put(brdf_direct(n, v, l, albedo, metallic, roughness, f0, radiance));
-    outputs.put(brdf_sampled(n, v, l, albedo, metallic, roughness, f0));
+    // The energy a shading point hands its lights, not the energy input, which probes the gain alone.
+    float2 surface = ggx_energy(dot(n, v), roughness);
+    outputs.put(brdf_smith_k(n, v, l, albedo, metallic, roughness, f0, radiance, k, surface));
+    outputs.put(brdf_direct(n, v, l, albedo, metallic, roughness, f0, radiance, surface));
+    outputs.put(brdf_sampled(n, v, l, albedo, metallic, roughness, f0, surface));
 }

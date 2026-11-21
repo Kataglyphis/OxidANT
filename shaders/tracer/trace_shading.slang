@@ -177,8 +177,8 @@ float3 shadowed(TracedSurface s, LightSample light)
     return any(light.radiance > 0.0) && light_visible(s, light.l, light.distance) ? light.radiance : float3(0.0);
 }
 
-// The sun's GGX and Lambert term through the forward pass's BRDF.
-LightSample sun_sample(TracedSurface s, float3 v)
+// The sun's GGX and Lambert term through the forward pass's BRDF; energy is the hit's, as brdf_direct takes it.
+LightSample sun_sample(TracedSurface s, float3 v, float2 energy)
 {
     LightSample o = unlit_sample();
     o.l = traceFrame.light_dir.xyz;
@@ -186,7 +186,7 @@ LightSample sun_sample(TracedSurface s, float3 v)
     if (dot(s.normal, o.l) <= 0.0)
         return o;
     float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);
-    o.radiance = brdf_direct(s.normal, v, o.l, s.albedo, s.metallic, s.roughness, f0, traceFrame.light_radiance.rgb);
+    o.radiance = brdf_direct(s.normal, v, o.l, s.albedo, s.metallic, s.roughness, f0, traceFrame.light_radiance.rgb, energy);
     return o;
 }
 
@@ -197,7 +197,7 @@ float3 sky_with_sun(float3 dir)
 }
 
 // Punctual light `index` of the raster's buffer, lit as punctual_lighting lights it.
-LightSample punctual_sample(TracedSurface s, float3 v, uint index)
+LightSample punctual_sample(TracedSurface s, float3 v, float2 energy, uint index)
 {
     LightSample o = unlit_sample();
     PunctualLight light = unpack_punctual_light(tracerLights[index * 4u], tracerLights[index * 4u + 1u],
@@ -209,17 +209,18 @@ LightSample punctual_sample(TracedSurface s, float3 v, uint index)
     if (incidence.attenuation <= 0.0 || dot(s.normal, incidence.l) <= 0.0)
         return o;
     float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);
-    o.radiance = brdf_direct(s.normal, v, incidence.l, s.albedo, s.metallic, s.roughness, f0, light.radiance * incidence.attenuation);
+    o.radiance = brdf_direct(s.normal, v, incidence.l, s.albedo, s.metallic, s.roughness, f0, light.radiance * incidence.attenuation,
+        energy);
     return o;
 }
 
 // One punctual light picked uniformly, over its 1/count chance.
-LightSample punctual_light_sample(TracedSurface s, float3 v, inout uint rng)
+LightSample punctual_light_sample(TracedSurface s, float3 v, float2 energy, inout uint rng)
 {
     uint count = traceFrame.lights.x;
     if (count == 0u)
         return unlit_sample();
-    LightSample o = punctual_sample(s, v, min(uint(rng_next(rng) * float(count)), count - 1u));
+    LightSample o = punctual_sample(s, v, energy, min(uint(rng_next(rng) * float(count)), count - 1u));
     o.radiance *= float(count);
     return o;
 }

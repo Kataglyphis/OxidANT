@@ -4,28 +4,38 @@ use kataglyphis_webgpu_renderer::GpuContext;
 use wgpu::util::DeviceExt as _;
 
 const FORWARD_WGSL: &str = include_str!("../src/shaders/forward.wgsl");
+const TRACED_WGSL: &str = include_str!("../src/shaders/traced.wgsl");
 
-/// The brace-balanced text of `fn <name>(...) { ... }` in forward.wgsl.
-fn extract_fn(name: &str) -> &'static str {
-    let start = FORWARD_WGSL
+/// The brace-balanced text of `fn <name>(...) { ... }` in `wgsl`.
+fn extract_fn(wgsl: &'static str, name: &str) -> &'static str {
+    let start = wgsl
         .find(&format!("fn {name}("))
-        .unwrap_or_else(|| panic!("forward.wgsl no longer declares `fn {name}`"));
-    let body = start
-        + FORWARD_WGSL[start..]
-            .find('{')
-            .expect("the function has a body");
+        .unwrap_or_else(|| panic!("the module no longer declares `fn {name}`"));
+    let body = start + wgsl[start..].find('{').expect("the function has a body");
     let mut depth = 0;
-    for (i, c) in FORWARD_WGSL[body..].char_indices() {
+    for (i, c) in wgsl[body..].char_indices() {
         depth += match c {
             '{' => 1,
             '}' => -1,
             _ => 0,
         };
         if depth == 0 {
-            return &FORWARD_WGSL[start..=body + i];
+            return &wgsl[start..=body + i];
         }
     }
     panic!("`fn {name}` is never closed");
+}
+
+/// Each function of `wgsl` whose body calls `callee`, with its number of call sites.
+fn callers(wgsl: &'static str, callee: &str) -> Vec<(&'static str, usize)> {
+    wgsl.lines()
+        .filter_map(|line| line.strip_prefix("fn ")?.split_once('('))
+        .filter_map(|(name, _)| {
+            let (_, body) = extract_fn(wgsl, name).split_once('{')?;
+            let calls = body.matches(&format!("{callee}(")).count();
+            (calls > 0).then_some((name, calls))
+        })
+        .collect()
 }
 
 /// `distribution_ggx(n_dot_h, roughness)` for each input pair, computed by the adapter.
@@ -38,7 +48,7 @@ fn ndf_on_gpu(gpu: &GpuContext, inputs: &[[f32; 2]]) -> Vec<f32> {
          fn main(@builtin(global_invocation_id) id: vec3<u32>) {{\n\
          if (id.x < arrayLength(&inputs)) {{\n\
          outputs[id.x] = distribution_ggx_0(inputs[id.x].x, inputs[id.x].y);\n}}\n}}\n",
-        extract_fn("distribution_ggx_0")
+        extract_fn(FORWARD_WGSL, "distribution_ggx_0")
     );
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("ndf_probe"),
@@ -153,4 +163,19 @@ fn the_ggx_lobe_integrates_to_one_at_every_roughness() {
             "the GGX lobe at roughness {r} integrates to {integral:.4}, not 1: a guard clips its peak"
         );
     }
+}
+
+/// brdf_smith_k takes the GGX energy from its caller, so a shading point fits it once however many lights it takes.
+#[test]
+fn the_energy_fit_runs_once_per_shading_point() {
+    assert_eq!(
+        callers(FORWARD_WGSL, "ggx_energy_0"),
+        [("shade_surface_0", 1)],
+        "forward.wgsl: once per fragment"
+    );
+    assert_eq!(
+        callers(TRACED_WGSL, "ggx_energy_0"),
+        [("direct_light_0", 1), ("trace_path_0", 1)],
+        "traced.wgsl: once per ray-traced hit and once per path vertex"
+    );
 }

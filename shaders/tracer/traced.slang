@@ -6,20 +6,22 @@ import trace_shading;
 // The ray- and path-traced modes' kernels: each dispatch shades one tile into the accumulation, which trace_resolve.slang copies into the HDR target.
 
 // The ray tracer's light `index`: the sun first, then the punctual lights in the raster's order.
-LightSample direct_sample(TracedSurface s, float3 v, uint index)
+LightSample direct_sample(TracedSurface s, float3 v, float2 energy, uint index)
 {
     if (index == 0u)
-        return sun_sample(s, v);
-    return punctual_sample(s, v, index - 1u);
+        return sun_sample(s, v, energy);
+    return punctual_sample(s, v, energy, index - 1u);
 }
 
 // The sun and every punctual light, each through its own shadow ray, as raytrace.rchit.slang lights a hit.
 float3 direct_light(TracedSurface s, float3 v)
 {
     float3 lit = float3(0.0);
+    // The fit once per hit, not once per light.
+    float2 energy = ggx_energy(dot(s.normal, v), s.roughness);
     // One shadow-ray call site, as in next_event: SwiftShader inlines a whole traversal per call site.
     for (uint i = 0u; i <= traceFrame.lights.x; i++)
-        lit += shadowed(s, direct_sample(s, v, i));
+        lit += shadowed(s, direct_sample(s, v, energy, i));
     return lit;
 }
 
@@ -82,11 +84,11 @@ float3 miss_radiance(float3 dir, uint bounce)
 }
 
 // The sun and one punctual light, each through a shadow ray; the furnace has a uniform sky and no lights.
-float3 next_event(TracedSurface s, float3 v, inout uint rng)
+float3 next_event(TracedSurface s, float3 v, float2 energy, inout uint rng)
 {
     if (furnace_on())
         return float3(0.0);
-    LightSample lights[2] = { sun_sample(s, v), punctual_light_sample(s, v, rng) };
+    LightSample lights[2] = { sun_sample(s, v, energy), punctual_light_sample(s, v, energy, rng) };
     float3 lit = float3(0.0);
     // One shadow-ray call site in a loop: SwiftShader inlines a whole traversal per call site, and compiles for minutes.
     for (uint i = 0u; i < 2u; i++)
@@ -119,8 +121,10 @@ float3 trace_path(uint2 pixel, inout uint rng)
             break;
         }
         float3 v = -ray.direction;
-        radiance += throughput * (s.emissive + next_event(s, v, rng));
-        Bounce next = sample_bounce(s.normal, s.face_normal, v, s.albedo, s.metallic, s.roughness, rng);
+        // The fit once per hit: both lights and the bounce share it.
+        float2 energy = ggx_energy(dot(s.normal, v), s.roughness);
+        radiance += throughput * (s.emissive + next_event(s, v, energy, rng));
+        Bounce next = sample_bounce(s.normal, s.face_normal, v, s.albedo, s.metallic, s.roughness, energy, rng);
         if (all(next.weight == float3(0.0)))
             break;
         throughput *= next.weight;

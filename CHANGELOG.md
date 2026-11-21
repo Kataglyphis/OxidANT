@@ -13,6 +13,27 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-21, the GGX energy once per shading point)
+
+- **`brdf_smith_k`, `brdf_direct` and `brdf_sampled` (`brdf.slang`) and `sample_bounce` (`path_estimator.slang`) take
+  `energy`** (BeschleunigerBallett BACKLOG "Evaluate the GGX energy once per surface"): `ggx_energy(dot(n, v),
+  roughness)`, which `brdf_smith_k` evaluated on every call, 28 basis functions and 196 float2 FMAs per light.
+  `shade_surface` evaluates it once per fragment for the sun, every punctual light (`punctual_lighting` takes it) and
+  `ibl_ambient`; the ray tracer once per hit, the path tracer once per path vertex for both NEE lights and the bounce.
+  It is the value `brdf_smith_k` computed (`ggx_energy_coordinates` clamps n.v to [1e-4, 1] and roughness to
+  [0.045, 1], as `brdf_smith_k` floored them), so `brdf.json` and `path_estimator.json` are byte-identical; the two
+  kernels pass it. `ibl_ambient` branches on the environment flag, a uniform, instead of sampling the environment and
+  evaluating the analytic sky for every fragment and picking by ternary. `forward.wgsl`, `traced.wgsl` and both
+  kernels' WGSL regenerated. BeschleunigerBallett's callers take the parameter with the pin bump.
+- Measured on aarch64 lavapipe: lavapipe's LLVM already hoisted the loop-invariant fit out of the light loop, so
+  steady-state frames of a 512 x 512 plane under 0 to 64 unbounded point lights take the same GPU time (new against old
+  within -2.3 % and +1.6 %, forward and deferred); a pipeline's first frame with Mesa's shader cache off took about 2 %
+  less (2.02 to 2.12 s against 2.04 to 2.18 s); the render-heavy test binaries ran 4 % faster interleaved (166.2 s
+  against 173.3 s over two rounds each), the renderer suite 252.7 s against 262.2 s (one run each).
+- `tests/brdf.rs`' `the_energy_fit_runs_once_per_shading_point` counts `ggx_energy`'s call sites in `forward.wgsl`
+  (`shade_surface` alone) and `traced.wgsl` (`direct_light`, `trace_path`); the previous WGSL fails it (`brdf_smith_k`
+  and `ibl_ambient`). Handing the kernels the probe `energy` input instead fails `shader_vectors`' brdf kernel.
+
 ### Changed (2026-11-21, the flat glTF in its default morph pose)
 
 - **`load_flat` bakes a primitive's default morph weights** (BeschleunigerBallett plan B2): the node's `weights`, else

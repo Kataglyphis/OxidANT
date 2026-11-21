@@ -109,6 +109,20 @@ rational fits put poles in the domain, a low-rank spline needed rank 6 for 2 %, 
 to +52 %. `ibl_ambient` takes the same compensation, from the split sum's own BRDF LUT with
 a baked environment and from `ggx_energy` without one.
 
+A shading point evaluates the fit once: `brdf_smith_k`, `brdf_direct`, `brdf_sampled` and
+`sample_bounce` take `energy`, `ggx_energy(dot(n, v), roughness)`, from their caller, the
+value `brdf_smith_k` computed itself (`ggx_energy` clamps n.v and roughness as it floored
+them), so `brdf.json` and `path_estimator.json` did not change. `shade_surface` hands it to
+the sun, every punctual light and `ibl_ambient`, which branches on the environment flag, a
+uniform, instead of sampling the environment and evaluating the analytic sky for every
+fragment; the ray tracer evaluates it once per hit, the path tracer once per path vertex.
+`tests/brdf.rs`' `the_energy_fit_runs_once_per_shading_point` counts its call sites in
+`forward.wgsl` and `traced.wgsl`. On aarch64 lavapipe the light loop paid nothing extra before:
+LLVM already hoisted the loop-invariant fit, so a 512 x 512 plane under 0 to 64 point lights
+renders in the same GPU time (new against old within -2.3 % and +1.6 %). Pipelines compile about
+2 % faster and the render-heavy test binaries ran 4 % faster (166.2 s against 173.3 s,
+interleaved); the explicit hoist keeps the cost off compilers that do not move it (2026-11-22).
+
 Instance vertex attributes contain matrix columns. `instance_matrix` transposes
 the Slang row constructor so instances and equivalent node transforms agree.
 `skinned_bounds::a_non_uniform_instance_scale_shades_like_the_same_node_scale`

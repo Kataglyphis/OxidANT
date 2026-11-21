@@ -1,3 +1,4 @@
+import brdf;
 import path_estimator;
 import kernel_vectors;
 
@@ -47,7 +48,7 @@ void path_estimator_test_main(uint3 tid : SV_DispatchThreadID)
     outputs.put(ggx_visible_normal_pdf(n_dot_v, n_dot_h, alpha));
     outputs.put(specular_lobe_probability(albedo, metallic, f0, n_dot_v));
     uint bounce_rng = rng;
-    Bounce next = sample_bounce(n, face_normal, v, albedo, metallic, roughness, bounce_rng);
+    Bounce next = sample_bounce(n, face_normal, v, albedo, metallic, roughness, ggx_energy(dot(n, v), roughness), bounce_rng);
     outputs.put(next.direction);
     outputs.put(next.weight);
     outputs.put(bounce_rng);

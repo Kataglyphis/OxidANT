@@ -85,7 +85,8 @@ struct Bounce
 };
 
 // One-sample MIS over the GGX and Lambert lobes; the weight takes brdf_sampled's f n.l, NEE and raster brdf_direct's.
-Bounce sample_bounce(float3 n, float3 face_normal, float3 v, float3 albedo, float metallic, float roughness, inout uint rng)
+Bounce sample_bounce(float3 n, float3 face_normal, float3 v, float3 albedo, float metallic, float roughness, float2 energy,
+    inout uint rng)
 {
     float3 f0 = lerp(float3(0.04), albedo, metallic);
     float n_dot_v = max(dot(n, v), 1e-4);
@@ -120,6 +121,6 @@ Bounce sample_bounce(float3 n, float3 face_normal, float3 v, float3 albedo, floa
         return o;
     float n_dot_h = max(dot(n, normalize(v + o.direction)), 0.0);
     float pdf = specular * ggx_visible_normal_pdf(n_dot_v, n_dot_h, alpha) + (1.0 - specular) * n_dot_l / PI;
-    o.weight = brdf_sampled(n, v, o.direction, albedo, metallic, roughness, f0) / max(pdf, 1e-6);
+    o.weight = brdf_sampled(n, v, o.direction, albedo, metallic, roughness, f0, energy) / max(pdf, 1e-6);
     return o;
 }

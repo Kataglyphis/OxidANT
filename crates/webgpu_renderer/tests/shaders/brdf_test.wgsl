@@ -214,32 +214,29 @@ fn specular_albedo_0( energy_1 : vec2<f32>,  f0_3 : vec3<f32>) -> vec3<f32>
     return multiscatter_gain_0(energy_1, f0_3) * (f0_3 * vec3<f32>(energy_1.x) + vec3<f32>(energy_1.y));
 }
 
-fn brdf_smith_k_0( n_0 : vec3<f32>,  v_0 : vec3<f32>,  l_0 : vec3<f32>,  albedo_1 : vec3<f32>,  metallic_0 : f32,  roughness_6 : f32,  f0_4 : vec3<f32>,  radiance_0 : vec3<f32>,  k_2 : f32) -> vec3<f32>
+fn brdf_smith_k_0( n_0 : vec3<f32>,  v_0 : vec3<f32>,  l_0 : vec3<f32>,  albedo_1 : vec3<f32>,  metallic_0 : f32,  roughness_6 : f32,  f0_4 : vec3<f32>,  radiance_0 : vec3<f32>,  k_2 : f32,  energy_2 : vec2<f32>) -> vec3<f32>
 {
     var h_0 : vec3<f32> = normalize(l_0 + v_0);
     var _S27 : f32 = max(dot(n_0, l_0), 0.0f);
-    var _S28 : f32 = max(dot(n_0, v_0), 0.00009999999747379f);
-    var _S29 : f32 = max(roughness_6, 0.04500000178813934f);
-    var energy_2 : vec2<f32> = ggx_energy_0(_S28, _S29);
-    return (saturate(vec3<f32>(1.0f) - specular_albedo_0(energy_2, f0_4)) * vec3<f32>((1.0f - metallic_0)) * lambert_diffuse_0(albedo_1) + multiscatter_gain_0(energy_2, f0_4) * ggx_single_scatter_0(_S28, _S27, max(dot(n_0, h_0), 0.0f), max(dot(h_0, v_0), 0.0f), _S29, f0_4, k_2)) * radiance_0 * vec3<f32>(_S27);
+    return (saturate(vec3<f32>(1.0f) - specular_albedo_0(energy_2, f0_4)) * vec3<f32>((1.0f - metallic_0)) * lambert_diffuse_0(albedo_1) + multiscatter_gain_0(energy_2, f0_4) * ggx_single_scatter_0(max(dot(n_0, v_0), 0.00009999999747379f), _S27, max(dot(n_0, h_0), 0.0f), max(dot(h_0, v_0), 0.0f), max(roughness_6, 0.04500000178813934f), f0_4, k_2)) * radiance_0 * vec3<f32>(_S27);
 }
 
-fn brdf_direct_0( n_1 : vec3<f32>,  v_1 : vec3<f32>,  l_1 : vec3<f32>,  albedo_2 : vec3<f32>,  metallic_1 : f32,  roughness_7 : f32,  f0_5 : vec3<f32>,  radiance_1 : vec3<f32>) -> vec3<f32>
+fn brdf_direct_0( n_1 : vec3<f32>,  v_1 : vec3<f32>,  l_1 : vec3<f32>,  albedo_2 : vec3<f32>,  metallic_1 : f32,  roughness_7 : f32,  f0_5 : vec3<f32>,  radiance_1 : vec3<f32>,  energy_3 : vec2<f32>) -> vec3<f32>
 {
-    return brdf_smith_k_0(n_1, v_1, l_1, albedo_2, metallic_1, roughness_7, f0_5, radiance_1, smith_k_analytic_0(roughness_7));
+    return brdf_smith_k_0(n_1, v_1, l_1, albedo_2, metallic_1, roughness_7, f0_5, radiance_1, smith_k_analytic_0(roughness_7), energy_3);
 }
 
-fn brdf_sampled_0( n_2 : vec3<f32>,  v_2 : vec3<f32>,  l_2 : vec3<f32>,  albedo_3 : vec3<f32>,  metallic_2 : f32,  roughness_8 : f32,  f0_6 : vec3<f32>) -> vec3<f32>
+fn brdf_sampled_0( n_2 : vec3<f32>,  v_2 : vec3<f32>,  l_2 : vec3<f32>,  albedo_3 : vec3<f32>,  metallic_2 : f32,  roughness_8 : f32,  f0_6 : vec3<f32>,  energy_4 : vec2<f32>) -> vec3<f32>
 {
-    return brdf_smith_k_0(n_2, v_2, l_2, albedo_3, metallic_2, roughness_8, f0_6, vec3<f32>(1.0f), smith_k_sampled_0(roughness_8));
+    return brdf_smith_k_0(n_2, v_2, l_2, albedo_3, metallic_2, roughness_8, f0_6, vec3<f32>(1.0f), smith_k_sampled_0(roughness_8), energy_4);
 }
 
 @compute
 @workgroup_size(1, 1, 1)
 fn brdf_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
 {
-    var _S30 : u32 = tid_0.x;
-    var inputs_1 : VectorInputs_0 = vector_inputs_0(_S30);
+    var _S28 : u32 = tid_0.x;
+    var inputs_1 : VectorInputs_0 = vector_inputs_0(_S28);
     var n_3 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var v_3 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var l_3 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
@@ -254,8 +251,8 @@ fn brdf_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
     var n_dot_l_2 : f32 = VectorInputs_f32_0(&(inputs_1));
     var cos_theta_1 : f32 = VectorInputs_f32_0(&(inputs_1));
     var t_3 : vec2<f32> = VectorInputs_f32x2_0(&(inputs_1));
-    var energy_3 : vec2<f32> = VectorInputs_f32x2_0(&(inputs_1));
-    var outputs_1 : VectorOutputs_0 = vector_outputs_0(_S30);
+    var energy_5 : vec2<f32> = VectorInputs_f32x2_0(&(inputs_1));
+    var outputs_1 : VectorOutputs_0 = vector_outputs_0(_S28);
     VectorOutputs_put_3(&(outputs_1), lambert_diffuse_0(albedo_4));
     VectorOutputs_put_1(&(outputs_1), distribution_ggx_0(n_dot_h_2, roughness_9));
     VectorOutputs_put_1(&(outputs_1), smith_k_analytic_0(roughness_9));
@@ -266,11 +263,12 @@ fn brdf_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
     VectorOutputs_put_4(&(outputs_1), ggx_energy_node_0(t_3));
     VectorOutputs_put_4(&(outputs_1), ggx_energy_coordinates_0(n_dot_v_4, roughness_9));
     VectorOutputs_put_4(&(outputs_1), ggx_energy_0(n_dot_v_4, roughness_9));
-    VectorOutputs_put_3(&(outputs_1), multiscatter_gain_0(energy_3, f0_7));
-    VectorOutputs_put_3(&(outputs_1), specular_albedo_0(energy_3, f0_7));
-    VectorOutputs_put_3(&(outputs_1), brdf_smith_k_0(n_3, v_3, l_3, albedo_4, metallic_3, roughness_9, f0_7, radiance_2, k_3));
-    VectorOutputs_put_3(&(outputs_1), brdf_direct_0(n_3, v_3, l_3, albedo_4, metallic_3, roughness_9, f0_7, radiance_2));
-    VectorOutputs_put_3(&(outputs_1), brdf_sampled_0(n_3, v_3, l_3, albedo_4, metallic_3, roughness_9, f0_7));
+    VectorOutputs_put_3(&(outputs_1), multiscatter_gain_0(energy_5, f0_7));
+    VectorOutputs_put_3(&(outputs_1), specular_albedo_0(energy_5, f0_7));
+    var surface_0 : vec2<f32> = ggx_energy_0(dot(n_3, v_3), roughness_9);
+    VectorOutputs_put_3(&(outputs_1), brdf_smith_k_0(n_3, v_3, l_3, albedo_4, metallic_3, roughness_9, f0_7, radiance_2, k_3, surface_0));
+    VectorOutputs_put_3(&(outputs_1), brdf_direct_0(n_3, v_3, l_3, albedo_4, metallic_3, roughness_9, f0_7, radiance_2, surface_0));
+    VectorOutputs_put_3(&(outputs_1), brdf_sampled_0(n_3, v_3, l_3, albedo_4, metallic_3, roughness_9, f0_7, surface_0));
     return;
 }
 

@@ -101,8 +101,9 @@ float3 specular_albedo(float2 energy, float3 f0)
 
 // Compensated Cook-Torrance with remap k + Lambert scaled by (1 - E_spec)(1 - metallic), times radiance and n.l.
 float3 brdf_smith_k(float3 n, float3 v, float3 l, float3 albedo, float metallic, float roughness, float3 f0,
-    float3 radiance, float k)
+    float3 radiance, float k, float2 energy)
 {
+    // energy is ggx_energy(dot(n, v), roughness): one evaluation per shading point serves all of its lights.
     float3 h = normalize(l + v);
     float n_dot_l = max(dot(n, l), 0.0);
     float n_dot_v = max(dot(n, v), 1e-4);
@@ -111,9 +112,8 @@ float3 brdf_smith_k(float3 n, float3 v, float3 l, float3 albedo, float metallic,
 
     // The NDF's floor, shared with smith_k_* and the energy fit: a lobe below it outgrew its gain (a white metal 1.21).
     float r = max(roughness, MIN_ROUGHNESS);
-    // brdf_sampled's energy for every remap: the analytic remap's extra masking shapes a highlight, it loses no bounce.
-    float2 energy = ggx_energy(n_dot_v, r);
     float3 single = ggx_single_scatter(n_dot_v, n_dot_l, n_dot_h, h_dot_v, r, f0, k);
+    // brdf_sampled's energy for every remap: the analytic remap's extra masking shapes a highlight, it loses no bounce.
     float3 specular = multiscatter_gain(energy, f0) * single;
     float3 diffuse = saturate(float3(1.0) - specular_albedo(energy, f0)) * (1.0 - metallic) * lambert_diffuse(albedo);
     return (diffuse + specular) * radiance * n_dot_l;
@@ -128,13 +128,14 @@ float3 brdf_direct(
     float metallic,
     float roughness,
     float3 f0,
-    float3 radiance)
+    float3 radiance,
+    float2 energy)
 {
-    return brdf_smith_k(n, v, l, albedo, metallic, roughness, f0, radiance, smith_k_analytic(roughness));
+    return brdf_smith_k(n, v, l, albedo, metallic, roughness, f0, radiance, smith_k_analytic(roughness), energy);
 }
 
 // brdf_direct's f n.l under a unit light for a direction a path sampled, with the sampled remap; NEE keeps brdf_direct.
-float3 brdf_sampled(float3 n, float3 v, float3 l, float3 albedo, float metallic, float roughness, float3 f0)
+float3 brdf_sampled(float3 n, float3 v, float3 l, float3 albedo, float metallic, float roughness, float3 f0, float2 energy)
 {
-    return brdf_smith_k(n, v, l, albedo, metallic, roughness, f0, float3(1.0), smith_k_sampled(roughness));
+    return brdf_smith_k(n, v, l, albedo, metallic, roughness, f0, float3(1.0), smith_k_sampled(roughness), energy);
 }
