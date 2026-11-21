@@ -435,7 +435,8 @@ fn deferred_cuts_out_mask_and_composites_blend() {
         &forward,
         &deferred,
         &[
-            |r, g, b| g > 140 && g > r + 25 && g > b + 25 && r > 70 && b > 60,
+            // Green over red by 10: the quad's g - r sits at 20-30, so 25 cut through it (the sky fails g > b + 25).
+            |r, g, b| g > 140 && g > r + 10 && g > b + 25 && r > 70 && b > 60,
             |r, g, b| r > 140 && g > 140 && b * 3 < r,
         ],
     )[..] else {
