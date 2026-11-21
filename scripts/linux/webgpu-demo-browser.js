@@ -16,7 +16,7 @@ const FRAME_TIMEOUT_MS = 5 * 60 * 1000;
 
 // Clouds must change `minChanged` of deferred; a traced mode must draw its own shadow (`signature`), as it changes only 2.6-3.2 % of forward.
 const STEPS = [
-  { name: 'forward', mode: 'raster', path: 'forward', clouds: false, fxaa: false },
+  { name: 'forward', mode: 'raster', path: 'forward', clouds: false, fxaa: true },
   { name: 'deferred', mode: 'raster', path: 'deferred', clouds: false, fxaa: true },
   { name: 'clouds', mode: 'raster', path: 'deferred', clouds: true, differsFrom: 'deferred', minChanged: 0.01 },
   { name: 'ray traced', mode: 'ray', path: 'forward', clouds: false, differsFrom: 'forward', signature: 'ray' },

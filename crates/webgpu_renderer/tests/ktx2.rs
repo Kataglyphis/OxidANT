@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use kataglyphis_webgpu_renderer::asset::ktx2_loader::load_ktx2;
+use kataglyphis_webgpu_renderer::render::fxaa::FxaaMode;
 use kataglyphis_webgpu_renderer::scene::{
     CompressedFormat, CompressedTexture, CpuSampler, CpuScene, CpuTexture, CpuTextureRef,
 };
@@ -64,6 +65,8 @@ fn render_cube_with(gpu: &GpuContext, texture: CpuTexture) -> (Option<wgpu::Erro
 fn render_scene(gpu: &GpuContext, scene: &CpuScene) -> (Option<wgpu::Error>, Vec<u8>) {
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut renderer = ForwardRenderer::new(gpu, 128, 128);
+    // FXAA would turn a decoder's one-level rounding into a different edge decision; these compare decodes.
+    renderer.fxaa = FxaaMode::Off;
     renderer.upload_scene(gpu, scene);
     let pixels = renderer
         .render_to_pixels(gpu, 128, 128, &OrbitCamera::default())

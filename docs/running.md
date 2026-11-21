@@ -244,8 +244,8 @@ gen-12lp`) and marks an integrated one with that hint.
 
 **Quality.** The Renderer tab's presets: Low (deferred and FXAA instead of 4x MSAA, no SSAO or
 bloom, one 1024 cascade, Auto scale from 0.75), Medium (deferred and FXAA, SSAO and bloom, two 1024
-cascades, Auto scale from 1), High (the defaults: forward at 4x MSAA, three 2048 cascades, scale 1)
-and Ultra (High with 4096 cascades, PCF radius 3 and FXAA on every frame). Editing a setting a
+cascades, Auto scale from 1), High (the defaults: forward at 4x MSAA, FXAA on every frame, three 2048
+cascades, scale 1) and Ultra (High with 4096 cascades and PCF radius 3). Editing a setting a
 preset owns shows Custom. The browser starts at Medium on an integrated or unknown GPU, Low on a
 CPU one and High on a discrete one; the viewer starts at High. Nothing is persisted.
 **Render scale** renders the scene at 0.25 to 1 of the viewport's size and upsamples in the

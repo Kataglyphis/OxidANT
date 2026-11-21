@@ -287,7 +287,8 @@ mod tests {
         );
         assert_eq!(
             (raster.clouds, raster.fxaa, raster.trace, raster.samples),
-            (false, false, "idle", 0)
+            (false, true, "idle", 0),
+            "FXAA's default, Always, filters the forward frame too"
         );
         assert!(
             app.controller.auto_orbit,
@@ -327,7 +328,7 @@ mod tests {
         let ready = app.demo_report();
         assert_eq!(
             (ready.drawn, ready.trace, ready.fxaa),
-            ("path", "ready", false)
+            ("path", "ready", true)
         );
         assert!(ready.detail.starts_with("Tracer ready"), "{}", ready.detail);
     }

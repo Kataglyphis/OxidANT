@@ -67,8 +67,8 @@ kernel writes, and the tonemap composites it in linear HDR, the same over sky an
 ranges in the Sky tab.
 
 **Post** — 4× MSAA on the forward path; deferred renders one sample and FXAA
-smooths its edges after the tonemap (`render::fxaa`, on deferred frames by default,
-selectable for every frame; sub-pixel detail still differs, `tests/deferred.rs` and
+smooths its edges after the tonemap (`render::fxaa`, on every frame by default since
+2026-11-21, as in BeschleunigerBallett, or on deferred frames only; sub-pixel detail still differs, `tests/deferred.rs` and
 `tests/fxaa.rs` measure it), HDR `Rgba16Float` target, bloom (bright-pass + separable
 Gaussian), SSAO (depth reconstruction), manual or histogram auto-exposure, ACES
 tonemapping.

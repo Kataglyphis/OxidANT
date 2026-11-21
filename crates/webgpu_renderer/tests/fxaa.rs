@@ -199,8 +199,9 @@ fn fxaa_smooths_the_deferred_staircase_and_leaves_flat_regions_alone() {
     }
 }
 
+/// The default, Always as in BeschleunigerBallett, filters a forward frame on top of its MSAA; Deferred only leaves it.
 #[test]
-fn fxaa_leaves_forward_frames_alone_unless_always() {
+fn fxaa_filters_forward_frames_by_default_but_not_deferred_only() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -208,11 +209,11 @@ fn fxaa_leaves_forward_frames_alone_unless_always() {
     let card = (&scene, &camera);
     let srgb = wgpu::TextureFormat::Rgba8UnormSrgb;
     let off = frame(&gpu, card, (RasterPath::Forward, FxaaMode::Off), srgb);
+    let deferred_only = frame(&gpu, card, (RasterPath::Forward, FxaaMode::Deferred), srgb);
+    assert_eq!(off, deferred_only, "Deferred only filtered a forward frame");
     let default = frame(&gpu, card, (RasterPath::Forward, FxaaMode::default()), srgb);
-    assert_eq!(off, default, "FXAA at its default filtered a forward frame");
-    let always = frame(&gpu, card, (RasterPath::Forward, FxaaMode::Always), srgb);
-    assert!(off != always, "Always filters the forward frame too");
-    let moved = max_diff_where(&off, &always, &flat_mask(&off));
+    assert!(off != default, "the default leaves the forward frame alone");
+    let moved = max_diff_where(&off, &default, &flat_mask(&off));
     assert!(moved <= 1, "FXAA moved a flat forward pixel by {moved}");
 }
 

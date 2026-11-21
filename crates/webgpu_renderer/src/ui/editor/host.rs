@@ -68,7 +68,7 @@ impl Default for RendererSettings {
             skybox_enabled: true,
             model_transform: ModelTransform::default(),
             raster_path: RasterPath::Forward,
-            fxaa: FxaaMode::Deferred,
+            fxaa: FxaaMode::Always,
             render_scale: RenderScale::default(),
             clouds: CloudSettings::default(),
             render_mode: RenderMode::Raster,
@@ -504,7 +504,7 @@ mod tests {
                 rotation_deg: glam::Vec3::new(0.0, 90.0, 0.0),
             },
             raster_path: RasterPath::Deferred,
-            fxaa: FxaaMode::Always,
+            fxaa: FxaaMode::Deferred,
             render_scale: RenderScale {
                 scale: 0.5,
                 auto: true,

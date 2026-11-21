@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-21, FXAA on every frame by default)
+
+- The renderer's FXAA defaults to `Always` instead of `Deferred` (owner decision 2026-11-21), as
+  BeschleunigerBallett's C++ FXAA does: `FxaaMode::default()`, the editor's `RendererSettings::default()` and the
+  High preset, which is the renderer's defaults, filter a forward frame on top of its 4x MSAA and the traced modes
+  too. Ultra's FXAA no longer differs from High's; Low and Medium take High's, so they filter traced frames as well.
+  `tests/fxaa.rs`' `fxaa_filters_forward_frames_by_default_but_not_deferred_only` replaces
+  `fxaa_leaves_forward_frames_alone_unless_always`; the Renderer tab's test starts at Always, and the web demo's
+  report test and the browser check expect FXAA on the forward frame too (`test-webgpu-demo-browser.sh` adds the
+  case). Five suites assumed an unfiltered forward frame: `clouds.rs`' composite, `ktx2.rs`' BC decode comparison and
+  `samplers.rs`' nearest-texel check pin FXAA off (each compares pixels FXAA moves), `gpu_timing.rs` expects the
+  `Fxaa` pass on both paths, and `deferred.rs` counts FXAA's 4-byte input in the forward frame's transients (80 bytes a
+  pixel). `docs/running.md`'s presets and `docs/testing.md`'s browser verdicts follow.
+
 ### Changed (2026-11-21, the brdf vectors take the multiple-scattering gain)
 
 - `scripts/shader_model.py` mirrors the compensated `brdf.slang` and `ggx_energy_fit`, reading the spline's

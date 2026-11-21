@@ -73,11 +73,11 @@ fn the_renderer_tab_picks_fxaa_in_every_mode() {
     studio.editor.select(SceneObject::Renderer);
     studio.stats.drawn_mode = RenderMode::PathTraced;
     studio.frame(Vec::new());
-    assert_eq!(studio.settings.fxaa, FxaaMode::Deferred);
-    click_text(&mut studio, "Always");
     assert_eq!(studio.settings.fxaa, FxaaMode::Always);
     click_text(&mut studio, "Deferred only");
     assert_eq!(studio.settings.fxaa, FxaaMode::Deferred);
+    click_text(&mut studio, "Always");
+    assert_eq!(studio.settings.fxaa, FxaaMode::Always);
 }
 
 #[test]

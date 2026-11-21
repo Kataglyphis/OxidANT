@@ -47,7 +47,7 @@ impl QualityPreset {
     pub fn knobs(self) -> QualityKnobs {
         let high = QualityKnobs {
             raster_path: RasterPath::Forward,
-            fxaa: FxaaMode::Deferred,
+            fxaa: FxaaMode::Always,
             ssao_strength: 0.7,
             bloom_strength: 0.6,
             shadows_enabled: true,
@@ -82,7 +82,6 @@ impl QualityPreset {
             },
             Self::High => high,
             Self::Ultra => QualityKnobs {
-                fxaa: FxaaMode::Always,
                 shadow_resolution: 4096,
                 pcf_radius: 3,
                 ..high

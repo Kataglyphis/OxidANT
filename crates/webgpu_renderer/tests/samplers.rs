@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use glam::Mat4;
+use kataglyphis_webgpu_renderer::render::fxaa::FxaaMode;
 use kataglyphis_webgpu_renderer::scene::{
     CpuMaterial, CpuPrimitive, CpuSampler, CpuTexture, CpuTextureRef, Vertex,
 };
@@ -79,6 +80,8 @@ fn a_minified_nearest_texture_samples_only_its_own_texels() {
     let mut renderer = ForwardRenderer::new(&gpu, width, height);
     renderer.bloom_strength = 0.0;
     renderer.ssao_strength = 0.0;
+    // FXAA would blend neighbouring texels, the very mix this test looks for.
+    renderer.fxaa = FxaaMode::Off;
     let nearest = CpuSampler {
         min_nearest: true,
         mip_nearest: true,

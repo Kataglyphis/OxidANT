@@ -244,7 +244,7 @@ second frame back, and fails when:
 - the frame drew another mode than asked (`drawn_mode`, the chip's), or the tracer failed;
 - the scene viewport, 2 % in from its edges, has fewer than 256 colours or one colour over 90 %;
 - clouds change under 1 % of pixels against deferred;
-- the deferred frame ran no FXAA or the forward frame did (`demo_view().fxaa`);
+- the forward or the deferred frame ran no FXAA, whose default, Always, filters both (`demo_view().fxaa`);
 - the ray-traced frame lacks its own shadow: the cube's sun shadow, black without an ambient term
   (every channel under 48), covers under 0.05 % of the viewport, or forward has a tenth as many such pixels;
 - in that shadow the path-traced frame is not lit by the sky (mean brightest channel under 80) or not

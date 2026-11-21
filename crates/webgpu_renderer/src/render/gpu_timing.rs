@@ -41,7 +41,7 @@ pub enum TimedPass {
     PathTrace,
     /// The traced modes' copy of their accumulation into the HDR target.
     TraceResolve,
-    /// FXAA over the tonemapped frame into the output target (deferred frames by default).
+    /// FXAA over the tonemapped frame into the output target (every frame by default).
     Fxaa,
 }
 

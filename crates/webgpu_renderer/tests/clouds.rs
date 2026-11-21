@@ -7,6 +7,7 @@ use kataglyphis_webgpu_renderer::render::clouds::{
     CloudAmbient, CloudSettings, NOISE_VOLUME_EXTENT,
 };
 use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
+use kataglyphis_webgpu_renderer::render::fxaa::FxaaMode;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
@@ -694,6 +695,8 @@ fn a_cloud_composites_over_the_sky_as_over_geometry() {
         // No bloom, AO or exposure, which differ between backgrounds; the tonemap's own math stays.
         renderer.bloom_strength = 0.0;
         renderer.ssao_strength = 0.0;
+        // FXAA would move the card's edge pixels off the composite this compares exactly.
+        renderer.fxaa = FxaaMode::Off;
         // Deep enough to be half opaque, without powder, which darkens thin cloud to almost nothing.
         renderer.clouds = CloudSettings {
             powder: false,

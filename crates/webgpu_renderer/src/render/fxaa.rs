@@ -11,9 +11,9 @@ use crate::render::pipeline_desc::{self, FullscreenPipeline};
 pub enum FxaaMode {
     Off,
     /// Deferred raster frames only, which have no other anti-aliasing.
-    #[default]
     Deferred,
-    /// Every frame: forward on top of its MSAA, and the traced modes.
+    /// Every frame: forward on top of its MSAA, and the traced modes; the default, as in BeschleunigerBallett.
+    #[default]
     Always,
 }
 

@@ -54,6 +54,10 @@ judge 'deferred' '{}' '{"fxaa": false}'
 t_case 'a deferred frame without FXAA fails'
 t_assert_grep "${work}/out" '^VERDICT FXAA did not run, expected it on$'
 
+judge 'forward' '{}' '{"fxaa": false}'
+t_case 'a forward frame without FXAA fails: the default, Always, filters it too'
+t_assert_grep "${work}/out" '^VERDICT FXAA did not run, expected it on$'
+
 suite_run node -e "
 const { shadowSignature } = require(process.argv[1]);
 // 6x6 frames, one pixel of the 4x4 inside the 2 % inset black in the ray-traced frame only.
