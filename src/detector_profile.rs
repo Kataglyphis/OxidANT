@@ -71,6 +71,8 @@ pub fn run(
 /// Warm p50 and p95 of `runs` detections as one JSON line, or `not_collected` for a provider this runtime lacks.
 pub fn latency_json(image_path: &Path, runs: usize) -> Result<String> {
     const WARM_RUNS: usize = 5;
+    // No sample has no rank to read, and the release profile aborts on the panic that indexing it would raise.
+    anyhow::ensure!(runs > 0, "latency needs at least one timed run, got {runs}");
     let image = load_rgba(image_path)?;
     let (width, height) = image.dimensions();
     let model = crate::person_detection::resolve_model_path(None);
@@ -156,6 +158,15 @@ fn write_results(output: &Path, width: u32, height: u32, found: &[crate::Detecti
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn zero_timed_runs_is_an_error_before_anything_loads() {
+        let error = super::latency_json(std::path::Path::new("no-such-image.png"), 0).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("at least one timed run"),
+            "{error:#}"
+        );
+    }
+
     #[test]
     fn latency_figures_rank_the_sorted_samples() {
         let samples = (1..=20).rev().map(f64::from).collect();

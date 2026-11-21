@@ -166,8 +166,9 @@ provider, on `embed --model-dir` too. `embed` prints one L2-normalised vector pe
 | `text_local_available()` | Whether this build loads the chain's GenAI |
 | `text_default_options()` | The contract's defaults |
 
-`TextOptions` carries `seed`, `json_schema` and `stop` as above. A schema on a lane without
-llguidance fails `text_generate` with a message starting `json_schema is unsupported on this lane`.
+`TextOptions` carries `seed`, `json_schema` and `stop` as above. Every failure ends the stream with
+an error whose message is `kind: text` (Dart decodes it as `AnyhowException`); a schema on a lane
+without llguidance starts `json_schema_unsupported: json_schema is unsupported on this lane`.
 A `piece` holds answer text only. `done` does not carry the thinking count: the generated Dart
 code mirrors `TextEvent`, so a new field needs the bindings regenerated.
 `TextSource` names either a `model_dir` with a `provider` (`cpu`, `cuda`, `dml`) or the endpoint
