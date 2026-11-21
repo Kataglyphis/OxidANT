@@ -22,6 +22,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and the weights, from which the renderer blends once. `tests/flat.rs`'
   `default_morph_weights_bake_into_the_flat_vertices_and_the_scene_keeps_them_apart` covers the mesh weight, a node
   weight that wins and a weight count that does not match, and fails when the bake moves into `load_gltf`.
+- **The parser cases of BeschleunigerBallett's `GltfParseUnit` live here** (plan X5): `tests/flat.rs` gains 18 tests
+  through `load_flat` (material factors and defaults, alpha modes, `KHR_materials_unlit`, dense slots whatever an
+  image's bytes, every slot's colour space and `KHR_texture_transform`, a slot's UV set, a percent-encoded image URI, a
+  truncated document, flat normals at a shared corner, strips and fans, an out-of-range index, `COLOR_0`,
+  `TEXCOORD_1`, authored tangents, the default scene's nodes, one range per primitive, two negative scales), and
+  `the_cube_flattens_into_consistent_arrays` checks the generated tangents' length and orthogonality.
 
 ### Fixed (2026-11-21, the energy compensation's review)
 

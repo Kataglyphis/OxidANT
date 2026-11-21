@@ -108,6 +108,11 @@ fn the_cube_flattens_into_consistent_arrays() {
         let n = glam::Vec3::from_array(v.normal);
         assert!((n.length() - 1.0).abs() < 1e-4, "normal {n:?}");
         assert!(v.tangent[3] == 1.0 || v.tangent[3] == -1.0);
+        let t = glam::Vec3::from_slice(&v.tangent[..3]);
+        assert!(
+            (t.length() - 1.0).abs() < 1e-4 && t.dot(n).abs() < 1e-4,
+            "tangent {t:?}"
+        );
     }
 }
 
@@ -982,4 +987,542 @@ fn default_morph_weights_bake_into_the_flat_vertices_and_the_scene_keeps_them_ap
         lift(&mismatched.unwrap()).iter().all(|&dy| dy == 0.0),
         "a count off the targets is ignored"
     );
+}
+
+/// `triangle_gltf` on one node under `extra`'s top-level members, flattened with the default options.
+fn flat_with(extra: &str) -> FlatModel {
+    let dir = tempfile::tempdir().unwrap();
+    let path = triangle_gltf(dir.path(), "doc.gltf", r#"{"mesh":0}"#, extra);
+    load_flat(path, &LoadOptions::default()).unwrap()
+}
+
+/// `count` images that embed the same PNG, so only their index tells them apart.
+fn same_png_images(count: usize) -> String {
+    let image = format!(r#"{{"uri":"{}"}}"#, embedded_png_uri());
+    format!(r#""images":[{}]"#, vec![image; count].join(","))
+}
+
+#[test]
+fn material_factors_reach_the_flat_material() {
+    let extra = format!(
+        r#",{},"textures":[{{"source":0}}],"extensionsUsed":["KHR_materials_emissive_strength"],
+        "materials":[{{"pbrMetallicRoughness":{{"baseColorFactor":[0.25,0.5,1.0,0.25],"baseColorTexture":{{"index":0}},
+                        "metallicFactor":0.75,"roughnessFactor":0.5}},
+                       "normalTexture":{{"index":0,"scale":0.5}},"emissiveFactor":[0.2,0.4,0.6]}},
+                     {{"emissiveFactor":[1,1,1],"extensions":{{"KHR_materials_emissive_strength":{{"emissiveStrength":4}}}}}}]"#,
+        same_png_images(1)
+    );
+    let model = flat_with(&extra);
+    let textured = &model.materials[0];
+    // glTF's base colour is the factor times the texture, so the factor stays beside the texture.
+    assert_eq!(
+        (textured.diffuse, textured.dissolve),
+        ([0.25, 0.5, 1.0], 0.25)
+    );
+    assert_eq!(textured.base_texture, 0);
+    assert_eq!(
+        (textured.metallic, textured.roughness, textured.normal_scale),
+        (0.75, 0.5, 0.5)
+    );
+    assert_eq!(
+        textured.emission,
+        [0.2, 0.4, 0.6],
+        "no strength leaves the factor"
+    );
+    assert_eq!(
+        model.materials[1].emission, [4.0; 3],
+        "the strength scales the factor past 1"
+    );
+}
+
+#[test]
+fn a_material_without_a_pbr_block_and_the_fallback_take_the_gltf_defaults() {
+    let model = flat_with(r#","materials":[{}]"#);
+    assert_eq!(
+        model.materials.len(),
+        2,
+        "the declared material, then the fallback"
+    );
+    for material in &model.materials {
+        assert_eq!((material.diffuse, material.dissolve), ([1.0; 3], 1.0));
+        assert_eq!(
+            (material.metallic, material.roughness, material.normal_scale),
+            (1.0, 1.0, 1.0)
+        );
+        assert_eq!(
+            (material.alpha_cutoff, material.alpha_blend, material.unlit),
+            (-1.0, false, false)
+        );
+        assert_eq!(material.emission, [0.0; 3]);
+        let slots = [
+            material.base_texture,
+            material.metallic_roughness_texture,
+            material.normal_texture,
+            material.emissive_texture,
+        ];
+        assert_eq!(slots, [-1; 4]);
+    }
+}
+
+#[test]
+fn alpha_modes_set_the_cutoff_and_the_blend_flag_of_material_and_range() {
+    let dir = tempfile::tempdir().unwrap();
+    let extra = r#","materials":[{"alphaMode":"MASK","alphaCutoff":0.25},{"alphaMode":"OPAQUE"},
+        {"alphaMode":"BLEND","pbrMetallicRoughness":{"baseColorFactor":[1,0,0,0.5]}}]"#;
+    let mut blended = Vec::new();
+    let mut materials = Vec::new();
+    for material in [1, 2] {
+        let path = triangle_gltf(dir.path(), "alpha.gltf", r#"{"mesh":0}"#, extra);
+        let json = std::fs::read_to_string(&path).unwrap();
+        let drawn = format!(r#""material":{material},"attributes":{{"#);
+        std::fs::write(&path, json.replacen(r#""attributes":{"#, &drawn, 1)).unwrap();
+        let model = load_flat(&path, &LoadOptions::default()).unwrap();
+        blended.push(model.ranges[0].alpha_blended);
+        materials = model.materials;
+    }
+    assert_eq!(
+        blended,
+        [false, true],
+        "only the BLEND mesh leaves the opaque passes"
+    );
+    let [mask, opaque, blend] = [&materials[0], &materials[1], &materials[2]];
+    assert_eq!((mask.alpha_cutoff, mask.alpha_blend), (0.25, false));
+    assert_eq!((opaque.alpha_cutoff, opaque.alpha_blend), (-1.0, false));
+    // BLEND never alpha-tests; its factor's alpha rides in dissolve.
+    assert_eq!(
+        (blend.alpha_cutoff, blend.alpha_blend, blend.dissolve),
+        (-1.0, true, 0.5)
+    );
+}
+
+#[test]
+fn khr_materials_unlit_marks_only_its_own_material() {
+    let model = flat_with(
+        r#","extensionsUsed":["KHR_materials_unlit"],"materials":[{"extensions":{"KHR_materials_unlit":{}}},{}]"#,
+    );
+    assert_eq!(
+        (model.materials[0].unlit, model.materials[1].unlit),
+        (true, false)
+    );
+}
+
+#[test]
+fn declared_images_get_dense_slots_whatever_their_bytes() {
+    // Images 0 and 1 embed one PNG; image 2's six zero bytes decode to nothing, which the C++ upload finds out later.
+    let images =
+        same_png_images(2).replacen("]", r#",{"uri":"data:image/png;base64,AAAAAAAA"}]"#, 1);
+    let base =
+        |i: usize| format!(r#"{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":{i}}}}}}}"#);
+    let extra = format!(
+        r#",{images},"textures":[{{"source":0}},{{"source":1}},{{"source":2}}],"materials":[{},{},{}]"#,
+        base(0),
+        base(1),
+        base(2)
+    );
+    let model = flat_with(&extra);
+    let ids: Vec<i32> = model.materials.iter().map(|m| m.base_texture).collect();
+    assert_eq!(
+        ids,
+        [0, 1, 2, -1],
+        "slots key on the declared image, not its bytes, and never decode"
+    );
+    assert_eq!(model.textures[2].encoded, [0; 6]);
+}
+
+#[test]
+fn every_slot_gets_its_own_texture_colour_space_and_uv_transform() {
+    let scaled = |index: usize, scale: f32| {
+        format!(
+            r#"{{"index":{index},"extensions":{{"KHR_texture_transform":{{"scale":[{scale},{scale}]}}}}}}"#
+        )
+    };
+    let all = format!(
+        r#"{{"pbrMetallicRoughness":{{"baseColorTexture":{},"metallicRoughnessTexture":{}}},"normalTexture":{},"emissiveTexture":{}}}"#,
+        scaled(0, 4.0),
+        scaled(1, 3.0),
+        scaled(2, 2.0),
+        scaled(3, 1.5)
+    );
+    let plain = r#"{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}"#;
+    let normal_only = format!(r#"{{"normalTexture":{}}}"#, scaled(2, 3.0));
+    let turned = r#"{"pbrMetallicRoughness":{"baseColorTexture":{"index":0,"extensions":{"KHR_texture_transform":{"rotation":1.5707964}}}}}"#;
+    let extra = format!(
+        r#",{},"textures":[{{"source":0}},{{"source":1}},{{"source":2}},{{"source":3}}],
+        "extensionsUsed":["KHR_texture_transform"],"materials":[{all},{plain},{normal_only},{turned}]"#,
+        same_png_images(4)
+    );
+    let model = flat_with(&extra);
+    let m = &model.materials[0];
+    let slots = [
+        m.base_texture,
+        m.metallic_roughness_texture,
+        m.normal_texture,
+        m.emissive_texture,
+    ];
+    assert_eq!(slots, [0, 1, 2, 3]);
+    let srgb: Vec<bool> = slots
+        .iter()
+        .map(|&s| model.textures[s as usize].srgb)
+        .collect();
+    assert_eq!(
+        srgb,
+        [true, false, false, true],
+        "colour slots are sRGB, data slots linear"
+    );
+    let scale = |rows: [[f32; 3]; 2]| (rows[0][0], rows[1][1]);
+    let scales = [
+        m.base_uv,
+        m.metallic_roughness_uv,
+        m.normal_uv,
+        m.emissive_uv,
+    ]
+    .map(scale);
+    assert_eq!(
+        scales,
+        [(4.0, 4.0), (3.0, 3.0), (2.0, 2.0), (1.5, 1.5)],
+        "no slot takes another's"
+    );
+    const IDENTITY: [[f32; 3]; 2] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    assert_eq!(model.materials[1].base_uv, IDENTITY);
+    let n = &model.materials[2];
+    assert_eq!(
+        scale(n.normal_uv),
+        (3.0, 3.0),
+        "a transform on the normal slot alone"
+    );
+    assert_eq!(
+        [n.base_uv, n.metallic_roughness_uv, n.emissive_uv],
+        [IDENTITY; 3]
+    );
+    // The spec's T*R*S turns u = (1, 0) by -rotation: a quarter turn lands on (0, -1), not (0, 1).
+    let rows = model.materials[3].base_uv;
+    let u = [rows[0][0] + rows[0][2], rows[1][0] + rows[1][2]];
+    assert!(u[0].abs() < 1e-6 && (u[1] + 1.0).abs() < 1e-6, "{u:?}");
+}
+
+#[test]
+fn a_percent_encoded_image_uri_resolves_beside_the_document() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("my tex.png"), PIXEL_PNG).unwrap();
+    let path = triangle_with_image(dir.path(), "my%20tex.png");
+    let model = load_flat(path, &LoadOptions::default()).unwrap();
+    assert_eq!(model.textures.len(), 1);
+    assert_eq!(model.textures[0].encoded, PIXEL_PNG);
+}
+
+#[test]
+fn a_truncated_document_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cut.gltf");
+    std::fs::write(&path, r#"{ "asset": { "version": "2.0" "#).unwrap();
+    assert!(load_flat(&path, &LoadOptions::default()).is_err());
+}
+
+#[test]
+fn each_slot_records_the_uv_set_its_tex_coord_names() {
+    let extra = format!(
+        r#",{},"textures":[{{"source":0}}],"extensionsUsed":["KHR_texture_transform"],"materials":[
+          {{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0,"texCoord":0}},"metallicRoughnessTexture":{{"index":0,"texCoord":1}}}},
+            "normalTexture":{{"index":0,"texCoord":2}},"emissiveTexture":{{"index":0,"texCoord":1}}}},
+          {{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0,"texCoord":0,"extensions":{{"KHR_texture_transform":{{"texCoord":1}}}}}}}},
+            "emissiveTexture":{{"index":0,"texCoord":1,"extensions":{{"KHR_texture_transform":{{"texCoord":0}}}}}}}}]"#,
+        same_png_images(1)
+    );
+    let model = flat_with(&extra);
+    // Bits: 0 base colour, 1 metallic-roughness, 2 normal, 3 emissive; TEXCOORD_2 is unsupported and reads UV0.
+    assert_eq!(model.materials[0].uv1_slot_mask, 0b1010);
+    assert_eq!(
+        model.materials[1].uv1_slot_mask, 0b0001,
+        "the transform's texCoord wins both ways"
+    );
+}
+
+fn f32_bytes(values: &[f32]) -> Vec<u8> {
+    values.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+/// One mesh of `primitive` over `accessors` and `views` into the embedded `bytes`, on one node.
+fn geometry_gltf(
+    dir: &Path,
+    primitive: &str,
+    accessors: &str,
+    views: &str,
+    bytes: &[u8],
+) -> PathBuf {
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],
+        "meshes":[{{"primitives":[{primitive}]}}],"accessors":[{accessors}],"bufferViews":[{views}],
+        "buffers":[{{"byteLength":{},"uri":"data:application/octet-stream;base64,{}"}}]}}"#,
+        bytes.len(),
+        base64(bytes)
+    );
+    let path = dir.join("geometry.gltf");
+    std::fs::write(&path, json).unwrap();
+    path
+}
+
+/// The POSITION accessor and view of `count` vertices at the buffer's start, as JSON list members.
+fn position_parts(count: usize) -> (String, String) {
+    (
+        format!(
+            r#"{{"bufferView":0,"componentType":5126,"count":{count},"type":"VEC3","min":[0,0,0],"max":[1,1,1]}}"#
+        ),
+        format!(r#"{{"buffer":0,"byteLength":{}}}"#, count * 12),
+    )
+}
+
+#[test]
+fn without_normals_each_face_of_a_shared_corner_gets_its_own_flat_normal() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bytes = f32_bytes(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+    bytes.extend([0u16, 1, 2, 0, 3, 1].iter().flat_map(|i| i.to_le_bytes()));
+    let (position, view) = position_parts(4);
+    let path = geometry_gltf(
+        dir.path(),
+        r#"{"attributes":{"POSITION":0},"indices":1}"#,
+        &format!(r#"{position},{{"bufferView":1,"componentType":5123,"count":6,"type":"SCALAR"}}"#),
+        &format!(r#"{view},{{"buffer":0,"byteOffset":48,"byteLength":12}}"#),
+        &bytes,
+    );
+    let model = load_flat(path, &LoadOptions::default()).unwrap();
+    assert_eq!(model.vertices.len(), 6, "one vertex per corner");
+    for (corner, &index) in model.indices.iter().enumerate() {
+        let face = if corner < 3 {
+            glam::Vec3::Z
+        } else {
+            glam::Vec3::Y
+        };
+        let normal = glam::Vec3::from_array(model.vertices[index as usize].normal);
+        assert!(
+            (normal - face).length() < 1e-6,
+            "corner {corner}: {normal:?}"
+        );
+    }
+}
+
+#[test]
+fn strips_and_fans_load_as_triangle_lists_with_their_own_winding() {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = f32_bytes(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0]);
+    let (position, view) = position_parts(4);
+    let corner = |model: &FlatModel| -> Vec<[f32; 3]> {
+        model
+            .indices
+            .iter()
+            .map(|&i| model.vertices[i as usize].position)
+            .collect()
+    };
+    let (o, x, y, xy) = (
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0],
+    );
+    // The odd strip triangle swaps its first two corners; a fan turns around its hub, vertex 0.
+    for (mode, expected) in [(5, [o, x, y, y, x, xy]), (6, [o, x, y, o, y, xy])] {
+        let primitive = format!(r#"{{"attributes":{{"POSITION":0}},"mode":{mode}}}"#);
+        let path = geometry_gltf(dir.path(), &primitive, &position, &view, &bytes);
+        let model = load_flat(path, &LoadOptions::default()).unwrap();
+        assert_eq!(
+            model.vertices.len(),
+            6,
+            "mode {mode}: one vertex per corner"
+        );
+        assert_eq!(corner(&model), expected, "mode {mode}");
+    }
+}
+
+#[test]
+fn an_out_of_range_index_drops_only_its_own_triangle() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bytes = f32_bytes(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    bytes.extend([0u16, 1, 2, 0, 1, 7].iter().flat_map(|i| i.to_le_bytes()));
+    let (position, view) = position_parts(3);
+    let path = geometry_gltf(
+        dir.path(),
+        r#"{"attributes":{"POSITION":0},"indices":1}"#,
+        &format!(r#"{position},{{"bufferView":1,"componentType":5123,"count":6,"type":"SCALAR"}}"#),
+        &format!(r#"{view},{{"buffer":0,"byteOffset":36,"byteLength":12}}"#),
+        &bytes,
+    );
+    let model = load_flat(path, &LoadOptions::default()).unwrap();
+    assert_consistent(&model);
+    assert_eq!(model.vertices.len(), 3);
+    assert_eq!(
+        model.indices,
+        [0, 1, 2],
+        "the triangle naming vertex 7 is gone, the first stays"
+    );
+}
+
+#[test]
+fn color_0_reaches_the_vertices_and_a_vec3_one_is_opaque() {
+    let dir = tempfile::tempdir().unwrap();
+    let positions = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+    let rgba = [
+        1.0, 0.0, 0.0, 0.25, 0.0, 1.0, 0.0, 0.25, 0.0, 0.0, 1.0, 0.25,
+    ];
+    let rgb = [0.5; 9];
+    let (position, view) = position_parts(3);
+    let mut colours = Vec::new();
+    for (kind, values) in [("VEC4", &rgba[..]), ("VEC3", &rgb[..])] {
+        let mut bytes = f32_bytes(&positions);
+        bytes.extend(f32_bytes(values));
+        let path = geometry_gltf(
+            dir.path(),
+            r#"{"attributes":{"POSITION":0,"COLOR_0":1}}"#,
+            &format!(
+                r#"{position},{{"bufferView":1,"componentType":5126,"count":3,"type":"{kind}"}}"#
+            ),
+            &format!(
+                r#"{view},{{"buffer":0,"byteOffset":36,"byteLength":{}}}"#,
+                values.len() * 4
+            ),
+            &bytes,
+        );
+        let model = load_flat(path, &LoadOptions::default()).unwrap();
+        colours.push(model.vertices.iter().map(|v| v.color).collect::<Vec<_>>());
+    }
+    let rgba_corners = [
+        [1.0, 0.0, 0.0, 0.25],
+        [0.0, 1.0, 0.0, 0.25],
+        [0.0, 0.0, 1.0, 0.25],
+    ];
+    assert_eq!(colours[0], rgba_corners);
+    assert_eq!(
+        colours[1],
+        [[0.5, 0.5, 0.5, 1.0]; 3],
+        "a VEC3 colour has alpha 1"
+    );
+}
+
+#[test]
+fn texcoord_1_reaches_the_second_uv_set_and_its_absence_copies_the_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let uv0 = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+    let uv1 = [[0.0, 1.0], [0.0, 0.0], [1.0, 1.0]];
+    let mut bytes = f32_bytes(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    bytes.extend(f32_bytes(uv0.as_flattened()));
+    bytes.extend(f32_bytes(uv1.as_flattened()));
+    let (position, view) = position_parts(3);
+    let accessors = format!(
+        r#"{position},{{"bufferView":1,"componentType":5126,"count":3,"type":"VEC2"}},
+        {{"bufferView":2,"componentType":5126,"count":3,"type":"VEC2"}}"#
+    );
+    let views = format!(
+        r#"{view},{{"buffer":0,"byteOffset":36,"byteLength":24}},{{"buffer":0,"byteOffset":60,"byteLength":24}}"#
+    );
+    let sets = |attributes: &str| -> Vec<([f32; 2], [f32; 2])> {
+        let primitive = format!(r#"{{"attributes":{{{attributes}}}}}"#);
+        let path = geometry_gltf(dir.path(), &primitive, &accessors, &views, &bytes);
+        let model = load_flat(path, &LoadOptions::default()).unwrap();
+        model.vertices.iter().map(|v| (v.uv0, v.uv1)).collect()
+    };
+    let both = sets(r#""POSITION":0,"TEXCOORD_0":1,"TEXCOORD_1":2"#);
+    assert_eq!(both, [(uv0[0], uv1[0]), (uv0[1], uv1[1]), (uv0[2], uv1[2])]);
+    let first_only = sets(r#""POSITION":0,"TEXCOORD_0":1"#);
+    assert!(
+        first_only.iter().all(|(a, b)| a == b),
+        "a slot on set 1 samples UV0, not (0, 0)"
+    );
+}
+
+#[test]
+fn authored_tangents_are_kept_instead_of_generated() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bytes = f32_bytes(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    bytes.extend(f32_bytes(&[0.0f32, 0.0, 1.0].repeat(3)));
+    bytes.extend(f32_bytes(&[0.0, 0.0, 1.0, 0.0, 0.0, 1.0]));
+    // Lengyel's tangent from these UVs is (1, 0, 0, 1); the authored one differs in axis and handedness.
+    bytes.extend(f32_bytes(&[0.0f32, 1.0, 0.0, -1.0].repeat(3)));
+    let (position, view) = position_parts(3);
+    let accessors = format!(
+        r#"{position},{{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}},
+        {{"bufferView":2,"componentType":5126,"count":3,"type":"VEC2"}},{{"bufferView":3,"componentType":5126,"count":3,"type":"VEC4"}}"#
+    );
+    let views = format!(
+        r#"{view},{{"buffer":0,"byteOffset":36,"byteLength":36}},{{"buffer":0,"byteOffset":72,"byteLength":24}},
+        {{"buffer":0,"byteOffset":96,"byteLength":48}}"#
+    );
+    let primitive = r#"{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2,"TANGENT":3}}"#;
+    let model = load_flat(
+        geometry_gltf(dir.path(), primitive, &accessors, &views, &bytes),
+        &LoadOptions::default(),
+    )
+    .unwrap();
+    assert!(model
+        .vertices
+        .iter()
+        .all(|v| v.tangent == [0.0, 1.0, 0.0, -1.0]));
+}
+
+#[test]
+fn only_the_default_scene_and_its_descendants_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let scene_0 = r#""scene":0,"scenes":[{"nodes":[0]}],"#;
+    let load = |scenes: &str, nodes: &str| -> Vec<[f32; 3]> {
+        let path = triangle_gltf(dir.path(), "scenes.gltf", nodes, "");
+        let json = std::fs::read_to_string(&path).unwrap();
+        assert!(json.contains(scene_0), "the fixture changed");
+        std::fs::write(&path, json.replacen(scene_0, scenes, 1)).unwrap();
+        let model = load_flat(&path, &LoadOptions::default()).unwrap();
+        model.vertices.iter().map(|v| v.position).collect()
+    };
+    let two = r#"{"mesh":0},{"mesh":0,"translation":[100,0,0]}"#;
+    let scene_1 = load(r#""scene":1,"scenes":[{"nodes":[0]},{"nodes":[1]}],"#, two);
+    assert_eq!(
+        scene_1,
+        [[100.0, 0.0, 0.0], [101.0, 0.0, 0.0], [100.0, 1.0, 0.0]]
+    );
+    let orphan = load(scene_0, two);
+    assert_eq!(
+        orphan,
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        "node 1 is in no scene"
+    );
+    let child = load(
+        scene_0,
+        r#"{"children":[1]},{"mesh":0,"translation":[50,0,0]}"#,
+    );
+    assert_eq!(
+        child[0],
+        [50.0, 0.0, 0.0],
+        "a root's child loads with its own transform"
+    );
+}
+
+#[test]
+fn each_primitive_of_a_mesh_gets_its_own_range_and_material() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = triangle_gltf(
+        dir.path(),
+        "two.gltf",
+        r#"{"mesh":0}"#,
+        r#","materials":[{},{}]"#,
+    );
+    let json = std::fs::read_to_string(&path).unwrap();
+    let primitive = r#"{"attributes":{"POSITION":0,"TEXCOORD_0":1}}"#;
+    assert!(json.contains(primitive), "the fixture changed");
+    let two = r#"{"material":0,"attributes":{"POSITION":0,"TEXCOORD_0":1}},
+                 {"material":1,"attributes":{"POSITION":0,"TEXCOORD_0":1}}"#;
+    std::fs::write(&path, json.replacen(primitive, two, 1)).unwrap();
+    let model = load_flat(&path, &LoadOptions::default()).unwrap();
+    assert_consistent(&model);
+    let bases: Vec<usize> = model.ranges.iter().map(|r| r.vertex_base).collect();
+    assert_eq!(
+        bases,
+        [0, 3],
+        "the second primitive's vertices follow the first's"
+    );
+    assert_eq!(model.material_index, [0, 1]);
+}
+
+#[test]
+fn two_negative_scales_are_a_rotation_and_keep_the_winding() {
+    let dir = tempfile::tempdir().unwrap();
+    let nodes = r#"{"mesh":0,"scale":[-1,-1,1]}"#;
+    let path = triangle_gltf(dir.path(), "turned.gltf", nodes, "");
+    let model = load_flat(path, &LoadOptions::default()).unwrap();
+    assert_eq!(model.indices, [0, 1, 2]);
+    assert_eq!(model.vertices[1].position, [-1.0, 0.0, 0.0]);
 }
