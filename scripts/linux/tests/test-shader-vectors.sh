@@ -5,11 +5,12 @@ set -u
 # shellcheck source=scripts/linux/tests/lib-suite.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
 repo="${tests_dir}/../../.."
-mkdir -p "${work}/scripts" "${work}/shaders/tests/vectors"
+mkdir -p "${work}/scripts" "${work}/shaders/tests/vectors" "${work}/shaders/common"
 
-# fresh: the copy reset to this checkout's generator, model and vector files.
+# fresh: the copy reset to this checkout's generator, model, energy fit and vector files.
 fresh() {
     cp "${repo}/scripts/generate-shader-vectors.py" "${repo}/scripts/shader_model.py" "${work}/scripts/"
+    cp "${repo}/shaders/common/brdf_energy_fit.slang" "${work}/shaders/common/"
     cp "${repo}"/shaders/tests/vectors/*.json "${work}/shaders/tests/vectors/"
 }
 gen="${work}/scripts/generate-shader-vectors.py"
@@ -28,6 +29,13 @@ t_assert_grep "${work}/out" '^  shaders/tests/vectors/brdf.json$'
 fresh
 sed -i 's/0.0, 1.0), 5.0)/0.0, 1.0), 5.5)/' "${work}/scripts/shader_model.py"
 t_case "a changed model fails the check for every module it reaches"
+suite_run python3 "${gen}" --check
+t_assert_grep "${work}/out" '^  shaders/tests/vectors/brdf.json$'
+t_assert_grep "${work}/out" '^  shaders/tests/vectors/path_estimator.json$'
+
+fresh
+sed -i 's/float2(0.8300566, 0.0006474)/float2(0.8400566, 0.0006474)/' "${work}/shaders/common/brdf_energy_fit.slang"
+t_case "a refitted energy spline fails the check for every module whose brdf reads it"
 suite_run python3 "${gen}" --check
 t_assert_grep "${work}/out" '^  shaders/tests/vectors/brdf.json$'
 t_assert_grep "${work}/out" '^  shaders/tests/vectors/path_estimator.json$'

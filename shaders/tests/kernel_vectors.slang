@@ -64,6 +64,12 @@ struct VectorOutputs
         put(asuint(value));
     }
 
+    [mutating] void put(float2 value)
+    {
+        put(value.x);
+        put(value.y);
+    }
+
     [mutating] void put(float3 value)
     {
         put(value.x);

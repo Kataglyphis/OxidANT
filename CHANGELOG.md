@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-21, the brdf vectors take the multiple-scattering gain)
+
+- `scripts/shader_model.py` mirrors the compensated `brdf.slang` and `ggx_energy_fit`, reading the spline's
+  coefficients from the generated `common/brdf_energy_fit.slang`; `brdf_test.slang` and `brdf.json` cover the six new
+  functions (`ggx_single_scatter`, `ggx_energy_node`, `ggx_energy_coordinates`, `ggx_energy`, `multiscatter_gain`,
+  `specular_albedo`) with three new cases (the furnace's white metal at roughness 0.7, clamped fit coordinates, the
+  gain's energy floor), and `path_estimator.json`'s `sample_bounce.weight` takes the gain. `kernel_vectors.slang`
+  writes a `float2`. `test-shader-vectors.sh` copies the fit and holds a refit to a stale `brdf.json` and
+  `path_estimator.json`.
+
 ### Added (2026-11-21, the shared Slang modules' vector kernels)
 
 - `shaders/tests/brdf_test.slang`, `noise_test.slang` and `path_estimator_test.slang` run every public function of

@@ -223,6 +223,7 @@ class Draw:
 
 def evaluate_brdf(i: Values) -> dict[str, list[float]]:
     s, radiance, k = surface(i), sm.vec3(i["radiance"]), one(i, "k")
+    n_dot_v, energy = one(i, "n_dot_v"), sm.Vec(*i["energy"])
     return {
         "lambert_diffuse": flat(sm.lambert_diffuse(s.albedo)),
         "distribution_ggx": flat(sm.distribution_ggx(one(i, "n_dot_h"), s.roughness)),
@@ -230,6 +231,13 @@ def evaluate_brdf(i: Values) -> dict[str, list[float]]:
         "smith_k_sampled": flat(sm.smith_k_sampled(s.roughness)),
         "geometry_smith_k": flat(sm.geometry_smith_k(one(i, "n_dot_v"), one(i, "n_dot_l"), k)),
         "fresnel_schlick": flat(sm.fresnel_schlick(one(i, "cos_theta"), s.f0)),
+        "ggx_single_scatter": flat(sm.ggx_single_scatter(
+            n_dot_v, one(i, "n_dot_l"), one(i, "n_dot_h"), one(i, "cos_theta"), s.roughness, s.f0, k)),
+        "ggx_energy_node": flat(sm.ggx_energy_node(sm.Vec(*i["t"]))),
+        "ggx_energy_coordinates": flat(sm.ggx_energy_coordinates(n_dot_v, s.roughness)),
+        "ggx_energy": flat(sm.ggx_energy(n_dot_v, s.roughness)),
+        "multiscatter_gain": flat(sm.multiscatter_gain(energy, s.f0)),
+        "specular_albedo": flat(sm.specular_albedo(energy, s.f0)),
         "brdf_smith_k": flat(sm.brdf_smith_k(s, radiance, k)),
         "brdf_direct": flat(sm.brdf_direct(s, radiance)),
         "brdf_sampled": flat(sm.brdf_sampled(s)),
@@ -279,6 +287,7 @@ def brdf_cases() -> list[tuple[str, Values]]:
         "n": [0.0, 1.0, 0.0], "v": [0.0, 1.0, 0.0], "l": unit(1.0, 1.0, 0.0), "albedo": [0.8, 0.2, 0.1],
         "metallic": [0.0], "roughness": [0.5], "f0": [0.04, 0.04, 0.04], "radiance": [1.0, 1.0, 1.0],
         "k": [0.28125], "n_dot_h": [0.9], "n_dot_v": [0.8], "n_dot_l": [0.6], "cos_theta": [0.7],
+        "t": [0.3, 0.7], "energy": [0.6, 0.2],
     }
     gold = [1.0, 0.766, 0.336]
     rows: list[tuple[str, Values]] = [
@@ -297,15 +306,21 @@ def brdf_cases() -> list[tuple[str, Values]]:
         ("cos below zero clamps Fresnel to one", {"cos_theta": [-0.5], "n_dot_v": [0.0]}),
         ("a coloured light on a half metal", {
             "metallic": [0.5], "f0": [0.42, 0.12, 0.07], "radiance": [0.2, 0.9, 2.5], "v": unit(0.3, 0.8, -0.2)}),
+        ("a white metal at roughness 0.7 seen head-on, the furnace's 0.671 single scatter", {
+            "albedo": [1.0, 1.0, 1.0], "metallic": [1.0], "roughness": [0.7], "f0": [1.0, 1.0, 1.0], "n_dot_v": [1.0],
+            "t": [0.0, 1.0], "energy": [0.67, 0.0]}),
+        ("fit coordinates outside [0, 1] clamp to its edges", {"t": [-0.5, 1.5]}),
+        ("an energy below the gain's 1e-3 floor", {"energy": [0.0002, 0.0003], "f0": [0.9, 0.5, 0.1]}),
     ]
-    draw = Draw(1)
+    draw, fit = Draw(1), Draw(4)
     for index in range(6):
         n = draw.direction()
         rows.append((f"seeded surface {index}", {
             "n": n, "v": draw.direction(n), "l": draw.direction(n), "albedo": draw.nums(0.0, 1.0),
             "metallic": [draw.num(0.0, 1.0)], "roughness": [draw.num(0.05, 1.0)], "f0": draw.nums(0.02, 1.0),
             "radiance": draw.nums(0.0, 4.0), "k": [draw.num(0.0, 0.6)], "n_dot_h": [draw.num(0.0, 0.98)],
-            "n_dot_v": [draw.num(0.01, 1.0)], "n_dot_l": [draw.num(0.0, 1.0)], "cos_theta": [draw.num(0.0, 1.0)]}))
+            "n_dot_v": [draw.num(0.01, 1.0)], "n_dot_l": [draw.num(0.0, 1.0)], "cos_theta": [draw.num(0.0, 1.0)],
+            "t": fit.nums(0.0, 1.0, 2), "energy": [fit.num(0.05, 0.95), fit.num(0.0, 0.1)]}))
     return merged(base, rows)
 
 
@@ -374,11 +389,17 @@ def path_estimator_cases() -> list[tuple[str, Values]]:
 SMOOTH = (1e-6, 1e-5)
 CHAINED = (1e-5, 1e-4)
 MODULES = [
-    Module("brdf", ports("n:3 v:3 l:3 albedo:3 metallic roughness f0:3 radiance:3 k n_dot_h n_dot_v n_dot_l cos_theta"), [
+    Module("brdf", ports(
+        "n:3 v:3 l:3 albedo:3 metallic roughness f0:3 radiance:3 k n_dot_h n_dot_v n_dot_l cos_theta t:2 energy:2"), [
         out("lambert_diffuse", 3, SMOOTH), out("distribution_ggx", 1, SMOOTH), out("smith_k_analytic", 1, SMOOTH),
         out("smith_k_sampled", 1, SMOOTH), out("geometry_smith_k", 1, SMOOTH), out("fresnel_schlick", 3, SMOOTH),
+        out("ggx_single_scatter", 3, CHAINED), out("ggx_energy_node", 2, SMOOTH),
+        out("ggx_energy_coordinates", 2, SMOOTH), out("ggx_energy", 2, CHAINED), out("multiscatter_gain", 3, SMOOTH),
+        out("specular_albedo", 3, SMOOTH),
         out("brdf_smith_k", 3, CHAINED), out("brdf_direct", 3, CHAINED), out("brdf_sampled", 3, CHAINED),
-    ], evaluate_brdf, brdf_cases(), {"roughness floor", "fresnel clamp", "light below the horizon"}),
+    ], evaluate_brdf, brdf_cases(), {
+        "roughness floor", "fresnel clamp", "light below the horizon", "fit coordinate clamp", "energy input clamp",
+        "gain floor"}),
     Module("noise", ports("p:3 x:4 freq octaves/i32"), [
         out("mod289.float3", 3, (2e-4, 0.0)), out("mod289.float4", 4, (2e-4, 0.0)), out("permute", 4, (1e-3, 0.0)),
         out("taylorInvSqrt", 4, SMOOTH), out("snoise", 1, (2e-5, 0.0)), out("fbm", 1, (1e-4, 0.0)),

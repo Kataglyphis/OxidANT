@@ -3,11 +3,14 @@
 Each function mirrors its Slang twin with every literal at its f32 value. Every operation rounds as the current
 `evaluation` says: not at all for the references, to f32 to tell how far an f32 kernel may stray from them.
 """
+import functools
 import math
+import re
 import struct
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import ClassVar
 
 M32 = 0xFFFFFFFF
@@ -222,6 +225,49 @@ def vec3(c: Sequence[Num]) -> Vec:
     return Vec(*c)
 
 
+def saturate(x: Real) -> Real:
+    return clamp(x, 0.0, 1.0)
+
+
+# ---- common/brdf_energy_fit.slang: generated, so its coefficients are read and its evaluation mirrored ----
+
+FIT_SOURCE = Path(__file__).resolve().parents[1] / "shaders" / "common" / "brdf_energy_fit.slang"
+
+
+@functools.cache
+def energy_fit() -> tuple[tuple[tuple[float, float], ...], ...]:
+    """ggx_energy_fit's float2 literals, one row per basis function of the first coordinate."""
+    body = FIT_SOURCE.read_text(encoding="utf-8").split("float2 ggx_energy_fit(", 1)[1]
+    pairs = [(float(a), float(b)) for a, b in re.findall(r"float2\(([-+.\deE]+), ([-+.\deE]+)\)", body)]
+    size = math.isqrt(len(pairs))
+    if size * size != len(pairs):
+        raise ValueError(f"{FIT_SOURCE.name}: {len(pairs)} coefficients are not a square")
+    return tuple(tuple(pairs[i * size:(i + 1) * size]) for i in range(size))
+
+
+def ggx_energy_basis(x: Real) -> Real:
+    t = Real(abs(x.v))
+    inner = 2.0 / 3.0 - t * t + 0.5 * t * t * t
+    outer = (2.0 - t) * (2.0 - t) * (2.0 - t) / 6.0
+    return inner if t.v < 1.0 else (outer if t.v < 2.0 else Real(0.0))
+
+
+def ggx_energy_fit(t: Vec) -> Vec:
+    rows = energy_fit()
+    x = t * float(len(rows) - 3) + 1.0
+    b = [ggx_energy_basis(x.y - float(j)) for j in range(len(rows))]
+    e: Vec | None = None
+    for i, row in enumerate(rows):
+        inner = Vec(*row[0]) * b[0]
+        for j in range(1, len(row)):
+            inner = inner + Vec(*row[j]) * b[j]
+        term = inner * ggx_energy_basis(x.x - float(i))
+        e = term if e is None else e + term
+    if e is None:
+        raise ValueError(f"{FIT_SOURCE.name} holds no coefficients")
+    return e
+
+
 # ---- common/brdf.slang ----
 
 PI = 3.14159265358979323846
@@ -273,6 +319,51 @@ class Surface:
     f0: Vec
 
 
+def ggx_single_scatter(n_dot_v: Real, n_dot_l: Real, n_dot_h: Real, h_dot_v: Real, roughness: Real, f0: Vec,
+                       k: Real) -> Vec:
+    d = distribution_ggx(n_dot_h, roughness)
+    g = geometry_smith_k(n_dot_v, n_dot_l, k)
+    f = fresnel_schlick(h_dot_v, f0)
+    return f * (d * g) / rmax(4.0 * n_dot_v * n_dot_l, 1e-6)
+
+
+GGX_ENERGY_MIN_N_DOT_V = 1e-4
+
+
+def energy_low() -> Vec:
+    return Vec(pow_(real(GGX_ENERGY_MIN_N_DOT_V), 1.0 / 3.0), sqrt(real(0.045)))
+
+
+def ggx_energy_node(t: Vec) -> Vec:
+    if not all(0.0 <= a.v <= 1.0 for a in t.c):
+        visit("fit coordinate clamp")
+    low = energy_low()
+    c = low + each(lambda a: clamp(a, 0.0, 1.0), t) * (1.0 - low)
+    return Vec(c.x * c.x * c.x, c.y * c.y)
+
+
+def ggx_energy_coordinates(n_dot_v: Real, roughness: Real) -> Vec:
+    if not f32(GGX_ENERGY_MIN_N_DOT_V) <= n_dot_v.v <= 1.0 or not f32(0.045) <= roughness.v <= 1.0:
+        visit("energy input clamp")
+    low = energy_low()
+    c = Vec(pow_(clamp(n_dot_v, GGX_ENERGY_MIN_N_DOT_V, 1.0), 1.0 / 3.0), sqrt(clamp(roughness, 0.045, 1.0)))
+    return (c - low) / (1.0 - low)
+
+
+def ggx_energy(n_dot_v: Real, roughness: Real) -> Vec:
+    return ggx_energy_fit(ggx_energy_coordinates(n_dot_v, roughness))
+
+
+def multiscatter_gain(energy: Vec, f0: Vec) -> Vec:
+    if (energy.x + energy.y).v < f32(1e-3):
+        visit("gain floor")
+    return 1.0 + f0 * (1.0 / rmax(energy.x + energy.y, 1e-3) - 1.0)
+
+
+def specular_albedo(energy: Vec, f0: Vec) -> Vec:
+    return multiscatter_gain(energy, f0) * (f0 * energy.x + energy.y)
+
+
 def brdf_smith_k(s: Surface, radiance: Vec, k: Real) -> Vec:
     h = normalize(s.l + s.v)
     if dot(s.n, s.l).v <= 0.0:
@@ -281,11 +372,10 @@ def brdf_smith_k(s: Surface, radiance: Vec, k: Real) -> Vec:
     n_dot_v = rmax(dot(s.n, s.v), 1e-4)
     n_dot_h = rmax(dot(s.n, h), 0.0)
     h_dot_v = rmax(dot(h, s.v), 0.0)
-    d = distribution_ggx(n_dot_h, s.roughness)
-    g = geometry_smith_k(n_dot_v, n_dot_l, k)
-    f = fresnel_schlick(h_dot_v, s.f0)
-    specular = f * (d * g) / rmax(4.0 * n_dot_v * n_dot_l, 1e-6)
-    diffuse = (1.0 - f) * (1.0 - s.metallic) * lambert_diffuse(s.albedo)
+    energy = ggx_energy(n_dot_v, s.roughness)
+    single = ggx_single_scatter(n_dot_v, n_dot_l, n_dot_h, h_dot_v, s.roughness, s.f0, k)
+    specular = multiscatter_gain(energy, s.f0) * single
+    diffuse = each(saturate, 1.0 - specular_albedo(energy, s.f0)) * (1.0 - s.metallic) * lambert_diffuse(s.albedo)
     return (diffuse + specular) * radiance * n_dot_l
 
 

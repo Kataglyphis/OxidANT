@@ -124,7 +124,9 @@ input and output words per case. The references come from
 its f32 value, never from the kernel: `scripts/generate-shader-vectors.py`
 evaluates each case in f64 and in emulated f32, stops on one an f32 kernel
 cannot meet or whose branch sits within 1e-5 of its edge, and writes the files;
-`--check`, in `pre-push-checks.sh`, fails a stale one.
+`--check`, in `pre-push-checks.sh`, fails a stale one. The brdf model reads
+the generated `common/brdf_energy_fit.slang`'s coefficients and mirrors its
+evaluation, so a refit stales `brdf.json` and `path_estimator.json`.
 `crates/webgpu_renderer/tests/shader_vectors.rs` dispatches the committed WGSL
 (`crates/webgpu_renderer/tests/shaders/`) on the test device and names every
 component that misses; under `KATAGLYPHIS_REQUIRE_GPU=1` a missing adapter
