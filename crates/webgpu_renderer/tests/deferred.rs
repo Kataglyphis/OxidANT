@@ -357,6 +357,8 @@ fn deferred_shadows_land_where_forward_shadows_land() {
         return;
     };
     let mut renderer = ForwardRenderer::new(&gpu, W, H);
+    // A parity view: FXAA would move the edge pixels it counts, by an amount that differs per CPU's lavapipe.
+    renderer.fxaa = FxaaMode::Off;
     renderer.upload_scene(&gpu, &scene("cube_on_plane.gltf"));
     low_sun(&gpu, &mut renderer);
     let camera = top_down(6.0, 55.0);
@@ -423,6 +425,8 @@ fn deferred_cuts_out_mask_and_composites_blend() {
         return;
     };
     let mut renderer = ForwardRenderer::new(&gpu, W, H);
+    // A parity view: FXAA would move the edge pixels it counts, by an amount that differs per CPU's lavapipe.
+    renderer.fxaa = FxaaMode::Off;
     renderer.upload_scene(&gpu, &scene("cube_alpha.gltf"));
     let camera = top_down(5.0, 60.0);
     let forward = frame(&gpu, &mut renderer, RasterPath::Forward, &camera);
@@ -456,6 +460,8 @@ fn punctual_lights_pool_on_the_deferred_plane() {
         return;
     };
     let mut renderer = ForwardRenderer::new(&gpu, W, H);
+    // A parity view: FXAA would move the edge pixels it counts, by an amount that differs per CPU's lavapipe.
+    renderer.fxaa = FxaaMode::Off;
     renderer.upload_scene(&gpu, &scene("point_light.gltf"));
     renderer.light_color_intensity.w = 0.4;
     let camera = top_down(7.0, 65.0);
