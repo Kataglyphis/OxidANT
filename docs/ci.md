@@ -96,8 +96,12 @@ which a local container run executes too:
   offset 0x80528 (WARP 10.0.26100.9278), as run 36889467167 had stopped `headless.exe`.
   Serially all of them pass (run 36907253720), and the whole job takes 2.5 min. The fault is
   in Microsoft's driver, not this repo; re-dispatch with the input after a runner image
-  update to see whether it is gone. No arm64 Windows container image exists, so that
-  job is the only place an arm64 binary of this repo executes.
+  update to see whether it is gone. The serial fail-fast abort (`0xC0000409`) of the first
+  traced test leaves no WER record (the runner sets `ForceQueue=1` and AeDebug to `-`), so the
+  `debugger-stack` input runs that test under the image's arm64 `cdb.exe` first, with
+  Microsoft's symbol server, and prints the faulting stack (the hub's
+  `windows-arm-debugger-probe.yml` found `cdb` there on 2026-11-21). No arm64 Windows
+  container image exists, so that job is the only place an arm64 binary of this repo executes.
 
 **Every Windows build compiles C and C++ with the image's clang-cl, never MSVC's `cl`**
 (owner rule): `Invoke-WindowsLane.ps1` sets `CC` and `CXX` for both lanes, and so do

@@ -9,6 +9,10 @@ on:
         description: Run the renderer tests in parallel on windows-11-arm, to name the WARP crash (BACKLOG)
         type: boolean
         default: false
+      debugger-stack:
+        description: Run the first traced test under cdb first, for the stack of the arm64 fail-fast (BACKLOG)
+        type: boolean
+        default: false
   workflow_call:
 
 permissions:
@@ -61,6 +65,21 @@ jobs:
           }
           ConvertTo-Json -InputObject $manifest -Depth 4 | Set-Content -LiteralPath tests.json -Encoding utf8
           Write-Host 'Renderer tests run in parallel (dispatch input parallel-renderer-tests)'
+        }
+        # Dispatch-only: WER records nothing there (ForceQueue=1, AeDebug '-'), so cdb, which the image has, takes the stack.
+        if ('${{ inputs.debugger-stack }}' -eq 'true') {
+          $cdb = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Debuggers\arm64\cdb.exe'
+          $traced = @(Get-Content -Raw -LiteralPath tests.json | ConvertFrom-Json | Where-Object { (Split-Path -Leaf $_.exe) -like 'traced_modes-*' })[0]
+          Push-Location (Split-Path -Parent $traced.exe)
+          try {
+            & $cdb -lines -y 'srv*C:\symbols*https://msdl.microsoft.com/download/symbols' `
+              -c 'sxe -c ".echo FAIL-FAST; .exr -1; .ecxr; kn 80; lmv m d3d*; q" c0000409; sxe -c ".echo ACCESS-VIOLATION; .ecxr; kn 80; q" av; g; q' `
+              (Split-Path -Leaf $traced.exe) a_mask_cutout_lets_the_sun_through_in_both_traced_modes --exact --nocapture --test-threads=1
+            Write-Host "cdb exited $LASTEXITCODE"
+          } finally {
+            Pop-Location
+          }
+          $global:LASTEXITCODE = 0
         }
         & ./Invoke-StagedTests.ps1
     secrets:

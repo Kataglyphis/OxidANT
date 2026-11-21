@@ -167,11 +167,13 @@ Empty on 2026-11-17: nothing else is in the queue.
       not log this abort at all, while it did log the parallel run's access violation. Next: a debugger's stack, as
       nothing else sees a fail-fast: WER `LocalDumps` writes nothing on hosted runners, which queue reports
       (`ForceQueue=1`) and set AeDebug to `-` (hub `docs/failure-modes.md`), and an in-process handler such as the
-      hub's `kataglyphis_add_crash_dump` is bypassed by `__fastfail`. The image lists the Windows SDKs 10.0.19041,
-      10.0.22621 and 10.0.26100 but no Debugging Tools (partner-runner-images, 2026-11-21), so a short probe job on
-      windows-11-arm says first whether `cdb` is there or installable (the SDK's `OptionId.WindowsDesktopDebuggers`,
-      winget); then the first traced test runs under `cdb -g -G` with `sxe c0000409`. `d3dcompiler_47.dll` on top
-      points at FXC compiling the tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
+      hub's `kataglyphis_add_crash_dump` is bypassed by `__fastfail`. The image's readme lists the Windows SDKs
+      10.0.19041, 10.0.22621 and 10.0.26100 but no Debugging Tools (partner-runner-images, 2026-11-21), yet the hub's
+      probe (run 44933363575) found `cdb.exe` under `Windows Kits\10\Debuggers\arm64`, WER's service stopped,
+      `ForceQueue=1` and AeDebug `-`. In source since 2026-11-21: `windows-arm64-cross.yml`'s dispatch-only
+      `debugger-stack` input runs the first traced test under that `cdb` with `sxe c0000409` and Microsoft's symbols
+      before the staged run; left: one dispatch and the stack it prints. `d3dcompiler_47.dll` on top points at FXC
+      compiling the tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
 
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
       `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially only the abort above. Re-dispatch
