@@ -61,7 +61,6 @@ done
 fake_gpu_refuses 'Missing real fixture was accepted' /dev/null bash "${fake_gpu_tests_dir}/../check-gpu-detector-parity.sh" "$work/launcher" cuda "$work/missing.jpg"
 mkdir -p "$work/mutant/scripts/linux/lib"
 cp "${fake_gpu_tests_dir}/../lib/gpu-check-common.sh" "$work/mutant/scripts/linux/lib/"
-cp "${fake_gpu_tests_dir}/../../verify-ort-gpu-profile.py" "$work/mutant/scripts/"
 # shellcheck disable=SC2016
 sed 's@"$work/$device-repeat.json"@"$work/cpu.json"@g; s@"$work/$device.json"@"$work/cpu.json"@g' "${fake_gpu_tests_dir}/../check-gpu-detector-parity.sh" > "$work/mutant/scripts/linux/check.sh"
 fake_gpu_accepts 'The CPU-versus-CPU comparison mutant was not exercised' env ANTFRASTRUCTURE_DIR="$hub" FAKE_MISMATCH=1 bash "$work/mutant/scripts/linux/check.sh" "$work/launcher" cuda "$TEST_FIXTURE"

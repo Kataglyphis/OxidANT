@@ -86,10 +86,7 @@ class ParityTest(unittest.TestCase):
             target = self.repo / "third_party/ANTfrastructure" / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(HUB / relative, target)
-        for relative in (
-            "scripts/verify-ort-gpu-profile.py",
-            "crates/inference/tests/fixtures/two_cats.jpg",
-        ):
+        for relative in ("crates/inference/tests/fixtures/two_cats.jpg",):
             target = self.repo / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, target)

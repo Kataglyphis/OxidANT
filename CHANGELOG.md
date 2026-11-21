@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-21, one ORT-profile verifier)
+
+- The GPU lanes, `profile-gpu-bundle.sh` and `docs/packaging.md` call the pinned hub's
+  `shared/python/verify_ort_profile.py`, the only copy with mutation tests and a superset of this repo's (the same
+  rule and messages, plus `--min-runs` and more providers); `scripts/verify-ort-gpu-profile.py`, its test, its mutation
+  recipe and the copies two suites made of it are gone. Oxidation roadmap step 1, hub CON289.
+
 ### Fixed (2026-11-21, a failed text turn reaches the app)
 
 - `text_generate` returned its failure as the function's `Err`, which flutter_rust_bridge puts in a future the

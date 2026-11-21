@@ -229,7 +229,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'GPU inference or profiling failed' }
           $profiles = @(Get-ChildItem -LiteralPath $stage -Filter 'ort-profile*.json' -File)
           if ($profiles.Count -ne 1) { throw "Expected one ORT profile, found $($profiles.Count)" }
-          python scripts/verify-ort-gpu-profile.py $profiles[0].FullName --device $env:PROVIDER
+          python -I third_party/ANTfrastructure/shared/python/verify_ort_profile.py $profiles[0].FullName --device $env:PROVIDER
           if ($LASTEXITCODE -ne 0) { throw 'No model operator ran on the requested GPU provider' }
           python -I scripts/windows/check_gpu_detector_parity.py $stage --device $env:PROVIDER --directml-index $env:DIRECTML_INDEX
           if ($LASTEXITCODE -ne 0) { throw 'Windows ZIP detector parity or per-run GPU profiling failed' }

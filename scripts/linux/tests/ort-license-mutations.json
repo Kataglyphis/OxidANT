@@ -703,14 +703,6 @@
   "why": "The clean-host check runs the package's own plugin module."
  },
  {
-  "id": "consumer.oxidant-profile-plugin-name",
-  "target": "scripts/verify-ort-gpu-profile.py",
-  "find": "    \"migraphx\": \"MIGraphX\",",
-  "replace": "    \"migraphx\": \"CPUExecutionProvider\",",
-  "test": "python3 scripts/linux/tests/test-ort-gpu-profile.py",
-  "why": "A migraphx profile is proved by nodes under the plugin's registration name only."
- },
- {
   "id": "consumer.oxidant-rust-size-growth-allowed",
   "target": "scripts/linux/check-rust-function-sizes.sh",
   "find": "    elif int(lines) > budget:",

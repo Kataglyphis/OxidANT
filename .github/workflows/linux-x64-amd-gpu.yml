@@ -168,7 +168,6 @@ jobs:
                 set -euo pipefail
                 cargo test --locked -p kataglyphis_inference --lib device_tests
                 cargo test --locked -p kataglyphis_inference --test gpu_request
-                python3 scripts/linux/tests/test-ort-gpu-profile.py
                 cargo build --locked --release -p kataglyphis_cli
                 KATAGLYPHIS_PACKAGING_WORKDIR=/tmp/oxidant-gpu-package-work \
                 bash scripts/linux/package-linux.sh --binary-path target/release/kataglyphis_cli \
@@ -180,8 +179,8 @@ jobs:
                   onnx-check --profile "$profile_dir/profile"
                 mapfile -t profiles < <(find "$profile_dir" -maxdepth 1 -type f -name "profile*.json")
                 [[ ${#profiles[@]} -eq 1 ]]
-                python3 scripts/verify-ort-gpu-profile.py "${profiles[0]}" --device cpu
-                if python3 scripts/verify-ort-gpu-profile.py "${profiles[0]}" --device migraphx; then
+                python3 -I third_party/ANTfrastructure/shared/python/verify_ort_profile.py "${profiles[0]}" --device cpu
+                if python3 -I third_party/ANTfrastructure/shared/python/verify_ort_profile.py "${profiles[0]}" --device migraphx; then
                   echo "CPU-only profile was accepted as GPU execution" >&2
                   exit 1
                 fi

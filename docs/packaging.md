@@ -93,7 +93,7 @@ full cleanup.
 
 To verify operator placement on a GPU host, run the packaged command with
 `onnx-check --profile /tmp/oxidant-profile` and the desired `KATAGLYPHIS_ORT_DEVICE`.
-Then run `python3 scripts/verify-ort-gpu-profile.py <generated-json> --device migraphx`
+Then run `python3 third_party/ANTfrastructure/shared/python/verify_ort_profile.py <generated-json> --device migraphx`
 from this checkout (use `cuda` for NVIDIA). A successful check proves at least one
 model operator used that provider, not that every operator did. For `migraphx` the provider is
 `MIGraphX`. The parity diagnostic above checks each run with the hub's `verify_ort_profile.py`,

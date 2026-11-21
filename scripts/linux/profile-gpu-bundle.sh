@@ -16,4 +16,4 @@ gpu_check_load_profile_env
 read -r -a clean <<< "$(gpu_check_clean_env_args)"
 gpu_without_migraphx_overrides "${clean[@]}" -u KATAGLYPHIS_ORT_DEVICE "${launcher}" onnx-check --profile "${prefix}"
 profile="$(gpu_check_one_profile "${prefix}" 'ONNX Runtime')"
-python3 "$(dirname "${BASH_SOURCE[0]}")/../verify-ort-gpu-profile.py" "${profile}" --device "${device}"
+python3 -I "$(gpu_check_profile_tool 'Pinned ANTfrastructure lacks the ORT profile verifier')" "${profile}" --device "${device}"

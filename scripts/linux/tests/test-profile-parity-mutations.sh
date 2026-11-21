@@ -15,7 +15,6 @@ cp "${fake_gpu_tests_dir}/../profile-gpu-bundle.sh" "${fake_gpu_tests_dir}/../ch
 cp "${fake_gpu_tests_dir}/../lib/models-lock.sh" "$work/scripts/linux/lib/"
 mkdir -p "$work/resources/models"
 cp "${fake_gpu_tests_dir}/../../../resources/models/models.lock" "$work/resources/models/"
-cp "${fake_gpu_tests_dir}/../../verify-ort-gpu-profile.py" "$work/scripts/"
 cp "$repo/.github/workflows/linux-nvidia-gpu.yml" "$repo/.github/workflows/linux-x64-amd-gpu.yml" "$work/.github/workflows/"
 profile="$work/scripts/linux/profile-gpu-packages.sh"
 for format in tar deb appimage; do

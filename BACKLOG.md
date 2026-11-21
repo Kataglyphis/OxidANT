@@ -59,18 +59,15 @@ its open work is here.
 - [ ] **Oxidation roadmap: this repo's steps** (M each, ★★; owner D2 to D17, 2026-11-21, all as recommended). The
       oxidation review keeps OxidANT the home of engines and algorithms (text generation, decode, preprocessing, stream
       and think parsing) and leaves logic on a consumer's own ORT environment to the hub (D15). In order:
-      (1) drop `scripts/verify-ort-gpu-profile.py` for the pinned hub verifier (hub CON289): repoint
-      `profile-gpu-bundle.sh:19`, `linux-nvidia-gpu-build.yml:184-185`, `linux-x64-amd-gpu.yml:183-184` and
-      `windows-gpu-candidates.yml:232`, which today only probe the hub script with `--help`, then delete the copy, its
-      test, its mutation recipe and its fixture copies; (2) a preprocess and decode crate without ORT, tract or
+      (1) a preprocess and decode crate without ORT, tract or
       environment reads: `preprocess.rs`, `postprocess.rs` and `ImageMapping` move and stay re-exported under their old
       paths, an entry point takes strided RGB, BGR and RGBA frames and refuses what `yolo_math.cpp:331-346` refuses,
       `checked_mul` holds the buffer size, a zero-size frame is refused, errors are typed, the class count comes per
       call, the contract cases replay on their raw bytes, `preprocess_fuzz.cpp` becomes a proptest, and full-size frames
-      compare bit for bit; (3) `GenerationResult::no_answer(budget_knob)`, `None` for `Cancelled`, ObservANT's answers
-      byte for byte, sent as the kind `no_answer`; (4) the bundled regeneration with OmniAccelerANT: `TextEvent` carries
+      compare bit for bit; (2) `GenerationResult::no_answer(budget_knob)`, `None` for `Cancelled`, ObservANT's answers
+      byte for byte, sent as the kind `no_answer`; (3) the bundled regeneration with OmniAccelerANT: `TextEvent` carries
       a typed failure (a plain kind enum, the message, the HTTP status), a typed kind and finish reason and the
-      thinking count in `done`, plus `default_score_threshold()` and `detector_latency_json()`; (5) for AccelerANTgine's
+      thinking count in `done`, plus `default_score_threshold()` and `detector_latency_json()`; (4) for AccelerANTgine's
       text pilot, after OmniAccelerANT drops its AccelerANTgine submodule: `guarded()` and the per-thread log collector
       move from `kataglyphis_cxx_bridge` into a shared support crate, and a second bridge crate (its own contract
       test; it forbids unsafe code, the crates it links may hold unsafe FFI, D3) carries one area per file; parity
