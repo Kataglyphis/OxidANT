@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-21, the flat glTF in its default morph pose)
+
+- **`load_flat` bakes a primitive's default morph weights** (BeschleunigerBallett plan B2): the node's `weights`, else
+  the mesh's, blend through `scene::blend_morph_targets` before world space, when there is one per target. The C++
+  engine draws no morphs, so `cube_morph.gltf` (mesh weight 1.0, no animation) drew neutral there and lifted here.
+  `gltf_loader::default_morph_weights` is the one rule for both loaders; `load_gltf` still keeps the neutral vertices
+  and the weights, from which the renderer blends once. `tests/flat.rs`'
+  `default_morph_weights_bake_into_the_flat_vertices_and_the_scene_keeps_them_apart` covers the mesh weight, a node
+  weight that wins and a weight count that does not match, and fails when the bake moves into `load_gltf`.
+
 ### Fixed (2026-11-21, the energy compensation's review)
 
 - **`brdf.slang`'s Smith remaps take `MIN_ROUGHNESS`, as `distribution_ggx` and the energy fit do**:

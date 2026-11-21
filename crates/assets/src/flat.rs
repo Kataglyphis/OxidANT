@@ -247,7 +247,7 @@ fn flat_material(material: &CpuMaterial, ids: [i32; 4]) -> FlatMaterial {
     }
 }
 
-/// One visited node: its light into `lights`, then each drawable primitive, baked by its world transform.
+/// One node: its light into `lights`, then each drawable primitive in its default morph pose, baked by its world transform.
 fn visit_node(
     model: &mut FlatModel,
     lights: &mut Vec<CpuLight>,
@@ -268,11 +268,18 @@ fn visit_node(
     };
     let fallback = (model.materials.len() - 1) as u32;
     for primitive in mesh.primitives().filter(gltf_loader::draws_triangles) {
-        let Some(geometry) =
+        let Some(mut geometry) =
             gltf_loader::primitive_geometry(&primitive, &imported.buffers, options)?
         else {
             continue;
         };
+        // The C++ engine draws no morphs, so it gets the default pose the Rust renderer starts from.
+        if let Some(weights) =
+            gltf_loader::default_morph_weights(node, geometry.morph_targets.len())
+        {
+            geometry.vertices =
+                scene::blend_morph_targets(&geometry.vertices, &geometry.morph_targets, weights);
+        }
         let material = primitive.material().index().map_or(fallback, |i| i as u32);
         append_primitive(model, &geometry, world, material);
     }

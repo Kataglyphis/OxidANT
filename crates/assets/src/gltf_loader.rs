@@ -615,19 +615,23 @@ fn visit_node(
                 cpu.skin_index = node.skin().map(|s| s.index());
                 let joint_count = node.skin().map(|skin| skin.joints().count());
                 bind_influences(&mut cpu.vertices, joint_count, primitive.index());
-                // Node weights override mesh weights (glTF spec); kept only when the count matches.
-                if !cpu.morph_targets.is_empty() {
-                    if let Some(weights) = node.weights().or_else(|| mesh.weights()) {
-                        if weights.len() == cpu.morph_weights.len() {
-                            cpu.morph_weights = weights.to_vec();
-                        }
-                    }
+                if let Some(weights) = default_morph_weights(node, cpu.morph_targets.len()) {
+                    cpu.morph_weights = weights.to_vec();
                 }
                 scene.primitives.push(cpu);
             }
         }
     }
     Ok(())
+}
+
+/// The node's default morph weights, else its mesh's (glTF spec); `None` unless there is one per target.
+pub(crate) fn default_morph_weights<'a>(
+    node: &gltf::Node<'a>,
+    targets: usize,
+) -> Option<&'a [f32]> {
+    let weights = node.weights().or_else(|| node.mesh()?.weights())?;
+    (targets > 0 && weights.len() == targets).then_some(weights)
 }
 
 /// Strips and fans are triangulated on load; points and lines have nothing to draw, and warn.

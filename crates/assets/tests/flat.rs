@@ -930,3 +930,56 @@ mod fifos {
         }
     }
 }
+
+/// `cube_morph.gltf`, whose one target lifts every vertex by 1, with `node_weights` on its node.
+fn cube_morph_with_node_weights(dir: &Path, node_weights: &str) -> PathBuf {
+    let json = std::fs::read_to_string(fixture("cube_morph.gltf")).unwrap();
+    let node = "\"mesh\": 0\n  }";
+    assert!(json.contains(node), "the fixture changed");
+    let path = dir.join("cube_morph_node.gltf");
+    let weighted = format!("\"mesh\": 0, \"weights\": {node_weights}\n  }}");
+    std::fs::write(&path, json.replacen(node, &weighted, 1)).unwrap();
+    path
+}
+
+#[test]
+fn default_morph_weights_bake_into_the_flat_vertices_and_the_scene_keeps_them_apart() {
+    let path = fixture("cube_morph.gltf");
+    let flat = load_flat(&path, &LoadOptions::default()).unwrap();
+    let scene = kataglyphis_assets::load_gltf(&path).unwrap();
+    let neutral = &scene.primitives[0];
+    // The renderer blends from the neutral pose itself, so the shared loader must not bake the weight too.
+    assert_eq!(neutral.morph_weights, [1.0]);
+    assert_eq!(flat.vertices.len(), neutral.vertices.len());
+    let lift = |model: &FlatModel| -> Vec<f32> {
+        let base = neutral.vertices.iter().map(|v| v.position);
+        let moved = model.vertices.iter().map(|v| v.position);
+        moved.zip(base).map(|(m, b)| m[1] - b[1]).collect()
+    };
+    assert!(
+        lift(&flat).iter().all(|&dy| dy == 1.0),
+        "the mesh's weight 1.0 is baked"
+    );
+    assert!(flat
+        .vertices
+        .iter()
+        .zip(&neutral.vertices)
+        .all(|(m, b)| m.position[0] == b.position[0]));
+
+    let dir = tempfile::tempdir().unwrap();
+    let options = LoadOptions::default();
+    let node_wins =
+        load_flat(cube_morph_with_node_weights(dir.path(), "[0.25]"), &options).unwrap();
+    assert!(
+        lift(&node_wins).iter().all(|&dy| dy == 0.25),
+        "the node's weights win over the mesh's"
+    );
+    let mismatched = load_flat(
+        cube_morph_with_node_weights(dir.path(), "[0.25, 0.5]"),
+        &options,
+    );
+    assert!(
+        lift(&mismatched.unwrap()).iter().all(|&dy| dy == 0.0),
+        "a count off the targets is ignored"
+    );
+}
