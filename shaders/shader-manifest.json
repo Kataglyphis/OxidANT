@@ -327,6 +327,24 @@
       ]
     },
     {
+      "_comment": "brdf.slang's energy fit: the bake from its own lobe and the lookup, for the GPU tests (WGSL emit); SPIR-V proves the fit emits as the C++ engine imports brdf.slang.",
+      "file": "tests/brdf_energy_bake.slang",
+      "entry": "cs_bake",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tests/brdf_energy_bake.slang",
+      "entry": "cs_lookup",
+      "stage": "compute",
+      "targets": [
+        "wgsl",
+        "spirv"
+      ]
+    },
+    {
       "_comment": "CI guard: the shared cloud module emits SPIR-V as the C++ engine's clouds_main imports it.",
       "file": "tests/volumetric_clouds_test.slang",
       "entry": "clouds_test_main",
@@ -475,6 +493,11 @@
       "src": "tex_quad/tex_quad.slang",
       "out": "tex_quad.wgsl",
       "dst": "crates/gui/src/shaders"
+    },
+    {
+      "src": "tests/brdf_energy_bake.slang",
+      "out": "brdf_energy_bake.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
     },
     {
       "src": "tracer/trace_debug.slang",

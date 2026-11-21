@@ -28,8 +28,9 @@ textures with BC1/3/5/7 passthrough, and Basis ETC1S/UASTC KTX2 (also through
 `KHR_texture_basisu`) transcoded to BC7, ETC2 or ASTC by adapter. Wavefront OBJ through a built-in OBJ→glTF
 converter (`asset::obj_to_gltf`, the `obj2gltf` example).
 
-**Shading** — metallic-roughness PBR (GGX + Smith + Fresnel-Schlick) with
-base color / metallic-roughness / normal / emissive / occlusion maps,
+**Shading** — metallic-roughness PBR (GGX + Smith + Fresnel-Schlick, with
+multiple-scattering energy compensation from a fitted spline, so a white surface
+returns all of a uniform sky at any roughness) with base color / metallic-roughness / normal / emissive / occlusion maps,
 `KHR_materials_unlit`, alpha OPAQUE/MASK/BLEND, double-sided materials,
 CPU-generated mip chains. Two raster paths, switched at run time like the C++
 engine's (`ForwardRenderer::raster_path`): forward, and deferred, whose

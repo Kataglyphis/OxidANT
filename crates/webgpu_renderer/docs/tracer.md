@@ -261,9 +261,10 @@ it matches the deferred depth within 4.2e-7 (`tests/feature_matrix.rs`).
 
 **White furnace.** `TraceSettings::furnace` (sky radiance, metallic, roughness) makes every
 surface white with that metallic and roughness, without emission or sun, under a uniform sky. A
-pixel converges to the radiance times the surface's directional albedo E(mu): 0.99-1.04 for the
-default white dielectric (roughness 0.5; above 1 at grazing angles, where Epic's diffuse takes what
-the Fresnel leaves however little the masking takes), less for a metal. The C++ kernel keeps NEE in its
+pixel converges to the radiance times the surface's directional albedo, which is 1 for metal and
+dielectric alike since `brdf.slang` compensates the lobe's multiple scattering
+([shaders.md](../../../docs/shaders.md)); single scattering returned 0.67 for a white metal at
+roughness 0.7 and passed 1 for a dielectric at grazing angles. The C++ kernel keeps NEE in its
 furnace, whose test zeroes the light instead.
 
 **Dispatch budget.** A frame's samples are split into chunks so a dispatch traces at most
@@ -324,11 +325,11 @@ Measured on lavapipe, the 8-core arm64 host under WSL, shared with other builds:
 The first frame of a mode adds its kernel's compile: 1-2 s for either on lavapipe.
 
 Tests: `tests/traced_modes.rs` (lavapipe; the C++ goldens' ports): the white furnace through the
-post chain on the C++ shadow rig (the HDR mean within the C++ 0.98..1.002 of the sky, measured
-0.994, and 98 % of pixels within 0.1; a 1.5 % gain a bounce reads 1.008; the 8-bit mean the C++
-231.6 within 3 levels), a white metal card against a quadrature of `brdf_sampled` (within 0.03;
-measured within 0.002) and closer to the exact Smith lobe's than the analytic remap's, and a white dielectric one at roughness 0.5 and 0.25, mu 1 and 0.5 (within
-the C++ 0.01; measured within 0.0022, the 1.5 % gain off by 0.014), an output whose accumulation
+post chain on the C++ shadow rig (the HDR mean within 0.01 of the sky, measured 0.9991,
+and 98 % of pixels within 0.1, measured 4094 of 4096; the 8-bit mean the C++ 231.6 within 3 levels), a white metal card at
+roughness 0.3, 0.7 and 1 and a white dielectric one at 0.5 and 0.25, mu 1, 0.5 and 0.25, each
+returning the sky within 0.01 (measured within 0.0050, the dielectric at 0.5 seen at mu 0.25; single scattering gave the metal
+0.31 at roughness 1 and the dielectric 1.14 at 0.25, mu 0.25), an output whose accumulation
 does not fit drawing and reporting raster, accumulation that settles, every reset premise, a MASK card's half shadow in both modes,
 the untextured metallic factor, unlit albedo in every mode, the traced shadow against the
 cascades' (IoU over 0.75; measured 0.98) and black, the lens shift, the raster round trip, and

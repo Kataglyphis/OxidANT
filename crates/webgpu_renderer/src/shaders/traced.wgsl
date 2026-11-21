@@ -1045,19 +1045,77 @@ fn smith_k_analytic_0( roughness_2 : f32) -> f32
     return r_0 * r_0 / 8.0f;
 }
 
-fn distribution_ggx_0( n_dot_h_0 : f32,  roughness_3 : f32) -> f32
+fn ggx_energy_coordinates_0( n_dot_v_0 : f32,  roughness_3 : f32) -> vec2<f32>
 {
-    var _S55 : f32 = max(roughness_3, 0.04500000178813934f);
-    var a_5 : f32 = _S55 * _S55;
+    var low_0 : vec2<f32> = vec2<f32>(pow(0.00009999999747379f, 0.3333333432674408f), sqrt(0.04500000178813934f));
+    return (vec2<f32>(pow(clamp(n_dot_v_0, 0.00009999999747379f, 1.0f), 0.3333333432674408f), sqrt(clamp(roughness_3, 0.04500000178813934f, 1.0f))) - low_0) / (vec2<f32>(1.0f) - low_0);
+}
+
+fn ggx_energy_basis_0( x_0 : f32) -> f32
+{
+    var t_4 : f32 = abs(x_0);
+    var inner_0 : f32 = 0.66666668653488159f - t_4 * t_4 + 0.5f * t_4 * t_4 * t_4;
+    var _S55 : f32 = 2.0f - t_4;
+    var outer_0 : f32 = _S55 * _S55 * _S55 / 6.0f;
+    var _S56 : f32;
+    if(t_4 < 1.0f)
+    {
+        _S56 = inner_0;
+    }
+    else
+    {
+        if(t_4 < 2.0f)
+        {
+            _S56 = outer_0;
+        }
+        else
+        {
+            _S56 = 0.0f;
+        }
+    }
+    return _S56;
+}
+
+fn ggx_energy_fit_0( t_5 : vec2<f32>) -> vec2<f32>
+{
+    var x_1 : vec2<f32> = t_5 * vec2<f32>(11.0f) + vec2<f32>(1.0f);
+    var _S57 : f32 = x_1.y;
+    var _S58 : f32 = x_1.x;
+    var _S59 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57));
+    var _S60 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 1.0f));
+    var _S61 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 2.0f));
+    var _S62 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 3.0f));
+    var _S63 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 4.0f));
+    var _S64 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 5.0f));
+    var _S65 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 6.0f));
+    var _S66 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 7.0f));
+    var _S67 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 8.0f));
+    var _S68 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 9.0f));
+    var _S69 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 10.0f));
+    var _S70 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 11.0f));
+    var _S71 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 12.0f));
+    var _S72 : vec2<f32> = vec2<f32>(ggx_energy_basis_0(_S57 - 13.0f));
+    return vec2<f32>(ggx_energy_basis_0(_S58)) * (vec2<f32>(0.03755360096693039f, 3.05165600776672363f) * _S59 + vec2<f32>(0.03963959962129593f, 0.65487277507781982f) * _S60 + vec2<f32>(0.07296779751777649f, 0.51261270046234131f) * _S61 + vec2<f32>(0.17118540406227112f, 0.62788808345794678f) * _S62 + vec2<f32>(0.30981320142745972f, 0.50604218244552612f) * _S63 + vec2<f32>(0.44191190600395203f, 0.40881091356277466f) * _S64 + vec2<f32>(0.55946820974349976f, 0.28783369064331055f) * _S65 + vec2<f32>(0.65159928798675537f, 0.20042069256305695f) * _S66 + vec2<f32>(0.70950692892074585f, 0.12844389677047729f) * _S67 + vec2<f32>(0.73192507028579712f, 0.08202389627695084f) * _S68 + vec2<f32>(0.7161983847618103f, 0.05005419999361038f) * _S69 + vec2<f32>(0.66943138837814331f, 0.03112700022757053f) * _S70 + vec2<f32>(0.59648841619491577f, 0.01862730085849762f) * _S71 + vec2<f32>(0.50741302967071533f, 0.01281030010432005f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 1.0f)) * (vec2<f32>(-0.00930839963257313f, -0.05096510052680969f) * _S59 + vec2<f32>(0.03267690166831017f, 0.88316977024078369f) * _S60 + vec2<f32>(0.11045809835195541f, 0.81648111343383789f) * _S61 + vec2<f32>(0.20676289498806f, 0.65160852670669556f) * _S62 + vec2<f32>(0.32054820656776428f, 0.53221142292022705f) * _S63 + vec2<f32>(0.4455254077911377f, 0.40326109528541565f) * _S64 + vec2<f32>(0.56171208620071411f, 0.2928445041179657f) * _S65 + vec2<f32>(0.65319478511810303f, 0.19869279861450195f) * _S66 + vec2<f32>(0.71095079183578491f, 0.12985430657863617f) * _S67 + vec2<f32>(0.7316511869430542f, 0.08150120079517365f) * _S68 + vec2<f32>(0.71713531017303467f, 0.05052080005407333f) * _S69 + vec2<f32>(0.66998302936553955f, 0.03087439946830273f) * _S70 + vec2<f32>(0.59695768356323242f, 0.01905369944870472f) * _S71 + vec2<f32>(0.50688481330871582f, 0.01136360038071871f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 2.0f)) * (vec2<f32>(0.010585299693048f, 0.99188041687011719f) * _S59 + vec2<f32>(0.00207319995388389f, 0.40556570887565613f) * _S60 + vec2<f32>(0.05862849950790405f, 0.55259382724761963f) * _S61 + vec2<f32>(0.16572730243206024f, 0.58792608976364136f) * _S62 + vec2<f32>(0.29784908890724182f, 0.50322818756103516f) * _S63 + vec2<f32>(0.4318917989730835f, 0.39728268980979919f) * _S64 + vec2<f32>(0.55288940668106079f, 0.2878929078578949f) * _S65 + vec2<f32>(0.64753270149230957f, 0.19779230654239655f) * _S66 + vec2<f32>(0.70724570751190186f, 0.12865540385246277f) * _S67 + vec2<f32>(0.72979277372360229f, 0.08128180354833603f) * _S68 + vec2<f32>(0.71553927659988403f, 0.05013220012187958f) * _S69 + vec2<f32>(0.66890257596969604f, 0.03081009909510612f) * _S70 + vec2<f32>(0.59605568647384644f, 0.01881019957363605f) * _S71 + vec2<f32>(0.50637918710708618f, 0.01177479978650808f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 3.0f)) * (vec2<f32>(0.04574630036950111f, 1.02595400810241699f) * _S59 + vec2<f32>(0.03743439912796021f, 0.88119810819625854f) * _S60 + vec2<f32>(0.04426249861717224f, 0.52496278285980225f) * _S61 + vec2<f32>(0.11310549825429916f, 0.46600010991096497f) * _S62 + vec2<f32>(0.23485749959945679f, 0.4375700056552887f) * _S63 + vec2<f32>(0.37963598966598511f, 0.36149460077285767f) * _S64 + vec2<f32>(0.51556599140167236f, 0.27323558926582336f) * _S65 + vec2<f32>(0.622580885887146f, 0.18986819684505463f) * _S66 + vec2<f32>(0.69136160612106323f, 0.12518900632858276f) * _S67 + vec2<f32>(0.71929609775543213f, 0.07907170057296753f) * _S68 + vec2<f32>(0.70917361974716187f, 0.04900079965591431f) * _S69 + vec2<f32>(0.66434282064437866f, 0.02995469979941845f) * _S70 + vec2<f32>(0.59224581718444824f, 0.01837039925158024f) * _S71 + vec2<f32>(0.5022997260093689f, 0.0110470000654459f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 4.0f)) * (vec2<f32>(0.1206125020980835f, 0.77379542589187622f) * _S59 + vec2<f32>(0.12222660332918167f, 0.83616697788238525f) * _S60 + vec2<f32>(0.11106769740581512f, 0.74211102724075317f) * _S61 + vec2<f32>(0.12635010480880737f, 0.50614690780639648f) * _S62 + vec2<f32>(0.20402370393276215f, 0.39524701237678528f) * _S63 + vec2<f32>(0.32609659433364868f, 0.32315808534622192f) * _S64 + vec2<f32>(0.46191799640655518f, 0.24740250408649445f) * _S65 + vec2<f32>(0.57957160472869873f, 0.17592360079288483f) * _S66 + vec2<f32>(0.66025441884994507f, 0.11711639910936356f) * _S67 + vec2<f32>(0.69881141185760498f, 0.07462230324745178f) * _S68 + vec2<f32>(0.69453942775726318f, 0.04620540142059326f) * _S69 + vec2<f32>(0.65352827310562134f, 0.02824320085346699f) * _S70 + vec2<f32>(0.582955002784729f, 0.01713629998266697f) * _S71 + vec2<f32>(0.49382159113883972f, 0.01042309962213039f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 5.0f)) * (vec2<f32>(0.26457729935646057f, 0.79617220163345337f) * _S59 + vec2<f32>(0.25447279214859009f, 0.71848297119140625f) * _S60 + vec2<f32>(0.24372699856758118f, 0.67536389827728271f) * _S61 + vec2<f32>(0.22911170125007629f, 0.58072292804718018f) * _S62 + vec2<f32>(0.24631629884243011f, 0.4128555953502655f) * _S63 + vec2<f32>(0.32152768969535828f, 0.3022313117980957f) * _S64 + vec2<f32>(0.42885839939117432f, 0.22238540649414062f) * _S65 + vec2<f32>(0.53810352087020874f, 0.157231405377388f) * _S66 + vec2<f32>(0.6227080225944519f, 0.10510919988155365f) * _S67 + vec2<f32>(0.66763401031494141f, 0.0672312006354332f) * _S68 + vec2<f32>(0.67200499773025513f, 0.04161379858851433f) * _S69 + vec2<f32>(0.63588422536849976f, 0.02530450001358986f) * _S70 + vec2<f32>(0.56762188673019409f, 0.01518450025469065f) * _S71 + vec2<f32>(0.47794249653816223f, 0.00909390021115541f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 6.0f)) * (vec2<f32>(0.43767940998077393f, 0.52778768539428711f) * _S59 + vec2<f32>(0.43497830629348755f, 0.55565857887268066f) * _S60 + vec2<f32>(0.42141589522361755f, 0.53836488723754883f) * _S61 + vec2<f32>(0.4008432924747467f, 0.49193951487541199f) * _S62 + vec2<f32>(0.37870550155639648f, 0.40763860940933228f) * _S63 + vec2<f32>(0.38813981413841248f, 0.28910300135612488f) * _S64 + vec2<f32>(0.44539439678192139f, 0.20043960213661194f) * _S65 + vec2<f32>(0.52257758378982544f, 0.13623130321502686f) * _S66 + vec2<f32>(0.59163397550582886f, 0.08995489776134491f) * _S67 + vec2<f32>(0.63798898458480835f, 0.05706769973039627f) * _S68 + vec2<f32>(0.64467430114746094f, 0.03520869836211205f) * _S69 + vec2<f32>(0.61179417371749878f, 0.021161999553442f) * _S70 + vec2<f32>(0.5443912148475647f, 0.01255400013178587f) * _S71 + vec2<f32>(0.45556539297103882f, 0.00719430018216372f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 7.0f)) * (vec2<f32>(0.63681560754776001f, 0.37943580746650696f) * _S59 + vec2<f32>(0.63195270299911499f, 0.36018449068069458f) * _S60 + vec2<f32>(0.62122827768325806f, 0.35363009572029114f) * _S61 + vec2<f32>(0.59902858734130859f, 0.34027791023254395f) * _S62 + vec2<f32>(0.56643378734588623f, 0.30496558547019958f) * _S63 + vec2<f32>(0.5314096212387085f, 0.24438419938087463f) * _S64 + vec2<f32>(0.52357661724090576f, 0.16980840265750885f) * _S65 + vec2<f32>(0.5474010705947876f, 0.11221110075712204f) * _S66 + vec2<f32>(0.58856910467147827f, 0.07183969765901566f) * _S67 + vec2<f32>(0.61636549234390259f, 0.04495130106806755f) * _S68 + vec2<f32>(0.61752068996429443f, 0.02730320021510124f) * _S69 + vec2<f32>(0.58241552114486694f, 0.01623369939625263f) * _S70 + vec2<f32>(0.51425069570541382f, 0.00938300043344498f) * _S71 + vec2<f32>(0.42317068576812744f, 0.00540499994531274f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 8.0f)) * (vec2<f32>(0.81267541646957397f, 0.17737489938735962f) * _S59 + vec2<f32>(0.81089460849761963f, 0.18592619895935059f) * _S60 + vec2<f32>(0.80203372240066528f, 0.18450069427490234f) * _S61 + vec2<f32>(0.78451091051101685f, 0.17923450469970703f) * _S62 + vec2<f32>(0.75236481428146362f, 0.17097190022468567f) * _S63 + vec2<f32>(0.70702672004699707f, 0.15113990008831024f) * _S64 + vec2<f32>(0.65327489376068115f, 0.11831910163164139f) * _S65 + vec2<f32>(0.62291878461837769f, 0.08054299652576447f) * _S66 + vec2<f32>(0.61463671922683716f, 0.05135539919137955f) * _S67 + vec2<f32>(0.61291992664337158f, 0.03151309862732887f) * _S68 + vec2<f32>(0.59584552049636841f, 0.01889899931848049f) * _S69 + vec2<f32>(0.5510483980178833f, 0.01100130006670952f) * _S70 + vec2<f32>(0.4772191047668457f, 0.00626480020582676f) * _S71 + vec2<f32>(0.38401719927787781f, 0.0033825000282377f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 9.0f)) * (vec2<f32>(0.93769299983978271f, 0.06798700243234634f) * _S59 + vec2<f32>(0.93442130088806152f, 0.06284449994564056f) * _S60 + vec2<f32>(0.92932981252670288f, 0.06249019876122475f) * _S61 + vec2<f32>(0.91649138927459717f, 0.06285469979047775f) * _S62 + vec2<f32>(0.89388298988342285f, 0.06178810074925423f) * _S63 + vec2<f32>(0.85349130630493164f, 0.06024239957332611f) * _S64 + vec2<f32>(0.79553717374801636f, 0.05434289947152138f) * _S65 + vec2<f32>(0.72840338945388794f, 0.04295980185270309f) * _S66 + vec2<f32>(0.67323261499404907f, 0.02926450036466122f) * _S67 + vec2<f32>(0.63030177354812622f, 0.01836870051920414f) * _S68 + vec2<f32>(0.58399122953414917f, 0.01094940025359392f) * _S69 + vec2<f32>(0.5202292799949646f, 0.00631939992308617f) * _S70 + vec2<f32>(0.43539279699325562f, 0.0035077000502497f) * _S71 + vec2<f32>(0.33793559670448303f, 0.00192960002459586f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 10.0f)) * (vec2<f32>(0.99163192510604858f, 0.00484689977020025f) * _S59 + vec2<f32>(0.99116522073745728f, 0.00796679966151714f) * _S60 + vec2<f32>(0.98792862892150879f, 0.00806930009275675f) * _S61 + vec2<f32>(0.98114508390426636f, 0.0078320000320673f) * _S62 + vec2<f32>(0.96755552291870117f, 0.00866509974002838f) * _S63 + vec2<f32>(0.94221091270446777f, 0.00961260031908751f) * _S64 + vec2<f32>(0.89904522895812988f, 0.0111905001103878f) * _S65 + vec2<f32>(0.83300900459289551f, 0.01175749953836203f) * _S66 + vec2<f32>(0.75132989883422852f, 0.01031319983303547f) * _S67 + vec2<f32>(0.66817468404769897f, 0.00739389983937144f) * _S68 + vec2<f32>(0.58449500799179077f, 0.00469669979065657f) * _S69 + vec2<f32>(0.49239379167556763f, 0.00274799996986985f) * _S70 + vec2<f32>(0.39069679379463196f, 0.00153979996684939f) * _S71 + vec2<f32>(0.28739228844642639f, 0.00080069998512045f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 11.0f)) * (vec2<f32>(1.00030839443206787f, 0.00132489996030927f) * _S59 + vec2<f32>(1.00059950351715088f, -0.00104150001425296f) * _S60 + vec2<f32>(0.99918842315673828f, -0.00109509995672852f) * _S61 + vec2<f32>(0.99662727117538452f, -0.00078689999645576f) * _S62 + vec2<f32>(0.99067902565002441f, -0.00099460000637919f) * _S63 + vec2<f32>(0.9789891242980957f, -0.00078649999340996f) * _S64 + vec2<f32>(0.95506691932678223f, -0.00063089997274801f) * _S65 + vec2<f32>(0.90853261947631836f, -0.00004849999822909f) * _S66 + vec2<f32>(0.83005660772323608f, 0.00064739998197183f) * _S67 + vec2<f32>(0.72199207544326782f, 0.00106369995046407f) * _S68 + vec2<f32>(0.59814202785491943f, 0.00094429997261614f) * _S69 + vec2<f32>(0.46943360567092896f, 0.0006571999983862f) * _S70 + vec2<f32>(0.34491020441055298f, 0.00038939999649301f) * _S71 + vec2<f32>(0.23603999614715576f, 0.00023839999630582f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 12.0f)) * (vec2<f32>(0.99982082843780518f, -0.00226259999908507f) * _S59 + vec2<f32>(0.99921691417694092f, 0.00083259999519214f) * _S60 + vec2<f32>(0.99951702356338501f, 0.00091000000247732f) * _S61 + vec2<f32>(0.99938511848449707f, 0.00050560000818223f) * _S62 + vec2<f32>(0.9986388087272644f, 0.00080109998816624f) * _S63 + vec2<f32>(0.99591022729873657f, 0.00060789997223765f) * _S64 + vec2<f32>(0.98590642213821411f, 0.00062870001420379f) * _S65 + vec2<f32>(0.95896798372268677f, 0.00030819998937659f) * _S66 + vec2<f32>(0.89731162786483765f, -0.00005109999983688f) * _S67 + vec2<f32>(0.78470510244369507f, -0.00027940000290982f) * _S68 + vec2<f32>(0.62571001052856445f, -0.00019700000120793f) * _S69 + vec2<f32>(0.45251798629760742f, -0.00010209999891231f) * _S70 + vec2<f32>(0.29973480105400085f, -0.00003329999890411f) * _S71 + vec2<f32>(0.18639770150184631f, -0.000034600001527f) * _S72) + vec2<f32>(ggx_energy_basis_0(_S58 - 13.0f)) * (vec2<f32>(1.00496220588684082f, 0.00913080014288425f) * _S59 + vec2<f32>(1.00138688087463379f, -0.00241709989495575f) * _S60 + vec2<f32>(1.0036776065826416f, -0.0027135000564158f) * _S61 + vec2<f32>(1.00481629371643066f, -0.00120069994591177f) * _S62 + vec2<f32>(1.008644700050354f, -0.00232520001009107f) * _S63 + vec2<f32>(1.01138985157012939f, -0.00167589995544404f) * _S64 + vec2<f32>(1.01234376430511475f, -0.00196720007807016f) * _S65 + vec2<f32>(0.99929207563400269f, -0.00119440001435578f) * _S66 + vec2<f32>(0.95524948835372925f, -0.00035449999268167f) * _S67 + vec2<f32>(0.85058838129043579f, 0.00027970000519417f) * _S68 + vec2<f32>(0.6671786904335022f, 0.00011629999789875f) * _S69 + vec2<f32>(0.44304949045181274f, 0.00001530000008643f) * _S70 + vec2<f32>(0.25579911470413208f, -0.00005640000017593f) * _S71 + vec2<f32>(0.14276920258998871f, 0.00004659999831347f) * _S72);
+}
+
+fn ggx_energy_0( n_dot_v_1 : f32,  roughness_4 : f32) -> vec2<f32>
+{
+    return ggx_energy_fit_0(ggx_energy_coordinates_0(n_dot_v_1, roughness_4));
+}
+
+fn distribution_ggx_0( n_dot_h_0 : f32,  roughness_5 : f32) -> f32
+{
+    var _S73 : f32 = max(roughness_5, 0.04500000178813934f);
+    var a_5 : f32 = _S73 * _S73;
     var a2_0 : f32 = a_5 * a_5;
     var denom_0 : f32 = n_dot_h_0 * n_dot_h_0 * (a2_0 - 1.0f) + 1.0f;
     return a2_0 / (3.14159274101257324f * max(denom_0 * denom_0, 9.99999968265522539e-21f));
 }
 
-fn geometry_smith_k_0( n_dot_v_0 : f32,  n_dot_l_0 : f32,  k_0 : f32) -> f32
+fn geometry_smith_k_0( n_dot_v_2 : f32,  n_dot_l_0 : f32,  k_0 : f32) -> f32
 {
-    var _S56 : f32 = 1.0f - k_0;
-    return n_dot_v_0 / max(n_dot_v_0 * _S56 + k_0, 9.99999997475242708e-07f) * (n_dot_l_0 / max(n_dot_l_0 * _S56 + k_0, 9.99999997475242708e-07f));
+    var _S74 : f32 = 1.0f - k_0;
+    return n_dot_v_2 / max(n_dot_v_2 * _S74 + k_0, 9.99999997475242708e-07f) * (n_dot_l_0 / max(n_dot_l_0 * _S74 + k_0, 9.99999997475242708e-07f));
 }
 
 fn fresnel_schlick_0( cos_theta_0 : f32,  f0_0 : vec3<f32>) -> vec3<f32>
@@ -1065,32 +1123,47 @@ fn fresnel_schlick_0( cos_theta_0 : f32,  f0_0 : vec3<f32>) -> vec3<f32>
     return f0_0 + (vec3<f32>(1.0f) - f0_0) * vec3<f32>(pow(clamp(1.0f - cos_theta_0, 0.0f, 1.0f), 5.0f));
 }
 
+fn ggx_single_scatter_0( n_dot_v_3 : f32,  n_dot_l_1 : f32,  n_dot_h_1 : f32,  h_dot_v_0 : f32,  roughness_6 : f32,  f0_1 : vec3<f32>,  k_1 : f32) -> vec3<f32>
+{
+    return vec3<f32>((distribution_ggx_0(n_dot_h_1, roughness_6) * geometry_smith_k_0(n_dot_v_3, n_dot_l_1, k_1))) * fresnel_schlick_0(h_dot_v_0, f0_1) / vec3<f32>(max(4.0f * n_dot_v_3 * n_dot_l_1, 9.99999997475242708e-07f));
+}
+
+fn multiscatter_gain_0( energy_0 : vec2<f32>,  f0_2 : vec3<f32>) -> vec3<f32>
+{
+    return vec3<f32>(1.0f) + f0_2 * vec3<f32>((1.0f / max(energy_0.x + energy_0.y, 0.00100000004749745f) - 1.0f));
+}
+
+fn specular_albedo_0( energy_1 : vec2<f32>,  f0_3 : vec3<f32>) -> vec3<f32>
+{
+    return multiscatter_gain_0(energy_1, f0_3) * (f0_3 * vec3<f32>(energy_1.x) + vec3<f32>(energy_1.y));
+}
+
 fn lambert_diffuse_0( albedo_1 : vec3<f32>) -> vec3<f32>
 {
     return albedo_1 / vec3<f32>(3.14159274101257324f);
 }
 
-fn brdf_smith_k_0( n_4 : vec3<f32>,  v_5 : vec3<f32>,  l_1 : vec3<f32>,  albedo_2 : vec3<f32>,  metallic_2 : f32,  roughness_4 : f32,  f0_1 : vec3<f32>,  radiance_1 : vec3<f32>,  k_1 : f32) -> vec3<f32>
+fn brdf_smith_k_0( n_4 : vec3<f32>,  v_5 : vec3<f32>,  l_1 : vec3<f32>,  albedo_2 : vec3<f32>,  metallic_2 : f32,  roughness_7 : f32,  f0_4 : vec3<f32>,  radiance_1 : vec3<f32>,  k_2 : f32) -> vec3<f32>
 {
     var h_1 : vec3<f32> = normalize(l_1 + v_5);
-    var _S57 : f32 = max(dot(n_4, l_1), 0.0f);
-    var _S58 : f32 = max(dot(n_4, v_5), 0.00009999999747379f);
-    var f_0 : vec3<f32> = fresnel_schlick_0(max(dot(h_1, v_5), 0.0f), f0_1);
-    return ((vec3<f32>(1.0f) - f_0) * vec3<f32>((1.0f - metallic_2)) * lambert_diffuse_0(albedo_2) + vec3<f32>((distribution_ggx_0(max(dot(n_4, h_1), 0.0f), roughness_4) * geometry_smith_k_0(_S58, _S57, k_1))) * f_0 / vec3<f32>(max(4.0f * _S58 * _S57, 9.99999997475242708e-07f))) * radiance_1 * vec3<f32>(_S57);
+    var _S75 : f32 = max(dot(n_4, l_1), 0.0f);
+    var _S76 : f32 = max(dot(n_4, v_5), 0.00009999999747379f);
+    var energy_2 : vec2<f32> = ggx_energy_0(_S76, roughness_7);
+    return (saturate(vec3<f32>(1.0f) - specular_albedo_0(energy_2, f0_4)) * vec3<f32>((1.0f - metallic_2)) * lambert_diffuse_0(albedo_2) + multiscatter_gain_0(energy_2, f0_4) * ggx_single_scatter_0(_S76, _S75, max(dot(n_4, h_1), 0.0f), max(dot(h_1, v_5), 0.0f), roughness_7, f0_4, k_2)) * radiance_1 * vec3<f32>(_S75);
 }
 
-fn brdf_direct_0( n_5 : vec3<f32>,  v_6 : vec3<f32>,  l_2 : vec3<f32>,  albedo_3 : vec3<f32>,  metallic_3 : f32,  roughness_5 : f32,  f0_2 : vec3<f32>,  radiance_2 : vec3<f32>) -> vec3<f32>
+fn brdf_direct_0( n_5 : vec3<f32>,  v_6 : vec3<f32>,  l_2 : vec3<f32>,  albedo_3 : vec3<f32>,  metallic_3 : f32,  roughness_8 : f32,  f0_5 : vec3<f32>,  radiance_2 : vec3<f32>) -> vec3<f32>
 {
-    return brdf_smith_k_0(n_5, v_6, l_2, albedo_3, metallic_3, roughness_5, f0_2, radiance_2, smith_k_analytic_0(roughness_5));
+    return brdf_smith_k_0(n_5, v_6, l_2, albedo_3, metallic_3, roughness_8, f0_5, radiance_2, smith_k_analytic_0(roughness_8));
 }
 
 fn sun_sample_0( s_4 : TracedSurface_0,  v_7 : vec3<f32>) -> LightSample_0
 {
     var o_3 : LightSample_0 = unlit_sample_0();
-    var _S59 : vec3<f32> = traceFrame_0.light_dir_0.xyz;
-    o_3.l_0 = _S59;
+    var _S77 : vec3<f32> = traceFrame_0.light_dir_0.xyz;
+    o_3.l_0 = _S77;
     o_3.distance_0 = 10000.0f;
-    if((dot(s_4.normal_2, _S59)) <= 0.0f)
+    if((dot(s_4.normal_2, _S77)) <= 0.0f)
     {
         return o_3;
     }
@@ -1140,14 +1213,14 @@ fn punctual_incidence_0( light_1 : PunctualLight_0,  position_3 : vec3<f32>) -> 
         return o_4;
     }
     var toLight_0 : vec3<f32> = light_1.position_2 - position_3;
-    var _S60 : f32 = max(length(toLight_0), 0.00009999999747379f);
-    o_4.distance_1 = _S60;
-    o_4.l_3 = toLight_0 / vec3<f32>(_S60);
-    o_4.attenuation_0 = 1.0f / (_S60 * _S60);
+    var _S78 : f32 = max(length(toLight_0), 0.00009999999747379f);
+    o_4.distance_1 = _S78;
+    o_4.l_3 = toLight_0 / vec3<f32>(_S78);
+    o_4.attenuation_0 = 1.0f / (_S78 * _S78);
     if((light_1.range_0) > 0.0f)
     {
-        var k_2 : f32 = clamp(1.0f - pow(o_4.distance_1 / light_1.range_0, 4.0f), 0.0f, 1.0f);
-        o_4.attenuation_0 = o_4.attenuation_0 * (k_2 * k_2);
+        var k_3 : f32 = clamp(1.0f - pow(o_4.distance_1 / light_1.range_0, 4.0f), 0.0f, 1.0f);
+        o_4.attenuation_0 = o_4.attenuation_0 * (k_3 * k_3);
     }
     if((light_1.kind_0) > 1.5f)
     {
@@ -1159,21 +1232,21 @@ fn punctual_incidence_0( light_1 : PunctualLight_0,  position_3 : vec3<f32>) -> 
 fn punctual_sample_0( s_5 : TracedSurface_0,  v_8 : vec3<f32>,  index_4 : u32) -> LightSample_0
 {
     var o_5 : LightSample_0 = unlit_sample_0();
-    var _S61 : u32 = index_4 * u32(4);
-    var light_2 : PunctualLight_0 = unpack_punctual_light_0(tracerLights_0[_S61], tracerLights_0[_S61 + u32(1)], tracerLights_0[_S61 + u32(2)], tracerLights_0[_S61 + u32(3)]);
+    var _S79 : u32 = index_4 * u32(4);
+    var light_2 : PunctualLight_0 = unpack_punctual_light_0(tracerLights_0[_S79], tracerLights_0[_S79 + u32(1)], tracerLights_0[_S79 + u32(2)], tracerLights_0[_S79 + u32(3)]);
     var incidence_0 : PunctualIncidence_0 = punctual_incidence_0(light_2, s_5.position_1);
     o_5.l_0 = incidence_0.l_3;
     o_5.distance_0 = incidence_0.distance_1 * 0.99989998340606689f;
-    var _S62 : bool;
+    var _S80 : bool;
     if((incidence_0.attenuation_0) <= 0.0f)
     {
-        _S62 = true;
+        _S80 = true;
     }
     else
     {
-        _S62 = (dot(s_5.normal_2, incidence_0.l_3)) <= 0.0f;
+        _S80 = (dot(s_5.normal_2, incidence_0.l_3)) <= 0.0f;
     }
-    if(_S62)
+    if(_S80)
     {
         return o_5;
     }
@@ -1207,32 +1280,32 @@ fn light_visible_0( s_7 : TracedSurface_0,  l_4 : vec3<f32>,  distance_2 : f32) 
 
 fn shadowed_0( s_8 : TracedSurface_0,  light_3 : LightSample_0) -> vec3<f32>
 {
-    var _S63 : bool;
+    var _S81 : bool;
     if((any(((light_3.radiance_0) > vec3<f32>(0.0f)))))
     {
-        _S63 = light_visible_0(s_8, light_3.l_0, light_3.distance_0);
+        _S81 = light_visible_0(s_8, light_3.l_0, light_3.distance_0);
     }
     else
     {
-        _S63 = false;
+        _S81 = false;
     }
-    var _S64 : vec3<f32>;
-    if(_S63)
+    var _S82 : vec3<f32>;
+    if(_S81)
     {
-        _S64 = light_3.radiance_0;
+        _S82 = light_3.radiance_0;
     }
     else
     {
-        _S64 = vec3<f32>(0.0f);
+        _S82 = vec3<f32>(0.0f);
     }
-    return _S64;
+    return _S82;
 }
 
 fn direct_light_0( s_9 : TracedSurface_0,  v_10 : vec3<f32>) -> vec3<f32>
 {
-    var _S65 : vec3<f32> = vec3<f32>(0.0f);
+    var _S83 : vec3<f32> = vec3<f32>(0.0f);
     var i_0 : u32 = u32(0);
-    var lit_0 : vec3<f32> = _S65;
+    var lit_0 : vec3<f32> = _S83;
     for(;;)
     {
         if(i_0 <= (traceFrame_0.lights_0.x))
@@ -1287,8 +1360,8 @@ fn pixel_index_0( pixel_3 : vec2<u32>) -> u32
 
 fn hdr_safe_0( radiance_4 : vec3<f32>) -> vec3<f32>
 {
-    var _S66 : vec3<f32> = vec3<f32>(0.0f);
-    return clamp(select(radiance_4, _S66, (((bitcast<vec3<u32>>((radiance_4))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S66, vec3<f32>(65000.0f));
+    var _S84 : vec3<f32> = vec3<f32>(0.0f);
+    return clamp(select(radiance_4, _S84, (((bitcast<vec3<u32>>((radiance_4))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S84, vec3<f32>(65000.0f));
 }
 
 @compute
@@ -1296,8 +1369,8 @@ fn hdr_safe_0( radiance_4 : vec3<f32>) -> vec3<f32>
 fn cs_ray_trace(@builtin(global_invocation_id) id_0 : vec3<u32>)
 {
     var pixel_4 : vec2<u32>;
-    var _S67 : bool = tile_pixel_0(id_0.xy, &(pixel_4));
-    if(!_S67)
+    var _S85 : bool = tile_pixel_0(id_0.xy, &(pixel_4));
+    if(!_S85)
     {
         return;
     }
@@ -1313,17 +1386,17 @@ fn path_rng_seed_0( pixel_index_1 : u32,  stream_0 : u32) -> u32
 
 fn rng_next_0( state_0 : ptr<function, u32>) -> f32
 {
-    var _S68 : u32 = (*state_0) * u32(747796405) + u32(1);
-    (*state_0) = _S68;
-    var word_1 : u32 = ((((_S68 >> ((((_S68 >> (u32(28)))) + u32(4))))) ^ (_S68))) * u32(277803737);
+    var _S86 : u32 = (*state_0) * u32(747796405) + u32(1);
+    (*state_0) = _S86;
+    var word_1 : u32 = ((((_S86 >> ((((_S86 >> (u32(28)))) + u32(4))))) ^ (_S86))) * u32(277803737);
     return f32((((word_1 >> (u32(22)))) ^ (word_1))) / 4.294967296e+09f;
 }
 
 fn rng_next_1( state_1 : ptr<function, u32>) -> f32
 {
-    var _S69 : u32 = (*state_1) * u32(747796405) + u32(1);
-    (*state_1) = _S69;
-    var word_2 : u32 = ((((_S69 >> ((((_S69 >> (u32(28)))) + u32(4))))) ^ (_S69))) * u32(277803737);
+    var _S87 : u32 = (*state_1) * u32(747796405) + u32(1);
+    (*state_1) = _S87;
+    var word_2 : u32 = ((((_S87 >> ((((_S87 >> (u32(28)))) + u32(4))))) ^ (_S87))) * u32(277803737);
     return f32((((word_2 >> (u32(22)))) ^ (word_2))) / 4.294967296e+09f;
 }
 
@@ -1334,8 +1407,8 @@ fn russian_roulette_survives_0( bounce_0 : u32,  throughput_0 : ptr<function, ve
         return true;
     }
     var survival_0 : f32 = clamp(max((*throughput_0).x, max((*throughput_0).y, (*throughput_0).z)), 0.05000000074505806f, 0.94999998807907104f);
-    var _S70 : f32 = rng_next_1(&((*rng_0)));
-    if(_S70 > survival_0)
+    var _S88 : f32 = rng_next_1(&((*rng_0)));
+    if(_S88 > survival_0)
     {
         return false;
     }
@@ -1368,16 +1441,16 @@ fn miss_radiance_0( dir_4 : vec3<f32>,  bounce_1 : u32) -> vec3<f32>
     {
         return vec3<f32>(traceFrame_0.furnace_0.x);
     }
-    var _S71 : vec3<f32>;
+    var _S89 : vec3<f32>;
     if(bounce_1 == u32(0))
     {
-        _S71 = sky_with_sun_0(dir_4);
+        _S89 = sky_with_sun_0(dir_4);
     }
     else
     {
-        _S71 = bounce_sky_0(dir_4);
+        _S89 = bounce_sky_0(dir_4);
     }
-    return _S71;
+    return _S89;
 }
 
 fn path_surface_0( ray_9 : TraceRay_0,  hit_6 : TraceHit_0) -> TracedSurface_0
@@ -1401,10 +1474,10 @@ fn punctual_light_sample_0( s_12 : TracedSurface_0,  v_11 : vec3<f32>,  rng_1 : 
     {
         return unlit_sample_0();
     }
-    var _S72 : f32 = rng_next_0(&((*rng_1)));
-    var _S73 : f32 = f32(count_1);
-    var o_6 : LightSample_0 = punctual_sample_0(s_12, v_11, min(u32(_S72 * _S73), count_1 - u32(1)));
-    o_6.radiance_0 = o_6.radiance_0 * vec3<f32>(_S73);
+    var _S90 : f32 = rng_next_0(&((*rng_1)));
+    var _S91 : f32 = f32(count_1);
+    var o_6 : LightSample_0 = punctual_sample_0(s_12, v_11, min(u32(_S90 * _S91), count_1 - u32(1)));
+    o_6.radiance_0 = o_6.radiance_0 * vec3<f32>(_S91);
     return o_6;
 }
 
@@ -1414,12 +1487,12 @@ fn next_event_0( s_13 : TracedSurface_0,  v_12 : vec3<f32>,  rng_2 : ptr<functio
     {
         return vec3<f32>(0.0f);
     }
-    var _S74 : LightSample_0 = sun_sample_0(s_13, v_12);
-    var _S75 : LightSample_0 = punctual_light_sample_0(s_13, v_12, &((*rng_2)));
-    var _S76 : array<LightSample_0, i32(2)> = array<LightSample_0, i32(2)>( _S74, _S75 );
-    var _S77 : vec3<f32> = vec3<f32>(0.0f);
+    var _S92 : LightSample_0 = sun_sample_0(s_13, v_12);
+    var _S93 : LightSample_0 = punctual_light_sample_0(s_13, v_12, &((*rng_2)));
+    var _S94 : array<LightSample_0, i32(2)> = array<LightSample_0, i32(2)>( _S92, _S93 );
+    var _S95 : vec3<f32> = vec3<f32>(0.0f);
     var i_1 : u32 = u32(0);
-    var lit_2 : vec3<f32> = _S77;
+    var lit_2 : vec3<f32> = _S95;
     for(;;)
     {
         if(i_1 < u32(2))
@@ -1429,26 +1502,26 @@ fn next_event_0( s_13 : TracedSurface_0,  v_12 : vec3<f32>,  rng_2 : ptr<functio
         {
             break;
         }
-        var lit_3 : vec3<f32> = lit_2 + shadowed_0(s_13, _S76[i_1]);
+        var lit_3 : vec3<f32> = lit_2 + shadowed_0(s_13, _S94[i_1]);
         i_1 = i_1 + u32(1);
         lit_2 = lit_3;
     }
     return lit_2;
 }
 
-fn specular_lobe_probability_0( albedo_4 : vec3<f32>,  metallic_4 : f32,  f0_3 : vec3<f32>,  n_dot_v_1 : f32) -> f32
+fn specular_lobe_probability_0( albedo_4 : vec3<f32>,  metallic_4 : f32,  f0_6 : vec3<f32>,  n_dot_v_4 : f32) -> f32
 {
     const LUMA_0 : vec3<f32> = vec3<f32>(0.2125999927520752f, 0.71520000696182251f, 0.07220000028610229f);
-    var fresnel_0 : vec3<f32> = fresnel_schlick_0(n_dot_v_1, f0_3);
+    var fresnel_0 : vec3<f32> = fresnel_schlick_0(n_dot_v_4, f0_6);
     var specular_0 : f32 = dot(fresnel_0, LUMA_0);
     return clamp(specular_0 / max(specular_0 + dot((vec3<f32>(1.0f) - fresnel_0) * vec3<f32>((1.0f - metallic_4)) * albedo_4, LUMA_0), 9.99999997475242708e-07f), 0.10000000149011612f, 1.0f);
 }
 
-fn orthonormal_basis_0( n_6 : vec3<f32>,  t_4 : ptr<function, vec3<f32>>,  b_7 : ptr<function, vec3<f32>>)
+fn orthonormal_basis_0( n_6 : vec3<f32>,  t_6 : ptr<function, vec3<f32>>,  b_7 : ptr<function, vec3<f32>>)
 {
-    var _S78 : f32 = n_6.z;
+    var _S96 : f32 = n_6.z;
     var s_14 : f32;
-    if(_S78 >= 0.0f)
+    if(_S96 >= 0.0f)
     {
         s_14 = 1.0f;
     }
@@ -1456,25 +1529,25 @@ fn orthonormal_basis_0( n_6 : vec3<f32>,  t_4 : ptr<function, vec3<f32>>,  b_7 :
     {
         s_14 = -1.0f;
     }
-    var a_7 : f32 = -1.0f / (s_14 + _S78);
-    var _S79 : f32 = n_6.x;
-    var _S80 : f32 = n_6.y;
-    var c_5 : f32 = _S79 * _S80 * a_7;
-    (*t_4) = vec3<f32>(1.0f + s_14 * _S79 * _S79 * a_7, s_14 * c_5, - s_14 * _S79);
-    (*b_7) = vec3<f32>(c_5, s_14 + _S80 * _S80 * a_7, - _S80);
+    var a_7 : f32 = -1.0f / (s_14 + _S96);
+    var _S97 : f32 = n_6.x;
+    var _S98 : f32 = n_6.y;
+    var c_5 : f32 = _S97 * _S98 * a_7;
+    (*t_6) = vec3<f32>(1.0f + s_14 * _S97 * _S97 * a_7, s_14 * c_5, - s_14 * _S97);
+    (*b_7) = vec3<f32>(c_5, s_14 + _S98 * _S98 * a_7, - _S98);
     return;
 }
 
 fn sample_ggx_visible_normal_0( v_13 : vec3<f32>,  alpha_0 : f32,  u_1 : vec2<f32>) -> vec3<f32>
 {
     var vh_0 : vec3<f32> = normalize(vec3<f32>(alpha_0 * v_13.x, alpha_0 * v_13.y, v_13.z));
-    var _S81 : f32 = vh_0.x;
-    var _S82 : f32 = vh_0.y;
-    var length_squared_0 : f32 = _S81 * _S81 + _S82 * _S82;
+    var _S99 : f32 = vh_0.x;
+    var _S100 : f32 = vh_0.y;
+    var length_squared_0 : f32 = _S99 * _S99 + _S100 * _S100;
     var t1_1 : vec3<f32>;
     if(length_squared_0 > 0.0f)
     {
-        t1_1 = vec3<f32>(- _S82, _S81, 0.0f) / vec3<f32>(sqrt(length_squared_0));
+        t1_1 = vec3<f32>(- _S100, _S99, 0.0f) / vec3<f32>(sqrt(length_squared_0));
     }
     else
     {
@@ -1484,27 +1557,27 @@ fn sample_ggx_visible_normal_0( v_13 : vec3<f32>,  alpha_0 : f32,  u_1 : vec2<f3
     var phi_0 : f32 = 6.28318548202514648f * u_1.y;
     var p1_2 : f32 = r_1 * cos(phi_0);
     var s_15 : f32 = 0.5f * (1.0f + vh_0.z);
-    var _S83 : f32 = 1.0f - p1_2 * p1_2;
-    var p2_2 : f32 = (1.0f - s_15) * sqrt(max(_S83, 0.0f)) + s_15 * (r_1 * sin(phi_0));
-    var nh_0 : vec3<f32> = vec3<f32>(p1_2) * t1_1 + vec3<f32>(p2_2) * cross(vh_0, t1_1) + vec3<f32>(sqrt(max(_S83 - p2_2 * p2_2, 0.0f))) * vh_0;
+    var _S101 : f32 = 1.0f - p1_2 * p1_2;
+    var p2_2 : f32 = (1.0f - s_15) * sqrt(max(_S101, 0.0f)) + s_15 * (r_1 * sin(phi_0));
+    var nh_0 : vec3<f32> = vec3<f32>(p1_2) * t1_1 + vec3<f32>(p2_2) * cross(vh_0, t1_1) + vec3<f32>(sqrt(max(_S101 - p2_2 * p2_2, 0.0f))) * vh_0;
     return normalize(vec3<f32>(alpha_0 * nh_0.x, alpha_0 * nh_0.y, max(nh_0.z, 9.99999997475242708e-07f)));
 }
 
-fn ggx_visible_normal_pdf_0( n_dot_v_2 : f32,  n_dot_h_1 : f32,  alpha_1 : f32) -> f32
+fn ggx_visible_normal_pdf_0( n_dot_v_5 : f32,  n_dot_h_2 : f32,  alpha_1 : f32) -> f32
 {
     var a2_1 : f32 = alpha_1 * alpha_1;
-    var d_3 : f32 = n_dot_h_1 * n_dot_h_1 * (a2_1 - 1.0f) + 1.0f;
-    return a2_1 / (3.14159274101257324f * d_3 * d_3) * (2.0f * n_dot_v_2 / (n_dot_v_2 + sqrt(a2_1 + (1.0f - a2_1) * n_dot_v_2 * n_dot_v_2))) / (4.0f * n_dot_v_2);
+    var d_3 : f32 = n_dot_h_2 * n_dot_h_2 * (a2_1 - 1.0f) + 1.0f;
+    return a2_1 / (3.14159274101257324f * d_3 * d_3) * (2.0f * n_dot_v_5 / (n_dot_v_5 + sqrt(a2_1 + (1.0f - a2_1) * n_dot_v_5 * n_dot_v_5))) / (4.0f * n_dot_v_5);
 }
 
-fn smith_k_sampled_0( roughness_6 : f32) -> f32
+fn smith_k_sampled_0( roughness_9 : f32) -> f32
 {
-    return roughness_6 * roughness_6 / 2.0f;
+    return roughness_9 * roughness_9 / 2.0f;
 }
 
-fn brdf_sampled_0( n_7 : vec3<f32>,  v_14 : vec3<f32>,  l_5 : vec3<f32>,  albedo_5 : vec3<f32>,  metallic_5 : f32,  roughness_7 : f32,  f0_4 : vec3<f32>) -> vec3<f32>
+fn brdf_sampled_0( n_7 : vec3<f32>,  v_14 : vec3<f32>,  l_5 : vec3<f32>,  albedo_5 : vec3<f32>,  metallic_5 : f32,  roughness_10 : f32,  f0_7 : vec3<f32>) -> vec3<f32>
 {
-    return brdf_smith_k_0(n_7, v_14, l_5, albedo_5, metallic_5, roughness_7, f0_4, vec3<f32>(1.0f), smith_k_sampled_0(roughness_7));
+    return brdf_smith_k_0(n_7, v_14, l_5, albedo_5, metallic_5, roughness_10, f0_7, vec3<f32>(1.0f), smith_k_sampled_0(roughness_10));
 }
 
 struct Bounce_0
@@ -1513,31 +1586,31 @@ struct Bounce_0
      weight_0 : vec3<f32>,
 };
 
-fn sample_bounce_0( n_8 : vec3<f32>,  face_normal_1 : vec3<f32>,  v_15 : vec3<f32>,  albedo_6 : vec3<f32>,  metallic_6 : f32,  roughness_8 : f32,  rng_3 : ptr<function, u32>) -> Bounce_0
+fn sample_bounce_0( n_8 : vec3<f32>,  face_normal_1 : vec3<f32>,  v_15 : vec3<f32>,  albedo_6 : vec3<f32>,  metallic_6 : f32,  roughness_11 : f32,  rng_3 : ptr<function, u32>) -> Bounce_0
 {
-    var f0_5 : vec3<f32> = mix(vec3<f32>(0.03999999910593033f), albedo_6, vec3<f32>(metallic_6));
-    var _S84 : f32 = max(dot(n_8, v_15), 0.00009999999747379f);
-    var specular_1 : f32 = specular_lobe_probability_0(albedo_6, metallic_6, f0_5, _S84);
-    var alpha_2 : f32 = roughness_8 * roughness_8;
-    var t_5 : vec3<f32>;
+    var f0_8 : vec3<f32> = mix(vec3<f32>(0.03999999910593033f), albedo_6, vec3<f32>(metallic_6));
+    var _S102 : f32 = max(dot(n_8, v_15), 0.00009999999747379f);
+    var specular_1 : f32 = specular_lobe_probability_0(albedo_6, metallic_6, f0_8, _S102);
+    var alpha_2 : f32 = roughness_11 * roughness_11;
+    var t_7 : vec3<f32>;
     var b_8 : vec3<f32>;
-    orthonormal_basis_0(n_8, &(t_5), &(b_8));
-    var _S85 : f32 = rng_next_0(&((*rng_3)));
+    orthonormal_basis_0(n_8, &(t_7), &(b_8));
+    var _S103 : f32 = rng_next_0(&((*rng_3)));
     var direction_8 : vec3<f32>;
-    if(_S85 < specular_1)
+    if(_S103 < specular_1)
     {
-        var local_0 : vec3<f32> = vec3<f32>(dot(v_15, t_5), dot(v_15, b_8), dot(v_15, n_8));
-        var _S86 : f32 = rng_next_0(&((*rng_3)));
-        var _S87 : f32 = rng_next_0(&((*rng_3)));
-        var h_2 : vec3<f32> = sample_ggx_visible_normal_0(local_0, alpha_2, vec2<f32>(_S86, _S87));
-        direction_8 = reflect((vec3<f32>(0) - v_15), vec3<f32>(h_2.x) * t_5 + vec3<f32>(h_2.y) * b_8 + vec3<f32>(h_2.z) * n_8);
+        var local_0 : vec3<f32> = vec3<f32>(dot(v_15, t_7), dot(v_15, b_8), dot(v_15, n_8));
+        var _S104 : f32 = rng_next_0(&((*rng_3)));
+        var _S105 : f32 = rng_next_0(&((*rng_3)));
+        var h_2 : vec3<f32> = sample_ggx_visible_normal_0(local_0, alpha_2, vec2<f32>(_S104, _S105));
+        direction_8 = reflect((vec3<f32>(0) - v_15), vec3<f32>(h_2.x) * t_7 + vec3<f32>(h_2.y) * b_8 + vec3<f32>(h_2.z) * n_8);
     }
     else
     {
-        var _S88 : f32 = rng_next_0(&((*rng_3)));
-        var theta_0 : f32 = 6.28318548202514648f * _S88;
-        var _S89 : f32 = rng_next_0(&((*rng_3)));
-        var z_0 : f32 = 2.0f * _S89 - 1.0f;
+        var _S106 : f32 = rng_next_0(&((*rng_3)));
+        var theta_0 : f32 = 6.28318548202514648f * _S106;
+        var _S107 : f32 = rng_next_0(&((*rng_3)));
+        var z_0 : f32 = 2.0f * _S107 - 1.0f;
         var r_2 : f32 = sqrt(max(1.0f - z_0 * z_0, 0.0f));
         var direction_9 : vec3<f32> = n_8 + vec3<f32>(r_2 * cos(theta_0), r_2 * sin(theta_0), z_0);
         if((dot(direction_9, direction_9)) < 9.99999993922529029e-09f)
@@ -1550,36 +1623,36 @@ fn sample_bounce_0( n_8 : vec3<f32>,  face_normal_1 : vec3<f32>,  v_15 : vec3<f3
         }
     }
     var o_7 : Bounce_0;
-    var _S90 : vec3<f32> = normalize(direction_8);
-    o_7.direction_7 = _S90;
+    var _S108 : vec3<f32> = normalize(direction_8);
+    o_7.direction_7 = _S108;
     o_7.weight_0 = vec3<f32>(0.0f);
-    var n_dot_l_1 : f32 = dot(n_8, _S90);
-    var _S91 : bool;
-    if(n_dot_l_1 <= 0.0f)
+    var n_dot_l_2 : f32 = dot(n_8, _S108);
+    var _S109 : bool;
+    if(n_dot_l_2 <= 0.0f)
     {
-        _S91 = true;
+        _S109 = true;
     }
     else
     {
-        _S91 = (dot(face_normal_1, o_7.direction_7)) <= 0.0f;
+        _S109 = (dot(face_normal_1, o_7.direction_7)) <= 0.0f;
     }
-    if(_S91)
+    if(_S109)
     {
         return o_7;
     }
-    o_7.weight_0 = brdf_sampled_0(n_8, v_15, o_7.direction_7, albedo_6, metallic_6, roughness_8, f0_5) / vec3<f32>(max(specular_1 * ggx_visible_normal_pdf_0(_S84, max(dot(n_8, normalize(v_15 + o_7.direction_7)), 0.0f), alpha_2) + (1.0f - specular_1) * n_dot_l_1 / 3.14159274101257324f, 9.99999997475242708e-07f));
+    o_7.weight_0 = brdf_sampled_0(n_8, v_15, o_7.direction_7, albedo_6, metallic_6, roughness_11, f0_8) / vec3<f32>(max(specular_1 * ggx_visible_normal_pdf_0(_S102, max(dot(n_8, normalize(v_15 + o_7.direction_7)), 0.0f), alpha_2) + (1.0f - specular_1) * n_dot_l_2 / 3.14159274101257324f, 9.99999997475242708e-07f));
     return o_7;
 }
 
 fn trace_path_0( pixel_5 : vec2<u32>,  rng_4 : ptr<function, u32>) -> vec3<f32>
 {
-    var _S92 : f32 = rng_next_0(&((*rng_4)));
-    var _S93 : f32 = rng_next_0(&((*rng_4)));
-    var ray_10 : TraceRay_0 = camera_ray_0(vec2<f32>(pixel_5) + vec2<f32>(_S92, _S93));
+    var _S110 : f32 = rng_next_0(&((*rng_4)));
+    var _S111 : f32 = rng_next_0(&((*rng_4)));
+    var ray_10 : TraceRay_0 = camera_ray_0(vec2<f32>(pixel_5) + vec2<f32>(_S110, _S111));
     var throughput_1 : vec3<f32> = vec3<f32>(1.0f);
-    var _S94 : vec3<f32> = vec3<f32>(0.0f);
+    var _S112 : vec3<f32> = vec3<f32>(0.0f);
     var bounce_2 : u32 = u32(0);
-    var radiance_5 : vec3<f32> = _S94;
+    var radiance_5 : vec3<f32> = _S112;
     for(;;)
     {
         if(bounce_2 < (traceFrame_0.size_0.z))
@@ -1589,8 +1662,8 @@ fn trace_path_0( pixel_5 : vec2<u32>,  rng_4 : ptr<function, u32>) -> vec3<f32>
         {
             break;
         }
-        var _S95 : bool = russian_roulette_survives_0(bounce_2, &(throughput_1), &((*rng_4)));
-        if(!_S95)
+        var _S113 : bool = russian_roulette_survives_0(bounce_2, &(throughput_1), &((*rng_4)));
+        if(!_S113)
         {
             break;
         }
@@ -1607,10 +1680,10 @@ fn trace_path_0( pixel_5 : vec2<u32>,  rng_4 : ptr<function, u32>) -> vec3<f32>
             break;
         }
         var v_16 : vec3<f32> = (vec3<f32>(0) - ray_10.direction_0);
-        var _S96 : vec3<f32> = next_event_0(s_16, v_16, &((*rng_4)));
-        var radiance_6 : vec3<f32> = radiance_5 + throughput_1 * (s_16.emissive_2 + _S96);
+        var _S114 : vec3<f32> = next_event_0(s_16, v_16, &((*rng_4)));
+        var radiance_6 : vec3<f32> = radiance_5 + throughput_1 * (s_16.emissive_2 + _S114);
         var next_0 : Bounce_0 = sample_bounce_0(s_16.normal_2, s_16.face_normal_0, v_16, s_16.albedo_0, s_16.metallic_1, s_16.roughness_1, &((*rng_4)));
-        if((all(((next_0.weight_0) == _S94))))
+        if((all(((next_0.weight_0) == _S112))))
         {
             radiance_5 = radiance_6;
             break;
@@ -1637,16 +1710,16 @@ fn primary_hit_depth_0( pixel_6 : vec2<u32>) -> f32
 fn cs_path_trace(@builtin(global_invocation_id) id_1 : vec3<u32>)
 {
     var pixel_7 : vec2<u32>;
-    var _S97 : bool = tile_pixel_0(id_1.xy, &(pixel_7));
-    if(!_S97)
+    var _S115 : bool = tile_pixel_0(id_1.xy, &(pixel_7));
+    if(!_S115)
     {
         return;
     }
     var index_6 : u32 = pixel_index_0(pixel_7);
     var rng_5 : u32 = path_rng_seed_0(index_6, traceTile_0.samples_0.z);
-    var _S98 : vec3<f32> = vec3<f32>(0.0f);
+    var _S116 : vec3<f32> = vec3<f32>(0.0f);
     var i_2 : u32 = u32(0);
-    var sum_0 : vec3<f32> = _S98;
+    var sum_0 : vec3<f32> = _S116;
     for(;;)
     {
         if(i_2 < (traceTile_0.samples_0.y))
@@ -1656,8 +1729,8 @@ fn cs_path_trace(@builtin(global_invocation_id) id_1 : vec3<u32>)
         {
             break;
         }
-        var _S99 : vec3<f32> = trace_path_0(pixel_7, &(rng_5));
-        var sum_1 : vec3<f32> = sum_0 + hdr_safe_0(_S99);
+        var _S117 : vec3<f32> = trace_path_0(pixel_7, &(rng_5));
+        var sum_1 : vec3<f32> = sum_0 + hdr_safe_0(_S117);
         i_2 = i_2 + u32(1);
         sum_0 = sum_1;
     }
@@ -1670,7 +1743,7 @@ fn cs_path_trace(@builtin(global_invocation_id) id_1 : vec3<u32>)
     }
     else
     {
-        previous_0 = _S98;
+        previous_0 = _S116;
     }
     var depth_0 : f32;
     if((traceTile_0.samples_0.x) == u32(0))

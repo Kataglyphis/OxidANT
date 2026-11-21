@@ -36,6 +36,10 @@ const SHADERS: &[(&str, &str)] = &[
     ),
     ("traced", include_str!("../src/shaders/traced.wgsl")),
     (
+        "brdf_energy_bake",
+        include_str!("../src/shaders/brdf_energy_bake.wgsl"),
+    ),
+    (
         "trace_resolve",
         include_str!("../src/shaders/trace_resolve.wgsl"),
     ),

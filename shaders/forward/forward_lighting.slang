@@ -153,16 +153,6 @@ float3 sky_radiance(float3 dir, bool withSun)
     return color;
 }
 
-float3 env_brdf_approx(float3 f0, float roughness, float nDotV)
-{
-    float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
-    float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
-    float4 r = float4(roughness) * c0 + c1;
-    float a004 = min(r.x * r.x, exp2(-9.28 * nDotV)) * r.x + r.y;
-    float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
-    return f0 * ab.x + float3(ab.y);
-}
-
 // One 2x2 PCF tap of slot's cube along d; uv flips NDC y, as WebGPU's framebuffer rows run down.
 float punctual_shadow_tap(float3 d, int slot, float reference)
 {
@@ -247,7 +237,6 @@ float3 ibl_ambient(SurfacePoint s, float3 v, float3 f0)
     // Both IBL paths are evaluated and picked by ternary, keeping the no-environment path bit-identical to the goldens.
     float3 reflected = reflect(-v, s.n);
     float nDotV = max(dot(s.n, v), 1e-4);
-    float3 kSIbl = fresnel_schlick(nDotV, f0);
     float envIntensity = iblParams.enabled_maxmip_intensity.z;
     float iblStrength = frame.light_dir_ambient.w;
     bool envEnabled = iblParams.enabled_maxmip_intensity.x > 0.5;
@@ -255,15 +244,16 @@ float3 ibl_ambient(SurfacePoint s, float3 v, float3 f0)
     float3 irradianceAnalytic = hemisphere_irradiance(s.n);
     float3 irradianceEnv = irradianceMap.SampleLevel(iblSampler, s.n, 0.0).xyz * envIntensity;
     float3 irradiance = envEnabled ? irradianceEnv : irradianceAnalytic;
-    float3 diffuseIbl = (float3(1.0) - kSIbl) * (1.0 - s.metallic) * s.albedo * irradiance;
 
     float3 prefiltered = prefilteredMap.SampleLevel(iblSampler, reflected, s.roughness * iblParams.enabled_maxmip_intensity.y).xyz * envIntensity;
     // Level 0, the table's only mip: the deferred pass reaches here after a non-uniform return, where Sample is illegal.
-    float2 brdfLutSample = brdfLut.SampleLevel(iblSampler, float2(max(dot(s.n, v), 0.0), s.roughness), 0.0).rg;
-    float3 specularSplitSum = prefiltered * (f0 * brdfLutSample.x + brdfLutSample.y);
+    float2 lutEnergy = brdfLut.SampleLevel(iblSampler, float2(max(dot(s.n, v), 0.0), s.roughness), 0.0).rg;
     float3 envAnalytic = lerp(sky_radiance(reflected, true), irradianceAnalytic, s.roughness * s.roughness);
-    float3 specularAnalytic = envAnalytic * env_brdf_approx(f0, s.roughness, nDotV);
-    float3 specularIbl = envEnabled ? specularSplitSum : specularAnalytic;
+    // The split sum's own table with the baked environment, so a uniform one returns exactly E_spec + the diffuse rest.
+    float2 energy = envEnabled ? lutEnergy : ggx_energy(nDotV, s.roughness);
+    float3 specularAlbedo = specular_albedo(energy, f0);
+    float3 diffuseIbl = saturate(float3(1.0) - specularAlbedo) * (1.0 - s.metallic) * s.albedo * irradiance;
+    float3 specularIbl = (envEnabled ? prefiltered : envAnalytic) * specularAlbedo;
 
     return iblStrength * s.occlusion * (diffuseIbl + specularIbl);
 }

@@ -12,6 +12,8 @@ use kataglyphis_webgpu_renderer::scene::{
 };
 use kataglyphis_webgpu_renderer::{EquirectImage, ForwardRenderer, GpuContext, OrbitCamera};
 
+mod common;
+
 const SIZE: u32 = 64;
 
 /// A renderer with its traced scene built, lit by the scene's punctual lights alone: no sun, no sky light, no bloom or SSAO.
@@ -193,8 +195,12 @@ fn brdf_direct(n: DVec3, v: DVec3, l: DVec3, roughness: f64, radiance: f64) -> f
     let k = (roughness + 1.0).powi(2) / 8.0;
     let smith = |c: f64| c / (c * (1.0 - k) + k).max(1e-6);
     let f = 0.04 + 0.96 * (1.0 - h_dot_v).clamp(0.0, 1.0).powi(5);
-    let specular = d * smith(n_dot_v) * smith(n_dot_l) * f / (4.0 * n_dot_v * n_dot_l).max(1e-6);
-    ((1.0 - f) / PI + specular) * radiance * n_dot_l
+    let energy = common::ggx_energy(n_dot_v, roughness);
+    let specular =
+        common::multiscatter_gain(energy, 0.04) * d * smith(n_dot_v) * smith(n_dot_l) * f
+            / (4.0 * n_dot_v * n_dot_l).max(1e-6);
+    let diffuse = (1.0 - common::specular_albedo(energy, 0.04)).clamp(0.0, 1.0) / PI;
+    (diffuse + specular) * radiance * n_dot_l
 }
 
 /// `punctual_light.slang`'s inverse square and range window for a point light, at a ground point, through the BRDF.

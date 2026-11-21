@@ -60,11 +60,12 @@ checked against committed WGSL; `histogram.wgsl` stays hand-written. See
 ## Literature
 
 The shading references behind the renderer's metallic-roughness BRDF (GGX, Smith,
-Fresnel-Schlick) and its split-sum image-based lighting:
+Fresnel-Schlick, multiple-scattering compensation) and its split-sum image-based lighting:
 
 - [Real Shading in Unreal Engine 4](https://blog.selfshadow.com/publications/s2013-shading-course/karis/s2013_pbs_epic_notes_v2.pdf) (Karis)
 - [Physically Based Shading at Disney](https://blog.selfshadow.com/publications/s2012-shading-course/burley/s2012_pbs_disney_brdf_notes_v3.pdf) (Burley)
 - [Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs](https://hal.inria.fr/hal-01024289/) (Heitz)
+- [Practical multiple scattering compensation for microfacet models](https://blog.selfshadow.com/publications/turquin/ms_comp_final.pdf) (Turquin)
 - [Physically Based Rendering, microfacet models](https://pbr-book.org/3ed-2018/Reflection_Models/Microfacet_Models)
 - [Real-Time Rendering](https://www.realtimerendering.com/)
 

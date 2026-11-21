@@ -69,6 +69,42 @@ direction and weights it by `brdf_sampled` over the mixture's density. It names
 no binding, so `tracer/traced.slang` and the C++ kernel each trace their own
 rays around it. `tests/path_estimator_test.slang` emits it to SPIR-V and WGSL.
 
+`common/brdf.slang` compensates the GGX lobe's lost multiple scattering (Turquin 2019):
+the specular term is scaled by `1 + f0 (1 / E_ss - 1)`, and the diffuse term takes
+`1 - E_spec(mu)` of the light, not `1 - F`, keeping `1 - metallic`. A white surface then
+returns all of a uniform sky at every roughness and angle; single scattering returned 0.67
+of it for a white metal at roughness 0.7. `ggx_energy(n_dot_v, roughness)` evaluates E_ss
+split by Schlick's Fresnel (scale, bias) from `common/brdf_energy_fit.slang`: a 14 x 14
+cubic B-spline over coordinates uniform in n.v's cube root from brdf.slang's n.v floor 1e-4
+and in roughness's square root from `MIN_ROUGHNESS`, written out as literal coefficients so
+no shader indexes an array. It fits `brdf_sampled`'s own lobe and serves both remaps: the
+analytic remap's extra masking shapes a punctual highlight and loses no bounce, and its own
+E_ss would multiply a smooth metal's highlight by 13 at n.v 0.05 and 175 at 0.01 (the
+sampled lobe's: 1.04 and 1.21). `tests/brdf_energy_bake.slang`'s `cs_bake` integrates
+`ggx_single_scatter` on a 64 x 64 lattice with BeschleunigerBallett's furnace quadrature
+(`GoldenMetrics.hpp`: 2048 CDF rows over the floored lobe, 128 azimuth columns);
+`crates/webgpu_renderer/tests/brdf_energy.rs` fits the spline to it by least squares and fails
+a stale one; `KATAGLYPHIS_UPDATE_BRDF_ENERGY=1` with that test refits it, then regenerate the
+WGSL.
+
+The fit against the quadrature at the lattice's cell centres, where a spline strays furthest
+(measured 2026-11-21 with `brdf_energy.rs`): the albedo within 1.4 % from n.v 1e-4, 0.56 %
+from 0.01, 0.13 % from 0.05 and 0.04 % from 0.2, the bias within 0.0098, 0.0047, 0.0012 and
+0.0003; the largest misses sit below n.v 0.01, within 0.6 degrees of the horizon. A fit, not
+a table, by measurement on aarch64 lavapipe: a 32 x 32 bilinear table matched the quadrature
+about as well (2.0 % from n.v 1e-4, 0.21 % from 0.1), but Slang emits a `static const` array
+as WGSL `var<private>` (SPIR-V: a constant stored into a function variable), which lavapipe
+fills per invocation: a million invocations took 28 ms against 1.2 ms from a storage buffer,
+a pipeline's first dispatch spent 6 s in the JIT, and the renderer's test binaries ran 2.3
+to 2.9 times as long. The spline's cost: a million invocations evaluating it four times take
+12 to 14 ms (the storage-buffer table 1.2 to 2.8, the private one 28 to 42), its module 7 to
+9 ms to create (the private table 150) and its first dispatch 16 to 30 ms. Least-squares
+polynomials on the same axes missed by 7 % with 55 coefficients a channel and 3.7 % with 78,
+rational fits put poles in the domain, a low-rank spline needed rank 6 for 2 %, and Karis'
+`env_brdf_approx`, which the analytic sky's ambient used before, misses this lobe by -26 %
+to +52 %. `ibl_ambient` takes the same compensation, from the split sum's own BRDF LUT with
+a baked environment and from `ggx_energy` without one.
+
 Instance vertex attributes contain matrix columns. `instance_matrix` transposes
 the Slang row constructor so instances and equivalent node transforms agree.
 `skinned_bounds::a_non_uniform_instance_scale_shades_like_the_same_node_scale`

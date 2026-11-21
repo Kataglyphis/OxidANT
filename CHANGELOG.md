@@ -13,6 +13,40 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-21, multiple-scattering GGX energy compensation)
+
+- **`shaders/common/brdf.slang` compensates the GGX lobe's lost multiple scattering** (Turquin 2019; plan N1 of
+  BeschleunigerBallett's BACKLOG): `brdf_smith_k`, so `brdf_direct` and `brdf_sampled`, scale the specular term by
+  `multiscatter_gain` (`1 + f0 (1 / E_ss - 1)`) and give the diffuse term `1 - specular_albedo` (E_spec(mu)) instead of
+  `1 - F`, keeping `1 - metallic`. A white metal at roughness 0.7 returned 0.671 of a uniform sky at mu 1 and a white
+  dielectric 1.02 at roughness 0.25, mu 0.5; both return 1 now. Both remaps take `brdf_sampled`'s E_ss: the analytic
+  remap's extra masking shapes a punctual highlight and loses no bounce (docs/shaders.md).
+- **New in `brdf.slang`**: `ggx_single_scatter` (the uncompensated lobe), `ggx_energy` (E_ss split by Fresnel,
+  from the new generated `common/brdf_energy_fit.slang`, a 14 x 14 cubic B-spline in literal coefficients),
+  `ggx_energy_node`, `ggx_energy_coordinates`, `multiscatter_gain`, `specular_albedo`, `GGX_ENERGY_MIN_N_DOT_V`.
+  `brdf_direct`'s and `brdf_sampled`'s signatures are unchanged; BeschleunigerBallett compiles the same module, so its
+  furnace oracle and goldens move with the pin.
+- **A fit, not a table**, by measurement on aarch64 lavapipe: a 32 x 32 bilinear table was as accurate, but Slang
+  emits it as a WGSL `var<private>` array that lavapipe fills per invocation (28 ms against 1.2 ms from a storage
+  buffer for a million lookups, 6 s of JIT for a pipeline's first dispatch, the renderer's test binaries 2.3 to 2.9
+  times as long). The spline against the furnace quadrature at its lattice's cell centres: the albedo within 1.4 %
+  from n.v 1e-4, 0.56 % from 0.01, 0.13 % from 0.05 and 0.04 % from 0.2, the bias within 0.0098, 0.0047, 0.0012 and
+  0.0003; the largest misses sit below n.v 0.01, within 0.6 degrees of the horizon; its cost: a million invocations
+  evaluating it four times take 12 to 14 ms (the storage-buffer table 1.2 to 2.8, the private one 28 to 42), its
+  module 7 to 9 ms to create (the private table 150) and its first dispatch 16 to 30 ms. Polynomial fits missed by 7
+  % (55 coefficients a channel) and 3.7 % (78), rational fits had poles, and Karis' `env_brdf_approx` misses this
+  lobe by -26 % to +52 %. `tests/brdf_energy_bake.slang` bakes the lobe from `ggx_single_scatter` with
+  BeschleunigerBallett's quadrature (`cs_bake`) and evaluates the fit (`cs_lookup`); its WGSL is
+  `brdf_energy_bake.wgsl`, its SPIR-V a CI guard.
+- **`ibl_ambient`** takes the same compensation and diffuse share, from the BRDF LUT with a baked environment and
+  from `ggx_energy` without one; `env_brdf_approx` (Karis) is gone. `forward.wgsl` and `traced.wgsl` regenerated.
+- Tests: `tests/brdf_energy.rs` (a stale fit fails against one refitted to a fresh GPU bake, the bake against the
+  f64 quadrature, the fit's error between lattice points, E_spec never above 1 beyond the fit's error); the traced
+  furnace cards (now also a metal at roughness 1, and both at mu 0.25) and the rig expect 1 within 0.01 instead of
+  the single-scatter E(mu); `forward_ambient.rs` adds the raster furnace, a white card in a uniform environment in
+  both raster paths; `traced_lights.rs`' analytic `brdf_direct` takes the gain through `tests/common`, a CPU mirror
+  of `ggx_energy`.
+
 ### Changed (2026-11-21, FXAA in the C++ renderer)
 
 - `fxaa/fxaa.slang`'s `fs_main` is compiled to SPIR-V by BeschleunigerBallett, whose `FxaaStage` binds its texture,
