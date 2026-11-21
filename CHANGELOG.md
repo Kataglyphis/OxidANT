@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-21, the C++ sky in its HDR target)
+
+- `sky/sky.slang` gains `vs_vulkan_main`, the same fullscreen triangle at depth 1 from `SV_VulkanVertexID`, so
+  BeschleunigerBallett draws this sky into its HDR target instead of its own untonemapped swapchain pass. The
+  combined `sky.wgsl` is regenerated with the extra entry; the Rust renderer still draws `vs_main`.
+
 ### Changed (2026-11-21, one ORT-profile verifier)
 
 - The GPU lanes, `profile-gpu-bundle.sh` and `docs/packaging.md` call the pinned hub's

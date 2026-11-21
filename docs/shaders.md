@@ -23,6 +23,12 @@ OxidANT submodule. Its Vulkan entry points and material modules stay in that
 repository. Commit source and generated WGSL here before updating its pin;
 an OxidANT checkout needs no parent source tree to run its shader parity tests.
 
+`sky/sky.slang` is the sky both renderers draw into their HDR target, tonemapped with
+the scene. The C++ renderer compiles `vs_vulkan_main` and `fs_main` to SPIR-V and fills
+`SkyUniforms` itself; its vertex entry takes `SV_VulkanVertexID`, because `SV_VertexID`
+subtracts the base vertex through draw parameters a Raspberry Pi 5's v3dv lacks. The
+combined `sky.wgsl` carries that entry too; the Rust renderer draws `vs_main`.
+
 `common/volumetric_clouds.slang` is the volumetric clouds' mathematics for both
 renderers: the noise texels, the unpack of the C++ `SceneUBO` cloud block, the
 box, the density and the march. Its functions take an `ICloudNoise`, which

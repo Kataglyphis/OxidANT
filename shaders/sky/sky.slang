@@ -1,4 +1,4 @@
-// Rust/WebGPU procedural sky: the checked-in sky.wgsl is generated from this file.
+// The sky both renderers draw into their HDR target: sky.wgsl is generated from this file, the C++ SPIR-V too.
 
 import sky_model;
 
@@ -18,7 +18,7 @@ static const float HDR_MAX = 65000.0;
 // The C++ SKYBOX_DISABLED_RADIANCE: linear navy while the skybox is switched off.
 static const float3 SKYBOX_DISABLED = float3(0.0, 0.0, 0.5);
 
-// The C++ sky is never tonemapped, so it enters as the radiance whose ACES at 0 EV reproduces its colour.
+// The photo skybox holds display colours, so it enters as the radiance whose ACES at 0 EV reproduces them.
 float3 untonemapped(float3 display)
 {
     const float a = 2.51;
@@ -38,8 +38,8 @@ struct SkyVsOut
     float2 ndc : TEXCOORD0;
 };
 
-[shader("vertex")]
-SkyVsOut vs_main(uint vid : SV_VertexID)
+// A fullscreen triangle at depth 1, so the sky only fills what no surface covered.
+SkyVsOut sky_vs(uint vid)
 {
     SkyVsOut o;
     float x = float(vid / 2) * 4.0 - 1.0;
@@ -47,6 +47,19 @@ SkyVsOut vs_main(uint vid : SV_VertexID)
     o.svPosition = float4(x, y, 1.0, 1.0);
     o.ndc = float2(x, y);
     return o;
+}
+
+[shader("vertex")]
+SkyVsOut vs_main(uint vid : SV_VertexID)
+{
+    return sky_vs(vid);
+}
+
+// The C++ renderer's SPIR-V entry: SV_VertexID subtracts BaseVertex, which needs draw parameters a Raspberry Pi 5's v3dv lacks.
+[shader("vertex")]
+SkyVsOut vs_vulkan_main(uint vid : SV_VulkanVertexID)
+{
+    return sky_vs(vid);
 }
 
 [shader("fragment")]

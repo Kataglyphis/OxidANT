@@ -21,8 +21,7 @@ struct SkyVsOut_0
     @location(0) ndc_0 : vec2<f32>,
 };
 
-@vertex
-fn vs_main(@builtin(vertex_index) vid_0 : u32) -> SkyVsOut_0
+fn sky_vs_0( vid_0 : u32) -> SkyVsOut_0
 {
     var x_0 : f32 = f32(vid_0 / u32(2)) * 4.0f - 1.0f;
     var y_0 : f32 = f32(vid_0 % u32(2)) * 4.0f - 1.0f;
@@ -30,6 +29,18 @@ fn vs_main(@builtin(vertex_index) vid_0 : u32) -> SkyVsOut_0
     o_0.svPosition_0 = vec4<f32>(x_0, y_0, 1.0f, 1.0f);
     o_0.ndc_0 = vec2<f32>(x_0, y_0);
     return o_0;
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid_1 : u32) -> SkyVsOut_0
+{
+    return sky_vs_0(vid_1);
+}
+
+@vertex
+fn vs_vulkan_main(@builtin(vertex_index) vid_2 : u32) -> SkyVsOut_0
+{
+    return sky_vs_0(vid_2);
 }
 
 fn untonemapped_0( display_0 : vec3<f32>) -> vec3<f32>
