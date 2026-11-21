@@ -338,8 +338,7 @@ fn the_checked_in_fit_is_fitted_to_a_fresh_bake_of_brdf_slangs_lobe() {
         );
         return;
     }
-    // An f32 bake of the narrowest grazing lobes depends on the adapter: 1.1e-4 off the f64 quadrature on lavapipe,
-    // 3.78e-3 on WARP at n.v 1e-4 (OxidANT run 44926941517); a stale fit shows above n.v 0.01, where all agree.
+    // The grazing f32 bake varies by adapter (WARP: 3.78e-3); a stale fit shows above n.v 0.01.
     for (min, max, bound) in [(0.01, f64::INFINITY, 3e-4), (0.0, 0.01, 5e-3)] {
         let (worst, at) = probes
             .iter()
@@ -419,8 +418,7 @@ fn the_fit_matches_the_lobe_within_its_measured_error() {
             probe.energy
         );
     }
-    // Measured worst (2026-11-21): 0.0138/0.0098, 0.0056/0.0047, 0.0013/0.0012, 0.0004/0.0003 on lavapipe; WARP's bake
-    // of the grazing corner reads 0.0174/0.0125 (OxidANT run 44926941517), the other bands as lavapipe's.
+    // Worst on lavapipe: 0.0138/0.0098, 0.0056/0.0047, 0.0013/0.0012, 0.0004/0.0003; WARP: 0.0174/0.0125.
     let bands = [
         (0.0, 0.019, 0.014),
         (0.01, 0.007, 0.006),
