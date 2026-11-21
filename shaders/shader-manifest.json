@@ -363,7 +363,25 @@
       ]
     },
     {
-      "_comment": "CI guard: the shared path estimator emits SPIR-V, as the C++ path_tracing.slang will import it, and WGSL.",
+      "_comment": "Vector kernels: every public function of a shared module per case of tests/vectors/<module>.json, run by the Rust and the C++ runner (docs/shaders.md#vector-kernels).",
+      "file": "tests/brdf_test.slang",
+      "entry": "brdf_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tests/noise_test.slang",
+      "entry": "noise_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
       "file": "tests/path_estimator_test.slang",
       "entry": "path_estimator_test_main",
       "stage": "compute",
@@ -513,6 +531,21 @@
       "src": "tracer/trace_resolve.slang",
       "out": "trace_resolve.wgsl",
       "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "tests/brdf_test.slang",
+      "out": "brdf_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/noise_test.slang",
+      "out": "noise_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/path_estimator_test.slang",
+      "out": "path_estimator_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
     }
   ],
   "depthTexturePatches": {

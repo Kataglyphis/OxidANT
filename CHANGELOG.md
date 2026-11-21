@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-21, the shared Slang modules' vector kernels)
+
+- `shaders/tests/brdf_test.slang`, `noise_test.slang` and `path_estimator_test.slang` run every public function of
+  their `common/` module once per case of `shaders/tests/vectors/<module>.json`, which holds the inputs, the f64
+  references and each output's tolerance (BeschleunigerBallett BACKLOG X3). The first two were BeschleunigerBallett's
+  compile-only dual-target guards, the third replaces OxidANT's; all three emit SPIR-V and WGSL, the WGSL committed
+  under `crates/webgpu_renderer/tests/shaders/`. `scripts/shader_model.py` is the independent Python model the
+  references come from; `scripts/generate-shader-vectors.py` writes the files, rejects a case an f32 kernel cannot
+  meet, and `--check` joins `pre-push-checks.sh`. The renderer's new `tests/shader_vectors.rs` dispatches each kernel
+  on the test device and checks every component, and fails while a module defines a function without an output.
+
 ### Changed (2026-11-21, multiple-scattering GGX energy compensation)
 
 - **`shaders/common/brdf.slang` compensates the GGX lobe's lost multiple scattering** (Turquin 2019; plan N1 of

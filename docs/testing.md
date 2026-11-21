@@ -277,7 +277,8 @@ same day: `CHANGELOG.md`).
   `crates/media/tests/capture_test.rs` (a `videotestsrc` pipeline and camera
   enumeration); `crates/inference/tests/` (the real model on both backends, the fallback,
   the load errors); `crates/burn_demos/tests/` (each demo's result, the detector demo on the
-  real model); and the renderer's 34 binaries under `crates/webgpu_renderer/tests/`, where
+  real model); and the renderer's 44 binaries under `crates/webgpu_renderer/tests/`, where
+  `shader_vectors.rs` runs the shared Slang modules' vector kernels ([shaders.md](shaders.md#vector-kernels)),
   `feature_matrix.rs` runs the shadow settings, the cube skybox, the clouds, the model transform and
   frustum culling on both raster paths and in both traced modes. `settings_sweep.rs`, BeschleunigerBallett's twin,
   renders every setting at its maximum at 1200x768 (3 cascades at 4096, PCF 5, 128/128 cloud steps, 64 spp at 16

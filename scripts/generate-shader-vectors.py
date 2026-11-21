@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""Write shaders/tests/vectors/<module>.json: each shared Slang module's cases with f64 references.
+
+The references come from shader_model.py, never from the kernel. Each case runs twice, in f64 and with every
+operation rounded to f32; a case whose f32 run strays past an eighth of a tolerance, or whose branch sits closer to
+its edge than a device's rounding could move it, stops the generator: pick another input. `--check` compares the
+committed files with a fresh run. docs/shaders.md#vector-kernels describes the format and how to add a module.
+"""
+import argparse
+import json
+import math
+import random
+import sys
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+import shader_model as sm
+
+ROOT = Path(__file__).resolve().parents[1]
+VECTORS = ROOT / "shaders" / "tests" / "vectors"
+MARGIN = 1e-5
+REF_DIGITS = 12
+
+
+Values = dict[str, list[float]]
+
+
+@dataclass
+class Port:
+    name: str
+    kind: str
+    width: int
+    abs: float = 0.0
+    rel: float = 0.0
+
+
+@dataclass
+class Module:
+    name: str
+    inputs: list[Port]
+    outputs: list[Port]
+    evaluate: Callable[[Values], dict[str, list[float]]]
+    cases: list[tuple[str, Values]]
+    visits: set[str] = field(default_factory=set)
+
+
+def flat(*items: sm.Real | sm.Vec | int | bool) -> list[float]:
+    words: list[float] = []
+    for item in items:
+        if isinstance(item, sm.Vec):
+            words += [c.v for c in item.c]
+        elif isinstance(item, sm.Real):
+            words.append(item.v)
+        else:
+            words.append(int(item))
+    return words
+
+
+def one(values: Values, name: str) -> sm.Real:
+    return sm.real(values[name][0])
+
+
+def word(values: Values, name: str) -> int:
+    return int(values[name][0])
+
+
+def unit(*c: float) -> list[float]:
+    length = math.sqrt(sum(x * x for x in c))
+    return [x / length for x in c]
+
+
+def surface(i: Values, l: str = "l", f0: str = "f0") -> sm.Surface:
+    return sm.Surface(sm.vec3(i["n"]), sm.vec3(i["v"]), sm.vec3(i.get(l, [0.0, 0.0, 1.0])), sm.vec3(i["albedo"]),
+                   one(i, "metallic"), one(i, "roughness"), sm.vec3(i.get(f0, [0.0, 0.0, 0.0])))
+
+
+def canonical(module: Module, name: str, raw: Values) -> Values:
+    """Each input at the value the kernel reads: an f32 as its shortest decimal, an integer as a 32-bit word."""
+    values: Values = {}
+    for port in module.inputs:
+        given = raw[port.name]
+        if len(given) != port.width:
+            sys.exit(f"{module.name}: case '{name}' gives {port.name} {len(given)} components, not {port.width}")
+        if port.kind == "f32":
+            values[port.name] = [sm.shortest_f32(sm.f32(x)) for x in given]
+        else:
+            values[port.name] = [int(x) for x in given]
+    if set(raw) - set(values):
+        sys.exit(f"{module.name}: case '{name}' names no input {sorted(set(raw) - set(values))}")
+    return values
+
+
+def strays(port: Port, reference: list[float], rounded: list[float]) -> list[str]:
+    """Components where the f32 evaluation misses the reference by more than an eighth of the tolerance."""
+    found = []
+    for k, (ref, f32_value) in enumerate(zip(reference, rounded, strict=True)):
+        if port.kind != "f32":
+            if ref != f32_value:
+                found.append(f"{port.name}[{k}] f32 run {f32_value} against {ref}")
+        elif not abs(f32_value - ref) <= (port.abs + port.rel * abs(ref)) / 8.0:
+            found.append(f"{port.name}[{k}] f32 run {f32_value!r} against {ref!r}")
+    return found
+
+
+def build_case(module: Module, name: str, raw: Values) -> tuple[dict[str, object], set[str]]:
+    inputs = canonical(module, name, raw)
+    with sm.evaluation(float):
+        reference = module.evaluate(inputs)
+        margins, visits = sm.Model.margins, sm.Model.visits
+    with sm.evaluation(sm.f32):
+        rounded = module.evaluate(inputs)
+    problems = [f"branch '{label}' {margin:.1e} from its edge" for label, margin in margins if margin < MARGIN]
+    for port in module.outputs:
+        problems += strays(port, reference[port.name], rounded[port.name])
+    if problems:
+        sys.exit(f"{module.name}: case '{name}' is too close to the f32 limits:\n  " + "\n  ".join(problems))
+    outputs = {
+        port.name: [float(f"{x:.{REF_DIGITS}g}") if port.kind == "f32" else int(x) for x in reference[port.name]]
+        for port in module.outputs
+    }
+    return {"name": name, "inputs": inputs, "outputs": outputs}, visits
+
+
+def about(module: Module) -> str:
+    return (
+        f"Inputs, f64 references and tolerances for tests/{module.name}_test.slang, which runs every public function "
+        f"of common/{module.name}.slang once per case. OxidANT's crates/webgpu_renderer/tests/shader_vectors.rs and "
+        "BeschleunigerBallett's C++ runner check it. The kernel reads two u32 header words (input words per case, "
+        "output words per case), then each case's inputs in `inputs` order, one 32-bit word per component (an f32 "
+        "as its IEEE bits, a u32 or i32 as the integer), and writes each case's outputs the same way in `outputs` "
+        "order. An f32 output passes when |gpu - ref| <= abs + rel * |ref| in every component; a u32 or i32 output "
+        "must be equal. Written by scripts/generate-shader-vectors.py from an f64 model of the module: edit that."
+    )
+
+
+def render(module: Module) -> str:
+    cases, reached = [], set()
+    for name, raw in module.cases:
+        case, visits = build_case(module, name, raw)
+        cases.append(case)
+        reached |= visits
+    if module.visits - reached:
+        sys.exit(f"{module.name}: no case reaches {sorted(module.visits - reached)}")
+    ports = {
+        "inputs": [{"name": p.name, "type": p.kind, "width": p.width} for p in module.inputs],
+        "outputs": [
+            {"name": p.name, "type": p.kind, "width": p.width} | ({"abs": p.abs, "rel": p.rel} if p.kind == "f32" else {})
+            for p in module.outputs
+        ],
+    }
+    lines = ["{", f'  "about": {json.dumps(about(module))},']
+    lines += [f'  "{key}": {json.dumps(value)},' for key, value in (
+        ("module", f"common/{module.name}.slang"),
+        ("kernel", f"tests/{module.name}_test.slang"),
+        ("entry", f"{module.name}_test_main"),
+    )]
+    for key, rows in ports.items():
+        lines.append(f'  "{key}": [')
+        lines.append(",\n".join(f"    {json.dumps(row)}" for row in rows))
+        lines.append("  ],")
+    lines.append('  "cases": [')
+    lines.append(",\n".join(f"    {json.dumps(case)}" for case in cases))
+    lines += ["  ]", "}", ""]
+    return "\n".join(lines)
+
+
+def same(a: object, b: object) -> bool:
+    """Equal structure and text, numbers within 1e-9: a libm's last bit must not fail the check."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(same(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b, strict=True))
+    if isinstance(a, bool) or isinstance(b, bool) or not isinstance(a, int | float) or not isinstance(b, int | float):
+        return a == b
+    return abs(a - b) <= 1e-12 + 1e-9 * abs(b)
+
+
+def ports(spec: str) -> list[Port]:
+    """`name:width/type` words, width 1 and type f32 by default."""
+    found = []
+    for item in spec.split():
+        head, _, kind = item.partition("/")
+        name, _, width = head.partition(":")
+        found.append(Port(name, kind or "f32", int(width or 1)))
+    return found
+
+
+def out(name: str, width: int, tolerance: tuple[float, float] | None = None) -> Port:
+    """An f32 output with its (abs, rel) tolerance, or an exact u32 one without."""
+    if tolerance is None:
+        return Port(name, "u32", width)
+    return Port(name, "f32", width, *tolerance)
+
+
+def merged(base: Values, rows: Sequence[tuple[str, Values]]) -> list[tuple[str, Values]]:
+    return [(name, base | row) for name, row in rows]
+
+
+class Draw:
+    """Seeded inputs from arithmetic and sqrt alone, which round alike on every platform."""
+
+    def __init__(self, seed: int) -> None:
+        self.rng = random.Random(seed)
+
+    def num(self, lo: float, hi: float) -> float:
+        return lo + (hi - lo) * self.rng.random()
+
+    def nums(self, lo: float, hi: float, count: int = 3) -> list[float]:
+        return [self.num(lo, hi) for _ in range(count)]
+
+    def whole(self, lo: int, hi: int) -> int:
+        return self.rng.randrange(lo, hi)
+
+    def direction(self, around: Sequence[float] | None = None) -> list[float]:
+        while True:
+            c = self.nums(-1.0, 1.0)
+            length = math.sqrt(sum(x * x for x in c))
+            if 0.2 < length <= 1.0 and (around is None or sum(a * x for a, x in zip(around, c, strict=True)) > 0.1 * length):
+                return unit(*c)
+
+
+def evaluate_brdf(i: Values) -> dict[str, list[float]]:
+    s, radiance, k = surface(i), sm.vec3(i["radiance"]), one(i, "k")
+    return {
+        "lambert_diffuse": flat(sm.lambert_diffuse(s.albedo)),
+        "distribution_ggx": flat(sm.distribution_ggx(one(i, "n_dot_h"), s.roughness)),
+        "smith_k_analytic": flat(sm.smith_k_analytic(s.roughness)),
+        "smith_k_sampled": flat(sm.smith_k_sampled(s.roughness)),
+        "geometry_smith_k": flat(sm.geometry_smith_k(one(i, "n_dot_v"), one(i, "n_dot_l"), k)),
+        "fresnel_schlick": flat(sm.fresnel_schlick(one(i, "cos_theta"), s.f0)),
+        "brdf_smith_k": flat(sm.brdf_smith_k(s, radiance, k)),
+        "brdf_direct": flat(sm.brdf_direct(s, radiance)),
+        "brdf_sampled": flat(sm.brdf_sampled(s)),
+    }
+
+
+def evaluate_noise(i: Values) -> dict[str, list[float]]:
+    p, x = sm.vec3(i["p"]), sm.Vec(*i["x"])
+    return {
+        "mod289.float3": flat(sm.mod289(x.xyz)),
+        "mod289.float4": flat(sm.mod289(x)),
+        "permute": flat(sm.permute(x)),
+        "taylorInvSqrt": flat(sm.taylor_inv_sqrt(x)),
+        "snoise": flat(sm.snoise(p)),
+        "fbm": flat(sm.fbm(p, one(i, "freq"), word(i, "octaves"))),
+    }
+
+
+def evaluate_path_estimator(i: Values) -> dict[str, list[float]]:
+    rng = word(i, "rng")
+    drawn, drawn_rng = sm.rng_next(rng)
+    alive, kept, roulette_rng = sm.russian_roulette_survives(word(i, "bounce"), sm.vec3(i["throughput"]), rng)
+    t, b = sm.orthonormal_basis(sm.vec3(i["n"]))
+    direction, weight, bounce_rng = sm.sample_bounce(surface(i, l="none"), sm.vec3(i["face_normal"]), rng)
+    n_dot_v, alpha = one(i, "n_dot_v"), one(i, "alpha")
+    return {
+        "path_rng_seed": flat(sm.path_rng_seed(word(i, "pixel_index"), word(i, "stream"))),
+        "rng_next": flat(drawn),
+        "rng_next.state": flat(drawn_rng),
+        "russian_roulette_survives": flat(alive),
+        "russian_roulette_survives.throughput": flat(kept),
+        "russian_roulette_survives.rng": flat(roulette_rng),
+        "orthonormal_basis.t": flat(t),
+        "orthonormal_basis.b": flat(b),
+        "sample_ggx_visible_normal": flat(sm.sample_ggx_visible_normal(sm.vec3(i["local_v"]), alpha, sm.Vec(*i["u"]))),
+        "ggx_visible_normal_pdf": flat(sm.ggx_visible_normal_pdf(n_dot_v, one(i, "n_dot_h"), alpha)),
+        "specular_lobe_probability": flat(
+            sm.specular_lobe_probability(sm.vec3(i["albedo"]), one(i, "metallic"), sm.vec3(i["f0"]), n_dot_v)),
+        "sample_bounce.direction": flat(direction),
+        "sample_bounce.weight": flat(weight),
+        "sample_bounce.rng": flat(bounce_rng),
+    }
+
+
+def brdf_cases() -> list[tuple[str, Values]]:
+    base: Values = {
+        "n": [0.0, 1.0, 0.0], "v": [0.0, 1.0, 0.0], "l": unit(1.0, 1.0, 0.0), "albedo": [0.8, 0.2, 0.1],
+        "metallic": [0.0], "roughness": [0.5], "f0": [0.04, 0.04, 0.04], "radiance": [1.0, 1.0, 1.0],
+        "k": [0.28125], "n_dot_h": [0.9], "n_dot_v": [0.8], "n_dot_l": [0.6], "cos_theta": [0.7],
+    }
+    gold = [1.0, 0.766, 0.336]
+    rows: list[tuple[str, Values]] = [
+        ("the retired dual-target guard's surface: head-on view, light at 45 degrees", {}),
+        ("a gold metal lit from the side, seen at 60 degrees", {
+            "v": unit(0.0, 0.5, 0.866), "l": unit(-0.7, 0.5, 0.2), "albedo": gold, "metallic": [1.0],
+            "roughness": [0.3], "f0": gold, "radiance": [3.0, 2.5, 2.0], "k": [0.2], "n_dot_h": [0.97],
+            "n_dot_v": [0.5], "n_dot_l": [0.35], "cos_theta": [0.95]}),
+        ("roughness below the 0.045 floor evaluates as the floor", {"roughness": [0.01], "n_dot_h": [0.9], "k": [0.1]}),
+        ("roughness zero evaluates as the floor too", {"roughness": [0.0], "n_dot_h": [0.99]}),
+        ("a rough dielectric, roughness one", {"roughness": [1.0], "n_dot_h": [0.3], "cos_theta": [0.1]}),
+        ("light below the horizon contributes nothing", {"l": unit(0.3, -0.5, 0.1), "n_dot_l": [0.0]}),
+        ("view below the horizon, n.v floored at 1e-4", {"v": unit(0.2, -0.1, 0.9), "n_dot_v": [0.0], "k": [0.0]}),
+        ("grazing view and light", {"v": unit(1.0, 0.02, 0.0), "l": unit(-1.0, 0.03, 0.1), "n_dot_v": [0.02]}),
+        ("cos above one clamps Fresnel to f0", {"cos_theta": [1.25], "f0": [0.9, 0.5, 0.1]}),
+        ("cos below zero clamps Fresnel to one", {"cos_theta": [-0.5], "n_dot_v": [0.0]}),
+        ("a coloured light on a half metal", {
+            "metallic": [0.5], "f0": [0.42, 0.12, 0.07], "radiance": [0.2, 0.9, 2.5], "v": unit(0.3, 0.8, -0.2)}),
+    ]
+    draw = Draw(1)
+    for index in range(6):
+        n = draw.direction()
+        rows.append((f"seeded surface {index}", {
+            "n": n, "v": draw.direction(n), "l": draw.direction(n), "albedo": draw.nums(0.0, 1.0),
+            "metallic": [draw.num(0.0, 1.0)], "roughness": [draw.num(0.05, 1.0)], "f0": draw.nums(0.02, 1.0),
+            "radiance": draw.nums(0.0, 4.0), "k": [draw.num(0.0, 0.6)], "n_dot_h": [draw.num(0.0, 0.98)],
+            "n_dot_v": [draw.num(0.01, 1.0)], "n_dot_l": [draw.num(0.0, 1.0)], "cos_theta": [draw.num(0.0, 1.0)]}))
+    return merged(base, rows)
+
+
+def noise_cases() -> list[tuple[str, Values]]:
+    base: Values = {"p": [0.31, 0.72, 0.18], "x": [0.0, 1.0, 2.0, 3.0], "freq": [1.0], "octaves": [4]}
+    rows: list[tuple[str, Values]] = [
+        ("the retired guard's point at x 0.1", {"p": [0.1, 0.0, 0.0]}),
+        ("the retired guard's point at x 0.7", {"p": [0.7, 0.0, 0.0], "x": [288.0, 289.0, 290.0, 578.0]}),
+        ("a lattice point, where the three offsets tie", {"p": [1.0, 2.0, 3.0], "x": [-1.0, -2.5, 12.25, 600.0]}),
+        ("inside a cell", {"x": [0.5, 0.75, 1.25, 1.5]}),
+        ("negative coordinates at half frequency", {
+            "p": [-3.7, 1.25, -0.4], "x": [144.5, 7.0, 48.0, 49.0], "freq": [0.5], "octaves": [3]}),
+        ("no octave sums to zero", {"p": [2.2, -1.1, 0.6], "octaves": [0]}),
+        ("a negative octave count sums to zero", {"p": [0.9, 0.4, -5.3], "octaves": [-2]}),
+        ("far from the origin, one octave", {"p": [57.3, -81.2, 33.9], "octaves": [1], "x": [-300.0, 650.0, 17.0, 5.5]}),
+    ]
+    draw = Draw(2)
+    for index in range(8):
+        rows.append((f"seeded point {index}", {
+            "p": draw.nums(-6.0, 6.0), "x": [float(draw.whole(-400, 650)) for _ in range(3)] + [draw.num(-4.0, 4.0)],
+            "freq": [draw.num(0.25, 1.5)], "octaves": [draw.whole(1, 5)]}))
+    return merged(base, rows)
+
+
+def path_estimator_cases() -> list[tuple[str, Values]]:
+    base: Values = {
+        "pixel_index": [0], "stream": [3], "rng": [12345], "bounce": [4], "throughput": [0.5, 0.5, 0.5],
+        "n": unit(0.2, 1.0, -0.1), "face_normal": [0.0, 1.0, 0.0], "v": unit(0.0, 1.0, 1.0),
+        "albedo": [0.8, 0.2, 0.1], "metallic": [0.5], "roughness": [0.4], "f0": [0.42, 0.12, 0.07],
+        "local_v": [0.0, 0.6, 0.8], "alpha": [0.16], "u": [0.3, 0.6], "n_dot_v": [0.8], "n_dot_h": [0.95],
+    }
+    white = [0.9, 0.9, 0.9]
+    rows: list[tuple[str, Values]] = [
+        ("the retired dual-target guard's surface", {}),
+        ("a pixel and a stream that wrap the seed", {"pixel_index": [4000000000], "stream": [7], "rng": [0]}),
+        ("the largest rng state", {"rng": [4294967295], "pixel_index": [1920 * 1080 - 1]}),
+        ("roulette waits for the fourth segment", {"bounce": [2], "throughput": [0.01, 0.01, 0.01]}),
+        ("roulette ends a dim path", {"throughput": [0.01, 0.02, 0.03], "rng": [7]}),
+        ("roulette keeps a bright path and reweights it", {"throughput": [2.0, 1.0, 0.5], "rng": [99]}),
+        ("a normal facing down takes the other basis", {"n": [0.0, 0.0, -1.0], "face_normal": [0.0, 0.0, -1.0],
+                                                       "v": unit(0.3, 0.1, -1.0)}),
+        ("a normal in the z = 0 plane", {"n": [1.0, 0.0, 0.0], "face_normal": [1.0, 0.0, 0.0], "v": unit(1.0, 0.5, 0.2)}),
+        ("visible normals seen along the normal", {"local_v": [0.0, 0.0, 1.0], "u": [0.7, 0.2]}),
+        ("visible normals at a grazing view and a tiny alpha", {"local_v": unit(0.99, 0.0, 0.05), "alpha": [0.002],
+                                                               "n_dot_v": [0.05], "n_dot_h": [0.99]}),
+        ("visible normals at alpha one", {"local_v": unit(-0.4, 0.3, 0.6), "alpha": [1.0], "u": [0.95, 0.05]}),
+        ("a metal bounces into its specular lobe", {"metallic": [1.0], "albedo": [0.95, 0.64, 0.54], "rng": [5]}),
+        ("a white dielectric bounces into its diffuse lobe", {"metallic": [0.0], "albedo": white, "rng": [31]}),
+        ("a bounce below the face normal ends the path", {"face_normal": [0.0, -1.0, 0.0], "metallic": [0.0],
+                                                         "albedo": white, "rng": [31]}),
+    ]
+    draw = Draw(3)
+    for index in range(6):
+        n = draw.direction()
+        local_v = draw.direction([0.0, 0.0, 1.0])
+        rows.append((f"seeded surface {index}", {
+            "pixel_index": [draw.whole(0, 1 << 22)], "stream": [draw.whole(0, 64)], "rng": [draw.whole(0, 1 << 32)],
+            "bounce": [draw.whole(0, 9)], "throughput": draw.nums(0.0, 1.5), "n": n, "face_normal": n,
+            "v": draw.direction(n), "albedo": draw.nums(0.0, 1.0), "metallic": [draw.num(0.0, 1.0)],
+            "roughness": [draw.num(0.05, 1.0)], "f0": draw.nums(0.02, 1.0), "local_v": local_v,
+            "alpha": [draw.num(0.01, 1.0)], "u": draw.nums(0.0, 1.0, 2), "n_dot_v": [draw.num(0.05, 1.0)],
+            "n_dot_h": [draw.num(0.0, 1.0)]}))
+    return merged(base, rows)
+
+
+SMOOTH = (1e-6, 1e-5)
+CHAINED = (1e-5, 1e-4)
+MODULES = [
+    Module("brdf", ports("n:3 v:3 l:3 albedo:3 metallic roughness f0:3 radiance:3 k n_dot_h n_dot_v n_dot_l cos_theta"), [
+        out("lambert_diffuse", 3, SMOOTH), out("distribution_ggx", 1, SMOOTH), out("smith_k_analytic", 1, SMOOTH),
+        out("smith_k_sampled", 1, SMOOTH), out("geometry_smith_k", 1, SMOOTH), out("fresnel_schlick", 3, SMOOTH),
+        out("brdf_smith_k", 3, CHAINED), out("brdf_direct", 3, CHAINED), out("brdf_sampled", 3, CHAINED),
+    ], evaluate_brdf, brdf_cases(), {"roughness floor", "fresnel clamp", "light below the horizon"}),
+    Module("noise", ports("p:3 x:4 freq octaves/i32"), [
+        out("mod289.float3", 3, (2e-4, 0.0)), out("mod289.float4", 4, (2e-4, 0.0)), out("permute", 4, (1e-3, 0.0)),
+        out("taylorInvSqrt", 4, SMOOTH), out("snoise", 1, (2e-5, 0.0)), out("fbm", 1, (1e-4, 0.0)),
+    ], evaluate_noise, noise_cases(), {"no octave"}),
+    Module("path_estimator", ports(
+        "pixel_index/u32 stream/u32 rng/u32 bounce/u32 throughput:3 n:3 face_normal:3 v:3 albedo:3 metallic roughness "
+        "f0:3 local_v:3 alpha u:2 n_dot_v n_dot_h"), [
+        out("path_rng_seed", 1), out("rng_next", 1, (1e-7, 1e-6)), out("rng_next.state", 1),
+        out("russian_roulette_survives", 1), out("russian_roulette_survives.throughput", 3, SMOOTH),
+        out("russian_roulette_survives.rng", 1), out("orthonormal_basis.t", 3, SMOOTH),
+        out("orthonormal_basis.b", 3, SMOOTH), out("sample_ggx_visible_normal", 3, CHAINED),
+        out("ggx_visible_normal_pdf", 1, SMOOTH), out("specular_lobe_probability", 1, SMOOTH),
+        out("sample_bounce.direction", 3, CHAINED), out("sample_bounce.weight", 3, CHAINED), out("sample_bounce.rng", 1),
+    ], evaluate_path_estimator, path_estimator_cases(), {
+        "roulette not yet", "roulette ends the path", "roulette keeps the path", "view along the normal",
+        "specular lobe", "diffuse lobe", "the path ends below a surface"}),
+]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
+    parser.add_argument("--check", action="store_true", help="fail when a committed file differs from a fresh run")
+    args = parser.parse_args()
+    stale = []
+    for module in MODULES:
+        text = render(module)
+        path = VECTORS / f"{module.name}.json"
+        if not args.check:
+            path.write_text(text, encoding="utf-8")
+        elif not path.is_file() or not same(json.loads(path.read_text(encoding="utf-8")), json.loads(text)):
+            stale.append(str(path.relative_to(ROOT)))
+    if stale:
+        sys.exit("Regenerate with scripts/generate-shader-vectors.py:\n  " + "\n  ".join(stale))
+    print(f"All {len(MODULES)} shader vector files match their models")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,35 @@
+import brdf;
+import kernel_vectors;
+
+// Every public brdf.slang function, one thread per case of vectors/brdf.json; both renderers' runners check it.
+
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void brdf_test_main(uint3 tid : SV_DispatchThreadID)
+{
+    VectorInputs inputs = vector_inputs(tid.x);
+    float3 n = inputs.f32x3();
+    float3 v = inputs.f32x3();
+    float3 l = inputs.f32x3();
+    float3 albedo = inputs.f32x3();
+    float metallic = inputs.f32();
+    float roughness = inputs.f32();
+    float3 f0 = inputs.f32x3();
+    float3 radiance = inputs.f32x3();
+    float k = inputs.f32();
+    float n_dot_h = inputs.f32();
+    float n_dot_v = inputs.f32();
+    float n_dot_l = inputs.f32();
+    float cos_theta = inputs.f32();
+
+    VectorOutputs outputs = vector_outputs(tid.x);
+    outputs.put(lambert_diffuse(albedo));
+    outputs.put(distribution_ggx(n_dot_h, roughness));
+    outputs.put(smith_k_analytic(roughness));
+    outputs.put(smith_k_sampled(roughness));
+    outputs.put(geometry_smith_k(n_dot_v, n_dot_l, k));
+    outputs.put(fresnel_schlick(cos_theta, f0));
+    outputs.put(brdf_smith_k(n, v, l, albedo, metallic, roughness, f0, radiance, k));
+    outputs.put(brdf_direct(n, v, l, albedo, metallic, roughness, f0, radiance));
+    outputs.put(brdf_sampled(n, v, l, albedo, metallic, roughness, f0));
+}

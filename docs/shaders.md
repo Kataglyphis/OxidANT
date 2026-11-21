@@ -2,8 +2,9 @@
 
 `shaders/` owns the WebGPU Slang entry points and shared math. Its manifest
 defines the entry points, WGSL destinations, depth-texture patches and minimum
-compiler version. `crates/webgpu_renderer/src/shaders/` and the GUI's shader
-directory contain generated WGSL; `histogram.wgsl` remains hand-written.
+compiler version. `crates/webgpu_renderer/src/shaders/`, the GUI's shader
+directory and the renderer's `tests/shaders/` contain generated WGSL;
+`histogram.wgsl` remains hand-written.
 
 Run in the family build image from the repository root:
 
@@ -67,7 +68,7 @@ the branchless orthonormal basis, visible-normal GGX sampling and its density,
 the lobe probability and `sample_bounce`, which picks a lobe, draws the next
 direction and weights it by `brdf_sampled` over the mixture's density. It names
 no binding, so `tracer/traced.slang` and the C++ kernel each trace their own
-rays around it. `tests/path_estimator_test.slang` emits it to SPIR-V and WGSL.
+rays around it.
 
 `common/brdf.slang` compensates the GGX lobe's lost multiple scattering (Turquin 2019):
 the specular term is scaled by `1 + f0 (1 / E_ss - 1)`, and the diffuse term takes
@@ -109,6 +110,32 @@ Instance vertex attributes contain matrix columns. `instance_matrix` transposes
 the Slang row constructor so instances and equivalent node transforms agree.
 `skinned_bounds::a_non_uniform_instance_scale_shades_like_the_same_node_scale`
 checks this on the GPU and stays enabled.
+
+## Vector kernels
+
+`tests/<module>_test.slang` runs every public function of `common/<module>.slang`
+once per case of `tests/vectors/<module>.json`: `brdf`, `noise` and
+`path_estimator` today. A file holds the inputs, the f64 references and each
+output's tolerance: an f32 passes within `abs + rel * |ref|`, a u32 or i32 must
+be equal. `tests/kernel_vectors.slang` reads the inputs and writes the outputs
+one 32-bit word per component, in the file's field order, after a header of
+input and output words per case. The references come from
+`scripts/shader_model.py`, a Python twin of each module with every literal at
+its f32 value, never from the kernel: `scripts/generate-shader-vectors.py`
+evaluates each case in f64 and in emulated f32, stops on one an f32 kernel
+cannot meet or whose branch sits within 1e-5 of its edge, and writes the files;
+`--check`, in `pre-push-checks.sh`, fails a stale one.
+`crates/webgpu_renderer/tests/shader_vectors.rs` dispatches the committed WGSL
+(`crates/webgpu_renderer/tests/shaders/`) on the test device and names every
+component that misses; under `KATAGLYPHIS_REQUIRE_GPU=1` a missing adapter
+fails it. BeschleunigerBallett checks the SPIR-V of the same kernels against
+the same files.
+
+A new shared module adds the same four things: a kernel with a manifest row
+(`spirv`, `wgsl`) and a `wgslMap` row into `crates/webgpu_renderer/tests/shaders/`;
+its functions in `shader_model.py`; a `Module` with its cases and tolerances in
+the generator; a `KERNELS` row in `shader_vectors.rs`, whose
+`every_public_function_has_vectors` fails while a function has no output.
 
 ## Color space
 
