@@ -101,8 +101,10 @@ which a local container run executes too:
   `debugger-stack` input runs that test under the image's arm64 `cdb.exe` first, with
   Microsoft's symbol server, and prints the faulting stack (the hub's
   `windows-arm-debugger-probe.yml` found `cdb` there on 2026-11-21). Its first dispatch caught a
-  first-chance access violation in WARP's arm64 pixel JIT (`PixelJITProcessor::ExecuteJIT`); it now
-  stops only at a second-chance access violation and at the fail-fast itself. No arm64 Windows
+  first-chance access violation in WARP's arm64 pixel JIT (`PixelJITProcessor::ExecuteJIT`); the
+  second, with first-chance faults passed on, ended at the fail-fast itself: subcode 0x49,
+  `FAST_FAIL_POINTER_AUTH_INVALID_RETURN_ADDRESS`, a pointer-authentication (PAC) failure on one of
+  WARP's JIT threads after four handled faults (run 44948200119, WARP 10.0.26100.9818). No arm64 Windows
   container image exists, so that job is the only place an arm64 binary of this repo executes.
 
 **Every Windows build compiles C and C++ with the image's clang-cl, never MSVC's `cl`**

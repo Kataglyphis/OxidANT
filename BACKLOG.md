@@ -174,9 +174,15 @@ Empty on 2026-11-17: nothing else is in the queue.
       `debugger-stack` input runs the first traced test under that `cdb` with `sxe c0000409` and Microsoft's symbols
       before the staged run. Its first dispatch (run 44938484144, WARP 10.0.26100.9818) stopped at a first-chance
       access violation in code WARP's arm64 pixel JIT generated: `d3d10warp!PixelJITProcessor::ExecuteJIT+0x2c` calls
-      into a frame with no module. Next: the input now stops only at a second-chance access violation and at the
-      fail-fast, to see whether WARP survives that fault and what raises `0xC0000409`. `d3dcompiler_47.dll` on top
-      points at FXC compiling the tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
+      into a frame with no module. **Root cause, run 44948200119:** with first-chance faults passed on, four WARP JIT
+      threads take a handled access violation each, then one fails fast with subcode 0x49,
+      `FAST_FAIL_POINTER_AUTH_INVALID_RETURN_ADDRESS`: ARM64 pointer authentication (PAC) finds a return address that
+      no longer verifies on the way back through WARP's JIT frames. That is Microsoft's driver on a PAC-enforcing
+      Windows 11 arm64, not this repo, and why WER records nothing. Ways on, an owner decision: (a) run the traced
+      tests on windows-11-arm through Vulkan and lavapipe, as BeschleunigerBallett's arm64 suites do, so arm64 keeps
+      real coverage; (b) name these tests in the arm64 manifest's `--skip` with this cause until a runner image fixes
+      WARP; (c) leave the lane on request and red, and report it to Microsoft. `d3dcompiler_47.dll` on top points at
+      FXC compiling the tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
 
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
       `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially only the abort above. Re-dispatch
