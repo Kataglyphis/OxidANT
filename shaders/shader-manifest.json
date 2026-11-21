@@ -19,7 +19,7 @@
       ]
     },
     {
-      "_comment": "Rust/WebGPU FXAA after the tonemap (WGSL emit).",
+      "_comment": "FXAA after the tonemap: WGSL for Rust/WebGPU; fs_main's SPIR-V is BeschleunigerBallett's, guarded here.",
       "file": "fxaa/fxaa.slang",
       "entry": "vs_main",
       "stage": "vertex",
@@ -32,7 +32,8 @@
       "entry": "fs_main",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -101,7 +102,7 @@
       ]
     },
     {
-      "_comment": "Rust/WebGPU procedural sky (WGSL emit).",
+      "_comment": "Procedural sky: WGSL for Rust/WebGPU; vs_vulkan_main and fs_main's SPIR-V are BeschleunigerBallett's, guarded here.",
       "file": "sky/sky.slang",
       "entry": "vs_main",
       "stage": "vertex",
@@ -111,10 +112,19 @@
     },
     {
       "file": "sky/sky.slang",
+      "entry": "vs_vulkan_main",
+      "stage": "vertex",
+      "targets": [
+        "spirv"
+      ]
+    },
+    {
+      "file": "sky/sky.slang",
       "entry": "fs_main",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {

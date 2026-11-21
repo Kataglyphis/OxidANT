@@ -22,6 +22,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   first. `brdf.json`'s two floor cases now hold for every output, and a white metal at roughness 0 seen at n.v 0.01
   joins them; the module before the fix misses 12 of their components. The Rust f64 mirrors in `brdf_energy.rs`,
   `traced_modes.rs` and `traced_lights.rs` floor their remaps too.
+- **The manifest builds BeschleunigerBallett's entries to SPIR-V**: `sky.slang`'s `vs_vulkan_main` and `fs_main` and
+  `fxaa.slang`'s `fs_main`, so a change that breaks the C++ target fails here, not at the next pin.
 - Docs: a refit names `generate-shader-vectors.py` beside the WGSL (`brdf_energy.rs`, the fit's header);
   `docs/shaders.md` says the vector tolerances assume correctly rounded f32 `sin` and `cos`.
 

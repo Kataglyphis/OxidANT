@@ -28,11 +28,14 @@ an OxidANT checkout needs no parent source tree to run its shader parity tests.
 the scene. The C++ renderer compiles `vs_vulkan_main` and `fs_main` to SPIR-V and fills
 `SkyUniforms` itself; its vertex entry takes `SV_VulkanVertexID`, because `SV_VertexID`
 subtracts the base vertex through draw parameters a Raspberry Pi 5's v3dv lacks. The
-combined `sky.wgsl` carries that entry too; the Rust renderer draws `vs_main`.
+combined `sky.wgsl` carries that entry too; the Rust renderer draws `vs_main`. The
+manifest builds both C++ entries to SPIR-V here as well, so a change that breaks that
+target fails before the pin moves.
 
 `fxaa/fxaa.slang`'s `fs_main` is the C++ renderer's FXAA too, behind its own
 `SV_VulkanVertexID` fullscreen vertex, with the same three bindings and
-`FxaaUniforms`; a change to either reaches its `FxaaStage` with the pin.
+`FxaaUniforms`; a change to either reaches its `FxaaStage` with the pin. Its manifest
+row builds `fs_main` to SPIR-V too.
 
 `common/volumetric_clouds.slang` is the volumetric clouds' mathematics for both
 renderers: the noise texels, the unpack of the C++ `SceneUBO` cloud block, the
