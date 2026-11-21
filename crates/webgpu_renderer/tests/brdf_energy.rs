@@ -338,30 +338,36 @@ fn the_checked_in_fit_is_fitted_to_a_fresh_bake_of_brdf_slangs_lobe() {
         );
         return;
     }
-    // The f32 bake differs from the f64 quadrature by up to 1.1e-4 (n.v 4.6e-4, the narrowest lobe): adapters may too.
-    let (worst, at) = probes
-        .iter()
-        .map(|t| {
-            let t = t.map(f64::from);
-            let (a, b) = (
-                common::spline(size, &fresh, t),
-                common::spline(size, checked_in, t),
+    // An f32 bake of the narrowest grazing lobes depends on the adapter: 1.1e-4 off the f64 quadrature on lavapipe,
+    // 3.78e-3 on WARP at n.v 1e-4 (OxidANT run 44926941517); a stale fit shows above n.v 0.01, where all agree.
+    for (min, max, bound) in [(0.01, f64::INFINITY, 3e-4), (0.0, 0.01, 5e-3)] {
+        let (worst, at) = probes
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| (min..max).contains(&baked[i].n_dot_v))
+            .map(|(i, t)| {
+                let t = t.map(f64::from);
+                let (a, b) = (
+                    common::spline(size, &fresh, t),
+                    common::spline(size, checked_in, t),
+                );
+                (i, (a[0] - b[0]).abs().max((a[1] - b[1]).abs()))
+            })
+            .fold(
+                (0.0, 0),
+                |best, (i, d)| if d > best.0 { (d, i) } else { best },
             );
-            (a[0] - b[0]).abs().max((a[1] - b[1]).abs())
-        })
-        .enumerate()
-        .fold(
-            (0.0, 0),
-            |best, (i, d)| if d > best.0 { (d, i) } else { best },
+        eprintln!(
+            "n.v in [{min}, {max}): checked-in fit against a fresh one: max difference {worst:.2e} at n.v {:.5}, \
+             roughness {:.4}",
+            baked[at].n_dot_v, baked[at].roughness
         );
-    eprintln!(
-        "checked-in fit against a fresh one: max difference {worst:.2e} at n.v {:.5}, roughness {:.4}",
-        baked[at].n_dot_v, baked[at].roughness
-    );
-    assert!(
-        worst < 3e-4,
-        "brdf_energy_fit.slang is stale (max difference {worst:.2e}): KATAGLYPHIS_UPDATE_BRDF_ENERGY=1 refits it"
-    );
+        assert!(
+            worst < bound,
+            "brdf_energy_fit.slang is stale for n.v in [{min}, {max}) (max difference {worst:.2e}, bound \
+             {bound:.0e}): KATAGLYPHIS_UPDATE_BRDF_ENERGY=1 refits it"
+        );
+    }
     // The bake is the goldens' quadrature, from the narrowest grazing lobe to the roughest head-on one.
     for &(a, b) in &[(0, 0), (3, 0), (10, 5), (40, 40), (63, 25), (63, 63)] {
         let probe = baked[a * FIT_GRID + b];
@@ -413,9 +419,10 @@ fn the_fit_matches_the_lobe_within_its_measured_error() {
             probe.energy
         );
     }
-    // Measured worst (2026-11-21): 0.0138/0.0098, 0.0056/0.0047, 0.0013/0.0012, 0.0004/0.0003; 1e-4 more for adapters.
+    // Measured worst (2026-11-21): 0.0138/0.0098, 0.0056/0.0047, 0.0013/0.0012, 0.0004/0.0003 on lavapipe; WARP's bake
+    // of the grazing corner reads 0.0174/0.0125 (OxidANT run 44926941517), the other bands as lavapipe's.
     let bands = [
-        (0.0, 0.017, 0.012),
+        (0.0, 0.019, 0.014),
         (0.01, 0.007, 0.006),
         (0.05, 0.0017, 0.0016),
         (0.2, 0.0006, 0.0005),
