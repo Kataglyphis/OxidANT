@@ -23,7 +23,8 @@ on 2026-09-15, verbatim. Nothing was deleted.
   sky fill, so `TraceResolve` is gone. `TimedPass::nested_in()` is the C++ `GPU_TIMED_PASS_PARENTS`; the profiler
   indents a nested scope under `Main`, `dump_gpu_timings` writes the C++ export's `nested_in` object, and the auto
   render scale steers by `ForwardRenderer::gpu_frame_ms()`, the top level only (a plain sum would count `Main` and its
-  scope twice). A switch of mode or raster path restarts `Main` with the scope it dropped. 17 passes outgrow the
+  scope twice). A switch of mode or raster path restarts `Main` with the scope it dropped; a
+  switch that drops only scopes the frames never ran, such as an FXAA toggle, keeps it. 17 passes outgrow the
   32-bit written-stamp mask, so it is a `u64`.
 - Tests: `gpu_timing`'s unit tests pin each C++ scope's twin and parent, `Main`'s span and the frame sum;
   `tests/gpu_timing.rs` times a lit cube, so every raster pass reports, checks `Main` against its nested scopes and

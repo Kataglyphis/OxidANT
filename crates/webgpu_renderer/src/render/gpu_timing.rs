@@ -451,10 +451,11 @@ impl GpuTiming {
     pub fn forget(&mut self, keep: impl Fn(TimedPass) -> bool) {
         for pass in TimedPass::ALL.into_iter().filter(|pass| !keep(*pass)) {
             let i = pass.index();
+            let had_samples = !self.averages[i].is_empty();
             self.averages[i].clear();
             self.frames_without[i] = AVERAGE_WINDOW;
-            // Its parent's samples spanned it, the other kind of frame's work.
-            if let Some(parent) = pass.nested_in() {
+            // Its parent's samples spanned it, the other kind of frame's work; an idle one spanned nothing.
+            if let (true, Some(parent)) = (had_samples, pass.nested_in()) {
                 self.averages[parent.index()].clear();
             }
             if let Some(resources) = self.resources.as_mut() {
@@ -824,6 +825,18 @@ mod tests {
         let mut timing = recorded(&[&[(TimedPass::Forward, 100, 300)]]);
         timing.forget(|pass| pass != TimedPass::Forward);
         assert!(timing.timings_ms().is_empty(), "{:?}", timing.timings_ms());
+    }
+
+    #[test]
+    fn forgetting_an_idle_nested_scope_keeps_its_parent() {
+        // An FXAA toggle forgets the four nested scopes the frame never ran; Main still spans Forward.
+        let mut timing = recorded(&[&[(TimedPass::Forward, 100, 300)]]);
+        timing.forget(|pass| pass != TimedPass::GBuffer && pass != TimedPass::RayTrace);
+        let names: Vec<&str> = timing.timings_ms().iter().map(|(name, _)| *name).collect();
+        assert!(
+            names.contains(&"Main") && names.contains(&"Forward"),
+            "{names:?}"
+        );
     }
 
     #[test]
