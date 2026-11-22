@@ -16,6 +16,7 @@
 )]
 
 mod accessor_check;
+mod attributes;
 #[doc(hidden)]
 pub mod basis;
 #[doc(hidden)]

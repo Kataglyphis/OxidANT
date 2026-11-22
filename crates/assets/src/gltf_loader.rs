@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use glam::{Mat4, Vec2, Vec3};
 
+use crate::attributes::read_f32;
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuCamera, CpuCameraProjection,
     CpuLight, CpuLightKind, CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin,
@@ -703,16 +704,20 @@ pub(crate) fn primitive_geometry(
     buffers: &[gltf::buffer::Data],
     load: &LoadOptions,
 ) -> anyhow::Result<Option<Geometry>> {
-    let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
-    let Some(vertices) = read_vertices(primitive, buffers)? else {
+    let Some(Read {
+        vertices,
+        has_normals,
+        has_tangents,
+    }) = read_vertices(primitive, buffers)?
+    else {
         return Ok(None);
     };
     let Some(indices) = read_triangles(primitive, buffers, vertices.len()) else {
         return Ok(None);
     };
     let options = GeometryOptions {
-        has_normals: reader.read_normals().is_some(),
-        has_tangents: reader.read_tangents().is_some(),
+        has_normals,
+        has_tangents,
         // glTF generates tangents from the UV set the normal texture samples.
         tangent_uv_set: primitive.material().normal_texture().map_or(0, |info| {
             let transform = info
@@ -839,28 +844,38 @@ fn gather_morph_targets(targets: &[MorphTarget], source: &[u32]) -> Vec<MorphTar
         .collect()
 }
 
+/// A primitive's vertices, and which of the attributes the loader generates the file supplied.
+struct Read {
+    vertices: Vec<Vertex>,
+    has_normals: bool,
+    has_tangents: bool,
+}
+
 /// Every vertex attribute with its glTF fallback; `None` without POSITION.
 fn read_vertices(
     primitive: &gltf::Primitive,
     buffers: &[gltf::buffer::Data],
-) -> anyhow::Result<Option<Vec<Vertex>>> {
+) -> anyhow::Result<Option<Read>> {
+    use gltf::mesh::Semantic;
     let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
-    let Some(positions) = reader.read_positions() else {
+    // KHR_mesh_quantization stores these as integers, which gltf's own readers take for floats.
+    let accessor = |semantic: Semantic| primitive.get(&semantic);
+    let Some(positions) = accessor(Semantic::Positions).and_then(|a| read_f32::<3>(a, buffers))
+    else {
         return Ok(None);
     };
-    let positions: Vec<[f32; 3]> = positions.collect();
     let count = positions.len();
 
-    let normals: Vec<[f32; 3]> = reader
-        .read_normals()
-        .map_or_else(|| vec![[0.0, 0.0, 0.0]; count], Iterator::collect);
-    let uvs: Vec<[f32; 2]> = reader
-        .read_tex_coords(0)
-        .map_or_else(|| vec![[0.0, 0.0]; count], |iter| iter.into_f32().collect());
+    let normals = accessor(Semantic::Normals).and_then(|a| read_f32::<3>(a, buffers));
+    let has_normals = normals.is_some();
+    let normals = normals.unwrap_or_else(|| vec![[0.0, 0.0, 0.0]; count]);
+    let uvs = accessor(Semantic::TexCoords(0))
+        .and_then(|a| read_f32::<2>(a, buffers))
+        .unwrap_or_else(|| vec![[0.0, 0.0]; count]);
     // TEXCOORD_1 falls back to UV0, so a slot wrongly flagged UV1 still samples something sane.
-    let uvs1: Vec<[f32; 2]> = reader
-        .read_tex_coords(1)
-        .map_or_else(|| uvs.clone(), |iter| iter.into_f32().collect());
+    let uvs1 = accessor(Semantic::TexCoords(1))
+        .and_then(|a| read_f32::<2>(a, buffers))
+        .unwrap_or_else(|| uvs.clone());
     let joints: Vec<[f32; 4]> = reader.read_joints(0).map_or_else(
         || vec![[0.0; 4]; count],
         |iter| iter.into_u16().map(|j| j.map(f32::from)).collect(),
@@ -873,9 +888,9 @@ fn read_vertices(
         || vec![[1.0, 1.0, 1.0, 1.0]; count],
         |iter| iter.into_rgba_f32().collect(),
     );
-    let tangents: Vec<[f32; 4]> = reader
-        .read_tangents()
-        .map_or_else(|| vec![[0.0, 0.0, 0.0, 0.0]; count], Iterator::collect);
+    let tangents = accessor(Semantic::Tangents).and_then(|a| read_f32::<4>(a, buffers));
+    let has_tangents = tangents.is_some();
+    let tangents = tangents.unwrap_or_else(|| vec![[0.0, 0.0, 0.0, 0.0]; count]);
 
     anyhow::ensure!(
         normals.len() == count && uvs.len() == count && tangents.len() == count,
@@ -886,20 +901,23 @@ fn read_vertices(
         tangents.len()
     );
 
-    Ok(Some(
-        (0..count)
-            .map(|i| Vertex {
-                position: positions[i],
-                normal: normals[i],
-                uv: uvs[i],
-                tangent: tangents[i],
-                joints: joints.get(i).copied().unwrap_or([0.0; 4]),
-                weights: weights.get(i).copied().unwrap_or([0.0; 4]),
-                color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
-                uv1: uvs1.get(i).copied().unwrap_or(uvs[i]),
-            })
-            .collect(),
-    ))
+    let vertices = (0..count)
+        .map(|i| Vertex {
+            position: positions[i],
+            normal: normals[i],
+            uv: uvs[i],
+            tangent: tangents[i],
+            joints: joints.get(i).copied().unwrap_or([0.0; 4]),
+            weights: weights.get(i).copied().unwrap_or([0.0; 4]),
+            color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
+            uv1: uvs1.get(i).copied().unwrap_or(uvs[i]),
+        })
+        .collect();
+    Ok(Some(Read {
+        vertices,
+        has_normals,
+        has_tangents,
+    }))
 }
 
 /// The primitive as a triangle list whose every index addresses one of its `vertex_count` vertices.
@@ -940,20 +958,19 @@ fn read_morph_targets(
     primitive: &gltf::Primitive,
     buffers: &[gltf::buffer::Data],
 ) -> Vec<MorphTarget> {
-    let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
-    reader
-        .read_morph_targets()
-        .map(|(pos, norm, tan)| MorphTarget {
-            position_deltas: pos
-                .map(|it| it.map(Vec3::from_array).collect())
-                .unwrap_or_default(),
-            normal_deltas: norm
-                .map(|it| it.map(Vec3::from_array).collect())
-                .unwrap_or_default(),
+    let deltas = |accessor: Option<gltf::Accessor>| -> Vec<Vec3> {
+        accessor
+            .and_then(|a| read_f32::<3>(a, buffers))
+            .map(|values| values.into_iter().map(Vec3::from_array).collect())
+            .unwrap_or_default()
+    };
+    primitive
+        .morph_targets()
+        .map(|target| MorphTarget {
+            position_deltas: deltas(target.positions()),
+            normal_deltas: deltas(target.normals()),
             // glTF morph TANGENT deltas are vec3: the base tangent's w handedness is never morphed.
-            tangent_deltas: tan
-                .map(|it| it.map(Vec3::from_array).collect())
-                .unwrap_or_default(),
+            tangent_deltas: deltas(target.tangents()),
         })
         .collect()
 }

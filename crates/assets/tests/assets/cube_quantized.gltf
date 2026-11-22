@@ -1,0 +1,138 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "kataglyphis cube generator, quantized as gltfpack lays it out"
+ },
+ "extensionsUsed": [
+  "KHR_mesh_quantization"
+ ],
+ "extensionsRequired": [
+  "KHR_mesh_quantization"
+ ],
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "mesh": 0,
+   "translation": [
+    -0.5,
+    -0.5,
+    -0.5
+   ],
+   "scale": [
+    6.103888176768602e-05,
+    6.103888176768602e-05,
+    6.103888176768602e-05
+   ]
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "NORMAL": 1,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0,
+     "mode": 4
+    }
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "pbrMetallicRoughness": {
+    "baseColorFactor": [
+     0.8,
+     0.2,
+     0.2,
+     1.0
+    ],
+    "metallicFactor": 0.0,
+    "roughnessFactor": 0.9
+   }
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5123,
+   "count": 24,
+   "type": "VEC3",
+   "min": [
+    0,
+    0,
+    0
+   ],
+   "max": [
+    16383,
+    16383,
+    16383
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5120,
+   "normalized": true,
+   "count": 24,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5123,
+   "normalized": true,
+   "count": 24,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "componentType": 5123,
+   "count": 36,
+   "type": "SCALAR"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 192,
+   "byteStride": 8,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 192,
+   "byteLength": 96,
+   "byteStride": 4,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 288,
+   "byteLength": 96,
+   "byteStride": 4,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 384,
+   "byteLength": 72,
+   "target": 34963
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 456,
+   "uri": "data:application/octet-stream;base64,AAAAAP8/AAD/PwAA/z8AAP8//z//PwAAAAD/P/8/AAD/PwAAAAAAAAAAAAAAAAAAAAD/PwAAAAD/P/8/AAAAAP8/AAD/PwAA/z8AAAAAAAD/P/8/AAAAAP8//z//PwAAAAAAAAAAAAAAAAAA/z8AAAAA/z//PwAAAAD/PwAAAAAAAP8//z8AAP8//z//PwAA/z//PwAAAAAAAP8/AAAAAAAAAAAAAAAA/z8AAAAAAAD/PwAA/z8AAAAAAAD/PwAAAAB/AAAAfwAAAH8AAAB/AAAAgQAAAIEAAACBAAAAgQB/AAAAfwAAAH8AAAB/AAAAgQAAAIEAAACBAAAAgQAAAAB/AAAAfwAAAH8AAAB/AAAAgQAAAIEAAACBAAAAgQAAAAD//////////wAAAAAAAAAA//////////8AAAAAAAAAAP//////////AAAAAAAAAAD//////////wAAAAAAAAAA//////////8AAAAAAAAAAP//////////AAAAAAAAAAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA"
+  }
+ ]
+}

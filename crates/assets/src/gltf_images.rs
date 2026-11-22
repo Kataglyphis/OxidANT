@@ -10,6 +10,8 @@ use crate::ktx2_loader::load_ktx2;
 use crate::scene::CpuTexture;
 
 const BASISU: &str = "KHR_texture_basisu";
+/// Read by `attributes::read_f32`; gltf 1.4.1 refuses it as required.
+const QUANTIZATION: &str = "KHR_mesh_quantization";
 
 /// Where one glTF texture's image comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +29,8 @@ pub(crate) struct Parsed {
     pub sources: Vec<TextureSource>,
 }
 
-/// `gltf::Gltf::from_slice`, except that it accepts `KHR_texture_basisu` as required and as a texture's only source.
+/// `gltf::Gltf::from_slice`, except that it accepts `KHR_texture_basisu` as required and as a texture's only source,
+/// and `KHR_mesh_quantization` as required.
 pub(crate) fn parse(bytes: &[u8]) -> anyhow::Result<Parsed> {
     let gltf::Gltf { document, blob } = gltf::Gltf::from_slice_without_validation(bytes)?;
     let mut root = document.into_json();
@@ -45,7 +48,8 @@ pub(crate) fn parse(bytes: &[u8]) -> anyhow::Result<Parsed> {
         }
         sources.push(TextureSource { basisu, fallback });
     }
-    root.extensions_required.retain(|name| name != BASISU);
+    root.extensions_required
+        .retain(|name| name != BASISU && name != QUANTIZATION);
     reject_dangling_positions(&root)?;
     reject_sourceless_images(&root)?;
     let document = gltf::Document::from_json(root)?;

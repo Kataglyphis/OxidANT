@@ -23,7 +23,8 @@ Regeneration and the check for drift from committed WGSL are described in
 **Assets** — glTF 2.0 and GLB: meshes (triangles, strips and fans), node
 hierarchy, samplers + wrap modes, `KHR_texture_transform`, tangents (loaded,
 Lengyel-generated, or MikkTSpace via an opt-in), `COLOR_0` vertex colours, a
-second UV set, skins, morph targets, animations, punctual lights, cameras. KTX2
+second UV set, skins, morph targets, animations, punctual lights, cameras,
+`KHR_mesh_quantization` (gltfpack's integer attributes). KTX2
 textures with BC1/3/5/7 passthrough, and Basis ETC1S/UASTC KTX2 (also through
 `KHR_texture_basisu`) transcoded to BC7, ETC2 or ASTC by adapter. Wavefront OBJ through a built-in OBJ→glTF
 converter (`asset::obj_to_gltf`, the `obj2gltf` example).

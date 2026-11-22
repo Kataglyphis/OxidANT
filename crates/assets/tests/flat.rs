@@ -516,9 +516,10 @@ fn a_truncated_base64_image_gets_no_slot() {
 }
 
 /// Self-contained seeds: every buffer and image is embedded, so a mutant read from a temp dir resolves nothing outside it.
-const FUZZ_SEEDS: [&str; 8] = [
+const FUZZ_SEEDS: [&str; 9] = [
     "cube.glb",
     "cube.gltf",
+    "cube_quantized.gltf",
     "cube_textured.gltf",
     "cube_alpha.gltf",
     "cube_normal_transform.gltf",
@@ -1525,4 +1526,368 @@ fn two_negative_scales_are_a_rotation_and_keep_the_winding() {
     let model = load_flat(path, &LoadOptions::default()).unwrap();
     assert_eq!(model.indices, [0, 1, 2]);
     assert_eq!(model.vertices[1].position, [-1.0, 0.0, 0.0]);
+}
+
+/// KHR_mesh_quantization: integer attributes, read by their `normalized` flag through both loaders.
+mod quantization {
+    use super::*;
+
+    const I8: u32 = 5120;
+    const U8: u32 = 5121;
+    const I16: u32 = 5122;
+    const U16: u32 = 5123;
+    const U32: u32 = 5125;
+    const F32: u32 = 5126;
+
+    /// One accessor: its glTF type name, componentType, `normalized` flag and one row per vertex.
+    #[derive(Clone)]
+    struct Attribute {
+        name: &'static str,
+        kind: u32,
+        normalized: bool,
+        rows: Vec<Vec<f64>>,
+    }
+
+    fn attribute(name: &'static str, kind: u32, normalized: bool, rows: &[&[f64]]) -> Attribute {
+        Attribute {
+            name,
+            kind,
+            normalized,
+            rows: rows.iter().map(|row| row.to_vec()).collect(),
+        }
+    }
+
+    fn component(kind: u32, value: f64) -> Vec<u8> {
+        match kind {
+            I8 => (value as i8).to_le_bytes().to_vec(),
+            U8 => (value as u8).to_le_bytes().to_vec(),
+            I16 => (value as i16).to_le_bytes().to_vec(),
+            U16 => (value as u16).to_le_bytes().to_vec(),
+            U32 => (value as u32).to_le_bytes().to_vec(),
+            _ => (value as f32).to_le_bytes().to_vec(),
+        }
+    }
+
+    fn glsl_type(width: usize) -> &'static str {
+        ["SCALAR", "VEC2", "VEC3", "VEC4"][width - 1]
+    }
+
+    /// A triangle whose `attributes` and one morph target's `deltas` each get an accessor; elements padded to 4 bytes.
+    fn triangle(dir: &Path, attributes: &[Attribute], deltas: &[Attribute]) -> PathBuf {
+        let (mut bytes, mut accessors, mut views) = (Vec::new(), Vec::new(), Vec::new());
+        let mut add = |a: &Attribute| -> usize {
+            let width = a.rows[0].len();
+            let element: usize = component(a.kind, 0.0).len() * width;
+            let stride = element.next_multiple_of(4);
+            let offset = bytes.len();
+            for row in &a.rows {
+                let mut packed: Vec<u8> = row.iter().flat_map(|&v| component(a.kind, v)).collect();
+                packed.resize(stride, 0);
+                bytes.extend(packed);
+            }
+            let bounds = if a.name == "POSITION" {
+                let axis = |pick: fn(f64, f64) -> f64| -> Vec<f64> {
+                    (0..width)
+                        .map(|k| a.rows.iter().map(|r| r[k]).reduce(pick).unwrap())
+                        .collect()
+                };
+                format!(r#","min":{:?},"max":{:?}"#, axis(f64::min), axis(f64::max))
+            } else {
+                String::new()
+            };
+            views.push(format!(
+                r#"{{"buffer":0,"byteOffset":{offset},"byteLength":{},"byteStride":{stride}}}"#,
+                stride * a.rows.len()
+            ));
+            accessors.push(format!(
+                r#"{{"bufferView":{},"componentType":{},"normalized":{},"count":{},"type":"{}"{bounds}}}"#,
+                views.len() - 1,
+                a.kind,
+                a.normalized,
+                a.rows.len(),
+                glsl_type(width)
+            ));
+            accessors.len() - 1
+        };
+        let mut members = |list: &[Attribute]| -> String {
+            list.iter()
+                .map(|a| format!(r#""{}":{}"#, a.name, add(a)))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let attributes = members(attributes);
+        let targets = if deltas.is_empty() {
+            String::new()
+        } else {
+            format!(r#","targets":[{{{}}}]"#, members(deltas))
+        };
+        let json = format!(
+            r#"{{"asset":{{"version":"2.0"}},"extensionsUsed":["KHR_mesh_quantization"],
+            "extensionsRequired":["KHR_mesh_quantization"],"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],
+            "meshes":[{{"primitives":[{{"attributes":{{{attributes}}}{targets}}}]}}],"accessors":[{}],"bufferViews":[{}],
+            "buffers":[{{"byteLength":{},"uri":"data:application/octet-stream;base64,{}"}}]}}"#,
+            accessors.join(","),
+            views.join(","),
+            bytes.len(),
+            base64(&bytes)
+        );
+        let path = dir.join("quantized.gltf");
+        std::fs::write(&path, json).unwrap();
+        path
+    }
+
+    fn float_positions() -> Attribute {
+        attribute(
+            "POSITION",
+            F32,
+            false,
+            &[&[0.0, 0.0, 0.0], &[1.0, 0.0, 0.0], &[0.0, 1.0, 0.0]],
+        )
+    }
+
+    /// Per integer type: three raw values, their decoding when `normalized` (the glTF spec's table) and its maximum.
+    const TYPES: [(u32, [f64; 3], [f32; 3]); 4] = [
+        (I8, [-128.0, 127.0, 64.0], [-1.0, 1.0, 64.0 / 127.0]),
+        (U8, [0.0, 255.0, 51.0], [0.0, 1.0, 0.2]),
+        (
+            I16,
+            [-32768.0, 32767.0, -16384.0],
+            [-1.0, 1.0, -16384.0 / 32767.0],
+        ),
+        (U16, [0.0, 65535.0, 13107.0], [0.0, 1.0, 0.2]),
+    ];
+
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() <= 1e-6 * b.abs().max(1.0)
+    }
+
+    /// gltfpack's layout of `cube.gltf`: u16 positions under a dequantizing node scale and translation, i8 normals and
+    /// u16 texcoords, both normalized, at strides 8, 4 and 4.
+    #[test]
+    fn a_gltfpack_quantized_cube_loads_where_its_float_twin_does() {
+        let step = 1.0 / 16383.0;
+        let options = LoadOptions::default();
+        let float = load_flat(fixture("cube.gltf"), &options).unwrap();
+        let quantized = load_flat(fixture("cube_quantized.gltf"), &options).unwrap();
+        assert_eq!(quantized.indices, float.indices);
+        assert_eq!(quantized.vertices.len(), float.vertices.len());
+        for (q, f) in quantized.vertices.iter().zip(&float.vertices) {
+            let off = |a: &[f32], b: &[f32]| {
+                a.iter()
+                    .zip(b)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0, f32::max)
+            };
+            assert!(off(&q.position, &f.position) <= step, "{q:?} against {f:?}");
+            assert!(
+                off(&q.normal, &f.normal) <= 1.0 / 127.0,
+                "{q:?} against {f:?}"
+            );
+            assert!(off(&q.uv0, &f.uv0) <= 1.0 / 65535.0, "{q:?} against {f:?}");
+            assert!(off(&q.tangent, &f.tangent) <= 1e-3, "{q:?} against {f:?}");
+        }
+        let float = kataglyphis_assets::load_gltf(fixture("cube.gltf")).unwrap();
+        let quantized = kataglyphis_assets::load_gltf(fixture("cube_quantized.gltf")).unwrap();
+        let world = |scene: &kataglyphis_assets::CpuScene| -> Vec<glam::Vec3> {
+            let prim = &scene.primitives[0];
+            prim.vertices
+                .iter()
+                .map(|v| {
+                    prim.transform
+                        .transform_point3(glam::Vec3::from_array(v.position))
+                })
+                .collect()
+        };
+        let stored = &quantized.primitives[0].vertices;
+        assert!(
+            stored.iter().any(|v| v.position[0] > 16000.0),
+            "the scene keeps the stored integers under the node's dequantizing transform"
+        );
+        for (q, f) in world(&quantized).iter().zip(world(&float)) {
+            assert!((*q - f).abs().max_element() <= step, "{q} against {f}");
+        }
+    }
+
+    #[test]
+    fn integer_positions_and_texcoords_decode_by_their_normalized_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        for (kind, raw, unit) in TYPES {
+            for normalized in [false, true] {
+                let expected = if normalized {
+                    unit
+                } else {
+                    raw.map(|v| v as f32)
+                };
+                let [a, b, c] = raw;
+                let positions = attribute(
+                    "POSITION",
+                    kind,
+                    normalized,
+                    &[&[a, 0.0, 0.0], &[0.0, b, 0.0], &[0.0, 0.0, c]],
+                );
+                let uvs = attribute("TEXCOORD_0", kind, normalized, &[&[a, b], &[b, c], &[c, a]]);
+                let path = triangle(dir.path(), &[positions, uvs], &[]);
+                let scene = kataglyphis_assets::load_gltf(&path).unwrap();
+                let flat = load_flat(&path, &LoadOptions::default()).unwrap();
+                let case = format!("componentType {kind}, normalized {normalized}");
+                let [x, y, z] = expected;
+                let want_positions = [[x, 0.0, 0.0], [0.0, y, 0.0], [0.0, 0.0, z]];
+                let want_uvs = [[x, y], [y, z], [z, x]];
+                let gltf: Vec<_> = scene.primitives[0]
+                    .vertices
+                    .iter()
+                    .map(|v| (v.position, v.uv))
+                    .collect();
+                let flat: Vec<_> = flat.vertices.iter().map(|v| (v.position, v.uv0)).collect();
+                for got in [gltf, flat] {
+                    for (k, (position, uv)) in got.iter().enumerate() {
+                        let all = position
+                            .iter()
+                            .zip(&want_positions[k])
+                            .chain(uv.iter().zip(&want_uvs[k]));
+                        for (got, want) in all {
+                            assert!(near(*got, *want), "{case}, vertex {k}: {got} for {want}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn normalized_integer_normals_tangents_and_morph_deltas_decode() {
+        let dir = tempfile::tempdir().unwrap();
+        for (kind, max) in [(I8, 127.0), (I16, 32767.0)] {
+            let min = -max - 1.0;
+            let normals = attribute(
+                "NORMAL",
+                kind,
+                true,
+                &[&[0.0, 0.0, max], &[min, 0.0, 0.0], &[0.0, max, 0.0]],
+            );
+            let tangents = attribute(
+                "TANGENT",
+                kind,
+                true,
+                &[
+                    &[max, 0.0, 0.0, max],
+                    &[0.0, max, 0.0, min],
+                    &[0.0, 0.0, min, max],
+                ],
+            );
+            let half = (max / 2.0).round();
+            let moved = attribute(
+                "POSITION",
+                kind,
+                false,
+                &[&[0.0, half, 0.0], &[0.0; 3], &[0.0; 3]],
+            );
+            let turned = attribute(
+                "NORMAL",
+                kind,
+                true,
+                &[&[half, 0.0, 0.0], &[0.0; 3], &[0.0; 3]],
+            );
+            let path = triangle(
+                dir.path(),
+                &[float_positions(), normals, tangents],
+                &[moved, turned],
+            );
+            let scene = kataglyphis_assets::load_gltf(&path).unwrap();
+            let prim = &scene.primitives[0];
+            let got: Vec<_> = prim
+                .vertices
+                .iter()
+                .map(|v| (v.normal, v.tangent))
+                .collect();
+            assert_eq!(
+                got,
+                [
+                    ([0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0]),
+                    ([-1.0, 0.0, 0.0], [0.0, 1.0, 0.0, -1.0]),
+                    ([0.0, 1.0, 0.0], [0.0, 0.0, -1.0, 1.0]),
+                ],
+                "componentType {kind}"
+            );
+            let target = &prim.morph_targets[0];
+            assert_eq!(
+                target.position_deltas[0],
+                glam::Vec3::new(0.0, half as f32, 0.0),
+                "the integer itself"
+            );
+            assert!(
+                near(target.normal_deltas[0].x, (half / max) as f32),
+                "componentType {kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn formats_the_extension_does_not_allow_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let normal: &[f64] = &[0.0, 0.0, 1.0];
+        let rows: &[&[f64]] = &[normal; 3];
+        let tangent: &[f64] = &[0.0, 0.0, 1.0, 1.0];
+        let uv: &[f64] = &[0.0, 1.0];
+        let cases = [
+            (
+                "an unnormalized byte normal",
+                vec![attribute("NORMAL", I8, false, rows)],
+                vec![],
+            ),
+            (
+                "an unsigned normal",
+                vec![attribute("NORMAL", U8, true, rows)],
+                vec![],
+            ),
+            (
+                "an unsigned tangent",
+                vec![attribute("TANGENT", U16, true, &[tangent; 3])],
+                vec![],
+            ),
+            (
+                "u32 texcoords",
+                vec![attribute("TEXCOORD_0", U32, false, &[uv; 3])],
+                vec![],
+            ),
+            (
+                "an unsigned morph position",
+                vec![],
+                vec![attribute("POSITION", U8, false, rows)],
+            ),
+            (
+                "an unnormalized morph normal",
+                vec![],
+                vec![attribute("NORMAL", I16, false, rows)],
+            ),
+        ];
+        for (name, attributes, deltas) in cases {
+            let attributes = [vec![float_positions()], attributes].concat();
+            let path = triangle(dir.path(), &attributes, &deltas);
+            assert!(
+                kataglyphis_assets::load_gltf(&path).is_err(),
+                "{name} loaded"
+            );
+            assert!(
+                load_flat(&path, &LoadOptions::default()).is_err(),
+                "{name} flattened"
+            );
+        }
+        let u32_positions = attribute(
+            "POSITION",
+            U32,
+            false,
+            &[&[0.0, 0.0, 0.0], &[1.0, 0.0, 0.0], &[0.0, 1.0, 0.0]],
+        );
+        let path = triangle(dir.path(), &[u32_positions], &[]);
+        assert!(
+            load_flat(&path, &LoadOptions::default()).is_err(),
+            "u32 positions flattened"
+        );
+        let path = triangle(dir.path(), &[float_positions()], &[]);
+        assert!(
+            load_flat(&path, &LoadOptions::default()).is_ok(),
+            "the base case loads"
+        );
+    }
 }

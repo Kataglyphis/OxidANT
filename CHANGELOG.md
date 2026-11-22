@@ -13,6 +13,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-22, KHR_mesh_quantization)
+
+- **gltfpack's output loads in both loaders** (BeschleunigerBallett BACKLOG "KHR_mesh_quantization", plan N4).
+  `KHR_mesh_quantization` is accepted as required, and POSITION, NORMAL, TANGENT, TEXCOORD_n and the morph POSITION,
+  NORMAL and TANGENT deltas are read in every integer format it allows by `attributes::read_f32`, which honours
+  `normalized` (c / max, the signed minimum clamped to -1) and reads any other integer as its value; gltf 1.4.1's
+  readers took them for floats. `accessor_check.rs` admits those formats whether or not a file declares the
+  extension, and still refuses an unnormalized integer normal or tangent, an unsigned one and u32 attributes. The
+  C++ engine reads them through `load_gltf_flat` unchanged.
+- Tests (`tests/flat.rs`, `mod quantization`): `cube_quantized.gltf`, `cube.gltf` in gltfpack's layout (u16 positions
+  under a dequantizing node scale and translation, i8 normals and u16 texcoords normalized, strides 8 and 4), matches
+  its float twin within the quantization step through `load_gltf` and `load_flat`; each integer type decodes,
+  normalized and not, as positions and texcoords, and i8 and i16 as normals, tangents and morph deltas; the formats
+  the extension does not list fail. The fixture joins the fuzz seeds.
+
 ### Fixed (2026-11-22, the arm64 lane is green again: the renderer tests run on lavapipe)
 
 - On windows-11-arm the first traced test exited `0xC0000409` since wgpu 30 (2026-10-15), with no panic and no WER
