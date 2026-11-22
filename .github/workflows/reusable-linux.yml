@@ -251,6 +251,9 @@ jobs:
             "frame_640x480/snapshot_jpeg": {"direction": "lower", "gate": true},
             "frame_640x480/motion_thumbnail": {"direction": "lower", "gate": true},
             "load_flat/grid_295k_triangles": {"direction": "lower", "gate": true},
+            "qem/*": {"direction": "lower", "gate": true},
+            "tile_grid/*": {"direction": "lower", "gate": true},
+            "bvh/*": {"direction": "lower", "gate": true},
             "*": {"direction": "lower"}}
 
       - name: Trim the cargo home

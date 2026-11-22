@@ -321,8 +321,10 @@ minutes on a Pi 5. The gates print one warning line in a clone without the setti
 **Benchmarks are Criterion's, run by `cargo bench`**. `crates/observant/benches/frame_stages.rs`
 times what a frame pays before the model (I420 to RGBA, the privacy blocks, a box, the snapshot JPEG, the
 motion thumbnail), `crates/inference/benches/detector.rs` a whole detection on the real model at
-ObservANT's two threads, and `crates/assets/benches/load_flat.rs` the bridge's glTF load from a file (`cube.glb`, and
-a generated grid of 294,912 triangles). The Linux lanes' *Run benchmarks* step (`ci-container-steps.sh bench`) fetches the
+ObservANT's two threads, `crates/assets/benches/load_flat.rs` the bridge's glTF load from a file (`cube.glb`, and
+a generated grid of 294,912 triangles), and `crates/webgpu_renderer/benches/cpu_passes.rs` the renderer's CPU passes the
+bridge is to share: QEM taking a 32,768-triangle height field to a quarter, the tile-light grid of 256 point lights at
+1080p, the cascade fit, and a BVH over 262,088 triangles. The Linux lanes' *Run benchmarks* step (`ci-container-steps.sh bench`) fetches the
 model and runs only the `[[bench]]` targets (`cargo bench --workspace --locked --bench '*'`; `--benches` also
 ran every library's unit tests) in the *Benchmarks* job, on its own runner with its own sccache key
 (`<arch>-bench`): the bench profile builds every dependency with `panic=unwind`, unlike the release
@@ -331,8 +333,8 @@ build's `abort`, and the build job's 1.5 GB cache always evicted those entries. 
 default branch's last 20 runs on that arch, read from the artifacts of earlier runs. **bench-history keys:**
 `criterion-x64` and `criterion-arm64` (artifacts `bench-history-criterion-<arch>`, kept 90 days). More than
 25 % slower warns; a gated mean (the detector, I420 to RGBA, the privacy blocks, the snapshot JPEG, the motion
-thumbnail, the grid's `load_flat`, all from 100 µs) that doubles fails the lane once 3 earlier runs exist, and such a run is stored as
-failed, never as a yardstick. `draw_box` (1 µs) and `load_flat/cube_glb` only warn. Locally:
+thumbnail, the grid's `load_flat`, QEM, the tile grid and the BVH, all from 100 µs) that doubles fails the lane once 3 earlier runs exist, and such a run is stored as
+failed, never as a yardstick. `draw_box` (1 µs), `load_flat/cube_glb` and the cascade fit (0.25 µs) only warn. Locally:
 `cargo bench --workspace --bench '*'`, where Criterion compares against your last local run. Benches need a library: `kataglyphis_observant`
 is one since that day, `main.rs` only wiring its modules into the service.
 

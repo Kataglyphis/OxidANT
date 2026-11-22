@@ -11,9 +11,8 @@ use crate::scene::{CpuLight, CpuLightKind};
 
 pub const MAX_PUNCTUAL_LIGHTS: usize = 256;
 
-pub(crate) fn pack_punctual_lights(
-    lights: &[CpuLight],
-) -> ([[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4], u32) {
+/// The first `MAX_PUNCTUAL_LIGHTS` of `lights` as the shader's rows, and how many were packed.
+pub fn pack_punctual_lights(lights: &[CpuLight]) -> ([[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4], u32) {
     let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
     let count = lights.len().min(MAX_PUNCTUAL_LIGHTS);
     for (i, light) in lights.iter().take(count).enumerate() {

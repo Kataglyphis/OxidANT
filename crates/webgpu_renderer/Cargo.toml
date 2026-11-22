@@ -31,6 +31,7 @@ egui-wgpu = "0.37"
 egui-winit = { version = "0.37", default-features = false }
 
 [dev-dependencies]
+criterion = { workspace = true }
 # Shader interop with the C++ Vulkan engine: WGSL -> SPIR-V / GLSL.
 naga = { version = "30", features = ["wgsl-in", "spv-out", "glsl-out"] }
 # Pins the embedded fonts and their licence texts to BeschleunigerBallett's copies.
@@ -65,6 +66,10 @@ web-sys = { version = "0.3", features = [
     "ReadableStream",
     "ReadableStreamDefaultReader",
 ] }
+
+[[bench]]
+name = "cpu_passes"
+harness = false
 
 # Its JSON schema has unit tests, which `cargo test` runs only for an example marked so.
 [[example]]

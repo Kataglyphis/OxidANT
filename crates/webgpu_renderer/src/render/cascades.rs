@@ -15,7 +15,7 @@ pub(crate) const Z_PADDING: f32 = 10.0;
 
 /// The camera as the fit reads it: the lens of the free rect, never the docks' remap.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct CascadeLens {
+pub struct CascadeLens {
     /// World to view.
     pub view: Mat4,
     pub fov_y_deg: f32,
@@ -39,7 +39,7 @@ impl CascadeLens {
 }
 
 /// One entry per cascade; past the settings' count the last fitted one repeats.
-pub(crate) struct CascadeFit {
+pub struct CascadeFit {
     /// Each cascade's far end as a view depth.
     pub splits: [f32; CASCADE_COUNT],
     pub matrices: [Mat4; CASCADE_COUNT],
@@ -50,7 +50,7 @@ pub(crate) struct CascadeFit {
 }
 
 /// One light matrix per slice of the camera frustum up to the shadow distance.
-pub(crate) fn fit_cascades(
+pub fn fit_cascades(
     lens: &CascadeLens,
     light_dir: Vec3,
     settings: &ShadowSettings,

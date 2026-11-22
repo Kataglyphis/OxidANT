@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-22, Criterion benchmarks for the renderer's CPU passes)
+
+- **`crates/webgpu_renderer/benches/cpu_passes.rs`** (BeschleunigerBallett BACKLOG "Criterion benchmarks for the
+  renderer code behind the bridge", plan X7): QEM taking a 32,768-triangle height field to a quarter, the tile-light
+  grid of 256 point lights at 1080p, the cascade fit, and a binned-SAH BVH over 262,088 triangle boxes, each on a
+  generated input whose result the bench checks first. One `[[bench]]` target, so the bench job links one more fat-LTO
+  binary. `fit_cascades`, `CascadeLens`, `CascadeFit`, `build_tile_light_grid`, `TileLightGridScratch` and
+  `pack_punctual_lights` are public for it. `reusable-linux.yml`'s bench history gates QEM, the tile grid and the BVH,
+  which take over 100 µs; the cascade fit only warns.
+- Measured once in `:latest` on the aarch64 WSL2 host (bench profile, fat LTO, one job): QEM 42.8 ms, the tile grid
+  369 µs, the cascade fit 0.23 µs, the BVH 83.3 ms; the bench profile built the workspace crates in 5 min 54 s from
+  warm dependencies, and the four ran in 35 s.
+
 ### Changed (2026-11-22, a skin's rest pose, baked for the C++ engine)
 
 - **`load_flat` bakes each skinned mesh at its joints' rest pose** (BeschleunigerBallett BACKLOG "Bake the skin's

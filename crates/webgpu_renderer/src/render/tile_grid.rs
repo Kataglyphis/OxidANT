@@ -15,7 +15,7 @@ type TileRect = (u32, u32, u32, u32);
 
 /// Scratch for [`build_tile_light_grid`], kept on `ForwardRenderer` to avoid per-frame allocations.
 #[derive(Default)]
-pub(crate) struct TileLightGridScratch {
+pub struct TileLightGridScratch {
     pub(crate) per_tile_counts: Vec<u32>,
     pub(crate) grid: Vec<u32>,
     pub(crate) indices: Vec<u32>,
@@ -143,7 +143,7 @@ fn tile_rect_for_light(
 
 /// Bins lights per tile into `scratch.grid` ([count, offset] per tile) and flat `scratch.indices`.
 /// `view` must be rigid, and `proj` a perspective projection for a bound tighter than the whole grid.
-pub(crate) fn build_tile_light_grid(
+pub fn build_tile_light_grid(
     scratch: &mut TileLightGridScratch,
     packed_lights: &[[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
     light_count: u32,
