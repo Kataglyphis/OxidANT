@@ -184,8 +184,10 @@ Empty on 2026-11-17: nothing else is in the queue.
       BeschleunigerBallett split its lavapipe suites off) that checks out the hub, provisions the pinned lavapipe and
       loader with its `windows/scripts/host/Install-LavapipeHost.ps1`, and runs the staged renderer tests with
       `WGPU_BACKEND=vulkan`, which `adapter.rs` already honours; the traced modes need no ray queries. Done when
-      `traced_modes` and `ktx2` pass there and the WARP run keeps only the tests that do not trace.
-      `d3dcompiler_47.dll` on top points at FXC compiling the tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
+      `traced_modes` and `ktx2` pass there and the WARP run keeps only the tests that do not trace. **In source since
+      2026-11-22:** the `lavapipe-renderer` job takes the renderer's entries (those with a `skip_pattern`), and the
+      WARP run the rest; left: its first dispatch green. `d3dcompiler_47.dll` on top points at FXC compiling the
+      tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
 
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
       `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially only the abort above. Re-dispatch

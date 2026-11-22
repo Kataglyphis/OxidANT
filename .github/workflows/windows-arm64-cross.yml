@@ -81,6 +81,53 @@ jobs:
           }
           $global:LASTEXITCODE = 0
         }
-        & ./Invoke-StagedTests.ps1
+        # The renderer's entries run in the lavapipe job below: WARP's arm64 JIT fails fast on a PAC check (BACKLOG).
+        $warp = @(Get-Content -Raw -LiteralPath tests.json | ConvertFrom-Json | Where-Object { -not $_.PSObject.Properties['skip_pattern'] })
+        ConvertTo-Json -InputObject $warp -Depth 4 | Set-Content -LiteralPath tests-warp.json -Encoding utf8
+        & ./Invoke-StagedTests.ps1 -Manifest tests-warp.json
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
+
+  # Owner decision 2026-11-22: the renderer tests on Mesa's lavapipe through Vulkan, as BeschleunigerBallett's arm64 suites run.
+  lavapipe-renderer:
+    name: renderer tests on lavapipe (windows-11-arm)
+    needs: cross
+    runs-on: windows-11-arm
+    # A job of its own: the hub's run job stops at 30 minutes, and lavapipe draws on the CPU.
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out this repository and the hub alone
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the hub's lavapipe provisioner and pins
+        run: git submodule update --init --depth 1 third_party/ANTfrastructure
+
+      - name: Download the tests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kataglyphis_cli-windows-arm64-tests
+          path: tests
+
+      # The binaries embed C:\ws (CARGO_MANIFEST_DIR), as in the WARP run; WGPU_BACKEND narrows adapter.rs's choice.
+      - name: Run the renderer tests on lavapipe
+        working-directory: tests
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tools = & ../third_party/ANTfrastructure/windows/scripts/host/Install-LavapipeHost.ps1
+          $env:PATH = "$($tools.LoaderDir);$env:PATH"
+          $env:WGPU_BACKEND = 'vulkan'
+          $env:KATAGLYPHIS_REQUIRE_GPU = '1'
+          $env:KATAGLYPHIS_REQUIRE_MODEL = '1'
+          if (Test-Path -LiteralPath 'C:\ws') { throw 'C:\ws exists on the runner; the tests would read another tree' }
+          $null = New-Item -ItemType Junction -Path 'C:\ws' -Target $PWD
+          $renderer = @(Get-Content -Raw -LiteralPath tests.json | ConvertFrom-Json | Where-Object { $_.PSObject.Properties['skip_pattern'] })
+          if ($renderer.Count -eq 0) { throw 'tests.json lists no renderer entry (none carries skip_pattern)' }
+          ConvertTo-Json -InputObject $renderer -Depth 4 | Set-Content -LiteralPath tests-lavapipe.json -Encoding utf8
+          & ./Invoke-StagedTests.ps1 -Manifest tests-lavapipe.json -AssertVerdict

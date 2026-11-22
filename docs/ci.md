@@ -104,7 +104,11 @@ which a local container run executes too:
   first-chance access violation in WARP's arm64 pixel JIT (`PixelJITProcessor::ExecuteJIT`); the
   second, with first-chance faults passed on, ended at the fail-fast itself: subcode 0x49,
   `FAST_FAIL_POINTER_AUTH_INVALID_RETURN_ADDRESS`, a pointer-authentication (PAC) failure on one of
-  WARP's JIT threads after four handled faults (run 44948200119, WARP 10.0.26100.9818). No arm64 Windows
+  WARP's JIT threads after four handled faults (run 44948200119, WARP 10.0.26100.9818). So the
+  renderer's entries (those with a `skip_pattern`) leave the WARP run since 2026-11-22 (owner
+  decision): the `lavapipe-renderer` job checks out the hub alone, provisions its pinned lavapipe
+  and loader with `Install-LavapipeHost.ps1`, and runs them with `WGPU_BACKEND=vulkan` through the
+  staged runner with `-AssertVerdict`, in a job of its own, as the hub's run job stops at 30 minutes. No arm64 Windows
   container image exists, so that job is the only place an arm64 binary of this repo executes.
 
 **Every Windows build compiles C and C++ with the image's clang-cl, never MSVC's `cl`**
