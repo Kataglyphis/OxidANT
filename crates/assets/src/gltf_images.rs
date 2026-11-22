@@ -50,6 +50,9 @@ pub(crate) fn parse(bytes: &[u8]) -> anyhow::Result<Parsed> {
     }
     root.extensions_required
         .retain(|name| name != BASISU && name != QUANTIZATION);
+    if !root.extensions_used.iter().any(|name| name == QUANTIZATION) {
+        normalize_core_tex_coords(&mut root);
+    }
     reject_dangling_positions(&root)?;
     reject_sourceless_images(&root)?;
     let document = gltf::Document::from_json(root)?;
@@ -77,6 +80,35 @@ fn reject_dangling_positions(root: &gltf::json::Root) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Core glTF allows a u8 or u16 TEXCOORD only normalized, and gltf's reader normalized one without the flag.
+fn normalize_core_tex_coords(root: &mut gltf::json::Root) {
+    use gltf::json::accessor::{ComponentType, GenericComponentType};
+    use gltf::json::validation::Checked;
+    let tex_coords: Vec<usize> = root
+        .meshes
+        .iter()
+        .flat_map(|mesh| &mesh.primitives)
+        .flat_map(|primitive| &primitive.attributes)
+        .filter(|(semantic, _)| {
+            matches!(
+                semantic,
+                Checked::Valid(gltf::json::mesh::Semantic::TexCoords(_))
+            )
+        })
+        .map(|(_, index)| index.value())
+        .collect();
+    for index in tex_coords {
+        if let Some(accessor) = root.accessors.get_mut(index) {
+            if matches!(
+                accessor.component_type,
+                Checked::Valid(GenericComponentType(ComponentType::U8 | ComponentType::U16))
+            ) {
+                accessor.normalized = true;
+            }
+        }
+    }
 }
 
 /// gltf-json 1.4.1 validates neither: `Image::source` unwraps the uri, or a bufferView's mimeType, and panics.

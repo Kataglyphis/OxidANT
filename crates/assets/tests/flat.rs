@@ -1764,6 +1764,16 @@ mod quantization {
 
     /// A triangle whose `attributes` and one morph target's `deltas` each get an accessor; elements padded to 4 bytes.
     fn triangle(dir: &Path, attributes: &[Attribute], deltas: &[Attribute]) -> PathBuf {
+        triangle_with(dir, attributes, deltas, true)
+    }
+
+    /// [`triangle`], declaring KHR_mesh_quantization only when `quantized`.
+    fn triangle_with(
+        dir: &Path,
+        attributes: &[Attribute],
+        deltas: &[Attribute],
+        quantized: bool,
+    ) -> PathBuf {
         let (mut bytes, mut accessors, mut views) = (Vec::new(), Vec::new(), Vec::new());
         let mut add = |a: &Attribute| -> usize {
             let width = a.rows[0].len();
@@ -1811,9 +1821,13 @@ mod quantization {
         } else {
             format!(r#","targets":[{{{}}}]"#, members(deltas))
         };
+        let extensions = if quantized {
+            r#""extensionsUsed":["KHR_mesh_quantization"],"extensionsRequired":["KHR_mesh_quantization"],"#
+        } else {
+            ""
+        };
         let json = format!(
-            r#"{{"asset":{{"version":"2.0"}},"extensionsUsed":["KHR_mesh_quantization"],
-            "extensionsRequired":["KHR_mesh_quantization"],"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],
+            r#"{{"asset":{{"version":"2.0"}},{extensions}"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],
             "meshes":[{{"primitives":[{{"attributes":{{{attributes}}}{targets}}}]}}],"accessors":[{}],"bufferViews":[{}],
             "buffers":[{{"byteLength":{},"uri":"data:application/octet-stream;base64,{}"}}]}}"#,
             accessors.join(","),
@@ -1938,6 +1952,36 @@ mod quantization {
                         for (got, want) in all {
                             assert!(near(*got, *want), "{case}, vertex {k}: {got} for {want}");
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Core glTF allows a u8 or u16 TEXCOORD only normalized; gltf's reader normalized one without the flag too.
+    #[test]
+    fn a_core_file_reads_unsigned_texcoords_normalized_whatever_their_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        for (kind, raw, unit) in TYPES
+            .into_iter()
+            .filter(|(kind, ..)| [U8, U16].contains(kind))
+        {
+            let [a, b, c] = raw;
+            let uvs = attribute("TEXCOORD_0", kind, false, &[&[a, b], &[b, c], &[c, a]]);
+            let path = triangle_with(dir.path(), &[float_positions(), uvs], &[], false);
+            let scene = kataglyphis_assets::load_gltf(&path).unwrap();
+            let flat = load_flat(&path, &LoadOptions::default()).unwrap();
+            let [x, y, z] = unit;
+            let want = [[x, y], [y, z], [z, x]];
+            let gltf: Vec<[f32; 2]> = scene.primitives[0].vertices.iter().map(|v| v.uv).collect();
+            let flat: Vec<[f32; 2]> = flat.vertices.iter().map(|v| v.uv0).collect();
+            for got in [gltf, flat] {
+                for (k, uv) in got.iter().enumerate() {
+                    for (got, want) in uv.iter().zip(&want[k]) {
+                        assert!(
+                            near(*got, *want),
+                            "componentType {kind}, vertex {k}: {got} for {want}"
+                        );
                     }
                 }
             }

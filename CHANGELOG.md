@@ -57,7 +57,9 @@ on 2026-09-15, verbatim. Nothing was deleted.
   NORMAL and TANGENT deltas are read in every integer format it allows by `attributes::read_f32`, which honours
   `normalized` (c / max, the signed minimum clamped to -1) and reads any other integer as its value; gltf 1.4.1's
   readers took them for floats. `accessor_check.rs` admits those formats whether or not a file declares the
-  extension, and still refuses an unnormalized integer normal or tangent, an unsigned one and u32 attributes. The
+  extension, and still refuses an unnormalized integer normal or tangent, an unsigned one and u32 attributes. A file
+  that does not use the extension reads a u8 or u16 TEXCOORD normalized whatever its flag, as gltf's reader did (core
+  glTF allows them only normalized; `a_core_file_reads_unsigned_texcoords_normalized_whatever_their_flag`). The
   C++ engine reads them through `load_gltf_flat` unchanged.
 - Tests (`tests/flat.rs`, `mod quantization`): `cube_quantized.gltf`, `cube.gltf` in gltfpack's layout (u16 positions
   under a dequantizing node scale and translation, i8 normals and u16 texcoords normalized, strides 8 and 4), matches
