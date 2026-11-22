@@ -91,7 +91,7 @@ which a local container run executes too:
   `onnx-runtime` and `media-check` natively, then every staged test with
   `KATAGLYPHIS_REQUIRE_GPU=1` (hub CON43) and `KATAGLYPHIS_REQUIRE_MODEL=1`, the renderer's
   one test at a time. The real-model tests there take the DirectML fallback below. In parallel,
-  WARP itself crashes: dispatch 37422053110 (2026-10-06, `parallel-renderer-tests`) stopped
+  WARP itself crashed: dispatch 37422053110 (2026-10-06, the retired `parallel-renderer-tests` input) stopped
   `ibl.exe` with `0xC0000005 STATUS_ACCESS_VIOLATION`, faulting module `d3d10warp.dll` at
   offset 0x80528 (WARP 10.0.26100.9278), as run 36889467167 had stopped `headless.exe`.
   Serially all of them pass (run 36907253720), and the whole job takes 2.5 min. The fault is

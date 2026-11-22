@@ -157,43 +157,6 @@ Empty on 2026-11-17: nothing else is in the queue.
       the JUnit record names the binary and its `ADAPTER:` line the width: loop that binary at `--test-threads 4`
       under `gdb -batch -ex run -ex "thread apply all bt"` and record the stack here.
 
-- [ ] **The first traced test aborts on windows-11-arm, serially too** (M). The lane was last green on 2026-10-15,
-      before wgpu 30. Now the first test that traces exits `0xC0000409` (a fail-fast abort) right after its `test …`
-      line, with no panic text, so the abort is native (FXC, WARP or the D3D12 runtime), not Rust: `traced_modes`'
-      `a_mask_cutout_lets_the_sun_through_in_both_traced_modes` in run 44759227422, `ktx2`'s
-      `a_bc1_texture_colours_the_cube_in_both_traced_modes` in run 44782412041. WARP x64 passes all 24 traced tests
-      since 0abbb7d, and the x64 lane is green again (run 44804439631). WER names no module: in that run the hub's
-      staged runner waited the full 15 s after the abort (20:40:29 to 20:40:44) and found no event 1000, so WER does
-      not log this abort at all, while it did log the parallel run's access violation. Next: a debugger's stack, as
-      nothing else sees a fail-fast: WER `LocalDumps` writes nothing on hosted runners, which queue reports
-      (`ForceQueue=1`) and set AeDebug to `-` (hub `docs/failure-modes.md`), and an in-process handler such as the
-      hub's `kataglyphis_add_crash_dump` is bypassed by `__fastfail`. The image's readme lists the Windows SDKs
-      10.0.19041, 10.0.22621 and 10.0.26100 but no Debugging Tools (partner-runner-images, 2026-11-21), yet the hub's
-      probe (run 44933363575) found `cdb.exe` under `Windows Kits\10\Debuggers\arm64`, WER's service stopped,
-      `ForceQueue=1` and AeDebug `-`. In source since 2026-11-21: `windows-arm64-cross.yml`'s dispatch-only
-      `debugger-stack` input runs the first traced test under that `cdb` with `sxe c0000409` and Microsoft's symbols
-      before the staged run. Its first dispatch (run 44938484144, WARP 10.0.26100.9818) stopped at a first-chance
-      access violation in code WARP's arm64 pixel JIT generated: `d3d10warp!PixelJITProcessor::ExecuteJIT+0x2c` calls
-      into a frame with no module. **Root cause, run 44948200119:** with first-chance faults passed on, four WARP JIT
-      threads take a handled access violation each, then one fails fast with subcode 0x49,
-      `FAST_FAIL_POINTER_AUTH_INVALID_RETURN_ADDRESS`: ARM64 pointer authentication (PAC) finds a return address that
-      no longer verifies on the way back through WARP's JIT frames. That is Microsoft's driver on a PAC-enforcing
-      Windows 11 arm64, not this repo, and why WER records nothing. **Owner decision 2026-11-22: the renderer tests on
-      windows-11-arm run through Vulkan and lavapipe**, as BeschleunigerBallett's arm64 suites do, so arm64 keeps real
-      coverage. Steps: a job of its own on windows-11-arm (the hub's run job stops at 30 minutes, which is why
-      BeschleunigerBallett split its lavapipe suites off) that checks out the hub, provisions the pinned lavapipe and
-      loader with its `windows/scripts/host/Install-LavapipeHost.ps1`, and runs the staged renderer tests with
-      `WGPU_BACKEND=vulkan`, which `adapter.rs` already honours; the traced modes need no ray queries. Done when
-      `traced_modes` and `ktx2` pass there and the WARP run keeps only the tests that do not trace. **In source since
-      2026-11-22:** the `lavapipe-renderer` job takes the renderer's entries (those with a `skip_pattern`), and the
-      WARP run the rest; left: its first dispatch green. `d3dcompiler_47.dll` on top points at FXC compiling the
-      tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
-
-- [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
-      `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially only the abort above. Re-dispatch
-      `windows-arm64-cross.yml` with `parallel-renderer-tests` after a runner image update. Still there on
-      2026-11-20 (run 44739816593, the runner image of that day): the same fault in `d3d10warp.dll`.
-
 - [ ] **A model run that hangs cannot be ended** (S, ★). A run in flight for over 20 s shows in `/healthz`, its
       boxes are dropped and a start in the app gives up after 10 s, but the run itself goes on: nothing calls
       `RunOptions::terminate`. Leave it until a GPU provider ships; on the CPU no hung run is on record. The four

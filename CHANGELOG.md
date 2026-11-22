@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-22, the arm64 lane is green again: the renderer tests run on lavapipe)
+
+- On windows-11-arm the first traced test exited `0xC0000409` since wgpu 30 (2026-10-15), with no panic and no WER
+  record. The image's `cdb`, which the hub's `windows-arm-debugger-probe.yml` found, named it: four first-chance access
+  violations in WARP's arm64 pixel JIT (`d3d10warp!PixelJITProcessor::ExecuteJIT`), then a fail-fast with subcode
+  0x49, `FAST_FAIL_POINTER_AUTH_INVALID_RETURN_ADDRESS` (runs 44938484144 and 44948200119, WARP 10.0.26100.9818):
+  Microsoft's driver, not this repo. Owner decision 2026-11-22: the renderer's entries run in a `lavapipe-renderer`
+  job through Vulkan on Mesa 26.3.0's llvmpipe, provisioned by the hub's `Install-LavapipeHost.ps1`, with
+  `WGPU_BACKEND=vulkan`; WARP keeps the rest. Run 44966862117: 776 passed on WARP and 847 on lavapipe, `traced_modes`,
+  `traced_lights` and `ktx2` among them, 0 failed. The `parallel-renderer-tests` input goes, as WARP runs no renderer
+  test now; `debugger-stack` stays for the next question to WARP.
+
 ### Changed (2026-11-22, the timed scopes are the C++ engine's)
 
 - **`render::gpu_timing::TimedPass` scopes a frame as BeschleunigerBallett's `GpuTimedPass`**, so its
