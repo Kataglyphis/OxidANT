@@ -13,6 +13,11 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Security (2026-11-22, url 2.5.9 for RUSTSEC-2026-0592)
+
+- `url` 2.5.8 overflowed its stack in `Url::origin()` on nested `blob:` URLs (RUSTSEC-2026-0592, 2026-11-20), and
+  `cargo audit` failed every lane from then on (run 45014244922). `Cargo.lock` takes 2.5.9; nothing else moves.
+
 ### Added (2026-11-22, Criterion benchmarks for the renderer's CPU passes)
 
 - **`crates/webgpu_renderer/benches/cpu_passes.rs`** (BeschleunigerBallett BACKLOG "Criterion benchmarks for the
