@@ -178,11 +178,14 @@ Empty on 2026-11-17: nothing else is in the queue.
       threads take a handled access violation each, then one fails fast with subcode 0x49,
       `FAST_FAIL_POINTER_AUTH_INVALID_RETURN_ADDRESS`: ARM64 pointer authentication (PAC) finds a return address that
       no longer verifies on the way back through WARP's JIT frames. That is Microsoft's driver on a PAC-enforcing
-      Windows 11 arm64, not this repo, and why WER records nothing. Ways on, an owner decision: (a) run the traced
-      tests on windows-11-arm through Vulkan and lavapipe, as BeschleunigerBallett's arm64 suites do, so arm64 keeps
-      real coverage; (b) name these tests in the arm64 manifest's `--skip` with this cause until a runner image fixes
-      WARP; (c) leave the lane on request and red, and report it to Microsoft. `d3dcompiler_47.dll` on top points at
-      FXC compiling the tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
+      Windows 11 arm64, not this repo, and why WER records nothing. **Owner decision 2026-11-22: the renderer tests on
+      windows-11-arm run through Vulkan and lavapipe**, as BeschleunigerBallett's arm64 suites do, so arm64 keeps real
+      coverage. Steps: a job of its own on windows-11-arm (the hub's run job stops at 30 minutes, which is why
+      BeschleunigerBallett split its lavapipe suites off) that checks out the hub, provisions the pinned lavapipe and
+      loader with its `windows/scripts/host/Install-LavapipeHost.ps1`, and runs the staged renderer tests with
+      `WGPU_BACKEND=vulkan`, which `adapter.rs` already honours; the traced modes need no ray queries. Done when
+      `traced_modes` and `ktx2` pass there and the WARP run keeps only the tests that do not trace.
+      `d3dcompiler_47.dll` on top points at FXC compiling the tracer's shader, `d3d10warp.dll` at WARP's arm64 JIT.
 
 - [ ] **WARP crashes when the renderer tests run in parallel on windows-11-arm** (S). `docs/ci.md`, the arm64 lane's run job:
       `d3d10warp.dll` faults with `STATUS_ACCESS_VIOLATION`; serially only the abort above. Re-dispatch
