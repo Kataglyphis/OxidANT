@@ -14,6 +14,7 @@ use kataglyphis_webgpu_renderer::render::gpu_timing::TimedPass;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
 use kataglyphis_webgpu_renderer::render::model_transform::ModelTransform;
 use kataglyphis_webgpu_renderer::render::tracer::RenderMode;
+use kataglyphis_webgpu_renderer::scene::{CpuLight, CpuLightKind};
 use kataglyphis_webgpu_renderer::{
     load_gltf, CpuScene, ForwardRenderer, GpuContext, OrbitCamera, TonemapPass,
 };
@@ -37,6 +38,21 @@ fn scene(name: &str) -> CpuScene {
         .join("../assets/tests/assets")
         .join(name);
     load_gltf(path).unwrap_or_else(|e| panic!("{name} must load: {e:#}"))
+}
+
+/// `name` under a point light, so a raster frame records the light shadows pass too.
+fn lit(name: &str) -> CpuScene {
+    let mut scene = scene(name);
+    scene.lights.push(CpuLight {
+        kind: CpuLightKind::Point,
+        color: [1.0; 3],
+        intensity: 5.0,
+        range: 0.0,
+        position: [0.0, 3.0, 0.0],
+        direction: [0.0, -1.0, 0.0],
+        node: None,
+    });
+    scene
 }
 
 /// The proven shadow tests' view: from above, so the plane fills most of the frame.
@@ -627,7 +643,7 @@ fn culling_counts_the_same_on_both_paths_with_frustum_culling_on_and_off() {
 }
 
 /// The passes `mode` records with every optional pass on: a raster path all but the other path's and the traced
-/// passes; a traced mode its kernel, the resolve and the post chain without SSAO. FXAA as `fxaa` decides.
+/// passes; a traced mode Main, its kernel through the resolve and the post chain without SSAO. FXAA as `fxaa` decides.
 fn passes_in((path, mode): (RasterPath, RenderMode), fxaa: FxaaMode) -> Vec<&'static str> {
     let deferred_raster = mode == RenderMode::Raster && path == RasterPath::Deferred;
     let runs = |pass: &TimedPass| match (mode, pass) {
@@ -641,7 +657,7 @@ fn passes_in((path, mode): (RasterPath, RenderMode), fxaa: FxaaMode) -> Vec<&'st
         (_, TimedPass::PathTrace) => mode == RenderMode::PathTraced,
         (_, pass) => matches!(
             pass,
-            TimedPass::TraceResolve
+            TimedPass::Main
                 | TimedPass::Histogram
                 | TimedPass::ExposureReduce
                 | TimedPass::Bloom
@@ -676,7 +692,7 @@ fn each_path_and_mode_reports_exactly_the_passes_it_runs_with_every_feature_on()
         );
         return;
     }
-    let scene = scene("cube_on_plane.gltf");
+    let scene = lit("cube_on_plane.gltf");
     for mode in MODES {
         // Bloom and SSAO at their defaults: at zero strength their passes do not record.
         let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
@@ -1076,7 +1092,7 @@ fn the_timings_follow_every_switch_of_mode_and_path_within_four_frames() {
         );
         return;
     }
-    let scene = scene("cube_on_plane.gltf");
+    let scene = lit("cube_on_plane.gltf");
     let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
     renderer.upload_scene(&gpu, &scene);
     trace(&mut renderer, &scene);

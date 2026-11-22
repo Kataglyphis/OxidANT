@@ -8,6 +8,7 @@ use anyhow::Context as _;
 use glam::Vec3;
 use kataglyphis_webgpu_renderer::render::clouds::CloudSettings;
 use kataglyphis_webgpu_renderer::render::forward::RasterPath;
+use kataglyphis_webgpu_renderer::render::gpu_timing::TimedPass;
 use kataglyphis_webgpu_renderer::{
     load_gltf, ForwardRenderer, GpuContext, OrbitCamera, TonemapPass,
 };
@@ -104,17 +105,30 @@ fn measure(
     Ok((supported, measured, renderer.gpu_timings_ms()))
 }
 
-/// The C++ export's JSON: without timestamps no frame was measured, however many ran.
+/// The C++ export's JSON: without timestamps no frame was measured, however many ran; `nested_in` names each nested
+/// pass's parent, so a frame sum adds the top level only.
 fn timings_json(supported: bool, frames_with_samples: u32, passes: &[(&str, f32)]) -> String {
     let frames = if supported { frames_with_samples } else { 0 };
     let body: Vec<String> = passes
         .iter()
         .map(|(name, ms)| format!("    \"{name}\": {ms}"))
         .collect();
+    let nested: Vec<String> = passes
+        .iter()
+        .filter_map(|(name, _)| parent(name).map(|parent| format!("    \"{name}\": \"{parent}\"")))
+        .collect();
     format!(
-        "{{\n  \"frames_measured\": {frames},\n  \"timestamps_supported\": {supported},\n  \"passes\": {{\n{}\n  }}\n}}\n",
-        body.join(",\n")
+        "{{\n  \"frames_measured\": {frames},\n  \"timestamps_supported\": {supported},\n  \"passes\": {{\n{}\n  }},\n  \"nested_in\": {{\n{}\n  }}\n}}\n",
+        body.join(",\n"),
+        nested.join(",\n")
     )
+}
+
+fn parent(name: &str) -> Option<&'static str> {
+    let pass = TimedPass::ALL
+        .into_iter()
+        .find(|pass| pass.name() == name)?;
+    pass.nested_in().map(TimedPass::name)
 }
 
 fn write(path: &str, json: &str) -> anyhow::Result<()> {
@@ -131,6 +145,20 @@ mod tests {
         assert!(json.contains("\"frames_measured\": 0,"), "{json}");
         assert!(json.contains("\"timestamps_supported\": false,"), "{json}");
         assert!(json.contains("\"passes\": {\n\n  }"), "{json}");
+    }
+
+    #[test]
+    fn a_nested_pass_names_its_parent_as_the_cpp_export_does() {
+        let json = timings_json(
+            true,
+            95,
+            &[("Main", 2.0), ("Forward", 1.5), ("Tonemap", 0.25)],
+        );
+        let doc: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(doc["passes"]["Main"], 2.0, "{json}");
+        assert_eq!(doc["nested_in"]["Forward"], "Main", "{json}");
+        let nested = doc["nested_in"].as_object().expect("an object");
+        assert_eq!(nested.len(), 1, "a top-level pass names no parent: {json}");
     }
 
     #[test]

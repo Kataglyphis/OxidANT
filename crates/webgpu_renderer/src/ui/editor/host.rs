@@ -442,6 +442,7 @@ mod tests {
     fn the_profiler_shows_labels_and_keeps_a_name_it_does_not_know() {
         let passes = labelled(vec![
             ("ShadowCascades", 0.5),
+            ("Main", 1.0),
             ("Forward", 1.0),
             ("Gui", 0.1),
         ]);
@@ -449,7 +450,8 @@ mod tests {
             passes,
             [
                 ("Shadow cascades", 0.5),
-                ("Forward + sky", 1.0),
+                ("Main (raster/traced)", 1.0),
+                ("  Forward + sky", 1.0),
                 ("Gui", 0.1)
             ]
         );

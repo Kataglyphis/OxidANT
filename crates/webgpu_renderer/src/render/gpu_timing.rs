@@ -7,20 +7,30 @@ use std::sync::Arc;
 
 use crate::render::buffer_desc;
 
-/// The passes we time, in the order they are recorded in a frame.
+/// The passes we time, in the order they are recorded in a frame, scoped as the C++ engine's `GpuTimedPass`.
 /// Opaque and blended share one: splitting that render pass to time it would change its cost.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TimedPass {
     /// The per-draw cull that writes every draw's indirect arguments (one compute pass; raster frames only).
     DrawCull,
-    /// All shadow cascades, then every punctual cube face, one render pass each.
+    /// The sun's shadow cascades, one render pass each.
     ShadowCascades,
+    /// Every point and spot light's cube faces, one render pass each, after the cascades.
+    PunctualShadows,
+    /// The scene draw: the one of `Forward`, `GBuffer` + `DeferredLighting`, `RayTrace` or `PathTrace` that ran.
+    /// No stamps of its own: it spans its nested scopes, from the first one's begin to the last one's end.
+    Main,
     /// Opaque geometry, sky, and blended geometry in one render pass.
     Forward,
     /// The deferred path's opaque geometry into the G-buffer, in place of `Forward`.
     GBuffer,
     /// The deferred path's full-screen lighting, then its sky and blended geometry in the same pass.
     DeferredLighting,
+    /// The ray-traced mode's kernel, every tile in one compute pass, then the resolve into the HDR target with the
+    /// sky where the rays missed; it replaces the shadow and forward passes.
+    RayTrace,
+    /// The path-traced mode's kernel, every tile and sample chunk in one compute pass, then the resolve.
+    PathTrace,
     /// The occlusion-query box pass (only with culling on); its cost is what the cull must beat.
     OcclusionCull,
     /// Histogram clear plus build (two compute passes).
@@ -35,29 +45,24 @@ pub enum TimedPass {
     Clouds,
     /// ACES tonemap and composite to the output target.
     Tonemap,
-    /// The ray-traced mode's kernel, every tile in one compute pass; it replaces the shadow and forward passes.
-    RayTrace,
-    /// The path-traced mode's kernel, every tile and sample chunk in one compute pass.
-    PathTrace,
-    /// The traced modes' copy of their accumulation into the HDR target.
-    TraceResolve,
     /// FXAA over the tonemapped frame into the output target (every frame by default).
     Fxaa,
 }
 
 impl TimedPass {
-    /// Every pass in record order: a raster frame's skip the traced passes, a traced frame's skip shadows to SSAO.
-    /// Iteration order is the reporting order, so either kind of frame lists its passes as it records them.
-    pub const ALL: [TimedPass; 16] = [
+    /// Every pass in record order, `Main` before the scopes it spans: a raster frame's skip the traced passes, a
+    /// traced frame's skip shadows to SSAO. Iteration order is the reporting order.
+    pub const ALL: [TimedPass; 17] = [
         TimedPass::DrawCull,
         TimedPass::ShadowCascades,
+        TimedPass::PunctualShadows,
+        TimedPass::Main,
         TimedPass::Forward,
         TimedPass::GBuffer,
         TimedPass::DeferredLighting,
-        TimedPass::OcclusionCull,
         TimedPass::RayTrace,
         TimedPass::PathTrace,
-        TimedPass::TraceResolve,
+        TimedPass::OcclusionCull,
         TimedPass::Histogram,
         TimedPass::ExposureReduce,
         TimedPass::Clouds,
@@ -71,6 +76,8 @@ impl TimedPass {
     pub fn name(self) -> &'static str {
         match self {
             TimedPass::ShadowCascades => "ShadowCascades",
+            TimedPass::PunctualShadows => "PunctualShadows",
+            TimedPass::Main => "Main",
             TimedPass::Forward => "Forward",
             TimedPass::OcclusionCull => "OcclusionCull",
             TimedPass::Bloom => "Bloom",
@@ -83,40 +90,50 @@ impl TimedPass {
             TimedPass::Clouds => "Clouds",
             TimedPass::RayTrace => "RayTrace",
             TimedPass::PathTrace => "PathTrace",
-            TimedPass::TraceResolve => "TraceResolve",
             TimedPass::Fxaa => "Fxaa",
             TimedPass::DrawCull => "DrawCull",
         }
     }
 
-    /// What the profiler shows; [`Self::name`] stays the identifier reports and scripts parse.
+    /// What the profiler shows, a nested scope indented under `Main` as in the C++ GUI; [`Self::name`] stays the
+    /// identifier reports and scripts parse.
     pub fn label(self) -> &'static str {
         match self {
             TimedPass::ShadowCascades => "Shadow cascades",
-            TimedPass::Forward => "Forward + sky",
+            TimedPass::PunctualShadows => "Point/spot shadows",
+            TimedPass::Main => "Main (raster/traced)",
+            TimedPass::Forward => "  Forward + sky",
             TimedPass::OcclusionCull => "Occlusion cull",
             TimedPass::Bloom => "Bloom",
             TimedPass::Ssao => "SSAO",
             TimedPass::Histogram => "Histogram",
             TimedPass::ExposureReduce => "Exposure",
             TimedPass::Tonemap => "Tonemap",
-            TimedPass::GBuffer => "G-buffer",
-            TimedPass::DeferredLighting => "Lighting + sky",
+            TimedPass::GBuffer => "  G-buffer",
+            TimedPass::DeferredLighting => "  Lighting + sky",
             TimedPass::Clouds => "Clouds",
-            TimedPass::RayTrace => "Ray trace",
-            TimedPass::PathTrace => "Path trace",
-            TimedPass::TraceResolve => "Trace resolve",
+            TimedPass::RayTrace => "  Ray trace + sky",
+            TimedPass::PathTrace => "  Path trace",
             TimedPass::Fxaa => "FXAA",
             TimedPass::DrawCull => "Draw cull",
         }
     }
 
+    /// The scope this one runs inside, the C++ `GPU_TIMED_PASS_PARENTS`: a frame's sum adds only the top level.
+    pub fn nested_in(self) -> Option<TimedPass> {
+        match self {
+            TimedPass::Forward
+            | TimedPass::GBuffer
+            | TimedPass::DeferredLighting
+            | TimedPass::RayTrace
+            | TimedPass::PathTrace => Some(TimedPass::Main),
+            _ => None,
+        }
+    }
+
     /// Recorded only by a ray- or path-traced frame, which records no shadow, forward, occlusion or SSAO pass.
     pub fn is_traced(self) -> bool {
-        matches!(
-            self,
-            TimedPass::RayTrace | TimedPass::PathTrace | TimedPass::TraceResolve
-        )
+        matches!(self, TimedPass::RayTrace | TimedPass::PathTrace)
     }
 
     fn index(self) -> usize {
@@ -134,9 +151,10 @@ impl TimedPass {
             TimedPass::Clouds => 10,
             TimedPass::RayTrace => 11,
             TimedPass::PathTrace => 12,
-            TimedPass::TraceResolve => 13,
-            TimedPass::Fxaa => 14,
-            TimedPass::DrawCull => 15,
+            TimedPass::Fxaa => 13,
+            TimedPass::DrawCull => 14,
+            TimedPass::PunctualShadows => 15,
+            TimedPass::Main => 16,
         }
     }
 }
@@ -144,8 +162,8 @@ impl TimedPass {
 /// Number of timed passes.
 pub const PASS_COUNT: usize = TimedPass::ALL.len();
 const _: () = assert!(
-    PASS_COUNT * 2 <= 32,
-    "a frame's written-stamp mask holds two bits per pass in a u32"
+    PASS_COUNT * 2 <= 64,
+    "a frame's written-stamp mask holds two bits per pass in a u64"
 );
 /// Two queries (begin, end) per pass.
 const QUERIES_PER_SLOT: u32 = PASS_COUNT as u32 * 2;
@@ -228,7 +246,7 @@ pub struct PassScope<'a> {
     begin: u32,
     end: u32,
     /// The frame's written-stamp mask and this pass's begin bit; the end bit is the next one up.
-    written: Option<(&'a Cell<u32>, u32)>,
+    written: Option<(&'a Cell<u64>, u32)>,
 }
 
 // Writes borrow the query set (`'a`), not the scope, so an inline temporary scope still works.
@@ -286,7 +304,7 @@ impl<'a> PassScope<'a> {
         let query_set = self.query_set?;
         let (beginning, end) = sub_pass_write_indices(sub, count, self.begin, self.end)?;
         if let Some((mask, begin_bit)) = self.written {
-            let stamped = u32::from(beginning.is_some()) | (u32::from(end.is_some()) << 1);
+            let stamped = u64::from(beginning.is_some()) | (u64::from(end.is_some()) << 1);
             mask.set(mask.get() | (stamped << begin_bit));
         }
         Some((query_set, beginning, end))
@@ -320,7 +338,7 @@ struct Slot {
     /// `Some` while a map is outstanding; the callback sets READY/FAILED for `end_frame` to drain.
     map_state: Option<Arc<AtomicU8>>,
     /// Which stamps this slot's frame wrote, two bits per pass; an unwritten query resolves stale.
-    written: u32,
+    written: u64,
 }
 
 struct Resources {
@@ -339,7 +357,7 @@ pub struct GpuTiming {
     recording: bool,
     averages: Vec<RollingAverage>,
     /// The stamps this frame's passes were handed, two bits per pass (begin, end).
-    written: Cell<u32>,
+    written: Cell<u64>,
     /// Measured frames in a row each pass has not run in; a full window clears its average.
     frames_without: [usize; PASS_COUNT],
 }
@@ -419,6 +437,15 @@ impl GpuTiming {
             .collect()
     }
 
+    /// The frame's GPU time: the averages of the top-level passes, a nested one counted inside its parent's.
+    pub fn frame_ms(&self) -> f32 {
+        TimedPass::ALL
+            .iter()
+            .filter(|pass| pass.nested_in().is_none())
+            .filter_map(|pass| self.averages[pass.index()].average())
+            .sum()
+    }
+
     /// Drops every pass `keep` rejects: its average, and its stamps in readbacks still in flight, so a pass the
     /// frame stopped running leaves the report now rather than a full window later.
     pub fn forget(&mut self, keep: impl Fn(TimedPass) -> bool) {
@@ -426,6 +453,10 @@ impl GpuTiming {
             let i = pass.index();
             self.averages[i].clear();
             self.frames_without[i] = AVERAGE_WINDOW;
+            // Its parent's samples spanned it, the other kind of frame's work.
+            if let Some(parent) = pass.nested_in() {
+                self.averages[parent.index()].clear();
+            }
             if let Some(resources) = self.resources.as_mut() {
                 for slot in &mut resources.slots {
                     slot.written &= !(0b11 << (i * 2));
@@ -452,9 +483,9 @@ impl GpuTiming {
         }
     }
 
-    /// The scope `pass` should stamp into this frame.
+    /// The scope `pass` should stamp into this frame; `Main`'s writes nothing, it is measured from its nested scopes.
     pub fn scope(&self, pass: TimedPass) -> PassScope<'_> {
-        if !self.recording {
+        if !self.recording || pass == TimedPass::Main {
             return PassScope::disabled();
         }
         let Some(resources) = self.resources.as_ref() else {
@@ -549,12 +580,10 @@ struct PassHistory<'a> {
 impl PassHistory<'_> {
     /// One measured frame: a sample per pass it stamped; a pass it skipped a full window running
     /// stops reporting, since an unwritten query resolves an old frame's stamps.
-    fn record(&mut self, ticks: &[u64], written: u32, period_ns: f32) {
+    fn record(&mut self, ticks: &[u64], written: u64, period_ns: f32) {
         for pass in TimedPass::ALL {
             let i = pass.index();
-            let (begin, end) = (ticks[i * 2], ticks[i * 2 + 1]);
-            let stamped = (written >> (i * 2)) & 0b11 == 0b11;
-            if stamped && begin != 0 && end >= begin {
+            if let Some((begin, end)) = span(pass, ticks, written) {
                 self.averages[i].push(ticks_to_ms(end - begin, period_ns));
                 self.frames_without[i] = 0;
                 continue;
@@ -565,6 +594,27 @@ impl PassHistory<'_> {
             }
         }
     }
+}
+
+/// The begin and end ticks `pass` measured this frame: its own stamps, or for `Main` the first nested scope's begin
+/// to the last one's end, as the C++ engine's `Main` brackets the scope that drew.
+fn span(pass: TimedPass, ticks: &[u64], written: u64) -> Option<(u64, u64)> {
+    if pass != TimedPass::Main {
+        return stamped_span(pass, ticks, written);
+    }
+    TimedPass::ALL
+        .into_iter()
+        .filter(|nested| nested.nested_in() == Some(pass))
+        .filter_map(|nested| stamped_span(nested, ticks, written))
+        .reduce(|(begin, end), (b, e)| (begin.min(b), end.max(e)))
+}
+
+/// Both of `pass`'s stamps, when this frame wrote them; an unwritten query resolves an old frame's.
+fn stamped_span(pass: TimedPass, ticks: &[u64], written: u64) -> Option<(u64, u64)> {
+    let i = pass.index();
+    let (begin, end) = (ticks[i * 2], ticks[i * 2 + 1]);
+    let stamped = (written >> (i * 2)) & 0b11 == 0b11;
+    (stamped && begin != 0 && end >= begin).then_some((begin, end))
 }
 
 /// Reads `QUERIES_PER_SLOT` u64 ticks out of a mapped readback buffer.
@@ -661,6 +711,119 @@ mod tests {
             PASS_COUNT,
             "two passes share a profiler label"
         );
+    }
+
+    /// The C++ engine's `GPU_TIMED_PASS_EXPORT_NAMES` it shares with this renderer, each with its parent.
+    const CPP_SHARED_SCOPES: [(&str, Option<&str>); 10] = [
+        ("Clouds", None),
+        ("ShadowCascades", None),
+        ("Main", None),
+        ("Forward", Some("Main")),
+        ("GBuffer", Some("Main")),
+        ("DeferredLighting", Some("Main")),
+        ("RayTrace", Some("Main")),
+        ("PathTrace", Some("Main")),
+        ("PunctualShadows", None),
+        ("Fxaa", None),
+    ];
+
+    #[test]
+    fn every_scope_the_cpp_engine_times_is_scoped_and_nested_alike() {
+        for (name, parent) in CPP_SHARED_SCOPES {
+            let pass = TimedPass::ALL
+                .into_iter()
+                .find(|pass| pass.name() == name)
+                .unwrap_or_else(|| panic!("the C++ engine times {name}, this renderer does not"));
+            assert_eq!(pass.nested_in().map(TimedPass::name), parent, "{name}");
+        }
+        for pass in TimedPass::ALL {
+            if let Some(parent) = pass.nested_in() {
+                assert_eq!(parent.nested_in(), None, "{pass:?} nests two deep");
+                let at = |p: TimedPass| TimedPass::ALL.iter().position(|q| *q == p);
+                assert!(at(parent) < at(pass), "{pass:?} reports before its parent");
+            }
+        }
+    }
+
+    /// Ticks for the passes in `stamps`, each with both stamps marked written; 1 ms a tick.
+    fn frame(stamps: &[(TimedPass, u64, u64)]) -> (Vec<u64>, u64) {
+        let mut ticks = vec![0; QUERIES_PER_SLOT as usize];
+        let mut written = 0;
+        for &(pass, begin, end) in stamps {
+            ticks[pass.index() * 2] = begin;
+            ticks[pass.index() * 2 + 1] = end;
+            written |= 0b11 << (pass.index() * 2);
+        }
+        (ticks, written)
+    }
+
+    fn recorded(frames: &[&[(TimedPass, u64, u64)]]) -> GpuTiming {
+        let mut timing = GpuTiming::unavailable();
+        for stamps in frames {
+            let (ticks, written) = frame(stamps);
+            PassHistory {
+                averages: &mut timing.averages,
+                frames_without: &mut timing.frames_without,
+            }
+            .record(&ticks, written, 1e6);
+        }
+        timing
+    }
+
+    #[test]
+    fn main_spans_its_nested_scopes_and_the_frame_counts_them_once() {
+        let deferred = [
+            (TimedPass::ShadowCascades, 10, 40),
+            (TimedPass::GBuffer, 100, 300),
+            (TimedPass::DeferredLighting, 320, 700),
+            (TimedPass::Tonemap, 750, 760),
+        ];
+        let timing = recorded(&[&deferred]);
+        let ms = |name: &str| {
+            let timings = timing.timings_ms();
+            timings.iter().find(|(n, _)| *n == name).map(|(_, ms)| *ms)
+        };
+        assert_eq!(ms("Main"), Some(600.0), "{:?}", timing.timings_ms());
+        assert_eq!(ms("GBuffer"), Some(200.0));
+        assert_eq!(timing.frame_ms(), 30.0 + 600.0 + 10.0);
+        let names: Vec<&str> = timing.timings_ms().iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names,
+            [
+                "ShadowCascades",
+                "Main",
+                "GBuffer",
+                "DeferredLighting",
+                "Tonemap"
+            ]
+        );
+    }
+
+    #[test]
+    fn main_reports_nothing_without_a_stamped_nested_scope() {
+        let half_stamped = {
+            let (ticks, mut written) = frame(&[(TimedPass::Forward, 100, 300)]);
+            written &= !(0b10 << (TimedPass::Forward.index() * 2));
+            (ticks, written)
+        };
+        let mut timing = recorded(&[&[(TimedPass::Tonemap, 1, 2)]]);
+        PassHistory {
+            averages: &mut timing.averages,
+            frames_without: &mut timing.frames_without,
+        }
+        .record(&half_stamped.0, half_stamped.1, 1e6);
+        assert!(
+            timing.timings_ms().iter().all(|(name, _)| *name != "Main"),
+            "{:?}",
+            timing.timings_ms()
+        );
+    }
+
+    #[test]
+    fn forgetting_a_nested_scope_restarts_its_parent() {
+        let mut timing = recorded(&[&[(TimedPass::Forward, 100, 300)]]);
+        timing.forget(|pass| pass != TimedPass::Forward);
+        assert!(timing.timings_ms().is_empty(), "{:?}", timing.timings_ms());
     }
 
     #[test]

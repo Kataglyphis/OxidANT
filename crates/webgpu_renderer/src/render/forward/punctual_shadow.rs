@@ -9,7 +9,7 @@ use super::{ForwardRenderer, DEPTH_FORMAT};
 use crate::context::GpuContext;
 use crate::render::bounds::Frustum;
 use crate::render::buffer_desc;
-use crate::render::gpu_timing::PassScope;
+use crate::render::gpu_timing::TimedPass;
 use crate::render::lights::{
     assign_punctual_shadow_slots, punctual_shadow_face_matrices, PunctualShadowSlot,
     MAX_SHADOWED_PUNCTUAL_LIGHTS,
@@ -145,12 +145,10 @@ impl ForwardRenderer {
         &self.punctual_shadow.slots
     }
 
-    /// One depth pass per face of every drawn cube, sub-passes `first..total` of the shadow scope.
-    pub(super) fn encode_punctual_shadow_faces(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        (scope, first, total): (PassScope<'_>, usize, usize),
-    ) {
+    /// One depth pass per face of every drawn cube, each a sub-pass of the `PunctualShadows` scope.
+    pub(super) fn encode_punctual_shadow_faces(&self, encoder: &mut wgpu::CommandEncoder) {
+        let scope = self.gpu_timing.scope(TimedPass::PunctualShadows);
+        let total = self.punctual_shadow_faces();
         let punctual = &self.punctual_shadow;
         for (cube, slot) in punctual
             .slots
@@ -172,7 +170,7 @@ impl ForwardRenderer {
                         }),
                         stencil_ops: None,
                     }),
-                    timestamp_writes: scope.render_writes(first + layer, total),
+                    timestamp_writes: scope.render_writes(layer, total),
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });

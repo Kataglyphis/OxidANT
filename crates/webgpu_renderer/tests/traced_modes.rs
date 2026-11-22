@@ -837,19 +837,16 @@ fn traced_frames_skip_the_raster_passes_and_time_their_own() {
         if !timed {
             continue;
         }
-        let names: Vec<&str> = rig
-            .renderer
-            .gpu_timings_ms()
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-        eprintln!("{mode:?} timings: {:?}", rig.renderer.gpu_timings_ms());
-        assert!(
-            names.contains(&own) && names.contains(&"TraceResolve"),
-            "{names:?}"
-        );
+        let timings = rig.renderer.gpu_timings_ms();
+        let names: Vec<&str> = timings.iter().map(|(name, _)| *name).collect();
+        eprintln!("{mode:?} timings: {timings:?}");
+        let ms = |name: &str| timings.iter().find(|(n, _)| *n == name).map(|(_, ms)| *ms);
+        // The kernel's scope runs through the resolve, as the C++ one spans its sky fill, and Main is that span.
+        assert!(ms(own).is_some() && ms(own) == ms("Main"), "{timings:?}");
+        assert!(!names.contains(&"TraceResolve"), "{names:?}");
         for raster in [
             "ShadowCascades",
+            "PunctualShadows",
             "Forward",
             "GBuffer",
             "DeferredLighting",

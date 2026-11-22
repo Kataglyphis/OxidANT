@@ -13,6 +13,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-22, the timed scopes are the C++ engine's)
+
+- **`render::gpu_timing::TimedPass` scopes a frame as BeschleunigerBallett's `GpuTimedPass`**, so its
+  `Compare-RendererTimings.ps1` compares like with like: the point and spot light cubes time as the new
+  `PunctualShadows`, no longer inside `ShadowCascades`; the new `Main` spans whichever of `Forward`, `GBuffer` +
+  `DeferredLighting`, `RayTrace` or `PathTrace` drew, from the first one's begin stamp to the last one's end, and
+  takes no queries of its own; the traced kernels' scopes run through their resolve, as the C++ `RayTrace` spans its
+  sky fill, so `TraceResolve` is gone. `TimedPass::nested_in()` is the C++ `GPU_TIMED_PASS_PARENTS`; the profiler
+  indents a nested scope under `Main`, `dump_gpu_timings` writes the C++ export's `nested_in` object, and the auto
+  render scale steers by `ForwardRenderer::gpu_frame_ms()`, the top level only (a plain sum would count `Main` and its
+  scope twice). A switch of mode or raster path restarts `Main` with the scope it dropped. 17 passes outgrow the
+  32-bit written-stamp mask, so it is a `u64`.
+- Tests: `gpu_timing`'s unit tests pin each C++ scope's twin and parent, `Main`'s span and the frame sum;
+  `tests/gpu_timing.rs` times a lit cube, so every raster pass reports, checks `Main` against its nested scopes and
+  times the light cubes apart from the cascades with either switch off; `traced_modes.rs` expects `Main` equal to the
+  kernel's scope and no `TraceResolve`; `feature_matrix.rs` adds a point light; the frame graph's rows name every scope
+  they open.
+
 ### Changed (2026-11-21, the GGX energy once per shading point)
 
 - **`brdf_smith_k`, `brdf_direct` and `brdf_sampled` (`brdf.slang`) and `sample_bounce` (`path_estimator.slang`) take

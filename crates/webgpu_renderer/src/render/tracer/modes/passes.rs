@@ -58,6 +58,9 @@ pub enum Kernel {
     Path,
 }
 
+/// A traced frame's timed scope: the kernel's compute pass, then the resolve's render pass.
+const SCOPE_PASSES: usize = 2;
+
 /// Draws into the resolve's pass after it, against the depth it wrote: the ray-traced mode's sky.
 pub type AfterResolve<'a> = &'a dyn Fn(&mut wgpu::RenderPass<'_>);
 
@@ -253,6 +256,7 @@ impl TracedPasses {
     }
 
     /// Records the frame's dispatches into the accumulation; an output this device cannot hold one for is refused.
+    /// The kernel opens `scope` and [`Self::encode_resolve`] closes it, as the C++ `RayTrace` spans its sky fill.
     pub fn encode(
         &mut self,
         gpu: &GpuContext,
@@ -281,7 +285,7 @@ impl TracedPasses {
         let target = self.target.as_ref().expect("prepared before the kernels");
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("traced_kernel"),
-            timestamp_writes: scope.compute_writes(0, 1),
+            timestamp_writes: scope.compute_writes(0, SCOPE_PASSES),
         });
         pass.set_pipeline(self.kernels.compiled(frame.kernel));
         pass.set_bind_group(TRACE_SCENE_GROUP, frame.scene.bind_group(), &[]);
@@ -358,7 +362,8 @@ impl TracedPasses {
         }
     }
 
-    /// The accumulation [`Self::encode`] wrote into the HDR and depth targets, every pixel, then what draws against that depth.
+    /// The accumulation [`Self::encode`] wrote into the HDR and depth targets, every pixel, then what draws against that
+    /// depth; the end of the kernel's `scope`.
     pub fn encode_resolve(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -385,7 +390,7 @@ impl TracedPasses {
                 }),
                 stencil_ops: None,
             }),
-            timestamp_writes: scope.render_writes(0, 1),
+            timestamp_writes: scope.render_writes(1, SCOPE_PASSES),
             occlusion_query_set: None,
             multiview_mask: None,
         });

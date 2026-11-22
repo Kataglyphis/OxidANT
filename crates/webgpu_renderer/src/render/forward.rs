@@ -332,6 +332,11 @@ impl ForwardRenderer {
         self.gpu_timing.timings_ms()
     }
 
+    /// The frame's averaged GPU time over its top-level passes, `Main`'s nested scopes counted once; 0 untimed.
+    pub fn gpu_frame_ms(&self) -> f32 {
+        self.gpu_timing.frame_ms()
+    }
+
     /// Per-primitive occlusion visibility from the latest readback, index-aligned to primitives.
     /// Empty until the first async readback lands; a missing entry is unmeasured, not occluded.
     pub fn occlusion_visibility(&self) -> &[bool] {

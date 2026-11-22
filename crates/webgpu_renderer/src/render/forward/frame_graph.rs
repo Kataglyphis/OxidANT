@@ -66,28 +66,28 @@ impl FramePass {
         }
     }
 
-    /// The profiler's pass this row's timestamps feed; the resolve and the one-off noise are untimed.
+    /// The profiler's scopes this row opens: the shadow row's cascades and cube faces apart, the traced kernel's span
+    /// through the resolve, which opens none; the depth resolve and the one-off noise are untimed.
     #[cfg(test)]
-    fn timed(self) -> Option<TimedPass> {
-        Some(match self {
-            FramePass::DrawCull => TimedPass::DrawCull,
-            FramePass::ShadowCascades => TimedPass::ShadowCascades,
-            FramePass::Forward => TimedPass::Forward,
-            FramePass::GBuffer => TimedPass::GBuffer,
-            FramePass::DeferredLighting => TimedPass::DeferredLighting,
-            FramePass::OcclusionCull => TimedPass::OcclusionCull,
-            FramePass::RayTrace => TimedPass::RayTrace,
-            FramePass::PathTrace => TimedPass::PathTrace,
-            FramePass::TraceResolve => TimedPass::TraceResolve,
-            FramePass::Histogram => TimedPass::Histogram,
-            FramePass::ExposureReduce => TimedPass::ExposureReduce,
-            FramePass::Clouds => TimedPass::Clouds,
-            FramePass::Bloom => TimedPass::Bloom,
-            FramePass::Ssao => TimedPass::Ssao,
-            FramePass::Tonemap => TimedPass::Tonemap,
-            FramePass::Fxaa => TimedPass::Fxaa,
-            FramePass::DepthResolve | FramePass::CloudNoise => return None,
-        })
+    fn timed(self) -> &'static [TimedPass] {
+        match self {
+            FramePass::DrawCull => &[TimedPass::DrawCull],
+            FramePass::ShadowCascades => &[TimedPass::ShadowCascades, TimedPass::PunctualShadows],
+            FramePass::Forward => &[TimedPass::Forward],
+            FramePass::GBuffer => &[TimedPass::GBuffer],
+            FramePass::DeferredLighting => &[TimedPass::DeferredLighting],
+            FramePass::OcclusionCull => &[TimedPass::OcclusionCull],
+            FramePass::RayTrace => &[TimedPass::RayTrace],
+            FramePass::PathTrace => &[TimedPass::PathTrace],
+            FramePass::Histogram => &[TimedPass::Histogram],
+            FramePass::ExposureReduce => &[TimedPass::ExposureReduce],
+            FramePass::Clouds => &[TimedPass::Clouds],
+            FramePass::Bloom => &[TimedPass::Bloom],
+            FramePass::Ssao => &[TimedPass::Ssao],
+            FramePass::Tonemap => &[TimedPass::Tonemap],
+            FramePass::Fxaa => &[TimedPass::Fxaa],
+            FramePass::TraceResolve | FramePass::DepthResolve | FramePass::CloudNoise => &[],
+        }
     }
 }
 

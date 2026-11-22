@@ -187,12 +187,7 @@ impl StudioApp {
         if !settings.auto || !raster || self.is_loading() {
             return;
         }
-        let gpu_ms: f32 = self
-            .renderer
-            .gpu_timings_ms()
-            .iter()
-            .map(|(_, ms)| ms)
-            .sum();
+        let gpu_ms = self.renderer.gpu_frame_ms();
         let cost = if gpu_ms > 0.0 {
             FrameCost::Gpu(gpu_ms)
         } else if let Some(ms) = self.frames.median_ms(AUTO_SCALE_WINDOW) {

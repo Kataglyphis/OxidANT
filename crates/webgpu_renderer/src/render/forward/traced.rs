@@ -58,7 +58,7 @@ pub(super) fn records(pass: TimedPass, mode: RenderMode, path: RasterPath, fxaa:
         (_, TimedPass::PathTrace) => mode == RenderMode::PathTraced,
         (_, pass) => matches!(
             pass,
-            TimedPass::TraceResolve
+            TimedPass::Main
                 | TimedPass::Histogram
                 | TimedPass::ExposureReduce
                 | TimedPass::Bloom
@@ -307,7 +307,7 @@ impl ForwardRenderer {
         true
     }
 
-    /// The accumulation this frame's kernel wrote into the HDR target and the primary hit's depth.
+    /// The accumulation this frame's kernel wrote into the HDR target and the primary hit's depth, closing its scope.
     pub(super) fn encode_trace_resolve(
         &mut self,
         gpu: &GpuContext,
@@ -333,11 +333,11 @@ impl ForwardRenderer {
             depth_view: self.targets.view(Resource::Depth),
             after_resolve: draw_sky.as_ref().map(|draw| draw as AfterResolve<'_>),
         };
-        passes.encode_resolve(
-            encoder,
-            &resolve,
-            self.gpu_timing.scope(TimedPass::TraceResolve),
-        );
+        let timed = match kernel {
+            Kernel::Ray => TimedPass::RayTrace,
+            Kernel::Path => TimedPass::PathTrace,
+        };
+        passes.encode_resolve(encoder, &resolve, self.gpu_timing.scope(timed));
     }
 
     /// Logs once per output size that a traced pick rasters because its accumulation does not fit.

@@ -11,7 +11,7 @@ use super::{ForwardRenderer, CASCADE_COUNT, DEPTH_FORMAT, SHADOW_MAP_SIZE};
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::cascades::{fit_cascades, CascadeLens};
-use crate::render::gpu_timing::{PassScope, TimedPass};
+use crate::render::gpu_timing::TimedPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{InstanceRaw, Vertex, VertexLayout as _};
 
@@ -256,8 +256,8 @@ const _: () = assert!(
 );
 
 impl ForwardRenderer {
-    /// One depth pass per active cascade, each replaying that cascade's caster bundle, then one per punctual cube face.
-    /// Both are timed as the cascades: a pass of their own would overflow the profiler's 16-pass stamp mask.
+    /// One depth pass per active cascade, each replaying that cascade's caster bundle, then one per punctual cube face,
+    /// timed apart as the C++ engine's `ShadowCascades` and `PunctualShadows`.
     pub(super) fn encode_shadow_cascades(
         &mut self,
         gpu: &GpuContext,
@@ -267,27 +267,18 @@ impl ForwardRenderer {
             .shadows
             .active_cascades()
             .min(self.shadow.layer_views.len());
-        let faces = self.punctual_shadow_faces();
-        if count + faces == 0 {
-            return;
-        }
         if count > 0 {
             self.ensure_shadow_caster_bundles(&gpu.device, count);
+            self.encode_cascade_passes(encoder, count);
         }
-        let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
-        if count > 0 {
-            self.encode_cascade_passes(encoder, count, (shadow_scope, count + faces));
+        if self.punctual_shadow_faces() > 0 {
+            self.encode_punctual_shadow_faces(encoder);
         }
-        self.encode_punctual_shadow_faces(encoder, (shadow_scope, count, count + faces));
     }
 
-    /// The cascades' passes, sub-passes 0 to `count` of the shadow scope's `total`.
-    fn encode_cascade_passes(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        count: usize,
-        (shadow_scope, total): (PassScope<'_>, usize),
-    ) {
+    /// The cascades' passes, sub-passes 0 to `count` of their scope.
+    fn encode_cascade_passes(&self, encoder: &mut wgpu::CommandEncoder, count: usize) {
+        let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
         let shadow = &self.shadow;
         let caster_bundles = shadow
             .caster_bundles
@@ -305,7 +296,7 @@ impl ForwardRenderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: shadow_scope.render_writes(cascade, total),
+                timestamp_writes: shadow_scope.render_writes(cascade, count),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

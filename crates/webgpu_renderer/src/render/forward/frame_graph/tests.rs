@@ -123,17 +123,28 @@ fn the_maximal_frames_record_their_passes_in_the_hand_written_order() {
     );
 }
 
+/// Whether one of `passes` opens `timed`'s scope, or for `Main` one of the scopes it spans.
+fn times(passes: &[FramePass], timed: TimedPass) -> bool {
+    passes.iter().any(|pass| {
+        pass.timed()
+            .iter()
+            .any(|&t| t == timed || t.nested_in() == Some(timed))
+    })
+}
+
 #[test]
 fn every_timed_pass_has_a_row_and_a_traced_one_only_in_traced_frames() {
     let frames = every_maximal_frame().map(|config| plan(&config).expect("compiles").passes);
     for timed in TimedPass::ALL {
-        let in_frame = |passes: &Vec<FramePass>| passes.iter().any(|p| p.timed() == Some(timed));
         assert!(
-            frames.iter().any(in_frame),
+            frames.iter().any(|passes| times(passes, timed)),
             "TimedPass::{timed:?} has no row"
         );
-        let traced_only = !in_frame(&frames[0]) && !in_frame(&frames[1]);
+        let traced_only = !times(&frames[0], timed) && !times(&frames[1], timed);
         assert_eq!(timed.is_traced(), traced_only, "{timed:?}");
+    }
+    for passes in &frames {
+        assert!(times(passes, TimedPass::Main), "{passes:?} draws no scene");
     }
 }
 
@@ -146,12 +157,17 @@ fn each_frame_times_the_passes_its_timings_report_and_no_others() {
         (RenderMode::PathTraced, RasterPath::Forward),
     ];
     for (config, (mode, path)) in every_maximal_frame().iter().zip(mode_of) {
-        let timed: Vec<TimedPass> = plan(config)
-            .expect("compiles")
-            .passes
+        let passes = plan(config).expect("compiles").passes;
+        let mut timed: Vec<TimedPass> = passes
             .iter()
-            .filter_map(|pass| pass.timed())
+            .flat_map(|pass| pass.timed().iter().copied())
             .collect();
+        // Main has no row: it reports where its nested scopes do, ahead of them.
+        let first_nested = timed
+            .iter()
+            .position(|pass| pass.nested_in() == Some(TimedPass::Main))
+            .expect("every frame draws its scene in a scope Main spans");
+        timed.insert(first_nested, TimedPass::Main);
         let path = if mode.is_traced() {
             RasterPath::Forward
         } else {
