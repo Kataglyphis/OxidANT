@@ -133,6 +133,8 @@ pub(super) struct GpuPrimitive {
     pub(super) aabb_max: Vec3,
     pub(super) node_index: Option<usize>,
     pub(super) skin_index: Option<usize>,
+    /// A vertex has no skin weight, so the model's box joins a skin's bounds.
+    pub(super) unweighted: bool,
     pub(super) joint_buffer: wgpu::Buffer,
     pub(super) local_aabb_min: Vec3,
     pub(super) local_aabb_max: Vec3,

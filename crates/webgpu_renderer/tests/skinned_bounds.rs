@@ -496,3 +496,81 @@ fn a_flattened_instance_never_shades_nan() {
         "the diamond must shade red, found {red} red pixels"
     );
 }
+
+/// glTF ignores a skinned mesh's node transform, so animating that node moves no vertex, unweighted ones included.
+#[test]
+fn an_animated_skinned_node_moves_neither_its_unweighted_vertices_nor_its_bounds() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut scene = skinned_cube_scene(Vec3::ZERO);
+    for v in &mut scene.primitives[0].vertices {
+        v.weights = [0.0; 4];
+    }
+    scene.animations =
+        vec![kataglyphis_webgpu_renderer::scene::CpuAnimation {
+            name: "slide".to_owned(),
+            duration: 1.0,
+            channels: vec![kataglyphis_webgpu_renderer::scene::CpuAnimationChannel {
+                node: 0,
+                times: vec![0.0, 1.0],
+                values: kataglyphis_webgpu_renderer::scene::ChannelValues::Translation(vec![
+                Vec3::new(40.0, 0.0, 0.0);
+                2
+            ]),
+                interpolation: kataglyphis_webgpu_renderer::scene::Interpolation::Linear,
+            }],
+        }];
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.set_animation_time(0.5);
+    let (_, max) = renderer.primitive_world_aabb(0).expect("primitive 0");
+    assert!(
+        max.x < 1.0,
+        "the box must stay at the cube, got max.x={}",
+        max.x
+    );
+    let at_origin = red_pixels_around(&mut renderer, &gpu, Vec3::ZERO);
+    assert!(
+        at_origin > 200,
+        "the cube must stay at the origin, found {at_origin} red pixels"
+    );
+    let at_node = red_pixels_around(&mut renderer, &gpu, Vec3::new(40.0, 0.0, 0.0));
+    assert_eq!(at_node, 0, "nothing may follow the skinned node to x = 40");
+}
+
+/// Only an unweighted vertex draws by the model matrix; a gltfpack skin's integer positions would span 16k units.
+#[test]
+fn a_fully_weighted_skin_is_bounded_by_its_joints_alone() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let mut scene = skinned_cube_scene(Vec3::new(0.0, 10.0, 0.0));
+    scene.animations = vec![kataglyphis_webgpu_renderer::scene::CpuAnimation {
+        name: "hold".to_owned(),
+        duration: 1.0,
+        channels: vec![kataglyphis_webgpu_renderer::scene::CpuAnimationChannel {
+            node: 1,
+            times: vec![0.0],
+            values: kataglyphis_webgpu_renderer::scene::ChannelValues::Translation(vec![
+                Vec3::new(0.0, 10.0, 0.0),
+            ]),
+            interpolation: kataglyphis_webgpu_renderer::scene::Interpolation::Linear,
+        }],
+    }];
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(&gpu, &scene);
+    let (min, _) = renderer.primitive_world_aabb(0).expect("primitive 0");
+    assert!(
+        min.y > 9.0,
+        "the upload kept the cube's own box, min.y={}",
+        min.y
+    );
+    renderer.set_animation_time(0.5);
+    let (min, _) = renderer.primitive_world_aabb(0).expect("primitive 0");
+    assert!(
+        min.y > 9.0,
+        "the animation kept the cube's own box, min.y={}",
+        min.y
+    );
+}

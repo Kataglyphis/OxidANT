@@ -133,7 +133,7 @@ fn build_scene(
 }
 
 /// The full node table, index-aligned with glTF node indices, with each node's local TRS and parent.
-fn read_nodes(document: &gltf::Document) -> Vec<CpuNode> {
+pub(crate) fn read_nodes(document: &gltf::Document) -> Vec<CpuNode> {
     let mut nodes: Vec<CpuNode> = document
         .nodes()
         .map(|n| {
@@ -265,7 +265,10 @@ fn interpolation_of(interpolation: gltf::animation::Interpolation) -> Interpolat
 }
 
 /// Skins: joint node indices + inverse bind matrices.
-fn read_skins(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Vec<CpuSkin> {
+pub(crate) fn read_skins(
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+) -> Vec<CpuSkin> {
     document
         .skins()
         .map(|skin| {
@@ -610,8 +613,16 @@ fn visit_node(
     }
 
     if let Some(mesh) = node.mesh() {
+        // glTF ignores a skinned mesh's node transform: its joints place it.
+        let transform = if node.skin().is_some() {
+            Mat4::IDENTITY
+        } else {
+            world
+        };
         for primitive in mesh.primitives().filter(draws_triangles) {
-            if let Some(mut cpu) = load_primitive(&primitive, world, buffers, textures, options)? {
+            if let Some(mut cpu) =
+                load_primitive(&primitive, transform, buffers, textures, options)?
+            {
                 cpu.node_index = Some(node.index());
                 cpu.skin_index = node.skin().map(|s| s.index());
                 let joint_count = node.skin().map(|skin| skin.joints().count());
@@ -654,7 +665,11 @@ pub(crate) fn draws_triangles(primitive: &gltf::Primitive) -> bool {
 
 /// Drops skin influences the shader cannot resolve: every one without a skin, and joints past its end.
 /// A weighted vertex skips the node transform, so a skinless node's copy drew at the mesh origin.
-fn bind_influences(vertices: &mut [Vertex], joint_count: Option<usize>, primitive: usize) {
+pub(crate) fn bind_influences(
+    vertices: &mut [Vertex],
+    joint_count: Option<usize>,
+    primitive: usize,
+) {
     let mut dropped = 0usize;
     for vertex in vertices.iter_mut() {
         for k in 0..4 {

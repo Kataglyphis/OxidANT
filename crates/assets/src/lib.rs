@@ -28,6 +28,7 @@ pub mod gltf_loader;
 pub mod ktx2_loader;
 mod ktx2_zstd;
 pub mod scene;
+pub mod skin;
 
 pub use gltf_loader::{
     load_gltf, load_gltf_slice, load_gltf_slice_with, load_gltf_with, LoadOptions,

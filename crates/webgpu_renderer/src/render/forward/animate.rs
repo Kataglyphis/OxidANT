@@ -206,7 +206,7 @@ impl ForwardRenderer {
         self.lights.punctual_count = count;
     }
 
-    /// Moves every node-driven primitive to its node's `world` matrix and re-derives its bounds.
+    /// Moves every node-driven primitive but a skinned one to its node's `world` matrix and re-derives its bounds.
     pub(super) fn retarget_primitives(&mut self, world: &[Mat4]) {
         let mut winding_flipped = false;
         for prim in &mut self.primitives {
@@ -220,17 +220,22 @@ impl ForwardRenderer {
             }
             if let Some(node) = prim.node_index {
                 if let Some(m) = world.get(node) {
-                    prim.model = *m;
-                    prim.normal_matrix = normal_matrix_of(*m);
-                    winding_flipped |= prim.mirrored != is_mirrored(m);
-                    prim.mirrored = is_mirrored(m);
-                    prim.uniforms_dirty = true;
-                    let mut bounds = transform_aabb(*m, prim.local_aabb_min, prim.local_aabb_max);
-                    if let Some(skin) = prim.skin_index.and_then(|s| self.animation.skins.get(s)) {
+                    let skin = prim.skin_index.and_then(|s| self.animation.skins.get(s));
+                    // glTF ignores a skinned mesh's node transform: only its joints move it.
+                    if skin.is_none() {
+                        prim.model = *m;
+                        prim.normal_matrix = normal_matrix_of(*m);
+                        winding_flipped |= prim.mirrored != is_mirrored(m);
+                        prim.mirrored = is_mirrored(m);
+                        prim.uniforms_dirty = true;
+                    }
+                    let mut bounds =
+                        transform_aabb(prim.model, prim.local_aabb_min, prim.local_aabb_max);
+                    if let Some(skin) = skin {
                         bounds = widen_bounds_for_skin(
                             bounds,
-                            prim.local_aabb_min,
-                            prim.local_aabb_max,
+                            prim.unweighted,
+                            (prim.local_aabb_min, prim.local_aabb_max),
                             skin,
                             world,
                         );

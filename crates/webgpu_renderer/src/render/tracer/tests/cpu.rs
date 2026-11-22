@@ -351,6 +351,34 @@ fn a_bent_skin_is_refitted_and_traces_like_brute_force() {
     assert!(hits > 200, "only {hits} of 1000 rays hit");
 }
 
+/// glTF ignores a skinned mesh's node transform: moving that node re-poses no unweighted vertex.
+#[test]
+fn a_moved_skinned_node_leaves_its_unweighted_vertices_in_place() {
+    let mut source = scenes::asset("skinned_bar.gltf");
+    for v in &mut source.primitives[0].vertices {
+        v.weights = [0.0; 4];
+    }
+    let stored: Vec<Vec3A> = source.primitives[0]
+        .vertices
+        .iter()
+        .map(|v| Vec3A::from_array(v.position))
+        .collect();
+    let own = Aabb::from_points(&stored);
+    let mut scene = build(source.clone());
+    let mesh = scene.deformed[0].mesh as usize;
+    let mut nodes = source.nodes.clone();
+    nodes[0].translation = Vec3::new(40.0, 0.0, 0.0);
+    nodes[2].rotation = Quat::from_rotation_z(1.0);
+    let world = CpuScene::compute_world_transforms(&nodes);
+    scene.pose_deformed(&world, &[]);
+    let moved = scene.meshes[mesh].bounds;
+    assert!(
+        (moved.max - own.max).abs().max_element() < 1e-4
+            && (moved.min - own.min).abs().max_element() < 1e-4,
+        "the bar left its own space for its node's: {own:?} -> {moved:?}"
+    );
+}
+
 /// A skin no animation moves keeps merging into the world-space mesh at its first pose.
 #[test]
 fn a_still_skin_merges_at_its_first_pose() {

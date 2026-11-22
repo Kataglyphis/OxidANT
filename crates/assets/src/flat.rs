@@ -9,7 +9,8 @@ use glam::{Mat3, Mat4, Vec3};
 
 use crate::gltf_images::{self, TextureSource};
 use crate::gltf_loader::{self, Geometry, Imported, LoadOptions};
-use crate::scene::{self, AlphaMode, CpuLight, CpuLightKind, CpuMaterial, CpuSampler};
+use crate::scene::{self, AlphaMode, CpuLight, CpuLightKind, CpuMaterial, CpuSampler, CpuScene};
+use crate::skin;
 
 /// One vertex in the C++ `Vertex`'s field order, in world space.
 #[repr(C)]
@@ -119,9 +120,14 @@ pub fn load_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::Resul
         textures,
         ..FlatModel::default()
     };
+    let source = Source {
+        imported: &imported,
+        options,
+        joints: rest_joint_matrices(&imported),
+    };
     let mut lights = Vec::new();
     gltf_loader::walk_nodes(&imported.document, |node, world| {
-        visit_node(&mut model, &mut lights, &imported, options, node, world)
+        visit_node(&mut model, &mut lights, &source, node, world)
     })?;
     anyhow::ensure!(
         !model.vertices.is_empty(),
@@ -130,6 +136,22 @@ pub fn load_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::Resul
     model.sun = scene::take_sun(&mut lights).map(|sun| flat_light(&sun));
     model.lights = lights.iter().map(flat_light).collect();
     Ok(model)
+}
+
+/// What every node reads: the file, the load options and each skin's joint matrices at rest.
+struct Source<'a> {
+    imported: &'a Imported,
+    options: &'a LoadOptions,
+    joints: Vec<Vec<Mat4>>,
+}
+
+/// Each skin's joint matrices at the file's pose: the engine draws no animation, so its skins keep that pose.
+fn rest_joint_matrices(imported: &Imported) -> Vec<Vec<Mat4>> {
+    let world = CpuScene::compute_world_transforms(&gltf_loader::read_nodes(&imported.document));
+    gltf_loader::read_skins(&imported.document, &imported.buffers)
+        .iter()
+        .map(|skin| skin::joint_matrices(skin, &world))
+        .collect()
 }
 
 /// Every material in document order, then the neutral fallback; textures get their slots on the way.
@@ -247,29 +269,35 @@ fn flat_material(material: &CpuMaterial, ids: [i32; 4]) -> FlatMaterial {
     }
 }
 
-/// One node: its light into `lights`, then each drawable primitive in its default morph pose, baked by its world transform.
+/// One node: its light into `lights`, then each drawable primitive in its default morph pose, baked by its world
+/// transform, or by its skin at rest.
 fn visit_node(
     model: &mut FlatModel,
     lights: &mut Vec<CpuLight>,
-    imported: &Imported,
-    options: &LoadOptions,
+    source: &Source,
     node: &gltf::Node,
     world: Mat4,
 ) -> anyhow::Result<()> {
-    // glTF ignores a skinned mesh's node transform; without joint animation it stays in bind pose.
-    let world = if node.skin().is_some() {
-        Mat4::IDENTITY
-    } else {
-        world
-    };
     lights.extend(gltf_loader::read_light(node, world));
     let Some(mesh) = node.mesh() else {
         return Ok(());
     };
+    // glTF ignores a skinned mesh's node transform: its joints place it.
+    let joints = node.skin().map(|skin| {
+        source
+            .joints
+            .get(skin.index())
+            .map_or(&[][..], Vec::as_slice)
+    });
+    let world = if joints.is_some() {
+        Mat4::IDENTITY
+    } else {
+        world
+    };
     let fallback = (model.materials.len() - 1) as u32;
     for primitive in mesh.primitives().filter(gltf_loader::draws_triangles) {
         let Some(mut geometry) =
-            gltf_loader::primitive_geometry(&primitive, &imported.buffers, options)?
+            gltf_loader::primitive_geometry(&primitive, &source.imported.buffers, source.options)?
         else {
             continue;
         };
@@ -279,6 +307,14 @@ fn visit_node(
         {
             geometry.vertices =
                 scene::blend_morph_targets(&geometry.vertices, &geometry.morph_targets, weights);
+        }
+        // Nor skins: it gets the pose the Rust renderer uploads, the joints at the file's transforms.
+        if let Some(joints) = joints {
+            let vertices = &mut geometry.vertices;
+            gltf_loader::bind_influences(vertices, Some(joints.len()), primitive.index());
+            for vertex in vertices.iter_mut() {
+                *vertex = skin::skin_vertex(vertex, joints, Mat4::IDENTITY);
+            }
         }
         let material = primitive.material().index().map_or(fallback, |i| i as u32);
         append_primitive(model, &geometry, world, material);

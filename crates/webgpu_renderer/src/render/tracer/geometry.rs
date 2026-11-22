@@ -3,13 +3,13 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
+use kataglyphis_assets::skin::{joint_matrices, skin_vertex, Pose};
 
 use super::deform::{push_deformed, DeformedSource};
 use super::material::MaterialTable;
-use crate::render::bounds::normal_matrix_of;
 use crate::scene::{
-    blend_morph_targets, ChannelValues, CpuPrimitive, CpuScene, CpuSkin, MorphTarget, Vertex,
+    blend_morph_targets, ChannelValues, CpuPrimitive, CpuScene, MorphTarget, Vertex,
 };
 
 /// Triangle records keep their material in the low bits and whether it alpha-tests in the top bit.
@@ -280,7 +280,7 @@ pub(super) struct Deformation<'a> {
     pub targets: &'a [MorphTarget],
     pub weights: &'a [f32],
     pub joints: Option<&'a [Mat4]>,
-    /// The transform an unweighted vertex of a skinned primitive follows.
+    /// The primitive's own transform, which an unweighted vertex of a skinned primitive follows; identity as loaded.
     pub node: Mat4,
 }
 
@@ -302,84 +302,6 @@ impl Deformation<'_> {
     }
 }
 
-/// Each joint's world matrix times its inverse bind matrix, as the raster's joint buffer holds them.
-pub(super) fn joint_matrices(skin: &CpuSkin, world: &[Mat4]) -> Vec<Mat4> {
-    skin.joints
-        .iter()
-        .enumerate()
-        .map(|(j, &node)| {
-            let bind = skin
-                .inverse_bind_matrices
-                .get(j)
-                .copied()
-                .unwrap_or(Mat4::IDENTITY);
-            world.get(node).copied().unwrap_or(Mat4::IDENTITY) * bind
-        })
-        .collect()
-}
-
-/// One vertex through its weighted joints, or through the node's transform when unweighted, as `forward.slang` does.
-fn skin_vertex(v: &Vertex, joints: &[Mat4], node: Mat4) -> Vertex {
-    let total: f32 = v.weights.iter().sum();
-    let matrix = if total > 1e-4 {
-        let mut m = Mat4::ZERO;
-        for k in 0..4 {
-            let joint = joints
-                .get(v.joints[k] as usize)
-                .copied()
-                .unwrap_or(Mat4::IDENTITY);
-            m += joint * v.weights[k];
-        }
-        m * (1.0 / total)
-    } else {
-        node
-    };
-    let (normal, tangent, handedness) = Pose::new(matrix).frame(v);
-    Vertex {
-        position: matrix
-            .transform_point3(Vec3::from_array(v.position))
-            .to_array(),
-        normal: normal.to_array(),
-        tangent: [tangent.x, tangent.y, tangent.z, handedness],
-        ..*v
-    }
-}
-
-/// A transform with its normal matrix and mirror sign, worked out once for all of a primitive's vertices.
-pub(super) struct Pose {
-    model: Mat4,
-    normal: Mat4,
-    mirror: f32,
-}
-
-impl Pose {
-    fn new(model: Mat4) -> Self {
-        let mirror = if Mat3::from_mat4(model).determinant() < 0.0 {
-            -1.0
-        } else {
-            1.0
-        };
-        Self {
-            model,
-            normal: normal_matrix_of(model),
-            mirror,
-        }
-    }
-
-    /// The normal, tangent and bitangent sign of `v`; a mirroring pose flips the sign, as the raster does.
-    fn frame(&self, v: &Vertex) -> (Vec3, Vec3, f32) {
-        let normal = self.normal.transform_vector3(Vec3::from_array(v.normal));
-        let tangent =
-            self.model
-                .transform_vector3(Vec3::new(v.tangent[0], v.tangent[1], v.tangent[2]));
-        (
-            normal.normalize_or_zero(),
-            tangent.normalize_or_zero(),
-            v.tangent[3] * self.mirror,
-        )
-    }
-}
-
 /// Appends vertices (moved to world space by `transform` when given) and the non-degenerate triangles over them.
 pub(super) fn append_primitive(
     build: &mut MeshBuild,
@@ -397,7 +319,7 @@ pub(super) fn append_primitive(
         0
     };
     // A mirrored primitive winds clockwise in world space; swapping two corners keeps its front where glTF puts it.
-    let mirrored = pose.is_some_and(|p| p.mirror < 0.0);
+    let mirrored = pose.is_some_and(|p| p.mirrors());
     for tri in indices.as_chunks::<3>().0 {
         let [a, b, c] = tri.map(|i| base + i);
         let corner = |i: u32| Vec4::from_array(build.positions[i as usize]).truncate();
@@ -416,7 +338,7 @@ pub(super) fn append_vertices(build: &mut MeshBuild, vertices: &[Vertex], pose: 
     for v in vertices {
         let (position, (normal, tangent, handedness)) = match pose {
             Some(pose) => (
-                pose.model.transform_point3(Vec3::from_array(v.position)),
+                pose.model().transform_point3(Vec3::from_array(v.position)),
                 pose.frame(v),
             ),
             None => (

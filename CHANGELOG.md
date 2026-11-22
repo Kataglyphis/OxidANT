@@ -13,6 +13,30 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-22, a skin's rest pose, baked for the C++ engine)
+
+- **`load_flat` bakes each skinned mesh at its joints' rest pose** (BeschleunigerBallett BACKLOG "Bake the skin's
+  rest pose in `flat.rs`", plan B2): a weighted vertex goes through joint world times inverse bind at the file's node
+  transforms, the pose the Rust renderer uploads, so a skin whose rest pose is not its bind pose, and a gltfpack skin,
+  whose inverse binds carry the dequantization, arrive where that renderer draws them; an unweighted vertex keeps the
+  mesh's space. The skinned node's own transform stays ignored (owner rule 2026-11-19;
+  `a_skinned_node_keeps_its_bind_pose_and_a_plain_one_moves` unchanged); its light, which glTF does not exempt,
+  follows that transform now. `joint_matrices`, `skin_vertex`, `Pose` and `normal_matrix_of` moved from the tracer and
+  `render::bounds` into `kataglyphis_assets::skin`. `load_flat` reads inverse binds now, so `accessor_check` refuses
+  one that is not a float MAT4 inside its view.
+- **The Rust renderer stops applying a skinned node's transform to unweighted vertices.** The loader gives a skinned
+  `CpuPrimitive` the identity transform, the raster's animation no longer moves a skinned primitive's model to its
+  node, and the tracer poses a deformed skin's unweighted vertices by the primitive's own transform, not the animated
+  node's. A fully weighted skin is bounded by its joints' boxes alone; the model's box, which a gltfpack skin's integer
+  positions make 16,383 units wide, joins them only for a primitive with an unweighted vertex.
+- Tests: `tests/flat.rs` bakes a skinned triangle through a turned, lifted joint over a doubling inverse bind and
+  through a mirroring one, keeps its unweighted vertex and its node's light, gives the scene's skinned primitive no
+  node transform, loads `skinned_bar_quantized.gltf` (gltfpack's skin: u16 positions, the dequantization in the
+  inverse binds) within the quantization step of `skinned_bar.gltf`, and refuses four malformed inverse-bind
+  accessors; `skinned_bounds.rs` and the tracer's CPU tests move a skinned node over unweighted vertices and nothing
+  follows, and `skinned_bounds.rs` bounds a fully weighted cube by its joint, at upload and animated. The fixture joins
+  the fuzz seeds.
+
 ### Added (2026-11-22, KHR_mesh_quantization)
 
 - **gltfpack's output loads in both loaders** (BeschleunigerBallett BACKLOG "KHR_mesh_quantization", plan N4).

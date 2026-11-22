@@ -9,8 +9,8 @@ use super::streaming::MaterialTextures;
 use super::{ForwardRenderer, MAX_PUNCTUAL_LIGHTS};
 use crate::context::GpuContext;
 use crate::render::bounds::{
-    compute_world_bounds, normal_matrix_of, primitive_local_aabb, primitive_world_aabb,
-    widen_bounds_for_skin,
+    compute_world_bounds, has_unweighted_vertex, normal_matrix_of, primitive_local_aabb,
+    primitive_world_aabb, widen_bounds_for_skin,
 };
 use crate::render::buffer_desc;
 use crate::render::lights::pack_punctual_lights;
@@ -432,6 +432,7 @@ fn assemble_primitive(prim: &CpuPrimitive, parts: PrimitiveParts) -> GpuPrimitiv
         aabb_max: max,
         node_index: prim.node_index,
         skin_index: prim.skin_index,
+        unweighted: has_unweighted_vertex(&prim.vertices),
         joint_buffer: parts.joint_buffer,
         local_aabb_min: parts.local_bounds.0,
         local_aabb_max: parts.local_bounds.1,
@@ -463,8 +464,8 @@ fn posed_world_bounds(
     if let Some(skin) = prim.skin_index.and_then(|s| scene.skins.get(s)) {
         prim_bounds = widen_bounds_for_skin(
             prim_bounds,
-            local_bounds.0,
-            local_bounds.1,
+            has_unweighted_vertex(&prim.vertices),
+            local_bounds,
             skin,
             node_world,
         );

@@ -54,6 +54,7 @@ pub(crate) fn parse(bytes: &[u8]) -> anyhow::Result<Parsed> {
     reject_sourceless_images(&root)?;
     let document = gltf::Document::from_json(root)?;
     crate::accessor_check::check_primitive_accessors(&document)?;
+    crate::accessor_check::check_skin_accessors(&document)?;
     Ok(Parsed {
         document,
         blob,

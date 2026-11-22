@@ -5,7 +5,7 @@ use anyhow::{ensure, Context};
 use gltf::accessor::{DataType, Dimensions};
 use gltf::mesh::Semantic;
 use DataType::{F32, I16, I8, U16, U32, U8};
-use Dimensions::{Scalar, Vec2, Vec3, Vec4};
+use Dimensions::{Mat4, Scalar, Vec2, Vec3, Vec4};
 
 /// Every accessor a primitive reads has a format its semantic allows, at least one element, and fits its view.
 pub(crate) fn check_primitive_accessors(document: &gltf::Document) -> anyhow::Result<()> {
@@ -32,6 +32,17 @@ pub(crate) fn check_primitive_accessors(document: &gltf::Document) -> anyhow::Re
                     }
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// Every skin's inverse bind matrices are float MAT4s that fit their view: `load_flat` poses skins with them.
+pub(crate) fn check_skin_accessors(document: &gltf::Document) -> anyhow::Result<()> {
+    for skin in document.skins() {
+        if let Some(accessor) = skin.inverse_bind_matrices() {
+            check(&accessor, INVERSE_BINDS)
+                .with_context(|| format!("skins[{}].inverseBindMatrices", skin.index()))?;
         }
     }
     Ok(())
@@ -86,6 +97,7 @@ const JOINTS: Rule = any(&[(U8, Vec4), (U16, Vec4)]);
 const WEIGHTS: Rule = any(&[(F32, Vec4), (U8, Vec4), (U16, Vec4)]);
 const INDICES: Rule = any(&[(U8, Scalar), (U16, Scalar), (U32, Scalar)]);
 const MORPH_POSITIONS: Rule = any(&[(F32, Vec3), (I8, Vec3), (I16, Vec3)]);
+const INVERSE_BINDS: Rule = any(&[(F32, Mat4)]);
 /// Morph NORMAL and TANGENT deltas, both vec3.
 const MORPH_DIRECTIONS: Rule = unit(&[(F32, Vec3), (I8, Vec3), (I16, Vec3)]);
 

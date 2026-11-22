@@ -8,16 +8,8 @@ use crate::scene::{CpuScene, CpuSkin, MorphTarget, Vertex};
 // The frustum tests moved to kataglyphis_render_core, which shares its verdicts with the C++ engine.
 pub(crate) use kataglyphis_render_core::frustum::Frustum;
 
-/// Inverse-transpose of a model matrix, identity when singular.
-/// Zero-scale nodes (how exporters hide objects) are common; a NaN normal matrix shades garbage.
-pub(crate) fn normal_matrix_of(model: Mat4) -> Mat4 {
-    let inv = model.inverse();
-    if inv.is_finite() {
-        inv.transpose()
-    } else {
-        Mat4::IDENTITY
-    }
-}
+// The tracer's skinning moved to kataglyphis_assets with the normal matrix it reads.
+pub(crate) use kataglyphis_assets::skin::normal_matrix_of;
 
 /// Bounds covering every instance of `pre`; empty `instances` means one identity instance.
 /// See `../../docs/renderer-bounds-invariant.md` § How to be conservative correctly
@@ -35,16 +27,28 @@ pub(crate) fn instanced_bounds(pre: (Vec3, Vec3), instances: &[Mat4]) -> (Vec3, 
     (min, max)
 }
 
+/// Whether a vertex has no skin weight, so `forward.slang`'s `skin_matrix` draws it by the model matrix.
+pub(crate) fn has_unweighted_vertex(vertices: &[Vertex]) -> bool {
+    vertices
+        .iter()
+        .any(|v| v.weights.iter().sum::<f32>() <= 1e-4)
+}
+
 /// Widens world bounds to every pose the skin can reach by unioning the per-joint boxes.
-/// The node-derived box stays in the union because zero-weight vertices still use the model matrix.
+/// `bounds`, the model's box, stays in the union only while an `unweighted` vertex draws by the model matrix.
 pub(crate) fn widen_bounds_for_skin(
     bounds: (Vec3, Vec3),
-    local_min: Vec3,
-    local_max: Vec3,
+    unweighted: bool,
+    (local_min, local_max): (Vec3, Vec3),
     skin: &CpuSkin,
     world: &[Mat4],
 ) -> (Vec3, Vec3) {
-    let (mut min, mut max) = bounds;
+    // A gltfpack skin stores integers its inverse binds scale down: their model box spans thousands of units.
+    let (mut min, mut max) = if unweighted || skin.joints.is_empty() {
+        bounds
+    } else {
+        (Vec3::INFINITY, Vec3::NEG_INFINITY)
+    };
     for (i, &joint_node) in skin.joints.iter().enumerate() {
         let jw = world.get(joint_node).copied().unwrap_or(Mat4::IDENTITY);
         let ib = skin

@@ -315,6 +315,7 @@ pub struct CpuSkin {
 pub struct CpuPrimitive {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    /// The node's world transform; identity for a skinned primitive, whose node's transform glTF ignores.
     pub transform: Mat4,
     /// Index into `CpuScene::nodes` when in the scene graph, so animation can retarget it.
     pub node_index: Option<usize>,

@@ -83,7 +83,9 @@ exactly, over-cover it:
   weights, since glTF puts no range on them.
 - **Skinning:** skin weights are normalised, so a skinned position is a *convex
   combination* of `J_i · v` and therefore lies inside the **union of the
-  per-joint boxes**. Union them.
+  per-joint boxes**. Union them. A vertex without weights draws by the model
+  matrix (identity: glTF ignores a skinned mesh's node), so the model's box joins
+  the union only when the primitive has one (`GpuPrimitive::unweighted`).
 - **Instancing:** union `transform_aabb(instance_i, posed_box)` over instances.
 
 Each of those is a proof, not a fudge factor — which is why none of them needs a

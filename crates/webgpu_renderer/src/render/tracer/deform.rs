@@ -1,10 +1,10 @@
 //! Meshes an animation skins or morphs: a mesh each, re-posed on the CPU and refitted when the pose moves.
 
 use glam::Mat4;
+use kataglyphis_assets::skin::joint_matrices;
 
 use super::geometry::{
-    append_primitive, append_vertices, joint_matrices, Deformation, Gathered, InstanceSource,
-    MeshBuild,
+    append_primitive, append_vertices, Deformation, Gathered, InstanceSource, MeshBuild,
 };
 use super::material::MaterialTable;
 use crate::scene::{CpuScene, CpuSkin, MorphTarget, Vertex};
@@ -17,41 +17,35 @@ pub struct DeformedSource {
     vertices: Vec<Vertex>,
     targets: Vec<MorphTarget>,
     skin: Option<CpuSkin>,
-    node: Option<usize>,
+    /// The primitive's own transform, which no animation moves: glTF ignores a skinned mesh's node.
     transform: Mat4,
     /// The weights the build saw, for a caller that passes none.
     rest_weights: Vec<f32>,
-    /// The joint matrices, node matrix and weights the arrays hold now.
-    posed: (Vec<Mat4>, Mat4, Vec<f32>),
+    /// The joint matrices and weights the arrays hold now.
+    posed: (Vec<Mat4>, Vec<f32>),
 }
 
 impl DeformedSource {
-    /// The inputs of a pose at `world` with `weights`: joint matrices, the node's matrix and the weights.
-    fn inputs(&self, world: &[Mat4], weights: &[f32]) -> (Vec<Mat4>, Mat4, Vec<f32>) {
+    /// The inputs of a pose at `world` with `weights`: joint matrices and the weights.
+    fn inputs(&self, world: &[Mat4], weights: &[f32]) -> (Vec<Mat4>, Vec<f32>) {
         let joints = self
             .skin
             .as_ref()
             .map_or_else(Vec::new, |skin| joint_matrices(skin, world));
-        // Only a skinned vertex without weights follows its node; a morphed mesh's instance carries the node.
-        let node = match (&self.skin, self.node.and_then(|n| world.get(n))) {
-            (None, _) => Mat4::IDENTITY,
-            (Some(_), Some(matrix)) => *matrix,
-            (Some(_), None) => self.transform,
-        };
         let weights = if weights.is_empty() {
             &self.rest_weights
         } else {
             weights
         };
-        (joints, node, weights.to_vec())
+        (joints, weights.to_vec())
     }
 
-    fn deformed(&self, (joints, node, weights): &(Vec<Mat4>, Mat4, Vec<f32>)) -> Vec<Vertex> {
+    fn deformed(&self, (joints, weights): &(Vec<Mat4>, Vec<f32>)) -> Vec<Vertex> {
         let pose = Deformation {
             targets: &self.targets,
             weights,
             joints: self.skin.is_some().then_some(joints.as_slice()),
-            node: *node,
+            node: self.transform,
         };
         pose.apply(&self.vertices).0.into_owned()
     }
@@ -84,10 +78,9 @@ pub(super) fn push_deformed(
         vertices: prim.vertices.clone(),
         targets: prim.morph_targets.clone(),
         skin: prim.skin_index.and_then(|s| scene.skins.get(s)).cloned(),
-        node: prim.node_index,
         transform: prim.transform,
         rest_weights: prim.morph_weights.clone(),
-        posed: (Vec::new(), Mat4::IDENTITY, Vec::new()),
+        posed: (Vec::new(), Vec::new()),
     };
     source.posed = source.inputs(world, &prim.morph_weights);
     let mut build = MeshBuild::default();

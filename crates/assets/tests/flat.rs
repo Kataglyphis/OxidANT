@@ -257,6 +257,195 @@ fn a_skinned_node_keeps_its_bind_pose_and_a_plain_one_moves() {
     assert_eq!(moved.vertices[0].position, [5.0, 0.0, 0.0]);
 }
 
+/// A skinned triangle: vertices 0 and 1 on the skin's one joint, node 1, vertex 2 unweighted; `ibm` is column-major.
+fn skinned_triangle(dir: &Path, nodes: &str, ibm: [f32; 16]) -> PathBuf {
+    let mut bytes = f32_bytes(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    bytes.extend(f32_bytes(&[0.0f32, 0.0, 1.0].repeat(3)));
+    bytes.extend(f32_bytes(&[1.0f32, 0.0, 0.0, 1.0].repeat(3)));
+    bytes.extend([0u8; 12]);
+    bytes.extend(f32_bytes(&[
+        1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    ]));
+    bytes.extend(f32_bytes(&ibm));
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},"extensionsUsed":["KHR_lights_punctual"],
+        "extensions":{{"KHR_lights_punctual":{{"lights":[{{"type":"point"}}]}}}},
+        "scene":0,"scenes":[{{"nodes":[0,1]}}],"nodes":[{nodes}],"skins":[{{"joints":[1],"inverseBindMatrices":5}}],
+        "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"NORMAL":1,"TANGENT":2,"JOINTS_0":3,"WEIGHTS_0":4}}}}]}}],
+        "accessors":[{{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}},
+          {{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}},{{"bufferView":2,"componentType":5126,"count":3,"type":"VEC4"}},
+          {{"bufferView":3,"componentType":5121,"count":3,"type":"VEC4"}},{{"bufferView":4,"componentType":5126,"count":3,"type":"VEC4"}},
+          {{"bufferView":5,"componentType":5126,"count":1,"type":"MAT4"}}],
+        "bufferViews":[{{"buffer":0,"byteLength":36}},{{"buffer":0,"byteOffset":36,"byteLength":36}},
+          {{"buffer":0,"byteOffset":72,"byteLength":48}},{{"buffer":0,"byteOffset":120,"byteLength":12}},
+          {{"buffer":0,"byteOffset":132,"byteLength":48}},{{"buffer":0,"byteOffset":180,"byteLength":64}}],
+        "buffers":[{{"byteLength":{},"uri":"data:application/octet-stream;base64,{}"}}]}}"#,
+        bytes.len(),
+        base64(&bytes)
+    );
+    let path = dir.join("skinned_triangle.gltf");
+    std::fs::write(&path, json).unwrap();
+    path
+}
+
+const SCALE_2: [f32; 16] = [
+    2.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+];
+const IDENTITY: [f32; 16] = [
+    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+];
+
+fn assert_near(got: &[f32], want: &[f32], what: &str) {
+    let off = got
+        .iter()
+        .zip(want)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0, f32::max);
+    assert!(off < 1e-5, "{what}: {got:?}, expected {want:?}");
+}
+
+/// The engine draws no animation, so a skin arrives at its joints' rest pose; its node's transform is ignored.
+#[test]
+fn a_skinned_mesh_is_baked_at_its_joints_rest_pose() {
+    let dir = tempfile::tempdir().unwrap();
+    // Joint 1 turns 90 degrees about z and lifts by 3, over an inverse bind that doubles the mesh.
+    let nodes = r#"{"mesh":0,"skin":0,"translation":[5,0,0],"extensions":{"KHR_lights_punctual":{"light":0}}},
+        {"translation":[0,3,0],"rotation":[0,0,0.70710677,0.70710677]}"#;
+    let model = load_flat(
+        skinned_triangle(dir.path(), nodes, SCALE_2),
+        &LoadOptions::default(),
+    )
+    .unwrap();
+    let [v0, v1, v2] = [0, 1, 2].map(|i| model.vertices[i]);
+    assert_near(&v0.position, &[0.0, 3.0, 0.0], "vertex 0 follows the joint");
+    assert_near(
+        &v1.position,
+        &[0.0, 5.0, 0.0],
+        "vertex 1 is doubled, turned and lifted",
+    );
+    assert_near(
+        &v1.tangent,
+        &[0.0, 1.0, 0.0, 1.0],
+        "the tangent turns with the joint",
+    );
+    assert_near(
+        &v1.normal,
+        &[0.0, 0.0, 1.0],
+        "the normal about the turn's axis stays",
+    );
+    assert_near(
+        &v2.position,
+        &[0.0, 1.0, 0.0],
+        "an unweighted vertex ignores the node's translation",
+    );
+    assert_near(
+        &v2.tangent,
+        &[1.0, 0.0, 0.0, 1.0],
+        "an unweighted vertex keeps its frame",
+    );
+    let lights: Vec<[f32; 3]> = model.lights.iter().map(|l| l.position).collect();
+    assert_eq!(
+        lights,
+        [[5.0, 0.0, 0.0]],
+        "only the mesh ignores the skinned node's transform"
+    );
+
+    let mirrored = r#"{"mesh":0,"skin":0},{"scale":[-1,1,1]}"#;
+    let model = load_flat(
+        skinned_triangle(dir.path(), mirrored, IDENTITY),
+        &LoadOptions::default(),
+    )
+    .unwrap();
+    assert_near(
+        &model.vertices[1].position,
+        &[-1.0, 0.0, 0.0],
+        "the mirrored vertex",
+    );
+    assert_near(
+        &model.vertices[1].tangent,
+        &[-1.0, 0.0, 0.0, -1.0],
+        "a mirroring joint flips the handedness",
+    );
+}
+
+/// `load_flat` reads a skin's inverse binds now; gltf 1.4.1's reader panics on a malformed accessor instead of failing.
+#[test]
+fn inverse_bind_accessors_the_reader_would_panic_on_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let nodes = r#"{"mesh":0,"skin":0},{}"#;
+    let json = std::fs::read_to_string(skinned_triangle(dir.path(), nodes, IDENTITY)).unwrap();
+    let matrices = r#""componentType":5126,"count":1,"type":"MAT4""#;
+    assert!(json.contains(matrices), "the fixture changed");
+    for (name, broken) in [
+        ("VEC4", r#""componentType":5126,"count":1,"type":"VEC4""#),
+        ("bytes", r#""componentType":5121,"count":1,"type":"MAT4""#),
+        (
+            "no elements",
+            r#""componentType":5126,"count":0,"type":"MAT4""#,
+        ),
+        ("overrun", r#""componentType":5126,"count":2,"type":"MAT4""#),
+    ] {
+        let case = dir.path().join("case.gltf");
+        std::fs::write(&case, json.replacen(matrices, broken, 1)).unwrap();
+        assert!(
+            load_flat(&case, &LoadOptions::default()).is_err(),
+            "{name} loaded"
+        );
+    }
+}
+
+/// glTF ignores a skinned mesh's node transform; the scene keeps the skin's joints to pose it.
+#[test]
+fn the_scene_gives_a_skinned_primitive_no_node_transform() {
+    let dir = tempfile::tempdir().unwrap();
+    let nodes = r#"{"mesh":0,"skin":0,"translation":[5,0,0]},{"translation":[0,3,0]}"#;
+    let scene =
+        kataglyphis_assets::load_gltf(skinned_triangle(dir.path(), nodes, IDENTITY)).unwrap();
+    assert_eq!(scene.primitives[0].transform, glam::Mat4::IDENTITY);
+    assert_eq!(scene.primitives[0].skin_index, Some(0));
+    let plain = r#"{"mesh":0,"translation":[5,0,0]},{"translation":[0,3,0]}"#;
+    let scene =
+        kataglyphis_assets::load_gltf(skinned_triangle(dir.path(), plain, IDENTITY)).unwrap();
+    assert_eq!(
+        scene.primitives[0].transform,
+        glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0))
+    );
+}
+
+/// gltfpack moves a skinned mesh's dequantization into its inverse binds; only the rest pose's joints undo it.
+#[test]
+fn a_gltfpack_quantized_skin_arrives_dequantized() {
+    let step = 0.5 / 4096.0;
+    let float = load_flat(fixture("skinned_bar.gltf"), &LoadOptions::default()).unwrap();
+    let quantized = load_flat(
+        fixture("skinned_bar_quantized.gltf"),
+        &LoadOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(quantized.indices, float.indices);
+    for (q, f) in quantized.vertices.iter().zip(&float.vertices) {
+        let off = |a: &[f32], b: &[f32]| {
+            a.iter()
+                .zip(b)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f32::max)
+        };
+        assert!(off(&q.position, &f.position) <= step, "{q:?} against {f:?}");
+        assert!(
+            off(&q.normal, &f.normal) <= 1.0 / 127.0,
+            "{q:?} against {f:?}"
+        );
+    }
+    let scene = kataglyphis_assets::load_gltf(fixture("skinned_bar_quantized.gltf")).unwrap();
+    assert!(
+        scene.primitives[0]
+            .vertices
+            .iter()
+            .any(|v| v.position[1] > 16000.0),
+        "the scene keeps the stored integers for its joints to pose"
+    );
+}
+
 #[test]
 fn a_primitive_without_a_material_draws_with_the_neutral_fallback() {
     let dir = tempfile::tempdir().unwrap();
@@ -516,7 +705,7 @@ fn a_truncated_base64_image_gets_no_slot() {
 }
 
 /// Self-contained seeds: every buffer and image is embedded, so a mutant read from a temp dir resolves nothing outside it.
-const FUZZ_SEEDS: [&str; 9] = [
+const FUZZ_SEEDS: [&str; 10] = [
     "cube.glb",
     "cube.gltf",
     "cube_quantized.gltf",
@@ -526,6 +715,7 @@ const FUZZ_SEEDS: [&str; 9] = [
     "cube_on_plane.gltf",
     "point_light.gltf",
     "skinned_bar.gltf",
+    "skinned_bar_quantized.gltf",
 ];
 
 #[derive(Clone, Debug)]
