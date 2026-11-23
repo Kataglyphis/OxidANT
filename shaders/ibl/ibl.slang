@@ -19,16 +19,11 @@ struct IblParams
 [vk::binding(2, 0)] TextureCube<float4> srcCube;
 [vk::binding(3, 0)] SamplerState srcSampler;
 
+// fullscreen_vs's uv puts (0, 0) on the target's top-left texel on both targets, so faces and the LUT never mirror.
 [shader("vertex")]
 FullscreenVsOut vs_fullscreen(uint vid : SV_VertexID)
 {
-    // IBL uses a different fullscreen triangle winding than fullscreen_vs.
-    float x = float((vid << 1u) & 2u);
-    float y = float(vid & 2u);
-    FullscreenVsOut o;
-    o.svPosition = float4(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
-    o.uv = float2(x, y);
-    return o;
+    return fullscreen_vs(vid);
 }
 
 float3 cube_direction(uint face, float2 uv)

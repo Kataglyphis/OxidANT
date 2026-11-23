@@ -1,4 +1,4 @@
-//! Pins histogram.wgsl's `histogram_bin` to the unit-tested CPU copy in `render::auto_exposure`.
+//! Pins histogram.slang's `histogram_bin` to the unit-tested CPU copy in `render::auto_exposure`.
 //! Uses known texture contents, not a rendered frame, so a mismatch points at the binning.
 
 use kataglyphis_webgpu_renderer::context::GpuContext;

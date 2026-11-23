@@ -29,7 +29,6 @@ pub struct ShaderSources<'a> {
     pub fxaa: &'a str,
     pub bloom: &'a str,
     pub ssao: &'a str,
-    /// Hand-written, unlike the others.
     pub histogram: &'a str,
     pub depth_resolve: &'a str,
 }

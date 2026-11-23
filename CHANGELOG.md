@@ -13,6 +13,23 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-23, target-neutral WebGPU passes and a Slang histogram)
+
+- **The IBL bake takes `fullscreen_vs`** (BeschleunigerBallett BACKLOG "Make OxidANT's WGSL-only passes
+  target-neutral, and probe workgroup atomics", plan I12): its own triangle mapped uv (0, 0) to clip y +1, the top row
+  in WebGPU and the bottom row in Vulkan, so a SPIR-V build would have mirrored every cube face and the BRDF LUT. The
+  WGSL interpolates the same uv as before. `ssao.slang` and `gpu_cull.slang` took `fullscreen_ndc_to_uv` with the
+  leaf modules. Only the forward pass's two shadow lookups still convert NDC by hand, which the shared shadow Slang
+  replaces.
+- **`histogram.wgsl` is generated** from the new `shaders/histogram/histogram.slang`: the bins and their per-workgroup
+  copy are `Atomic<uint>`, which slangc 2026.17 emits as `atomic<u32>` (`InterlockedAdd` does not compile for WGSL).
+  The kernels keep their names, bindings, workgroup sizes and arithmetic; `tests/histogram.rs`,
+  `tests/histogram_constants.rs` (now reading the Slang constants) and the auto-exposure tests pass on wgpu, and
+  `shader_export.rs` no longer exempts the file from the hand-edit check. Every WGSL file under `src/shaders/` is
+  Slang-emitted now. The current EV's NaN check, `x == x` in the hand-written WGSL, is `hdr_safe.slang`'s new
+  `is_finite` (the exponent bits, which a compiler assuming finite floats cannot fold away); the vector kernel checks
+  it on NaN, both infinities and the largest finite float, and the copy gate fails a self-comparison.
+
 ### Changed (2026-11-23, one camera ray for both renderers)
 
 - **`common/camera_ray.slang`** (BeschleunigerBallett BACKLOG "`camera_ray.slang` for the seven camera-ray copies",

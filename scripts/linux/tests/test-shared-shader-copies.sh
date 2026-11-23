@@ -35,6 +35,14 @@ pass literal 'float3 f(float3 c) { return min(c, float3(65000.0)); }'
 t_case "a private HDR maximum literal fails"
 t_assert_rc 1 python3 "$gate" "${tree}"
 
+pass selfcompare 'bool ok(float ev) { return ev == ev && abs(ev) < 1e30; }'
+t_case "a NaN check by self-comparison fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+
+pass compare 'bool same(float a, float b) { return a == b && a.x != b.x; }'
+t_case "comparing two different values passes"
+t_assert_rc 0 python3 "$gate" "${tree}"
+
 pass redefined 'float3 hdr_safe(float3 r)\n{\n    return r;\n}'
 t_case "a second definition of a shared function fails"
 t_assert_rc 1 python3 "$gate" "${tree}"
@@ -63,6 +71,10 @@ t_assert_rc 1 python3 "$gate" "${tree}"
 
 pass importer 'import fullscreen;\nfloat2 to_uv(float2 ndc) { return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5); }'
 t_case "a fullscreen importer converting by hand fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+
+pass triangle 'import fullscreen;\nFullscreenVsOut vs(uint vid) { FullscreenVsOut o; o.svPosition = float4(float(vid), 0.0, 0.0, 1.0); return o; }'
+t_case "a fullscreen importer writing its own triangle fails"
 t_assert_rc 1 python3 "$gate" "${tree}"
 
 t_summary

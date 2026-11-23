@@ -1,20 +1,21 @@
-//! Pins hand-written `histogram.wgsl`'s constants against `render::auto_exposure`'s copies.
-//! No generated-shader gate covers that shader; pure CPU, so it runs where no adapter exists.
+//! Pins `histogram.slang`'s constants and the generated `histogram.wgsl`'s workgroup sizes against
+//! `render::auto_exposure`'s copies. Pure CPU, so it runs where no adapter exists.
 
 use kataglyphis_webgpu_renderer::render::auto_exposure::{
     BLACK_THRESHOLD, BUILD_WORKGROUP, CLEAR_WORKGROUP, EXPOSURE_KEY, HISTOGRAM_BINS,
     MAX_LOG_LUMINANCE, MIN_LOG_LUMINANCE,
 };
 
+const SLANG_SOURCE: &str = include_str!("../../../shaders/histogram/histogram.slang");
 const SHADER_SOURCE: &str = include_str!("../src/shaders/histogram.wgsl");
 
-/// The value literal of `const <name>: <type> = <value>[u];` in [`SHADER_SOURCE`].
+/// The value literal of `static const <type> <name> = <value>[u];` in [`SLANG_SOURCE`].
 fn extract_const(name: &str) -> &'static str {
-    let needle = format!("const {name}:");
-    let line = SHADER_SOURCE
+    let needle = format!(" {name} =");
+    let line = SLANG_SOURCE
         .lines()
-        .find(|line| line.trim_start().starts_with(&needle))
-        .unwrap_or_else(|| panic!("histogram.wgsl no longer declares `{name}`"));
+        .find(|line| line.starts_with("static const ") && line.contains(&needle))
+        .unwrap_or_else(|| panic!("histogram.slang no longer declares `{name}`"));
 
     let value = line
         .split('=')
@@ -60,7 +61,7 @@ fn histogram_bins_matches_the_shader() {
         .expect("HISTOGRAM_BINS is not a u32 literal");
     assert_eq!(
         shader_value, HISTOGRAM_BINS as u32,
-        "histogram.wgsl's HISTOGRAM_BINS ({shader_value}) disagrees with \
+        "histogram.slang's HISTOGRAM_BINS ({shader_value}) disagrees with \
          render::auto_exposure::HISTOGRAM_BINS ({HISTOGRAM_BINS}) - edit both together"
     );
 }
@@ -72,7 +73,7 @@ fn min_log_luminance_matches_the_shader() {
         .expect("MIN_LOG_LUMINANCE is not an f32 literal");
     assert_eq!(
         shader_value, MIN_LOG_LUMINANCE,
-        "histogram.wgsl's MIN_LOG_LUMINANCE ({shader_value}) disagrees with \
+        "histogram.slang's MIN_LOG_LUMINANCE ({shader_value}) disagrees with \
          render::auto_exposure::MIN_LOG_LUMINANCE ({MIN_LOG_LUMINANCE}) - edit both together"
     );
 }
@@ -84,7 +85,7 @@ fn max_log_luminance_matches_the_shader() {
         .expect("MAX_LOG_LUMINANCE is not an f32 literal");
     assert_eq!(
         shader_value, MAX_LOG_LUMINANCE,
-        "histogram.wgsl's MAX_LOG_LUMINANCE ({shader_value}) disagrees with \
+        "histogram.slang's MAX_LOG_LUMINANCE ({shader_value}) disagrees with \
          render::auto_exposure::MAX_LOG_LUMINANCE ({MAX_LOG_LUMINANCE}) - edit both together"
     );
 }
@@ -96,7 +97,7 @@ fn exposure_key_matches_the_shader() {
         .expect("EXPOSURE_KEY is not an f32 literal");
     assert_eq!(
         shader_value, EXPOSURE_KEY,
-        "histogram.wgsl's EXPOSURE_KEY ({shader_value}) disagrees with \
+        "histogram.slang's EXPOSURE_KEY ({shader_value}) disagrees with \
          render::auto_exposure::EXPOSURE_KEY ({EXPOSURE_KEY}) - edit both together"
     );
 }
@@ -108,7 +109,7 @@ fn black_threshold_matches_the_shader() {
         .expect("BLACK_THRESHOLD is not an f32 literal");
     assert_eq!(
         shader_value, BLACK_THRESHOLD,
-        "histogram.wgsl's BLACK_THRESHOLD ({shader_value}) disagrees with \
+        "histogram.slang's BLACK_THRESHOLD ({shader_value}) disagrees with \
          render::auto_exposure::BLACK_THRESHOLD ({BLACK_THRESHOLD}) - edit both together"
     );
 }

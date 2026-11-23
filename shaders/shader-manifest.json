@@ -244,6 +244,31 @@
       ]
     },
     {
+      "_comment": "Rust/WebGPU auto-exposure (WGSL emit): Atomic<uint> emits atomic<u32> for both the bins and the workgroup copy.",
+      "file": "histogram/histogram.slang",
+      "entry": "cs_build_histogram",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "histogram/histogram.slang",
+      "entry": "cs_clear_histogram",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
+      "file": "histogram/histogram.slang",
+      "entry": "cs_reduce_exposure",
+      "stage": "compute",
+      "targets": [
+        "wgsl"
+      ]
+    },
+    {
       "_comment": "Rust/WebGPU per-draw culling into indirect draw arguments (WGSL emit).",
       "file": "draw_cull/draw_cull.slang",
       "entry": "cs_main",
@@ -525,6 +550,11 @@
     {
       "src": "gpu_cull/gpu_cull.slang",
       "out": "gpu_cull.wgsl",
+      "dst": "crates/webgpu_renderer/src/shaders"
+    },
+    {
+      "src": "histogram/histogram.slang",
+      "out": "histogram.wgsl",
       "dst": "crates/webgpu_renderer/src/shaders"
     },
     {

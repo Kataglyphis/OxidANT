@@ -17,15 +17,20 @@ struct FullscreenVsOut_0
     @location(0) uv_0 : vec2<f32>,
 };
 
-@vertex
-fn vs_fullscreen(@builtin(vertex_index) vid_0 : u32) -> FullscreenVsOut_0
+fn fullscreen_vs_0( vid_0 : u32) -> FullscreenVsOut_0
 {
-    var x_0 : f32 = f32((((vid_0 << (u32(1)))) & (u32(2))));
-    var y_0 : f32 = f32((vid_0 & (u32(2))));
+    var x_0 : f32 = f32(vid_0 / u32(2)) * 4.0f - 1.0f;
+    var y_0 : f32 = f32(vid_0 % u32(2)) * 4.0f - 1.0f;
     var o_0 : FullscreenVsOut_0;
-    o_0.svPosition_0 = vec4<f32>(x_0 * 2.0f - 1.0f, 1.0f - y_0 * 2.0f, 0.0f, 1.0f);
-    o_0.uv_0 = vec2<f32>(x_0, y_0);
+    o_0.svPosition_0 = vec4<f32>(x_0, y_0, 0.0f, 1.0f);
+    o_0.uv_0 = vec2<f32>((x_0 + 1.0f) * 0.5f, 1.0f - (y_0 + 1.0f) * 0.5f);
     return o_0;
+}
+
+@vertex
+fn vs_fullscreen(@builtin(vertex_index) vid_1 : u32) -> FullscreenVsOut_0
+{
+    return fullscreen_vs_0(vid_1);
 }
 
 fn cube_direction_0( face_0 : u32,  uv_1 : vec2<f32>) -> vec3<f32>

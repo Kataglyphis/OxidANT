@@ -3,8 +3,18 @@
 `shaders/` owns the WebGPU Slang entry points and shared math. Its manifest
 defines the entry points, WGSL destinations, depth-texture patches and minimum
 compiler version. `crates/webgpu_renderer/src/shaders/`, the GUI's shader
-directory and the renderer's `tests/shaders/` contain generated WGSL;
-`histogram.wgsl` remains hand-written.
+directory and the renderer's `tests/shaders/` contain generated WGSL, all of
+it: `histogram.wgsl` comes from `histogram/histogram.slang` since 2026-11-23.
+
+Every WebGPU pass is target-neutral Slang: a fullscreen pass takes its uv from
+`fullscreen_vs` (the IBL bake included, whose own triangle would have mirrored
+the faces and the BRDF LUT on SPIR-V) and a projected point's texel from
+`fullscreen_ndc_to_uv` (`ssao`, `gpu_cull`). Atomics are Slang's `Atomic<uint>`,
+which slangc 2026.17 emits as WGSL's `atomic<u32>` for a storage buffer and a
+`groupshared` array alike; `InterlockedAdd` does not compile for WGSL. A pass
+gets a SPIR-V row with the C++ change that binds it. The forward pass's shadow
+lookups still convert NDC to uv by hand, WebGPU's way; the shared shadow Slang
+replaces them.
 
 Run in the family build image from the repository root:
 
@@ -25,15 +35,16 @@ repository. Commit source and generated WGSL here before updating its pin;
 an OxidANT checkout needs no parent source tree to run its shader parity tests.
 
 Five leaf modules under `common/` import nothing and hold what more than one shader needs:
-`constants.slang` (`PI`, `MIN_ROUGHNESS`), `hdr_safe.slang` (`HDR_MAX`, 65000, and `hdr_safe`, which
-finds a NaN by its bits because WGSL may assume floats are finite), `trace_constants.slang` (every
+`constants.slang` (`PI`, `MIN_ROUGHNESS`), `hdr_safe.slang` (`HDR_MAX`, 65000, `hdr_safe`, which
+finds a NaN by its bits because WGSL may assume floats are finite, and `is_finite`, which reads the exponent bits
+for the same reason), `trace_constants.slang` (every
 secondary ray's `TRACE_TMIN`, `TRACE_TMAX`, `TRACE_SURFACE_OFFSET` and the punctual shadow ray's
 `TRACE_LIGHT_SPAN`), `aces.slang` (the five ACES coefficients, `aces_tonemap`, `aces_tonemap_inverse`,
 `linear_to_srgb`) and `fullscreen.slang` (`fullscreen_vs`, `fullscreen_uv_to_ndc` and its inverse
 `fullscreen_ndc_to_uv`, switched per target). BeschleunigerBallett's shaders import the same files.
 `scripts/check-shared-shader-copies.py`, run by `pre-push-checks.sh`, fails a file outside the owner
 that declares one of these names, writes one of their literals (3.14159, 0.045, 65000, an ACES
-coefficient, a ray bound) or a NaN check, or defines one of their functions; a `fullscreen` importer
+coefficient, a ray bound) or a NaN check (`isnan`, the exponent mask, `x == x`), or defines one of their functions; a `fullscreen` importer
 also may not convert between uv and NDC by hand. `render::tonemap`'s `aces_tonemap` and
 `aces_tonemap_inverse` are the CPU twins, whose unit test reads the coefficients from `aces.slang`.
 

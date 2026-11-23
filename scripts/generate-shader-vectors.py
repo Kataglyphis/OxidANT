@@ -288,7 +288,8 @@ def f32_word(x: float) -> int:
 
 
 def evaluate_hdr_safe(i: Values) -> dict[str, list[float]]:
-    return {"hdr_safe": flat(sm.hdr_safe([int(w) for w in i["radiance"]]))}
+    words = [int(w) for w in i["radiance"]]
+    return {"hdr_safe": flat(sm.hdr_safe(words)), "is_finite": [float(math.isfinite(sm.bits_to_f32(w))) for w in words]}
 
 
 def evaluate_aces(i: Values) -> dict[str, list[float]]:
@@ -600,7 +601,7 @@ MODULES = [
     ], evaluate_path_estimator, path_estimator_cases(), {
         "roulette not yet", "roulette ends the path", "roulette keeps the path", "view along the normal",
         "specular lobe", "diffuse lobe", "the path ends below a surface"}),
-    Module("hdr_safe", ports("radiance:3/u32"), [out("hdr_safe", 3, SMOOTH)], evaluate_hdr_safe, hdr_safe_cases(), {
+    Module("hdr_safe", ports("radiance:3/u32"), [out("hdr_safe", 3, SMOOTH), out("is_finite", 3)], evaluate_hdr_safe, hdr_safe_cases(), {
         "NaN zeroed", "negative zeroed", "infinity capped", "capped at HDR_MAX"}),
     Module("aces", ports("radiance:3 display:3 encoded:3"), [
         out("aces_tonemap", 3, SMOOTH), out("aces_tonemap_inverse", 3, CHAINED),

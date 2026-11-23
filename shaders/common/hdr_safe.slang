@@ -9,3 +9,9 @@ float3 hdr_safe(float3 radiance)
     bool3 nan = (asuint(radiance) & 0x7FFFFFFFu) > 0x7F800000u;
     return clamp(select(nan, float3(0.0), radiance), float3(0.0), float3(HDR_MAX));
 }
+
+// False for NaN and both infinities, read from the exponent bits for the same reason; x == x may fold to true.
+bool is_finite(float x)
+{
+    return (asuint(x) & 0x7F800000u) != 0x7F800000u;
+}

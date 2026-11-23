@@ -1,205 +1,172 @@
-// Luminance histogram over the HDR target, for auto-exposure.
-//
-// The binning here MUST match render::auto_exposure::histogram_bin on the CPU
-// side. That function is unit-tested (monotonicity, clamping, the reserved
-// black bin, round-tripping through bin_luminance) and a headless test
-// compares this shader's output against it - so the duplication is checked
-// rather than hoped at.
-//
-// Bin 0 is reserved for "effectively black". Without it, near-zero luminance
-// dominates the log-space average in any scene with background: log2 of a
-// tiny number is a large negative that drags the mean down and blows the
-// exposure up.
+@binding(0) @group(0) var hdrTex_0 : texture_2d<f32>;
 
-const HISTOGRAM_BINS: u32 = 64u;
-const MIN_LOG_LUMINANCE: f32 = -10.0;
-const MAX_LOG_LUMINANCE: f32 = 4.0;
-const BLACK_THRESHOLD: f32 = 1e-6;
+@binding(1) @group(0) var<storage, read_write> histogram_0 : array<atomic<u32>>;
 
-@group(0) @binding(0) var hdr_tex: texture_2d<f32>;
-@group(0) @binding(1) var<storage, read_write> histogram: array<atomic<u32>, 64>;
-
-// Rec. 709 luma, matching the CPU-side luminance used by the golden tests.
-fn luminance(color: vec3<f32>) -> f32 {
-    return dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
-fn histogram_bin(lum: f32) -> u32 {
-    // `!(lum > threshold)` rather than `lum <= threshold` so NaN lands in bin
-    // 0 instead of indexing out of range.
-    if (!(lum > BLACK_THRESHOLD)) {
-        return 0u;
-    }
-    let log_luminance = log2(lum);
-    let normalized = clamp(
-        (log_luminance - MIN_LOG_LUMINANCE) / (MAX_LOG_LUMINANCE - MIN_LOG_LUMINANCE),
-        0.0,
-        1.0,
-    );
-    let span = f32(HISTOGRAM_BINS - 2u);
-    return 1u + min(u32(normalized * span), HISTOGRAM_BINS - 2u);
-}
-
-// Per-workgroup histogram in shared memory, flushed to the global buffer once
-// per workgroup. The naive one-global-atomicAdd-per-pixel version serialises
-// badly on exactly the scenes auto-exposure sees most - a sky- or
-// wall-dominated frame lands most pixels in the SAME bin, so two million
-// atomics contend on one memory location. Privatising moves that contention
-// into workgroup memory (256 threads at most), and the flush skips empty
-// bins, so a single-bin frame issues ~1 global atomic per workgroup instead
-// of 256 per workgroup. Measured on the worst case (1920x1080, every pixel in
-// one bin): 0.7664 ms -> 0.1197 ms, 6.4x.
-var<workgroup> local_hist: array<atomic<u32>, HISTOGRAM_BINS>;
-
-// One thread per pixel. 16x16 keeps a workgroup within the 256-invocation
-// limit that the WebGPU baseline guarantees, and 256 threads >= 64 bins means
-// thread i can zero and flush bin i directly.
-@compute @workgroup_size(16, 16, 1)
-fn cs_build_histogram(
-    @builtin(global_invocation_id) id: vec3<u32>,
-    @builtin(local_invocation_index) local_index: u32,
-) {
-    if (local_index < HISTOGRAM_BINS) {
-        atomicStore(&local_hist[local_index], 0u);
-    }
-    workgroupBarrier();
-
-    let size = textureDimensions(hdr_tex);
-    // Dispatches are rounded up to whole workgroups, so the tail threads fall
-    // outside the image and must not contribute - otherwise the clamped edge
-    // texel is counted repeatedly and biases the exposure. Guarded with a
-    // branch rather than an early return: returning before a barrier is
-    // non-uniform control flow, which WGSL forbids.
-    if (id.x < size.x && id.y < size.y) {
-        let color = textureLoad(hdr_tex, vec2<i32>(i32(id.x), i32(id.y)), 0).rgb;
-        let bin = histogram_bin(luminance(color));
-        atomicAdd(&local_hist[bin], 1u);
-    }
-    workgroupBarrier();
-
-    if (local_index < HISTOGRAM_BINS) {
-        let count = atomicLoad(&local_hist[local_index]);
-        if (count > 0u) {
-            atomicAdd(&histogram[local_index], count);
-        }
-    }
-}
-
-// Zeroes the histogram. A separate entry point rather than a queue write so
-// the reset stays on the GPU timeline and cannot race the build pass.
-@compute @workgroup_size(64, 1, 1)
-fn cs_clear_histogram(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x < HISTOGRAM_BINS) {
-        atomicStore(&histogram[id.x], 0u);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Reduction: histogram -> adapted exposure, entirely on the GPU.
-//
-// Deliberately never reads back to the CPU. A per-frame readback would
-// serialise the pipeline behind a map_async round trip; the exposure the
-// tonemap needs can just stay in a buffer the tonemap reads.
-//
-// Mirrors render::auto_exposure::{average_luminance, exposure_ev_for_luminance,
-// adapt_exposure_ev}, all of which are unit-tested on the CPU side. The two
-// degenerate adaptation cases are NOT the same rule, and cs_reduce_exposure
-// below implements both distinctly:
-//   - speed <= 0: adaptation is disabled, snap to the target immediately.
-//   - dt <= 0: no time passed (a stalled frame or a coarse/repeated timer
-//     reading — see render::frame_clock::tick_at), hold the current value.
-
-const EXPOSURE_KEY: f32 = 0.18;
-
-struct ExposureParams {
-    // x: seconds since the previous frame
-    // y: adaptation rate constant (0 disables adaptation)
-    // z: 1 when auto-exposure is enabled, else 0
-    // w: manual exposure EV, used when auto is off
-    values: vec4<f32>,
+struct ExposureParams_std140_0
+{
+    @align(16) values_0 : vec4<f32>,
 };
 
-// The reduction reads the SAME storage binding the build pass writes, via
-// atomicLoad, rather than aliasing it to a second read-only binding. wgpu
-// rejects that: STORAGE_READ_WRITE is an exclusive usage and cannot coexist
-// with STORAGE_READ_ONLY for one buffer inside a dispatch scope.
-@group(0) @binding(2) var<storage, read_write> exposure_state: array<f32, 2>;
-@group(0) @binding(3) var<uniform> exposure_params: ExposureParams;
+@binding(3) @group(0) var<uniform> exposureParams_0 : ExposureParams_std140_0;
+@binding(2) @group(0) var<storage, read_write> exposureState_0 : array<f32>;
 
-// Inverse of histogram_bin, evaluated at the bin centre.
-fn bin_luminance(bin: u32) -> f32 {
-    if (bin == 0u) {
-        return 0.0;
-    }
-    let index = f32(bin - 1u) + 0.5;
-    let normalized = index / f32(HISTOGRAM_BINS - 2u);
-    return exp2(MIN_LOG_LUMINANCE + normalized * (MAX_LOG_LUMINANCE - MIN_LOG_LUMINANCE));
+var<workgroup> localHist_0 : array<atomic<u32>, i32(64)>;
+
+fn luminance_0( color_0 : vec3<f32>) -> f32
+{
+    return dot(color_0, vec3<f32>(0.2125999927520752f, 0.71520000696182251f, 0.07220000028610229f));
 }
 
-// One invocation: 64 bins is far too little work to justify a parallel
-// reduction, and a single thread removes any question of shared-memory
-// barriers being right.
-@compute @workgroup_size(1, 1, 1)
-fn cs_reduce_exposure() {
-    let dt = exposure_params.values.x;
-    let speed = exposure_params.values.y;
-    let auto_enabled = exposure_params.values.z;
-    let manual_ev = exposure_params.values.w;
-
-    if (auto_enabled < 0.5) {
-        // Manual mode still writes the buffer, so the tonemap has one source
-        // of truth and switching modes cannot leave a stale auto value behind.
-        exposure_state[0] = manual_ev;
-        exposure_state[1] = manual_ev;
-        return;
+fn histogram_bin_0( lum_0 : f32) -> u32
+{
+    if(!(lum_0 > 9.99999997475242708e-07f))
+    {
+        return u32(0);
     }
+    return u32(1) + min(u32(clamp((log2(lum_0) - -10.0f) / 14.0f, 0.0f, 1.0f) * 62.0f), u32(62));
+}
 
-    // Geometric mean over the non-black bins.
-    var weighted_log_sum = 0.0;
-    var counted = 0.0;
-    for (var bin = 1u; bin < HISTOGRAM_BINS; bin = bin + 1u) {
-        let count = f32(atomicLoad(&histogram[bin]));
-        if (count > 0.0) {
-            weighted_log_sum = weighted_log_sum + log2(bin_luminance(bin)) * count;
-            counted = counted + count;
+@compute
+@workgroup_size(16, 16, 1)
+fn cs_build_histogram(@builtin(global_invocation_id) id_0 : vec3<u32>, @builtin(local_invocation_index) localIndex_0 : u32)
+{
+    var _S1 : bool = localIndex_0 < u32(64);
+    if(_S1)
+    {
+        atomicStore(&(localHist_0[localIndex_0]), u32(0));
+    }
+    workgroupBarrier();
+    var width_0 : u32;
+    var height_0 : u32;
+    {var dim = textureDimensions((hdrTex_0));((width_0)) = dim.x;((height_0)) = dim.y;};
+    var _S2 : bool;
+    if((id_0.x) < width_0)
+    {
+        _S2 = (id_0.y) < height_0;
+    }
+    else
+    {
+        _S2 = false;
+    }
+    if(_S2)
+    {
+        var _S3 : vec3<i32> = vec3<i32>(vec2<i32>(id_0.xy), i32(0));
+        var _S4 : u32 = atomicAdd(&(localHist_0[histogram_bin_0(luminance_0((textureLoad((hdrTex_0), ((_S3)).xy, ((_S3)).z)).xyz))]), u32(1));
+    }
+    workgroupBarrier();
+    if(_S1)
+    {
+        var count_0 : u32 = atomicLoad(&(localHist_0[localIndex_0]));
+        if(count_0 > u32(0))
+        {
+            var _S5 : u32 = atomicAdd(&(histogram_0[localIndex_0]), count_0);
         }
     }
-
-    let current_ev = exposure_state[0];
-    // A NaN (or infinite) current_ev cannot be climbed out of by the blend
-    // below - it would poison every subsequent frame. Fall back to the
-    // freshly-computed target instead. Mirrors auto_exposure.rs:130-132.
-    let current_ok = current_ev == current_ev && abs(current_ev) < 1e30;
-
-    if (counted <= 0.0) {
-        // Nothing but black: hold the previous exposure rather than adapt to
-        // a meaningless number. Deriving one here would drive exposure to
-        // infinity on the first frame of a scene that has not loaded yet.
-        exposure_state[1] = current_ev;
-        return;
-    }
-
-    let average_luminance = exp2(weighted_log_sum / counted);
-    let target_ev = log2(EXPOSURE_KEY / average_luminance);
-
-    if (dt <= 0.0) {
-        // No time passed: hold the current value rather than snapping. A
-        // stalled frame or a coarse/repeated timer reading must not pop the
-        // exposure just because this reduction still ran.
-        exposure_state[0] = select(target_ev, current_ev, current_ok);
-        exposure_state[1] = target_ev;
-        return;
-    }
-
-    // Exponential, not a plain lerp: a lerp converges twice as fast at 120 Hz
-    // as at 60, so a speed tuned on one machine is wrong on every other.
-    var adapted = target_ev;
-    if (speed > 0.0) {
-        let blend = clamp(1.0 - exp(-dt * speed), 0.0, 1.0);
-        let safe_current_ev = select(target_ev, current_ev, current_ok);
-        adapted = safe_current_ev + (target_ev - safe_current_ev) * blend;
-    }
-
-    exposure_state[0] = adapted;
-    exposure_state[1] = target_ev;
+    return;
 }
+
+@compute
+@workgroup_size(64, 1, 1)
+fn cs_clear_histogram(@builtin(global_invocation_id) id_1 : vec3<u32>)
+{
+    var _S6 : u32 = id_1.x;
+    if(_S6 < u32(64))
+    {
+        atomicStore(&(histogram_0[_S6]), u32(0));
+    }
+    return;
+}
+
+fn bin_luminance_0( bin_0 : u32) -> f32
+{
+    if(bin_0 == u32(0))
+    {
+        return 0.0f;
+    }
+    return exp2(-10.0f + (f32(bin_0 - u32(1)) + 0.5f) / 62.0f * 14.0f);
+}
+
+fn is_finite_0( x_0 : f32) -> bool
+{
+    return (((bitcast<u32>((x_0))) & (u32(2139095040)))) != u32(2139095040);
+}
+
+@compute
+@workgroup_size(1, 1, 1)
+fn cs_reduce_exposure()
+{
+    var dt_0 : f32 = exposureParams_0.values_0.x;
+    var speed_0 : f32 = exposureParams_0.values_0.y;
+    if((exposureParams_0.values_0.z) < 0.5f)
+    {
+        exposureState_0[i32(0)] = exposureParams_0.values_0.w;
+        exposureState_0[i32(1)] = exposureParams_0.values_0.w;
+        return;
+    }
+    var bin_1 : u32 = u32(1);
+    var weightedLogSum_0 : f32 = 0.0f;
+    var counted_0 : f32 = 0.0f;
+    for(;;)
+    {
+        if(bin_1 < u32(64))
+        {
+        }
+        else
+        {
+            break;
+        }
+        var _S7 : u32 = atomicLoad(&(histogram_0[bin_1]));
+        var count_1 : f32 = f32(_S7);
+        if(count_1 > 0.0f)
+        {
+            var counted_1 : f32 = counted_0 + count_1;
+            weightedLogSum_0 = weightedLogSum_0 + log2(bin_luminance_0(bin_1)) * count_1;
+            counted_0 = counted_1;
+        }
+        bin_1 = bin_1 + u32(1);
+    }
+    var currentEv_0 : f32 = exposureState_0[i32(0)];
+    var currentOk_0 : bool;
+    if(is_finite_0(exposureState_0[i32(0)]))
+    {
+        currentOk_0 = (abs(currentEv_0)) < 1.00000001504746622e+30f;
+    }
+    else
+    {
+        currentOk_0 = false;
+    }
+    if(counted_0 <= 0.0f)
+    {
+        exposureState_0[i32(1)] = currentEv_0;
+        return;
+    }
+    var targetEv_0 : f32 = log2(0.18000000715255737f / exp2(weightedLogSum_0 / counted_0));
+    var safeCurrentEv_0 : f32;
+    if(currentOk_0)
+    {
+        safeCurrentEv_0 = currentEv_0;
+    }
+    else
+    {
+        safeCurrentEv_0 = targetEv_0;
+    }
+    if(dt_0 <= 0.0f)
+    {
+        exposureState_0[i32(0)] = safeCurrentEv_0;
+        exposureState_0[i32(1)] = targetEv_0;
+        return;
+    }
+    var adapted_0 : f32;
+    if(speed_0 > 0.0f)
+    {
+        adapted_0 = safeCurrentEv_0 + (targetEv_0 - safeCurrentEv_0) * clamp(1.0f - exp(- dt_0 * speed_0), 0.0f, 1.0f);
+    }
+    else
+    {
+        adapted_0 = targetEv_0;
+    }
+    exposureState_0[i32(0)] = adapted_0;
+    exposureState_0[i32(1)] = targetEv_0;
+    return;
+}
+

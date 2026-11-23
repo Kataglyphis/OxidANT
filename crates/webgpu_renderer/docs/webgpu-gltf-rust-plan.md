@@ -66,7 +66,7 @@ crates/webgpu_renderer/
 │   │   ├── forward.rs      # forward PBR pass (first milestone)
 │   │   ├── shadow.rs       # depth-only pass (milestone 4)
 │   │   └── tonemap.rs      # post pass: HDR -> swapchain (milestone 3)
-│   └── shaders/            # WGSL — Slang-emitted (BeschleunigerBallett's shader-sharing.md); histogram.wgsl excepted
+│   └── shaders/            # WGSL — Slang-emitted (BeschleunigerBallett's shader-sharing.md)
 ├── examples/
 │   └── viewer.rs           # winit window, orbit camera, drag&drop a .gltf
 └── tests/                  # headless golden-image tests (no window needed)

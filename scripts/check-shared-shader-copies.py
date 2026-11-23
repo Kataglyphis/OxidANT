@@ -23,7 +23,8 @@ RULES = [
     ("common/constants.slang", r"(?<![\d.])0\.045(?!\d)", "the 0.045 roughness floor"),
     ("common/hdr_safe.slang", declares(r"\w*HDR_MAX"), "an HDR maximum"),
     ("common/hdr_safe.slang", r"\b65(?:000|504)\b", "the HDR maximum literal"),
-    ("common/hdr_safe.slang", r"\bisnan\s*\(|0x7[fF]800000", "a NaN check"),
+    ("common/hdr_safe.slang", r"\bisnan\s*\(|0x7[fF]800000|(?<![\w.])([A-Za-z_]\w*(?:\.\w+|\[\w+\])*)\s*[!=]=\s*\1(?![\w.\[(])",
+     "a NaN check"),
     ("common/hdr_safe.slang", defines("hdr_safe"), "hdr_safe"),
     ("common/aces.slang", r"\b2\.51\b|\b2\.43\b", "an ACES coefficient"),
     ("common/aces.slang", defines("aces_tonemap|aces_tonemap_inverse|untonemapped|linear_to_srgb"), "an ACES or sRGB curve"),
@@ -41,7 +42,8 @@ RULES = [
      "the eye as a ray origin"),
 ]
 # A fullscreen_vs importer converts between uv and NDC through fullscreen.slang only.
-FULLSCREEN_COPIES = re.compile(r"\(y \+ 1\.0\) \* 0\.5|\buv \* 2\.0 - 1\.0|\buv\.y \* 2\.0|\b0\.5\s*-\s*[^;,]*\*\s*0\.5\b")
+FULLSCREEN_COPIES = re.compile(
+    r"\(y \+ 1\.0\) \* 0\.5|\buv \* 2\.0 - 1\.0|\buv\.y \* 2\.0|\b0\.5\s*-\s*[^;,]*\*\s*0\.5\b|\.svPosition\s*=\s*float4\(")
 IMPORTS_FULLSCREEN = re.compile(r"^\s*import\s+fullscreen\s*;", re.MULTILINE)
 
 
@@ -52,7 +54,7 @@ def copies(root):
         text = COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), path.read_text(encoding="utf-8"))
         rules = [(re.compile(p, re.MULTILINE), what) for owner, p, what in RULES if owner != relative]
         if IMPORTS_FULLSCREEN.search(text):
-            rules.append((FULLSCREEN_COPIES, "a uv/NDC conversion fullscreen.slang owns"))
+            rules.append((FULLSCREEN_COPIES, "a uv/NDC conversion or a triangle fullscreen.slang owns"))
         for pattern, what in rules:
             for match in pattern.finditer(text):
                 line = text.count("\n", 0, match.start()) + 1

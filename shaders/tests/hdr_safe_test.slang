@@ -15,4 +15,7 @@ void hdr_safe_test_main(uint3 tid : SV_DispatchThreadID)
 
     VectorOutputs outputs = vector_outputs(tid.x);
     outputs.put(hdr_safe(asfloat(uint3(x, y, z))));
+    outputs.put(is_finite(asfloat(x)) ? 1u : 0u);
+    outputs.put(is_finite(asfloat(y)) ? 1u : 0u);
+    outputs.put(is_finite(asfloat(z)) ? 1u : 0u);
 }

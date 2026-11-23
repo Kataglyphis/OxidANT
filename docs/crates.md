@@ -54,7 +54,7 @@ WebGPU); its features, demos and tests are in its
 [README](../crates/webgpu_renderer/README.md). OxidANT owns the WebGPU Slang entry points
 and shared mathematics under `shaders/`; BeschleunigerBallett consumes the mathematics
 from its recorded OxidANT pin and owns its Vulkan-specific stages. Fresh output is
-checked against committed WGSL; `histogram.wgsl` stays hand-written. See
+checked against committed WGSL, `histogram.wgsl` included. See
 [shaders.md](shaders.md) for regeneration and ownership.
 
 ## Literature

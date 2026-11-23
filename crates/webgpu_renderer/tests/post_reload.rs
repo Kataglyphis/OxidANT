@@ -221,8 +221,8 @@ fn a_histogram_reload_reduces_with_the_new_kernel() {
     let mut renderer = renderer(&gpu);
     let shifted = edited(
         ShaderSources::shipped().histogram,
-        "exposure_state[0] = manual_ev;",
-        "exposure_state[0] = manual_ev + 3.0;",
+        "exposureState_0[i32(0)] = exposureParams_0.values_0.w;",
+        "exposureState_0[i32(0)] = exposureParams_0.values_0.w + 3.0f;",
     );
     renderer
         .reload_shaders(&gpu, &with_source("histogram", &shifted))

@@ -8,15 +8,15 @@ pub const HISTOGRAM_BINS: usize = 64;
 pub const MIN_LOG_LUMINANCE: f32 = -10.0;
 pub const MAX_LOG_LUMINANCE: f32 = 4.0;
 
-/// Must match `cs_build_histogram`'s `@workgroup_size(16, 16, 1)` in `histogram.wgsl`.
+/// Must match `cs_build_histogram`'s `[numthreads(16, 16, 1)]` in `histogram.slang`.
 pub const BUILD_WORKGROUP: u32 = 16;
-/// Must match `cs_clear_histogram`'s `@workgroup_size(64, 1, 1)` in `histogram.wgsl`.
+/// Must match `cs_clear_histogram`'s `[numthreads(64, 1, 1)]` in `histogram.slang`.
 pub const CLEAR_WORKGROUP: u32 = 64;
 
 /// Middle grey, the target the average scene luminance is exposed onto.
 pub const EXPOSURE_KEY: f32 = 0.18;
 
-/// Luminance at or below which a sample counts as black; shared with `histogram.wgsl`.
+/// Luminance at or below which a sample counts as black; shared with `histogram.slang`.
 pub const BLACK_THRESHOLD: f32 = 1e-6;
 
 /// Which histogram bin a linear luminance falls into.

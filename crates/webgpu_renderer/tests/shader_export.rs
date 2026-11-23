@@ -158,7 +158,6 @@ fn every_shader_file_is_covered() {
 }
 
 /// Slang emits no comments, so a `//` in generated WGSL is a hand-edit the next regenerate drops.
-/// `histogram.wgsl` is hand-written, so it is exempt.
 #[test]
 fn generated_wgsl_has_no_hand_edits() {
     let shaders_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/shaders");
@@ -170,9 +169,6 @@ fn generated_wgsl_has_no_hand_edits() {
             .unwrap_or_else(|e| panic!("failed to read entry in {shaders_dir}: {e:?}"))
             .path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("wgsl") {
-            continue;
-        }
-        if path.file_name().and_then(|n| n.to_str()) == Some("histogram.wgsl") {
             continue;
         }
         let contents = std::fs::read_to_string(&path)
