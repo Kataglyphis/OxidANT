@@ -1,3 +1,4 @@
+import constants;
 import forward_lighting;
 import fullscreen;
 
@@ -279,7 +280,7 @@ MaterialSample sample_material(VsOut In, bool isFrontFace)
     m.surface.position = In.worldPosition;
     m.surface.albedo = albedo.rgb;
     m.surface.metallic = clamp(prim.material_factors.x * mrSample.b, 0.0, 1.0);
-    m.surface.roughness = clamp(prim.material_factors.y * mrSample.g, 0.045, 1.0);
+    m.surface.roughness = clamp(prim.material_factors.y * mrSample.g, MIN_ROUGHNESS, 1.0);
     m.surface.occlusion = lerp(1.0, occlusionSample.r, prim.material_factors.z);
     m.surface.emissive = prim.emissive_factor.rgb * emissiveSample.rgb;
 

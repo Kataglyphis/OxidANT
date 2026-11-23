@@ -1,4 +1,5 @@
 import fullscreen;
+import hdr_safe;
 
 // Rust/WebGPU bloom: the checked-in bloom.wgsl is generated from this file.
 
@@ -18,9 +19,6 @@ struct BloomUniforms
 [vk::binding(4, 0)] ConstantBuffer<BloomUniforms> bloomUniforms;
 
 static const float THRESHOLD = 1.0;
-
-// Below fp16's 65504: the bright pass scales by the exposure, and the bloom targets are Rgba16Float too.
-static const float HDR_MAX = 65000.0;
 
 static const float W0 = 0.227027;
 static const float W1 = 0.1945946;
@@ -54,15 +52,15 @@ FullscreenVsOut vs_main(uint vid : SV_VertexID)
 [shader("fragment")]
 float4 fs_brightpass(FullscreenVsOut In) : SV_Target
 {
-    float3 scene = min(srcTex.Sample(srcSampler, In.uv).rgb, float3(HDR_MAX));
+    float3 scene = hdr_safe(srcTex.Sample(srcSampler, In.uv).rgb);
     // Thresholds what the tonemap shows: a sun the clouds hide must not glow around them.
     if (bloomUniforms.params.x > 0.5)
     {
         float4 cloud = cloudTex.Sample(srcSampler, In.uv);
         scene = cloud.rgb + scene * (1.0 - cloud.a);
     }
-    float3 hdr = min(scene, float3(HDR_MAX)) * exp2(exposureState[0]);
-    float3 bright = clamp(hdr - float3(THRESHOLD), float3(0.0), float3(HDR_MAX));
+    float3 hdr = hdr_safe(scene) * exp2(exposureState[0]);
+    float3 bright = hdr_safe(hdr - float3(THRESHOLD));
     return float4(bright, 1.0);
 }
 

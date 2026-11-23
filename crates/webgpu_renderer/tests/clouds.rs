@@ -9,6 +9,7 @@ use kataglyphis_webgpu_renderer::render::clouds::{
 use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
 use kataglyphis_webgpu_renderer::render::fxaa::FxaaMode;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
+use kataglyphis_webgpu_renderer::render::tonemap::aces_tonemap;
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
 const SIZE: u32 = 128;
@@ -626,8 +627,7 @@ fn half_resolution_clouds_keep_off_the_wall_and_close_to_the_full_march() {
 
 /// ACES (Narkowicz) and the exact sRGB encode, as `aces.slang` and an sRGB target apply them.
 fn displayed(linear: f32) -> f32 {
-    let x = linear.min(1e4);
-    let mapped = ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0);
+    let mapped = aces_tonemap(linear.min(1e4));
     let encoded = if mapped < 0.003_130_8 {
         mapped * 12.92
     } else {

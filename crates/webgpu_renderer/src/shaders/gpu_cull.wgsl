@@ -26,6 +26,11 @@ struct Aabb_std430_0
 @binding(0) @group(0) var depthTex_0 : texture_depth_2d;
 
 var<private> UNIT_CORNERS_0 : array<vec3<f32>, i32(8)> = array<vec3<f32>, i32(8)>( vec3<f32>(0.0f, 0.0f, 0.0f), vec3<f32>(1.0f, 0.0f, 0.0f), vec3<f32>(0.0f, 1.0f, 0.0f), vec3<f32>(1.0f, 1.0f, 0.0f), vec3<f32>(0.0f, 0.0f, 1.0f), vec3<f32>(1.0f, 0.0f, 1.0f), vec3<f32>(0.0f, 1.0f, 1.0f), vec3<f32>(1.0f, 1.0f, 1.0f) );
+fn fullscreen_ndc_to_uv_0( ndc_0 : vec2<f32>) -> vec2<f32>
+{
+    return vec2<f32>(ndc_0.x * 0.5f + 0.5f, 0.5f - ndc_0.y * 0.5f);
+}
+
 @compute
 @workgroup_size(64, 1, 1)
 fn cs_main(@builtin(global_invocation_id) gid_0 : vec3<u32>)
@@ -58,8 +63,7 @@ fn cs_main(@builtin(global_invocation_id) gid_0 : vec3<u32>)
             visibility_0[idx_0] = u32(1);
             return;
         }
-        var ndc_0 : vec2<f32> = clip_0.xy / vec2<f32>(_S4);
-        var uv_0 : vec2<f32> = vec2<f32>(ndc_0.x * 0.5f + 0.5f, 0.5f - ndc_0.y * 0.5f);
+        var uv_0 : vec2<f32> = fullscreen_ndc_to_uv_0(clip_0.xy / vec2<f32>(_S4));
         var _S5 : f32 = min(aabbNear_0, clip_0.z / _S4);
         var _S6 : vec2<f32> = min(uvMin_0, uv_0);
         var _S7 : vec2<f32> = max(uvMax_0, uv_0);

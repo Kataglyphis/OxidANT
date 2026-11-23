@@ -10,6 +10,7 @@ import argparse
 import json
 import math
 import random
+import struct
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -282,6 +283,41 @@ def evaluate_path_estimator(i: Values) -> dict[str, list[float]]:
     }
 
 
+def f32_word(x: float) -> int:
+    return struct.unpack("<I", struct.pack("<f", x))[0]
+
+
+def evaluate_hdr_safe(i: Values) -> dict[str, list[float]]:
+    return {"hdr_safe": flat(sm.hdr_safe([int(w) for w in i["radiance"]]))}
+
+
+def evaluate_aces(i: Values) -> dict[str, list[float]]:
+    display = sm.vec3(i["display"])
+    return {
+        "aces_tonemap": flat(sm.aces_tonemap(sm.vec3(i["radiance"]))),
+        "aces_tonemap_inverse": flat(sm.aces_tonemap_inverse(display)),
+        "aces_tonemap_inverse.round_trip": flat(sm.aces_tonemap(sm.aces_tonemap_inverse(display))),
+        "linear_to_srgb": flat(sm.linear_to_srgb(sm.vec3(i["encoded"]))),
+    }
+
+
+def evaluate_fullscreen(i: Values) -> dict[str, list[float]]:
+    position, uv = sm.fullscreen_vs(word(i, "vid"))
+    given_uv, given_ndc = sm.Vec(*i["uv"]), sm.Vec(*i["ndc"])
+    return {
+        "fullscreen_vs.position": flat(position),
+        "fullscreen_vs.uv_to_ndc": flat(sm.fullscreen_uv_to_ndc(uv)),
+        "fullscreen_vs.ndc_to_uv_error": flat(sm.fullscreen_ndc_to_uv(position.xy) - uv),
+        "fullscreen_uv_to_ndc.x": flat(sm.fullscreen_uv_to_ndc(given_uv).x),
+        "fullscreen_uv_to_ndc.round_trip": flat(sm.fullscreen_ndc_to_uv(sm.fullscreen_uv_to_ndc(given_uv))),
+        "fullscreen_ndc_to_uv.x": flat(sm.fullscreen_ndc_to_uv(given_ndc).x),
+        "fullscreen_ndc_to_uv.round_trip": flat(sm.fullscreen_uv_to_ndc(sm.fullscreen_ndc_to_uv(given_ndc))),
+        "fullscreen_vs.top_row_error": [0.0],
+        "fullscreen_uv_to_ndc.top_row_error": [0.0],
+        "fullscreen_ndc_to_uv.top_row_error": [0.0],
+    }
+
+
 def brdf_cases() -> list[tuple[str, Values]]:
     base: Values = {
         "n": [0.0, 1.0, 0.0], "v": [0.0, 1.0, 0.0], "l": unit(1.0, 1.0, 0.0), "albedo": [0.8, 0.2, 0.1],
@@ -389,6 +425,64 @@ def path_estimator_cases() -> list[tuple[str, Values]]:
     return merged(base, rows)
 
 
+def hdr_safe_cases() -> list[tuple[str, Values]]:
+    nan, inf = 0x7FC00000, 0x7F800000
+    rows: list[tuple[str, Values]] = [
+        ("ordinary radiance passes unchanged", {"radiance": [f32_word(0.5), f32_word(1.25), f32_word(3.0e4)]}),
+        ("a quiet NaN in each channel becomes zero", {"radiance": [nan, f32_word(2.0), nan | 0x80000000]}),
+        ("a signalling NaN and the largest NaN payload become zero", {"radiance": [0x7F800001, 0x7FFFFFFF, f32_word(7.0)]}),
+        ("+Inf caps at HDR_MAX, -Inf clamps to zero", {"radiance": [inf, inf | 0x80000000, f32_word(1.0)]}),
+        ("fp16's 65504 and the largest finite float cap at HDR_MAX", {
+            "radiance": [f32_word(65504.0), 0x7F7FFFFF, f32_word(65000.0)]}),
+        ("the float just above HDR_MAX caps, the one below passes", {
+            "radiance": [f32_word(65000.0) + 1, f32_word(65000.0) - 1, f32_word(64999.0)]}),
+        ("negative radiance clamps to zero", {"radiance": [f32_word(-5.0), f32_word(-1.0e-3), f32_word(-1.0e30)]}),
+        ("negative zero and the smallest subnormal", {"radiance": [0x80000000, 1, 0]}),
+    ]
+    draw = Draw(5)
+    for index in range(6):
+        rows.append((f"seeded radiance {index}", {"radiance": [f32_word(draw.num(0.0, 70000.0)) for _ in range(3)]}))
+    return rows
+
+
+def aces_cases() -> list[tuple[str, Values]]:
+    base: Values = {"radiance": [0.18, 0.5, 1.0], "display": [0.2, 0.5, 0.8], "encoded": [0.001, 0.18, 0.9]}
+    rows: list[tuple[str, Values]] = [
+        ("mid grey, its neighbours and display mid-tones", {}),
+        ("zero radiance and a black display", {"radiance": [0.0, 1.0e-4, 0.01], "display": [0.0, 0.01, 0.05]}),
+        ("radiance past the curve's shoulder clamps to one", {"radiance": [8.0, 100.0, 1.0e4], "display": [0.95, 0.99, 1.0]}),
+        ("negative radiance: below -b/a, about -0.012, the curve turns positive, and -0.5 shows white", {"radiance": [-0.5, -1.0e-3, 2.0]}),
+        ("a display outside [0, 1] clamps first", {"display": [-0.25, 1.5, 0.6]}),
+        ("the skybox navy, sky.slang's SKYBOX_DISABLED", {"display": [0.0, 0.0, 0.5]}),
+        ("encodes on the linear segment", {"encoded": [0.0, 0.002, 0.003]}),
+        ("encodes on the power segment, white included", {"encoded": [0.0032, 0.5, 1.0]}),
+        ("negative linear values stay on the linear segment", {"encoded": [-0.1, -1.0e-3, 0.05]}),
+    ]
+    draw = Draw(6)
+    for index in range(6):
+        rows.append((f"seeded colour {index}", {
+            "radiance": draw.nums(0.0, 12.0), "display": draw.nums(0.0, 1.0), "encoded": draw.nums(0.004, 1.2)}))
+    return merged(base, rows)
+
+
+def fullscreen_cases() -> list[tuple[str, Values]]:
+    base: Values = {"vid": [0], "uv": [0.25, 0.75], "ndc": [-0.5, 0.5]}
+    rows: list[tuple[str, Values]] = [
+        ("the first vertex, bottom-left in clip space", {}),
+        ("the second vertex, three units up", {"vid": [1], "uv": [0.0, 0.0], "ndc": [-1.0, -1.0]}),
+        ("the third vertex, three units right", {"vid": [2], "uv": [1.0, 1.0], "ndc": [1.0, 1.0]}),
+        ("the texel centres of a 4 x 4 target's corners", {"uv": [0.125, 0.875], "ndc": [0.75, -0.75]}),
+        ("the image centre", {"vid": [1], "uv": [0.5, 0.5], "ndc": [0.0, 0.0]}),
+        ("off-image positions the triangle's far vertices reach", {"vid": [2], "uv": [2.0, -1.0], "ndc": [3.0, -1.0]}),
+        ("a vertex index past the triangle repeats the pattern", {"vid": [3], "uv": [0.3, 0.1], "ndc": [0.2, -0.9]}),
+    ]
+    draw = Draw(7)
+    for index in range(6):
+        rows.append((f"seeded position {index}", {
+            "vid": [draw.whole(0, 3)], "uv": draw.nums(0.0, 1.0, 2), "ndc": draw.nums(-1.0, 1.0, 2)}))
+    return merged(base, rows)
+
+
 SMOOTH = (1e-6, 1e-5)
 CHAINED = (1e-5, 1e-4)
 MODULES = [
@@ -419,6 +513,19 @@ MODULES = [
     ], evaluate_path_estimator, path_estimator_cases(), {
         "roulette not yet", "roulette ends the path", "roulette keeps the path", "view along the normal",
         "specular lobe", "diffuse lobe", "the path ends below a surface"}),
+    Module("hdr_safe", ports("radiance:3/u32"), [out("hdr_safe", 3, SMOOTH)], evaluate_hdr_safe, hdr_safe_cases(), {
+        "NaN zeroed", "negative zeroed", "infinity capped", "capped at HDR_MAX"}),
+    Module("aces", ports("radiance:3 display:3 encoded:3"), [
+        out("aces_tonemap", 3, SMOOTH), out("aces_tonemap_inverse", 3, CHAINED),
+        out("aces_tonemap_inverse.round_trip", 3, CHAINED), out("linear_to_srgb", 3, CHAINED),
+    ], evaluate_aces, aces_cases(), {"tonemap clamp", "display clamp", "linear segment", "power segment"}),
+    Module("fullscreen", ports("vid/u32 uv:2 ndc:2"), [
+        out("fullscreen_vs.position", 4, SMOOTH), out("fullscreen_vs.uv_to_ndc", 2, CHAINED),
+        out("fullscreen_vs.ndc_to_uv_error", 2, CHAINED), out("fullscreen_uv_to_ndc.x", 1, CHAINED),
+        out("fullscreen_uv_to_ndc.round_trip", 2, CHAINED), out("fullscreen_ndc_to_uv.x", 1, CHAINED),
+        out("fullscreen_ndc_to_uv.round_trip", 2, CHAINED), out("fullscreen_vs.top_row_error", 1, CHAINED),
+        out("fullscreen_uv_to_ndc.top_row_error", 1, CHAINED), out("fullscreen_ndc_to_uv.top_row_error", 1, CHAINED),
+    ], evaluate_fullscreen, fullscreen_cases()),
 ]
 
 

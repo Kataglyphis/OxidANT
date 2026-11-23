@@ -401,6 +401,42 @@
       ]
     },
     {
+      "file": "tests/hdr_safe_test.slang",
+      "entry": "hdr_safe_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tests/aces_test.slang",
+      "entry": "aces_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tests/fullscreen_test.slang",
+      "entry": "fullscreen_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
+      "_comment": "CI-only SPIR-V guard of the constant-only shared modules the C++ shaders import.",
+      "file": "tests/constants_test.slang",
+      "entry": "constants_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv"
+      ]
+    },
+    {
       "_comment": "Rust/WebGPU tracer: the BVH traversal (tracer/bvh_traverse.slang) over a ray buffer, for its GPU tests (WGSL emit).",
       "file": "tracer/trace_debug.slang",
       "entry": "cs_trace_closest",
@@ -555,6 +591,21 @@
     {
       "src": "tests/path_estimator_test.slang",
       "out": "path_estimator_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/hdr_safe_test.slang",
+      "out": "hdr_safe_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/aces_test.slang",
+      "out": "aces_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/fullscreen_test.slang",
+      "out": "fullscreen_test.wgsl",
       "dst": "crates/webgpu_renderer/tests/shaders"
     }
   ],

@@ -24,6 +24,19 @@ OxidANT submodule. Its Vulkan entry points and material modules stay in that
 repository. Commit source and generated WGSL here before updating its pin;
 an OxidANT checkout needs no parent source tree to run its shader parity tests.
 
+Five leaf modules under `common/` import nothing and hold what more than one shader needs:
+`constants.slang` (`PI`, `MIN_ROUGHNESS`), `hdr_safe.slang` (`HDR_MAX`, 65000, and `hdr_safe`, which
+finds a NaN by its bits because WGSL may assume floats are finite), `trace_constants.slang` (every
+secondary ray's `TRACE_TMIN`, `TRACE_TMAX`, `TRACE_SURFACE_OFFSET` and the punctual shadow ray's
+`TRACE_LIGHT_SPAN`), `aces.slang` (the five ACES coefficients, `aces_tonemap`, `aces_tonemap_inverse`,
+`linear_to_srgb`) and `fullscreen.slang` (`fullscreen_vs`, `fullscreen_uv_to_ndc` and its inverse
+`fullscreen_ndc_to_uv`, switched per target). BeschleunigerBallett's shaders import the same files.
+`scripts/check-shared-shader-copies.py`, run by `pre-push-checks.sh`, fails a file outside the owner
+that declares one of these names, writes one of their literals (3.14159, 0.045, 65000, an ACES
+coefficient, a ray bound) or a NaN check, or defines one of their functions; a `fullscreen` importer
+also may not convert between uv and NDC by hand. `render::tonemap`'s `aces_tonemap` and
+`aces_tonemap_inverse` are the CPU twins, whose unit test reads the coefficients from `aces.slang`.
+
 `sky/sky.slang` is the sky both renderers draw into their HDR target, tonemapped with
 the scene. The C++ renderer compiles `vs_vulkan_main` and `fs_main` to SPIR-V and fills
 `SkyUniforms` itself; its vertex entry takes `SV_VulkanVertexID`, because `SV_VertexID`
@@ -131,8 +144,12 @@ checks this on the GPU and stays enabled.
 ## Vector kernels
 
 `tests/<module>_test.slang` runs every public function of `common/<module>.slang`
-once per case of `tests/vectors/<module>.json`: `brdf`, `noise` and
-`path_estimator` today. A file holds the inputs, the f64 references and each
+once per case of `tests/vectors/<module>.json`: `brdf`, `noise`, `path_estimator`, `hdr_safe`,
+`aces` and `fullscreen` today. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
+the infinities, which JSON cannot spell; `fullscreen`'s uv differs per target, so its kernel writes
+only what both targets share: the positions, x, each mapping's round trip through its inverse, and its
+distance from `tests/clip_y.slang`'s own top row per target, so a swapped `__target_switch` branch fails.
+`tests/constants_test.slang` is the SPIR-V guard of the two constant-only modules. A file holds the inputs, the f64 references and each
 output's tolerance: an f32 passes within `abs + rel * |ref|`, a u32 or i32 must
 be equal. `tests/kernel_vectors.slang` reads the inputs and writes the outputs
 one 32-bit word per component, in the file's field order, after a header of

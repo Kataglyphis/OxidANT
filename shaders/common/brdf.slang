@@ -1,11 +1,7 @@
 // Epic/UE4 microfacet BRDF shared by both renderers; the 1e-6 guards prevent NaN/inf at grazing angles.
 
 import brdf_energy_fit;
-
-static const float PI = 3.14159265358979323846;
-
-// Smallest perceptual roughness the NDF evaluates; below it the GGX peak 1/(PI r^4) outgrows HDR targets.
-static const float MIN_ROUGHNESS = 0.045;
+import constants;
 
 // Lambertian diffuse.
 float3 lambert_diffuse(float3 albedo)

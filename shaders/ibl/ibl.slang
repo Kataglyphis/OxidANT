@@ -1,8 +1,8 @@
+import constants;
 import fullscreen;
 
 // Rust/WebGPU split-sum IBL precompute: the checked-in ibl.wgsl is generated from this file.
 
-static const float PI = 3.14159265359;
 static const uint IRRADIANCE_PHI_STEPS = 128u;
 static const uint IRRADIANCE_THETA_STEPS = 64u;
 

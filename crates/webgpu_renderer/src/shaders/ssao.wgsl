@@ -58,6 +58,11 @@ fn view_pos_at_0( uv_3 : vec2<f32>,  depth_0 : f32) -> vec3<f32>
     return v_0.xyz / vec3<f32>(v_0.w);
 }
 
+fn fullscreen_ndc_to_uv_0( ndc_0 : vec2<f32>) -> vec2<f32>
+{
+    return vec2<f32>(ndc_0.x * 0.5f + 0.5f, 0.5f - ndc_0.y * 0.5f);
+}
+
 struct pixelOutput_0
 {
     @location(0) output_0 : vec4<f32>,
@@ -117,17 +122,25 @@ fn fs_ssao( _S2 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> 
             i_0 = i_0 + i32(1);
             continue;
         }
-        var _S11 : f32 = clip_0.x / _S10 * 0.5f + 0.5f;
-        var _S12 : f32 = 0.5f - clip_0.y / _S10 * 0.5f;
-        var sampleUV_0 : vec2<f32> = vec2<f32>(_S11, _S12);
-        var _S13 : bool;
+        var sampleUV_0 : vec2<f32> = fullscreen_ndc_to_uv_0(clip_0.xy / vec2<f32>(_S10));
+        var _S11 : f32 = sampleUV_0.x;
+        var _S12 : bool;
         if(_S11 < 0.0f)
+        {
+            _S12 = true;
+        }
+        else
+        {
+            _S12 = _S11 > 1.0f;
+        }
+        var _S13 : bool;
+        if(_S12)
         {
             _S13 = true;
         }
         else
         {
-            _S13 = _S11 > 1.0f;
+            _S13 = (sampleUV_0.y) < 0.0f;
         }
         var _S14 : bool;
         if(_S13)
@@ -136,18 +149,9 @@ fn fs_ssao( _S2 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> 
         }
         else
         {
-            _S14 = _S12 < 0.0f;
+            _S14 = (sampleUV_0.y) > 1.0f;
         }
-        var _S15 : bool;
         if(_S14)
-        {
-            _S15 = true;
-        }
-        else
-        {
-            _S15 = _S12 > 1.0f;
-        }
-        if(_S15)
         {
             i_0 = i_0 + i32(1);
             continue;
@@ -166,8 +170,8 @@ fn fs_ssao( _S2 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> 
         occlusion_0 = occlusion_1;
         i_0 = i_0 + i32(1);
     }
-    var _S16 : pixelOutput_0 = pixelOutput_0( vec4<f32>(clamp(1.0f - u_0.params_0.z * (occlusion_0 / 12.0f), 0.0f, 1.0f)) );
-    return _S16;
+    var _S15 : pixelOutput_0 = pixelOutput_0( vec4<f32>(clamp(1.0f - u_0.params_0.z * (occlusion_0 / 12.0f), 0.0f, 1.0f)) );
+    return _S15;
 }
 
 struct pixelOutput_1
@@ -181,13 +185,13 @@ struct pixelInput_1
 };
 
 @fragment
-fn fs_blur( _S17 : pixelInput_1, @builtin(position) svPosition_2 : vec4<f32>) -> pixelOutput_1
+fn fs_blur( _S16 : pixelInput_1, @builtin(position) svPosition_2 : vec4<f32>) -> pixelOutput_1
 {
     var w_2 : u32;
     var h_2 : u32;
     {var dim = textureDimensions((aoTex_0));((w_2)) = dim.x;((h_2)) = dim.y;};
-    var _S18 : vec2<i32> = vec2<i32>(_S17.uv_5 * vec2<f32>(f32(w_2), f32(h_2)));
-    var _S19 : vec2<i32> = vec2<i32>(i32(w_2), i32(h_2)) - vec2<i32>(i32(1));
+    var _S17 : vec2<i32> = vec2<i32>(_S16.uv_5 * vec2<f32>(f32(w_2), f32(h_2)));
+    var _S18 : vec2<i32> = vec2<i32>(i32(w_2), i32(h_2)) - vec2<i32>(i32(1));
     var y_1 : i32 = i32(-1);
     var total_0 : f32 = 0.0f;
     for(;;)
@@ -209,14 +213,14 @@ fn fs_blur( _S17 : pixelInput_1, @builtin(position) svPosition_2 : vec4<f32>) ->
             {
                 break;
             }
-            var _S20 : vec3<i32> = vec3<i32>(clamp(_S18 + vec2<i32>(x_1, y_1), vec2<i32>(i32(0), i32(0)), _S19), i32(0));
-            var total_1 : f32 = total_0 + (textureLoad((aoTex_0), ((_S20)).xy, ((_S20)).z)).x;
+            var _S19 : vec3<i32> = vec3<i32>(clamp(_S17 + vec2<i32>(x_1, y_1), vec2<i32>(i32(0), i32(0)), _S18), i32(0));
+            var total_1 : f32 = total_0 + (textureLoad((aoTex_0), ((_S19)).xy, ((_S19)).z)).x;
             x_1 = x_1 + i32(1);
             total_0 = total_1;
         }
         y_1 = y_1 + i32(1);
     }
-    var _S21 : pixelOutput_1 = pixelOutput_1( vec4<f32>((total_0 / 9.0f)) );
-    return _S21;
+    var _S20 : pixelOutput_1 = pixelOutput_1( vec4<f32>((total_0 / 9.0f)) );
+    return _S20;
 }
 

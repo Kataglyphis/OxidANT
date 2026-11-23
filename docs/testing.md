@@ -132,6 +132,12 @@ declares at top level (function, struct, interface, constant, global, `#define`)
 counts for its importers. Slang compiles such an import silently, and `traced.slang` carried one from
 18e178a until 2026-11-16. Its fixture suite is `scripts/linux/tests/test-slang-imports.sh`.
 
+**A private copy of a shared leaf module fails the lint lane.** `scripts/check-shared-shader-copies.py`,
+run by `pre-push-checks.sh`, fails a file under `shaders/` that redeclares or retypes what
+`common/constants.slang`, `hdr_safe.slang`, `trace_constants.slang`, `aces.slang` or `fullscreen.slang`
+own ([shaders.md](shaders.md)), comments excluded. Its fixture suite is
+`scripts/linux/tests/test-shared-shader-copies.sh`.
+
 The `lint-gates.yml` script-test job also runs `test-burn-lock-graph.sh` with Python 3.11+
 `tomllib`: it checks the real `Cargo.lock` and seven synthetic Torch/ZIP/Zstd reintroductions.
 The gate is also run after local Renovate `--apply`. Cargo audit and deny remain the security

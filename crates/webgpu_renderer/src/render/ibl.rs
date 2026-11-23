@@ -100,8 +100,8 @@ impl EquirectImage {
         width: u32,
         height: u32,
     ) -> Self {
-        use crate::render::clouds::untonemapped;
         use crate::render::texture::srgb_to_linear;
+        use crate::render::tonemap::aces_tonemap_inverse;
         let size = faces.size.max(1) as usize;
         let mut rgba32f = Vec::with_capacity((width * height * 4) as usize);
         for y in 0..height {
@@ -119,7 +119,9 @@ impl EquirectImage {
                 let row = ((t * size as f32) as usize).min(size - 1);
                 let texel = (face * size * size + row * size + column) * 4;
                 for channel in 0..3 {
-                    rgba32f.push(untonemapped(srgb_to_linear(faces.rgba8[texel + channel])));
+                    rgba32f.push(aces_tonemap_inverse(srgb_to_linear(
+                        faces.rgba8[texel + channel],
+                    )));
                 }
                 rgba32f.push(1.0);
             }

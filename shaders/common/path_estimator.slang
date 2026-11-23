@@ -1,6 +1,7 @@
 // Both path tracers' estimator: the RNG, Russian roulette and the bounce over both lobes; target-independent, the C++ kernel imports it too.
 
 import brdf;
+import constants;
 
 // A pixel's RNG state: the stream offset by the golden-ratio constant, so every stream starts far from the others.
 uint path_rng_seed(uint pixel_index, uint stream)

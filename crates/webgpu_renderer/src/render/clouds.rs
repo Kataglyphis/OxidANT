@@ -11,6 +11,7 @@ pub use kataglyphis_render_core::clouds::{
 use crate::asset::skybox::CubemapFaces;
 use crate::render::ibl::{SKY_GROUND, SKY_HORIZON, SKY_ZENITH};
 use crate::render::texture::srgb_to_linear;
+use crate::render::tonemap::aces_tonemap_inverse;
 
 /// Texels per axis of the noise volume; the shader's `NOISE_VOLUME_EXTENT`.
 pub const NOISE_VOLUME_EXTENT: u32 = 128;
@@ -44,7 +45,7 @@ impl CloudAmbient {
 
     /// The switched-off sky: the navy, as the sky pass draws it.
     pub fn sky_off() -> Self {
-        let navy = SKY_OFF_DISPLAY.to_array().map(untonemapped).into();
+        let navy = SKY_OFF_DISPLAY.to_array().map(aces_tonemap_inverse).into();
         Self {
             top: navy,
             bottom: navy,
@@ -72,7 +73,7 @@ impl CloudAmbient {
                 for column in (0..size).step_by(stride) {
                     let texel = (face * size * size + row * size + column) * 4;
                     let radiance: Vec3 = std::array::from_fn(|c| {
-                        untonemapped(srgb_to_linear(faces.rgba8[texel + c]))
+                        aces_tonemap_inverse(srgb_to_linear(faces.rgba8[texel + c]))
                     })
                     .into();
                     for ((sum, count), weight) in sums.iter_mut().zip(&mut counts).zip(weights) {
@@ -87,14 +88,6 @@ impl CloudAmbient {
             bottom: sums[1] / counts[1].max(1.0),
         }
     }
-}
-
-/// `sky.slang`'s `untonemapped`: the radiance whose ACES curve shows `display`.
-pub(crate) fn untonemapped(display: f32) -> f32 {
-    let (a, b, c, d, e) = (2.51, 0.03, 2.43, 0.59, 0.14);
-    let y = display.clamp(0.0, 1.0);
-    let (qa, qb) = (a - c * y, b - d * y);
-    (-qb + (qb * qb + 4.0 * qa * e * y).sqrt()) / (2.0 * qa)
 }
 
 #[cfg(test)]
@@ -141,8 +134,8 @@ mod tests {
         let grey = [128, 128, 128, 255];
         let faces = CubemapFaces::solid([grey, grey, blue, red, grey, grey]);
         let ambient = CloudAmbient::of_cubemap(&faces);
-        let grey_radiance = untonemapped(srgb_to_linear(128));
-        let full = untonemapped(1.0);
+        let grey_radiance = aces_tonemap_inverse(srgb_to_linear(128));
+        let full = aces_tonemap_inverse(1.0);
         // The side faces' single row lies on the horizon, so it counts half toward each hemisphere.
         let expected_top = (Vec3::new(0.0, 0.0, full) + Vec3::splat(grey_radiance) * 2.0) / 3.0;
         let expected_bottom = (Vec3::new(full, 0.0, 0.0) + Vec3::splat(grey_radiance) * 2.0) / 3.0;
@@ -152,7 +145,7 @@ mod tests {
             "{ambient:?}"
         );
         assert!(
-            (untonemapped(0.5) - 0.5).abs() > 0.05,
+            (aces_tonemap_inverse(0.5) - 0.5).abs() > 0.05,
             "the inverse curve is not the identity"
         );
     }

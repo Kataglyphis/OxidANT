@@ -79,9 +79,7 @@ float4 fs_ssao(FullscreenVsOut In) : SV_Target
         float3 samplePos = p + dir * radius;
         float4 clip = mul(u.proj, float4(samplePos, 1.0));
         if (clip.w <= 0.0) continue;
-        float2 sampleUV = float2(
-            (clip.x / clip.w) * 0.5 + 0.5,
-            0.5 - (clip.y / clip.w) * 0.5);
+        float2 sampleUV = fullscreen_ndc_to_uv(clip.xy / clip.w);
         if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) continue;
         float sceneZ = view_pos_at(sampleUV, load_depth(sampleUV)).z;
         float rangeCheck = smoothstep(0.0, 1.0, radius / max(abs(p.z - sceneZ), 1e-4));

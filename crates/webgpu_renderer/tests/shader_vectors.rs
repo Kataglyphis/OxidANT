@@ -15,7 +15,7 @@ struct Kernel {
     slang: &'static str,
 }
 
-const KERNELS: [Kernel; 3] = [
+const KERNELS: [Kernel; 6] = [
     Kernel {
         module: "brdf",
         vectors: include_str!("../../../shaders/tests/vectors/brdf.json"),
@@ -33,6 +33,24 @@ const KERNELS: [Kernel; 3] = [
         vectors: include_str!("../../../shaders/tests/vectors/path_estimator.json"),
         wgsl: include_str!("shaders/path_estimator_test.wgsl"),
         slang: include_str!("../../../shaders/common/path_estimator.slang"),
+    },
+    Kernel {
+        module: "hdr_safe",
+        vectors: include_str!("../../../shaders/tests/vectors/hdr_safe.json"),
+        wgsl: include_str!("shaders/hdr_safe_test.wgsl"),
+        slang: include_str!("../../../shaders/common/hdr_safe.slang"),
+    },
+    Kernel {
+        module: "aces",
+        vectors: include_str!("../../../shaders/tests/vectors/aces.json"),
+        wgsl: include_str!("shaders/aces_test.wgsl"),
+        slang: include_str!("../../../shaders/common/aces.slang"),
+    },
+    Kernel {
+        module: "fullscreen",
+        vectors: include_str!("../../../shaders/tests/vectors/fullscreen.json"),
+        wgsl: include_str!("shaders/fullscreen_test.wgsl"),
+        slang: include_str!("../../../shaders/common/fullscreen.slang"),
     },
 ];
 
@@ -271,6 +289,21 @@ fn noise_kernel_meets_its_vectors() {
 #[test]
 fn path_estimator_kernel_meets_its_vectors() {
     check(&KERNELS[2]);
+}
+
+#[test]
+fn hdr_safe_kernel_meets_its_vectors() {
+    check(&KERNELS[3]);
+}
+
+#[test]
+fn aces_kernel_meets_its_vectors() {
+    check(&KERNELS[4]);
+}
+
+#[test]
+fn fullscreen_kernel_meets_its_vectors() {
+    check(&KERNELS[5]);
 }
 
 /// The names of the functions `slang` defines at file scope, overloads once.

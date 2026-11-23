@@ -2,19 +2,14 @@
 
 import bvh_traverse;
 import brdf;
+import constants;
 import path_estimator;
 import punctual_light;
 import sky_model;
+import trace_constants;
 
 // render::tracer::modes::KERNEL_GROUP_SIZE: each kernel's workgroup is this square of pixels.
 static const uint TRACE_GROUP_SIZE = 8;
-// The C++ kernels' ray bounds: a hit nearer than TRACE_TMIN is the surface the ray left.
-static const float TRACE_TMIN = 0.001;
-static const float TRACE_TMAX = 10000.0;
-// Along the face normal, against self-intersection, as the C++ path tracer offsets.
-static const float TRACE_SURFACE_OFFSET = 0.0001;
-// Below fp16's 65504: a larger radiance stores as +Inf in the HDR target, and ACES turns Inf into NaN.
-static const float TRACE_HDR_MAX = 65000.0;
 
 // render::tracer::modes::TraceFrameUniforms; `size` stays first, as trace_resolve.slang reads only it.
 struct TraceFrame
@@ -56,13 +51,6 @@ struct TracedSurface
     float roughness;
     bool unlit;
 };
-
-// WGSL may assume floats are finite, so a NaN is found by its bits; clamp then caps +Inf.
-float3 hdr_safe(float3 radiance)
-{
-    bool3 nan = (asuint(radiance) & 0x7FFFFFFFu) > 0x7F800000u;
-    return clamp(select(nan, float3(0.0), radiance), float3(0.0), float3(TRACE_HDR_MAX));
-}
 
 float3 normalize_or(float3 v, float3 fallback)
 {
@@ -204,8 +192,7 @@ LightSample punctual_sample(TracedSurface s, float3 v, float2 energy, uint index
         tracerLights[index * 4u + 2u], tracerLights[index * 4u + 3u]);
     PunctualIncidence incidence = punctual_incidence(light, s.position);
     o.l = incidence.l;
-    // Short of the light, so geometry at its position does not shadow it.
-    o.distance = incidence.distance * (1.0 - 1e-4);
+    o.distance = incidence.distance * TRACE_LIGHT_SPAN;
     if (incidence.attenuation <= 0.0 || dot(s.normal, incidence.l) <= 0.0)
         return o;
     float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);

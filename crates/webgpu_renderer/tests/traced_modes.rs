@@ -7,6 +7,7 @@ use std::time::Duration;
 use glam::{DVec3, Mat4, Vec3, Vec4};
 use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
+use kataglyphis_webgpu_renderer::render::tonemap::aces_tonemap;
 use kataglyphis_webgpu_renderer::render::tracer::{FurnaceSettings, RenderMode, TraceSettings};
 use kataglyphis_webgpu_renderer::scene::{
     AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef, Vertex,
@@ -227,8 +228,7 @@ fn single_scatter_albedo(mu: f64, metallic: f64, roughness: f64) -> f64 {
 
 /// What the tonemap writes for `radiance` at `ev` with bloom and SSAO off: ACES (Narkowicz), then the exact sRGB encode.
 fn tonemapped(radiance: f32, ev: f32) -> f32 {
-    let x = radiance * ev.exp2();
-    let aces = ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0);
+    let aces = aces_tonemap(radiance * ev.exp2());
     let srgb = if aces < 0.003_130_8 {
         aces * 12.92
     } else {

@@ -1,4 +1,5 @@
 import brdf;
+import constants;
 
 // Bakes the samples common/brdf_energy_fit.slang is fitted to, from ggx_single_scatter, and reads the fit back, for the tests.
 

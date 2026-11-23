@@ -13,6 +13,27 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-23, shared Slang leaf modules)
+
+- **Five leaf modules own what the shaders used to copy** (BeschleunigerBallett BACKLOG "Shared Slang leaf modules",
+  plan I8): new `common/constants.slang` (`PI`, `MIN_ROUGHNESS`), `common/hdr_safe.slang` (`HDR_MAX` and `hdr_safe` with
+  the bit-test NaN check) and `common/trace_constants.slang` (`TRACE_TMIN`, `TRACE_TMAX`, `TRACE_SURFACE_OFFSET`,
+  `TRACE_LIGHT_SPAN`); `aces.slang` gains the coefficients as `ACES_A` to `ACES_E` and `aces_tonemap_inverse`, which
+  replaces `sky.slang`'s `untonemapped`; `fullscreen.slang` gains `fullscreen_ndc_to_uv`. Copies replaced: `brdf.slang`'s
+  `PI` and `MIN_ROUGHNESS`, `ibl.slang`'s `PI`, `volumetric_clouds.slang`'s `CLOUD_PI`, `forward.slang`'s 0.045,
+  `HDR_MAX` in `forward_lighting.slang`, `sky.slang` and `bloom.slang` (each now ends in `hdr_safe`, which adds the NaN
+  and negative clamps), `trace_shading.slang`'s `TRACE_*` and private `hdr_safe`, its `1 - 1e-4` light span, and the
+  hand-written WebGPU NDC-to-uv in `ssao.slang` and `gpu_cull.slang`. Every value stayed: `traced.wgsl`, `ibl.wgsl`
+  and `cloud_march.wgsl` emit byte for byte as before, and no golden or headless test changed.
+- **Vector kernels for `hdr_safe`, `aces` and `fullscreen`** (`tests/<module>_test.slang`, SPIR-V and WGSL rows,
+  `shader_model.py`, the generator, `shader_vectors.rs`), and `tests/constants_test.slang`, the SPIR-V guard of the two
+  constant-only modules. `hdr_safe.json` feeds NaN, both infinities, fp16's 65504 and subnormals as bits.
+- **`scripts/check-shared-shader-copies.py`**, in `pre-push-checks.sh` with the fixture suite
+  `test-shared-shader-copies.sh`, fails a private copy of any of them.
+- **`render::tonemap::{ACES_COEFFICIENTS, aces_tonemap, aces_tonemap_inverse}`** are the CPU twins; `clouds.rs` drops its
+  `untonemapped`, and `ibl.rs`, `tests/clouds.rs` and `tests/traced_modes.rs` use them. A unit test reads the
+  coefficients from `aces.slang`.
+
 ### Changed (2026-11-23, ModelANT's full-size frames replay bit for bit)
 
 - The ModelANT pin moves to f845b60, whose `inference-v1.json` adds `digest_cases` (ANTfrastructure CON288 (e)).

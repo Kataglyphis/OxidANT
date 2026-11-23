@@ -268,9 +268,13 @@ def ggx_energy_fit(t: Vec) -> Vec:
     return e
 
 
-# ---- common/brdf.slang ----
+# ---- common/constants.slang ----
 
 PI = 3.14159265358979323846
+MIN_ROUGHNESS = 0.045
+
+
+# ---- common/brdf.slang ----
 
 
 def lambert_diffuse(albedo: Vec) -> Vec:
@@ -278,9 +282,9 @@ def lambert_diffuse(albedo: Vec) -> Vec:
 
 
 def min_roughness(roughness: Real) -> Real:
-    if roughness.v < f32(0.045):
+    if roughness.v < f32(MIN_ROUGHNESS):
         visit("roughness floor")
-    return rmax(roughness, 0.045)
+    return rmax(roughness, MIN_ROUGHNESS)
 
 
 def distribution_ggx(n_dot_h: Real, roughness: Real) -> Real:
@@ -336,7 +340,7 @@ GGX_ENERGY_MIN_N_DOT_V = 1e-4
 
 
 def energy_low() -> Vec:
-    return Vec(pow_(real(GGX_ENERGY_MIN_N_DOT_V), 1.0 / 3.0), sqrt(real(0.045)))
+    return Vec(pow_(real(GGX_ENERGY_MIN_N_DOT_V), 1.0 / 3.0), sqrt(real(MIN_ROUGHNESS)))
 
 
 def ggx_energy_node(t: Vec) -> Vec:
@@ -348,10 +352,10 @@ def ggx_energy_node(t: Vec) -> Vec:
 
 
 def ggx_energy_coordinates(n_dot_v: Real, roughness: Real) -> Vec:
-    if not f32(GGX_ENERGY_MIN_N_DOT_V) <= n_dot_v.v <= 1.0 or not f32(0.045) <= roughness.v <= 1.0:
+    if not f32(GGX_ENERGY_MIN_N_DOT_V) <= n_dot_v.v <= 1.0 or not f32(MIN_ROUGHNESS) <= roughness.v <= 1.0:
         visit("energy input clamp")
     low = energy_low()
-    c = Vec(pow_(clamp(n_dot_v, GGX_ENERGY_MIN_N_DOT_V, 1.0), 1.0 / 3.0), sqrt(clamp(roughness, 0.045, 1.0)))
+    c = Vec(pow_(clamp(n_dot_v, GGX_ENERGY_MIN_N_DOT_V, 1.0), 1.0 / 3.0), sqrt(clamp(roughness, MIN_ROUGHNESS, 1.0)))
     return (c - low) / (1.0 - low)
 
 
@@ -573,3 +577,80 @@ def sample_bounce(s: Surface, face_normal: Vec, rng: int) -> tuple[Vec, Vec, int
     pdf = specular * ggx_visible_normal_pdf(n_dot_v, n_dot_h, s.roughness * s.roughness)
     pdf = pdf + (1.0 - specular) * n_dot_l / PI
     return s.l, brdf_sampled(s) / rmax(pdf, 1e-6), rng
+
+
+# ---- common/hdr_safe.slang ----
+
+HDR_MAX = 65000.0
+
+
+def bits_to_f32(word: int) -> float:
+    return struct.unpack("<f", struct.pack("<I", word & M32))[0]
+
+
+def hdr_safe(words: Sequence[int]) -> Vec:
+    """The radiance arrives as its bits, as the kernel reads it, so NaN and the infinities can be inputs."""
+    out: list[Real] = []
+    for word in words:
+        x = bits_to_f32(word)
+        if math.isnan(x):
+            visit("NaN zeroed")
+            out.append(Real(0.0))
+            continue
+        if x < 0.0:
+            visit("negative zeroed")
+        if x > f32(HDR_MAX):
+            visit("infinity capped" if math.isinf(x) else "capped at HDR_MAX")
+        out.append(clamp(Real(x), 0.0, HDR_MAX))
+    return Vec(*out)
+
+
+# ---- common/aces.slang ----
+
+ACES_A, ACES_B, ACES_C, ACES_D, ACES_E = 2.51, 0.03, 2.43, 0.59, 0.14
+
+
+def unit_clamp(v: Vec, label: str) -> Vec:
+    if any(not 0.0 <= a.v <= 1.0 for a in v.c):
+        visit(label)
+    return each(lambda a: clamp(a, 0.0, 1.0), v)
+
+
+def aces_tonemap(x: Vec) -> Vec:
+    return unit_clamp((x * (ACES_A * x + ACES_B)) / (x * (ACES_C * x + ACES_D) + ACES_E), "tonemap clamp")
+
+
+def aces_tonemap_inverse(display: Vec) -> Vec:
+    y = unit_clamp(display, "display clamp")
+    qa = ACES_A - ACES_C * y
+    qb = ACES_B - ACES_D * y
+    return (-qb + each(sqrt, qb * qb + 4.0 * qa * ACES_E * y)) / (2.0 * qa)
+
+
+def linear_to_srgb(c: Vec) -> Vec:
+    out: list[Real] = []
+    for x in c.c:
+        if below(x, 0.0031308, "srgb segment"):
+            visit("linear segment")
+            out.append(x * 12.92)
+        else:
+            visit("power segment")
+            out.append(1.055 * pow_(rmax(x, 0.0), 1.0 / 2.4) - 0.055)
+    return Vec(*out)
+
+
+# ---- common/fullscreen.slang: the WGSL branch; the kernel writes only what both targets share ----
+
+
+def fullscreen_vs(vid: int) -> tuple[Vec, Vec]:
+    x = Real(float((vid & M32) // 2)) * 4.0 - 1.0
+    y = Real(float((vid & M32) % 2)) * 4.0 - 1.0
+    return Vec(x, y, 0.0, 1.0), Vec((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5)
+
+
+def fullscreen_uv_to_ndc(uv: Vec) -> Vec:
+    return Vec(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0)
+
+
+def fullscreen_ndc_to_uv(ndc: Vec) -> Vec:
+    return Vec(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5)

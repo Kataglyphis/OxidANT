@@ -9,6 +9,23 @@ use crate::render::fxaa::FxaaPass;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
 
+/// `aces.slang`'s ACES_A to ACES_E: the tonemap is x (a x + b) / (x (c x + d) + e), clamped to [0, 1].
+pub const ACES_COEFFICIENTS: [f32; 5] = [2.51, 0.03, 2.43, 0.59, 0.14];
+
+/// `aces.slang`'s `aces_tonemap` on one channel.
+pub fn aces_tonemap(x: f32) -> f32 {
+    let [a, b, c, d, e] = ACES_COEFFICIENTS;
+    ((x * (a * x + b)) / (x * (c * x + d) + e)).clamp(0.0, 1.0)
+}
+
+/// `aces.slang`'s `aces_tonemap_inverse`: the radiance whose tonemap shows `display`.
+pub fn aces_tonemap_inverse(display: f32) -> f32 {
+    let [a, b, c, d, e] = ACES_COEFFICIENTS;
+    let y = display.clamp(0.0, 1.0);
+    let (qa, qb) = (a - c * y, b - d * y);
+    (-qb + (qb * qb + 4.0 * qa * e * y).sqrt()) / (2.0 * qa)
+}
+
 /// The tonemap and FXAA WGSL a pass builds from; a reload in the renderer hands every pass new ones.
 #[derive(Clone, Debug)]
 pub struct TonemapShaders {
@@ -284,4 +301,36 @@ fn tonemap_pipeline(
             blend: None,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ACES_SLANG: &str = include_str!("../../../../shaders/common/aces.slang");
+
+    #[test]
+    fn the_cpu_aces_pair_carries_aces_slangs_coefficients() {
+        let shader: Vec<f32> = ["A", "B", "C", "D", "E"]
+            .iter()
+            .map(|name| {
+                let needle = format!("static const float ACES_{name} = ");
+                let value = ACES_SLANG
+                    .split(&needle)
+                    .nth(1)
+                    .and_then(|rest| rest.split(';').next())
+                    .unwrap_or_else(|| panic!("aces.slang no longer declares ACES_{name}"));
+                value.trim().parse().expect("a float literal")
+            })
+            .collect();
+        assert_eq!(shader, ACES_COEFFICIENTS);
+    }
+
+    #[test]
+    fn the_inverse_undoes_the_tonemap() {
+        for display in [0.0, 0.01, 0.2, 0.5, 0.8, 0.99] {
+            let radiance = aces_tonemap_inverse(display);
+            assert!((aces_tonemap(radiance) - display).abs() < 1e-5, "{display}");
+        }
+    }
 }

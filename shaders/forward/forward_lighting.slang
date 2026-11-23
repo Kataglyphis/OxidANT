@@ -1,4 +1,5 @@
 import brdf;
+import hdr_safe;
 import punctual_light;
 import punctual_shadow;
 import shadow_pcf;
@@ -17,8 +18,6 @@ static const uint TILE_SIZE = 16;
 // Must match render::tile_grid::MAX_LIGHTS_PER_TILE: a tile counting more lists none.
 static const uint MAX_LIGHTS_PER_TILE = 32;
 
-// Below fp16's 65504: a larger radiance stores as +Inf in the Rgba16Float target, and ACES turns Inf into NaN.
-static const float HDR_MAX = 65000.0;
 
 struct FrameUniforms
 {
@@ -279,5 +278,5 @@ float3 shade_surface(SurfacePoint s, float4 fragCoord)
 
     float3 punctual = punctual_lighting(s.position, s.n, v, s.albedo, s.metallic, s.roughness, f0, energy, fragCoord);
     float3 color = directLight + punctual + ibl_ambient(s, v, f0, energy) + s.emissive;
-    return clamp(color, float3(0.0), float3(HDR_MAX));
+    return hdr_safe(color);
 }

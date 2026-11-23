@@ -1,5 +1,7 @@
 // Rust/WebGPU AABB-vs-depth occlusion culling: the checked-in gpu_cull.wgsl is generated from this file.
 
+import fullscreen;
+
 struct CullParams
 {
     float4x4 view_proj;
@@ -53,8 +55,7 @@ void cs_main(uint3 gid : SV_DispatchThreadID)
 
         float2 ndc = clip.xy / clip.w;
         float depth = clip.z / clip.w;
-        // WebGPU convention: ndc.y = +1 is the top row.
-        float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        float2 uv = fullscreen_ndc_to_uv(ndc);
 
         aabbNear = min(aabbNear, depth);
         uvMin = min(uvMin, uv);

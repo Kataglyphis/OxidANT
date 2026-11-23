@@ -23,7 +23,7 @@ FullscreenVsOut fullscreen_vs(uint vid)
     return o;
 }
 
-// The exact inverse of fullscreen_vs's uv; edit the two together.
+// The exact inverse of fullscreen_vs's uv; edit the three together.
 float2 fullscreen_uv_to_ndc(float2 uv)
 {
     __target_switch
@@ -32,5 +32,17 @@ float2 fullscreen_uv_to_ndc(float2 uv)
         return uv * 2.0 - 1.0;
     default:
         return float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    }
+}
+
+// fullscreen_uv_to_ndc's inverse: an NDC position's uv, (0, 0) at the target's top-left texel.
+float2 fullscreen_ndc_to_uv(float2 ndc)
+{
+    __target_switch
+    {
+    case spirv:
+        return ndc * 0.5 + 0.5;
+    default:
+        return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     }
 }

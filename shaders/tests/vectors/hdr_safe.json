@@ -1,0 +1,28 @@
+{
+  "about": "Inputs, f64 references and tolerances for tests/hdr_safe_test.slang, which runs every public function of common/hdr_safe.slang once per case. OxidANT's crates/webgpu_renderer/tests/shader_vectors.rs and BeschleunigerBallett's C++ runner check it. The kernel reads two u32 header words (input words per case, output words per case), then each case's inputs in `inputs` order, one 32-bit word per component (an f32 as its IEEE bits, a u32 or i32 as the integer), and writes each case's outputs the same way in `outputs` order. An f32 output passes when |gpu - ref| <= abs + rel * |ref| in every component; a u32 or i32 output must be equal. Written by scripts/generate-shader-vectors.py from an f64 model of the module: edit that.",
+  "module": "common/hdr_safe.slang",
+  "kernel": "tests/hdr_safe_test.slang",
+  "entry": "hdr_safe_test_main",
+  "inputs": [
+    {"name": "radiance", "type": "u32", "width": 3}
+  ],
+  "outputs": [
+    {"name": "hdr_safe", "type": "f32", "width": 3, "abs": 1e-06, "rel": 1e-05}
+  ],
+  "cases": [
+    {"name": "ordinary radiance passes unchanged", "inputs": {"radiance": [1056964608, 1067450368, 1189765120]}, "outputs": {"hdr_safe": [0.5, 1.25, 30000.0]}},
+    {"name": "a quiet NaN in each channel becomes zero", "inputs": {"radiance": [2143289344, 1073741824, 4290772992]}, "outputs": {"hdr_safe": [0.0, 2.0, 0.0]}},
+    {"name": "a signalling NaN and the largest NaN payload become zero", "inputs": {"radiance": [2139095041, 2147483647, 1088421888]}, "outputs": {"hdr_safe": [0.0, 0.0, 7.0]}},
+    {"name": "+Inf caps at HDR_MAX, -Inf clamps to zero", "inputs": {"radiance": [2139095040, 4286578688, 1065353216]}, "outputs": {"hdr_safe": [65000.0, 0.0, 1.0]}},
+    {"name": "fp16's 65504 and the largest finite float cap at HDR_MAX", "inputs": {"radiance": [1199562752, 2139095039, 1199433728]}, "outputs": {"hdr_safe": [65000.0, 65000.0, 65000.0]}},
+    {"name": "the float just above HDR_MAX caps, the one below passes", "inputs": {"radiance": [1199433729, 1199433727, 1199433472]}, "outputs": {"hdr_safe": [65000.0, 64999.9960938, 64999.0]}},
+    {"name": "negative radiance clamps to zero", "inputs": {"radiance": [3231711232, 3129152111, 4048155338]}, "outputs": {"hdr_safe": [0.0, 0.0, 0.0]}},
+    {"name": "negative zero and the smallest subnormal", "inputs": {"radiance": [2147483648, 1, 0]}, "outputs": {"hdr_safe": [-0.0, 1.40129846432e-45, 0.0]}},
+    {"name": "seeded radiance 0", "inputs": {"radiance": [1193956126, 1196086551, 1197043597]}, "outputs": {"hdr_safe": [43603.1171875, 51925.0898438, 55663.5507812]}},
+    {"name": "seeded radiance 1", "inputs": {"radiance": [1199626691, 1196052710, 1199321792]}, "outputs": {"hdr_safe": [65000.0, 51792.8984375, 64562.75]}},
+    {"name": "seeded radiance 2", "inputs": {"radiance": [1157483446, 1191093036, 1199634812]}, "outputs": {"hdr_safe": [2030.3659668, 32593.5859375, 65000.0]}},
+    {"name": "seeded radiance 3", "inputs": {"radiance": [1194423352, 1198937865, 1173857111]}, "outputs": {"hdr_safe": [45428.21875, 63063.0351562, 7924.41748047]}},
+    {"name": "seeded radiance 4", "inputs": {"radiance": [1191199445, 1183242290, 1192537923]}, "outputs": {"hdr_safe": [32834.8320312, 17260.0976562, 38063.2617188]}},
+    {"name": "seeded radiance 5", "inputs": {"radiance": [1193078754, 1147502482, 1181551704]}, "outputs": {"hdr_safe": [40175.8828125, 917.993286133, 15171.0859375]}}
+  ]
+}

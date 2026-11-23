@@ -34,6 +34,12 @@ fn vs_main(@builtin(vertex_index) vid_1 : u32) -> FullscreenVsOut_0
     return fullscreen_vs_0(vid_1);
 }
 
+fn hdr_safe_0( radiance_0 : vec3<f32>) -> vec3<f32>
+{
+    var _S1 : vec3<f32> = vec3<f32>(0.0f);
+    return clamp(select(radiance_0, _S1, (((bitcast<vec3<u32>>((radiance_0))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S1, vec3<f32>(65000.0f));
+}
+
 struct pixelOutput_0
 {
     @location(0) output_0 : vec4<f32>,
@@ -45,21 +51,20 @@ struct pixelInput_0
 };
 
 @fragment
-fn fs_brightpass( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
+fn fs_brightpass( _S2 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
-    var _S2 : vec3<f32> = vec3<f32>(65000.0f);
-    var scene_0 : vec3<f32> = min((textureSample((srcTex_0), (srcSampler_0), (_S1.uv_1))).xyz, _S2);
+    var scene_0 : vec3<f32> = hdr_safe_0((textureSample((srcTex_0), (srcSampler_0), (_S2.uv_1))).xyz);
     var scene_1 : vec3<f32>;
     if((bloomUniforms_0.params_0.x) > 0.5f)
     {
-        var cloud_0 : vec4<f32> = (textureSample((cloudTex_0), (srcSampler_0), (_S1.uv_1)));
+        var cloud_0 : vec4<f32> = (textureSample((cloudTex_0), (srcSampler_0), (_S2.uv_1)));
         scene_1 = cloud_0.xyz + scene_0 * vec3<f32>((1.0f - cloud_0.w));
     }
     else
     {
         scene_1 = scene_0;
     }
-    var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(clamp(min(scene_1, _S2) * vec3<f32>(exp2(exposureState_0[i32(0)])) - vec3<f32>(1.0f), vec3<f32>(0.0f), _S2), 1.0f) );
+    var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(hdr_safe_0(hdr_safe_0(scene_1) * vec3<f32>(exp2(exposureState_0[i32(0)])) - vec3<f32>(1.0f)), 1.0f) );
     return _S3;
 }
 

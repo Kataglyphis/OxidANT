@@ -1,6 +1,6 @@
 // Volumetric clouds for both renderers: the noise volume's texels, the axis-aligned cloud box and the ray march.
 
-static const float CLOUD_PI = 3.14159265358979323846;
+import constants;
 
 // Each renderer allocates the volume at this extent per axis; its own constants are pinned to it by a test.
 static const float NOISE_VOLUME_EXTENT = 128.0;
@@ -191,7 +191,7 @@ float sample_density(ICloudNoise noise, float3 position, Clouds cloud)
 float phase_HG(float cosTheta, float g)
 {
     float denom = 1.0 + g * g - 2.0 * g * cosTheta;
-    return (1.0 / (4.0 * CLOUD_PI)) * ((1.0 - g * g) / (denom * sqrt(denom)));
+    return (1.0 / (4.0 * PI)) * ((1.0 - g * g) / (denom * sqrt(denom)));
 }
 
 // Slab test (iquilezles) against the box around cloud.offset with half extents cloud.radius; entry/exit in oT.

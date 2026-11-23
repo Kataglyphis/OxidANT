@@ -1,6 +1,9 @@
 import brdf;
 import bvh_traverse;
+import constants;
+import hdr_safe;
 import path_estimator;
+import trace_constants;
 import trace_shading;
 
 // The ray- and path-traced modes' kernels: each dispatch shades one tile into the accumulation, which trace_resolve.slang copies into the HDR target.

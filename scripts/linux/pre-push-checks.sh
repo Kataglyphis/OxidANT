@@ -6,5 +6,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 for suite in scripts/linux/tests/test-*.sh; do bash "${suite}"; done
 bash scripts/linux/check-rust-function-sizes.sh
 python3 scripts/check-slang-imports.py
+python3 scripts/check-shared-shader-copies.py
 python3 scripts/generate-shader-vectors.py --check
 python3 scripts/linux/tests/test-detector-parity.py
