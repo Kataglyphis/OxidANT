@@ -312,6 +312,12 @@ fn visit_node(
         if let Some(joints) = joints {
             let vertices = &mut geometry.vertices;
             gltf_loader::bind_influences(vertices, Some(joints.len()), primitive.index());
+            skin::rewind_mirrored_triangles(
+                vertices,
+                &mut geometry.indices,
+                joints,
+                Mat4::IDENTITY,
+            );
             for vertex in vertices.iter_mut() {
                 *vertex = skin::skin_vertex(vertex, joints, Mat4::IDENTITY);
             }

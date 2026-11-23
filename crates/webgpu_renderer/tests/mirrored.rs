@@ -103,6 +103,52 @@ fn a_mirrored_cube_renders_like_the_original() {
     }
 }
 
+/// Green-dominant pixels left and right of the frame's middle column.
+fn green_halves(pixels: &[u8]) -> (usize, usize) {
+    let mut halves = (0, 0);
+    for (i, p) in pixels.as_chunks::<4>().0.iter().enumerate() {
+        let green = i32::from(p[1]);
+        if green > i32::from(p[0]) + 40 && green > i32::from(p[2]) + 40 {
+            if (i as u32 % SIZE) < SIZE / 2 {
+                halves.0 += 1;
+            } else {
+                halves.1 += 1;
+            }
+        }
+    }
+    halves
+}
+
+/// Two single-sided cards facing the camera, the left one placed by a joint that mirrors X: both show their fronts.
+#[test]
+fn a_skin_mirrored_by_its_joints_draws_both_cards_from_the_front() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/skinned_mirrored.gltf");
+    let scene = load_gltf(path).expect("skinned_mirrored.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, SIZE, SIZE);
+    renderer.upload_scene(&gpu, &scene);
+    let camera = OrbitCamera {
+        yaw_deg: 90.0,
+        pitch_deg: 0.0,
+        ..OrbitCamera::default()
+    };
+    let pixels = renderer
+        .render_to_pixels(&gpu, SIZE, SIZE, &camera)
+        .expect("headless render must succeed");
+    let (mirrored, upright) = green_halves(&pixels);
+    assert!(
+        upright > 1000,
+        "precondition: the upright card draws ({upright} pixels)"
+    );
+    assert!(
+        mirrored * 10 > upright * 9,
+        "the mirrored card shows {mirrored} pixels against the upright one's {upright}: culled as a back face"
+    );
+}
+
 /// One draw holding mirrored and unmirrored instances renders each with its own winding.
 #[test]
 fn mixed_mirrored_and_upright_instances_render_alike() {

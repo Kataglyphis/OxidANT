@@ -7,6 +7,7 @@ use glam::{Mat4, Quat, Vec3, Vec3A};
 use super::scenes::{self, build, rays};
 use crate::render::tracer::build::{TraceBuildOptions, TraceSceneBuilder};
 use crate::render::tracer::bvh::Aabb;
+use crate::render::tracer::geometry::unpack_vertex;
 use crate::render::tracer::query::{TraceRay, FAR};
 use crate::render::tracer::scene::{InstanceChange, TraceScene};
 use crate::scene::{ChannelValues, CpuAnimation, CpuAnimationChannel, CpuScene, Interpolation};
@@ -387,6 +388,48 @@ fn a_still_skin_merges_at_its_first_pose() {
     let scene = build(source);
     assert!(scene.deformed.is_empty());
     assert_eq!(scene.meshes.len(), 1, "only the merged mesh");
+}
+
+/// Each triangle's corners wind counter-clockwise about their summed normals, and how many lie left of the origin.
+fn assert_fronts_face_out(name: &str, scene: &TraceScene) -> usize {
+    let mut left = 0;
+    for tri in &scene.triangles {
+        let corner = |i: u32| Vec3::from_slice(&scene.positions[i as usize][..3]);
+        let face = (corner(tri[1]) - corner(tri[0])).cross(corner(tri[2]) - corner(tri[0]));
+        let normals: Vec3 = tri[..3]
+            .iter()
+            .map(|&i| unpack_vertex(&scene.vertices[i as usize]).normal)
+            .sum();
+        assert!(face.dot(normals) > 0.0, "{name}: {tri:?} faces in");
+        left += usize::from(corner(tri[0]).x < 0.0);
+    }
+    left
+}
+
+/// The card a joint mirrors keeps its front out, merged at rest and as an animated mesh of its own.
+#[test]
+fn a_skin_mirrored_by_its_joints_traces_with_its_fronts_out() {
+    let source = scenes::asset("skinned_mirrored.gltf");
+    let still = build(source.clone());
+    assert_eq!(
+        assert_fronts_face_out("still", &still),
+        2,
+        "the mirrored card's two"
+    );
+    let mut animated = source;
+    animated.animations.push(CpuAnimation {
+        name: "lift".to_owned(),
+        duration: 1.0,
+        channels: vec![CpuAnimationChannel {
+            node: 2,
+            times: vec![0.0],
+            values: ChannelValues::Translation(vec![Vec3::Y]),
+            interpolation: Interpolation::Linear,
+        }],
+    });
+    let animated = build(animated);
+    assert_eq!(animated.deformed.len(), 1, "the skin is a mesh of its own");
+    assert_eq!(assert_fronts_face_out("animated", &animated), 2);
 }
 
 /// A morphed mesh whose weights an animation drives is re-posed by the weights it is handed.

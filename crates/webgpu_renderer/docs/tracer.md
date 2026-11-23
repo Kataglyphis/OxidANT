@@ -55,7 +55,8 @@ moves, or a morphed primitive whose weights one drives, gets a mesh of its own (
 skin in world space under an identity instance, a morph in object space under its node's.
 Everything else merges into one world-space mesh, skins and morph targets no animation moves
 baked at their first pose; a mirroring transform flips that mesh's winding and bitangent sign
-there. Zero-scale and degenerate geometry is dropped. `set_root_transform` (the model transform) and `set_primitive_transforms` (animated
+there. A skin's triangles come wound for its joints at rest from the loader (reversed where most of a
+triangle's corners mirror), so no skinned mesh flips its winding here. Zero-scale and degenerate geometry is dropped. `set_root_transform` (the model transform) and `set_primitive_transforms` (animated
 nodes' world matrices, by scene primitive) rebuild only the top level, and
 `TraceGpuScene::write_instances` rewrites it in place; `Tracer` has both for the uploaded
 scene.

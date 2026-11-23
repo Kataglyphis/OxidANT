@@ -194,7 +194,7 @@ on a software adapter: lavapipe on Linux, WARP on Windows (x64 on its runner
 host, arm64 on `windows-11-arm`). The `ADAPTER:` line and the BC-upload and
 GPU-timing tests:
 [`docs/testing.md` § The GPU tests must render](../../docs/testing.md#the-gpu-tests-must-render).
-`tests/mirrored.rs` holds mirrored (negative-determinant) nodes and instances, and
+`tests/mirrored.rs` holds mirrored (negative-determinant) nodes, instances and skins, and
 double-sided back faces, to the shading of their unmirrored originals. `tests/traced_modes.rs`
 holds the traced modes to the C++ goldens and the path tracer's white furnace to analytic values;
 `tests/feature_matrix.rs` runs the shadow settings, skybox, clouds, model transform and culling

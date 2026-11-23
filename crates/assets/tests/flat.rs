@@ -446,6 +446,71 @@ fn a_gltfpack_quantized_skin_arrives_dequantized() {
     );
 }
 
+/// Per triangle: whether its corners in index order wind counter-clockwise about their summed normals.
+fn fronts_out(positions: &[glam::Vec3], normals: &[glam::Vec3], indices: &[u32]) -> Vec<bool> {
+    indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[a, b, c]| {
+            let [a, b, c] = [a, b, c].map(|i| i as usize);
+            let face = (positions[b] - positions[a]).cross(positions[c] - positions[a]);
+            face.dot(normals[a] + normals[b] + normals[c]) > 0.0
+        })
+        .collect()
+}
+
+/// A joint that mirrors X places the left card: the bake reverses its triangles, so both fronts face +Z.
+#[test]
+fn a_skin_mirrored_by_its_joints_keeps_its_fronts_out_in_the_bake() {
+    let model = load_flat(fixture("skinned_mirrored.gltf"), &LoadOptions::default()).unwrap();
+    let positions: Vec<glam::Vec3> = model.vertices.iter().map(|v| v.position.into()).collect();
+    let normals: Vec<glam::Vec3> = model.vertices.iter().map(|v| v.normal.into()).collect();
+    assert_eq!(fronts_out(&positions, &normals, &model.indices), [true; 4]);
+    for v in &model.vertices {
+        assert_eq!(v.normal, [0.0, 0.0, 1.0], "a mirror in X keeps a +Z normal");
+    }
+    // The mirrored card's tangent sign flips with its joint, as it did before the winding did.
+    let signs = |left: bool| -> Vec<f32> {
+        let side = model
+            .vertices
+            .iter()
+            .filter(|v| (v.position[0] < 0.0) == left);
+        side.map(|v| v.tangent[3]).collect()
+    };
+    let (upright, mirrored) = (signs(false), signs(true));
+    assert_eq!((upright.len(), mirrored.len()), (4, 4));
+    assert!(mirrored.iter().chain(&upright).all(|w| w.abs() == 1.0));
+    let flipped =
+        upright.iter().all(|w| *w == upright[0]) && mirrored.iter().all(|w| *w == -upright[0]);
+    assert!(flipped, "{upright:?} {mirrored:?}");
+}
+
+/// The scene keeps the bind pose, wound for the joints at the file's pose: posed there, both fronts face +Z.
+#[test]
+fn a_skin_mirrored_by_its_joints_keeps_its_fronts_out_in_the_scene() {
+    use kataglyphis_assets::skin::{joint_matrices, skin_vertex};
+    let scene = kataglyphis_assets::load_gltf(fixture("skinned_mirrored.gltf")).unwrap();
+    let prim = &scene.primitives[0];
+    let world = kataglyphis_assets::CpuScene::compute_world_transforms(&scene.nodes);
+    let joints = joint_matrices(&scene.skins[0], &world);
+    let posed: Vec<_> = prim
+        .vertices
+        .iter()
+        .map(|v| skin_vertex(v, &joints, prim.transform))
+        .collect();
+    let positions: Vec<glam::Vec3> = posed.iter().map(|v| v.position.into()).collect();
+    let normals: Vec<glam::Vec3> = posed.iter().map(|v| v.normal.into()).collect();
+    assert_eq!(fronts_out(&positions, &normals, &prim.indices), [true; 4]);
+    let bind: Vec<glam::Vec3> = prim.vertices.iter().map(|v| v.position.into()).collect();
+    let bind_normals: Vec<glam::Vec3> = prim.vertices.iter().map(|v| v.normal.into()).collect();
+    assert_eq!(
+        fronts_out(&bind, &bind_normals, &prim.indices),
+        [true, true, false, false],
+        "only the mirrored card's triangles are reversed in the bind pose"
+    );
+}
+
 #[test]
 fn a_primitive_without_a_material_draws_with_the_neutral_fallback() {
     let dir = tempfile::tempdir().unwrap();
@@ -705,7 +770,7 @@ fn a_truncated_base64_image_gets_no_slot() {
 }
 
 /// Self-contained seeds: every buffer and image is embedded, so a mutant read from a temp dir resolves nothing outside it.
-const FUZZ_SEEDS: [&str; 10] = [
+const FUZZ_SEEDS: [&str; 11] = [
     "cube.glb",
     "cube.gltf",
     "cube_quantized.gltf",
@@ -716,6 +781,7 @@ const FUZZ_SEEDS: [&str; 10] = [
     "point_light.gltf",
     "skinned_bar.gltf",
     "skinned_bar_quantized.gltf",
+    "skinned_mirrored.gltf",
 ];
 
 #[derive(Clone, Debug)]

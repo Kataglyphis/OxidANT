@@ -12,7 +12,7 @@ use crate::scene::{
     CpuLight, CpuLightKind, CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin,
     CpuTexture, CpuTextureRef, CpuWrap, Interpolation, MorphTarget, Vertex,
 };
-use crate::{files, gltf_images};
+use crate::{files, gltf_images, skin};
 
 /// How the loader builds geometry. An application reads its settings once at its start; the loader reads no environment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -123,6 +123,7 @@ fn build_scene(
     walk_nodes(&document, |node, world| {
         visit_node(node, world, &buffers, &textures, options, &mut scene)
     })?;
+    rewind_mirrored_skins(&mut scene);
 
     anyhow::ensure!(
         !scene.primitives.is_empty(),
@@ -130,6 +131,29 @@ fn build_scene(
     );
 
     Ok(scene)
+}
+
+/// Each skinned primitive wound for its joints at the file's pose, the pose the renderer uploads first.
+fn rewind_mirrored_skins(scene: &mut CpuScene) {
+    if scene.skins.is_empty() {
+        return;
+    }
+    let world = CpuScene::compute_world_transforms(&scene.nodes);
+    let rest: Vec<Vec<Mat4>> = scene
+        .skins
+        .iter()
+        .map(|s| skin::joint_matrices(s, &world))
+        .collect();
+    for prim in &mut scene.primitives {
+        if let Some(joints) = prim.skin_index.and_then(|s| rest.get(s)) {
+            skin::rewind_mirrored_triangles(
+                &prim.vertices,
+                &mut prim.indices,
+                joints,
+                prim.transform,
+            );
+        }
+    }
 }
 
 /// The full node table, index-aligned with glTF node indices, with each node's local TRS and parent.

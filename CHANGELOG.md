@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-22, a skin mirrored by its joints keeps its triangles' fronts out)
+
+- **A skinned triangle whose joints mirror space is reversed at load** (BeschleunigerBallett BACKLOG "A skin mirrored by
+  its joints keeps its triangle winding"). Since the rest-pose bake only the tangent sign flipped, so such a skin drew
+  inside out wherever back faces are culled. `skin::rewind_mirrored_triangles` reverses a triangle when the blended
+  joint matrix has a negative determinant at two or three of its corners, at the joints' rest pose; a triangle split
+  one to two follows the majority, as each corner's tangent sign follows its own. `load_gltf` winds every skinned
+  primitive so, which the raster's upright pipelines and the tracer read, and `load_flat` before it bakes the pose, so
+  the C++ engine gets it too. An animation that turns a joint's mirror on or off keeps the rest pose's winding.
+- `crates/assets/tests/assets/skinned_mirrored.gltf`: two single-sided cards facing +Z, the left one placed by a joint
+  scaled -1 in X. Tested in `tests/flat.rs` (the bake and the scene), `skin.rs` (the majority), the tracer's
+  `tests/cpu.rs` (merged and animated) and `tests/mirrored.rs`, where the raster culled the left card as a back face.
+
 ### Added (2026-11-22, a VSync switch in the Rust renderer)
 
 - **The Renderer tab's DISPLAY section and the Render menu switch VSync** (BeschleunigerBallett BACKLOG "A VSync
