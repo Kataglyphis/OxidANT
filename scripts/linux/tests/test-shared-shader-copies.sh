@@ -43,6 +43,24 @@ pass formula 'float2 to_ndc(float2 uv) { return uv * 2.0 - 1.0; }'
 t_case "a uv conversion outside a fullscreen importer passes"
 t_assert_rc 0 python3 "$gate" "${tree}"
 
+pass unproject 'float3 f(float2 ndc) { float4 n = mul(frame.inv_view_proj, float4(ndc, 0.0, 1.0)); return n.xyz / n.w; }'
+t_case "a near-plane unprojection outside camera_ray.slang fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+
+pass unproject2 'float3 f(float2 ndc) {\n    float4 clip = float4(ndc, 1.0, 1.0);\n    float4 eye = mul(frame.inv_projection, clip);\n    return eye.xyz;\n}'
+t_case "a far-plane point unprojected a statement later fails by file and line"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/unproject2.slang:2: a clip-space point on the near or far plane'
+
+pass colour 'float4 red() { float4 c = float4(1.0, 0.0, 0.0, 1.0); return c; }'
+t_case "a literal colour with z 0 and w 1 passes"
+t_assert_rc 0 python3 "$gate" "${tree}"
+
+pass eye 'float3 f() { return frame.inv_view[3].xyz; }'
+t_case "the eye read from the inverse view's last row fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+
 pass importer 'import fullscreen;\nfloat2 to_uv(float2 ndc) { return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5); }'
 t_case "a fullscreen importer converting by hand fails"
 t_assert_rc 1 python3 "$gate" "${tree}"

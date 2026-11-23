@@ -1,3 +1,4 @@
+import camera_ray;
 import fullscreen;
 import volumetric_clouds;
 
@@ -63,9 +64,8 @@ FullscreenVsOut vs_main(uint vid : SV_VertexID)
 float4 fs_main(FullscreenVsOut In) : SV_Target
 {
     float2 ndc = fullscreen_uv_to_ndc(In.uv);
-    float4 nearPoint = mul(frame.inv_view_proj, float4(ndc, 0.0, 1.0));
-    float4 farPoint = mul(frame.inv_view_proj, float4(ndc, 1.0, 1.0));
-    float3 rayDirection = normalize(farPoint.xyz / farPoint.w - nearPoint.xyz / nearPoint.w);
+    // The march starts at the eye, so it takes the camera ray's direction alone.
+    float3 rayDirection = camera_ray(frame.inv_view_proj, ndc).direction;
 
     int3 pixel = int3(int2(In.svPosition.xy), 0);
     float depth = frame.depth_spread.y > 0.5 ? half_texel_depth(pixel.xy) : sceneDepth.Load(pixel).r;

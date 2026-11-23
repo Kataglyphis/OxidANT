@@ -2,6 +2,7 @@
 
 import bvh_traverse;
 import brdf;
+import camera_ray;
 import constants;
 import path_estimator;
 import punctual_light;
@@ -69,20 +70,15 @@ uint pixel_index(uint2 pixel)
     return pixel.y * traceFrame.size.x + pixel.x;
 }
 
-// From the near plane through `pixel` (top-left origin, in pixels) to the far plane: what the raster camera sees.
-TraceRay camera_ray(float2 pixel)
+// The raster camera's ray through `pixel` (top-left origin, in pixels), from its near plane to its far plane.
+TraceRay pixel_ray(float2 pixel)
 {
-    float2 size = float2(traceFrame.size.xy);
-    float2 ndc = float2(pixel.x / size.x * 2.0 - 1.0, 1.0 - pixel.y / size.y * 2.0);
-    float4 near = mul(traceFrame.inv_view_proj, float4(ndc, 0.0, 1.0));
-    float4 far = mul(traceFrame.inv_view_proj, float4(ndc, 1.0, 1.0));
-    float3 origin = near.xyz / near.w;
-    float3 span = far.xyz / far.w - origin;
+    CameraRay camera = camera_ray_through_pixel(traceFrame.inv_view_proj, pixel, float2(traceFrame.size.xy));
     TraceRay ray;
-    ray.origin = origin;
+    ray.origin = camera.origin;
     ray.tmin = 0.0;
-    ray.direction = normalize(span);
-    ray.tmax = length(span);
+    ray.direction = camera.direction;
+    ray.tmax = camera.length;
     return ray;
 }
 

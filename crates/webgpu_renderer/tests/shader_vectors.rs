@@ -15,7 +15,7 @@ struct Kernel {
     slang: &'static str,
 }
 
-const KERNELS: [Kernel; 6] = [
+const KERNELS: [Kernel; 7] = [
     Kernel {
         module: "brdf",
         vectors: include_str!("../../../shaders/tests/vectors/brdf.json"),
@@ -51,6 +51,12 @@ const KERNELS: [Kernel; 6] = [
         vectors: include_str!("../../../shaders/tests/vectors/fullscreen.json"),
         wgsl: include_str!("shaders/fullscreen_test.wgsl"),
         slang: include_str!("../../../shaders/common/fullscreen.slang"),
+    },
+    Kernel {
+        module: "camera_ray",
+        vectors: include_str!("../../../shaders/tests/vectors/camera_ray.json"),
+        wgsl: include_str!("shaders/camera_ray_test.wgsl"),
+        slang: include_str!("../../../shaders/common/camera_ray.slang"),
     },
 ];
 
@@ -304,6 +310,11 @@ fn aces_kernel_meets_its_vectors() {
 #[test]
 fn fullscreen_kernel_meets_its_vectors() {
     check(&KERNELS[5]);
+}
+
+#[test]
+fn camera_ray_kernel_meets_its_vectors() {
+    check(&KERNELS[6]);
 }
 
 /// The names of the functions `slang` defines at file scope, overloads once.

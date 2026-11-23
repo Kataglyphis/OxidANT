@@ -134,8 +134,8 @@ counts for its importers. Slang compiles such an import silently, and `traced.sl
 
 **A private copy of a shared leaf module fails the lint lane.** `scripts/check-shared-shader-copies.py`,
 run by `pre-push-checks.sh`, fails a file under `shaders/` that redeclares or retypes what
-`common/constants.slang`, `hdr_safe.slang`, `trace_constants.slang`, `aces.slang` or `fullscreen.slang`
-own ([shaders.md](shaders.md)), comments excluded. Its fixture suite is
+`common/constants.slang`, `hdr_safe.slang`, `trace_constants.slang`, `aces.slang`, `fullscreen.slang` or
+`camera_ray.slang` own ([shaders.md](shaders.md)), comments excluded. Its fixture suite is
 `scripts/linux/tests/test-shared-shader-copies.sh`.
 
 The `lint-gates.yml` script-test job also runs `test-burn-lock-graph.sh` with Python 3.11+

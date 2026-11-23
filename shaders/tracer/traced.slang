@@ -31,7 +31,7 @@ float3 direct_light(TracedSurface s, float3 v)
 // The C++ ray-traced mode, no ambient term; alpha is the hit's NDC depth for the clouds, as raytrace.rgen.slang writes it.
 float4 ray_trace_pixel(uint2 pixel)
 {
-    TraceRay ray = camera_ray(float2(pixel) + 0.5);
+    TraceRay ray = pixel_ray(float2(pixel) + 0.5);
     TraceHit hit = trace_closest(ray);
     if (hit.instance == TRACE_NO_HIT)
         return float4(sky_with_sun(ray.direction), 1.0);
@@ -54,7 +54,7 @@ void cs_ray_trace(uint3 id : SV_DispatchThreadID)
 // path_tracing.slang's primary_hit_depth: the first surface through the pixel centre, unjittered, for the clouds.
 float primary_hit_depth(uint2 pixel)
 {
-    TraceRay ray = camera_ray(float2(pixel) + 0.5);
+    TraceRay ray = pixel_ray(float2(pixel) + 0.5);
     return ndc_depth(ray, trace_closest(ray));
 }
 
@@ -103,7 +103,7 @@ float3 next_event(TracedSurface s, float3 v, float2 energy, inout uint rng)
 float3 trace_path(uint2 pixel, inout uint rng)
 {
     float2 jitter = float2(rng_next(rng), rng_next(rng));
-    TraceRay ray = camera_ray(float2(pixel) + jitter);
+    TraceRay ray = pixel_ray(float2(pixel) + jitter);
     float3 throughput = float3(1.0);
     float3 radiance = float3(0.0);
     for (uint bounce = 0u; bounce < traceFrame.size.z; bounce++)

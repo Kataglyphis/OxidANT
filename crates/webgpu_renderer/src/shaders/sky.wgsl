@@ -43,6 +43,26 @@ fn vs_vulkan_main(@builtin(vertex_index) vid_2 : u32) -> SkyVsOut_0
     return sky_vs_0(vid_2);
 }
 
+struct CameraRay_0
+{
+     origin_0 : vec3<f32>,
+     direction_0 : vec3<f32>,
+     length_0 : f32,
+};
+
+fn camera_ray_0( clip_to_world_0 : mat4x4<f32>,  ndc_1 : vec2<f32>) -> CameraRay_0
+{
+    var near_0 : vec4<f32> = (((vec4<f32>(ndc_1, 0.0f, 1.0f)) * (clip_to_world_0)));
+    var far_0 : vec4<f32> = (((vec4<f32>(ndc_1, 1.0f, 1.0f)) * (clip_to_world_0)));
+    var ray_0 : CameraRay_0;
+    var _S1 : vec3<f32> = near_0.xyz / vec3<f32>(near_0.w);
+    ray_0.origin_0 = _S1;
+    var span_0 : vec3<f32> = far_0.xyz / vec3<f32>(far_0.w) - _S1;
+    ray_0.direction_0 = normalize(span_0);
+    ray_0.length_0 = length(span_0);
+    return ray_0;
+}
+
 fn aces_tonemap_inverse_0( display_0 : vec3<f32>) -> vec3<f32>
 {
     var y_1 : vec3<f32> = clamp(display_0, vec3<f32>(0.0f), vec3<f32>(1.0f));
@@ -53,27 +73,27 @@ fn aces_tonemap_inverse_0( display_0 : vec3<f32>) -> vec3<f32>
 
 fn sky_gradient_0( dir_0 : vec3<f32>) -> vec3<f32>
 {
-    var _S1 : f32 = dir_0.y;
-    if(_S1 >= 0.0f)
+    var _S2 : f32 = dir_0.y;
+    if(_S2 >= 0.0f)
     {
-        return mix(vec3<f32>(0.55000001192092896f, 0.62000000476837158f, 0.72000002861022949f), vec3<f32>(0.09000000357627869f, 0.15999999642372131f, 0.34999999403953552f), vec3<f32>(pow(clamp(_S1, 0.0f, 1.0f), 0.69999998807907104f)));
+        return mix(vec3<f32>(0.55000001192092896f, 0.62000000476837158f, 0.72000002861022949f), vec3<f32>(0.09000000357627869f, 0.15999999642372131f, 0.34999999403953552f), vec3<f32>(pow(clamp(_S2, 0.0f, 1.0f), 0.69999998807907104f)));
     }
     else
     {
-        return mix(vec3<f32>(0.55000001192092896f, 0.62000000476837158f, 0.72000002861022949f), vec3<f32>(0.18000000715255737f, 0.15999999642372131f, 0.15000000596046448f), vec3<f32>(clamp(- _S1 * 3.0f, 0.0f, 1.0f)));
+        return mix(vec3<f32>(0.55000001192092896f, 0.62000000476837158f, 0.72000002861022949f), vec3<f32>(0.18000000715255737f, 0.15999999642372131f, 0.15000000596046448f), vec3<f32>(clamp(- _S2 * 3.0f, 0.0f, 1.0f)));
     }
 }
 
 fn sun_disk_0( dir_1 : vec3<f32>,  lightDir_0 : vec3<f32>,  intensity_0 : f32) -> vec3<f32>
 {
-    var _S2 : f32 = max(dot(dir_1, normalize(lightDir_0)), 0.0f);
-    return vec3<f32>(1.0f, 0.94999998807907104f, 0.85000002384185791f) * vec3<f32>((pow(_S2, 1200.0f) * 24.0f + pow(_S2, 48.0f) * 0.5f)) * vec3<f32>((intensity_0 * 0.40000000596046448f));
+    var _S3 : f32 = max(dot(dir_1, normalize(lightDir_0)), 0.0f);
+    return vec3<f32>(1.0f, 0.94999998807907104f, 0.85000002384185791f) * vec3<f32>((pow(_S3, 1200.0f) * 24.0f + pow(_S3, 48.0f) * 0.5f)) * vec3<f32>((intensity_0 * 0.40000000596046448f));
 }
 
 fn hdr_safe_0( radiance_0 : vec3<f32>) -> vec3<f32>
 {
-    var _S3 : vec3<f32> = vec3<f32>(0.0f);
-    return clamp(select(radiance_0, _S3, (((bitcast<vec3<u32>>((radiance_0))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S3, vec3<f32>(65000.0f));
+    var _S4 : vec3<f32> = vec3<f32>(0.0f);
+    return clamp(select(radiance_0, _S4, (((bitcast<vec3<u32>>((radiance_0))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S4, vec3<f32>(65000.0f));
 }
 
 struct pixelOutput_0
@@ -83,26 +103,24 @@ struct pixelOutput_0
 
 struct pixelInput_0
 {
-    @location(0) ndc_1 : vec2<f32>,
+    @location(0) ndc_2 : vec2<f32>,
 };
 
 @fragment
-fn fs_main( _S4 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
+fn fs_main( _S5 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
-    var nearP_0 : vec4<f32> = (((vec4<f32>(_S4.ndc_1, 0.0f, 1.0f)) * (mat4x4<f32>(sky_0.inv_view_proj_0.data_0[i32(0)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(3)]))));
-    var farP_0 : vec4<f32> = (((vec4<f32>(_S4.ndc_1, 1.0f, 1.0f)) * (mat4x4<f32>(sky_0.inv_view_proj_0.data_0[i32(0)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(3)]))));
-    var dir_2 : vec3<f32> = normalize(farP_0.xyz / vec3<f32>(farP_0.w) - nearP_0.xyz / vec3<f32>(nearP_0.w));
+    var _S6 : CameraRay_0 = camera_ray_0(mat4x4<f32>(sky_0.inv_view_proj_0.data_0[i32(0)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(3)]), _S5.ndc_2);
     if((sky_0.mode_0.x) > 1.5f)
     {
-        var _S5 : pixelOutput_0 = pixelOutput_0( vec4<f32>(aces_tonemap_inverse_0(vec3<f32>(0.0f, 0.0f, 0.5f)), 1.0f) );
-        return _S5;
+        var _S7 : pixelOutput_0 = pixelOutput_0( vec4<f32>(aces_tonemap_inverse_0(vec3<f32>(0.0f, 0.0f, 0.5f)), 1.0f) );
+        return _S7;
     }
     if((sky_0.mode_0.x) > 0.5f)
     {
-        var _S6 : pixelOutput_0 = pixelOutput_0( vec4<f32>(aces_tonemap_inverse_0((textureSampleLevel((skyboxTex_0), (skyboxSampler_0), (dir_2), (0.0f))).xyz), 1.0f) );
-        return _S6;
+        var _S8 : pixelOutput_0 = pixelOutput_0( vec4<f32>(aces_tonemap_inverse_0((textureSampleLevel((skyboxTex_0), (skyboxSampler_0), (_S6.direction_0), (0.0f))).xyz), 1.0f) );
+        return _S8;
     }
-    var _S7 : pixelOutput_0 = pixelOutput_0( vec4<f32>(hdr_safe_0(sky_gradient_0(dir_2) + sun_disk_0(dir_2, sky_0.light_dir_intensity_0.xyz, sky_0.light_dir_intensity_0.w)), 1.0f) );
-    return _S7;
+    var _S9 : pixelOutput_0 = pixelOutput_0( vec4<f32>(hdr_safe_0(sky_gradient_0(_S6.direction_0) + sun_disk_0(_S6.direction_0, sky_0.light_dir_intensity_0.xyz, sky_0.light_dir_intensity_0.w)), 1.0f) );
+    return _S9;
 }
 

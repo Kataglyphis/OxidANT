@@ -37,6 +37,14 @@ coefficient, a ray bound) or a NaN check, or defines one of their functions; a `
 also may not convert between uv and NDC by hand. `render::tonemap`'s `aces_tonemap` and
 `aces_tonemap_inverse` are the CPU twins, whose unit test reads the coefficients from `aces.slang`.
 
+`common/camera_ray.slang` is the camera's ray in both renderers: `camera_ray(clip_to_world, ndc)` unprojects
+the near and far plane, so a traced ray starts on the near plane, where raster clips, with the far plane as
+its length; `camera_ray_through_pixel` takes a pixel through `fullscreen_uv_to_ndc`. The tracer's `pixel_ray`,
+the sky and the cloud march take it (the last two only its direction; the march starts at the eye), and so do
+BeschleunigerBallett's ray-generation shader, path tracer and cloud compute pass, which hand it
+`mul(inv_view, inv_projection)`. The copy gate also fails a near- or far-plane unprojection, inline or through a
+clip-space point declared a statement before, and the eye as a ray origin, written outside it.
+
 `sky/sky.slang` is the sky both renderers draw into their HDR target, tonemapped with
 the scene. The C++ renderer compiles `vs_vulkan_main` and `fs_main` to SPIR-V and fills
 `SkyUniforms` itself; its vertex entry takes `SV_VulkanVertexID`, because `SV_VertexID`
@@ -145,10 +153,11 @@ checks this on the GPU and stays enabled.
 
 `tests/<module>_test.slang` runs every public function of `common/<module>.slang`
 once per case of `tests/vectors/<module>.json`: `brdf`, `noise`, `path_estimator`, `hdr_safe`,
-`aces` and `fullscreen` today. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
+`aces`, `fullscreen` and `camera_ray` today. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
 the infinities, which JSON cannot spell; `fullscreen`'s uv differs per target, so its kernel writes
 only what both targets share: the positions, x, each mapping's round trip through its inverse, and its
-distance from `tests/clip_y.slang`'s own top row per target, so a swapped `__target_switch` branch fails.
+distance from `tests/clip_y.slang`'s own top row per target, so a swapped `__target_switch` branch fails;
+`camera_ray`'s writes its pixel ray's difference from the ray through that file's NDC of the same pixel.
 `tests/constants_test.slang` is the SPIR-V guard of the two constant-only modules. A file holds the inputs, the f64 references and each
 output's tolerance: an f32 passes within `abs + rel * |ref|`, a u32 or i32 must
 be equal. `tests/kernel_vectors.slang` reads the inputs and writes the outputs

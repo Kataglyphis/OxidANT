@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-23, one camera ray for both renderers)
+
+- **`common/camera_ray.slang`** (BeschleunigerBallett BACKLOG "`camera_ray.slang` for the seven camera-ray copies",
+  plan I8): `camera_ray(clip_to_world, ndc)` returns the ray from the near plane to the far plane (origin, unit
+  direction, length) and `camera_ray_through_pixel` the one through a pixel. It replaces `trace_shading.slang`'s
+  `camera_ray` (now `pixel_ray`, a thin wrapper), and the near/far unprojections in `sky.slang` and
+  `cloud_march.slang`; BeschleunigerBallett's ray-generation shader, path tracer (camera and cloud-depth rays) and
+  cloud compute pass take it too, so its traced camera rays start at the near plane (owner 2026-11-19). The Rust
+  arithmetic is the same, so no frame moves here. A vector kernel (`tests/camera_ray_test.slang`, SPIR-V and WGSL)
+  checks it on Vulkan-style perspective, lens-shifted and orthographic cameras, its pixel ray against an NDC of the
+  kernel's own per target; the copy gate fails a hand-written unprojection, also one split over two statements.
+
 ### Changed (2026-11-23, shared Slang leaf modules)
 
 - **Five leaf modules own what the shaders used to copy** (BeschleunigerBallett BACKLOG "Shared Slang leaf modules",

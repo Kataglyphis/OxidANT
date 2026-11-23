@@ -1,6 +1,7 @@
 // The sky both renderers draw into their HDR target: sky.wgsl is generated from this file, the C++ SPIR-V too.
 
 import aces;
+import camera_ray;
 import hdr_safe;
 import sky_model;
 
@@ -50,9 +51,7 @@ SkyVsOut vs_vulkan_main(uint vid : SV_VulkanVertexID)
 [shader("fragment")]
 float4 fs_main(SkyVsOut In) : SV_Target
 {
-    float4 nearP = mul(sky.inv_view_proj, float4(In.ndc, 0.0, 1.0));
-    float4 farP = mul(sky.inv_view_proj, float4(In.ndc, 1.0, 1.0));
-    float3 dir = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
+    float3 dir = camera_ray(sky.inv_view_proj, In.ndc).direction;
 
     if (sky.mode.x > 1.5)
         return float4(aces_tonemap_inverse(SKYBOX_DISABLED), 1.0);

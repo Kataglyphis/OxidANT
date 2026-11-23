@@ -654,3 +654,18 @@ def fullscreen_uv_to_ndc(uv: Vec) -> Vec:
 
 def fullscreen_ndc_to_uv(ndc: Vec) -> Vec:
     return Vec(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5)
+
+
+# ---- common/camera_ray.slang ----
+
+
+def mul_mat_vec(rows: Sequence[Vec], v: Vec) -> Vec:
+    return Vec(*(dot(row, v) for row in rows))
+
+
+def camera_ray(clip_to_world: Sequence[Vec], ndc: Vec) -> tuple[Vec, Vec, Real]:
+    near = mul_mat_vec(clip_to_world, Vec(ndc.x, ndc.y, 0.0, 1.0))
+    far = mul_mat_vec(clip_to_world, Vec(ndc.x, ndc.y, 1.0, 1.0))
+    origin = near.xyz / near.w
+    span = far.xyz / far.w - origin
+    return origin, normalize(span), sqrt(dot(span, span))

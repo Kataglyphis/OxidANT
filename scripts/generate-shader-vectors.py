@@ -318,6 +318,18 @@ def evaluate_fullscreen(i: Values) -> dict[str, list[float]]:
     }
 
 
+def evaluate_camera_ray(i: Values) -> dict[str, list[float]]:
+    rows = [sm.Vec(*i[f"row{k}"]) for k in range(4)]
+    origin, direction, length = sm.camera_ray(rows, sm.Vec(*i["ndc"]))
+    return {
+        "camera_ray.origin": flat(origin),
+        "camera_ray.direction": flat(direction),
+        "camera_ray.length": flat(length),
+        "camera_ray_through_pixel.origin_error": [0.0, 0.0, 0.0],
+        "camera_ray_through_pixel.direction_error": [0.0, 0.0, 0.0],
+    }
+
+
 def brdf_cases() -> list[tuple[str, Values]]:
     base: Values = {
         "n": [0.0, 1.0, 0.0], "v": [0.0, 1.0, 0.0], "l": unit(1.0, 1.0, 0.0), "albedo": [0.8, 0.2, 0.1],
@@ -483,6 +495,81 @@ def fullscreen_cases() -> list[tuple[str, Values]]:
     return merged(base, rows)
 
 
+def matmul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
+    return [[sum(a[r][k] * b[k][c] for k in range(4)) for c in range(4)] for r in range(4)]
+
+
+def inverse(m: list[list[float]]) -> list[list[float]]:
+    """Gauss-Jordan with partial pivoting, in f64."""
+    a = [row[:] + [float(r == c) for c in range(4)] for r, row in enumerate(m)]
+    for col in range(4):
+        pivot = max(range(col, 4), key=lambda r: abs(a[r][col]))
+        a[col], a[pivot] = a[pivot], a[col]
+        scale = a[col][col]
+        a[col] = [x / scale for x in a[col]]
+        for r in range(4):
+            if r != col:
+                factor = a[r][col]
+                a[r] = [x - factor * y for x, y in zip(a[r], a[col], strict=True)]
+    return [row[4:] for row in a]
+
+
+def look_at(eye: list[float], target: list[float]) -> list[list[float]]:
+    """glm::lookAt, right-handed, +Y up."""
+    f = unit(*(t - e for t, e in zip(target, eye, strict=True)))
+    s = unit(f[1] * 0.0 - f[2] * 1.0, f[2] * 0.0 - f[0] * 0.0, f[0] * 1.0 - f[1] * 0.0)
+    u = [s[1] * f[2] - s[2] * f[1], s[2] * f[0] - s[0] * f[2], s[0] * f[1] - s[1] * f[0]]
+    dots = [sum(a * b for a, b in zip(axis, eye, strict=True)) for axis in (s, u, f)]
+    return [s + [-dots[0]], u + [-dots[1]], [-x for x in f] + [dots[2]], [0.0, 0.0, 0.0, 1.0]]
+
+
+def vulkan_perspective(fov_y: float, aspect: float, near: float, far: float, shift: tuple[float, float] = (0.0, 0.0)):
+    """The C++ makeVulkanProjection: glm::perspective at depth [0, 1] with y flipped, then a viewport remap's shift."""
+    t = 1.0 / math.tan(math.radians(fov_y) / 2.0)
+    return [[t / aspect, 0.0, shift[0], 0.0], [0.0, -t, shift[1], 0.0],
+            [0.0, 0.0, far / (near - far), far * near / (near - far)], [0.0, 0.0, -1.0, 0.0]]
+
+
+def orthographic(half: float, near: float, far: float) -> list[list[float]]:
+    return [[1.0 / half, 0.0, 0.0, 0.0], [0.0, 1.0 / half, 0.0, 0.0],
+            [0.0, 0.0, 1.0 / (near - far), near / (near - far)], [0.0, 0.0, 0.0, 1.0]]
+
+
+def clip_to_world(projection: list[list[float]], eye: list[float], target: list[float]) -> Values:
+    m = inverse(matmul(projection, look_at(eye, target)))
+    return {f"row{k}": m[k] for k in range(4)}
+
+
+def camera_ray_cases() -> list[tuple[str, Values]]:
+    golden = vulkan_perspective(45.0, 1.0, 0.1, 150.0)
+    base: Values = clip_to_world(golden, [0.0, 2.0, 6.0], [0.0, 0.5, 0.0]) | {
+        "ndc": [0.0, 0.0], "pixel": [32.5, 16.5], "size": [64.0, 64.0]}
+    rows: list[tuple[str, Values]] = [
+        ("the Debug camera's planes, through the image centre", {}),
+        ("a corner of the image", {"ndc": [-1.0, -1.0], "pixel": [0.5, 0.5]}),
+        ("the opposite corner", {"ndc": [1.0, 1.0], "pixel": [63.5, 63.5]}),
+        ("Sponza's planes, 0.1 to 4000", clip_to_world(vulkan_perspective(60.0, 16.0 / 9.0, 0.1, 4000.0),
+                                                     [-8.0, 3.0, 0.5], [4.0, 3.5, -0.5]) | {"ndc": [0.3, -0.4]}),
+        ("a wide lens looking straight down", clip_to_world(vulkan_perspective(90.0, 1.5, 0.05, 50.0),
+                                                           [0.0, 10.0, 0.0001], [0.0, 0.0, 0.0]) | {"ndc": [0.7, 0.2]}),
+        ("a viewport remap's lens shift, the docked editor", clip_to_world(
+            vulkan_perspective(50.0, 1.25, 0.1, 200.0, (0.2, -0.1)), [3.0, 1.0, 3.0], [0.0, 1.0, 0.0])
+         | {"ndc": [-0.6, 0.5]}),
+        ("an orthographic camera starts every ray on the near plane", clip_to_world(
+            orthographic(5.0, 0.1, 100.0), [0.0, 0.0, 10.0], [0.0, 0.0, 0.0]) | {"ndc": [0.5, -0.5]}),
+        ("a pixel ray through a 1920 x 1080 target", {"pixel": [1919.5, 0.5], "size": [1920.0, 1080.0]}),
+    ]
+    draw = Draw(8)
+    for index in range(6):
+        eye = draw.nums(-20.0, 20.0)
+        target = [e + d for e, d in zip(eye, draw.direction(), strict=True)]
+        projection = vulkan_perspective(draw.num(30.0, 90.0), draw.num(0.75, 2.0), 0.1, draw.num(50.0, 1000.0))
+        rows.append((f"seeded camera {index}", clip_to_world(projection, eye, target) | {
+            "ndc": draw.nums(-1.0, 1.0, 2), "pixel": [draw.num(0.0, 640.0), draw.num(0.0, 480.0)],
+            "size": [640.0, 480.0]}))
+    return merged(base, rows)
+
+
 SMOOTH = (1e-6, 1e-5)
 CHAINED = (1e-5, 1e-4)
 MODULES = [
@@ -526,6 +613,11 @@ MODULES = [
         out("fullscreen_ndc_to_uv.round_trip", 2, CHAINED), out("fullscreen_vs.top_row_error", 1, CHAINED),
         out("fullscreen_uv_to_ndc.top_row_error", 1, CHAINED), out("fullscreen_ndc_to_uv.top_row_error", 1, CHAINED),
     ], evaluate_fullscreen, fullscreen_cases()),
+    Module("camera_ray", ports("row0:4 row1:4 row2:4 row3:4 ndc:2 pixel:2 size:2"), [
+        out("camera_ray.origin", 3, CHAINED), out("camera_ray.direction", 3, CHAINED), out("camera_ray.length", 1, CHAINED),
+        out("camera_ray_through_pixel.origin_error", 3, (1e-4, 0.0)),
+        out("camera_ray_through_pixel.direction_error", 3, (1e-5, 0.0)),
+    ], evaluate_camera_ray, camera_ray_cases()),
 ]
 
 

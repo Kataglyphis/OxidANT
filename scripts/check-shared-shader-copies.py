@@ -31,6 +31,14 @@ RULES = [
     ("common/trace_constants.slang", r"(?i)\btm(?:in|ax)\s*=\s*[\d.]*[1-9]", "a literal ray bound"),
     ("common/trace_constants.slang", r"\b10000\.0\b|\b0\.0001\s*\*|\*\s*0\.0001\b|\b1\.0\s*-\s*1e-4\b", "a ray-bound literal"),
     ("common/fullscreen.slang", defines("fullscreen_vs|fullscreen_uv_to_ndc|fullscreen_ndc_to_uv"), "a fullscreen mapping"),
+    ("common/camera_ray.slang", defines("camera_ray|camera_ray_through_pixel"), "a camera ray"),
+    ("common/camera_ray.slang", r"mul\(\s*[\w.]*(?:inv_view_proj|inv_projection|clip_to_world)\s*,\s*float4\([^;]*,\s*[01](?:\.0)?\s*,\s*1(?:\.0)?\s*\)\s*\)",
+     "a near- or far-plane unprojection"),
+    ("common/camera_ray.slang", r"float4\s+\w+\s*=\s*float4\(\s*(?![-\d.]+\s*,)[^;]*,\s*[01](?:\.0)?\s*,\s*1(?:\.0)?\s*\)\s*;",
+     "a clip-space point on the near or far plane, unprojected a statement later"),
+    ("common/camera_ray.slang",
+     r"\binv_view\s*,\s*float4\(\s*0(?:\.0)?\s*,\s*0(?:\.0)?\s*,\s*0(?:\.0)?\s*,\s*1(?:\.0)?\s*\)|\binv_view\s*\[\s*3\s*\]",
+     "the eye as a ray origin"),
 ]
 # A fullscreen_vs importer converts between uv and NDC through fullscreen.slang only.
 FULLSCREEN_COPIES = re.compile(r"\(y \+ 1\.0\) \* 0\.5|\buv \* 2\.0 - 1\.0|\buv\.y \* 2\.0|\b0\.5\s*-\s*[^;,]*\*\s*0\.5\b")
