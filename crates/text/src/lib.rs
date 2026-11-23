@@ -145,6 +145,8 @@ pub enum TextError {
     JsonSchemaUnsupported(String),
     /// This model directory was exported without the `hidden_states` output embeddings read.
     EmbeddingsUnsupported(String),
+    /// The prompt's tokens and the budget pass the model's context (owner D7, hub CON288).
+    ContextLengthExceeded(String),
 }
 
 impl TextError {
@@ -165,6 +167,7 @@ impl TextError {
             Self::StreamLineTooLong(_) => "stream_line_too_long",
             Self::JsonSchemaUnsupported(_) => "json_schema_unsupported",
             Self::EmbeddingsUnsupported(_) => "embeddings_unsupported",
+            Self::ContextLengthExceeded(_) => "context_length_exceeded",
         }
     }
 }
@@ -195,6 +198,9 @@ impl fmt::Display for TextError {
             }
             Self::EmbeddingsUnsupported(d) => {
                 write!(f, "this model cannot embed: {d}")
+            }
+            Self::ContextLengthExceeded(d) => {
+                write!(f, "the prompt and the budget pass the context: {d}")
             }
         }
     }
@@ -250,6 +256,10 @@ pub trait TextBackend {
     ) -> Result<GenerationResult, TextError>;
 }
 
+/// The message roles a request may hold, as the hub's fixture names them.
+#[cfg(not(target_arch = "wasm32"))]
+const ROLES: [&str; 4] = ["system", "user", "assistant", "tool"];
+
 /// Refuses what no backend can answer, so both report it the same way.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn check_request(
@@ -271,6 +281,26 @@ pub(crate) fn check_request(
     }
     if options.stop.iter().any(String::is_empty) {
         return Err(TextError::InvalidOptions("a stop string is empty".into()));
+    }
+    // The roles every binding's chat template knows (hub CON288 (c)); GenAI would pass another one through.
+    if let Some(message) = messages.iter().find(|m| !ROLES.contains(&m.role.as_str())) {
+        return Err(TextError::InvalidOptions(format!(
+            "the role {:?} is not one of {ROLES:?}",
+            message.role
+        )));
+    }
+    // The C ABI under both backends' parity reads text up to its first NUL byte.
+    if messages.iter().any(|m| m.content.contains('\0'))
+        || options.stop.iter().any(|s| s.contains('\0'))
+    {
+        return Err(TextError::InvalidOptions(
+            "a message or a stop string holds a NUL byte".into(),
+        ));
+    }
+    if !options.temperature.is_finite() || !options.top_p.is_finite() {
+        return Err(TextError::InvalidOptions(
+            "temperature and top_p must be finite".into(),
+        ));
     }
     if options.json_schema.is_some() && !options.schema_value().is_some_and(|v| v.is_object()) {
         return Err(TextError::InvalidOptions(
@@ -469,6 +499,7 @@ mod tests {
             TextError::StreamLineTooLong(1),
             TextError::JsonSchemaUnsupported("x".into()),
             TextError::EmbeddingsUnsupported("x".into()),
+            TextError::ContextLengthExceeded("x".into()),
         ];
         let texts: std::collections::HashSet<String> =
             errors.iter().map(ToString::to_string).collect();

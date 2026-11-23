@@ -883,6 +883,12 @@ impl GenaiGenerator {
         // SAFETY: prompt is a live sequences handle; GenAI owns its ids until the handle goes.
         let data = unsafe { (c.sequence_data)(prompt.handle, 0) };
         let needed = prompt_tokens + budget(options);
+        if self.context_tokens > 0 && needed > self.context_tokens {
+            return Err(TextError::ContextLengthExceeded(format!(
+                "{prompt_tokens} prompt tokens and max_new_tokens {} pass the context of {}",
+                options.max_new_tokens, self.context_tokens
+            )));
+        }
         if !data.is_null() {
             // SAFETY: data points to the prompt's prompt_tokens ids.
             let ids = unsafe { std::slice::from_raw_parts(data, prompt_tokens) };

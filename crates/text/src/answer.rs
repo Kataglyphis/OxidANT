@@ -112,12 +112,43 @@ impl<'a> Answer<'a> {
         if self.stopped {
             return true;
         }
-        for part in self.thinking.push(piece) {
+        let mut parts = self.thinking.push(piece);
+        self.hide_before_late_close(&mut parts);
+        for part in parts {
             if self.take(part, on_text) {
                 break;
             }
         }
         self.stopped
+    }
+
+    /// Owner D5 (hub CON288 (b)): this piece's answer before a late close is never shown, unless a stop string in it ends the reply first.
+    fn hide_before_late_close(&self, parts: &mut [Part]) {
+        let Some(late) = parts
+            .iter()
+            .rposition(|p| matches!(p, Part::EarlierWasThinking))
+        else {
+            return;
+        };
+        let before: String = parts[..late]
+            .iter()
+            .filter_map(|p| match p {
+                Part::Answer(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        // Piece by piece, a stop string in that text would have ended the reply before the tag came.
+        let stopped_first = stop_scan(&format!("{}{before}", self.text), self.stops)
+            .0
+            .is_some();
+        if before.is_empty() || stopped_first {
+            return;
+        }
+        for part in &mut parts[..late] {
+            if let Part::Answer(text) = part {
+                *part = Part::Thinking(text.chars().count());
+            }
+        }
     }
 
     /// Takes thinking a server sent apart from the text.
@@ -238,13 +269,62 @@ mod tests {
         assert_eq!(shown, ["Okay, the user", " asks.\n", "Twice."]);
         assert_eq!(text, "Twice.");
         assert_eq!(thinking, "Okay, the user asks.\n</think>".len());
-        // In one piece the earlier text is still shown first: a stop string in it must end the reply as it would piece by piece.
+        // In one piece the earlier text is never shown (owner D5), unless a stop string in it ends the reply first.
         let (shown, text, thinking, stopped) = replay(&["hm</think>\n\nTwice."], &["END"]);
-        assert_eq!(shown, ["hm", "Twice."]);
+        assert_eq!(shown, ["Twice."]);
         assert_eq!((text.as_str(), thinking, stopped), ("Twice.", 10, false));
         let (shown, text, thinking, stopped) = replay(&["one END two</think>three"], &["END"]);
         assert_eq!((shown.concat().as_str(), text.as_str()), ("one ", "one "));
         assert_eq!((thinking, stopped), (0, true));
+    }
+
+    /// The late closes the splitter counts over `pieces`.
+    fn late_closes(pieces: &[&str]) -> usize {
+        let mut splitter = ThinkingSplitter::default();
+        pieces
+            .iter()
+            .flat_map(|piece| splitter.push(piece))
+            .filter(|part| matches!(part, Part::EarlierWasThinking))
+            .count()
+    }
+
+    /// The hub's think split (owner D5, hub CON288 (b)): shown, answer, thinking and late closes; final is the lab's.
+    #[test]
+    fn every_think_split_case_shows_and_answers_as_the_hub_says() {
+        let doc: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../third_party/ANTfrastructure/shared/contracts/think-split.json"
+        )))
+        .unwrap();
+        let cases = doc["cases"].as_array().unwrap();
+        assert!(cases.len() >= 11, "the file shrank: {}", cases.len());
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let pieces: Vec<&str> = case["pieces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|piece| piece.as_str().unwrap())
+                .collect();
+            let (shown, text, thinking, _) = replay(&pieces, &[]);
+            let expect = &case["expect"];
+            assert_eq!(
+                shown.concat(),
+                expect["shown"].as_str().unwrap(),
+                "{name}: shown"
+            );
+            assert_eq!(text, expect["answer"].as_str().unwrap(), "{name}: answer");
+            assert_eq!(
+                thinking as u64,
+                expect["thinking"].as_u64().unwrap(),
+                "{name}: thinking"
+            );
+            assert_eq!(
+                late_closes(&pieces) as u64,
+                expect["late_closes"].as_u64().unwrap(),
+                "{name}: late closes"
+            );
+        }
     }
 
     #[test]

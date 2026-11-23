@@ -13,6 +13,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-23, the think split and the fixture's refusals)
+
+- The hub pin moves to 7b1e32d2 (ANTfrastructure CON288 (b), (c)). A late `</think>` hides the answer before it in its
+  own piece (owner D5): `Answer::push` turns that text into thinking unless a stop string in it ends the reply first,
+  as it would piece by piece. `answer.rs` replays the 11 cases of `think-split.json` (shown, answer, thinking, late
+  closes), and two recipes guard the hiding and the stop's precedence.
+- `check_request` refuses a role outside system, user, assistant and tool, a NaN or infinite `temperature` or
+  `top_p`, and a NUL byte in a message or a stop string. The GenAI backend refuses a prompt plus budget past the
+  model's context as `TextError::ContextLengthExceeded` (kind `context_length_exceeded`, owner D7), which ObservANT
+  answers with 400. The fixture replay passes `temperature` (the hub's `"NaN"` as a float NaN) and `stop`.
+
 ### Changed (2026-11-22, the endpoint reader follows owner decision D8)
 
 - The hub pin moves to 44d37673, whose `openai-stream-lines.json` holds 22 cases (ANTfrastructure CON288).

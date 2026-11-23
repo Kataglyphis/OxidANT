@@ -381,6 +381,24 @@
   "why": "Nothing after [DONE] is read (owner D8): a late broken line failed a reply that had finished."
  },
  {
+  "id": "consumer.oxidant-text-late-close-shown",
+  "target": "crates/text/src/answer.rs",
+  "find": "        if before.is_empty() || stopped_first {",
+  "replace": "        if true || stopped_first {",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib answer::",
+  "timeout": 900,
+  "why": "owner D5: text before a late close in its own piece is never shown, or a template's thinking flashes as answer"
+ },
+ {
+  "id": "consumer.oxidant-text-late-close-stop-first",
+  "target": "crates/text/src/answer.rs",
+  "find": "let stopped_first = stop_scan(&format!(\"{}{before}\", self.text), self.stops)\n            .0\n            .is_some();",
+  "replace": "let stopped_first = false;",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib answer::",
+  "timeout": 900,
+  "why": "a stop string before a late close ends the reply in one piece as it does piece by piece"
+ },
+ {
   "id": "consumer.oxidant-inference-red-blue-swapped",
   "target": "crates/inference/src/person_detection/preprocess.rs",
   "find": "            *r = UNIT_FLOATS[row[offset] as usize];\n            *g = UNIT_FLOATS[row[offset + 1] as usize];\n            *b = UNIT_FLOATS[row[offset + 2] as usize];\n",

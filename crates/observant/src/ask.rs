@@ -549,7 +549,9 @@ fn refusal_parts(refusal: Refusal) -> (StatusCode, String) {
 /// The caller's mistake is 400, a model that cannot load 503, a server too slow 504, and everything else past it 502.
 fn status_of(err: &TextError) -> StatusCode {
     match err {
-        TextError::InvalidOptions(_) => StatusCode::BAD_REQUEST,
+        TextError::InvalidOptions(_) | TextError::ContextLengthExceeded(_) => {
+            StatusCode::BAD_REQUEST
+        }
         TextError::EndpointTimedOut(_) => StatusCode::GATEWAY_TIMEOUT,
         TextError::LibraryUnavailable(_)
         | TextError::ModelLoadFailed(_)

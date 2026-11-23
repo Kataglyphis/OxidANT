@@ -444,7 +444,7 @@ fn every_fixture_case_answers_as_the_hub_says() {
     let cases = fixture["cases"]
         .as_array()
         .expect("the fixture lists its cases");
-    assert!(cases.len() >= 7, "the case list shrank: {}", cases.len());
+    assert!(cases.len() >= 12, "the case list shrank: {}", cases.len());
     for case in cases {
         let name = case["name"].as_str().unwrap();
         let messages: Vec<ChatMessage> = case["messages"]
@@ -453,9 +453,24 @@ fn every_fixture_case_answers_as_the_hub_says() {
             .iter()
             .map(|m| ChatMessage::new(m["role"].as_str().unwrap(), m["content"].as_str().unwrap()))
             .collect();
+        // JSON holds no NaN: the hub writes the string "NaN" for one (hub CON288 (c)).
+        let temperature = match &case["options"]["temperature"] {
+            serde_json::Value::String(word) if word == "NaN" => f64::NAN,
+            value => value.as_f64().unwrap_or(0.0),
+        };
+        let stop = case["options"]["stop"]
+            .as_array()
+            .map_or_else(Vec::new, |stops| {
+                stops
+                    .iter()
+                    .map(|s| s.as_str().unwrap().to_string())
+                    .collect()
+            });
         let options = GenerationOptions {
             max_new_tokens: case["options"]["max_new_tokens"].as_u64().unwrap() as u32,
             json_schema: case["options"]["json_schema"].as_str().map(str::to_string),
+            temperature,
+            stop,
             ..GenerationOptions::default()
         };
         let got = generator.generate(&messages, &options, &CancelToken::default(), &mut |_| {});
@@ -470,6 +485,12 @@ fn every_fixture_case_answers_as_the_hub_says() {
             Some("generation_failed") => {
                 assert!(
                     matches!(got, Err(TextError::GenerationFailed(_))),
+                    "{name}: {got:?}"
+                )
+            }
+            Some("context_length_exceeded") => {
+                assert!(
+                    matches!(got, Err(TextError::ContextLengthExceeded(_))),
                     "{name}: {got:?}"
                 )
             }
