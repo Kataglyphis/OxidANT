@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-23, one sentence for a reply without words: roadmap step 2)
+
+- `GenerationResult::no_answer(budget_knob)` in `kataglyphis_text` words a reply that has no words: "the model gave
+  no answer (finish_reason ...)", with the thinking count and the ways out when it only thought, the budget setting
+  named only when the budget cut it. A cancelled run owes no answer and gets `None`. ObservANT answers through it
+  with `llm_max_new_tokens`, byte for byte as before (502 whole, the `error` line streamed). The app's
+  `text_generate` ends such a stream with the error kind `no_answer` instead of a blank `done`, which
+  OmniAccelerANT words in English and German at its next regeneration (owner D13).
+
 ### Fixed (2026-11-23, the analytic ambient counted the sun twice)
 
 - **`analytic_ambient` takes no sun disk** (BeschleunigerBallett review of the Phase 7 ambient term). Its reflection

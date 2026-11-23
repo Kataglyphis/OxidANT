@@ -237,9 +237,17 @@ mod enabled {
         };
         local::touch(&mut cached);
         let result = result?;
+        // A reply without words ends as the kind no_answer, which the app words itself (owner D13), not as a blank done.
+        if let Some(text) = result.no_answer("max_new_tokens") {
+            let _ = sink.add_error(anyhow::anyhow!("{NO_ANSWER}: {text}"));
+            return Ok(());
+        }
         let _ = sink.add(done(&result));
         Ok(())
     }
+
+    /// The kind before the colon, beside `TextError::kind`'s: the run worked, and the model said nothing.
+    pub(super) const NO_ANSWER: &str = "no_answer";
 
     /// Generates unless a cancel came while the model loaded: a backend clears the token as it starts, so that
     /// cancel was lost and the whole answer decoded for a user who had already left.

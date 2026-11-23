@@ -124,6 +124,40 @@ pub struct GenerationResult {
     pub thinking_chars: usize,
 }
 
+impl GenerationResult {
+    /// Why a reply has no words, naming `budget_knob` when a larger budget would help; `None` for words, or a run its
+    /// caller cancelled, which owes no answer (owner D5 and the oxidation roadmap step 2).
+    pub fn no_answer(&self, budget_knob: &str) -> Option<String> {
+        if self.finish_reason == FinishReason::Cancelled || !self.text.trim().is_empty() {
+            return None;
+        }
+        let reason = self.finish_reason.as_str();
+        let mut text = format!("the model gave no answer (finish_reason {reason})");
+        if self.thinking_chars > 0 {
+            text.push_str(&self.thinking_hint(budget_knob));
+        }
+        Some(text)
+    }
+
+    /// Why a reply that was only thinking has no words, and the ways out; a larger budget helps only a reply it cut.
+    fn thinking_hint(&self, budget_knob: &str) -> String {
+        let (what, way_out) = match self.finish_reason {
+            FinishReason::Length => (
+                "it spent its budget thinking",
+                format!("set a larger {budget_knob} or switch thinking off at the endpoint"),
+            ),
+            FinishReason::Stop | FinishReason::Cancelled => (
+                "it only thought",
+                "switch thinking off at the endpoint".to_owned(),
+            ),
+        };
+        format!(
+            ": {what} ({} characters of thinking, {} tokens); {way_out}",
+            self.thinking_chars, self.completion_tokens
+        )
+    }
+}
+
 /// Each failure of the contract, never an empty answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextError {
@@ -480,6 +514,62 @@ mod tests {
         ] {
             assert_eq!(unit_length(none.clone()), None, "{none:?}");
         }
+    }
+
+    fn wordless(finish_reason: FinishReason, thinking_chars: usize) -> GenerationResult {
+        GenerationResult {
+            text: " \n".into(),
+            tokens: Vec::new(),
+            finish_reason,
+            prompt_tokens: 3,
+            completion_tokens: 128,
+            time_to_first_token_ms: 0.0,
+            decode_tokens_per_second: 0.0,
+            thinking_chars,
+        }
+    }
+
+    #[test]
+    fn a_reply_without_words_names_why_and_a_cancelled_one_owes_nothing() {
+        let blank = wordless(FinishReason::Length, 0);
+        assert_eq!(
+            blank.no_answer("knob").as_deref(),
+            Some("the model gave no answer (finish_reason length)")
+        );
+        assert_eq!(
+            wordless(FinishReason::Cancelled, 412).no_answer("knob"),
+            None
+        );
+        let mut answered = wordless(FinishReason::Stop, 412);
+        answered.text = "Twice.".into();
+        assert_eq!(
+            answered.no_answer("knob"),
+            None,
+            "thinking beside an answer is no refusal"
+        );
+    }
+
+    #[test]
+    fn the_thinking_hint_names_the_count_the_tokens_and_the_budget_only_when_it_cut() {
+        let cut = wordless(FinishReason::Length, 412)
+            .no_answer("llm_max_new_tokens")
+            .unwrap();
+        assert_eq!(
+            cut,
+            "the model gave no answer (finish_reason length): it spent its budget thinking (412 characters of \
+             thinking, 128 tokens); set a larger llm_max_new_tokens or switch thinking off at the endpoint"
+        );
+        let stopped = wordless(FinishReason::Stop, 412)
+            .no_answer("llm_max_new_tokens")
+            .unwrap();
+        assert!(
+            stopped.contains("it only thought (412 characters of thinking, 128 tokens)"),
+            "{stopped}"
+        );
+        assert!(
+            !stopped.contains("llm_max_new_tokens"),
+            "a model that ended by itself had budget left: {stopped}"
+        );
     }
 
     #[test]

@@ -15,8 +15,7 @@ use jiff::tz::{Offset, TimeZone};
 use jiff::{Timestamp, ToSpan, Zoned};
 use kataglyphis_text::endpoint::EndpointChoice;
 use kataglyphis_text::{
-    CancelToken, ChatMessage, FinishReason, GenerationOptions, GenerationResult, TextBackend,
-    TextError,
+    CancelToken, ChatMessage, GenerationOptions, GenerationResult, TextBackend, TextError,
 };
 use serde::Deserialize;
 
@@ -565,32 +564,9 @@ fn no_words(result: &GenerationResult) -> Option<Response<Body>> {
     no_words_text(result).map(|text| text_reply(StatusCode::BAD_GATEWAY, text))
 }
 
+/// The text crate's sentence with ObservANT's budget setting; a cancelled run owes no answer.
 fn no_words_text(result: &GenerationResult) -> Option<String> {
-    result.text.trim().is_empty().then(|| {
-        let reason = result.finish_reason.as_str();
-        let mut text = format!("the model gave no answer (finish_reason {reason})");
-        if result.thinking_chars > 0 {
-            text.push_str(&thinking_hint(result));
-        }
-        text
-    })
-}
-
-/// Why a reply that was only thinking has no words, and the ways out; a larger budget helps only a reply the budget cut.
-fn thinking_hint(result: &GenerationResult) -> String {
-    let (what, way_out) = match result.finish_reason {
-        FinishReason::Length => (
-            "it spent its budget thinking",
-            "set a larger llm_max_new_tokens or switch thinking off at the endpoint",
-        ),
-        FinishReason::Stop | FinishReason::Cancelled => {
-            ("it only thought", "switch thinking off at the endpoint")
-        }
-    };
-    format!(
-        ": {what} ({} characters of thinking, {} tokens); {way_out}",
-        result.thinking_chars, result.completion_tokens
-    )
+    result.no_answer("llm_max_new_tokens")
 }
 
 /// A POST body as `T`: JSON only, for the reason `/settings` gives, and small.
@@ -788,6 +764,7 @@ pub(crate) async fn summary(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use kataglyphis_text::FinishReason;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Answers without a model; `hold` keeps it busy until a cancel, as a slow model would.
@@ -1165,7 +1142,7 @@ pub(crate) mod tests {
             decode_tokens_per_second: 0.0,
             thinking_chars: 412,
         };
-        let hint = thinking_hint(&result);
+        let hint = no_words_text(&result).unwrap();
         for part in [
             "spent its budget thinking",
             "412 characters of thinking, 128 tokens",
@@ -1176,7 +1153,7 @@ pub(crate) mod tests {
         }
         // A model that ended by itself had budget left: a larger one is no way out.
         result.finish_reason = FinishReason::Stop;
-        let hint = thinking_hint(&result);
+        let hint = no_words_text(&result).unwrap();
         assert!(
             hint.contains("it only thought (412 characters of thinking, 128 tokens)"),
             "{hint}"

@@ -64,8 +64,9 @@ its open work is here.
       paths, an entry point takes strided RGB, BGR and RGBA frames and refuses what `yolo_math.cpp:331-346` refuses,
       `checked_mul` holds the buffer size, a zero-size frame is refused, errors are typed, the class count comes per
       call, the contract cases replay on their raw bytes, `preprocess_fuzz.cpp` becomes a proptest, and full-size frames
-      compare bit for bit; (2) `GenerationResult::no_answer(budget_knob)`, `None` for `Cancelled`, ObservANT's answers
-      byte for byte, sent as the kind `no_answer`; (3) the bundled regeneration with OmniAccelerANT: `TextEvent` carries
+      compare bit for bit; (2) **done 2026-11-23:** `GenerationResult::no_answer(budget_knob)`,
+      `None` for `Cancelled`, ObservANT's answers byte for byte through it, the app's stream ends with the kind
+      `no_answer`; (3) the bundled regeneration with OmniAccelerANT: `TextEvent` carries
       a typed failure (a plain kind enum, the message, the HTTP status), a typed kind and finish reason and the
       thinking count in `done`, plus `default_score_threshold()` and `detector_latency_json()`; (4) for AccelerANTgine's
       text pilot, after OmniAccelerANT drops its AccelerANTgine submodule: `guarded()` and the per-thread log collector
