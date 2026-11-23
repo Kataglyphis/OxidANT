@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-22, the endpoint reader follows owner decision D8)
+
+- The hub pin moves to 44d37673, whose `openai-stream-lines.json` holds 22 cases (ANTfrastructure CON288).
+  `parse_stream_line` fails the stream on any non-null `error`, `false`, `""` and `{}` among them, with the
+  message or else the error's JSON, and on a chunk that is not an object; `StreamEvent::Finish` keeps the raw
+  `finish_reason` beside the mapped `FinishReason`; a usage event needs both counts as whole, non-negative numbers,
+  a whole-number float among them. The endpoint backend stops reading at `[DONE]`, so a late line no longer fails
+  a finished reply (`nothing_after_done_is_read_so_a_late_line_cannot_fail_a_finished_reply`), and three recipes
+  guard the falsy error, the chunk that is not an object and the stop at `[DONE]`.
+
 ### Security (2026-11-22, url 2.5.9 for RUSTSEC-2026-0592)
 
 - `url` 2.5.8 overflowed its stack in `Url::origin()` on nested `blob:` URLs (RUSTSEC-2026-0592, 2026-11-20), and

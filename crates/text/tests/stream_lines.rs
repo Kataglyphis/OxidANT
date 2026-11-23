@@ -1,7 +1,7 @@
-//! The hub's shared OpenAI stream lines, replayed through this crate's reader (ANTfrastructure CON237).
+//! The hub's shared OpenAI stream lines, replayed through this crate's reader (ANTfrastructure CON237, CON288).
 
 use kataglyphis_text::endpoint::{parse_stream_line, StreamEvent};
-use kataglyphis_text::{FinishReason, TextError};
+use kataglyphis_text::TextError;
 use serde_json::Value;
 
 const CASES: &str = include_str!(concat!(
@@ -18,17 +18,20 @@ fn replay(lines: &[Value]) -> Result<Value, TextError> {
         Value::Null,
         false,
     );
-    for line in lines {
+    'lines: for line in lines {
         for event in parse_stream_line(line.as_str().unwrap())? {
             match event {
                 StreamEvent::Text(piece) => text.push_str(&piece),
                 StreamEvent::Thinking(piece) => thinking.push_str(&piece),
-                StreamEvent::Finish(FinishReason::Length) => finish = "length".into(),
-                StreamEvent::Finish(_) => finish = "stop".into(),
+                StreamEvent::Finish { raw, .. } => finish = raw.into(),
                 StreamEvent::Usage { prompt, completion } => {
                     usage = serde_json::json!([prompt, completion])
                 }
-                StreamEvent::Done => done = true,
+                // The endpoint backend stops reading here too (owner D8).
+                StreamEvent::Done => {
+                    done = true;
+                    break 'lines;
+                }
             }
         }
     }
@@ -41,7 +44,7 @@ fn replay(lines: &[Value]) -> Result<Value, TextError> {
 fn every_shared_stream_case_reads_as_the_hub_file_says() {
     let doc: Value = serde_json::from_str(CASES).unwrap();
     let cases = doc["cases"].as_array().unwrap();
-    assert!(cases.len() >= 11, "the file shrank: {}", cases.len());
+    assert!(cases.len() >= 22, "the file shrank: {}", cases.len());
     for case in cases {
         let name = case["name"].as_str().unwrap();
         let got = replay(case["lines"].as_array().unwrap());

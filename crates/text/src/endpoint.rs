@@ -342,7 +342,11 @@ pub fn read_stream_line(reader: &mut impl BufRead) -> Result<Option<String>, Tex
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamEvent {
     Text(String),
-    Finish(FinishReason),
+    /// `raw` is the server's `finish_reason` as sent (owner D8); `reason` reads `length` as Length, any other as Stop.
+    Finish {
+        reason: FinishReason,
+        raw: String,
+    },
     Usage {
         prompt: usize,
         completion: usize,
@@ -360,6 +364,27 @@ fn delta_thinking(delta: &Value) -> Option<&str> {
         .find(|thinking| !thinking.is_empty())
 }
 
+/// An error's words: the error or its `message` when either is a non-empty string, else its JSON (owner D8).
+fn error_text(error: &Value) -> String {
+    error
+        .as_str()
+        .or_else(|| error["message"].as_str())
+        .filter(|message| !message.is_empty())
+        .map_or_else(|| error.to_string(), str::to_string)
+}
+
+/// A usage count: a whole, non-negative number, 7.0 among them; anything else is missing (owner D8).
+fn token_count(value: &Value) -> Option<usize> {
+    if let Some(count) = value.as_u64() {
+        return usize::try_from(count).ok();
+    }
+    // A float cast saturates, and NaN never passes the filter.
+    value
+        .as_f64()
+        .filter(|c| *c >= 0.0 && c.fract() == 0.0)
+        .map(|c| c as usize)
+}
+
 /// The events of one `data:` line; other lines, keep-alives and empty deltas carry none.
 pub fn parse_stream_line(line: &str) -> Result<Vec<StreamEvent>, TextError> {
     // Some servers end a stream with a bare `error:` line; read as nothing, the reply looked merely cut (owner, CON237).
@@ -375,10 +400,16 @@ pub fn parse_stream_line(line: &str) -> Result<Vec<StreamEvent>, TextError> {
     let chunk: Value = serde_json::from_str(data).map_err(|e| {
         TextError::GenerationFailed(format!("an unreadable stream chunk ({e}): {data}"))
     })?;
-    // OpenAI nests the message; Ollama sends the error as the text itself, which read as a stream without an end.
+    // Skipped, a chunk that is no object hid whatever it meant (owner D8, ANTfrastructure CON288).
+    if !chunk.is_object() {
+        return Err(TextError::GenerationFailed(format!(
+            "a stream chunk that is not an object: {data}"
+        )));
+    }
+    // OpenAI nests the message, Ollama sends it as the error itself; false, "" and {} fail too (owner D8).
     let error = &chunk["error"];
-    if let Some(message) = error["message"].as_str().or_else(|| error.as_str()) {
-        return Err(TextError::GenerationFailed(message.to_string()));
+    if !error.is_null() {
+        return Err(TextError::GenerationFailed(error_text(error)));
     }
     let mut events = Vec::new();
     if let Some(choice) = chunk["choices"].get(0) {
@@ -391,18 +422,25 @@ pub fn parse_stream_line(line: &str) -> Result<Vec<StreamEvent>, TextError> {
         {
             events.push(StreamEvent::Text(text.to_string()));
         }
-        match choice["finish_reason"].as_str() {
-            Some("length") => events.push(StreamEvent::Finish(FinishReason::Length)),
-            Some(_) => events.push(StreamEvent::Finish(FinishReason::Stop)),
-            None => {}
+        if let Some(raw) = choice["finish_reason"].as_str() {
+            let reason = if raw == "length" {
+                FinishReason::Length
+            } else {
+                FinishReason::Stop
+            };
+            events.push(StreamEvent::Finish {
+                reason,
+                raw: raw.to_string(),
+            });
         }
     }
-    if let Some(usage) = chunk["usage"].as_object() {
-        let count = |k: &str| usage.get(k).and_then(Value::as_u64).unwrap_or(0) as usize;
-        events.push(StreamEvent::Usage {
-            prompt: count("prompt_tokens"),
-            completion: count("completion_tokens"),
-        });
+    // Both counts or none: a server's usage with one count missing is no usage (owner D8).
+    let usage = &chunk["usage"];
+    if let (Some(prompt), Some(completion)) = (
+        token_count(&usage["prompt_tokens"]),
+        token_count(&usage["completion_tokens"]),
+    ) {
+        events.push(StreamEvent::Usage { prompt, completion });
     }
     Ok(events)
 }
@@ -471,7 +509,7 @@ impl TextBackend for Endpoint {
         // The server ends the reply at a stop string itself, so none is looked for here.
         let mut answer = Answer::new(&[]);
         let (mut pieces, mut first, mut finished, mut usage) = (0usize, start, false, None);
-        loop {
+        'read: loop {
             let line = incoming.recv_timeout(CANCEL_POLL);
             if cancel.is_cancelled() {
                 result.finish_reason = FinishReason::Cancelled;
@@ -499,12 +537,13 @@ impl TextBackend for Endpoint {
                         answer.push(&text, on_text);
                     }
                     StreamEvent::Thinking(thinking) => answer.push_thinking(&thinking),
-                    StreamEvent::Finish(reason) => {
+                    StreamEvent::Finish { reason, .. } => {
                         result.finish_reason = reason;
                         finished = true;
                     }
                     StreamEvent::Usage { prompt, completion } => usage = Some((prompt, completion)),
-                    StreamEvent::Done => {}
+                    // Nothing after [DONE] is read (owner D8): a late line cannot fail a finished reply.
+                    StreamEvent::Done => break 'read,
                 }
             }
         }
@@ -668,7 +707,10 @@ mod tests {
         assert_eq!(
             parse_stream_line(end).unwrap(),
             vec![
-                StreamEvent::Finish(FinishReason::Length),
+                StreamEvent::Finish {
+                    reason: FinishReason::Length,
+                    raw: "length".into()
+                },
                 StreamEvent::Usage {
                     prompt: 7,
                     completion: 3
@@ -715,7 +757,10 @@ mod tests {
             .unwrap(),
             vec![
                 StreamEvent::Text(".".into()),
-                StreamEvent::Finish(FinishReason::Stop)
+                StreamEvent::Finish {
+                    reason: FinishReason::Stop,
+                    raw: "stop".into()
+                }
             ]
         );
         assert_eq!(

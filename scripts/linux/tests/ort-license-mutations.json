@@ -354,6 +354,33 @@
   "why": "A stream that stalls after its head is too slow, not broken: the same 504 as a silent server."
  },
  {
+  "id": "consumer.oxidant-text-falsy-error",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "    if !error.is_null() {\n",
+  "replace": "    if error.as_str().is_some_and(|e| !e.is_empty()) {\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --test stream_lines",
+  "timeout": 900,
+  "why": "false, \"\" and {} are server errors too (owner D8): only a null error is none, in every binding of the hub's stream cases."
+ },
+ {
+  "id": "consumer.oxidant-text-chunk-not-object",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "    if !chunk.is_object() {\n",
+  "replace": "    if chunk.is_null() {\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --test stream_lines",
+  "timeout": 900,
+  "why": "A stream chunk that is no object fails the stream (owner D8), not as text nobody reads."
+ },
+ {
+  "id": "consumer.oxidant-text-read-past-done",
+  "target": "crates/text/src/endpoint.rs",
+  "find": "                    StreamEvent::Done => break 'read,\n",
+  "replace": "                    StreamEvent::Done => {}\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib --test endpoint",
+  "timeout": 900,
+  "why": "Nothing after [DONE] is read (owner D8): a late broken line failed a reply that had finished."
+ },
+ {
   "id": "consumer.oxidant-inference-red-blue-swapped",
   "target": "crates/inference/src/person_detection/preprocess.rs",
   "find": "            *r = UNIT_FLOATS[row[offset] as usize];\n            *g = UNIT_FLOATS[row[offset + 1] as usize];\n            *b = UNIT_FLOATS[row[offset + 2] as usize];\n",

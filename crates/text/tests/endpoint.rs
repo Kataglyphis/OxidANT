@@ -309,6 +309,22 @@ fn a_length_finish_is_reported_as_such() {
 }
 
 #[test]
+fn nothing_after_done_is_read_so_a_late_line_cannot_fail_a_finished_reply() {
+    // Owner D8 (ANTfrastructure CON288): a reader stops at [DONE], whatever follows it.
+    let body = format!("{}data: {{broken\n\n", chat_stream(&["ok"], "stop", 1));
+    let server = FakeServer::answer(200, "text/event-stream", body);
+    let result = endpoint(&server)
+        .generate(
+            &[ChatMessage::user("x")],
+            &GenerationOptions::default(),
+            &CancelToken::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(result.text, "ok");
+}
+
+#[test]
 fn an_http_error_keeps_its_status_and_body() {
     let server = FakeServer::answer(503, "application/json", r#"{"error":"loading"}"#);
     let refused = endpoint(&server)
