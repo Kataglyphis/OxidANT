@@ -2,6 +2,7 @@
 
 use egui::{vec2, Align2, Sense, TextStyle, Ui};
 use glam::Vec3;
+use kataglyphis_render_core::sun::{DIRECTION_RANGE, RADIANCE_RANGE};
 
 use super::super::{EditorContext, RendererSettings};
 use crate::render::shadow_settings::{
@@ -22,7 +23,7 @@ const DIGITS: [&str; 6] = ["0", "1", "2", "3", "4", "5"];
 pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
     let settings = &mut *cx.settings;
     property_row(ui, "Radiance", None, |ui| {
-        ui.add(FillSlider::new(&mut settings.light_color_intensity.w, 0.0..=50.0).decimals(1))
+        ui.add(FillSlider::new(&mut settings.light_color_intensity.w, RADIANCE_RANGE).decimals(1))
     });
     property_row(ui, "Color", Some("Click the swatch for the picker"), |ui| {
         colour(ui, settings)
@@ -132,7 +133,7 @@ fn byte(value: f32) -> u8 {
 fn direction(ui: &mut Ui, settings: &mut RendererSettings) -> egui::Response {
     let towards = settings.light_dir_ambient.truncate();
     let mut from_sun = (-towards).to_array();
-    let response = drag_axes(ui, &mut from_sun, 0.005, -1.0..=1.0, 2, "");
+    let response = drag_axes(ui, &mut from_sun, 0.005, DIRECTION_RANGE, 2, "");
     if response.changed() {
         let travel = Vec3::from_array(from_sun);
         // A zero vector has no direction; the C++ engine falls back to straight down.

@@ -3,7 +3,7 @@
 
 use kataglyphis_render_core::clouds::{self, CloudSettings};
 use kataglyphis_render_core::shadow_settings::{self, ShadowSettings};
-use kataglyphis_render_core::sun::SunSettings;
+use kataglyphis_render_core::sun::{self, SunSettings};
 
 use crate::{guarded, nothing};
 
@@ -44,7 +44,7 @@ pub mod ffi {
     /// The Sun, `kataglyphis_render_core::sun::SunSettings` field for field.
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
     struct SunSettings {
-        /// Towards the Sun; the C++ editor's `directional_light_direction` is the way the light travels.
+        /// Towards the Sun, as the C++ engine's `directional_light_direction`; both editors show the way the light travels.
         direction: [f32; 3],
         color: [f32; 3],
         radiance: f32,
@@ -106,11 +106,21 @@ pub mod ffi {
         split_lambda: FloatRange,
     }
 
+    /// The Sun's controls' ranges; the direction's holds for each axis of the way the light travels.
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
+    struct SunRanges {
+        direction: FloatRange,
+        color: FloatRange,
+        radiance: FloatRange,
+        ambient: FloatRange,
+    }
+
     /// The editor's range for every shared setting.
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
     struct SettingRanges {
         clouds: CloudRanges,
         shadows: ShadowRanges,
+        sun: SunRanges,
     }
 
     extern "Rust" {
@@ -118,7 +128,7 @@ pub mod ffi {
         fn default_scene_settings() -> SceneSettings;
         /// The editor's range for each setting.
         fn setting_ranges() -> SettingRanges;
-        /// `settings` in the editor's ranges: each cloud and shadow field clamped, a NaN or inf at its default; the Sun as given.
+        /// `settings` in the editor's ranges: each field clamped, a NaN or inf at its default.
         fn sanitize(settings: SceneSettings) -> SceneSettings;
     }
 }
@@ -147,7 +157,7 @@ pub fn sanitize(settings: ffi::SceneSettings) -> ffi::SceneSettings {
             scene(
                 core_clouds(settings.clouds).sanitized(),
                 core_shadows(settings.shadows).sanitized(),
-                core_sun(settings.sun),
+                core_sun(settings.sun).sanitized(),
             )
         },
         nothing,
@@ -269,6 +279,12 @@ fn ranges() -> ffi::SettingRanges {
             distance: floats(shadow_settings::SHADOW_DISTANCE_RANGE),
             split_lambda: floats(shadow_settings::SPLIT_LAMBDA_RANGE),
         },
+        sun: ffi::SunRanges {
+            direction: floats(sun::DIRECTION_RANGE),
+            color: floats(sun::COLOR_RANGE),
+            radiance: floats(sun::RADIANCE_RANGE),
+            ambient: floats(sun::AMBIENT_RANGE),
+        },
     }
 }
 
@@ -325,10 +341,15 @@ mod tests {
         assert_eq!(shadows.pcf_radius, ffi::UintRange { min: 0, max: 5 });
         assert_eq!([shadows.strength, shadows.split_lambda], [unit; 2]);
         assert_eq!(shadows.distance, range(5.0, 500.0));
+        let sun = ranges.sun;
+        assert_eq!(sun.direction, range(-1.0, 1.0));
+        assert_eq!(sun.color, unit);
+        assert_eq!(sun.radiance, range(0.0, 50.0));
+        assert_eq!(sun.ambient, range(0.0, 2.0));
     }
 
     #[test]
-    fn sanitize_applies_render_cores_clamps_to_both_sections() {
+    fn sanitize_applies_render_cores_clamps_to_every_section() {
         let mut wild = default_scene_settings();
         wild.clouds.march_steps = 0;
         wild.clouds.light_steps = 1000;
@@ -338,6 +359,8 @@ mod tests {
         wild.clouds.offset = [f32::NAN, 500.0, -500.0];
         wild.clouds.wind = [300.0, 0.0, 0.0];
         wild.sun.radiance = 80.0;
+        wild.sun.ambient = f32::NAN;
+        wild.sun.direction = [0.0, 3.0, -2.0];
         wild.shadows.resolution = 3000;
         wild.shadows.cascade_count = 9;
         wild.shadows.pcf_radius = 40;
@@ -355,7 +378,13 @@ mod tests {
             "a NaN takes the default"
         );
         assert_eq!(sane.clouds.wind, [100.0, 0.0, 0.0]);
-        assert_eq!(sane.sun, wild.sun, "the Sun passes through");
+        let expected_sun = ffi::SunSettings {
+            direction: [0.0, 1.0, -1.0],
+            radiance: 50.0,
+            ambient: 0.35,
+            ..wild.sun
+        };
+        assert_eq!(sane.sun, expected_sun, "a NaN takes the default");
         let expected = ffi::ShadowSettings {
             resolution: 2048,
             cascade_count: 3,

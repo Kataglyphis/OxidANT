@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-23, one set of defaults: the Sun's ranges and sanitize)
+
+- **`kataglyphis_render_core::sun`** has the Sun's editor ranges (`DIRECTION_RANGE` per axis of the way the light
+  travels, `COLOR_RANGE`, `RADIANCE_RANGE` 0-50, `AMBIENT_RANGE` 0-2), which the Sun and Sky tabs read, and
+  `SunSettings::sanitized`: each field clamped, a NaN or infinity at its default, a direction that clamps to zero
+  straight up (BeschleunigerBallett BACKLOG "One set of defaults: the Sun, the wind and F5", owner 2026-11-20).
+- **The bridge**: `setting_ranges()` reports them (`SunRanges`), `sanitize` applies `sanitized` to the Sun, which it
+  passed through before. `SunSettings::direction` points towards the Sun in both engines now: the C++ editor's field
+  took that convention, and both editors still show the way the light travels.
+
 ### Added (2026-11-23, the analytic ambient term shared with the C++ engine)
 
 - **`shaders/common/ambient.slang`** (BeschleunigerBallett BACKLOG "An analytic ambient term with an Ambient slider",

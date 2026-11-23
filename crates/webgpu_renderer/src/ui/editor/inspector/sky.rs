@@ -1,6 +1,7 @@
 //! The Sky tab: the C++ SKYBOX switch, the image-based light the sky gives the scene, then the C++ CLOUDS section.
 
 use egui::Ui;
+use kataglyphis_render_core::sun::AMBIENT_RANGE;
 
 use super::super::EditorContext;
 use super::clouds;
@@ -17,7 +18,7 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>) {
         ui,
         "Ambient",
         Some("How strongly the sky lights the scene"),
-        |ui| ui.add(FillSlider::new(ambient, 0.0..=2.0).decimals(2)),
+        |ui| ui.add(FillSlider::new(ambient, AMBIENT_RANGE).decimals(2)),
     );
     clouds::show(ui, &mut cx.settings.clouds);
 }
