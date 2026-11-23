@@ -28,7 +28,7 @@ float3 direct_light(TracedSurface s, float3 v)
     return lit;
 }
 
-// The C++ ray-traced mode, no ambient term; alpha is the hit's NDC depth for the clouds, as raytrace.rgen.slang writes it.
+// The C++ ray-traced mode less its ambient.slang term; alpha is the hit's NDC depth for the clouds, as raytrace.rgen.slang writes it.
 float4 ray_trace_pixel(uint2 pixel)
 {
     TraceRay ray = pixel_ray(float2(pixel) + 0.5);

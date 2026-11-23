@@ -669,3 +669,51 @@ def camera_ray(clip_to_world: Sequence[Vec], ndc: Vec) -> tuple[Vec, Vec, Real]:
     origin = near.xyz / near.w
     span = far.xyz / far.w - origin
     return origin, normalize(span), sqrt(dot(span, span))
+
+
+# ---- common/sky_model.slang ----
+
+SKY_ZENITH = (0.09, 0.16, 0.35)
+SKY_HORIZON = (0.55, 0.62, 0.72)
+SKY_GROUND = (0.18, 0.16, 0.15)
+
+
+def lerp(a: Vec, b: Vec, t: Num) -> Vec:
+    """SPIR-V's FMix and WGSL's mix: a * (1 - t) + b * t."""
+    return a * (1.0 - real(t)) + b * real(t)
+
+
+def sky_gradient(d: Vec) -> Vec:
+    if below(d.y, 0.0, "sky gradient's horizon"):
+        visit("ground side")
+        return lerp(vec3(SKY_HORIZON), vec3(SKY_GROUND), clamp(-d.y * 3.0, 0.0, 1.0))
+    visit("sky side")
+    return lerp(vec3(SKY_HORIZON), vec3(SKY_ZENITH), pow_(clamp(d.y, 0.0, 1.0), 0.7))
+
+
+def sun_disk(d: Vec, light_dir: Vec, intensity: Real) -> Vec:
+    cos_sun = rmax(dot(d, normalize(light_dir)), 0.0)
+    sun = pow_(cos_sun, 1200.0) * 24.0 + pow_(cos_sun, 48.0) * 0.5
+    return Vec(1.0, 0.95, 0.85) * sun * (intensity * 0.4)
+
+
+def hemisphere_irradiance(n: Vec) -> Vec:
+    sky = lerp(vec3(SKY_HORIZON), vec3(SKY_ZENITH), pow_(clamp(n.y, 0.0, 1.0), 0.7))
+    return lerp(vec3(SKY_GROUND) * 0.7, sky, clamp(n.y * 0.5 + 0.5, 0.0, 1.0))
+
+
+# ---- common/ambient.slang ----
+
+
+def ambient_split_sum(irradiance: Vec, reflection: Vec, albedo: Vec, metallic: Real, f0: Vec, energy: Vec) -> Vec:
+    spec = specular_albedo(energy, f0)
+    diffuse = each(saturate, 1.0 - spec) * (1.0 - metallic) * albedo * irradiance
+    return diffuse + reflection * spec
+
+
+def analytic_ambient(s: Surface, energy: Vec, towards_sun: Vec, sun_intensity: Real) -> Vec:
+    irradiance = hemisphere_irradiance(s.n)
+    reflected = reflect(-s.v, s.n)
+    sky = sky_gradient(reflected) + sun_disk(reflected, towards_sun, sun_intensity)
+    reflection = lerp(sky, irradiance, s.roughness * s.roughness)
+    return ambient_split_sum(irradiance, reflection, s.albedo, s.metallic, s.f0, energy)

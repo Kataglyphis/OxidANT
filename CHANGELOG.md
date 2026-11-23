@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-23, the analytic ambient term shared with the C++ engine)
+
+- **`shaders/common/ambient.slang`** (BeschleunigerBallett BACKLOG "An analytic ambient term with an Ambient slider",
+  plan C4 stage 1): `ambient_split_sum`, the split sum's combine of an irradiance and a reflection by `brdf_direct`'s
+  compensated albedo, and `analytic_ambient`, the procedural sky's hemisphere irradiance and its reflected gradient and
+  sun disk blurred towards it by roughness squared. They are `forward_lighting.slang`'s former `ibl_ambient` body,
+  which now calls them (`forward.wgsl` computes the same values), and the C++ forward, deferred and closest-hit
+  shaders call `analytic_ambient` from the pin that carries it. The tracer's ray-traced mode, which the C++ mode
+  lights, takes no ambient term yet.
+- `tests/ambient_test.slang` and `tests/vectors/ambient.json` (15 cases, both functions, both sides of the sky's
+  horizon and the gain's floor), with `sky_model.slang`'s three functions in `scripts/shader_model.py`;
+  `shader_vectors.rs`' `ambient_kernel_meets_its_vectors`.
+- `scripts/check-shared-shader-copies.py` fails a second definition of `ambient_split_sum` or `analytic_ambient`.
+
 ### Fixed (2026-11-22, a skin mirrored by its joints keeps its triangles' fronts out)
 
 - **A skinned triangle whose joints mirror space is reversed at load** (BeschleunigerBallett BACKLOG "A skin mirrored by

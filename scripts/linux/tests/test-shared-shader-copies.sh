@@ -47,6 +47,12 @@ pass redefined 'float3 hdr_safe(float3 r)\n{\n    return r;\n}'
 t_case "a second definition of a shared function fails"
 t_assert_rc 1 python3 "$gate" "${tree}"
 
+pass ambient 'import brdf;\nfloat3 analytic_ambient(float3 n, float3 v)\n{\n    return n;\n}'
+t_case "a private analytic ambient fails by file and line"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/ambient.slang:2: an ambient term'
+
 pass formula 'float2 to_ndc(float2 uv) { return uv * 2.0 - 1.0; }'
 t_case "a uv conversion outside a fullscreen importer passes"
 t_assert_rc 0 python3 "$gate" "${tree}"

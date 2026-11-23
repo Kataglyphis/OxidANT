@@ -1,9 +1,9 @@
+import ambient;
 import brdf;
 import hdr_safe;
 import punctual_light;
 import punctual_shadow;
 import shadow_pcf;
-import sky_model;
 
 // The lighting forward.slang's forward and deferred lighting passes share, so the two paths cannot drift apart.
 
@@ -143,15 +143,6 @@ float shadow_visibility(float3 worldPos, float3 n, float nDotL)
     return pcf_visibility(taps, uv, float2(texel), proj.z - bias, slope, radius);
 }
 
-// Local wrapper: this pass's light comes from FrameUniforms, not sky.slang's SkyUniforms.
-float3 sky_radiance(float3 dir, bool withSun)
-{
-    float3 color = sky_gradient(dir);
-    if (withSun)
-        color += sun_disk(dir, frame.light_dir_ambient.xyz, frame.light_color_intensity.w);
-    return color;
-}
-
 // One 2x2 PCF tap of slot's cube along d; uv flips NDC y, as WebGPU's framebuffer rows run down.
 float punctual_shadow_tap(float3 d, int slot, float reference)
 {
@@ -233,29 +224,24 @@ float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
 // The ambient term from the baked environment, or from the analytic sky and the surface's energy without one.
 float3 ibl_ambient(SurfacePoint s, float3 v, float3 f0, float2 surfaceEnergy)
 {
-    float3 reflected = reflect(-v, s.n);
-    float3 irradiance;
-    float3 reflection;
-    float2 energy = surfaceEnergy;
+    float3 ambient;
     // A uniform flag: every fragment takes one side, so none pays for the other's samples or sky.
     if (iblParams.enabled_maxmip_intensity.x > 0.5)
     {
         float envIntensity = iblParams.enabled_maxmip_intensity.z;
-        irradiance = irradianceMap.SampleLevel(iblSampler, s.n, 0.0).xyz * envIntensity;
-        reflection = prefilteredMap.SampleLevel(iblSampler, reflected, s.roughness * iblParams.enabled_maxmip_intensity.y).xyz * envIntensity;
+        float3 irradiance = irradianceMap.SampleLevel(iblSampler, s.n, 0.0).xyz * envIntensity;
+        float3 reflected = reflect(-v, s.n);
+        float3 reflection = prefilteredMap.SampleLevel(iblSampler, reflected, s.roughness * iblParams.enabled_maxmip_intensity.y).xyz * envIntensity;
         // The split sum's own table, so a uniform one returns E_spec exactly; level 0, legal after the deferred early return.
-        energy = brdfLut.SampleLevel(iblSampler, float2(max(dot(s.n, v), 0.0), s.roughness), 0.0).rg;
+        float2 energy = brdfLut.SampleLevel(iblSampler, float2(max(dot(s.n, v), 0.0), s.roughness), 0.0).rg;
+        ambient = ambient_split_sum(irradiance, reflection, s.albedo, s.metallic, f0, energy);
     }
     else
     {
-        irradiance = hemisphere_irradiance(s.n);
-        reflection = lerp(sky_radiance(reflected, true), irradiance, s.roughness * s.roughness);
+        ambient = analytic_ambient(s.n, v, s.albedo, s.metallic, s.roughness, f0, surfaceEnergy,
+            frame.light_dir_ambient.xyz, frame.light_color_intensity.w);
     }
-    float3 specularAlbedo = specular_albedo(energy, f0);
-    float3 diffuseIbl = saturate(float3(1.0) - specularAlbedo) * (1.0 - s.metallic) * s.albedo * irradiance;
-    float3 specularIbl = reflection * specularAlbedo;
-
-    return frame.light_dir_ambient.w * s.occlusion * (diffuseIbl + specularIbl);
+    return frame.light_dir_ambient.w * s.occlusion * ambient;
 }
 
 // The lit HDR colour of `s`; fragCoord picks its light tile.

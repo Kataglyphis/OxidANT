@@ -56,6 +56,16 @@ BeschleunigerBallett's ray-generation shader, path tracer and cloud compute pass
 `mul(inv_view, inv_projection)`. The copy gate also fails a near- or far-plane unprojection, inline or through a
 clip-space point declared a statement before, and the eye as a ray origin, written outside it.
 
+`common/ambient.slang` is the sky's share of a surface's light. `ambient_split_sum` combines an irradiance and a
+reflection by `brdf_direct`'s compensated albedo: the diffuse lobe takes `1 - E_spec` of the irradiance, the
+specular lobe `E_spec` of the reflection. `analytic_ambient` feeds it the procedural sky when no environment is
+baked: `sky_model.slang`'s `hemisphere_irradiance`, and the reflected gradient plus the sun disk, blurred towards
+that irradiance by roughness squared. `forward_lighting.slang`'s `ibl_ambient` takes one or the other on the
+environment flag and scales it by the ambient strength and the occlusion; BeschleunigerBallett's forward, deferred
+and closest-hit shaders take `analytic_ambient`, scaled by the Sun's ambient, after the sun's shadow. The tracer's
+ray-traced mode has no ambient term yet, and both path tracers get the sky through their bounces' misses. The copy
+gate fails a second definition of either function.
+
 `sky/sky.slang` is the sky both renderers draw into their HDR target, tonemapped with
 the scene. The C++ renderer compiles `vs_vulkan_main` and `fs_main` to SPIR-V and fills
 `SkyUniforms` itself; its vertex entry takes `SV_VulkanVertexID`, because `SV_VertexID`
@@ -164,7 +174,7 @@ checks this on the GPU and stays enabled.
 
 `tests/<module>_test.slang` runs every public function of `common/<module>.slang`
 once per case of `tests/vectors/<module>.json`: `brdf`, `noise`, `path_estimator`, `hdr_safe`,
-`aces`, `fullscreen` and `camera_ray` today. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
+`aces`, `fullscreen`, `camera_ray` and `ambient` today. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
 the infinities, which JSON cannot spell; `fullscreen`'s uv differs per target, so its kernel writes
 only what both targets share: the positions, x, each mapping's round trip through its inverse, and its
 distance from `tests/clip_y.slang`'s own top row per target, so a swapped `__target_switch` branch fails;

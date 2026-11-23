@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail on a Slang file that keeps a private copy of a constant or function a shared leaf module owns."""
+"""Fail on a Slang file that keeps a private copy of a constant or function a shared module owns."""
 import argparse
 import re
 import sys
@@ -40,6 +40,7 @@ RULES = [
     ("common/camera_ray.slang",
      r"\binv_view\s*,\s*float4\(\s*0(?:\.0)?\s*,\s*0(?:\.0)?\s*,\s*0(?:\.0)?\s*,\s*1(?:\.0)?\s*\)|\binv_view\s*\[\s*3\s*\]",
      "the eye as a ray origin"),
+    ("common/ambient.slang", defines("ambient_split_sum|analytic_ambient"), "an ambient term"),
 ]
 # A fullscreen_vs importer converts between uv and NDC through fullscreen.slang only.
 FULLSCREEN_COPIES = re.compile(
@@ -69,7 +70,7 @@ def main():
     found = copies(root)
     if found:
         sys.exit("Import the shared module instead of copying it:\n  " + "\n  ".join(found))
-    print(f"No Slang file under {root} copies a shared leaf module")
+    print(f"No Slang file under {root} copies a shared module")
 
 
 if __name__ == "__main__":
