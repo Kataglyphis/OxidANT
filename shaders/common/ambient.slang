@@ -11,13 +11,10 @@ float3 ambient_split_sum(float3 irradiance, float3 reflection, float3 albedo, fl
     return diffuse + reflection * specularAlbedo;
 }
 
-// Without a baked environment: the analytic sky's irradiance, and its reflection with the sun blurred towards it by roughness.
-float3 analytic_ambient(float3 n, float3 v, float3 albedo, float metallic, float roughness, float3 f0, float2 energy,
-    float3 towardsSun, float sunIntensity)
+// Without a baked environment; no sun disk: brdf_direct's lobe carries the sun, and its shadow must take the glint.
+float3 analytic_ambient(float3 n, float3 v, float3 albedo, float metallic, float roughness, float3 f0, float2 energy)
 {
     float3 irradiance = hemisphere_irradiance(n);
-    float3 reflected = reflect(-v, n);
-    float3 sky = sky_gradient(reflected) + sun_disk(reflected, towardsSun, sunIntensity);
-    float3 reflection = lerp(sky, irradiance, roughness * roughness);
+    float3 reflection = lerp(sky_gradient(reflect(-v, n)), irradiance, roughness * roughness);
     return ambient_split_sum(irradiance, reflection, albedo, metallic, f0, energy);
 }

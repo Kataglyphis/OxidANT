@@ -59,8 +59,10 @@ clip-space point declared a statement before, and the eye as a ray origin, writt
 `common/ambient.slang` is the sky's share of a surface's light. `ambient_split_sum` combines an irradiance and a
 reflection by `brdf_direct`'s compensated albedo: the diffuse lobe takes `1 - E_spec` of the irradiance, the
 specular lobe `E_spec` of the reflection. `analytic_ambient` feeds it the procedural sky when no environment is
-baked: `sky_model.slang`'s `hemisphere_irradiance`, and the reflected gradient plus the sun disk, blurred towards
-that irradiance by roughness squared. `forward_lighting.slang`'s `ibl_ambient` takes one or the other on the
+baked: `sky_model.slang`'s `hemisphere_irradiance`, and the reflected gradient blurred towards that irradiance by
+roughness squared. It takes no sun disk: `brdf_direct`'s GGX lobe carries the sun, so a disk here counted it twice
+and kept a glossy surface's glint inside the sun's shadow (`forward_ambient.rs`'
+`the_analytic_ambient_adds_the_sky_and_no_sun`). `forward_lighting.slang`'s `ibl_ambient` takes one or the other on the
 environment flag and scales it by the ambient strength and the occlusion; BeschleunigerBallett's forward, deferred
 and closest-hit shaders take `analytic_ambient`, scaled by the Sun's ambient, after the sun's shadow. The tracer's
 ray-traced mode has no ambient term yet, and both path tracers get the sky through their bounces' misses. The copy

@@ -691,12 +691,6 @@ def sky_gradient(d: Vec) -> Vec:
     return lerp(vec3(SKY_HORIZON), vec3(SKY_ZENITH), pow_(clamp(d.y, 0.0, 1.0), 0.7))
 
 
-def sun_disk(d: Vec, light_dir: Vec, intensity: Real) -> Vec:
-    cos_sun = rmax(dot(d, normalize(light_dir)), 0.0)
-    sun = pow_(cos_sun, 1200.0) * 24.0 + pow_(cos_sun, 48.0) * 0.5
-    return Vec(1.0, 0.95, 0.85) * sun * (intensity * 0.4)
-
-
 def hemisphere_irradiance(n: Vec) -> Vec:
     sky = lerp(vec3(SKY_HORIZON), vec3(SKY_ZENITH), pow_(clamp(n.y, 0.0, 1.0), 0.7))
     return lerp(vec3(SKY_GROUND) * 0.7, sky, clamp(n.y * 0.5 + 0.5, 0.0, 1.0))
@@ -711,9 +705,7 @@ def ambient_split_sum(irradiance: Vec, reflection: Vec, albedo: Vec, metallic: R
     return diffuse + reflection * spec
 
 
-def analytic_ambient(s: Surface, energy: Vec, towards_sun: Vec, sun_intensity: Real) -> Vec:
+def analytic_ambient(s: Surface, energy: Vec) -> Vec:
     irradiance = hemisphere_irradiance(s.n)
-    reflected = reflect(-s.v, s.n)
-    sky = sky_gradient(reflected) + sun_disk(reflected, towards_sun, sun_intensity)
-    reflection = lerp(sky, irradiance, s.roughness * s.roughness)
+    reflection = lerp(sky_gradient(reflect(-s.v, s.n)), irradiance, s.roughness * s.roughness)
     return ambient_split_sum(irradiance, reflection, s.albedo, s.metallic, s.f0, energy)

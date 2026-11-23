@@ -238,8 +238,7 @@ float3 ibl_ambient(SurfacePoint s, float3 v, float3 f0, float2 surfaceEnergy)
     }
     else
     {
-        ambient = analytic_ambient(s.n, v, s.albedo, s.metallic, s.roughness, f0, surfaceEnergy,
-            frame.light_dir_ambient.xyz, frame.light_color_intensity.w);
+        ambient = analytic_ambient(s.n, v, s.albedo, s.metallic, s.roughness, f0, surfaceEnergy);
     }
     return frame.light_dir_ambient.w * s.occlusion * ambient;
 }

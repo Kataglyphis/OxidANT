@@ -1,7 +1,7 @@
 //! `fs_main`'s ambient term: fallback specular, the ambient slider and the environment intensity.
 //! See <https://github.com/Kataglyphis/BeschleunigerBallett/blob/develop/docs/source/shader-sharing.md>.
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 use kataglyphis_webgpu_renderer::render::forward::RasterPath;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
 use kataglyphis_webgpu_renderer::scene::{CpuMaterial, CpuPrimitive, CpuScene, Vertex};
@@ -236,4 +236,40 @@ fn a_white_card_returns_a_uniform_environment_whole() {
         off.is_empty(),
         "white cards off a uniform environment (path, metallic, roughness, mu, radiance): {off:?}"
     );
+}
+
+/// The analytic ambient is the sky alone: `brdf_direct`'s GGX lobe carries the sun, so a sun disk here counted it twice.
+#[test]
+fn the_analytic_ambient_adds_the_sky_and_no_sun() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    for path in RasterPath::ALL {
+        let mut renderer = ForwardRenderer::new(&gpu, 64, 64);
+        renderer.raster_path = path;
+        // A black sun of radiance 5 mirrored into the eye: brdf_direct adds nothing, a disk in the ambient would.
+        renderer.light_color_intensity = Vec4::new(0.0, 0.0, 0.0, 5.0);
+        renderer.light_dir_ambient = Vec4::new(0.0, 0.0, 1.0, 1.0);
+        renderer.bloom_strength = 0.0;
+        renderer.ssao_strength = 0.0;
+        assert!(!renderer.environment_enabled());
+        renderer.upload_scene(&gpu, &white_card(1.0, 0.05));
+        let camera = OrbitCamera {
+            target: Vec3::ZERO,
+            radius: 2.0,
+            yaw_deg: 90.0,
+            pitch_deg: 0.0,
+            ..OrbitCamera::default()
+        };
+        renderer
+            .render_to_pixels(&gpu, 64, 64, &camera)
+            .expect("renders");
+        let radiance = centre_radiance(&renderer, &gpu);
+        eprintln!("{path:?}: a smooth white metal mirroring the sun returns {radiance:.4}");
+        // The horizon it mirrors is the gradient's brightest radiance, 0.72 at most; with the disk forward read 20.3.
+        assert!(
+            (0.4..=0.72).contains(&radiance),
+            "{path:?}: the ambient of a mirror facing the sun is {radiance}, not the sky's horizon"
+        );
+    }
 }

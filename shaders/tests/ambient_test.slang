@@ -15,12 +15,10 @@ void ambient_test_main(uint3 tid : SV_DispatchThreadID)
     float roughness = inputs.f32();
     float3 f0 = inputs.f32x3();
     float2 energy = inputs.f32x2();
-    float3 towards_sun = inputs.f32x3();
-    float sun_intensity = inputs.f32();
     float3 irradiance = inputs.f32x3();
     float3 reflection = inputs.f32x3();
 
     VectorOutputs outputs = vector_outputs(tid.x);
     outputs.put(ambient_split_sum(irradiance, reflection, albedo, metallic, f0, energy));
-    outputs.put(analytic_ambient(n, v, albedo, metallic, roughness, f0, energy, towards_sun, sun_intensity));
+    outputs.put(analytic_ambient(n, v, albedo, metallic, roughness, f0, energy));
 }

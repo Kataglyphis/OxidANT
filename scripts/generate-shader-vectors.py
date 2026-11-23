@@ -336,7 +336,7 @@ def evaluate_ambient(i: Values) -> dict[str, list[float]]:
     return {
         "ambient_split_sum": flat(sm.ambient_split_sum(
             sm.vec3(i["irradiance"]), sm.vec3(i["reflection"]), s.albedo, s.metallic, s.f0, energy)),
-        "analytic_ambient": flat(sm.analytic_ambient(s, energy, sm.vec3(i["towards_sun"]), one(i, "sun_intensity"))),
+        "analytic_ambient": flat(sm.analytic_ambient(s, energy)),
     }
 
 
@@ -583,20 +583,20 @@ def camera_ray_cases() -> list[tuple[str, Values]]:
 def ambient_cases() -> list[tuple[str, Values]]:
     base: Values = {
         "n": [0.0, 1.0, 0.0], "v": unit(0.3, 0.8, 0.5), "albedo": [0.8, 0.6, 0.4], "metallic": [0.0],
-        "roughness": [0.5], "f0": [0.04, 0.04, 0.04], "energy": [0.6, 0.05], "towards_sun": [0.5, 0.8, 0.3],
-        "sun_intensity": [5.0], "irradiance": [0.3, 0.4, 0.6], "reflection": [0.5, 0.6, 0.7],
+        "roughness": [0.5], "f0": [0.04, 0.04, 0.04], "energy": [0.6, 0.05], "irradiance": [0.3, 0.4, 0.6],
+        "reflection": [0.5, 0.6, 0.7],
     }
     gold = [1.0, 0.766, 0.336]
     rows: list[tuple[str, Values]] = [
-        ("ground under the default Sun, its reflection above the horizon", {}),
+        ("ground, its reflection above the horizon", {}),
         ("a face turned down sees the ground and reflects it", {"n": [0.0, -1.0, 0.0], "v": unit(0.2, -0.7, 0.4)}),
-        ("a smooth gold reflection 8 degrees off the sun takes its halo", {
+        ("a smooth gold mirror reflects the sky alone, no sun: brdf_direct's lobe carries it", {
             "v": unit(-0.62, 0.72, -0.32), "albedo": gold, "metallic": [1.0], "roughness": [0.1], "f0": gold,
             "energy": [0.9, 0.02]}),
         ("roughness one reflects the irradiance alone", {"roughness": [1.0], "v": unit(-0.45, 0.83, -0.3)}),
         ("a metal takes no diffuse share", {"metallic": [1.0], "f0": [0.9, 0.5, 0.1], "albedo": [0.9, 0.5, 0.1]}),
         ("a grazing view reflects just above the horizon", {"v": unit(1.0, 0.05, 0.0), "roughness": [0.2]}),
-        ("no sun leaves the gradient", {"sun_intensity": [0.0], "v": unit(-0.5, 0.8, -0.3), "roughness": [0.05]}),
+        ("the smoothest surface reflects the gradient itself", {"v": unit(-0.5, 0.8, -0.3), "roughness": [0.05]}),
         ("a tilted wall between sky and ground", {"n": unit(0.9, 0.1, -0.4), "v": unit(0.6, -0.2, 0.2)}),
         ("an energy below the gain's 1e-3 floor", {"energy": [0.0002, 0.0003], "f0": [0.9, 0.5, 0.1]}),
     ]
@@ -606,8 +606,7 @@ def ambient_cases() -> list[tuple[str, Values]]:
         rows.append((f"seeded surface {index}", {
             "n": n, "v": draw.direction(n), "albedo": draw.nums(0.0, 1.0), "metallic": [draw.num(0.0, 1.0)],
             "roughness": [draw.num(0.05, 1.0)], "f0": draw.nums(0.02, 1.0),
-            "energy": [draw.num(0.05, 0.95), draw.num(0.0, 0.1)], "towards_sun": draw.direction(),
-            "sun_intensity": [draw.num(0.0, 50.0)], "irradiance": draw.nums(0.0, 2.0),
+            "energy": [draw.num(0.05, 0.95), draw.num(0.0, 0.1)], "irradiance": draw.nums(0.0, 2.0),
             "reflection": draw.nums(0.0, 4.0)}))
     return merged(base, rows)
 
@@ -661,7 +660,7 @@ MODULES = [
         out("camera_ray_through_pixel.direction_error", 3, (1e-5, 0.0)),
     ], evaluate_camera_ray, camera_ray_cases()),
     Module("ambient", ports(
-        "n:3 v:3 albedo:3 metallic roughness f0:3 energy:2 towards_sun:3 sun_intensity irradiance:3 reflection:3"), [
+        "n:3 v:3 albedo:3 metallic roughness f0:3 energy:2 irradiance:3 reflection:3"), [
         out("ambient_split_sum", 3, SMOOTH), out("analytic_ambient", 3, CHAINED),
     ], evaluate_ambient, ambient_cases(), {"sky side", "ground side", "gain floor"}),
 ]

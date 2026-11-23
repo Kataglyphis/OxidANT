@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-23, the analytic ambient counted the sun twice)
+
+- **`analytic_ambient` takes no sun disk** (BeschleunigerBallett review of the Phase 7 ambient term). Its reflection
+  added `sun_disk` on top of `brdf_direct`'s GGX lobe, which already carries the sun, and after the shadow, so a glossy
+  surface inside the sun's shadow kept the sun's glint and halo; the smooth gold vector case read 0.778 in red, 0.184
+  without the disk. The function drops its `towardsSun` and `sunIntensity` arguments, `ibl_ambient` calls it so, and
+  `ambient.json` loses those two inputs. The procedural sky's IBL bake (`EquirectImage::sky`) never held the disk.
+  `forward_ambient.rs`' `the_analytic_ambient_adds_the_sky_and_no_sun`: a smooth white metal card mirroring the sun,
+  without an environment, gains no more from the Ambient than the brightest sky radiance.
+
 ### Changed (2026-11-23, one set of defaults: the Sun's ranges and sanitize)
 
 - **`kataglyphis_render_core::sun`** has the Sun's editor ranges (`DIRECTION_RANGE` per axis of the way the light

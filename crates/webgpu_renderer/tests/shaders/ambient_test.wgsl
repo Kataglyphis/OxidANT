@@ -116,25 +116,18 @@ fn sky_gradient_0( dir_0 : vec3<f32>) -> vec3<f32>
     }
 }
 
-fn sun_disk_0( dir_1 : vec3<f32>,  lightDir_0 : vec3<f32>,  intensity_0 : f32) -> vec3<f32>
-{
-    var _S5 : f32 = max(dot(dir_1, normalize(lightDir_0)), 0.0f);
-    return vec3<f32>(1.0f, 0.94999998807907104f, 0.85000002384185791f) * vec3<f32>((pow(_S5, 1200.0f) * 24.0f + pow(_S5, 48.0f) * 0.5f)) * vec3<f32>((intensity_0 * 0.40000000596046448f));
-}
-
-fn analytic_ambient_0( n_1 : vec3<f32>,  v_0 : vec3<f32>,  albedo_1 : vec3<f32>,  metallic_1 : f32,  roughness_0 : f32,  f0_3 : vec3<f32>,  energy_3 : vec2<f32>,  towardsSun_0 : vec3<f32>,  sunIntensity_0 : f32) -> vec3<f32>
+fn analytic_ambient_0( n_1 : vec3<f32>,  v_0 : vec3<f32>,  albedo_1 : vec3<f32>,  metallic_1 : f32,  roughness_0 : f32,  f0_3 : vec3<f32>,  energy_3 : vec2<f32>) -> vec3<f32>
 {
     var irradiance_1 : vec3<f32> = hemisphere_irradiance_0(n_1);
-    var reflected_0 : vec3<f32> = reflect((vec3<f32>(0) - v_0), n_1);
-    return ambient_split_sum_0(irradiance_1, mix(sky_gradient_0(reflected_0) + sun_disk_0(reflected_0, towardsSun_0, sunIntensity_0), irradiance_1, vec3<f32>((roughness_0 * roughness_0))), albedo_1, metallic_1, f0_3, energy_3);
+    return ambient_split_sum_0(irradiance_1, mix(sky_gradient_0(reflect((vec3<f32>(0) - v_0), n_1)), irradiance_1, vec3<f32>((roughness_0 * roughness_0))), albedo_1, metallic_1, f0_3, energy_3);
 }
 
 @compute
 @workgroup_size(1, 1, 1)
 fn ambient_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
 {
-    var _S6 : u32 = tid_0.x;
-    var inputs_1 : VectorInputs_0 = vector_inputs_0(_S6);
+    var _S5 : u32 = tid_0.x;
+    var inputs_1 : VectorInputs_0 = vector_inputs_0(_S5);
     var n_2 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var v_1 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var albedo_2 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
@@ -142,13 +135,11 @@ fn ambient_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
     var roughness_1 : f32 = VectorInputs_f32_0(&(inputs_1));
     var f0_4 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var energy_4 : vec2<f32> = VectorInputs_f32x2_0(&(inputs_1));
-    var towards_sun_0 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
-    var sun_intensity_0 : f32 = VectorInputs_f32_0(&(inputs_1));
     var irradiance_2 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var reflection_1 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
-    var outputs_1 : VectorOutputs_0 = vector_outputs_0(_S6);
+    var outputs_1 : VectorOutputs_0 = vector_outputs_0(_S5);
     VectorOutputs_put_2(&(outputs_1), ambient_split_sum_0(irradiance_2, reflection_1, albedo_2, metallic_2, f0_4, energy_4));
-    VectorOutputs_put_2(&(outputs_1), analytic_ambient_0(n_2, v_1, albedo_2, metallic_2, roughness_1, f0_4, energy_4, towards_sun_0, sun_intensity_0));
+    VectorOutputs_put_2(&(outputs_1), analytic_ambient_0(n_2, v_1, albedo_2, metallic_2, roughness_1, f0_4, energy_4));
     return;
 }
 
