@@ -1,4 +1,4 @@
-//! A Wavefront OBJ as an in-memory GLB: the crate's converter, with its textures packed into the binary chunk.
+//! A Wavefront OBJ as an in-memory GLB for the WebGPU renderer: the converter's glTF, its textures in the binary chunk.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -7,7 +7,10 @@ use std::path::Path;
 use anyhow::Context as _;
 use gltf::json::Value;
 
-use crate::asset::obj_to_gltf::{read_obj, texture_source, to_gltf, ObjMesh};
+use super::gltf_json::to_gltf;
+use super::material::MASK_CUTOFF;
+use super::parse::{read_obj, ObjMesh};
+use super::paths::texture_source;
 
 /// One white texel, standing in for a texture no file holds: the image stays, nothing samples it.
 const WHITE_PNG: &[u8] = &[
@@ -23,8 +26,6 @@ const TEXTURE_SLOTS: [(&str, Option<&str>); 3] = [
     ("normalTexture", None),
     ("emissiveTexture", None),
 ];
-/// The C++ engine's cut-out threshold for a `map_d` mask (`ObjLoader.cpp`).
-const MASK_CUTOFF: f64 = 0.5;
 
 /// `obj_path` converted and packed as one GLB, which `load_gltf_slice` reads; a missing texture only warns.
 pub fn obj_to_glb(obj_path: &Path) -> anyhow::Result<Vec<u8>> {
@@ -99,7 +100,7 @@ fn push_view(root: &mut Value, bin: &mut Vec<u8>, bytes: &[u8]) -> anyhow::Resul
 
 /// The bytes and MIME type of the texture `uri` names; a format glTF cannot carry is decoded and packed as PNG.
 fn texture(uri: &str, obj_path: &Path) -> Option<(Vec<u8>, &'static str)> {
-    let path = texture_source(uri, obj_path);
+    let path = texture_source(uri, obj_path)?;
     let bytes = read_texture(&path)?;
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Some((bytes, "image/png"));
@@ -111,10 +112,14 @@ fn texture(uri: &str, obj_path: &Path) -> Option<(Vec<u8>, &'static str)> {
     Some((encode_png(&image.into_rgba8())?, "image/png"))
 }
 
+/// A regular file only: a device name or a FIFO would block the loader.
 fn read_texture(path: &Path) -> Option<Vec<u8>> {
-    std::fs::read(path)
+    crate::files::read_regular_file(path)
         .inspect_err(|error| {
-            log::warn!("{}: {error}; the material draws without it", path.display());
+            log::warn!(
+                "{}: {error:#}; the material draws without it",
+                path.display()
+            );
         })
         .ok()
 }
@@ -197,7 +202,7 @@ fn apply_masks(
         gltf_material["pbrMetallicRoughness"]["baseColorTexture"] =
             gltf::json::deserialize::from_str(&format!(r#"{{"index": {texture}}}"#))?;
         gltf_material["alphaMode"] = Value::from("MASK");
-        gltf_material["alphaCutoff"] = Value::from(MASK_CUTOFF);
+        gltf_material["alphaCutoff"] = Value::from(f64::from(MASK_CUTOFF));
     }
     Ok(())
 }
@@ -205,7 +210,7 @@ fn apply_masks(
 /// The base colour image with alpha multiplied by the mask's red, as the C++ shaders test it; the mask is resized to fit.
 fn masked_base_color(base_uri: Option<&str>, mask_uri: &str, obj_path: &Path) -> Option<Vec<u8>> {
     let load = |uri: &str| {
-        let path = texture_source(uri, obj_path);
+        let path = texture_source(uri, obj_path)?;
         decode(&read_texture(&path)?, &path)
     };
     let mask = load(mask_uri)?.into_rgba8();
@@ -255,9 +260,8 @@ fn push_texture(root: &mut Value, bin: &mut Vec<u8>, png: &[u8]) -> anyhow::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::gltf_loader::load_gltf_slice;
+    use crate::gltf_loader::load_gltf_slice;
     use crate::scene::{AlphaMode, CpuScene};
-    use crate::{ForwardRenderer, GpuContext, OrbitCamera};
 
     /// A quad whose .mtl names one texture that exists and one that does not.
     fn quad_dir() -> std::path::PathBuf {
@@ -302,8 +306,7 @@ mod tests {
 
     /// `crates/assets/tests/assets/obj_mask`: a 2x2 card, `map_Kd red.bmp`, and `map_d half_mask.tga` clearing its left half.
     fn mask_card() -> CpuScene {
-        let obj =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/obj_mask/card.obj");
+        let obj = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/obj_mask/card.obj");
         load_gltf_slice(&obj_to_glb(&obj).expect("converts")).expect("the GLB loads")
     }
 
@@ -321,46 +324,5 @@ mod tests {
         let texel = |x: usize| &texture.rgba8[x * 4..x * 4 + 4];
         assert_eq!(texel(0), [255, 0, 0, 0], "the TGA's black left half is cut");
         assert_eq!(texel(7), [255, 0, 0, 255], "its white right half stays");
-    }
-
-    fn red_pixels(gpu: &GpuContext, scene: &CpuScene) -> usize {
-        let mut renderer = ForwardRenderer::new(gpu, 64, 64);
-        renderer.upload_scene(gpu, scene);
-        let camera = OrbitCamera {
-            radius: 3.0,
-            pitch_deg: 89.0,
-            ..OrbitCamera::default()
-        };
-        let pixels = renderer
-            .render_to_pixels(gpu, 64, 64, &camera)
-            .expect("headless render");
-        let red = |p: &&[u8; 4]| {
-            p[0] > 80
-                && i32::from(p[0]) > i32::from(p[1]) + 40
-                && i32::from(p[0]) > i32::from(p[2]) + 40
-        };
-        pixels.as_chunks::<4>().0.iter().filter(red).count()
-    }
-
-    /// The C++ engine's MaskCardDiscardsCutoutTexelsVisually, for an OBJ opened in memory.
-    #[test]
-    fn an_obj_card_with_a_map_d_mask_draws_only_its_uncut_half() {
-        let Some(gpu) = GpuContext::headless_or_skip() else {
-            return;
-        };
-        let masked = mask_card();
-        let mut opaque = masked.clone();
-        opaque.primitives[0].material.alpha_mode = AlphaMode::Opaque;
-        let (cut, whole) = (red_pixels(&gpu, &masked), red_pixels(&gpu, &opaque));
-        assert!(
-            whole > 1000,
-            "the opaque card must fill the frame, {whole} red pixels"
-        );
-        let share = cut as f64 / whole as f64;
-        eprintln!("masked card: {cut} of {whole} red pixels");
-        assert!(
-            (0.35..0.65).contains(&share),
-            "the masked card keeps {cut} of the opaque card's {whole} red pixels"
-        );
     }
 }

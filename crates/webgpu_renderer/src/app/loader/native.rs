@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 use super::{
     parse_bytes, LoadOutcome, LoadProgress, LoadStage, LoadedScene, SceneLoader, SceneRequest,
 };
-use crate::app::obj_glb::obj_to_glb;
 use crate::app::scene_meta::SceneMeta;
 use crate::asset::gltf_loader::{load_gltf_with, LoadOptions};
+use kataglyphis_assets::obj::{is_obj_path, obj_to_glb};
 
 pub(super) enum State {
     Parsing(Receiver<Result<LoadedScene, String>>),
@@ -90,10 +90,7 @@ fn load(request: SceneRequest, options: &LoadOptions) -> Result<LoadedScene, Str
 
 /// An OBJ through the converter in memory; a glTF through the importer, which reads its files beside it.
 fn load_file(path: &Path, options: &LoadOptions) -> Result<LoadedScene, String> {
-    let is_obj = path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("obj"));
-    if is_obj {
+    if is_obj_path(path) {
         let glb = obj_to_glb(path).map_err(|error| format!("{error:#}"))?;
         return parse_bytes(&glb, options);
     }

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 392cd886a1383c1666fe06d007aba10f134f7e93fcd8738c57a5e67912d09f05 # shrinks to card = false, mutations = [Truncate(Index(0)), Overwrite(Index(0), 0)]

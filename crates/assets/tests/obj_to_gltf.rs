@@ -1,7 +1,7 @@
 //! OBJ -> glTF conversion, verified by loading the hand-written JSON back through the real loader.
 
-use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf;
-use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{convert_file, parse_obj, to_gltf};
+use kataglyphis_assets::gltf_loader::load_gltf;
+use kataglyphis_assets::obj::{convert_file, parse_obj, to_gltf};
 
 /// A unit cube with normals and UVs, as a Blender-style OBJ.
 const CUBE_OBJ: &str = "\
@@ -62,7 +62,7 @@ fn the_v_axis_is_flipped_for_gltf() {
 }
 
 #[test]
-fn quads_are_fan_triangulated() {
+fn a_quad_splits_along_its_shorter_diagonal_without_new_vertices() {
     let quad = "\
 v 0.0 0.0 0.0
 v 1.0 0.0 0.0
@@ -75,36 +75,71 @@ f 1 2 3 4
     assert_eq!(
         mesh.positions.len(),
         4,
-        "fan triangulation must not duplicate vertices"
+        "triangulation must not duplicate vertices"
+    );
+    // Equal diagonals take tinyobjloader's tie rule: corners 1-2-4 and 2-3-4.
+    assert_eq!(mesh.indices, [0, 1, 3, 1, 2, 3]);
+    assert_eq!(mesh.positions[3], [0.0, 1.0, 0.0]);
+}
+
+#[test]
+fn a_bad_line_is_skipped_and_counted_like_tinyobjloader_does() {
+    // Each line of the file but the good triangle is malformed; the triangle survives them all.
+    let mesh = parse_obj(
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1.0 oops 2\nf 1 2 3\nf 1 2 9\nf 0 1 2\nf 1 2\ncurv 0 1 2\n",
+    )
+    .expect("the good triangle loads");
+    assert_eq!(mesh.triangle_count(), 1, "only `f 1 2 3` draws");
+    assert_eq!(
+        mesh.skipped_lines, 5,
+        "the bad v, the three bad faces and curv"
+    );
+    assert_eq!(mesh.positions.len(), 3);
+}
+
+#[test]
+fn a_corner_two_groups_share_without_vn_takes_each_groups_own_normal() {
+    let mesh = parse_obj("v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\ng floor\nf 1 2 3\ng wall\nf 1 4 2\n")
+        .expect("parse");
+    assert_eq!(
+        mesh.positions.len(),
+        6,
+        "the wall gets its own copies of the shared corners"
+    );
+    assert_eq!(mesh.normals[0], [0.0, 0.0, 1.0], "the floor's corner");
+    assert_eq!(mesh.normals[3], [0.0, 1.0, 0.0], "the wall's copy of it");
+}
+
+#[test]
+fn relative_indices_count_back_from_the_latest_vertex() {
+    let mesh = parse_obj("v 0 0 0\nv 1 0 0\nv 0 1 0\nf -3 -2 -1\n").expect("parse");
+    assert_eq!(mesh.skipped_lines, 0);
+    assert_eq!(
+        mesh.positions,
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
     );
 }
 
 #[test]
-fn malformed_input_is_rejected_rather_than_guessed_at() {
-    // A silent fix-up of any of these would make the asset differ from its source unnoticed.
-    assert!(
-        parse_obj("v 1.0 2.0\nf 1 1 1\n").is_err(),
-        "a 2-component vertex must be rejected"
+fn a_bad_texcoord_or_normal_index_drops_only_that_attribute() {
+    let mesh =
+        parse_obj("v 0 0 0\nv 1 0 0\nv 0 1 0\nvn 0 0 1\nf 1/7/1 2//1 3//5\n").expect("parse");
+    assert_eq!(mesh.triangle_count(), 1);
+    assert_eq!(mesh.skipped_lines, 1, "reported once for the face");
+    assert_eq!(mesh.uvs[0], [0.0, 0.0]);
+    assert_eq!(
+        mesh.normals[2],
+        [0.0, 0.0, 1.0],
+        "the missing normal is filled flat"
     );
+}
+
+#[test]
+fn a_file_without_a_drawable_face_is_an_error() {
+    assert!(parse_obj("# nothing here\n").is_err());
     assert!(
         parse_obj("v 0 0 0\nf 1 2 3\n").is_err(),
-        "an out-of-range index must be rejected"
-    );
-    assert!(
-        parse_obj("v 0 0 0\nf -1 -2 -3\n").is_err(),
-        "relative indices are unsupported, not ignored"
-    );
-    assert!(
-        parse_obj("v 0 0 0\nf 0 0 0\n").is_err(),
-        "index 0 is invalid in OBJ"
-    );
-    assert!(
-        parse_obj("# nothing here\n").is_err(),
-        "an empty OBJ must not produce an empty mesh silently"
-    );
-    assert!(
-        parse_obj("curv 0 1 2\n").is_err(),
-        "an unsupported directive must not be skipped quietly"
+        "its only face names undeclared vertices"
     );
 }
 
@@ -214,7 +249,7 @@ d 0.4
 
 #[test]
 fn mtl_diffuse_and_opacity_become_base_color() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+    use kataglyphis_assets::obj::parse_mtl;
 
     let materials = parse_mtl(PAIR_MTL);
     assert_eq!(materials.len(), 2);
@@ -236,7 +271,7 @@ fn mtl_diffuse_and_opacity_become_base_color() {
 
 #[test]
 fn tr_is_inverted_relative_to_d() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+    use kataglyphis_assets::obj::parse_mtl;
 
     // Tr = 1 - d; confusing them swaps opaque and transparent materials.
     let by_opacity = parse_mtl("newmtl a\nd 0.25\n");
@@ -248,7 +283,7 @@ fn tr_is_inverted_relative_to_d() {
 
 #[test]
 fn map_d_is_read_apart_from_d_and_the_other_maps() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+    use kataglyphis_assets::obj::parse_mtl;
 
     let materials =
         parse_mtl("newmtl leaf\nd 1\nmap_Kd leaf.jpg\nmap_d -clamp on masks\\leaf_mask.jpg\n");
@@ -265,10 +300,10 @@ fn map_d_is_read_apart_from_d_and_the_other_maps() {
 
 #[test]
 fn mtl_emissive_becomes_emissive_factor() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     let materials = parse_mtl("newmtl a\nKe 0.5 0.25 0.0\n");
-    assert_eq!(materials[0].emissive, [0.5, 0.25, 0.0]);
+    assert_eq!(materials[0].emissive, Some([0.5, 0.25, 0.0]));
 
     let mesh = ObjMesh {
         materials,
@@ -283,7 +318,7 @@ fn mtl_emissive_becomes_emissive_factor() {
 
 #[test]
 fn mtl_without_ke_emits_no_emissive_factor() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     let materials = parse_mtl("newmtl a\nKd 1 0 0\n");
     let mesh = ObjMesh {
@@ -299,13 +334,13 @@ fn mtl_without_ke_emits_no_emissive_factor() {
 
 #[test]
 fn an_hdr_ke_emits_emissive_strength() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     // The C++ engine keeps HDR `Ke` verbatim, so carry it via emissive_strength, not a clamp.
     let materials = parse_mtl("newmtl a\nKe 4 4 4\n");
     assert_eq!(
         materials[0].emissive,
-        [4.0, 4.0, 4.0],
+        Some([4.0, 4.0, 4.0]),
         "Ke must be stored unclamped"
     );
 
@@ -332,7 +367,7 @@ fn an_hdr_ke_emits_emissive_strength() {
 
 #[test]
 fn a_non_hdr_ke_emits_no_emissive_strength_extension() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     // Non-HDR output stays byte-identical: no unconditional extensions arrays.
     let materials = parse_mtl("newmtl a\nKe 0.5 0.5 0.5\n");
@@ -377,7 +412,8 @@ fn an_hdr_ke_round_trips_through_the_real_gltf_loader() {
 
 /// Red, blue, red again: three runs, two materials, so two draws; every triangle keeps its material.
 #[test]
-fn runs_that_share_a_material_become_one_primitive() {
+fn each_usemtl_run_is_its_own_mesh_even_when_its_material_returns() {
+    // Owner 2026-11-24: one mesh per usemtl group, so culling keeps the file's granularity.
     let source = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nusemtl red\nf 1 2 3\nusemtl blue\nf 1 3 4\nusemtl red\nf 2 3 4\n";
     let mesh = parse_obj(source).expect("the OBJ must parse");
     let red = mesh.materials.iter().position(|m| m.name == "red").unwrap();
@@ -386,8 +422,30 @@ fn runs_that_share_a_material_become_one_primitive() {
         .iter()
         .position(|m| m.name == "blue")
         .unwrap();
-    assert_eq!(mesh.submeshes, vec![(0, 6, red), (6, 3, blue)]);
-    assert_eq!(mesh.indices, vec![0, 1, 2, 1, 2, 3, 0, 2, 3]);
+    assert_eq!(mesh.submeshes, vec![(0, 3, red), (3, 3, blue), (6, 3, red)]);
+    assert_eq!(
+        mesh.indices,
+        (0..9).collect::<Vec<u32>>(),
+        "corners without vn are never shared"
+    );
+}
+
+#[test]
+fn a_run_ends_at_a_group_and_not_at_a_repeated_usemtl() {
+    let source =
+        "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\no a\nusemtl red\nf 1 2 3\nusemtl red\nf 1 3 4\n\
+                  g b\nf 2 3 4\n";
+    let mesh = parse_obj(source).expect("parse");
+    let runs: Vec<(u32, u32)> = mesh
+        .submeshes
+        .iter()
+        .map(|&(first, count, _)| (first, count))
+        .collect();
+    assert_eq!(
+        runs,
+        [(0, 6), (6, 3)],
+        "one run for o a, a new one for g b with the same material"
+    );
 }
 
 #[test]
@@ -539,7 +597,7 @@ fn write_test_png(path: &std::path::Path) {
 
 #[test]
 fn map_kd_takes_the_filename_not_the_first_option() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+    use kataglyphis_assets::obj::parse_mtl;
 
     // MTL options precede the path, so the first token would be "-s".
     let plain = parse_mtl("newmtl a\nmap_Kd wood.png\n");
@@ -766,7 +824,7 @@ fn a_backslash_texture_path_does_not_corrupt_the_document() {
 
 #[test]
 fn an_empty_mesh_emits_finite_accessor_bounds() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::ObjMesh;
+    use kataglyphis_assets::obj::ObjMesh;
 
     // Empty `bounds()` is +/-infinity, which is not a valid JSON number.
     let (json, _bin) = to_gltf(&ObjMesh::default(), "empty.bin");
@@ -896,7 +954,7 @@ f 4 5 6
 
 #[test]
 fn parse_mtl_reads_map_bump_as_the_normal_texture() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+    use kataglyphis_assets::obj::parse_mtl;
 
     let materials = parse_mtl("newmtl a\nmap_Bump rock_normal.png\n");
     assert_eq!(
@@ -907,7 +965,7 @@ fn parse_mtl_reads_map_bump_as_the_normal_texture() {
 
 #[test]
 fn parse_mtl_prefers_norm_over_map_bump() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+    use kataglyphis_assets::obj::parse_mtl;
 
     // norm first: the later, less specific map_Bump must not override it.
     let norm_first = parse_mtl("newmtl a\nnorm better.png\nmap_Bump worse.png\n");
@@ -920,7 +978,7 @@ fn parse_mtl_prefers_norm_over_map_bump() {
 
 #[test]
 fn parse_mtl_takes_the_last_token_of_an_option_carrying_map_bump() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+    use kataglyphis_assets::obj::parse_mtl;
 
     // Options precede the path; `-bm` sets normalTexture.scale.
     let materials = parse_mtl("newmtl a\nmap_Bump -bm 0.5 rock_normal.png\n");
@@ -938,7 +996,7 @@ fn parse_mtl_takes_the_last_token_of_an_option_carrying_map_bump() {
 
 #[test]
 fn to_gltf_emits_a_normal_texture_pointing_at_a_distinct_image_when_the_maps_differ() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     let materials = parse_mtl("newmtl a\nmap_Kd base.png\nmap_Bump normal.png\n");
     let mesh = ObjMesh {
@@ -959,7 +1017,7 @@ fn to_gltf_emits_a_normal_texture_pointing_at_a_distinct_image_when_the_maps_dif
 
 #[test]
 fn to_gltf_shares_one_image_when_map_kd_and_map_bump_name_the_same_file() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     let materials = parse_mtl("newmtl a\nmap_Kd shared.png\nmap_Bump shared.png\n");
     let mesh = ObjMesh {
@@ -981,7 +1039,7 @@ fn to_gltf_shares_one_image_when_map_kd_and_map_bump_name_the_same_file() {
 
 #[test]
 fn to_gltf_shares_one_image_when_two_spellings_name_the_same_file() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     let materials = parse_mtl(
         "newmtl a\nmap_Kd tex.png\nnewmtl b\nmap_Kd ./tex.png\nnewmtl c\nmap_Kd maps/../tex.png\n\
@@ -1013,7 +1071,7 @@ fn to_gltf_shares_one_image_when_two_spellings_name_the_same_file() {
 
 #[test]
 fn parse_mtl_takes_the_last_token_of_an_option_carrying_map_ke() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+    use kataglyphis_assets::obj::parse_mtl;
 
     // As for map_Kd/map_Bump, the path is the last token.
     let materials = parse_mtl("newmtl a\nmap_Ke -s 1 1 1 glow.png\n");
@@ -1026,7 +1084,7 @@ fn parse_mtl_takes_the_last_token_of_an_option_carrying_map_ke() {
 
 #[test]
 fn to_gltf_emits_an_emissive_texture_pointing_at_the_right_image() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     let materials = parse_mtl("newmtl a\nmap_Kd base.png\nmap_Ke glow.png\n");
     let mesh = ObjMesh {
@@ -1047,7 +1105,7 @@ fn to_gltf_emits_an_emissive_texture_pointing_at_the_right_image() {
 
 #[test]
 fn a_map_ke_without_ke_gets_a_normalised_emissive_factor() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     // glTF's default emissiveFactor [0,0,0] would render a map_Ke without Ke black.
     let materials = parse_mtl("newmtl a\nmap_Ke glow.png\n");
@@ -1065,7 +1123,7 @@ fn a_map_ke_without_ke_gets_a_normalised_emissive_factor() {
 
 #[test]
 fn to_gltf_shares_one_image_when_map_kd_and_map_ke_name_the_same_file() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     let materials = parse_mtl("newmtl a\nmap_Kd wood.png\nmap_Ke wood.png\n");
     let mesh = ObjMesh {
@@ -1083,7 +1141,7 @@ fn to_gltf_shares_one_image_when_map_kd_and_map_ke_name_the_same_file() {
 
 #[test]
 fn parse_mtl_reads_the_pbr_channels() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+    use kataglyphis_assets::obj::parse_mtl;
 
     let materials = parse_mtl("newmtl a\nPm 1.0\nPr 0.25\n");
     assert_eq!(materials[0].metallic, Some(1.0));
@@ -1102,7 +1160,7 @@ fn parse_mtl_reads_the_pbr_channels() {
 
 #[test]
 fn to_gltf_emits_the_authored_pbr_channels_and_falls_back_when_absent() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     let authored = parse_mtl("newmtl a\nPm 1.0\nPr 0.25\n");
     let mesh = ObjMesh {
@@ -1111,7 +1169,7 @@ fn to_gltf_emits_the_authored_pbr_channels_and_falls_back_when_absent() {
     };
     let (json, _bin) = to_gltf(&mesh, "a.bin");
     assert!(
-        json.contains(r#""metallicFactor": 1, "roughnessFactor": 0.25"#),
+        json.contains(r#""metallicFactor": 1.0, "roughnessFactor": 0.25"#),
         "expected the authored Pm/Pr values, got: {json}"
     );
 
@@ -1129,8 +1187,8 @@ fn to_gltf_emits_the_authored_pbr_channels_and_falls_back_when_absent() {
 
 #[test]
 fn ns_without_pr_derives_roughness_via_the_shininess_curve() {
-    use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf;
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{convert_file, parse_mtl};
+    use kataglyphis_assets::gltf_loader::load_gltf;
+    use kataglyphis_assets::obj::{convert_file, parse_mtl};
 
     // sqrt(2/(Ns+2)), the C++ engine's material_rules.slang curve.
     let materials = parse_mtl("newmtl a\nNs 96\n");
@@ -1157,7 +1215,7 @@ fn ns_without_pr_derives_roughness_via_the_shininess_curve() {
 
 #[test]
 fn an_authored_pr_wins_over_ns() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     let materials = parse_mtl("newmtl a\nNs 96\nPr 0.3\n");
     let mesh = ObjMesh {
@@ -1173,7 +1231,7 @@ fn an_authored_pr_wins_over_ns() {
 
 #[test]
 fn neither_pr_nor_ns_keeps_the_byte_identical_fallback() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     let materials = parse_mtl("newmtl a\nKd 1 0 0\n");
     let mesh = ObjMesh {
@@ -1189,7 +1247,7 @@ fn neither_pr_nor_ns_keeps_the_byte_identical_fallback() {
 
 #[test]
 fn an_invalid_ns_falls_back_to_the_literal_one_rather_than_nan() {
-    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+    use kataglyphis_assets::obj::{parse_mtl, ObjMesh};
 
     for source in ["newmtl a\nNs -1\n", "newmtl a\nNs notanumber\n"] {
         let materials = parse_mtl(source);

@@ -1,8 +1,9 @@
-//! The glTF loader for the engine: `kataglyphis_assets::flat`'s arrays, in the C++ namespace `kataglyphis::oxidant::gltf`.
+//! The model loader for the engine: `kataglyphis_assets::flat`'s arrays for a glTF or an OBJ, in the C++ namespace `kataglyphis::oxidant::gltf`.
 
 use kataglyphis_assets::flat::{
     load_flat, FlatLight, FlatMaterial, FlatModel, FlatRange, FlatTexture, FlatVertex,
 };
+use kataglyphis_assets::obj::{is_obj_path, load_obj_flat};
 use kataglyphis_assets::scene::{CpuSampler, CpuWrap};
 use kataglyphis_assets::LoadOptions;
 
@@ -43,6 +44,8 @@ pub mod ffi {
         metallic_roughness_texture: i32,
         normal_texture: i32,
         emissive_texture: i32,
+        /// An OBJ `map_d` cut-out mask, -1 for none and for every glTF material.
+        alpha_texture: i32,
         uv1_slot_mask: u32,
         unlit: bool,
         alpha_blend: bool,
@@ -124,7 +127,7 @@ pub mod ffi {
     }
 
     extern "Rust" {
-        /// Parses the .gltf or .glb at the UTF-8 `path` with OxidANT's loader, flattened for the engine.
+        /// Parses the .gltf, .glb or .obj at the UTF-8 `path` with OxidANT's loaders, flattened for the engine.
         fn load_gltf_flat(path: &[u8]) -> GltfModel;
         /// `load_gltf_flat` with `options`, which the engine reads once at its start; the loader reads no environment.
         fn load_gltf_flat_with(path: &[u8], options: &GltfLoadOptions) -> GltfModel;
@@ -154,7 +157,12 @@ fn load_options(options: &ffi::GltfLoadOptions) -> LoadOptions {
 
 fn load(path: &[u8], options: &LoadOptions) -> Result<FlatModel, String> {
     let path = std::str::from_utf8(path).map_err(|_| "the path is not UTF-8".to_owned())?;
-    load_flat(path, options).map_err(|err| format!("{err:#}"))
+    let loaded = if is_obj_path(std::path::Path::new(path)) {
+        load_obj_flat(path, options)
+    } else {
+        load_flat(path, options)
+    };
+    loaded.map_err(|err| format!("{err:#}"))
 }
 
 fn model(loaded: Result<FlatModel, String>) -> ffi::GltfModel {
@@ -221,6 +229,7 @@ fn material(m: FlatMaterial) -> ffi::GltfMaterial {
         metallic_roughness_texture: m.metallic_roughness_texture,
         normal_texture: m.normal_texture,
         emissive_texture: m.emissive_texture,
+        alpha_texture: m.alpha_texture,
         uv1_slot_mask: m.uv1_slot_mask,
         unlit: m.unlit,
         alpha_blend: m.alpha_blend,
@@ -339,6 +348,37 @@ mod tests {
         assert!(model.textures[0].srgb);
         assert_eq!(model.materials[0].base_texture, 0);
         assert_eq!(model.materials.last().unwrap().base_texture, -1);
+        assert!(
+            model.materials.iter().all(|m| m.alpha_texture == -1),
+            "glTF has no map_d"
+        );
+    }
+
+    #[test]
+    fn an_obj_crosses_the_same_bridge_by_its_extension_in_any_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let card = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/obj_mask");
+        for name in ["card.mtl", "red.bmp", "half_mask.tga"] {
+            std::fs::copy(card.join(name), dir.path().join(name)).unwrap();
+        }
+        std::fs::copy(card.join("card.obj"), dir.path().join("CARD.OBJ")).unwrap();
+        let model = load_gltf_flat(&bytes(&dir.path().join("CARD.OBJ")));
+        assert!(model.ok, "{}", model.error);
+        let material = &model.materials[0];
+        assert_eq!(material.alpha_cutoff, 0.5, "map_d cuts out");
+        let mask = &model.textures[material.alpha_texture as usize];
+        assert!(!mask.srgb);
+        let base = &model.textures[material.base_texture as usize];
+        assert!(
+            base.encoded.starts_with(b"BM"),
+            "the BMP's own bytes, for stb"
+        );
+        let missing = load_gltf_flat(b"/no/such/model.obj");
+        assert!(
+            !missing.ok && missing.error.contains("model.obj"),
+            "{}",
+            missing.error
+        );
     }
 
     #[test]

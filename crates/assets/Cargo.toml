@@ -3,7 +3,7 @@ name = "kataglyphis_assets"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CPU-side glTF and KTX2 loading into the CpuScene types; no GPU, window or UI dependency."
+description = "CPU-side glTF, OBJ and KTX2 loading into the CpuScene types; no GPU, window or UI dependency."
 
 [dependencies]
 anyhow = { workspace = true }
@@ -14,8 +14,8 @@ glam = { version = "0.34", features = ["bytemuck"] }
 gltf = { version = "1", features = ["import", "guess_mime_type", "KHR_lights_punctual", "KHR_texture_transform", "KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions"] }
 # Not the `mikktspace` crate: it pulls nalgebra 0.26, which is future-incompatible on current rustc.
 bevy_mikktspace = "1"
-# gltf's own image decoder and features: an external PNG or JPEG is decoded from the bytes `confined_file` checked.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# gltf's decoder for the PNG and JPEG `confined_file` checked; BMP and TGA for the PNG an OBJ's GLB re-encodes.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tga"] }
 ktx2 = "0.5"
 # Pure Rust for wasm32; no zstd feature, whose ruzstd 0.7 has RUSTSEC-2026-0344: ktx2_zstd.rs inflates.
 basisu = { version = "0.1", default-features = false, features = ["std"] }

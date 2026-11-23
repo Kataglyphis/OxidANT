@@ -1,4 +1,4 @@
-//! Reading what a glTF document names: regular files only, and relative URIs inside the document's directory.
+//! Reading what a glTF or OBJ file names: regular files only, and relative paths inside the file's directory.
 
 use std::path::{Path, PathBuf};
 
@@ -53,6 +53,17 @@ pub(crate) fn read_confined(base: &Path, uri: &str) -> anyhow::Result<Vec<u8>> {
 pub(crate) fn confined_file(base: &Path, uri: &str) -> anyhow::Result<PathBuf> {
     // gltf reads `file:` paths and refuses every other scheme; neither names a file beside the document.
     anyhow::ensure!(!uri.contains(':'), "'{uri}' is not a relative URI");
+    confined_path(base, &percent_decode(uri)?).with_context(|| format!("'{uri}'"))
+}
+
+/// The canonical regular file a relative path names inside `base`: no drive, no root, no UNC, no `..` out of it.
+pub(crate) fn confined_path(base: &Path, relative: &str) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(
+        !relative.contains(':'),
+        "'{relative}' names a drive or a scheme"
+    );
+    let relative = relative.replace('\\', "/");
+    anyhow::ensure!(!relative.starts_with('/'), "'{relative}' is absolute");
     let base = if base.as_os_str().is_empty() {
         Path::new(".")
     } else {
@@ -61,15 +72,15 @@ pub(crate) fn confined_file(base: &Path, uri: &str) -> anyhow::Result<PathBuf> {
     let root = base
         .canonicalize()
         .with_context(|| format!("resolving {}", base.display()))?;
-    let candidate = base.join(percent_decode(uri)?.replace('\\', "/"));
+    let candidate = base.join(&relative);
     // Before canonicalize, which opens the path on Windows.
-    refuse_device(&candidate).with_context(|| format!("'{uri}'"))?;
+    refuse_device(&candidate).with_context(|| format!("'{relative}'"))?;
     let file = candidate
         .canonicalize()
-        .with_context(|| format!("'{uri}' does not resolve to a file"))?;
+        .with_context(|| format!("'{relative}' does not resolve to a file"))?;
     anyhow::ensure!(
         file.starts_with(&root),
-        "'{uri}' resolves outside the document's directory"
+        "'{relative}' resolves outside the document's directory"
     );
     require_regular_file(&file).with_context(|| format!("reading {}", file.display()))?;
     Ok(file)

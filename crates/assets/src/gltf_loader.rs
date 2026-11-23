@@ -820,6 +820,17 @@ struct GeometryOptions {
     mikktspace: bool,
 }
 
+/// An OBJ material group's geometry finished as a glTF primitive with NORMAL and without TANGENT is.
+pub(crate) fn finish_with_generated_tangents(geometry: Geometry, load: &LoadOptions) -> Geometry {
+    let options = GeometryOptions {
+        has_normals: true,
+        has_tangents: false,
+        tangent_uv_set: 0,
+        mikktspace: load.mikktspace_tangents,
+    };
+    finish_geometry(geometry, &options)
+}
+
 /// Generates what the file left out (flat normals, tangents) and repairs what NaNs the shader.
 fn finish_geometry(mut geometry: Geometry, options: &GeometryOptions) -> Geometry {
     if !options.has_normals {

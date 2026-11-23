@@ -27,6 +27,7 @@ mod gltf_images;
 pub mod gltf_loader;
 pub mod ktx2_loader;
 mod ktx2_zstd;
+pub mod obj;
 pub mod scene;
 pub mod skin;
 

@@ -13,6 +13,39 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-23, one OBJ reader for both renderers: BeschleunigerBallett plan B6)
+
+- **`kataglyphis_assets::obj` is the OBJ reader both renderers load through.** `obj_to_gltf` and `obj_glb` moved
+  from the renderer into the assets crate (re-exported as `asset::obj_to_gltf`). The parser is tolerant like
+  tinyobjloader, whose C++ copy BeschleunigerBallett deletes: a malformed or unsupported line is skipped and
+  logged (the first eight by number, then a count, `ObjMesh::skipped_lines`), a number that does not parse or is
+  not finite reads 0 so later indices keep their meaning, relative (negative) indices resolve, a bad texcoord or
+  normal index drops only that attribute, and `l`/`p` lines draw nothing. A face over 2048 corners is skipped
+  (the largest in any known scene has 1429), and the ear clipper gives up on a face after 64 fruitless tries per
+  corner, so one hostile face cannot hang a load. Only a file without a drawable face is an error.
+- **One mesh per `usemtl` run** (owner 2026-11-24): a run ends where its `o`/`g` group or its material does, and
+  runs of one material are no longer merged, so Sponza keeps 385 meshes (tinyobjloader's `ObjLoader` drew 373, one per group) and its culling granularity; the WebGPU
+  renderer's GLB gets the same primitives. A corner without `vn` is never shared between faces, so each face
+  keeps its own flat normal, as glTF unindexes such a primitive.
+- **Paths are confined like a glTF's** (owner 2026-11-24): every `mtllib` and texture goes through
+  `files::confined_path`, the rule `confined_file` now shares: no drive or scheme, no root, no UNC name, no `..`
+  out of the OBJ's folder, regular files only. A texture resolves beside its `.mtl`, else in that folder's
+  `textures/`, as the OBJ/MTL format and tinyobjloader have it; anything else is refused with a warning. The
+  GLB reads textures as regular files only, and `convert_file` copies a texture only to a place inside its
+  output folder.
+- **Polygons split as tinyobjloader splits them** (`obj/triangulate.rs`): a quad along its shorter diagonal, a
+  larger polygon through its ear clipper, quirks included, so no scene changes its triangles. Was a fan.
+- **One rule set for OBJ materials** (`obj/material.rs`, owner 2026-11-19): `d` below 1 or `Tr` above 0 is BLEND,
+  a `map_Ke` without any `Ke` glows at factor 1 (an authored `Ke 0 0 0` stays dark, `ObjMaterial::emissive` is an
+  `Option`), no `Kd` is white, no `Pr` and no `Ns` is roughness 1, a `map_d` is a MASK at 0.5. A `d` wins over a
+  `Tr` of the same material, and only the winning bump directive's `-bm` counts.
+- **`obj::load_obj_flat`**: an OBJ as `flat::FlatModel`, one range per run with its own vertices and generated
+  tangents, every texture as the file's bytes (no re-encode: the engine's stb reads BMP and TGA), and `map_d` in
+  the new `FlatMaterial::alpha_texture`. The bridge's `load_gltf_flat` dispatches `.obj` to it by extension, in
+  any case, and carries `alpha_texture` (-1 for glTF). `tests/obj_flat.rs` fuzzes it with proptest over mutated
+  card, cube and hostile seeds (not-finite numbers, paths out of the folder, 40 materials, a 300-gon) and polygons
+  around the corner cap: the successor of BeschleunigerBallett's `obj_parsing_fuzz_test`.
+
 ### Fixed (2026-11-24, the docs match the tree, and no host name)
 
 - **The docs audit's stale and wrong facts are fixed.** The CLI runs with `-p kataglyphis_cli`, the x64 and arm64

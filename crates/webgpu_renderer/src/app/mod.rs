@@ -7,8 +7,6 @@ pub mod framing;
 mod input;
 pub mod library;
 pub mod loader;
-#[cfg(not(target_arch = "wasm32"))]
-mod obj_glb;
 pub mod scene_meta;
 mod scenes;
 #[cfg(any(target_arch = "wasm32", test))]

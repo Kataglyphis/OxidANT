@@ -1,4 +1,4 @@
-//! A glTF flattened into the arrays BeschleunigerBallett's C++ engine draws: world-space vertices in one list,
+//! A glTF (or, through `obj::load_obj_flat`, an OBJ) flattened into the arrays BeschleunigerBallett's C++ engine draws: world-space vertices in one list,
 //! a material id per triangle, a range per primitive, and each texture's image still encoded.
 
 use std::collections::HashMap;
@@ -49,6 +49,8 @@ pub struct FlatMaterial {
     pub metallic_roughness_texture: i32,
     pub normal_texture: i32,
     pub emissive_texture: i32,
+    /// An OBJ `map_d` cut-out mask, sampled `.r` at the base colour's UV; glTF has no such slot.
+    pub alpha_texture: i32,
     /// Slots sampling TEXCOORD_1, one bit each: 0 base colour, 1 metallic-roughness, 2 normal, 3 emissive.
     pub uv1_slot_mask: u32,
     pub unlit: bool,
@@ -240,7 +242,7 @@ impl Slots<'_> {
 }
 
 /// The C++ `ObjMaterial` fields of a loaded material; factors clamp to [0, 1] as the C++ loader's do.
-fn flat_material(material: &CpuMaterial, ids: [i32; 4]) -> FlatMaterial {
+pub(crate) fn flat_material(material: &CpuMaterial, ids: [i32; 4]) -> FlatMaterial {
     let [r, g, b, a] = material.base_color;
     FlatMaterial {
         diffuse: [r, g, b],
@@ -261,6 +263,7 @@ fn flat_material(material: &CpuMaterial, ids: [i32; 4]) -> FlatMaterial {
         metallic_roughness_texture: ids[1],
         normal_texture: ids[2],
         emissive_texture: ids[3],
+        alpha_texture: -1,
         // Bit 4 is occlusion, which the C++ material has no slot for.
         uv1_slot_mask: material.uv_set_mask & 0b1111,
         unlit: material.unlit,
@@ -329,7 +332,12 @@ fn visit_node(
 }
 
 /// Appends one primitive in world space; a mirroring transform reverses the winding so the front face stays front.
-fn append_primitive(model: &mut FlatModel, geometry: &Geometry, world: Mat4, material: u32) {
+pub(crate) fn append_primitive(
+    model: &mut FlatModel,
+    geometry: &Geometry,
+    world: Mat4,
+    material: u32,
+) {
     let linear = Mat3::from_mat4(world);
     let normal_matrix = linear.inverse().transpose();
     let mirrored = linear.determinant() < 0.0;
