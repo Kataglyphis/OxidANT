@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-23, ModelANT's full-size frames replay bit for bit)
+
+- The ModelANT pin moves to f845b60, whose `inference-v1.json` adds `digest_cases` (ANTfrastructure CON288 (e)).
+  `full_size_frames_match_their_digest` builds each frame byte by byte, padding and offset included, runs the
+  production stretch or letterbox and matches the tensor's samples and SHA-256 bit for bit: a 2304x1296 frame both
+  ways, a frame 1279 pixels wide with rows padded to 3840 bytes, and an RGBA frame 64 bytes into its buffer. The
+  `raw_decode` section is not this repo's: its detector decodes no raw head. `sha2` joins the dev-dependencies.
+
 ### Changed (2026-11-23, the think split and the fixture's refusals)
 
 - The hub pin moves to 7b1e32d2 (ANTfrastructure CON288 (b), (c)). A late `</think>` hides the answer before it in its

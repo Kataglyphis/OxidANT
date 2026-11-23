@@ -38,6 +38,8 @@ criterion = { workspace = true }
 # png: the golden tests read ModelANT's lossless two_cats.png, so every detector gets the same pixels.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 serde_json = "1"
+# sha2: ModelANT's full-size frames compare by the SHA-256 of the tensor (hub CON288 (e)).
+sha2 = "0.10"
 
 [[bench]]
 name = "detector"

@@ -178,47 +178,63 @@ mod contract_tests {
     use super::*;
     use serde_json::Value;
 
-    #[test]
-    fn matches_the_shared_modelant_contract() {
-        let contract: Value = serde_json::from_str(include_str!(concat!(
+    fn contract() -> Value {
+        serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../third_party/ModelANT/contracts/inference-v1.json"
         )))
+        .unwrap()
+    }
+
+    /// A case's strided RGB or RGBA bytes as the RGBA frame the transforms take, alpha opaque.
+    fn rgba_from(item: &Value, data: &[u8]) -> Vec<u8> {
+        let u = |key: &str| item[key].as_u64().unwrap() as usize;
+        let channels = if item["pixel_format"] == "RGB" { 3 } else { 4 };
+        let (offset, stride) = (u("plane_offset_bytes"), u("row_stride_bytes"));
+        let mut rgba = Vec::with_capacity(u("width") * u("height") * 4);
+        for y in 0..u("height") {
+            for x in 0..u("width") {
+                let index = offset + y * stride + x * channels;
+                rgba.extend_from_slice(&data[index..index + 3]);
+                rgba.push(255);
+            }
+        }
+        rgba
+    }
+
+    /// The production transform the case's mode names, its NCHW output and mapping.
+    fn transformed(item: &Value, rgba: &[u8]) -> (Vec<f32>, ImageMapping) {
+        let u = |key: &str| item[key].as_u64().unwrap() as u32;
+        let transform = if item["mode"] == "letterbox" {
+            rgba_to_nchw_f32_letterboxed
+        } else {
+            rgba_to_nchw_f32_stretched
+        };
+        let mut output = Vec::new();
+        let mapping = transform(
+            rgba,
+            u("width"),
+            u("height"),
+            u("input_width"),
+            u("input_height"),
+            &mut output,
+        )
         .unwrap();
+        (output, mapping)
+    }
+
+    #[test]
+    fn matches_the_shared_modelant_contract() {
+        let contract = contract();
         assert_eq!(contract["schema_version"], 1);
         for item in contract["cases"].as_array().unwrap() {
-            let u = |key: &str| item[key].as_u64().unwrap() as u32;
-            let width = u("width");
-            let height = u("height");
-            let channels = if item["pixel_format"] == "RGB" { 3 } else { 4 };
-            let offset = u("plane_offset_bytes") as usize;
-            let stride = u("row_stride_bytes") as usize;
-            let data = item["data"].as_array().unwrap();
-            let mut rgba = Vec::new();
-            for y in 0..height as usize {
-                for x in 0..width as usize {
-                    let index = offset + y * stride + x * channels;
-                    for c in 0..3 {
-                        rgba.push(data[index + c].as_u64().unwrap() as u8);
-                    }
-                    rgba.push(255);
-                }
-            }
-            let mut output = Vec::new();
-            let transform = if item["mode"] == "letterbox" {
-                rgba_to_nchw_f32_letterboxed
-            } else {
-                rgba_to_nchw_f32_stretched
-            };
-            let mapping = transform(
-                &rgba,
-                width,
-                height,
-                u("input_width"),
-                u("input_height"),
-                &mut output,
-            )
-            .unwrap();
+            let data: Vec<u8> = item["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|byte| byte.as_u64().unwrap() as u8)
+                .collect();
+            let (output, mapping) = transformed(item, &rgba_from(item, &data));
             let expected = item["expected_nchw"].as_array().unwrap();
             assert_eq!(output.len(), expected.len(), "{}", item["name"]);
             for (actual, expected) in output.iter().zip(expected) {
@@ -240,6 +256,52 @@ mod contract_tests {
                     item["name"]
                 );
             }
+        }
+    }
+
+    /// ModelANT's full-size frames (hub CON288 (e)): the tensor bit for bit, by its samples and its SHA-256.
+    #[test]
+    fn full_size_frames_match_their_digest() {
+        use sha2::{Digest, Sha256};
+        let contract = contract();
+        let cases = contract["digest_cases"]["cases"].as_array().unwrap();
+        assert!(cases.len() >= 4, "the digest cases shrank: {}", cases.len());
+        for item in cases {
+            let u = |key: &str| item[key].as_u64().unwrap() as usize;
+            let channels = item["pixel_format"].as_str().unwrap().len();
+            let (offset, stride) = (u("plane_offset_bytes"), u("row_stride_bytes"));
+            // digest_cases.frame: each byte from x, y and the channel, 171 in every padding and offset byte.
+            let mut data = vec![171_u8; offset + stride * u("height")];
+            for y in 0..u("height") {
+                for x in 0..u("width") {
+                    for c in 0..channels {
+                        data[offset + y * stride + x * channels + c] =
+                            ((7 * x + 13 * y + 61 * c) % 256) as u8;
+                    }
+                }
+            }
+            let (output, _) = transformed(item, &rgba_from(item, &data));
+            let (width, height) = (u("input_width"), u("input_height"));
+            for sample in item["samples"].as_array().unwrap() {
+                let at = |i: usize| sample[i].as_u64().unwrap() as usize;
+                let value = output[at(0) * width * height + at(1) * width + at(2)];
+                assert_eq!(
+                    value.to_bits(),
+                    (sample[3].as_f64().unwrap() as f32).to_bits(),
+                    "{} {sample}",
+                    item["name"]
+                );
+            }
+            let mut digest = Sha256::new();
+            for value in &output {
+                digest.update(value.to_le_bytes());
+            }
+            assert_eq!(
+                format!("{:x}", digest.finalize()),
+                item["expected_sha256"].as_str().unwrap(),
+                "{}",
+                item["name"]
+            );
         }
     }
 
