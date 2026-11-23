@@ -13,6 +13,7 @@ const NATIVE: HostCaps = HostCaps {
     screenshot: true,
     hot_reload: true,
     relaunch: true,
+    vsync: true,
 };
 
 /// The editor, the data a host hands it, and a frame loop in the host's order.

@@ -207,6 +207,7 @@ impl ApplicationHandler for Viewer {
             screenshot: true,
             hot_reload: true,
             relaunch: true,
+            vsync: true,
         };
         // The environment is read here, at the start, and nowhere in the shared loader.
         let load_options = load_options_from_env();

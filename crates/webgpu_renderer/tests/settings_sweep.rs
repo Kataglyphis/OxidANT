@@ -88,7 +88,7 @@ impl Sweep {
 
     /// `frames` frames under `settings` inside an error scope: no validation error, no loss, more than one colour.
     fn check(&mut self, name: &str, settings: &RendererSettings, frames: u32) {
-        settings.apply(&mut self.renderer);
+        settings.apply(&mut self.renderer, &mut self.gpu);
         let scope = self
             .gpu
             .device

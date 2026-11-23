@@ -129,7 +129,9 @@ starts at Medium on an integrated or unknown GPU and High on a discrete one; nat
 the start is High. The viewer picks discrete over integrated over a CPU rasterizer,
 takes `--adapter <name>` or `KATAGLYPHIS_ADAPTER`, and the Renderer tab's ADAPTER list
 restarts it on another (`adapter`). The status bar names a browser adapter from its
-vendor and architecture and hints where Windows chooses Chrome's GPU.
+vendor and architecture and hints where Windows chooses Chrome's GPU. The DISPLAY
+section's VSync switch, also in the Render menu, is on (Fifo) by default; off presents
+Mailbox, else Immediate (`context::present_mode`). A browser always presents with the display.
 
 **Camera** — the C++ engine's fly camera (`scene::fly`) and the orbit controller
 share one `OrbitCamera`: flying moves eye and target together and turns about the

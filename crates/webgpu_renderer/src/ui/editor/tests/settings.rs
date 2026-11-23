@@ -1,4 +1,5 @@
-//! The C++ rows the renderer now backs: the Sun's shadows, the skybox switch, the model transform and frustum culling.
+//! The C++ rows the renderer now backs: the Sun's shadows, the skybox switch, the model transform, frustum culling
+//! and VSync.
 
 use egui::Pos2;
 use glam::Vec3;
@@ -163,4 +164,36 @@ fn frustum_culling_is_one_switch_in_the_renderer_tab_and_the_visibility_tab() {
     let knob = switch_of(&mut studio, "Frustum culling");
     studio.frame(click(knob.x, knob.y));
     assert!(studio.settings.frustum_culling);
+}
+
+#[test]
+fn the_display_section_switches_vsync_natively_and_not_in_a_browser() {
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.editor.select(SceneObject::Renderer);
+    studio.frame(Vec::new());
+    assert!(studio.settings.vsync, "on by default, as in the C++ engine");
+    assert!(studio.text_rect("DISPLAY").is_some());
+    let knob = switch_of(&mut studio, "VSync");
+    studio.frame(click(knob.x, knob.y));
+    assert!(!studio.settings.vsync, "the switch turns it off");
+    studio.frame(click(knob.x, knob.y));
+    assert!(studio.settings.vsync);
+    studio.caps = HostCaps::default();
+    studio.frame(click(knob.x, knob.y));
+    assert!(studio.settings.vsync, "a browser canvas keeps Fifo");
+}
+
+#[test]
+fn the_render_menu_switches_vsync_natively_and_not_in_a_browser() {
+    let mut studio = Harness::new((1600.0, 900.0), 1.0);
+    studio.frame(Vec::new());
+    click_text(&mut studio, "Render");
+    click_text(&mut studio, "VSync");
+    assert!(!studio.settings.vsync, "the menu's box turns it off");
+    studio.caps = HostCaps::default();
+    studio.settings.vsync = true;
+    studio.frame(tap(egui::Key::Escape));
+    click_text(&mut studio, "Render");
+    click_text(&mut studio, "VSync");
+    assert!(studio.settings.vsync, "a browser canvas keeps Fifo");
 }

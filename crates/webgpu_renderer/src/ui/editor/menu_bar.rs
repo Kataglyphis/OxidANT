@@ -151,6 +151,11 @@ fn render_menu(ui: &mut Ui, cx: &mut EditorContext<'_>) {
     }
     ui.separator();
     ui.checkbox(&mut settings.frustum_culling, "Frustum culling");
+    ui.add_enabled(
+        cx.caps.vsync,
+        egui::Checkbox::new(&mut settings.vsync, "VSync"),
+    )
+    .on_disabled_hover_text("A browser presents in step with the display");
 }
 
 /// The centred mode switch, dropped when it would touch the menus; returns its right edge.

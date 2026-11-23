@@ -1,5 +1,5 @@
-//! The Renderer tab: the C++ mode switch, the quality presets and render scale, raster path and path-tracing controls,
-//! the WebGPU renderer's post and culling settings, then the adapter.
+//! The Renderer tab: the C++ mode switch, the quality presets and render scale, raster path, VSync and path-tracing
+//! controls, the WebGPU renderer's post and culling settings, then the adapter.
 
 use egui::{vec2, Button, Ui};
 
@@ -25,6 +25,7 @@ pub(super) fn show(ui: &mut Ui, cx: &mut EditorContext<'_>, actions: &mut Vec<Ed
     render_scale(ui, cx);
     raster_path(ui, cx);
     anti_aliasing(ui, cx);
+    display(ui, cx);
     path_tracing(ui, cx);
     post(ui, cx);
     culling(ui, cx);
@@ -124,6 +125,22 @@ fn anti_aliasing(ui: &mut Ui, cx: &mut EditorContext<'_>) {
         |ui| Segmented::new(&FxaaMode::ALL.map(FxaaMode::label)).show(ui, &mut mode),
     );
     settings.fxaa = FxaaMode::ALL[mode];
+}
+
+/// The C++ DISPLAY section; a browser canvas presents with the display, so its switch stays on.
+fn display(ui: &mut Ui, cx: &mut EditorContext<'_>) {
+    section_header(ui, "DISPLAY", None);
+    let settings = &mut *cx.settings;
+    let row = enabled_ui(ui, cx.caps.vsync, |ui| {
+        property_row(
+            ui,
+            "VSync",
+            Some("On waits for the display's refresh; off presents each frame as it finishes"),
+            |ui| toggle(ui, &mut settings.vsync),
+        )
+    })
+    .inner;
+    row.on_disabled_hover_text("A browser presents in step with the display");
 }
 
 /// The C++ PATH TRACING rows, live while the path tracer draws, then the white furnace and the accumulation.

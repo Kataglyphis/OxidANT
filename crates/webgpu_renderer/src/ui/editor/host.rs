@@ -19,7 +19,7 @@ use crate::render::render_scale::RenderScale;
 use crate::render::shadow_settings::ShadowSettings;
 use crate::render::tracer::{RenderMode, TraceSettings, TraceStatus};
 
-/// The renderer's editable settings: read before the egui pass, written back after it.
+/// The renderer's editable settings, and its context's VSync: read before the egui pass, written back after it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RendererSettings {
     /// Towards the light (xyz), and the ambient strength (w).
@@ -47,10 +47,12 @@ pub struct RendererSettings {
     pub trace: TraceSettings,
     /// Set by the Renderer tab's Reset; `apply` starts the path tracer's mean over.
     pub reset_accumulation: bool,
+    /// The surface's present mode, which [`GpuContext`] owns: [`crate::context::present_mode`].
+    pub vsync: bool,
 }
 
 impl Default for RendererSettings {
-    /// `ForwardRenderer::new`'s values; a GPU test keeps the two equal.
+    /// `ForwardRenderer::new`'s values and a new context's VSync; a GPU test keeps them equal.
     fn default() -> Self {
         Self {
             light_dir_ambient: SunSettings::default().light_dir_ambient(),
@@ -74,12 +76,13 @@ impl Default for RendererSettings {
             render_mode: RenderMode::Raster,
             trace: TraceSettings::default(),
             reset_accumulation: false,
+            vsync: true,
         }
     }
 }
 
 impl RendererSettings {
-    pub fn of(renderer: &ForwardRenderer) -> Self {
+    pub fn of(renderer: &ForwardRenderer, gpu: &GpuContext) -> Self {
         Self {
             light_dir_ambient: renderer.light_dir_ambient,
             light_color_intensity: renderer.light_color_intensity,
@@ -102,10 +105,11 @@ impl RendererSettings {
             render_mode: renderer.render_mode,
             trace: renderer.trace_settings,
             reset_accumulation: false,
+            vsync: gpu.vsync(),
         }
     }
 
-    pub fn apply(&self, renderer: &mut ForwardRenderer) {
+    pub fn apply(&self, renderer: &mut ForwardRenderer, gpu: &mut GpuContext) {
         renderer.light_dir_ambient = self.light_dir_ambient;
         renderer.light_color_intensity = self.light_color_intensity;
         renderer.ibl_intensity = self.ibl_intensity;
@@ -129,6 +133,7 @@ impl RendererSettings {
         if self.reset_accumulation {
             renderer.reset_accumulation();
         }
+        gpu.set_vsync(self.vsync);
     }
 }
 
@@ -524,6 +529,7 @@ mod tests {
                 furnace: Some(FurnaceSettings::default()),
             },
             reset_accumulation: true,
+            vsync: !defaults.vsync,
         }
     }
 
@@ -554,7 +560,8 @@ mod tests {
             clouds,
             render_mode,
             trace,
-            reset_accumulation
+            reset_accumulation,
+            vsync
         );
         let unchanged: Vec<&str> = same
             .iter()
@@ -573,23 +580,27 @@ mod tests {
 
     #[test]
     fn the_settings_start_from_the_renderer_and_write_back_what_they_show() {
-        let Some(gpu) = crate::GpuContext::headless_or_skip() else {
+        let Some(mut gpu) = crate::GpuContext::headless_or_skip() else {
             return;
         };
         let mut renderer = ForwardRenderer::new(&gpu, 8, 8);
-        assert_eq!(RendererSettings::of(&renderer), RendererSettings::default());
+        assert_eq!(
+            RendererSettings::of(&renderer, &gpu),
+            RendererSettings::default()
+        );
         let settings = changed_settings();
-        settings.apply(&mut renderer);
+        settings.apply(&mut renderer, &mut gpu);
         assert_eq!(renderer.shadows, settings.shadows);
         assert_eq!(renderer.model_transform, settings.model_transform);
         assert_eq!(renderer.clouds, settings.clouds);
         assert_eq!(renderer.render_mode, settings.render_mode);
         assert_eq!(renderer.trace_settings, settings.trace);
+        assert_eq!(gpu.vsync(), settings.vsync);
         // A Reset is a one-frame request the renderer does not keep.
         let kept = RendererSettings {
             reset_accumulation: false,
             ..settings
         };
-        assert_eq!(RendererSettings::of(&renderer), kept);
+        assert_eq!(RendererSettings::of(&renderer, &gpu), kept);
     }
 }

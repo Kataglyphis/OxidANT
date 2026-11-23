@@ -137,7 +137,7 @@ impl StudioApp {
         // A click's down, up and down reach egui a frame apart, so at software-rendering rates 0.3 s is never a double-click.
         ctx.options_mut(|options| options.input_options.max_double_click_delay = delay);
         let esc_armed = self.editor.esc_armed(ctx);
-        let mut settings = RendererSettings::of(&self.renderer);
+        let mut settings = RendererSettings::of(&self.renderer, &self.gpu);
         let stats = SceneStats::of(&self.renderer);
         let mut cx = EditorContext {
             settings: &mut settings,
@@ -155,7 +155,7 @@ impl StudioApp {
         let (output, editor_output) = self
             .overlay
             .run(raw, |ui| editor.show(ui, &mut cx, esc_armed));
-        settings.apply(&mut self.renderer);
+        settings.apply(&mut self.renderer, &mut self.gpu);
         self.steer_render_scale(now_s);
         self.camera.viewport = editor_output.viewport;
         let signals = self.act(editor_output.actions);
@@ -291,6 +291,7 @@ pub(in crate::app) mod tests {
             screenshot: true,
             hot_reload: true,
             relaunch: true,
+            vsync: true,
         };
         Some(StudioApp::headless(
             gpu,

@@ -248,6 +248,9 @@ cascades, Auto scale from 1), High (the defaults: forward at 4x MSAA, FXAA on ev
 cascades, scale 1) and Ultra (High with 4096 cascades and PCF radius 3). Editing a setting a
 preset owns shows Custom. The browser starts at Medium on an integrated or unknown GPU, Low on a
 CPU one and High on a discrete one; the viewer starts at High. Nothing is persisted.
+**VSync** is on (Fifo), as in the C++ engine; the Renderer tab's DISPLAY switch or the Render menu
+turns it off, which presents Mailbox where the surface offers it, else Immediate, else Fifo. The
+browser always presents in step with the display, so its switch stays on.
 **Render scale** renders the scene at 0.25 to 1 of the viewport's size and upsamples in the
 tonemap; the chip shows the internal size. **Auto** steers it toward a target frame rate (60 FPS by
 default) on raster frames: down by the root of the over-run when a frame takes 15 % over the

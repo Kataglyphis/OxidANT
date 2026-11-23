@@ -1,5 +1,6 @@
 //! Instance/adapter/device/queue management plus surface configuration and recovery.
-//! A failed acquire repairs the surface ([`GpuContext::acquire`]); a suboptimal one reconfigures after presenting.
+//! A failed acquire repairs the surface ([`GpuContext::acquire`]); a suboptimal one, or a VSync switch, reconfigures
+//! after presenting.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -39,12 +40,16 @@ pub struct GpuContext {
     /// Present target; `None` for headless (render-to-texture) contexts.
     pub surface: Option<wgpu::Surface<'static>>,
     pub surface_config: Option<wgpu::SurfaceConfiguration>,
+    /// The present modes the surface offers; a browser canvas offers Fifo alone.
+    present_modes: Vec<wgpu::PresentMode>,
+    /// VSync as last asked for, which a surface without an uncapped mode presents as Fifo all the same.
+    vsync: bool,
     /// The instance and window the surface came from, to make it again when the platform loses it.
     origin: Option<(wgpu::Instance, Arc<Window>)>,
     /// The size last asked of the surface, before the device's texture limit scaled it down.
     requested_size: Option<(u32, u32)>,
-    /// The frame in flight came from a suboptimal acquire: reconfigure once it is presented.
-    suboptimal: bool,
+    /// Reconfigure once the frame in flight is presented: its acquire was suboptimal, or VSync changed.
+    reconfigure_after_present: bool,
     /// Failed acquires in a row, so a surface that stays unusable logs once, not every frame.
     failed_acquires: u32,
     /// Set by wgpu's device-lost callback; the app stops submitting once it is.
@@ -88,7 +93,8 @@ impl GpuContext {
         let srgb_twin_views = downlevel.contains(
             wgpu::DownlevelFlags::VIEW_FORMATS | wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS,
         );
-        let surface_config = surface_config(&surface, adapter, &device, size, srgb_twin_views)?;
+        let caps = surface.get_capabilities(adapter);
+        let surface_config = surface_config(&caps, &device, size, srgb_twin_views)?;
         surface.configure(&device, &surface_config);
 
         let lost = watch_device(&device);
@@ -106,9 +112,11 @@ impl GpuContext {
             srgb_twin_views,
             surface: Some(surface),
             surface_config: Some(surface_config),
+            present_modes: caps.present_modes,
+            vsync: true,
             origin: Some((instance, window)),
             requested_size: Some((size.width.max(1), size.height.max(1))),
-            suboptimal: false,
+            reconfigure_after_present: false,
             failed_acquires: 0,
             lost,
         })
@@ -152,9 +160,11 @@ impl GpuContext {
             srgb_twin_views,
             surface: None,
             surface_config: None,
+            present_modes: Vec::new(),
+            vsync: true,
             origin: None,
             requested_size: None,
-            suboptimal: false,
+            reconfigure_after_present: false,
             failed_acquires: 0,
             lost,
         })
@@ -251,6 +261,30 @@ impl GpuContext {
         }
     }
 
+    /// VSync as last asked for: on unless [`Self::set_vsync`] turned it off.
+    pub fn vsync(&self) -> bool {
+        self.vsync
+    }
+
+    /// Picks the surface's present mode by [`present_mode`]; the surface takes it once the frame in flight is presented.
+    pub fn set_vsync(&mut self, on: bool) {
+        if on == self.vsync {
+            return;
+        }
+        self.vsync = on;
+        let Some(config) = self.surface_config.as_mut() else {
+            return;
+        };
+        config.present_mode = present_mode(on, &self.present_modes);
+        log::info!(
+            "VSync {}: presenting {:?}",
+            if on { "on" } else { "off" },
+            config.present_mode
+        );
+        // Configuring a surface whose texture is still held fails, so the switch waits for the present.
+        self.reconfigure_after_present = true;
+    }
+
     /// Reconfigures the surface with its current size (Outdated recovery).
     pub fn reconfigure(&self) {
         if let (Some(surface), Some(config)) = (self.surface.as_ref(), self.surface_config.as_ref())
@@ -278,14 +312,14 @@ impl GpuContext {
             );
             self.failed_acquires = 0;
         }
-        self.suboptimal = suboptimal;
+        self.reconfigure_after_present |= suboptimal;
         Ok(frame)
     }
 
-    /// Presents a frame from [`Self::acquire`], then reconfigures if that acquire was suboptimal.
+    /// Presents a frame from [`Self::acquire`], then reconfigures if that acquire was suboptimal or VSync changed.
     pub fn present(&mut self, frame: wgpu::SurfaceTexture) {
         self.queue.present(frame);
-        if std::mem::take(&mut self.suboptimal) {
+        if std::mem::take(&mut self.reconfigure_after_present) {
             self.reconfigure();
         }
     }
@@ -404,15 +438,25 @@ fn new_instance(backends: wgpu::Backends) -> wgpu::Instance {
     })
 }
 
+/// VSync on is Fifo, which every surface offers; off prefers Mailbox, which does not tear, then Immediate, else Fifo.
+pub fn present_mode(vsync: bool, offered: &[wgpu::PresentMode]) -> wgpu::PresentMode {
+    use wgpu::PresentMode::{Fifo, Immediate, Mailbox};
+    if vsync {
+        return Fifo;
+    }
+    [Mailbox, Immediate]
+        .into_iter()
+        .find(|mode| offered.contains(mode))
+        .unwrap_or(Fifo)
+}
+
 /// An sRGB format where the surface has one, at the window's size within the device's limit; `twin_view` adds its linear view.
 fn surface_config(
-    surface: &wgpu::Surface<'_>,
-    adapter: &wgpu::Adapter,
+    caps: &wgpu::SurfaceCapabilities,
     device: &wgpu::Device,
     size: winit::dpi::PhysicalSize<u32>,
     twin_view: bool,
 ) -> anyhow::Result<wgpu::SurfaceConfiguration> {
-    let caps = surface.get_capabilities(adapter);
     let format = caps
         .formats
         .iter()
@@ -435,7 +479,7 @@ fn surface_config(
         color_space: wgpu::SurfaceColorSpace::Auto,
         width,
         height,
-        present_mode: wgpu::PresentMode::Fifo,
+        present_mode: present_mode(true, &caps.present_modes),
         alpha_mode,
         // egui blends in sRGB through this view, as on the browser's non-sRGB canvas.
         view_formats: if twin_view && format.is_srgb() {
@@ -646,6 +690,30 @@ mod tests {
             !BACKENDS.contains(wgpu::Backends::GL),
             "no instance offers GL"
         );
+    }
+
+    #[test]
+    fn vsync_presents_fifo_and_off_prefers_mailbox_then_immediate() {
+        use wgpu::PresentMode::{AutoNoVsync, Fifo, FifoRelaxed, Immediate, Mailbox};
+        let every = [Fifo, FifoRelaxed, Immediate, Mailbox];
+        assert_eq!(present_mode(true, &every), Fifo);
+        assert_eq!(present_mode(false, &every), Mailbox);
+        assert_eq!(present_mode(false, &[Fifo, Immediate]), Immediate);
+        // A browser canvas offers Fifo alone, so it presents in step with the display either way.
+        assert_eq!(present_mode(false, &[Fifo]), Fifo);
+        assert_eq!(present_mode(false, &[]), Fifo);
+        assert_eq!(present_mode(false, &[FifoRelaxed, AutoNoVsync]), Fifo);
+    }
+
+    #[test]
+    fn a_headless_context_keeps_the_vsync_it_was_asked_for() {
+        let Some(mut gpu) = GpuContext::headless_or_skip() else {
+            return;
+        };
+        assert!(gpu.vsync(), "VSync starts on");
+        gpu.set_vsync(false);
+        assert!(!gpu.vsync());
+        assert!(!gpu.reconfigure_after_present, "no surface to reconfigure");
     }
 
     #[test]

@@ -237,6 +237,7 @@ fn studio(web: bool, models: &Models) -> anyhow::Result<StudioApp> {
             screenshot: true,
             hot_reload: true,
             relaunch: true,
+            vsync: true,
         };
         (all, wgpu::TextureFormat::Rgba8UnormSrgb)
     };

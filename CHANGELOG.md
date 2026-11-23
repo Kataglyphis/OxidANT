@@ -13,6 +13,19 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-22, a VSync switch in the Rust renderer)
+
+- **The Renderer tab's DISPLAY section and the Render menu switch VSync** (BeschleunigerBallett BACKLOG "A VSync
+  switch in the Rust renderer", plan X15's remainder), as the C++ engine's do since BeschleunigerBallett 86589d6c: on,
+  the default, presents Fifo; off picks Mailbox, then Immediate, else Fifo from the surface's capabilities
+  (`context::present_mode`). `RendererSettings::vsync` is the context's (`GpuContext::vsync`, `set_vsync`), so
+  `RendererSettings::of` and `apply` take the `GpuContext` beside the renderer. A switch reconfigures the surface once
+  the frame in flight is presented, as a suboptimal acquire does, since configuring a held surface fails. A browser
+  canvas offers Fifo alone: `HostCaps::vsync` is off there and the switch stays on, disabled. The camera GUI
+  (`crates/gui`) keeps its fixed Fifo.
+- VSync stays out of the bridged `SceneSettings`, which carries the scene sections both editors share field for field;
+  the C++ engine keeps it in its renderer settings, on by default as here.
+
 ### Changed (2026-11-23, target-neutral WebGPU passes and a Slang histogram)
 
 - **The IBL bake takes `fullscreen_vs`** (BeschleunigerBallett BACKLOG "Make OxidANT's WGSL-only passes

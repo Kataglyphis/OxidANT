@@ -50,6 +50,8 @@ pub struct HostCaps {
     pub hot_reload: bool,
     /// The Renderer tab's adapter list may ask the shell to restart itself on another adapter.
     pub relaunch: bool,
+    /// VSync can be switched off: a native surface, never a browser canvas, which presents with the display.
+    pub vsync: bool,
 }
 
 /// What a frame asks its shell to do.
@@ -130,14 +132,14 @@ impl StudioApp {
     }
 
     fn with_overlay(
-        gpu: GpuContext,
+        mut gpu: GpuContext,
         scene: &CpuScene,
         (home, caps): (OrbitCamera, HostCaps),
         (format, size): (wgpu::TextureFormat, [u32; 2]),
         overlay: Overlay,
     ) -> Self {
         let mut renderer = ForwardRenderer::new(&gpu, size[0], size[1]);
-        start_preset(&gpu, &mut renderer);
+        start_preset(&mut gpu, &mut renderer);
         renderer.enable_gpu_timing(&gpu);
         // A large scene opens on its coarse levels and sharpens where the camera looks.
         renderer.texture_streaming = TextureStreaming::INTERACTIVE;
@@ -204,7 +206,7 @@ impl StudioApp {
 }
 
 /// The preset the adapter starts at ([`QualityPreset::for_adapter`]): natively High, the renderer's defaults.
-fn start_preset(gpu: &GpuContext, renderer: &mut ForwardRenderer) {
+fn start_preset(gpu: &mut GpuContext, renderer: &mut ForwardRenderer) {
     let browser = gpu.adapter_info.backend == wgpu::Backend::BrowserWebGpu;
     let preset = QualityPreset::for_adapter(gpu.identity.class, browser);
     log::info!(
@@ -213,7 +215,7 @@ fn start_preset(gpu: &GpuContext, renderer: &mut ForwardRenderer) {
         gpu.identity.label,
         gpu.identity.class
     );
-    let mut settings = RendererSettings::of(renderer);
+    let mut settings = RendererSettings::of(renderer, gpu);
     settings.apply_preset(preset);
-    settings.apply(renderer);
+    settings.apply(renderer, gpu);
 }
