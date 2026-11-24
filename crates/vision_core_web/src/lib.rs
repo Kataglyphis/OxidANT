@@ -101,27 +101,28 @@ fn resize_mode(name: &str) -> Result<ResizeMode, Refusal> {
 }
 
 /// Where the frame went in the model's input; `decode` maps boxes back through it.
-#[wasm_bindgen]
+// No wasm_bindgen under rustdoc: its impls of the doc(hidden) describe traits link anchors no page has.
+#[cfg_attr(not(doc), wasm_bindgen)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Mapping {
-    #[wasm_bindgen(readonly, js_name = srcWidth)]
+    #[cfg_attr(not(doc), wasm_bindgen(readonly, js_name = srcWidth))]
     pub src_width: u32,
-    #[wasm_bindgen(readonly, js_name = srcHeight)]
+    #[cfg_attr(not(doc), wasm_bindgen(readonly, js_name = srcHeight))]
     pub src_height: u32,
-    #[wasm_bindgen(readonly, js_name = scaleX)]
+    #[cfg_attr(not(doc), wasm_bindgen(readonly, js_name = scaleX))]
     pub scale_x: f32,
-    #[wasm_bindgen(readonly, js_name = scaleY)]
+    #[cfg_attr(not(doc), wasm_bindgen(readonly, js_name = scaleY))]
     pub scale_y: f32,
-    #[wasm_bindgen(readonly, js_name = padX)]
+    #[cfg_attr(not(doc), wasm_bindgen(readonly, js_name = padX))]
     pub pad_x: f32,
-    #[wasm_bindgen(readonly, js_name = padY)]
+    #[cfg_attr(not(doc), wasm_bindgen(readonly, js_name = padY))]
     pub pad_y: f32,
 }
 
-#[wasm_bindgen]
+#[cfg_attr(not(doc), wasm_bindgen)]
 impl Mapping {
     /// A mapping by hand, as ModelANT's decode cases give one.
-    #[wasm_bindgen(constructor)]
+    #[cfg_attr(not(doc), wasm_bindgen(constructor))]
     pub fn new(
         src_width: u32,
         src_height: u32,
@@ -161,7 +162,7 @@ impl From<Mapping> for ImageMapping {
 }
 
 /// One model input's preprocessing; it keeps its tensor buffer from frame to frame.
-#[wasm_bindgen]
+#[cfg_attr(not(doc), wasm_bindgen)]
 #[derive(Debug)]
 pub struct Preprocessor {
     input_width: u32,
@@ -170,10 +171,10 @@ pub struct Preprocessor {
     tensor: Vec<f32>,
 }
 
-#[wasm_bindgen]
+#[cfg_attr(not(doc), wasm_bindgen)]
 impl Preprocessor {
     /// For an `input_width` x `input_height` model input, `mode` `stretch` or `letterbox`.
-    #[wasm_bindgen(constructor)]
+    #[cfg_attr(not(doc), wasm_bindgen(constructor))]
     pub fn new(input_width: u32, input_height: u32, mode: &str) -> Result<Preprocessor, Refusal> {
         Ok(Self {
             input_width,
@@ -209,7 +210,7 @@ impl Preprocessor {
     }
 
     /// A copy of the last tensor, NCHW float32 with values `pixel / 255`; empty before the first `run`.
-    #[wasm_bindgen(getter)]
+    #[cfg_attr(not(doc), wasm_bindgen(getter))]
     pub fn tensor(&self) -> Vec<f32> {
         self.tensor.clone()
     }
@@ -217,7 +218,7 @@ impl Preprocessor {
 
 /// The model's `[n, s]` or `[1, n, s]` rows to detections in frame pixels, in row order: six numbers each,
 /// x1, y1, x2, y2, score and class. A row under the threshold, or with a class at or past `class_count`, is none.
-#[wasm_bindgen]
+#[cfg_attr(not(doc), wasm_bindgen)]
 pub fn decode(
     shape: &[u32],
     data: &[f32],
@@ -247,7 +248,7 @@ pub fn decode(
 }
 
 /// The 80 COCO class names by class id, so a page labels boxes without the Rust core.
-#[wasm_bindgen(js_name = classNames)]
+#[cfg_attr(not(doc), wasm_bindgen(js_name = classNames))]
 pub fn class_names() -> Vec<String> {
     COCO.lines().map(str::to_owned).collect()
 }

@@ -4,16 +4,11 @@
 # `[default]: dispatcher#setting-the-default-subscriber` as a plain relative URL in `WithSubscriber`'s method docs
 # (instrument.rs), so `impl<T> WithSubscriber for T` on each type page links `<module>/dispatcher`: one key per module
 # of the renderer, the GUI and the CLI, so every new module with a type adds one here. burn's `Module`, on YoloTiny,
-# links `ModuleMapper` and `ModuleVisitor` (2 keys). wasm-bindgen's hidden `WasmDescribe` and `WasmDescribeVector`
-# impls on vision_core_web's exported types link `#tymethod.*` anchors rustdoc never renders (4 keys).
+# links `ModuleMapper` and `ModuleVisitor` (2 keys).
 # Format: missing<TAB><path> or anchor<TAB><path>#<id>, as verify_site_links.py --print-keys prints it.
 # Two-way: a key that resolves now is STALE.
 # third_party/ANTfrastructure/docs/docs-sites.md#the-built-site-link-gate
 
-anchor	kataglyphis_vision_core_web/struct.Mapping.html#tymethod.describe
-anchor	kataglyphis_vision_core_web/struct.Mapping.html#tymethod.describe_vector
-anchor	kataglyphis_vision_core_web/struct.Preprocessor.html#tymethod.describe
-anchor	kataglyphis_vision_core_web/struct.Preprocessor.html#tymethod.describe_vector
 missing	kataglyphis_burn_demos/yolo/ModuleMapper
 missing	kataglyphis_burn_demos/yolo/ModuleVisitor
 missing	kataglyphis_cli/cli/dispatcher
