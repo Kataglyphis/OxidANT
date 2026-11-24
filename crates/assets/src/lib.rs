@@ -25,9 +25,12 @@ mod files;
 pub mod flat;
 mod gltf_images;
 pub mod gltf_loader;
+pub mod image_decode;
 pub mod ktx2_loader;
 mod ktx2_zstd;
+pub mod levels;
 pub mod obj;
+mod parallel;
 pub mod scene;
 pub mod skin;
 

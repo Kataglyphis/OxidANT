@@ -45,67 +45,8 @@ pub(crate) fn anisotropy_for(desc: &CpuSampler) -> u16 {
     }
 }
 
-pub(crate) fn srgb_to_linear(byte: u8) -> f32 {
-    let c = byte as f32 / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-pub(crate) fn linear_to_srgb(value: f32) -> u8 {
-    let c = if value <= 0.0031308 {
-        value * 12.92
-    } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
-    };
-    (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
-}
-
-/// Full mip chain via 2x2 box filtering; sRGB averaged in linear space, data maps raw.
-pub(crate) fn generate_mips(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
-    let mut levels = vec![(base.width, base.height, base.rgba8.clone())];
-    if base.width == 0 || base.height == 0 {
-        return levels;
-    }
-    let (mut w, mut h) = (base.width, base.height);
-
-    while w > 1 || h > 1 {
-        let (pw, ph, prev) = levels.last().unwrap();
-        let (pw, ph) = (*pw, *ph);
-        let nw = (w / 2).max(1);
-        let nh = (h / 2).max(1);
-        let mut next = Vec::with_capacity((nw * nh * 4) as usize);
-
-        for y in 0..nh {
-            for x in 0..nw {
-                let x0 = (x * 2).min(pw - 1);
-                let x1 = (x * 2 + 1).min(pw - 1);
-                let y0 = (y * 2).min(ph - 1);
-                let y1 = (y * 2 + 1).min(ph - 1);
-                for channel in 0..4usize {
-                    let fetch = |px: u32, py: u32| prev[((py * pw + px) * 4) as usize + channel];
-                    let samples = [fetch(x0, y0), fetch(x1, y0), fetch(x0, y1), fetch(x1, y1)];
-                    // Alpha is linear even for sRGB textures.
-                    let value = if srgb && channel < 3 {
-                        let sum: f32 = samples.iter().map(|&b| srgb_to_linear(b)).sum();
-                        linear_to_srgb(sum / 4.0)
-                    } else {
-                        // Round half up like the sRGB arm; truncating compounds a bias per level.
-                        ((samples.iter().map(|&b| b as u32).sum::<u32>() + 2) / 4) as u8
-                    };
-                    next.push(value);
-                }
-            }
-        }
-        levels.push((nw, nh, next));
-        w = nw;
-        h = nh;
-    }
-
-    levels
-}
+// The chain both renderers build, so the C++ engine's levels are this renderer's.
+pub(crate) use kataglyphis_assets::levels::{generate_mips, linear_to_srgb, srgb_to_linear};
 
 pub(crate) fn compressed_wgpu_format(format: CompressedFormat, srgb: bool) -> wgpu::TextureFormat {
     use CompressedFormat as F;
@@ -319,7 +260,7 @@ pub(crate) fn create_material_texture(
         .base_candidates(max_side)
         .first()
         .copied()
-        .unwrap_or(chain.levels.len() - 1);
+        .unwrap_or(chain.levels.len().saturating_sub(1));
     write_chain(gpu, &chain, base, label).create_view(&wgpu::TextureViewDescriptor::default())
 }
 

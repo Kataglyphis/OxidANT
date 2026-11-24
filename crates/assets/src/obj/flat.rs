@@ -1,5 +1,5 @@
 //! An OBJ flattened for the C++ engine: the arrays `flat::load_flat` gives a glTF, one range per `usemtl` run, and each
-//! texture as the file's own bytes, which the engine's stb decodes (BMP and TGA included), so nothing is re-encoded.
+//! texture's RGBA8 mip chain, decoded on every core.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -10,8 +10,13 @@ use glam::Mat4;
 use super::material::{self, finite_or};
 use super::parse::{read_obj, ObjMaterial, ObjMesh};
 use super::paths::texture_source;
-use crate::flat::{append_primitive, flat_material, FlatMaterial, FlatModel, FlatTexture};
+use crate::flat::{
+    append_primitive, flat_material, renumber_slots, FlatMaterial, FlatModel, FlatTexture,
+    DECODE_BUDGET,
+};
+use crate::gltf_images::StoredImage;
 use crate::gltf_loader::{finish_with_generated_tangents, Geometry, LoadOptions};
+use crate::parallel::{self, Budget};
 use crate::scene::{CpuMaterial, CpuSampler, Vertex};
 
 /// Loads the OBJ at `path` with its materials and textures into the engine's arrays; an error when nothing draws.
@@ -22,7 +27,7 @@ pub fn load_obj_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::R
     let mut slots = Slots {
         obj_path: path,
         keys: HashMap::new(),
-        textures: Vec::new(),
+        pending: Vec::new(),
     };
     let mut materials: Vec<FlatMaterial> = mesh
         .materials
@@ -31,9 +36,20 @@ pub fn load_obj_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::R
         .collect();
     // The neutral fallback every FlatModel ends with; no OBJ range uses it.
     materials.push(flat_material(&CpuMaterial::default(), [-1; 4]));
+    let budget = Budget::new(DECODE_BUDGET);
+    let decoded = parallel::map(&slots.pending, |(file, stored, srgb)| {
+        FlatTexture::from_stored(
+            stored,
+            CpuSampler::default(),
+            *srgb,
+            &file.display(),
+            &budget,
+        )
+    });
+    let textures = renumber_slots(&mut materials, decoded);
     let mut model = FlatModel {
         materials,
-        textures: slots.textures,
+        textures,
         ..FlatModel::default()
     };
     append_groups(&mut model, &mesh, options);
@@ -106,7 +122,8 @@ fn obj_flat_material(material: &ObjMaterial, slots: &mut Slots) -> FlatMaterial 
 struct Slots<'a> {
     obj_path: &'a Path,
     keys: HashMap<(PathBuf, bool), i32>,
-    textures: Vec<FlatTexture>,
+    /// Each slot's file, its bytes and its colour space, decoded once every material has its slots.
+    pending: Vec<(PathBuf, StoredImage, bool)>,
 }
 
 impl Slots<'_> {
@@ -133,13 +150,14 @@ impl Slots<'_> {
                 return -1;
             }
         };
-        let slot = self.textures.len() as i32;
-        self.keys.insert((file, srgb), slot);
-        self.textures.push(FlatTexture {
-            encoded,
-            sampler: CpuSampler::default(),
-            srgb,
-        });
+        let slot = self.pending.len() as i32;
+        self.keys.insert((file.clone(), srgb), slot);
+        let stored = StoredImage {
+            bytes: encoded,
+            mime_type: None,
+            uri: Some(file.to_string_lossy().into_owned()),
+        };
+        self.pending.push((file, stored, srgb));
         slot
     }
 }

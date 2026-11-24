@@ -11,6 +11,7 @@ use super::gltf_json::to_gltf;
 use super::material::MASK_CUTOFF;
 use super::parse::{read_obj, ObjMesh};
 use super::paths::texture_source;
+use crate::image_decode;
 
 /// One white texel, standing in for a texture no file holds: the image stays, nothing samples it.
 const WHITE_PNG: &[u8] = &[
@@ -98,18 +99,25 @@ fn push_view(root: &mut Value, bin: &mut Vec<u8>, bytes: &[u8]) -> anyhow::Resul
     Ok(views.len() - 1)
 }
 
-/// The bytes and MIME type of the texture `uri` names; a format glTF cannot carry is decoded and packed as PNG.
+/// The bytes and MIME type of the texture `uri` names, packed as stored: `image_decode` reads BMP, TGA and the rest
+/// back from their MIME type, so nothing is re-encoded; a file whose header does not read is left out.
 fn texture(uri: &str, obj_path: &Path) -> Option<(Vec<u8>, &'static str)> {
     let path = texture_source(uri, obj_path)?;
     let bytes = read_texture(&path)?;
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return Some((bytes, "image/png"));
+    let format = image_decode::image_format(&bytes, None, Some(&path.to_string_lossy()));
+    let Some(mime_type) = format.and_then(image_decode::mime_type_of) else {
+        log::warn!(
+            "{}: not an image this renderer decodes, so the material draws without it",
+            path.display()
+        );
+        return None;
+    };
+    let reader = image::ImageReader::with_format(std::io::Cursor::new(&bytes), format?);
+    if let Err(error) = reader.into_dimensions() {
+        log::warn!("{}: {error}; the material draws without it", path.display());
+        return None;
     }
-    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        return Some((bytes, "image/jpeg"));
-    }
-    let image = decode(&bytes, &path)?;
-    Some((encode_png(&image.into_rgba8())?, "image/png"))
+    Some((bytes, mime_type))
 }
 
 /// A regular file only: a device name or a FIFO would block the loader.
@@ -124,18 +132,19 @@ fn read_texture(path: &Path) -> Option<Vec<u8>> {
         .ok()
 }
 
-/// Decodes by the file's extension, else by its signature: TGA has none.
-fn decode(bytes: &[u8], path: &Path) -> Option<image::DynamicImage> {
-    let format = image::ImageFormat::from_path(path).or_else(|_| image::guess_format(bytes));
-    format
-        .and_then(|format| image::load_from_memory_with_format(bytes, format))
+/// The file `uri` names decoded to RGBA8, as both renderers decode it.
+fn decode(uri: &str, obj_path: &Path) -> Option<image::RgbaImage> {
+    let path = texture_source(uri, obj_path)?;
+    let bytes = read_texture(&path)?;
+    let texture = image_decode::decode_rgba8(&bytes, None, Some(&path.to_string_lossy()))
         .inspect_err(|error| {
             log::warn!(
-                "{}: {error}; not an image this renderer decodes, so the material draws without it",
+                "{}: {error:#}; the material draws without it",
                 path.display()
             );
         })
-        .ok()
+        .ok()?;
+    image::RgbaImage::from_raw(texture.width, texture.height, texture.rgba8)
 }
 
 fn encode_png(image: &image::RgbaImage) -> Option<Vec<u8>> {
@@ -209,13 +218,9 @@ fn apply_masks(
 
 /// The base colour image with alpha multiplied by the mask's red, as the C++ shaders test it; the mask is resized to fit.
 fn masked_base_color(base_uri: Option<&str>, mask_uri: &str, obj_path: &Path) -> Option<Vec<u8>> {
-    let load = |uri: &str| {
-        let path = texture_source(uri, obj_path)?;
-        decode(&read_texture(&path)?, &path)
-    };
-    let mask = load(mask_uri)?.into_rgba8();
+    let mask = decode(mask_uri, obj_path)?;
     let mut base = match base_uri {
-        Some(uri) => load(uri)?.into_rgba8(),
+        Some(uri) => decode(uri, obj_path)?,
         None => image::RgbaImage::from_pixel(mask.width(), mask.height(), image::Rgba([255; 4])),
     };
     let mask = if mask.dimensions() == base.dimensions() {
@@ -308,6 +313,33 @@ mod tests {
     fn mask_card() -> CpuScene {
         let obj = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/obj_mask/card.obj");
         load_gltf_slice(&obj_to_glb(&obj).expect("converts")).expect("the GLB loads")
+    }
+
+    #[test]
+    fn a_bmp_is_packed_as_stored_not_re_encoded() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/obj_mask");
+        let glb = obj_to_glb(&dir.join("card.obj")).expect("converts");
+        let gltf::Gltf { document, blob } =
+            gltf::Gltf::from_slice_without_validation(&glb).unwrap();
+        let blob = blob.unwrap();
+        let packed: Vec<(String, &[u8])> = document
+            .images()
+            .filter_map(|image| match image.source() {
+                gltf::image::Source::View { view, mime_type } => Some((
+                    mime_type.to_owned(),
+                    &blob[view.offset()..view.offset() + view.length()],
+                )),
+                gltf::image::Source::Uri { .. } => None,
+            })
+            .collect();
+        let mimes: Vec<&str> = packed.iter().map(|(m, _)| m.as_str()).collect();
+        let bmp = std::fs::read(dir.join("red.bmp")).unwrap();
+        assert!(
+            packed
+                .iter()
+                .any(|(m, bytes)| m == "image/bmp" && *bytes == bmp.as_slice()),
+            "red.bmp is not packed as its own bytes: {mimes:?}"
+        );
     }
 
     #[test]

@@ -13,6 +13,39 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-24, texture ingest in Rust: BeschleunigerBallett plan B5)
+
+- **The engine gets every texture as a full RGBA8 mip chain, decoded here.** `flat::FlatTexture` carries a
+  `levels::Rgba8Chain` (level 0 first, packed back to back, each level halving down to 1x1) instead of the file's
+  bytes, and the bridge's `GltfTexture` its `width`, `height`, `level_count` and `rgba8`. A glTF slot prefers its
+  `KHR_texture_basisu` KTX2, transcoded level by level straight to RGBA8 (`basis::rgba8_chain_of_ktx2`, not through
+  BC7), with the core `source` as the fallback when it fails; a BCn KTX2 is decoded (`bc_decode`), and a KTX2 chain
+  shorter than full is completed by halving its last level (`levels::complete_chain`). A basisu-only texture, which
+  had no slot because the engine's stb reads no KTX2, now draws textured there. Decoded images box-filter with the
+  filter the WebGPU renderer always used, now `levels::generate_mips` over one shared `halve` (sRGB averaged in
+  linear space, alpha and data rounded half up), so the two renderers' chains are the same bytes; the chain is built
+  in one allocation sized for every level.
+- **`image_decode` is the one decoder of both renderers**: PNG, JPEG, BMP, TGA, GIF, PNM and Radiance HDR (`image`'s
+  `gif`, `pnm` and `hdr` features are new), told by the bytes' signature, then the MIME type, then the name's
+  extension (TGA has no signature). Channels expand as stb's `STBI_rgb_alpha` does: grey fills RGB, grey with alpha
+  is grey with alpha (it was red-green before), 16-bit channels keep their high byte, HDR colour is gamma-encoded
+  with 1/2.2 and its alpha kept linear (`stbi__hdr_to_ldr`). `gltf_images::import_images` decodes every non-KTX2
+  image through it, embedded ones included.
+- **Sizes are capped before anything is allocated**: an image whose header names more than 16384x16384 pixels
+  (`image_decode::MAX_PIXELS`), a KTX2 or Basis payload over it, or one declaring more levels than its size allows,
+  is an error. PSD and PIC, which only the engine's stb reads, keep the file's bytes in `encoded` with an empty chain
+  after the same check of their header; anything else that does not decode gets no slot, and the materials' ids are
+  renumbered (`flat::renumber_slots`), instead of reaching stb.
+- **Slots decode on up to eight cores** (`parallel::map`, scoped threads; in order on wasm32) under a 1 GiB budget of
+  bytes in flight (`parallel::Budget`, a decode leasing its image and chain), after the scene walk, with the
+  document's buffers already dropped. One image under two samplers is decoded once. `Colosseum-gltf` (69 images:
+  25 at 2048², 42 at 1024², 2 at 512²) makes 760 MB of chains; `load_flat` takes 1.44-1.49 s and peaks at 1.28-1.30 GiB resident in
+  release on an aarch64 WSL host with 8 cores, against 0.79-1.14 s and 745-752 MiB when it handed over the encoded
+  files (three runs each), which the engine then decoded with stb on its render thread.
+- **The OBJ GLB packs BMP, TGA and the other formats as stored** with their MIME type (`image/bmp`, `image/x-tga`,
+  ...), which `image_decode` reads back, instead of decoding and re-encoding them as PNG; a file whose header does not
+  read is left out with a warning. The `map_d` composite is still a PNG.
+
 ### Done (2026-11-24, the oxidation roadmap)
 
 - BACKLOG's *Oxidation roadmap: this repo's steps* is closed: steps 1 to 4 are on develop, and every lane ran green

@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 
-use crate::files::{self, decode_base64, read_confined};
+use crate::files::{self, decode_base64};
+use crate::image_decode::decode_rgba8;
 use crate::ktx2_loader::load_ktx2;
 use crate::scene::CpuTexture;
 
@@ -14,7 +15,7 @@ const BASISU: &str = "KHR_texture_basisu";
 const QUANTIZATION: &str = "KHR_mesh_quantization";
 
 /// Where one glTF texture's image comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct TextureSource {
     /// The `KHR_texture_basisu` KTX2 image, preferred when it loads.
     pub basisu: Option<usize>,
@@ -164,20 +165,42 @@ pub(crate) fn import_images(
                     .with_context(|| format!("glTF image {} (KTX2)", image.index()));
                 return Ok(texture.map(Arc::new));
             }
-            let data = match image.source() {
-                gltf::image::Source::Uri { uri, mime_type } if !uri.starts_with("data:") => {
-                    let file = image_file(base, uri)
-                        .with_context(|| format!("glTF image {}", image.index()))?;
-                    let encoded = std::fs::read(&file)
-                        .with_context(|| format!("reading {}", file.display()))?;
-                    decode_external(&encoded, uri, mime_type)
-                        .with_context(|| format!("glTF image {}", image.index()))?
-                }
-                source => gltf::image::Data::from_source(source, base, buffers)?,
-            };
-            Ok(Ok(Arc::new(crate::gltf_loader::to_rgba8(data)?)))
+            let texture = image_bytes(&image, base, buffers)
+                .and_then(|stored| stored.decode())
+                .with_context(|| format!("glTF image {}", image.index()))?;
+            Ok(Ok(Arc::new(texture)))
         })
         .collect()
+}
+
+/// An image's bytes as stored, with what names its format: the MIME type, and a file's URI.
+#[derive(Clone)]
+pub(crate) struct StoredImage {
+    pub bytes: Vec<u8>,
+    pub mime_type: Option<String>,
+    pub uri: Option<String>,
+}
+
+impl StoredImage {
+    pub(crate) fn decode(&self) -> anyhow::Result<CpuTexture> {
+        decode_rgba8(&self.bytes, self.mime_type.as_deref(), self.uri.as_deref())
+    }
+
+    /// [`StoredImage::decode`] into room for its whole mip chain.
+    pub(crate) fn decode_for_chain(&self) -> anyhow::Result<CpuTexture> {
+        crate::image_decode::decode_rgba8_into(
+            &self.bytes,
+            self.mime_type.as_deref(),
+            self.uri.as_deref(),
+            |width, height| {
+                crate::levels::chain_bytes(
+                    width,
+                    height,
+                    crate::levels::full_level_count(width, height),
+                )
+            },
+        )
+    }
 }
 
 /// The file an image URI names beside the document, by `read_confined`'s rule; an in-memory import has none.
@@ -186,52 +209,6 @@ fn image_file(base: Option<&Path>, uri: &str) -> anyhow::Result<PathBuf> {
         format!("glTF image '{uri}' is an external file, which an in-memory import cannot read")
     })?;
     files::confined_file(base, uri)
-}
-
-/// gltf's decode of an external PNG or JPEG (its type by MIME type, else extension, else content), from its bytes,
-/// so a path need not be UTF-8 and gltf opens nothing `confined_file` did not check.
-fn decode_external(
-    encoded: &[u8],
-    uri: &str,
-    mime_type: Option<&str>,
-) -> anyhow::Result<gltf::image::Data> {
-    use gltf::image::Format;
-    use image::{DynamicImage, ImageFormat};
-    let named = match mime_type {
-        Some("image/png") => Some(ImageFormat::Png),
-        Some("image/jpeg") => Some(ImageFormat::Jpeg),
-        Some(_) => None,
-        None => match uri.rsplit('.').next() {
-            Some("png") => Some(ImageFormat::Png),
-            Some("jpg" | "jpeg") => Some(ImageFormat::Jpeg),
-            _ => None,
-        },
-    };
-    let format = named
-        .or_else(|| match image::guess_format(encoded) {
-            Ok(sniffed @ (ImageFormat::Png | ImageFormat::Jpeg)) => Some(sniffed),
-            _ => None,
-        })
-        .context("neither PNG nor JPEG")?;
-    let decoded = image::load_from_memory_with_format(encoded, format)?;
-    let (width, height) = (decoded.width(), decoded.height());
-    let format = match &decoded {
-        DynamicImage::ImageLuma8(_) => Format::R8,
-        DynamicImage::ImageLumaA8(_) => Format::R8G8,
-        DynamicImage::ImageRgb8(_) => Format::R8G8B8,
-        DynamicImage::ImageRgba8(_) => Format::R8G8B8A8,
-        DynamicImage::ImageLuma16(_) => Format::R16,
-        DynamicImage::ImageLumaA16(_) => Format::R16G16,
-        DynamicImage::ImageRgb16(_) => Format::R16G16B16,
-        DynamicImage::ImageRgba16(_) => Format::R16G16B16A16,
-        other => anyhow::bail!("a decoded {:?} image", other.color()),
-    };
-    Ok(gltf::image::Data {
-        pixels: decoded.into_bytes(),
-        format,
-        width,
-        height,
-    })
 }
 
 /// Each texture's image: its `KHR_texture_basisu` KTX2, else (with a warning on failure) its fallback.
@@ -310,17 +287,58 @@ fn view_bytes(
         .context("the buffer view runs past its buffer")
 }
 
-/// An image's bytes as stored, for a consumer that decodes them itself; a file must lie inside `base`.
-pub(crate) fn encoded_bytes(
+/// An image's bytes as stored, so a path need not be UTF-8 and nothing opens a file `confined_file` did not check.
+pub(crate) fn image_bytes(
     image: &gltf::Image,
-    base: &Path,
+    base: Option<&Path>,
     buffers: &[gltf::buffer::Data],
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<StoredImage> {
+    locate_image(image, base, buffers)?.load()
+}
+
+/// Where an image's bytes are: copied out of a buffer view or data URI, or a checked file still to read.
+pub(crate) enum LocatedImage {
+    Stored(StoredImage),
+    File {
+        path: PathBuf,
+        mime_type: Option<String>,
+        uri: String,
+    },
+}
+
+impl LocatedImage {
+    pub(crate) fn load(&self) -> anyhow::Result<StoredImage> {
+        match self {
+            LocatedImage::Stored(stored) => Ok(stored.clone()),
+            LocatedImage::File {
+                path,
+                mime_type,
+                uri,
+            } => Ok(StoredImage {
+                bytes: std::fs::read(path)
+                    .with_context(|| format!("reading {}", path.display()))?,
+                mime_type: mime_type.clone(),
+                uri: Some(uri.clone()),
+            }),
+        }
+    }
+}
+
+/// An image located without its document's buffers held any longer: a view or data URI is copied, a file is not read.
+pub(crate) fn locate_image(
+    image: &gltf::Image,
+    base: Option<&Path>,
+    buffers: &[gltf::buffer::Data],
+) -> anyhow::Result<LocatedImage> {
     match image.source() {
-        gltf::image::Source::View { view, .. } => view_bytes(&view, buffers),
-        gltf::image::Source::Uri { uri, .. } => {
+        gltf::image::Source::View { view, mime_type } => Ok(LocatedImage::Stored(StoredImage {
+            bytes: view_bytes(&view, buffers)?,
+            mime_type: Some(mime_type.to_owned()),
+            uri: None,
+        })),
+        gltf::image::Source::Uri { uri, mime_type } => {
             if let Some(data) = uri.strip_prefix("data:") {
-                let (_, payload) = data
+                let (media, payload) = data
                     .split_once(";base64,")
                     .context("a data URI image that is not base64")?;
                 // Padded base64 only: a truncated payload is a broken image, not a shorter one.
@@ -328,9 +346,17 @@ pub(crate) fn encoded_bytes(
                     !payload.is_empty() && payload.len().is_multiple_of(4),
                     "a data URI image whose base64 is truncated"
                 );
-                return decode_base64(payload);
+                return Ok(LocatedImage::Stored(StoredImage {
+                    bytes: decode_base64(payload)?,
+                    mime_type: Some(mime_type.unwrap_or(media).to_owned()),
+                    uri: None,
+                }));
             }
-            read_confined(base, uri)
+            Ok(LocatedImage::File {
+                path: image_file(base, uri)?,
+                mime_type: mime_type.map(str::to_owned),
+                uri: uri.to_owned(),
+            })
         }
     }
 }

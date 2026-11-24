@@ -78,7 +78,25 @@ pub fn validate_mip_chain(
 /// Parses a KTX2 file into a `CpuTexture` carrying its compressed mip chain.
 pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
     let reader = ktx2::Reader::new(bytes).context("not a valid KTX2 container")?;
+    check_header(&reader)?;
+    if super::basis::is_basis(&reader) {
+        return super::basis::transcode_basis(&reader);
+    }
+    load_block_compressed(&reader)
+}
+
+/// A 2D texture within the pixel cap and a level count its size allows, checked before anything is transcoded.
+pub(crate) fn check_header(reader: &ktx2::Reader<&[u8]>) -> anyhow::Result<()> {
     let header = reader.header();
+    crate::image_decode::check_dimensions(header.pixel_width.max(1), header.pixel_height.max(1))?;
+    anyhow::ensure!(
+        header.level_count
+            <= crate::levels::full_level_count(header.pixel_width, header.pixel_height),
+        "KTX2 declares {} levels for a {}x{} texture",
+        header.level_count,
+        header.pixel_width,
+        header.pixel_height
+    );
 
     anyhow::ensure!(
         header.face_count <= 1,
@@ -95,10 +113,12 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
         "KTX2 3D textures (depth {}) are not supported yet, only 2D textures",
         header.pixel_depth
     );
+    Ok(())
+}
 
-    if super::basis::is_basis(&reader) {
-        return super::basis::transcode_basis(&reader);
-    }
+/// A BCn KTX2's levels as stored.
+fn load_block_compressed(reader: &ktx2::Reader<&[u8]>) -> anyhow::Result<CpuTexture> {
+    let header = reader.header();
     anyhow::ensure!(
         header.supercompression_scheme.is_none(),
         "KTX2 supercompression {:?} is supported only for Basis payloads (ETC1S, UASTC)",

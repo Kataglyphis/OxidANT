@@ -58,7 +58,7 @@ const RULES: [&str; 6] = [
 #[test]
 fn the_owners_material_rules_reach_the_engine() {
     let (dir, path) = write_model(&triangles_using(&RULES), RULES_MTL);
-    std::fs::write(dir.path().join("glow.png"), b"\x89PNG not decoded here").unwrap();
+    std::fs::write(dir.path().join("glow.png"), psd(b"glow")).unwrap();
     let model = load(&path);
     let m = &model.materials;
     assert_eq!(
@@ -162,24 +162,41 @@ fn each_usemtl_run_is_one_range_even_when_its_material_returns() {
 }
 
 #[test]
-fn a_map_d_mask_and_a_bmp_reach_the_engine_as_the_files_bytes() {
+fn a_map_d_mask_and_a_bmp_reach_the_engine_as_their_mip_chains() {
     let model = load(&mask_card());
     let material = &model.materials[0];
     assert_eq!(material.alpha_cutoff, 0.5, "map_d cuts out at 0.5");
     assert!(!material.alpha_blend);
-    let dir = mask_card().with_file_name("");
     let base = &model.textures[material.base_texture as usize];
     let mask = &model.textures[material.alpha_texture as usize];
-    assert_eq!(
-        base.encoded,
-        std::fs::read(dir.join("red.bmp")).unwrap(),
-        "passed through, not re-encoded"
+    assert!(
+        base.encoded.is_empty() && mask.encoded.is_empty(),
+        "both decode here"
     );
+    let base_chain = &base.chain;
     assert_eq!(
-        mask.encoded,
-        std::fs::read(dir.join("half_mask.tga")).unwrap()
+        (base_chain.width, base_chain.height, base_chain.level_count),
+        (8, 8, 4)
+    );
+    assert_eq!(base_chain.texels[..4], [255, 0, 0, 255], "red.bmp");
+    let texel = |x: usize| mask.chain.texels[x * 4];
+    assert_eq!(
+        (texel(0), texel(7)),
+        (0, 255),
+        "half_mask.tga: black left, white right"
     );
     assert!(base.srgb && !mask.srgb, "colour in sRGB, the mask linear");
+}
+
+#[test]
+fn a_format_only_stb_reads_reaches_the_engine_as_the_files_bytes() {
+    let (dir, path) = write_model(&triangles_using(&["a"]), "newmtl a\nmap_Kd paint.psd\n");
+    let psd = psd(b" a Photoshop file the image crate does not read");
+    std::fs::write(dir.path().join("paint.psd"), &psd).unwrap();
+    let model = load(&path);
+    let texture = &model.textures[model.materials[0].base_texture as usize];
+    assert_eq!(texture.encoded, psd, "for the engine's stb");
+    assert_eq!(texture.chain.level_count, 0, "no chain");
 }
 
 #[test]
@@ -187,7 +204,7 @@ fn a_texture_named_twice_or_missing_takes_one_slot_or_none() {
     let mtl =
         "newmtl a\nmap_Kd tex.png\nmap_Bump tex.png\nnewmtl b\nmap_Kd ./tex.png\nnorm gone.png\n";
     let (dir, path) = write_model(&triangles_using(&["a", "b"]), mtl);
-    std::fs::write(dir.path().join("tex.png"), b"bytes").unwrap();
+    std::fs::write(dir.path().join("tex.png"), psd(b"bytes")).unwrap();
     let model = load(&path);
     let [a, b] = [&model.materials[0], &model.materials[1]];
     assert_eq!(
@@ -254,10 +271,10 @@ fn textures_resolve_beside_their_mtl_even_in_a_subfolder() {
         "newmtl a\nmap_Kd near.png\nmap_Ke far.png\nKe 1 1 1\n",
     )
     .unwrap();
-    std::fs::write(dir.path().join("sub/near.png"), b"near").unwrap();
-    std::fs::write(dir.path().join("sub/textures/far.png"), b"far").unwrap();
+    std::fs::write(dir.path().join("sub/near.png"), psd(b"near")).unwrap();
+    std::fs::write(dir.path().join("sub/textures/far.png"), psd(b"far")).unwrap();
     // A file of the same name beside the OBJ must not be taken: the .mtl's folder is the base.
-    std::fs::write(dir.path().join("near.png"), b"wrong").unwrap();
+    std::fs::write(dir.path().join("near.png"), psd(b"wrong")).unwrap();
     let path = dir.path().join("model.obj");
     std::fs::write(
         &path,
@@ -266,10 +283,10 @@ fn textures_resolve_beside_their_mtl_even_in_a_subfolder() {
     .unwrap();
     let model = load(&path);
     let bytes = |slot: i32| model.textures[slot as usize].encoded.clone();
-    assert_eq!(bytes(model.materials[0].base_texture), b"near");
+    assert_eq!(bytes(model.materials[0].base_texture), psd(b"near"));
     assert_eq!(
         bytes(model.materials[0].emissive_texture),
-        b"far",
+        psd(b"far"),
         "the subfolder's textures/"
     );
 }
@@ -513,4 +530,34 @@ proptest::proptest! {
         proptest::prop_assert!(mesh.indices.iter().all(|&i| (i as usize) < mesh.positions.len()));
         proptest::prop_assert!(mesh.triangle_count() <= corners - 2 + 1);
     }
+}
+
+/// A 1x1 PSD header followed by `tag`, which only the engine's stb reads: its bytes cross unchanged.
+fn psd(tag: &[u8]) -> Vec<u8> {
+    let mut bytes = b"8BPS\0\x01\0\0\0\0\0\0\0\x03".to_vec();
+    bytes.extend_from_slice(&1u32.to_be_bytes());
+    bytes.extend_from_slice(&1u32.to_be_bytes());
+    bytes.extend_from_slice(tag);
+    bytes
+}
+
+#[test]
+fn an_oversized_psd_and_an_unknown_format_get_no_slot() {
+    let mtl = "newmtl big\nmap_Kd big.psd\nnewmtl odd\nmap_Kd odd.webp\n";
+    let (dir, path) = write_model(&triangles_using(&["big", "odd"]), mtl);
+    let mut big = b"8BPS\0\x01\0\0\0\0\0\0\0\x03".to_vec();
+    big.extend_from_slice(&32768u32.to_be_bytes());
+    big.extend_from_slice(&32768u32.to_be_bytes());
+    std::fs::write(dir.path().join("big.psd"), big).unwrap();
+    std::fs::write(dir.path().join("odd.webp"), b"RIFF\0\0\0\0WEBPVP8 ").unwrap();
+    let model = load(&path);
+    assert_eq!(
+        model.materials[0].base_texture, -1,
+        "stb would have read a 32768x32768 PSD"
+    );
+    assert_eq!(
+        model.materials[1].base_texture, -1,
+        "no renderer reads WebP"
+    );
+    assert!(model.textures.is_empty());
 }

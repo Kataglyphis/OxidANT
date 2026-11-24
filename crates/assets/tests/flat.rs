@@ -151,11 +151,20 @@ fn a_glb_reads_its_buffer_from_the_binary_chunk() {
 }
 
 #[test]
-fn a_textured_material_gets_the_encoded_image_and_its_sampler() {
+fn a_textured_material_gets_the_mip_chain_and_its_sampler() {
     let model = load_flat(fixture("cube_textured.gltf"), &LoadOptions::default()).unwrap();
     assert_eq!(model.textures.len(), 1);
     let texture = &model.textures[0];
-    assert!(texture.encoded.starts_with(b"\x89PNG"), "bytes as stored");
+    assert!(
+        texture.encoded.is_empty(),
+        "decoded here, so nothing for stb"
+    );
+    let sizes: Vec<_> = texture.chain.levels().map(|(w, h, _)| (w, h)).collect();
+    assert_eq!(
+        sizes.first(),
+        Some(&(texture.chain.width, texture.chain.height))
+    );
+    assert_eq!(sizes.last(), Some(&(1, 1)), "a full chain");
     assert!(texture.srgb);
     assert!(texture.sampler.mag_nearest && texture.sampler.min_nearest);
     assert!(!texture.sampler.mipmaps, "bare NEAREST reads level 0");
@@ -164,20 +173,35 @@ fn a_textured_material_gets_the_encoded_image_and_its_sampler() {
 }
 
 #[test]
-fn a_basisu_only_texture_has_no_slot_and_a_fallback_uses_its_core_image() {
+fn a_basisu_texture_arrives_as_its_levels_and_a_broken_one_falls_back_to_its_core_image() {
     let only = load_flat(fixture("cube_basisu.gltf"), &LoadOptions::default()).unwrap();
-    assert!(
-        only.textures.is_empty(),
-        "stb cannot decode KTX2, so no slot"
+    assert_eq!(only.textures.len(), 1, "the KTX2 is the slot");
+    assert_eq!(only.materials[0].base_texture, 0);
+    let chain = &only.textures[0].chain;
+    assert_eq!(
+        (chain.width, chain.height, chain.level_count),
+        (32, 32, 6),
+        "the KTX2's six levels"
     );
-    assert_eq!(only.materials[0].base_texture, -1);
+    assert_eq!(chain.levels().count(), 6);
+    // ramp_uastc runs dark to bright along x: level 0's last texel outshines its first.
+    assert!(
+        chain.texels[31 * 4] > chain.texels[0] + 100,
+        "{:?}",
+        &chain.texels[..8]
+    );
     let fallback = load_flat(
         fixture("cube_basisu_fallback.gltf"),
         &LoadOptions::default(),
     )
     .unwrap();
     assert_eq!(fallback.textures.len(), 1);
-    assert!(fallback.textures[0].encoded.starts_with(b"\x89PNG"));
+    let chain = &fallback.textures[0].chain;
+    assert_eq!(
+        (chain.width, chain.height, chain.level_count),
+        (2, 2, 2),
+        "the 2x2 PNG, not the KTX2"
+    );
 }
 
 #[test]
@@ -527,9 +551,9 @@ fn a_primitive_without_a_material_draws_with_the_neutral_fallback() {
 #[test]
 fn slots_dedup_on_image_sampler_and_colour_space() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.png"), b"\x89PNG a").unwrap();
-    std::fs::write(dir.path().join("b.png"), b"\x89PNG b").unwrap();
-    let extra = r#","images":[{"uri":"a.png"},{"uri":"b.png"}],"samplers":[{},{"wrapS":33071}],
+    std::fs::write(dir.path().join("a.psd"), psd(b"a")).unwrap();
+    std::fs::write(dir.path().join("b.psd"), psd(b"b")).unwrap();
+    let extra = r#","images":[{"uri":"a.psd"},{"uri":"b.psd"}],"samplers":[{},{"wrapS":33071}],
         "textures":[{"source":0},{"source":0},{"source":0,"sampler":1},{"source":1}],
         "materials":[
           {"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"normalTexture":{"index":1}},
@@ -557,7 +581,11 @@ fn slots_dedup_on_image_sampler_and_colour_space() {
     assert_eq!(ids[1], [0, -1, -1, 0]);
     assert_eq!(ids[2], [2, 3, -1, -1]);
     assert_eq!(model.textures.len(), 4);
-    assert_eq!(model.textures[3].encoded, b"\x89PNG b");
+    assert_eq!(
+        model.textures[3].encoded,
+        psd(b"b"),
+        "PSD, for the engine's stb"
+    );
     assert!(!model.textures[1].srgb && !model.textures[3].srgb);
 }
 
@@ -1364,8 +1392,8 @@ fn khr_materials_unlit_marks_only_its_own_material() {
 }
 
 #[test]
-fn declared_images_get_dense_slots_whatever_their_bytes() {
-    // Images 0 and 1 embed one PNG; image 2's six zero bytes decode to nothing, which the C++ upload finds out later.
+fn declared_images_get_dense_slots_and_one_that_does_not_decode_is_dropped() {
+    // Images 0 and 1 embed one PNG; image 2's six zero bytes are no image, so its slot goes and none shifts.
     let images =
         same_png_images(2).replacen("]", r#",{"uri":"data:image/png;base64,AAAAAAAA"}]"#, 1);
     let base =
@@ -1380,10 +1408,10 @@ fn declared_images_get_dense_slots_whatever_their_bytes() {
     let ids: Vec<i32> = model.materials.iter().map(|m| m.base_texture).collect();
     assert_eq!(
         ids,
-        [0, 1, 2, -1],
-        "slots key on the declared image, not its bytes, and never decode"
+        [0, 1, -1, -1],
+        "slots key on the declared image, not its bytes"
     );
-    assert_eq!(model.textures[2].encoded, [0; 6]);
+    assert_eq!(model.textures.len(), 2);
 }
 
 #[test]
@@ -1464,7 +1492,7 @@ fn a_percent_encoded_image_uri_resolves_beside_the_document() {
     let path = triangle_with_image(dir.path(), "my%20tex.png");
     let model = load_flat(path, &LoadOptions::default()).unwrap();
     assert_eq!(model.textures.len(), 1);
-    assert_eq!(model.textures[0].encoded, PIXEL_PNG);
+    assert_eq!(model.textures[0].chain.texels, [200, 40, 0, 255]);
 }
 
 #[test]
@@ -2190,4 +2218,29 @@ mod quantization {
             "the base case loads"
         );
     }
+}
+
+/// A 1x1 PSD header followed by `tag`, which only the engine's stb reads: its bytes cross unchanged.
+fn psd(tag: &[u8]) -> Vec<u8> {
+    let mut bytes = b"8BPS\0\x01\0\0\0\0\0\0\0\x03".to_vec();
+    bytes.extend_from_slice(&1u32.to_be_bytes());
+    bytes.extend_from_slice(&1u32.to_be_bytes());
+    bytes.extend_from_slice(tag);
+    bytes
+}
+
+#[test]
+fn one_image_under_two_samplers_is_decoded_once_and_keeps_each_sampler() {
+    let extra = format!(
+        r#",{},"samplers":[{{}},{{"wrapS":33071}}],"textures":[{{"source":0}},{{"source":0,"sampler":1}}],
+        "materials":[{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0}}}}}},
+          {{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":1}}}}}}]"#,
+        same_png_images(1)
+    );
+    let model = flat_with(&extra);
+    assert_eq!(model.textures.len(), 2, "one slot per sampler");
+    let [a, b] = [&model.textures[0], &model.textures[1]];
+    assert_eq!(a.chain, b.chain, "one decode's chain in both");
+    assert!(a.chain.level_count > 0);
+    assert_ne!(a.sampler, b.sampler);
 }

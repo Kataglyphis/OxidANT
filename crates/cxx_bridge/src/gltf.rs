@@ -64,9 +64,14 @@ pub mod ffi {
         wrap_v: u8,
     }
 
-    /// One texture slot: the image as the file stores it (PNG, JPEG, ...), for the engine's own decoder.
+    /// One texture slot: its RGBA8 mip chain, level 0 first and packed back to back, each level halving down to 1x1;
+    /// for a format only the engine's stb reads (PSD, PIC), `level_count` 0 and the file's bytes in `encoded`.
     #[derive(Debug, PartialEq)]
     struct GltfTexture {
+        width: u32,
+        height: u32,
+        level_count: u32,
+        rgba8: Vec<u8>,
         encoded: Vec<u8>,
         sampler: GltfSampler,
         srgb: bool,
@@ -258,6 +263,10 @@ fn sampler(s: CpuSampler) -> ffi::GltfSampler {
 
 fn texture(t: FlatTexture) -> ffi::GltfTexture {
     ffi::GltfTexture {
+        width: t.chain.width,
+        height: t.chain.height,
+        level_count: t.chain.level_count,
+        rgba8: t.chain.texels,
         encoded: t.encoded,
         sampler: sampler(t.sampler),
         srgb: t.srgb,
@@ -322,6 +331,16 @@ mod tests {
     }
 
     /// One triangle under node 0, then `nodes`, `scenes` and a top-level `extra`, written to `dir`.
+    /// The bytes a texture's packed chain holds: each level halves down to 1x1.
+    fn chain_bytes(texture: &ffi::GltfTexture) -> usize {
+        (0..texture.level_count)
+            .map(|level| {
+                let side = |s: u32| (s >> level).max(1) as usize;
+                side(texture.width) * side(texture.height) * 4
+            })
+            .sum()
+    }
+
     fn triangle(dir: &Path, nodes: &str, scenes: &str, extra: &str) -> Vec<u8> {
         let json = format!(
             r#"{{"asset":{{"version":"2.0"}},{scenes}"nodes":[{{"mesh":0}}{nodes}],
@@ -344,14 +363,32 @@ mod tests {
         assert_eq!(model.material_index.len(), model.indices.len() / 3);
         assert!(!model.vertices.is_empty() && !model.mesh_ranges.is_empty());
         assert_eq!(model.textures.len(), 1, "one base-colour image");
-        assert!(model.textures[0].encoded.starts_with(b"\x89PNG"));
-        assert!(model.textures[0].srgb);
+        let texture = &model.textures[0];
+        assert!(texture.encoded.is_empty(), "decoded here, not by stb");
+        assert_eq!(
+            texture.level_count,
+            32 - texture.width.max(texture.height).leading_zeros()
+        );
+        assert_eq!(texture.rgba8.len(), chain_bytes(texture));
+        assert!(texture.srgb);
         assert_eq!(model.materials[0].base_texture, 0);
         assert_eq!(model.materials.last().unwrap().base_texture, -1);
         assert!(
             model.materials.iter().all(|m| m.alpha_texture == -1),
             "glTF has no map_d"
         );
+    }
+
+    #[test]
+    fn a_basisu_only_texture_crosses_as_its_transcoded_chain() {
+        let model = load_gltf_flat(&asset("cube_basisu.gltf"));
+        assert!(model.ok, "{}", model.error);
+        assert_eq!(model.textures.len(), 1, "the KTX2 is the slot");
+        assert_eq!(model.materials[0].base_texture, 0);
+        let texture = &model.textures[0];
+        assert!(texture.encoded.is_empty());
+        assert!(texture.level_count > 1, "the KTX2's own levels");
+        assert_eq!(texture.rgba8.len(), chain_bytes(texture));
     }
 
     #[test]
@@ -369,10 +406,10 @@ mod tests {
         let mask = &model.textures[material.alpha_texture as usize];
         assert!(!mask.srgb);
         let base = &model.textures[material.base_texture as usize];
-        assert!(
-            base.encoded.starts_with(b"BM"),
-            "the BMP's own bytes, for stb"
-        );
+        assert!(base.encoded.is_empty(), "the BMP decodes here");
+        assert_eq!((base.width, base.height, base.level_count), (8, 8, 4));
+        assert_eq!(base.rgba8.len(), chain_bytes(base));
+        assert_eq!(base.rgba8[..4], [255, 0, 0, 255], "red.bmp is red");
         let missing = load_gltf_flat(b"/no/such/model.obj");
         assert!(
             !missing.ok && missing.error.contains("model.obj"),

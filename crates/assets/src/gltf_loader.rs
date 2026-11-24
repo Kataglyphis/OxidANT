@@ -431,75 +431,6 @@ fn drop_out_of_range_triangles(indices: Vec<u32>, vertex_count: usize) -> (Vec<u
     (out, triangle_count - kept)
 }
 
-/// Converts a decoded glTF image into tightly packed RGBA8.
-pub(crate) fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
-    use gltf::image::Format;
-
-    let pixel_count = (img.width * img.height) as usize;
-    let rgba8 = match img.format {
-        Format::R8G8B8A8 => img.pixels,
-        Format::R8G8B8 => {
-            let mut out = Vec::with_capacity(pixel_count * 4);
-            for rgb in img.pixels.as_chunks::<3>().0 {
-                out.extend_from_slice(rgb);
-                out.push(255);
-            }
-            out
-        }
-        Format::R8 => {
-            let mut out = Vec::with_capacity(pixel_count * 4);
-            for &r in &img.pixels {
-                out.extend_from_slice(&[r, r, r, 255]);
-            }
-            out
-        }
-        Format::R8G8 => {
-            let mut out = Vec::with_capacity(pixel_count * 4);
-            for rg in img.pixels.as_chunks::<2>().0 {
-                out.extend_from_slice(&[rg[0], rg[1], 0, 255]);
-            }
-            out
-        }
-        // 16-bit PNGs are common tool output: keep the high byte rather than fail the whole file.
-        Format::R16 | Format::R16G16 | Format::R16G16B16 | Format::R16G16B16A16 => {
-            let channels = match img.format {
-                Format::R16 => 1,
-                Format::R16G16 => 2,
-                Format::R16G16B16 => 3,
-                _ => 4,
-            };
-            let mut out = Vec::with_capacity(pixel_count * 4);
-            for texel in img.pixels.chunks_exact(channels * 2) {
-                // Little-endian u16 -> u8 by keeping the high byte.
-                let ch = |i: usize| texel[i * 2 + 1];
-                match channels {
-                    1 => {
-                        let v = ch(0);
-                        out.extend_from_slice(&[v, v, v, 255]);
-                    }
-                    2 => out.extend_from_slice(&[ch(0), ch(1), 0, 255]),
-                    3 => out.extend_from_slice(&[ch(0), ch(1), ch(2), 255]),
-                    _ => out.extend_from_slice(&[ch(0), ch(1), ch(2), ch(3)]),
-                }
-            }
-            out
-        }
-        other => anyhow::bail!("Unsupported glTF image format: {other:?}"),
-    };
-
-    anyhow::ensure!(
-        rgba8.len() == pixel_count * 4,
-        "Image byte count mismatch after RGBA8 conversion"
-    );
-
-    Ok(CpuTexture {
-        width: img.width,
-        height: img.height,
-        rgba8,
-        compressed: None,
-    })
-}
-
 pub(crate) fn to_cpu_sampler(sampler: &gltf::texture::Sampler) -> CpuSampler {
     use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 
@@ -1441,31 +1372,6 @@ mod tests {
         assert_eq!(drop_out_of_range_triangles(vec![0, 0, 0], 0), (vec![], 1));
     }
 
-    #[test]
-    fn sixteen_bit_images_down_convert_instead_of_failing_the_whole_file() {
-        // 2x1 R16G16B16A16, little-endian.
-        let texel = |r: u16, g: u16, b: u16, a: u16| {
-            let mut v = Vec::new();
-            for c in [r, g, b, a] {
-                v.extend_from_slice(&c.to_le_bytes());
-            }
-            v
-        };
-        let mut pixels = texel(0xFFFF, 0x0000, 0x8000, 0xFFFF);
-        pixels.extend(texel(0x0000, 0xFF00, 0x0000, 0x1234));
-
-        let data = gltf::image::Data {
-            pixels,
-            format: gltf::image::Format::R16G16B16A16,
-            width: 2,
-            height: 1,
-        };
-        let tex = to_rgba8(data).expect("16-bit image must convert, not bail");
-        assert_eq!(tex.rgba8.len(), 2 * 4, "must be tightly packed RGBA8");
-        // High byte survives: 0xFFFF -> 0xFF, 0x8000 -> 0x80, 0x1234 -> 0x12.
-        assert_eq!(&tex.rgba8[0..4], &[0xFF, 0x00, 0x80, 0xFF]);
-        assert_eq!(&tex.rgba8[4..8], &[0x00, 0xFF, 0x00, 0x12]);
-    }
     use super::*;
 
     #[test]

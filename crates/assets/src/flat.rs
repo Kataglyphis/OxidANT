@@ -1,5 +1,5 @@
 //! A glTF (or, through `obj::load_obj_flat`, an OBJ) flattened into the arrays BeschleunigerBallett's C++ engine draws: world-space vertices in one list,
-//! a material id per triangle, a range per primitive, and each texture's image still encoded.
+//! a material id per triangle, a range per primitive, and each texture's RGBA8 mip chain, decoded on every core.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -7,8 +7,11 @@ use std::path::Path;
 use anyhow::Context as _;
 use glam::{Mat3, Mat4, Vec3};
 
-use crate::gltf_images::{self, TextureSource};
+use crate::gltf_images::{self, LocatedImage, StoredImage, TextureSource};
 use crate::gltf_loader::{self, Geometry, Imported, LoadOptions};
+use crate::image_decode;
+use crate::levels::{self, Rgba8Chain};
+use crate::parallel::{self, Budget};
 use crate::scene::{self, AlphaMode, CpuLight, CpuLightKind, CpuMaterial, CpuSampler, CpuScene};
 use crate::skin;
 
@@ -58,13 +61,87 @@ pub struct FlatMaterial {
     pub double_sided: bool,
 }
 
-/// One texture slot: an image's bytes as the file stores them, with its sampler and colour space.
+/// One texture slot with its sampler and colour space: the RGBA8 mip chain, or, for a format only the engine's stb
+/// reads (PSD, PIC), an empty chain and the file's bytes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlatTexture {
+    pub chain: Rgba8Chain,
     pub encoded: Vec<u8>,
     pub sampler: CpuSampler,
     pub srgb: bool,
 }
+
+impl FlatTexture {
+    /// The chain of `stored`, or for PSD and PIC its bytes for the engine's stb; `None`, with a warning, when it does
+    /// not load or is over the pixel cap, which stb would not have refused.
+    pub(crate) fn from_stored(
+        stored: &StoredImage,
+        sampler: CpuSampler,
+        srgb: bool,
+        what: &dyn std::fmt::Display,
+        budget: &Budget,
+    ) -> Option<FlatTexture> {
+        let texture = |chain: Rgba8Chain, encoded: Vec<u8>| FlatTexture {
+            chain,
+            encoded,
+            sampler,
+            srgb,
+        };
+        match decode_chain(stored, srgb, budget) {
+            Ok(Some(chain)) => Some(texture(chain, Vec::new())),
+            Ok(None) => Some(texture(Rgba8Chain::default(), stored.bytes.clone())),
+            Err(err) => {
+                log::warn!("{what}: {err:#}; the material draws without it");
+                None
+            }
+        }
+    }
+}
+
+/// `stored`'s full chain, `None` for a PSD or PIC within the cap; the decode holds its bytes from `budget` meanwhile.
+fn decode_chain(
+    stored: &StoredImage,
+    srgb: bool,
+    budget: &Budget,
+) -> anyhow::Result<Option<Rgba8Chain>> {
+    let bytes = &stored.bytes;
+    anyhow::ensure!(!bytes.is_empty(), "the image is empty");
+    if bytes.starts_with(KTX2_MAGIC) {
+        let header = ktx2::Reader::new(bytes.as_slice())
+            .map_err(|err| anyhow::anyhow!("not a valid KTX2 container: {err:?}"))?
+            .header();
+        let (width, height) = (header.pixel_width.max(1), header.pixel_height.max(1));
+        image_decode::check_dimensions(width, height)?;
+        let _lease = budget.lease(in_flight_bytes(width, height));
+        return levels::ktx2_chain(bytes, srgb).map(Some);
+    }
+    if let Some((width, height)) = image_decode::stb_only_dimensions(bytes) {
+        image_decode::check_dimensions(width, height)?;
+        return Ok(None);
+    }
+    let format =
+        image_decode::image_format(bytes, stored.mime_type.as_deref(), stored.uri.as_deref())
+            .context("not an image format either renderer reads")?;
+    let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(bytes), format)
+        .into_dimensions()
+        .with_context(|| format!("reading the {format:?} header"))?;
+    image_decode::check_dimensions(width, height)?;
+    let _lease = budget.lease(in_flight_bytes(width, height));
+    let texture = stored.decode_for_chain()?;
+    levels::rgba8_chain(texture, srgb).map(Some)
+}
+
+/// What one decode holds at its peak: the decoded image beside its full chain.
+fn in_flight_bytes(width: u32, height: u32) -> u64 {
+    let chain = levels::chain_bytes(width, height, levels::full_level_count(width, height));
+    chain as u64 + u64::from(width) * u64::from(height) * 4
+}
+
+/// Decodes in flight at once, in bytes: one load cannot hold eight 16384x16384 chains together.
+pub(crate) const DECODE_BUDGET: u64 = 1 << 30;
+
+/// The identifier every KTX2 file starts with.
+const KTX2_MAGIC: &[u8] = b"\xabKTX 20\xbb\r\n\x1a\n";
 
 /// One primitive's slice of the flat arrays.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -115,11 +192,9 @@ pub fn load_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::Resul
     let path = path.as_ref();
     let imported = gltf_loader::import_document(path)
         .with_context(|| format!("Failed to import glTF file: {}", path.display()))?;
-    let mut textures = Vec::new();
-    let materials = read_materials(&imported, &mut textures);
+    let (materials, pending) = read_materials(&imported);
     let mut model = FlatModel {
         materials,
-        textures,
         ..FlatModel::default()
     };
     let source = Source {
@@ -137,6 +212,27 @@ pub fn load_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::Resul
     );
     model.sun = scene::take_sun(&mut lights).map(|sun| flat_light(&sun));
     model.lights = lights.iter().map(flat_light).collect();
+    // One decode per image and colour space; a second sampler of it shares the decoded chain.
+    let mut decode_of: HashMap<(TextureSource, bool), usize> = HashMap::new();
+    let mut located: Vec<LocatedSlot> = Vec::new();
+    let jobs: Vec<usize> = pending
+        .iter()
+        .map(|slot| {
+            *decode_of
+                .entry((slot.source, slot.srgb))
+                .or_insert_with(|| {
+                    located.push(slot.locate(&imported));
+                    located.len() - 1
+                })
+        })
+        .collect();
+    drop(source);
+    // Before the chains arrive: Colosseum-gltf's 197 MiB .bin would otherwise peak beside them.
+    drop(imported);
+    let budget = Budget::new(DECODE_BUDGET);
+    let decoded = parallel::map(&located, |slot| slot.decode(&budget));
+    let textures = share_decodes(decoded, &jobs, &pending);
+    model.textures = renumber_slots(&mut model.materials, textures);
     Ok(model)
 }
 
@@ -156,12 +252,12 @@ fn rest_joint_matrices(imported: &Imported) -> Vec<Vec<Mat4>> {
         .collect()
 }
 
-/// Every material in document order, then the neutral fallback; textures get their slots on the way.
-fn read_materials(imported: &Imported, textures: &mut Vec<FlatTexture>) -> Vec<FlatMaterial> {
+/// Every material in document order, then the neutral fallback, and the texture slots they name, still to decode.
+fn read_materials(imported: &Imported) -> (Vec<FlatMaterial>, Vec<PendingSlot>) {
     let mut slots = Slots {
         imported,
         keys: HashMap::new(),
-        textures,
+        pending: Vec::new(),
     };
     let mut materials: Vec<FlatMaterial> = imported
         .document
@@ -172,15 +268,81 @@ fn read_materials(imported: &Imported, textures: &mut Vec<FlatTexture>) -> Vec<F
         })
         .collect();
     materials.push(flat_material(&CpuMaterial::default(), [-1; 4]));
-    materials
+    (materials, slots.pending)
 }
 
-/// Dedups slots on (image, sampler settings, colour space): an image sampled two ways gets one slot per way.
+/// Each slot's texture with its own sampler, cloned from its decode while another slot still needs it, moved after.
+fn share_decodes(
+    mut decoded: Vec<Option<FlatTexture>>,
+    jobs: &[usize],
+    pending: &[PendingSlot],
+) -> Vec<Option<FlatTexture>> {
+    let mut uses = vec![0usize; decoded.len()];
+    for &job in jobs {
+        uses[job] += 1;
+    }
+    jobs.iter()
+        .zip(pending)
+        .map(|(&job, slot)| {
+            uses[job] -= 1;
+            let texture = if uses[job] == 0 {
+                decoded[job].take()
+            } else {
+                decoded[job].clone()
+            };
+            texture.map(|texture| FlatTexture {
+                sampler: slot.sampler,
+                ..texture
+            })
+        })
+        .collect()
+}
+
+/// Drops the slots that did not load and renumbers the materials' ids to the ones that did, -1 for a dropped one.
+pub(crate) fn renumber_slots(
+    materials: &mut [FlatMaterial],
+    decoded: Vec<Option<FlatTexture>>,
+) -> Vec<FlatTexture> {
+    let mut textures = Vec::with_capacity(decoded.len());
+    let ids: Vec<i32> = decoded
+        .into_iter()
+        .map(|texture| match texture {
+            Some(texture) => {
+                textures.push(texture);
+                textures.len() as i32 - 1
+            }
+            None => -1,
+        })
+        .collect();
+    for material in materials.iter_mut() {
+        for id in [
+            &mut material.base_texture,
+            &mut material.metallic_roughness_texture,
+            &mut material.normal_texture,
+            &mut material.emissive_texture,
+            &mut material.alpha_texture,
+        ] {
+            if *id >= 0 {
+                *id = ids.get(*id as usize).copied().unwrap_or(-1);
+            }
+        }
+    }
+    textures
+}
+
+/// Dedups slots on (sources, sampler settings, colour space): an image sampled two ways gets one slot per way.
 struct Slots<'a> {
     imported: &'a Imported,
     /// The settings, not the sampler's index: two equal sampler objects, or none and a default one, share a slot.
-    keys: HashMap<(usize, CpuSampler, bool), i32>,
-    textures: &'a mut Vec<FlatTexture>,
+    keys: HashMap<(TextureSource, CpuSampler, bool), i32>,
+    pending: Vec<PendingSlot>,
+}
+
+/// A slot to decode: its `KHR_texture_basisu` image, preferred, and its core one.
+struct PendingSlot {
+    source: TextureSource,
+    sampler: CpuSampler,
+    srgb: bool,
 }
 
 impl Slots<'_> {
@@ -195,46 +357,92 @@ impl Slots<'_> {
         ]
     }
 
-    /// The core `source` only: the C++ engine decodes with stb, which reads no KTX2.
     fn slot(&mut self, texture: Option<gltf::Texture>, srgb: bool) -> i32 {
         let Some(texture) = texture else {
             return -1;
         };
-        let source = self.imported.sources.get(texture.index());
-        let Some(&TextureSource {
-            fallback: Some(image),
-            ..
-        }) = source
-        else {
+        let Some(&source) = self.imported.sources.get(texture.index()) else {
             return -1;
         };
         let sampler = gltf_loader::to_cpu_sampler(&texture.sampler());
-        let key = (image, sampler, srgb);
+        let key = (source, sampler, srgb);
         if let Some(&slot) = self.keys.get(&key) {
             return slot;
         }
-        let Some(encoded) = self.encoded(image) else {
-            return -1;
-        };
-        let slot = self.textures.len() as i32;
+        let slot = self.pending.len() as i32;
         self.keys.insert(key, slot);
-        self.textures.push(FlatTexture {
-            encoded,
+        self.pending.push(PendingSlot {
+            source,
             sampler,
             srgb,
         });
         slot
     }
+}
 
-    /// An image's stored bytes; `None`, with a warning, when they cannot be read, as the C++ loader skips them.
-    fn encoded(&self, image: usize) -> Option<Vec<u8>> {
-        let imported = self.imported;
-        let image = imported.document.images().nth(image)?;
-        match gltf_images::encoded_bytes(&image, &imported.base, &imported.buffers) {
-            Ok(bytes) if !bytes.is_empty() => Some(bytes),
-            Ok(_) => None,
+impl PendingSlot {
+    /// Each source's bytes, or where to read them, so the decode needs no buffer of the document.
+    fn locate(&self, imported: &Imported) -> LocatedSlot {
+        let locate = |image: usize| {
+            let located = imported
+                .document
+                .images()
+                .nth(image)
+                .context("no such image")
+                .and_then(|gltf_image| {
+                    gltf_images::locate_image(&gltf_image, Some(&imported.base), &imported.buffers)
+                });
+            (image, located)
+        };
+        LocatedSlot {
+            basisu: self.source.basisu.map(locate),
+            fallback: self.source.fallback.map(locate),
+            sampler: self.sampler,
+            srgb: self.srgb,
+        }
+    }
+}
+
+/// A slot's `KHR_texture_basisu` image and its core one, each with its index for the log.
+struct LocatedSlot {
+    basisu: Option<(usize, anyhow::Result<LocatedImage>)>,
+    fallback: Option<(usize, anyhow::Result<LocatedImage>)>,
+    sampler: CpuSampler,
+    srgb: bool,
+}
+
+impl LocatedSlot {
+    /// The `KHR_texture_basisu` image, else (with a warning) the core one; `None` when neither loads.
+    fn decode(&self, budget: &Budget) -> Option<FlatTexture> {
+        if let Some((image, located)) = &self.basisu {
+            let chain = located
+                .as_ref()
+                .map_err(|err| anyhow::anyhow!("{err:#}"))
+                .and_then(LocatedImage::load)
+                .and_then(|stored| decode_chain(&stored, self.srgb, budget))
+                .and_then(|chain| chain.context("a KHR_texture_basisu image that is no KTX2"));
+            match chain {
+                Ok(chain) => {
+                    return Some(FlatTexture {
+                        chain,
+                        encoded: Vec::new(),
+                        sampler: self.sampler,
+                        srgb: self.srgb,
+                    })
+                }
+                Err(err) => log::warn!("glTF image {image} (KTX2): {err:#}"),
+            }
+        }
+        let (image, located) = self.fallback.as_ref()?;
+        let what = format!("glTF image {image}");
+        match located
+            .as_ref()
+            .map_err(|err| anyhow::anyhow!("{err:#}"))
+            .and_then(LocatedImage::load)
+        {
+            Ok(stored) => FlatTexture::from_stored(&stored, self.sampler, self.srgb, &what, budget),
             Err(err) => {
-                log::warn!("glTF image {}: {err:#}", image.index());
+                log::warn!("{what}: {err:#}");
                 None
             }
         }

@@ -74,6 +74,13 @@ fn basis_transcoder(bytes: &[u8]) -> anyhow::Result<Transcoder<'_>> {
         !transcoder.is_video(),
         "Basis video textures are not supported"
     );
+    let (width, height) = transcoder.base_dimensions();
+    crate::image_decode::check_dimensions(width, height)?;
+    anyhow::ensure!(
+        transcoder.level_count() <= crate::levels::full_level_count(width, height),
+        "Basis declares {} levels for a {width}x{height} texture",
+        transcoder.level_count()
+    );
     Ok(transcoder)
 }
 
@@ -104,6 +111,41 @@ fn transcode_chain(
     let (width, height) = transcoder.base_dimensions();
     super::ktx2_loader::validate_mip_chain(width, height, format, &mips)?;
     Ok(mips)
+}
+
+/// A base size and its levels, level 0 first.
+pub type SizedLevels = (u32, u32, Vec<Vec<u8>>);
+
+/// A Basis KTX2's size and levels transcoded straight to RGBA8, not through BC7; `None` when `bytes` is no Basis KTX2.
+pub fn rgba8_chain_of_ktx2(bytes: &[u8]) -> Option<anyhow::Result<SizedLevels>> {
+    let reader = ktx2::Reader::new(bytes).ok()?;
+    if !is_basis(&reader) {
+        return None;
+    }
+    Some((|| {
+        crate::ktx2_loader::check_header(&reader)?;
+        let source = basis_source(&reader)?;
+        let (width, height) = basis_transcoder(&source)?.base_dimensions();
+        Ok((width, height, rgba8_levels(&source)?))
+    })())
+}
+
+/// Every level of the Basis KTX2 `source` transcoded straight to RGBA8, for a consumer that uploads no blocks.
+pub fn rgba8_levels(source: &[u8]) -> anyhow::Result<Vec<Vec<u8>>> {
+    let transcoder = basis_transcoder(source)?;
+    let (width, height) = transcoder.base_dimensions();
+    (0..transcoder.level_count())
+        .map(|index| {
+            let level = transcode_level(&transcoder, index, TargetFormat::Rgba32)?;
+            let (w, h) = crate::levels::level_size(width, height, index);
+            anyhow::ensure!(
+                level.len() == (w as usize) * (h as usize) * 4,
+                "Basis level {index} is {} bytes, not a {w}x{h} RGBA8 level",
+                level.len()
+            );
+            Ok(level)
+        })
+        .collect()
 }
 
 /// The Basis target for an adapter: BC7, then ETC2, then ASTC 4x4; `None` decodes BC7 to RGBA8 on the CPU.
@@ -428,6 +470,31 @@ mod tests {
                 "{name}: {bc7_mean:.3} / {rgba_mean:.3} over {bound}"
             );
         }
+    }
+
+    #[test]
+    fn rgba8_levels_transcode_every_level_close_to_the_source() {
+        for (name, file) in [
+            (
+                "ETC1S",
+                &include_bytes!("../tests/assets/ramp_etc1s.ktx2")[..],
+            ),
+            (
+                "UASTC",
+                &include_bytes!("../tests/assets/ramp_uastc.ktx2")[..],
+            ),
+        ] {
+            let levels = rgba8_levels(file).unwrap_or_else(|err| panic!("{name}: {err:#}"));
+            let sizes: Vec<usize> = levels.iter().map(Vec::len).collect();
+            assert_eq!(sizes, [4096, 1024, 256, 64, 16, 4], "{name}");
+            let (mean, _) = texel_error(32, 32, &levels[0], encoded_ramp);
+            let (swapped, _) = texel_error(32, 32, &levels[0], |x, y| encoded_ramp(y, x));
+            assert!(
+                mean < 10.0 && swapped > 40.0,
+                "{name}: {mean:.3}, transposed {swapped:.3}"
+            );
+        }
+        assert!(rgba8_levels(b"not a KTX2").is_err());
     }
 
     #[test]
