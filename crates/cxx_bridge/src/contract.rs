@@ -36,6 +36,7 @@ fn every_bridge_file_keeps_the_contract() {
         all,
         [
             "default_scene_settings",
+            "frame_scene",
             "load_gltf_flat",
             "load_gltf_flat_with",
             "oxidant_version",

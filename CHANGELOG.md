@@ -13,6 +13,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-24, glTF cameras and scene framing through the bridge: BeschleunigerBallett plan B9)
+
+- **The framing moved into `kataglyphis_render_core`, and the engine frames through it.** `framing.rs` (with
+  `orbit_camera::OrbitCamera` and `fly_speed`, which `scene::camera` and `scene::fly` re-export) takes
+  `SceneCamera`s posed in world space instead of a `CpuScene` and `SceneMeta`, so it no longer reaches winit; the
+  renderer's `app::framing::frame` adapts its scene to it and frames as before. `frame_for_cpp` is the engine's
+  owner rule: a scene with a camera starts at it, one the engine's fixed pose would need a far plane past
+  `NEAR_FAR_RATIO` near planes for is fitted to its bounds, and every other scene keeps the fixed pose; `CppPose` is
+  the C++ camera's convention (the orbit's yaw + 180 and -pitch, clamped to its 89 degrees).
+- **`flat::FlatModel` carries the file's cameras, the active one and its credit.** `FlatCamera` is a camera at its
+  node's world pose; `active_camera` indexes the one `scenes[scene].extras.active_camera` names; `credit` is
+  `asset.copyright`, else the `Attribution:` and `License:` lines of AssetANT's `ATTRIBUTION.txt` beside the model
+  (`scene_meta::credit`: a regular file, its first 64 KiB, a byte-order mark dropped), which credits an OBJ too; a
+  GLB's JSON length no longer overflows `20 + length` on wasm32. `SceneMeta` moved to `kataglyphis_assets::scene_meta`.
+- **The bridge's `GltfModel` has `cameras`, `active_camera`, `credit` and the vertices' `bounds`, and `frame_scene`
+  answers with a `SceneFraming`** (eye, yaw, pitch, field of view, clip planes, fly speed and shadow distance);
+  `CameraPose` names its planes `near_plane` and `far_plane`, since windows.h defines `near` and `far`.
+
 ### Changed (2026-11-24, texture ingest in Rust: BeschleunigerBallett plan B5)
 
 - **The engine gets every texture as a full RGBA8 mip chain, decoded here.** `flat::FlatTexture` carries a

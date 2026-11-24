@@ -561,3 +561,21 @@ fn an_oversized_psd_and_an_unknown_format_get_no_slot() {
     );
     assert!(model.textures.is_empty());
 }
+
+#[test]
+fn an_obj_is_credited_by_its_folders_attribution_and_has_no_camera() {
+    let (dir, path) = write_model(&triangles_using(&["red"]), "newmtl red\nKd 1 0 0\n");
+    let model = load(&path);
+    assert_eq!(model.credit, None);
+    std::fs::write(
+        dir.path().join("ATTRIBUTION.txt"),
+        "model: a triangle\n\nLicense:     CC BY 3.0\nAttribution: (c) 2010 Somebody\n",
+    )
+    .unwrap();
+    let credited = load(&path);
+    assert_eq!(
+        credited.credit.as_deref(),
+        Some("(c) 2010 Somebody, CC BY 3.0")
+    );
+    assert!(credited.cameras.is_empty() && credited.active_camera.is_none());
+}

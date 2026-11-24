@@ -310,7 +310,7 @@ pub(crate) fn read_skins(
 }
 
 /// Cameras authored in the file (pose = their node's world transform).
-fn read_cameras(document: &gltf::Document) -> Vec<CpuCamera> {
+pub(crate) fn read_cameras(document: &gltf::Document) -> Vec<CpuCamera> {
     let mut cameras = Vec::new();
     for node in document.nodes() {
         let Some(camera) = node.camera() else {

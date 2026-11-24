@@ -2244,3 +2244,79 @@ fn one_image_under_two_samplers_is_decoded_once_and_keeps_each_sampler() {
     assert!(a.chain.level_count > 0);
     assert_ne!(a.sampler, b.sampler);
 }
+
+/// `triangle_gltf` with two camera nodes, `active` named in the scene's extras and `copyright` in its asset.
+fn camera_gltf(dir: &Path, active: &str, copyright: Option<&str>) -> PathBuf {
+    let nodes = r#"{"mesh":0},{"name":"Side","camera":0,"translation":[5,1,0],"rotation":[0,0.7071068,0,0.7071068]},
+                   {"name":"Arena","camera":1,"translation":[0,2,10]}"#;
+    let cameras = r#","cameras":[{"type":"perspective","perspective":{"yfov":0.8,"znear":0.1}},
+        {"name":"Top","type":"orthographic","orthographic":{"xmag":1,"ymag":1,"znear":0.1,"zfar":10}}]"#;
+    let path = triangle_gltf(dir, "cameras.gltf", nodes, cameras);
+    let asset = match copyright {
+        Some(text) => format!(r#""asset":{{"version":"2.0","copyright":"{text}"}}"#),
+        None => r#""asset":{"version":"2.0"}"#.to_owned(),
+    };
+    let json = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace(r#""asset":{"version":"2.0"}"#, &asset)
+        .replace(
+            r#""scenes":[{"nodes":[0]}]"#,
+            &format!(r#""scenes":[{{"nodes":[0,1,2],"extras":{{"active_camera":"{active}"}}}}]"#),
+        );
+    std::fs::write(&path, json).unwrap();
+    path
+}
+
+#[test]
+fn the_cameras_their_active_one_and_the_credit_reach_the_flat_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = camera_gltf(dir.path(), "Arena", Some("Triangle by Somebody, CC BY 4.0"));
+    let model = load_flat(path, &LoadOptions::default()).unwrap();
+    assert_eq!(model.cameras.len(), 2);
+    let (side, arena) = (&model.cameras[0], &model.cameras[1]);
+    // An unnamed camera takes its node's name; a named one keeps its own.
+    assert_eq!((side.name.as_str(), arena.name.as_str()), ("Side", "Top"));
+    assert_eq!(side.eye, [5.0, 1.0, 0.0]);
+    // Turned 90 degrees about +Y, the node's -Z looks along -X.
+    let forward = glam::Vec3::from(side.forward);
+    assert!(forward.abs_diff_eq(glam::Vec3::NEG_X, 1e-5), "{forward}");
+    assert_eq!(side.yfov_rad, Some(0.8));
+    assert_eq!(
+        (arena.eye, arena.forward, arena.yfov_rad),
+        ([0.0, 2.0, 10.0], [0.0, 0.0, -1.0], None)
+    );
+    assert_eq!(
+        model.active_camera,
+        Some(1),
+        "the scene's extras name the node Arena"
+    );
+    assert_eq!(
+        model.credit.as_deref(),
+        Some("Triangle by Somebody, CC BY 4.0")
+    );
+    let unnamed = load_flat(
+        camera_gltf(dir.path(), "Nobody", None),
+        &LoadOptions::default(),
+    )
+    .unwrap();
+    assert_eq!((unnamed.active_camera, unnamed.credit), (None, None));
+}
+
+#[test]
+fn a_scene_without_a_copyright_takes_its_folders_attribution() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("ATTRIBUTION.txt"),
+        "doc: a triangle\n\nLicense:     CC BY 3.0\nAttribution: Somebody\n",
+    )
+    .unwrap();
+    let model = flat_with("");
+    assert_eq!(
+        model.credit, None,
+        "flat_with's own folder has no attribution"
+    );
+    let path = triangle_gltf(dir.path(), "doc.gltf", r#"{"mesh":0}"#, "");
+    let credited = load_flat(path, &LoadOptions::default()).unwrap();
+    assert_eq!(credited.credit.as_deref(), Some("Somebody, CC BY 3.0"));
+    assert!(credited.cameras.is_empty() && credited.active_camera.is_none());
+}

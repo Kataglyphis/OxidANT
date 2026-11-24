@@ -12,7 +12,10 @@ use crate::gltf_loader::{self, Geometry, Imported, LoadOptions};
 use crate::image_decode;
 use crate::levels::{self, Rgba8Chain};
 use crate::parallel::{self, Budget};
-use crate::scene::{self, AlphaMode, CpuLight, CpuLightKind, CpuMaterial, CpuSampler, CpuScene};
+use crate::scene::{
+    self, AlphaMode, CpuCameraProjection, CpuLight, CpuLightKind, CpuMaterial, CpuSampler, CpuScene,
+};
+use crate::scene_meta::SceneMeta;
 use crate::skin;
 
 /// One vertex in the C++ `Vertex`'s field order, in world space.
@@ -185,6 +188,24 @@ pub struct FlatModel {
     pub lights: Vec<FlatLight>,
     /// The first directional light, which the engine adopts as its Sun: [`crate::CpuScene::take_sun`]'s rule.
     pub sun: Option<FlatLight>,
+    /// Every camera the file authors, in node order, posed in world space.
+    pub cameras: Vec<FlatCamera>,
+    /// The camera `scenes[scene].extras.active_camera` names, as an index into `cameras`.
+    pub active_camera: Option<usize>,
+    /// `asset.copyright`, else the scene folder's attribution: [`crate::scene_meta::credit`].
+    pub credit: Option<String>,
+}
+
+/// A camera at its node's world pose.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FlatCamera {
+    /// The camera's name, else its node's; empty when neither has one.
+    pub name: String,
+    pub eye: [f32; 3],
+    /// The node's -Z, a unit vector, or zero for a degenerate node.
+    pub forward: [f32; 3],
+    /// `None` for an orthographic camera.
+    pub yfov_rad: Option<f32>,
 }
 
 /// Loads `path` through the shared loader with `options` and flattens it; an error when nothing draws.
@@ -212,6 +233,9 @@ pub fn load_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::Resul
     );
     model.sun = scene::take_sun(&mut lights).map(|sun| flat_light(&sun));
     model.lights = lights.iter().map(flat_light).collect();
+    let meta = read_meta(path);
+    (model.cameras, model.active_camera) = flat_cameras(&imported.document, &meta);
+    model.credit = scene_meta_credit(path, meta.copyright);
     // One decode per image and colour space; a second sampler of it shares the decoded chain.
     let mut decode_of: HashMap<(TextureSource, bool), usize> = HashMap::new();
     let mut located: Vec<LocatedSlot> = Vec::new();
@@ -234,6 +258,65 @@ pub fn load_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::Resul
     let textures = share_decodes(decoded, &jobs, &pending);
     model.textures = renumber_slots(&mut model.materials, textures);
     Ok(model)
+}
+
+/// The file's credit and active camera; a browser build reads no file beside the model.
+fn read_meta(path: &Path) -> SceneMeta {
+    #[cfg(not(target_arch = "wasm32"))]
+    return SceneMeta::read(path);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        SceneMeta::default()
+    }
+}
+
+/// [`crate::scene_meta::credit`] where a folder can be read.
+pub(crate) fn scene_meta_credit(path: &Path, copyright: Option<String>) -> Option<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return crate::scene_meta::credit(path, copyright);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        copyright
+    }
+}
+
+/// Every authored camera at its world pose, and which of them `meta` names active.
+fn flat_cameras(document: &gltf::Document, meta: &SceneMeta) -> (Vec<FlatCamera>, Option<usize>) {
+    let world = CpuScene::compute_world_transforms(&gltf_loader::read_nodes(document));
+    let authored = gltf_loader::read_cameras(document);
+    let cameras: Vec<FlatCamera> = authored
+        .iter()
+        .map(|camera| {
+            let pose = world.get(camera.node).copied().unwrap_or(Mat4::NAN);
+            let node_name = document
+                .nodes()
+                .nth(camera.node)
+                .and_then(|node| node.name());
+            FlatCamera {
+                name: camera
+                    .name
+                    .as_deref()
+                    .or(node_name)
+                    .unwrap_or_default()
+                    .to_owned(),
+                eye: pose.transform_point3(Vec3::ZERO).to_array(),
+                forward: pose
+                    .transform_vector3(Vec3::NEG_Z)
+                    .normalize_or_zero()
+                    .to_array(),
+                yfov_rad: match camera.projection {
+                    CpuCameraProjection::Perspective { yfov_rad, .. } => Some(yfov_rad),
+                    CpuCameraProjection::Orthographic { .. } => None,
+                },
+            }
+        })
+        .collect();
+    let active = meta
+        .active_camera_node
+        .and_then(|node| authored.iter().position(|camera| camera.node == node));
+    (cameras, active)
 }
 
 /// What every node reads: the file, the load options and each skin's joint matrices at rest.

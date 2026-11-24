@@ -17,9 +17,12 @@
 )]
 
 pub mod clouds;
+pub mod fly_speed;
+pub mod framing;
 pub mod frustum;
 pub mod lens;
 pub mod model_transform;
+pub mod orbit_camera;
 pub mod shadow_settings;
 pub mod sun;
 pub mod viewport;

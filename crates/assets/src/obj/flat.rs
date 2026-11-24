@@ -50,6 +50,8 @@ pub fn load_obj_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::R
     let mut model = FlatModel {
         materials,
         textures,
+        // OBJ has no copyright field: only the folder's attribution credits it.
+        credit: crate::flat::scene_meta_credit(path, None),
         ..FlatModel::default()
     };
     append_groups(&mut model, &mesh, options);

@@ -32,6 +32,7 @@ pub mod levels;
 pub mod obj;
 mod parallel;
 pub mod scene;
+pub mod scene_meta;
 pub mod skin;
 
 pub use gltf_loader::{

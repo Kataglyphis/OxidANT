@@ -1,60 +1,11 @@
-//! Where the camera starts on a scene: the camera its author left active, else its first camera, else its bounds.
+//! Where the camera starts on a scene: kataglyphis_render_core's framing over the scene's cameras and metadata.
 
 use glam::{Mat4, Vec3};
 
 use super::scene_meta::SceneMeta;
-use crate::render::shadow_settings::{DEFAULT_SHADOW_DISTANCE, SHADOW_DISTANCE_RANGE};
 use crate::scene::camera::OrbitCamera;
-use crate::scene::fly;
-use crate::scene::{CpuCamera, CpuCameraProjection, CpuScene};
-
-/// Far over near: more and a 32-bit depth buffer z-fights at an 8 km scene's arena.
-pub const NEAR_FAR_RATIO: f32 = 50_000.0;
-/// The far plane's room beyond the scene's farthest point, so zooming out does not clip it at once.
-const FAR_MARGIN: f32 = 2.0;
-/// The bounds fit's room around the scene.
-const FIT_MARGIN: f32 = 1.1;
-/// The field-of-view slider's range, which an authored camera is held to.
-const FOV_RANGE_DEG: (f32, f32) = (20.0, 110.0);
-/// At most half the start view's distance to its target per second, so a close start view flies slowly.
-const FLY_SPEED_PER_VIEW_DISTANCE: f32 = 0.5;
-/// Shadows reach twice the start view's distance to its target, so the subject and what lies behind it are shadowed.
-const SHADOW_DISTANCE_PER_VIEW_DISTANCE: f32 = 2.0;
-
-/// Which framing a scene got.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FramingSource {
-    /// `scenes[scene].extras.active_camera`.
-    ActiveCamera(String),
-    /// The first camera the file authors.
-    FirstCamera,
-    Bounds,
-    /// No bounds: the shell's own camera.
-    Unchanged,
-}
-
-/// A scene's start view and the speed the fly camera crosses it at.
-#[derive(Clone, Debug)]
-pub struct Framing {
-    pub camera: OrbitCamera,
-    /// World units per second.
-    pub fly_speed: f32,
-    /// The orbit radius the wheel and a pinch keep to.
-    pub radius_range: (f32, f32),
-    /// How far the shadow cascades reach.
-    pub shadow_distance: f32,
-    pub source: FramingSource,
-}
-
-impl Framing {
-    /// An authored camera is a deliberate view, so only a bounds fit may spin until the first drag.
-    pub fn auto_orbit(&self) -> bool {
-        matches!(
-            self.source,
-            FramingSource::Bounds | FramingSource::Unchanged
-        )
-    }
-}
+use crate::scene::{CpuCameraProjection, CpuScene};
+pub use kataglyphis_render_core::framing::{Framing, FramingSource, SceneCamera, NEAR_FAR_RATIO};
 
 /// The start view of `scene` whose world bounds are `bounds`; `base` lends a bounds fit its direction and field of view.
 pub fn frame(
@@ -63,153 +14,35 @@ pub fn frame(
     bounds: Option<(Vec3, Vec3)>,
     base: &OrbitCamera,
 ) -> Framing {
-    let sphere = bounds.and_then(bounding_sphere);
-    let bounds = bounds.filter(|_| sphere.is_some());
-    let active = meta
-        .active_camera_node
-        .and_then(|node| scene.cameras.iter().find(|camera| camera.node == node));
-    let authored = active
-        .map(|camera| (camera, active_source(meta)))
-        .or_else(|| {
-            scene
-                .cameras
-                .first()
-                .map(|camera| (camera, FramingSource::FirstCamera))
-        });
-    let from_camera = authored
-        .and_then(|(camera, source)| Some((at_camera(scene, camera, sphere, base)?, source)));
-    let (mut camera, source) = match (from_camera, bounds) {
-        (Some(found), _) => found,
-        (None, Some(bounds)) => (fit_bounds(bounds, base), FramingSource::Bounds),
-        (None, None) => (base.clone(), FramingSource::Unchanged),
-    };
-    if let Some((centre, half)) = sphere {
-        clip_planes(&mut camera, centre, half);
-    }
-    let fly_speed = fly_speed(bounds, camera.radius);
-    Framing {
-        radius_range: radius_range(&camera),
-        shadow_distance: shadow_distance(camera.radius),
-        camera,
-        fly_speed,
-        source,
-    }
+    let world = CpuScene::compute_world_transforms(&scene.nodes);
+    let cameras = scene_cameras(scene, &world);
+    let active = meta.active_camera_node.and_then(|node| {
+        let index = scene
+            .cameras
+            .iter()
+            .position(|camera| camera.node == node)?;
+        Some((index, meta.active_camera.clone().unwrap_or_default()))
+    });
+    kataglyphis_render_core::framing::frame(&cameras, active, bounds, base)
 }
 
-fn active_source(meta: &SceneMeta) -> FramingSource {
-    FramingSource::ActiveCamera(meta.active_camera.clone().unwrap_or_default())
-}
-
-/// The bounds' centre and half diagonal; `None` for empty or non-finite bounds.
-fn bounding_sphere((min, max): (Vec3, Vec3)) -> Option<(Vec3, f32)> {
-    let half = (max - min).length() * 0.5;
-    (min.is_finite() && max.is_finite() && min.cmple(max).all() && half > 0.0)
-        .then(|| ((min + max) * 0.5, half))
-}
-
-/// The orbit camera at `camera`'s pose: its eye, its view direction, a target ahead of it at the scene's depth.
-fn at_camera(
-    scene: &CpuScene,
-    camera: &CpuCamera,
-    sphere: Option<(Vec3, f32)>,
-    base: &OrbitCamera,
-) -> Option<OrbitCamera> {
-    let world: Mat4 = *CpuScene::compute_world_transforms(&scene.nodes).get(camera.node)?;
-    let eye = world.transform_point3(Vec3::ZERO);
-    let forward = world.transform_vector3(Vec3::NEG_Z).normalize_or_zero();
-    if !eye.is_finite() || forward == Vec3::ZERO {
-        return None;
-    }
-    let centre = sphere.map_or(eye + forward, |(centre, _)| centre);
-    let ahead = (centre - eye).dot(forward);
-    // A camera that looks away from the scene's centre orbits a point as far ahead as the centre is away.
-    let distance = if ahead > 1e-3 {
-        ahead
-    } else {
-        (centre - eye).length().max(1.0)
-    };
-    let toward_eye = -forward;
-    let fov_y_deg = match camera.projection {
-        CpuCameraProjection::Perspective { yfov_rad, .. } if yfov_rad.is_finite() => yfov_rad
-            .to_degrees()
-            .clamp(FOV_RANGE_DEG.0, FOV_RANGE_DEG.1),
-        _ => base.fov_y_deg,
-    };
-    Some(OrbitCamera {
-        target: eye + forward * distance,
-        radius: distance,
-        yaw_deg: toward_eye.z.atan2(toward_eye.x).to_degrees(),
-        pitch_deg: toward_eye.y.clamp(-1.0, 1.0).asin().to_degrees(),
-        fov_y_deg,
-        ..base.clone()
-    })
-}
-
-/// `base` turned on the bounds' centre and moved back until every corner is in view, the narrower axis vertical.
-fn fit_bounds((min, max): (Vec3, Vec3), base: &OrbitCamera) -> OrbitCamera {
-    let centre = (min + max) * 0.5;
-    let probe = OrbitCamera {
-        target: Vec3::ZERO,
-        radius: 1.0,
-        ..base.clone()
-    };
-    let toward_eye = probe.eye().normalize_or_zero();
-    let view = probe.view();
-    let tan_half = (base.fov_y_deg.to_radians() * 0.5).tan().max(1e-3);
-    let mut radius: f32 = 0.0;
-    for corner in 0..8 {
-        let pick = |bit: usize, low: f32, high: f32| if corner & bit == 0 { low } else { high };
-        let offset = Vec3::new(
-            pick(1, min.x, max.x),
-            pick(2, min.y, max.y),
-            pick(4, min.z, max.z),
-        ) - centre;
-        let in_view = view.transform_vector3(offset);
-        let spread = in_view.x.abs().max(in_view.y.abs());
-        radius = radius.max(offset.dot(toward_eye) + spread / tan_half);
-    }
-    OrbitCamera {
-        target: centre,
-        radius: (radius * FIT_MARGIN).max(1e-3),
-        ..base.clone()
-    }
-}
-
-/// Far past the scene's farthest point, near a fixed ratio closer, so depth precision holds at every scale.
-fn clip_planes(camera: &mut OrbitCamera, centre: Vec3, half: f32) {
-    let reach = (camera.eye() - centre).length() + half;
-    camera.far = (reach * FAR_MARGIN).max(1e-2);
-    camera.near = camera.far / NEAR_FAR_RATIO;
-}
-
-/// From twice the near plane to half the far, the default camera's 0.2 to 500 m, always holding the start radius.
-fn radius_range(camera: &OrbitCamera) -> (f32, f32) {
-    let low = (camera.near * 2.0).min(camera.radius);
-    let high = (camera.far * 0.5).max(camera.radius);
-    (low, high)
-}
-
-/// Never under the C++ 60 m its scenes were tuned for, more for a scene viewed from farther away.
-fn shadow_distance(view_distance: f32) -> f32 {
-    let fitted = view_distance * SHADOW_DISTANCE_PER_VIEW_DISTANCE;
-    let distance = if fitted.is_finite() {
-        fitted.max(DEFAULT_SHADOW_DISTANCE)
-    } else {
-        DEFAULT_SHADOW_DISTANCE
-    };
-    distance.clamp(*SHADOW_DISTANCE_RANGE.start(), *SHADOW_DISTANCE_RANGE.end())
-}
-
-/// The scene's own speed, [`fly::speed_for_bounds`], at most half the start view's distance per second.
-fn fly_speed(bounds: Option<(Vec3, Vec3)>, view_distance: f32) -> f32 {
-    let scene = fly::speed_for_bounds(bounds);
-    let close = view_distance * FLY_SPEED_PER_VIEW_DISTANCE;
-    let speed = if close.is_finite() && close > 0.0 {
-        scene.min(close)
-    } else {
-        scene
-    };
-    speed.clamp(*fly::SPEED_RANGE.start(), *fly::SPEED_RANGE.end())
+/// Each camera at its node's world pose; a camera whose node is missing looks nowhere, so the framing skips it.
+fn scene_cameras(scene: &CpuScene, world: &[Mat4]) -> Vec<SceneCamera> {
+    scene
+        .cameras
+        .iter()
+        .map(|camera| {
+            let pose = world.get(camera.node).copied().unwrap_or(Mat4::NAN);
+            SceneCamera {
+                eye: pose.transform_point3(Vec3::ZERO),
+                forward: pose.transform_vector3(Vec3::NEG_Z),
+                yfov_rad: match camera.projection {
+                    CpuCameraProjection::Perspective { yfov_rad, .. } => Some(yfov_rad),
+                    CpuCameraProjection::Orthographic { .. } => None,
+                },
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -218,7 +51,11 @@ mod tests {
 
     use super::*;
     use crate::scene::controller::{OrbitController, DEFAULT_RADIUS_RANGE};
-    use crate::scene::CpuNode;
+    use crate::scene::{CpuCamera, CpuNode};
+    use kataglyphis_render_core::framing::shadow_distance;
+    use kataglyphis_render_core::shadow_settings::{
+        DEFAULT_SHADOW_DISTANCE, SHADOW_DISTANCE_RANGE,
+    };
 
     fn node(translation: Vec3, rotation: Quat) -> CpuNode {
         CpuNode {

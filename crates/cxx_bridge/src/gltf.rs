@@ -1,11 +1,13 @@
 //! The model loader for the engine: `kataglyphis_assets::flat`'s arrays for a glTF or an OBJ, in the C++ namespace `kataglyphis::oxidant::gltf`.
 
+use glam::Vec3;
 use kataglyphis_assets::flat::{
-    load_flat, FlatLight, FlatMaterial, FlatModel, FlatRange, FlatTexture, FlatVertex,
+    load_flat, FlatCamera, FlatLight, FlatMaterial, FlatModel, FlatRange, FlatTexture, FlatVertex,
 };
 use kataglyphis_assets::obj::{is_obj_path, load_obj_flat};
 use kataglyphis_assets::scene::{CpuSampler, CpuWrap};
 use kataglyphis_assets::LoadOptions;
+use kataglyphis_render_core::framing::{frame_for_cpp, CppPose, FramingSource, SceneCamera};
 
 use crate::guarded;
 
@@ -104,6 +106,48 @@ pub mod ffi {
         cos_outer: f32,
     }
 
+    /// A camera the file authors, at its node's world pose; `yfov_rad` 0 for an orthographic one.
+    #[derive(Debug, PartialEq)]
+    struct GltfCamera {
+        name: String,
+        eye: [f32; 3],
+        /// The way it looks, a unit vector.
+        forward: [f32; 3],
+        yfov_rad: f32,
+    }
+
+    /// The vertices' world-space box; `valid` false for a model without vertices.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct GltfBounds {
+        valid: bool,
+        min: [f32; 3],
+        max: [f32; 3],
+    }
+
+    /// The C++ fly camera: front = (cos pitch cos yaw, sin pitch, cos pitch sin yaw), angles and the field of view in
+    /// degrees, the fly speed in world units per second.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct CameraPose {
+        eye: [f32; 3],
+        yaw_deg: f32,
+        pitch_deg: f32,
+        fov_y_deg: f32,
+        // Not `near` and `far`, which windows.h defines as macros.
+        near_plane: f32,
+        far_plane: f32,
+        fly_speed: f32,
+        shadow_distance: f32,
+    }
+
+    /// `frame_scene`'s answer; `source` 0 keeps the fixed pose, 1 the active camera, 2 the first camera, 3 the bounds.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct SceneFraming {
+        framed: bool,
+        source: u8,
+        /// The fixed pose itself when `framed` is false.
+        pose: CameraPose,
+    }
+
     /// The parse result; `ok` false carries `error` and empty arrays, since the engine builds without exceptions.
     #[derive(Debug, PartialEq)]
     struct GltfModel {
@@ -122,6 +166,12 @@ pub mod ffi {
         has_sun: bool,
         /// Meaningful only with `has_sun`; all zero otherwise.
         sun: GltfLight,
+        cameras: Vec<GltfCamera>,
+        /// The camera `scenes[scene].extras.active_camera` names, an index into `cameras`, or -1.
+        active_camera: i32,
+        /// `asset.copyright`, else the `ATTRIBUTION.txt` beside the model; empty for none.
+        credit: String,
+        bounds: GltfBounds,
     }
 
     /// How the loader builds geometry; each field's zero is its default, so `GltfLoadOptions{}` is `load_gltf_flat`'s.
@@ -136,6 +186,14 @@ pub mod ffi {
         fn load_gltf_flat(path: &[u8]) -> GltfModel;
         /// `load_gltf_flat` with `options`, which the engine reads once at its start; the loader reads no environment.
         fn load_gltf_flat_with(path: &[u8], options: &GltfLoadOptions) -> GltfModel;
+        /// Where the camera starts on a loaded scene: framed only at its own camera, or at its bounds when `fixed`
+        /// would need a far plane past 50 000 near planes; otherwise `fixed`, unframed.
+        fn frame_scene(
+            cameras: &[GltfCamera],
+            active_camera: i32,
+            bounds: &GltfBounds,
+            fixed: &CameraPose,
+        ) -> SceneFraming;
     }
 }
 
@@ -187,6 +245,7 @@ fn failed(error: String) -> ffi::GltfModel {
 
 // Each map keeps its element's size, so collect reuses the allocation instead of copying the arrays again.
 fn to_ffi(model: FlatModel, ok: bool, error: String) -> ffi::GltfModel {
+    let bounds = bounds(&model.vertices);
     ffi::GltfModel {
         ok,
         error,
@@ -199,6 +258,119 @@ fn to_ffi(model: FlatModel, ok: bool, error: String) -> ffi::GltfModel {
         lights: model.lights.into_iter().map(light).collect(),
         has_sun: model.sun.is_some(),
         sun: model.sun.map_or_else(no_light, light),
+        bounds,
+        cameras: model.cameras.into_iter().map(camera).collect(),
+        active_camera: model
+            .active_camera
+            .and_then(|index| i32::try_from(index).ok())
+            .unwrap_or(-1),
+        credit: model.credit.unwrap_or_default(),
+    }
+}
+
+fn camera(c: FlatCamera) -> ffi::GltfCamera {
+    ffi::GltfCamera {
+        name: c.name,
+        eye: c.eye,
+        forward: c.forward,
+        yfov_rad: c.yfov_rad.unwrap_or(0.0),
+    }
+}
+
+fn bounds(vertices: &[FlatVertex]) -> ffi::GltfBounds {
+    let (min, max) = vertices.iter().fold(
+        (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+        |(min, max), v| {
+            let p = Vec3::from(v.position);
+            (min.min(p), max.max(p))
+        },
+    );
+    ffi::GltfBounds {
+        valid: !vertices.is_empty() && min.is_finite() && max.is_finite(),
+        min: min.to_array(),
+        max: max.to_array(),
+    }
+}
+
+/// Never unwinds into C++: a panic keeps the fixed pose.
+pub fn frame_scene(
+    cameras: &[ffi::GltfCamera],
+    active_camera: i32,
+    bounds: &ffi::GltfBounds,
+    fixed: &ffi::CameraPose,
+) -> ffi::SceneFraming {
+    guarded(
+        || framing(cameras, active_camera, bounds, fixed),
+        |_| unframed(fixed),
+    )
+}
+
+fn framing(
+    cameras: &[ffi::GltfCamera],
+    active_camera: i32,
+    bounds: &ffi::GltfBounds,
+    fixed: &ffi::CameraPose,
+) -> ffi::SceneFraming {
+    let scene: Vec<SceneCamera> = cameras
+        .iter()
+        .map(|c| SceneCamera {
+            eye: Vec3::from(c.eye),
+            forward: Vec3::from(c.forward),
+            yfov_rad: (c.yfov_rad > 0.0).then_some(c.yfov_rad),
+        })
+        .collect();
+    let active = usize::try_from(active_camera)
+        .ok()
+        .and_then(|index| Some((index, cameras.get(index)?.name.clone())));
+    let box_ = bounds
+        .valid
+        .then(|| (Vec3::from(bounds.min), Vec3::from(bounds.max)));
+    match frame_for_cpp(&scene, active, box_, &cpp_pose(fixed)) {
+        Some((pose, source)) => ffi::SceneFraming {
+            framed: true,
+            source: match source {
+                FramingSource::ActiveCamera(_) => 1,
+                FramingSource::FirstCamera => 2,
+                FramingSource::Bounds => 3,
+                FramingSource::Unchanged => 0,
+            },
+            pose: ffi_pose(&pose),
+        },
+        None => unframed(fixed),
+    }
+}
+
+fn unframed(fixed: &ffi::CameraPose) -> ffi::SceneFraming {
+    ffi::SceneFraming {
+        framed: false,
+        source: 0,
+        pose: *fixed,
+    }
+}
+
+fn cpp_pose(p: &ffi::CameraPose) -> CppPose {
+    CppPose {
+        eye: Vec3::from(p.eye),
+        yaw_deg: p.yaw_deg,
+        pitch_deg: p.pitch_deg,
+        fov_y_deg: p.fov_y_deg,
+        near: p.near_plane,
+        far: p.far_plane,
+        fly_speed: p.fly_speed,
+        shadow_distance: p.shadow_distance,
+    }
+}
+
+fn ffi_pose(p: &CppPose) -> ffi::CameraPose {
+    ffi::CameraPose {
+        eye: p.eye.to_array(),
+        yaw_deg: p.yaw_deg,
+        pitch_deg: p.pitch_deg,
+        fov_y_deg: p.fov_y_deg,
+        near_plane: p.near,
+        far_plane: p.far,
+        fly_speed: p.fly_speed,
+        shadow_distance: p.shadow_distance,
     }
 }
 
@@ -517,6 +689,127 @@ mod tests {
         assert!(!model.ok);
         assert_eq!(model.error, "the glTF loader panicked: broken accessor");
         assert!(model.vertices.is_empty());
+    }
+
+    /// The C++ Release start pose, Sponza's.
+    fn release_pose() -> ffi::CameraPose {
+        ffi::CameraPose {
+            eye: [0.0, 2.0, 0.0],
+            yaw_deg: -90.0,
+            pitch_deg: 0.0,
+            fov_y_deg: 45.0,
+            near_plane: 0.1,
+            far_plane: 4000.0,
+            fly_speed: 10.0,
+            shadow_distance: 60.0,
+        }
+    }
+
+    #[test]
+    fn the_cameras_the_credit_and_the_bounds_cross_the_bridge() {
+        let dir = tempfile::tempdir().unwrap();
+        let scene = triangle(
+            dir.path(),
+            r#",{"name":"Arena","camera":0,"translation":[0,1,5]}"#,
+            r#""scene":0,"scenes":[{"nodes":[0,1],"extras":{"active_camera":"Arena"}}],"#,
+            r#","cameras":[{"type":"perspective","perspective":{"yfov":0.6,"znear":0.1}}]"#,
+        );
+        let model = load_gltf_flat(&scene);
+        assert!(model.ok, "{}", model.error);
+        assert_eq!(model.cameras.len(), 1);
+        let arena = &model.cameras[0];
+        assert_eq!(
+            (
+                arena.name.as_str(),
+                arena.eye,
+                arena.forward,
+                arena.yfov_rad
+            ),
+            ("Arena", [0.0, 1.0, 5.0], [0.0, 0.0, -1.0], 0.6)
+        );
+        assert_eq!(model.active_camera, 0);
+        assert_eq!(
+            model.bounds,
+            ffi::GltfBounds {
+                valid: true,
+                min: [0.0; 3],
+                max: [1.0, 1.0, 0.0]
+            }
+        );
+        assert!(model.credit.is_empty());
+        std::fs::write(
+            dir.path().join("ATTRIBUTION.txt"),
+            "License:     CC BY 4.0\nAttribution: Somebody\n",
+        )
+        .unwrap();
+        assert_eq!(load_gltf_flat(&scene).credit, "Somebody, CC BY 4.0");
+        let failed = load_gltf_flat(b"/no/such/model.glb");
+        assert_eq!((failed.active_camera, failed.bounds.valid), (-1, false));
+    }
+
+    #[test]
+    fn a_scene_is_framed_at_its_camera_and_otherwise_keeps_the_fixed_pose() {
+        let arena = arena_camera();
+        let sponza = ffi::GltfBounds {
+            valid: true,
+            min: [-19.2, -1.3, -11.9],
+            max: [18.0, 15.4, 11.2],
+        };
+        let framed = frame_scene(&[arena], 0, &sponza, &release_pose());
+        assert!(framed.framed);
+        assert_eq!(framed.source, 1);
+        // The orbit camera places the eye from its target, a float round trip away from the authored one.
+        assert!(Vec3::from(framed.pose.eye).abs_diff_eq(Vec3::new(-58.0, 34.0, 36.0), 1e-3));
+        // The C++ convention: yaw + 180 and -pitch of the orbit's, which looks along the camera's -Z.
+        let (yaw, pitch) = (
+            framed.pose.yaw_deg.to_radians(),
+            framed.pose.pitch_deg.to_radians(),
+        );
+        let front = Vec3::new(
+            pitch.cos() * yaw.cos(),
+            pitch.sin(),
+            pitch.cos() * yaw.sin(),
+        );
+        assert!(
+            front.abs_diff_eq(Vec3::from(arena_forward()), 1e-4),
+            "{front}"
+        );
+        assert!((framed.pose.fov_y_deg - 0.7427_f32.to_degrees()).abs() < 1e-3);
+        let kept = frame_scene(&[], -1, &sponza, &release_pose());
+        assert_eq!(
+            kept,
+            ffi::SceneFraming {
+                framed: false,
+                source: 0,
+                pose: release_pose()
+            }
+        );
+        let city = ffi::GltfBounds {
+            valid: true,
+            min: [-4000.0, -11.25, -4000.0],
+            max: [4000.0, 58.6, 4000.0],
+        };
+        let fitted = frame_scene(&[], -1, &city, &release_pose());
+        assert_eq!((fitted.framed, fitted.source), (true, 3));
+        assert!(fitted.pose.far_plane / fitted.pose.near_plane <= 50_001.0);
+        // An index past the cameras falls back to the first.
+        assert_eq!(
+            frame_scene(&[arena_camera()], 7, &sponza, &release_pose()).source,
+            2
+        );
+    }
+
+    fn arena_forward() -> [f32; 3] {
+        Vec3::new(0.783, -0.403, -0.474).normalize().to_array()
+    }
+
+    fn arena_camera() -> ffi::GltfCamera {
+        ffi::GltfCamera {
+            name: "Kamera_Arena".into(),
+            eye: [-58.0, 34.0, 36.0],
+            forward: arena_forward(),
+            yfov_rad: 0.7427,
+        }
     }
 
     #[test]
