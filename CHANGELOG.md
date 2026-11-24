@@ -13,6 +13,30 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-24, a preprocess and decode crate without ORT: roadmap step 1)
+
+- **`crates/vision_core` (`kataglyphis_vision_core`)**, without dependencies, ORT, tract or environment reads, takes
+  `preprocess.rs`, `postprocess.rs`, `ImageMapping` and `Detection` out of `kataglyphis_inference` and
+  `kataglyphis_core`, which re-export them under their old paths (`person_detection::preprocess`,
+  `person_detection::postprocess`, `detection::Detection`). It forbids unsafe code and denies the clippy panic lints,
+  as `kataglyphis_render_core` does, so a bridge can link it for AccelerANTgine's detector.
+- **`preprocess_frame_into`** takes a strided RGB, BGR or RGBA `Frame` (row stride, 0 for packed rows, and plane
+  offset) and refuses what `yolo_math.cpp:331-346` refuses: a zero-size frame or input, a stride shorter than a row,
+  a last row past the buffer and every size past `checked_mul`, each a variant of the typed `PreprocessError`. The
+  packed-RGBA functions the detector calls stay, on top of it.
+- **`parse_yolo_like_detections` takes the class count per call** (the detector passes the 80 COCO names) and fails
+  with the typed `DecodeError`; a value count past `usize` is an error, no longer an unchecked product.
+- **The contract cases replay on their raw bytes.** `tests/contract.rs` hands each tensor case's bytes, stride and
+  offset included, to `preprocess_frame_into` instead of a repacked RGBA copy; the four full-size frames match their
+  SHA-256 bit for bit, and so do their RGB frames read as BGR with red and blue swapped; the decode cases take the
+  class count from the contract's `class_range`.
+- **`tests/preprocess_proptest.rs`** is AccelerANTgine's `Test/fuzz/preprocess_fuzz.cpp` as a proptest: 2048 frames of
+  any claimed geometry, and whatever the entry point accepts equals the slow nearest-floor sampler bit for bit.
+- The five `consumer.oxidant-inference-*` mutation recipes follow the code into the new crate, and four new ones
+  guard the BGR swap, the last-row bound, the stride bound and the class count. The crate joins the function-size
+  scopes, the coverage floors (90 %, measured 180 of 199 lines; inference stays at 90.6 %), the licence policy, `AGENTS.md`, `docs/crates.md` and `docs/testing.md`;
+  `kataglyphis_inference` drops its `serde_json` and `sha2` dev-dependencies with the tests that moved.
+
 ### Changed (2026-11-24, typed text events for the bundled regeneration: roadmap step 3)
 
 - **`TextEvent` is typed** (owner D12 to D14). `kind` is `TextEventKind` (`piece`, `done`, `failed`) and

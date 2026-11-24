@@ -5180,6 +5180,7 @@ version = "3.0.0"
 dependencies = [
  "env_logger",
  "jiff",
+ "kataglyphis_vision_core",
  "log",
 ]
 
@@ -5247,12 +5248,11 @@ dependencies = [
  "criterion",
  "image 0.25.10",
  "kataglyphis_core",
+ "kataglyphis_vision_core",
  "libc",
  "libloading 0.9.0",
  "log",
  "ort",
- "serde_json",
- "sha2",
  "tract-onnx",
 ]
 
@@ -5331,6 +5331,15 @@ dependencies = [
  "log",
  "serde_json",
  "ureq",
+]
+
+[[package]]
+name = "kataglyphis_vision_core"
+version = "3.0.0"
+dependencies = [
+ "proptest",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

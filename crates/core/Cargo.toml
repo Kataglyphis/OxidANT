@@ -8,6 +8,8 @@ license.workspace = true
 log = { workspace = true }
 env_logger = { workspace = true }
 jiff = { workspace = true }
+# Detection lives there, so the preprocess and decode crate needs nothing of this one.
+kataglyphis_vision_core = { path = "../vision_core" }
 
 [lints]
 workspace = true

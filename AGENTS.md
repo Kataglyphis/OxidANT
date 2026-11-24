@@ -32,7 +32,7 @@ dependencies](#targets-and-their-system-dependencies)). Every crate, what `src/`
 `tests/` hold, and the three documented vendored crates under `third_party/`:
 [`docs/crates.md`](docs/crates.md). The crates are `crates/assets`, `crates/burn_demos`, `crates/cli`, `crates/core`,
 `crates/cxx_bridge`, `crates/esp32`, `crates/esp32-protocol`, `crates/gui`, `crates/inference`,
-`crates/media`, `crates/observant`, `crates/render_core`, `crates/telemetry`, `crates/text` and `crates/webgpu_renderer`;
+`crates/media`, `crates/observant`, `crates/render_core`, `crates/telemetry`, `crates/text`, `crates/vision_core` and `crates/webgpu_renderer`;
 the root package's modules are `src/api` (the flutter_rust_bridge surface) and `src/platform`. The tooling submodule, `third_party/ANTfrastructure`,
 is **the ground truth for every container and PowerShell concern**; read § 2 before
 writing any helper.

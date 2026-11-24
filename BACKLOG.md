@@ -59,9 +59,9 @@ its open work is here.
 - [ ] **Oxidation roadmap: this repo's steps** (M each, ★★; owner D2 to D17, 2026-11-21, all as recommended). The
       oxidation review keeps OxidANT the home of engines and algorithms (text generation, decode, preprocessing, stream
       and think parsing) and leaves logic on a consumer's own ORT environment to the hub (D15). In order:
-      (1) a preprocess and decode crate without ORT, tract or
-      environment reads: `preprocess.rs`, `postprocess.rs` and `ImageMapping` move and stay re-exported under their old
-      paths, an entry point takes strided RGB, BGR and RGBA frames and refuses what `yolo_math.cpp:331-346` refuses,
+      (1) **done 2026-11-24:** a preprocess and decode crate without ORT, tract or environment reads
+      (`crates/vision_core`): `preprocess.rs`, `postprocess.rs` and `ImageMapping` move and stay re-exported under their
+      old paths, an entry point takes strided RGB, BGR and RGBA frames and refuses what `yolo_math.cpp:331-346` refuses,
       `checked_mul` holds the buffer size, a zero-size frame is refused, errors are typed, the class count comes per
       call, the contract cases replay on their raw bytes, `preprocess_fuzz.cpp` becomes a proptest, and full-size frames
       compare bit for bit; (2) **done 2026-11-23:** `GenerationResult::no_answer(budget_knob)`,

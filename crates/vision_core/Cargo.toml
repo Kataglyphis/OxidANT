@@ -1,0 +1,18 @@
+[package]
+name = "kataglyphis_vision_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The detector's shared CPU half without ORT, tract or environment reads: strided frames to the NCHW tensor, the raw rows to detections."
+
+[dependencies]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest = { workspace = true }
+# Reads ModelANT's inference-v1.json, the cases every detector of the family replays.
+serde_json = "1"
+# sha2: ModelANT's full-size frames compare by the SHA-256 of the tensor (hub CON288 (e)).
+sha2 = "0.10"

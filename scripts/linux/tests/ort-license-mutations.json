@@ -400,48 +400,84 @@
  },
  {
   "id": "consumer.oxidant-inference-red-blue-swapped",
-  "target": "crates/inference/src/person_detection/preprocess.rs",
-  "find": "            *r = UNIT_FLOATS[row[offset] as usize];\n            *g = UNIT_FLOATS[row[offset + 1] as usize];\n            *b = UNIT_FLOATS[row[offset + 2] as usize];\n",
-  "replace": "            *r = UNIT_FLOATS[row[offset + 2] as usize];\n            *g = UNIT_FLOATS[row[offset + 1] as usize];\n            *b = UNIT_FLOATS[row[offset] as usize];\n",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-inference-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_inference --lib",
-  "timeout": 1800,
+  "target": "crates/vision_core/src/preprocess.rs",
+  "find": "            Self::Rgb | Self::Rgba => (0, 2),\n",
+  "replace": "            Self::Rgb | Self::Rgba => (2, 0),\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core",
+  "timeout": 900,
   "why": "The model reads RGB planes; a BGR input still finds boxes on most photos, so only the contract's exact floats notice."
  },
  {
   "id": "consumer.oxidant-inference-threshold-ignored",
-  "target": "crates/inference/src/person_detection/postprocess.rs",
+  "target": "crates/vision_core/src/postprocess.rs",
   "find": "        if !score.is_finite() || score < score_threshold {\n",
   "replace": "        if !score.is_finite() {\n",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-inference-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_inference --lib",
-  "timeout": 1800,
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core",
+  "timeout": 900,
   "why": "A row under the score threshold is no detection: the settings page's score would change nothing."
  },
  {
   "id": "consumer.oxidant-inference-nan-corner-kept",
-  "target": "crates/inference/src/person_detection/postprocess.rs",
+  "target": "crates/vision_core/src/postprocess.rs",
   "find": "        if ![x1, y1, x2, y2].iter().all(|corner| corner.is_finite()) {\n            continue;\n        }\n",
   "replace": "",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-inference-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_inference --lib",
-  "timeout": 1800,
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core",
+  "timeout": 900,
   "why": "A NaN corner survives every clamp and reaches the overlay as a box that cannot be drawn."
  },
  {
   "id": "consumer.oxidant-inference-corners-unclamped",
-  "target": "crates/inference/src/person_detection/postprocess.rs",
+  "target": "crates/vision_core/src/postprocess.rs",
   "find": "            x1: x1.clamp(0.0, mapping.src_w as f32),\n            y1: y1.clamp(0.0, mapping.src_h as f32),\n            x2: x2.clamp(0.0, mapping.src_w as f32),\n            y2: y2.clamp(0.0, mapping.src_h as f32),\n",
   "replace": "            x1,\n            y1,\n            x2,\n            y2,\n",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-inference-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_inference --lib",
-  "timeout": 1800,
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core",
+  "timeout": 900,
   "why": "A box is held inside the frame it was found in; a corner past the edge breaks the privacy filter and the drawing."
  },
  {
   "id": "consumer.oxidant-inference-one-scale-for-both-axes",
-  "target": "crates/inference/src/person_detection/preprocess.rs",
+  "target": "crates/vision_core/src/preprocess.rs",
   "find": "    let y = (y - mapping.pad_y) / mapping.scale_y.max(1e-6);\n",
   "replace": "    let y = (y - mapping.pad_y) / mapping.scale_x.max(1e-6);\n",
-  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-inference-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_inference --lib",
-  "timeout": 1800,
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core",
+  "timeout": 900,
   "why": "A stretched input scales x and y apart; one scale for both puts every box of a non-square camera in the wrong rows."
+ },
+ {
+  "id": "consumer.oxidant-vision-bgr-read-as-rgb",
+  "target": "crates/vision_core/src/preprocess.rs",
+  "find": "            Self::Bgr => (2, 0),\n",
+  "replace": "            Self::Bgr => (0, 2),\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core",
+  "timeout": 900,
+  "why": "A BGR camera frame read as RGB swaps red and blue in every tensor; only the swapped digest frames notice."
+ },
+ {
+  "id": "consumer.oxidant-vision-last-row-unchecked",
+  "target": "crates/vision_core/src/preprocess.rs",
+  "find": "    if needed > got {\n        return Err(PreprocessError::BufferTooShort { needed, got });\n    }\n",
+  "replace": "",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core",
+  "timeout": 900,
+  "why": "A frame whose last row ends past its buffer is refused, as yolo_math.cpp refuses it, not read out of bounds."
+ },
+ {
+  "id": "consumer.oxidant-vision-stride-under-a-row",
+  "target": "crates/vision_core/src/preprocess.rs",
+  "find": "    if stride < row_bytes {\n",
+  "replace": "    if stride < row_bytes && stride == usize::MAX {\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core",
+  "timeout": 900,
+  "why": "Rows closer than a row of pixels overlap; the C++ detector refuses that geometry, so this one does too."
+ },
+ {
+  "id": "consumer.oxidant-vision-class-count-ignored",
+  "target": "crates/vision_core/src/postprocess.rs",
+  "find": "        if class.is_nan() || class < 0.0 || class >= class_count as f32 {\n",
+  "replace": "        if class.is_nan() || class < 0.0 || class >= 80.0 {\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core",
+  "timeout": 900,
+  "why": "The class count comes per call: a model of fewer classes must not report a class it does not have."
  },
  {
   "id": "consumer.oxidant-crate-floor-unfloored",

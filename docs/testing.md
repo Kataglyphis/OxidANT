@@ -58,10 +58,15 @@ omits the readiness signal and the launcher waits before starting Cargo.
 The script regression checks both handoffs, forwarded arguments, failure status and
 the coverage report's per-crate floor check.
 
-Inference preprocessing reads ModelANT's pinned `contracts/inference-v1.json` through
-`third_party/ModelANT`, and `postprocess.rs` replays its decode cases: raw rows in, detections out
-in row order, under the five rules for end-to-end rows. The C++ and Python implementations use
-those same cases. The text contract is compiled in from the same pin ([text.md](text.md#tests)).
+Inference preprocessing and decode live in `crates/vision_core`, whose `tests/contract.rs` reads ModelANT's
+pinned `contracts/inference-v1.json` through `third_party/ModelANT`: each tensor case's raw bytes, stride and plane
+offset included, go through `preprocess_frame_into` as the camera hands them over; the four full-size frames match
+their SHA-256 bit for bit, and so do their RGB frames read as BGR with red and blue swapped; the decode cases go in
+as raw rows with the contract's class count and come out as detections in row order, under the five rules for
+end-to-end rows. The C++ and Python implementations use those same cases. `tests/preprocess_proptest.rs` is
+AccelerANTgine's `Test/fuzz/preprocess_fuzz.cpp` as a proptest: 2048 frames of any claimed geometry, none read
+outside its buffer, and what the entry point accepts equals the slow nearest-floor sampler bit for bit. The text
+contract is compiled in from the same pin ([text.md](text.md#tests)).
 `crates/inference/tests/fixtures/two_cats.jpg` stays here, as the original ModelANT's copy cites
 and the path OmniAccelerANT reads; `the_photo_is_byte_for_byte_the_one_modelant_holds` in
 `real_model.rs` compares it with `third_party/ModelANT/contracts/fixtures/two_cats.jpg`. Both
@@ -116,7 +121,7 @@ runs them and `scripts/linux/pre-push-checks.sh`, the script suites of the lint 
 
 **Function size is a hard gate in every crate.** `crates/observant`, `crates/inference`,
 `crates/media`, the root crate `src` and, since 2026-11-14, `crates/text`, `crates/core`, `crates/esp32`, `crates/esp32-protocol`,
-`crates/cli`, `crates/telemetry`, `crates/gui`, `crates/burn_demos`, `crates/cxx_bridge`, `crates/assets`, `crates/render_core` and `crates/webgpu_renderer` set `#![warn(clippy::too_many_lines)]`, and `clippy.toml`
+`crates/cli`, `crates/telemetry`, `crates/gui`, `crates/burn_demos`, `crates/cxx_bridge`, `crates/assets`, `crates/render_core`, `crates/vision_core` and `crates/webgpu_renderer` set `#![warn(clippy::too_many_lines)]`, and `clippy.toml`
 holds the limit, 80 lines in clippy's count (code lines only), so `-D warnings` fails a new long
 function there. Those over it carry `#[expect(clippy::too_many_lines)]` where clippy's count passes 80. An
 `#[expect]` does not stop a function from growing, so `scripts/linux/check-rust-function-sizes.sh`,

@@ -1,8 +1,8 @@
 mod model_lock;
 mod model_says;
 mod model_utils;
-pub(crate) mod postprocess;
-mod preprocess;
+// Moved to the crate without ORT, tract or environment reads; these paths stay for every caller of the old ones.
+pub use kataglyphis_vision_core::{postprocess, preprocess};
 
 mod tract_backend;
 
@@ -19,6 +19,7 @@ use log::info;
 #[cfg(any(target_os = "linux", windows))]
 use crate::ort_ext::{extract_first_f32_output, OrtResultExt};
 
+use kataglyphis_core::coco;
 use kataglyphis_core::config::{self, PreprocessMode};
 use kataglyphis_core::detection::Detection;
 use preprocess::{rgba_to_nchw_f32_letterboxed, rgba_to_nchw_f32_stretched};
@@ -351,6 +352,7 @@ impl PersonDetector {
             score_threshold,
             mapping,
             self.swap_xy,
+            coco::NAMES.len(),
         )?;
 
         if let Some(ids) = class_filter {
