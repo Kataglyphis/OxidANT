@@ -127,8 +127,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 That is the scope of the lanes' `fmt-clippy` step (`CARGO_CLIPPY_ARGS` in
-`scripts/linux/ci-container-steps.sh`), which then lints the renderer for the browser too:
-`cargo clippy -p kataglyphis_webgpu_renderer --locked --target wasm32-unknown-unknown -- -D warnings`.
+`scripts/linux/ci-container-steps.sh`), which then lints the renderer and the vision crates for the browser too:
+`cargo clippy -p kataglyphis_webgpu_renderer -p kataglyphis_vision_core -p kataglyphis_vision_core_web --locked --target wasm32-unknown-unknown -- -D warnings`.
 `bash scripts/linux/ci-container-steps.sh fmt-clippy`
 inside the image reproduces the step itself. The shell, workflow, secret and config gates
 are `bash scripts/linux/run-lint-gates.sh`; with the hub's hook pair switched on (`AGENTS.md` § 5) a push
@@ -136,7 +136,7 @@ runs them and `scripts/linux/pre-push-checks.sh`, the script suites of the lint 
 
 **Function size is a hard gate in every crate.** `crates/observant`, `crates/inference`,
 `crates/media`, the root crate `src` and, since 2026-11-14, `crates/text`, `crates/core`, `crates/esp32`, `crates/esp32-protocol`,
-`crates/cli`, `crates/telemetry`, `crates/gui`, `crates/burn_demos`, `crates/cxx_bridge`, `crates/bridge_support`, `crates/accel_bridge`, `crates/assets`, `crates/render_core`, `crates/vision_core` and `crates/webgpu_renderer` set `#![warn(clippy::too_many_lines)]`, and `clippy.toml`
+`crates/cli`, `crates/telemetry`, `crates/gui`, `crates/burn_demos`, `crates/cxx_bridge`, `crates/bridge_support`, `crates/accel_bridge`, `crates/assets`, `crates/render_core`, `crates/vision_core`, `crates/vision_core_web` and `crates/webgpu_renderer` set `#![warn(clippy::too_many_lines)]`, and `clippy.toml`
 holds the limit, 80 lines in clippy's count (code lines only), so `-D warnings` fails a new long
 function there. Those over it carry `#[expect(clippy::too_many_lines)]` where clippy's count passes 80. An
 `#[expect]` does not stop a function from growing, so `scripts/linux/check-rust-function-sizes.sh`,
@@ -292,6 +292,24 @@ tinted 28.3 (forward 0.8); no console or WebGPU message. The path-tracing kernel
 of its 124 s step, the others 3-7 s. The same views from
 `editor_snapshot` on lavapipe look alike, the clouds' grain included (the shared estimator's, fixed the
 same day: `CHANGELOG.md`).
+
+## vision_core in the browser
+
+`bash scripts/linux/ci-container-steps.sh vision-web` in the family image builds `crates/vision_core_web` for
+wasm32 (release, `wasm-bindgen --target web` pinned to `Cargo.lock`) and runs
+`scripts/linux/vision-core-web-contract.mjs` on the module in node. The script:
+
+1. Replays ModelANT's `inference-v1.json` through the module's exports: the tensor cases within 1e-6, the
+   full-size frames by their samples and SHA-256 (the RGB ones also as BGR), the decode cases within the
+   contract's tolerances.
+2. Provokes a refusal of each kind and checks that each throws an `Error` named by its kind.
+3. Compares every result with the native report of `crates/vision_core_web/examples/contract_report.rs`, which
+   runs the same cases through the same exports on the host. Tensors, mappings and detections compare by their
+   bits, refusals by kind and text, the class names by their hash. One difference fails the step.
+
+Both Linux lanes run it right after `fmt-clippy`. It needs `node`, which the image has, and installs the
+pinned `wasm-bindgen-cli` into `CARGO_HOME` when it is missing. `cargo test -p kataglyphis_vision_core_web`
+checks the exports against `vision_core` on the host, and the class names against `kataglyphis_core::coco::NAMES`.
 
 ## Where the suites live
 

@@ -8,7 +8,7 @@ source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
 # Each crate's own floor, just under its latest figure, so one well-tested crate cannot carry a weak one; raise them as tests come.
-COVERAGE_FLOORS='--floor crates/observant=83 --floor crates/webgpu_renderer=89 --floor crates/inference=85 --floor crates/text=94 --floor crates/cli=87 --floor crates/core=80 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/cxx_bridge=100 --floor crates/bridge_support=99 --floor crates/accel_bridge=97 --floor crates/assets=91 --floor crates/render_core=100 --floor crates/vision_core=90 --floor crates/media=72 --floor crates/gui=29 --floor src=65 --max-slack 3'
+COVERAGE_FLOORS='--floor crates/observant=83 --floor crates/webgpu_renderer=89 --floor crates/inference=85 --floor crates/text=94 --floor crates/cli=87 --floor crates/core=80 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/cxx_bridge=100 --floor crates/bridge_support=99 --floor crates/accel_bridge=97 --floor crates/assets=91 --floor crates/render_core=100 --floor crates/vision_core=90 --floor crates/vision_core_web=83 --floor crates/media=72 --floor crates/gui=29 --floor src=65 --max-slack 3'
 # The vendored crates under third_party/ are upstream's code: tract-linalg's took the workspace figure from 71 % to 56 %.
 COVERAGE_EXCLUDE='third_party/*'
 # flutter_rust_bridge's output, 1157 of src's 1795 lines and never run by a Rust test: src read 24 % with it, 67.6 % without.
@@ -20,7 +20,7 @@ usage: ci-container-steps.sh <step>
 
   debug       cargo_debug.sh            - dev profile build
   security    cargo_security_checks.sh  - cargo audit + cargo deny (GATING)
-  fmt-clippy  cargo_fmt_clippy.sh         - bridge freshness + fmt --check + clippy -D warnings, renderer on wasm32 too (GATING)
+  fmt-clippy  cargo_fmt_clippy.sh         - bridge freshness + fmt --check + clippy -D warnings, renderer and vision crates on wasm32 too (GATING)
   test        cargo_test.sh             - unit + integration + proptest + doc, then ORT/tract/XNNPACK/DNNL parity
   coverage    cargo_coverage.sh         - tarpaulin over the workspace
   bench       cargo_bench.sh
@@ -30,6 +30,7 @@ usage: ci-container-steps.sh <step>
   ort-chain-only  check-ort-chain-only.sh - no downloaded ONNX Runtime (GATING)
   riscv64-test    the workspace tests, cross-built for riscv64 and run under QEMU
   web-browser     webgpu-demo-browser.sh    - the web demo's every mode drawn in headless Chrome
+  vision-web      vision-core-web.sh        - the browser's vision module on wasm32: ModelANT's contract in node, bit for bit against native (GATING)
   mutants <group> run-mutants.sh            - one group of ObservANT's cargo-mutants commands, reported, not gated
 
 Run inside the family Linux CI image, from the repository root.
@@ -109,8 +110,9 @@ case "$step" in
         bash "${SCRIPT_DIR}/frb-codegen.sh" check --hub "${ANTFRASTRUCTURE_DIR}"
         export CARGO_CLIPPY_ARGS="${CARGO_CLIPPY_ARGS---workspace --locked}"
         bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_fmt_clippy.sh")" "$@"
-        # The renderer's wasm32-only code (the browser's tracer build) gets no lint from the host clippy above.
-        exec cargo clippy -p kataglyphis_webgpu_renderer --locked --target wasm32-unknown-unknown -- -D warnings
+        # The renderer's wasm32-only code (the browser's tracer build) and the browser's vision module get no wasm32 build from the host clippy above.
+        exec cargo clippy -p kataglyphis_webgpu_renderer -p kataglyphis_vision_core -p kataglyphis_vision_core_web \
+            --locked --target wasm32-unknown-unknown -- -D warnings
         ;;
 
     # GPU suites skip unless RISCV64_GPU_TESTS=1: lavapipe under QEMU is the long pole. See docs/ci.md § The riscv64 lane
@@ -136,6 +138,7 @@ case "$step" in
         ;;
 
     web-browser) exec bash "${SCRIPT_DIR}/webgpu-demo-browser.sh" "$@" ;;
+    vision-web) exec bash "${SCRIPT_DIR}/vision-core-web.sh" "$@" ;;
 
     mutants) exec bash "${SCRIPT_DIR}/run-mutants.sh" "$@" ;;
 

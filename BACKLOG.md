@@ -56,30 +56,6 @@ its open work is here.
       set under `KATAGLYPHIS_REQUIRE_MODEL` with a budget (cats found, false boxes at 0.25) for
       ORT and tract, so a new model passes it before it reaches a camera.
 
-- [ ] **Oxidation roadmap: this repo's steps** (M each, ★★; owner D2 to D17, 2026-11-21, all as recommended). The
-      oxidation review keeps OxidANT the home of engines and algorithms (text generation, decode, preprocessing, stream
-      and think parsing) and leaves logic on a consumer's own ORT environment to the hub (D15). In order:
-      (1) **done 2026-11-24:** a preprocess and decode crate without ORT, tract or environment reads
-      (`crates/vision_core`): `preprocess.rs`, `postprocess.rs` and `ImageMapping` move and stay re-exported under their
-      old paths, an entry point takes strided RGB, BGR and RGBA frames and refuses what `yolo_math.cpp:331-346` refuses,
-      `checked_mul` holds the buffer size, a zero-size frame is refused, errors are typed, the class count comes per
-      call, the contract cases replay on their raw bytes, `preprocess_fuzz.cpp` becomes a proptest, and full-size frames
-      compare bit for bit; (2) **done 2026-11-23:** `GenerationResult::no_answer(budget_knob)`,
-      `None` for `Cancelled`, ObservANT's answers byte for byte through it, the app's stream ends with the kind
-      `no_answer`; (3) **done 2026-11-24:** the bundled regeneration with OmniAccelerANT: `TextEvent` carries
-      a typed failure (a plain kind enum, the message, the HTTP status), a typed kind and finish reason and the
-      thinking count in `done`, plus `default_score_threshold()` and `detector_latency_json()`; (4) **done
-      2026-11-24:** for AccelerANTgine's text pilot, after OmniAccelerANT dropped its AccelerANTgine submodule:
-      `guarded()` and the per-thread log collector moved from `kataglyphis_cxx_bridge` into `crates/bridge_support`,
-      and `crates/accel_bridge` (its own contract test; it denies unsafe code with cxx's generated glue as its one
-      allowance, since cxx cannot build under `forbid`, and the crates it links may hold unsafe FFI, D3) carries
-      `text.rs` (a pull API with lock-step cancel and the C ABI's statuses) and `diagnostics.rs`; parity first: a NUL
-      byte in a stop string is `InvalidOptions`, GenAI's own messages stay apart from OxidANT's refusals, `<think>`
-      follows hub CON288's think-split cases, `Api::check` logs, migraphx, xnnpack and dnnl are refused early, a usable
-      CPU is the smaller of the affinity mask and the cgroup quota (D16), and the GenAI search adds the loaded
-      library's own directory (D17). Left for the hub: a shared case file that pins D16's rule in all three
-      languages.
-
 ## P2 — medium
 
 - [ ] **Rust mutation scores wait for cargo-mutants in the image** (S, ★★). The owner accepted a weekly job
@@ -222,6 +198,9 @@ Empty on 2026-11-17: nothing else is in the queue.
       dialect. Blocked on that chain. Then: `Should -Be` and its kin, setup moved into `BeforeAll` or `BeforeEach`
       (Pester 5 and 6 discover a file before they run it), the `3.4.0` pins dropped, and the suites run in the image
       as well. Done when no workflow pins 3.4.0.
+
+- [b] **D16's shared cases wait for the hub** (S, ★). A usable CPU count is the smaller of the affinity mask and
+      cgroup `cpu.max`, at least 1; the hub's BACKLOG owns the case file that pins it in all three languages.
 
 ## Recorded probes
 

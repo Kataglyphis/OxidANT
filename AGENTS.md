@@ -33,7 +33,7 @@ dependencies](#targets-and-their-system-dependencies)). Every crate, what `src/`
 [`docs/crates.md`](docs/crates.md). The crates are `crates/accel_bridge`, `crates/assets`, `crates/bridge_support`,
 `crates/burn_demos`, `crates/cli`, `crates/core`, `crates/cxx_bridge`, `crates/esp32`, `crates/esp32-protocol`,
 `crates/gui`, `crates/inference`, `crates/media`, `crates/observant`, `crates/render_core`, `crates/telemetry`,
-`crates/text`, `crates/vision_core` and `crates/webgpu_renderer`;
+`crates/text`, `crates/vision_core`, `crates/vision_core_web` and `crates/webgpu_renderer`;
 the root package's modules are `src/api` (the flutter_rust_bridge surface) and `src/platform`. The tooling submodule, `third_party/ANTfrastructure`,
 is **the ground truth for every container and PowerShell concern**; read § 2 before
 writing any helper.
@@ -186,9 +186,11 @@ unformatted and with 12 clippy errors; the step gates now.
 - **Scope:** `scripts/linux/ci-container-steps.sh` sets `CARGO_CLIPPY_ARGS` to
   `--workspace --locked`, the whole workspace with nothing left out.
 - **Positional arguments reach `cargo fmt` only**, not both tools.
-- **Then the renderer on wasm32**: `cargo clippy -p kataglyphis_webgpu_renderer --locked --target
-  wasm32-unknown-unknown -- -D warnings`, since the browser's code (`cfg(target_arch = "wasm32")`) gets no
-  lint from the host run; 1 min 49 s from a cold target directory at two jobs.
+- **Then the renderer and the vision crates on wasm32**: `cargo clippy -p kataglyphis_webgpu_renderer -p
+  kataglyphis_vision_core -p kataglyphis_vision_core_web --locked --target wasm32-unknown-unknown -- -D warnings`,
+  since the browser's code (`cfg(target_arch = "wasm32")`) gets no lint from the host run; 1 min 49 s from a cold
+  target directory at two jobs. The `vision-web` step after it replays ModelANT's contract on the browser's
+  vision module in node ([testing.md](docs/testing.md#vision_core-in-the-browser)).
 - **The step first fails a stale `src/frb_generated.rs`.** `scripts/linux/frb-codegen.sh` is the
   one flutter_rust_bridge input and flag set, also used by OmniAccelerANT's generator; regenerate
   there after changing `src/api`: [the bridge bindings](docs/testing.md#the-bridge-bindings).

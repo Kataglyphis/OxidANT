@@ -13,6 +13,29 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Done (2026-11-24, the oxidation roadmap)
+
+- BACKLOG's *Oxidation roadmap: this repo's steps* is closed: steps 1 to 4 are on develop, and every lane ran green
+  on step 4 (f675e25), Windows and arm64 included. The shared case file for D16's CPU count is the hub's.
+
+### Added (2026-11-24, `vision_core` for the browser: OmniAccelerANT's browser port, step 3)
+
+- **`crates/vision_core_web` (`kataglyphis_vision_core_web`)** wraps `kataglyphis_vision_core` with wasm-bindgen for
+  the browser's inference worker. `Preprocessor` takes an RGBA, RGB or BGR frame with its row stride and plane
+  offset to the NCHW tensor and keeps its buffer from frame to frame; `decode` turns the model's rows into six
+  numbers per detection with the class count per call; `classNames()` gives the 80 COCO names of `crates/core`'s
+  synced list, so the app labels boxes without the optional flutter_rust_bridge core. A refusal throws an `Error`
+  named by its kind. `vision_core` stays without dependencies and unsafe code; the wrapper denies unsafe code, with
+  wasm-bindgen's export glue as its one allowance.
+- **The `vision-web` step** (`scripts/linux/vision-core-web.sh`, after `fmt-clippy` in both Linux lanes) builds the
+  module for wasm32 in release, replays ModelANT's `inference-v1.json` on it in node and compares every result
+  with the native report of `examples/contract_report.rs`, bit for bit: the tensors, the full-size frames as RGB,
+  RGBA and BGR, the decode cases, a refusal of each kind and the class names.
+- `fmt-clippy` lints `kataglyphis_vision_core` and `kataglyphis_vision_core_web` for wasm32 beside the renderer. The
+  crate joins the function-size scopes, the coverage floors, the CI-steps test, the licence policy and its
+  staging test, `AGENTS.md` and the docs; four mutation recipes guard the BGR order, the refusal's name, the class
+  and the native comparison.
+
 ### Added (2026-11-24, a second C++ bridge for AccelerANTgine's text pilot: roadmap step 4)
 
 - **`crates/bridge_support` (`kataglyphis_bridge_support`)** holds what both C++ bridges share: `guarded()`,

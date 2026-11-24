@@ -5363,6 +5363,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kataglyphis_vision_core_web"
+version = "3.0.0"
+dependencies = [
+ "js-sys",
+ "kataglyphis_core",
+ "kataglyphis_vision_core",
+ "serde_json",
+ "sha2",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "kataglyphis_webgpu_renderer"
 version = "3.0.0"
 dependencies = [

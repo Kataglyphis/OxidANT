@@ -109,6 +109,13 @@ jobs:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh fmt-clippy'
 
+      # Gating: vision_core as the browser's wasm module, ModelANT's contract in node equal to native bit for bit.
+      - name: vision_core on wasm32 against native
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
+        with:
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
+          script: bash -lc 'bash scripts/linux/ci-container-steps.sh vision-web'
+
       - name: Run unit, integration, and doc tests
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
         with:

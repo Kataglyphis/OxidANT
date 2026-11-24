@@ -17,6 +17,7 @@ members = [
     "crates/assets",
     "crates/render_core",
     "crates/vision_core",
+    "crates/vision_core_web",
     "crates/bridge_support",
     "crates/accel_bridge",
 ]

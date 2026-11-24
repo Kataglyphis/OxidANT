@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proves the policy covers the CLI's and both C++ bridges' Cargo graphs on every packaged target, and the renderer's wasm graph; it does not prove linkage or native-library coverage.
+# Proves the policy covers the CLI's and both C++ bridges' Cargo graphs on every packaged target, and the renderer's and the vision module's wasm graphs; it does not prove linkage or native-library coverage.
 set -u
 # shellcheck source=scripts/linux/tests/lib-suite.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
@@ -38,6 +38,9 @@ done
 t_case "every crate the browser demo ships on ${demo_target} has reviewed original license texts"
 root=kataglyphis_webgpu_renderer t_assert_ok stage "$demo_target" "$policy" "${work}/demo"
 t_assert_grep "${work}/demo/manifest.json" '"name": "bevy_mikktspace"'
+t_case "every crate the browser's vision module ships on ${demo_target} has reviewed original license texts"
+root=kataglyphis_vision_core_web t_assert_ok stage "$demo_target" "$policy" "${work}/vision"
+t_assert_grep "${work}/vision/manifest.json" '"name": "kataglyphis_vision_core"'
 
 t_case 'every vendored text is named by the policy'
 orphans() {

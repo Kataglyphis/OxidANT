@@ -902,5 +902,41 @@
   "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-core-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_core --lib config::",
   "timeout": 900,
   "why": "A cgroup's own quota may be looser than a parent's; the tightest one up to the root limits the process."
+ },
+ {
+  "id": "consumer.oxidant-vision-web-bgr-read-as-rgb",
+  "target": "crates/vision_core_web/src/lib.rs",
+  "find": "        \"BGR\" => Ok(PixelFormat::Bgr),\n",
+  "replace": "        \"BGR\" => Ok(PixelFormat::Rgb),\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-web-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core_web",
+  "timeout": 900,
+  "why": "A browser camera's BGR frame read as RGB swaps red and blue, and boxes still appear on most photos."
+ },
+ {
+  "id": "consumer.oxidant-vision-web-refusal-unnamed",
+  "target": "crates/vision_core_web/src/lib.rs",
+  "find": "            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))\n",
+  "replace": "            .split(|c: char| c == '{')\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-web-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core_web",
+  "timeout": 900,
+  "why": "A page tells refusals apart by the Error's name; a name with the variant's fields in it matches none."
+ },
+ {
+  "id": "consumer.oxidant-vision-web-class-lost",
+  "target": "crates/vision_core_web/src/lib.rs",
+  "find": "            box_and_score.into_iter().chain([d.class_id as f64])\n",
+  "replace": "            box_and_score.into_iter().chain([0.0])\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-web-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_vision_core_web",
+  "timeout": 900,
+  "why": "Every box would be labelled a person: the class is the sixth number of each detection."
+ },
+ {
+  "id": "consumer.oxidant-vision-web-native-differs",
+  "target": "crates/vision_core_web/examples/contract_report.rs",
+  "find": "                data.swap(at, at + 2);\n",
+  "replace": "                data.swap(at, at + 1);\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-web-mutations-$(basename \"$PWD\")\" bash scripts/linux/vision-core-web.sh",
+  "timeout": 1800,
+  "why": "Only the comparison with wasm reads the native report: a native result that differs must fail the step."
  }
 ]
