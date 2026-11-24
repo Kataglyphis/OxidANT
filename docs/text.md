@@ -160,17 +160,22 @@ provider, on `embed --model-dir` too. `embed` prints one L2-normalised vector pe
 
 | Function | What it does |
 | --- | --- |
-| `text_generate(source, messages, options, sink)` | Streams `TextEvent`s: `piece` with its text, then one `done` with the finish reason and the figures |
+| `text_generate(source, messages, options, sink)` | Streams `TextEvent`s: `piece` with its text, then one `done` with the finish reason and the figures, or one `failed` |
 | `text_cancel()` | Cancels the running generation, also one whose local model is still loading |
 | `text_embed(source, texts)` | The vectors of the model directory or endpoint the source names |
 | `text_local_available()` | Whether this build loads the chain's GenAI |
 | `text_default_options()` | The contract's defaults |
 
-`TextOptions` carries `seed`, `json_schema` and `stop` as above. Every failure ends the stream with
-an error whose message is `kind: text` (Dart decodes it as `AnyhowException`); a schema on a lane
-without llguidance starts `json_schema_unsupported: json_schema is unsupported on this lane`.
-A `piece` holds answer text only. `done` does not carry the thinking count: the generated Dart
-code mirrors `TextEvent`, so a new field needs the bindings regenerated.
+`TextOptions` carries `seed`, `json_schema` and `stop` as above. `TextEvent.kind` and
+`finish_reason` are enums (`TextEventKind`, `TextFinishReason`). Every failure of a turn ends the
+stream with a `failed` event whose `TextFailure` holds a `TextFailureKind` (one variant per
+`TextError::kind`, plus `no_answer` for a reply without words), the English message and, for
+`endpoint_status`, the HTTP status; a schema on a lane without llguidance is
+`json_schema_unsupported` with `json_schema is unsupported on this lane`. Dart switches over the
+kind, so a new kind fails the app's build until it has a sentence. `text_embed` still returns a
+plain `kind: text` error. A `piece` holds answer text only; `done` carries the thinking count
+(`thinking_chars`). The generated Dart code mirrors these types, so a new field needs the bindings
+regenerated.
 `TextSource` names either a `model_dir` with a `provider` (`cpu`, `cuda`, `dml`) or the endpoint
 fields, plus an `api_key` for platforms without the key's variable. One generation runs at a time,
 and the last local model stays loaded for the next turn. Android and macOS reach endpoints only;

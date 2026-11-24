@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-24, typed text events for the bundled regeneration: roadmap step 3)
+
+- **`TextEvent` is typed** (owner D12 to D14). `kind` is `TextEventKind` (`piece`, `done`, `failed`) and
+  `finish_reason` is `TextFinishReason`; `done` carries `thinking_chars`. A failed turn, the wordless reply's
+  `no_answer` included, ends the stream with a `failed` event whose `TextFailure` holds a `TextFailureKind` (one
+  variant per `TextError::kind`, plus `NoAnswer`), the English message and the HTTP status of `endpoint_status`,
+  instead of an `AnyhowException` reading `kind: text`. **A Dart caller reads `event.failure`**; `text_embed` keeps
+  its `kind: text` error.
+- **`default_score_threshold()`** gives the bridge the 0.25 of hub CON235, where OmniAccelerANT's webcam slider
+  starts, and **`detector_latency_json(rgba, width, height, runs)`** times `detect_rgba` after five warm-up runs and
+  returns the `{"p50_ms":..,"p95_ms":..}` line of the app's `--detect-latency`, which loses its Dart loop.
+
 ### Changed (2026-11-23, one sentence for a reply without words: roadmap step 2)
 
 - `GenerationResult::no_answer(budget_knob)` in `kataglyphis_text` words a reply that has no words: "the model gave

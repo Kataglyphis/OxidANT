@@ -76,7 +76,10 @@ It loads the configured model and runs one synthetic frame. Set
 
 Flutter consumers detect any class through `detect_rgba(rgba, width, height, classes)`: the
 default model, scores from 0.25, and only the given class ids (empty keeps every class).
-`detector_labels()` returns the class names at their ids. `WebcamStreamConfig.classes` filters
+`detector_labels()` returns the class names at their ids, and `default_score_threshold()` the
+0.25 a slider starts at (hub CON235). `detector_latency_json(rgba, width, height, runs)` times
+`runs` such detections after five untimed ones and returns `{"p50_ms":..,"p95_ms":..}`, the line
+OmniAccelerANT's `--detect-latency` prints. `WebcamStreamConfig.classes` filters
 the live stream the same way, and each `DetectionEvent` names its `backend` (`ort` or `tract`)
 and `execution_provider` (`cpu`, `xnnpack`, `cuda`, ...). `detect_persons_rgba` and
 `start_webcam_inference` stay; the person filter is `classes: [0]`.

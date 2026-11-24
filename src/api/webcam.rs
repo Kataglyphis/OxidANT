@@ -63,6 +63,12 @@ pub struct DetectionEvent {
     pub fps: f32,
 }
 
+/// The score a detection needs unless the caller sets one (hub CON235), where a threshold slider starts.
+#[flutter_rust_bridge::frb(sync)]
+pub fn default_score_threshold() -> f32 {
+    kataglyphis_core::DEFAULT_SCORE_THRESHOLD
+}
+
 /// Whether this target runs the webcam pipeline (desktop: GStreamer); compile-time, cheap enough for a widget's build.
 #[flutter_rust_bridge::frb(sync)]
 pub fn webcam_inference_available() -> bool {

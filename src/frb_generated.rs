@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 468371456;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -2114642906;
 
 // Section: executor
 
@@ -82,6 +82,35 @@ fn wire__crate__api__simple__async_heavy_work_impl(
                     .await,
                 )
             }
+        },
+    )
+}
+fn wire__crate__api__webcam__default_score_threshold_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "default_score_threshold",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::webcam::default_score_threshold())?;
+                std::result::Result::Ok(output_ok)
+            })())
         },
     )
 }
@@ -183,6 +212,41 @@ fn wire__crate__api__onnx__detector_labels_impl(
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
                 let output_ok = Ok::<_, ()>(crate::api::onnx::detector_labels())?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__onnx__detector_latency_json_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "detector_latency_json",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_rgba = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_width = <u32>::sse_decode(&mut deserializer);
+            let api_height = <u32>::sse_decode(&mut deserializer);
+            let api_runs = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::onnx::detector_latency_json(
+                    api_rgba, api_width, api_height, api_runs,
+                )?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -1317,6 +1381,41 @@ impl SseDecode for Option<i32> {
     }
 }
 
+impl SseDecode for Option<crate::api::text::TextFailure> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::text::TextFailure>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::text::TextFinishReason> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::text::TextFinishReason>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<u16> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<u16>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<u32> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1342,13 +1441,16 @@ impl SseDecode for Option<u64> {
 impl SseDecode for crate::api::text::TextEvent {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_kind = <String>::sse_decode(deserializer);
+        let mut var_kind = <crate::api::text::TextEventKind>::sse_decode(deserializer);
         let mut var_text = <Option<String>>::sse_decode(deserializer);
-        let mut var_finishReason = <Option<String>>::sse_decode(deserializer);
+        let mut var_finishReason =
+            <Option<crate::api::text::TextFinishReason>>::sse_decode(deserializer);
         let mut var_promptTokens = <Option<u32>>::sse_decode(deserializer);
         let mut var_completionTokens = <Option<u32>>::sse_decode(deserializer);
         let mut var_timeToFirstTokenMs = <Option<f64>>::sse_decode(deserializer);
         let mut var_decodeTokensPerSecond = <Option<f64>>::sse_decode(deserializer);
+        let mut var_thinkingChars = <Option<u32>>::sse_decode(deserializer);
+        let mut var_failure = <Option<crate::api::text::TextFailure>>::sse_decode(deserializer);
         return crate::api::text::TextEvent {
             kind: var_kind,
             text: var_text,
@@ -1357,6 +1459,74 @@ impl SseDecode for crate::api::text::TextEvent {
             completion_tokens: var_completionTokens,
             time_to_first_token_ms: var_timeToFirstTokenMs,
             decode_tokens_per_second: var_decodeTokensPerSecond,
+            thinking_chars: var_thinkingChars,
+            failure: var_failure,
+        };
+    }
+}
+
+impl SseDecode for crate::api::text::TextEventKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::text::TextEventKind::Piece,
+            1 => crate::api::text::TextEventKind::Done,
+            2 => crate::api::text::TextEventKind::Failed,
+            _ => unreachable!("Invalid variant for TextEventKind: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::text::TextFailure {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_kind = <crate::api::text::TextFailureKind>::sse_decode(deserializer);
+        let mut var_message = <String>::sse_decode(deserializer);
+        let mut var_httpStatus = <Option<u16>>::sse_decode(deserializer);
+        return crate::api::text::TextFailure {
+            kind: var_kind,
+            message: var_message,
+            http_status: var_httpStatus,
+        };
+    }
+}
+
+impl SseDecode for crate::api::text::TextFailureKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::text::TextFailureKind::LibraryUnavailable,
+            1 => crate::api::text::TextFailureKind::ModelLoadFailed,
+            2 => crate::api::text::TextFailureKind::ProviderUnavailable,
+            3 => crate::api::text::TextFailureKind::TokenizerFailed,
+            4 => crate::api::text::TextFailureKind::ChatTemplateFailed,
+            5 => crate::api::text::TextFailureKind::EncodeFailed,
+            6 => crate::api::text::TextFailureKind::InvalidOptions,
+            7 => crate::api::text::TextFailureKind::GenerationFailed,
+            8 => crate::api::text::TextFailureKind::EndpointUnreachable,
+            9 => crate::api::text::TextFailureKind::EndpointStatus,
+            10 => crate::api::text::TextFailureKind::EndpointTimedOut,
+            11 => crate::api::text::TextFailureKind::StreamLineTooLong,
+            12 => crate::api::text::TextFailureKind::JsonSchemaUnsupported,
+            13 => crate::api::text::TextFailureKind::EmbeddingsUnsupported,
+            14 => crate::api::text::TextFailureKind::ContextLengthExceeded,
+            15 => crate::api::text::TextFailureKind::NoAnswer,
+            _ => unreachable!("Invalid variant for TextFailureKind: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::text::TextFinishReason {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::text::TextFinishReason::Stop,
+            1 => crate::api::text::TextFinishReason::Length,
+            2 => crate::api::text::TextFinishReason::Cancelled,
+            _ => unreachable!("Invalid variant for TextFinishReason: {}", inner),
         };
     }
 }
@@ -1495,16 +1665,16 @@ fn pde_ffi_dispatcher_primary_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         1 => wire__crate__api__simple__async_heavy_work_impl(port, ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__esp32__esp32_connect_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__esp32__esp32_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__esp32__esp32_list_devices_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__webcam__list_cameras_impl(port, ptr, rust_vec_len, data_len),
-        20 => {
+        8 => wire__crate__api__esp32__esp32_connect_impl(port, ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__esp32__esp32_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__esp32__esp32_list_devices_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__webcam__list_cameras_impl(port, ptr, rust_vec_len, data_len),
+        22 => {
             wire__crate__api__webcam__start_webcam_inference_impl(port, ptr, rust_vec_len, data_len)
         }
-        24 => wire__crate__api__text__text_embed_impl(port, ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__text__text_generate_impl(port, ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__text__text_embed_impl(port, ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__text__text_generate_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1517,24 +1687,26 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        2 => wire__crate__api__onnx__detect_persons_rgba_impl(ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__onnx__detect_rgba_impl(ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__onnx__detector_labels_impl(ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__esp32__esp32_available_impl(ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__esp32__esp32_connected_impl(ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__esp32__esp32_notify_detection_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__esp32__esp32_ping_impl(ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__esp32__esp32_set_led_impl(ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__esp32__esp32_set_telemetry_period_impl(ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__simple__heavy_computation_impl(ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__onnx__profile_detector_image_impl(ptr, rust_vec_len, data_len),
-        19 => wire__crate__api__onnx__profile_person_detection_impl(ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__webcam__stop_webcam_inference_impl(ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__text__text_cancel_impl(ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__text__text_default_options_impl(ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__text__text_local_available_impl(ptr, rust_vec_len, data_len),
-        27 => {
+        2 => wire__crate__api__webcam__default_score_threshold_impl(ptr, rust_vec_len, data_len),
+        3 => wire__crate__api__onnx__detect_persons_rgba_impl(ptr, rust_vec_len, data_len),
+        4 => wire__crate__api__onnx__detect_rgba_impl(ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__onnx__detector_labels_impl(ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__onnx__detector_latency_json_impl(ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__esp32__esp32_available_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__esp32__esp32_connected_impl(ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__esp32__esp32_notify_detection_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__esp32__esp32_ping_impl(ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__esp32__esp32_set_led_impl(ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__esp32__esp32_set_telemetry_period_impl(ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__simple__heavy_computation_impl(ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__onnx__profile_detector_image_impl(ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__onnx__profile_person_detection_impl(ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__webcam__stop_webcam_inference_impl(ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__text__text_cancel_impl(ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__text__text_default_options_impl(ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__text__text_local_available_impl(ptr, rust_vec_len, data_len),
+        29 => {
             wire__crate__api__webcam__webcam_inference_available_impl(ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),
@@ -1695,6 +1867,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::text::TextEvent {
             self.completion_tokens.into_into_dart().into_dart(),
             self.time_to_first_token_ms.into_into_dart().into_dart(),
             self.decode_tokens_per_second.into_into_dart().into_dart(),
+            self.thinking_chars.into_into_dart().into_dart(),
+            self.failure.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1704,6 +1878,104 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::text::TextEvent>
     for crate::api::text::TextEvent
 {
     fn into_into_dart(self) -> crate::api::text::TextEvent {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::text::TextEventKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Piece => 0.into_dart(),
+            Self::Done => 1.into_dart(),
+            Self::Failed => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::text::TextEventKind
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::text::TextEventKind>
+    for crate::api::text::TextEventKind
+{
+    fn into_into_dart(self) -> crate::api::text::TextEventKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::text::TextFailure {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.kind.into_into_dart().into_dart(),
+            self.message.into_into_dart().into_dart(),
+            self.http_status.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::text::TextFailure {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::text::TextFailure>
+    for crate::api::text::TextFailure
+{
+    fn into_into_dart(self) -> crate::api::text::TextFailure {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::text::TextFailureKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::LibraryUnavailable => 0.into_dart(),
+            Self::ModelLoadFailed => 1.into_dart(),
+            Self::ProviderUnavailable => 2.into_dart(),
+            Self::TokenizerFailed => 3.into_dart(),
+            Self::ChatTemplateFailed => 4.into_dart(),
+            Self::EncodeFailed => 5.into_dart(),
+            Self::InvalidOptions => 6.into_dart(),
+            Self::GenerationFailed => 7.into_dart(),
+            Self::EndpointUnreachable => 8.into_dart(),
+            Self::EndpointStatus => 9.into_dart(),
+            Self::EndpointTimedOut => 10.into_dart(),
+            Self::StreamLineTooLong => 11.into_dart(),
+            Self::JsonSchemaUnsupported => 12.into_dart(),
+            Self::EmbeddingsUnsupported => 13.into_dart(),
+            Self::ContextLengthExceeded => 14.into_dart(),
+            Self::NoAnswer => 15.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::text::TextFailureKind
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::text::TextFailureKind>
+    for crate::api::text::TextFailureKind
+{
+    fn into_into_dart(self) -> crate::api::text::TextFailureKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::text::TextFinishReason {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Stop => 0.into_dart(),
+            Self::Length => 1.into_dart(),
+            Self::Cancelled => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::text::TextFinishReason
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::text::TextFinishReason>
+    for crate::api::text::TextFinishReason
+{
+    fn into_into_dart(self) -> crate::api::text::TextFinishReason {
         self
     }
 }
@@ -2099,6 +2371,36 @@ impl SseEncode for Option<i32> {
     }
 }
 
+impl SseEncode for Option<crate::api::text::TextFailure> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::text::TextFailure>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::text::TextFinishReason> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::text::TextFinishReason>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<u16> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <u16>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<u32> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -2122,13 +2424,88 @@ impl SseEncode for Option<u64> {
 impl SseEncode for crate::api::text::TextEvent {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <String>::sse_encode(self.kind, serializer);
+        <crate::api::text::TextEventKind>::sse_encode(self.kind, serializer);
         <Option<String>>::sse_encode(self.text, serializer);
-        <Option<String>>::sse_encode(self.finish_reason, serializer);
+        <Option<crate::api::text::TextFinishReason>>::sse_encode(self.finish_reason, serializer);
         <Option<u32>>::sse_encode(self.prompt_tokens, serializer);
         <Option<u32>>::sse_encode(self.completion_tokens, serializer);
         <Option<f64>>::sse_encode(self.time_to_first_token_ms, serializer);
         <Option<f64>>::sse_encode(self.decode_tokens_per_second, serializer);
+        <Option<u32>>::sse_encode(self.thinking_chars, serializer);
+        <Option<crate::api::text::TextFailure>>::sse_encode(self.failure, serializer);
+    }
+}
+
+impl SseEncode for crate::api::text::TextEventKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::text::TextEventKind::Piece => 0,
+                crate::api::text::TextEventKind::Done => 1,
+                crate::api::text::TextEventKind::Failed => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::text::TextFailure {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::text::TextFailureKind>::sse_encode(self.kind, serializer);
+        <String>::sse_encode(self.message, serializer);
+        <Option<u16>>::sse_encode(self.http_status, serializer);
+    }
+}
+
+impl SseEncode for crate::api::text::TextFailureKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::text::TextFailureKind::LibraryUnavailable => 0,
+                crate::api::text::TextFailureKind::ModelLoadFailed => 1,
+                crate::api::text::TextFailureKind::ProviderUnavailable => 2,
+                crate::api::text::TextFailureKind::TokenizerFailed => 3,
+                crate::api::text::TextFailureKind::ChatTemplateFailed => 4,
+                crate::api::text::TextFailureKind::EncodeFailed => 5,
+                crate::api::text::TextFailureKind::InvalidOptions => 6,
+                crate::api::text::TextFailureKind::GenerationFailed => 7,
+                crate::api::text::TextFailureKind::EndpointUnreachable => 8,
+                crate::api::text::TextFailureKind::EndpointStatus => 9,
+                crate::api::text::TextFailureKind::EndpointTimedOut => 10,
+                crate::api::text::TextFailureKind::StreamLineTooLong => 11,
+                crate::api::text::TextFailureKind::JsonSchemaUnsupported => 12,
+                crate::api::text::TextFailureKind::EmbeddingsUnsupported => 13,
+                crate::api::text::TextFailureKind::ContextLengthExceeded => 14,
+                crate::api::text::TextFailureKind::NoAnswer => 15,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::text::TextFinishReason {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::text::TextFinishReason::Stop => 0,
+                crate::api::text::TextFinishReason::Length => 1,
+                crate::api::text::TextFinishReason::Cancelled => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 

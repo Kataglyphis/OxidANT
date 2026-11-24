@@ -75,6 +75,60 @@ pub fn detect_rgba(
         })
 }
 
+/// Times `runs` every-class [`detect_rgba`] calls on one frame as the `{"p50_ms":..,"p95_ms":..}` line of `--perf-host`.
+#[flutter_rust_bridge::frb(sync)]
+pub fn detector_latency_json(
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    runs: u32,
+) -> Result<String, String> {
+    if runs == 0 {
+        return Err("detector_latency_json needs at least one timed run".into());
+    }
+    let samples = detector_latency_samples(&rgba, width, height, runs).map_err(|e| {
+        error!("detector_latency_json failed: {e:#}");
+        format!("detector_latency_json failed: {e:#}")
+    })?;
+    Ok(latency_json(samples))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn detector_latency_samples(_: &[u8], _: u32, _: u32, _: u32) -> anyhow::Result<Vec<f64>> {
+    // Before the clock: wasm32-unknown-unknown has no Instant, and no model to time.
+    detect_rgba_impl("", &[], 0, 0, DETECT_SCORE_FLOOR, None).map(|_| Vec::new())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn detector_latency_samples(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    runs: u32,
+) -> anyhow::Result<Vec<f64>> {
+    // Untimed first, so the model load and the first allocations stay out of the figures.
+    const WARM_RUNS: u32 = 5;
+    let mut samples = Vec::with_capacity(runs as usize);
+    for run in 0..WARM_RUNS.saturating_add(runs) {
+        let start = std::time::Instant::now();
+        detect_rgba_impl("", rgba, width, height, DETECT_SCORE_FLOOR, None)?;
+        if run >= WARM_RUNS {
+            samples.push(start.elapsed().as_secs_f64() * 1e3);
+        }
+    }
+    Ok(samples)
+}
+
+/// The p50 and p95 of `samples` (milliseconds) by nearest rank, as the app's Dart loop ranked them before.
+fn latency_json(mut samples: Vec<f64>) -> String {
+    samples.sort_by(f64::total_cmp);
+    let rank = |fraction: f64| {
+        let at = (fraction * samples.len() as f64).floor() as usize;
+        samples[at.min(samples.len() - 1)]
+    };
+    format!("{{\"p50_ms\":{:?},\"p95_ms\":{:?}}}", rank(0.5), rank(0.95))
+}
+
 /// Run the packaged detector twice in one profiled session on a real image.
 #[flutter_rust_bridge::frb(sync)]
 pub fn profile_detector_image(
@@ -231,6 +285,25 @@ mod tests {
             err,
             "detect_persons_rgba failed: no ONNX model at /nonexistent/model.onnx"
         );
+    }
+
+    #[test]
+    fn the_latency_line_ranks_its_samples_as_perf_host_reads_them() {
+        let samples = (1..=20).rev().map(f64::from).collect();
+        assert_eq!(latency_json(samples), r#"{"p50_ms":11.0,"p95_ms":20.0}"#);
+        assert_eq!(latency_json(vec![2.5]), r#"{"p50_ms":2.5,"p95_ms":2.5}"#);
+    }
+
+    #[test]
+    fn latency_needs_a_timed_run_and_names_a_failed_detection() {
+        assert!(detector_latency_json(vec![0; 4], 1, 1, 0)
+            .unwrap_err()
+            .contains("at least one"));
+        // A short frame fails at the model or its preprocessing, before any sample is taken.
+        let _turn = crate::model_turn();
+        assert!(detector_latency_json(vec![0; 3], 1, 1, 1)
+            .unwrap_err()
+            .starts_with("detector_latency_json failed: "));
     }
 
     #[test]

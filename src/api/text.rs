@@ -37,16 +37,85 @@ pub struct TextSource {
     pub api_key: Option<String>,
 }
 
-/// A flattened stream event: `piece` sets `text`; `done`, the last one, sets the finish reason and the figures.
+/// What a [`TextEvent`] is: a piece of the answer, the `done` that ends it, or the `failed` that ends it instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextEventKind {
+    Piece,
+    Done,
+    Failed,
+}
+
+/// Why the answer ended, as `kataglyphis_text::FinishReason`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextFinishReason {
+    Stop,
+    Length,
+    Cancelled,
+}
+
+/// `TextError::kind` as a plain enum, so the app words every kind and a new one fails its build; plus `NoAnswer`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextFailureKind {
+    LibraryUnavailable,
+    ModelLoadFailed,
+    ProviderUnavailable,
+    TokenizerFailed,
+    ChatTemplateFailed,
+    EncodeFailed,
+    InvalidOptions,
+    GenerationFailed,
+    EndpointUnreachable,
+    EndpointStatus,
+    EndpointTimedOut,
+    StreamLineTooLong,
+    JsonSchemaUnsupported,
+    EmbeddingsUnsupported,
+    ContextLengthExceeded,
+    /// The run worked and the model said nothing (`GenerationResult::no_answer`).
+    NoAnswer,
+}
+
+/// A failed turn: the kind the app words, OxidANT's English detail, and the status of an `EndpointStatus`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextFailure {
+    pub kind: TextFailureKind,
+    pub message: String,
+    pub http_status: Option<u16>,
+}
+
+/// A flattened stream event: `piece` sets `text`; the last, `done` or `failed`, sets the figures or the failure.
 pub struct TextEvent {
-    pub kind: String,
+    pub kind: TextEventKind,
     pub text: Option<String>,
-    /// `stop`, `length` or `cancelled`.
-    pub finish_reason: Option<String>,
+    pub finish_reason: Option<TextFinishReason>,
     pub prompt_tokens: Option<u32>,
     pub completion_tokens: Option<u32>,
     pub time_to_first_token_ms: Option<f64>,
     pub decode_tokens_per_second: Option<f64>,
+    /// Characters of reasoning the answer leaves out.
+    pub thinking_chars: Option<u32>,
+    pub failure: Option<TextFailure>,
+}
+
+fn event(kind: TextEventKind) -> TextEvent {
+    TextEvent {
+        kind,
+        text: None,
+        finish_reason: None,
+        prompt_tokens: None,
+        completion_tokens: None,
+        time_to_first_token_ms: None,
+        decode_tokens_per_second: None,
+        thinking_chars: None,
+        failure: None,
+    }
+}
+
+fn failed(failure: TextFailure) -> TextEvent {
+    TextEvent {
+        failure: Some(failure),
+        ..event(TextEventKind::Failed)
+    }
 }
 
 #[flutter_rust_bridge::frb(sync)]
@@ -69,7 +138,7 @@ pub fn text_local_available() -> bool {
     enabled::local_available()
 }
 
-/// Streams the answer into `sink` and returns after its `done` event; a second call waits for the first.
+/// Streams the answer into `sink` and returns after its `done` or `failed` event; a second call waits for the first.
 pub fn text_generate(
     source: TextSource,
     messages: Vec<TextMessage>,
@@ -77,8 +146,8 @@ pub fn text_generate(
     sink: StreamSink<TextEvent>,
 ) -> Result<(), String> {
     // Through the stream, not the return value: Dart holds only the stream, and a returned error only closes it.
-    if let Err(e) = enabled::generate(source, messages, options, &sink) {
-        let _ = sink.add_error(anyhow::anyhow!(enabled::describe(e)));
+    if let Err(failure) = enabled::generate(source, messages, options, &sink) {
+        let _ = sink.add(failed(failure));
     }
     Ok(())
 }
@@ -104,12 +173,42 @@ mod enabled {
         TextError,
     };
 
-    use super::{TextEvent, TextMessage, TextOptions, TextSource};
+    use super::{
+        event, failed, TextEvent, TextEventKind, TextFailure, TextFailureKind, TextFinishReason,
+        TextMessage, TextOptions, TextSource,
+    };
     use crate::frb_generated::StreamSink;
 
-    /// `kind: text`: the app reads the kind before the colon instead of matching English (`TextError::kind`).
+    /// `kind: text` for `text_embed`'s plain error (`TextError::kind`); a turn's failure is typed.
     pub(super) fn describe(err: TextError) -> String {
         format!("{}: {err}", err.kind())
+    }
+
+    /// The kind, the English detail and an endpoint's HTTP status of `err`.
+    pub(super) fn failure(err: &TextError) -> TextFailure {
+        use TextFailureKind as K;
+        let (kind, http_status) = match err {
+            TextError::LibraryUnavailable(_) => (K::LibraryUnavailable, None),
+            TextError::ModelLoadFailed(_) => (K::ModelLoadFailed, None),
+            TextError::ProviderUnavailable(_) => (K::ProviderUnavailable, None),
+            TextError::TokenizerFailed(_) => (K::TokenizerFailed, None),
+            TextError::ChatTemplateFailed(_) => (K::ChatTemplateFailed, None),
+            TextError::EncodeFailed(_) => (K::EncodeFailed, None),
+            TextError::InvalidOptions(_) => (K::InvalidOptions, None),
+            TextError::GenerationFailed(_) => (K::GenerationFailed, None),
+            TextError::EndpointUnreachable(_) => (K::EndpointUnreachable, None),
+            TextError::EndpointStatus(code, _) => (K::EndpointStatus, Some(*code)),
+            TextError::EndpointTimedOut(_) => (K::EndpointTimedOut, None),
+            TextError::StreamLineTooLong(_) => (K::StreamLineTooLong, None),
+            TextError::JsonSchemaUnsupported(_) => (K::JsonSchemaUnsupported, None),
+            TextError::EmbeddingsUnsupported(_) => (K::EmbeddingsUnsupported, None),
+            TextError::ContextLengthExceeded(_) => (K::ContextLengthExceeded, None),
+        };
+        TextFailure {
+            kind,
+            message: err.to_string(),
+            http_status,
+        }
     }
 
     fn cancel_token() -> &'static CancelToken {
@@ -152,26 +251,37 @@ mod enabled {
 
     fn piece(text: &str) -> TextEvent {
         TextEvent {
-            kind: "piece".into(),
             text: Some(text.into()),
-            finish_reason: None,
-            prompt_tokens: None,
-            completion_tokens: None,
-            time_to_first_token_ms: None,
-            decode_tokens_per_second: None,
+            ..event(TextEventKind::Piece)
         }
     }
 
     pub(super) fn done(result: &GenerationResult) -> TextEvent {
-        let reason = result.finish_reason.as_str();
+        let reason = match result.finish_reason {
+            FinishReason::Stop => TextFinishReason::Stop,
+            FinishReason::Length => TextFinishReason::Length,
+            FinishReason::Cancelled => TextFinishReason::Cancelled,
+        };
         TextEvent {
-            kind: "done".into(),
-            text: None,
-            finish_reason: Some(reason.into()),
+            finish_reason: Some(reason),
             prompt_tokens: Some(result.prompt_tokens as u32),
             completion_tokens: Some(result.completion_tokens as u32),
             time_to_first_token_ms: Some(result.time_to_first_token_ms),
             decode_tokens_per_second: Some(result.decode_tokens_per_second),
+            thinking_chars: Some(result.thinking_chars as u32),
+            ..event(TextEventKind::Done)
+        }
+    }
+
+    /// The last event: `done`, or the kind `no_answer` for a reply without words, which the app words (owner D13).
+    pub(super) fn last(result: &GenerationResult) -> TextEvent {
+        match result.no_answer("max_new_tokens") {
+            Some(message) => failed(TextFailure {
+                kind: TextFailureKind::NoAnswer,
+                message,
+                http_status: None,
+            }),
+            None => done(result),
         }
     }
 
@@ -221,7 +331,7 @@ mod enabled {
         messages: Vec<TextMessage>,
         options: TextOptions,
         sink: &StreamSink<TextEvent>,
-    ) -> Result<(), TextError> {
+    ) -> Result<(), TextFailure> {
         let (messages, options) = request(messages, &options);
         let mut cached = turn();
         let mut on_text = |text: &str| {
@@ -233,21 +343,15 @@ mod enabled {
                 || local::backend(&mut cached, dir, &source.provider),
                 |backend| backend.generate(&messages, &options, cancel_token(), &mut on_text),
             ),
-            None => endpoint(&source)?.generate(&messages, &options, cancel_token(), &mut on_text),
+            None => endpoint(&source).and_then(|mut endpoint| {
+                endpoint.generate(&messages, &options, cancel_token(), &mut on_text)
+            }),
         };
         local::touch(&mut cached);
-        let result = result?;
-        // A reply without words ends as the kind no_answer, which the app words itself (owner D13), not as a blank done.
-        if let Some(text) = result.no_answer("max_new_tokens") {
-            let _ = sink.add_error(anyhow::anyhow!("{NO_ANSWER}: {text}"));
-            return Ok(());
-        }
-        let _ = sink.add(done(&result));
+        let result = result.map_err(|err| failure(&err))?;
+        let _ = sink.add(last(&result));
         Ok(())
     }
-
-    /// The kind before the colon, beside `TextError::kind`'s: the run worked, and the model said nothing.
-    pub(super) const NO_ANSWER: &str = "no_answer";
 
     /// Generates unless a cancel came while the model loaded: a backend clears the token as it starts, so that
     /// cancel was lost and the whole answer decoded for a user who had already left.
@@ -407,7 +511,7 @@ mod enabled {
 /// The web build has no file system for a model and no blocking socket for an endpoint; Dart talks to it there.
 #[cfg(target_arch = "wasm32")]
 mod enabled {
-    use super::{TextEvent, TextMessage, TextOptions, TextSource};
+    use super::{TextEvent, TextFailure, TextFailureKind, TextMessage, TextOptions, TextSource};
     use crate::frb_generated::StreamSink;
 
     const WEB: &str = "the web build reaches language models from Dart, not through this bridge";
@@ -428,8 +532,12 @@ mod enabled {
         _: Vec<TextMessage>,
         _: TextOptions,
         _: &StreamSink<TextEvent>,
-    ) -> Result<(), String> {
-        Err(WEB.into())
+    ) -> Result<(), TextFailure> {
+        Err(TextFailure {
+            kind: TextFailureKind::LibraryUnavailable,
+            message: WEB.into(),
+            http_status: None,
+        })
     }
 
     pub(super) fn embed(_: TextSource, _: Vec<String>) -> Result<Vec<Vec<f32>>, String> {
@@ -505,8 +613,8 @@ mod tests {
         .unwrap();
         assert_eq!(during.finish_reason, FinishReason::Cancelled);
         assert_eq!(
-            enabled::done(&during).finish_reason.as_deref(),
-            Some("cancelled")
+            enabled::done(&during).finish_reason,
+            Some(TextFinishReason::Cancelled)
         );
     }
 
@@ -520,15 +628,65 @@ mod tests {
             completion_tokens: 1,
             time_to_first_token_ms: 2.5,
             decode_tokens_per_second: 0.0,
-            thinking_chars: 0,
+            thinking_chars: 4,
         };
-        let event = enabled::done(&result);
-        assert_eq!(event.kind, "done");
-        assert_eq!(event.finish_reason.as_deref(), Some("cancelled"));
+        let event = enabled::last(&result);
+        assert_eq!(event.kind, TextEventKind::Done);
+        assert_eq!(event.finish_reason, Some(TextFinishReason::Cancelled));
         assert_eq!(
             (event.prompt_tokens, event.completion_tokens),
             (Some(3), Some(1))
         );
+        assert_eq!((event.thinking_chars, event.failure), (Some(4), None));
+    }
+
+    #[test]
+    fn a_reply_without_words_ends_as_the_kind_no_answer() {
+        let result = GenerationResult {
+            text: " ".into(),
+            tokens: vec![1],
+            finish_reason: FinishReason::Length,
+            prompt_tokens: 3,
+            completion_tokens: 1,
+            time_to_first_token_ms: 2.5,
+            decode_tokens_per_second: 0.0,
+            thinking_chars: 0,
+        };
+        let event = enabled::last(&result);
+        assert_eq!(event.kind, TextEventKind::Failed);
+        let failure = event.failure.unwrap();
+        assert_eq!(
+            (failure.kind, failure.message),
+            (
+                TextFailureKind::NoAnswer,
+                result.no_answer("max_new_tokens").unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn a_failure_keeps_its_kind_its_sentence_and_an_endpoints_status() {
+        use kataglyphis_text::TextError;
+        let status = TextError::EndpointStatus(503, "busy".into());
+        assert_eq!(
+            enabled::failure(&status),
+            TextFailure {
+                kind: TextFailureKind::EndpointStatus,
+                message: "the endpoint answered HTTP 503: busy".into(),
+                http_status: Some(503),
+            }
+        );
+        let load = enabled::failure(&TextError::ModelLoadFailed("x".into()));
+        assert_eq!(
+            (load.kind, load.message.as_str(), load.http_status),
+            (
+                TextFailureKind::ModelLoadFailed,
+                "the model directory could not be loaded: x",
+                None
+            )
+        );
+        let long = enabled::failure(&TextError::ContextLengthExceeded("y".into()));
+        assert_eq!(long.kind, TextFailureKind::ContextLengthExceeded);
     }
 
     fn endpoint_source(base_url: &str) -> TextSource {
