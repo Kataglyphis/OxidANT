@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-24, the docs match the tree, and no host name)
+
+- **The docs audit's stale and wrong facts are fixed.** The CLI runs with `-p kataglyphis_cli`, the x64 and arm64
+  lanes set five `KATAGLYPHIS_REQUIRE_*` flags, counts that went stale are gone, the README's complexity workflow
+  gates, `windows.md` and `ci.md` agree on `Invoke-WindowsLane.ps1`, and `packaging.md` runs `Build-Windows.ps1` in
+  the image. `text.md` lists every `TextError` and how to add a kind.
+- **No tracked file names the test machine.** The docs say "the test Pi", the ObservANT tests use `catcam`, and
+  `synthesise.py` still writes its scenarios byte for byte.
+
 ### Added (2026-11-24, a preprocess and decode crate without ORT: roadmap step 1)
 
 - **`crates/vision_core` (`kataglyphis_vision_core`)**, without dependencies, ORT, tract or environment reads, takes
@@ -3713,7 +3722,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   the ISP's free scaler, so `videoscale` only adds the side borders. Measured on a Pi 5,
   30 fps: resampling the turned 480x640 cost 20 % of a core, borders alone 3 %. A turn
   between landscape and portrait restarts such a capture once (`Ended::Turned`); other
-  sources keep their size and still turn live. On tabblscatcam (rotate 270) the service
+  sources keep their size and still turn live. On a second camera host (rotate 270) the service
   went from 21 % to 4 % of a core.
   - `rpicam-vid --codec yuv420` pads each row to 128 bytes: 480 wide writes 512-byte rows
     (276480 bytes a frame, measured). `rawvideoparse` now gets those strides and offsets;
@@ -3801,7 +3810,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   treats `/` and `\` alike, as it already ignored case. In `:winamd64`, the cat cam found 2 cats (best score
   0.72) with the image's ORT, where it failed before the change.
 - **The cat cam runs ORT on two threads that sleep between runs (2026-10-11).** ORT's
-  default, four threads spin-waiting for the next run, kept himbeere2's live service at a
+  default, four threads spin-waiting for the next run, kept the test Pi's live service at a
   133 % average over 5.8 days at 2 Hz. On ANThology's photo the process took 183 % that
   way and 81 % now, with the same detections. Installed there, the live service went from
   131 % to 70 % of a core (60 s each, same camera, same scene). `inference_threads` sets
@@ -3809,17 +3818,17 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `KATAGLYPHIS_ORT_SPIN` / `KATAGLYPHIS_ORT_THREADS` set both for any of them.
 - **A cat counts after two hits in a row (2026-10-11).** A lone detection near the score
   threshold logged an arrival and a departure a second apart, and drew a box for half a
-  second. 52 of the 72 arrivals in himbeere2's journal were that. A cat now leaves after
+  second. 52 of the 72 arrivals in the test Pi's journal were that. A cat now leaves after
   3 s without a hit (longer at slow rates). The journal keeps its words.
 - **The cat cam's frames stay I420 from camera to encoder (2026-10-12).** The capture
   asked for RGBA, so every frame was converted from the camera's I420 and back for the
   encoder. Boxes are drawn into the YUV planes now, and only the model's frames and
-  snapshots are converted. himbeere2's idle service went from 13 % to 9 % of a core. On
+  snapshots are converted. The test Pi's idle service went from 13 % to 9 % of a core. On
   ANThology's photo the best score moved from 0.72 to 0.76: the photo now passes through
   chroma subsampling, as a camera's frames always did.
 - **A Pi camera mounted upside down is flipped by the sensor (2026-10-11).** `rotate = 180`
   becomes `rpicam-vid --rotation 180` instead of a `videoflip` over every RGBA frame, which
-  halved the capture thread on himbeere2 (11 % to 5 %). Two 4 s stills of its imx219, with
+  halved the capture thread on the test Pi (11 % to 5 %). Two 4 s stills of its imx219, with
   and without the flag, show the same scene turned 180°, as the `videoflip` turned it.
 
 ### Added
@@ -3850,7 +3859,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   skips the idle run as well, which took the dark room at night from 9 % to 2 %.
   A cat in view with nothing moving is looked at every `still_period`, twice the full
   rate's period (2026-10-13); motion restores the full rate, and the visit lingers past
-  the still period. himbeere2's drying rack, a false cat at 0.34, went from 69 % to 36 %.
+  the still period. The test Pi's drying rack, a false cat at 0.34, went from 69 % to 36 %.
 - **`/snapshot.jpg` and the cat in `/healthz` (2026-10-11).** The cat cam's web server
   encodes the latest frame, boxes included, when asked. `/healthz` gains `cat`: whether
   one is in view, when one was last seen, the visits counted and the last best score.
@@ -3877,7 +3886,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
       folder and Windows.
     - A `webrtcsrc` viewer decoded 60 frames, and the bundled `yolo26n` on the bundled
       chain ORT found the cat.
-  - **First board run: himbeere2 (Raspberry Pi 5, imx219, Debian 13), 2026-10-05.** It
+  - **First board run: a Raspberry Pi 5 (imx219, Debian 13), 2026-10-05.** It
     ran as OmniAccelerANT's packaged service and picked the camera via `rpicam-vid`.
     Headless Chrome on another host played it at 29 fps. Three fixes came out of it:
     - `rpicam-vid` is now owned by a guard. A failed pipeline setup no longer leaves one

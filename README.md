@@ -26,8 +26,8 @@
 
 A push to `develop` and every PR run Linux x64; the other lanes run on request and before a release, so a lane's badge shows its runs started by hand and a requested run is listed under *On request*
 ([docs/ci.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/ci.md)).
-PowerShell lint stays strict, and the separate quality workflow uploads a complexity report
-on each push and PR; its manual `strict` input tests the current complexity debt.
+PowerShell lint stays strict. The separate quality workflow fails a push or PR on PowerShell
+complexity and uploads its report; a manual run without `strict` only measures.
 
 [**Docs site**](https://rust.jonasheinle.de)
 
@@ -87,7 +87,7 @@ Prerequisites, the API docs and Linux containers locally:
 | Continuous integration, lane by lane | [docs/ci.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/ci.md) |
 | Dependency updates | [docs/updates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/updates.md) |
 | The WebGPU renderer | [crates/webgpu_renderer/README.md](https://github.com/Kataglyphis/OxidANT/blob/develop/crates/webgpu_renderer/README.md) |
-| Shader ownership and regeneration | [docs/shaders.md](https://github.com/Kataglyphis/OxidANT/blob/c930e59ae429748cdc81a51b6e96aaca55c79179/docs/shaders.md) |
+| Shader ownership and regeneration | [docs/shaders.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/shaders.md) |
 | API docs (rustdoc) | [rust.jonasheinle.de](https://rust.jonasheinle.de) |
 | Rules for agents and contributors, CI | [AGENTS.md](https://github.com/Kataglyphis/OxidANT/blob/develop/AGENTS.md) |
 | Known work | [BACKLOG.md](https://github.com/Kataglyphis/OxidANT/blob/develop/BACKLOG.md) |

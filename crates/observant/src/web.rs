@@ -1316,8 +1316,8 @@ mod tests {
         // The page itself, under an IP, a bare name or a local suffix, port and all.
         for host in [
             "192.168.1.98:8080",
-            "himbeere2:8080",
-            "himbeere2.fritz.box:8080",
+            "catcam:8080",
+            "catcam.lan:8080",
             "[fd46::1]:8080",
             "cat.local",
         ] {
@@ -1373,7 +1373,7 @@ mod tests {
             let reply = get_as(addr, path, "rebind.evil.example").await;
             assert!(reply.starts_with("HTTP/1.1 403"), "{path}: {reply}");
         }
-        for host in ["cat.local", "192.168.1.98:8080", "himbeere2"] {
+        for host in ["cat.local", "192.168.1.98:8080", "catcam"] {
             assert!(
                 get_as(addr, HEALTHZ_PATH, host)
                     .await

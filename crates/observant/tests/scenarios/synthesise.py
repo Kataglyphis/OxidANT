@@ -136,7 +136,7 @@ RACK_SCORES = (0.27, 0.34)
 def drying_rack_still() -> Scene:
     scene = Scene(
         "drying-rack-still",
-        "himbeere2's drying rack, a false cat at about 0.34 that never moves (2026-10-13), "
+        "the test Pi's drying rack, a false cat at about 0.34 that never moves (2026-10-13), "
         "before any spot was marked not a cat; the motion gate alone must keep it from arriving",
     )
     scene.move(0.0, WHOLE)
@@ -235,7 +235,7 @@ DIM = (0.25, 0.29)
 def dark_room() -> Scene:
     scene = Scene(
         "dark-room",
-        "dusk in himbeere2's room: lone hits at 0.2x where the sensor's noise flickers (52 of 72 "
+        "dusk in the test Pi's room: lone hits at 0.2x where the sensor's noise flickers (52 of 72 "
         "old arrivals were one hit, 42 scored 0.2x, 2026-10-09 to -11), black, a lamp switched on "
         "(boxes over 0.95 of the frame at 0.31, 2026-10-16/17, and 0.2x on a cushion), then a "
         "cat in the dim light at 0.25 to 0.31",

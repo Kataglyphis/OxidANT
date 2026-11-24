@@ -56,9 +56,9 @@ build-only run in the kept container took 12 s. The binaries run on the host:
 .\release\kataglyphis_cli.exe stats --path .\README.md
 ```
 
-The driver does not run the CI lane, and no local driver wraps that yet:
-`scripts/windows/Invoke-WindowsLane.ps1`
-([AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration)).
+The driver does not run the CI lane. To reproduce a lane, start a container of the image and
+run `scripts/windows/Invoke-WindowsLane.ps1` in it by hand; no local driver does that yet
+([ci.md](ci.md)).
 
 ## The rules, and the host side
 

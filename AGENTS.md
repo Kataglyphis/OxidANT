@@ -29,7 +29,7 @@ The root `Cargo.toml` is both the workspace and the root package `oxidant`: a li
 `cdylib`/`staticlib`/`rlib` crate types. **No crate has a Cargo feature** (owner,
 2026-10-20): every target builds what it can run ([§ Targets and their system
 dependencies](#targets-and-their-system-dependencies)). Every crate, what `src/` and
-`tests/` hold, and the three documented vendored crates under `third_party/`:
+`tests/` hold, and the two vendored crates under `third_party/`:
 [`docs/crates.md`](docs/crates.md). The crates are `crates/assets`, `crates/burn_demos`, `crates/cli`, `crates/core`,
 `crates/cxx_bridge`, `crates/esp32`, `crates/esp32-protocol`, `crates/gui`, `crates/inference`,
 `crates/media`, `crates/observant`, `crates/render_core`, `crates/telemetry`, `crates/text`, `crates/vision_core` and `crates/webgpu_renderer`;
@@ -263,10 +263,11 @@ ModelANT's photo: [running.md](docs/running.md), [testing.md](docs/testing.md).
 
 ### Tests and scripts that read source text
 
-- `crates/webgpu_renderer/tests/buffer_desc_single_definition.rs` pins the two `BufferDescriptor` outliers by
-  line number (`occlusion.rs:396`, `histogram.rs:102`), so a comment edit above either line breaks it.
+- `crates/webgpu_renderer/tests/buffer_desc_single_definition.rs` pins the two `BufferDescriptor` outliers in
+  `render/occlusion.rs` and `render/histogram.rs` by line number, so a line added or removed above either breaks
+  it. Update the pair in its `assert_eq!` when you move one.
 - `TEXTURE_2D_SHAPE_OK` must stay on the first line of its `wgpu::TextureDescriptor {` body
-  (`tests/texture_desc_single_definition.rs`).
+  (`crates/webgpu_renderer/tests/texture_desc_single_definition.rs`).
 - `scripts/linux/check-ort-chain-only.sh --help` prints lines 2-10 of the file (`sed -n '2,10p'`).
 - The two bootstrap copies (`scripts/linux/lib/antfrastructure.sh`,
   `scripts/windows/Resolve-BuildModule.ps1`) and exact Renovate Git-mode companion
@@ -301,7 +302,8 @@ cargo build --workspace --locked --release            # fat LTO, codegen-units 1
 cargo build --locked --profile observant -p kataglyphis_observant  # the camera service: release, but a panic unwinds
 cargo build --locked --profile bridge -p kataglyphis_cxx_bridge    # the C++ engine's bridge: release, but a panic unwinds
 cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
-cargo run --bin kataglyphis_cli -- --help             # the CLI
+cargo test  -p kataglyphis_observant --locked         # one crate; package names are in docs/crates.md
+cargo run -p kataglyphis_cli -- --help                # the CLI is its own package
 cargo run -p kataglyphis_burn_demos --bin burn_demos  # the burn demos
 ```
 
@@ -309,7 +311,7 @@ cargo run -p kataglyphis_burn_demos --bin burn_demos  # the burn demos
 
 **Text generation keeps its contract** ([`docs/text.md`](docs/text.md)): `seed`, `json_schema` and `stop` reach both backends; the Linux and Windows chains build GenAI with llguidance, and a schema on a GenAI built without it fails with `TextError::JsonSchemaUnsupported`, never an unconstrained answer; the SmolLM2 contract model comes from `resources/models/llm.lock` through `fetch-models.sh --llm` only, never the default fetch packaging calls, so no installer carries it.
 
-The suite as every Linux lane runs it (`KATAGLYPHIS_REQUIRE_GPU=1`, `KATAGLYPHIS_REQUIRE_MODEL=1`, `KATAGLYPHIS_REQUIRE_GST=1`, `KATAGLYPHIS_REQUIRE_GENAI=1`), where the suites live, and the lint commands: [`docs/testing.md`](docs/testing.md). **Run the lint gates before pushing**: the fmt/clippy pair there is CI's `fmt-clippy` step (§ *`cargo_fmt_clippy.sh`*), and the shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` ([Continuous integration](#continuous-integration)).
+The suite as the x64 and arm64 Linux lanes run it (`KATAGLYPHIS_REQUIRE_GPU=1`, `KATAGLYPHIS_REQUIRE_MODEL=1`, `KATAGLYPHIS_REQUIRE_GST=1`, `KATAGLYPHIS_REQUIRE_GTK=1`, `KATAGLYPHIS_REQUIRE_GENAI=1`; the riscv64 lane requires fewer), where the suites live, and the lint commands: [`docs/testing.md`](docs/testing.md). **Run the lint gates before pushing**: the fmt/clippy pair there is CI's `fmt-clippy` step (§ *`cargo_fmt_clippy.sh`*), and the shell/workflow/secret/config gates are `bash scripts/linux/run-lint-gates.sh` ([Continuous integration](#continuous-integration)).
 
 **A hook runs them for you.** Once per clone: `git config core.hooksPath
 third_party/ANTfrastructure/shared/linux/templates/git-hooks`. A commit then checks what is staged (large

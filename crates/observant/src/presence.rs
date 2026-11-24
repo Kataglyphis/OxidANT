@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn a_box_over_nearly_the_whole_picture_is_dropped_unless_the_limit_is_one() {
-        // himbeere2's false visits of 2026-10-16/17: boxes of 0.95 to 0.99 of a 640x480 frame.
+        // The test Pi's false visits of 2026-10-16/17: boxes of 0.95 to 0.99 of a 640x480 frame.
         let whole = at(0.0, 5.0, 640.0, 476.0, 0.31);
         let near = at(0.0, 0.0, 610.0, 470.0, 0.4);
         // A cat close to the lens: 0.8 x 0.9 of the frame, 0.72 of it.

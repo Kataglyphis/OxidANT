@@ -3,7 +3,7 @@
 The existing CPU packages carry the GStreamer libraries and the GUI's plugins,
 the chain-built ONNX Runtime, the model, and on Linux the image's C and C++ runtime. On
 Windows the MSIX and the MSI are steps of `Build-Windows.ps1`, beside the portable bundle in
-`dist\windows-<x64|arm64>\` ([AGENTS.md § Continuous integration](../AGENTS.md#continuous-integration));
+`dist\windows-<x64|arm64>\` ([ci.md](ci.md));
 on Linux `scripts/linux/package-linux.sh` packs one bundle four ways
 ([§ Linux](#linux-tar-deb-appimage-flatpak)).
 
@@ -225,6 +225,11 @@ turns it off. The package lands in `dist\windows-<x64|arm64>\msix\`.
 ```pwsh
 pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
 ```
+
+Run it inside the family's Windows image, which holds `wix.exe`, GStreamer under `C:\runtime`
+and the chain ORT under `$env:ONNX_ROOT`. Set `CC` and `CXX` to `clang-cl` first, as
+`Invoke-WindowsLane.ps1` does for the lanes ([ci.md](ci.md)). `-TargetArch arm64` cross-builds;
+`-SkipBuild`, `-SkipTests` and `-SkipMsi` skip their steps, and `-Clean` runs `cargo clean` first.
 
 **The same step signs**, with the first `*.pfx` at the repository root (`*.pfx` is
 gitignored) and `MSIX_PFX_PASSWORD`, then verifies the signature. With no `.pfx` it warns

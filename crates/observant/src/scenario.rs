@@ -240,7 +240,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("run.jsonl");
         let config = Config {
-            name: "himbeere2".into(),
+            name: "catcam".into(),
             score: 0.3,
             ..Config::default()
         };
@@ -261,7 +261,7 @@ mod tests {
         drop(recorder);
         let read = Scenario::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(read.header.provenance.contains("recorded by ObservANT"));
-        assert!(read.header.provenance.contains("himbeere2"));
+        assert!(read.header.provenance.contains("catcam"));
         assert_eq!((read.header.width, read.header.height), (640, 480));
         assert_eq!(read.header.floor, RECORD_FLOOR);
         assert_eq!(read.header.ignore, vec![zone]);

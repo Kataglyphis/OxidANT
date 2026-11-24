@@ -114,7 +114,20 @@ Each failure has its own `TextError`: the library, the model directory, the prov
 tokenizer, the chat template, the encoding, invalid options (no messages, a zero budget, a NUL
 byte, a seed above `i32::MAX`, an empty stop string, a `json_schema` that is not a JSON object),
 generation, an unreachable endpoint, an endpoint too slow, an endpoint HTTP status with its body, a streamed
-line over the 1 MiB bound, and a `json_schema` this lane cannot hold.
+line over the 1 MiB bound, a `json_schema` this lane cannot hold, a model that cannot embed
+(`EmbeddingsUnsupported`), and a prompt whose tokens and budget pass the model's context
+(`ContextLengthExceeded`, kind `context_length_exceeded`).
+
+To add an error kind:
+
+1. `crates/text/src/lib.rs`: the `TextError` variant, its `kind()` word, its `Display` sentence, and the
+   variant in the test `every_error_names_its_kind`.
+2. `src/api/text.rs`: the `TextFailureKind` variant and its arm in `failure()`. Then regenerate the
+   bindings ([testing.md](testing.md#the-bridge-bindings)).
+3. `crates/observant/src/ask.rs`: an arm in `status_of`, or the kind answers 502.
+4. OmniAccelerANT: its sentence in `lib/Pages/AiPlaygroundPage/text_failure.dart` and in
+   `lib/l10n/app_en.arb` and `lib/l10n/app_de.arb`. The app's build fails until the switch has it.
+5. If the hub's fixture `cases` use the kind: its arm in the replay in `crates/text/tests/genai.rs`.
 
 An `Endpoint` waits 5 s for the connection (`connect_timeout`), 120 s for any one read, the response head
 included (`read_timeout`), and 300 s for the whole request with its stream (`timeout`). Running past one is

@@ -551,7 +551,7 @@ pub(super) mod tests {
     fn rpicam_frames_are_read_with_their_padded_rows() {
         use gstreamer::prelude::*;
 
-        // Measured on tabblscatcam: 480x360 is 276480 bytes a frame, 640x480 460800.
+        // Measured on a second camera host: 480x360 is 276480 bytes a frame, 640x480 460800.
         let turned = I420Layout::rpicam(480, 360);
         assert_eq!(turned.frame_size, 276_480);
         assert_eq!(turned.strides(), "<512, 256, 256>");

@@ -33,7 +33,7 @@ cargo doc --open
 
 `docs.yml` publishes them to <https://rust.jonasheinle.de> on every push to `develop` or
 `main`, through the hub's `build-docs.yml` with `builder: rustdoc`: ANTfrastructure's
-`cargo_build_doc.sh`, which is `cargo doc --no-deps --workspace` (all 13 crates) plus the
+`cargo_build_doc.sh`, which is `cargo doc --no-deps --workspace` (every crate and the root package) plus the
 family theme and `images/`, then the hub's `.htaccess` and its built-site link gate, whose
 known exceptions are `docs/site-links.allow`. `bash scripts/linux/ci-container-steps.sh docs`
 builds its API pages into `target/doc` locally, without the guides.
@@ -67,6 +67,16 @@ nerdctl run --rm --platform linux/amd64 `
   --mount type=volume,source=ox-target,target=/workspace/target `
   --mount type=volume,source=ox-cargo-home,target=/tmp/cargo-home -e CARGO_HOME=/tmp/cargo-home `
   $image bash -lc 'bash scripts/linux/ci-container-steps.sh fmt-clippy'
+```
+
+On a Linux host, from the checkout:
+
+```bash
+image=$(bash third_party/ANTfrastructure/linux/scripts/ci-image-ref.sh)
+nerdctl run --rm -v "$PWD:/workspace" -w /workspace \
+  --mount type=volume,source=ox-target,target=/workspace/target \
+  --mount type=volume,source=ox-cargo-home,target=/tmp/cargo-home -e CARGO_HOME=/tmp/cargo-home \
+  "$image" bash -lc 'bash scripts/linux/ci-container-steps.sh fmt-clippy'
 ```
 
 - **`target/` is a volume, not a `CARGO_TARGET_DIR` elsewhere**: the `docs` step copies

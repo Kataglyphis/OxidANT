@@ -2,8 +2,8 @@
 
 ## The whole suite
 
-Unit + integration + proptest fuzz + doc tests at the debug profile, as every Linux lane
-runs them (`bash scripts/linux/ci-container-steps.sh test`):
+Unit + integration + proptest fuzz + doc tests at the debug profile, as the x64 and arm64
+Linux lanes run them (`bash scripts/linux/ci-container-steps.sh test`):
 
 ```bash
 scripts/linux/fetch-models.sh
@@ -11,6 +11,10 @@ scripts/linux/fetch-models.sh --llm
 KATAGLYPHIS_REQUIRE_GPU=1 KATAGLYPHIS_REQUIRE_MODEL=1 KATAGLYPHIS_REQUIRE_GST=1 \
   KATAGLYPHIS_REQUIRE_GTK=1 KATAGLYPHIS_REQUIRE_GENAI=1 xvfb-run -a cargo test --workspace --locked
 ```
+
+For one crate, run the same line with `-p <package>` in place of `--workspace`; the package names are
+in [crates.md](crates.md). The `test` step always tests the whole workspace, since the hub's
+`cargo_test.sh` passes `--all`.
 
 There are no features to add: the capture tests, the ORT loader, the webcam engine and the
 burn demos compile wherever the target runs them, so GStreamer's development files and the
@@ -38,7 +42,7 @@ one case per test with its outcome, an ignored test's reason and a failed test's
 one failed case `(binary ended early)` with the signal for a binary that died before its summary.
 Stable libtest prints no per-test time, so each suite carries its binary's total only.
 Before it fetches anything, the `test` step runs `scripts/linux/check-genai-signatures.py`: `crates/text/src/genai.rs`
-types GenAI's C functions by hand, so the declarations of the 37 symbols it binds are taken from the image's
+types GenAI's C functions by hand, so the declarations of every symbol it binds are taken from the image's
 `ort_genai_c.h` and compared with `crates/text/genai-signatures.txt`; a GenAI bump that changes one fails the step and
 prints the changed lines. After checking `genai.rs` against the header, `--write` in the image renews the snapshot.
 

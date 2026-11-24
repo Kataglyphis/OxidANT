@@ -167,7 +167,7 @@ board runs it as one service unit. How to run and configure it:
   start every provider, NDI and PipeWire included, on each probe.
   - **And only for the choice that needs them.** When `rpicam-hello` lists a camera, no
     provider starts: `libcameraprovider` loads the host's libcamera into the service,
-    and on himbeere2 (2026-10-05) that brought the host's abseil, TensorFlow Lite and
+    and on the test Pi (2026-10-05) that brought the host's abseil, TensorFlow Lite and
     lttng into a process that runs its own glibc.
   - `test` and `image:` probe nothing.
 - **`rpicam-vid` belongs to a guard** (`RpicamProcess`), which kills and reaps the
@@ -180,7 +180,7 @@ board runs it as one service unit. How to run and configure it:
   the encoder takes it, so neither end converts. Boxes are drawn into the three planes,
   the inference thread converts only the frames it takes to RGBA (BT.601 limited range,
   what `videoconvert` assumes for these caps), and `/snapshot.jpg` converts on request.
-  Asking the capture for RGBA again would convert every frame: on himbeere2 (2026-10-12)
+  Asking the capture for RGBA again would convert every frame: on the test Pi (2026-10-12)
   I420 took the idle service from 13 % to 9 % of a core, its capture thread from 5.2 %
   to 1.7 %.
 - **A still, empty room idles the model** (`motion.rs`). At most once an inference period
@@ -190,14 +190,14 @@ board runs it as one service unit. How to run and configure it:
   view or the last run saw one, once a `still_period` (twice the full period, since
   2026-10-13): a still cat, asleep or a false one, costs half the runs, and leaving is
   motion, which restores the full rate. `Presence` lingers past the still period, so one
-  missed run never ends a visit; himbeere2's drying rack, a false cat at 0.34, went from
+  missed run never ends a visit; the test Pi's drying rack, a false cat at 0.34, went from
   69 % to 36 %. An `idle_inference_fps` at or above `inference_fps`, or an uncapped
   model, turns the gate off.
-  - On himbeere2 (2026-10-11, 2 Hz, 60 s per row) a still scene without a cat took 12 %
+  - On the test Pi (2026-10-11, 2 Hz, 60 s per row) a still scene without a cat took 12 %
     CPU and 11 runs, against 74 % and 100 with the gate off. The cat photo and the moving
     test pattern kept the full rate. `/healthz` counts the runs (`model_runs`).
   - A black frame, every block at luma 20 or less, skips the idle run too: a camera
-    without IR sees nothing at night. Light coming on is motion. In himbeere2's dark room
+    without IR sees nothing at night. Light coming on is motion. In the test Pi's dark room
     (2026-10-12) the service went from 9 % to 2 % of a core, and the model ran once in a
     minute instead of eleven times.
 - **ORT runs two threads that sleep between runs.** `main` sets `KATAGLYPHIS_ORT_SPIN=0`
@@ -205,7 +205,7 @@ board runs it as one service unit. How to run and configure it:
   `KATAGLYPHIS_ORT_THREADS`, both before anything starts a thread. ORT's own default,
   four threads that spin-wait between runs, is for back-to-back inference; every other
   caller that sets no count gets the family's rule, the usable CPUs but one, 1 to 8 (owner decision
-  2026-11-15; on a Pi 5 the detector took 234-242 ms p50 at 3 threads against 237-247 ms at ORT's default). Measured on himbeere2 (Pi 5,
+  2026-11-15; on a Pi 5 the detector took 234-242 ms p50 at 3 threads against 237-247 ms at ORT's default). Measured on the test Pi (Pi 5,
   2026-10-11; ANThology's photo at 2 Hz, 45 s per row, the live service beside it):
 
   | ORT setting | process CPU |
@@ -234,7 +234,7 @@ board runs it as one service unit. How to run and configure it:
 - **A cat counts after two hits in a row** (`presence.rs`), and leaves once no hit came
   for 3 s, or 2.5 inference periods when that is longer. Until then no box is drawn and
   nothing is logged. A lone detection near `score` is mostly noise: of the 72 arrivals
-  the old rule logged on himbeere2 (2026-10-09 to -11, 2 Hz), 52 were a single hit, and
+  the old rule logged on the test Pi (2026-10-09 to -11, 2 Hz), 52 were a single hit, and
   42 of the 72 scored 0.2x. The journal keeps its words, `cat in view: …` on arrival and
   `no cat in view (stayed N s)`, because OmniAccelerANT's package tests grep the first.
 - **The visit rules replay against scenarios** (2026-11-16). `--record-scenario FILE`
@@ -254,7 +254,7 @@ board runs it as one service unit. How to run and configure it:
   and ETags; a revalidation reads no file. A client that accepts gzip gets the
   compressible files over 1 KB gzipped (`GzipCache`): compressed on first request, kept in
   memory while the file is unchanged, with an ETag of their own and
-  `Vary: accept-encoding`. On himbeere2 (2026-10-12) the boot's main files went from 20.2 MB to
+  `Vary: accept-encoding`. On the test Pi (2026-10-12) the boot's main files went from 20.2 MB to
   7.5 MB; the first request for the 7 MB CanvasKit spent 614 ms compressing, later ones
   2 ms. It also answers `/healthz` (camera, the model's backend and runs, the cat's presence),
   serves `/snapshot.jpg` (the latest frame, boxes included, encoded on request) and forwards
@@ -385,4 +385,4 @@ first: the arm64 child, the runner's recorded `nerdctl run` with an empty stand-
 `/hostlibs`, gives GCC → GStreamer → `/hostlibs` → `/opt/libcamera` → media paths → host
 multiarch, `libgstlibcamera.so` resolves `libcamera.so.0.7` from a stubbed `/hostlibs`,
 and `gst-inspect-1.0 libcamerasrc` and `webrtcsink` load. The Pi 5 board run followed on
-2026-10-06: `--build`, then a stream from himbeere2's CSI camera (`CHANGELOG.md`).
+2026-10-06: `--build`, then a stream from the test Pi's CSI camera (`CHANGELOG.md`).

@@ -1,4 +1,4 @@
-{"observant_scenario":1,"provenance":"synthesised, not recorded: crates/observant/tests/scenarios/synthesise.py from the hand observations in docs/observant.md and CHANGELOG.md: himbeere2's drying rack, a false cat at about 0.34 that never moves (2026-10-13), before any spot was marked not a cat; the motion gate alone must keep it from arriving","width":640,"height":480,"inference_fps":2.0,"floor":0.1,"ignore":[]}
+{"observant_scenario":1,"provenance":"synthesised, not recorded: crates/observant/tests/scenarios/synthesise.py from the hand observations in docs/observant.md and CHANGELOG.md: the test Pi's drying rack, a false cat at about 0.34 that never moves (2026-10-13), before any spot was marked not a cat; the motion gate alone must keep it from arriving","width":640,"height":480,"inference_fps":2.0,"floor":0.1,"ignore":[]}
 {"t":0.0,"boxes":[],"moving":{"cols":80,"rows":60,"runs":[[0,4800]]}}
 {"t":1.0,"boxes":[],"moving":{"cols":80,"rows":60,"runs":[[0,4800]]}}
 {"t":2.0,"boxes":[],"moving":{"cols":80,"rows":60,"runs":[[0,4800]]}}
