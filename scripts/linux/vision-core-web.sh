@@ -11,6 +11,8 @@ export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"
 # shellcheck source=lib/antfrastructure.sh
 source "${script_dir}/lib/antfrastructure.sh"
 antfrastructure_source linux/scripts/lib/rust-toolchain.sh
+# A bare runner's rustup has the host target only, and rustc then fails on cfg-if with "can't find crate for core".
+ensure_wasm32_target || exit 2
 ensure_wasm_bindgen Cargo.lock || exit 2
 
 contract="third_party/ModelANT/contracts/inference-v1.json"
