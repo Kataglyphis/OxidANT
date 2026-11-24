@@ -12,9 +12,12 @@ The CLI and the flutter_rust_bridge surface use it; OmniAccelerANT's AI Playgrou
 - **`genai::GenaiGenerator`** runs a GenAI model directory in process on the chain's
   ONNX Runtime GenAI, on Linux and Windows. It loads `libonnxruntime-genai.so` or
   `onnxruntime-genai.dll` at run time, so nothing links it. The library is looked for beside the
-  executable, then under `ONNX_GENAI_ROOT` (`bin`, then `lib`), then at the Linux image's
-  `/usr/local/lib/onnxruntime-genai/lib`. There is no bare-name fallback, which would take
-  whatever copy the loader finds first.
+  executable, then beside the library this code runs from, then under `ONNX_GENAI_ROOT` (`bin`,
+  then `lib`), then at the Linux image's `/usr/local/lib/onnxruntime-genai/lib`. The second place
+  serves a host such as Python: the interpreter's directory has no GenAI, but the package that
+  loads OxidANT's code ships one beside its library (`genai::module_dir`, through the hub's
+  `loaded_module.rs`). There is no bare-name fallback, which would take whatever copy the loader
+  finds first.
 - **`endpoint::Endpoint`** talks to an OpenAI-compatible server: `/v1/chat/completions` with a
   server-sent stream, and `/v1/embeddings`. `EndpointChoice` resolves it in the hub tools' order:
   a URL, `LLM_BASE_URL` or `OLLAMA_BASE_URL`, a backend named in
@@ -52,6 +55,19 @@ token or the server's `stop`, `Length` when the budget ran out, and `Cancelled` 
 20 ms even while the server is silent; its connection closes at the server's next line. Each run
 clears the token as it starts. A stream that ends without a finish reason is an error, not an
 answer. A server without usage reports leaves the completion count at the number of pieces.
+
+**A caller without a callback pulls.** `GenaiGenerator::start(messages, options, cancel)` checks the
+request and puts the prompt into a generator. Each `pull()` then decodes on the caller's thread up to
+the answer's next text, and the last one carries the `GenerationResult` beside any text held back until
+then. A cancel ends the generation at the next pull, before its next token, so a cancel sent after a
+piece leaves exactly the tokens decoded so far. `generate` runs the same steps, so both give the same
+tokens and text. A new `start` or `generate` drops a generation left unfinished. AccelerANTgine's
+bridge (`crates/accel_bridge`) drives GenAI this way, since cxx cannot take a C++ callback.
+
+**GenAI's own words stay apart.** Each failed GenAI call is logged at error level as
+`ONNX Runtime GenAI: <step>: <message>`, and its words wait on the calling thread for
+`genai::take_genai_failure()`. A refusal of OxidANT's own, such as a NUL byte in a stop string,
+leaves them empty. For a GenAI failure the `TextError` text holds the kind's sentence and those words.
 
 **A greedy GenAI turn continues the last generator.** Without sampling and without `json_schema`,
 `GenaiGenerator` keeps its GenAI generator and every token it holds. The next prompt rewinds it to
@@ -116,7 +132,8 @@ byte, a seed above `i32::MAX`, an empty stop string, a `json_schema` that is not
 generation, an unreachable endpoint, an endpoint too slow, an endpoint HTTP status with its body, a streamed
 line over the 1 MiB bound, a `json_schema` this lane cannot hold, a model that cannot embed
 (`EmbeddingsUnsupported`), and a prompt whose tokens and budget pass the model's context
-(`ContextLengthExceeded`, kind `context_length_exceeded`).
+(`ContextLengthExceeded`, kind `context_length_exceeded`). `GenaiGenerator` refuses the last before it
+makes a generator, greedy or sampled, as AccelerANTgine's engine does.
 
 To add an error kind:
 
@@ -127,7 +144,10 @@ To add an error kind:
 3. `crates/observant/src/ask.rs`: an arm in `status_of`, or the kind answers 502.
 4. OmniAccelerANT: its sentence in `lib/Pages/AiPlaygroundPage/text_failure.dart` and in
    `lib/l10n/app_en.arb` and `lib/l10n/app_de.arb`. The app's build fails until the switch has it.
-5. If the hub's fixture `cases` use the kind: its arm in the replay in `crates/text/tests/genai.rs`.
+5. If the hub's fixture `cases` use the kind: its arm in the replay in `crates/text/tests/genai.rs`, and in
+   `crates/accel_bridge/tests/text.rs`.
+6. `crates/accel_bridge/src/text.rs`: its C ABI status in `status()`. The match lists every kind, so the
+   bridge does not build until it has one.
 
 An `Endpoint` waits 5 s for the connection (`connect_timeout`), 120 s for any one read, the response head
 included (`read_timeout`), and 300 s for the whole request with its stream (`timeout`). Running past one is
@@ -223,6 +243,7 @@ local server that plays back one recorded answer and ends within 30 s on its own
 | `crates/text/src/*.rs` | Option checks, the request body, stream lines and their 1 MiB bound, thinking deltas under both names, `<think>` blocks (whole, split over pieces, unclosed, beside a stop string), the redacted key, embeddings, endpoint resolution, the loader's search and its chain check |
 | `crates/text/tests/genai.rs` | The tiny model: the oracle's tokens and text, the end token, a cancel from another thread, invalid requests, a repeated seed's identical ids, at least two different 24-token answers across seeds 1 to 4 at temperature 1, a schema answer that parses and validates on Linux and `JsonSchemaUnsupported` on Windows, a stop string ending with `Stop`, the oracle's embedding, several texts in order, generation after embedding, a model without the output, texts that cannot be embedded |
 | `crates/text/tests/contract.rs` | ModelANT's text-generation-v1 on SmolLM2-135M: exact ids and `must_contain` |
+| `crates/accel_bridge/tests/text.rs` | The tiny model through AccelerANTgine's bridge: pulls that give the oracle, a cancel between pulls after one token, every fixture case with the C ABI's status, a NUL byte in a stop string as OxidANT's own refusal, and a missing model directory with GenAI's words, their log record and the model loaded before kept |
 | `crates/text/tests/endpoint.rs` | Streaming, cancel, both finish reasons, the three thinking dialects giving one answer, a reply cut inside its thinking, HTTP errors, an over-long stream line, an unreachable port, a connection that never opens, a server silent before its head, after it and after a piece, a stream that ends only at the cap, embeddings, `seed`, `stop` and `response_format` in the request body |
 | `crates/cli/tests/text.rs` | `chat` and `embed` on both backends, a named backend, the missing-endpoint error, the `--seed`, `--json-schema` and `--stop` request body |
 | `src/api/text.rs` | The bridge's mapping |

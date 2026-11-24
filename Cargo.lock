@@ -5123,6 +5123,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kataglyphis_accel_bridge"
+version = "3.0.0"
+dependencies = [
+ "cxx",
+ "kataglyphis_bridge_support",
+ "kataglyphis_text",
+ "log",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "kataglyphis_assets"
 version = "3.0.0"
 dependencies = [
@@ -5139,6 +5151,13 @@ dependencies = [
  "proptest",
  "ruzstd",
  "tempfile",
+]
+
+[[package]]
+name = "kataglyphis_bridge_support"
+version = "3.0.0"
+dependencies = [
+ "log",
 ]
 
 [[package]]
@@ -5191,6 +5210,7 @@ dependencies = [
  "cxx",
  "glam",
  "kataglyphis_assets",
+ "kataglyphis_bridge_support",
  "kataglyphis_render_core",
  "log",
  "tempfile",

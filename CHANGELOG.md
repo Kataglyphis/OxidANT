@@ -13,6 +13,46 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-24, a second C++ bridge for AccelerANTgine's text pilot: roadmap step 4)
+
+- **`crates/bridge_support` (`kataglyphis_bridge_support`)** holds what both C++ bridges share: `guarded()`,
+  `nothing`, the per-thread log collector (`log_records`) and the bridge contract's source checks (`contract`). It
+  forbids unsafe code and denies the panic lints. `kataglyphis_cxx_bridge` takes all of it from there; its bridge
+  files, functions and C++ names are unchanged. The note on dropped records now names
+  `kataglyphis_bridge_support::log_records` as its target.
+- **`crates/accel_bridge` (`kataglyphis_accel_bridge`)**, a staticlib for AccelerANTgine, one area per file in
+  `kataglyphis::oxidant::accel::<file stem>`: `text.rs` drives the GenAI generator as a pull (`new_text_generator`,
+  `initialize`, `start`, `next_piece`, `cancel_handle`, `cancel`, `genai_available`, `text_intra_op_threads`),
+  `diagnostics.rs` has `oxidant_version` and `take_log_records`. The last piece carries the whole answer, which is
+  shorter than the pieces after a late `</think>`, for the engine's `GenerationResult::text`. A status is the C ABI's
+  number, so the engine's adapters map it one to one, and `NotInitialized` is the bridge's own. The engine's
+  `ExecutionProvider` values MIGraphX, XNNPACK and DNNL are refused before the library loads, and a failed load keeps
+  the model loaded before, as `TextGenerator::initialize` does. Owner D3: the crate denies unsafe code and the panic
+  lints, the glue cxx generates on each bridge module is its one allowance (cxx's macro cannot build under `forbid`),
+  and the crates it links may hold unsafe FFI. Its own `contract.rs` holds all of this. A C++ driver built with
+  `-fno-exceptions` by clang and GCC 16.2 against the staticlib and `cxxbridge` 1.0.205's output ran the tiny model
+  through it on the Pi; GCC warns `maybe-uninitialized` inside cxx's generated `rust::Vec<LogRecord>` glue, as for
+  BeschleunigerBallett's identical diagnostics bridge.
+- **`GenaiGenerator::start` and `pull`** decode on the caller's thread for a caller without a callback. `generate`
+  runs the same steps (`begin`, `step`, `end`), so both give the same tokens. A cancel ends the generation at the
+  next pull, before its next token: the lock step of AccelerANTgine's `CancelFromTheCallbackEndsAfterTheCurrentToken`.
+- **Parity with AccelerANTgine's engine.** `Api::check` logs each GenAI failure at error level and keeps GenAI's
+  own words per thread (`genai::take_genai_failure`), so a bridge reports them apart from OxidANT's refusals, which
+  leave them empty. A NUL byte in a stop string stays `InvalidOptions`, and the `<think>` split stays the one that
+  replays hub CON288's cases. `ContextLengthExceeded` is refused on every path, sampled turns included (owner D7);
+  before, only a greedy turn checked it.
+- **The usable CPUs** (owner D16): `kataglyphis_core::config::usable_cpus` is the smaller of the affinity mask and
+  the cgroup v2 CPU quota (`cpu.max`, the tightest from the process's cgroup up to the root, in whole CPUs rounded
+  down, at least 1). The ORT and the text thread rules count it. A container with `--cpus 3` on a Pi 5 gives 3.
+- **The GenAI search adds the loaded library's own directory** (owner D17), after the executable's and before
+  `ONNX_GENAI_ROOT`, through the hub's `loaded_module.rs` (`loaded-module-rust`, an exact copy at
+  `crates/text/src/loaded_module.rs`). A host such as Python finds the GenAI that ships beside its package's
+  library.
+- **The lists follow the new crates**: the function-size scopes, the coverage floors, the CI-steps test, the
+  licence policy and its staging test, `AGENTS.md` and the docs. Eight mutation recipes guard the glue-only unsafe
+  allowance, the records' bound, the early provider refusal, status 11, the seed, the loaded library's directory
+  and the quota's minimum and tightest level.
+
 ### Changed (2026-11-23, one OBJ reader for both renderers: BeschleunigerBallett plan B6)
 
 - **`kataglyphis_assets::obj` is the OBJ reader both renderers load through.** `obj_to_gltf` and `obj_glb` moved

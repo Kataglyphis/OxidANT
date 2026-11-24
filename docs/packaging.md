@@ -140,8 +140,9 @@ SHA-256 and source URL. A crate without a reviewed text fails the package step, 
 dependency bump that adds one needs a policy entry first; `scripts/linux/tests/test-cargo-license-policy.sh`
 stages all four packaged targets and fails on a missing, changed or unreferenced text.
 The same policy covers `kataglyphis_cxx_bridge`, whose graph BeschleunigerBallett links and
-stages on its own packaged targets, riscv64 included, and `kataglyphis_webgpu_renderer` for
-`wasm32-unknown-unknown`, the WebGPU demo on BeschleunigerBallett's docs site; the test stages both roots too.
+stages on its own packaged targets, riscv64 included, `kataglyphis_accel_bridge`, whose graph
+AccelerANTgine will link on the same targets, and `kataglyphis_webgpu_renderer` for
+`wasm32-unknown-unknown`, the WebGPU demo on BeschleunigerBallett's docs site; the test stages these roots too.
 Linux tar, DEB and Flatpak read back every staged crate file and the model's `LICENSE` and
 `NOTICE`; the AppImage, the Windows bundle and MSIX check the crate manifest, the CLI's own
 entry and the model license (MSIX part names percent-encode a crate directory's `@`, so

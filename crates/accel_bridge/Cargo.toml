@@ -1,0 +1,26 @@
+[package]
+name = "kataglyphis_accel_bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The cxx bridge AccelerANTgine's C++ engine links through Corrosion: kataglyphis_text's GenAI generation pulled piece by piece, OxidANT's version and each call's log records."
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+cxx = "1.0"
+# guarded() and the per-thread log records, shared with BeschleunigerBallett's bridge.
+kataglyphis_bridge_support = { path = "../bridge_support" }
+# The GenAI generator; its unsafe FFI stays in that crate, never in this one (owner D3).
+kataglyphis_text = { path = "../text" }
+# The levels of the records `diagnostics` hands the engine.
+log = { workspace = true }
+
+[dev-dependencies]
+# Reads the tiny model's fixture.json, whose cases every text binding replays.
+serde_json = "1"
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

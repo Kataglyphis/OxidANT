@@ -100,10 +100,63 @@ env_cached!(
 env_cached!(
     /// `KATAGLYPHIS_ORT_THREADS`: ORT intra-op threads; unset takes [`family_threads`], `0` ORT's own one per core.
     fn ort_intra_threads -> usize, || {
-        let usable = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-        threads_from(std::env::var("KATAGLYPHIS_ORT_THREADS").ok().as_deref(), usable)
+        threads_from(std::env::var("KATAGLYPHIS_ORT_THREADS").ok().as_deref(), usable_cpus())
     }
 );
+
+/// The CPUs the thread rules count (owner D16): the smaller of the affinity mask and the cgroup CPU quota.
+pub fn usable_cpus() -> usize {
+    let affinity = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let quota = std::fs::read_to_string("/proc/self/cgroup")
+        .ok()
+        .and_then(|membership| {
+            let path = cgroup_v2_path(&membership)?;
+            quota_along(path, |dir| {
+                std::fs::read_to_string(
+                    std::path::Path::new("/sys/fs/cgroup")
+                        .join(dir)
+                        .join("cpu.max"),
+                )
+                .ok()
+            })
+        });
+    usable_of(affinity, quota)
+}
+
+/// `affinity` capped by a `quota` in whole CPUs, at least 1.
+pub fn usable_of(affinity: usize, quota: Option<usize>) -> usize {
+    quota.map_or(affinity, |quota| affinity.min(quota)).max(1)
+}
+
+/// The cgroup v2 path of `/proc/self/cgroup`'s `0::<path>` line; a v1 hierarchy has none.
+pub fn cgroup_v2_path(membership: &str) -> Option<&str> {
+    membership.lines().find_map(|line| line.strip_prefix("0::"))
+}
+
+/// The tightest quota of the cgroup at `path` and its ancestors up to the root, `read` giving each one's `cpu.max`.
+pub fn quota_along(path: &str, read: impl Fn(&str) -> Option<String>) -> Option<usize> {
+    let mut dir = path.trim_matches('/');
+    let mut tightest: Option<usize> = None;
+    loop {
+        if let Some(quota) = read(dir).as_deref().and_then(cpu_max_quota) {
+            tightest = Some(tightest.map_or(quota, |held| held.min(quota)));
+        }
+        if dir.is_empty() {
+            return tightest;
+        }
+        dir = dir.rsplit_once('/').map_or("", |(parent, _)| parent);
+    }
+}
+
+/// Whole CPUs, rounded down, of a `cpu.max` line `<quota> <period>` in microseconds; `max` sets no limit.
+pub fn cpu_max_quota(cpu_max: &str) -> Option<usize> {
+    let mut fields = cpu_max.split_whitespace();
+    let quota: u64 = fields.next()?.parse().ok()?;
+    let period: u64 = fields.next()?.parse().ok()?;
+    quota
+        .checked_div(period)
+        .and_then(|cpus| usize::try_from(cpus).ok())
+}
 
 /// The family's ORT pool: the usable CPUs but one, 1 to 8 (owner decision); ORT's default ignores the mask.
 pub fn family_threads(usable: usize) -> usize {
@@ -192,6 +245,49 @@ mod tests {
         assert_eq!(threads_from(Some("many"), 4), 3);
         assert_eq!(threads_from(Some(" 2 "), 4), 2);
         assert_eq!(threads_from(Some("0"), 4), 0, "0 keeps ORT's own default");
+    }
+
+    /// Owner D16: a container's `--cpus 3` on a Pi 5 leaves 3 usable CPUs, not the mask's 4.
+    #[test]
+    fn a_usable_cpu_is_the_smaller_of_the_mask_and_the_quota() {
+        for (cpu_max, quota) in [
+            ("max 100000", None),
+            ("300000 100000\n", Some(3)),
+            ("150000 100000", Some(1)),
+            ("50000 100000", Some(0)),
+            ("100000 0", None),
+            ("", None),
+            ("max", None),
+        ] {
+            assert_eq!(cpu_max_quota(cpu_max), quota, "{cpu_max:?}");
+        }
+        assert_eq!(usable_of(4, Some(3)), 3);
+        assert_eq!(usable_of(2, Some(3)), 2);
+        assert_eq!(usable_of(4, None), 4);
+        assert_eq!(usable_of(4, Some(0)), 1, "half a CPU still runs one thread");
+        assert!(usable_cpus() >= 1);
+    }
+
+    #[test]
+    fn the_quota_is_the_tightest_from_the_cgroup_up_to_the_root() {
+        assert_eq!(
+            cgroup_v2_path("12:cpu:/x\n0::/user.slice/app\n"),
+            Some("/user.slice/app")
+        );
+        assert_eq!(cgroup_v2_path("4:cpu,cpuacct:/docker/1\n"), None);
+        let limits = |dir: &str| match dir {
+            "" => Some("400000 100000".to_owned()),
+            "user.slice" => Some("200000 100000".to_owned()),
+            "user.slice/app" => Some("max 100000".to_owned()),
+            _ => None,
+        };
+        assert_eq!(quota_along("/user.slice/app", limits), Some(2));
+        assert_eq!(
+            quota_along("/", limits),
+            Some(4),
+            "inside a container its own root"
+        );
+        assert_eq!(quota_along("/other/deep", |_| None), None);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proves the policy covers the CLI's and the C++ bridge's Cargo graphs on every packaged target, and the renderer's wasm graph; it does not prove linkage or native-library coverage.
+# Proves the policy covers the CLI's and both C++ bridges' Cargo graphs on every packaged target, and the renderer's wasm graph; it does not prove linkage or native-library coverage.
 set -u
 # shellcheck source=scripts/linux/tests/lib-suite.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
@@ -8,7 +8,7 @@ stager="$(antfrastructure_path linux/scripts/06-packaging/stage-cargo-licenses.p
 policy="${KATAGLYPHIS_REPO_ROOT}/packaging/cargo-license-policy.json"
 python="$(command -v python3 || command -v python)"
 targets=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-pc-windows-msvc)
-# BeschleunigerBallett links the bridge into its packages, riscv64 included.
+# BeschleunigerBallett and AccelerANTgine link their bridges into their packages, riscv64 included.
 bridge_targets=("${targets[@]}" riscv64gc-unknown-linux-gnu)
 # BeschleunigerBallett's docs site ships the renderer as its WebGPU demo.
 demo_target=wasm32-unknown-unknown
@@ -31,6 +31,9 @@ for target in "${bridge_targets[@]}"; do
     t_case "every crate the C++ bridge links on ${target} has reviewed original license texts"
     root=kataglyphis_cxx_bridge t_assert_ok stage "$target" "$policy" "${work}/bridge-${target}"
     t_assert_grep "${work}/bridge-${target}/manifest.json" '"name": "kataglyphis_cxx_bridge"'
+    t_case "every crate AccelerANTgine's bridge links on ${target} has reviewed original license texts"
+    root=kataglyphis_accel_bridge t_assert_ok stage "$target" "$policy" "${work}/accel-${target}"
+    t_assert_grep "${work}/accel-${target}/manifest.json" '"name": "kataglyphis_accel_bridge"'
 done
 t_case "every crate the browser demo ships on ${demo_target} has reviewed original license texts"
 root=kataglyphis_webgpu_renderer t_assert_ok stage "$demo_target" "$policy" "${work}/demo"

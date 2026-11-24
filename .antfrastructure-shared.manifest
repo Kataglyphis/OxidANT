@@ -13,3 +13,5 @@ antfrastructure-sh
 renovate-git-mode-sh
 resolve-build-module
 coco-classes crates/core/src/coco-classes.txt
+# The GenAI search's directory of the library that holds this code (owner D17).
+loaded-module-rust crates/text/src/loaded_module.rs

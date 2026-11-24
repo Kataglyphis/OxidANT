@@ -30,9 +30,10 @@ The root `Cargo.toml` is both the workspace and the root package `oxidant`: a li
 2026-10-20): every target builds what it can run ([§ Targets and their system
 dependencies](#targets-and-their-system-dependencies)). Every crate, what `src/` and
 `tests/` hold, and the two vendored crates under `third_party/`:
-[`docs/crates.md`](docs/crates.md). The crates are `crates/assets`, `crates/burn_demos`, `crates/cli`, `crates/core`,
-`crates/cxx_bridge`, `crates/esp32`, `crates/esp32-protocol`, `crates/gui`, `crates/inference`,
-`crates/media`, `crates/observant`, `crates/render_core`, `crates/telemetry`, `crates/text`, `crates/vision_core` and `crates/webgpu_renderer`;
+[`docs/crates.md`](docs/crates.md). The crates are `crates/accel_bridge`, `crates/assets`, `crates/bridge_support`,
+`crates/burn_demos`, `crates/cli`, `crates/core`, `crates/cxx_bridge`, `crates/esp32`, `crates/esp32-protocol`,
+`crates/gui`, `crates/inference`, `crates/media`, `crates/observant`, `crates/render_core`, `crates/telemetry`,
+`crates/text`, `crates/vision_core` and `crates/webgpu_renderer`;
 the root package's modules are `src/api` (the flutter_rust_bridge surface) and `src/platform`. The tooling submodule, `third_party/ANTfrastructure`,
 is **the ground truth for every container and PowerShell concern**; read § 2 before
 writing any helper.
@@ -59,7 +60,14 @@ into each of them **in the same change**:
   panic. The bridge is a crate of its own: the root package links GStreamer and
   the ORT loader, which the C++ engine would have linked and shipped for one function.
   It links only wgpu-free crates: `crates/assets` and `crates/render_core`, where a renderer module
-  moves, re-exported under its old path, in the change that bridges it.
+  moves, re-exported under its old path, in the change that bridges it, and `crates/bridge_support`.
+- [AccelerANTgine](https://github.com/Kataglyphis/AccelerANTgine), for its text pilot:
+  `crates/accel_bridge` (`kataglyphis_accel_bridge`) through Corrosion, as BeschleunigerBallett imports its
+  bridge, with the files `src/text.rs` and `src/diagnostics.rs` in the C++ namespace
+  `kataglyphis::oxidant::accel::<file stem>`. Its package name, the staticlib and those file names become
+  part of that repository's build once it takes OxidANT as a submodule. The crate holds no unsafe code
+  of its own and links `crates/text`, whose GenAI binding is unsafe FFI. `guarded()` and the per-thread
+  log records of both bridges live in `crates/bridge_support`.
 
 ## 2. What ANTfrastructure owns — links only
 
@@ -301,6 +309,7 @@ cargo build --workspace --locked --profile profile    # custom: release + debugi
 cargo build --workspace --locked --release            # fat LTO, codegen-units 1, panic=abort, stripped
 cargo build --locked --profile observant -p kataglyphis_observant  # the camera service: release, but a panic unwinds
 cargo build --locked --profile bridge -p kataglyphis_cxx_bridge    # the C++ engine's bridge: release, but a panic unwinds
+cargo build --locked --profile bridge -p kataglyphis_accel_bridge  # AccelerANTgine's bridge, the same profile
 cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
 cargo test  -p kataglyphis_observant --locked         # one crate; package names are in docs/crates.md
 cargo run -p kataglyphis_cli -- --help                # the CLI is its own package

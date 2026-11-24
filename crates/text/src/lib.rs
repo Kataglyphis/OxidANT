@@ -14,6 +14,9 @@ mod answer;
 pub mod endpoint;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod genai;
+// The hub's exact copy (`loaded-module-rust`), which finds the library this code runs from.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod loaded_module;
 
 /// One turn of a chat; `role` is `system`, `user`, `assistant` or `tool`.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,0 +1,13 @@
+[package]
+name = "kataglyphis_bridge_support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "What both C++ bridges share: guarded() around every bridged call, the per-thread log records, and the source checks of the bridge contract."
+
+[dependencies]
+# The records bridged calls log, which the collector keeps per thread for the engine.
+log = { workspace = true }
+
+[lints]
+workspace = true

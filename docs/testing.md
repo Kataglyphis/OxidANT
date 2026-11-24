@@ -106,6 +106,17 @@ cover GPU providers or packaged launchers. A tract-only channel swap fails it; a
 the shared preprocessing does not, since both backends then see the same image and still find
 both cats.
 
+**Both C++ bridges keep one contract.** `crates/cxx_bridge/src/contract.rs` and
+`crates/accel_bridge/src/contract.rs` read their crate's bridge files with the checks in
+`kataglyphis_bridge_support::contract`: one bridge per file in its area's namespace, every bridged
+function one `guarded()` call, no cxx `Result`, text from C++ as bytes and no call into C++. Each
+pins its own files and functions and the unwinding `[profile.bridge]`. BeschleunigerBallett's bridge
+checks that every workspace crate it links forbids unsafe code and denies the panic lints.
+AccelerANTgine's bridge denies unsafe code itself, allows it only on the glue cxx generates for each
+bridge module, and may link crates with unsafe FFI. Its `tests/text.rs` drives the tiny GenAI model
+through the bridge's own calls ([text.md](text.md#tests)). Nothing here compiles the C++ half of a
+bridge; the consumers' builds do.
+
 ## Formatting and lints
 
 CI gates on both, as hard failures. Run them before pushing:
@@ -125,7 +136,7 @@ runs them and `scripts/linux/pre-push-checks.sh`, the script suites of the lint 
 
 **Function size is a hard gate in every crate.** `crates/observant`, `crates/inference`,
 `crates/media`, the root crate `src` and, since 2026-11-14, `crates/text`, `crates/core`, `crates/esp32`, `crates/esp32-protocol`,
-`crates/cli`, `crates/telemetry`, `crates/gui`, `crates/burn_demos`, `crates/cxx_bridge`, `crates/assets`, `crates/render_core`, `crates/vision_core` and `crates/webgpu_renderer` set `#![warn(clippy::too_many_lines)]`, and `clippy.toml`
+`crates/cli`, `crates/telemetry`, `crates/gui`, `crates/burn_demos`, `crates/cxx_bridge`, `crates/bridge_support`, `crates/accel_bridge`, `crates/assets`, `crates/render_core`, `crates/vision_core` and `crates/webgpu_renderer` set `#![warn(clippy::too_many_lines)]`, and `clippy.toml`
 holds the limit, 80 lines in clippy's count (code lines only), so `-D warnings` fails a new long
 function there. Those over it carry `#[expect(clippy::too_many_lines)]` where clippy's count passes 80. An
 `#[expect]` does not stop a function from growing, so `scripts/linux/check-rust-function-sizes.sh`,

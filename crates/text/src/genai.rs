@@ -1,11 +1,13 @@
 //! The chain's ONNX Runtime GenAI through its C API, loaded at run time from the chain install and verified like ORT.
 
+use std::cell::RefCell;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
 
 use crate::answer::Answer;
+use crate::loaded_module;
 use crate::{
     check_request, decode_rate, messages_json, unit_length, CancelToken, ChatMessage, FinishReason,
     GenerationOptions, GenerationResult, TextBackend, TextError,
@@ -197,13 +199,37 @@ impl Api {
             (self.destroy_result)(status);
             message
         };
-        Err(format!("{what}: {message}"))
+        let failure = format!("{what}: {message}");
+        log::error!("ONNX Runtime GenAI: {failure}");
+        GENAI_FAILURE.with_borrow_mut(|last| *last = Some(failure.clone()));
+        Err(failure)
     }
 }
 
-/// Where the library is looked for: beside the executable, then the chain install; no bare name, which finds any copy.
-pub fn library_candidates(exe_dir: Option<&Path>, genai_root: Option<&Path>) -> Vec<PathBuf> {
+thread_local! {
+    static GENAI_FAILURE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// GenAI's own words, `<step>: <message>`, for this thread's last failed GenAI call since the last take; `None` when
+/// GenAI refused nothing, so a failure without them is OxidANT's own refusal.
+pub fn take_genai_failure() -> Option<String> {
+    GENAI_FAILURE.with_borrow_mut(Option::take)
+}
+
+/// Where the library is looked for: beside the executable, beside the library that holds this code, then the chain
+/// install; no bare name, which finds any copy.
+pub fn library_candidates(
+    exe_dir: Option<&Path>,
+    module_dir: Option<&Path>,
+    genai_root: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = exe_dir.map(|d| d.join(LIBRARY)).into_iter().collect();
+    // A host such as Python runs this code from a library that ships GenAI beside it (owner D17).
+    if let Some(beside) = module_dir.map(|d| d.join(LIBRARY)) {
+        if !candidates.contains(&beside) {
+            candidates.push(beside);
+        }
+    }
     if let Some(root) = genai_root {
         candidates.extend(
             ["bin", "lib"]
@@ -230,6 +256,13 @@ pub fn verify_chain_build(path: &Path) -> Result<(), String> {
     ))
 }
 
+/// The directory of the executable or library this code runs from, which differs from the executable's in a host.
+pub fn module_dir() -> Option<PathBuf> {
+    let address = module_dir as fn() -> Option<PathBuf> as *const c_void;
+    let path = loaded_module::path_for_address(address).ok()?;
+    path.parent().map(Path::to_path_buf)
+}
+
 fn api() -> Result<&'static Api, TextError> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
     API.get_or_init(|| {
@@ -239,7 +272,8 @@ fn api() -> Result<&'static Api, TextError> {
         let root = std::env::var_os("ONNX_GENAI_ROOT")
             .filter(|v| !v.is_empty())
             .map(PathBuf::from);
-        let candidates = library_candidates(exe_dir.as_deref(), root.as_deref());
+        let candidates =
+            library_candidates(exe_dir.as_deref(), module_dir().as_deref(), root.as_deref());
         let Some(path) = candidates.iter().find(|c| c.is_file()) else {
             let tried: Vec<String> = candidates.iter().map(|c| c.display().to_string()).collect();
             return Err(format!(
@@ -442,6 +476,8 @@ pub fn hidden_states_error(message: String) -> TextError {
 
 /// One GenAI model directory, loaded once; `generate` takes it exclusively.
 pub struct GenaiGenerator {
+    /// The generation [`Self::start`] began and [`Self::pull`] decodes; declared first, so it goes before the model.
+    turn: Option<Turn>,
     api: &'static Api,
     tokenizer: Owned,
     model: Owned,
@@ -472,7 +508,7 @@ pub fn default_text_threads(model_dir: &Path) -> Option<u32> {
     if names_its_own {
         return None;
     }
-    let usable = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let usable = kataglyphis_core::config::usable_cpus();
     u32::try_from(kataglyphis_core::config::text_threads(usable)).ok()
 }
 
@@ -605,6 +641,7 @@ impl GenaiGenerator {
             unsafe { std::slice::from_raw_parts(ids, count) }.to_vec()
         };
         Ok(Self {
+            turn: None,
             api,
             tokenizer,
             model,
@@ -883,12 +920,6 @@ impl GenaiGenerator {
         // SAFETY: prompt is a live sequences handle; GenAI owns its ids until the handle goes.
         let data = unsafe { (c.sequence_data)(prompt.handle, 0) };
         let needed = prompt_tokens + budget(options);
-        if self.context_tokens > 0 && needed > self.context_tokens {
-            return Err(TextError::ContextLengthExceeded(format!(
-                "{prompt_tokens} prompt tokens and max_new_tokens {} pass the context of {}",
-                options.max_new_tokens, self.context_tokens
-            )));
-        }
         if !data.is_null() {
             // SAFETY: data points to the prompt's prompt_tokens ids.
             let ids = unsafe { std::slice::from_raw_parts(data, prompt_tokens) };
@@ -925,16 +956,8 @@ impl GenaiGenerator {
         }
     }
 
-    /// Decodes up to the budget into `result` and sets its finish reason; the first token's moment.
-    fn decode(
-        &self,
-        generator: Handle,
-        options: &GenerationOptions,
-        cancel: &CancelToken,
-        on_text: &mut dyn FnMut(&str),
-        start: Instant,
-        result: &mut GenerationResult,
-    ) -> Result<Instant, TextError> {
+    /// A tokenizer stream for one reply's tokens.
+    fn tokenizer_stream(&self) -> Result<Owned, TextError> {
         let api = self.api;
         let mut raw = std::ptr::null_mut();
         // SAFETY: tokenizer is live.
@@ -943,25 +966,118 @@ impl GenaiGenerator {
             "tokenizer stream",
         )
         .map_err(TextError::TokenizerFailed)?;
-        let stream = Owned::new(raw, api.destroy_tokenizer_stream);
-        let (mut first, mut answer) = (start, Answer::new(&options.stop));
-        // A greedy generator has room past this turn's budget, so the budget ends the turn, not only the generator.
-        // SAFETY: generator is live for the whole loop.
-        while result.tokens.len() < budget(options) && !unsafe { (api.is_done)(generator) } {
-            if cancel.is_cancelled() {
-                result.finish_reason = FinishReason::Cancelled;
-                break;
-            }
-            // A piece that ends inside a UTF-8 character stays in the stream until it is complete.
-            let piece = self.next_token(generator, &stream, result)?;
-            if result.tokens.len() == 1 {
-                first = Instant::now();
-            }
-            if answer.push(&piece, on_text) {
-                break;
-            }
+        Ok(Owned::new(raw, api.destroy_tokenizer_stream))
+    }
+
+    fn is_done(&self, generator: Handle) -> bool {
+        // SAFETY: a turn's generator lives as long as the turn.
+        unsafe { (self.api.is_done)(generator) }
+    }
+
+    /// Checks the request, puts its prompt into a generator and opens the stream its reply decodes through.
+    fn begin(
+        &mut self,
+        messages: &[ChatMessage],
+        options: &GenerationOptions,
+        cancel: &CancelToken,
+    ) -> Result<Turn, TextError> {
+        check_request(messages, options)?;
+        cancel.reset();
+        // The clock starts before the prompt goes in, so the first token's time includes the prefill.
+        let start = Instant::now();
+        let prompt = self.prompt(messages)?;
+        // SAFETY: prompt is a live sequences handle holding one sequence.
+        let prompt_tokens = unsafe { (self.api.sequences_get_sequence_count)(prompt.handle, 0) };
+        let needed = prompt_tokens + budget(options);
+        // Refused on every path, greedy or sampled, as AccelerANTgine refuses it (owner D7, hub CON288).
+        if self.context_tokens > 0 && needed > self.context_tokens {
+            return Err(TextError::ContextLengthExceeded(format!(
+                "{prompt_tokens} prompt tokens and max_new_tokens {} pass the context of {}",
+                options.max_new_tokens, self.context_tokens
+            )));
         }
-        if answer.finish(on_text, result) {
+        let continuation = self.api.continuation.filter(|_| continues(options));
+        let (generator, fresh) = match continuation {
+            Some(c) => (
+                self.greedy_generator(c, &prompt, prompt_tokens, options)?,
+                None,
+            ),
+            None => {
+                let fresh = self.generator(&prompt, needed, options)?;
+                (fresh.handle, Some(fresh))
+            }
+        };
+        let stream = match self.tokenizer_stream() {
+            Ok(stream) => stream,
+            Err(e) => {
+                if continuation.is_some() {
+                    self.live = None;
+                }
+                return Err(e);
+            }
+        };
+        Ok(Turn {
+            stream,
+            _fresh: fresh,
+            generator,
+            continuation,
+            budget: budget(options),
+            cancel: cancel.clone(),
+            answer: Answer::new(&options.stop),
+            result: GenerationResult {
+                text: String::new(),
+                tokens: Vec::new(),
+                finish_reason: FinishReason::Length,
+                prompt_tokens,
+                completion_tokens: 0,
+                time_to_first_token_ms: 0.0,
+                decode_tokens_per_second: 0.0,
+                thinking_chars: 0,
+            },
+            start,
+            first: start,
+        })
+    }
+
+    /// Decodes the turn's next token into its answer; false once the turn has ended, by its budget, the model's end
+    /// token, a cancel or a stop string.
+    fn step(&self, turn: &mut Turn, on_text: &mut dyn FnMut(&str)) -> Result<bool, TextError> {
+        // A greedy generator has room past this turn's budget, so the budget ends the turn, not only the generator.
+        if turn.result.tokens.len() >= turn.budget || self.is_done(turn.generator) {
+            return Ok(false);
+        }
+        if turn.cancel.is_cancelled() {
+            turn.result.finish_reason = FinishReason::Cancelled;
+            return Ok(false);
+        }
+        // A piece that ends inside a UTF-8 character stays in the stream until it is complete.
+        let piece = self.next_token(turn.generator, &turn.stream, &mut turn.result)?;
+        if turn.result.tokens.len() == 1 {
+            turn.first = Instant::now();
+        }
+        Ok(!turn.answer.push(&piece, on_text))
+    }
+
+    fn run(&self, turn: &mut Turn, on_text: &mut dyn FnMut(&str)) -> Result<(), TextError> {
+        while self.step(turn, on_text)? {}
+        Ok(())
+    }
+
+    /// Ends a turn that decoded to its end: keeps the live generator's tokens, shows what the answer held back and
+    /// sets the finish reason and the figures.
+    fn end(&mut self, turn: Turn, on_text: &mut dyn FnMut(&str)) -> GenerationResult {
+        let Turn {
+            continuation,
+            answer,
+            mut result,
+            start,
+            first,
+            ..
+        } = turn;
+        if let Some(c) = continuation {
+            self.remember(c);
+        }
+        if answer.finish(on_text, &mut result) {
             result.finish_reason = FinishReason::Stop;
         } else if result.finish_reason != FinishReason::Cancelled {
             let stopped = result
@@ -974,8 +1090,93 @@ impl GenaiGenerator {
                 FinishReason::Length
             };
         }
-        Ok(first)
+        result.completion_tokens = result.tokens.len();
+        if !result.tokens.is_empty() {
+            result.time_to_first_token_ms = first.duration_since(start).as_secs_f64() * 1000.0;
+        }
+        result.decode_tokens_per_second =
+            decode_rate(result.tokens.len(), first.elapsed().as_secs_f64());
+        result
     }
+
+    /// Drops a turn that did not reach its end: its generator holds tokens the live record does not know.
+    fn forget(&mut self, turn: Turn) {
+        if turn.continuation.is_some() {
+            self.live = None;
+        }
+    }
+
+    /// Starts a generation that [`Self::pull`] decodes on the caller's thread, for a caller that cannot hand over an
+    /// `on_text`, such as a C++ engine through a bridge; it drops one left unfinished. A `cancel` ends the generation
+    /// at the next pull, before its next token.
+    pub fn start(
+        &mut self,
+        messages: &[ChatMessage],
+        options: &GenerationOptions,
+        cancel: &CancelToken,
+    ) -> Result<(), TextError> {
+        if let Some(left) = self.turn.take() {
+            self.forget(left);
+        }
+        self.turn = Some(self.begin(messages, options, cancel)?);
+        Ok(())
+    }
+
+    /// Decodes to the answer's next text, or to the generation's end, whose result it then carries with the text held
+    /// back until then. A failure ends the generation; a pull without one is `GenerationFailed`.
+    pub fn pull(&mut self) -> Result<Pulled, TextError> {
+        let Some(mut turn) = self.turn.take() else {
+            return Err(TextError::GenerationFailed(
+                "no generation is running; start one first".into(),
+            ));
+        };
+        loop {
+            let mut text = String::new();
+            let stepped = self.step(&mut turn, &mut |shown| text.push_str(shown));
+            match stepped {
+                Ok(true) if text.is_empty() => {}
+                Ok(true) => {
+                    self.turn = Some(turn);
+                    return Ok(Pulled { text, done: None });
+                }
+                Ok(false) => {
+                    let done = self.end(turn, &mut |shown| text.push_str(shown));
+                    return Ok(Pulled {
+                        text,
+                        done: Some(done),
+                    });
+                }
+                Err(e) => {
+                    self.forget(turn);
+                    return Err(e);
+                }
+            }
+        }
+    }
+}
+
+/// One generation under way: its prompt in a generator, its reply decoded a token per step.
+struct Turn {
+    /// Declared first, so it is released before the generator it decodes for.
+    stream: Owned,
+    /// The generator when it is not the live one, which [`GenaiGenerator`] keeps.
+    _fresh: Option<Owned>,
+    generator: Handle,
+    continuation: Option<Continuation>,
+    budget: usize,
+    cancel: CancelToken,
+    answer: Answer,
+    result: GenerationResult,
+    start: Instant,
+    first: Instant,
+}
+
+/// What one [`GenaiGenerator::pull`] gives: the answer's next text, and once the generation has ended its result.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pulled {
+    /// Answer text not given before; empty only on a last pull that had none left.
+    pub text: String,
+    pub done: Option<GenerationResult>,
 }
 
 impl TextBackend for GenaiGenerator {
@@ -986,49 +1187,17 @@ impl TextBackend for GenaiGenerator {
         cancel: &CancelToken,
         on_text: &mut dyn FnMut(&str),
     ) -> Result<GenerationResult, TextError> {
-        check_request(messages, options)?;
-        cancel.reset();
-        // The clock starts before the prompt goes in, so the first token's time includes the prefill.
-        let start = Instant::now();
-        let prompt = self.prompt(messages)?;
-        // SAFETY: prompt is a live sequences handle holding one sequence.
-        let prompt_tokens = unsafe { (self.api.sequences_get_sequence_count)(prompt.handle, 0) };
-        let continuation = self.api.continuation.filter(|_| continues(options));
-        let mut fresh = None;
-        let generator = if let Some(c) = continuation {
-            self.greedy_generator(c, &prompt, prompt_tokens, options)?
-        } else {
-            let max_length = prompt_tokens + budget(options);
-            fresh
-                .insert(self.generator(&prompt, max_length, options)?)
-                .handle
-        };
-        let mut result = GenerationResult {
-            text: String::new(),
-            tokens: Vec::new(),
-            finish_reason: FinishReason::Length,
-            prompt_tokens,
-            completion_tokens: 0,
-            time_to_first_token_ms: 0.0,
-            decode_tokens_per_second: 0.0,
-            thinking_chars: 0,
-        };
-        let decoded = self.decode(generator, options, cancel, on_text, start, &mut result);
-        if let Some(c) = continuation {
-            if decoded.is_ok() {
-                self.remember(c);
-            } else {
-                self.live = None;
+        if let Some(left) = self.turn.take() {
+            self.forget(left);
+        }
+        let mut turn = self.begin(messages, options, cancel)?;
+        match self.run(&mut turn, on_text) {
+            Ok(()) => Ok(self.end(turn, on_text)),
+            Err(e) => {
+                self.forget(turn);
+                Err(e)
             }
         }
-        let first = decoded?;
-        result.completion_tokens = result.tokens.len();
-        if !result.tokens.is_empty() {
-            result.time_to_first_token_ms = first.duration_since(start).as_secs_f64() * 1000.0;
-        }
-        result.decode_tokens_per_second =
-            decode_rate(result.tokens.len(), first.elapsed().as_secs_f64());
-        Ok(result)
     }
 }
 
@@ -1038,17 +1207,49 @@ mod tests {
 
     #[test]
     fn the_library_is_looked_for_beside_the_exe_then_in_the_chain_install() {
-        let candidates = library_candidates(Some(Path::new("/app")), Some(Path::new("/genai")));
+        let candidates =
+            library_candidates(Some(Path::new("/app")), None, Some(Path::new("/genai")));
         assert_eq!(candidates.first(), Some(&Path::new("/app").join(LIBRARY)));
         assert_eq!(candidates[1], Path::new("/genai").join("bin").join(LIBRARY));
         assert_eq!(candidates[2], Path::new("/genai").join("lib").join(LIBRARY));
     }
 
+    /// Owner D17: a Python host's library ships GenAI beside it, where the interpreter's directory has none.
+    #[test]
+    fn the_library_is_looked_for_beside_the_loaded_library_after_the_exe() {
+        let (exe, module) = (Path::new("/usr/bin"), Path::new("/site/pkg"));
+        let candidates = library_candidates(Some(exe), Some(module), Some(Path::new("/genai")));
+        assert_eq!(candidates[..2], [exe.join(LIBRARY), module.join(LIBRARY)]);
+        assert_eq!(candidates[2], Path::new("/genai").join("bin").join(LIBRARY));
+        let same = library_candidates(Some(exe), Some(exe), None);
+        assert_eq!(same.iter().filter(|c| **c == exe.join(LIBRARY)).count(), 1);
+    }
+
+    #[test]
+    fn this_code_runs_from_the_test_executables_directory() {
+        let exe = std::env::current_exe().unwrap().canonicalize().unwrap();
+        assert_eq!(module_dir().as_deref(), exe.parent());
+    }
+
+    #[test]
+    fn genai_words_wait_for_one_take_on_their_thread() {
+        assert_eq!(take_genai_failure(), None);
+        GENAI_FAILURE.with_borrow_mut(|last| *last = Some("model: broken".into()));
+        let elsewhere = std::thread::spawn(take_genai_failure).join().unwrap();
+        assert_eq!(elsewhere, None);
+        assert_eq!(take_genai_failure().as_deref(), Some("model: broken"));
+        assert_eq!(take_genai_failure(), None);
+    }
+
     #[test]
     fn no_candidate_is_a_bare_name_the_loader_would_search() {
         for candidates in [
-            library_candidates(None, None),
-            library_candidates(Some(&std::env::temp_dir().join("app")), None),
+            library_candidates(None, None, None),
+            library_candidates(
+                Some(&std::env::temp_dir().join("app")),
+                module_dir().as_deref(),
+                None,
+            ),
         ] {
             assert!(
                 candidates

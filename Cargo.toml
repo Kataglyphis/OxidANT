@@ -17,6 +17,8 @@ members = [
     "crates/assets",
     "crates/render_core",
     "crates/vision_core",
+    "crates/bridge_support",
+    "crates/accel_bridge",
 ]
 
 [workspace.package]
@@ -140,7 +142,7 @@ panic = "abort"
 inherits = "release"
 panic = "unwind"
 
-# BeschleunigerBallett's non-Debug builds of kataglyphis_cxx_bridge: guarded() turns a panic into an error value (owner decision).
+# The C++ engines' non-Debug bridge builds (BeschleunigerBallett's, AccelerANTgine's): guarded() turns a panic into an error value (owner decision).
 [profile.bridge]
 inherits = "release"
 panic = "unwind"

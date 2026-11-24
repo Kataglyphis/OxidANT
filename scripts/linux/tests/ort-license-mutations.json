@@ -392,7 +392,7 @@
  {
   "id": "consumer.oxidant-text-late-close-stop-first",
   "target": "crates/text/src/answer.rs",
-  "find": "let stopped_first = stop_scan(&format!(\"{}{before}\", self.text), self.stops)\n            .0\n            .is_some();",
+  "find": "let stopped_first = stop_scan(&format!(\"{}{before}\", self.text), &self.stops)\n            .0\n            .is_some();",
   "replace": "let stopped_first = false;",
   "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib answer::",
   "timeout": 900,
@@ -830,5 +830,77 @@
   "replace": "exclude = [\"third_party/*\"]\nmax = 1",
   "test": "bash scripts/linux/tests/test-pattern-limits.sh",
   "why": "No crate may get a Cargo feature; one [features] table must fail the lint gates, not be counted."
+ },
+ {
+  "id": "consumer.oxidant-bridge-unsafe-off-glue",
+  "target": "crates/bridge_support/src/contract.rs",
+  "find": "            let glue = **line == \"#[allow(unsafe_code)]\" && on_a_bridge(*at);\n",
+  "replace": "            let glue = **line == \"#[allow(unsafe_code)]\";\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-bridge-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_bridge_support",
+  "timeout": 900,
+  "why": "An unsafe_code allowance off a bridge's generated glue would let hand-written unsafe code into AccelerANTgine's bridge (owner D3)."
+ },
+ {
+  "id": "consumer.oxidant-bridge-records-unbounded",
+  "target": "crates/bridge_support/src/log_records.rs",
+  "find": "        if self.kept.len() < KEPT_RECORDS {\n",
+  "replace": "        if self.kept.len() < usize::MAX {\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-bridge-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_bridge_support",
+  "timeout": 900,
+  "why": "A thread whose records the engine never drains keeps a bounded count, or a long run grows without end."
+ },
+ {
+  "id": "consumer.oxidant-accel-migraphx-on-cpu",
+  "target": "crates/accel_bridge/src/text.rs",
+  "find": "        other => Err(TextError::ProviderUnavailable(format!(\n            \"GenAI has no route to the engine's provider {}\",\n            other.repr\n        ))),\n",
+  "replace": "        _ => Ok(genai::Provider::Cpu),\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-bridge-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_accel_bridge --lib",
+  "timeout": 900,
+  "why": "MIGraphX, XNNPACK and DNNL have no GenAI route: the bridge refuses them before the library loads, as the engine does, never runs them on the CPU."
+ },
+ {
+  "id": "consumer.oxidant-accel-context-status",
+  "target": "crates/accel_bridge/src/text.rs",
+  "find": "        TextError::ContextLengthExceeded(_) => ffi::Status::ContextLengthExceeded,\n",
+  "replace": "        TextError::ContextLengthExceeded(_) => ffi::Status::GenerationFailed,\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-bridge-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_accel_bridge --lib",
+  "timeout": 900,
+  "why": "The C ABI's status 11 is context_length_exceeded (owner D7), which a server answers with 400, not 500."
+ },
+ {
+  "id": "consumer.oxidant-accel-seed-dropped",
+  "target": "crates/accel_bridge/src/text.rs",
+  "find": "    let seed = if options.has_seed {\n",
+  "replace": "    let seed = if false {\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-bridge-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_accel_bridge --lib",
+  "timeout": 900,
+  "why": "A seed the engine sets reaches GenAI, or a sampled answer never repeats."
+ },
+ {
+  "id": "consumer.oxidant-text-genai-beside-module",
+  "target": "crates/text/src/genai.rs",
+  "find": "            candidates.push(beside);\n",
+  "replace": "",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-text-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_text --lib genai::",
+  "timeout": 900,
+  "why": "A host such as Python loads OxidANT from a library that ships GenAI beside it; without that directory the search misses it (owner D17)."
+ },
+ {
+  "id": "consumer.oxidant-core-quota-ignored",
+  "target": "crates/core/src/config.rs",
+  "find": "    quota.map_or(affinity, |quota| affinity.min(quota)).max(1)\n",
+  "replace": "    quota.map_or(affinity, |_| affinity).max(1)\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-core-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_core --lib config::",
+  "timeout": 900,
+  "why": "Under a container's CPU quota the thread rules count the quota, not every CPU of the affinity mask (owner D16)."
+ },
+ {
+  "id": "consumer.oxidant-core-quota-not-tightest",
+  "target": "crates/core/src/config.rs",
+  "find": "            tightest = Some(tightest.map_or(quota, |held| held.min(quota)));\n",
+  "replace": "            tightest = Some(quota);\n",
+  "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-core-mutations-$(basename \"$PWD\")\" cargo test --locked -p kataglyphis_core --lib config::",
+  "timeout": 900,
+  "why": "A cgroup's own quota may be looser than a parent's; the tightest one up to the root limits the process."
  }
 ]

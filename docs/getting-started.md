@@ -7,7 +7,7 @@ and every gate use is `RUST_VERSION` in ANTfrastructure's
 [`linux/scripts/01-core/versions.env`](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/linux/scripts/01-core/versions.env)
 (`third_party/ANTfrastructure/linux/scripts/01-core/versions.env` in a checkout); read it
 there, since a number pinned here went stale. The C++ compiler is for `cxx`, which
-`crates/cxx_bridge` builds (on Windows the Visual Studio C++ build tools, which the MSVC
+`crates/cxx_bridge` and `crates/accel_bridge` build (on Windows the Visual Studio C++ build tools, which the MSVC
 Rust toolchain needs to link anyway). GStreamer's
 development files and the chain-built ONNX Runtime come from the family images; on a bare
 host: [AGENTS.md § Targets and their system dependencies](../AGENTS.md#targets-and-their-system-dependencies).

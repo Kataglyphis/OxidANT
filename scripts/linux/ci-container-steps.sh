@@ -8,7 +8,7 @@ source "${SCRIPT_DIR}/lib/antfrastructure.sh"
 
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
 # Each crate's own floor, just under its latest figure, so one well-tested crate cannot carry a weak one; raise them as tests come.
-COVERAGE_FLOORS='--floor crates/observant=83 --floor crates/webgpu_renderer=89 --floor crates/inference=85 --floor crates/text=94 --floor crates/cli=87 --floor crates/core=80 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/cxx_bridge=100 --floor crates/assets=91 --floor crates/render_core=100 --floor crates/vision_core=90 --floor crates/media=72 --floor crates/gui=29 --floor src=65 --max-slack 3'
+COVERAGE_FLOORS='--floor crates/observant=83 --floor crates/webgpu_renderer=89 --floor crates/inference=85 --floor crates/text=94 --floor crates/cli=87 --floor crates/core=80 --floor crates/telemetry=89 --floor crates/esp32=91 --floor crates/esp32-protocol=97 --floor crates/burn_demos=95 --floor crates/cxx_bridge=100 --floor crates/bridge_support=99 --floor crates/accel_bridge=97 --floor crates/assets=91 --floor crates/render_core=100 --floor crates/vision_core=90 --floor crates/media=72 --floor crates/gui=29 --floor src=65 --max-slack 3'
 # The vendored crates under third_party/ are upstream's code: tract-linalg's took the workspace figure from 71 % to 56 %.
 COVERAGE_EXCLUDE='third_party/*'
 # flutter_rust_bridge's output, 1157 of src's 1795 lines and never run by a Rust test: src read 24 % with it, 67.6 % without.

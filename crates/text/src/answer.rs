@@ -85,8 +85,8 @@ impl ThinkingSplitter {
 }
 
 /// One reply's answer for both backends: `on_text` receives only text that is neither thinking nor the start of a stop string.
-pub(crate) struct Answer<'a> {
-    stops: &'a [String],
+pub(crate) struct Answer {
+    stops: Vec<String>,
     thinking: ThinkingSplitter,
     thinking_chars: usize,
     text: String,
@@ -94,11 +94,11 @@ pub(crate) struct Answer<'a> {
     stopped: bool,
 }
 
-impl<'a> Answer<'a> {
+impl Answer {
     /// `stops` is empty for an endpoint, whose server ends the reply at a stop string itself.
-    pub(crate) fn new(stops: &'a [String]) -> Self {
+    pub(crate) fn new(stops: &[String]) -> Self {
         Self {
-            stops,
+            stops: stops.to_vec(),
             thinking: ThinkingSplitter::default(),
             thinking_chars: 0,
             text: String::new(),
@@ -138,7 +138,7 @@ impl<'a> Answer<'a> {
             })
             .collect();
         // Piece by piece, a stop string in that text would have ended the reply before the tag came.
-        let stopped_first = stop_scan(&format!("{}{before}", self.text), self.stops)
+        let stopped_first = stop_scan(&format!("{}{before}", self.text), &self.stops)
             .0
             .is_some();
         if before.is_empty() || stopped_first {
@@ -172,7 +172,7 @@ impl<'a> Answer<'a> {
 
     fn show(&mut self, answer: &str, on_text: &mut dyn FnMut(&str)) -> bool {
         self.text.push_str(answer);
-        let (stop_at, safe) = stop_scan(&self.text, self.stops);
+        let (stop_at, safe) = stop_scan(&self.text, &self.stops);
         if safe > self.shown {
             on_text(&self.text[self.shown..safe]);
             self.shown = safe;
