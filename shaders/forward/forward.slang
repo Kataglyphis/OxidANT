@@ -1,5 +1,6 @@
 import forward_lighting;
 import fullscreen;
+import gbuffer;
 import gltf_material;
 
 // Rust/WebGPU forward PBR pass and its deferred twin: the checked-in forward.wgsl is generated from this file.
@@ -279,7 +280,7 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     return float4(shade_surface(m.surface, In.svPosition), m.alpha);
 }
 
-// 24 bytes a sample, under WebGPU's 32: metallic's sign carries unlit, since albedo's alpha holds the occlusion.
+// gbuffer.slang's texels at their targets.
 struct GBufferOut
 {
     float4 normalMetallic : SV_Target0;
@@ -292,12 +293,11 @@ GBufferOut fs_gbuffer(VsOut In, bool isFrontFace : SV_IsFrontFace)
 {
     MaterialSample m = sample_material(In, isFrontFace);
     if (alpha_masked_out(prim_alpha_mode(), m.alpha, prim.emissive_factor.w)) discard;
-    SurfacePoint s = m.surface;
+    GBufferTexels t = gbuffer_pack(m.surface, prim.material_flags.x > 0.5);
     GBufferOut g;
-    g.normalMetallic = float4(s.n, prim.material_flags.x > 0.5 ? -1.0 : s.metallic);
-    g.albedoOcclusion = float4(s.albedo, s.occlusion);
-    // Half floats keep an emissive strength above 1, which an 8-bit target would clip.
-    g.roughnessEmissive = float4(s.roughness, s.emissive);
+    g.normalMetallic = t.normalMetallic;
+    g.albedoOcclusion = t.albedoOcclusion;
+    g.roughnessEmissive = t.roughnessEmissive;
     return g;
 }
 
@@ -315,19 +315,11 @@ float4 fs_deferred_lighting(FullscreenVsOut In) : SV_Target
     float depth = gbufferDepth.Load(texel);
     // Nothing was drawn here: the sky fills it after this pass, testing the same depth.
     if (depth >= 1.0) discard;
-    float4 normalMetallic = gbufferNormal.Load(texel);
-    float4 albedoOcclusion = gbufferAlbedo.Load(texel);
-    if (normalMetallic.w < -0.5) return float4(albedoOcclusion.rgb, 1.0);
-    float4 roughnessEmissive = gbufferMaterial.Load(texel);
+    GBufferTexels t;
+    t.normalMetallic = gbufferNormal.Load(texel);
+    t.albedoOcclusion = gbufferAlbedo.Load(texel);
+    if (gbuffer_unlit(t.normalMetallic)) return float4(t.albedoOcclusion.rgb, 1.0);
+    t.roughnessEmissive = gbufferMaterial.Load(texel);
     float4 world = mul(deferredParams.inv_view_proj, float4(fullscreen_uv_to_ndc(In.uv), depth, 1.0));
-
-    SurfacePoint s;
-    s.position = world.xyz / world.w;
-    s.n = normalize_or(normalMetallic.xyz, float3(0.0, 1.0, 0.0));
-    s.albedo = albedoOcclusion.rgb;
-    s.metallic = normalMetallic.w;
-    s.roughness = roughnessEmissive.r;
-    s.occlusion = albedoOcclusion.a;
-    s.emissive = roughnessEmissive.gba;
-    return float4(shade_surface(s, In.svPosition), 1.0);
+    return float4(shade_surface(gbuffer_unpack(t, world.xyz / world.w), In.svPosition), 1.0);
 }

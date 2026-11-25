@@ -7,6 +7,7 @@ import gltf_material;
 import path_estimator;
 import punctual_light;
 import sky_model;
+import surface_lighting;
 import trace_constants;
 
 // render::tracer::modes::KERNEL_GROUP_SIZE: each kernel's workgroup is this square of pixels.
@@ -151,7 +152,7 @@ LightSample sun_sample(TracedSurface s, float3 v, float2 energy)
     o.distance = TRACE_TMAX;
     if (dot(s.normal, o.l) <= 0.0)
         return o;
-    float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);
+    float3 f0 = surface_f0(s.albedo, s.metallic);
     o.radiance = brdf_direct(s.normal, v, o.l, s.albedo, s.metallic, s.roughness, f0, traceFrame.light_radiance.rgb, energy);
     return o;
 }
@@ -173,7 +174,7 @@ LightSample punctual_sample(TracedSurface s, float3 v, float2 energy, uint index
     o.distance = incidence.distance * TRACE_LIGHT_SPAN;
     if (incidence.attenuation <= 0.0 || dot(s.normal, incidence.l) <= 0.0)
         return o;
-    float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);
+    float3 f0 = surface_f0(s.albedo, s.metallic);
     o.radiance = brdf_direct(s.normal, v, incidence.l, s.albedo, s.metallic, s.roughness, f0, light.radiance * incidence.attenuation,
         energy);
     return o;

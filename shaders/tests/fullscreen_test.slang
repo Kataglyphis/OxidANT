@@ -28,4 +28,7 @@ void fullscreen_test_main(uint3 tid : SV_DispatchThreadID)
     outputs.put(triangle.uv.y - 0.5 * (1.0 - triangle.svPosition.y * top));
     outputs.put(fullscreen_uv_to_ndc(float2(uv.x, 0.0)).y - top);
     outputs.put(fullscreen_ndc_to_uv(float2(ndc.x, top)).y);
+    // The sign against fullscreen_ndc_to_uv's own y step, zero on each target only while the two agree.
+    outputs.put((fullscreen_ndc_to_uv(float2(ndc.x, ndc.y + 1.0)).y - fullscreen_ndc_to_uv(ndc).y) * 2.0
+                - fullscreen_ndc_uv_y_sign());
 }

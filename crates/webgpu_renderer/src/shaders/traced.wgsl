@@ -1151,6 +1151,11 @@ fn unlit_sample_0() -> LightSample_0
     return o_2;
 }
 
+fn surface_f0_0( albedo_1 : vec3<f32>,  metallic_2 : f32) -> vec3<f32>
+{
+    return mix(vec3<f32>(0.03999999910593033f), albedo_1, vec3<f32>(metallic_2));
+}
+
 fn smith_k_analytic_0( roughness_4 : f32) -> f32
 {
     var r_0 : f32 = max(roughness_4, 0.04500000178813934f) + 1.0f;
@@ -1192,21 +1197,21 @@ fn specular_albedo_0( energy_1 : vec2<f32>,  f0_3 : vec3<f32>) -> vec3<f32>
     return multiscatter_gain_0(energy_1, f0_3) * (f0_3 * vec3<f32>(energy_1.x) + vec3<f32>(energy_1.y));
 }
 
-fn lambert_diffuse_0( albedo_1 : vec3<f32>) -> vec3<f32>
+fn lambert_diffuse_0( albedo_2 : vec3<f32>) -> vec3<f32>
 {
-    return albedo_1 / vec3<f32>(3.14159274101257324f);
+    return albedo_2 / vec3<f32>(3.14159274101257324f);
 }
 
-fn brdf_smith_k_0( n_4 : vec3<f32>,  v_5 : vec3<f32>,  l_1 : vec3<f32>,  albedo_2 : vec3<f32>,  metallic_2 : f32,  roughness_7 : f32,  f0_4 : vec3<f32>,  radiance_1 : vec3<f32>,  k_2 : f32,  energy_2 : vec2<f32>) -> vec3<f32>
+fn brdf_smith_k_0( n_4 : vec3<f32>,  v_5 : vec3<f32>,  l_1 : vec3<f32>,  albedo_3 : vec3<f32>,  metallic_3 : f32,  roughness_7 : f32,  f0_4 : vec3<f32>,  radiance_1 : vec3<f32>,  k_2 : f32,  energy_2 : vec2<f32>) -> vec3<f32>
 {
     var h_1 : vec3<f32> = normalize(l_1 + v_5);
     var _S74 : f32 = max(dot(n_4, l_1), 0.0f);
-    return (saturate(vec3<f32>(1.0f) - specular_albedo_0(energy_2, f0_4)) * vec3<f32>((1.0f - metallic_2)) * lambert_diffuse_0(albedo_2) + multiscatter_gain_0(energy_2, f0_4) * ggx_single_scatter_0(max(dot(n_4, v_5), 0.00009999999747379f), _S74, max(dot(n_4, h_1), 0.0f), max(dot(h_1, v_5), 0.0f), max(roughness_7, 0.04500000178813934f), f0_4, k_2)) * radiance_1 * vec3<f32>(_S74);
+    return (saturate(vec3<f32>(1.0f) - specular_albedo_0(energy_2, f0_4)) * vec3<f32>((1.0f - metallic_3)) * lambert_diffuse_0(albedo_3) + multiscatter_gain_0(energy_2, f0_4) * ggx_single_scatter_0(max(dot(n_4, v_5), 0.00009999999747379f), _S74, max(dot(n_4, h_1), 0.0f), max(dot(h_1, v_5), 0.0f), max(roughness_7, 0.04500000178813934f), f0_4, k_2)) * radiance_1 * vec3<f32>(_S74);
 }
 
-fn brdf_direct_0( n_5 : vec3<f32>,  v_6 : vec3<f32>,  l_2 : vec3<f32>,  albedo_3 : vec3<f32>,  metallic_3 : f32,  roughness_8 : f32,  f0_5 : vec3<f32>,  radiance_2 : vec3<f32>,  energy_3 : vec2<f32>) -> vec3<f32>
+fn brdf_direct_0( n_5 : vec3<f32>,  v_6 : vec3<f32>,  l_2 : vec3<f32>,  albedo_4 : vec3<f32>,  metallic_4 : f32,  roughness_8 : f32,  f0_5 : vec3<f32>,  radiance_2 : vec3<f32>,  energy_3 : vec2<f32>) -> vec3<f32>
 {
-    return brdf_smith_k_0(n_5, v_6, l_2, albedo_3, metallic_3, roughness_8, f0_5, radiance_2, smith_k_analytic_0(roughness_8), energy_3);
+    return brdf_smith_k_0(n_5, v_6, l_2, albedo_4, metallic_4, roughness_8, f0_5, radiance_2, smith_k_analytic_0(roughness_8), energy_3);
 }
 
 fn sun_sample_0( s_3 : TracedSurface_0,  v_7 : vec3<f32>,  energy_4 : vec2<f32>) -> LightSample_0
@@ -1219,7 +1224,7 @@ fn sun_sample_0( s_3 : TracedSurface_0,  v_7 : vec3<f32>,  energy_4 : vec2<f32>)
     {
         return o_3;
     }
-    o_3.radiance_0 = brdf_direct_0(s_3.normal_3, v_7, o_3.l_0, s_3.albedo_0, s_3.metallic_1, s_3.roughness_1, mix(vec3<f32>(0.03999999910593033f), s_3.albedo_0, vec3<f32>(s_3.metallic_1)), traceFrame_0.light_radiance_0.xyz, energy_4);
+    o_3.radiance_0 = brdf_direct_0(s_3.normal_3, v_7, o_3.l_0, s_3.albedo_0, s_3.metallic_1, s_3.roughness_1, surface_f0_0(s_3.albedo_0, s_3.metallic_1), traceFrame_0.light_radiance_0.xyz, energy_4);
     return o_3;
 }
 
@@ -1302,7 +1307,7 @@ fn punctual_sample_0( s_4 : TracedSurface_0,  v_8 : vec3<f32>,  energy_5 : vec2<
     {
         return o_5;
     }
-    o_5.radiance_0 = brdf_direct_0(s_4.normal_3, v_8, incidence_0.l_3, s_4.albedo_0, s_4.metallic_1, s_4.roughness_1, mix(vec3<f32>(0.03999999910593033f), s_4.albedo_0, vec3<f32>(s_4.metallic_1)), light_2.radiance_3 * vec3<f32>(incidence_0.attenuation_0), energy_5);
+    o_5.radiance_0 = brdf_direct_0(s_4.normal_3, v_8, incidence_0.l_3, s_4.albedo_0, s_4.metallic_1, s_4.roughness_1, surface_f0_0(s_4.albedo_0, s_4.metallic_1), light_2.radiance_3 * vec3<f32>(incidence_0.attenuation_0), energy_5);
     return o_5;
 }
 
@@ -1562,12 +1567,12 @@ fn next_event_0( s_12 : TracedSurface_0,  v_12 : vec3<f32>,  energy_8 : vec2<f32
     return lit_2;
 }
 
-fn specular_lobe_probability_0( albedo_4 : vec3<f32>,  metallic_4 : f32,  f0_6 : vec3<f32>,  n_dot_v_4 : f32) -> f32
+fn specular_lobe_probability_0( albedo_5 : vec3<f32>,  metallic_5 : f32,  f0_6 : vec3<f32>,  n_dot_v_4 : f32) -> f32
 {
     const LUMA_0 : vec3<f32> = vec3<f32>(0.2125999927520752f, 0.71520000696182251f, 0.07220000028610229f);
     var fresnel_0 : vec3<f32> = fresnel_schlick_0(n_dot_v_4, f0_6);
     var specular_0 : f32 = dot(fresnel_0, LUMA_0);
-    return clamp(specular_0 / max(specular_0 + dot((vec3<f32>(1.0f) - fresnel_0) * vec3<f32>((1.0f - metallic_4)) * albedo_4, LUMA_0), 9.99999997475242708e-07f), 0.10000000149011612f, 1.0f);
+    return clamp(specular_0 / max(specular_0 + dot((vec3<f32>(1.0f) - fresnel_0) * vec3<f32>((1.0f - metallic_5)) * albedo_5, LUMA_0), 9.99999997475242708e-07f), 0.10000000149011612f, 1.0f);
 }
 
 fn orthonormal_basis_0( n_6 : vec3<f32>,  t_6 : ptr<function, vec3<f32>>,  b_6 : ptr<function, vec3<f32>>)
@@ -1629,9 +1634,9 @@ fn smith_k_sampled_0( roughness_9 : f32) -> f32
     return _S101 * _S101 / 2.0f;
 }
 
-fn brdf_sampled_0( n_7 : vec3<f32>,  v_14 : vec3<f32>,  l_5 : vec3<f32>,  albedo_5 : vec3<f32>,  metallic_5 : f32,  roughness_10 : f32,  f0_7 : vec3<f32>,  energy_9 : vec2<f32>) -> vec3<f32>
+fn brdf_sampled_0( n_7 : vec3<f32>,  v_14 : vec3<f32>,  l_5 : vec3<f32>,  albedo_6 : vec3<f32>,  metallic_6 : f32,  roughness_10 : f32,  f0_7 : vec3<f32>,  energy_9 : vec2<f32>) -> vec3<f32>
 {
-    return brdf_smith_k_0(n_7, v_14, l_5, albedo_5, metallic_5, roughness_10, f0_7, vec3<f32>(1.0f), smith_k_sampled_0(roughness_10), energy_9);
+    return brdf_smith_k_0(n_7, v_14, l_5, albedo_6, metallic_6, roughness_10, f0_7, vec3<f32>(1.0f), smith_k_sampled_0(roughness_10), energy_9);
 }
 
 struct Bounce_0
@@ -1640,11 +1645,11 @@ struct Bounce_0
      weight_0 : vec3<f32>,
 };
 
-fn sample_bounce_0( n_8 : vec3<f32>,  face_normal_1 : vec3<f32>,  v_15 : vec3<f32>,  albedo_6 : vec3<f32>,  metallic_6 : f32,  roughness_11 : f32,  energy_10 : vec2<f32>,  rng_3 : ptr<function, u32>) -> Bounce_0
+fn sample_bounce_0( n_8 : vec3<f32>,  face_normal_1 : vec3<f32>,  v_15 : vec3<f32>,  albedo_7 : vec3<f32>,  metallic_7 : f32,  roughness_11 : f32,  energy_10 : vec2<f32>,  rng_3 : ptr<function, u32>) -> Bounce_0
 {
-    var f0_8 : vec3<f32> = mix(vec3<f32>(0.03999999910593033f), albedo_6, vec3<f32>(metallic_6));
+    var f0_8 : vec3<f32> = surface_f0_0(albedo_7, metallic_7);
     var _S102 : f32 = max(dot(n_8, v_15), 0.00009999999747379f);
-    var specular_1 : f32 = specular_lobe_probability_0(albedo_6, metallic_6, f0_8, _S102);
+    var specular_1 : f32 = specular_lobe_probability_0(albedo_7, metallic_7, f0_8, _S102);
     var alpha_3 : f32 = roughness_11 * roughness_11;
     var t_7 : vec3<f32>;
     var b_7 : vec3<f32>;
@@ -1694,7 +1699,7 @@ fn sample_bounce_0( n_8 : vec3<f32>,  face_normal_1 : vec3<f32>,  v_15 : vec3<f3
     {
         return o_7;
     }
-    o_7.weight_0 = brdf_sampled_0(n_8, v_15, o_7.direction_8, albedo_6, metallic_6, roughness_11, f0_8, energy_10) / vec3<f32>(max(specular_1 * ggx_visible_normal_pdf_0(_S102, max(dot(n_8, normalize(v_15 + o_7.direction_8)), 0.0f), alpha_3) + (1.0f - specular_1) * n_dot_l_2 / 3.14159274101257324f, 9.99999997475242708e-07f));
+    o_7.weight_0 = brdf_sampled_0(n_8, v_15, o_7.direction_8, albedo_7, metallic_7, roughness_11, f0_8, energy_10) / vec3<f32>(max(specular_1 * ggx_visible_normal_pdf_0(_S102, max(dot(n_8, normalize(v_15 + o_7.direction_8)), 0.0f), alpha_3) + (1.0f - specular_1) * n_dot_l_2 / 3.14159274101257324f, 9.99999997475242708e-07f));
     return o_7;
 }
 

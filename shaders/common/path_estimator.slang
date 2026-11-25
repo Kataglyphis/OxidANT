@@ -2,6 +2,7 @@
 
 import brdf;
 import constants;
+import surface_lighting;
 
 // A pixel's RNG state: the stream offset by the golden-ratio constant, so every stream starts far from the others.
 uint path_rng_seed(uint pixel_index, uint stream)
@@ -89,7 +90,7 @@ struct Bounce
 Bounce sample_bounce(float3 n, float3 face_normal, float3 v, float3 albedo, float metallic, float roughness, float2 energy,
     inout uint rng)
 {
-    float3 f0 = lerp(float3(0.04), albedo, metallic);
+    float3 f0 = surface_f0(albedo, metallic);
     float n_dot_v = max(dot(n, v), 1e-4);
     float specular = specular_lobe_probability(albedo, metallic, f0, n_dot_v);
     float alpha = roughness * roughness;

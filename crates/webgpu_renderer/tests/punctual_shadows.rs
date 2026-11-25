@@ -224,7 +224,7 @@ fn the_card_lands_on_the_down_face_where_the_shader_samples_it() {
     eprintln!("texels nearer than the far plane per face of cube 0: {faces:?}");
     assert_eq!(faces[2], 0, "nothing lies above the light");
     assert_eq!(faces[3], layer, "the ground fills the down face");
-    // On -Y, NDC is (x, -z) over the depth below; uv flips NDC y as the shader's punctual_shadow_tap does.
+    // On -Y, NDC is (x, -z) over the depth below; uv flips NDC y as punctual_shadow_face_coord does.
     let texel = |offset: Vec2| {
         let ndc = Vec2::new(offset.x, -offset.y) / (CARD.y - 2.0).abs();
         let (u, v) = (ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);

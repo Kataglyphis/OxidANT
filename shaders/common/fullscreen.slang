@@ -23,7 +23,7 @@ FullscreenVsOut fullscreen_vs(uint vid)
     return o;
 }
 
-// The exact inverse of fullscreen_vs's uv; edit the three together.
+// The exact inverse of fullscreen_vs's uv; edit the four target switches together.
 float2 fullscreen_uv_to_ndc(float2 uv)
 {
     __target_switch
@@ -44,5 +44,17 @@ float2 fullscreen_ndc_to_uv(float2 ndc)
         return ndc * 0.5 + 0.5;
     default:
         return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    }
+}
+
+// 2 d(uv.y)/d(ndc.y) of fullscreen_ndc_to_uv: the sign a map's uv-space depth slope takes in y on this target.
+float fullscreen_ndc_uv_y_sign()
+{
+    __target_switch
+    {
+    case spirv:
+        return 1.0;
+    default:
+        return -1.0;
     }
 }

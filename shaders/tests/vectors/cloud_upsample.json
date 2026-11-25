@@ -1,0 +1,34 @@
+{
+  "about": "Inputs, f64 references and tolerances for tests/cloud_upsample_test.slang, which runs every public function of common/cloud_upsample.slang once per case. OxidANT's crates/webgpu_renderer/tests/shader_vectors.rs and BeschleunigerBallett's C++ runner check it. The kernel reads two u32 header words (input words per case, output words per case), then each case's inputs in `inputs` order, one 32-bit word per component (an f32 as its IEEE bits, a u32 or i32 as the integer), and writes each case's outputs the same way in `outputs` order. An f32 output passes when |gpu - ref| <= abs + rel * |ref| in every component; a u32 or i32 output must be equal. Written by scripts/generate-shader-vectors.py from an f64 model of the module: edit that.",
+  "module": "common/cloud_upsample.slang",
+  "kernel": "tests/cloud_upsample_test.slang",
+  "entry": "cloud_upsample_test_main",
+  "inputs": [
+    {"name": "pixel", "type": "i32", "width": 2},
+    {"name": "texel", "type": "i32", "width": 2},
+    {"name": "half_size", "type": "i32", "width": 2},
+    {"name": "depth_size", "type": "i32", "width": 2},
+    {"name": "spot", "type": "i32", "width": 2},
+    {"name": "spot_depth", "type": "f32", "width": 1},
+    {"name": "rest_depth", "type": "f32", "width": 1},
+    {"name": "scale", "type": "f32", "width": 1}
+  ],
+  "outputs": [
+    {"name": "half_texel_depth", "type": "f32", "width": 1, "abs": 1e-06, "rel": 1e-05},
+    {"name": "cloud_upsample", "type": "f32", "width": 4, "abs": 1e-05, "rel": 0.0001}
+  ],
+  "cases": [
+    {"name": "one depth everywhere: the bilinear blend", "inputs": {"pixel": [5, 7], "texel": [2, 3], "half_size": [8, 6], "depth_size": [16, 12], "spot": [20, 20], "spot_depth": [0.2], "rest_depth": [0.6], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.600000023842], "cloud_upsample": [0.225000003353, 0.325000004843, 0.275000004098, 1.0]}},
+    {"name": "an even pixel takes its texel and the ones before it", "inputs": {"pixel": [6, 4], "texel": [2, 3], "half_size": [8, 6], "depth_size": [16, 12], "spot": [20, 20], "spot_depth": [0.2], "rest_depth": [0.6], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.600000023842], "cloud_upsample": [0.275000004098, 0.175000002608, 0.225000003353, 1.0]}},
+    {"name": "the top-left pixel clamps to the first texel", "inputs": {"pixel": [0, 0], "texel": [0, 0], "half_size": [8, 6], "depth_size": [16, 12], "spot": [20, 20], "spot_depth": [0.2], "rest_depth": [0.6], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.600000023842], "cloud_upsample": [0.0, 0.0, 0.0, 1.0]}},
+    {"name": "the bottom-right pixel clamps to the last texel", "inputs": {"pixel": [15, 11], "texel": [7, 5], "half_size": [8, 6], "depth_size": [16, 12], "spot": [20, 20], "spot_depth": [0.2], "rest_depth": [0.6], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.600000023842], "cloud_upsample": [0.700000010431, 0.500000007451, 0.600000008941, 1.0]}},
+    {"name": "a near spot inside a texel sets its depth", "inputs": {"pixel": [5, 7], "texel": [2, 3], "half_size": [8, 6], "depth_size": [16, 12], "spot": [4, 6], "spot_depth": [0.2], "rest_depth": [0.6], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.20000000298], "cloud_upsample": [0.257142860975, 0.357142862465, 0.30714286172, 1.0]}},
+    {"name": "a near spot pulls its texel off a far pixel's blend", "inputs": {"pixel": [5, 7], "texel": [2, 3], "half_size": [8, 6], "depth_size": [16, 12], "spot": [4, 6], "spot_depth": [0.2], "rest_depth": [0.6], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.20000000298], "cloud_upsample": [0.257142860975, 0.357142862465, 0.30714286172, 1.0]}},
+    {"name": "the near spot itself keeps its own texel", "inputs": {"pixel": [5, 7], "texel": [2, 3], "half_size": [8, 6], "depth_size": [16, 12], "spot": [5, 7], "spot_depth": [0.2], "rest_depth": [0.6], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.20000000298], "cloud_upsample": [0.20000000298, 0.30000000447, 0.250000003725, 1.0]}},
+    {"name": "a lone far pixel among near ones: the bilinear blend", "inputs": {"pixel": [5, 7], "texel": [2, 3], "half_size": [8, 6], "depth_size": [16, 12], "spot": [5, 7], "spot_depth": [0.8], "rest_depth": [0.2], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.20000000298], "cloud_upsample": [0.225000003353, 0.325000004843, 0.275000004098, 1.0]}},
+    {"name": "an odd-sized depth target clamps its last half texel's pixels", "inputs": {"pixel": [14, 10], "texel": [7, 5], "half_size": [8, 6], "depth_size": [15, 11], "spot": [20, 20], "spot_depth": [0.2], "rest_depth": [0.6], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.600000023842], "cloud_upsample": [0.675000010058, 0.475000007078, 0.575000008568, 1.0]}},
+    {"name": "a far spot in a texel leaves its nearest depth", "inputs": {"pixel": [5, 7], "texel": [2, 3], "half_size": [8, 6], "depth_size": [16, 12], "spot": [4, 6], "spot_depth": [0.9], "rest_depth": [0.6], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.600000023842], "cloud_upsample": [0.225000003353, 0.325000004843, 0.275000004098, 1.0]}},
+    {"name": "a long scale keeps the relative weight", "inputs": {"pixel": [5, 7], "texel": [2, 3], "half_size": [8, 6], "depth_size": [16, 12], "spot": [4, 6], "spot_depth": [0.2], "rest_depth": [0.6], "scale": [1000.0]}, "outputs": {"half_texel_depth": [0.20000000298], "cloud_upsample": [0.257142860975, 0.357142862465, 0.30714286172, 1.0]}},
+    {"name": "a spot one texel over", "inputs": {"pixel": [5, 7], "texel": [2, 3], "half_size": [8, 6], "depth_size": [16, 12], "spot": [7, 7], "spot_depth": [0.2], "rest_depth": [0.6], "scale": [10.0]}, "outputs": {"half_texel_depth": [0.600000023842], "cloud_upsample": [0.207692310787, 0.330769235698, 0.269230773243, 1.0]}}
+  ]
+}

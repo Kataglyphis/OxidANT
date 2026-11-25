@@ -15,7 +15,7 @@ struct Kernel {
     slang: &'static str,
 }
 
-const KERNELS: [Kernel; 9] = [
+const KERNELS: [Kernel; 14] = [
     Kernel {
         module: "brdf",
         vectors: include_str!("../../../shaders/tests/vectors/brdf.json"),
@@ -69,6 +69,36 @@ const KERNELS: [Kernel; 9] = [
         vectors: include_str!("../../../shaders/tests/vectors/gltf_material.json"),
         wgsl: include_str!("shaders/gltf_material_test.wgsl"),
         slang: include_str!("../../../shaders/common/gltf_material.slang"),
+    },
+    Kernel {
+        module: "cascade_visibility",
+        vectors: include_str!("../../../shaders/tests/vectors/cascade_visibility.json"),
+        wgsl: include_str!("shaders/cascade_visibility_test.wgsl"),
+        slang: include_str!("../../../shaders/common/cascade_visibility.slang"),
+    },
+    Kernel {
+        module: "punctual_shadow",
+        vectors: include_str!("../../../shaders/tests/vectors/punctual_shadow.json"),
+        wgsl: include_str!("shaders/punctual_shadow_test.wgsl"),
+        slang: include_str!("../../../shaders/common/punctual_shadow.slang"),
+    },
+    Kernel {
+        module: "surface_lighting",
+        vectors: include_str!("../../../shaders/tests/vectors/surface_lighting.json"),
+        wgsl: include_str!("shaders/surface_lighting_test.wgsl"),
+        slang: include_str!("../../../shaders/common/surface_lighting.slang"),
+    },
+    Kernel {
+        module: "gbuffer",
+        vectors: include_str!("../../../shaders/tests/vectors/gbuffer.json"),
+        wgsl: include_str!("shaders/gbuffer_test.wgsl"),
+        slang: include_str!("../../../shaders/common/gbuffer.slang"),
+    },
+    Kernel {
+        module: "cloud_upsample",
+        vectors: include_str!("../../../shaders/tests/vectors/cloud_upsample.json"),
+        wgsl: include_str!("shaders/cloud_upsample_test.wgsl"),
+        slang: include_str!("../../../shaders/common/cloud_upsample.slang"),
     },
 ];
 
@@ -339,6 +369,31 @@ fn gltf_material_kernel_meets_its_vectors() {
     check(&KERNELS[8]);
 }
 
+#[test]
+fn cascade_visibility_kernel_meets_its_vectors() {
+    check(&KERNELS[9]);
+}
+
+#[test]
+fn punctual_shadow_kernel_meets_its_vectors() {
+    check(&KERNELS[10]);
+}
+
+#[test]
+fn surface_lighting_kernel_meets_its_vectors() {
+    check(&KERNELS[11]);
+}
+
+#[test]
+fn gbuffer_kernel_meets_its_vectors() {
+    check(&KERNELS[12]);
+}
+
+#[test]
+fn cloud_upsample_kernel_meets_its_vectors() {
+    check(&KERNELS[13]);
+}
+
 /// The names of the functions `slang` defines at file scope, overloads once.
 fn defined_functions(slang: &str) -> BTreeSet<String> {
     slang
@@ -346,7 +401,14 @@ fn defined_functions(slang: &str) -> BTreeSet<String> {
         .filter(|line| line.starts_with(|c: char| c.is_ascii_alphabetic()))
         .filter(|line| !line.starts_with("static ") && !line.starts_with("import "))
         .filter_map(|line| line.split_once('('))
-        .filter_map(|(head, _)| head.split_whitespace().last().map(str::to_owned))
+        // A generic's name stands before its `<T : I>` parameters.
+        .filter_map(|(head, _)| {
+            head.split('<')
+                .next()?
+                .split_whitespace()
+                .last()
+                .map(str::to_owned)
+        })
         .collect()
 }
 

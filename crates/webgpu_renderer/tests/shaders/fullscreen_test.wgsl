@@ -125,6 +125,11 @@ fn top_row_clip_y_0() -> f32
     return 1.0f;
 }
 
+fn fullscreen_ndc_uv_y_sign_0() -> f32
+{
+    return -1.0f;
+}
+
 @compute
 @workgroup_size(1, 1, 1)
 fn fullscreen_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
@@ -148,7 +153,9 @@ fn fullscreen_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
     var top_0 : f32 = top_row_clip_y_0();
     VectorOutputs_put_1(&(outputs_1), triangle_0.uv_0.y - 0.5f * (1.0f - triangle_0.svPosition_0.y * top_0));
     VectorOutputs_put_1(&(outputs_1), fullscreen_uv_to_ndc_0(vec2<f32>(uv_2.x, 0.0f)).y - top_0);
-    VectorOutputs_put_1(&(outputs_1), fullscreen_ndc_to_uv_0(vec2<f32>(ndc_1.x, top_0)).y);
+    var _S5 : f32 = ndc_1.x;
+    VectorOutputs_put_1(&(outputs_1), fullscreen_ndc_to_uv_0(vec2<f32>(_S5, top_0)).y);
+    VectorOutputs_put_1(&(outputs_1), (fullscreen_ndc_to_uv_0(vec2<f32>(_S5, ndc_1.y + 1.0f)).y - _S4.y) * 2.0f - fullscreen_ndc_uv_y_sign_0());
     return;
 }
 

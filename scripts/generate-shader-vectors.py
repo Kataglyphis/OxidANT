@@ -9,67 +9,33 @@ committed files with a fresh run. docs/shaders.md#vector-kernels describes the f
 import argparse
 import json
 import math
-import random
 import struct
 import sys
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 import shader_model as sm
+import shader_vectors_lighting
+from shader_vector_format import (
+    CHAINED,
+    SMOOTH,
+    Draw,
+    Module,
+    Port,
+    Values,
+    flat,
+    merged,
+    one,
+    out,
+    ports,
+    unit,
+    word,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 VECTORS = ROOT / "shaders" / "tests" / "vectors"
 MARGIN = 1e-5
 REF_DIGITS = 12
-
-
-Values = dict[str, list[float]]
-
-
-@dataclass
-class Port:
-    name: str
-    kind: str
-    width: int
-    abs: float = 0.0
-    rel: float = 0.0
-
-
-@dataclass
-class Module:
-    name: str
-    inputs: list[Port]
-    outputs: list[Port]
-    evaluate: Callable[[Values], dict[str, list[float]]]
-    cases: list[tuple[str, Values]]
-    visits: set[str] = field(default_factory=set)
-
-
-def flat(*items: sm.Real | sm.Vec | int | bool) -> list[float]:
-    words: list[float] = []
-    for item in items:
-        if isinstance(item, sm.Vec):
-            words += [c.v for c in item.c]
-        elif isinstance(item, sm.Real):
-            words.append(item.v)
-        else:
-            words.append(int(item))
-    return words
-
-
-def one(values: Values, name: str) -> sm.Real:
-    return sm.real(values[name][0])
-
-
-def word(values: Values, name: str) -> int:
-    return int(values[name][0])
-
-
-def unit(*c: float) -> list[float]:
-    length = math.sqrt(sum(x * x for x in c))
-    return [x / length for x in c]
 
 
 def surface(i: Values, l: str = "l", f0: str = "f0") -> sm.Surface:
@@ -178,50 +144,6 @@ def same(a: object, b: object) -> bool:
     return abs(a - b) <= 1e-12 + 1e-9 * abs(b)
 
 
-def ports(spec: str) -> list[Port]:
-    """`name:width/type` words, width 1 and type f32 by default."""
-    found = []
-    for item in spec.split():
-        head, _, kind = item.partition("/")
-        name, _, width = head.partition(":")
-        found.append(Port(name, kind or "f32", int(width or 1)))
-    return found
-
-
-def out(name: str, width: int, tolerance: tuple[float, float] | None = None) -> Port:
-    """An f32 output with its (abs, rel) tolerance, or an exact u32 one without."""
-    if tolerance is None:
-        return Port(name, "u32", width)
-    return Port(name, "f32", width, *tolerance)
-
-
-def merged(base: Values, rows: Sequence[tuple[str, Values]]) -> list[tuple[str, Values]]:
-    return [(name, base | row) for name, row in rows]
-
-
-class Draw:
-    """Seeded inputs from arithmetic and sqrt alone, which round alike on every platform."""
-
-    def __init__(self, seed: int) -> None:
-        self.rng = random.Random(seed)
-
-    def num(self, lo: float, hi: float) -> float:
-        return lo + (hi - lo) * self.rng.random()
-
-    def nums(self, lo: float, hi: float, count: int = 3) -> list[float]:
-        return [self.num(lo, hi) for _ in range(count)]
-
-    def whole(self, lo: int, hi: int) -> int:
-        return self.rng.randrange(lo, hi)
-
-    def direction(self, around: Sequence[float] | None = None) -> list[float]:
-        while True:
-            c = self.nums(-1.0, 1.0)
-            length = math.sqrt(sum(x * x for x in c))
-            if 0.2 < length <= 1.0 and (around is None or sum(a * x for a, x in zip(around, c, strict=True)) > 0.1 * length):
-                return unit(*c)
-
-
 def evaluate_brdf(i: Values) -> dict[str, list[float]]:
     s, radiance, k = surface(i), sm.vec3(i["radiance"]), one(i, "k")
     n_dot_v, energy = one(i, "n_dot_v"), sm.Vec(*i["energy"])
@@ -316,6 +238,7 @@ def evaluate_fullscreen(i: Values) -> dict[str, list[float]]:
         "fullscreen_vs.top_row_error": [0.0],
         "fullscreen_uv_to_ndc.top_row_error": [0.0],
         "fullscreen_ndc_to_uv.top_row_error": [0.0],
+        "fullscreen_ndc_uv_y_sign.error": [0.0],
     }
 
 
@@ -673,8 +596,6 @@ def gltf_material_cases() -> list[tuple[str, Values]]:
     return merged(base, rows)
 
 
-SMOOTH = (1e-6, 1e-5)
-CHAINED = (1e-5, 1e-4)
 MODULES = [
     Module("brdf", ports(
         "n:3 v:3 l:3 albedo:3 metallic roughness f0:3 radiance:3 k n_dot_h n_dot_v n_dot_l cos_theta t:2 energy:2"), [
@@ -715,6 +636,7 @@ MODULES = [
         out("fullscreen_uv_to_ndc.round_trip", 2, CHAINED), out("fullscreen_ndc_to_uv.x", 1, CHAINED),
         out("fullscreen_ndc_to_uv.round_trip", 2, CHAINED), out("fullscreen_vs.top_row_error", 1, CHAINED),
         out("fullscreen_uv_to_ndc.top_row_error", 1, CHAINED), out("fullscreen_ndc_to_uv.top_row_error", 1, CHAINED),
+        out("fullscreen_ndc_uv_y_sign.error", 1, CHAINED),
     ], evaluate_fullscreen, fullscreen_cases()),
     Module("camera_ray", ports("row0:4 row1:4 row2:4 row3:4 ndc:2 pixel:2 size:2"), [
         out("camera_ray.origin", 3, CHAINED), out("camera_ray.direction", 3, CHAINED), out("camera_ray.length", 1, CHAINED),
@@ -734,7 +656,7 @@ MODULES = [
     ], evaluate_gltf_material, gltf_material_cases(), {
         "two-channel texel", "zero vector", "back face", "mirrored", "metallic clamp", "roughness floor", "not MASK",
         "cut out", "kept"}),
-]
+] + shader_vectors_lighting.MODULES
 
 
 def main() -> None:

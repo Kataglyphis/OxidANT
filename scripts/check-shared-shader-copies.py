@@ -13,7 +13,7 @@ def declares(names):
 
 
 def defines(names):
-    return rf"^[ \t]*(?!return\b)\w+\s+(?:{names})\s*\("
+    return rf"^[ \t]*(?!return\b)\w+\s+(?:{names})\s*(?:<[^>(]*>)?\s*\("
 
 
 # (owner, pattern, what a match copies); the owner alone may match.
@@ -31,7 +31,10 @@ RULES = [
     ("common/trace_constants.slang", declares(r"\w*TMIN|\w*TMAX|\w*SURFACE_OFFSET|\w*LIGHT_SPAN"), "a ray bound"),
     ("common/trace_constants.slang", r"(?i)\btm(?:in|ax)\s*=\s*[\d.]*[1-9]", "a literal ray bound"),
     ("common/trace_constants.slang", r"\b10000\.0\b|\b0\.0001\s*\*|\*\s*0\.0001\b|\b1\.0\s*-\s*1e-4\b", "a ray-bound literal"),
-    ("common/fullscreen.slang", defines("fullscreen_vs|fullscreen_uv_to_ndc|fullscreen_ndc_to_uv"), "a fullscreen mapping"),
+    ("common/fullscreen.slang", defines("fullscreen_vs|fullscreen_uv_to_ndc|fullscreen_ndc_to_uv|fullscreen_ndc_uv_y_sign"),
+     "a fullscreen mapping"),
+    ("common/fullscreen.slang", r"\b0\.5\s*-\s*[\w.\[\]]+\.y\s*\*\s*0\.5\b|\.xy\s*\*\s*0\.5\s*\+\s*0\.5\b",
+     "an NDC-to-uv conversion"),
     ("common/camera_ray.slang", defines("camera_ray|camera_ray_through_pixel"), "a camera ray"),
     ("common/camera_ray.slang", r"mul\(\s*[\w.]*(?:inv_view_proj|inv_projection|clip_to_world)\s*,\s*float4\([^;]*,\s*[01](?:\.0)?\s*,\s*1(?:\.0)?\s*\)\s*\)",
      "a near- or far-plane unprojection"),
@@ -51,6 +54,20 @@ RULES = [
      r"\bdot\(\s*float3\(\s*[\w.]+\s*,\s*1\.0\s*\)|\.x\s*\*\s*\w+\.x\s*\+\s*\w+\.y\s*\*\s*\w+\.y\s*\+\s*\w+\.z\b",
      "a texture transform"),
     ("common/gltf_material.slang", r"\bfloat3x3\(\s*t\s*,\s*b\s*,", "a tangent frame"),
+    ("common/cascade_visibility.slang",
+     defines("select_cascade|cascade_hit|cascade_bias|cascade_depth_slope|cascade_visibility"),
+     "a cascade lookup"),
+    ("common/cascade_visibility.slang", r"\bmax\(\s*0\.002\s*\*", "the cascades' depth bias"),
+    ("common/punctual_shadow.slang", defines(
+        "unpack_punctual_shadow|fetch_punctual_shadow|punctual_shadow_depth|punctual_shadow_face"
+        "|punctual_shadow_face_coord|punctual_shadow_visibility"), "a punctual shadow lookup"),
+    ("common/punctual_shadow.slang", r"\bstruct\s+PunctualShadow\b", "the punctual shadow record"),
+    ("common/surface_lighting.slang", defines("surface_f0|surface_lighting"), "a surface lighting rule"),
+    ("common/surface_lighting.slang", r"\bstruct\s+SurfacePoint\b", "the surface point"),
+    ("common/surface_lighting.slang", r"\blerp\(\s*float3\(\s*0\.04\s*\)", "a dielectric f0"),
+    ("common/gbuffer.slang", defines("gbuffer_pack|gbuffer_unlit|gbuffer_unpack"), "a G-buffer packing"),
+    ("common/gbuffer.slang", r"\.w\s*<\s*-0\.5\b", "the G-buffer's unlit sign"),
+    ("common/cloud_upsample.slang", defines("half_texel_depth|cloud_upsample"), "a cloud upsample"),
 ]
 # A fullscreen_vs importer converts between uv and NDC through fullscreen.slang only.
 FULLSCREEN_COPIES = re.compile(

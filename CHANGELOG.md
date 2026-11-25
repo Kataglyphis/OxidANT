@@ -13,6 +13,31 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-25, shared shadow and lighting Slang: BeschleunigerBallett plan I10)
+
+- **Both renderers' shadows, lighting composition, G-buffer and cloud upsample are shared Slang under
+  `shaders/common/`**:
+  - `cascade_visibility.slang`: `select_cascade`, `cascade_hit`, `cascade_bias`, `cascade_depth_slope` and
+    `cascade_visibility` over `shadow_pcf.slang`. The WebGPU pass keeps its retry of coarser cascades.
+  - `punctual_shadow.slang`: `punctual_shadow_visibility`, the five-tap cube shadow behind `IPunctualShadowTaps`,
+    and `punctual_shadow_face_coord` for this renderer's 2D face array.
+  - `surface_lighting.slang`: `SurfacePoint`, `surface_f0` and `surface_lighting`, which shadows the sun by
+    strength and adds the punctual, ambient and emissive terms.
+  - `gbuffer.slang`: `gbuffer_pack`, `gbuffer_unlit` and `gbuffer_unpack`. The C++ engine now writes this layout
+    (owner rule 2026-11-19).
+  - `cloud_upsample.slang`: `half_texel_depth` and `cloud_upsample` behind `ICloudUpsampleTexels`.
+- **The shadow maps' NDC-to-uv conversions follow the target**: `forward_lighting.slang` takes both through
+  `fullscreen_ndc_to_uv` and the depth slope's y sign from the new `fullscreen_ndc_uv_y_sign`. The emitted WGSL
+  computes what it did.
+- **Five new vector kernels and one extended**: `tests/<module>_test.slang` and `tests/vectors/<module>.json` for
+  `cascade_visibility`, `punctual_shadow`, `surface_lighting`, `gbuffer` and `cloud_upsample`. Each generic runs
+  over a kernel-local stand-in for its interface. `fullscreen`'s kernel checks the new sign against its mapping.
+  `shader_vectors.rs` reads a generic's name before its `<T : I>`.
+- **`check-shared-shader-copies.py` covers the new modules**: a private NDC-to-uv conversion (`0.5 - p.y * 0.5`,
+  `p.xy * 0.5 + 0.5`), the cascades' depth bias, a `PunctualShadow` or `SurfacePoint` record, a dielectric f0
+  (`trace_shading.slang` and `path_estimator.slang` now call `surface_f0`), the G-buffer's unlit sign, or a second
+  definition, generic ones included.
+
 ### Changed (2026-11-25, shared material Slang: BeschleunigerBallett plan I9)
 
 - **`shaders/common/gltf_material.slang` holds the glTF material rules both renderers sample with**: `transform_uv`

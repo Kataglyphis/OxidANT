@@ -1,10 +1,10 @@
 import ambient;
 import brdf;
-import hdr_safe;
+import cascade_visibility;
 import limits;
 import punctual_light;
 import punctual_shadow;
-import shadow_pcf;
+__exported import surface_lighting;
 
 // The lighting forward.slang's forward and deferred lighting passes share, so the two paths cannot drift apart.
 
@@ -53,18 +53,6 @@ struct IblParams
 // One layer per cube face (slot * 6 + face): a 2D array needs no cube-array support, which WebGPU compatibility lacks.
 [vk::binding(3, 3)] Texture2DArray<float> punctualShadowMap;
 
-// What lighting needs of a surface point, whether the forward pass sampled it or the deferred pass read it back.
-struct SurfacePoint
-{
-    float3 position;
-    float3 n;
-    float3 albedo;
-    float metallic;
-    float roughness;
-    float occlusion;
-    float3 emissive;
-};
-
 float4x4 light_space_for(int cascade)
 {
     if (cascade == 1) return frame.light_space_1;
@@ -77,15 +65,6 @@ float bias_scale_for(int cascade)
     if (cascade == 1) return frame.shadow_bias_scale.y;
     if (cascade == 2) return frame.shadow_bias_scale.z;
     return frame.shadow_bias_scale.x;
-}
-
-// The first cascade whose split lies beyond the view depth, else the last, as cascaded_shadow.slang selects.
-int select_cascade(float viewDepth, int count)
-{
-    int selected = 0;
-    if (viewDepth >= frame.cascade_splits.x) selected = 1;
-    if (viewDepth >= frame.cascade_splits.y) selected = 2;
-    return min(selected, count - 1);
 }
 
 // This pass's map and comparison sampler, one cascade's layer.
@@ -102,74 +81,40 @@ struct CascadeTaps : IShadowTaps
     }
 }
 
-// Visibility (1 = lit), the inverse of cascaded_shadow.slang's calc_cascaded_shadow, with its bias and (2r+1)^2 taps.
+// Visibility (1 = lit) of the sun; a fragment the selected box misses retries coarser cascades before counting as lit.
 float shadow_visibility(float3 worldPos, float3 n, float nDotL)
 {
     int count = clamp(int(frame.shadow_params.x), 0, CASCADE_COUNT);
     if (count == 0) return 1.0;
     float viewDepth = dot(worldPos - frame.camera_position.xyz, frame.shadow_view_dir.xyz);
 
-    // A fragment the selected box misses retries coarser cascades before counting as lit.
-    float3 proj = float3(0.0, 0.0, 0.0);
-    float2 uv = float2(0.0, 0.0);
-    int cascade = select_cascade(viewDepth, count);
-    bool inBounds = false;
+    int cascade = select_cascade(viewDepth, frame.cascade_splits.xy, count);
+    CascadeHit hit;
+    hit.inside = false;
     for (; cascade < count; cascade++)
     {
-        float4 lightSpacePos = mul(light_space_for(cascade), float4(worldPos, 1.0));
-        proj = lightSpacePos.xyz / lightSpacePos.w;
-        uv = float2(proj.x * 0.5 + 0.5, 0.5 - proj.y * 0.5);
-        if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 && proj.z >= 0.0 && proj.z <= 1.0)
-        {
-            inBounds = true;
-            break;
-        }
+        hit = cascade_hit(light_space_for(cascade), worldPos);
+        if (hit.inside) break;
     }
-    if (!inBounds) return 1.0;
+    if (!hit.inside) return 1.0;
 
-    float bias = max(0.002 * (1.0 - nDotL), 0.0005) * bias_scale_for(cascade);
     int radius = clamp(int(frame.shadow_params.y), 0, MAX_PCF_RADIUS);
-    float2 slope = receiver_plane_depth_slope(light_space_for(cascade), n, -1.0);
-
     uint shadowWidth, shadowHeight, shadowLayers;
     shadowMap.GetDimensions(shadowWidth, shadowHeight, shadowLayers);
-    float texel = 1.0 / float(shadowWidth);
     CascadeTaps taps = { float(cascade) };
-    return pcf_visibility(taps, uv, float2(texel), proj.z - bias, slope, radius);
+    return cascade_visibility(taps, light_space_for(cascade), hit, n, nDotL, bias_scale_for(cascade),
+        float2(1.0 / float(shadowWidth), 1.0 / float(shadowHeight)), radius);
 }
 
-// One 2x2 PCF tap of slot's cube along d; uv flips NDC y, as WebGPU's framebuffer rows run down.
-float punctual_shadow_tap(float3 d, int slot, float reference)
+// This pass's 2D array of cube faces, one 2x2 PCF tap of a light's slot.
+struct FaceTaps : IPunctualShadowTaps
 {
-    PunctualShadowFace f = punctual_shadow_face(d);
-    float2 uv = float2(f.ndc.x * 0.5 + 0.5, 0.5 - f.ndc.y * 0.5);
-    float layer = float(uint(slot) * 6u + f.face);
-    return punctualShadowMap.SampleCmpLevelZero(shadowSampler, float3(uv, layer), reference);
-}
+    int slot;
 
-// Fraction of the light reaching worldPos: a tap at the centre and four around it, the C++ punctual_lights.slang's.
-float punctual_shadow_visibility(PunctualShadow shadow, float3 lightPos, float3 worldPos, float3 n, float3 l)
-{
-    uint width, height, layers;
-    punctualShadowMap.GetDimensions(width, height, layers);
-    // A texel spans 2 * distance / width at the receiver; offsetting by it along n and l keeps acne off.
-    float texel = 2.0 * length(worldPos - lightPos) / float(width);
-    float3 d = worldPos + n * (1.5 * texel) + l * texel - lightPos;
-    float majorAxis = max(abs(d.x), max(abs(d.y), abs(d.z)));
-    if (majorAxis >= shadow.farPlane)
-        return 1.0;
-    float reference = punctual_shadow_depth(max(majorAxis, shadow.nearPlane), shadow.nearPlane, shadow.farPlane);
-
-    float3 axis = normalize(d);
-    float3 tangent = normalize(cross(abs(axis.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0), axis));
-    float3 bitangent = cross(axis, tangent);
-    float spread = 1.5 * 2.0 * majorAxis / float(width);
-    float lit = punctual_shadow_tap(d, shadow.slot, reference);
-    lit += punctual_shadow_tap(d + tangent * spread, shadow.slot, reference);
-    lit += punctual_shadow_tap(d - tangent * spread, shadow.slot, reference);
-    lit += punctual_shadow_tap(d + bitangent * spread, shadow.slot, reference);
-    lit += punctual_shadow_tap(d - bitangent * spread, shadow.slot, reference);
-    return lit * 0.2;
+    float lit(float3 d, float reference)
+    {
+        return punctualShadowMap.SampleCmpLevelZero(shadowSampler, punctual_shadow_face_coord(d, slot), reference);
+    }
 }
 
 float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
@@ -209,7 +154,12 @@ float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
         float visibility = 1.0;
         PunctualShadow shadow = unpack_punctual_shadow(punctualLights[lightIdx * 4u + 3u]);
         if (shadow.slot >= 0 && uint(shadow.slot) < shadowCubes && dot(n, incidence.l) > 0.0)
-            visibility = punctual_shadow_visibility(shadow, light.position, worldPos, n, incidence.l);
+        {
+            uint width, height, layers;
+            punctualShadowMap.GetDimensions(width, height, layers);
+            FaceTaps taps = { shadow.slot };
+            visibility = punctual_shadow_visibility(taps, shadow, light.position, worldPos, n, incidence.l, float(width));
+        }
         total += brdf_direct(n, v, incidence.l, albedo, metallic, roughness, f0,
             light.radiance * incidence.attenuation * visibility, energy);
     }
@@ -244,7 +194,7 @@ float3 shade_surface(SurfacePoint s, float4 fragCoord)
     float3 v = normalize(frame.camera_position.xyz - s.position);
     float3 l = normalize(frame.light_dir_ambient.xyz);
 
-    float3 f0 = lerp(float3(0.04), s.albedo, s.metallic);
+    float3 f0 = surface_f0(s.albedo, s.metallic);
     float3 radiance = frame.light_color_intensity.rgb * frame.light_color_intensity.w;
     float nDotL = max(dot(s.n, l), 0.0);
     // The fit once per fragment, not once per light: the sun, every punctual light and the analytic ambient share it.
@@ -253,10 +203,8 @@ float3 shade_surface(SurfacePoint s, float4 fragCoord)
     float3 directLight = brdf_direct(s.n, v, l, s.albedo, s.metallic, s.roughness, f0, radiance, energy);
     // Per fragment: a per-vertex depth interpolates too far inside big triangles, picking coarse cascades.
     float visibility = shadow_visibility(s.position, s.n, nDotL);
-    // The C++ color *= 1 - shadow * strength, on the sun alone.
-    directLight *= lerp(1.0, visibility, frame.shadow_params.z);
 
     float3 punctual = punctual_lighting(s.position, s.n, v, s.albedo, s.metallic, s.roughness, f0, energy, fragCoord);
-    float3 color = directLight + punctual + ibl_ambient(s, v, f0, energy) + s.emissive;
-    return hdr_safe(color);
+    return surface_lighting(directLight, visibility, frame.shadow_params.z, punctual, ibl_ambient(s, v, f0, energy),
+        s.emissive);
 }

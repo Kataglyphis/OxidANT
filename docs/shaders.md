@@ -41,7 +41,8 @@ for the same reason), `trace_constants.slang` (every
 secondary ray's `TRACE_TMIN`, `TRACE_TMAX`, `TRACE_SURFACE_OFFSET` and the punctual shadow ray's
 `TRACE_LIGHT_SPAN`), `aces.slang` (the five ACES coefficients, `aces_tonemap`, `aces_tonemap_inverse`,
 `linear_to_srgb`) and `fullscreen.slang` (`fullscreen_vs`, `fullscreen_uv_to_ndc` and its inverse
-`fullscreen_ndc_to_uv`, switched per target). `limits.slang` holds the limits both renderers and Rust share
+`fullscreen_ndc_to_uv`, switched per target, and `fullscreen_ndc_uv_y_sign`, the sign a map's uv-space depth
+slope takes in y). `limits.slang` holds the limits both renderers and Rust share
 (`CASCADE_COUNT`, `MAX_PCF_RADIUS`) as `static const int` lines only, because the C++ engine includes it and
 `kataglyphis_render_core::shader_limits` reads it at compile time; `alpha_mode.slang` holds the glTF alpha modes
 the same way. `gltf_material.slang` holds the material rules both renderers sample with: `transform_uv`, the
@@ -114,6 +115,17 @@ the statement that samples, where the C++ suite's
 `BuildIntegrity.EveryPcfKernelBoundsChecksItsTaps` looks for the check;
 `tests/shadow_pcf_test.slang` is the SPIR-V guard.
 
+`common/cascade_visibility.slang` is the sun's cascades over it for both renderers: `select_cascade` by the view
+depth, `cascade_hit` (the map uv through `fullscreen_ndc_to_uv`, so each target reads the rows its shadow pass
+rasterised), `cascade_bias` and `cascade_visibility`. The WebGPU pass retries coarser cascades on a miss; the C++
+engine takes the selected one. `common/punctual_shadow.slang`'s `punctual_shadow_visibility` is both renderers'
+five-tap cube shadow behind an `IPunctualShadowTaps`: this renderer's 2D face array through
+`punctual_shadow_face_coord`, the C++ engine's cube array. `common/surface_lighting.slang` holds the
+`SurfacePoint`, its f0 and how its terms combine (the sun shadowed by strength, then punctual, ambient and
+emissive), and `common/gbuffer.slang` both deferred paths' G-buffer: rgba16f normal and metallic, whose sign -1
+marks unlit; rgba8 sRGB albedo and occlusion; rgba16f roughness and emissive. `common/cloud_upsample.slang` is
+both cloud upsamples, behind an `ICloudUpsampleTexels`.
+
 `common/path_estimator.slang` is both path tracers' estimator, ported from the
 C++ `path_tracing.slang`: the PCG RNG and its per-pixel seed, Russian roulette,
 the branchless orthonormal basis, visible-normal GGX sampling and its density,
@@ -181,7 +193,9 @@ checks this on the GPU and stays enabled.
 
 `tests/<module>_test.slang` runs every public function of `common/<module>.slang`
 once per case of `tests/vectors/<module>.json`: `brdf`, `noise`, `path_estimator`, `hdr_safe`,
-`aces`, `fullscreen`, `camera_ray`, `ambient` and `gltf_material` today. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
+`aces`, `fullscreen`, `camera_ray`, `ambient`, `gltf_material`, `cascade_visibility`, `punctual_shadow`,
+`surface_lighting`, `gbuffer` and `cloud_upsample` today. A generic's interface is a kernel's own struct, a
+texture-free stand-in whose result both targets share. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
 the infinities, which JSON cannot spell; `fullscreen`'s uv differs per target, so its kernel writes
 only what both targets share: the positions, x, each mapping's round trip through its inverse, and its
 distance from `tests/clip_y.slang`'s own top row per target, so a swapped `__target_switch` branch fails;

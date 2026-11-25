@@ -480,6 +480,51 @@
       ]
     },
     {
+      "file": "tests/cascade_visibility_test.slang",
+      "entry": "cascade_visibility_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tests/punctual_shadow_test.slang",
+      "entry": "punctual_shadow_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tests/surface_lighting_test.slang",
+      "entry": "surface_lighting_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tests/gbuffer_test.slang",
+      "entry": "gbuffer_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tests/cloud_upsample_test.slang",
+      "entry": "cloud_upsample_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
       "_comment": "CI-only SPIR-V guard of the constant-only shared modules the C++ shaders import.",
       "file": "tests/constants_test.slang",
       "entry": "constants_test_main",
@@ -678,6 +723,31 @@
     {
       "src": "tests/gltf_material_test.slang",
       "out": "gltf_material_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/cascade_visibility_test.slang",
+      "out": "cascade_visibility_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/punctual_shadow_test.slang",
+      "out": "punctual_shadow_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/surface_lighting_test.slang",
+      "out": "surface_lighting_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/gbuffer_test.slang",
+      "out": "gbuffer_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/cloud_upsample_test.slang",
+      "out": "cloud_upsample_test.wgsl",
       "dst": "crates/webgpu_renderer/tests/shaders"
     }
   ],

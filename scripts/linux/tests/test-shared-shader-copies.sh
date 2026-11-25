@@ -117,4 +117,34 @@ t_assert_rc 1 python3 "$gate" "${tree}"
 python3 "$gate" "${tree}" > "${work}/out" 2>&1
 t_assert_grep "${work}/out" '^  pass/rule.slang:2: a glTF material rule'
 
+pass shadowuv 'float2 at(float3 proj) { return float2(proj.x * 0.5 + 0.5, 0.5 - proj.y * 0.5); }'
+t_case "a private NDC-to-uv conversion fails without importing fullscreen"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/shadowuv.slang:1: an NDC-to-uv conversion'
+
+pass sky 'float3 f(float3 n) { return lerp(float3(0.0), float3(1.0), n.y * 0.5 + 0.5); }'
+t_case "a hemisphere blend is no NDC conversion"
+t_assert_rc 0 python3 "$gate" "${tree}"
+
+pass unlit 'bool flat(float4 t) { return t.w < -0.5; }'
+t_case "a private G-buffer unlit sign fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" "^  pass/unlit.slang:1: the G-buffer's unlit sign"
+
+pass cube 'struct PunctualShadow\n{\n    int slot;\n};'
+t_case "a private punctual shadow record fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+
+pass f0 'float3 f(float3 a, float m) { return lerp(float3(0.04), a, m); }'
+t_case "a private dielectric f0 fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+
+pass generic 'float4 cloud_upsample<T : ITexels>(T texels, int2 pixel)\n{\n    return float4(0.0);\n}'
+t_case "a private generic definition fails by its name"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/generic.slang:1: a cloud upsample'
+
 t_summary

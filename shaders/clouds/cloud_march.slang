@@ -1,4 +1,5 @@
 import camera_ray;
+import cloud_upsample;
 import fullscreen;
 import volumetric_clouds;
 
@@ -38,19 +39,32 @@ struct SampledNoise : ICloudNoise
     }
 };
 
-// The nearest scene depth of the 2x2 pixels a half-resolution texel covers; fs_upsample recomputes it, so no target holds it.
-float half_texel_depth(int2 texel)
+// This pass's depth and half march, along one pixel's ray; fs_upsample recomputes depths, so no target holds them.
+struct PixelTexels : ICloudUpsampleTexels
+{
+    float2 ndc;
+
+    float scene_depth(int2 pixel)
+    {
+        return sceneDepth.Load(int3(pixel, 0)).r;
+    }
+
+    float4 half_cloud(int2 texel)
+    {
+        return halfClouds.Load(int3(texel, 0));
+    }
+
+    float scene_distance(float depth)
+    {
+        return cloud_scene_distance(frame.inv_view_proj, ndc, depth, frame.eye.xyz);
+    }
+};
+
+int2 scene_depth_size()
 {
     uint width, height;
     sceneDepth.GetDimensions(width, height);
-    int2 last = int2(int(width), int(height)) - 1;
-    float nearest = 1.0;
-    for (int i = 0; i < 4; i++)
-    {
-        int2 pixel = min(texel * 2 + int2(i & 1, i >> 1), last);
-        nearest = min(nearest, sceneDepth.Load(int3(pixel, 0)).r);
-    }
-    return nearest;
+    return int2(int(width), int(height));
 }
 
 // Returned directly: a copy into a local struct makes Slang emit FullscreenVsOut with two @location(0), which Tint rejects.
@@ -68,7 +82,9 @@ float4 fs_main(FullscreenVsOut In) : SV_Target
     float3 rayDirection = camera_ray(frame.inv_view_proj, ndc).direction;
 
     int3 pixel = int3(int2(In.svPosition.xy), 0);
-    float depth = frame.depth_spread.y > 0.5 ? half_texel_depth(pixel.xy) : sceneDepth.Load(pixel).r;
+    PixelTexels texels = { ndc };
+    float depth = frame.depth_spread.y > 0.5 ? half_texel_depth(texels, pixel.xy, scene_depth_size())
+                                             : sceneDepth.Load(pixel).r;
     float sceneDistance = cloud_scene_distance(frame.inv_view_proj, ndc, depth, frame.eye.xyz);
 
     SampledNoise noise;
@@ -90,39 +106,12 @@ float4 fs_main(FullscreenVsOut In) : SV_Target
     return lerp(nearest, farthest, spread.y);
 }
 
-// The half-resolution march at full resolution: its four nearest texels, each weighted bilinearly and by depth.
+// The half-resolution march at full resolution, cloud_upsample.slang's four-texel blend.
 [shader("fragment")]
 float4 fs_upsample(FullscreenVsOut In) : SV_Target
 {
-    float2 ndc = fullscreen_uv_to_ndc(In.uv);
-    int2 pixel = int2(In.svPosition.xy);
-    float pixelDistance = cloud_scene_distance(frame.inv_view_proj, ndc, sceneDepth.Load(int3(pixel, 0)).r, frame.eye.xyz);
-
+    PixelTexels texels = { fullscreen_uv_to_ndc(In.uv) };
     uint width, height;
     halfClouds.GetDimensions(width, height);
-    int2 last = int2(int(width), int(height)) - 1;
-    // This pixel's centre in half-resolution texels, whose centres sit at whole numbers.
-    float2 position = (float2(pixel) + 0.5) * 0.5 - 0.5;
-    int2 base = int2(floor(position));
-    float2 f = position - float2(base);
-
-    float4 weighted = float4(0.0);
-    float4 bilinear = float4(0.0);
-    float weightSum = 0.0;
-    for (int i = 0; i < 4; i++)
-    {
-        int2 corner = int2(i & 1, i >> 1);
-        int2 texel = clamp(base + corner, int2(0), last);
-        float2 axis = lerp(1.0 - f, f, float2(corner));
-        float w = axis.x * axis.y;
-        float4 value = halfClouds.Load(int3(texel, 0));
-        // The texel's depth along this pixel's ray: neighbours' rays differ by less than the depth edges matter.
-        float texelDistance = cloud_scene_distance(frame.inv_view_proj, ndc, half_texel_depth(texel), frame.eye.xyz);
-        float depthWeight = w * cloud_upsample_depth_weight(pixelDistance, texelDistance);
-        weighted += value * depthWeight;
-        weightSum += depthWeight;
-        bilinear += value * w;
-    }
-    // No neighbour at this pixel's depth, a lone sliver: the plain bilinear blend beats a division by almost zero.
-    return weightSum > 1e-4 ? weighted / weightSum : bilinear;
+    return cloud_upsample(texels, int2(In.svPosition.xy), int2(int(width), int(height)), scene_depth_size());
 }
