@@ -496,7 +496,8 @@ fn the_checked_in_fit_is_what_the_generator_writes() {
     let (size, coefficients) = common::fit();
     assert_eq!(
         fit_source(*size, coefficients),
-        FIT_TEXT,
+        // A Windows checkout under core.autocrlf reads the file back with CRLF.
+        FIT_TEXT.replace("\r\n", "\n"),
         "brdf_energy_fit.slang differs from fit_source's output for its own coefficients"
     );
 }
