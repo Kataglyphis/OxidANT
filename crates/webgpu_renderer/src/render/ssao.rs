@@ -204,3 +204,22 @@ impl SsaoPass {
         }
     }
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn ssao_uniforms_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(SsaoUniforms {
+                proj,
+                inv_proj,
+                params
+            }),
+            &wgsl("ssao.wgsl"),
+            "SsaoUniforms_std140_0",
+        );
+    }
+}

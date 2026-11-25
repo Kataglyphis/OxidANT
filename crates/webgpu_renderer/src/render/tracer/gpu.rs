@@ -358,3 +358,27 @@ fn create_bind_group(
         entries: &entries,
     })
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn trace_scene_info_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(TraceSceneInfo {
+                tlas_root,
+                instance_base,
+                material_base,
+                instance_count,
+                material_count,
+                srgb_layer_size,
+                linear_layer_size,
+                flags
+            }),
+            &wgsl("traced.wgsl"),
+            "TraceSceneInfo_std140_0",
+        );
+    }
+}

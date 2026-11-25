@@ -223,3 +223,30 @@ impl ForwardRenderer {
         }
     }
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn frame_uniforms_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(FrameUniforms {
+                view_proj,
+                light_space,
+                light_space_1,
+                light_space_2,
+                light_dir_ambient,
+                light_color_intensity,
+                camera_position,
+                cascade_splits,
+                shadow_params,
+                shadow_view_dir,
+                shadow_bias_scale
+            }),
+            &wgsl("forward.wgsl"),
+            "FrameUniforms_std140_0",
+        );
+    }
+}

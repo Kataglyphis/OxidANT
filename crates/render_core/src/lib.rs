@@ -23,6 +23,7 @@ pub mod frustum;
 pub mod lens;
 pub mod model_transform;
 pub mod orbit_camera;
+pub mod shader_limits;
 pub mod shadow_settings;
 pub mod sun;
 pub mod viewport;

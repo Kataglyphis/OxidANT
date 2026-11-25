@@ -1020,3 +1020,21 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn ibl_params_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(IblParams {
+                face_roughness_samples_mip,
+                source_resolution
+            }),
+            &wgsl("ibl.wgsl"),
+            "IblParams_std140_0",
+        );
+    }
+}

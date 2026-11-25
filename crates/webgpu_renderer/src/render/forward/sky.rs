@@ -313,3 +313,22 @@ pub(super) fn sky_pipeline(
         cache: None,
     })
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn sky_uniforms_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(SkyUniforms {
+                inv_view_proj,
+                light_dir_intensity,
+                mode
+            }),
+            &wgsl("sky.wgsl"),
+            "SkyUniforms_std140_0",
+        );
+    }
+}

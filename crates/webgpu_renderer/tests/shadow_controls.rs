@@ -376,22 +376,15 @@ fn a_sloped_receiver_stays_lit_at_every_pcf_radius_and_shadows_still_darken() {
 }
 
 #[test]
-fn the_pcf_radius_bound_matches_the_slang_constant() {
+fn the_pcf_radius_bound_is_the_limits_files() {
     use kataglyphis_webgpu_renderer::render::shadow_settings::MAX_PCF_RADIUS;
+    assert_eq!(
+        MAX_PCF_RADIUS,
+        kataglyphis_render_core::shader_limits::MAX_PCF_RADIUS,
+        "the shader clamps the radius the settings allow"
+    );
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../shaders/forward/forward_lighting.slang");
     let source = std::fs::read_to_string(&path).expect("forward_lighting.slang is owned here");
-    let needle = "static const int MAX_PCF_RADIUS = ";
-    let start = source
-        .find(needle)
-        .expect("forward_lighting.slang declares MAX_PCF_RADIUS")
-        + needle.len();
-    let value: u32 = source[start..start + source[start..].find(';').expect("a semicolon")]
-        .trim()
-        .parse()
-        .expect("an integer");
-    assert_eq!(
-        value, MAX_PCF_RADIUS,
-        "the shader clamps the radius the settings allow"
-    );
+    assert!(source.lines().any(|line| line.trim() == "import limits;"));
 }

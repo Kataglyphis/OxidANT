@@ -1,17 +1,12 @@
 import ambient;
 import brdf;
 import hdr_safe;
+import limits;
 import punctual_light;
 import punctual_shadow;
 import shadow_pcf;
 
 // The lighting forward.slang's forward and deferred lighting passes share, so the two paths cannot drift apart.
-
-// Must match CASCADE_COUNT in forward.rs (one light_space* matrix each).
-static const int CASCADE_COUNT = 3;
-
-// Must match render::shadow_settings::MAX_PCF_RADIUS, the C++ MAX_PCF_RADIUS.
-static const int MAX_PCF_RADIUS = 5;
 
 // Must match render::tile_grid::TILE_SIZE, the CPU's light-binning tile size.
 static const uint TILE_SIZE = 16;

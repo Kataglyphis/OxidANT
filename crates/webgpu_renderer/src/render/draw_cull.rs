@@ -460,3 +460,47 @@ impl StatsReadback {
         }
     }
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn draw_input_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(DrawInput {
+                aabb_min,
+                aabb_max,
+                primitive,
+                flags,
+                camera_index_count,
+                shadow_index_count,
+                instance_count,
+                _pad
+            }),
+            &wgsl("draw_cull.wgsl"),
+            "DrawInput_std430_0",
+        );
+    }
+
+    #[test]
+    fn cull_views_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(CullViews {
+                camera_planes,
+                cascade_planes,
+                eye,
+                prev_eye,
+                slot_count,
+                cascade_count,
+                flags,
+                occlusion_count,
+                slot_stride,
+                _pad
+            }),
+            &wgsl("draw_cull.wgsl"),
+            "CullViews_std140_0",
+        );
+    }
+}

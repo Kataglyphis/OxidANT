@@ -13,6 +13,23 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-25, single-source limits and complete layout gates: BeschleunigerBallett plan I7)
+
+- **`shaders/common/limits.slang` is the one home of the cascade count and the PCF radius.** It holds only
+  `static const int` lines, so `forward_lighting.slang` imports it, `kataglyphis_render_core::shader_limits` reads
+  it at compile time (`CASCADE_COUNT`, `MAX_PCF_RADIUS`; `shadow_settings` re-exports them) and the C++ engine
+  includes it. A test fails a shader or a Rust constant that gives either a literal value of its own.
+- **Every GPU-bound `Pod` struct is checked against the struct naga lays out from its generated WGSL**: offsets and
+  sizes of its fields, padding aside, and its total size against the span (`render::pod_layout`, one `wgsl_layout`
+  test beside each struct). `every_pod_struct_is_checked_against_its_wgsl` fails a `Pod` struct of any crate, its derive
+  wrapped, behind `cfg_attr` or an `unsafe impl`, with neither a check nor a named reason (vertex attributes, `u32`
+  records, atomic counters); `BvhNode`'s two halves are pinned against `bvh_traverse.slang`'s `load_node`.
+
+### Fixed (2026-11-25, found by the layout table: BeschleunigerBallett plan I7)
+
+- `gpu_occlusion`'s `CullParams` was 152 bytes against the shader's 144 B `CullParams` (eight bytes of padding too
+  many after `primitive_count`); it ends at the span now.
+
 ### Added (2026-11-24, glTF cameras and scene framing through the bridge: BeschleunigerBallett plan B9)
 
 - **The framing moved into `kataglyphis_render_core`, and the engine frames through it.** `framing.rs` (with
@@ -3227,7 +3244,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
 - The Cargo license policy reviews ring 0.17.14 (`Apache-2.0 AND ISC`), which the CLI now ships through
   the endpoint client's rustls; its five original texts, the once_cell polyfill's included, are pinned by SHA-256.
 
-### Fixed
+### Fixed (2026-11-25, found by the layout table: BeschleunigerBallett plan I7)
 - Register MIGraphX through ORT's generic provider options, avoiding the legacy struct's malformed empty model-cache path.
 - **riscv64 tests no longer try the amd64 GStreamer plugins.** ANTfrastructure is pinned at 0aef805d,
   whose `riscv64_cross_env` drops the host-triplet entries from `GST_PLUGIN_PATH`,
@@ -3483,7 +3500,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   and the hub's cargo drivers hoist the pinned toolchain and log it (`rust toolchain: … rustc 1.99.0`).
   The section is now *The trap a Windows checkout hits before anything runs*, the CRLF one.
 
-### Fixed
+### Fixed (2026-11-25, found by the layout table: BeschleunigerBallett plan I7)
 - **Every Windows build compiles C and C++ with clang-cl** (2026-10-21). The arm64 cross lane and the
   local Stevedore driver (`Build-RustAll.ps1`, `Test-RustAll.ps1`) left `CC` and `CXX` unset, so
   cc-rs took MSVC's `cl`; they set both now, as the x64 lane does. cc-rs 1.8 adds the triple itself
@@ -3891,7 +3908,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   one fails. All six pass that way in `:latest` on the dev box. Dispatching `linux-x64.yml` with
   `feature-checks-per-job` brings back one job per set.
 
-### Fixed
+### Fixed (2026-11-25, found by the layout table: BeschleunigerBallett plan I7)
 
 - **`inference = "auto"` runs the model on 1 GB boards** (2026-10-15). It skipped the model
   below 1024 MiB of RAM to spare a 512 MB Pi Zero 2 W, but the GPU keeps part of every board's
@@ -4497,7 +4514,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   `path-helpers.sh`'s `_path_prepend_unique` instead of a hand-typed list that
   had `/opt/gcc-16.2.0` frozen into it.
 
-### Fixed
+### Fixed (2026-11-25, found by the layout table: BeschleunigerBallett plan I7)
 - **MSIX signing works, and `Build-Windows.ps1` does it (2026-09-25).** The README's
   route ran ANTfrastructure's standalone `New-MsixPackage.ps1` over
   `packaging/msix/AppxManifest.template.xml`, but that script fills `__PACKAGE_NAME__`-style

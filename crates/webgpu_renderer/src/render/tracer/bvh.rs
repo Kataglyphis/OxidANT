@@ -803,3 +803,49 @@ mod tests {
         assert_eq!(levels_needed((1 << 20) + 1, 1), 21);
     }
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::pod_layout;
+
+    /// The upload writes words 0..4 to `tracerRecords` and 4..8 to `tracerNodeMax`, which `load_node` reads as
+    /// (lo, first) and (hi, count); naga has no buffer struct to compare, so both halves are pinned here.
+    #[test]
+    fn bvh_node_halves_are_the_ones_load_node_reads() {
+        let layout = pod_layout!(BvhNode {
+            min,
+            first,
+            max,
+            count
+        });
+        let offsets: Vec<(usize, usize)> = layout.fields.iter().map(|f| (f.1, f.2)).collect();
+        assert_eq!(offsets, [(0, 12), (12, 4), (16, 12), (28, 4)]);
+        assert_eq!(layout.size, 32);
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../shaders/tracer/bvh_traverse.slang");
+        let source = std::fs::read_to_string(path).expect("bvh_traverse.slang");
+        let body = &source[source
+            .find("BvhNode load_node(uint index)")
+            .expect("load_node")..];
+        let body = &body[..body.find("return node;").expect("load_node returns")];
+        for line in [
+            "float4 a = tracerRecords[index];",
+            "float4 b = tracerNodeMax[index];",
+            "node.lo = a.xyz;",
+            "node.first = asuint(a.w);",
+            "node.hi = b.xyz;",
+            "node.count = asuint(b.w);",
+        ] {
+            assert!(
+                body.lines().any(|l| l.trim() == line),
+                "load_node lacks `{line}`"
+            );
+        }
+        let upload = include_str!("upload.rs");
+        assert!(
+            upload.contains("halves(half, &b.records, &b.node_max)"),
+            "half 0 must go to tracerRecords"
+        );
+    }
+}

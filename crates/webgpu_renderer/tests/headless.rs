@@ -442,24 +442,17 @@ fn parse_slang_constant<T: std::str::FromStr>(source: &str, name: &str) -> Optio
     source[start..end].trim().parse().ok()
 }
 
-/// Pins Rust `CASCADE_COUNT` against `forward_lighting.slang`'s; no GPU needed.
+/// The cascade count is `limits.slang`'s, which the lighting module imports instead of declaring its own.
 #[test]
-fn cascade_count_matches_the_slang_constant() {
+fn cascade_count_is_the_limits_files() {
     assert_eq!(
         kataglyphis_webgpu_renderer::render::forward::CASCADE_COUNT,
-        3
+        kataglyphis_render_core::shader_limits::CASCADE_COUNT
     );
-
     let Some(source) = slang_source() else {
         return;
     };
-    let shader_cascade_count: usize = parse_slang_constant(&source, "CASCADE_COUNT")
-        .expect("forward_lighting.slang must declare `static const int CASCADE_COUNT = <n>;`");
-    assert_eq!(
-        kataglyphis_webgpu_renderer::render::forward::CASCADE_COUNT,
-        shader_cascade_count,
-        "Rust CASCADE_COUNT and forward_lighting.slang's CASCADE_COUNT have drifted apart"
-    );
+    assert!(source.lines().any(|line| line.trim() == "import limits;"));
 }
 
 /// Pins `render::tile_grid::TILE_SIZE` against `forward_lighting.slang`'s; no GPU needed.

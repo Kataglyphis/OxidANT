@@ -656,3 +656,41 @@ fn half_float_region(width: u32, height: u32, layers: u32) -> TextureRegion {
         texel_bytes: 8,
     }
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn cloud_frame_uniforms_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(CloudFrameUniforms {
+                inv_view_proj,
+                eye,
+                to_sun,
+                sun_radiance,
+                params,
+                depth_spread,
+                ambient_top,
+                ambient_bottom
+            }),
+            &wgsl("cloud_march.wgsl"),
+            "CloudFrame_std140_0",
+        );
+    }
+
+    #[test]
+    fn cloud_params_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(CloudParams {
+                mesh_scale,
+                mesh_offset,
+                parameters,
+                light_march
+            }),
+            &wgsl("cloud_march.wgsl"),
+            "CloudParams_std140_0",
+        );
+    }
+}

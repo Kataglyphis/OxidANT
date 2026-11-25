@@ -19,7 +19,8 @@ struct CullParams {
     width: f32,
     height: f32,
     primitive_count: u32,
-    _pad: [u32; 3],
+    // Ends the struct at the shader's 144 B span.
+    _pad: [u32; 1],
 }
 
 #[repr(C)]
@@ -122,7 +123,7 @@ impl GpuCulling {
             width: 0.0,
             height: 0.0,
             primitive_count: 0,
-            _pad: [0; 3],
+            _pad: [0; 1],
         };
         let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("gpu_cull_params"),
@@ -185,7 +186,7 @@ impl GpuCulling {
             width: width as f32,
             height: height as f32,
             primitive_count: count as u32,
-            _pad: [0; 3],
+            _pad: [0; 1],
         };
         gpu.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
@@ -351,4 +352,35 @@ fn create_slots(device: &wgpu::Device, max_primitives: usize) -> Vec<Slot> {
             sequence: 0,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn cull_params_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(CullParams {
+                view_proj,
+                inv_view_proj,
+                width,
+                height,
+                primitive_count,
+                _pad
+            }),
+            &wgsl("gpu_cull.wgsl"),
+            "CullParams_std140_0",
+        );
+    }
+
+    #[test]
+    fn aabb_gpu_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(AabbGpu { min, max }),
+            &wgsl("gpu_cull.wgsl"),
+            "Aabb_std430_0",
+        );
+    }
 }

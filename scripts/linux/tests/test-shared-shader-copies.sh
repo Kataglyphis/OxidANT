@@ -31,6 +31,12 @@ t_assert_rc 1 python3 "$gate" "${tree}"
 python3 "$gate" "${tree}" > "${work}/out" 2>&1
 t_assert_grep "${work}/out" '^  pass/private.slang:2: an HDR maximum'
 
+pass limit 'static const int CASCADE_COUNT = 3;'
+t_case "a private copy of a limits.slang limit fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/limit.slang:1: a cascade or PCF limit'
+
 pass literal 'float3 f(float3 c) { return min(c, float3(65000.0)); }'
 t_case "a private HDR maximum literal fails"
 t_assert_rc 1 python3 "$gate" "${tree}"

@@ -163,3 +163,20 @@ pub(super) fn create_ibl_bind_group(
         ],
     })
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn ibl_uniforms_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(IblUniforms {
+                enabled_maxmip_intensity
+            }),
+            &wgsl("forward.wgsl"),
+            "IblParams_std140_0",
+        );
+    }
+}

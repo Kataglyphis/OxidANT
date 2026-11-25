@@ -527,3 +527,35 @@ fn create_resolve(
         cache: None,
     })
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn trace_frame_uniforms_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(TraceFrameUniforms {
+                size,
+                inv_view_proj,
+                light_dir,
+                light_radiance,
+                furnace,
+                view_proj,
+                lights
+            }),
+            &wgsl("traced.wgsl"),
+            "TraceFrame_std140_0",
+        );
+    }
+
+    #[test]
+    fn trace_tile_uniforms_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(TraceTileUniforms { rect, samples }),
+            &wgsl("traced.wgsl"),
+            "TraceTile_std140_0",
+        );
+    }
+}

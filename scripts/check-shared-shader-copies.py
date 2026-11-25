@@ -41,6 +41,7 @@ RULES = [
      r"\binv_view\s*,\s*float4\(\s*0(?:\.0)?\s*,\s*0(?:\.0)?\s*,\s*0(?:\.0)?\s*,\s*1(?:\.0)?\s*\)|\binv_view\s*\[\s*3\s*\]",
      "the eye as a ray origin"),
     ("common/ambient.slang", defines("ambient_split_sum|analytic_ambient"), "an ambient term"),
+    ("common/limits.slang", declares(r"CASCADE_COUNT|MAX_PCF_RADIUS"), "a cascade or PCF limit"),
 ]
 # A fullscreen_vs importer converts between uv and NDC through fullscreen.slang only.
 FULLSCREEN_COPIES = re.compile(

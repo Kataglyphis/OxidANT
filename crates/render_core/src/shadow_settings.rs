@@ -2,12 +2,12 @@
 
 use std::ops::RangeInclusive;
 
-/// The most cascades, the C++ `MAX_CASCADES`; [`ShadowSettings::cascade_count`] renders 1 to this many.
-pub const CASCADE_COUNT: usize = 3;
+/// The most cascades, `limits.slang`'s; [`ShadowSettings::cascade_count`] renders 1 to this many.
+pub use crate::shader_limits::CASCADE_COUNT;
 /// The C++ `kShadowMapResolutions`: texels per side of each cascade's map.
 pub const SHADOW_MAP_RESOLUTIONS: [u32; 4] = [512, 1024, 2048, 4096];
-/// The C++ `MAX_PCF_RADIUS`: past 5 a step moves under 2 % of near-shadow pixels while taps grow as (2r+1)^2.
-pub const MAX_PCF_RADIUS: u32 = 5;
+/// The widest PCF radius, `limits.slang`'s.
+pub use crate::shader_limits::MAX_PCF_RADIUS;
 /// The C++ `kMinShadowDistance..=kMaxShadowDistance`.
 pub const SHADOW_DISTANCE_RANGE: RangeInclusive<f32> = 5.0..=500.0;
 /// The C++ default distance, fitted to its Sponza and Dinosaurs scenes.

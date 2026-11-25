@@ -281,3 +281,35 @@ fn uv_rows(t: [[f32; 3]; 2]) -> ([f32; 4], [f32; 4]) {
         [t[1][0], t[1][1], t[1][2], 0.0],
     )
 }
+
+#[cfg(test)]
+mod wgsl_layout {
+    use super::*;
+    use crate::render::pod_layout::{assert_matches_wgsl, pod_layout, wgsl};
+
+    #[test]
+    fn prim_uniforms_matches_its_wgsl() {
+        assert_matches_wgsl(
+            &pod_layout!(PrimUniforms {
+                model,
+                normal_matrix,
+                base_color,
+                material_factors,
+                emissive_factor,
+                base_uv_row0,
+                base_uv_row1,
+                mr_uv_row0,
+                mr_uv_row1,
+                normal_uv_row0,
+                normal_uv_row1,
+                emissive_uv_row0,
+                emissive_uv_row1,
+                occlusion_uv_row0,
+                occlusion_uv_row1,
+                material_flags
+            }),
+            &wgsl("forward.wgsl"),
+            "PrimUniforms_std140_0",
+        );
+    }
+}

@@ -34,14 +34,16 @@ OxidANT submodule. Its Vulkan entry points and material modules stay in that
 repository. Commit source and generated WGSL here before updating its pin;
 an OxidANT checkout needs no parent source tree to run its shader parity tests.
 
-Five leaf modules under `common/` import nothing and hold what more than one shader needs:
+Six leaf modules under `common/` import nothing and hold what more than one shader needs:
 `constants.slang` (`PI`, `MIN_ROUGHNESS`), `hdr_safe.slang` (`HDR_MAX`, 65000, `hdr_safe`, which
 finds a NaN by its bits because WGSL may assume floats are finite, and `is_finite`, which reads the exponent bits
 for the same reason), `trace_constants.slang` (every
 secondary ray's `TRACE_TMIN`, `TRACE_TMAX`, `TRACE_SURFACE_OFFSET` and the punctual shadow ray's
 `TRACE_LIGHT_SPAN`), `aces.slang` (the five ACES coefficients, `aces_tonemap`, `aces_tonemap_inverse`,
 `linear_to_srgb`) and `fullscreen.slang` (`fullscreen_vs`, `fullscreen_uv_to_ndc` and its inverse
-`fullscreen_ndc_to_uv`, switched per target). BeschleunigerBallett's shaders import the same files.
+`fullscreen_ndc_to_uv`, switched per target). `limits.slang` holds the limits both renderers and Rust share
+(`CASCADE_COUNT`, `MAX_PCF_RADIUS`) as `static const int` lines only, because the C++ engine includes it and
+`kataglyphis_render_core::shader_limits` reads it at compile time. BeschleunigerBallett's shaders import the same files.
 `scripts/check-shared-shader-copies.py`, run by `pre-push-checks.sh`, fails a file outside the owner
 that declares one of these names, writes one of their literals (3.14159, 0.045, 65000, an ACES
 coefficient, a ray bound) or a NaN check (`isnan`, the exponent mask, `x == x`), or defines one of their functions; a `fullscreen` importer

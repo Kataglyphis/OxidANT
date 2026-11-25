@@ -21,6 +21,8 @@ pub use kataglyphis_render_core::model_transform;
 pub mod occlusion;
 pub mod overlay;
 pub mod pipeline_desc;
+#[cfg(test)]
+pub(crate) mod pod_layout;
 pub mod quality;
 pub mod render_scale;
 // The settings moved to kataglyphis_render_core, which the C++ engine links without wgpu.
