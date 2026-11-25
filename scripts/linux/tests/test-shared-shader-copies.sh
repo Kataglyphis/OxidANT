@@ -157,4 +157,16 @@ t_assert_rc 1 python3 "$gate" "${tree}"
 python3 "$gate" "${tree}" > "${work}/out" 2>&1
 t_assert_grep "${work}/out" '^  pass/generic.slang:1: a cloud upsample'
 
+pass integrator 'float3 trace_path<S : ITracedScene>(S scene, TracedSegment ray, uint n, inout uint rng)\n{\n    return float3(0.0);\n}'
+t_case "a private path integrator fails by its name"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/integrator.slang:1: a path tracer step'
+
+pass sky 'float3 drawn_sky(float mode, float3 cube, float3 dir, float3 l, float s)\n{\n    return cube;\n}'
+t_case "a private drawn sky fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/sky.slang:1: the drawn sky'
+
 t_summary

@@ -20,7 +20,7 @@ pub const NOISE_WORKGROUP_SIZE: [u32; 3] = [8, 8, 4];
 /// The noise volume's texel format, the C++ engine's `R16G16B16A16Sfloat`; WebGPU writes it write-only.
 pub const NOISE_VOLUME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// `sky.slang`'s `SKYBOX_DISABLED`: the navy the switched-off sky shows.
+/// `drawn_sky.slang`'s `SKYBOX_DISABLED`: the navy the switched-off sky shows.
 const SKY_OFF_DISPLAY: Vec3 = Vec3::new(0.0, 0.0, 0.5);
 /// Texels sampled per face edge at most when a cube map is averaged.
 const CUBEMAP_AVERAGE_EDGE: u32 = 64;

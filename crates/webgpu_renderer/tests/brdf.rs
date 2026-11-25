@@ -175,7 +175,7 @@ fn the_energy_fit_runs_once_per_shading_point() {
     );
     assert_eq!(
         callers(TRACED_WGSL, "ggx_energy_0"),
-        [("ray_trace_pixel_0", 1), ("trace_path_0", 1)],
+        [("trace_path_0", 1), ("ray_trace_pixel_0", 1)],
         "traced.wgsl: once per ray-traced hit, which its sun, lights and ambient share, and once per path vertex"
     );
 }

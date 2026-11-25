@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use glam::{DVec3, Mat4, Vec3, Vec4};
+use kataglyphis_webgpu_renderer::asset::skybox::CubemapFaces;
 use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
 use kataglyphis_webgpu_renderer::render::ibl::half_to_f32;
 use kataglyphis_webgpu_renderer::render::tonemap::aces_tonemap;
@@ -1080,5 +1081,96 @@ fn a_shader_reload_rebuilds_the_traced_kernels_or_keeps_them() {
     assert!(
         rig.frames(RenderMode::RayTraced, 1) == before,
         "the shipped kernel did not bring the frame back"
+    );
+}
+
+/// The HDR radiance of the frame's top-left `side` x `side` corner, which the lone card leaves to the sky.
+fn corner_radiance(rig: &Rig, side: u32) -> [f32; 3] {
+    let hdr = rig.hdr();
+    let mut sum = [0.0f32; 3];
+    for y in 0..side {
+        for x in 0..side {
+            let p = hdr[(y * rig.size + x) as usize];
+            for c in 0..3 {
+                sum[c] += p[c];
+            }
+        }
+    }
+    sum.map(|v| v / (side * side) as f32)
+}
+
+/// C++ `PathTracedCameraMissShowsTheDrawnSky`: what a camera ray that misses sees is what the sky pass draws, in all three modes.
+#[test]
+fn a_path_traced_camera_miss_shows_the_drawn_sky() {
+    let Some(mut rig) = lone_card() else {
+        return;
+    };
+    rig.camera = OrbitCamera {
+        radius: 6.0,
+        ..OrbitCamera::default()
+    };
+    rig.renderer.trace_settings = TraceSettings {
+        samples_per_pixel: 1,
+        max_bounces: 1,
+        furnace: None,
+    };
+    let mut seen = Vec::new();
+    for sky in ["procedural", "cube map", "off"] {
+        match sky {
+            "cube map" => rig
+                .renderer
+                .set_skybox(&rig.gpu, &CubemapFaces::solid([[200, 80, 40, 255]; 6])),
+            "off" => rig.renderer.skybox_enabled = false,
+            _ => {}
+        }
+        rig.frames(RenderMode::Raster, 1);
+        let raster = corner_radiance(&rig, 4);
+        rig.frames(RenderMode::PathTraced, 2);
+        let traced = corner_radiance(&rig, 4);
+        eprintln!("{sky}: raster {raster:?}, path traced {traced:?}");
+        for c in 0..3 {
+            assert!(
+                (traced[c] - raster[c]).abs() <= 0.02 * (1.0 + raster[c]),
+                "{sky}: a camera miss shows {traced:?}, the sky pass {raster:?}"
+            );
+        }
+        seen.push(raster);
+    }
+    // The three skies differ, so the check above saw each one.
+    assert!(seen[0] != seen[1] && seen[1] != seen[2], "{seen:?}");
+}
+
+/// C++ `PathTracedMirrorReflectsTheSkyboxItDraws`: a bounce that misses takes the ambient term's light, IBL included.
+#[test]
+fn a_bounce_miss_takes_the_sky_light_the_ambient_term_does() {
+    let Some(mut rig) = lone_card() else {
+        return;
+    };
+    rig.renderer.light_color_intensity.w = 0.0;
+    rig.renderer.trace_settings = TraceSettings {
+        samples_per_pixel: 8,
+        max_bounces: 2,
+        furnace: None,
+    };
+    let card = |rig: &mut Rig, ambient: f32| {
+        rig.renderer.light_dir_ambient.w = ambient;
+        rig.frames(RenderMode::PathTraced, 16);
+        f64::from(rig.centre_radiance(16))
+    };
+    let (half, full) = (card(&mut rig, 0.35), card(&mut rig, 0.7));
+    eprintln!("analytic sky: ambient 0.35 lights the card to {half:.4}, 0.7 to {full:.4}");
+    assert!(half > 0.01, "the sky lit nothing: {half}");
+    assert!(
+        (full / half - 2.0).abs() < 0.1,
+        "the bounce sky ignores the Ambient slider: {half} then {full}"
+    );
+    // A uniform environment of 1 through the IBL: a white card returns about all of it, times the strength.
+    rig.renderer
+        .set_environment(&rig.gpu, &EquirectImage::constant(8, 4, [1.0, 1.0, 1.0]));
+    let lit = card(&mut rig, 0.5);
+    eprintln!("uniform environment at ambient 0.5: {lit:.4}");
+    assert!(
+        (lit - 0.5).abs() < 0.05,
+        "a bounce miss does not read the IBL's environment: {lit}"
     );
 }

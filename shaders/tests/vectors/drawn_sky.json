@@ -1,0 +1,36 @@
+{
+  "about": "Inputs, f64 references and tolerances for tests/drawn_sky_test.slang, which runs every public function of common/drawn_sky.slang once per case. OxidANT's crates/webgpu_renderer/tests/shader_vectors.rs and BeschleunigerBallett's C++ runner check it. The kernel reads two u32 header words (input words per case, output words per case), then each case's inputs in `inputs` order, one 32-bit word per component (an f32 as its IEEE bits, a u32 or i32 as the integer), and writes each case's outputs the same way in `outputs` order. An f32 output passes when |gpu - ref| <= abs + rel * |ref| in every component; a u32 or i32 output must be equal. Written by scripts/generate-shader-vectors.py from an f64 model of the module: edit that.",
+  "module": "common/drawn_sky.slang",
+  "kernel": "tests/drawn_sky_test.slang",
+  "entry": "drawn_sky_test_main",
+  "inputs": [
+    {"name": "mode", "type": "f32", "width": 1},
+    {"name": "cube", "type": "f32", "width": 3},
+    {"name": "dir", "type": "f32", "width": 3},
+    {"name": "light_dir", "type": "f32", "width": 3},
+    {"name": "sun_intensity", "type": "f32", "width": 1}
+  ],
+  "outputs": [
+    {"name": "drawn_sky", "type": "f32", "width": 3, "abs": 1e-05, "rel": 0.002}
+  ],
+  "cases": [
+    {"name": "procedural: the gradient above the horizon and the sun's glow", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.30304575, 0.80812204, 0.5050763], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.289025692027, 0.352260875926, 0.516262444185]}},
+    {"name": "procedural: below the horizon the ground side", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.6359987, -0.21199958, 0.7419985], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.314680474795, 0.327440578697, 0.357480731953]}},
+    {"name": "procedural: far below, the ground colour itself", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.107832775, -0.970495, 0.21566555], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.180000007153, 0.159999996424, 0.15000000596]}},
+    {"name": "procedural: straight up, the zenith", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.0, 1.0, 0.0], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.0900362190022, 0.160034401078, 0.350030777152]}},
+    {"name": "procedural: near the sun the 1200th power's disk", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.50351167, 0.80561864, 0.3121772], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [46.5721059762, 44.3212295789, 39.8568425423]}},
+    {"name": "procedural: a sun behind the view adds nothing", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.30304575, 0.80812204, 0.5050763], "light_dir": [-0.3, -0.8, -0.5], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.153729545324, 0.223729538171, 0.401260716261]}},
+    {"name": "procedural: a dark sun adds nothing", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.50351167, 0.80561864, 0.3121772], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [0.0]}, "outputs": {"drawn_sky": [0.154589239946, 0.224589232794, 0.401952209814]}},
+    {"name": "procedural: a light direction of any length", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.30304575, 0.80812204, 0.5050763], "light_dir": [5.0, 8.0, 3.0], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.289025671857, 0.352260856765, 0.516262427041]}},
+    {"name": "the cube map's display colour untonemapped", "inputs": {"mode": [1.0], "cube": [0.3, 0.5, 0.8], "dir": [0.30304575, 0.80812204, 0.5050763], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.200282741042, 0.356329873974, 0.982353367148]}},
+    {"name": "the cube map ignores the direction and the sun", "inputs": {"mode": [1.0], "cube": [0.3, 0.5, 0.8], "dir": [0.6359987, -0.21199958, 0.7419985], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [0.0]}, "outputs": {"drawn_sky": [0.200282741042, 0.356329873974, 0.982353367148]}},
+    {"name": "a cube texel outside [0, 1] clamps first", "inputs": {"mode": [1.0], "cube": [-0.2, 1.4, 0.95], "dir": [0.30304575, 0.80812204, 0.5050763], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.0, 7.24166376181, 2.86327724055]}},
+    {"name": "a black cube texel", "inputs": {"mode": [1.0], "cube": [0.0, 0.0, 0.0], "dir": [0.30304575, 0.80812204, 0.5050763], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.0, 0.0, 0.0]}},
+    {"name": "switched off: the navy untonemapped", "inputs": {"mode": [2.0], "cube": [0.3, 0.5, 0.8], "dir": [0.30304575, 0.80812204, 0.5050763], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.0, 0.0, 0.356329873974]}},
+    {"name": "switched off ignores the cube map", "inputs": {"mode": [2.0], "cube": [1.0, 1.0, 1.0], "dir": [0.30304575, 0.80812204, 0.5050763], "light_dir": [0.5, 0.8, 0.3], "sun_intensity": [5.0]}, "outputs": {"drawn_sky": [0.0, 0.0, 0.356329873974]}},
+    {"name": "seeded procedural sky 0", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [-0.84065235, 0.43315452, 0.32508585], "light_dir": [0.88070476, -0.45776954, -0.48844898], "sun_intensity": [7.340594]}, "outputs": {"drawn_sky": [0.293901036068, 0.363901028915, 0.51400735861]}},
+    {"name": "seeded procedural sky 1", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.5065068, -0.6297754, 0.58892596], "light_dir": [-0.20665272, 0.55503315, -0.7632009], "sun_intensity": [2.2326612]}, "outputs": {"drawn_sky": [0.180000007153, 0.159999996424, 0.15000000596]}},
+    {"name": "seeded procedural sky 2", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.8216524, -0.2905567, -0.49037138], "light_dir": [0.6085626, 0.26332784, -0.7005929], "sun_intensity": [5.5133266]}, "outputs": {"drawn_sky": [0.22750047923, 0.21904923985, 0.223163699801]}},
+    {"name": "seeded procedural sky 3", "inputs": {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": [0.40724814, -0.8320121, 0.37670246], "light_dir": [-0.7539473, -0.32586753, -0.833584], "sun_intensity": [2.0442169]}, "outputs": {"drawn_sky": [0.180000007153, 0.159999996424, 0.15000000596]}}
+  ]
+}

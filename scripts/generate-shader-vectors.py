@@ -17,6 +17,7 @@ sys.dont_write_bytecode = True
 import shader_model as sm
 import shader_model_lighting as sl
 import shader_vectors_lighting
+import shader_vectors_path
 from shader_vector_format import (
     CHAINED,
     SMOOTH,
@@ -667,7 +668,7 @@ MODULES = [
     ], evaluate_gltf_material, gltf_material_cases(), {
         "two-channel texel", "zero vector", "back face", "mirrored", "metallic clamp", "roughness floor", "not MASK",
         "cut out", "kept"}),
-] + shader_vectors_lighting.MODULES
+] + shader_vectors_lighting.MODULES + shader_vectors_path.MODULES
 
 
 def main() -> None:

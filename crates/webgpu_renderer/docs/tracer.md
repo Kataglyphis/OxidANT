@@ -117,7 +117,7 @@ array render with their factor alone.
 
 The scene binds 6 storage buffers, so a kernel keeps 2 of WebGPU's default 8 per stage,
 plus 2 sampled textures and 2 samplers. The modes' kernels use all 8: the scene's 6, the
-accumulation and the punctual lights; 3 sampled textures (the environment cube is the third) and
+accumulation and the punctual lights; 3 sampled textures (the sky pass's cube is the third) and
 the scene's 2 samplers. A further kernel buffer has to share one of those. Every binding holds
 16 bytes an entry, so in the browser, at WebGPU's 128 MiB per storage binding, a scene holds
 about 8.4 M stored triangles, vertices and nodes, and 1.1 M instances. Natively `GpuContext`
@@ -225,11 +225,14 @@ and divides by the mixture's density, its BRDF `brdf_sampled` (Epic's Smith rema
 a white metal at roughness 0.3 kept 0.668 of the sky at 60 degrees, now 0.901, the exact Smith lobe 0.975); Russian roulette from the fourth segment, survival in
 0.05-0.95; an unlit surface ends its path at its albedo; emission is added before the surface
 absorbs. Metallic is the factor times the texture, so an untextured factor counts (the C++
-kernel once applied it with a texture only). A camera ray that misses sees the procedural sky, sun
-disk included. A bounce that misses gets the sky's light as the raster's ambient term does: the
-gradient times the ambient strength (`light_dir_ambient.w`) and the environment's intensity,
-without the disk, which NEE brings; with an environment loaded (`set_environment`), the
-environment's radiance cube at mip 0 in place of the gradient, as the raster's IBL ambient takes it.
+kernel once applied it with a texture only). Both renderers walk the path with
+`shaders/common/path_integrator.slang`'s `trace_path`, each over its own `ITracedScene` (here
+`trace_shading.slang`'s `TracerScene` over `bvh_traverse`, in C++ ray queries). A camera ray that
+misses sees the drawn sky, `shaders/common/drawn_sky.slang` as the sky pass draws it: the cube map,
+the navy with the skybox off, or the procedural sky and its sun disk. A bounce that misses gets the
+sky's light as the raster's ambient term does: the IBL's prefiltered map at its sharpest level, or
+the gradient without one, times the ambient strength (`light_dir_ambient.w`) and the environment's
+intensity, without the disk, which NEE brings.
 So the path tracer lights a scene as raster does, plus the bounces and the sky's occlusion. The
 environment is sampled only where a bounce happens to miss, with no importance sampling, so a small
 bright sun in an `.hdr` converges slowly.
@@ -241,16 +244,17 @@ directional lights unattenuated) and divides by the pick's chance, 1 / count, th
 that stops just short of the light; the ray tracer adds every light that way, undivided
 (`punctual_sample` is the term both share). So a punctual light casts a traced shadow, as the raster's
 first four point and spot lights cast theirs through depth cubes. The kernels read the raster's light buffer itself, at
-`TRACE_LIGHTS_GROUP` (2): binding 0 the lights in `render::lights`' four rows, binding 1 the
-environment cube (the IBL's 1x1 stand-in without one); `TraceFrame::lights` carries the count and
-whether an environment is bound.
+`TRACE_LIGHTS_GROUP` (2): binding 0 the lights in `render::lights`' four rows, binding 1 the sky
+pass's cube (its black placeholder without one), bindings 2-5 the IBL maps; `TraceFrame::lights`
+carries the count, whether an environment is bound, the prefiltered map's top mip and the sky's mode.
 
 **Accumulation.** One running mean a pixel in `array<vec4<f32>>`, 16 bytes a pixel: WebGPU has
 no read-write `rgba32f` storage texture. It starts over when `AccumulationKey` changes (the
 view-projection, eye and output size; the sun's direction, colour and intensity; the sky's light;
 the settings; the tracer's generation, which a build and every instance move bump; a hash of the
 packed punctual lights, so a moved, animated or recoloured light counts; the environment's
-generation, which every `set_environment` and `clear_environment` bump), on `reset_accumulation()`,
+generation, which every `set_environment` and `clear_environment` bump; the sky pass's cube
+generation and mode, which a camera miss sees), on `reset_accumulation()`,
 after a shader reload, and after any frame that is not path traced. A material changes only with
 a new scene, which rebuilds the traced one. The RNG stream of a dispatch is its pixel index plus
 the samples accumulated before it times 2654435769, the C++ seed with samples for frames.
@@ -258,7 +262,9 @@ the samples accumulated before it times 2654435769, the C++ seed with samples fo
 **Depth and clouds.** Both kernels write the primary hit's NDC depth, through the raster's
 view-projection, into the accumulation's alpha, 1 where nothing is hit: the ray tracer its one
 ray's hit, the path tracer an unjittered ray through the pixel centre on each frame's first sample
-chunk (`path_tracing.slang`'s `primary_hit_depth`). The resolve writes it into the single-sample
+chunk. That ray takes the first pass of `trace_path`'s loop (`PathDepth`), so the kernel inlines one
+traversal: with a call of its own it held 1446 more of its SPIR-V instructions, 17 %, and the C++
+path tracer probes the same way when the clouds read it. The resolve writes it into the single-sample
 depth target (`frag_depth`, compare always), which the clouds march to as they march to either
 raster path's depth: the C++ engine's `cloudDepthSourceForThisFrame` and `bindCloudSceneDepth`.
 It rides the accumulation, so no storage binding is added to the limits above. On a simple scene
@@ -269,8 +275,7 @@ surface white with that metallic and roughness, without emission or sun, under a
 pixel converges to the radiance times the surface's directional albedo, which is 1 for metal and
 dielectric alike since `brdf.slang` compensates the lobe's multiple scattering
 ([shaders.md](../../../docs/shaders.md)); single scattering returned 0.67 for a white metal at
-roughness 0.7 and passed 1 for a dielectric at grazing angles. The C++ kernel keeps NEE in its
-furnace, whose test zeroes the light instead.
+roughness 0.7 and passed 1 for a dielectric at grazing angles. Neither renderer's furnace traces NEE.
 
 **Dispatch budget.** A frame's samples are split into chunks so a dispatch traces at most
 `DISPATCH_SEGMENTS` (4 M) path segments over one tile: milliseconds on a desktop GPU, far inside a
@@ -280,7 +285,7 @@ GPU-less Chrome, takes about two minutes for the path-tracing kernel and three s
 ray-tracing one; lavapipe takes about a second. SwiftShader inlines a whole traversal at every call site, so
 each kernel keeps one any-hit call: `next_event` traces the sun's and the punctual light's shadow
 rays from one loop, `direct_light` the sun's and every punctual light's (`tests/tracer.rs` counts
-each kernel's call paths to `trace_any`). With a call each, the web demo's path-traced frame did not arrive within
+each kernel's call paths to `trace_any`, and the path tracer's to `trace_closest`). With a call each, the web demo's path-traced frame did not arrive within
 the browser test's 300 s; with the loop it took 117 s, against 124 before the punctual lights.
 
 **Animation and placement.** The renderer moves the traced instances of rigid animated nodes to
@@ -308,15 +313,12 @@ the ray tracer's one-sample sky from `ShaderSources::traced`, `trace_resolve` an
 error scope, though they otherwise compile on their mode's first frame: a module the device
 refuses keeps the old pipelines, an accepted one replaces them and restarts the mean.
 
-**On purpose unlike the C++ engine:** a path-traced bounce that misses gets the renderer's sky
-gradient, or the loaded environment, times the ambient strength and the environment's intensity
-(C++, since BeschleunigerBallett 7dd4669b: its skybox cube map, or the navy with the skybox off,
-times 0.35, the product of those two settings' defaults, which it lacks); a path-traced camera
-miss sees that procedural sky with its sun disk, not the cube map (C++: a soft gradient at half
-intensity); the ray tracer's shadow rays leave along the face normal and its side test reads the
-shading normal (C++'s closest-hit: the hit point itself, the interpolated normal), where both path
-tracers take the face normal for offsets; camera rays clip to the near and far planes as raster does (C++: 0.001-10000
-from the eye, which bounces keep). The whole frame is traced, docks included, as in C++.
+**As the C++ engine:** one integrator, `common/path_integrator.slang`; the drawn sky on a camera
+miss; the IBL's sharpest level, or the gradient without one, times the ambient on a bounce miss;
+camera rays from the near to the far plane; shadow rays leaving along the face normal and the side
+test on the shading normal in both traced modes; and, in the path tracers alone, the face normal
+shading where the shading normal turns from the viewer (`trace_path`; both ray tracers shade the
+authored normal, as raster does). The whole frame is traced, docks included.
 
 Measured on lavapipe, the 8-core arm64 host under WSL, shared with other builds:
 

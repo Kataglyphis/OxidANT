@@ -25,6 +25,8 @@ pub struct AccumulationKey {
     pub lights: u64,
     /// The bound environment's generation: one set or cleared.
     pub environment: u64,
+    /// The drawn sky a camera miss sees: the sky pass's cube generation and its mode.
+    pub sky: (u64, u32),
 }
 
 /// How many samples the accumulation holds, and the key they were traced under.
@@ -80,6 +82,7 @@ mod tests {
             scene: 1,
             lights: 7,
             environment: 0,
+            sky: (0, 0),
         }
     }
 
@@ -103,7 +106,7 @@ mod tests {
 
     #[test]
     fn every_premise_of_the_mean_starts_it_over() {
-        let edits: [fn(&mut AccumulationKey); 12] = [
+        let edits: [fn(&mut AccumulationKey); 14] = [
             |k| k.view_proj = Mat4::from_translation(Vec3::X * 1e-3),
             |k| k.eye.x += 1e-3,
             |k| k.size.0 += 1,
@@ -116,6 +119,8 @@ mod tests {
             |k| k.scene += 1,
             |k| k.lights ^= 1,
             |k| k.environment += 1,
+            |k| k.sky.0 += 1,
+            |k| k.sky.1 = 2,
         ];
         let base = key();
         for edit in edits {

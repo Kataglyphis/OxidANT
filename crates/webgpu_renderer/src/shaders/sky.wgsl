@@ -96,6 +96,19 @@ fn hdr_safe_0( radiance_0 : vec3<f32>) -> vec3<f32>
     return clamp(select(radiance_0, _S4, (((bitcast<vec3<u32>>((radiance_0))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S4, vec3<f32>(65000.0f));
 }
 
+fn drawn_sky_0( mode_1 : f32,  cube_0 : vec3<f32>,  dir_2 : vec3<f32>,  light_dir_0 : vec3<f32>,  sun_intensity_0 : f32) -> vec3<f32>
+{
+    if(mode_1 > 1.5f)
+    {
+        return aces_tonemap_inverse_0(vec3<f32>(0.0f, 0.0f, 0.5f));
+    }
+    if(mode_1 > 0.5f)
+    {
+        return aces_tonemap_inverse_0(cube_0);
+    }
+    return hdr_safe_0(sky_gradient_0(dir_2) + sun_disk_0(dir_2, light_dir_0, sun_intensity_0));
+}
+
 struct pixelOutput_0
 {
     @location(0) output_0 : vec4<f32>,
@@ -110,17 +123,7 @@ struct pixelInput_0
 fn fs_main( _S5 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
     var _S6 : CameraRay_0 = camera_ray_0(mat4x4<f32>(sky_0.inv_view_proj_0.data_0[i32(0)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(3)]), _S5.ndc_2);
-    if((sky_0.mode_0.x) > 1.5f)
-    {
-        var _S7 : pixelOutput_0 = pixelOutput_0( vec4<f32>(aces_tonemap_inverse_0(vec3<f32>(0.0f, 0.0f, 0.5f)), 1.0f) );
-        return _S7;
-    }
-    if((sky_0.mode_0.x) > 0.5f)
-    {
-        var _S8 : pixelOutput_0 = pixelOutput_0( vec4<f32>(aces_tonemap_inverse_0((textureSampleLevel((skyboxTex_0), (skyboxSampler_0), (_S6.direction_0), (0.0f))).xyz), 1.0f) );
-        return _S8;
-    }
-    var _S9 : pixelOutput_0 = pixelOutput_0( vec4<f32>(hdr_safe_0(sky_gradient_0(_S6.direction_0) + sun_disk_0(_S6.direction_0, sky_0.light_dir_intensity_0.xyz, sky_0.light_dir_intensity_0.w)), 1.0f) );
-    return _S9;
+    var _S7 : pixelOutput_0 = pixelOutput_0( vec4<f32>(drawn_sky_0(sky_0.mode_0.x, (textureSampleLevel((skyboxTex_0), (skyboxSampler_0), (_S6.direction_0), (0.0f))).xyz, _S6.direction_0, sky_0.light_dir_intensity_0.xyz, sky_0.light_dir_intensity_0.w), 1.0f) );
+    return _S7;
 }
 

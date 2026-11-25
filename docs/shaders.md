@@ -130,6 +130,13 @@ emissive), and `common/gbuffer.slang` both deferred paths' G-buffer: rgba16f nor
 marks unlit; rgba8 sRGB albedo and occlusion; rgba16f roughness and emissive. `common/cloud_upsample.slang` is
 both cloud upsamples, behind an `ICloudUpsampleTexels`.
 
+`common/path_integrator.slang` is both path tracers: `trace_path<S : ITracedScene>` walks a path
+over the renderer's scene (its closest hit, its shadow rays, its drawn sky and bounce sky, its sun,
+punctual lights and furnace), with `next_event`, `sun_sample` and `punctual_sample` shared with the
+ray tracers. A `PathDepth` probe takes the loop's first pass, so the clouds' depth ray needs no
+traversal of its own. `common/drawn_sky.slang` is the sky the sky pass draws, per direction, which
+both path tracers' camera misses read.
+
 `common/path_estimator.slang` is both path tracers' estimator, ported from the
 C++ `path_tracing.slang`: the PCG RNG and its per-pixel seed, Russian roulette,
 the branchless orthonormal basis, visible-normal GGX sampling and its density,
@@ -200,8 +207,9 @@ checks this on the GPU and stays enabled.
 `tests/<module>_test.slang` runs every public function of `common/<module>.slang`
 once per case of `tests/vectors/<module>.json`: `brdf`, `noise`, `path_estimator`, `hdr_safe`,
 `aces`, `fullscreen`, `camera_ray`, `ambient`, `gltf_material`, `cascade_visibility`, `punctual_shadow`,
-`surface_lighting`, `gbuffer` and `cloud_upsample` today. A generic's interface is a kernel's own struct, a
-texture-free stand-in whose result both targets share. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
+`surface_lighting`, `gbuffer`, `cloud_upsample`, `drawn_sky` and `path_integrator` today. A generic's interface is a kernel's own struct, a
+texture-free stand-in whose result both targets share: `path_integrator`'s is a floor under a sky, whose paths
+end after one bounce. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
 the infinities, which JSON cannot spell; `fullscreen`'s uv differs per target, so its kernel writes
 only what both targets share: the positions, x, each mapping's round trip through its inverse, and its
 distance from `tests/clip_y.slang`'s own top row per target, so a swapped `__target_switch` branch fails;

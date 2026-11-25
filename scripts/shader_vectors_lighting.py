@@ -1,5 +1,5 @@
-"""The shadow and lighting modules' cases and evaluations for generate-shader-vectors.py: cascade_visibility,
-punctual_shadow, surface_lighting, gbuffer and cloud_upsample."""
+"""The shadow, lighting and sky modules' cases and evaluations for generate-shader-vectors.py: cascade_visibility,
+punctual_shadow, surface_lighting, gbuffer, cloud_upsample and drawn_sky."""
 import shader_model as sm
 import shader_model_lighting as sl
 from shader_vector_format import (
@@ -239,6 +239,38 @@ def cloud_upsample_cases() -> list[tuple[str, Values]]:
     return merged(base, rows)
 
 
+def evaluate_drawn_sky(i: Values) -> dict[str, list[float]]:
+    return {"drawn_sky": flat(sl.drawn_sky(
+        one(i, "mode"), sm.vec3(i["cube"]), sm.vec3(i["dir"]), sm.vec3(i["light_dir"]), one(i, "sun_intensity")))}
+
+
+def drawn_sky_cases() -> list[tuple[str, Values]]:
+    base: Values = {"mode": [0.0], "cube": [0.3, 0.5, 0.8], "dir": unit(0.3, 0.8, 0.5), "light_dir": [0.5, 0.8, 0.3],
+                    "sun_intensity": [5.0]}
+    rows: list[tuple[str, Values]] = [
+        ("procedural: the gradient above the horizon and the sun's glow", {}),
+        ("procedural: below the horizon the ground side", {"dir": unit(0.6, -0.2, 0.7)}),
+        ("procedural: far below, the ground colour itself", {"dir": unit(0.1, -0.9, 0.2)}),
+        ("procedural: straight up, the zenith", {"dir": [0.0, 1.0, 0.0]}),
+        ("procedural: near the sun the 1200th power's disk", {"dir": unit(0.5, 0.8, 0.31)}),
+        ("procedural: a sun behind the view adds nothing", {"light_dir": [-0.3, -0.8, -0.5]}),
+        ("procedural: a dark sun adds nothing", {"dir": unit(0.5, 0.8, 0.31), "sun_intensity": [0.0]}),
+        ("procedural: a light direction of any length", {"light_dir": [5.0, 8.0, 3.0]}),
+        ("the cube map's display colour untonemapped", {"mode": [1.0]}),
+        ("the cube map ignores the direction and the sun", {"mode": [1.0], "dir": unit(0.6, -0.2, 0.7),
+                                                             "sun_intensity": [0.0]}),
+        ("a cube texel outside [0, 1] clamps first", {"mode": [1.0], "cube": [-0.2, 1.4, 0.95]}),
+        ("a black cube texel", {"mode": [1.0], "cube": [0.0, 0.0, 0.0]}),
+        ("switched off: the navy untonemapped", {"mode": [2.0]}),
+        ("switched off ignores the cube map", {"mode": [2.0], "cube": [1.0, 1.0, 1.0]}),
+    ]
+    draw = Draw(14)
+    for index in range(4):
+        rows.append((f"seeded procedural sky {index}", {
+            "dir": unit(*draw.nums(-1.0, 1.0)), "light_dir": draw.nums(-1.0, 1.0), "sun_intensity": [draw.num(0.0, 10.0)]}))
+    return merged(base, rows)
+
+
 MODULES = [
     Module("cascade_visibility", ports(
         "row0:4 row1:4 row2:4 row3:4 world:3 view_depth splits:2 count/i32 n:3 n_dot_l bias_scale texel:2 radius/i32"), [
@@ -270,4 +302,8 @@ MODULES = [
         "pixel:2/i32 texel:2/i32 half_size:2/i32 depth_size:2/i32 spot:2/i32 spot_depth rest_depth scale"), [
         out("half_texel_depth", 1, SMOOTH), out("cloud_upsample", 4, CHAINED),
     ], evaluate_cloud_upsample, cloud_upsample_cases(), {"depth weighted", "lone sliver"}),
+    # pow(cos, 1200) multiplies the dot product's rounding by 1200, so the sun's disk needs a looser bound.
+    Module("drawn_sky", ports("mode cube:3 dir:3 light_dir:3 sun_intensity"), [out("drawn_sky", 3, (1e-5, 2e-3))],
+           evaluate_drawn_sky, drawn_sky_cases(), {
+               "procedural", "cube map", "switched off", "sky side", "ground side", "display clamp"}),
 ]

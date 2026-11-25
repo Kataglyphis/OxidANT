@@ -871,10 +871,10 @@ fn sky_only(gpu: &GpuContext, mode: (RasterPath, RenderMode)) -> ForwardRenderer
     renderer
 }
 
-/// The C++ ray-traced mode draws its sky pass where a primary ray misses: the cube map, or the navy when switched off,
-/// as raster does. The path tracer keeps its own sky term, the procedural gradient, as the C++ one keeps its own.
+/// Both traced modes show the drawn sky where a primary ray misses: the cube map, or the navy when switched off, as
+/// raster does. The ray tracer draws the sky pass over its misses; the path tracer's camera misses read it themselves.
 #[test]
-fn ray_traced_misses_show_the_sky_pass_and_path_traced_ones_the_tracers_sky() {
+fn traced_misses_show_the_drawn_sky() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
@@ -923,11 +923,12 @@ fn ray_traced_misses_show_the_sky_pass_and_path_traced_ones_the_tracers_sky() {
             near(procedural, raster, 1),
             "{procedural:?} against {raster:?}"
         );
+        // The path tracer jitters its camera rays inside the pixel, so it may land a level off raster.
         assert!(
-            near(path.0[layer], path.2[layer], 2) && !near(path.0[layer], face, 20),
-            "the path tracer's sky along layer {layer} is {:?} with the cube map, {:?} without",
+            near(path.0[layer], forward.0[layer], 3),
+            "the path tracer's sky along layer {layer} is {:?} with the cube map, raster's {:?}",
             path.0[layer],
-            path.2[layer]
+            forward.0[layer]
         );
         let (jittered, raster) = (path.2[layer], forward.2[layer]);
         assert!(near(jittered, raster, 3), "{jittered:?} against {raster:?}");
@@ -938,6 +939,12 @@ fn ray_traced_misses_show_the_sky_pass_and_path_traced_ones_the_tracers_sky() {
         ray.1
     );
     assert_eq!(ray.1, forward.1, "the navy differs from raster's");
+    assert!(
+        near(path.1, forward.1, 2),
+        "path traced off: {:?} against raster's {:?}",
+        path.1,
+        forward.1
+    );
 }
 
 /// The red cube's centroid in one frame of `mode`.

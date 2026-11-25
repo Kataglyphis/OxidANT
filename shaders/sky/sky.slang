@@ -1,9 +1,7 @@
 // The sky both renderers draw into their HDR target: sky.wgsl is generated from this file, the C++ SPIR-V too.
 
-import aces;
 import camera_ray;
-import hdr_safe;
-import sky_model;
+import drawn_sky;
 
 struct SkyUniforms
 {
@@ -14,9 +12,6 @@ struct SkyUniforms
 [vk::binding(0, 0)] ConstantBuffer<SkyUniforms> sky;
 [vk::binding(1, 0)] TextureCube<float4> skyboxTex;
 [vk::binding(2, 0)] SamplerState skyboxSampler;
-
-// The C++ SKYBOX_DISABLED_RADIANCE: linear navy while the skybox is switched off.
-static const float3 SKYBOX_DISABLED = float3(0.0, 0.0, 0.5);
 
 struct SkyVsOut
 {
@@ -52,14 +47,6 @@ SkyVsOut vs_vulkan_main(uint vid : SV_VulkanVertexID)
 float4 fs_main(SkyVsOut In) : SV_Target
 {
     float3 dir = camera_ray(sky.inv_view_proj, In.ndc).direction;
-
-    if (sky.mode.x > 1.5)
-        return float4(aces_tonemap_inverse(SKYBOX_DISABLED), 1.0);
-    // The photo skybox holds display colours, so it enters as the radiance whose ACES at 0 EV reproduces them.
-    if (sky.mode.x > 0.5)
-        return float4(aces_tonemap_inverse(skyboxTex.SampleLevel(skyboxSampler, dir, 0.0).rgb), 1.0);
-
-    float3 color = sky_gradient(dir) + sun_disk(dir, sky.light_dir_intensity.xyz, sky.light_dir_intensity.w);
-
-    return float4(hdr_safe(color), 1.0);
+    float3 cube = skyboxTex.SampleLevel(skyboxSampler, dir, 0.0).rgb;
+    return float4(drawn_sky(sky.mode.x, cube, dir, sky.light_dir_intensity.xyz, sky.light_dir_intensity.w), 1.0);
 }

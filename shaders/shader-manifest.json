@@ -491,6 +491,24 @@
       ]
     },
     {
+      "file": "tests/drawn_sky_test.slang",
+      "entry": "drawn_sky_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tests/path_integrator_test.slang",
+      "entry": "path_integrator_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
       "file": "tests/gltf_material_test.slang",
       "entry": "gltf_material_test_main",
       "stage": "compute",
@@ -738,6 +756,16 @@
     {
       "src": "tests/ambient_test.slang",
       "out": "ambient_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/drawn_sky_test.slang",
+      "out": "drawn_sky_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/path_integrator_test.slang",
+      "out": "path_integrator_test.wgsl",
       "dst": "crates/webgpu_renderer/tests/shaders"
     },
     {

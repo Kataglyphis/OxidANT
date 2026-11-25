@@ -69,6 +69,13 @@ RULES = [
     ("common/gbuffer.slang", defines("gbuffer_pack|gbuffer_unlit|gbuffer_unpack"), "a G-buffer packing"),
     ("common/gbuffer.slang", r"\.w\s*<\s*-0\.5\b", "the G-buffer's unlit sign"),
     ("common/cloud_upsample.slang", defines("half_texel_depth|cloud_upsample"), "a cloud upsample"),
+    ("common/drawn_sky.slang", defines("drawn_sky"), "the drawn sky"),
+    ("common/drawn_sky.slang", declares(r"SKYBOX_DISABLED\w*"), "the switched-off sky's navy"),
+    ("common/path_integrator.slang", defines(
+        "trace_path|next_event|path_miss|furnace_surface|sun_sample|punctual_sample|picked_punctual_sample|shadowed"),
+     "a path tracer step"),
+    ("common/path_integrator.slang", r"\bstruct\s+(?:TracedSurface|TracedSegment|LightSample|PathDepth)\b",
+     "the path tracer's surface, segment, light or depth record"),
 ]
 # A fullscreen_vs importer converts between uv and NDC through fullscreen.slang only.
 FULLSCREEN_COPIES = re.compile(

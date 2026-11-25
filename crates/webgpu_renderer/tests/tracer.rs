@@ -210,7 +210,7 @@ fn the_traced_kernels_read_the_rust_uniforms_and_workgroups() {
         wgsl_layout(traced, "traceTile_0"),
         (vec![0, 16], size_of::<TraceTileUniforms>() as u32)
     );
-    for (binding, name) in ["tracerLights", "tracerEnvironment"].iter().enumerate() {
+    for (binding, name) in ["tracerLights", "tracerSkybox"].iter().enumerate() {
         let declared = format!("@binding({binding}) @group({TRACE_LIGHTS_GROUP}) var");
         assert!(
             traced
@@ -277,6 +277,23 @@ fn each_traced_kernel_has_one_shadow_ray_call_site() {
             "{kernel} must reach trace_any from exactly one call site, a loop over its lights"
         );
     }
+}
+
+/// The path tracer's clouds depth probe takes the path's own closest-hit pass, so the kernel inlines one traversal.
+#[test]
+fn the_path_tracer_has_one_closest_hit_call_site() {
+    let module =
+        naga::front::wgsl::parse_str(include_str!("../src/shaders/traced.wgsl")).expect("parses");
+    let entry = module
+        .entry_points
+        .iter()
+        .find(|entry| entry.name == "cs_path_trace")
+        .expect("traced.wgsl has cs_path_trace");
+    assert_eq!(
+        inlined_calls(&module, &entry.function.body, "trace_closest_0"),
+        1,
+        "cs_path_trace must reach trace_closest from exactly one call site, the path loop's"
+    );
 }
 
 /// Rays from `eye` towards a 40 x 40 grid over the far face of the box.

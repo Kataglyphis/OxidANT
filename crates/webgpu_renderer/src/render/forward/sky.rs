@@ -8,7 +8,6 @@ use crate::render::bind_layout;
 use crate::render::buffer_desc;
 use crate::render::clouds::CloudAmbient;
 use crate::render::pipeline_desc;
-use crate::render::tracer::RenderMode;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -42,6 +41,8 @@ pub(super) struct SkyResources {
     cubemap: Option<wgpu::TextureView>,
     /// The loaded skybox's mean radiance per hemisphere, the clouds' ambient while it shows.
     cubemap_ambient: CloudAmbient,
+    /// Counts every cube bound or cleared, so the path tracer's mean restarts on a new sky.
+    generation: u64,
 }
 
 impl SkyResources {
@@ -86,12 +87,14 @@ impl SkyResources {
             placeholder,
             cubemap: None,
             cubemap_ambient: CloudAmbient::sky_off(),
+            generation: 0,
         }
     }
 
     /// Binds `cubemap`, or the placeholder for none.
     fn bind(&mut self, device: &wgpu::Device, cubemap: Option<wgpu::TextureView>) {
         self.cubemap = cubemap;
+        self.generation += 1;
         let view = self.cubemap.as_ref().unwrap_or(&self.placeholder);
         self.bind_group = create_sky_bind_group(
             device,
@@ -100,6 +103,16 @@ impl SkyResources {
             view,
             &self.sampler,
         );
+    }
+
+    /// The cube the sky pass samples, its black placeholder without one.
+    pub(super) fn cube_view(&self) -> &wgpu::TextureView {
+        self.cubemap.as_ref().unwrap_or(&self.placeholder)
+    }
+
+    /// Changes whenever the bound cube does.
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Sky fills every pixel geometry left untouched.
@@ -148,10 +161,6 @@ impl ForwardRenderer {
 
     /// What the clouds scatter as ambient: the mean radiance of the sky this frame draws.
     pub(super) fn cloud_ambient(&self) -> CloudAmbient {
-        // The path tracer's camera misses keep the procedural sky whatever the sky pass would draw.
-        if self.drawn_mode() == RenderMode::PathTraced {
-            return CloudAmbient::analytic_sky();
-        }
         match self.sky_mode() {
             SkyMode::Procedural => CloudAmbient::analytic_sky(),
             SkyMode::Cubemap => self.sky.cubemap_ambient,

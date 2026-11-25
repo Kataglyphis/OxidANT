@@ -13,6 +13,28 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-25, one path tracer for both renderers: BeschleunigerBallett plan I11)
+
+- **`shaders/common/path_integrator.slang` walks both renderers' paths.** `trace_path<S : ITracedScene>` takes
+  the scene's closest hit, shadow rays, skies, sun, punctual lights and furnace from an interface; `TracerScene`
+  (`trace_shading.slang`) implements it over `bvh_traverse`, the engine's path tracer over ray queries. NEE
+  (`next_event`, `sun_sample`, `punctual_sample`, `shadowed`) is shared with the ray tracer.
+- **A camera ray that misses sees the drawn sky**: `shaders/common/drawn_sky.slang`, which `sky.slang` now draws
+  through, with the sky pass's cube at the lights group's binding 1 in place of the IBL environment and the sky's
+  mode in `TraceFrame::lights.w`; the accumulation restarts on a new cube or mode. The procedural sky was shown
+  whatever the sky pass drew. A bounce that misses reads the prefiltered map's sharpest level (the environment's
+  mip 0 before), else the gradient, times the ambient strength.
+- **The clouds' depth ray takes the path loop's first pass** (`PathDepth`), so `cs_path_trace` inlines one
+  traversal: 7443 SPIR-V instructions instead of 8640 (7416 instead of 8601 fully inlined); its WGSL text
+  grew from 69402 to 73549 bytes with the drawn sky and the integrator's small functions. `tests/tracer.rs`
+  counts its one call path to `trace_closest`. The furnace traces no NEE in either renderer.
+- **The face normal shades where the shading normal turns from the viewer in the path tracers alone**: the rule moved
+  from `shade_hit` into `trace_path`, so the ray-traced mode shades the authored normal as raster does, as the C++
+  engine's closest-hit shader does.
+- **Vector kernels for `drawn_sky` and `path_integrator`**: `tests/path_integrator_test.slang`'s scene is a floor
+  under a sky, so `trace_path`, NEE and the misses meet `scripts/shader_model_path.py`'s paths on both targets.
+- `check-shared-shader-copies.py` fails a private `trace_path`, NEE step, drawn sky or their records.
+
 ### Changed (2026-11-25, IBL and the occlusion map for BeschleunigerBallett's engine)
 
 - **`ambient.slang`'s `sky_ambient<M : IAmbientMaps>` is the ambient term of every raster and ray-traced mode.** It

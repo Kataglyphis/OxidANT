@@ -221,6 +221,7 @@ impl ForwardRenderer {
             scene: self.tracer.generation(),
             lights: self.lights.fingerprint(),
             environment: self.ibl.generation,
+            sky: (self.sky.generation(), self.sky_mode() as u32),
         };
         let accumulated = self.traced.accumulation.begin(key);
         let dispatches = plan(
@@ -254,7 +255,7 @@ impl ForwardRenderer {
                     .environment
                     .as_ref()
                     .map_or(0, |e| e.max_prefiltered_mip() as u32),
-                0,
+                self.sky_mode() as u32,
             ],
         }
     }
@@ -287,23 +288,15 @@ impl ForwardRenderer {
             .passes
             .get_or_insert_with(|| TracedPasses::new(device));
         let ibl = &self.ibl;
-        let (environment, irradiance, prefiltered) = ibl.environment.as_ref().map_or(
-            (
-                &ibl.fallback.prefiltered,
-                &ibl.fallback.irradiance,
-                &ibl.fallback.prefiltered,
-            ),
-            |e| {
-                (
-                    e.environment_view(),
-                    e.irradiance_view(),
-                    e.prefiltered_view(),
-                )
-            },
-        );
+        let (irradiance, prefiltered) = ibl
+            .environment
+            .as_ref()
+            .map_or((&ibl.fallback.irradiance, &ibl.fallback.prefiltered), |e| {
+                (e.irradiance_view(), e.prefiltered_view())
+            });
         let lights = TraceLights {
             punctual: &self.lights.storage_buffer,
-            environment,
+            skybox: self.sky.cube_view(),
             irradiance,
             prefiltered,
             brdf_lut: ibl

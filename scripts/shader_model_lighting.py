@@ -1,4 +1,4 @@
-"""The f64 model of the shared shadow and lighting modules, beside shader_model.py and on its rounding Real."""
+"""The f64 model of the shared shadow, lighting and sky modules, beside shader_model.py and on its rounding Real."""
 import math
 from collections.abc import Callable, Sequence
 
@@ -6,22 +6,27 @@ from shader_model import (
     Real,
     Surface,
     Vec,
+    aces_tonemap_inverse,
     ambient_split_sum,
     analytic_ambient,
     below,
     clamp,
     cross,
     dot,
+    each,
     f32,
     fullscreen_ndc_to_uv,
     lerp,
     mul_mat_vec,
     normalize,
+    pow_,
     reflect,
     rmax,
     rmin,
     saturate,
+    sky_gradient,
     sqrt,
+    vec3,
     visit,
 )
 
@@ -248,3 +253,29 @@ def sky_ambient(s: Surface, baked: bool, energy: Vec) -> Vec:
     reflection = (reflect(-s.v, s.n) * 0.5 + 0.5) * (1.0 - 0.5 * s.roughness)
     looked_up = Vec(0.5 * n_dot_v + 0.25, 0.1 * s.roughness)
     return ambient_split_sum(irradiance, reflection, s.albedo, s.metallic, s.f0, looked_up)
+
+
+# ---- common/sky_model.slang's sun_disk ----
+
+
+def sun_disk(d: Vec, light_dir: Vec, intensity: Real) -> Vec:
+    cos_sun = rmax(dot(d, normalize(light_dir)), 0.0)
+    sun = pow_(cos_sun, 1200.0) * 24.0 + pow_(cos_sun, 48.0) * 0.5
+    return vec3((1.0, 0.95, 0.85)) * sun * (intensity * 0.4)
+
+
+# ---- common/drawn_sky.slang ----
+
+SKYBOX_DISABLED = (0.0, 0.0, 0.5)
+
+
+def drawn_sky(mode: Real, cube: Vec, d: Vec, light_dir: Vec, sun_intensity: Real) -> Vec:
+    if below(1.5, mode, "the switched-off mode's edge"):
+        visit("switched off")
+        return aces_tonemap_inverse(vec3(SKYBOX_DISABLED))
+    if below(0.5, mode, "the cube map mode's edge"):
+        visit("cube map")
+        return aces_tonemap_inverse(cube)
+    visit("procedural")
+    # hdr_safe on a finite radiance is its clamp.
+    return each(lambda a: clamp(a, 0.0, HDR_MAX), sky_gradient(d) + sun_disk(d, light_dir, sun_intensity))
