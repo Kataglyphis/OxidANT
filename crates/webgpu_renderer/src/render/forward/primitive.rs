@@ -6,6 +6,7 @@ use wgpu::util::DeviceExt as _;
 use super::upload::MaterialSlots;
 use crate::context::GpuContext;
 use crate::render::bounds::instanced_bounds;
+use crate::render::tracer::material::alpha_mode_code;
 use crate::scene::{AlphaMode, CpuMaterial, InstanceRaw, MorphTarget, Vertex};
 
 /// True when `m` mirrors space (negative determinant), which reverses its triangles' winding.
@@ -32,7 +33,7 @@ pub(super) struct PrimUniforms {
     emissive_uv_row1: [f32; 4],
     occlusion_uv_row0: [f32; 4],
     occlusion_uv_row1: [f32; 4],
-    /// x: 1.0 when KHR_materials_unlit, else 0.0. y: per-slot UV1 mask bits.
+    /// x: 1.0 when KHR_materials_unlit, else 0.0. y: per-slot UV1 mask bits. z: the alpha mode's code.
     material_flags: [f32; 4],
 }
 
@@ -57,6 +58,8 @@ pub(super) struct PrimMaterial {
     uv_set_mask: u32,
     /// KHR_materials_unlit: skip lighting entirely and emit the base color.
     unlit: bool,
+    /// `alpha_mode_code` of the material's alphaMode, packed into `material_flags.z`.
+    alpha_mode: u32,
 }
 
 impl PrimMaterial {
@@ -78,7 +81,7 @@ impl PrimMaterial {
                 material.emissive_factor[0],
                 material.emissive_factor[1],
                 material.emissive_factor[2],
-                // w carries the MASK alpha cutoff (0 = never discard).
+                // w carries the MASK alpha cutoff; material_flags.z says whether it applies.
                 match material.alpha_mode {
                     AlphaMode::Mask(cutoff) => cutoff,
                     _ => 0.0,
@@ -91,6 +94,7 @@ impl PrimMaterial {
             occlusion_uv_transform: material.occlusion_uv_transform,
             uv_set_mask: material.uv_set_mask,
             unlit: material.unlit,
+            alpha_mode: alpha_mode_code(material.alpha_mode),
         }
     }
 }
@@ -256,7 +260,7 @@ impl GpuPrimitive {
             material_flags: [
                 if material.unlit { 1.0 } else { 0.0 },
                 material.uv_set_mask as f32,
-                0.0,
+                material.alpha_mode as f32,
                 0.0,
             ],
         }

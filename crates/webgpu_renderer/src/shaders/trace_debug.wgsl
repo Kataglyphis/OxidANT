@@ -403,68 +403,70 @@ fn material_layer_0( m_1 : TraceMaterial_0,  slot_0 : u32) -> u32
     return word_0;
 }
 
+fn transform_uv_0( uv_0 : vec2<f32>,  row0_0 : vec3<f32>,  row1_0 : vec3<f32>) -> vec2<f32>
+{
+    var _S13 : vec3<f32> = vec3<f32>(uv_0, 1.0f);
+    return vec2<f32>(dot(_S13, row0_0), dot(_S13, row1_0));
+}
+
 fn material_slot_uv_0( material_0 : u32,  m_2 : TraceMaterial_0,  slot_1 : u32,  uv0_1 : vec2<f32>,  uv1_1 : vec2<f32>) -> vec2<f32>
 {
-    var uv_0 : vec2<f32>;
+    var uv_1 : vec2<f32>;
     if((((((m_2.flags_2) >> ((u32(4) + slot_1)))) & (u32(1)))) != u32(0))
     {
-        uv_0 = uv1_1;
+        uv_1 = uv1_1;
     }
     else
     {
-        uv_0 = uv0_1;
+        uv_1 = uv0_1;
     }
     var base_2 : u32 = tracerInfo_0.material_base_0 + material_0 * u32(14) + u32(4) + u32(2) * slot_1;
-    var r0_0 : vec4<f32> = tracerRecords_0[base_2];
-    var r1_0 : vec4<f32> = tracerRecords_0[base_2 + u32(1)];
-    var _S13 : f32 = uv_0.x;
-    var _S14 : f32 = uv_0.y;
-    return vec2<f32>(r0_0.x * _S13 + r0_0.y * _S14 + r0_0.z, r1_0.x * _S13 + r1_0.y * _S14 + r1_0.z);
+    return transform_uv_0(uv_1, tracerRecords_0[base_2].xyz, tracerRecords_0[base_2 + u32(1)].xyz);
 }
 
 fn wrap_coordinate_0( c_1 : f32,  mode_0 : u32,  half_texel_0 : f32) -> f32
 {
-    var _S15 : bool = mode_0 == u32(1);
-    var _S16 : f32;
-    if(_S15)
+    var _S14 : bool = mode_0 == u32(1);
+    var _S15 : f32;
+    if(_S14)
     {
-        _S16 = 1.0f - abs(fract(c_1 * 0.5f) * 2.0f - 1.0f);
+        _S15 = 1.0f - abs(fract(c_1 * 0.5f) * 2.0f - 1.0f);
     }
     else
     {
-        _S16 = c_1;
+        _S15 = c_1;
     }
-    var _S17 : bool;
-    if(_S15)
+    var _S16 : bool;
+    if(_S14)
     {
-        _S17 = true;
+        _S16 = true;
     }
     else
     {
-        _S17 = mode_0 == u32(2);
+        _S16 = mode_0 == u32(2);
     }
-    if(_S17)
+    if(_S16)
     {
-        _S16 = clamp(_S16, half_texel_0, 1.0f - half_texel_0);
+        _S15 = clamp(_S15, half_texel_0, 1.0f - half_texel_0);
     }
-    return _S16;
+    return _S15;
 }
 
 fn sample_material_slot_0( material_1 : u32,  m_3 : TraceMaterial_0,  slot_2 : u32,  uv0_2 : vec2<f32>,  uv1_2 : vec2<f32>,  lod_0 : f32) -> vec4<f32>
 {
     var layer_0 : u32 = material_layer_0(m_3, slot_2);
-    var _S18 : vec4<f32>;
+    var _S17 : vec4<f32>;
     if(layer_0 == u32(65535))
     {
         if(slot_2 == u32(2))
         {
-            _S18 = vec4<f32>(0.5f, 0.5f, 1.0f, 1.0f);
+            _S17 = vec4<f32>(0.5f, 0.5f, 1.0f, 1.0f);
         }
         else
         {
-            _S18 = vec4<f32>(1.0f, 1.0f, 1.0f, 1.0f);
+            _S17 = vec4<f32>(1.0f, 1.0f, 1.0f, 1.0f);
         }
-        return _S18;
+        return _S17;
     }
     var srgb_0 : bool;
     if(slot_2 == u32(0))
@@ -475,48 +477,63 @@ fn sample_material_slot_0( material_1 : u32,  m_3 : TraceMaterial_0,  slot_2 : u
     {
         srgb_0 = slot_2 == u32(3);
     }
-    var _S19 : u32;
+    var _S18 : u32;
     if(srgb_0)
     {
-        _S19 = tracerInfo_0.srgb_layer_size_0;
+        _S18 = tracerInfo_0.srgb_layer_size_0;
     }
     else
     {
-        _S19 = tracerInfo_0.linear_layer_size_0;
+        _S18 = tracerInfo_0.linear_layer_size_0;
     }
-    var half_texel_1 : f32 = 0.5f * exp2(max(lod_0, 0.0f)) / f32(_S19);
+    var half_texel_1 : f32 = 0.5f * exp2(max(lod_0, 0.0f)) / f32(_S18);
     var wrap_0 : u32 = ((m_3.flags_2) >> ((u32(9) + u32(4) * slot_2)));
-    var uv_1 : vec2<f32> = material_slot_uv_0(material_1, m_3, slot_2, uv0_2, uv1_2);
-    var coord_0 : vec3<f32> = vec3<f32>(wrap_coordinate_0(uv_1.x, (wrap_0 & (u32(3))), half_texel_1), wrap_coordinate_0(uv_1.y, (((wrap_0 >> (u32(2)))) & (u32(3))), half_texel_1), f32(layer_0));
+    var uv_2 : vec2<f32> = material_slot_uv_0(material_1, m_3, slot_2, uv0_2, uv1_2);
+    var coord_0 : vec3<f32> = vec3<f32>(wrap_coordinate_0(uv_2.x, (wrap_0 & (u32(3))), half_texel_1), wrap_coordinate_0(uv_2.y, (((wrap_0 >> (u32(2)))) & (u32(3))), half_texel_1), f32(layer_0));
     var nearest_0 : bool = (((((m_3.layers_0.z) >> ((u32(16) + slot_2)))) & (u32(1)))) != u32(0);
     if(srgb_0)
     {
         if(nearest_0)
         {
-            _S18 = (textureSampleLevel((tracerSrgbLayers_0), (tracerNearestSampler_0), ((coord_0)).xy, i32(((coord_0)).z), (lod_0)));
+            _S17 = (textureSampleLevel((tracerSrgbLayers_0), (tracerNearestSampler_0), ((coord_0)).xy, i32(((coord_0)).z), (lod_0)));
         }
         else
         {
-            _S18 = (textureSampleLevel((tracerSrgbLayers_0), (tracerLinearSampler_0), ((coord_0)).xy, i32(((coord_0)).z), (lod_0)));
+            _S17 = (textureSampleLevel((tracerSrgbLayers_0), (tracerLinearSampler_0), ((coord_0)).xy, i32(((coord_0)).z), (lod_0)));
         }
-        return _S18;
+        return _S17;
     }
     if(nearest_0)
     {
-        _S18 = (textureSampleLevel((tracerLinearLayers_0), (tracerNearestSampler_0), ((coord_0)).xy, i32(((coord_0)).z), (lod_0)));
+        _S17 = (textureSampleLevel((tracerLinearLayers_0), (tracerNearestSampler_0), ((coord_0)).xy, i32(((coord_0)).z), (lod_0)));
     }
     else
     {
-        _S18 = (textureSampleLevel((tracerLinearLayers_0), (tracerLinearSampler_0), ((coord_0)).xy, i32(((coord_0)).z), (lod_0)));
+        _S17 = (textureSampleLevel((tracerLinearLayers_0), (tracerLinearSampler_0), ((coord_0)).xy, i32(((coord_0)).z), (lod_0)));
     }
-    return _S18;
+    return _S17;
 }
 
-fn alpha_masked_out_0( tri_0 : vec4<u32>,  barycentrics_1 : vec2<f32>) -> bool
+fn alpha_masked_out_0( alpha_mode_0 : i32,  alpha_0 : f32,  cutoff_0 : f32) -> bool
+{
+    var _S19 : bool;
+    if(alpha_mode_0 == i32(1))
+    {
+        _S19 = alpha_0 < cutoff_0;
+    }
+    else
+    {
+        _S19 = false;
+    }
+    return _S19;
+}
+
+fn hit_masked_out_0( tri_0 : vec4<u32>,  barycentrics_1 : vec2<f32>) -> bool
 {
     var material_2 : u32 = ((tri_0.w) & (u32(16777215)));
     var m_4 : TraceMaterial_0 = load_material_0(material_2);
-    if((((m_4.flags_2) & (u32(3)))) != u32(1))
+    var mode_1 : i32 = i32(((m_4.flags_2) & (u32(3))));
+    if(mode_1 != i32(1))
     {
         return false;
     }
@@ -529,7 +546,7 @@ fn alpha_masked_out_0( tri_0 : vec4<u32>,  barycentrics_1 : vec2<f32>) -> bool
     var _S23 : vec2<f32> = vec2<f32>(_S22);
     var _S24 : vec2<f32> = vec2<f32>(_S20);
     var _S25 : vec2<f32> = vec2<f32>(_S21);
-    return (m_4.base_color_0.w * (a_3.color_0.w * _S22 + b_3.color_0.w * _S20 + c_2.color_0.w * _S21) * sample_material_slot_0(material_2, m_4, u32(0), a_3.uv0_0 * _S23 + b_3.uv0_0 * _S24 + c_2.uv0_0 * _S25, a_3.uv1_0 * _S23 + b_3.uv1_0 * _S24 + c_2.uv1_0 * _S25, 0.0f).w) < (m_4.alpha_cutoff_0);
+    return alpha_masked_out_0(mode_1, m_4.base_color_0.w * (a_3.color_0.w * _S22 + b_3.color_0.w * _S20 + c_2.color_0.w * _S21) * sample_material_slot_0(material_2, m_4, u32(0), a_3.uv0_0 * _S23 + b_3.uv0_0 * _S24 + c_2.uv0_0 * _S25, a_3.uv1_0 * _S23 + b_3.uv1_0 * _S24 + c_2.uv1_0 * _S25, 0.0f).w, m_4.alpha_cutoff_0);
 }
 
 fn trace_scene_0( ray_1 : TraceRay_0,  any_hit_0 : bool) -> TraceHit_0
@@ -696,7 +713,7 @@ fn trace_scene_0( ray_1 : TraceRay_0,  any_hit_0 : bool) -> TraceHit_0
                     var _S32 : bool;
                     if((((tri_1.w) & (u32(2147483648)))) != u32(0))
                     {
-                        _S32 = alpha_masked_out_0(tri_1, hit_1.yz);
+                        _S32 = hit_masked_out_0(tri_1, hit_1.yz);
                     }
                     else
                     {

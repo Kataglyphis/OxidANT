@@ -39,7 +39,7 @@ fn constant(name: &str) -> u64 {
 
 #[test]
 fn the_slang_constants_match_the_rust_layout() {
-    let pairs: [(&str, u64); 14] = [
+    let pairs: [(&str, u64); 13] = [
         ("TRACE_STACK_SIZE", STACK_SIZE as u64),
         ("INSTANCE_STRIDE", GpuInstance::RECORDS as u64),
         ("MATERIAL_STRIDE", GpuMaterial::RECORDS as u64),
@@ -48,7 +48,6 @@ fn the_slang_constants_match_the_rust_layout() {
         ("TRIANGLE_MATERIAL", u64::from(TRIANGLE_MATERIAL)),
         ("INSTANCE_MIRRORED", u64::from(INSTANCE_MIRRORED)),
         ("ALPHA_MODE_MASK", u64::from(flags::ALPHA_MODE_MASK)),
-        ("ALPHA_MASK", u64::from(flags::ALPHA_MASK)),
         ("MATERIAL_DOUBLE_SIDED", u64::from(flags::DOUBLE_SIDED)),
         ("MATERIAL_UNLIT", u64::from(flags::UNLIT)),
         ("MATERIAL_UV1_SHIFT", u64::from(flags::UV1_SHIFT)),

@@ -13,6 +13,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-25, shared material Slang: BeschleunigerBallett plan I9)
+
+- **`shaders/common/gltf_material.slang` holds the glTF material rules both renderers sample with**: `transform_uv`
+  (KHR_texture_transform), `normalize_or`, `tangent_space_normal` (z rebuilt from xy for a two-channel BC5 map),
+  `apply_normal_map`, `mirror_sign`, `normal_transform` (the cofactor, so the C++ push constants carry only the
+  model matrix), `material_metallic` (held in [0, 1]), `material_roughness` and `alpha_masked_out`. `forward.slang`,
+  `bvh_traverse.slang` and `trace_shading.slang` call it; their copies went (the tracer's MASK test is
+  `hit_masked_out`). Its vector kernel `tests/gltf_material_test.slang` checks every function on both targets, and
+  `check-shared-shader-copies.py` fails a private copy, a BC5 rebuild, a texture transform or a tangent frame.
+- **MASK is an explicit alpha mode plus cutoff in every pass** (owner rule 2026-11-19): `shaders/common/alpha_mode.slang`
+  holds `ALPHA_OPAQUE`, `ALPHA_MASK` and `ALPHA_BLEND` as `static const int` lines, which
+  `kataglyphis_render_core::shader_limits` reads at compile time and the C++ engine includes; the tracer's flags
+  re-export them, the forward pass packs the mode into `material_flags.z`, `FlatMaterial::alpha_mode` carries the
+  `AlphaMode` (it replaces `alpha_blend`) and the bridge's `GltfMaterial::alpha_mode` its code.
+
 - **AMD's MIGraphX plugin registers through the hub's shared policy** (ANTfrastructure CON231). The exact
   `ort_plugin_eps.rs` asset decides the module path and the once-per-process registration;
   `ort_plugin.rs` only binds it to ort rc.15 (typed `GetEpDevices`, `AppendExecutionProvider_V2`). A

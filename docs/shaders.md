@@ -43,7 +43,10 @@ secondary ray's `TRACE_TMIN`, `TRACE_TMAX`, `TRACE_SURFACE_OFFSET` and the punct
 `linear_to_srgb`) and `fullscreen.slang` (`fullscreen_vs`, `fullscreen_uv_to_ndc` and its inverse
 `fullscreen_ndc_to_uv`, switched per target). `limits.slang` holds the limits both renderers and Rust share
 (`CASCADE_COUNT`, `MAX_PCF_RADIUS`) as `static const int` lines only, because the C++ engine includes it and
-`kataglyphis_render_core::shader_limits` reads it at compile time. BeschleunigerBallett's shaders import the same files.
+`kataglyphis_render_core::shader_limits` reads it at compile time; `alpha_mode.slang` holds the glTF alpha modes
+the same way. `gltf_material.slang` holds the material rules both renderers sample with: `transform_uv`, the
+normal-texel decode with its BC5 z rebuild, `apply_normal_map`, the mirror sign and cofactor normal transform, the
+metallic and roughness clamps and `alpha_masked_out`. BeschleunigerBallett's shaders import the same files.
 `scripts/check-shared-shader-copies.py`, run by `pre-push-checks.sh`, fails a file outside the owner
 that declares one of these names, writes one of their literals (3.14159, 0.045, 65000, an ACES
 coefficient, a ray bound) or a NaN check (`isnan`, the exponent mask, `x == x`), or defines one of their functions; a `fullscreen` importer
@@ -178,7 +181,7 @@ checks this on the GPU and stays enabled.
 
 `tests/<module>_test.slang` runs every public function of `common/<module>.slang`
 once per case of `tests/vectors/<module>.json`: `brdf`, `noise`, `path_estimator`, `hdr_safe`,
-`aces`, `fullscreen`, `camera_ray` and `ambient` today. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
+`aces`, `fullscreen`, `camera_ray`, `ambient` and `gltf_material` today. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
 the infinities, which JSON cannot spell; `fullscreen`'s uv differs per target, so its kernel writes
 only what both targets share: the positions, x, each mapping's round trip through its inverse, and its
 distance from `tests/clip_y.slang`'s own top row per target, so a swapped `__target_switch` branch fails;

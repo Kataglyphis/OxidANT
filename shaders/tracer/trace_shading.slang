@@ -3,7 +3,7 @@
 import bvh_traverse;
 import brdf;
 import camera_ray;
-import constants;
+import gltf_material;
 import path_estimator;
 import punctual_light;
 import sky_model;
@@ -53,11 +53,6 @@ struct TracedSurface
     bool unlit;
 };
 
-float3 normalize_or(float3 v, float3 fallback)
-{
-    return dot(v, v) > 1e-30 ? normalize(v) : fallback;
-}
-
 // The pixel this thread shades, or false past the dispatch's rect.
 bool tile_pixel(uint2 thread, out uint2 pixel)
 {
@@ -91,19 +86,6 @@ float ndc_depth(TraceRay ray, TraceHit hit)
     return saturate(clip.z / clip.w);
 }
 
-// forward.slang's normal mapping: a two-channel map rebuilds z, and a back face turns the whole frame.
-float3 mapped_normal(TraceSurface s, float4 texel, float scale)
-{
-    float3 t = normalize_or(s.tangent.xyz - s.normal * dot(s.normal, s.tangent.xyz), float3(0.0));
-    float3 b = cross(s.normal, t) * s.tangent.w;
-    float3 n = texel.xyz * 2.0 - 1.0;
-    if (texel.b == 0.0)
-        n.z = sqrt(saturate(1.0 - dot(n.xy, n.xy)));
-    n = float3(n.xy * scale, n.z);
-    float3 mapped = normalize_or(mul(n, float3x3(t, b, s.normal)), s.normal);
-    return s.front_face ? mapped : -mapped;
-}
-
 // The hit's material at level 0, read like the forward pass; the kernels trace unit-length rays.
 TracedSurface shade_hit(TraceRay ray, TraceHit hit)
 {
@@ -116,13 +98,13 @@ TracedSurface shade_hit(TraceRay ray, TraceHit hit)
     TracedSurface o;
     o.position = s.position;
     o.face_normal = s.front_face ? s.geometric_normal : -s.geometric_normal;
-    float3 n = mapped_normal(s, normal, m.normal_scale);
+    float3 n = apply_normal_map(s.normal, s.tangent, tangent_space_normal(normal.xyz, m.normal_scale), s.front_face);
     // A normal tilted away from the viewer leaves no lobe to shade, so the face normal shades, as in the C++ path tracer.
     o.normal = dot(n, -ray.direction) < 1e-4 ? o.face_normal : n;
     o.albedo = m.base_color.rgb * base.rgb * s.color.rgb;
     o.emissive = m.emissive * emission.rgb;
-    o.metallic = clamp(m.metallic * mr.b, 0.0, 1.0);
-    o.roughness = clamp(m.roughness * mr.g, MIN_ROUGHNESS, 1.0);
+    o.metallic = material_metallic(m.metallic, mr.b);
+    o.roughness = material_roughness(m.roughness, mr.g);
     o.unlit = (m.flags & MATERIAL_UNLIT) != 0u;
     return o;
 }

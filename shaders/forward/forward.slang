@@ -1,6 +1,6 @@
-import constants;
 import forward_lighting;
 import fullscreen;
+import gltf_material;
 
 // Rust/WebGPU forward PBR pass and its deferred twin: the checked-in forward.wgsl is generated from this file.
 
@@ -10,7 +10,7 @@ struct PrimUniforms
     float4x4 normal_matrix;
     float4 base_color;
     float4 material_factors;  // x: metallic, y: roughness, z: occlusion, w: normal scale
-    float4 emissive_factor;   // rgb: emissive, w: MASK cutoff
+    float4 emissive_factor;   // rgb: emissive, w: alphaCutoff
     float4 base_uv_row0;
     float4 base_uv_row1;
     float4 mr_uv_row0;
@@ -21,15 +21,13 @@ struct PrimUniforms
     float4 emissive_uv_row1;
     float4 occlusion_uv_row0;
     float4 occlusion_uv_row1;
-    float4 material_flags;    // x: unlit, y: uv mask bits
+    float4 material_flags;    // x: unlit, y: uv mask bits, z: alpha_mode.slang's mode
 };
 
-// Applies a KHR_texture_transform's two affine rows to a UV.
-float2 apply_uv_transform(float4 row0, float4 row1, float2 uv)
+// The primitive's glTF alphaMode.
+int prim_alpha_mode()
 {
-    return float2(
-        row0.x * uv.x + row0.y * uv.y + row0.z,
-        row1.x * uv.x + row1.y * uv.y + row1.z);
+    return int(prim.material_flags.z);
 }
 
 // Per-slot UV accessors, so no call site pairs one slot's rows with another's; base colour is split across stages.
@@ -43,7 +41,7 @@ float2 base_color_uv_select(float2 uv0, float2 uv1)
 // Base-colour slot's KHR_texture_transform.
 float2 base_color_uv_rows(float2 uv)
 {
-    return apply_uv_transform(prim.base_uv_row0, prim.base_uv_row1, uv);
+    return transform_uv(uv, prim.base_uv_row0.xyz, prim.base_uv_row1.xyz);
 }
 
 // Base-colour slot's full UV: selection composed with the row pair.
@@ -56,28 +54,28 @@ float2 base_color_uv(float2 uv0, float2 uv1)
 float2 metallic_roughness_uv(float2 uv0, float2 uv1)
 {
     float2 uv = (uint(prim.material_flags.y) & 2u) != 0u ? uv1 : uv0;
-    return apply_uv_transform(prim.mr_uv_row0, prim.mr_uv_row1, uv);
+    return transform_uv(uv, prim.mr_uv_row0.xyz, prim.mr_uv_row1.xyz);
 }
 
 // Normal slot's uv-set selection (mask bit 4) and KHR_texture_transform.
 float2 normal_uv(float2 uv0, float2 uv1)
 {
     float2 uv = (uint(prim.material_flags.y) & 4u) != 0u ? uv1 : uv0;
-    return apply_uv_transform(prim.normal_uv_row0, prim.normal_uv_row1, uv);
+    return transform_uv(uv, prim.normal_uv_row0.xyz, prim.normal_uv_row1.xyz);
 }
 
 // Emissive slot's uv-set selection (mask bit 8) and KHR_texture_transform.
 float2 emissive_uv(float2 uv0, float2 uv1)
 {
     float2 uv = (uint(prim.material_flags.y) & 8u) != 0u ? uv1 : uv0;
-    return apply_uv_transform(prim.emissive_uv_row0, prim.emissive_uv_row1, uv);
+    return transform_uv(uv, prim.emissive_uv_row0.xyz, prim.emissive_uv_row1.xyz);
 }
 
 // Occlusion slot's uv-set selection (mask bit 16) and KHR_texture_transform; the C++ engine has no such slot.
 float2 occlusion_uv(float2 uv0, float2 uv1)
 {
     float2 uv = (uint(prim.material_flags.y) & 16u) != 0u ? uv1 : uv0;
-    return apply_uv_transform(prim.occlusion_uv_row0, prim.occlusion_uv_row1, uv);
+    return transform_uv(uv, prim.occlusion_uv_row0.xyz, prim.occlusion_uv_row1.xyz);
 }
 
 [vk::binding(0, 0)] ConstantBuffer<PrimUniforms> prim;
@@ -146,27 +144,6 @@ float4x4 instance_matrix(VsIn In)
     return transpose(float4x4(In.instance0, In.instance1, In.instance2, In.instance3));
 }
 
-// Sign of the upper 3x3's determinant: -1 where m mirrors space.
-float mirror_sign(float4x4 m)
-{
-    return dot(m[0].xyz, cross(m[1].xyz, m[2].xyz)) < 0.0 ? -1.0 : 1.0;
-}
-
-// Cofactor of m's upper 3x3 times mirror_sign: |det| m^-T, the normal transform up to scale.
-float3x3 normal_transform(float4x4 m)
-{
-    float3 r0 = m[0].xyz;
-    float3 r1 = m[1].xyz;
-    float3 r2 = m[2].xyz;
-    return float3x3(cross(r1, r2), cross(r2, r0), cross(r0, r1)) * mirror_sign(m);
-}
-
-// normalize() of a zero vector is NaN, and a zero-scale joint or a flattening instance zeroes normals and tangents.
-float3 normalize_or(float3 v, float3 fallback)
-{
-    return dot(v, v) > 1e-30 ? normalize(v) : fallback;
-}
-
 float4x4 skin_matrix(VsIn In)
 {
     float4 w = In.weights;
@@ -202,15 +179,15 @@ VsOut vs_main(VsIn In)
     // A collapsed vertex passes zero, which leaves the interpolated direction to its triangle's other vertices.
     if (In.weights.x + In.weights.y + In.weights.z + In.weights.w > 0.0001)
     {
-        o.worldNormal = normalize_or(mul(normal_transform(model), In.normal), float3(0.0));
+        o.worldNormal = normalize_or(mul(normal_transform((float3x3)model), In.normal), float3(0.0));
     }
     else
     {
         float3 nModel = mul(prim.normal_matrix, float4(In.normal, 0.0)).xyz;
-        o.worldNormal = normalize_or(mul(normal_transform(instance_matrix(In)), nModel), float3(0.0));
+        o.worldNormal = normalize_or(mul(normal_transform((float3x3)instance_matrix(In)), nModel), float3(0.0));
     }
     // A mirroring transform reverses the tangent frame's handedness, so the bitangent sign follows.
-    float handedness = In.tangent.w * mirror_sign(model);
+    float handedness = In.tangent.w * mirror_sign((float3x3)model);
     o.worldTangent = float4(normalize_or(mul(model, float4(In.tangent.xyz, 0.0)).xyz, float3(0.0)), handedness);
     o.uv = In.uv;
     o.lightSpacePos = mul(frame.light_space, worldPos);
@@ -250,7 +227,7 @@ void fs_shadow_masked(VsShadowMaskedOut In)
 {
     float2 uv = base_color_uv_rows(In.uv);
     float alpha = prim.base_color.a * baseColorTex.Sample(baseColorSampler, uv, 0).a * In.alpha;
-    if (alpha < prim.emissive_factor.w) discard;
+    if (alpha_masked_out(prim_alpha_mode(), alpha, prim.emissive_factor.w)) discard;
 }
 
 // The material at a fragment, where fs_main and fs_gbuffer both start.
@@ -279,24 +256,16 @@ MaterialSample sample_material(VsOut In, bool isFrontFace)
     m.alpha = albedo.a;
     m.surface.position = In.worldPosition;
     m.surface.albedo = albedo.rgb;
-    m.surface.metallic = clamp(prim.material_factors.x * mrSample.b, 0.0, 1.0);
-    m.surface.roughness = clamp(prim.material_factors.y * mrSample.g, MIN_ROUGHNESS, 1.0);
+    m.surface.metallic = material_metallic(prim.material_factors.x, mrSample.b);
+    m.surface.roughness = material_roughness(prim.material_factors.y, mrSample.g);
     m.surface.occlusion = lerp(1.0, occlusionSample.r, prim.material_factors.z);
     m.surface.emissive = prim.emissive_factor.rgb * emissiveSample.rgb;
 
     float3 v = normalize(frame.camera_position.xyz - In.worldPosition);
     // A fragment whose vertices all collapsed faces the camera; a zero tangent leaves the mapped normal at nGeom.
     float3 nGeom = normalize_or(In.worldNormal, v);
-    float3 t = normalize_or(In.worldTangent.xyz - nGeom * dot(nGeom, In.worldTangent.xyz), float3(0.0));
-    float3 b = cross(nGeom, t) * In.worldTangent.w;
-    float3 nTs = normalSample.xyz * 2.0 - 1.0;
-    // A two-channel map (BC5) samples blue as 0; glTF normals are unit length, so z is rebuilt from xy.
-    if (normalSample.b == 0.0) nTs.z = sqrt(saturate(1.0 - dot(nTs.xy, nTs.xy)));
-    nTs = float3(nTs.xy * prim.material_factors.w, nTs.z);
-    // Row-multiply mul(v, M), as in common/normal_map.slang's apply_normal_map().
-    float3 n = normalize_or(mul(nTs, float3x3(t, b, nGeom)), nGeom);
-    // A doubleSided back face reverses the whole tangent frame (glTF 3.9.2), so the mapped normal flips.
-    if (!isFrontFace) n = -n;
+    float3 nTs = tangent_space_normal(normalSample.xyz, prim.material_factors.w);
+    float3 n = apply_normal_map(nGeom, In.worldTangent, nTs, isFrontFace);
     m.surface.n = n;
     return m;
 }
@@ -305,7 +274,7 @@ MaterialSample sample_material(VsOut In, bool isFrontFace)
 float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
 {
     MaterialSample m = sample_material(In, isFrontFace);
-    if (m.alpha < prim.emissive_factor.w) discard;
+    if (alpha_masked_out(prim_alpha_mode(), m.alpha, prim.emissive_factor.w)) discard;
     if (prim.material_flags.x > 0.5) return float4(m.surface.albedo, m.alpha);
     return float4(shade_surface(m.surface, In.svPosition), m.alpha);
 }
@@ -322,7 +291,7 @@ struct GBufferOut
 GBufferOut fs_gbuffer(VsOut In, bool isFrontFace : SV_IsFrontFace)
 {
     MaterialSample m = sample_material(In, isFrontFace);
-    if (m.alpha < prim.emissive_factor.w) discard;
+    if (alpha_masked_out(prim_alpha_mode(), m.alpha, prim.emissive_factor.w)) discard;
     SurfacePoint s = m.surface;
     GBufferOut g;
     g.normalMetallic = float4(s.n, prim.material_flags.x > 0.5 ? -1.0 : s.metallic);

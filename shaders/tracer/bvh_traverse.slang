@@ -1,3 +1,5 @@
+import gltf_material;
+
 // The tracer's scene and its two-level BVH traversal for compute kernels; render::tracer documents the layout.
 
 // render::tracer::query::STACK_SIZE: a top-level path (32) and a bottom-level path (64) below it.
@@ -18,8 +20,8 @@ static const uint SLOT_METALLIC_ROUGHNESS = 1u;
 static const uint SLOT_NORMAL = 2u;
 static const uint SLOT_EMISSIVE = 3u;
 static const uint SLOT_OCCLUSION = 4u;
+// GpuMaterial::flags' bits holding alpha_mode.slang's mode.
 static const uint ALPHA_MODE_MASK = 3u;
-static const uint ALPHA_MASK = 1u;
 static const uint MATERIAL_DOUBLE_SIDED = 4u;
 static const uint MATERIAL_UNLIT = 8u;
 static const uint MATERIAL_UV1_SHIFT = 4u;
@@ -290,9 +292,7 @@ float2 material_slot_uv(uint material, TraceMaterial m, uint slot, float2 uv0, f
 {
     float2 uv = ((m.flags >> (MATERIAL_UV1_SHIFT + slot)) & 1u) != 0u ? uv1 : uv0;
     uint base = tracerInfo.material_base + material * MATERIAL_STRIDE + 4u + 2u * slot;
-    float4 r0 = tracerRecords[base];
-    float4 r1 = tracerRecords[base + 1u];
-    return float2(r0.x * uv.x + r0.y * uv.y + r0.z, r1.x * uv.x + r1.y * uv.y + r1.z);
+    return transform_uv(uv, tracerRecords[base].xyz, tracerRecords[base + 1u].xyz);
 }
 
 // The sampler repeats; clamp and mirror are folded into the coordinate, half a texel of the level from the edge.
@@ -324,11 +324,13 @@ float4 sample_material_slot(uint material, TraceMaterial m, uint slot, float2 uv
 }
 
 // The forward pass's MASK test at level 0: base colour alpha, texture alpha and vertex alpha against the cutoff.
-bool alpha_masked_out(uint4 tri, float2 barycentrics)
+bool hit_masked_out(uint4 tri, float2 barycentrics)
 {
     uint material = tri.w & TRIANGLE_MATERIAL;
     TraceMaterial m = load_material(material);
-    if ((m.flags & ALPHA_MODE_MASK) != ALPHA_MASK)
+    int mode = int(m.flags & ALPHA_MODE_MASK);
+    // Only a MASK material pays for the texel; alpha_masked_out decides.
+    if (mode != ALPHA_MASK)
         return false;
     float3 w = float3(1.0 - barycentrics.x - barycentrics.y, barycentrics.x, barycentrics.y);
     TraceVertex a = load_vertex(tri.x);
@@ -338,7 +340,7 @@ bool alpha_masked_out(uint4 tri, float2 barycentrics)
     float2 uv1 = a.uv1 * w.x + b.uv1 * w.y + c.uv1 * w.z;
     float alpha = m.base_color.a * (a.color.a * w.x + b.color.a * w.y + c.color.a * w.z);
     alpha *= sample_material_slot(material, m, SLOT_BASE_COLOR, uv0, uv1, 0.0).a;
-    return alpha < m.alpha_cutoff;
+    return alpha_masked_out(mode, alpha, m.alpha_cutoff);
 }
 
 TraceHit trace_miss(float tmax)
@@ -409,7 +411,7 @@ TraceHit trace_scene(TraceRay ray, bool any_hit)
                 float3 hit = intersect_triangle(origin, direction, trace_position(tri.x), trace_position(tri.y), trace_position(tri.z));
                 if (hit.x < ray.tmin || !trace_closer(hit.x, instance, triangle, best))
                     continue;
-                if ((tri.w & TRIANGLE_MASKED) != 0u && alpha_masked_out(tri, hit.yz))
+                if ((tri.w & TRIANGLE_MASKED) != 0u && hit_masked_out(tri, hit.yz))
                     continue;
                 best.t = hit.x;
                 best.instance = instance;

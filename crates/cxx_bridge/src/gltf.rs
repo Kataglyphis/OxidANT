@@ -5,9 +5,10 @@ use kataglyphis_assets::flat::{
     load_flat, FlatCamera, FlatLight, FlatMaterial, FlatModel, FlatRange, FlatTexture, FlatVertex,
 };
 use kataglyphis_assets::obj::{is_obj_path, load_obj_flat};
-use kataglyphis_assets::scene::{CpuSampler, CpuWrap};
+use kataglyphis_assets::scene::{AlphaMode, CpuSampler, CpuWrap};
 use kataglyphis_assets::LoadOptions;
 use kataglyphis_render_core::framing::{frame_for_cpp, CppPose, FramingSource, SceneCamera};
+use kataglyphis_render_core::shader_limits::{ALPHA_BLEND, ALPHA_MASK, ALPHA_OPAQUE};
 
 use crate::guarded;
 
@@ -50,7 +51,8 @@ pub mod ffi {
         alpha_texture: i32,
         uv1_slot_mask: u32,
         unlit: bool,
-        alpha_blend: bool,
+        /// `shaders/common/alpha_mode.slang`'s code; `alpha_cutoff` applies only to ALPHA_MASK.
+        alpha_mode: u32,
         double_sided: bool,
     }
 
@@ -414,8 +416,16 @@ fn material(m: FlatMaterial) -> ffi::GltfMaterial {
         alpha_texture: m.alpha_texture,
         uv1_slot_mask: m.uv1_slot_mask,
         unlit: m.unlit,
-        alpha_blend: m.alpha_blend,
+        alpha_mode: alpha_mode(m.alpha_mode),
         double_sided: m.double_sided,
+    }
+}
+
+fn alpha_mode(mode: AlphaMode) -> u32 {
+    match mode {
+        AlphaMode::Opaque => ALPHA_OPAQUE,
+        AlphaMode::Mask(_) => ALPHA_MASK,
+        AlphaMode::Blend => ALPHA_BLEND,
     }
 }
 
@@ -495,6 +505,13 @@ mod tests {
 
     use super::*;
     use crate::diagnostics::{ffi::LogLevel, take_log_records};
+
+    #[test]
+    fn each_alpha_mode_crosses_as_alpha_mode_slangs_code() {
+        assert_eq!(alpha_mode(AlphaMode::Opaque), ALPHA_OPAQUE);
+        assert_eq!(alpha_mode(AlphaMode::Mask(0.25)), ALPHA_MASK);
+        assert_eq!(alpha_mode(AlphaMode::Blend), ALPHA_BLEND);
+    }
 
     fn asset(name: &str) -> Vec<u8> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -580,6 +597,7 @@ mod tests {
         assert!(model.ok, "{}", model.error);
         let material = &model.materials[0];
         assert_eq!(material.alpha_cutoff, 0.5, "map_d cuts out");
+        assert_eq!(material.alpha_mode, ALPHA_MASK, "as a MASK material");
         let mask = &model.textures[material.alpha_texture as usize];
         assert!(!mask.srgb);
         let base = &model.textures[material.base_texture as usize];

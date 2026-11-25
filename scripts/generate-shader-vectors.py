@@ -340,6 +340,23 @@ def evaluate_ambient(i: Values) -> dict[str, list[float]]:
     }
 
 
+def evaluate_gltf_material(i: Values) -> dict[str, list[float]]:
+    m = [sm.vec3(i[f"m{k}"]) for k in range(3)]
+    factor, sampled = one(i, "factor"), one(i, "sampled")
+    return {
+        "transform_uv": flat(sm.transform_uv(sm.Vec(*i["uv"]), sm.vec3(i["row0"]), sm.vec3(i["row1"]))),
+        "normalize_or": flat(sm.normalize_or(sm.vec3(i["v"]), sm.vec3(i["fallback"]))),
+        "tangent_space_normal": flat(sm.tangent_space_normal(sm.vec3(i["texel"]), one(i, "scale"))),
+        "apply_normal_map": flat(sm.apply_normal_map(
+            sm.vec3(i["normal"]), sm.Vec(*i["tangent"]), sm.vec3(i["tangent_normal"]), word(i, "front_face") != 0)),
+        "mirror_sign": flat(sm.mirror_sign(m)),
+        "normal_transform": flat(*sm.normal_transform(m)),
+        "material_metallic": flat(sm.material_metallic(factor, sampled)),
+        "material_roughness": flat(sm.material_roughness(factor, sampled)),
+        "alpha_masked_out": flat(sm.alpha_masked_out(word(i, "alpha_mode"), one(i, "alpha"), one(i, "cutoff"))),
+    }
+
+
 def brdf_cases() -> list[tuple[str, Values]]:
     base: Values = {
         "n": [0.0, 1.0, 0.0], "v": [0.0, 1.0, 0.0], "l": unit(1.0, 1.0, 0.0), "albedo": [0.8, 0.2, 0.1],
@@ -611,6 +628,51 @@ def ambient_cases() -> list[tuple[str, Values]]:
     return merged(base, rows)
 
 
+def gltf_material_cases() -> list[tuple[str, Values]]:
+    identity = {"m0": [1.0, 0.0, 0.0], "m1": [0.0, 1.0, 0.0], "m2": [0.0, 0.0, 1.0]}
+    base: Values = {
+        "uv": [0.25, 0.75], "row0": [1.0, 0.0, 0.0], "row1": [0.0, 1.0, 0.0], "v": [0.0, 3.0, 4.0],
+        "fallback": [0.0, 1.0, 0.0], "texel": [0.5, 0.5, 1.0], "scale": [1.0], "normal": [0.0, 1.0, 0.0],
+        "tangent": [1.0, 0.0, 0.0, 1.0], "tangent_normal": [0.0, 0.0, 1.0], "front_face": [1],
+        "factor": [1.0], "sampled": [0.5], "alpha_mode": [0], "alpha": [0.2], "cutoff": [0.5],
+    } | identity
+    rows: list[tuple[str, Values]] = [
+        ("the identity transform and the flat texel", {}),
+        ("a KHR_texture_transform's offset, rotation and scale", {
+            "uv": [0.3, -1.2], "row0": [0.0, -2.0, 0.5], "row1": [3.0, 0.0, -0.25]}),
+        ("a two-channel (BC5) texel rebuilds z from xy", {"texel": [0.7, 0.4, 0.0], "tangent_normal": unit(0.4, -0.2, 0.9)}),
+        ("a two-channel texel past the unit circle rebuilds z as 0", {"texel": [1.0, 1.0, 0.0]}),
+        ("the normal scale scales x and y alone", {"texel": [0.8, 0.3, 0.9], "scale": [2.0]}),
+        ("scale 0 keeps the geometric normal", {"texel": [0.9, 0.1, 0.0], "scale": [0.0]}),
+        ("a zero vector takes the fallback", {"v": [0.0, 0.0, 0.0], "fallback": [0.0, 0.0, -1.0]}),
+        ("a back face reverses the mapped normal", {"tangent_normal": unit(0.3, 0.2, 0.8), "front_face": [0]}),
+        ("a mirrored frame's bitangent follows its handedness", {
+            "tangent": [0.0, 0.0, 1.0, -1.0], "tangent_normal": unit(-0.5, 0.4, 0.7), "normal": unit(0.2, 1.0, 0.1)}),
+        ("a zero tangent leaves the normal", {"tangent": [0.0, 0.0, 0.0, 1.0], "tangent_normal": unit(0.6, 0.1, 0.7)}),
+        ("a tangent along the normal leaves it too", {"tangent": [0.0, 2.0, 0.0, 1.0], "tangent_normal": unit(0.1, 0.6, 0.7)}),
+        ("a mirroring matrix: the sign and the cofactor flip", {
+            "m0": [-1.0, 0.0, 0.0], "m1": [0.0, 2.0, 0.0], "m2": [0.0, 0.0, 0.5]}),
+        ("a non-uniform scale with a shear", {"m0": [2.0, 0.5, 0.0], "m1": [0.0, 1.0, 0.0], "m2": [0.3, 0.0, 4.0]}),
+        ("metallic above 1 is held at 1", {"factor": [1.0], "sampled": [1.5]}),
+        ("a zero G keeps the roughness floor", {"factor": [0.8], "sampled": [0.0]}),
+        ("a MASK alpha below the cutoff is cut out", {"alpha_mode": [1], "alpha": [0.3], "cutoff": [0.5]}),
+        ("a MASK alpha above the cutoff stays", {"alpha_mode": [1], "alpha": [0.7], "cutoff": [0.5]}),
+        ("BLEND never cuts out, whatever its cutoff", {"alpha_mode": [2], "alpha": [0.1], "cutoff": [0.5]}),
+        ("OPAQUE with the -1 cutoff the engine passes", {"alpha_mode": [0], "alpha": [0.0], "cutoff": [-1.0]}),
+    ]
+    draw = Draw(10)
+    for index in range(6):
+        n = draw.direction()
+        rows.append((f"seeded material {index}", {
+            "uv": draw.nums(-2.0, 2.0, 2), "row0": draw.nums(-2.0, 2.0), "row1": draw.nums(-2.0, 2.0),
+            "v": draw.nums(-5.0, 5.0), "texel": draw.nums(0.05, 0.95), "scale": [draw.num(0.0, 2.0)], "normal": n,
+            "tangent": draw.nums(-1.0, 1.0) + [1.0 if index % 2 else -1.0], "tangent_normal": draw.direction([0.0, 0.0, 1.0]),
+            "front_face": [index % 3 != 0], "m0": draw.nums(-3.0, 3.0), "m1": draw.nums(-3.0, 3.0),
+            "m2": draw.nums(-3.0, 3.0), "factor": [draw.num(0.0, 1.0)], "sampled": [draw.num(0.0, 1.0)],
+            "alpha_mode": [draw.whole(0, 3)], "alpha": [draw.num(0.0, 1.0)], "cutoff": [draw.num(0.1, 0.9)]}))
+    return merged(base, rows)
+
+
 SMOOTH = (1e-6, 1e-5)
 CHAINED = (1e-5, 1e-4)
 MODULES = [
@@ -663,6 +725,15 @@ MODULES = [
         "n:3 v:3 albedo:3 metallic roughness f0:3 energy:2 irradiance:3 reflection:3"), [
         out("ambient_split_sum", 3, SMOOTH), out("analytic_ambient", 3, CHAINED),
     ], evaluate_ambient, ambient_cases(), {"sky side", "ground side", "gain floor"}),
+    Module("gltf_material", ports(
+        "uv:2 row0:3 row1:3 v:3 fallback:3 texel:3 scale normal:3 tangent:4 tangent_normal:3 front_face/u32 "
+        "m0:3 m1:3 m2:3 factor sampled alpha_mode/i32 alpha cutoff"), [
+        out("transform_uv", 2, SMOOTH), out("normalize_or", 3, SMOOTH), out("tangent_space_normal", 3, SMOOTH),
+        out("apply_normal_map", 3, CHAINED), out("mirror_sign", 1, SMOOTH), out("normal_transform", 9, CHAINED),
+        out("material_metallic", 1, SMOOTH), out("material_roughness", 1, SMOOTH), out("alpha_masked_out", 1),
+    ], evaluate_gltf_material, gltf_material_cases(), {
+        "two-channel texel", "zero vector", "back face", "mirrored", "metallic clamp", "roughness floor", "not MASK",
+        "cut out", "kept"}),
 ]
 
 

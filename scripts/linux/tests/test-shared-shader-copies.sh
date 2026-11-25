@@ -89,4 +89,32 @@ pass triangle 'import fullscreen;\nFullscreenVsOut vs(uint vid) { FullscreenVsOu
 t_case "a fullscreen importer writing its own triangle fails"
 t_assert_rc 1 python3 "$gate" "${tree}"
 
+pass bc5 'float3 n = t * 2.0 - 1.0;\nn.z = sqrt(saturate(1.0 - dot(n.xy, n.xy)));'
+t_case "a private BC5 z rebuild fails by file and line"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/bc5.slang:2: a BC5 z rebuild'
+
+pass transform 'float2 f(float4 r0, float4 r1, float2 uv) { return float2(r0.x * uv.x + r0.y * uv.y + r0.z, 0.0); }'
+t_case "a private texture transform fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/transform.slang:1: a texture transform'
+
+pass frame 'float3 f(float3 t, float3 b, float3 n, float3 v) { return mul(v, float3x3(t, b, n)); }'
+t_case "a private tangent frame fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+
+pass mode 'static const uint ALPHA_MASK = 1u;'
+t_case "a private alpha mode fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/mode.slang:1: an alpha mode'
+
+pass rule 'import gltf_material;\nbool alpha_masked_out(uint4 tri, float2 bary)\n{\n    return false;\n}'
+t_case "a second alpha_masked_out fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" '^  pass/rule.slang:2: a glTF material rule'
+
 t_summary

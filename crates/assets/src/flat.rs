@@ -60,7 +60,7 @@ pub struct FlatMaterial {
     /// Slots sampling TEXCOORD_1, one bit each: 0 base colour, 1 metallic-roughness, 2 normal, 3 emissive.
     pub uv1_slot_mask: u32,
     pub unlit: bool,
-    pub alpha_blend: bool,
+    pub alpha_mode: AlphaMode,
     pub double_sided: bool,
 }
 
@@ -558,7 +558,7 @@ pub(crate) fn flat_material(material: &CpuMaterial, ids: [i32; 4]) -> FlatMateri
         // Bit 4 is occlusion, which the C++ material has no slot for.
         uv1_slot_mask: material.uv_set_mask & 0b1111,
         unlit: material.unlit,
-        alpha_blend: material.alpha_mode == AlphaMode::Blend,
+        alpha_mode: material.alpha_mode,
         double_sided: material.double_sided,
     }
 }
@@ -669,7 +669,7 @@ pub(crate) fn append_primitive(
         tri_start,
         tri_count,
         double_sided: flat.double_sided,
-        alpha_blended: flat.alpha_blend,
+        alpha_blended: flat.alpha_mode == AlphaMode::Blend,
     });
 }
 

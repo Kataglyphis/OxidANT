@@ -1,4 +1,4 @@
-//! The limits `shaders/common/limits.slang` declares, read at compile time, so Rust cannot drift from the shaders.
+//! The limits `shaders/common/limits.slang` and the alpha modes `alpha_mode.slang` declare, read at compile time, so Rust cannot drift from the shaders.
 
 /// The shaders' file, which C++ includes too.
 pub const LIMITS_SLANG: &str = include_str!("../../../shaders/common/limits.slang");
@@ -21,6 +21,39 @@ pub const CASCADE_COUNT: usize = match slang_int(LIMITS_SLANG, "CASCADE_COUNT") 
 pub const MAX_PCF_RADIUS: u32 = match slang_int(LIMITS_SLANG, "MAX_PCF_RADIUS") {
     Some(value) => value,
     None => panic!("limits.slang declares no `static const int MAX_PCF_RADIUS = <n>;`"),
+};
+
+/// glTF's alpha modes as both renderers' materials code them, which C++ includes too.
+pub const ALPHA_MODE_SLANG: &str = include_str!("../../../shaders/common/alpha_mode.slang");
+
+/// OPAQUE: alpha is ignored.
+#[allow(
+    clippy::panic,
+    reason = "a const-evaluation panic is a compile error, never a runtime one"
+)]
+pub const ALPHA_OPAQUE: u32 = match slang_int(ALPHA_MODE_SLANG, "ALPHA_OPAQUE") {
+    Some(value) => value,
+    None => panic!("alpha_mode.slang declares no `static const int ALPHA_OPAQUE = <n>;`"),
+};
+
+/// MASK: cut out below the cutoff.
+#[allow(
+    clippy::panic,
+    reason = "a const-evaluation panic is a compile error, never a runtime one"
+)]
+pub const ALPHA_MASK: u32 = match slang_int(ALPHA_MODE_SLANG, "ALPHA_MASK") {
+    Some(value) => value,
+    None => panic!("alpha_mode.slang declares no `static const int ALPHA_MASK = <n>;`"),
+};
+
+/// BLEND: composited back to front.
+#[allow(
+    clippy::panic,
+    reason = "a const-evaluation panic is a compile error, never a runtime one"
+)]
+pub const ALPHA_BLEND: u32 = match slang_int(ALPHA_MODE_SLANG, "ALPHA_BLEND") {
+    Some(value) => value,
+    None => panic!("alpha_mode.slang declares no `static const int ALPHA_BLEND = <n>;`"),
 };
 
 /// The value of the first `static const int <name> = <digits>;` line of `source`, or `None`.
@@ -136,6 +169,17 @@ mod tests {
         }
         assert_eq!(CASCADE_COUNT, 3);
         assert_eq!(MAX_PCF_RADIUS, 5);
+    }
+
+    #[test]
+    fn the_alpha_modes_are_three_distinct_codes_cpp_can_include() {
+        for line in ALPHA_MODE_SLANG.lines().map(str::trim) {
+            assert!(
+                line.is_empty() || line.starts_with("//") || line.starts_with("static const int "),
+                "alpha_mode.slang line C++ cannot include: {line}"
+            );
+        }
+        assert_eq!((ALPHA_OPAQUE, ALPHA_MASK, ALPHA_BLEND), (0, 1, 2));
     }
 }
 

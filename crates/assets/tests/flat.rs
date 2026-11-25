@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use kataglyphis_assets::flat::{load_flat, FlatModel};
+use kataglyphis_assets::scene::AlphaMode;
 use kataglyphis_assets::LoadOptions;
 
 fn fixture(name: &str) -> PathBuf {
@@ -1335,7 +1336,11 @@ fn a_material_without_a_pbr_block_and_the_fallback_take_the_gltf_defaults() {
             (1.0, 1.0, 1.0)
         );
         assert_eq!(
-            (material.alpha_cutoff, material.alpha_blend, material.unlit),
+            (
+                material.alpha_cutoff,
+                material.alpha_mode == AlphaMode::Blend,
+                material.unlit
+            ),
             (-1.0, false, false)
         );
         assert_eq!(material.emission, [0.0; 3]);
@@ -1371,11 +1376,21 @@ fn alpha_modes_set_the_cutoff_and_the_blend_flag_of_material_and_range() {
         "only the BLEND mesh leaves the opaque passes"
     );
     let [mask, opaque, blend] = [&materials[0], &materials[1], &materials[2]];
-    assert_eq!((mask.alpha_cutoff, mask.alpha_blend), (0.25, false));
-    assert_eq!((opaque.alpha_cutoff, opaque.alpha_blend), (-1.0, false));
+    assert_eq!(
+        (mask.alpha_cutoff, mask.alpha_mode),
+        (0.25, AlphaMode::Mask(0.25))
+    );
+    assert_eq!(
+        (opaque.alpha_cutoff, opaque.alpha_mode),
+        (-1.0, AlphaMode::Opaque)
+    );
     // BLEND never alpha-tests; its factor's alpha rides in dissolve.
     assert_eq!(
-        (blend.alpha_cutoff, blend.alpha_blend, blend.dissolve),
+        (
+            blend.alpha_cutoff,
+            blend.alpha_mode == AlphaMode::Blend,
+            blend.dissolve
+        ),
         (-1.0, true, 0.5)
     );
 }

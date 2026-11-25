@@ -42,6 +42,15 @@ RULES = [
      "the eye as a ray origin"),
     ("common/ambient.slang", defines("ambient_split_sum|analytic_ambient"), "an ambient term"),
     ("common/limits.slang", declares(r"CASCADE_COUNT|MAX_PCF_RADIUS"), "a cascade or PCF limit"),
+    ("common/alpha_mode.slang", declares(r"ALPHA_OPAQUE|ALPHA_MASK|ALPHA_BLEND"), "an alpha mode"),
+    ("common/gltf_material.slang", defines(
+        "transform_uv|normalize_or|tangent_space_normal|apply_normal_map|mirror_sign|normal_transform"
+        "|material_metallic|material_roughness|alpha_masked_out"), "a glTF material rule"),
+    ("common/gltf_material.slang", r"\bsqrt\(\s*saturate\(\s*1\.0\s*-\s*dot\(", "a BC5 z rebuild"),
+    ("common/gltf_material.slang",
+     r"\bdot\(\s*float3\(\s*[\w.]+\s*,\s*1\.0\s*\)|\.x\s*\*\s*\w+\.x\s*\+\s*\w+\.y\s*\*\s*\w+\.y\s*\+\s*\w+\.z\b",
+     "a texture transform"),
+    ("common/gltf_material.slang", r"\bfloat3x3\(\s*t\s*,\s*b\s*,", "a tangent frame"),
 ]
 # A fullscreen_vs importer converts between uv and NDC through fullscreen.slang only.
 FULLSCREEN_COPIES = re.compile(

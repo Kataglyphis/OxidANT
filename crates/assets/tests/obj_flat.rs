@@ -66,9 +66,12 @@ fn the_owners_material_rules_reach_the_engine() {
         RULES.len() + 1,
         "one per newmtl, then the neutral fallback"
     );
-    assert!(m[0].alpha_blend && m[0].dissolve == 0.5, "d below 1 blends");
     assert!(
-        m[1].alpha_blend && m[1].dissolve == 0.75,
+        m[0].alpha_mode == AlphaMode::Blend && m[0].dissolve == 0.5,
+        "d below 1 blends"
+    );
+    assert!(
+        m[1].alpha_mode == AlphaMode::Blend && m[1].dissolve == 0.75,
         "Tr above 0 blends"
     );
     assert_eq!(
@@ -90,7 +93,7 @@ fn the_owners_material_rules_reach_the_engine() {
     );
     assert_eq!(m[4].emission, [2.0, 1.0, 0.0], "Ke keeps its HDR magnitude");
     assert!(
-        !m[5].alpha_blend && m[5].dissolve == 1.0,
+        m[5].alpha_mode == AlphaMode::Opaque && m[5].dissolve == 1.0,
         "a d wins over a Tr, as in tinyobjloader"
     );
     assert!(m
@@ -117,7 +120,7 @@ fn the_engine_and_the_webgpu_renderer_read_one_set_of_material_rules() {
         assert_eq!(gpu.base_color[3], engine.dissolve, "{name}");
         assert_eq!(
             gpu.alpha_mode == AlphaMode::Blend,
-            engine.alpha_blend,
+            engine.alpha_mode == AlphaMode::Blend,
             "{name}"
         );
         assert_eq!(gpu.metallic_factor, engine.metallic, "{name}");
@@ -166,7 +169,7 @@ fn a_map_d_mask_and_a_bmp_reach_the_engine_as_their_mip_chains() {
     let model = load(&mask_card());
     let material = &model.materials[0];
     assert_eq!(material.alpha_cutoff, 0.5, "map_d cuts out at 0.5");
-    assert!(!material.alpha_blend);
+    assert_eq!(material.alpha_mode, AlphaMode::Mask(0.5));
     let base = &model.textures[material.base_texture as usize];
     let mask = &model.textures[material.alpha_texture as usize];
     assert!(

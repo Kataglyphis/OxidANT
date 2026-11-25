@@ -17,9 +17,7 @@ pub const SRGB_SLOTS: [bool; SLOT_COUNT] = [true, false, false, true, false];
 /// Bits of [`GpuMaterial::flags`]; `bvh_traverse.slang` decodes the same layout.
 pub mod flags {
     pub const ALPHA_MODE_MASK: u32 = 0b11;
-    pub const ALPHA_OPAQUE: u32 = 0;
-    pub const ALPHA_MASK: u32 = 1;
-    pub const ALPHA_BLEND: u32 = 2;
+    pub use kataglyphis_render_core::shader_limits::{ALPHA_BLEND, ALPHA_MASK, ALPHA_OPAQUE};
     pub const DOUBLE_SIDED: u32 = 1 << 2;
     pub const UNLIT: u32 = 1 << 3;
     /// Slot `i` reads TEXCOORD_1 when bit `UV1_SHIFT + i` is set.
@@ -246,17 +244,23 @@ fn gpu_material(material: &CpuMaterial, assigner: &mut LayerAssigner) -> GpuMate
     }
 }
 
-fn alpha_flags(material: &CpuMaterial) -> u32 {
-    let mode = match material.alpha_mode {
+/// `shaders/common/alpha_mode.slang`'s code for `mode`, which both passes hand `alpha_masked_out`.
+pub(crate) fn alpha_mode_code(mode: AlphaMode) -> u32 {
+    match mode {
         AlphaMode::Opaque => flags::ALPHA_OPAQUE,
         AlphaMode::Mask(_) => flags::ALPHA_MASK,
         AlphaMode::Blend => flags::ALPHA_BLEND,
-    };
-    mode | if material.double_sided {
-        flags::DOUBLE_SIDED
-    } else {
-        0
-    } | if material.unlit { flags::UNLIT } else { 0 }
+    }
+}
+
+fn alpha_flags(material: &CpuMaterial) -> u32 {
+    alpha_mode_code(material.alpha_mode)
+        | if material.double_sided {
+            flags::DOUBLE_SIDED
+        } else {
+            0
+        }
+        | if material.unlit { flags::UNLIT } else { 0 }
 }
 
 #[cfg(test)]

@@ -709,3 +709,76 @@ def analytic_ambient(s: Surface, energy: Vec) -> Vec:
     irradiance = hemisphere_irradiance(s.n)
     reflection = lerp(sky_gradient(reflect(-s.v, s.n)), irradiance, s.roughness * s.roughness)
     return ambient_split_sum(irradiance, reflection, s.albedo, s.metallic, s.f0, energy)
+
+
+# ---- common/gltf_material.slang ----
+
+ALPHA_MASK = 1
+
+
+def transform_uv(uv: Vec, row0: Vec, row1: Vec) -> Vec:
+    p = Vec(uv.x, uv.y, 1.0)
+    return Vec(dot(p, row0), dot(p, row1))
+
+
+def normalize_or(v: Vec, fallback: Vec) -> Vec:
+    if dot(v, v).v > f32(1e-30):
+        return normalize(v)
+    visit("zero vector")
+    return fallback
+
+
+def tangent_space_normal(texel: Vec, scale: Real) -> Vec:
+    n = texel * 2.0 - 1.0
+    z = n.z
+    if texel.z.v == 0.0:
+        visit("two-channel texel")
+        z = sqrt(saturate(1.0 - dot(n.xy, n.xy)))
+    return Vec(n.x * scale, n.y * scale, z)
+
+
+def apply_normal_map(normal: Vec, tangent: Vec, tangent_normal: Vec, front_face: bool) -> Vec:
+    t = normalize_or(tangent.xyz - normal * dot(normal, tangent.xyz), Vec(0.0, 0.0, 0.0))
+    b = cross(normal, t) * tangent.w
+    mapped = normalize_or(t * tangent_normal.x + b * tangent_normal.y + normal * tangent_normal.z, normal)
+    if front_face:
+        return mapped
+    visit("back face")
+    return -mapped
+
+
+def mirror_sign(m: Sequence[Vec]) -> Real:
+    if below(dot(m[0], cross(m[1], m[2])), 0.0, "determinant sign"):
+        visit("mirrored")
+        return Real(-1.0)
+    return Real(1.0)
+
+
+def normal_transform(m: Sequence[Vec]) -> list[Vec]:
+    sign = mirror_sign(m)
+    return [cross(m[1], m[2]) * sign, cross(m[2], m[0]) * sign, cross(m[0], m[1]) * sign]
+
+
+def material_metallic(factor: Real, sampled: Real) -> Real:
+    x = factor * sampled
+    if not 0.0 <= x.v <= 1.0:
+        visit("metallic clamp")
+    return clamp(x, 0.0, 1.0)
+
+
+def material_roughness(factor: Real, sampled: Real) -> Real:
+    x = factor * sampled
+    if x.v < f32(MIN_ROUGHNESS):
+        visit("roughness floor")
+    return clamp(x, MIN_ROUGHNESS, 1.0)
+
+
+def alpha_masked_out(alpha_mode: int, alpha: Real, cutoff: Real) -> bool:
+    if alpha_mode != ALPHA_MASK:
+        visit("not MASK")
+        return False
+    if below(alpha, cutoff, "alpha against its cutoff"):
+        visit("cut out")
+        return True
+    visit("kept")
+    return False

@@ -471,6 +471,15 @@
       ]
     },
     {
+      "file": "tests/gltf_material_test.slang",
+      "entry": "gltf_material_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
       "_comment": "CI-only SPIR-V guard of the constant-only shared modules the C++ shaders import.",
       "file": "tests/constants_test.slang",
       "entry": "constants_test_main",
@@ -664,6 +673,11 @@
     {
       "src": "tests/ambient_test.slang",
       "out": "ambient_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/gltf_material_test.slang",
+      "out": "gltf_material_test.wgsl",
       "dst": "crates/webgpu_renderer/tests/shaders"
     }
   ],
