@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+- **AMD's MIGraphX plugin registers through the hub's shared policy** (ANTfrastructure CON231). The exact
+  `ort_plugin_eps.rs` asset decides the module path and the once-per-process registration;
+  `ort_plugin.rs` only binds it to ort rc.15 (typed `GetEpDevices`, `AppendExecutionProvider_V2`). A
+  registration another library of the process made is still used. Changed: an `ORT_AMDGPU_EP_ROOT` without
+  the module now fails instead of falling back to a module beside ONNX Runtime. On the RX 9070 XT the
+  detector runs on `MIGraphX` with detector parity against the CPU.
+
 ### Added (2026-11-25, single-source limits and complete layout gates: BeschleunigerBallett plan I7)
 
 - **`shaders/common/limits.slang` is the one home of the cascade count and the PCF radius.** It holds only

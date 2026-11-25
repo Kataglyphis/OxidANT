@@ -133,11 +133,13 @@ GPU inference notes:
   Windows and supports compatible GPUs from multiple vendors.
 - `migraphx` (Linux) runs on AMD's plugin module `libmigraphx-ep.so`; the chain ONNX Runtime has
   no MIGraphX provider of its own. It needs an AMD GPU and the ROCm/MIGraphX runtime on the host.
-  The module is taken from `$ORT_AMDGPU_EP_ROOT/lib` when that variable is not empty and the file
-  is there (the `:latest-rocm` image), else from the directory of the loaded ONNX Runtime library,
-  where an AMD package carries it. It is registered once per process under the name `MIGraphX`.
+  The module is taken from `$ORT_AMDGPU_EP_ROOT/lib` when that variable is not empty (the
+  `:latest-rocm` image); a root without the module is an error, never a fallback. With the variable
+  empty or unset it comes from the directory of the loaded ONNX Runtime library, where an AMD package
+  carries it. The policy is the hub's `ort_plugin_eps.rs`. It is registered once per process under the
+  name `MIGraphX`, or a registration another library of the process made is used.
   AMD's module takes that name as its provider name, so an ONNX Runtime profile should say
-  `MIGraphX` too (read in AMD's source, not seen on a card). A missing module, a failed
+  `MIGraphX` too; on the RX 9070 XT it does (2026-11-25). A missing module, a failed
   registration and a module that lists no device are each `ProviderUnavailable: MIGraphX` with
   the paths tried or ONNX Runtime's reason. Before the registration four bytes are copied to the
   GPU in a child process; the load fails with `ProviderUnavailable` if that takes over

@@ -264,10 +264,12 @@ version bump and coordinated consumer changes. [testing.md](docs/testing.md).
 them. The class names live once, in `kataglyphis_core::coco`. Every `KATAGLYPHIS_ORT_DEVICE`
 other than `cpu` and `auto` (including `xnnpack` and `dnnl`) fails with `ProviderUnavailable`
 when its provider is missing or cannot load; never add a CPU fallback for a named provider.
-`migraphx` is AMD's plugin module, one row in `crates/inference/src/ort_plugin.rs`: registered by
-path once per process as `MIGraphX`, then exactly one of its devices appended with `device_id`
-alone. Never the by-name append, never an option the plugin does not list, never an unregister;
-another plugin is one more row ([running.md](docs/running.md)).
+`migraphx` is AMD's plugin module. Its path and registration policy is the hub's exact
+`crates/inference/src/ort_plugin_eps.rs` (`ort-plugin-registration-rust`); never edit that copy, change the
+hub. `crates/inference/src/ort_plugin.rs` only binds it to the pinned ort: registered by path once per
+process as `MIGraphX`, a registration another library of the process made is used, then exactly one of its
+devices appended with `device_id` alone. Never the by-name append, never an option the plugin does not list,
+never an unregister; another plugin is one more row ([running.md](docs/running.md)).
 The test step's `check-backend-parity.sh` compares ORT against tract, XNNPACK and DNNL on
 ModelANT's photo: [running.md](docs/running.md), [testing.md](docs/testing.md).
 

@@ -15,3 +15,4 @@ resolve-build-module
 coco-classes crates/core/src/coco-classes.txt
 # The GenAI search's directory of the library that holds this code (owner D17).
 loaded-module-rust crates/text/src/loaded_module.rs
+ort-plugin-registration-rust crates/inference/src/ort_plugin_eps.rs

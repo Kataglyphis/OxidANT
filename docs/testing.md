@@ -101,7 +101,10 @@ in-process and that a missing GPU provider is `ProviderUnavailable`. `plugin_ep.
 plugin path where it cannot run, against the image's ONNX Runtime: no module, a file that does
 not load, and (on arm64, with Qualcomm's module as the stand-in) a module that registers and
 lists no device. Each makes a named `migraphx` fail with `ProviderUnavailable: MIGraphX` and
-its reason, and lets `auto` run on the CPU. No test here loads `libmigraphx-ep.so`. The parity check does not
+its reason, and lets `auto` run on the CPU. No test here loads `libmigraphx-ep.so`; an advertised root
+without the module must fail without naming the module beside ONNX Runtime. On an AMD card,
+`check-gpu-detector-parity.sh` with a launcher that sets `ORT_AMDGPU_EP_ROOT` runs the real plugin
+(2026-11-25, RX 9070 XT: `MIGraphX` operators in every run, six parity comparisons passed). The parity check does not
 cover GPU providers or packaged launchers. A tract-only channel swap fails it; a channel swap in
 the shared preprocessing does not, since both backends then see the same image and still find
 both cats.

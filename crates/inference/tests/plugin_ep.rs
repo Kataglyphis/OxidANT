@@ -43,12 +43,12 @@ fn a_named_migraphx_fails_with_what_was_looked_for_and_auto_runs_on_the_cpu() {
     let Some(model) = model() else { return };
     let beside = ensure_ort_loaded()
         .unwrap()
-        .with_file_name(MIGRAPHX.module)
+        .with_file_name(MIGRAPHX.filename)
         .display()
         .to_string();
 
     // Every image without the plugin sets the variable to the empty string.
-    std::env::set_var(MIGRAPHX.root_var, "");
+    std::env::set_var(MIGRAPHX.root_variable, "");
     assert!(!PluginEp(&MIGRAPHX).is_available().unwrap());
     let missing = named_request_fails(&model);
     assert!(
@@ -59,11 +59,13 @@ fn a_named_migraphx_fails_with_what_was_looked_for_and_auto_runs_on_the_cpu() {
     auto_runs_on_the_cpu(&model);
 
     let empty = root("empty");
-    std::env::set_var(MIGRAPHX.root_var, &empty);
-    let in_root = empty.join("lib").join(MIGRAPHX.module);
+    std::env::set_var(MIGRAPHX.root_variable, &empty);
+    let in_root = empty.join("lib").join(MIGRAPHX.filename);
+    // An advertised root without the module never falls back to one beside ONNX Runtime.
     let missing = named_request_fails(&model);
     assert!(
-        missing.reason.contains(&in_root.display().to_string()) && missing.reason.contains(&beside),
+        missing.reason.contains(&in_root.display().to_string())
+            && !missing.reason.contains(&beside),
         "{missing}"
     );
 
@@ -85,11 +87,13 @@ fn a_named_migraphx_fails_with_what_was_looked_for_and_auto_runs_on_the_cpu() {
         return;
     };
     let registers = root("registers");
-    std::os::unix::fs::symlink(&plugin, registers.join("lib").join(MIGRAPHX.module)).unwrap();
-    std::env::set_var(MIGRAPHX.root_var, &registers);
+    std::os::unix::fs::symlink(&plugin, registers.join("lib").join(MIGRAPHX.filename)).unwrap();
+    std::env::set_var(MIGRAPHX.root_variable, &registers);
     let no_device = named_request_fails(&model);
     assert!(
-        no_device.reason.contains("lists 0 MIGraphX device(s)"),
+        no_device
+            .reason
+            .contains("MIGraphX device index 0 is unavailable; found 0"),
         "{no_device}"
     );
     // Registered by the first request: a second registration of the name would be ONNX Runtime's error instead.

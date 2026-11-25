@@ -83,8 +83,8 @@ fn register_provider(
 fn require_available(provider: &dyn crate::ort_ext::Provider) -> Result<()> {
     // GetAvailableProviders never lists a plugin: its module on disk makes it available.
     #[cfg(target_os = "linux")]
-    if let Some(plugin) = crate::ort_plugin::Plugin::named(provider.name()) {
-        return plugin.module().map(drop);
+    if let Some(plugin) = crate::ort_plugin::named(provider.name()) {
+        return crate::ort_plugin::module(plugin).map(drop);
     }
     require_provider_available(
         provider.name(),
