@@ -28,6 +28,7 @@ on 2026-09-15, verbatim. Nothing was deleted.
   traversal: 7443 SPIR-V instructions instead of 8640 (7416 instead of 8601 fully inlined); its WGSL text
   grew from 69402 to 73549 bytes with the drawn sky and the integrator's small functions. `tests/tracer.rs`
   counts its one call path to `trace_closest`. The furnace traces no NEE in either renderer.
+- **`IblEnvironment::environment_view()` is gone**: no bounce reads the environment cube any more.
 - **The face normal shades where the shading normal turns from the viewer in the path tracers alone**: the rule moved
   from `shade_hit` into `trace_path`, so the ray-traced mode shades the authored normal as raster does, as the C++
   engine's closest-hit shader does.
