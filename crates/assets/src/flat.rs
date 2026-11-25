@@ -47,17 +47,22 @@ pub struct FlatMaterial {
     /// MASK's cutoff, -1 for OPAQUE and BLEND.
     pub alpha_cutoff: f32,
     pub normal_scale: f32,
+    /// occlusionTexture's strength: how far its texel darkens the ambient term, `lerp(1, texel.r, strength)`.
+    pub occlusion_strength: f32,
     pub base_uv: UvRows,
     pub metallic_roughness_uv: UvRows,
     pub normal_uv: UvRows,
     pub emissive_uv: UvRows,
+    pub occlusion_uv: UvRows,
     pub base_texture: i32,
     pub metallic_roughness_texture: i32,
     pub normal_texture: i32,
     pub emissive_texture: i32,
+    /// Linear; its red channel occludes the ambient term only, never the sun or a punctual light.
+    pub occlusion_texture: i32,
     /// An OBJ `map_d` cut-out mask, sampled `.r` at the base colour's UV; glTF has no such slot.
     pub alpha_texture: i32,
-    /// Slots sampling TEXCOORD_1, one bit each: 0 base colour, 1 metallic-roughness, 2 normal, 3 emissive.
+    /// Slots sampling TEXCOORD_1, one bit each: 0 base colour, 1 metallic-roughness, 2 normal, 3 emissive, 4 occlusion.
     pub uv1_slot_mask: u32,
     pub unlit: bool,
     pub alpha_mode: AlphaMode,
@@ -350,7 +355,7 @@ fn read_materials(imported: &Imported) -> (Vec<FlatMaterial>, Vec<PendingSlot>) 
             flat_material(&gltf_loader::load_material(&material, &[]), ids)
         })
         .collect();
-    materials.push(flat_material(&CpuMaterial::default(), [-1; 4]));
+    materials.push(flat_material(&CpuMaterial::default(), [-1; 5]));
     (materials, slots.pending)
 }
 
@@ -403,6 +408,7 @@ pub(crate) fn renumber_slots(
             &mut material.metallic_roughness_texture,
             &mut material.normal_texture,
             &mut material.emissive_texture,
+            &mut material.occlusion_texture,
             &mut material.alpha_texture,
         ] {
             if *id >= 0 {
@@ -429,14 +435,15 @@ struct PendingSlot {
 }
 
 impl Slots<'_> {
-    /// Base colour, metallic-roughness, normal and emissive, in the C++ material's order.
-    fn material_slots(&mut self, material: &gltf::Material) -> [i32; 4] {
+    /// Base colour, metallic-roughness, normal, emissive and occlusion, in the C++ material's order.
+    fn material_slots(&mut self, material: &gltf::Material) -> [i32; 5] {
         let pbr = material.pbr_metallic_roughness();
         [
             self.slot(pbr.base_color_texture().map(|i| i.texture()), true),
             self.slot(pbr.metallic_roughness_texture().map(|i| i.texture()), false),
             self.slot(material.normal_texture().map(|i| i.texture()), false),
             self.slot(material.emissive_texture().map(|i| i.texture()), true),
+            self.slot(material.occlusion_texture().map(|i| i.texture()), false),
         ]
     }
 
@@ -533,7 +540,7 @@ impl LocatedSlot {
 }
 
 /// The C++ `ObjMaterial` fields of a loaded material; factors clamp to [0, 1] as the C++ loader's do.
-pub(crate) fn flat_material(material: &CpuMaterial, ids: [i32; 4]) -> FlatMaterial {
+pub(crate) fn flat_material(material: &CpuMaterial, ids: [i32; 5]) -> FlatMaterial {
     let [r, g, b, a] = material.base_color;
     FlatMaterial {
         diffuse: [r, g, b],
@@ -546,17 +553,19 @@ pub(crate) fn flat_material(material: &CpuMaterial, ids: [i32; 4]) -> FlatMateri
             AlphaMode::Opaque | AlphaMode::Blend => -1.0,
         },
         normal_scale: material.normal_scale,
+        occlusion_strength: material.occlusion_strength,
         base_uv: material.base_uv_transform,
         metallic_roughness_uv: material.mr_uv_transform,
         normal_uv: material.normal_uv_transform,
         emissive_uv: material.emissive_uv_transform,
+        occlusion_uv: material.occlusion_uv_transform,
         base_texture: ids[0],
         metallic_roughness_texture: ids[1],
         normal_texture: ids[2],
         emissive_texture: ids[3],
+        occlusion_texture: ids[4],
         alpha_texture: -1,
-        // Bit 4 is occlusion, which the C++ material has no slot for.
-        uv1_slot_mask: material.uv_set_mask & 0b1111,
+        uv1_slot_mask: material.uv_set_mask,
         unlit: material.unlit,
         alpha_mode: material.alpha_mode,
         double_sided: material.double_sided,

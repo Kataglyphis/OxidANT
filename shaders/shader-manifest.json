@@ -186,12 +186,28 @@
       ]
     },
     {
-      "_comment": "Rust/WebGPU IBL precompute (WGSL emit).",
+      "_comment": "The split-sum IBL precompute (WGSL for Rust/WebGPU; SPIR-V for C++, which bakes the drawn skybox's cube).",
       "file": "ibl/ibl.slang",
       "entry": "vs_fullscreen",
       "stage": "vertex",
       "targets": [
         "wgsl"
+      ]
+    },
+    {
+      "file": "ibl/ibl.slang",
+      "entry": "vs_vulkan_fullscreen",
+      "stage": "vertex",
+      "targets": [
+        "spirv"
+      ]
+    },
+    {
+      "file": "ibl/ibl.slang",
+      "entry": "fs_skybox_to_cube",
+      "stage": "fragment",
+      "targets": [
+        "spirv"
       ]
     },
     {
@@ -207,7 +223,8 @@
       "entry": "fs_downsample_cube",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -215,7 +232,8 @@
       "entry": "fs_irradiance",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -223,7 +241,8 @@
       "entry": "fs_prefilter",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -231,7 +250,8 @@
       "entry": "fs_brdf_lut",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {

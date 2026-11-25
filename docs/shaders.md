@@ -47,7 +47,8 @@ slope takes in y). `limits.slang` holds the limits both renderers and Rust share
 `kataglyphis_render_core::shader_limits` reads it at compile time; `alpha_mode.slang` holds the glTF alpha modes
 the same way. `gltf_material.slang` holds the material rules both renderers sample with: `transform_uv`, the
 normal-texel decode with its BC5 z rebuild, `apply_normal_map`, the mirror sign and cofactor normal transform, the
-metallic and roughness clamps and `alpha_masked_out`. BeschleunigerBallett's shaders import the same files.
+metallic and roughness clamps, `alpha_masked_out` and `material_occlusion` (`lerp(1, texel, strength)`, which
+scales the ambient term only). BeschleunigerBallett's shaders import the same files.
 `scripts/check-shared-shader-copies.py`, run by `pre-push-checks.sh`, fails a file outside the owner
 that declares one of these names, writes one of their literals (3.14159, 0.045, 65000, an ACES
 coefficient, a ray bound) or a NaN check (`isnan`, the exponent mask, `x == x`), or defines one of their functions; a `fullscreen` importer
@@ -68,11 +69,13 @@ specular lobe `E_spec` of the reflection. `analytic_ambient` feeds it the proced
 baked: `sky_model.slang`'s `hemisphere_irradiance`, and the reflected gradient blurred towards that irradiance by
 roughness squared. It takes no sun disk: `brdf_direct`'s GGX lobe carries the sun, so a disk here counted it twice
 and kept a glossy surface's glint inside the sun's shadow (`forward_ambient.rs`'
-`the_analytic_ambient_adds_the_sky_and_no_sun`). `forward_lighting.slang`'s `ibl_ambient` takes one or the other on the
-environment flag and scales it by the ambient strength and the occlusion; BeschleunigerBallett's forward, deferred
-and closest-hit shaders take `analytic_ambient`, scaled by the Sun's ambient, after the sun's shadow. The tracer's
-ray-traced mode takes the same pair through `trace_shading.slang`'s `traced_ambient`, over the IBL maps its lights
-group binds, and both path tracers get the sky through their bounces' misses. The copy
+`the_analytic_ambient_adds_the_sky_and_no_sun`). `sky_ambient<M : IAmbientMaps>` takes one or the other on a
+uniform flag: the split sum over a renderer's baked irradiance, prefiltered map and table, which it reads through
+`IAmbientMaps`, else `analytic_ambient`. `forward_lighting.slang`'s `ibl_ambient` and the tracer's
+`traced_ambient` call it over their own bindings and scale it by the ambient strength and the occlusion;
+BeschleunigerBallett's forward, deferred and closest-hit shaders call it over the maps its `AmbientMaps` bakes from the
+drawn skybox with `ibl.slang` (its `fs_skybox_to_cube` and `vs_vulkan_fullscreen` are SPIR-V for that bake), scaled by
+the Sun's ambient, after the sun's shadow. Both path tracers get the sky through their bounces' misses. The copy
 gate fails a second definition of either function.
 
 `sky/sky.slang` is the sky both renderers draw into their HDR target, tonemapped with

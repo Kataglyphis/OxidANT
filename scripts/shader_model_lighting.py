@@ -4,7 +4,10 @@ from collections.abc import Callable, Sequence
 
 from shader_model import (
     Real,
+    Surface,
     Vec,
+    ambient_split_sum,
+    analytic_ambient,
     below,
     clamp,
     cross,
@@ -14,6 +17,7 @@ from shader_model import (
     lerp,
     mul_mat_vec,
     normalize,
+    reflect,
     rmax,
     rmin,
     saturate,
@@ -229,3 +233,18 @@ def cloud_upsample(depth: Callable[[int, int], Real], half: Callable[[int, int],
         return weighted / weight_sum
     visit("lone sliver")
     return bilinear
+
+
+# ---- common/ambient.slang's sky_ambient, over ambient_test.slang's EchoMaps ----
+
+
+def sky_ambient(s: Surface, baked: bool, energy: Vec) -> Vec:
+    if not baked:
+        visit("analytic sky")
+        return analytic_ambient(s, energy)
+    visit("baked maps")
+    n_dot_v = rmax(dot(s.n, s.v), 0.0)
+    irradiance = s.n * 0.5 + 0.5
+    reflection = (reflect(-s.v, s.n) * 0.5 + 0.5) * (1.0 - 0.5 * s.roughness)
+    looked_up = Vec(0.5 * n_dot_v + 0.25, 0.1 * s.roughness)
+    return ambient_split_sum(irradiance, reflection, s.albedo, s.metallic, s.f0, looked_up)

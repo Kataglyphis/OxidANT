@@ -757,8 +757,8 @@ fn a_texture_transform_tex_coord_overrides_the_slots_uv_set() {
     .unwrap();
     let flat = load_flat(&path, &LoadOptions::default()).unwrap();
     assert_eq!(
-        flat.materials[0].uv1_slot_mask, 0b0101,
-        "base colour and normal"
+        flat.materials[0].uv1_slot_mask, 0b1_0101,
+        "base colour, normal and occlusion"
     );
     let scene = kataglyphis_assets::load_gltf(&path).unwrap();
     assert_eq!(
@@ -1535,6 +1535,36 @@ fn each_slot_records_the_uv_set_its_tex_coord_names() {
         model.materials[1].uv1_slot_mask, 0b0001,
         "the transform's texCoord wins both ways"
     );
+}
+
+#[test]
+fn the_occlusion_slot_reaches_the_flat_material_linear_with_its_strength_and_transform() {
+    let occlusion =
+        r#"{"index":1,"strength":0.25,"extensions":{"KHR_texture_transform":{"scale":[2,3]}}}"#;
+    let extra = format!(
+        r#",{},"textures":[{{"source":0}},{{"source":1}}],"extensionsUsed":["KHR_texture_transform"],
+        "materials":[{{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0}}}},"occlusionTexture":{occlusion}}},
+                     {{"pbrMetallicRoughness":{{"metallicRoughnessTexture":{{"index":1}}}},"occlusionTexture":{{"index":1}}}},
+                     {{"pbrMetallicRoughness":{{"baseColorTexture":{{"index":0}}}}}}]"#,
+        same_png_images(2)
+    );
+    let model = flat_with(&extra);
+    let occluded = &model.materials[0];
+    assert_eq!(occluded.occlusion_texture, 1);
+    assert!(!model.textures[1].srgb, "occlusion is data, decoded linear");
+    assert_eq!(occluded.occlusion_strength, 0.25);
+    assert_eq!(
+        (occluded.occlusion_uv[0][0], occluded.occlusion_uv[1][1]),
+        (2.0, 3.0)
+    );
+    let orm = &model.materials[1];
+    assert_eq!(
+        orm.occlusion_texture, orm.metallic_roughness_texture,
+        "an ORM image shares the metallic-roughness slot: same image, sampler and colour space"
+    );
+    assert_eq!(orm.occlusion_strength, 1.0, "glTF's default strength");
+    assert_eq!(model.materials[2].occlusion_texture, -1);
+    assert_eq!(model.materials.last().unwrap().occlusion_texture, -1);
 }
 
 fn f32_bytes(values: &[f32]) -> Vec<u8> {

@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-25, IBL and the occlusion map for BeschleunigerBallett's engine)
+
+- **`ambient.slang`'s `sky_ambient<M : IAmbientMaps>` is the ambient term of every raster and ray-traced mode.** It
+  takes the split sum from a renderer's baked maps when it has them, else `analytic_ambient`; `forward_lighting.slang`'s
+  `ibl_ambient` and `trace_shading.slang`'s `traced_ambient` call it over their own bindings, and the engine calls it
+  over its own bake. `ambient_test.slang` checks it over maps that echo their arguments, so the vectors hold which
+  lookups it makes.
+- **`gltf_material.slang`'s `material_occlusion`** is the occlusion rule both renderers' raster passes and tracers take.
+- **The occlusion slot reaches the engine**: `FlatMaterial` and the bridge's `GltfMaterial` carry `occlusion_texture`
+  (linear, sharing an ORM image's metallic-roughness slot), `occlusion_strength` and its transform rows, and uv1 bit 4.
+- **`ibl.slang` is the engine's bake too**: `fs_skybox_to_cube` untonemaps a drawn skybox's cube as `sky.slang` draws
+  it, one tap per source texel; it, `vs_vulkan_fullscreen` and the downsample, irradiance, prefilter and table
+  entries are SPIR-V as well.
+
 ### Fixed (2026-11-25, the GGX energy fit evaluates only its cell)
 
 - **`ggx_energy_fit` evaluates the 4 x 4 basis functions nonzero at its coordinates, not all 14 x 14.** The fit

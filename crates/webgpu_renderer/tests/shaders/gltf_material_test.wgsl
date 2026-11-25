@@ -221,6 +221,11 @@ fn alpha_masked_out_0( alpha_mode_0 : i32,  alpha_0 : f32,  cutoff_0 : f32) -> b
     return _S11;
 }
 
+fn material_occlusion_0( strength_0 : f32,  sampled_2 : f32) -> f32
+{
+    return mix(1.0f, sampled_2, strength_0);
+}
+
 @compute
 @workgroup_size(1, 1, 1)
 fn gltf_material_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
@@ -243,7 +248,7 @@ fn gltf_material_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
     var m1_0 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var m2_0 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var factor_2 : f32 = VectorInputs_f32_0(&(inputs_1));
-    var sampled_2 : f32 = VectorInputs_f32_0(&(inputs_1));
+    var sampled_3 : f32 = VectorInputs_f32_0(&(inputs_1));
     var mode_0 : i32 = VectorInputs_i32_0(&(inputs_1));
     var alpha_1 : f32 = VectorInputs_f32_0(&(inputs_1));
     var cutoff_1 : f32 = VectorInputs_f32_0(&(inputs_1));
@@ -258,8 +263,8 @@ fn gltf_material_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
     VectorOutputs_put_5(&(outputs_1), normal_m_0[i32(0)]);
     VectorOutputs_put_5(&(outputs_1), normal_m_0[i32(1)]);
     VectorOutputs_put_5(&(outputs_1), normal_m_0[i32(2)]);
-    VectorOutputs_put_2(&(outputs_1), material_metallic_0(factor_2, sampled_2));
-    VectorOutputs_put_2(&(outputs_1), material_roughness_0(factor_2, sampled_2));
+    VectorOutputs_put_2(&(outputs_1), material_metallic_0(factor_2, sampled_3));
+    VectorOutputs_put_2(&(outputs_1), material_roughness_0(factor_2, sampled_3));
     var _S14 : u32;
     if(alpha_masked_out_0(mode_0, alpha_1, cutoff_1))
     {
@@ -270,6 +275,7 @@ fn gltf_material_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
         _S14 = u32(0);
     }
     VectorOutputs_put_0(&(outputs_1), _S14);
+    VectorOutputs_put_2(&(outputs_1), material_occlusion_0(factor_2, sampled_3));
     return;
 }
 

@@ -43,12 +43,13 @@ RULES = [
     ("common/camera_ray.slang",
      r"\binv_view\s*,\s*float4\(\s*0(?:\.0)?\s*,\s*0(?:\.0)?\s*,\s*0(?:\.0)?\s*,\s*1(?:\.0)?\s*\)|\binv_view\s*\[\s*3\s*\]",
      "the eye as a ray origin"),
-    ("common/ambient.slang", defines("ambient_split_sum|analytic_ambient"), "an ambient term"),
+    ("common/ambient.slang", defines("ambient_split_sum|analytic_ambient|sky_ambient"), "an ambient term"),
     ("common/limits.slang", declares(r"CASCADE_COUNT|MAX_PCF_RADIUS"), "a cascade or PCF limit"),
     ("common/alpha_mode.slang", declares(r"ALPHA_OPAQUE|ALPHA_MASK|ALPHA_BLEND"), "an alpha mode"),
     ("common/gltf_material.slang", defines(
         "transform_uv|normalize_or|tangent_space_normal|apply_normal_map|mirror_sign|normal_transform"
-        "|material_metallic|material_roughness|alpha_masked_out"), "a glTF material rule"),
+        "|material_metallic|material_roughness|alpha_masked_out|material_occlusion"), "a glTF material rule"),
+    ("common/gltf_material.slang", r"\blerp\(\s*1\.0\s*,\s*[\w.]+\.r\s*,", "an occlusion rule"),
     ("common/gltf_material.slang", r"\bsqrt\(\s*saturate\(\s*1\.0\s*-\s*dot\(", "a BC5 z rebuild"),
     ("common/gltf_material.slang",
      r"\bdot\(\s*float3\(\s*[\w.]+\s*,\s*1\.0\s*\)|\.x\s*\*\s*\w+\.x\s*\+\s*\w+\.y\s*\*\s*\w+\.y\s*\+\s*\w+\.z\b",

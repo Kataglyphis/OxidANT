@@ -42,4 +42,5 @@ void gltf_material_test_main(uint3 tid : SV_DispatchThreadID)
     outputs.put(material_metallic(factor, sampled));
     outputs.put(material_roughness(factor, sampled));
     outputs.put(alpha_masked_out(mode, alpha, cutoff) ? 1u : 0u);
+    outputs.put(material_occlusion(factor, sampled));
 }

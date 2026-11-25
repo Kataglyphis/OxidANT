@@ -65,3 +65,9 @@ bool alpha_masked_out(int alpha_mode, float alpha, float cutoff)
 {
     return alpha_mode == ALPHA_MASK && alpha < cutoff;
 }
+
+// glTF 3.9.3: occlusion is 1 + strength * (texel.r - 1); it darkens the ambient term only.
+float material_occlusion(float strength, float sampled)
+{
+    return lerp(1.0, sampled, strength);
+}

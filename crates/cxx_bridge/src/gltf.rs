@@ -43,10 +43,16 @@ pub mod ffi {
         normal_uv_row1: [f32; 3],
         emissive_uv_row0: [f32; 3],
         emissive_uv_row1: [f32; 3],
+        occlusion_uv_row0: [f32; 3],
+        occlusion_uv_row1: [f32; 3],
+        /// `lerp(1, texel.r, strength)` darkens the ambient term only.
+        occlusion_strength: f32,
         base_texture: i32,
         metallic_roughness_texture: i32,
         normal_texture: i32,
         emissive_texture: i32,
+        /// Linear, -1 for none and for every OBJ material.
+        occlusion_texture: i32,
         /// An OBJ `map_d` cut-out mask, -1 for none and for every glTF material.
         alpha_texture: i32,
         uv1_slot_mask: u32,
@@ -409,10 +415,14 @@ fn material(m: FlatMaterial) -> ffi::GltfMaterial {
         normal_uv_row1: m.normal_uv[1],
         emissive_uv_row0: m.emissive_uv[0],
         emissive_uv_row1: m.emissive_uv[1],
+        occlusion_uv_row0: m.occlusion_uv[0],
+        occlusion_uv_row1: m.occlusion_uv[1],
+        occlusion_strength: m.occlusion_strength,
         base_texture: m.base_texture,
         metallic_roughness_texture: m.metallic_roughness_texture,
         normal_texture: m.normal_texture,
         emissive_texture: m.emissive_texture,
+        occlusion_texture: m.occlusion_texture,
         alpha_texture: m.alpha_texture,
         uv1_slot_mask: m.uv1_slot_mask,
         unlit: m.unlit,
@@ -571,6 +581,34 @@ mod tests {
             model.materials.iter().all(|m| m.alpha_texture == -1),
             "glTF has no map_d"
         );
+    }
+
+    #[test]
+    fn the_occlusion_slot_crosses_with_its_strength_and_transform() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tests/assets/cube_textured.gltf"),
+        )
+        .unwrap();
+        let start = png.find("data:image/png;base64,").unwrap();
+        let uri = &png[start..start + png[start..].find('"').unwrap()];
+        let extra = format!(
+            r#","images":[{{"uri":"{uri}"}}],"textures":[{{"source":0}}],"extensionsUsed":["KHR_texture_transform"],
+            "materials":[{{"occlusionTexture":{{"index":0,"texCoord":1,"strength":0.5,
+                "extensions":{{"KHR_texture_transform":{{"offset":[0.25,0.75]}}}}}}}}]"#
+        );
+        let model = load_gltf_flat(&triangle(dir.path(), "", "", &extra));
+        assert!(model.ok, "{}", model.error);
+        let material = &model.materials[0];
+        assert_eq!(material.occlusion_texture, 0);
+        assert!(!model.textures[0].srgb, "occlusion is data");
+        assert_eq!(material.occlusion_strength, 0.5);
+        assert_eq!(
+            (material.occlusion_uv_row0[2], material.occlusion_uv_row1[2]),
+            (0.25, 0.75)
+        );
+        assert_eq!(material.uv1_slot_mask, 0b1_0000, "occlusion is bit 4");
+        assert_eq!(model.materials.last().unwrap().occlusion_texture, -1);
     }
 
     #[test]

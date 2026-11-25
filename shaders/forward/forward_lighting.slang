@@ -166,25 +166,30 @@ float3 punctual_lighting(float3 worldPos, float3 n, float3 v, float3 albedo,
     return total;
 }
 
+// The baked environment at its intensity; level 0 for the LUT, legal after the deferred early return.
+struct ForwardAmbientMaps : IAmbientMaps
+{
+    float3 irradiance(float3 n)
+    {
+        return irradianceMap.SampleLevel(iblSampler, n, 0.0).xyz * iblParams.enabled_maxmip_intensity.z;
+    }
+    float3 reflection(float3 r, float roughness)
+    {
+        float lod = roughness * iblParams.enabled_maxmip_intensity.y;
+        return prefilteredMap.SampleLevel(iblSampler, r, lod).xyz * iblParams.enabled_maxmip_intensity.z;
+    }
+    float2 energy(float nDotV, float roughness)
+    {
+        return brdfLut.SampleLevel(iblSampler, float2(nDotV, roughness), 0.0).rg;
+    }
+}
+
 // The ambient term from the baked environment, or from the analytic sky and the surface's energy without one.
 float3 ibl_ambient(SurfacePoint s, float3 v, float3 f0, float2 surfaceEnergy)
 {
-    float3 ambient;
-    // A uniform flag: every fragment takes one side, so none pays for the other's samples or sky.
-    if (iblParams.enabled_maxmip_intensity.x > 0.5)
-    {
-        float envIntensity = iblParams.enabled_maxmip_intensity.z;
-        float3 irradiance = irradianceMap.SampleLevel(iblSampler, s.n, 0.0).xyz * envIntensity;
-        float3 reflected = reflect(-v, s.n);
-        float3 reflection = prefilteredMap.SampleLevel(iblSampler, reflected, s.roughness * iblParams.enabled_maxmip_intensity.y).xyz * envIntensity;
-        // The split sum's own table, so a uniform one returns E_spec exactly; level 0, legal after the deferred early return.
-        float2 energy = brdfLut.SampleLevel(iblSampler, float2(max(dot(s.n, v), 0.0), s.roughness), 0.0).rg;
-        ambient = ambient_split_sum(irradiance, reflection, s.albedo, s.metallic, f0, energy);
-    }
-    else
-    {
-        ambient = analytic_ambient(s.n, v, s.albedo, s.metallic, s.roughness, f0, surfaceEnergy);
-    }
+    ForwardAmbientMaps maps;
+    float3 ambient = sky_ambient(maps, iblParams.enabled_maxmip_intensity.x > 0.5, s.n, v, s.albedo, s.metallic,
+        s.roughness, f0, surfaceEnergy);
     return frame.light_dir_ambient.w * s.occlusion * ambient;
 }
 

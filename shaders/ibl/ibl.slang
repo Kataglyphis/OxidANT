@@ -1,7 +1,8 @@
+import aces;
 import constants;
 import fullscreen;
 
-// Rust/WebGPU split-sum IBL precompute: the checked-in ibl.wgsl is generated from this file.
+// The split-sum IBL precompute both renderers bake: ibl.wgsl is generated from this file, the C++ SPIR-V too.
 
 static const uint IRRADIANCE_PHI_STEPS = 128u;
 static const uint IRRADIANCE_THETA_STEPS = 64u;
@@ -22,6 +23,13 @@ struct IblParams
 // fullscreen_vs's uv puts (0, 0) on the target's top-left texel on both targets, so faces and the LUT never mirror.
 [shader("vertex")]
 FullscreenVsOut vs_fullscreen(uint vid : SV_VertexID)
+{
+    return fullscreen_vs(vid);
+}
+
+// The C++ renderer's SPIR-V entry: SV_VertexID subtracts BaseVertex, which needs draw parameters a Raspberry Pi 5's v3dv lacks.
+[shader("vertex")]
+FullscreenVsOut vs_vulkan_fullscreen(uint vid : SV_VulkanVertexID)
 {
     return fullscreen_vs(vid);
 }
@@ -88,6 +96,26 @@ float4 fs_equirect_to_cube(FullscreenVsOut In) : SV_Target
         {
             float2 offset = (float2(float(x), float(y)) + 0.5) / float(taps) - 0.5;
             sum += sample_equirect(cube_direction(face, In.uv + offset * texel));
+        }
+    }
+    return float4(sum / float(taps * taps), 1.0);
+}
+
+// The drawn skybox's radiance as sky.slang untonemaps it, a tap per texel: an inverted average dims a small sun.
+[shader("fragment")]
+float4 fs_skybox_to_cube(FullscreenVsOut In) : SV_Target
+{
+    uint face = uint(params.face_roughness_samples_mip.x);
+    float2 texel = fwidth(In.uv);
+    uint taps = clamp(uint(ceil(params.source_resolution.x * texel.x)), 1u, MAX_EQUIRECT_TAPS);
+    float3 sum = float3(0.0);
+    for (uint y = 0u; y < taps; y++)
+    {
+        for (uint x = 0u; x < taps; x++)
+        {
+            float2 offset = (float2(float(x), float(y)) + 0.5) / float(taps) - 0.5;
+            float3 display = srcCube.SampleLevel(srcSampler, cube_direction(face, In.uv + offset * texel), 0.0).rgb;
+            sum += aces_tonemap_inverse(display);
         }
     }
     return float4(sum / float(taps * taps), 1.0);

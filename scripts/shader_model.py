@@ -781,3 +781,7 @@ def alpha_masked_out(alpha_mode: int, alpha: Real, cutoff: Real) -> bool:
         return True
     visit("kept")
     return False
+
+
+def material_occlusion(strength: Real, sampled: Real) -> Real:
+    return 1.0 + (sampled - 1.0) * strength

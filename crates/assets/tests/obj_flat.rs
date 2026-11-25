@@ -99,6 +99,10 @@ fn the_owners_material_rules_reach_the_engine() {
     assert!(m
         .iter()
         .all(|m| m.alpha_cutoff == -1.0 && m.alpha_texture == -1));
+    assert!(
+        model.materials.iter().all(|m| m.occlusion_texture == -1),
+        "OBJ has no occlusion map"
+    );
 }
 
 #[test]

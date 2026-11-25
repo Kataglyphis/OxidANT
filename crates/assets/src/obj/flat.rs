@@ -35,7 +35,7 @@ pub fn load_obj_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::R
         .map(|material| obj_flat_material(material, &mut slots))
         .collect();
     // The neutral fallback every FlatModel ends with; no OBJ range uses it.
-    materials.push(flat_material(&CpuMaterial::default(), [-1; 4]));
+    materials.push(flat_material(&CpuMaterial::default(), [-1; 5]));
     let budget = Budget::new(DECODE_BUDGET);
     let decoded = parallel::map(&slots.pending, |(file, stored, srgb)| {
         FlatTexture::from_stored(
@@ -113,6 +113,7 @@ fn obj_flat_material(material: &ObjMaterial, slots: &mut Slots) -> FlatMaterial 
         -1,
         slots.slot(material.normal_texture.as_deref(), false),
         slots.slot(material.emissive_texture.as_deref(), true),
+        -1,
     ];
     FlatMaterial {
         alpha_texture: slots.slot(material.alpha_texture.as_deref(), false),

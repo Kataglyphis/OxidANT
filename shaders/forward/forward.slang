@@ -259,7 +259,7 @@ MaterialSample sample_material(VsOut In, bool isFrontFace)
     m.surface.albedo = albedo.rgb;
     m.surface.metallic = material_metallic(prim.material_factors.x, mrSample.b);
     m.surface.roughness = material_roughness(prim.material_factors.y, mrSample.g);
-    m.surface.occlusion = lerp(1.0, occlusionSample.r, prim.material_factors.z);
+    m.surface.occlusion = material_occlusion(prim.material_factors.z, occlusionSample.r);
     m.surface.emissive = prim.emissive_factor.rgb * emissiveSample.rgb;
 
     float3 v = normalize(frame.camera_position.xyz - In.worldPosition);

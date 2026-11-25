@@ -114,7 +114,7 @@ TracedSurface shade_hit(TraceRay ray, TraceHit hit)
     o.emissive = m.emissive * emission.rgb;
     o.metallic = material_metallic(m.metallic, mr.b);
     o.roughness = material_roughness(m.roughness, mr.g);
-    o.occlusion = lerp(1.0, occlusion.r, m.occlusion_strength);
+    o.occlusion = material_occlusion(m.occlusion_strength, occlusion.r);
     o.unlit = (m.flags & MATERIAL_UNLIT) != 0u;
     return o;
 }
@@ -207,23 +207,28 @@ float3 bounce_sky(float3 dir)
     return sky * traceFrame.light_radiance.w;
 }
 
+// The tracer's IBL maps, read as the forward pass reads its own.
+struct TracerAmbientMaps : IAmbientMaps
+{
+    float3 irradiance(float3 n)
+    {
+        return tracerIrradiance.SampleLevel(tracerIblSampler, n, 0.0).rgb;
+    }
+    float3 reflection(float3 r, float roughness)
+    {
+        return tracerPrefiltered.SampleLevel(tracerIblSampler, r, roughness * float(traceFrame.lights.z)).rgb;
+    }
+    float2 energy(float nDotV, float roughness)
+    {
+        return tracerBrdfLut.SampleLevel(tracerIblSampler, float2(nDotV, roughness), 0.0).rg;
+    }
+}
+
 // The raster's ambient term, unshadowed as every C++ mode adds it: the baked IBL with an environment, else the analytic sky.
 float3 traced_ambient(TracedSurface s, float3 v, float2 energy)
 {
-    float3 f0 = surface_f0(s.albedo, s.metallic);
-    float3 ambient;
-    if (traceFrame.lights.y != 0u)
-    {
-        float3 irradiance = tracerIrradiance.SampleLevel(tracerIblSampler, s.normal, 0.0).rgb;
-        float lod = s.roughness * float(traceFrame.lights.z);
-        float3 reflection = tracerPrefiltered.SampleLevel(tracerIblSampler, reflect(-v, s.normal), lod).rgb;
-        // The split sum's own table, as the forward pass reads it.
-        float2 lut = tracerBrdfLut.SampleLevel(tracerIblSampler, float2(max(dot(s.normal, v), 0.0), s.roughness), 0.0).rg;
-        ambient = ambient_split_sum(irradiance, reflection, s.albedo, s.metallic, f0, lut);
-    }
-    else
-    {
-        ambient = analytic_ambient(s.normal, v, s.albedo, s.metallic, s.roughness, f0, energy);
-    }
+    TracerAmbientMaps maps;
+    float3 ambient = sky_ambient(maps, traceFrame.lights.y != 0u, s.normal, v, s.albedo, s.metallic, s.roughness,
+        surface_f0(s.albedo, s.metallic), energy);
     return traceFrame.light_radiance.w * s.occlusion * ambient;
 }

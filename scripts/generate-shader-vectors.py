@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 import shader_model as sm
+import shader_model_lighting as sl
 import shader_vectors_lighting
 from shader_vector_format import (
     CHAINED,
@@ -260,6 +261,7 @@ def evaluate_ambient(i: Values) -> dict[str, list[float]]:
         "ambient_split_sum": flat(sm.ambient_split_sum(
             sm.vec3(i["irradiance"]), sm.vec3(i["reflection"]), s.albedo, s.metallic, s.f0, energy)),
         "analytic_ambient": flat(sm.analytic_ambient(s, energy)),
+        "sky_ambient": flat(sl.sky_ambient(s, word(i, "baked") != 0, energy)),
     }
 
 
@@ -277,6 +279,7 @@ def evaluate_gltf_material(i: Values) -> dict[str, list[float]]:
         "material_metallic": flat(sm.material_metallic(factor, sampled)),
         "material_roughness": flat(sm.material_roughness(factor, sampled)),
         "alpha_masked_out": flat(sm.alpha_masked_out(word(i, "alpha_mode"), one(i, "alpha"), one(i, "cutoff"))),
+        "material_occlusion": flat(sm.material_occlusion(factor, sampled)),
     }
 
 
@@ -524,7 +527,7 @@ def ambient_cases() -> list[tuple[str, Values]]:
     base: Values = {
         "n": [0.0, 1.0, 0.0], "v": unit(0.3, 0.8, 0.5), "albedo": [0.8, 0.6, 0.4], "metallic": [0.0],
         "roughness": [0.5], "f0": [0.04, 0.04, 0.04], "energy": [0.6, 0.05], "irradiance": [0.3, 0.4, 0.6],
-        "reflection": [0.5, 0.6, 0.7],
+        "reflection": [0.5, 0.6, 0.7], "baked": [0],
     }
     gold = [1.0, 0.766, 0.336]
     rows: list[tuple[str, Values]] = [
@@ -539,6 +542,11 @@ def ambient_cases() -> list[tuple[str, Values]]:
         ("the smoothest surface reflects the gradient itself", {"v": unit(-0.5, 0.8, -0.3), "roughness": [0.05]}),
         ("a tilted wall between sky and ground", {"n": unit(0.9, 0.1, -0.4), "v": unit(0.6, -0.2, 0.2)}),
         ("an energy below the gain's 1e-3 floor", {"energy": [0.0002, 0.0003], "f0": [0.9, 0.5, 0.1]}),
+        ("baked maps: irradiance at n, the prefiltered map at reflect(-v, n), the table at n.v", {"baked": [1]}),
+        ("baked maps under a face turned down", {"baked": [1], "n": [0.0, -1.0, 0.0], "v": unit(0.2, -0.7, 0.4)}),
+        ("baked maps seen from behind: n.v clamps to 0", {"baked": [1], "v": unit(0.1, -0.9, 0.2)}),
+        ("a rough gold metal from the baked maps", {
+            "baked": [1], "albedo": gold, "metallic": [1.0], "roughness": [0.9], "f0": gold}),
     ]
     draw = Draw(9)
     for index in range(6):
@@ -547,7 +555,7 @@ def ambient_cases() -> list[tuple[str, Values]]:
             "n": n, "v": draw.direction(n), "albedo": draw.nums(0.0, 1.0), "metallic": [draw.num(0.0, 1.0)],
             "roughness": [draw.num(0.05, 1.0)], "f0": draw.nums(0.02, 1.0),
             "energy": [draw.num(0.05, 0.95), draw.num(0.0, 0.1)], "irradiance": draw.nums(0.0, 2.0),
-            "reflection": draw.nums(0.0, 4.0)}))
+            "reflection": draw.nums(0.0, 4.0), "baked": [index % 2]}))
     return merged(base, rows)
 
 
@@ -582,6 +590,8 @@ def gltf_material_cases() -> list[tuple[str, Values]]:
         ("a MASK alpha above the cutoff stays", {"alpha_mode": [1], "alpha": [0.7], "cutoff": [0.5]}),
         ("BLEND never cuts out, whatever its cutoff", {"alpha_mode": [2], "alpha": [0.1], "cutoff": [0.5]}),
         ("OPAQUE with the -1 cutoff the engine passes", {"alpha_mode": [0], "alpha": [0.0], "cutoff": [-1.0]}),
+        ("occlusion strength 0.5 darkens half as far as its texel", {"factor": [0.5], "sampled": [0.2]}),
+        ("occlusion strength 0 leaves the ambient whole", {"factor": [0.0], "sampled": [0.0]}),
     ]
     draw = Draw(10)
     for index in range(6):
@@ -644,15 +654,16 @@ MODULES = [
         out("camera_ray_through_pixel.direction_error", 3, (1e-5, 0.0)),
     ], evaluate_camera_ray, camera_ray_cases()),
     Module("ambient", ports(
-        "n:3 v:3 albedo:3 metallic roughness f0:3 energy:2 irradiance:3 reflection:3"), [
-        out("ambient_split_sum", 3, SMOOTH), out("analytic_ambient", 3, CHAINED),
-    ], evaluate_ambient, ambient_cases(), {"sky side", "ground side", "gain floor"}),
+        "n:3 v:3 albedo:3 metallic roughness f0:3 energy:2 irradiance:3 reflection:3 baked/u32"), [
+        out("ambient_split_sum", 3, SMOOTH), out("analytic_ambient", 3, CHAINED), out("sky_ambient", 3, CHAINED),
+    ], evaluate_ambient, ambient_cases(), {"sky side", "ground side", "gain floor", "baked maps", "analytic sky"}),
     Module("gltf_material", ports(
         "uv:2 row0:3 row1:3 v:3 fallback:3 texel:3 scale normal:3 tangent:4 tangent_normal:3 front_face/u32 "
         "m0:3 m1:3 m2:3 factor sampled alpha_mode/i32 alpha cutoff"), [
         out("transform_uv", 2, SMOOTH), out("normalize_or", 3, SMOOTH), out("tangent_space_normal", 3, SMOOTH),
         out("apply_normal_map", 3, CHAINED), out("mirror_sign", 1, SMOOTH), out("normal_transform", 9, CHAINED),
         out("material_metallic", 1, SMOOTH), out("material_roughness", 1, SMOOTH), out("alpha_masked_out", 1),
+        out("material_occlusion", 1, SMOOTH),
     ], evaluate_gltf_material, gltf_material_cases(), {
         "two-channel texel", "zero vector", "back face", "mirrored", "metallic clamp", "roughness floor", "not MASK",
         "cut out", "kept"}),
