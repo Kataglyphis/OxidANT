@@ -7,9 +7,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib-suite.sh"
 repo="${tests_dir}/../../.."
 mkdir -p "${work}/scripts" "${work}/shaders/tests/vectors" "${work}/shaders/common"
 
-# fresh: the copy reset to this checkout's generator, model, energy fit and vector files.
+# fresh: the copy reset to this checkout's generator and its modules, model, energy fit and vector files.
 fresh() {
-    cp "${repo}/scripts/generate-shader-vectors.py" "${repo}/scripts/shader_model.py" "${work}/scripts/"
+    cp "${repo}/scripts/generate-shader-vectors.py" "${repo}/scripts/shader_model.py" \
+        "${repo}/scripts/shader_model_lighting.py" "${repo}/scripts/shader_vector_format.py" \
+        "${repo}/scripts/shader_vectors_lighting.py" "${work}/scripts/"
     cp "${repo}/shaders/common/brdf_energy_fit.slang" "${work}/shaders/common/"
     cp "${repo}"/shaders/tests/vectors/*.json "${work}/shaders/tests/vectors/"
 }

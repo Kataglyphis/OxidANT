@@ -822,9 +822,8 @@ mod wgsl_layout {
         let offsets: Vec<(usize, usize)> = layout.fields.iter().map(|f| (f.1, f.2)).collect();
         assert_eq!(offsets, [(0, 12), (12, 4), (16, 12), (28, 4)]);
         assert_eq!(layout.size, 32);
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../shaders/tracer/bvh_traverse.slang");
-        let source = std::fs::read_to_string(path).expect("bvh_traverse.slang");
+        // Embedded, as a staged test binary runs where the Slang sources are not.
+        let source = include_str!("../../../../../shaders/tracer/bvh_traverse.slang");
         let body = &source[source
             .find("BvhNode load_node(uint index)")
             .expect("load_node")..];
