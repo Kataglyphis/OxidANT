@@ -301,8 +301,13 @@ pub fn frame_scene(
 ) -> ffi::SceneFraming {
     guarded(
         || framing(cameras, active_camera, bounds, fixed),
-        |_| unframed(fixed),
+        kept_on_panic(fixed),
     )
+}
+
+/// `frame_scene`'s panic fallback, named so a test can make it run.
+fn kept_on_panic(fixed: &ffi::CameraPose) -> impl FnOnce(String) -> ffi::SceneFraming + '_ {
+    |_| unframed(fixed)
 }
 
 fn framing(
@@ -796,6 +801,19 @@ mod tests {
         assert_eq!(
             frame_scene(&[arena_camera()], 7, &sponza, &release_pose()).source,
             2
+        );
+    }
+
+    #[test]
+    fn a_panic_while_framing_keeps_the_fixed_pose() {
+        let kept = guarded(|| panic!("broken camera"), kept_on_panic(&release_pose()));
+        assert_eq!(
+            kept,
+            ffi::SceneFraming {
+                framed: false,
+                source: 0,
+                pose: release_pose()
+            }
         );
     }
 

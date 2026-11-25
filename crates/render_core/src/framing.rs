@@ -491,4 +491,67 @@ mod tests {
         assert_eq!(shadow_distance(1e6), *SHADOW_DISTANCE_RANGE.end());
         assert_eq!(shadow_distance(f32::NAN), DEFAULT_SHADOW_DISTANCE);
     }
+
+    #[test]
+    fn a_camera_without_a_usable_fov_keeps_the_base_one() {
+        let base = OrbitCamera {
+            fov_y_deg: 60.0,
+            ..OrbitCamera::default()
+        };
+        for yfov_rad in [None, Some(f32::NAN), Some(f32::INFINITY)] {
+            let camera = SceneCamera {
+                yfov_rad,
+                ..arena_camera()
+            };
+            let framing = frame(&[camera], None, Some(COLOSSEUM), &base);
+            assert_eq!(framing.source, FramingSource::FirstCamera);
+            assert_eq!(framing.camera.fov_y_deg, 60.0, "{yfov_rad:?}");
+        }
+    }
+
+    #[test]
+    fn a_camera_looking_away_orbits_as_far_ahead_as_the_centre_is_away() {
+        let camera = SceneCamera {
+            eye: Vec3::new(0.0, 0.0, 10.0),
+            forward: Vec3::Z,
+            yfov_rad: None,
+        };
+        let bounds = (Vec3::splat(-1.0), Vec3::splat(1.0));
+        let framing = frame(&[camera], None, Some(bounds), &OrbitCamera::default());
+        assert!((framing.camera.radius - 10.0).abs() < 1e-4);
+        assert!(framing
+            .camera
+            .target
+            .abs_diff_eq(Vec3::new(0.0, 0.0, 20.0), 1e-4));
+        // At the centre itself the orbit keeps a 1 m radius.
+        let inside = SceneCamera {
+            eye: Vec3::ZERO,
+            ..camera
+        };
+        let framing = frame(&[inside], None, Some(bounds), &OrbitCamera::default());
+        assert!((framing.camera.radius - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_unusable_view_distance_leaves_the_scene_its_own_fly_speed() {
+        let bounds = Some(COLOSSEUM);
+        let own = fly_speed::speed_for_bounds(bounds).clamp(
+            *fly_speed::SPEED_RANGE.start(),
+            *fly_speed::SPEED_RANGE.end(),
+        );
+        for view_distance in [0.0, -5.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(fly_speed(bounds, view_distance), own, "{view_distance}");
+        }
+        assert!(fly_speed(bounds, 1.0) < own);
+    }
+
+    #[test]
+    fn only_a_bounds_fit_or_an_unchanged_view_orbits_on_its_own() {
+        let base = OrbitCamera::default();
+        let auto = |source| finish(base.clone(), None, source).auto_orbit();
+        assert!(auto(FramingSource::Bounds));
+        assert!(auto(FramingSource::Unchanged));
+        assert!(!auto(FramingSource::FirstCamera));
+        assert!(!auto(FramingSource::ActiveCamera("Kamera_Arena".into())));
+    }
 }
