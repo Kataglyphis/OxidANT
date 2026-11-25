@@ -274,8 +274,9 @@ second frame back, and fails when:
 - the scene viewport, 2 % in from its edges, has fewer than 256 colours or one colour over 90 %;
 - clouds change under 1 % of pixels against deferred;
 - the forward or the deferred frame ran no FXAA, whose default, Always, filters both (`demo_view().fxaa`);
-- the ray-traced frame lacks its own shadow: the cube's sun shadow, black without an ambient term
-  (every channel under 48), covers under 0.05 % of the viewport, or forward has a tenth as many such pixels;
+- the ray-traced frame lacks its own shadow: the cube's sun shadow, where its brightest channel is under
+  0.75 of forward's (the cascades keep 35 % of the sun at strength 0.65, the shadow ray none), covers
+  under 0.05 % of the viewport, or the ambient term leaves it black (mean brightest channel under 48);
 - in that shadow the path-traced frame is not lit by the sky (mean brightest channel under 80) or not
   tinted by the cube's red bounce and the blue sky (mean (r + b) / 2 − g under 10, forward's is about 0);
 - the page logged any console error or warning, a browser log error or warning (WebGPU's

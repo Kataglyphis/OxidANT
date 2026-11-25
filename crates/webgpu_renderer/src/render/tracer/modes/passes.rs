@@ -30,7 +30,7 @@ pub struct TraceFrameUniforms {
     pub furnace: [f32; 4],
     /// The raster's world to clip, for the primary hit's depth.
     pub view_proj: [[f32; 4]; 4],
-    /// The punctual light count, 1 when an environment is bound, unused, unused.
+    /// The punctual light count, 1 when an environment is bound, the prefiltered map's top mip, unused.
     pub lights: [u32; 4],
 }
 
@@ -64,11 +64,16 @@ const SCOPE_PASSES: usize = 2;
 /// Draws into the resolve's pass after it, against the depth it wrote: the ray-traced mode's sky.
 pub type AfterResolve<'a> = &'a dyn Fn(&mut wgpu::RenderPass<'_>);
 
-/// What a path lights with besides the sun: the raster's punctual lights and the environment cube (a stand-in without one).
+/// What a hit lights with besides the sun: the raster's punctual lights, its environment cube and its IBL maps (stand-ins without one).
 #[derive(Clone, Copy)]
 pub struct TraceLights<'a> {
     pub punctual: &'a wgpu::Buffer,
     pub environment: &'a wgpu::TextureView,
+    pub irradiance: &'a wgpu::TextureView,
+    pub prefiltered: &'a wgpu::TextureView,
+    pub brdf_lut: &'a wgpu::TextureView,
+    /// Clamps, as the forward pass's IBL sampler does: the LUT's edges must not wrap.
+    pub ibl_sampler: &'a wgpu::Sampler,
 }
 
 /// One traced frame's kernel: what it traces and how.
@@ -327,6 +332,10 @@ impl TracedPasses {
             entries: &[
                 buffer_entry(0, lights.punctual.as_entire_binding()),
                 buffer_entry(1, wgpu::BindingResource::TextureView(lights.environment)),
+                buffer_entry(2, wgpu::BindingResource::TextureView(lights.irradiance)),
+                buffer_entry(3, wgpu::BindingResource::TextureView(lights.prefiltered)),
+                buffer_entry(4, wgpu::BindingResource::TextureView(lights.brdf_lut)),
+                buffer_entry(5, wgpu::BindingResource::Sampler(lights.ibl_sampler)),
             ],
         })
     }
@@ -465,20 +474,27 @@ fn buffer_entry(binding: u32, resource: wgpu::BindingResource<'_>) -> wgpu::Bind
     wgpu::BindGroupEntry { binding, resource }
 }
 
-/// The punctual lights (read-only storage) and the environment cube, sampled with the scene's linear sampler.
+/// The punctual lights (read-only storage), the environment cube the scene's linear sampler reads, and the IBL maps with their own.
 fn create_lights_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let compute = wgpu::ShaderStages::COMPUTE;
+    let texture = |binding: u32, dimension: wgpu::TextureViewDimension| {
+        bind_layout::texture(
+            binding,
+            compute,
+            wgpu::TextureSampleType::Float { filterable: true },
+            dimension,
+            false,
+        )
+    };
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("traced_lights_layout"),
         entries: &[
             bind_layout::storage_buffer(0, compute, true),
-            bind_layout::texture(
-                1,
-                compute,
-                wgpu::TextureSampleType::Float { filterable: true },
-                wgpu::TextureViewDimension::Cube,
-                false,
-            ),
+            texture(1, wgpu::TextureViewDimension::Cube),
+            texture(2, wgpu::TextureViewDimension::Cube),
+            texture(3, wgpu::TextureViewDimension::Cube),
+            texture(4, wgpu::TextureViewDimension::D2),
+            bind_layout::sampler(5, compute, wgpu::SamplerBindingType::Filtering),
         ],
     })
 }

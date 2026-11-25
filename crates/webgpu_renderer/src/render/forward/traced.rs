@@ -250,7 +250,10 @@ impl ForwardRenderer {
             lights: [
                 self.lights.punctual_count,
                 u32::from(self.environment_enabled()),
-                0,
+                self.ibl
+                    .environment
+                    .as_ref()
+                    .map_or(0, |e| e.max_prefiltered_mip() as u32),
                 0,
             ],
         }
@@ -283,15 +286,31 @@ impl ForwardRenderer {
             .traced
             .passes
             .get_or_insert_with(|| TracedPasses::new(device));
+        let ibl = &self.ibl;
+        let (environment, irradiance, prefiltered) = ibl.environment.as_ref().map_or(
+            (
+                &ibl.fallback.prefiltered,
+                &ibl.fallback.irradiance,
+                &ibl.fallback.prefiltered,
+            ),
+            |e| {
+                (
+                    e.environment_view(),
+                    e.irradiance_view(),
+                    e.prefiltered_view(),
+                )
+            },
+        );
         let lights = TraceLights {
             punctual: &self.lights.storage_buffer,
-            environment: self
-                .ibl
-                .environment
+            environment,
+            irradiance,
+            prefiltered,
+            brdf_lut: ibl
+                .brdf_lut
                 .as_ref()
-                .map_or(&self.ibl.fallback.prefiltered, |environment| {
-                    environment.environment_view()
-                }),
+                .map_or(&ibl.fallback.brdf_lut, |lut| lut.view()),
+            ibl_sampler: &ibl.fallback.sampler,
         };
         let frame = TracedFrame {
             kernel,

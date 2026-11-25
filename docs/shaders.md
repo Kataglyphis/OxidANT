@@ -71,7 +71,8 @@ and kept a glossy surface's glint inside the sun's shadow (`forward_ambient.rs`'
 `the_analytic_ambient_adds_the_sky_and_no_sun`). `forward_lighting.slang`'s `ibl_ambient` takes one or the other on the
 environment flag and scales it by the ambient strength and the occlusion; BeschleunigerBallett's forward, deferred
 and closest-hit shaders take `analytic_ambient`, scaled by the Sun's ambient, after the sun's shadow. The tracer's
-ray-traced mode has no ambient term yet, and both path tracers get the sky through their bounces' misses. The copy
+ray-traced mode takes the same pair through `trace_shading.slang`'s `traced_ambient`, over the IBL maps its lights
+group binds, and both path tracers get the sky through their bounces' misses. The copy
 gate fails a second definition of either function.
 
 `sky/sky.slang` is the sky both renderers draw into their HDR target, tonemapped with

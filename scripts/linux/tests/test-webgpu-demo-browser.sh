@@ -10,7 +10,7 @@ judge() {
     suite_run node -e "
 const { verdicts, problemOf, STEPS } = require(process.argv[1]);
 const step = STEPS.find((s) => s.name === process.argv[2]);
-const signature = { shadow: 0.0017, forwardDark: 0, pathLight: 165, pathTint: 28, forwardTint: 0.8 };
+const signature = { shadow: 0.0017, rayLight: 90, pathLight: 165, pathTint: 28, forwardTint: 0.8 };
 const given = JSON.parse(process.argv[3]);
 const m = { colours: 1000, dominant: 0.4, changed: 0.05, sameSize: true, ...given, signature: { ...signature, ...given.signature } };
 const after = { drawn: step.mode, fxaa: Boolean(step.fxaa), detail: '', ...JSON.parse(process.argv[4] || '{}') };
@@ -38,12 +38,12 @@ t_case 'a traced frame is judged by its shadow, not by a share of changed pixels
 t_assert_no_grep "${work}/out" '^VERDICT'
 
 judge 'ray traced' '{"signature": {"shadow": 0.0001}}'
-t_case 'a ray-traced frame without its black shadow fails'
-t_assert_grep "${work}/out" "^VERDICT the ray tracer's black sun shadow covers 0.010 % of the viewport, under 0.050 %$"
+t_case 'a ray-traced frame without a shadow darker than forward fails'
+t_assert_grep "${work}/out" "^VERDICT the ray tracer's sun shadow covers 0.010 % of the viewport, under 0.050 %: no ray-traced signature$"
 
-judge 'ray traced' '{"signature": {"forwardDark": 0.0017}}'
-t_case 'a forward frame as dark as the ray-traced shadow tells nothing apart'
-t_assert_grep "${work}/out" '^VERDICT forward is as dark .0.170 %. as the ray tracer'
+judge 'ray traced' '{"signature": {"rayLight": 12}}'
+t_case 'a black ray-traced shadow fails: the ambient term lights it'
+t_assert_grep "${work}/out" "^VERDICT the ray tracer's shadow is 12.0 bright, under 48: no ambient term lit it$"
 
 judge 'path traced' '{"signature": {"pathLight": 32, "pathTint": 1}}'
 t_case 'a path-traced shadow without sky light or bounce fails on both'
@@ -60,16 +60,16 @@ t_assert_grep "${work}/out" '^VERDICT FXAA did not run, expected it on$'
 
 suite_run node -e "
 const { shadowSignature } = require(process.argv[1]);
-// 6x6 frames, one pixel of the 4x4 inside the 2 % inset black in the ray-traced frame only.
+// 6x6 frames, one pixel of the 4x4 inside the 2 % inset darker than forward in the ray-traced frame only.
 const frame = (rgb) => ({ w: 6, h: 6, data: Uint8ClampedArray.from({ length: 144 }, (_, i) => (i % 4 === 3 ? 255 : rgb[i % 4])) });
-const ray = frame([200, 200, 200]);
-ray.data.set([10, 10, 10], (2 * 6 + 2) * 4);
+const ray = frame([180, 180, 180]);
+ray.data.set([60, 70, 80], (2 * 6 + 2) * 4);
 const path = frame([150, 100, 130]);
 global.window = { __demoFrames: { forward: frame([190, 190, 190]), 'ray traced': ray, 'path traced': path } };
-console.log('SIGNATURE ' + JSON.stringify(shadowSignature([0, 0, 1, 1])));
+console.log('SIGNATURE ' + JSON.stringify(shadowSignature([0, 0, 1, 1], 0.75)));
 " "${check}"
 t_case 'the signature reads the ray-traced shadow and what the path tracer drew there'
-t_assert_grep "${work}/out" '^SIGNATURE {"shadow":0.0625,"forwardDark":0,"pathLight":150,"pathTint":40,"forwardTint":0}$'
+t_assert_grep "${work}/out" '^SIGNATURE {"shadow":0.0625,"rayLight":80,"pathLight":150,"pathTint":40,"forwardTint":0}$'
 
 judge 'ray traced' '{}' '{"drawn": "raster", "detail": "accumulation does not fit"}'
 t_case 'a traced pick that rastered fails and says why'

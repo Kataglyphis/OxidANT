@@ -1,4 +1,5 @@
-//! The traced modes' punctual lights and the path tracer's environment on a real adapter: lit where raster lights, the analytic radiance, traced shadows.
+//! The traced modes' punctual lights, the ray tracer's ambient and the path tracer's environment on a real adapter: lit where raster
+//! lights, the analytic radiance, traced shadows.
 
 use std::f64::consts::PI;
 use std::sync::Arc;
@@ -479,9 +480,8 @@ fn the_ray_traced_mode_shadows_a_point_light_behind_an_occluder() {
     );
 }
 
-/// A white card under a constant coloured environment: a bounce that misses sees that colour, so the card converges to it times E(mu) of about 0.99.
-#[test]
-fn a_bounce_that_misses_sees_the_loaded_environment() {
+/// A white card of roughness 0.5 filling the view head on, lit by the sky alone.
+fn card_head_on() -> Option<Rig> {
     let card = quad(
         [
             Vec3::new(-1.0, -1.0, 0.0),
@@ -497,25 +497,77 @@ fn a_bounce_that_misses_sees_the_loaded_environment() {
         pitch_deg: 0.0,
         ..OrbitCamera::default()
     };
-    let Some(mut rig) = Rig::new(&scene(vec![card], Vec::new()), head_on) else {
-        return;
-    };
-    let environment = Vec3::new(0.8, 0.4, 0.2);
+    let mut rig = Rig::new(&scene(vec![card], Vec::new()), head_on)?;
     rig.renderer.light_dir_ambient = Vec4::new(0.0, 1.0, 0.0, 1.0);
-    rig.renderer.set_environment(
-        &rig.gpu,
-        &EquirectImage::constant(32, 16, environment.to_array()),
-    );
-    let traced = rig.radiance(RenderMode::PathTraced, 12);
+    Some(rig)
+}
+
+/// The mean radiance of the 16 x 16 pixels at the frame's centre.
+fn centre_patch(frame: &[Vec3]) -> Vec3 {
     let start = SIZE / 2 - 8;
     let patch: Vec<usize> = (start..start + 16)
         .flat_map(|y| (start..start + 16).map(move |x| (y * SIZE + x) as usize))
         .collect();
-    let measured = Vec3::new(
-        mean(patch.iter().map(|&i| traced[i].x)),
-        mean(patch.iter().map(|&i| traced[i].y)),
-        mean(patch.iter().map(|&i| traced[i].z)),
+    Vec3::new(
+        mean(patch.iter().map(|&i| frame[i].x)),
+        mean(patch.iter().map(|&i| frame[i].y)),
+        mean(patch.iter().map(|&i| frame[i].z)),
+    )
+}
+
+/// C++ `TheSkyLightsShadowedGroundInEveryRasterAndRayTracedFrame`: the ray tracer adds the raster's ambient term, the analytic sky
+/// without an environment and the baked IBL with one, so the card reads the raster's radiance either way.
+#[test]
+fn the_ray_traced_ambient_is_the_rasters_with_and_without_an_environment() {
+    let Some(mut rig) = card_head_on() else {
+        return;
+    };
+    let environment = Vec3::new(0.8, 0.4, 0.2);
+    let mut traced_tints = Vec::new();
+    for loaded in [false, true] {
+        if loaded {
+            rig.renderer.set_environment(
+                &rig.gpu,
+                &EquirectImage::constant(32, 16, environment.to_array()),
+            );
+        }
+        let raster = centre_patch(&rig.radiance(RenderMode::Raster, 1));
+        let traced = centre_patch(&rig.radiance(RenderMode::RayTraced, 1));
+        let relative = traced / raster;
+        eprintln!(
+            "environment {loaded}: raster {raster}, ray traced {traced}, relative {relative}"
+        );
+        assert!(
+            raster.min_element() > 0.02,
+            "the raster card is unlit: {raster}"
+        );
+        for c in relative.to_array() {
+            assert!(
+                (0.97..1.03).contains(&c),
+                "environment {loaded}: the ray-traced ambient {traced} against the raster's {raster}"
+            );
+        }
+        traced_tints.push(traced.x / traced.z);
+    }
+    // The orange environment, not the blue analytic sky, lights the card once it is loaded.
+    assert!(
+        traced_tints[0] < 1.0 && traced_tints[1] > 2.0,
+        "red over blue, analytic then loaded: {traced_tints:?}"
     );
+}
+
+/// A white card under a constant coloured environment: a bounce that misses sees that colour, so the card converges to it times E(mu) of about 0.99.
+#[test]
+fn a_bounce_that_misses_sees_the_loaded_environment() {
+    let Some(mut rig) = card_head_on() else {
+        return;
+    };
+    let environment = Vec3::new(0.8, 0.4, 0.2);
+    rig.renderer.set_environment(
+        &rig.gpu,
+        &EquirectImage::constant(32, 16, environment.to_array()),
+    );
+    let measured = centre_patch(&rig.radiance(RenderMode::PathTraced, 12));
     let relative = measured / environment;
     eprintln!("card under the environment {environment}: {measured}, relative {relative}");
     for c in relative.to_array() {

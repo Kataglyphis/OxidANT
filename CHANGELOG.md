@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-25, the analytic ambient in the ray-traced mode)
+
+- **The ray tracer adds the raster's ambient term, as the C++ mode does.** `trace_shading.slang`'s `traced_ambient`
+  takes `ambient.slang`'s pair: `ambient_split_sum` over the baked IBL maps, which the lights group now binds
+  (irradiance, prefiltered, BRDF LUT and a clamping sampler; the 1x1 stand-ins without an environment), or
+  `analytic_ambient` without one, times the ambient strength and the occlusion map, which `shade_hit` now samples.
+  A ray-traced shadow is sky-lit instead of black. `TraceFrame.lights.z` carries the prefiltered map's top mip.
+  `traced_lights.rs`' `the_ray_traced_ambient_is_the_rasters_with_and_without_an_environment` holds the card to the
+  raster's radiance within 3 % either way; `ray_traced_shadows_land_where_the_raster_shadows_are_and_take_its_ambient`
+  replaces the black-shadow assertion, and the browser check marks the ray tracer's shadow as darker than forward's
+  (whose cascades keep 35 % of the sun) and not black.
+
 ### Changed (2026-11-25, shared shadow and lighting Slang: BeschleunigerBallett plan I10)
 
 - **Both renderers' shadows, lighting composition, G-buffer and cloud upsample are shared Slang under

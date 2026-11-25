@@ -1,7 +1,7 @@
 import brdf;
 import sky_model;
 
-// The sky's share of a surface's light, which both renderers' raster passes and the C++ ray-traced mode add after shadowing.
+// The sky's share of a surface's light, which both renderers' raster and ray-traced modes add after shadowing.
 
 // The split sum's combine: the diffuse lobe takes 1 - E_spec of the irradiance, the specular lobe E_spec of the reflection.
 float3 ambient_split_sum(float3 irradiance, float3 reflection, float3 albedo, float metallic, float3 f0, float2 energy)

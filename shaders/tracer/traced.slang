@@ -17,18 +17,16 @@ LightSample direct_sample(TracedSurface s, float3 v, float2 energy, uint index)
 }
 
 // The sun and every punctual light, each through its own shadow ray, as raytrace.rchit.slang lights a hit.
-float3 direct_light(TracedSurface s, float3 v)
+float3 direct_light(TracedSurface s, float3 v, float2 energy)
 {
     float3 lit = float3(0.0);
-    // The fit once per hit, not once per light.
-    float2 energy = ggx_energy(dot(s.normal, v), s.roughness);
     // One shadow-ray call site, as in next_event: SwiftShader inlines a whole traversal per call site.
     for (uint i = 0u; i <= traceFrame.lights.x; i++)
         lit += shadowed(s, direct_sample(s, v, energy, i));
     return lit;
 }
 
-// The C++ ray-traced mode less its ambient.slang term; alpha is the hit's NDC depth for the clouds, as raytrace.rgen.slang writes it.
+// The C++ ray-traced mode; alpha is the hit's NDC depth for the clouds, as raytrace.rgen.slang writes it.
 float4 ray_trace_pixel(uint2 pixel)
 {
     TraceRay ray = pixel_ray(float2(pixel) + 0.5);
@@ -36,8 +34,12 @@ float4 ray_trace_pixel(uint2 pixel)
     if (hit.instance == TRACE_NO_HIT)
         return float4(sky_with_sun(ray.direction), 1.0);
     TracedSurface s = shade_hit(ray, hit);
-    float3 colour = s.unlit ? s.albedo : direct_light(s, -ray.direction) + s.emissive;
-    return float4(colour, ndc_depth(ray, hit));
+    if (s.unlit)
+        return float4(s.albedo, ndc_depth(ray, hit));
+    float3 v = -ray.direction;
+    // The fit once per hit: every light and the ambient share it.
+    float2 energy = ggx_energy(dot(s.normal, v), s.roughness);
+    return float4(direct_light(s, v, energy) + traced_ambient(s, v, energy) + s.emissive, ndc_depth(ray, hit));
 }
 
 [shader("compute")]

@@ -254,9 +254,23 @@ fn shadow_mask(frame: &[u8], plane: &[bool]) -> Vec<bool> {
         .collect()
 }
 
+/// The mean luma of the plane's darkest and brightest tenth.
+fn plane_deciles(frame: &[u8], plane: &[bool]) -> (f32, f32) {
+    let mut lumas: Vec<f32> = pixels(frame)
+        .iter()
+        .zip(plane)
+        .filter(|(_, &on_plane)| on_plane)
+        .map(|(p, _)| luma(p))
+        .collect();
+    lumas.sort_by(f32::total_cmp);
+    let decile = lumas.len() / 10;
+    let mean = |values: &[f32]| values.iter().sum::<f32>() / values.len() as f32;
+    (mean(&lumas[..decile]), mean(&lumas[lumas.len() - decile..]))
+}
+
 /// C++ `RaytracedShadowsAreDarkerThanLitGround`, and the traced shadow where the cascades put theirs.
 #[test]
-fn ray_traced_shadows_land_where_the_raster_shadows_are_and_go_black() {
+fn ray_traced_shadows_land_where_the_raster_shadows_are_and_take_its_ambient() {
     let Some(mut rig) = Rig::new(&asset("cube_on_plane.gltf"), 128, above_the_plane()) else {
         return;
     };
@@ -288,20 +302,17 @@ fn ray_traced_shadows_land_where_the_raster_shadows_are_and_go_black() {
         iou > 0.75,
         "the traced shadow is not where the raster one is: IoU {iou}"
     );
-    // The C++ mode has no ambient term, so a shadowed plane pixel goes black, not to the IBL's blue.
-    let mut plane_luma: Vec<f32> = pixels(&traced)
-        .iter()
-        .zip(&plane)
-        .filter(|(_, &on_plane)| on_plane)
-        .map(|(p, _)| luma(p))
-        .collect();
-    plane_luma.sort_by(f32::total_cmp);
-    let decile = plane_luma.len() / 10;
-    let dark: f32 = plane_luma[..decile].iter().sum::<f32>() / decile as f32;
-    let lit: f32 = plane_luma[plane_luma.len() - decile..].iter().sum::<f32>() / decile as f32;
+    // Both modes add the same ambient term unshadowed, so the shadow keeps the sky's light, not black: the darkest deciles agree.
+    let (dark, lit) = plane_deciles(&traced, &plane);
+    let (raster_dark, _) = plane_deciles(&raster, &plane);
+    eprintln!("darkest decile: ray traced {dark:.4}, raster {raster_dark:.4}; lit decile {lit:.4}");
     assert!(
-        dark < lit * 0.05,
-        "darkest decile {dark} against the lit {lit}"
+        dark > lit * 0.05,
+        "the traced shadow is black: {dark} against the lit {lit}"
+    );
+    assert!(
+        (0.8..1.25).contains(&(dark / raster_dark)),
+        "the traced shadow {dark} against the raster one {raster_dark}"
     );
 }
 
@@ -971,7 +982,6 @@ fn the_traced_scene_follows_a_skin() {
         let raster = upper_red_x(&rig.frames(RenderMode::Raster, 1), size);
         let traced = upper_red_x(&rig.frames(RenderMode::RayTraced, 1), size);
         eprintln!("t {time}: upper bar x raster {raster:.2}, ray traced {traced:.2}");
-        // The traced frame has no ambient term, so its shadowed faces drop out of the red pixels.
         assert!(
             (raster - traced).abs() < 3.0,
             "at t {time} the traced bar sits at {traced}, the raster one at {raster}"

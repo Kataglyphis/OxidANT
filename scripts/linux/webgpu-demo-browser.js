@@ -26,9 +26,12 @@ const CAMERA = { yaw: 45, pitch: 5 };
 // A scene has thousands of colours where a cleared target has one; a pixel changed when a channel moved by more than this.
 const MIN_COLOURS = 256;
 const MAX_DOMINANT = 0.9;
-// The ray tracer has no ambient term, so the cube's sun shadow is black: 0.17 % of the viewport on SwiftShader, forward none.
+// The cascades keep 35 % of the sun at strength 0.65, the shadow ray none: the ray tracer's sun shadow is this much darker than forward.
+const RAY_SHADOW_RATIO = 0.75;
+// That shadow's share of the viewport and its mean brightest channel, lit by the ambient term: 0.32 % and 105 on SwiftShader.
 const MIN_RAY_SHADOW = 0.0005;
-// In that shadow the path tracer gathers sky and the cube's red bounce: 165 bright and (r + b) / 2 - g of 28 measured, forward 0.8.
+const MIN_RAY_SHADOW_LIGHT = 48;
+// In that shadow the path tracer gathers sky and the cube's red bounce: 165 bright, (r + b) / 2 - g 28 over the old black mask, forward 0.8.
 const MIN_PATH_SHADOW_LIGHT = 80;
 const MIN_PATH_SHADOW_TINT = 10;
 // The demo's one warning when the sky folder is not served: a face that answered 404.
@@ -128,23 +131,23 @@ function measure(name, viewport, against, keepPng) {
   return { width: w, height: h, pixels, colours: seen.size, dominant, changed: base && sameSize ? changed / pixels : null, sameSize, png };
 }
 
-// Runs in the page over the kept frames: the ray tracer's near-black shadow, and what the path tracer and forward draw in it.
-function shadowSignature(viewport) {
+// Runs in the page over the kept frames: the ray tracer's sun shadow, and what the path tracer and forward draw in it.
+function shadowSignature(viewport, ratio) {
   const frames = window.__demoFrames || {};
   const [ray, path, forward] = [frames['ray traced'], frames['path traced'], frames.forward];
   if (!ray || !forward || ray.w !== forward.w || ray.h !== forward.h) return { error: 'no ray-traced and forward frames of one size' };
   const { w, h } = ray;
   const [x0, y0, x1, y1] = viewport.map((f, i) => Math.round(f * (i % 2 ? h : w)));
   const [ix, iy] = [Math.ceil((x1 - x0) * 0.02), Math.ceil((y1 - y0) * 0.02)];
-  const dark = (data, i) => Math.max(data[i], data[i + 1], data[i + 2]) < 48;
-  let [pixels, shadow, forwardDark, light, tint, forwardTint] = [0, 0, 0, 0, 0, 0];
+  const peak = (data, i) => Math.max(data[i], data[i + 1], data[i + 2]);
+  let [pixels, shadow, rayLight, light, tint, forwardTint] = [0, 0, 0, 0, 0, 0];
   for (let y = y0 + iy; y < y1 - iy; y++) {
     for (let x = x0 + ix; x < x1 - ix; x++) {
       const i = (y * w + x) * 4;
       pixels++;
-      if (dark(forward.data, i)) forwardDark++;
-      if (!dark(ray.data, i)) continue;
+      if (!(peak(ray.data, i) < peak(forward.data, i) * ratio)) continue;
       shadow++;
+      rayLight += peak(ray.data, i);
       const f = forward.data;
       forwardTint += (f[i] + f[i + 2]) / 2 - f[i + 1];
       if (!path || path.w !== w || path.h !== h) continue;
@@ -154,7 +157,7 @@ function shadowSignature(viewport) {
     }
   }
   const mean = (sum) => (shadow ? sum / shadow : 0);
-  return { shadow: shadow / pixels, forwardDark: forwardDark / pixels, pathLight: path ? mean(light) : null, pathTint: path ? mean(tint) : null, forwardTint: mean(forwardTint) };
+  return { shadow: shadow / pixels, rayLight: mean(rayLight), pathLight: path ? mean(light) : null, pathTint: path ? mean(tint) : null, forwardTint: mean(forwardTint) };
 }
 
 // The next frame's read-back, polled: one traced frame on SwiftShader can outlast a single DevTools call.
@@ -187,7 +190,7 @@ async function runStep(browser, step, opts) {
   const m = await evaluate(browser, `(${measure})(${JSON.stringify(step.name)}, ${JSON.stringify(state.viewport)}, ${JSON.stringify(step.differsFrom || null)}, ${Boolean(opts.frames)})`);
   if (m.error) throw new Error(`${step.name}: ${m.error}`);
   if (step.signature) {
-    m.signature = await evaluate(browser, `(${shadowSignature})(${JSON.stringify(state.viewport)})`);
+    m.signature = await evaluate(browser, `(${shadowSignature})(${JSON.stringify(state.viewport)}, ${RAY_SHADOW_RATIO})`);
     if (m.signature.error) throw new Error(`${step.name}: ${m.signature.error}`);
   }
   if (opts.frames) fs.writeFileSync(path.join(opts.frames, `${step.name.replace(/ /g, '-')}.png`), Buffer.from(m.png.split(',')[1], 'base64'));
@@ -210,14 +213,14 @@ function verdicts({ step, frame, after, m }) {
   return out;
 }
 
-// Each traced mode's own shadow: black without ambient for the ray tracer, sky-lit and red-tinted for the path tracer.
+// Each traced mode's own shadow: darker than forward's yet sky-lit for the ray tracer, sky-lit and red-tinted for the path tracer.
 function signatureVerdicts(step, sig) {
   if (!step.signature) return [];
   if (!sig) return ['no shadow signature measured'];
   const out = [];
   const pct = (f) => `${(f * 100).toFixed(3)} %`;
-  if (sig.shadow < MIN_RAY_SHADOW) out.push(`the ray tracer's black sun shadow covers ${pct(sig.shadow)} of the viewport, under ${pct(MIN_RAY_SHADOW)}`);
-  if (sig.forwardDark * 10 > sig.shadow) out.push(`forward is as dark (${pct(sig.forwardDark)}) as the ray tracer's shadow (${pct(sig.shadow)}): no ray-traced signature`);
+  if (sig.shadow < MIN_RAY_SHADOW) out.push(`the ray tracer's sun shadow covers ${pct(sig.shadow)} of the viewport, under ${pct(MIN_RAY_SHADOW)}: no ray-traced signature`);
+  else if (!(sig.rayLight >= MIN_RAY_SHADOW_LIGHT)) out.push(`the ray tracer's shadow is ${sig.rayLight?.toFixed(1)} bright, under ${MIN_RAY_SHADOW_LIGHT}: no ambient term lit it`);
   if (step.signature !== 'path') return out;
   if (!(sig.pathLight >= MIN_PATH_SHADOW_LIGHT)) out.push(`the path tracer's shadow is ${sig.pathLight?.toFixed(1)} bright, under ${MIN_PATH_SHADOW_LIGHT}: no sky light reached it`);
   if (!(sig.pathTint >= MIN_PATH_SHADOW_TINT)) out.push(`the path tracer's shadow is tinted ${sig.pathTint?.toFixed(1)}, under ${MIN_PATH_SHADOW_TINT}: no bounce from the cube`);
@@ -228,7 +231,7 @@ function report({ step, frame, after, m }) {
   const changed = m.changed === null ? '' : `, ${(m.changed * 100).toFixed(1)} % changed against ${step.differsFrom}`;
   const samples = after.samples ? `, ${after.samples} spp` : '';
   const sig = m.signature;
-  const shadow = sig ? `; shadow ${(sig.shadow * 100).toFixed(3)} % (forward dark ${(sig.forwardDark * 100).toFixed(3)} %)${sig.pathLight === null ? '' : `, path-traced light ${sig.pathLight.toFixed(1)} tint ${sig.pathTint.toFixed(1)} (forward tint ${sig.forwardTint.toFixed(1)})`}` : '';
+  const shadow = sig ? `; shadow ${(sig.shadow * 100).toFixed(3)} %, ${sig.rayLight.toFixed(1)} bright${sig.pathLight === null ? '' : `, path-traced light ${sig.pathLight.toFixed(1)} tint ${sig.pathTint.toFixed(1)} (forward tint ${sig.forwardTint.toFixed(1)})`}` : '';
   return `${step.name}: drew ${after.drawn}/${after.path}${after.clouds ? '+clouds' : ''}${after.fxaa ? '+fxaa' : ''}${samples}, ${m.width}x${m.height} ${frame.format}, ${m.colours} colours, dominant ${(m.dominant * 100).toFixed(1)} %${changed}${shadow}`;
 }
 

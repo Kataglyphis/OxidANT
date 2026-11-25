@@ -1,5 +1,6 @@
 // What the ray- and path-traced kernels share: their bindings, the camera's rays, a hit's material as the forward pass reads it, and the sky.
 
+import ambient;
 import bvh_traverse;
 import brdf;
 import camera_ray;
@@ -22,7 +23,7 @@ struct TraceFrame
     float4 light_radiance;   // colour times intensity; w: the sky's light, the raster's ambient strength times its environment's
     float4 furnace;          // the white furnace's sky radiance, metallic, roughness; w: 1 when on
     float4x4 view_proj;      // world to clip, the raster's, so a hit's depth is the one raster writes
-    uint4 lights;            // punctual light count, 1 when an environment is bound, unused, unused
+    uint4 lights;            // punctual light count, 1 when an environment is bound, the prefiltered map's top mip, unused
 };
 
 // One dispatch's pixels and samples, bound at a dynamic offset: render::tracer::modes::TraceDispatch.
@@ -39,6 +40,11 @@ struct TraceTile
 // The raster's punctual lights and IBL environment, at render::tracer::modes::TRACE_LIGHTS_GROUP.
 [vk::binding(0, 2)] StructuredBuffer<float4> tracerLights;
 [vk::binding(1, 2)] TextureCube<float4> tracerEnvironment;
+// The raster's baked IBL maps, the 1x1 stand-ins without an environment, and their clamping sampler.
+[vk::binding(2, 2)] TextureCube<float4> tracerIrradiance;
+[vk::binding(3, 2)] TextureCube<float4> tracerPrefiltered;
+[vk::binding(4, 2)] Texture2D<float4> tracerBrdfLut;
+[vk::binding(5, 2)] SamplerState tracerIblSampler;
 
 // A hit as both kernels shade it.
 struct TracedSurface
@@ -51,6 +57,7 @@ struct TracedSurface
     float3 emissive;
     float metallic;
     float roughness;
+    float occlusion;
     bool unlit;
 };
 
@@ -96,6 +103,7 @@ TracedSurface shade_hit(TraceRay ray, TraceHit hit)
     float4 mr = sample_material_slot(s.material, m, SLOT_METALLIC_ROUGHNESS, s.uv0, s.uv1, 0.0);
     float4 normal = sample_material_slot(s.material, m, SLOT_NORMAL, s.uv0, s.uv1, 0.0);
     float4 emission = sample_material_slot(s.material, m, SLOT_EMISSIVE, s.uv0, s.uv1, 0.0);
+    float4 occlusion = sample_material_slot(s.material, m, SLOT_OCCLUSION, s.uv0, s.uv1, 0.0);
     TracedSurface o;
     o.position = s.position;
     o.face_normal = s.front_face ? s.geometric_normal : -s.geometric_normal;
@@ -106,6 +114,7 @@ TracedSurface shade_hit(TraceRay ray, TraceHit hit)
     o.emissive = m.emissive * emission.rgb;
     o.metallic = material_metallic(m.metallic, mr.b);
     o.roughness = material_roughness(m.roughness, mr.g);
+    o.occlusion = lerp(1.0, occlusion.r, m.occlusion_strength);
     o.unlit = (m.flags & MATERIAL_UNLIT) != 0u;
     return o;
 }
@@ -196,4 +205,25 @@ float3 bounce_sky(float3 dir)
 {
     float3 sky = traceFrame.lights.y != 0u ? tracerEnvironment.SampleLevel(tracerLinearSampler, dir, 0.0).rgb : sky_gradient(dir);
     return sky * traceFrame.light_radiance.w;
+}
+
+// The raster's ambient term, unshadowed as every C++ mode adds it: the baked IBL with an environment, else the analytic sky.
+float3 traced_ambient(TracedSurface s, float3 v, float2 energy)
+{
+    float3 f0 = surface_f0(s.albedo, s.metallic);
+    float3 ambient;
+    if (traceFrame.lights.y != 0u)
+    {
+        float3 irradiance = tracerIrradiance.SampleLevel(tracerIblSampler, s.normal, 0.0).rgb;
+        float lod = s.roughness * float(traceFrame.lights.z);
+        float3 reflection = tracerPrefiltered.SampleLevel(tracerIblSampler, reflect(-v, s.normal), lod).rgb;
+        // The split sum's own table, as the forward pass reads it.
+        float2 lut = tracerBrdfLut.SampleLevel(tracerIblSampler, float2(max(dot(s.normal, v), 0.0), s.roughness), 0.0).rg;
+        ambient = ambient_split_sum(irradiance, reflection, s.albedo, s.metallic, f0, lut);
+    }
+    else
+    {
+        ambient = analytic_ambient(s.normal, v, s.albedo, s.metallic, s.roughness, f0, energy);
+    }
+    return traceFrame.light_radiance.w * s.occlusion * ambient;
 }

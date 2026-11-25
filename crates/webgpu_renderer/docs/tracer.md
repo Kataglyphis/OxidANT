@@ -207,8 +207,10 @@ times vertex colour, the metallic-roughness and normal maps at level 0, the forw
 `brdf_direct` (GGX and Lambert) lit by the sun and by every punctual light, each through its
 own shadow ray (any-hit, MASK alpha-tested; a punctual light's stops just short of it), plus
 emission, as the C++ closest-hit shader (`raytrace.rchit.slang`) lights a hit. An unlit
-material returns its albedo. No ambient term yet, which the C++ mode adds since 2026-11-23
-(`analytic_ambient`, [`docs/shaders.md`](../../../docs/shaders.md)); the path tracer's bounces bring the sky's. A miss is left to the sky pass, drawn in the
+material returns its albedo. The raster's ambient term joins unshadowed, as the C++ mode adds
+it (`trace_shading.slang`'s `traced_ambient`): the baked IBL maps the lights group binds with an
+environment, `analytic_ambient` without one, times the ambient strength and the occlusion map
+([`docs/shaders.md`](../../../docs/shaders.md)); the path tracer's bounces bring the sky's. A miss is left to the sky pass, drawn in the
 resolve's render pass against the traced depth: the cube map, the C++ navy with the skybox
 switched off, or the procedural sky and its sun disk without a cube map, as raster draws it
 (the C++ ray-traced mode shows its skybox).
