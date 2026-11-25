@@ -236,35 +236,34 @@ FIT_SOURCE = Path(__file__).resolve().parents[1] / "shaders" / "common" / "brdf_
 
 @functools.cache
 def energy_fit() -> tuple[tuple[tuple[float, float], ...], ...]:
-    """ggx_energy_fit's float2 literals, one row per basis function of the first coordinate."""
-    body = FIT_SOURCE.read_text(encoding="utf-8").split("float2 ggx_energy_fit(", 1)[1]
-    pairs = [(float(a), float(b)) for a, b in re.findall(r"float2\(([-+.\deE]+), ([-+.\deE]+)\)", body)]
+    """GGX_ENERGY_COEFFICIENTS' float2 literals, one row per basis function of the first coordinate."""
+    table = FIT_SOURCE.read_text(encoding="utf-8").split("GGX_ENERGY_COEFFICIENTS[", 1)[1].split("};", 1)[0]
+    pairs = [(float(a), float(b)) for a, b in re.findall(r"float2\(([-+.\deE]+), ([-+.\deE]+)\)", table)]
     size = math.isqrt(len(pairs))
-    if size * size != len(pairs):
+    if size == 0 or size * size != len(pairs):
         raise ValueError(f"{FIT_SOURCE.name}: {len(pairs)} coefficients are not a square")
     return tuple(tuple(pairs[i * size:(i + 1) * size]) for i in range(size))
 
 
-def ggx_energy_basis(x: Real) -> Real:
-    t = Real(abs(x.v))
-    inner = 2.0 / 3.0 - t * t + 0.5 * t * t * t
-    outer = (2.0 - t) * (2.0 - t) * (2.0 - t) / 6.0
-    return inner if t.v < 1.0 else (outer if t.v < 2.0 else Real(0.0))
+def ggx_energy_weights(f: Real) -> list[Real]:
+    g = 1.0 - f
+    return [g * g * g / 6.0, (4.0 - 6.0 * f * f + 3.0 * f * f * f) / 6.0,
+            (4.0 - 6.0 * g * g + 3.0 * g * g * g) / 6.0, f * f * f / 6.0]
 
 
 def ggx_energy_fit(t: Vec) -> Vec:
     rows = energy_fit()
-    x = t * float(len(rows) - 3) + 1.0
-    b = [ggx_energy_basis(x.y - float(j)) for j in range(len(rows))]
-    e: Vec | None = None
-    for i, row in enumerate(rows):
-        inner = Vec(*row[0]) * b[0]
-        for j in range(1, len(row)):
-            inner = inner + Vec(*row[j]) * b[j]
-        term = inner * ggx_energy_basis(x.x - float(i))
-        e = term if e is None else e + term
-    if e is None:
-        raise ValueError(f"{FIT_SOURCE.name} holds no coefficients")
+    cells = float(len(rows) - 3)
+    x = t * cells + 1.0
+    cell_x, cell_y = clamp(floor(x.x), 1.0, cells), clamp(floor(x.y), 1.0, cells)
+    wi, wj = ggx_energy_weights(x.x - cell_x), ggx_energy_weights(x.y - cell_y)
+    first_i, first_j = int(cell_x.v) - 1, int(cell_y.v) - 1
+    e = Vec(0.0, 0.0)
+    for i in range(4):
+        row = Vec(0.0, 0.0)
+        for j in range(4):
+            row = row + Vec(*rows[first_i + i][first_j + j]) * wj[j]
+        e = e + row * wi[i]
     return e
 
 

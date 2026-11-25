@@ -142,8 +142,10 @@ returns all of a uniform sky at every roughness and angle; single scattering ret
 of it for a white metal at roughness 0.7. `ggx_energy(n_dot_v, roughness)` evaluates E_ss
 split by Schlick's Fresnel (scale, bias) from `common/brdf_energy_fit.slang`: a 14 x 14
 cubic B-spline over coordinates uniform in n.v's cube root from brdf.slang's n.v floor 1e-4
-and in roughness's square root from `MIN_ROUGHNESS`, written out as literal coefficients so
-no shader indexes an array. It fits `brdf_sampled`'s own lobe and serves both remaps: the
+and in roughness's square root from `MIN_ROUGHNESS`. Its coefficients are a table that each
+call indexes by the coordinates' cell, so a call evaluates the 16 nonzero terms of the 196:
+the whole tensor product, written out, took the web demo's path tracer past what headless
+Chrome on SwiftShader would run. It fits `brdf_sampled`'s own lobe and serves both remaps: the
 analytic remap's extra masking shapes a punctual highlight and loses no bounce, and its own
 E_ss would multiply a smooth metal's highlight by 13 at n.v 0.05 and 175 at 0.01 (the
 sampled lobe's: 1.04 and 1.21). `tests/brdf_energy_bake.slang`'s `cs_bake` integrates
@@ -211,8 +213,8 @@ its f32 value, never from the kernel: `scripts/generate-shader-vectors.py`
 evaluates each case in f64 and in emulated f32, stops on one an f32 kernel
 cannot meet or whose branch sits within 1e-5 of its edge, and writes the files;
 `--check`, in `pre-push-checks.sh`, fails a stale one. The brdf model reads
-the generated `common/brdf_energy_fit.slang`'s coefficients and mirrors its
-evaluation, so a refit stales `brdf.json` and `path_estimator.json`.
+the generated `common/brdf_energy_fit.slang`'s coefficient table and mirrors its
+cell evaluation, so a refit stales `brdf.json` and `path_estimator.json`.
 `crates/webgpu_renderer/tests/shader_vectors.rs` dispatches the committed WGSL
 (`crates/webgpu_renderer/tests/shaders/`) on the test device and names every
 component that misses; under `KATAGLYPHIS_REQUIRE_GPU=1` a missing adapter

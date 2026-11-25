@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-25, the GGX energy fit evaluates only its cell)
+
+- **`ggx_energy_fit` evaluates the 4 x 4 basis functions nonzero at its coordinates, not all 14 x 14.** The fit
+  wrote the whole tensor product out: 28 branchy basis calls and 196 float2 multiply-adds at every call site. Since
+  801b719 the web demo's path tracer in headless Chrome on SwiftShader lost its device after the ray-traced mode
+  (`[ci web]`, green at 5adf124, red from d0433b1 on). `brdf_energy_fit.slang` now holds the same coefficients as
+  `GGX_ENERGY_COEFFICIENTS`, indexed by the clamped cell, with `ggx_energy_weights`' four exact cubic weights; the
+  function shrinks from 14,160 to 1,228 bytes of WGSL. The old basis rounded its 2/3 to f32, so `brdf.json` and
+  `path_estimator.json` move by at most 1.1e-7 relative. `brdf_energy.rs` writes the new form, and two tests hold
+  it: the checked-in file is the generator's output, and the cell evaluation equals the whole tensor product within
+  1e-12 at every knot and between. `scripts/shader_model.py` reads the table and mirrors the cell form.
+
 ### Changed (2026-11-25, the analytic ambient in the ray-traced mode)
 
 - **The ray tracer adds the raster's ambient term, as the C++ mode does.** `trace_shading.slang`'s `traced_ambient`
