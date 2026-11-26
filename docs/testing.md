@@ -285,6 +285,10 @@ second frame back, and fails when:
 The traced modes are judged by those shadows, not by a share of changed pixels: a traced frame differs
 from forward by only 2.6 to 3.2 %, too close to any floor.
 
+Every DevTools call into the page waits up to 3 min (`CALL_TIMEOUT_MS`), not the hub's default 30 s: on a
+slow runner one path-traced frame held the page's main thread longer, and an unpolled call failed on
+`develop` and on a branch alike (2026-11-25).
+
 `--frames DIR` keeps each read-back as a PNG. `web-browser.yml` runs it on request (`[ci web]`,
 `[ci browser]`) and by hand, and uploads the frames. `scripts/linux/tests/test-webgpu-demo-browser.sh`
 checks the verdicts and the console filter without a browser.

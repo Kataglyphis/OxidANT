@@ -100,4 +100,13 @@ t_assert_grep "${work}/out" '^PROBLEM exception: RuntimeError: unreachable$'
 t_assert_grep "${work}/out" '^PROBLEM console.warning: Keeping the procedural sky: px.png: no PNG$'
 t_assert_eq "$(grep -c '^PROBLEM null$' "${work}/out")" 4
 
+suite_run node -e "
+const { evaluate, CALL_TIMEOUT_MS } = require(process.argv[1]);
+const bounds = [];
+const browser = { send: async (method, params, timeoutMs) => { bounds.push(timeoutMs); return { result: { result: { value: 7 } } }; } };
+evaluate(browser, '7').then((v) => console.log('VALUE ' + v + (bounds[0] === CALL_TIMEOUT_MS && CALL_TIMEOUT_MS > 30000 ? ' OWN BOUND' : ' BOUND ' + bounds[0])));
+" "${check}"
+t_case "a page call waits out a traced frame: its bound is the driver's, longer than the hub's 30 s"
+t_assert_grep "${work}/out" '^VALUE 7 OWN BOUND$'
+
 t_summary

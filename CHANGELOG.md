@@ -13,6 +13,13 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-26, the browser lane on a slow runner)
+
+- **`webgpu-demo-browser.js` bounds its page calls itself** (`CALL_TIMEOUT_MS`, 3 min) through the hub's new
+  `send(method, params, timeoutMs)`: one path-traced frame on SwiftShader held the page past the default 30 s, and
+  the lane failed with "Runtime.evaluate got no answer from Chrome in 30 s" on `d38dc45` as on a branch.
+  `test-webgpu-demo-browser.sh` checks the bound.
+
 ### Changed (2026-11-25, one path tracer for both renderers: BeschleunigerBallett plan I11)
 
 - **`shaders/common/path_integrator.slang` walks both renderers' paths.** `trace_path<S : ITracedScene>` takes

@@ -13,6 +13,8 @@ const { install, WEBGPU_FLAGS } = require(path.join(hubScripts, 'webgpu-canvas-r
 const STEP_TIMEOUT_MS = 10 * 60 * 1000;
 const READY_TIMEOUT_MS = 3 * 60 * 1000;
 const FRAME_TIMEOUT_MS = 5 * 60 * 1000;
+// One traced frame on SwiftShader can hold the page's main thread past the hub's default 30 s per DevTools call.
+const CALL_TIMEOUT_MS = 3 * 60 * 1000;
 
 // Clouds must change `minChanged` of deferred; a traced mode must draw its own shadow (`signature`), as it changes only 2.6-3.2 % of forward.
 const STEPS = [
@@ -76,7 +78,7 @@ function problemOf(m) {
 }
 
 async function evaluate(browser, expression) {
-  const answer = await browser.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  const answer = await browser.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, CALL_TIMEOUT_MS);
   const { result, exceptionDetails } = answer.result || {};
   if (exceptionDetails) throw new Error(`${expression.slice(0, 60)}: ${exceptionDetails.exception?.description ?? exceptionDetails.text}`);
   return result && result.value;
@@ -286,4 +288,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch((e) => fail(e.stack || String(e)));
-else module.exports = { STEPS, problemOf, verdicts, shadowSignature };
+else module.exports = { STEPS, problemOf, verdicts, shadowSignature, evaluate, CALL_TIMEOUT_MS };
