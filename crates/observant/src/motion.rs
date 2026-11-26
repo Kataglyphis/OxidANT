@@ -25,7 +25,7 @@ const MOVED_LATELY: Duration = Duration::from_secs(10);
 /// Moving blocks under a box, grown by one block each side, that let it start a visit.
 const MOVING_BLOCKS: usize = 2;
 
-/// The blocks that changed in the last [`MOVED_LATELY`], for the frame the model gets.
+/// The blocks that changed in the last `MOVED_LATELY`, for the frame the model gets.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Moving {
     cols: usize,

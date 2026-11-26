@@ -231,7 +231,7 @@ pub struct Visit {
 }
 
 /// The visits `scenario`'s runs make under this build's rules: [`Config::default`]'s score and box
-/// limit, [`Presence`], [`counted`]; the camera's size, rate and ignored spots come from its header.
+/// limit, [`Presence`], `counted`; the camera's size, rate and ignored spots come from its header.
 pub fn replay(scenario: &Scenario) -> anyhow::Result<Vec<Visit>> {
     let h = &scenario.header;
     let defaults = Config::default();

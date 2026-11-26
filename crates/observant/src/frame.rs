@@ -59,7 +59,7 @@ const PRIVACY_BLOCK_AT_640: u32 = 32;
 const KEEP_MARGIN: f32 = 0.15;
 
 /// Pixelates the I420 `frame` everywhere but inside the `keep` boxes (pixels: x1, y1, x2, y2),
-/// each grown by [`KEEP_MARGIN`]; with no box the whole frame. A block takes its own mean.
+/// each grown by `KEEP_MARGIN`; with no box the whole frame. A block takes its own mean.
 pub fn pixelate_outside(frame: &mut [u8], width: u32, height: u32, keep: &[[f32; 4]]) {
     let (w, h) = (width as usize, height as usize);
     // Even, so a luma block is whole chroma blocks.

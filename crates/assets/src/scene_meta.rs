@@ -78,7 +78,7 @@ fn read_attribution(path: &std::path::Path) -> Option<String> {
     Some(text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned())
 }
 
-/// `Attribution: <who>` and `License: <terms>` as "<who>, <terms>"; none when the attribution is unknown.
+/// `Attribution: <who>` and `License: <terms>` as `<who>, <terms>`; none when the attribution is unknown.
 pub fn attribution_credit(text: &str) -> Option<String> {
     let field = |name: &str| {
         text.lines()

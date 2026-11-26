@@ -164,7 +164,7 @@ impl Decoder {
     }
 
     /// Appends bytes. Returns false when the buffer cannot hold them all; drain with
-    /// [`Decoder::next`] first.
+    /// [`Decoder::next_frame`] first.
     pub fn push(&mut self, bytes: &[u8]) -> bool {
         if bytes.len() > self.buf.len() - self.len {
             return false;

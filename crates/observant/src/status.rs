@@ -803,7 +803,7 @@ impl Status {
         }
     }
 
-    /// `/visits`: the last [`HISTORY_DAYS`] days' visits, newest first, each `[arrived, stayed_s]`.
+    /// `/visits`: the last `HISTORY_DAYS` days' visits, newest first, each `[arrived, stayed_s]`.
     pub fn visits_json(&self) -> String {
         let since = unix_now().saturating_sub(HISTORY_DAYS * 86_400);
         let visits: Vec<Stay> = self
