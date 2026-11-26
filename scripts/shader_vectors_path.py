@@ -3,7 +3,19 @@ from dataclasses import replace
 
 import shader_model as sm
 import shader_model_path as sp
-from shader_vector_format import CHAINED, Draw, Module, Values, flat, merged, one, out, ports, unit, word
+from shader_vector_format import (
+    CHAINED,
+    Draw,
+    Module,
+    Values,
+    flat,
+    merged,
+    one,
+    out,
+    ports,
+    unit,
+    word,
+)
 
 
 def scene_of(i: Values) -> sp.FloorScene:

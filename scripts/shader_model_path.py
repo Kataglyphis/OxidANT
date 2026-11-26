@@ -2,7 +2,18 @@
 from dataclasses import dataclass, replace
 
 import shader_model as sm
-from shader_model import Real, Surface, Vec, below, clamp, dot, normalize, pow_, rmax, visit
+from shader_model import (
+    Real,
+    Surface,
+    Vec,
+    below,
+    clamp,
+    dot,
+    normalize,
+    pow_,
+    rmax,
+    visit,
+)
 from shader_model_lighting import length, surface_f0
 
 TRACE_TMIN = 0.001
