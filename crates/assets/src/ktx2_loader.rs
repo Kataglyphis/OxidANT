@@ -30,6 +30,11 @@ fn map_format(vk_format: u32) -> Option<CompressedFormat> {
     }
 }
 
+/// The block format a non-Basis KTX2 stores, `None` for one this loader refuses.
+pub(crate) fn stored_format(reader: &ktx2::Reader<&[u8]>) -> Option<CompressedFormat> {
+    map_format(reader.header().format?.value())
+}
+
 /// Whether a vkFormat declares sRGB; `None` for data formats with no colour space (BC5).
 fn declared_srgb_for(vk_format: u32) -> Option<bool> {
     match vk_format {

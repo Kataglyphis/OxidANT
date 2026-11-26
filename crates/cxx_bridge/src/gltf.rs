@@ -4,8 +4,9 @@ use glam::Vec3;
 use kataglyphis_assets::flat::{
     load_flat, FlatCamera, FlatLight, FlatMaterial, FlatModel, FlatRange, FlatTexture, FlatVertex,
 };
+use kataglyphis_assets::levels::{BlockSupport, ChainFormat};
 use kataglyphis_assets::obj::{is_obj_path, load_obj_flat};
-use kataglyphis_assets::scene::{AlphaMode, CpuSampler, CpuWrap};
+use kataglyphis_assets::scene::{AlphaMode, CompressedFormat, CpuSampler, CpuWrap};
 use kataglyphis_assets::LoadOptions;
 use kataglyphis_render_core::framing::{frame_for_cpp, CppPose, FramingSource, SceneCamera};
 use kataglyphis_render_core::shader_limits::{ALPHA_BLEND, ALPHA_MASK, ALPHA_OPAQUE};
@@ -74,14 +75,30 @@ pub mod ffi {
         wrap_v: u8,
     }
 
-    /// One texture slot: its RGBA8 mip chain, level 0 first and packed back to back, each level halving down to 1x1;
-    /// for a format only the engine's stb reads (PSD, PIC), `level_count` 0 and the file's bytes in `encoded`.
+    /// What a texture's `data` holds: RGBA8 texels, or one block format's 4x4 blocks; a colour slot samples the
+    /// block format's sRGB variant, BC5 its only one.
+    #[derive(Debug)]
+    #[repr(u8)]
+    enum GltfTextureFormat {
+        Rgba8 = 0,
+        Bc1 = 1,
+        Bc3 = 2,
+        Bc5 = 3,
+        Bc7 = 4,
+        Etc2Rgba8 = 5,
+        Astc4x4 = 6,
+    }
+
+    /// One texture slot: its mip chain, level 0 first and packed back to back, each level `max(side >> level, 1)`. An
+    /// RGBA8 chain halves down to 1x1; a block chain has the KTX2's own levels. For a format only the engine's stb reads
+    /// (PSD, PIC), `level_count` 0 and the file's bytes in `encoded`.
     #[derive(Debug, PartialEq)]
     struct GltfTexture {
         width: u32,
         height: u32,
         level_count: u32,
-        rgba8: Vec<u8>,
+        format: GltfTextureFormat,
+        data: Vec<u8>,
         encoded: Vec<u8>,
         sampler: GltfSampler,
         srgb: bool,
@@ -182,11 +199,23 @@ pub mod ffi {
         bounds: GltfBounds,
     }
 
+    /// The block formats the engine's device samples, by family, and its longest image side, 0 for no limit.
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
+    struct GltfBlockSupport {
+        bc: bool,
+        etc2: bool,
+        astc: bool,
+        max_side: u32,
+    }
+
     /// How the loader builds geometry; each field's zero is its default, so `GltfLoadOptions{}` is `load_gltf_flat`'s.
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
     struct GltfLoadOptions {
         /// MikkTSpace tangents where the file has none, the basis DCC tools bake against; false keeps Lengyel's.
         mikktspace_tangents: bool,
+        /// Where a KTX2 may arrive as blocks: Basis transcoded to BC7, else ETC2, else ASTC 4x4, BCn as stored; none
+        /// keeps every texture RGBA8.
+        blocks: GltfBlockSupport,
     }
 
     extern "Rust" {
@@ -221,8 +250,15 @@ pub fn load_gltf_flat_with(path: &[u8], options: &ffi::GltfLoadOptions) -> ffi::
 }
 
 fn load_options(options: &ffi::GltfLoadOptions) -> LoadOptions {
+    let blocks = &options.blocks;
     LoadOptions {
         mikktspace_tangents: options.mikktspace_tangents,
+        blocks: BlockSupport {
+            bc: blocks.bc,
+            etc2: blocks.etc2,
+            astc: blocks.astc,
+            max_side: blocks.max_side,
+        },
     }
 }
 
@@ -458,12 +494,27 @@ fn sampler(s: CpuSampler) -> ffi::GltfSampler {
     }
 }
 
+fn texture_format(format: ChainFormat) -> ffi::GltfTextureFormat {
+    use ffi::GltfTextureFormat as Tag;
+    use CompressedFormat as F;
+    match format {
+        ChainFormat::Rgba8 => Tag::Rgba8,
+        ChainFormat::Blocks(F::Bc1RgbaUnorm) => Tag::Bc1,
+        ChainFormat::Blocks(F::Bc3RgbaUnorm) => Tag::Bc3,
+        ChainFormat::Blocks(F::Bc5RgUnorm) => Tag::Bc5,
+        ChainFormat::Blocks(F::Bc7RgbaUnorm) => Tag::Bc7,
+        ChainFormat::Blocks(F::Etc2Rgba8Unorm) => Tag::Etc2Rgba8,
+        ChainFormat::Blocks(F::Astc4x4RgbaUnorm) => Tag::Astc4x4,
+    }
+}
+
 fn texture(t: FlatTexture) -> ffi::GltfTexture {
     ffi::GltfTexture {
         width: t.chain.width,
         height: t.chain.height,
         level_count: t.chain.level_count,
-        rgba8: t.chain.texels,
+        format: texture_format(t.chain.format),
+        data: t.chain.bytes,
         encoded: t.encoded,
         sampler: sampler(t.sampler),
         srgb: t.srgb,
@@ -534,17 +585,27 @@ mod tests {
         path.to_str().expect("a UTF-8 path").as_bytes().to_vec()
     }
 
-    /// One triangle under node 0, then `nodes`, `scenes` and a top-level `extra`, written to `dir`.
-    /// The bytes a texture's packed chain holds: each level halves down to 1x1.
+    /// The bytes a texture's packed chain holds: each level halves down to 1x1, four bytes a texel or whole blocks.
     fn chain_bytes(texture: &ffi::GltfTexture) -> usize {
+        let block_bytes = match texture.format {
+            ffi::GltfTextureFormat::Rgba8 => 0,
+            ffi::GltfTextureFormat::Bc1 => 8,
+            _ => 16,
+        };
         (0..texture.level_count)
             .map(|level| {
                 let side = |s: u32| (s >> level).max(1) as usize;
-                side(texture.width) * side(texture.height) * 4
+                let (w, h) = (side(texture.width), side(texture.height));
+                if block_bytes == 0 {
+                    w * h * 4
+                } else {
+                    w.div_ceil(4) * h.div_ceil(4) * block_bytes
+                }
             })
             .sum()
     }
 
+    /// One triangle under node 0, then `nodes`, `scenes` and a top-level `extra`, written to `dir`.
     fn triangle(dir: &Path, nodes: &str, scenes: &str, extra: &str) -> Vec<u8> {
         let json = format!(
             r#"{{"asset":{{"version":"2.0"}},{scenes}"nodes":[{{"mesh":0}}{nodes}],
@@ -573,7 +634,7 @@ mod tests {
             texture.level_count,
             32 - texture.width.max(texture.height).leading_zeros()
         );
-        assert_eq!(texture.rgba8.len(), chain_bytes(texture));
+        assert_eq!(texture.data.len(), chain_bytes(texture));
         assert!(texture.srgb);
         assert_eq!(model.materials[0].base_texture, 0);
         assert_eq!(model.materials.last().unwrap().base_texture, -1);
@@ -619,8 +680,78 @@ mod tests {
         assert_eq!(model.materials[0].base_texture, 0);
         let texture = &model.textures[0];
         assert!(texture.encoded.is_empty());
+        assert_eq!(
+            texture.format,
+            ffi::GltfTextureFormat::Rgba8,
+            "no blocks asked for"
+        );
         assert!(texture.level_count > 1, "the KTX2's own levels");
-        assert_eq!(texture.rgba8.len(), chain_bytes(texture));
+        assert_eq!(texture.data.len(), chain_bytes(texture));
+    }
+
+    /// `cube_basisu.gltf`'s one texture, loaded for a device sampling `blocks`.
+    fn basisu_texture(blocks: ffi::GltfBlockSupport) -> ffi::GltfTexture {
+        let options = ffi::GltfLoadOptions {
+            mikktspace_tangents: false,
+            blocks,
+        };
+        let mut model = load_gltf_flat_with(&asset("cube_basisu.gltf"), &options);
+        assert!(model.ok, "{}", model.error);
+        model.textures.remove(0)
+    }
+
+    #[test]
+    fn a_basisu_texture_crosses_as_the_blocks_the_device_samples() {
+        use ffi::GltfTextureFormat as Tag;
+        let family = |bc, etc2, astc| ffi::GltfBlockSupport {
+            bc,
+            etc2,
+            astc,
+            max_side: 0,
+        };
+        for (blocks, want) in [
+            (family(true, true, true), Tag::Bc7),
+            (family(false, true, true), Tag::Etc2Rgba8),
+            (family(false, false, true), Tag::Astc4x4),
+            (family(false, false, false), Tag::Rgba8),
+        ] {
+            let texture = basisu_texture(blocks);
+            assert_eq!(texture.format, want, "{blocks:?}");
+            assert_eq!(
+                (texture.width, texture.height, texture.level_count),
+                (32, 32, 6),
+                "{blocks:?}: the KTX2's six levels"
+            );
+            assert_eq!(texture.data.len(), chain_bytes(&texture), "{blocks:?}");
+        }
+        assert_eq!(
+            chain_bytes(&basisu_texture(family(true, false, false))),
+            1392
+        );
+        // Only 1x1 to 4x4 fit a 2-texel side, and none of them is a whole block to start from.
+        let tiny = basisu_texture(ffi::GltfBlockSupport {
+            max_side: 2,
+            ..family(true, false, false)
+        });
+        assert_eq!(tiny.format, Tag::Rgba8);
+    }
+
+    #[test]
+    fn every_chain_format_has_its_tag() {
+        use ffi::GltfTextureFormat as Tag;
+        use CompressedFormat as F;
+        let tags = [
+            ChainFormat::Rgba8,
+            ChainFormat::Blocks(F::Bc1RgbaUnorm),
+            ChainFormat::Blocks(F::Bc3RgbaUnorm),
+            ChainFormat::Blocks(F::Bc5RgUnorm),
+            ChainFormat::Blocks(F::Bc7RgbaUnorm),
+            ChainFormat::Blocks(F::Etc2Rgba8Unorm),
+            ChainFormat::Blocks(F::Astc4x4RgbaUnorm),
+        ]
+        .map(|format| texture_format(format).repr);
+        assert_eq!(tags, [0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(Tag::Astc4x4.repr, 6);
     }
 
     #[test]
@@ -641,8 +772,8 @@ mod tests {
         let base = &model.textures[material.base_texture as usize];
         assert!(base.encoded.is_empty(), "the BMP decodes here");
         assert_eq!((base.width, base.height, base.level_count), (8, 8, 4));
-        assert_eq!(base.rgba8.len(), chain_bytes(base));
-        assert_eq!(base.rgba8[..4], [255, 0, 0, 255], "red.bmp is red");
+        assert_eq!(base.data.len(), chain_bytes(base));
+        assert_eq!(base.data[..4], [255, 0, 0, 255], "red.bmp is red");
         let missing = load_gltf_flat(b"/no/such/model.obj");
         assert!(
             !missing.ok && missing.error.contains("model.obj"),
@@ -716,6 +847,7 @@ mod tests {
         assert_eq!(load_gltf_flat_with(&quad, &defaults), plain);
         let mikktspace = ffi::GltfLoadOptions {
             mikktspace_tangents: true,
+            ..defaults
         };
         let split = load_gltf_flat_with(&quad, &mikktspace);
         assert!(split.ok, "{}", split.error);

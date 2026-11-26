@@ -185,8 +185,8 @@ fn a_map_d_mask_and_a_bmp_reach_the_engine_as_their_mip_chains() {
         (base_chain.width, base_chain.height, base_chain.level_count),
         (8, 8, 4)
     );
-    assert_eq!(base_chain.texels[..4], [255, 0, 0, 255], "red.bmp");
-    let texel = |x: usize| mask.chain.texels[x * 4];
+    assert_eq!(base_chain.bytes[..4], [255, 0, 0, 255], "red.bmp");
+    let texel = |x: usize| mask.chain.bytes[x * 4];
     assert_eq!(
         (texel(0), texel(7)),
         (0, 255),

@@ -2,8 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
+use kataglyphis_assets::bc_decode::decode_level;
 use kataglyphis_assets::flat::{load_flat, FlatModel};
-use kataglyphis_assets::scene::AlphaMode;
+use kataglyphis_assets::levels::{BlockSupport, ChainFormat};
+use kataglyphis_assets::scene::{AlphaMode, CompressedFormat};
 use kataglyphis_assets::LoadOptions;
 
 fn fixture(name: &str) -> PathBuf {
@@ -19,6 +21,14 @@ fn mirrored_uv_quad() -> PathBuf {
 
 const MIKKTSPACE: LoadOptions = LoadOptions {
     mikktspace_tangents: true,
+    blocks: NO_BLOCKS,
+};
+
+const NO_BLOCKS: BlockSupport = BlockSupport {
+    bc: false,
+    etc2: false,
+    astc: false,
+    max_side: 0,
 };
 
 fn base64(bytes: &[u8]) -> String {
@@ -187,9 +197,9 @@ fn a_basisu_texture_arrives_as_its_levels_and_a_broken_one_falls_back_to_its_cor
     assert_eq!(chain.levels().count(), 6);
     // ramp_uastc runs dark to bright along x: level 0's last texel outshines its first.
     assert!(
-        chain.texels[31 * 4] > chain.texels[0] + 100,
+        chain.bytes[31 * 4] > chain.bytes[0] + 100,
         "{:?}",
-        &chain.texels[..8]
+        &chain.bytes[..8]
     );
     let fallback = load_flat(
         fixture("cube_basisu_fallback.gltf"),
@@ -203,6 +213,59 @@ fn a_basisu_texture_arrives_as_its_levels_and_a_broken_one_falls_back_to_its_cor
         (2, 2, 2),
         "the 2x2 PNG, not the KTX2"
     );
+}
+
+#[test]
+fn a_basisu_texture_arrives_as_the_blocks_the_engine_samples_and_its_fallback_stays_rgba8() {
+    let with = |blocks: BlockSupport| LoadOptions {
+        blocks,
+        ..LoadOptions::default()
+    };
+    let bc = BlockSupport {
+        bc: true,
+        ..NO_BLOCKS
+    };
+    let model = load_flat(fixture("cube_basisu.gltf"), &with(bc)).unwrap();
+    let chain = &model.textures[0].chain;
+    assert_eq!(
+        chain.format,
+        ChainFormat::Blocks(CompressedFormat::Bc7RgbaUnorm)
+    );
+    assert_eq!(
+        (chain.width, chain.height, chain.level_count),
+        (32, 32, 6),
+        "the KTX2's six levels, none halved"
+    );
+    let sizes: Vec<usize> = chain.levels().map(|(_, _, b)| b.len()).collect();
+    assert_eq!(sizes, [1024, 256, 64, 16, 16, 16]);
+    // The same ramp as the RGBA8 transcode: dark to bright along x.
+    let base = decode_level(CompressedFormat::Bc7RgbaUnorm, 32, 32, &chain.bytes[..1024]).unwrap();
+    assert!(base[31 * 4] > base[0] + 100, "{:?}", &base[..8]);
+    let rgba8 = load_flat(fixture("cube_basisu.gltf"), &LoadOptions::default()).unwrap();
+    let rgba8 = &rgba8.textures[0].chain.bytes[..4096];
+    let mean_error = base
+        .iter()
+        .zip(rgba8)
+        .map(|(a, b)| f64::from(a.abs_diff(*b)))
+        .sum::<f64>()
+        / 4096.0;
+    assert!(
+        mean_error < 2.0,
+        "BC7 is {mean_error:.3} off the RGBA8 transcode"
+    );
+    let etc2 = BlockSupport {
+        etc2: true,
+        ..NO_BLOCKS
+    };
+    let model = load_flat(fixture("cube_basisu.gltf"), &with(etc2)).unwrap();
+    assert_eq!(
+        model.textures[0].chain.format,
+        ChainFormat::Blocks(CompressedFormat::Etc2Rgba8Unorm)
+    );
+    let fallback = load_flat(fixture("cube_basisu_fallback.gltf"), &with(bc)).unwrap();
+    let chain = &fallback.textures[0].chain;
+    assert_eq!(chain.format, ChainFormat::Rgba8, "the PNG fallback decodes");
+    assert_eq!((chain.width, chain.height, chain.level_count), (2, 2, 2));
 }
 
 #[test]
@@ -863,13 +926,18 @@ proptest::proptest! {
         seed in 0..FUZZ_SEEDS.len(),
         mutations in proptest::collection::vec(mutation(), 1..8),
         mikktspace_tangents in proptest::bool::ANY,
+        bc in proptest::bool::ANY,
     ) {
         let name = FUZZ_SEEDS[seed];
         let bytes = mutate(std::fs::read(fixture(name)).unwrap(), &mutations);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(name);
         std::fs::write(&path, bytes).unwrap();
-        if let Ok(model) = load_flat(&path, &LoadOptions { mikktspace_tangents }) {
+        let options = LoadOptions {
+            mikktspace_tangents,
+            blocks: BlockSupport { bc, ..NO_BLOCKS },
+        };
+        if let Ok(model) = load_flat(&path, &options) {
             assert_consistent(&model);
             let materials = model.materials.len();
             for material in &model.materials {
@@ -1507,7 +1575,7 @@ fn a_percent_encoded_image_uri_resolves_beside_the_document() {
     let path = triangle_with_image(dir.path(), "my%20tex.png");
     let model = load_flat(path, &LoadOptions::default()).unwrap();
     assert_eq!(model.textures.len(), 1);
-    assert_eq!(model.textures[0].chain.texels, [200, 40, 0, 255]);
+    assert_eq!(model.textures[0].chain.bytes, [200, 40, 0, 255]);
 }
 
 #[test]

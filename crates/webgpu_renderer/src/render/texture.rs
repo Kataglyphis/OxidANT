@@ -1,9 +1,11 @@
 //! Texture, sampler and mip-chain creation, split out of `forward.rs`.
 
-use crate::asset::basis::{basis_target, retarget_basis};
+use std::sync::Arc;
+
+use crate::asset::basis::{basis_target, retarget_basis, rgba8_levels as basis_rgba8_levels};
 use crate::asset::bc_decode::decode_level;
 use crate::context::GpuContext;
-use crate::render::texture_stream::{ChainLevel, LevelChain};
+use crate::render::texture_stream::{ChainLevel, LevelBytes, LevelChain};
 use crate::scene::{CompressedFormat, CompressedTexture, CpuSampler, CpuTexture, CpuWrap};
 
 pub(crate) fn create_sampler(device: &wgpu::Device, desc: &CpuSampler) -> wgpu::Sampler {
@@ -46,7 +48,8 @@ pub(crate) fn anisotropy_for(desc: &CpuSampler) -> u16 {
 }
 
 // The chain both renderers build, so the C++ engine's levels are this renderer's.
-pub(crate) use kataglyphis_assets::levels::{generate_mips, linear_to_srgb, srgb_to_linear};
+use kataglyphis_assets::levels::{first_block_base, mips_below_base};
+pub(crate) use kataglyphis_assets::levels::{linear_to_srgb, srgb_to_linear};
 
 pub(crate) fn compressed_wgpu_format(format: CompressedFormat, srgb: bool) -> wgpu::TextureFormat {
     use CompressedFormat as F;
@@ -90,7 +93,7 @@ fn warn_declared_colour_space(compressed: &CompressedTexture, srgb: bool, label:
 fn compressed_chain(
     texture: &CpuTexture,
     format: CompressedFormat,
-    mips: Vec<Vec<u8>>,
+    mips: Vec<LevelBytes>,
     srgb: bool,
 ) -> LevelChain {
     // `compressed_upload_problem` already checked the base and every level's byte count.
@@ -223,13 +226,6 @@ fn compressed_upload_problem(
     if !sampled {
         return Some(format!("the adapter has no {family} support"));
     }
-    let max_side = gpu.device.limits().max_texture_dimension_2d;
-    if texture.width > max_side || texture.height > max_side {
-        return Some(format!(
-            "its {}x{} base exceeds the device's {max_side}-texel side",
-            texture.width, texture.height
-        ));
-    }
     // WebGPU requires a block-compressed texture's base to be whole 4x4 blocks.
     if !texture.width.is_multiple_of(4) || !texture.height.is_multiple_of(4) {
         return Some(format!(
@@ -237,24 +233,35 @@ fn compressed_upload_problem(
             texture.width, texture.height
         ));
     }
-    crate::asset::ktx2_loader::validate_mip_chain(
+    if let Err(err) = crate::asset::ktx2_loader::validate_mip_chain(
         texture.width,
         texture.height,
         compressed.format,
         &compressed.mips,
-    )
-    .err()
-    .map(|err| err.to_string())
+    ) {
+        return Some(err.to_string());
+    }
+    // A finer level past the device's side is skipped, as the C++ engine's upload does; only none to start from decodes.
+    let max_side = gpu.device.limits().max_texture_dimension_2d;
+    let levels = compressed.mips.len() as u32;
+    first_block_base(texture.width, texture.height, levels, max_side)
+        .is_none()
+        .then(|| {
+            format!(
+                "none of its {}x{} levels fits the device's {max_side}-texel side as whole blocks",
+                texture.width, texture.height
+            )
+        })
 }
 
 /// An uncompressed texture with its whole mip chain behind the default view.
 pub(crate) fn create_material_texture(
     gpu: &GpuContext,
-    texture: &CpuTexture,
+    texture: CpuTexture,
     srgb: bool,
     label: Option<&str>,
 ) -> wgpu::TextureView {
-    let chain = rgba8_chain(texture, srgb);
+    let chain = rgba8_chain(&Arc::new(texture), srgb);
     let max_side = gpu.device.limits().max_texture_dimension_2d;
     let base = chain
         .base_candidates(max_side)
@@ -274,9 +281,10 @@ pub(crate) fn material_view(texture: &wgpu::Texture, sampler: &CpuSampler) -> wg
 }
 
 /// A material texture's chain as this adapter uploads it, decoding a BCn payload the device refuses; `None` if even that fails.
+/// Its levels share the image's base or stored blocks rather than copy them.
 pub(crate) fn material_chain(
     gpu: &GpuContext,
-    texture: &CpuTexture,
+    texture: &Arc<CpuTexture>,
     srgb: bool,
     label: Option<&str>,
 ) -> Option<LevelChain> {
@@ -288,10 +296,16 @@ pub(crate) fn material_chain(
     }
     let Some(problem) = compressed_upload_problem(gpu, texture, compressed) else {
         warn_declared_colour_space(compressed, srgb, label);
-        let mips = compressed.mips.clone();
+        let mips = (0..compressed.mips.len())
+            .map(|level| LevelBytes::Stored(Arc::clone(texture), level))
+            .collect();
         return Some(compressed_chain(texture, compressed.format, mips, srgb));
     };
     let name = label.unwrap_or("<unlabeled texture>");
+    if let Some(chain) = straight_basis_chain(texture, compressed, srgb) {
+        log::info!("{name}: Basis transcoded straight to RGBA8: {problem}");
+        return Some(chain);
+    }
     let Some(levels) = decoded_levels(texture, compressed) else {
         log::warn!("{name}: block-compressed texture ({problem}) does not decode; the slot keeps its default");
         return None;
@@ -309,9 +323,29 @@ pub(crate) fn material_chain(
             rgba8: base,
             compressed: None,
         };
-        return Some(rgba8_chain(&decoded, srgb));
+        return Some(rgba8_chain(&Arc::new(decoded), srgb));
     }
     Some(rgba8_levels(levels, srgb))
+}
+
+/// A Basis payload no block format of this adapter takes, transcoded straight to RGBA8 as the C++ engine's loader does,
+/// not decoded from its BC7; `None` for any other payload or a failed transcode.
+fn straight_basis_chain(
+    texture: &CpuTexture,
+    compressed: &CompressedTexture,
+    srgb: bool,
+) -> Option<LevelChain> {
+    let levels = basis_rgba8_levels(compressed.basis_source.as_ref()?).ok()?;
+    let sized = levels
+        .into_iter()
+        .zip(0u32..)
+        .map(|(rgba8, level)| {
+            let (w, h) =
+                kataglyphis_assets::levels::level_size(texture.width, texture.height, level);
+            (w, h, rgba8)
+        })
+        .collect();
+    Some(rgba8_levels(sized, srgb))
 }
 
 /// A Basis payload retargeted for an adapter with ETC2 or ASTC but no BC; `None` leaves the BC7 path to decide.
@@ -337,12 +371,8 @@ fn retargeted_basis_chain(
     }
     log::info!("{name}: Basis transcoded to {target:?} for this adapter");
     warn_declared_colour_space(&retargeted, srgb, label);
-    Some(compressed_chain(
-        texture,
-        retargeted.format,
-        retargeted.mips,
-        srgb,
-    ))
+    let mips = retargeted.mips.into_iter().map(LevelBytes::Owned).collect();
+    Some(compressed_chain(texture, retargeted.format, mips, srgb))
 }
 
 /// The payload's mip chain as RGBA8, up to its first level too short to decode; `None` if that is the base.
@@ -365,9 +395,16 @@ fn decoded_levels(
     (!levels.is_empty()).then_some(levels)
 }
 
-/// The CPU box-filtered chain of an RGBA8 image, down to 1x1.
-pub(crate) fn rgba8_chain(texture: &CpuTexture, srgb: bool) -> LevelChain {
-    rgba8_levels(generate_mips(texture, srgb), srgb)
+/// The CPU box-filtered chain of an RGBA8 image, down to 1x1; level 0 is the image's own base.
+pub(crate) fn rgba8_chain(texture: &Arc<CpuTexture>, srgb: bool) -> LevelChain {
+    let base = ChainLevel {
+        width: texture.width,
+        height: texture.height,
+        data: LevelBytes::Base(Arc::clone(texture)),
+    };
+    let mut chain = rgba8_levels(mips_below_base(texture, srgb), srgb);
+    chain.levels.insert(0, base);
+    chain
 }
 
 fn rgba8_levels(levels: Vec<(u32, u32, Vec<u8>)>, srgb: bool) -> LevelChain {
@@ -382,7 +419,7 @@ fn rgba8_levels(levels: Vec<(u32, u32, Vec<u8>)>, srgb: bool) -> LevelChain {
             .map(|(width, height, data)| ChainLevel {
                 width,
                 height,
-                data,
+                data: LevelBytes::Owned(data),
             })
             .collect(),
     }
@@ -482,6 +519,80 @@ pub(crate) fn create_2d_view(
 mod tests {
     use super::*;
     use crate::scene::CpuTexture;
+
+    /// `rgba8_chain`'s levels as sizes and bytes.
+    fn generate_mips(base: CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
+        rgba8_chain(&Arc::new(base), srgb)
+            .levels
+            .iter()
+            .map(|level| (level.width, level.height, level.data.to_vec()))
+            .collect()
+    }
+
+    #[test]
+    fn a_chain_shares_the_image_s_base_and_stored_blocks_instead_of_copying_them() {
+        let image = Arc::new(CpuTexture {
+            width: 4,
+            height: 4,
+            rgba8: vec![9; 64],
+            compressed: None,
+        });
+        let chain = rgba8_chain(&image, true);
+        assert_eq!(chain.levels.len(), 3);
+        assert!(
+            std::ptr::eq(chain.levels[0].data.as_ptr(), image.rgba8.as_ptr()),
+            "level 0 is the image's own base"
+        );
+        assert!(matches!(chain.levels[1].data, LevelBytes::Owned(_)));
+        let blocks = Arc::new(CpuTexture {
+            width: 4,
+            height: 4,
+            rgba8: Vec::new(),
+            compressed: Some(CompressedTexture {
+                format: CompressedFormat::Bc1RgbaUnorm,
+                mips: vec![vec![1; 8], vec![2; 8], vec![3; 8]],
+                declared_srgb: None,
+                basis_source: None,
+            }),
+        });
+        let mips = (0..3)
+            .map(|level| LevelBytes::Stored(Arc::clone(&blocks), level))
+            .collect();
+        let chain = compressed_chain(&blocks, CompressedFormat::Bc1RgbaUnorm, mips, false);
+        let stored = &blocks.compressed.as_ref().unwrap().mips;
+        for (level, mip) in chain.levels.iter().zip(stored) {
+            assert!(std::ptr::eq(level.data.as_ptr(), mip.as_ptr()));
+        }
+        let sizes: Vec<_> = chain.levels.iter().map(|l| (l.width, l.height)).collect();
+        assert_eq!(sizes, [(4, 4), (2, 2), (1, 1)]);
+        assert_eq!(
+            &*LevelBytes::Stored(Arc::clone(&blocks), 7),
+            &[] as &[u8],
+            "a missing level is empty"
+        );
+    }
+
+    #[test]
+    fn a_basis_payload_no_block_format_takes_transcodes_straight_to_rgba8() {
+        let file = include_bytes!("../../../assets/tests/assets/ramp_uastc.ktx2");
+        let texture = crate::asset::ktx2_loader::load_ktx2(file).unwrap();
+        let compressed = texture.compressed.as_ref().unwrap();
+        let chain = straight_basis_chain(&texture, compressed, true).unwrap();
+        assert_eq!(chain.format, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let want = basis_rgba8_levels(file).unwrap();
+        let got: Vec<Vec<u8>> = chain.levels.iter().map(|l| l.data.to_vec()).collect();
+        assert_eq!(got, want, "basisu's own RGBA32 levels, not BC7 decoded");
+        let sizes: Vec<_> = chain.levels.iter().map(|l| (l.width, l.height)).collect();
+        assert_eq!(sizes, [(32, 32), (16, 16), (8, 8), (4, 4), (2, 2), (1, 1)]);
+        let stored_bc1 = crate::asset::ktx2_loader::load_ktx2(include_bytes!(
+            "../../../assets/tests/assets/red_bc1.ktx2"
+        ))
+        .unwrap();
+        assert!(
+            straight_basis_chain(&stored_bc1, stored_bc1.compressed.as_ref().unwrap(), true)
+                .is_none()
+        );
+    }
 
     #[test]
     fn anisotropy_is_requested_only_when_every_filter_is_linear() {
@@ -593,7 +704,7 @@ mod tests {
             rgba8: vec![128u8; 4 * 4 * 4],
             compressed: None,
         };
-        let levels = generate_mips(&base, false);
+        let levels = generate_mips(base, false);
         let dims: Vec<(u32, u32)> = levels.iter().map(|(w, h, _)| (*w, *h)).collect();
         assert_eq!(dims, vec![(4, 4), (2, 2), (1, 1)]);
         for (w, h, data) in &levels {
@@ -610,7 +721,7 @@ mod tests {
             rgba8: vec![0, 0, 0, 0, 255, 255, 255, 255],
             compressed: None,
         };
-        let levels = generate_mips(&base, true);
+        let levels = generate_mips(base, true);
         let (w, h, data) = &levels[1];
         assert_eq!((*w, *h), (1, 1));
 
@@ -658,7 +769,7 @@ mod tests {
         }
         let means: Vec<f64> = sums.iter().map(|&s| s / (SIZE * SIZE) as f64).collect();
 
-        let levels = generate_mips(&base, false);
+        let levels = generate_mips(base, false);
         let (w, h, data) = levels.last().unwrap();
         assert_eq!((*w, *h), (1, 1));
         for channel in 0..4usize {
@@ -679,7 +790,7 @@ mod tests {
             rgba8: Vec::new(),
             compressed: None,
         };
-        let levels = generate_mips(&base, false);
+        let levels = generate_mips(base, false);
         assert_eq!(levels.len(), 1);
         assert_eq!(levels[0].0, 0);
         assert_eq!(levels[0].1, 4);

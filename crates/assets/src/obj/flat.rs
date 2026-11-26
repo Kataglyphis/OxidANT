@@ -40,10 +40,10 @@ pub fn load_obj_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::R
     let decoded = parallel::map(&slots.pending, |(file, stored, srgb)| {
         FlatTexture::from_stored(
             stored,
-            CpuSampler::default(),
-            *srgb,
+            (CpuSampler::default(), *srgb),
             &file.display(),
             &budget,
+            &options.blocks,
         )
     });
     let textures = renumber_slots(&mut materials, decoded);

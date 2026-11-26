@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use basisu::{DecodeFlags, SourceFormat, TargetFormat, Transcoder};
 
+use crate::levels::{BlockSupport, ChainFormat};
 use crate::scene::{CompressedFormat, CompressedTexture, CpuTexture};
 
 /// Whether a KTX2 carries Basis payloads: BasisLZ (ETC1S) or a UASTC data format descriptor.
@@ -116,8 +117,12 @@ fn transcode_chain(
 /// A base size and its levels, level 0 first.
 pub type SizedLevels = (u32, u32, Vec<Vec<u8>>);
 
-/// A Basis KTX2's size and levels transcoded straight to RGBA8, not through BC7; `None` when `bytes` is no Basis KTX2.
-pub fn rgba8_chain_of_ktx2(bytes: &[u8]) -> Option<anyhow::Result<SizedLevels>> {
+/// A Basis KTX2's format, size and levels: blocks of `blocks`' target where it takes the base, else RGBA8 straight, not
+/// through BC7; `None` when `bytes` is no Basis KTX2.
+pub fn levels_of_ktx2(
+    bytes: &[u8],
+    blocks: &BlockSupport,
+) -> Option<anyhow::Result<(ChainFormat, SizedLevels)>> {
     let reader = ktx2::Reader::new(bytes).ok()?;
     if !is_basis(&reader) {
         return None;
@@ -125,8 +130,18 @@ pub fn rgba8_chain_of_ktx2(bytes: &[u8]) -> Option<anyhow::Result<SizedLevels>> 
     Some((|| {
         crate::ktx2_loader::check_header(&reader)?;
         let source = basis_source(&reader)?;
-        let (width, height) = basis_transcoder(&source)?.base_dimensions();
-        Ok((width, height, rgba8_levels(&source)?))
+        let transcoder = basis_transcoder(&source)?;
+        let (width, height) = transcoder.base_dimensions();
+        let target = blocks.basis_target().filter(|&format| {
+            blocks.uploads_blocks(format, width, height, transcoder.level_count())
+        });
+        Ok(match target {
+            Some(format) => (
+                ChainFormat::Blocks(format),
+                (width, height, transcode_chain(&transcoder, format)?),
+            ),
+            None => (ChainFormat::Rgba8, (width, height, rgba8_levels(&source)?)),
+        })
     })())
 }
 
@@ -495,6 +510,59 @@ mod tests {
             );
         }
         assert!(rgba8_levels(b"not a KTX2").is_err());
+    }
+
+    #[test]
+    fn a_basis_ktx2_transcodes_once_to_the_target_the_support_picks() {
+        use CompressedFormat as F;
+        let file = include_bytes!("../tests/assets/ramp_uastc.ktx2");
+        let support = |bc, etc2, astc| BlockSupport {
+            bc,
+            etc2,
+            astc,
+            max_side: 0,
+        };
+        let bc7 = load_ktx2(file).unwrap().compressed.unwrap();
+        for (blocks, want) in [
+            (
+                support(true, true, true),
+                ChainFormat::Blocks(F::Bc7RgbaUnorm),
+            ),
+            (
+                support(false, true, true),
+                ChainFormat::Blocks(F::Etc2Rgba8Unorm),
+            ),
+            (
+                support(false, false, true),
+                ChainFormat::Blocks(F::Astc4x4RgbaUnorm),
+            ),
+            (support(false, false, false), ChainFormat::Rgba8),
+        ] {
+            let (format, (width, height, levels)) = levels_of_ktx2(file, &blocks).unwrap().unwrap();
+            assert_eq!(format, want, "{blocks:?}");
+            assert_eq!((width, height, levels.len()), (32, 32, 6), "{blocks:?}");
+            let wanted: Vec<Vec<u8>> = match want {
+                ChainFormat::Blocks(F::Bc7RgbaUnorm) => bc7.mips.clone(),
+                ChainFormat::Blocks(format) => retarget_basis(&bc7, format).unwrap().unwrap().mips,
+                ChainFormat::Rgba8 => rgba8_levels(file).unwrap(),
+            };
+            assert_eq!(
+                levels, wanted,
+                "{blocks:?}: the WebGPU renderer's own transcode"
+            );
+        }
+        let six = uastc_ktx2(6, 6, &[ramp_level(2, 2)]);
+        let (format, (_, _, levels)) = levels_of_ktx2(&six, &support(true, true, true))
+            .unwrap()
+            .unwrap();
+        assert_eq!(format, ChainFormat::Rgba8, "a 6x6 base is no whole block");
+        assert_eq!(levels[0].len(), 6 * 6 * 4);
+        assert!(levels_of_ktx2(
+            include_bytes!("../tests/assets/red_bc1.ktx2"),
+            &support(true, false, false)
+        )
+        .is_none());
+        assert!(levels_of_ktx2(b"not a KTX2", &support(true, false, false)).is_none());
     }
 
     #[test]

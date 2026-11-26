@@ -23,6 +23,7 @@ pub fn load_options_from_env() -> LoadOptions {
 fn load_options_from(mikktspace_tangents: Option<std::ffi::OsString>) -> LoadOptions {
     LoadOptions {
         mikktspace_tangents: mikktspace_tangents.is_some_and(|value| !value.is_empty()),
+        ..LoadOptions::default()
     }
 }
 

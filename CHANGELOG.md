@@ -13,6 +13,31 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-26, texture ingest step 3, native blocks: BeschleunigerBallett plan B5)
+
+- **`load_flat` hands a KTX2 over as the blocks the engine's device samples.** `LoadOptions::blocks`
+  (`levels::BlockSupport`: BC, ETC2, ASTC 4x4 and the device's longest side; the default samples none, so every chain
+  stays RGBA8) arrives from the bridge's new `GltfLoadOptions::blocks`. A Basis payload transcodes once to BC7, else
+  ETC2, else ASTC 4x4 (`basis::levels_of_ktx2`, the WebGPU renderer's order), and a stored BCn KTX2 keeps its blocks
+  (`levels::ktx2_chain`), where the base is whole 4x4 blocks and a level of whole blocks fits the side
+  (`levels::first_block_base`, the rule of the renderer's `base_candidates`); otherwise either decodes to RGBA8 as
+  before. A block chain keeps the levels the file has. PNG, JPEG and the other decoded formats stay RGBA8, and a stored
+  ETC2 or ASTC KTX2 is still refused, so its core `source` loads: no CPU decoder for ETC2 exists here. A decode leases
+  its block chain's bytes from the 1 GiB budget when it keeps blocks. `levels::Rgba8Chain` is `levels::TextureChain`,
+  tagged with its `ChainFormat`, its `texels` now `bytes`; the bridge's `GltfTexture` gains `format`
+  (`GltfTextureFormat`, 0 to 6 in `ChainFormat`'s order) and its `rgba8` is `data`.
+- Measured in release on an aarch64 WSL host with 6 CPUs, three runs each: `Colosseum-gltf` (69 PNG and JPEG images)
+  is unchanged, 760 MiB of RGBA8 chains and a 1287-1296 MiB peak in 0.69-0.81 s. The same images as UASTC KTX2 (a
+  local measurement build, 191 MB of files) made 760 MiB of RGBA8 chains and peaked at 1363-1416 MiB in 0.66-0.71 s;
+  for a device sampling BC, ETC2 or ASTC they are 190 MiB of blocks and the load peaks at 711-714 MiB in 0.66-0.90 s.
+- **The WebGPU renderer shares a texture's base and stored blocks instead of copying them.** A `LevelChain`'s levels
+  are `texture_stream::LevelBytes`: the chain's own, or the image's RGBA8 base or one of its stored mips behind the
+  `Arc` the scene holds. `levels::mips_below_base` replaces `generate_mips` and leaves the base to the caller.
+- **Both renderers decide a block upload alike.** A block payload whose base is over the device's side uploads from its
+  first level that fits as whole blocks, as the C++ engine's does, and decodes on the CPU only when none fits; any base
+  over the side decoded before. A Basis payload on an adapter with no BC, ETC2 or ASTC transcodes straight to RGBA8
+  (`straight_basis_chain`), as the C++ engine's loader does, instead of decoding its BC7.
+
 ### Changed (2026-11-26, the IBL bake leaves the sky's sun out: BeschleunigerBallett's owner decision of 2026-11-25)
 
 - **Both renderers' bake leaves a sky's own sun out, so the directional Sun alone lights with it.** A photo sky's

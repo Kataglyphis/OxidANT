@@ -29,7 +29,7 @@ impl MaterialDefaults {
         let solid = |rgba8: [u8; 4], label: &str| {
             create_material_texture(
                 gpu,
-                &CpuTexture {
+                CpuTexture {
                     width: 1,
                     height: 1,
                     rgba8: rgba8.to_vec(),

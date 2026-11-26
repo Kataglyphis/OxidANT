@@ -195,6 +195,7 @@ mod tests {
         assert_eq!(vertices(&mut loader, SceneRequest::File(quad.clone())), 4);
         loader.set_options(LoadOptions {
             mikktspace_tangents: true,
+            ..LoadOptions::default()
         });
         assert_eq!(vertices(&mut loader, SceneRequest::File(quad.clone())), 6);
         let bytes = std::fs::read(&quad).unwrap();

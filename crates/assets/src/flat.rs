@@ -1,5 +1,6 @@
 //! A glTF (or, through `obj::load_obj_flat`, an OBJ) flattened into the arrays BeschleunigerBallett's C++ engine draws: world-space vertices in one list,
-//! a material id per triangle, a range per primitive, and each texture's RGBA8 mip chain, decoded on every core.
+//! a material id per triangle, a range per primitive, and each texture's mip chain, decoded on every core: RGBA8, or a
+//! KTX2's blocks in a format the engine samples.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -10,7 +11,7 @@ use glam::{Mat3, Mat4, Vec3};
 use crate::gltf_images::{self, LocatedImage, StoredImage, TextureSource};
 use crate::gltf_loader::{self, Geometry, Imported, LoadOptions};
 use crate::image_decode;
-use crate::levels::{self, Rgba8Chain};
+use crate::levels::{self, BlockSupport, ChainFormat, TextureChain};
 use crate::parallel::{self, Budget};
 use crate::scene::{
     self, AlphaMode, CpuCameraProjection, CpuLight, CpuLightKind, CpuMaterial, CpuSampler, CpuScene,
@@ -69,11 +70,11 @@ pub struct FlatMaterial {
     pub double_sided: bool,
 }
 
-/// One texture slot with its sampler and colour space: the RGBA8 mip chain, or, for a format only the engine's stb
-/// reads (PSD, PIC), an empty chain and the file's bytes.
+/// One texture slot with its sampler and colour space: the mip chain, or, for a format only the engine's stb reads (PSD,
+/// PIC), an empty chain and the file's bytes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlatTexture {
-    pub chain: Rgba8Chain,
+    pub chain: TextureChain,
     pub encoded: Vec<u8>,
     pub sampler: CpuSampler,
     pub srgb: bool,
@@ -84,20 +85,20 @@ impl FlatTexture {
     /// not load or is over the pixel cap, which stb would not have refused.
     pub(crate) fn from_stored(
         stored: &StoredImage,
-        sampler: CpuSampler,
-        srgb: bool,
+        (sampler, srgb): (CpuSampler, bool),
         what: &dyn std::fmt::Display,
         budget: &Budget,
+        blocks: &BlockSupport,
     ) -> Option<FlatTexture> {
-        let texture = |chain: Rgba8Chain, encoded: Vec<u8>| FlatTexture {
+        let texture = |chain: TextureChain, encoded: Vec<u8>| FlatTexture {
             chain,
             encoded,
             sampler,
             srgb,
         };
-        match decode_chain(stored, srgb, budget) {
+        match decode_chain(stored, srgb, budget, blocks) {
             Ok(Some(chain)) => Some(texture(chain, Vec::new())),
-            Ok(None) => Some(texture(Rgba8Chain::default(), stored.bytes.clone())),
+            Ok(None) => Some(texture(TextureChain::default(), stored.bytes.clone())),
             Err(err) => {
                 log::warn!("{what}: {err:#}; the material draws without it");
                 None
@@ -106,22 +107,23 @@ impl FlatTexture {
     }
 }
 
-/// `stored`'s full chain, `None` for a PSD or PIC within the cap; the decode holds its bytes from `budget` meanwhile.
+/// `stored`'s chain, `None` for a PSD or PIC within the cap; the decode holds its bytes from `budget` meanwhile.
 fn decode_chain(
     stored: &StoredImage,
     srgb: bool,
     budget: &Budget,
-) -> anyhow::Result<Option<Rgba8Chain>> {
+    blocks: &BlockSupport,
+) -> anyhow::Result<Option<TextureChain>> {
     let bytes = &stored.bytes;
     anyhow::ensure!(!bytes.is_empty(), "the image is empty");
     if bytes.starts_with(KTX2_MAGIC) {
-        let header = ktx2::Reader::new(bytes.as_slice())
-            .map_err(|err| anyhow::anyhow!("not a valid KTX2 container: {err:?}"))?
-            .header();
+        let reader = ktx2::Reader::new(bytes.as_slice())
+            .map_err(|err| anyhow::anyhow!("not a valid KTX2 container: {err:?}"))?;
+        let header = reader.header();
         let (width, height) = (header.pixel_width.max(1), header.pixel_height.max(1));
         image_decode::check_dimensions(width, height)?;
-        let _lease = budget.lease(in_flight_bytes(width, height));
-        return levels::ktx2_chain(bytes, srgb).map(Some);
+        let _lease = budget.lease(ktx2_in_flight_bytes(&reader, blocks));
+        return levels::ktx2_chain(bytes, srgb, blocks).map(Some);
     }
     if let Some((width, height)) = image_decode::stb_only_dimensions(bytes) {
         image_decode::check_dimensions(width, height)?;
@@ -143,6 +145,23 @@ fn decode_chain(
 fn in_flight_bytes(width: u32, height: u32) -> u64 {
     let chain = levels::chain_bytes(width, height, levels::full_level_count(width, height));
     chain as u64 + u64::from(width) * u64::from(height) * 4
+}
+
+/// A KTX2's peak: its blocks where `blocks` will take them as they are, else the RGBA8 decode's.
+fn ktx2_in_flight_bytes(reader: &ktx2::Reader<&[u8]>, blocks: &BlockSupport) -> u64 {
+    let header = reader.header();
+    let (width, height) = (header.pixel_width.max(1), header.pixel_height.max(1));
+    let format = if crate::basis::is_basis(reader) {
+        blocks.basis_target()
+    } else {
+        crate::ktx2_loader::stored_format(reader)
+    };
+    match format {
+        Some(format) if blocks.uploads_blocks(format, width, height, header.level_count.max(1)) => {
+            ChainFormat::Blocks(format).chain_bytes(width, height, header.level_count.max(1)) as u64
+        }
+        _ => in_flight_bytes(width, height),
+    }
 }
 
 /// Decodes in flight at once, in bytes: one load cannot hold eight 16384x16384 chains together.
@@ -259,7 +278,7 @@ pub fn load_flat(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::Resul
     // Before the chains arrive: Colosseum-gltf's 197 MiB .bin would otherwise peak beside them.
     drop(imported);
     let budget = Budget::new(DECODE_BUDGET);
-    let decoded = parallel::map(&located, |slot| slot.decode(&budget));
+    let decoded = parallel::map(&located, |slot| slot.decode(&budget, &options.blocks));
     let textures = share_decodes(decoded, &jobs, &pending);
     model.textures = renumber_slots(&mut model.materials, textures);
     Ok(model)
@@ -503,13 +522,13 @@ struct LocatedSlot {
 
 impl LocatedSlot {
     /// The `KHR_texture_basisu` image, else (with a warning) the core one; `None` when neither loads.
-    fn decode(&self, budget: &Budget) -> Option<FlatTexture> {
+    fn decode(&self, budget: &Budget, blocks: &BlockSupport) -> Option<FlatTexture> {
         if let Some((image, located)) = &self.basisu {
             let chain = located
                 .as_ref()
                 .map_err(|err| anyhow::anyhow!("{err:#}"))
                 .and_then(LocatedImage::load)
-                .and_then(|stored| decode_chain(&stored, self.srgb, budget))
+                .and_then(|stored| decode_chain(&stored, self.srgb, budget, blocks))
                 .and_then(|chain| chain.context("a KHR_texture_basisu image that is no KTX2"));
             match chain {
                 Ok(chain) => {
@@ -530,7 +549,9 @@ impl LocatedSlot {
             .map_err(|err| anyhow::anyhow!("{err:#}"))
             .and_then(LocatedImage::load)
         {
-            Ok(stored) => FlatTexture::from_stored(&stored, self.sampler, self.srgb, &what, budget),
+            Ok(stored) => {
+                FlatTexture::from_stored(&stored, (self.sampler, self.srgb), &what, budget, blocks)
+            }
             Err(err) => {
                 log::warn!("{what}: {err:#}");
                 None

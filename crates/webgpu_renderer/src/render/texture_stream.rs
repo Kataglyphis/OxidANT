@@ -2,9 +2,11 @@
 //! needs, and which finer steps fit one frame's upload budget. Pure CPU; the GPU half is
 //! `forward/streaming.rs`.
 
+use std::sync::Arc;
+
 use glam::{Mat4, Vec3};
 
-use crate::scene::Vertex;
+use crate::scene::{CpuTexture, Vertex};
 
 /// How material textures reach the GPU: whole at upload, or a coarse tail first and finer levels as the camera needs them.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,7 +85,32 @@ pub struct TextureResidency {
 pub(crate) struct ChainLevel {
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) data: Vec<u8>,
+    pub(crate) data: LevelBytes,
+}
+
+/// A level's bytes: built for the chain, or the scene image's own, which the chain shares instead of copying.
+pub(crate) enum LevelBytes {
+    Owned(Vec<u8>),
+    /// The image's RGBA8 base.
+    Base(Arc<CpuTexture>),
+    /// Mip `.1` of the image's block payload.
+    Stored(Arc<CpuTexture>, usize),
+}
+
+impl std::ops::Deref for LevelBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            LevelBytes::Owned(bytes) => bytes,
+            LevelBytes::Base(image) => &image.rgba8,
+            LevelBytes::Stored(image, level) => image
+                .compressed
+                .as_ref()
+                .and_then(|compressed| compressed.mips.get(*level))
+                .map_or(&[], Vec::as_slice),
+        }
+    }
 }
 
 /// A material texture's levels in the format they upload as, finest first.

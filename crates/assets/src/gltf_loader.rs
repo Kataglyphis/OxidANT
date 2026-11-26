@@ -19,6 +19,8 @@ use crate::{files, gltf_images, skin};
 pub struct LoadOptions {
     /// MikkTSpace tangents where the file has none, the basis DCC tools bake against; off keeps Lengyel's.
     pub mikktspace_tangents: bool,
+    /// The block formats `load_flat` may hand a KTX2 over in; the WebGPU renderer reads none and retargets at upload.
+    pub blocks: crate::levels::BlockSupport,
 }
 
 /// [`load_gltf_with`] the default options.

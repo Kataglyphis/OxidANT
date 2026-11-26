@@ -1,28 +1,134 @@
-//! A texture's RGBA8 mip chain, built once for both renderers: a 2x2 box filter for a decoded image (sRGB averaged in
-//! linear space), Basis levels transcoded straight to RGBA8, and BCn levels decoded.
+//! A texture's mip chain, built once for both renderers: a 2x2 box filter for a decoded image (sRGB averaged in linear
+//! space), Basis levels transcoded straight to RGBA8 or to a block format the consumer samples, BCn levels decoded or
+//! kept as stored.
 
-use crate::scene::{CompressedTexture, CpuTexture};
+use crate::scene::{CompressedFormat, CompressedTexture, CpuTexture};
+
+/// What a chain's bytes hold: RGBA8 texels, or one block format's 4x4 blocks.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum ChainFormat {
+    #[default]
+    Rgba8,
+    Blocks(CompressedFormat),
+}
+
+impl ChainFormat {
+    /// The bytes of one `width` x `height` level: four per texel, or its whole blocks.
+    pub fn level_bytes(self, width: u32, height: u32) -> usize {
+        match self {
+            ChainFormat::Rgba8 => (width as usize) * (height as usize) * 4,
+            ChainFormat::Blocks(format) => {
+                width.div_ceil(4) as usize
+                    * height.div_ceil(4) as usize
+                    * format.block_bytes() as usize
+            }
+        }
+    }
+
+    /// The bytes of `levels` levels from a `width` x `height` base.
+    pub fn chain_bytes(self, width: u32, height: u32, levels: u32) -> usize {
+        (0..levels)
+            .map(|level| {
+                let (w, h) = level_size(width, height, level);
+                self.level_bytes(w, h)
+            })
+            .sum()
+    }
+}
 
 /// A mip chain, level 0 first, packed back to back: level `i` is `max(width >> i, 1)` by `max(height >> i, 1)`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Rgba8Chain {
+pub struct TextureChain {
+    pub format: ChainFormat,
     pub width: u32,
     pub height: u32,
     pub level_count: u32,
-    pub texels: Vec<u8>,
+    pub bytes: Vec<u8>,
 }
 
-impl Rgba8Chain {
-    /// Each level's width, height and texels, up to the first the texels do not hold.
+impl TextureChain {
+    /// Each level's width, height and bytes, up to the first the bytes do not hold.
     pub fn levels(&self) -> impl Iterator<Item = (u32, u32, &[u8])> {
-        let mut rest = self.texels.as_slice();
+        let mut rest = self.bytes.as_slice();
         (0..self.level_count).map_while(move |level| {
             let (w, h) = level_size(self.width, self.height, level);
-            let (texels, tail) = rest.split_at_checked((w as usize) * (h as usize) * 4)?;
+            let (bytes, tail) = rest.split_at_checked(self.format.level_bytes(w, h))?;
             rest = tail;
-            Some((w, h, texels))
+            Some((w, h, bytes))
         })
     }
+
+    /// `mips` as stored, each cut to its whole blocks, packed back to back.
+    pub fn of_blocks(
+        format: CompressedFormat,
+        width: u32,
+        height: u32,
+        mips: &[Vec<u8>],
+    ) -> TextureChain {
+        let format = ChainFormat::Blocks(format);
+        let mut bytes = Vec::with_capacity(format.chain_bytes(width, height, mips.len() as u32));
+        for (level, mip) in (0u32..).zip(mips) {
+            let (w, h) = level_size(width, height, level);
+            bytes.extend_from_slice(&mip[..format.level_bytes(w, h).min(mip.len())]);
+        }
+        TextureChain {
+            format,
+            width,
+            height,
+            level_count: mips.len() as u32,
+            bytes,
+        }
+    }
+}
+
+/// The block formats a consumer samples and the longest side it creates (0 for no limit); the default samples none,
+/// so every chain arrives as RGBA8.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct BlockSupport {
+    pub bc: bool,
+    pub etc2: bool,
+    pub astc: bool,
+    pub max_side: u32,
+}
+
+impl BlockSupport {
+    pub fn samples(&self, format: CompressedFormat) -> bool {
+        use CompressedFormat as F;
+        match format {
+            F::Bc1RgbaUnorm | F::Bc3RgbaUnorm | F::Bc5RgUnorm | F::Bc7RgbaUnorm => self.bc,
+            F::Etc2Rgba8Unorm => self.etc2,
+            F::Astc4x4RgbaUnorm => self.astc,
+        }
+    }
+
+    /// The format a Basis payload transcodes to, [`crate::basis::basis_target`]'s order; `None` for RGBA8.
+    pub fn basis_target(&self) -> Option<CompressedFormat> {
+        crate::basis::basis_target(self.bc, self.etc2, self.astc)
+    }
+
+    /// Whether `levels` stored levels of `format` upload as they are: the format sampled, a base of whole 4x4 blocks,
+    /// and a level to start from within the side limit.
+    pub fn uploads_blocks(
+        &self,
+        format: CompressedFormat,
+        width: u32,
+        height: u32,
+        levels: u32,
+    ) -> bool {
+        self.samples(format)
+            && width.is_multiple_of(4)
+            && height.is_multiple_of(4)
+            && first_block_base(width, height, levels, self.max_side).is_some()
+    }
+}
+
+/// The first of `levels` levels a block texture can start from: whole 4x4 blocks with no side over `max_side` (0 for
+/// no limit), as the WebGPU renderer's `base_candidates` picks.
+pub fn first_block_base(width: u32, height: u32, levels: u32, max_side: u32) -> Option<u32> {
+    (0..levels).find(|&level| {
+        let (w, h) = level_size(width, height, level);
+        w.is_multiple_of(4) && h.is_multiple_of(4) && (max_side == 0 || w.max(h) <= max_side)
+    })
 }
 
 /// Level `level`'s size, never below 1x1, also past the 32 levels a `u32` side can have.
@@ -103,18 +209,19 @@ pub fn complete_chain(
     height: u32,
     stored: u32,
     srgb: bool,
-) -> Rgba8Chain {
+) -> TextureChain {
     let level_count = full_level_count(width, height);
     if width == 0
         || height == 0
         || stored == 0
         || texels.len() != chain_bytes(width, height, stored)
     {
-        return Rgba8Chain {
+        return TextureChain {
+            format: ChainFormat::Rgba8,
             width,
             height,
             level_count: stored,
-            texels,
+            bytes: texels,
         };
     }
     let stored = stored.min(level_count);
@@ -133,23 +240,25 @@ pub fn complete_chain(
             srgb,
         );
     }
-    Rgba8Chain {
+    TextureChain {
+        format: ChainFormat::Rgba8,
         width,
         height,
         level_count,
-        texels,
+        bytes: texels,
     }
 }
 
 /// The full chain of a `width` x `height` RGBA8 image, built in one allocation sized for every level.
-pub fn box_filtered_chain(base: Vec<u8>, width: u32, height: u32, srgb: bool) -> Rgba8Chain {
+pub fn box_filtered_chain(base: Vec<u8>, width: u32, height: u32, srgb: bool) -> TextureChain {
     complete_chain(base, width, height, 1, srgb)
 }
 
-/// `generate_mips`' shape for the WebGPU renderer: each level's size and its own texels, the base copied once.
-pub fn generate_mips(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
+/// The WebGPU renderer's levels below `base`'s RGBA8 base, each with its size, down to 1x1; the base stays the
+/// caller's, so a chain can share it instead of copying it. None for an empty or short base.
+pub fn mips_below_base(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
     let (width, height) = (base.width, base.height);
-    let mut levels = vec![(width, height, base.rgba8.clone())];
+    let mut levels: Vec<(u32, u32, Vec<u8>)> = Vec::new();
     if width == 0 || height == 0 || base.rgba8.len() != chain_bytes(width, height, 1) {
         return levels;
     }
@@ -157,19 +266,24 @@ pub fn generate_mips(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> 
         let (pw, ph) = level_size(width, height, level - 1);
         let (nw, nh) = level_size(width, height, level);
         let mut next = vec![0; (nw as usize) * (nh as usize) * 4];
-        if let Some((_, _, previous)) = levels.last() {
-            halve(previous, pw, ph, &mut next, srgb);
-        }
+        let previous = levels
+            .last()
+            .map_or(base.rgba8.as_slice(), |(_, _, texels)| texels);
+        halve(previous, pw, ph, &mut next, srgb);
         levels.push((nw, nh, next));
     }
     levels
 }
 
-/// A KTX2's full RGBA8 chain: Basis transcoded straight to RGBA8 (not through BC7), BCn decoded, either completed by
-/// halving; the header's size is capped before anything is transcoded.
-pub fn ktx2_chain(bytes: &[u8], srgb: bool) -> anyhow::Result<Rgba8Chain> {
-    if let Some(basis) = crate::basis::rgba8_chain_of_ktx2(bytes) {
-        let (width, height, levels) = basis?;
+/// A KTX2's chain: Basis transcoded to `blocks`' target or straight to RGBA8 (not through BC7), BCn kept as stored where
+/// `blocks` samples it or decoded; an RGBA8 chain is completed by halving, a block chain keeps the levels it has. The
+/// header's size is capped before anything is transcoded.
+pub fn ktx2_chain(bytes: &[u8], srgb: bool, blocks: &BlockSupport) -> anyhow::Result<TextureChain> {
+    if let Some(basis) = crate::basis::levels_of_ktx2(bytes, blocks) {
+        let (format, (width, height, levels)) = basis?;
+        if let ChainFormat::Blocks(format) = format {
+            return Ok(TextureChain::of_blocks(format, width, height, &levels));
+        }
         let stored = levels.len() as u32;
         return Ok(complete_chain(
             pack(&levels, width, height),
@@ -179,12 +293,24 @@ pub fn ktx2_chain(bytes: &[u8], srgb: bool) -> anyhow::Result<Rgba8Chain> {
             srgb,
         ));
     }
-    rgba8_chain(crate::ktx2_loader::load_ktx2(bytes)?, srgb)
+    let texture = crate::ktx2_loader::load_ktx2(bytes)?;
+    if let Some(compressed) = &texture.compressed {
+        let (width, height, levels) = (texture.width, texture.height, compressed.mips.len() as u32);
+        if blocks.uploads_blocks(compressed.format, width, height, levels) {
+            return Ok(TextureChain::of_blocks(
+                compressed.format,
+                width,
+                height,
+                &compressed.mips,
+            ));
+        }
+    }
+    rgba8_chain(texture, srgb)
 }
 
 /// `texture`'s full RGBA8 chain: a decoded image box-filtered, a Basis payload transcoded level by level, BCn decoded up
 /// to its first level too short to decode, the rest halved from the last; an error when not even level 0 decodes.
-pub fn rgba8_chain(texture: CpuTexture, srgb: bool) -> anyhow::Result<Rgba8Chain> {
+pub fn rgba8_chain(texture: CpuTexture, srgb: bool) -> anyhow::Result<TextureChain> {
     let CpuTexture {
         width,
         height,
@@ -261,30 +387,145 @@ mod tests {
         assert_eq!(chain.level_count, 4);
         let sizes: Vec<_> = chain.levels().map(|(w, h, t)| (w, h, t.len())).collect();
         assert_eq!(sizes, [(8, 2, 64), (4, 1, 16), (2, 1, 8), (1, 1, 4)]);
-        assert_eq!(chain.texels.len(), 64 + 16 + 8 + 4);
-        assert!(chain.texels.iter().all(|&b| b == 255));
+        assert_eq!(chain.bytes.len(), 64 + 16 + 8 + 4);
+        assert!(chain.bytes.iter().all(|&b| b == 255));
     }
 
     #[test]
     fn srgb_averages_in_linear_space_and_alpha_and_data_round_half_up() {
         let base = vec![0, 0, 0, 0, 255, 255, 255, 1, 0, 0, 0, 0, 255, 255, 255, 1];
         let srgb = box_filtered_chain(base.clone(), 2, 2, true);
-        let top = &srgb.texels[16..];
+        let top = &srgb.bytes[16..];
         // Half of linear white is 0.5, which sRGB encodes as 188.
         assert_eq!(top, [188, 188, 188, 1]);
         let data = box_filtered_chain(base, 2, 2, false);
-        assert_eq!(&data.texels[16..], [128, 128, 128, 1]);
+        assert_eq!(&data.bytes[16..], [128, 128, 128, 1]);
     }
 
     #[test]
-    fn generate_mips_matches_the_packed_chain() {
+    fn the_mips_below_a_base_match_the_packed_chain() {
         let base = image(3, 3, (0..36).collect());
-        let levels = generate_mips(&base, true);
+        let below = mips_below_base(&base, true);
         let chain = box_filtered_chain(base.rgba8.clone(), 3, 3, true);
-        let packed: Vec<u8> = levels.iter().flat_map(|(_, _, t)| t.clone()).collect();
-        assert_eq!(packed, chain.texels);
-        assert_eq!(levels.len(), 2);
-        assert_eq!((levels[1].0, levels[1].1), (1, 1));
+        let packed: Vec<u8> = base
+            .rgba8
+            .iter()
+            .copied()
+            .chain(below.iter().flat_map(|(_, _, t)| t.clone()))
+            .collect();
+        assert_eq!(packed, chain.bytes);
+        assert_eq!(below.len(), 1, "3x3 then 1x1, the base not among them");
+        assert_eq!((below[0].0, below[0].1), (1, 1));
+        assert!(mips_below_base(&image(1, 1, vec![0; 4]), true).is_empty());
+        assert!(mips_below_base(&image(2, 2, vec![0; 3]), true).is_empty());
+    }
+
+    #[test]
+    fn a_block_level_holds_its_whole_blocks() {
+        let bc7 = ChainFormat::Blocks(CompressedFormat::Bc7RgbaUnorm);
+        let bc1 = ChainFormat::Blocks(CompressedFormat::Bc1RgbaUnorm);
+        assert_eq!(ChainFormat::Rgba8.level_bytes(3, 2), 24);
+        assert_eq!(bc7.level_bytes(8, 4), 32);
+        assert_eq!(bc7.level_bytes(2, 1), 16, "a level below 4x4 is one block");
+        assert_eq!(bc1.level_bytes(6, 6), 32);
+        assert_eq!(bc7.chain_bytes(32, 32, 6), 1024 + 256 + 64 + 16 + 16 + 16);
+        let chain = TextureChain::of_blocks(
+            CompressedFormat::Bc1RgbaUnorm,
+            8,
+            4,
+            &[vec![1; 16], vec![2; 9], vec![3; 8]],
+        );
+        let levels: Vec<_> = chain.levels().map(|(w, h, b)| (w, h, b.to_vec())).collect();
+        assert_eq!(
+            levels,
+            [(8, 4, vec![1; 16]), (4, 2, vec![2; 8]), (2, 1, vec![3; 8])],
+            "a level's bytes past its blocks are cut"
+        );
+        assert_eq!(chain.format, bc1);
+    }
+
+    #[test]
+    fn blocks_upload_as_stored_only_where_sampled_whole_and_within_the_side() {
+        use CompressedFormat as F;
+        let bc = BlockSupport {
+            bc: true,
+            ..BlockSupport::default()
+        };
+        assert!(bc.uploads_blocks(F::Bc7RgbaUnorm, 32, 32, 6));
+        assert!(bc.uploads_blocks(F::Bc5RgUnorm, 8, 4, 1));
+        assert!(
+            !bc.uploads_blocks(F::Etc2Rgba8Unorm, 32, 32, 6),
+            "ETC2 not sampled"
+        );
+        assert!(
+            !bc.uploads_blocks(F::Bc7RgbaUnorm, 6, 8, 2),
+            "a base of partial blocks"
+        );
+        assert!(
+            !bc.uploads_blocks(F::Bc7RgbaUnorm, 18, 16, 2),
+            "18 wide is no whole block, though its 9x8 level would not be either"
+        );
+        let limited = BlockSupport { max_side: 16, ..bc };
+        assert!(
+            limited.uploads_blocks(F::Bc7RgbaUnorm, 64, 64, 3),
+            "64, 32, then 16 fits"
+        );
+        assert!(
+            !limited.uploads_blocks(F::Bc7RgbaUnorm, 64, 64, 2),
+            "64 and 32 only"
+        );
+        assert_eq!(first_block_base(64, 64, 7, 16), Some(2));
+        assert_eq!(
+            first_block_base(64, 64, 7, 2),
+            None,
+            "4x4 is the last whole block"
+        );
+        assert_eq!(first_block_base(64, 64, 7, 0), Some(0), "0 is no limit");
+        assert!(!BlockSupport::default().uploads_blocks(F::Bc7RgbaUnorm, 32, 32, 6));
+        assert_eq!(BlockSupport::default().basis_target(), None);
+        let all = BlockSupport {
+            bc: true,
+            etc2: true,
+            astc: true,
+            max_side: 0,
+        };
+        assert_eq!(all.basis_target(), Some(F::Bc7RgbaUnorm));
+        assert!(all.samples(F::Astc4x4RgbaUnorm) && all.samples(F::Bc1RgbaUnorm));
+    }
+
+    #[test]
+    fn a_stored_bcn_ktx2_keeps_its_blocks_where_sampled_and_decodes_elsewhere() {
+        let file = include_bytes!("../tests/assets/red_bc1.ktx2");
+        let bc = BlockSupport {
+            bc: true,
+            ..BlockSupport::default()
+        };
+        let stored = ktx2_chain(file, true, &bc).unwrap();
+        let loaded = crate::ktx2_loader::load_ktx2(file)
+            .unwrap()
+            .compressed
+            .unwrap();
+        assert_eq!(
+            stored.format,
+            ChainFormat::Blocks(CompressedFormat::Bc1RgbaUnorm)
+        );
+        assert_eq!(
+            (stored.width, stored.height, stored.level_count),
+            (8, 8, 1),
+            "its one level, not halved"
+        );
+        assert_eq!(stored.bytes, loaded.mips[0][..32]);
+        let decoded = ktx2_chain(file, true, &BlockSupport::default()).unwrap();
+        assert_eq!(decoded.format, ChainFormat::Rgba8);
+        assert_eq!(decoded.level_count, 4, "decoded, then halved down to 1x1");
+        let etc2_only = BlockSupport {
+            etc2: true,
+            ..BlockSupport::default()
+        };
+        assert_eq!(
+            ktx2_chain(file, true, &etc2_only).unwrap().format,
+            ChainFormat::Rgba8
+        );
     }
 
     #[test]
@@ -292,7 +533,7 @@ mod tests {
         assert!(rgba8_chain(image(0, 4, Vec::new()), false).is_err());
         assert!(rgba8_chain(image(2, 2, vec![0; 15]), false).is_err());
         let one = box_filtered_chain(Vec::new(), 0, 0, false);
-        assert_eq!((one.level_count, one.texels.len()), (1, 0));
+        assert_eq!((one.level_count, one.bytes.len()), (1, 0));
     }
 
     #[test]
@@ -316,8 +557,8 @@ mod tests {
             chain.level_count, 4,
             "two decoded levels, then 2x2 and 1x1 halved"
         );
-        assert_eq!(chain.texels.len(), (64 + 16 + 4 + 1) * 4);
-        assert!(chain.texels.iter().all(|&b| b == 255));
+        assert_eq!(chain.bytes.len(), (64 + 16 + 4 + 1) * 4);
+        assert!(chain.bytes.iter().all(|&b| b == 255));
     }
 
     #[test]
@@ -329,11 +570,11 @@ mod tests {
         ]);
         let chain = complete_chain(texels, 4, 4, 2, false);
         assert_eq!(chain.level_count, 3);
-        assert_eq!(chain.texels.len(), (16 + 4 + 1) * 4);
-        assert_eq!(chain.texels[80..], [128, 128, 128, 128]);
+        assert_eq!(chain.bytes.len(), (16 + 4 + 1) * 4);
+        assert_eq!(chain.bytes[80..], [128, 128, 128, 128]);
         let full = complete_chain(vec![7; 4], 1, 1, 1, true);
         assert_eq!(
-            (full.level_count, full.texels.len()),
+            (full.level_count, full.bytes.len()),
             (1, 4),
             "a 1x1 base is already full"
         );
