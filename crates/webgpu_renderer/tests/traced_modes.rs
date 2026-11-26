@@ -1140,6 +1140,80 @@ fn a_path_traced_camera_miss_shows_the_drawn_sky() {
     assert!(seen[0] != seen[1] && seen[1] != seen[2], "{seen:?}");
 }
 
+/// 128-texel faces of one sky colour, with BeschleunigerBallett's photo sky's saturated sun 4 degrees around +Z if `sun`.
+fn photo_faces(sun: bool) -> CubemapFaces {
+    const SIZE: u32 = 128;
+    let mut rgba8 = Vec::with_capacity((6 * SIZE * SIZE * 4) as usize);
+    for face in 0..6u32 {
+        for row in 0..SIZE {
+            for column in 0..SIZE {
+                // +Z is face 4, its centre straight ahead; s and t are the tangents of the angle off it.
+                let s = 2.0 * (column as f32 + 0.5) / SIZE as f32 - 1.0;
+                let t = 2.0 * (row as f32 + 0.5) / SIZE as f32 - 1.0;
+                let in_disk =
+                    sun && face == 4 && (s * s + t * t).sqrt() < 4.0_f32.to_radians().tan();
+                rgba8.extend_from_slice(if in_disk {
+                    &[255, 255, 255, 255]
+                } else {
+                    &[150, 180, 230, 255]
+                });
+            }
+        }
+    }
+    CubemapFaces { size: SIZE, rgba8 }
+}
+
+/// C++ `AMirrorFacingThePhotoSunReflectsTheSkyAroundIt`: the bake leaves a photo sky's sun to the directional Sun, so a
+/// mirror facing it returns the sky around the disk in every mode, the path tracer's bounce misses included.
+#[test]
+fn a_mirror_facing_a_photo_skys_sun_returns_the_sky_around_it() {
+    let mirror = CpuMaterial {
+        metallic_factor: 1.0,
+        roughness_factor: 0.05,
+        ..CpuMaterial::default()
+    };
+    // The card faces +Z and the eye looks down -Z at it, so the mirror reflects +Z.
+    let camera = OrbitCamera {
+        target: Vec3::ZERO,
+        radius: 2.0,
+        yaw_deg: 90.0,
+        pitch_deg: 0.0,
+        ..OrbitCamera::default()
+    };
+    let Some(mut rig) = Rig::new(&scene_of(vec![card(mirror)]), 64, camera) else {
+        return;
+    };
+    rig.renderer.light_color_intensity.w = 0.0;
+    rig.renderer.light_dir_ambient.w = 1.0;
+    rig.renderer.trace_settings = TraceSettings {
+        samples_per_pixel: 4,
+        max_bounces: 2,
+        furnace: None,
+    };
+    let mut radiance = [[0.0f32; 3]; 2];
+    for (index, sun) in [false, true].into_iter().enumerate() {
+        let panorama = EquirectImage::from_cubemap(&photo_faces(sun), 256, 128);
+        rig.renderer.set_environment(&rig.gpu, &panorama);
+        for (m, mode) in RenderMode::ALL.into_iter().enumerate() {
+            rig.frames(mode, if mode == RenderMode::PathTraced { 8 } else { 2 });
+            radiance[index][m] = rig.centre_radiance(16);
+        }
+    }
+    eprintln!(
+        "mirror without the sun {:?}, facing it {:?}",
+        radiance[0], radiance[1]
+    );
+    for (m, mode) in RenderMode::ALL.into_iter().enumerate() {
+        let (sky, facing) = (radiance[0][m], radiance[1][m]);
+        assert!(sky > 0.1, "{mode:?}: the mirror reflects no sky: {sky}");
+        // Kept, the saturated disk mirrors as 7.2 against the sky's 0.5.
+        assert!(
+            (facing - sky).abs() < 0.05 * sky,
+            "{mode:?}: the mirror facing the sun returns {facing}, the sky around it {sky}"
+        );
+    }
+}
+
 /// C++ `PathTracedMirrorReflectsTheSkyboxItDraws`: a bounce that misses takes the ambient term's light, IBL included.
 #[test]
 fn a_bounce_miss_takes_the_sky_light_the_ambient_term_does() {

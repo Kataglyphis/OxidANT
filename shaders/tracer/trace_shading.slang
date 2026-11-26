@@ -103,12 +103,6 @@ TracedSurface shade_hit(TraceRay ray, TraceHit hit)
     return o;
 }
 
-// The raster sky, sun disk included: what a camera ray that hits nothing sees.
-float3 sky_with_sun(float3 dir)
-{
-    return sky_gradient(dir) + sun_disk(dir, traceFrame.light_dir.xyz, traceFrame.light_dir.w);
-}
-
 // Punctual light `index` of the raster's buffer.
 [ForceInline]
 PunctualLight tracer_punctual(uint index)

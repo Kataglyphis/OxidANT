@@ -210,6 +210,7 @@ const REQUIRED_ENTRY_POINTS: &[(&str, &[&str])] = &[
         &[
             "vs_fullscreen",
             "fs_equirect_to_cube",
+            "fs_find_sun",
             "fs_downsample_cube",
             "fs_irradiance",
             "fs_prefilter",

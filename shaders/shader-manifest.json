@@ -220,6 +220,15 @@
     },
     {
       "file": "ibl/ibl.slang",
+      "entry": "fs_find_sun",
+      "stage": "fragment",
+      "targets": [
+        "wgsl",
+        "spirv"
+      ]
+    },
+    {
+      "file": "ibl/ibl.slang",
       "entry": "fs_downsample_cube",
       "stage": "fragment",
       "targets": [
@@ -509,6 +518,15 @@
       ]
     },
     {
+      "file": "tests/sun_mask_test.slang",
+      "entry": "sun_mask_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
       "file": "tests/gltf_material_test.slang",
       "entry": "gltf_material_test_main",
       "stage": "compute",
@@ -766,6 +784,11 @@
     {
       "src": "tests/path_integrator_test.slang",
       "out": "path_integrator_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/sun_mask_test.slang",
+      "out": "sun_mask_test.wgsl",
       "dst": "crates/webgpu_renderer/tests/shaders"
     },
     {

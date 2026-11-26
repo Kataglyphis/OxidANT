@@ -40,6 +40,8 @@ const CUBE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const LUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// Uploaded as f32; `Float32Filterable` is not requested, so `ibl.wgsl` filters it by hand.
 const EQUIRECT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+/// `fs_find_sun`'s 2x1 result: the sun's direction, then the radiance of the ring that replaces it.
+const SUN_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// The WebGPU cube face (+X, -X, +Y, -Y, +Z, -Z) `dir` hits and its texture coordinates, row 0 at the top.
 fn cube_face_st(dir: [f32; 3]) -> (usize, f32, f32) {
@@ -216,6 +218,7 @@ pub fn half_to_f32(bits: u16) -> f32 {
 struct Precompute {
     bind_group_layout: wgpu::BindGroupLayout,
     equirect_to_cube: wgpu::RenderPipeline,
+    find_sun: wgpu::RenderPipeline,
     downsample_cube: wgpu::RenderPipeline,
     irradiance: wgpu::RenderPipeline,
     prefilter: wgpu::RenderPipeline,
@@ -223,6 +226,7 @@ struct Precompute {
     sampler: wgpu::Sampler,
     dummy_equirect: wgpu::TextureView,
     dummy_cube: wgpu::TextureView,
+    dummy_sun: wgpu::TextureView,
 }
 
 impl Precompute {
@@ -250,6 +254,7 @@ impl Precompute {
                     wgpu::ShaderStages::FRAGMENT,
                     wgpu::SamplerBindingType::Filtering,
                 ),
+                bind_layout::texture_2d(4, wgpu::ShaderStages::FRAGMENT, false),
             ],
         });
 
@@ -274,6 +279,7 @@ impl Precompute {
 
         Self {
             equirect_to_cube: make("fs_equirect_to_cube", CUBE_FORMAT, "ibl_equirect_to_cube"),
+            find_sun: make("fs_find_sun", SUN_MASK_FORMAT, "ibl_find_sun"),
             downsample_cube: make("fs_downsample_cube", CUBE_FORMAT, "ibl_downsample_cube"),
             irradiance: make("fs_irradiance", CUBE_FORMAT, "ibl_irradiance"),
             prefilter: make("fs_prefilter", CUBE_FORMAT, "ibl_prefilter"),
@@ -289,8 +295,9 @@ impl Precompute {
                 mipmap_filter: wgpu::MipmapFilterMode::Linear,
                 ..Default::default()
             }),
-            dummy_equirect: dummy_2d(device),
+            dummy_equirect: dummy_2d(device, EQUIRECT_FORMAT),
             dummy_cube: dummy_cube(device),
+            dummy_sun: dummy_2d(device, SUN_MASK_FORMAT),
         }
     }
 }
@@ -303,13 +310,13 @@ struct IblParams {
     source_resolution: [f32; 4],
 }
 
-fn dummy_2d(device: &wgpu::Device) -> wgpu::TextureView {
+fn dummy_2d(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::TextureView {
     create_2d_view(
         device,
         Some("ibl_dummy_2d"),
         1,
         1,
-        EQUIRECT_FORMAT,
+        format,
         wgpu::TextureUsages::TEXTURE_BINDING,
         1,
         1,
@@ -416,6 +423,7 @@ impl BrdfLut {
             IblParams::default(),
             &precompute.dummy_equirect,
             &precompute.dummy_cube,
+            &precompute.dummy_sun,
             "ibl_brdf_lut_pass",
         );
         gpu.queue.submit(Some(encoder.finish()));
@@ -434,9 +442,17 @@ impl BrdfLut {
     }
 }
 
+/// What the bake left out of an environment: no sun when `direction` is zero.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SunMaskReadback {
+    pub direction: [f32; 3],
+    pub ring: [f32; 3],
+}
+
 /// A baked environment's maps; the environment-independent BRDF LUT lives beside the renderer.
 pub struct IblEnvironment {
     environment: wgpu::Texture,
+    sun_mask: wgpu::Texture,
     irradiance: wgpu::Texture,
     prefiltered: wgpu::Texture,
     irradiance_view: wgpu::TextureView,
@@ -444,13 +460,27 @@ pub struct IblEnvironment {
 }
 
 impl IblEnvironment {
-    /// Bakes every environment-dependent map from `equirect`, in one submit.
+    /// Bakes every environment-dependent map from `equirect`, in one submit, without the sun `fs_find_sun` finds.
+    /// The directional Sun lights with the sun alone: a baked sun disk would light the scene a second time.
     pub fn bake(gpu: &GpuContext, equirect: &EquirectImage) -> Self {
         let device = &gpu.device;
         let precompute = Precompute::new(device);
 
         let source = upload_equirect(gpu, equirect);
         let environment = create_cube(device, "ibl_environment", ENV_SIZE, ENV_MIPS);
+        let sun_mask = create_2d_texture(
+            device,
+            Some("ibl_sun_mask"),
+            2,
+            1,
+            SUN_MASK_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            1,
+            1,
+        );
+        let sun_view = sun_mask.create_view(&wgpu::TextureViewDescriptor::default());
         let irradiance = create_cube(device, "ibl_irradiance", IRRADIANCE_SIZE, 1);
         let prefiltered = create_cube(device, "ibl_prefiltered", PREFILTER_SIZE, PREFILTER_MIPS);
 
@@ -462,14 +492,18 @@ impl IblEnvironment {
             encoder: &mut encoder,
             precompute: &precompute,
         };
-        bake.environment(&environment, &source, equirect.width);
         let environment_all_mips = cube_view_all_mips(&environment);
+        // The search reads a whole environment's mips, so the masked one is drawn again over it.
+        bake.environment(&environment, &source, equirect.width, &sun_view, false);
+        bake.find_sun(&sun_view, &environment_all_mips);
+        bake.environment(&environment, &source, equirect.width, &sun_view, true);
         bake.irradiance(&irradiance, &environment_all_mips);
         bake.prefilter(&prefiltered, &environment_all_mips);
         gpu.queue.submit(Some(encoder.finish()));
 
         Self {
             environment,
+            sun_mask,
             irradiance_view: cube_view_all_mips(&irradiance),
             prefiltered_view: cube_view_all_mips(&prefiltered),
             irradiance,
@@ -512,6 +546,15 @@ impl IblEnvironment {
     pub fn read_environment_face(&self, gpu: &GpuContext, face: u32, mip: u32) -> Vec<[f32; 3]> {
         read_cube_face_rgb(gpu, &self.environment, face, mip, ENV_SIZE >> mip)
     }
+
+    /// The sun the bake left out and the ring radiance it put in its place.
+    pub fn read_sun_mask(&self, gpu: &GpuContext) -> SunMaskReadback {
+        let texels = read_texture_halves(gpu, &self.sun_mask, 0, 0, 2, 1, 4);
+        SunMaskReadback {
+            direction: [texels[0], texels[1], texels[2]],
+            ring: [texels[4], texels[5], texels[6]],
+        }
+    }
 }
 
 fn create_cube(device: &wgpu::Device, label: &str, size: u32, mips: u32) -> wgpu::Texture {
@@ -542,8 +585,15 @@ struct BakeEncoder<'a> {
 }
 
 impl BakeEncoder<'_> {
-    /// Panorama -> cube at mip 0, then its mip chain.
-    fn environment(&mut self, environment: &wgpu::Texture, source: &wgpu::TextureView, width: u32) {
+    /// Panorama -> cube at mip 0, then its mip chain; `masked` leaves out the sun in `sun_mask`.
+    fn environment(
+        &mut self,
+        environment: &wgpu::Texture,
+        source: &wgpu::TextureView,
+        width: u32,
+        sun_mask: &wgpu::TextureView,
+        masked: bool,
+    ) {
         let precompute = self.precompute;
         for face in 0..6u32 {
             draw_fullscreen(
@@ -554,10 +604,11 @@ impl BakeEncoder<'_> {
                 &face_view(environment, face, 0),
                 IblParams {
                     face_roughness_samples_mip: [face as f32, 0.0, 0.0, 0.0],
-                    source_resolution: [width as f32, 0.0, 0.0, 0.0],
+                    source_resolution: [width as f32, f32::from(u8::from(masked)), 0.0, 0.0],
                 },
                 source,
                 &precompute.dummy_cube,
+                sun_mask,
                 "ibl_equirect_to_cube_pass",
             );
         }
@@ -578,10 +629,28 @@ impl BakeEncoder<'_> {
                     },
                     &precompute.dummy_equirect,
                     &source_mip,
+                    &precompute.dummy_sun,
                     "ibl_downsample_pass",
                 );
             }
         }
+    }
+
+    /// The sun in the unmasked `environment`'s mips, into the 2x1 `sun_mask`.
+    fn find_sun(&mut self, sun_mask: &wgpu::TextureView, environment: &wgpu::TextureView) {
+        let precompute = self.precompute;
+        draw_fullscreen(
+            self.device,
+            self.encoder,
+            precompute,
+            &precompute.find_sun,
+            sun_mask,
+            IblParams::default(),
+            &precompute.dummy_equirect,
+            environment,
+            &precompute.dummy_sun,
+            "ibl_find_sun_pass",
+        );
     }
 
     /// Diffuse irradiance, from mip 0 of the environment.
@@ -600,6 +669,7 @@ impl BakeEncoder<'_> {
                 },
                 &precompute.dummy_equirect,
                 environment,
+                &precompute.dummy_sun,
                 "ibl_irradiance_pass",
             );
         }
@@ -628,6 +698,7 @@ impl BakeEncoder<'_> {
                     },
                     &precompute.dummy_equirect,
                     environment,
+                    &precompute.dummy_sun,
                     "ibl_prefilter_pass",
                 );
             }
@@ -676,6 +747,7 @@ fn draw_fullscreen(
     params: IblParams,
     equirect: &wgpu::TextureView,
     cube: &wgpu::TextureView,
+    sun_mask: &wgpu::TextureView,
     label: &str,
 ) {
     // Per-draw buffers: few one-shot draws, and no dynamic-offset alignment arithmetic to get wrong.
@@ -706,6 +778,10 @@ fn draw_fullscreen(
             wgpu::BindGroupEntry {
                 binding: 3,
                 resource: wgpu::BindingResource::Sampler(&precompute.sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(sun_mask),
             },
         ],
     });

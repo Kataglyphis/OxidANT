@@ -13,6 +13,34 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-26, the IBL bake leaves the sky's sun out: BeschleunigerBallett's owner decision of 2026-11-25)
+
+- **Both renderers' bake leaves a sky's own sun out, so the directional Sun alone lights with it.** A photo sky's
+  saturated disk (BeschleunigerBallett's `kloofendal_43d_clear_puresky`: 4 degrees at `aces_tonemap_inverse(1)`, 7.24,
+  in a glow to 10) lit the scene a second time: a mirror facing it showed the disk, and since the path tracers'
+  bounce misses read the prefiltered map, they counted it twice too. `shaders/common/sun_mask.slang`'s `find_sun`
+  searches the environment's mips for the sun (the brightest 10-degree cell, centred on what outshines half of it,
+  a sun only if it outshines the ring at 12 degrees three times, all in a texel's dimmest channel: the photo's
+  glow saturates green and blue, and luminance put the search 7 degrees off its white disk), and `sun_masked`
+  brings every channel within 10 degrees down to that ring's. `ibl.slang` draws the environment twice around the
+  new `fs_find_sun`, whose 2x1 result the second `fs_equirect_to_cube` or `fs_skybox_to_cube` reads at binding 4
+  (`source_resolution.y` 1). It searches the sky, not the Sun's direction: that photo's sun sits 11 degrees from the
+  default Sun. A clamp would have cut the two sunlit clouds below it, which saturate alike. An `.hdr`'s sun is left
+  out the same way, and the gradient, a constant sky or a bright half keep everything. The drawn sky keeps its sun.
+  On that photo the search lands on the disk with a contrast of 12.5, a mirror facing it reads a luminance of 1.34
+  for 7.24, and an upward surface loses about a sixth of its sky light (the Rust bake's irradiance: 0.291 to 0.240).
+- **`IblEnvironment::read_sun_mask()`** reads the direction and ring a bake left out; `tests/ibl.rs` checks a photo's
+  disk, its glow, an HDR sun at 5e4 and four skies without one, and `traced_modes.rs` a mirror facing a photo's sun
+  in every mode. `a_small_sun_gives_the_same_irradiance_at_any_sub_texel_offset` became
+  `a_small_sun_is_found_and_left_out_at_any_sub_texel_offset`: the supersampling it guarded now decides whether the
+  search finds the sun.
+- **A vector kernel for `sun_mask`**: `tests/sun_mask_test.slang`'s sky is one radiance with one disk, so `find_sun`
+  and `sun_masked` meet `scripts/shader_model_sun.py` on both targets. `check-shared-shader-copies.py` fails a
+  private search, mask or `SunMask`.
+- **The ray tracer's miss returns black at depth 1**, which the sky pass draws over as before; `sky_with_sun` is
+  gone. `cs_ray_trace` falls from 6832 to 6782 SPIR-V instructions (6805 to 6755 fully inlined) and from 61028 to
+  60489 bytes of WGSL; `cs_path_trace` keeps its 7443 and 73549.
+
 ### Fixed (2026-11-26, the browser lane on a slow runner)
 
 - **`webgpu-demo-browser.js` bounds its page calls itself** (`CALL_TIMEOUT_MS`, 3 min) through the hub's new

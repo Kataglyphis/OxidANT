@@ -210,8 +210,8 @@ emission, as the C++ closest-hit shader (`raytrace.rchit.slang`) lights a hit. A
 material returns its albedo. The raster's ambient term joins unshadowed, as the C++ mode adds
 it (`trace_shading.slang`'s `traced_ambient`): the baked IBL maps the lights group binds with an
 environment, `analytic_ambient` without one, times the ambient strength and the occlusion map
-([`docs/shaders.md`](../../../docs/shaders.md)); the path tracer's bounces bring the sky's. A miss is left to the sky pass, drawn in the
-resolve's render pass against the traced depth: the cube map, the C++ navy with the skybox
+([`docs/shaders.md`](../../../docs/shaders.md)); the path tracer's bounces bring the sky's. A miss is left to the sky pass (the kernel
+writes black at depth 1), drawn in the resolve's render pass against the traced depth: the cube map, the C++ navy with the skybox
 switched off, or the procedural sky and its sun disk without a cube map, as raster draws it
 (the C++ ray-traced mode shows its skybox).
 
@@ -232,7 +232,8 @@ misses sees the drawn sky, `shaders/common/drawn_sky.slang` as the sky pass draw
 the navy with the skybox off, or the procedural sky and its sun disk. A bounce that misses gets the
 sky's light as the raster's ambient term does: the IBL's prefiltered map at its sharpest level, or
 the gradient without one, times the ambient strength (`light_dir_ambient.w`) and the environment's
-intensity, without the disk, which NEE brings.
+intensity, without the disk, which NEE brings: the bake leaves a photo's or an `.hdr`'s own sun out
+(`shaders/common/sun_mask.slang`).
 So the path tracer lights a scene as raster does, plus the bounces and the sky's occlusion. The
 environment is sampled only where a bounce happens to miss, with no importance sampling, so a small
 bright sun in an `.hdr` converges slowly.

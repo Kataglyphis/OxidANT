@@ -76,6 +76,8 @@ RULES = [
      "a path tracer step"),
     ("common/path_integrator.slang", r"\bstruct\s+(?:TracedSurface|TracedSegment|LightSample|PathDepth)\b",
      "the path tracer's surface, segment, light or depth record"),
+    ("common/sun_mask.slang", defines("find_sun|sun_masked"), "the IBL bake's sun search or mask"),
+    ("common/sun_mask.slang", r"\bstruct\s+SunMask\b", "the IBL bake's sun mask"),
 ]
 # A fullscreen_vs importer converts between uv and NDC through fullscreen.slang only.
 FULLSCREEN_COPIES = re.compile(

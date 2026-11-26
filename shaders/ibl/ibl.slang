@@ -1,6 +1,7 @@
 import aces;
 import constants;
 import fullscreen;
+import sun_mask;
 
 // The split-sum IBL precompute both renderers bake: ibl.wgsl is generated from this file, the C++ SPIR-V too.
 
@@ -13,12 +14,14 @@ static const uint MAX_EQUIRECT_TAPS = 16u;
 struct IblParams
 {
     float4 face_roughness_samples_mip; // x: face, y: roughness, z: samples, w: mip
-    float4 source_resolution;
+    float4 source_resolution; // x: source texels a side, y: 1 leaves out the sun fs_find_sun found
 };
 [vk::binding(0, 0)] ConstantBuffer<IblParams> params;
 [vk::binding(1, 0)] Texture2D<float4> srcEquirect;
 [vk::binding(2, 0)] TextureCube<float4> srcCube;
 [vk::binding(3, 0)] SamplerState srcSampler;
+// fs_find_sun's 2x1 result: the sun's direction, then the ring's radiance.
+[vk::binding(4, 0)] Texture2D<float4> sunMask;
 
 // fullscreen_vs's uv puts (0, 0) on the target's top-left texel on both targets, so faces and the LUT never mirror.
 [shader("vertex")]
@@ -82,10 +85,20 @@ float3 sample_equirect(float3 dir)
     return lerp(lerp(c00, c10, frac.x), lerp(c01, c11, frac.x), frac.y);
 }
 
+// The sun a bake leaves out; the first environment pass, which the search reads, leaves out none.
+SunMask baked_sun_mask()
+{
+    SunMask mask;
+    mask.dir = sunMask.Load(int3(0, 0, 0)).xyz * params.source_resolution.y;
+    mask.ring = sunMask.Load(int3(1, 0, 0)).rgb;
+    return mask;
+}
+
 [shader("fragment")]
 float4 fs_equirect_to_cube(FullscreenVsOut In) : SV_Target
 {
     uint face = uint(params.face_roughness_samples_mip.x);
+    SunMask mask = baked_sun_mask();
     float2 texel = fwidth(In.uv);
     // Taps under one panorama texel apart: a face-centre cube texel spans about 5 of them per 4 on average.
     uint taps = clamp(uint(ceil(0.5 * params.source_resolution.x * texel.x)), 1u, MAX_EQUIRECT_TAPS);
@@ -95,7 +108,8 @@ float4 fs_equirect_to_cube(FullscreenVsOut In) : SV_Target
         for (uint x = 0u; x < taps; x++)
         {
             float2 offset = (float2(float(x), float(y)) + 0.5) / float(taps) - 0.5;
-            sum += sample_equirect(cube_direction(face, In.uv + offset * texel));
+            float3 dir = cube_direction(face, In.uv + offset * texel);
+            sum += sun_masked(sample_equirect(dir), dir, mask);
         }
     }
     return float4(sum / float(taps * taps), 1.0);
@@ -106,6 +120,7 @@ float4 fs_equirect_to_cube(FullscreenVsOut In) : SV_Target
 float4 fs_skybox_to_cube(FullscreenVsOut In) : SV_Target
 {
     uint face = uint(params.face_roughness_samples_mip.x);
+    SunMask mask = baked_sun_mask();
     float2 texel = fwidth(In.uv);
     uint taps = clamp(uint(ceil(params.source_resolution.x * texel.x)), 1u, MAX_EQUIRECT_TAPS);
     float3 sum = float3(0.0);
@@ -114,11 +129,29 @@ float4 fs_skybox_to_cube(FullscreenVsOut In) : SV_Target
         for (uint x = 0u; x < taps; x++)
         {
             float2 offset = (float2(float(x), float(y)) + 0.5) / float(taps) - 0.5;
-            float3 display = srcCube.SampleLevel(srcSampler, cube_direction(face, In.uv + offset * texel), 0.0).rgb;
-            sum += aces_tonemap_inverse(display);
+            float3 dir = cube_direction(face, In.uv + offset * texel);
+            sum += sun_masked(aces_tonemap_inverse(srcCube.SampleLevel(srcSampler, dir, 0.0).rgb), dir, mask);
         }
     }
     return float4(sum / float(taps * taps), 1.0);
+}
+
+// The unmasked environment's mips as find_sun reads them.
+struct EnvironmentMips : ISkyRadiance
+{
+    float3 radiance(float3 dir, float lod)
+    {
+        return srcCube.SampleLevel(srcSampler, dir, lod).rgb;
+    }
+};
+
+// A 2x1 target: both texels run the one search, texel 0 keeps its direction and texel 1 its ring.
+[shader("fragment")]
+float4 fs_find_sun(FullscreenVsOut In) : SV_Target
+{
+    EnvironmentMips environment;
+    SunMask mask = find_sun(environment);
+    return In.uv.x < 0.5 ? float4(mask.dir, 0.0) : float4(mask.ring, 0.0);
 }
 
 // A texel sits on the corner of its four parents, so one bilinear tap is their box average.

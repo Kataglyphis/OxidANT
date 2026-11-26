@@ -169,4 +169,10 @@ t_assert_rc 1 python3 "$gate" "${tree}"
 python3 "$gate" "${tree}" > "${work}/out" 2>&1
 t_assert_grep "${work}/out" '^  pass/sky.slang:1: the drawn sky'
 
+pass bake 'float3 sun_masked(float3 radiance, float3 dir, SunMask mask)\n{\n    return radiance;\n}'
+t_case "a private IBL sun mask fails"
+t_assert_rc 1 python3 "$gate" "${tree}"
+python3 "$gate" "${tree}" > "${work}/out" 2>&1
+t_assert_grep "${work}/out" "^  pass/bake.slang:1: the IBL bake's sun search or mask"
+
 t_summary

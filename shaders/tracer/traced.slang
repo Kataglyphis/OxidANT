@@ -32,8 +32,9 @@ float4 ray_trace_pixel(uint2 pixel)
 {
     TraceRay ray = pixel_ray(float2(pixel) + 0.5);
     TraceHit hit = trace_closest(ray);
+    // At depth 1 the sky pass draws over a miss, against the traced depth.
     if (hit.instance == TRACE_NO_HIT)
-        return float4(sky_with_sun(ray.direction), 1.0);
+        return float4(0.0, 0.0, 0.0, 1.0);
     TracedSurface s = shade_hit(ray, hit);
     if (s.unlit)
         return float4(s.albedo, ndc_depth(ray, hit));

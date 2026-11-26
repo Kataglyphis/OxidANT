@@ -1820,11 +1820,6 @@ fn pixel_ray_0( pixel_2 : vec2<f32>) -> TraceRay_0
     return ray_10;
 }
 
-fn sky_with_sun_0( dir_4 : vec3<f32>) -> vec3<f32>
-{
-    return sky_gradient_0(dir_4) + sun_disk_0(dir_4, traceFrame_0.light_dir_0.xyz, traceFrame_0.light_dir_0.w);
-}
-
 fn ndc_depth_0( ray_11 : TraceRay_0,  hit_6 : TraceHit_0) -> f32
 {
     if((hit_6.instance_0) == u32(4294967295))
@@ -1877,7 +1872,7 @@ fn ray_trace_pixel_0( pixel_3 : vec2<u32>) -> vec4<f32>
     var hit_7 : TraceHit_0 = trace_closest_0(ray_12);
     if((hit_7.instance_0) == u32(4294967295))
     {
-        return vec4<f32>(sky_with_sun_0(ray_12.direction_1), 1.0f);
+        return vec4<f32>(0.0f, 0.0f, 0.0f, 1.0f);
     }
     var s_15 : TracedSurface_0 = shade_hit_0(ray_12, hit_7);
     if(s_15.unlit_0)

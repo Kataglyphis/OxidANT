@@ -74,7 +74,7 @@ uniform flag: the split sum over a renderer's baked irradiance, prefiltered map 
 `IAmbientMaps`, else `analytic_ambient`. `forward_lighting.slang`'s `ibl_ambient` and the tracer's
 `traced_ambient` call it over their own bindings and scale it by the ambient strength and the occlusion;
 BeschleunigerBallett's forward, deferred and closest-hit shaders call it over the maps its `AmbientMaps` bakes from the
-drawn skybox with `ibl.slang` (its `fs_skybox_to_cube` and `vs_vulkan_fullscreen` are SPIR-V for that bake), scaled by
+drawn skybox with `ibl.slang` (its `fs_skybox_to_cube`, `fs_find_sun` and `vs_vulkan_fullscreen` are SPIR-V for that bake), scaled by
 the Sun's ambient, after the sun's shadow. Both path tracers get the sky through their bounces' misses. The copy
 gate fails a second definition of either function.
 
@@ -136,6 +136,21 @@ punctual lights and furnace), with `next_event`, `sun_sample` and `punctual_samp
 ray tracers. A `PathDepth` probe takes the loop's first pass, so the clouds' depth ray needs no
 traversal of its own. `common/drawn_sky.slang` is the sky the sky pass draws, per direction, which
 both path tracers' camera misses read.
+
+`common/sun_mask.slang` leaves a sky's sun out of both renderers' IBL bake, so the directional Sun alone lights
+with it (BeschleunigerBallett's owner, 2026-11-25). `ibl.slang` draws the environment cube twice: `fs_find_sun`
+reads the first one's mips into a 2x1 target, the sun's direction and the ring around it, and the second
+`fs_equirect_to_cube` or `fs_skybox_to_cube` (`source_resolution.y` 1) brings every channel of a tap within 10
+degrees of that direction down to the ring's. `find_sun` takes the brightest cell of a 10-degree grid on the
+8-texel mip, where a sunlit cloud stays below the sun's glow, centres it twice on what outshines half of it on the
+32-texel mip, and averages 16 taps at 12 degrees; a disk that does not outshine that ring three times is no sun
+(BeschleunigerBallett's photo sky's does 12 times, the gradient's horizon 1.3). Brightness is a texel's dimmest
+channel: a sun outshines its sky in all three, and below that photo's white disk a glow saturates green and blue,
+whose luminance pulled the search 7 degrees off the disk. It searches the sky, not the Sun's direction: that
+photo's sun sits 11 degrees from the default Sun, and the Sun moves. A clamp would cut the two sunlit clouds below
+it as well, which saturate alike. An `.hdr`'s sun, far brighter, goes the same way, and so
+would any patch within 10 degrees that outshines its ring three times, a window in an interior panorama say. The
+drawn sky keeps its sun: the sky pass, the path tracers' camera misses and the clouds' ambient never read the bake.
 
 `common/path_estimator.slang` is both path tracers' estimator, ported from the
 C++ `path_tracing.slang`: the PCG RNG and its per-pixel seed, Russian roulette,
@@ -207,9 +222,9 @@ checks this on the GPU and stays enabled.
 `tests/<module>_test.slang` runs every public function of `common/<module>.slang`
 once per case of `tests/vectors/<module>.json`: `brdf`, `noise`, `path_estimator`, `hdr_safe`,
 `aces`, `fullscreen`, `camera_ray`, `ambient`, `gltf_material`, `cascade_visibility`, `punctual_shadow`,
-`surface_lighting`, `gbuffer`, `cloud_upsample`, `drawn_sky` and `path_integrator` today. A generic's interface is a kernel's own struct, a
+`surface_lighting`, `gbuffer`, `cloud_upsample`, `drawn_sky`, `path_integrator` and `sun_mask` today. A generic's interface is a kernel's own struct, a
 texture-free stand-in whose result both targets share: `path_integrator`'s is a floor under a sky, whose paths
-end after one bounce. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
+end after one bounce, and `sun_mask`'s a sky with one disk, alike at every mip. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
 the infinities, which JSON cannot spell; `fullscreen`'s uv differs per target, so its kernel writes
 only what both targets share: the positions, x, each mapping's round trip through its inverse, and its
 distance from `tests/clip_y.slang`'s own top row per target, so a swapped `__target_switch` branch fails;

@@ -11,8 +11,9 @@ mkdir -p "${work}/scripts" "${work}/shaders/tests/vectors" "${work}/shaders/comm
 fresh() {
     cp "${repo}/scripts/generate-shader-vectors.py" "${repo}/scripts/shader_model.py" \
         "${repo}/scripts/shader_model_lighting.py" "${repo}/scripts/shader_model_path.py" \
-        "${repo}/scripts/shader_vector_format.py" "${repo}/scripts/shader_vectors_lighting.py" \
-        "${repo}/scripts/shader_vectors_path.py" "${work}/scripts/"
+        "${repo}/scripts/shader_model_sun.py" "${repo}/scripts/shader_vector_format.py" \
+        "${repo}/scripts/shader_vectors_lighting.py" "${repo}/scripts/shader_vectors_path.py" \
+        "${repo}/scripts/shader_vectors_sun.py" "${work}/scripts/"
     cp "${repo}/shaders/common/brdf_energy_fit.slang" "${work}/shaders/common/"
     cp "${repo}"/shaders/tests/vectors/*.json "${work}/shaders/tests/vectors/"
 }

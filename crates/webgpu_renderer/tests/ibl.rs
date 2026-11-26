@@ -527,16 +527,19 @@ fn the_brdf_table_is_baked_once_and_shared_across_environments() {
     );
 }
 
-/// A small sun moved by a quarter cube texel must give the same irradiance: the bake must not alias it.
+/// A small sun moved by a quarter cube texel is found every time: a bake that aliased it would lose it at some offsets,
+/// and the irradiance towards it would keep the sun the directional light already supplies.
 #[test]
-fn a_small_sun_gives_the_same_irradiance_at_any_sub_texel_offset() {
+fn a_small_sun_is_found_and_left_out_at_any_sub_texel_offset() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     // Four panorama texels per cube texel; the panorama's centre is +X, the irradiance face 0.
     let (width, height) = (2048u32, 1024u32);
-    let irradiance_toward_the_sun = |shift: u32| -> f32 {
-        let mut rgba32f = vec![0.0f32; (width * height * 4) as usize];
+    let sky = 0.1f32;
+    let mut irradiance = Vec::new();
+    for shift in 0..4u32 {
+        let mut rgba32f = vec![sky; (width * height * 4) as usize];
         for v in height / 2 - 1..height / 2 + 1 {
             for u in width / 2 + shift..width / 2 + shift + 2 {
                 let i = ((v * width + u) * 4) as usize;
@@ -544,16 +547,297 @@ fn a_small_sun_gives_the_same_irradiance_at_any_sub_texel_offset() {
             }
         }
         let image = EquirectImage::new(width, height, rgba32f).expect("well formed");
-        let face = IblEnvironment::bake(&gpu, &image).read_irradiance_face(&gpu, 0);
+        let environment = IblEnvironment::bake(&gpu, &image);
+        let mask = environment.read_sun_mask(&gpu);
+        let off = angle_degrees(mask.direction, [1.0, 0.0, 0.0]);
+        // A point sun is found to within a 2.8-degree texel of the search's finer mip, well inside the 10-degree disk.
+        assert!(
+            off < 2.5,
+            "shift {shift}: the search put the sun at {:?}, {off} degrees off +X",
+            mask.direction
+        );
+        let face = environment.read_irradiance_face(&gpu, 0);
         let centre = IRRADIANCE_SIZE / 2;
-        face[(centre * IRRADIANCE_SIZE + centre) as usize][0]
-    };
-    let values: Vec<f32> = (0..4).map(irradiance_toward_the_sun).collect();
-    let low = values.iter().copied().fold(f32::INFINITY, f32::min);
-    let high = values.iter().copied().fold(0.0, f32::max);
-    eprintln!("sun irradiance per quarter-texel shift: {values:?}");
+        irradiance.push(face[(centre * IRRADIANCE_SIZE + centre) as usize][0]);
+    }
+    eprintln!("irradiance towards the left-out sun per quarter-texel shift: {irradiance:?}");
+    // The sun alone, baked, adds about 0.12 to the sky's 0.1.
     assert!(
-        high > 0.0 && (high - low) < 0.1 * high,
-        "a 2x2-texel sun shifted by quarter cube texels gives irradiance {values:?}: the bake aliases it"
+        irradiance.iter().all(|&e| (e - sky).abs() < 0.01 * sky),
+        "the sky's {sky} with the sun left out, got {irradiance:?}"
     );
+}
+
+/// The WebGPU cube face `dir` hits and its row-major texel on a `size`-texel face, as `ibl.rs`'s `cube_face_st`.
+fn cube_texel(dir: [f32; 3], size: u32) -> (u32, usize) {
+    let [x, y, z] = dir;
+    let (face, s, t, major) = if x.abs() >= y.abs() && x.abs() >= z.abs() {
+        if x > 0.0 {
+            (0, -z, -y, x.abs())
+        } else {
+            (1, z, -y, x.abs())
+        }
+    } else if y.abs() >= z.abs() {
+        if y > 0.0 {
+            (2, x, z, y.abs())
+        } else {
+            (3, x, -z, y.abs())
+        }
+    } else if z > 0.0 {
+        (4, x, -y, z.abs())
+    } else {
+        (5, -x, -y, z.abs())
+    };
+    let texel = |c: f32| ((0.5 * (c / major + 1.0) * size as f32) as u32).min(size - 1);
+    (face, (texel(t) * size + texel(s)) as usize)
+}
+
+fn unit(v: [f32; 3]) -> [f32; 3] {
+    let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    v.map(|c| c / length)
+}
+
+fn angle_degrees(a: [f32; 3], b: [f32; 3]) -> f32 {
+    let (a, b) = (unit(a), unit(b));
+    (a[0] * b[0] + a[1] * b[1] + a[2] * b[2])
+        .clamp(-1.0, 1.0)
+        .acos()
+        .to_degrees()
+}
+
+/// BeschleunigerBallett's photo sky's sun, measured from its faces: the centroid of their saturated texels.
+const PHOTO_SUN: [f32; 3] = [0.6248, 0.6769, 0.3891];
+/// What `aces_tonemap_inverse` makes of a saturated photo texel: the radiance of the photo's sun disk.
+const SATURATED: f32 = 7.242;
+
+/// `radiance` along each texel's direction, panoramised as `from_cubemap` does.
+fn panorama((width, height): (u32, u32), radiance: impl Fn([f32; 3]) -> [f32; 3]) -> EquirectImage {
+    let mut rgba32f = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        let latitude = (0.5 - (y as f32 + 0.5) / height as f32) * std::f32::consts::PI;
+        for x in 0..width {
+            let longitude = ((x as f32 + 0.5) / width as f32 - 0.5) * std::f32::consts::TAU;
+            let [r, g, b] = radiance([
+                latitude.cos() * longitude.cos(),
+                latitude.sin(),
+                latitude.cos() * longitude.sin(),
+            ]);
+            rgba32f.extend_from_slice(&[r, g, b, 1.0]);
+        }
+    }
+    EquirectImage::new(width, height, rgba32f).expect("well formed")
+}
+
+/// A sky of one radiance with a disk of `disk` within `radius_deg` of `sun`.
+fn sky_with_disk(
+    size: (u32, u32),
+    sky: [f32; 3],
+    (sun, radius_deg): ([f32; 3], f32),
+    disk: f32,
+) -> EquirectImage {
+    panorama(size, |dir| {
+        if angle_degrees(dir, sun) < radius_deg {
+            [disk; 3]
+        } else {
+            sky
+        }
+    })
+}
+
+/// The worst relative deviation from `sky` over every texel of every face, per map.
+fn worst_off(faces: impl Iterator<Item = Vec<[f32; 3]>>, sky: [f32; 3]) -> f32 {
+    faces
+        .flatten()
+        .flat_map(|texel| (0..3).map(move |c| (texel[c] - sky[c]).abs() / sky[c]))
+        .fold(0.0, f32::max)
+}
+
+/// The photo sky's saturated sun lights the scene through the directional Sun only: every map the bake writes is the
+/// sky around the disk, while 4 degrees of 7.2 would light a mirror facing it 7 times as bright.
+#[test]
+fn a_photo_skys_saturated_sun_is_left_out_of_every_map() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let sky = [0.5f32, 0.7, 1.0];
+    let sun = unit(PHOTO_SUN);
+    let image = sky_with_disk((256, 128), sky, (sun, 4.0), SATURATED);
+    assert_eq!(image.max_radiance(), SATURATED);
+    let environment = IblEnvironment::bake(&gpu, &image);
+
+    let mask = environment.read_sun_mask(&gpu);
+    let off = angle_degrees(mask.direction, sun);
+    eprintln!(
+        "photo sun: found {:?}, {off:.2} degrees off, ring {:?}",
+        mask.direction, mask.ring
+    );
+    assert!(off < 1.5, "the search put the sun {off} degrees off");
+    for c in 0..3 {
+        assert!(
+            (mask.ring[c] - sky[c]).abs() < 0.01 * sky[c],
+            "the ring {:?} is not the sky {sky:?}",
+            mask.ring
+        );
+    }
+
+    let environment_off = worst_off(
+        (0..6).map(|f| environment.read_environment_face(&gpu, f, 0)),
+        sky,
+    );
+    let irradiance_off = worst_off(
+        (0..6).map(|f| environment.read_irradiance_face(&gpu, f)),
+        sky,
+    );
+    let (face, texel) = cube_texel(sun, PREFILTER_SIZE);
+    let mirror = environment.read_prefiltered_face(&gpu, face, 0)[texel];
+    let (face, texel) = cube_texel(sun, PREFILTER_SIZE >> 1);
+    let glossy = environment.read_prefiltered_face(&gpu, face, 1)[texel];
+    eprintln!(
+        "worst off the sky: environment {environment_off:.4}, irradiance {irradiance_off:.4}; \
+         prefiltered towards the sun: mip 0 {mirror:?}, mip 1 {glossy:?}"
+    );
+    assert!(
+        environment_off < 0.01,
+        "the environment keeps the sun: {environment_off}"
+    );
+    assert!(
+        irradiance_off < 0.002,
+        "the irradiance keeps the sun: {irradiance_off}"
+    );
+    for c in 0..3 {
+        assert!(
+            (mirror[c] - sky[c]).abs() < 0.01 * sky[c],
+            "a mirror sees {mirror:?}"
+        );
+        assert!(
+            (glossy[c] - sky[c]).abs() < 0.01 * sky[c],
+            "a glossy lobe sees {glossy:?}"
+        );
+    }
+}
+
+/// Below the photo sky's white disk a glow saturates green and blue, nearly as bright in luminance (5.9 against
+/// 7.2): the search keys on the dimmest channel, so it centres on the disk, and the glow past 10 degrees stays.
+#[test]
+fn a_photo_skys_glow_does_not_pull_the_search_off_its_sun() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let sky = [0.5f32, 0.7, 1.0];
+    let glow = [0.9f32, SATURATED, SATURATED];
+    let sun = unit(PHOTO_SUN);
+    let image = panorama((256, 128), |dir| match angle_degrees(dir, sun) {
+        a if a < 4.0 => [SATURATED; 3],
+        a if a < 13.0 && dir[1] < sun[1] => glow,
+        _ => sky,
+    });
+    let environment = IblEnvironment::bake(&gpu, &image);
+    let mask = environment.read_sun_mask(&gpu);
+    let off = angle_degrees(mask.direction, sun);
+    eprintln!(
+        "photo sun over its glow: found {:?}, {off:.2} degrees off, ring {:?}",
+        mask.direction, mask.ring
+    );
+    assert!(
+        off < 1.5,
+        "the glow pulled the search {off} degrees off the sun"
+    );
+
+    let (face, texel) = cube_texel(sun, PREFILTER_SIZE);
+    let mirror = environment.read_prefiltered_face(&gpu, face, 0)[texel];
+    // 11.5 degrees below the sun, in the glow and outside the disk the bake replaces.
+    let below = {
+        let a = 11.5f32.to_radians();
+        let level = unit([sun[0], 0.0, sun[2]]);
+        let elevation = sun[1].asin() - a;
+        [
+            level[0] * elevation.cos(),
+            elevation.sin(),
+            level[2] * elevation.cos(),
+        ]
+    };
+    let (face, texel) = cube_texel(below, PREFILTER_SIZE);
+    let kept = environment.read_environment_face(&gpu, face, 0)[texel];
+    eprintln!("a mirror facing the sun sees {mirror:?}; the glow below it keeps {kept:?}");
+    assert!(
+        mirror[0] < 0.3 * SATURATED,
+        "a mirror facing the sun sees its disk: {mirror:?}"
+    );
+    assert!(
+        kept[1] > 0.9 * SATURATED,
+        "the glow outside the disk lost its light: {kept:?}"
+    );
+}
+
+/// A real HDR's sun outshines a photo's ten thousand times; the bake leaves it out the same way and stays finite.
+#[test]
+fn an_hdr_sun_far_brighter_than_a_photos_is_left_out_too() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let sky = [1.0f32, 1.0, 1.0];
+    let sun = unit(PHOTO_SUN);
+    // The real sun's quarter degree in a 2K panorama: a few texels at 5e4.
+    let image = sky_with_disk((2048, 1024), sky, (sun, 0.27), 5.0e4);
+    let environment = IblEnvironment::bake(&gpu, &image);
+    let mask = environment.read_sun_mask(&gpu);
+    let off = angle_degrees(mask.direction, sun);
+    eprintln!(
+        "HDR sun: found {:?}, {off:.2} degrees off, ring {:?}",
+        mask.direction, mask.ring
+    );
+    assert!(off < 2.5, "the search put the sun {off} degrees off");
+    let environment_off = worst_off(
+        (0..6).map(|f| environment.read_environment_face(&gpu, f, 0)),
+        sky,
+    );
+    let irradiance_off = worst_off(
+        (0..6).map(|f| environment.read_irradiance_face(&gpu, f)),
+        sky,
+    );
+    let (face, texel) = cube_texel(sun, PREFILTER_SIZE);
+    let mirror = environment.read_prefiltered_face(&gpu, face, 0)[texel];
+    eprintln!("worst off the sky: environment {environment_off:.4}, irradiance {irradiance_off:.4}; mirror {mirror:?}");
+    assert!(
+        environment_off < 0.01,
+        "the environment keeps the sun: {environment_off}"
+    );
+    assert!(
+        irradiance_off < 0.002,
+        "the irradiance keeps the sun: {irradiance_off}"
+    );
+    assert!(
+        mirror.iter().all(|c| (c - 1.0).abs() < 0.01),
+        "a mirror sees {mirror:?}"
+    );
+}
+
+/// A sky without a sun leaves nothing out: the gradient's horizon, a constant, a bright half and a 25-degree patch.
+#[test]
+fn a_sky_without_a_sun_leaves_nothing_out() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let skies = [
+        ("the gradient", EquirectImage::sky(256, 128)),
+        (
+            "a constant",
+            EquirectImage::constant(64, 32, [0.4, 0.4, 0.4]),
+        ),
+        ("a bright upper half", split_environment(128, 64, 4.0, 0.0)),
+        (
+            "a bright patch of 25 degrees",
+            sky_with_disk(
+                (256, 128),
+                [0.5, 0.7, 1.0],
+                (unit(PHOTO_SUN), 25.0),
+                SATURATED,
+            ),
+        ),
+    ];
+    for (name, image) in &skies {
+        let mask = IblEnvironment::bake(&gpu, image).read_sun_mask(&gpu);
+        eprintln!("{name}: {mask:?}");
+        assert_eq!(mask.direction, [0.0; 3], "{name}: the bake left a sun out");
+    }
 }
