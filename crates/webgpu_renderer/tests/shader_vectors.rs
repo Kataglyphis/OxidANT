@@ -15,7 +15,7 @@ struct Kernel {
     slang: &'static str,
 }
 
-const KERNELS: [Kernel; 17] = [
+const KERNELS: [Kernel; 19] = [
     Kernel {
         module: "brdf",
         vectors: include_str!("../../../shaders/tests/vectors/brdf.json"),
@@ -117,6 +117,18 @@ const KERNELS: [Kernel; 17] = [
         vectors: include_str!("../../../shaders/tests/vectors/sun_mask.json"),
         wgsl: include_str!("shaders/sun_mask_test.wgsl"),
         slang: include_str!("../../../shaders/common/sun_mask.slang"),
+    },
+    Kernel {
+        module: "exposure",
+        vectors: include_str!("../../../shaders/tests/vectors/exposure.json"),
+        wgsl: include_str!("shaders/exposure_test.wgsl"),
+        slang: include_str!("../../../shaders/common/exposure.slang"),
+    },
+    Kernel {
+        module: "bloom_filter",
+        vectors: include_str!("../../../shaders/tests/vectors/bloom_filter.json"),
+        wgsl: include_str!("shaders/bloom_filter_test.wgsl"),
+        slang: include_str!("../../../shaders/common/bloom_filter.slang"),
     },
 ];
 
@@ -425,6 +437,16 @@ fn path_integrator_kernel_meets_its_vectors() {
 #[test]
 fn sun_mask_kernel_meets_its_vectors() {
     check(&KERNELS[16]);
+}
+
+#[test]
+fn exposure_kernel_meets_its_vectors() {
+    check(&KERNELS[17]);
+}
+
+#[test]
+fn bloom_filter_kernel_meets_its_vectors() {
+    check(&KERNELS[18]);
 }
 
 /// The names of the functions `slang` defines at file scope, overloads once.

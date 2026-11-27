@@ -16,7 +16,7 @@ pub const CLEAR_WORKGROUP: u32 = 64;
 /// Middle grey, the target the average scene luminance is exposed onto.
 pub const EXPOSURE_KEY: f32 = 0.18;
 
-/// Luminance at or below which a sample counts as black; shared with `histogram.slang`.
+/// Luminance at or below which a sample counts as black; shared with `exposure.slang`.
 pub const BLACK_THRESHOLD: f32 = 1e-6;
 
 /// Which histogram bin a linear luminance falls into.

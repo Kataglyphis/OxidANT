@@ -16,8 +16,12 @@ void surface_lighting_test_main(uint3 tid : SV_DispatchThreadID)
     float3 punctual = inputs.f32x3();
     float3 ambient = inputs.f32x3();
     float3 emissive = inputs.f32x3();
+    float occlusion = inputs.f32();
+    float occlusionStrength = inputs.f32();
+    uint blended = inputs.u32();
 
     VectorOutputs outputs = vector_outputs(tid.x);
     outputs.put(surface_f0(albedo, metallic));
     outputs.put(surface_lighting(sun, visibility, strength, punctual, ambient, emissive));
+    outputs.put(screen_space_occlusion(occlusion, occlusionStrength, blended != 0u));
 }

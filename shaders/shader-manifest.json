@@ -128,7 +128,7 @@
       ]
     },
     {
-      "_comment": "Rust/WebGPU bloom (WGSL emit).",
+      "_comment": "Bloom in both renderers: WGSL for Rust/WebGPU, the fragment entries' SPIR-V for BeschleunigerBallett behind its own vertex.",
       "file": "bloom/bloom.slang",
       "entry": "vs_main",
       "stage": "vertex",
@@ -141,7 +141,8 @@
       "entry": "fs_brightpass",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -149,7 +150,8 @@
       "entry": "fs_blur_h",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -157,11 +159,12 @@
       "entry": "fs_blur_v",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
-      "_comment": "Rust/WebGPU SSAO (WGSL emit).",
+      "_comment": "SSAO in both renderers: WGSL for Rust/WebGPU, the fragment entries' SPIR-V for BeschleunigerBallett behind its own vertex.",
       "file": "ssao/ssao.slang",
       "entry": "vs_main",
       "stage": "vertex",
@@ -174,7 +177,8 @@
       "entry": "fs_ssao",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -182,7 +186,8 @@
       "entry": "fs_blur",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -273,12 +278,13 @@
       ]
     },
     {
-      "_comment": "Rust/WebGPU auto-exposure (WGSL emit): Atomic<uint> emits atomic<u32> for both the bins and the workgroup copy.",
+      "_comment": "Auto exposure in both renderers: WGSL for Rust/WebGPU, SPIR-V for BeschleunigerBallett. Atomic<uint> emits atomic<u32> for both the bins and the workgroup copy.",
       "file": "histogram/histogram.slang",
       "entry": "cs_build_histogram",
       "stage": "compute",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -286,7 +292,8 @@
       "entry": "cs_clear_histogram",
       "stage": "compute",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -294,7 +301,8 @@
       "entry": "cs_reduce_exposure",
       "stage": "compute",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -581,6 +589,24 @@
       ]
     },
     {
+      "file": "tests/exposure_test.slang",
+      "entry": "exposure_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
+      "file": "tests/bloom_filter_test.slang",
+      "entry": "bloom_filter_test_main",
+      "stage": "compute",
+      "targets": [
+        "spirv",
+        "wgsl"
+      ]
+    },
+    {
       "_comment": "CI-only SPIR-V guard of the constant-only shared modules the C++ shaders import.",
       "file": "tests/constants_test.slang",
       "entry": "constants_test_main",
@@ -819,6 +845,16 @@
     {
       "src": "tests/cloud_upsample_test.slang",
       "out": "cloud_upsample_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/exposure_test.slang",
+      "out": "exposure_test.wgsl",
+      "dst": "crates/webgpu_renderer/tests/shaders"
+    },
+    {
+      "src": "tests/bloom_filter_test.slang",
+      "out": "bloom_filter_test.wgsl",
       "dst": "crates/webgpu_renderer/tests/shaders"
     }
   ],

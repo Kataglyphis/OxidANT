@@ -40,8 +40,10 @@ pub enum Resource {
     Bloom,
     /// Bloom's horizontal blur, which the vertical one reads back into `Bloom`.
     BloomScratch,
-    /// Blurred ambient occlusion factor, at half resolution.
+    /// Blurred ambient occlusion factor, at half resolution, which the scene passes' ambient light takes.
     Ambient,
+    /// The forward path's single-sample depth prepass, which SSAO reads before the forward pass shades.
+    PrepassDepth,
     /// SSAO's occlusion before its blur into `Ambient`.
     AmbientRaw,
     /// Luminance histogram bins.

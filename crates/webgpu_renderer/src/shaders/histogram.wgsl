@@ -12,7 +12,7 @@ struct ExposureParams_std140_0
 
 var<workgroup> localHist_0 : array<atomic<u32>, i32(64)>;
 
-fn luminance_0( color_0 : vec3<f32>) -> f32
+fn exposure_luminance_0( color_0 : vec3<f32>) -> f32
 {
     return dot(color_0, vec3<f32>(0.2125999927520752f, 0.71520000696182251f, 0.07220000028610229f));
 }
@@ -51,7 +51,7 @@ fn cs_build_histogram(@builtin(global_invocation_id) id_0 : vec3<u32>, @builtin(
     if(_S2)
     {
         var _S3 : vec3<i32> = vec3<i32>(vec2<i32>(id_0.xy), i32(0));
-        var _S4 : u32 = atomicAdd(&(localHist_0[histogram_bin_0(luminance_0((textureLoad((hdrTex_0), ((_S3)).xy, ((_S3)).z)).xyz))]), u32(1));
+        var _S4 : u32 = atomicAdd(&(localHist_0[histogram_bin_0(exposure_luminance_0((textureLoad((hdrTex_0), ((_S3)).xy, ((_S3)).z)).xyz))]), u32(1));
     }
     workgroupBarrier();
     if(_S1)
@@ -86,17 +86,53 @@ fn bin_luminance_0( bin_0 : u32) -> f32
     return exp2(-10.0f + (f32(bin_0 - u32(1)) + 0.5f) / 62.0f * 14.0f);
 }
 
+fn exposure_target_ev_0( log2Mean_0 : f32) -> f32
+{
+    return log2(0.18000000715255737f / exp2(log2Mean_0));
+}
+
 fn is_finite_0( x_0 : f32) -> bool
 {
     return (((bitcast<u32>((x_0))) & (u32(2139095040)))) != u32(2139095040);
+}
+
+fn adapt_exposure_ev_0( currentEv_0 : f32,  targetEv_0 : f32,  dt_0 : f32,  speed_0 : f32) -> f32
+{
+    var _S7 : bool;
+    if(is_finite_0(currentEv_0))
+    {
+        _S7 = (abs(currentEv_0)) < 1.00000001504746622e+30f;
+    }
+    else
+    {
+        _S7 = false;
+    }
+    var current_0 : f32;
+    if(_S7)
+    {
+        current_0 = currentEv_0;
+    }
+    else
+    {
+        current_0 = targetEv_0;
+    }
+    if(dt_0 <= 0.0f)
+    {
+        return current_0;
+    }
+    if(speed_0 <= 0.0f)
+    {
+        return targetEv_0;
+    }
+    return current_0 + (targetEv_0 - current_0) * clamp(1.0f - exp(- dt_0 * speed_0), 0.0f, 1.0f);
 }
 
 @compute
 @workgroup_size(1, 1, 1)
 fn cs_reduce_exposure()
 {
-    var dt_0 : f32 = exposureParams_0.values_0.x;
-    var speed_0 : f32 = exposureParams_0.values_0.y;
+    var dt_1 : f32 = exposureParams_0.values_0.x;
+    var speed_1 : f32 = exposureParams_0.values_0.y;
     if((exposureParams_0.values_0.z) < 0.5f)
     {
         exposureState_0[i32(0)] = exposureParams_0.values_0.w;
@@ -115,8 +151,8 @@ fn cs_reduce_exposure()
         {
             break;
         }
-        var _S7 : u32 = atomicLoad(&(histogram_0[bin_1]));
-        var count_1 : f32 = f32(_S7);
+        var _S8 : u32 = atomicLoad(&(histogram_0[bin_1]));
+        var count_1 : f32 = f32(_S8);
         if(count_1 > 0.0f)
         {
             var counted_1 : f32 = counted_0 + count_1;
@@ -125,48 +161,15 @@ fn cs_reduce_exposure()
         }
         bin_1 = bin_1 + u32(1);
     }
-    var currentEv_0 : f32 = exposureState_0[i32(0)];
-    var currentOk_0 : bool;
-    if(is_finite_0(exposureState_0[i32(0)]))
-    {
-        currentOk_0 = (abs(currentEv_0)) < 1.00000001504746622e+30f;
-    }
-    else
-    {
-        currentOk_0 = false;
-    }
+    var currentEv_1 : f32 = exposureState_0[i32(0)];
     if(counted_0 <= 0.0f)
     {
-        exposureState_0[i32(1)] = currentEv_0;
+        exposureState_0[i32(1)] = currentEv_1;
         return;
     }
-    var targetEv_0 : f32 = log2(0.18000000715255737f / exp2(weightedLogSum_0 / counted_0));
-    var safeCurrentEv_0 : f32;
-    if(currentOk_0)
-    {
-        safeCurrentEv_0 = currentEv_0;
-    }
-    else
-    {
-        safeCurrentEv_0 = targetEv_0;
-    }
-    if(dt_0 <= 0.0f)
-    {
-        exposureState_0[i32(0)] = safeCurrentEv_0;
-        exposureState_0[i32(1)] = targetEv_0;
-        return;
-    }
-    var adapted_0 : f32;
-    if(speed_0 > 0.0f)
-    {
-        adapted_0 = safeCurrentEv_0 + (targetEv_0 - safeCurrentEv_0) * clamp(1.0f - exp(- dt_0 * speed_0), 0.0f, 1.0f);
-    }
-    else
-    {
-        adapted_0 = targetEv_0;
-    }
-    exposureState_0[i32(0)] = adapted_0;
-    exposureState_0[i32(1)] = targetEv_0;
+    var targetEv_1 : f32 = exposure_target_ev_0(weightedLogSum_0 / counted_0);
+    exposureState_0[i32(0)] = adapt_exposure_ev_0(currentEv_1, targetEv_1, dt_1, speed_1);
+    exposureState_0[i32(1)] = targetEv_1;
     return;
 }
 

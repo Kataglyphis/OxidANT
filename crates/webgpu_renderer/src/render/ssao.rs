@@ -1,4 +1,4 @@
-//! Half-resolution depth-only SSAO with a 3x3 blur into targets the frame graph's pool backs; the tonemap multiplies it into HDR.
+//! Half-resolution depth-only SSAO with a 3x3 blur into targets the frame graph's pool backs; the lit passes' ambient takes it.
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
@@ -51,7 +51,7 @@ impl SsaoPipelines {
     }
 }
 
-/// What SSAO reads and writes this frame: the scene depth, the raw occlusion and the blurred one the tonemap samples.
+/// What SSAO reads and writes this frame: a depth, the raw occlusion and the blurred one the lit passes sample.
 #[derive(Clone, Copy)]
 pub struct SsaoTargets<'a> {
     pub depth: &'a wgpu::TextureView,
@@ -170,8 +170,13 @@ impl SsaoPass {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
-    /// Records the occlusion and its blur into the bound targets; nothing while none are bound.
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, scope: PassScope<'_>) {
+    /// Records the occlusion and its blur, sub-passes `first` and `first + 1` of `count`; nothing while unbound.
+    pub fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        scope: PassScope<'_>,
+        (first, count): (usize, usize),
+    ) {
         let Some(bound) = self.bound.as_ref() else {
             log::error!("SSAO ran on a frame that backs no AO targets");
             return;
@@ -180,7 +185,6 @@ impl SsaoPass {
             (&self.pipelines.ssao, &bound.ssao, &bound.raw),
             (&self.pipelines.blur, &bound.blur, &bound.blurred),
         ];
-        let step_count = steps.len();
         for (step, (pipeline, bind_group, target)) in steps.into_iter().enumerate() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ssao_pass"),
@@ -194,7 +198,7 @@ impl SsaoPass {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: scope.render_writes(step, step_count),
+                timestamp_writes: scope.render_writes(first + step, count),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

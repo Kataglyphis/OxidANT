@@ -1,4 +1,4 @@
-//! The post chain after the forward pass: bloom, SSAO, histogram exposure and the tonemap.
+//! The post chain: SSAO before the pass that lights the scene, then bloom, histogram exposure and the tonemap.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -10,7 +10,7 @@ use crate::render::bloom::{BloomInputs, BloomPass, BloomTargets};
 use crate::render::gpu_timing::TimedPass;
 use crate::render::graph::Resource;
 use crate::render::histogram::{ExposureSettings, HistogramPass};
-use crate::render::ssao::{SsaoPass, SsaoTargets, AO_FORMAT};
+use crate::render::ssao::{SsaoPass, SsaoTargets};
 use crate::render::tonemap::TonemapPass;
 
 pub(super) struct PostChain {
@@ -19,8 +19,6 @@ pub(super) struct PostChain {
     pub(super) histogram: HistogramPass,
     /// What the tonemap samples for bloom on a frame without it, whose bloom strength is zero.
     no_bloom: wgpu::TextureView,
-    /// What the tonemap samples for AO on a frame without SSAO, whose AO strength is zero.
-    no_ambient: wgpu::TextureView,
     /// Bloom and SSAO must rebind to the current targets before the next frame.
     pub(super) rebuild_needed: bool,
     /// Names the current HDR, bloom, AO and exposure set; unique across renderers.
@@ -41,7 +39,6 @@ impl PostChain {
             ssao: SsaoPass::new(gpu),
             histogram: HistogramPass::new(gpu),
             no_bloom: placeholder(&gpu.device, "bloom_placeholder", HDR_FORMAT),
-            no_ambient: placeholder(&gpu.device, "ssao_placeholder", AO_FORMAT),
             rebuild_needed: true,
             inputs_id: 0,
         }
@@ -65,20 +62,28 @@ impl ForwardRenderer {
             .zip(targets.get(Resource::BloomScratch))
             .map(|(output, scratch)| BloomTargets { output, scratch });
         post.bloom.bind(&gpu.device, inputs, bloom);
+        // The forward path's prepass depth, else the G-buffer pass's: either way the depth before any lighting.
+        let depth = targets
+            .get(Resource::PrepassDepth)
+            .unwrap_or_else(|| targets.view(Resource::Depth));
         let ssao = targets
             .get(Resource::AmbientRaw)
             .zip(targets.get(Resource::Ambient))
             .map(|(raw, blurred)| SsaoTargets {
-                depth: targets.view(Resource::Depth),
+                depth,
                 raw,
                 blurred,
             });
         post.ssao.bind(&gpu.device, ssao);
+        let occlusion = targets.get(Resource::Ambient);
+        self.frame.bind_occlusion(&gpu.device, occlusion);
+        // The cascades' bundles bind group 2, which now names another texture.
+        self.shadow.caster_bundles = None;
         post.inputs_id = next_inputs_id();
         post.rebuild_needed = false;
     }
 
-    /// Binds `tonemap` to the current HDR, bloom and AO outputs unless it samples them already, and to the reloaded WGSL.
+    /// Binds `tonemap` to the current HDR and bloom outputs unless it samples them already, and to the reloaded WGSL.
     /// Per pass, not per rebuild: every pass a host renders with must follow a rebuild.
     pub(super) fn bind_tonemap_inputs(&self, gpu: &GpuContext, tonemap: &mut TonemapPass) {
         tonemap.use_shaders(gpu, &self.tonemap_shaders);
@@ -90,24 +95,24 @@ impl ForwardRenderer {
             gpu,
             self.targets.view(Resource::HdrColor),
             self.targets.get(Resource::Bloom).unwrap_or(&post.no_bloom),
-            self.targets
-                .get(Resource::Ambient)
-                .unwrap_or(&post.no_ambient),
             post.histogram.exposure_buffer(),
             self.cloud_view(),
         );
         tonemap.bound_inputs = Some(post.inputs_id);
     }
 
-    /// This frame's bloom and SSAO mix, and the exposure mode the reduce pass applies.
-    pub(super) fn write_post_settings(&self, gpu: &GpuContext, tonemap: &TonemapPass) {
-        // A traced frame has no depth for SSAO, so it must not darken by a raster frame's occlusion.
-        let ssao = if self.drawn_mode().is_traced() {
+    /// The SSAO strength this frame's lit passes apply: zero on a traced frame, which runs no SSAO.
+    pub(super) fn frame_ssao_strength(&self) -> f32 {
+        if self.drawn_mode().is_traced() {
             0.0
         } else {
-            self.ssao_strength
-        };
-        tonemap.set_params(&gpu.queue, self.bloom_strength, ssao, self.clouds.enabled);
+            self.ssao_strength.max(0.0)
+        }
+    }
+
+    /// This frame's bloom mix and the exposure mode the reduce pass applies.
+    pub(super) fn write_post_settings(&self, gpu: &GpuContext, tonemap: &TonemapPass) {
+        tonemap.set_params(&gpu.queue, self.bloom_strength, self.clouds.enabled);
         self.post.bloom.set_clouds(&gpu.queue, self.clouds.enabled);
         self.post.histogram.set_exposure_settings(
             &gpu.queue,
@@ -147,11 +152,15 @@ impl ForwardRenderer {
             .encode(encoder, self.gpu_timing.scope(TimedPass::Bloom));
     }
 
-    /// The frame graph adds the row only above zero strength on a raster frame, the only one with SSAO's depth.
-    pub(super) fn encode_ssao(&self, encoder: &mut wgpu::CommandEncoder) {
-        self.post
-            .ssao
-            .encode(encoder, self.gpu_timing.scope(TimedPass::Ssao));
+    /// The frame graph adds the row only above zero strength on a raster frame; the forward path draws its depth first.
+    pub(super) fn encode_ssao(&self, encoder: &mut wgpu::CommandEncoder, view: &FrameView) {
+        let scope = self.gpu_timing.scope(TimedPass::Ssao);
+        if self.targets.get(Resource::PrepassDepth).is_some() {
+            self.encode_depth_prepass(encoder, view, scope.render_writes(0, 3));
+            self.post.ssao.encode(encoder, scope, (1, 3));
+        } else {
+            self.post.ssao.encode(encoder, scope, (0, 2));
+        }
     }
 
     /// The full-resolution histogram build, which only auto exposure reads.
@@ -171,7 +180,7 @@ impl ForwardRenderer {
             .encode_reduce(encoder, self.gpu_timing.scope(TimedPass::ExposureReduce));
     }
 
-    /// ACES over HDR, bloom and AO into `output_view`, or into FXAA's input when the frame's graph backs one.
+    /// ACES over HDR and bloom into `output_view`, or into FXAA's input when the frame's graph backs one.
     pub(super) fn encode_tonemap(
         &self,
         encoder: &mut wgpu::CommandEncoder,

@@ -18,6 +18,7 @@ import shader_model as sm
 import shader_model_lighting as sl
 import shader_vectors_lighting
 import shader_vectors_path
+import shader_vectors_post
 import shader_vectors_sun
 from shader_vector_format import (
     CHAINED,
@@ -669,7 +670,7 @@ MODULES = [
     ], evaluate_gltf_material, gltf_material_cases(), {
         "two-channel texel", "zero vector", "back face", "mirrored", "metallic clamp", "roughness floor", "not MASK",
         "cut out", "kept"}),
-] + shader_vectors_lighting.MODULES + shader_vectors_path.MODULES + shader_vectors_sun.MODULES
+] + shader_vectors_lighting.MODULES + shader_vectors_path.MODULES + shader_vectors_sun.MODULES + shader_vectors_post.MODULES
 
 
 def main() -> None:

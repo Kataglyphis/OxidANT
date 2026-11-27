@@ -96,9 +96,11 @@ fn the_maximal_frames_record_their_passes_in_the_hand_written_order() {
         "bloom",
     ];
     let tail = ["tonemap", "fxaa"];
+    // SSAO before the pass that lights the scene, whose ambient it scales.
     let forward = [
         "draw_cull",
         "shadow",
+        "ssao",
         "forward+sky",
         "depth_resolve",
         "occlusion_cull",
@@ -107,12 +109,13 @@ fn the_maximal_frames_record_their_passes_in_the_hand_written_order() {
         "draw_cull",
         "shadow",
         "gbuffer",
+        "ssao",
         "deferred_lighting+sky",
         "occlusion_cull",
     ];
     let [f, d, r, p] = every_maximal_frame().map(|config| names(&config));
-    assert_eq!(f, [&forward[..], &post, &["ssao"], &tail].concat());
-    assert_eq!(d, [&deferred[..], &post, &["ssao"], &tail].concat());
+    assert_eq!(f, [&forward[..], &post, &tail].concat());
+    assert_eq!(d, [&deferred[..], &post, &tail].concat());
     assert_eq!(
         r,
         [&["ray_trace", "trace_resolve"][..], &post, &tail].concat()
@@ -243,6 +246,9 @@ fn the_post_chain_allocates_only_the_targets_of_its_running_rows() {
         assert_eq!(has(Bloom) || has(BloomScratch), config.bloom, "{config:?}");
         assert_eq!(has(AmbientRaw) && has(Ambient), ssao, "{config:?}");
         assert_eq!(has(AmbientRaw) || has(Ambient), ssao, "{config:?}");
+        // Only the forward path draws a depth for SSAO; the deferred one has the G-buffer's.
+        let prepass = ssao && config.path == RasterPath::Forward;
+        assert_eq!(has(PrepassDepth), prepass, "{config:?}");
         assert_eq!(has(Tonemapped), config.fxaa, "{config:?}");
     }
 }

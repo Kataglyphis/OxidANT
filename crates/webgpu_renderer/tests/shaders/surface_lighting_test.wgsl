@@ -21,23 +21,30 @@ fn VectorInputs_u32_0( this_0 : ptr<function, VectorInputs_0>) -> u32
     return word_0;
 }
 
-fn VectorInputs_f32_0( this_1 : ptr<function, VectorInputs_0>) -> f32
+fn VectorInputs_u32_1( this_1 : ptr<function, VectorInputs_0>) -> u32
 {
-    var _S1 : u32 = VectorInputs_u32_0(&((*this_1)));
+    var word_1 : u32 = vectorInputs_0[(*this_1).at_0];
+    (*this_1).at_0 = (*this_1).at_0 + u32(1);
+    return word_1;
+}
+
+fn VectorInputs_f32_0( this_2 : ptr<function, VectorInputs_0>) -> f32
+{
+    var _S1 : u32 = VectorInputs_u32_1(&((*this_2)));
     return (bitcast<f32>((_S1)));
 }
 
-fn VectorInputs_f32_1( this_2 : ptr<function, VectorInputs_0>) -> f32
+fn VectorInputs_f32_1( this_3 : ptr<function, VectorInputs_0>) -> f32
 {
-    var _S2 : u32 = VectorInputs_u32_0(&((*this_2)));
+    var _S2 : u32 = VectorInputs_u32_1(&((*this_3)));
     return (bitcast<f32>((_S2)));
 }
 
-fn VectorInputs_f32x3_0( this_3 : ptr<function, VectorInputs_0>) -> vec3<f32>
+fn VectorInputs_f32x3_0( this_4 : ptr<function, VectorInputs_0>) -> vec3<f32>
 {
-    var x_0 : f32 = VectorInputs_f32_1(&((*this_3)));
-    var y_0 : f32 = VectorInputs_f32_1(&((*this_3)));
-    var z_0 : f32 = VectorInputs_f32_1(&((*this_3)));
+    var x_0 : f32 = VectorInputs_f32_1(&((*this_4)));
+    var y_0 : f32 = VectorInputs_f32_1(&((*this_4)));
+    var z_0 : f32 = VectorInputs_f32_1(&((*this_4)));
     return vec3<f32>(x_0, y_0, z_0);
 }
 
@@ -58,24 +65,30 @@ fn surface_f0_0( albedo_0 : vec3<f32>,  metallic_0 : f32) -> vec3<f32>
     return mix(vec3<f32>(0.03999999910593033f), albedo_0, vec3<f32>(metallic_0));
 }
 
-fn VectorOutputs_put_0( this_4 : ptr<function, VectorOutputs_0>,  word_1 : u32)
+fn VectorOutputs_put_0( this_5 : ptr<function, VectorOutputs_0>,  word_2 : u32)
 {
-    vectorOutputs_0[(*this_4).at_1] = word_1;
-    (*this_4).at_1 = (*this_4).at_1 + u32(1);
+    vectorOutputs_0[(*this_5).at_1] = word_2;
+    (*this_5).at_1 = (*this_5).at_1 + u32(1);
     return;
 }
 
-fn VectorOutputs_put_1( this_5 : ptr<function, VectorOutputs_0>,  value_0 : f32)
+fn VectorOutputs_put_1( this_6 : ptr<function, VectorOutputs_0>,  value_0 : f32)
 {
-    VectorOutputs_put_0(&((*this_5)), (bitcast<u32>((value_0))));
+    VectorOutputs_put_0(&((*this_6)), (bitcast<u32>((value_0))));
     return;
 }
 
-fn VectorOutputs_put_2( this_6 : ptr<function, VectorOutputs_0>,  value_1 : vec3<f32>)
+fn VectorOutputs_put_2( this_7 : ptr<function, VectorOutputs_0>,  value_1 : f32)
 {
-    VectorOutputs_put_1(&((*this_6)), value_1.x);
-    VectorOutputs_put_1(&((*this_6)), value_1.y);
-    VectorOutputs_put_1(&((*this_6)), value_1.z);
+    VectorOutputs_put_0(&((*this_7)), (bitcast<u32>((value_1))));
+    return;
+}
+
+fn VectorOutputs_put_3( this_8 : ptr<function, VectorOutputs_0>,  value_2 : vec3<f32>)
+{
+    VectorOutputs_put_2(&((*this_8)), value_2.x);
+    VectorOutputs_put_2(&((*this_8)), value_2.y);
+    VectorOutputs_put_2(&((*this_8)), value_2.z);
     return;
 }
 
@@ -90,23 +103,41 @@ fn surface_lighting_0( sunDirect_0 : vec3<f32>,  sunVisibility_0 : f32,  shadowS
     return hdr_safe_0(sunDirect_0 * vec3<f32>(mix(1.0f, sunVisibility_0, shadowStrength_0)) + punctual_0 + ambient_0 + emissive_0);
 }
 
+fn screen_space_occlusion_0( occlusion_0 : f32,  strength_0 : f32,  blended_0 : bool) -> f32
+{
+    var _S4 : f32;
+    if(blended_0)
+    {
+        _S4 = 1.0f;
+    }
+    else
+    {
+        _S4 = mix(1.0f, saturate(occlusion_0), saturate(strength_0));
+    }
+    return _S4;
+}
+
 @compute
 @workgroup_size(1, 1, 1)
 fn surface_lighting_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
 {
-    var _S4 : u32 = tid_0.x;
-    var inputs_1 : VectorInputs_0 = vector_inputs_0(_S4);
+    var _S5 : u32 = tid_0.x;
+    var inputs_1 : VectorInputs_0 = vector_inputs_0(_S5);
     var albedo_1 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var metallic_1 : f32 = VectorInputs_f32_0(&(inputs_1));
     var sun_0 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var visibility_0 : f32 = VectorInputs_f32_0(&(inputs_1));
-    var strength_0 : f32 = VectorInputs_f32_0(&(inputs_1));
+    var strength_1 : f32 = VectorInputs_f32_0(&(inputs_1));
     var punctual_1 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var ambient_1 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var emissive_1 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
-    var outputs_1 : VectorOutputs_0 = vector_outputs_0(_S4);
-    VectorOutputs_put_2(&(outputs_1), surface_f0_0(albedo_1, metallic_1));
-    VectorOutputs_put_2(&(outputs_1), surface_lighting_0(sun_0, visibility_0, strength_0, punctual_1, ambient_1, emissive_1));
+    var occlusion_1 : f32 = VectorInputs_f32_0(&(inputs_1));
+    var occlusionStrength_0 : f32 = VectorInputs_f32_0(&(inputs_1));
+    var blended_1 : u32 = VectorInputs_u32_0(&(inputs_1));
+    var outputs_1 : VectorOutputs_0 = vector_outputs_0(_S5);
+    VectorOutputs_put_3(&(outputs_1), surface_f0_0(albedo_1, metallic_1));
+    VectorOutputs_put_3(&(outputs_1), surface_lighting_0(sun_0, visibility_0, strength_1, punctual_1, ambient_1, emissive_1));
+    VectorOutputs_put_1(&(outputs_1), screen_space_occlusion_0(occlusion_1, occlusionStrength_0, blended_1 != u32(0)));
     return;
 }
 

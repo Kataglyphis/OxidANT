@@ -39,7 +39,7 @@ pub enum TimedPass {
     ExposureReduce,
     /// Brightpass plus separable blur (three render passes).
     Bloom,
-    /// Occlusion plus blur (two render passes).
+    /// Inside `Main`, before the lit pass: the forward path's depth prepass, then occlusion and blur.
     Ssao,
     /// The volumetric clouds' march to the scene depth (one render pass; only with clouds on).
     Clouds,
@@ -57,8 +57,9 @@ impl TimedPass {
         TimedPass::ShadowCascades,
         TimedPass::PunctualShadows,
         TimedPass::Main,
-        TimedPass::Forward,
         TimedPass::GBuffer,
+        TimedPass::Ssao,
+        TimedPass::Forward,
         TimedPass::DeferredLighting,
         TimedPass::RayTrace,
         TimedPass::PathTrace,
@@ -67,7 +68,6 @@ impl TimedPass {
         TimedPass::ExposureReduce,
         TimedPass::Clouds,
         TimedPass::Bloom,
-        TimedPass::Ssao,
         TimedPass::Tonemap,
         TimedPass::Fxaa,
     ];
@@ -124,6 +124,7 @@ impl TimedPass {
         match self {
             TimedPass::Forward
             | TimedPass::GBuffer
+            | TimedPass::Ssao
             | TimedPass::DeferredLighting
             | TimedPass::RayTrace
             | TimedPass::PathTrace => Some(TimedPass::Main),

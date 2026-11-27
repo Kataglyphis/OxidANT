@@ -58,6 +58,8 @@ def evaluate_surface_lighting(i: Values) -> dict[str, list[float]]:
         "surface_lighting": flat(sl.surface_lighting(
             sm.vec3(i["sun"]), one(i, "visibility"), one(i, "strength"), sm.vec3(i["punctual"]),
             sm.vec3(i["ambient"]), sm.vec3(i["emissive"]))),
+        "screen_space_occlusion": flat(sl.screen_space_occlusion(
+            one(i, "occlusion"), one(i, "occlusion_strength"), word(i, "blended") != 0)),
     }
 
 
@@ -164,6 +166,7 @@ def surface_lighting_cases() -> list[tuple[str, Values]]:
     base: Values = {
         "albedo": [0.8, 0.2, 0.1], "metallic": [0.0], "sun": [1.5, 1.2, 0.9], "visibility": [0.25],
         "strength": [1.0], "punctual": [0.1, 0.2, 0.05], "ambient": [0.05, 0.06, 0.08], "emissive": [0.0, 0.0, 0.0],
+        "occlusion": [0.4], "occlusion_strength": [0.7], "blended": [0],
     }
     rows: list[tuple[str, Values]] = [
         ("a dielectric in a quarter of the sun's light", {}),
@@ -177,13 +180,18 @@ def surface_lighting_cases() -> list[tuple[str, Values]]:
         ("an emissive strength above 1", {"emissive": [40.0, 12.0, 3.0]}),
         ("a radiance past the half float's range caps at HDR_MAX", {"sun": [70000.0, 1.0, 1.0], "visibility": [1.0]}),
         ("negative terms floor at zero", {"sun": [0.0, 0.0, 0.0], "punctual": [-0.5, 0.0, 0.0], "ambient": [0.0, 0.0, 0.0]}),
+        ("SSAO strength 0 leaves the ambient whole", {"occlusion": [0.1], "occlusion_strength": [0.0]}),
+        ("SSAO strength 1 takes the occlusion as it is", {"occlusion": [0.25], "occlusion_strength": [1.0]}),
+        ("a BLEND surface takes no SSAO: its texel is the surface behind", {"blended": [1]}),
+        ("an occlusion and strength past their range saturate", {"occlusion": [1.5], "occlusion_strength": [2.0]}),
     ]
     draw = Draw(13)
     for index in range(4):
         rows.append((f"seeded terms {index}", {
             "albedo": draw.nums(0.0, 1.0), "metallic": [draw.num(0.0, 1.0)], "sun": draw.nums(0.0, 5.0),
             "visibility": [draw.num(0.0, 1.0)], "strength": [draw.num(0.0, 1.0)], "punctual": draw.nums(0.0, 2.0),
-            "ambient": draw.nums(0.0, 1.0), "emissive": draw.nums(0.0, 3.0)}))
+            "ambient": draw.nums(0.0, 1.0), "emissive": draw.nums(0.0, 3.0), "occlusion": [draw.num(0.0, 1.0)],
+            "occlusion_strength": [draw.num(0.0, 1.0)], "blended": [index % 2]}))
     return merged(base, rows)
 
 
@@ -287,9 +295,11 @@ MODULES = [
         out("punctual_shadow_face_coord.layer", 1, SMOOTH), out("punctual_shadow_visibility", 1, CHAINED),
     ], evaluate_punctual_shadow, punctual_shadow_cases(), {
         "shadowed", "unshadowed", "x face", "y face", "z face", "beyond the far plane", "near the pole"}),
-    Module("surface_lighting", ports("albedo:3 metallic sun:3 visibility strength punctual:3 ambient:3 emissive:3"), [
-        out("surface_f0", 3, SMOOTH), out("surface_lighting", 3, CHAINED),
-    ], evaluate_surface_lighting, surface_lighting_cases(), {"capped at HDR_MAX"}),
+    Module("surface_lighting", ports(
+        "albedo:3 metallic sun:3 visibility strength punctual:3 ambient:3 emissive:3 occlusion occlusion_strength "
+        "blended/u32"), [
+        out("surface_f0", 3, SMOOTH), out("surface_lighting", 3, CHAINED), out("screen_space_occlusion", 1, SMOOTH),
+    ], evaluate_surface_lighting, surface_lighting_cases(), {"capped at HDR_MAX", "blended", "saturated"}),
     Module("gbuffer", ports(
         "position:3 n:3 albedo:3 metallic roughness occlusion emissive:3 unlit/u32 stored:4"), [
         out("gbuffer_pack.normal_metallic", 4, SMOOTH), out("gbuffer_pack.albedo_occlusion", 4, SMOOTH),

@@ -103,6 +103,7 @@ struct SceneReload {
     shader: wgpu::ShaderModule,
     sky_shader: wgpu::ShaderModule,
     upright: ForwardPipelineSet,
+    prepass: ForwardPipelineSet,
     shadow: shadow::ShadowPipelines,
     sky: wgpu::RenderPipeline,
     deferred: DeferredResources,
@@ -153,6 +154,12 @@ impl ForwardRenderer {
             &self.main.layout,
             wgpu::FrontFace::Ccw,
         );
+        let prepass = main_pass::create_prepass_pipeline_set(
+            device,
+            &shader,
+            &self.main.layout,
+            wgpu::FrontFace::Ccw,
+        );
         let shadow = shadow::ShadowPipelines::new(
             device,
             &shader,
@@ -177,6 +184,7 @@ impl ForwardRenderer {
             shader,
             sky_shader,
             upright,
+            prepass,
             shadow,
             sky,
             deferred,
@@ -208,8 +216,10 @@ impl ForwardRenderer {
 
     fn install_scene(&mut self, device: &wgpu::Device, scene: SceneReload) {
         self.main.upright = scene.upright;
+        self.main.prepass = scene.prepass;
         // The mirrored sets are rebuilt from the new module the next frame one is drawn.
         self.main.mirrored = None;
+        self.main.prepass_mirrored = None;
         self.main.shader = scene.shader;
         self.shadow.pipelines = scene.shadow;
         // The cached bundles still hold the old shadow pipelines.

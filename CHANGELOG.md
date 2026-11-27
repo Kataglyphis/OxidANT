@@ -19,6 +19,42 @@ on 2026-09-15, verbatim. Nothing was deleted.
   x86-64-v3 is larger: with 91 GB free before the pull the fast cleanup was chosen, and the debug test binaries then
   filled the disk, where lld died of `signal 7 [Bus error]`. The GPU workflows already run the full cleanup.
 
+### Changed (2026-11-27, SSAO on the ambient light only: BeschleunigerBallett plans C5 and C11)
+
+- **SSAO darkens the ambient and IBL light, never the direct light** (the owner's rule for both renderers). It ran
+  after the scene and the tonemap multiplied it into the whole HDR colour; now its row runs before the pass that lights
+  the scene, after the G-buffer on the deferred path and after a new single-sample depth prepass on the forward one
+  (`fs_depth_prepass`: the opaque and MASK primitives through the forward pass's draw loop and indirect arguments,
+  into the transient `PrepassDepth`), and the lighting samples the blurred occlusion at its pixel through group 2
+  (`FrameUniforms::ambient_occlusion`: strength and 1 / size) and multiplies `surface_lighting.slang`'s new
+  `screen_space_occlusion` into `ibl_ambient` alone; a BLEND surface takes none, as its texel lies behind it. The
+  tonemap lost its AO input (binding 4 and `params.y`). `TimedPass::Ssao` nests in `Main` and covers the prepass,
+  occlusion and blur; `TimedPass::ALL` lists `GBuffer` and `Ssao` before `Forward`, their record order.
+- `ssao_darkens_the_ambient_light_and_never_the_direct_light` (headless): under the Sun alone the frame is the same
+  with SSAO on both paths, under the sky alone it darkens; `surface_lighting.json` checks the new function (4 cases).
+
+### Changed (2026-11-27, bloom in both renderers: BeschleunigerBallett plan C5)
+
+- **Bloom's threshold and taps are one module.** `shaders/common/bloom_filter.slang` holds `bloom_bright` (the
+  exposed radiance less 1 per channel) and `bloom_tap_weight` (the 9-tap Gaussian's weights, which sum to one);
+  `bloom/bloom.slang` uses them, its blur unrolled into the straight-line sum in the order it had
+  (`bloom_adds_energy_around_bright_sources` and the clouds' tests pass as they did; `post_reload.rs` edits the bright
+  pass's new call).
+  `tests/bloom_filter_test.slang` checks both, and the weights' sum, per case of `vectors/bloom_filter.json` (17).
+- `bloom.slang`'s three fragment entries get SPIR-V rows: BeschleunigerBallett draws the same bright pass and blurs.
+
+### Changed (2026-11-27, exposure in both renderers: BeschleunigerBallett plan C5)
+
+- **One exposure module for both renderers.** `shaders/common/exposure.slang` holds the histogram's constants,
+  `exposure_luminance`, `histogram_bin`, `bin_luminance`, `exposure_target_ev`, `adapt_exposure_ev` and
+  `exposure_scale`, which `histogram/histogram.slang`, `tonemap.slang` and `bloom.slang` import instead of their own
+  copies; the WGSL computes what it did (`tests/histogram.rs`, and `tests/histogram_constants.rs`, which reads the
+  constants from the module now, pass unchanged). `tests/exposure_test.slang` runs every function once per case of
+  `vectors/exposure.json` (22 cases, `scripts/shader_model_post.py` and `shader_vectors_post.py`), on lavapipe here
+  and as SPIR-V in BeschleunigerBallett, and the copy gate owns the module's names.
+- `histogram.slang`'s three kernels get SPIR-V rows: BeschleunigerBallett's auto exposure binds them as they are, with
+  the two-float `[adapted EV, target EV]` buffer its post pass reads.
+
 ### Added (2026-11-27, the NSIS setup pilot: ANTfrastructure CON302)
 
 - **A per-machine NSIS setup beside the MSI and the MSIX**, `kataglyphis_cli-<VERSION>-<x64|arm64>-setup.exe`, built

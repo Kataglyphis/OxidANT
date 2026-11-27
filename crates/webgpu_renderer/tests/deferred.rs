@@ -682,6 +682,9 @@ fn ssao_and_occlusion_queries_read_the_gbuffer_depth() {
     let mut renderer = ForwardRenderer::new(&gpu, W, H);
     renderer.upload_scene(&gpu, &scene("cube_alpha.gltf"));
     renderer.bloom_strength = 0.0;
+    // SSAO darkens the ambient light alone, so the sky alone lights the frame.
+    renderer.light_color_intensity.w = 0.0;
+    renderer.light_dir_ambient.w = 1.0;
     let camera = top_down(5.0, 60.0);
     let energy = |frame: &[u8]| frame.iter().map(|&b| u64::from(b)).sum::<u64>();
     renderer.ssao_strength = 0.0;
@@ -861,8 +864,8 @@ fn each_path_holds_only_its_own_targets_and_deferred_clouds_alias_the_gbuffer() 
     let deferred = bytes_of(RasterPath::Deferred);
     // Bloom's pair 16 and SSAO's pair 2 bytes a half-size pixel, on either path.
     let post = 18 * (w / 2) * (h / 2);
-    // MSAA HDR 32 and depth 16, HDR 8, depth 4, spread 8, clouds 8 and FXAA's input 4 bytes a pixel.
-    assert_eq!(forward, 80 * w * h + post);
+    // MSAA HDR 32 and depth 16, HDR 8, depth 4, SSAO's prepass depth 4, spread 8, clouds 8 and FXAA's input 4.
+    assert_eq!(forward, 84 * w * h + post);
     // HDR 8, depth 4, the G-buffer 20 and FXAA's input 4; the clouds' 8 reuse the G-buffer normal's texture.
     assert_eq!(deferred, 36 * w * h + post);
     assert_eq!(bytes_of(RasterPath::Forward), forward);

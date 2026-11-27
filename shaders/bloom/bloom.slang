@@ -1,7 +1,9 @@
+import bloom_filter;
+import exposure;
 import fullscreen;
 import hdr_safe;
 
-// Rust/WebGPU bloom: the checked-in bloom.wgsl is generated from this file.
+// Both renderers' bloom (bloom.wgsl and the C++ SPIR-V); common/bloom_filter.slang holds its threshold and taps.
 
 [vk::binding(0, 0)] Texture2D<float4> srcTex;
 [vk::binding(1, 0)] SamplerState srcSampler;
@@ -18,28 +20,19 @@ struct BloomUniforms
 };
 [vk::binding(4, 0)] ConstantBuffer<BloomUniforms> bloomUniforms;
 
-static const float THRESHOLD = 1.0;
-
-static const float W0 = 0.227027;
-static const float W1 = 0.1945946;
-static const float W2 = 0.1216216;
-static const float W3 = 0.054054;
-static const float W4 = 0.016216;
-
 float3 blur(float2 uv, float2 dir)
 {
     uint w, h;
     srcTex.GetDimensions(w, h);
     float2 texel = dir / float2(float(w), float(h));
-    float3 color = srcTex.Sample(srcSampler, uv).rgb * W0;
-    color += srcTex.Sample(srcSampler, uv + texel * 1.0).rgb * W1;
-    color += srcTex.Sample(srcSampler, uv - texel * 1.0).rgb * W1;
-    color += srcTex.Sample(srcSampler, uv + texel * 2.0).rgb * W2;
-    color += srcTex.Sample(srcSampler, uv - texel * 2.0).rgb * W2;
-    color += srcTex.Sample(srcSampler, uv + texel * 3.0).rgb * W3;
-    color += srcTex.Sample(srcSampler, uv - texel * 3.0).rgb * W3;
-    color += srcTex.Sample(srcSampler, uv + texel * 4.0).rgb * W4;
-    color += srcTex.Sample(srcSampler, uv - texel * 4.0).rgb * W4;
+    float3 color = srcTex.Sample(srcSampler, uv).rgb * bloom_tap_weight(0);
+    // Unrolled: straight-line taps, as the blur was written before the taps had a module.
+    [ForceUnroll]
+    for (int i = 1; i <= BLOOM_TAP_RADIUS; i++)
+    {
+        color += srcTex.Sample(srcSampler, uv + texel * float(i)).rgb * bloom_tap_weight(i);
+        color += srcTex.Sample(srcSampler, uv - texel * float(i)).rgb * bloom_tap_weight(-i);
+    }
     return color;
 }
 
@@ -59,9 +52,7 @@ float4 fs_brightpass(FullscreenVsOut In) : SV_Target
         float4 cloud = cloudTex.Sample(srcSampler, In.uv);
         scene = cloud.rgb + scene * (1.0 - cloud.a);
     }
-    float3 hdr = hdr_safe(scene) * exp2(exposureState[0]);
-    float3 bright = hdr_safe(hdr - float3(THRESHOLD));
-    return float4(bright, 1.0);
+    return float4(bloom_bright(hdr_safe(scene) * exposure_scale(exposureState[0])), 1.0);
 }
 
 [shader("fragment")]

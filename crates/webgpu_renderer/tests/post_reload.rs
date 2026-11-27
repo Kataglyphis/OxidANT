@@ -250,8 +250,8 @@ fn bloom_and_ssao_reloads_change_what_they_add() {
     let shipped = ShaderSources::shipped();
     let blue_bloom = edited(
         shipped.bloom,
-        "pixelOutput_0( vec4<f32>(hdr_safe_0(",
-        "pixelOutput_0( vec4<f32>(0.0f, 0.0f, 4.0f, 1.0f) + 0.0f * vec4<f32>(hdr_safe_0(",
+        "pixelOutput_0( vec4<f32>(bloom_bright_0(",
+        "pixelOutput_0( vec4<f32>(0.0f, 0.0f, 4.0f, 1.0f) + 0.0f * vec4<f32>(bloom_bright_0(",
     );
     let full_occlusion = edited(
         shipped.ssao,
@@ -270,14 +270,23 @@ fn bloom_and_ssao_reloads_change_what_they_add() {
         "the bloom reload added no blue"
     );
 
-    let mut renderer = self::renderer(&gpu);
+    // SSAO darkens the ambient light alone, so the sky alone lights this half.
+    let sky_only = |gpu: &GpuContext| {
+        let mut renderer = self::renderer(gpu);
+        renderer.light_color_intensity.w = 0.0;
+        renderer.light_dir_ambient.w = 1.0;
+        renderer
+    };
+    let mut renderer = sky_only(&gpu);
+    let unoccluded = render(&gpu, &mut renderer);
+    let mut renderer = sky_only(&gpu);
     renderer
         .reload_shaders(&gpu, &with_source("ssao", &full_occlusion))
         .expect("a valid SSAO shader must reload");
     let occluded = render(&gpu, &mut renderer);
-    eprintln!("green {} -> {}", mean(&before, 1), mean(&occluded, 1));
+    eprintln!("green {} -> {}", mean(&unoccluded, 1), mean(&occluded, 1));
     assert!(
-        mean(&occluded, 1) < mean(&before, 1) - 5.0,
+        mean(&occluded, 1) < mean(&unoccluded, 1) - 5.0,
         "the SSAO reload darkened nothing"
     );
 }

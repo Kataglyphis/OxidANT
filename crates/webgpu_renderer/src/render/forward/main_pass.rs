@@ -64,6 +64,9 @@ pub(super) struct MainPipelines {
     pub(super) upright: ForwardPipelineSet,
     /// Clockwise front faces, for mirrored transforms; built the first frame one is drawn.
     pub(super) mirrored: Option<ForwardPipelineSet>,
+    /// SSAO's depth prepass on the forward path, both windings as above; its blended slots repeat the opaque ones.
+    pub(super) prepass: ForwardPipelineSet,
+    pub(super) prepass_mirrored: Option<ForwardPipelineSet>,
     /// The module every pipeline here was built from, kept for the lazily built mirrored set.
     pub(super) shader: wgpu::ShaderModule,
     pub(super) layout: wgpu::PipelineLayout,
@@ -92,9 +95,12 @@ impl MainPipelines {
             immediate_size: 0,
         });
         let upright = create_forward_pipeline_set(device, &shader, &layout, wgpu::FrontFace::Ccw);
+        let prepass = create_prepass_pipeline_set(device, &shader, &layout, wgpu::FrontFace::Ccw);
         Self {
             upright,
             mirrored: None,
+            prepass,
+            prepass_mirrored: None,
             shader,
             layout,
             material_layout,
@@ -106,6 +112,14 @@ impl MainPipelines {
         WindingSets {
             upright: &self.upright,
             mirrored: self.mirrored.as_ref(),
+        }
+    }
+
+    /// The depth prepass's sets for both windings.
+    pub(super) fn prepass_sets(&self) -> WindingSets<'_> {
+        WindingSets {
+            upright: &self.prepass,
+            mirrored: self.prepass_mirrored.as_ref(),
         }
     }
 }
@@ -152,6 +166,14 @@ impl ForwardRenderer {
                 wgpu::FrontFace::Cw,
             ));
         }
+        if self.main.prepass_mirrored.is_none() {
+            self.main.prepass_mirrored = Some(create_prepass_pipeline_set(
+                device,
+                &self.main.shader,
+                &self.main.layout,
+                wgpu::FrontFace::Cw,
+            ));
+        }
         self.shadow.pipelines.ensure_mirrored(
             device,
             &self.main.shader,
@@ -171,6 +193,32 @@ impl ForwardRenderer {
         self.draw_opaque(&mut pass, view, self.main.sets());
         self.sky.draw(&mut pass);
         self.draw_blended(&mut pass, view, self.main.sets());
+    }
+
+    /// SSAO's single-sample depth of the opaque and MASK primitives, before the forward pass shades them.
+    pub(super) fn encode_depth_prepass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &FrameView,
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("depth_prepass"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: self.targets.view(Resource::PrepassDepth),
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        self.bind_frame_groups(&mut pass);
+        self.draw_opaque(&mut pass, view, self.main.prepass_sets());
     }
 
     fn begin_forward_pass<'e>(
@@ -348,6 +396,40 @@ pub(super) fn create_forward_pipeline_set(
         ],
         "forward_pipeline",
     )
+}
+
+/// SSAO's depth prepass: `fs_depth_prepass`, no colour, one sample; the blended slots repeat the opaque pipelines.
+pub(super) fn create_prepass_pipeline_set(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    pipeline_layout: &wgpu::PipelineLayout,
+    front_face: wgpu::FrontFace,
+) -> ForwardPipelineSet {
+    let source = PipelineSource {
+        shader,
+        layout: pipeline_layout,
+    };
+    let targets = SceneTargets::new("fs_depth_prepass", &[], true, 1);
+    let opaque = scene_pipeline(
+        device,
+        &source,
+        &targets,
+        (front_face, Some(wgpu::Face::Back)),
+        "depth_prepass",
+    );
+    let double_sided = scene_pipeline(
+        device,
+        &source,
+        &targets,
+        (front_face, None),
+        "depth_prepass_double_sided",
+    );
+    ForwardPipelineSet {
+        blend: opaque.clone(),
+        blend_double_sided: double_sided.clone(),
+        opaque,
+        double_sided,
+    }
 }
 
 /// The HDR colour target, alpha-blended for BLEND materials.

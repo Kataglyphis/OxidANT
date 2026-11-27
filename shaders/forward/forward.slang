@@ -277,7 +277,16 @@ float4 fs_main(VsOut In, bool isFrontFace : SV_IsFrontFace) : SV_Target
     MaterialSample m = sample_material(In, isFrontFace);
     if (alpha_masked_out(prim_alpha_mode(), m.alpha, prim.emissive_factor.w)) discard;
     if (prim.material_flags.x > 0.5) return float4(m.surface.albedo, m.alpha);
-    return float4(shade_surface(m.surface, In.svPosition), m.alpha);
+    return float4(shade_surface(m.surface, In.svPosition, prim_alpha_mode() == ALPHA_BLEND), m.alpha);
+}
+
+// SSAO's depth on the forward path, drawn before the forward pass shades: the opaque and MASK fragments fs_main keeps.
+[shader("fragment")]
+void fs_depth_prepass(VsOut In)
+{
+    float alpha = prim.base_color.a * baseColorTex.Sample(baseColorSampler, base_color_uv(In.uv, In.uv1)).a
+                  * In.vertexColor.a;
+    if (alpha_masked_out(prim_alpha_mode(), alpha, prim.emissive_factor.w)) discard;
 }
 
 // gbuffer.slang's texels at their targets.
@@ -321,5 +330,5 @@ float4 fs_deferred_lighting(FullscreenVsOut In) : SV_Target
     if (gbuffer_unlit(t.normalMetallic)) return float4(t.albedoOcclusion.rgb, 1.0);
     t.roughnessEmissive = gbufferMaterial.Load(texel);
     float4 world = mul(deferredParams.inv_view_proj, float4(fullscreen_uv_to_ndc(In.uv), depth, 1.0));
-    return float4(shade_surface(gbuffer_unpack(t, world.xyz / world.w), In.svPosition), 1.0);
+    return float4(shade_surface(gbuffer_unpack(t, world.xyz / world.w), In.svPosition, false), 1.0);
 }
