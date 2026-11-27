@@ -60,9 +60,9 @@ its open work is here.
 
 - [ ] **Rust mutation scores wait for cargo-mutants in the image** (S, ★★). The owner accepted a weekly job
       (2026-11-16): `rust-mutants.yml` runs the five per-file groups of `docs/testing.md` on Sundays through
-      `scripts/linux/run-mutants.sh` and uploads `mutants.out`, but warns and runs nothing while the image lacks the
-      tool (hub CON238). The `cargo mutants` scores in `docs/testing.md` are from 2026-10-15. The first run after
-      CON238 writes `capture.rs`'s and `capture/logic.rs`'s new counts (six capture tests since 2026-11-15) into
+      `scripts/linux/run-mutants.sh` and uploads `mutants.out`. It warned and ran nothing until the hub's `:latest`
+      `abb3030d…` (2026-11-27) carried cargo-mutants 27.1.0 (hub CON238). The `cargo mutants` scores in
+      `docs/testing.md` are from 2026-10-15. The next weekly run writes `capture.rs`'s and `capture/logic.rs`'s new counts (six capture tests since 2026-11-15) into
       `docs/testing.md`. Next: a group for the root crate's `src/session_slot.rs` (`-p` of the root package); a
       `kind = "count"` artifact over `mutants.out/missed.txt` in `quality-report.toml`. Done when a weekly run has
       uploaded all five groups and the table holds its counts.
@@ -192,10 +192,10 @@ Empty on 2026-11-17: nothing else is in the queue.
       `kataglyphis_observant`, `kataglyphis_text` and the root package, with the added minutes
       measured (about 5 a package, `docs/observant.md`) before it runs on every push.
 
-- [b] **The Pester suites still speak Pester 3.4** (M, ★). 10 suites under `scripts/windows/tests` hold
+- [ ] **The Pester suites still speak Pester 3.4** (M, ★). 10 suites under `scripts/windows/tests` hold
       77 dash-less `Should Be` lines, so `lint-gates.yml` and `windows-gpu-candidates.yml` pin Pester 3.4.0, the runner's inbox copy, and nothing runs
-      them on Linux. The hub's next image carries Pester 6.2.0 in `pwsh` (hub CON273, CON283), which refuses that
-      dialect. Blocked on that chain. Then: `Should -Be` and its kin, setup moved into `BeforeAll` or `BeforeEach`
+      them on Linux. Since 2026-11-27 the hub's `:latest` (`abb3030d…`) carries Pester 6.2.0 in `pwsh` (hub CON283;
+      the owner keeps 6.2), which refuses that dialect. Now: `Should -Be` and its kin, setup moved into `BeforeAll` or `BeforeEach`
       (Pester 5 and 6 discover a file before they run it), the `3.4.0` pins dropped, and the suites run in the image
       as well. Done when no workflow pins 3.4.0.
 
