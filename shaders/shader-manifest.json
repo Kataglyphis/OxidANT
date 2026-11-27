@@ -164,7 +164,7 @@
       ]
     },
     {
-      "_comment": "Rust/WebGPU SSAO (WGSL emit).",
+      "_comment": "SSAO in both renderers: WGSL for Rust/WebGPU, the fragment entries' SPIR-V for BeschleunigerBallett behind its own vertex.",
       "file": "ssao/ssao.slang",
       "entry": "vs_main",
       "stage": "vertex",
@@ -177,7 +177,8 @@
       "entry": "fs_ssao",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {
@@ -185,7 +186,8 @@
       "entry": "fs_blur",
       "stage": "fragment",
       "targets": [
-        "wgsl"
+        "wgsl",
+        "spirv"
       ]
     },
     {

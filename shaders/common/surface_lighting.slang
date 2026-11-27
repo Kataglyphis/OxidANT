@@ -20,6 +20,12 @@ float3 surface_f0(float3 albedo, float metallic)
     return lerp(float3(0.04), albedo, metallic);
 }
 
+// SSAO's factor on a surface's ambient and IBL light, never its direct light; a BLEND surface's texel lies behind it.
+float screen_space_occlusion(float occlusion, float strength, bool blended)
+{
+    return blended ? 1.0 : lerp(1.0, saturate(occlusion), saturate(strength));
+}
+
 // The lit HDR colour: the sun's direct light shadowed by strength, then the unshadowed punctual, ambient and emissive.
 float3 surface_lighting(float3 sunDirect, float sunVisibility, float shadowStrength, float3 punctual, float3 ambient,
     float3 emissive)

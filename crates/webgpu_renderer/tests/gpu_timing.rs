@@ -146,11 +146,14 @@ fn every_pass_reports_a_finite_non_negative_duration() {
             main >= nested * (1.0 - 1e-4),
             "{path:?}: Main {main} under its nested scopes' {nested}"
         );
+        // Forward's SSAO, prepass included, runs just before the forward pass, so the two are Main's whole span.
         if path == RasterPath::Forward {
-            assert_eq!(
-                Some(main),
-                ms(&timings, "Forward"),
-                "a lone nested scope is Main's whole span"
+            let (ssao, forward) = (ms(&timings, "Ssao"), ms(&timings, "Forward"));
+            let span = ssao.zip(forward).map(|(ssao, forward)| ssao + forward);
+            let span = span.expect("SSAO and the forward pass report");
+            assert!(
+                main >= span * (1.0 - 1e-4),
+                "Main {main} under SSAO and the forward pass's {span}"
             );
         }
     }

@@ -141,8 +141,10 @@ rasterised), `cascade_bias` and `cascade_visibility`. The WebGPU pass retries co
 engine takes the selected one. `common/punctual_shadow.slang`'s `punctual_shadow_visibility` is both renderers'
 five-tap cube shadow behind an `IPunctualShadowTaps`: this renderer's 2D face array through
 `punctual_shadow_face_coord`, the C++ engine's cube array. `common/surface_lighting.slang` holds the
-`SurfacePoint`, its f0 and how its terms combine (the sun shadowed by strength, then punctual, ambient and
-emissive), and `common/gbuffer.slang` both deferred paths' G-buffer: rgba16f normal and metallic, whose sign -1
+`SurfacePoint`, its f0, how its terms combine (the sun shadowed by strength, then punctual, ambient and
+emissive) and `screen_space_occlusion`, SSAO's factor on the ambient and IBL term alone (`lerp(1, texel, strength)`,
+1 for a BLEND surface, whose texel lies behind it), which both renderers' forward and deferred lighting multiply
+into their ambient only, and `common/gbuffer.slang` both deferred paths' G-buffer: rgba16f normal and metallic, whose sign -1
 marks unlit; rgba8 sRGB albedo and occlusion; rgba16f roughness and emissive. `common/cloud_upsample.slang` is
 both cloud upsamples, behind an `ICloudUpsampleTexels`.
 

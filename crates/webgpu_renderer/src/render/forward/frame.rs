@@ -2,12 +2,14 @@
 
 use glam::{Mat4, Vec3};
 
+use super::cloud_pass::placeholder;
 use super::frame_graph::{FramePass, FramePlan};
 use super::ForwardRenderer;
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::bounds::Frustum;
 use crate::render::buffer_desc;
+use crate::render::ssao::AO_FORMAT;
 use crate::render::tile_grid::TILE_SIZE;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
@@ -27,13 +29,19 @@ struct FrameUniforms {
     shadow_params: [f32; 4],
     shadow_view_dir: [f32; 4],
     shadow_bias_scale: [f32; 4],
+    /// x: SSAO strength, 0 on a frame without it; yz: 1 / the scene targets' size, its texel at a fragment.
+    ambient_occlusion: [f32; 4],
 }
 
-/// Group 2 of the forward and shadow layouts: the per-frame uniforms.
+/// Group 2 of the forward and shadow layouts: the per-frame uniforms and SSAO's occlusion.
 pub(super) struct FrameBinding {
     /// Read only to build the forward and shadow pipeline layouts.
     pub(super) layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
+    /// Filters the half-resolution occlusion up to the fragment.
+    occlusion_sampler: wgpu::Sampler,
+    /// What a frame without SSAO binds, its strength then zero.
+    no_occlusion: wgpu::TextureView,
     pub(super) bind_group: wgpu::BindGroup,
 }
 
@@ -41,27 +49,85 @@ impl FrameBinding {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame_bind_group_layout"),
-            entries: &[bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
+            entries: &[
+                bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+                bind_layout::texture_2d(1, wgpu::ShaderStages::FRAGMENT, true),
+                bind_layout::sampler(
+                    2,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::SamplerBindingType::Filtering,
+                ),
+            ],
         });
         let uniform_buffer = buffer_desc::uniform(
             device,
             "frame_uniforms",
             std::mem::size_of::<FrameUniforms>() as wgpu::BufferAddress,
         );
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("frame_bind_group"),
-            layout: &layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
+        let occlusion_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("frame_occlusion_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
+        let no_occlusion = placeholder(device, "frame_occlusion_placeholder", AO_FORMAT);
+        let bind_group = frame_bind_group(
+            device,
+            &layout,
+            &uniform_buffer,
+            &no_occlusion,
+            &occlusion_sampler,
+        );
         Self {
             layout,
             uniform_buffer,
+            occlusion_sampler,
+            no_occlusion,
             bind_group,
         }
     }
+
+    /// Binds `occlusion`, the pool's this frame, or the placeholder on a frame without SSAO.
+    pub(super) fn bind_occlusion(
+        &mut self,
+        device: &wgpu::Device,
+        occlusion: Option<&wgpu::TextureView>,
+    ) {
+        self.bind_group = frame_bind_group(
+            device,
+            &self.layout,
+            &self.uniform_buffer,
+            occlusion.unwrap_or(&self.no_occlusion),
+            &self.occlusion_sampler,
+        );
+    }
+}
+
+fn frame_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform_buffer: &wgpu::Buffer,
+    occlusion: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("frame_bind_group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(occlusion),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
 }
 
 /// What every pass of one frame reads from the camera and the scene targets' size.
@@ -182,6 +248,12 @@ impl ForwardRenderer {
             ],
             shadow_view_dir: self.shadow.view_dir.extend(0.0).to_array(),
             shadow_bias_scale: [bias_0, bias_1, bias_2, 0.0],
+            ambient_occlusion: [
+                self.frame_ssao_strength(),
+                1.0 / view.width as f32,
+                1.0 / view.height as f32,
+                0.0,
+            ],
         };
         gpu.queue.write_buffer(
             &self.frame.uniform_buffer,
@@ -243,7 +315,8 @@ mod wgsl_layout {
                 cascade_splits,
                 shadow_params,
                 shadow_view_dir,
-                shadow_bias_scale
+                shadow_bias_scale,
+                ambient_occlusion
             }),
             &wgsl("forward.wgsl"),
             "FrameUniforms_std140_0",

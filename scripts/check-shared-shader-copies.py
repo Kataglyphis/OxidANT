@@ -72,7 +72,7 @@ RULES = [
         "unpack_punctual_shadow|fetch_punctual_shadow|punctual_shadow_depth|punctual_shadow_face"
         "|punctual_shadow_face_coord|punctual_shadow_visibility"), "a punctual shadow lookup"),
     ("common/punctual_shadow.slang", r"\bstruct\s+PunctualShadow\b", "the punctual shadow record"),
-    ("common/surface_lighting.slang", defines("surface_f0|surface_lighting"), "a surface lighting rule"),
+    ("common/surface_lighting.slang", defines("surface_f0|surface_lighting|screen_space_occlusion"), "a surface lighting rule"),
     ("common/surface_lighting.slang", r"\bstruct\s+SurfacePoint\b", "the surface point"),
     ("common/surface_lighting.slang", r"\blerp\(\s*float3\(\s*0\.04\s*\)", "a dielectric f0"),
     ("common/gbuffer.slang", defines("gbuffer_pack|gbuffer_unlit|gbuffer_unpack"), "a G-buffer packing"),

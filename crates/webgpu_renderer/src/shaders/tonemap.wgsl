@@ -4,7 +4,7 @@
 
 @binding(2) @group(0) var bloomTex_0 : texture_2d<f32>;
 
-@binding(4) @group(0) var aoTex_0 : texture_2d<f32>;
+@binding(5) @group(0) var<storage, read> exposureState_0 : array<f32>;
 
 struct TonemapUniforms_std140_0
 {
@@ -12,8 +12,6 @@ struct TonemapUniforms_std140_0
 };
 
 @binding(3) @group(0) var<uniform> tonemapUniforms_0 : TonemapUniforms_std140_0;
-@binding(5) @group(0) var<storage, read> exposureState_0 : array<f32>;
-
 @binding(6) @group(0) var cloudTex_0 : texture_2d<f32>;
 
 struct FullscreenVsOut_0
@@ -68,7 +66,6 @@ fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> 
 {
     var hdr_0 : vec3<f32> = (textureSample((hdrTex_0), (hdrSampler_0), (_S1.uv_1))).xyz;
     var bloom_0 : vec3<f32> = (textureSample((bloomTex_0), (hdrSampler_0), (_S1.uv_1))).xyz;
-    var ao_0 : f32 = mix(1.0f, (textureSample((aoTex_0), (hdrSampler_0), (_S1.uv_1))).x, tonemapUniforms_0.params_0.y);
     var exposure_0 : f32 = exposure_scale_0(exposureState_0[i32(0)]);
     var _S2 : vec4<f32> = vec4<f32>(0.0f);
     var cloud_0 : vec4<f32>;
@@ -80,7 +77,7 @@ fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> 
     {
         cloud_0 = _S2;
     }
-    var mapped_0 : vec3<f32> = aces_tonemap_0(min((cloud_0.xyz + hdr_0 * vec3<f32>(ao_0) * vec3<f32>((1.0f - cloud_0.w))) * vec3<f32>(exposure_0) + bloom_0 * vec3<f32>(tonemapUniforms_0.params_0.x), vec3<f32>(10000.0f)));
+    var mapped_0 : vec3<f32> = aces_tonemap_0(min((cloud_0.xyz + hdr_0 * vec3<f32>((1.0f - cloud_0.w))) * vec3<f32>(exposure_0) + bloom_0 * vec3<f32>(tonemapUniforms_0.params_0.x), vec3<f32>(10000.0f)));
     if((tonemapUniforms_0.params_0.w) > 0.5f)
     {
         var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(linear_to_srgb_0(mapped_0), 1.0f) );

@@ -187,12 +187,14 @@ fn rows(config: &FrameConfig) -> Vec<Row> {
     rows
 }
 
-/// The draw cull, the shadow cascades, the path's scene passes, and the occlusion cull against their depth.
+/// The draw cull, the shadow cascades, the path's scene passes with SSAO before their lighting, and the occlusion cull.
 fn raster_rows(config: &FrameConfig) -> Vec<Row> {
     let mut rows = vec![
         (FramePass::DrawCull, vec![], vec![DrawArgs]),
         (FramePass::ShadowCascades, vec![DrawArgs], vec![ShadowMap]),
     ];
+    // SSAO scales the ambient light only, so its occlusion exists before the pass that lights the scene.
+    let ambient: &[Resource] = if config.ssao { &[Ambient] } else { &[] };
     if config.path == RasterPath::Deferred {
         let gbuffer = [GBufferNormal, GBufferAlbedo, GBufferMaterial];
         rows.push((
@@ -200,11 +202,20 @@ fn raster_rows(config: &FrameConfig) -> Vec<Row> {
             vec![DrawArgs],
             [&gbuffer[..], &[Depth]].concat(),
         ));
-        let reads = [&gbuffer[..], &[Depth, ShadowMap, DrawArgs]].concat();
+        if config.ssao {
+            rows.push((FramePass::Ssao, vec![Depth], vec![AmbientRaw, Ambient]));
+        }
+        let reads = [&gbuffer[..], &[Depth, ShadowMap, DrawArgs], ambient].concat();
         rows.push((FramePass::DeferredLighting, reads, vec![HdrColor]));
     } else {
+        if config.ssao {
+            // Its own depth prepass: the forward pass shades as it draws, before any depth of its own exists.
+            let writes = vec![PrepassDepth, AmbientRaw, Ambient];
+            rows.push((FramePass::Ssao, vec![DrawArgs], writes));
+        }
         let writes = vec![HdrMsaa, HdrColor, DepthMsaa];
-        rows.push((FramePass::Forward, vec![ShadowMap, DrawArgs], writes));
+        let reads = [&[ShadowMap, DrawArgs][..], ambient].concat();
+        rows.push((FramePass::Forward, reads, writes));
         let writes = vec![Depth, DepthSpread];
         rows.push((FramePass::DepthResolve, vec![DepthMsaa], writes));
     }
@@ -249,7 +260,7 @@ fn cloud_rows(clouds: CloudShape, spread: bool) -> Vec<Row> {
     rows
 }
 
-/// Bloom, SSAO, and the tonemap of everything before them, through FXAA when the frame filters.
+/// Bloom and the tonemap of everything before it, through FXAA when the frame filters.
 fn post_rows(config: &FrameConfig) -> Vec<Row> {
     let clouds: &[Resource] = if config.clouds.is_some() {
         &[CloudColor]
@@ -262,11 +273,6 @@ fn post_rows(config: &FrameConfig) -> Vec<Row> {
         let reads = [&[HdrColor, Exposure][..], clouds].concat();
         rows.push((FramePass::Bloom, reads, vec![Bloom, BloomScratch]));
         tonemap_reads.push(Bloom);
-    }
-    // A traced frame never ran SSAO, so its tonemap reads no ambient term.
-    if config.ssao && !config.mode.is_traced() {
-        rows.push((FramePass::Ssao, vec![Depth], vec![AmbientRaw, Ambient]));
-        tonemap_reads.push(Ambient);
     }
     let tonemapped = if config.fxaa { Tonemapped } else { Output };
     rows.push((FramePass::Tonemap, tonemap_reads, vec![tonemapped]));
@@ -303,7 +309,7 @@ pub(super) fn transient_targets(
     size: (u32, u32),
     output_size: (u32, u32),
     output: wgpu::TextureFormat,
-) -> [(Resource, TextureDesc); 15] {
+) -> [(Resource, TextureDesc); 16] {
     use wgpu::TextureUsages as U;
     let sampled = U::RENDER_ATTACHMENT | U::TEXTURE_BINDING;
     // One usage for every single-sample colour target, so a G-buffer target and the clouds can share a texture.
@@ -338,6 +344,7 @@ pub(super) fn transient_targets(
         (BloomScratch, post_half(HDR_FORMAT, read_back)),
         (AmbientRaw, post_half(AO_FORMAT, sampled)),
         (Ambient, post_half(AO_FORMAT, sampled)),
+        (PrepassDepth, target(DEPTH_FORMAT, 1, sampled)),
         (
             Tonemapped,
             TextureDesc {

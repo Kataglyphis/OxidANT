@@ -87,7 +87,6 @@ impl TonemapPass {
                 ),
                 bind_layout::texture_2d(2, wgpu::ShaderStages::FRAGMENT, true),
                 bind_layout::uniform(3, wgpu::ShaderStages::FRAGMENT),
-                bind_layout::texture_2d(4, wgpu::ShaderStages::FRAGMENT, true),
                 // Exposure stays on the GPU, so no frame waits on a readback.
                 bind_layout::storage_buffer(5, wgpu::ShaderStages::FRAGMENT, true),
                 bind_layout::texture_2d(6, wgpu::ShaderStages::FRAGMENT, true),
@@ -178,19 +177,14 @@ impl TonemapPass {
     }
 
     /// Per-frame parameters; `clouds` composites the cloud input over the scene.
-    pub fn set_params(
-        &self,
-        queue: &wgpu::Queue,
-        bloom_strength: f32,
-        ssao_strength: f32,
-        clouds: bool,
-    ) {
+    pub fn set_params(&self, queue: &wgpu::Queue, bloom_strength: f32, clouds: bool) {
         queue.write_buffer(
             &self.uniform_buffer,
             0,
             bytemuck::bytes_of(&[
                 bloom_strength,
-                ssao_strength,
+                // params.y: SSAO, which the scene passes apply to the ambient light since it stopped compositing here.
+                0.0,
                 if clouds { 1.0 } else { 0.0 },
                 // params.w: `encode_srgb`, fixed at creation but carried in the spare slot.
                 if self.encode_srgb { 1.0 } else { 0.0 },
@@ -198,13 +192,12 @@ impl TonemapPass {
         );
     }
 
-    /// (Re)binds the HDR, bloom, AO, exposure and cloud inputs; call whenever they are recreated.
+    /// (Re)binds the HDR, bloom, exposure and cloud inputs; call whenever they are recreated.
     pub fn set_input(
         &mut self,
         gpu: &GpuContext,
         hdr_view: &wgpu::TextureView,
         bloom_view: &wgpu::TextureView,
-        ao_view: &wgpu::TextureView,
         exposure_buffer: &wgpu::Buffer,
         cloud_view: &wgpu::TextureView,
     ) {
@@ -228,10 +221,6 @@ impl TonemapPass {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: self.uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(ao_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,

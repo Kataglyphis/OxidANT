@@ -34,7 +34,7 @@ impl ForwardRenderer {
             FramePass::CloudNoise => self.encode_cloud_noise(encoder),
             FramePass::Clouds => self.encode_clouds(gpu, encoder, view),
             FramePass::Bloom => self.encode_bloom(encoder),
-            FramePass::Ssao => self.encode_ssao(encoder),
+            FramePass::Ssao => self.encode_ssao(encoder, view),
             FramePass::Tonemap => self.encode_tonemap(encoder, frame.tonemap, frame.output),
             FramePass::Fxaa => self.encode_fxaa(encoder, frame.tonemap, frame.output),
         }

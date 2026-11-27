@@ -13,6 +13,20 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-27, SSAO on the ambient light only: BeschleunigerBallett plans C5 and C11)
+
+- **SSAO darkens the ambient and IBL light, never the direct light** (the owner's rule for both renderers). It ran
+  after the scene and the tonemap multiplied it into the whole HDR colour; now its row runs before the pass that lights
+  the scene, after the G-buffer on the deferred path and after a new single-sample depth prepass on the forward one
+  (`fs_depth_prepass`: the opaque and MASK primitives through the forward pass's draw loop and indirect arguments,
+  into the transient `PrepassDepth`), and the lighting samples the blurred occlusion at its pixel through group 2
+  (`FrameUniforms::ambient_occlusion`: strength and 1 / size) and multiplies `surface_lighting.slang`'s new
+  `screen_space_occlusion` into `ibl_ambient` alone; a BLEND surface takes none, as its texel lies behind it. The
+  tonemap lost its AO input (binding 4 and `params.y`). `TimedPass::Ssao` nests in `Main` and covers the prepass,
+  occlusion and blur; `TimedPass::ALL` lists `GBuffer` and `Ssao` before `Forward`, their record order.
+- `ssao_darkens_the_ambient_light_and_never_the_direct_light` (headless): under the Sun alone the frame is the same
+  with SSAO on both paths, under the sky alone it darkens; `surface_lighting.json` checks the new function (4 cases).
+
 ### Changed (2026-11-27, bloom in both renderers: BeschleunigerBallett plan C5)
 
 - **Bloom's threshold and taps are one module.** `shaders/common/bloom_filter.slang` holds `bloom_bright` (the

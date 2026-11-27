@@ -44,6 +44,7 @@ struct FrameUniforms_std140_0
     @align(16) shadow_params_0 : vec4<f32>,
     @align(16) shadow_view_dir_0 : vec4<f32>,
     @align(16) shadow_bias_scale_0 : vec4<f32>,
+    @align(16) ambient_occlusion_0 : vec4<f32>,
 };
 
 @binding(0) @group(2) var<uniform> frame_0 : FrameUniforms_std140_0;
@@ -83,6 +84,10 @@ struct ShadowView_std140_0
 @binding(0) @group(3) var<storage, read> punctualLights_0 : array<vec4<f32>>;
 
 @binding(3) @group(3) var punctualShadowMap_0 : texture_depth_2d_array;
+
+@binding(1) @group(2) var ambientOcclusionTex_0 : texture_2d<f32>;
+
+@binding(2) @group(2) var ambientOcclusionSampler_0 : sampler;
 
 struct IblParams_std140_0
 {
@@ -1320,15 +1325,34 @@ fn punctual_lighting_0( worldPos_4 : vec3<f32>,  n_13 : vec3<f32>,  v_5 : vec3<f
     return total_1;
 }
 
-fn ibl_ambient_0( s_0 : SurfacePoint_0,  v_6 : vec3<f32>,  f0_10 : vec3<f32>,  surfaceEnergy_1 : vec2<f32>) -> vec3<f32>
+fn screen_space_occlusion_0( occlusion_1 : f32,  strength_1 : f32,  blended_0 : bool) -> f32
 {
-    return vec3<f32>((frame_0.light_dir_ambient_0.w * s_0.occlusion_0)) * sky_ambient_0((iblParams_0.enabled_maxmip_intensity_0.x) > 0.5f, s_0.n_9, v_6, s_0.albedo_3, s_0.metallic_3, s_0.roughness_4, f0_10, surfaceEnergy_1);
+    var _S81 : f32;
+    if(blended_0)
+    {
+        _S81 = 1.0f;
+    }
+    else
+    {
+        _S81 = mix(1.0f, saturate(occlusion_1), saturate(strength_1));
+    }
+    return _S81;
+}
+
+fn frame_occlusion_0( fragCoord_1 : vec4<f32>,  blended_1 : bool) -> f32
+{
+    return screen_space_occlusion_0((textureSampleLevel((ambientOcclusionTex_0), (ambientOcclusionSampler_0), (fragCoord_1.xy * frame_0.ambient_occlusion_0.yz), (0.0f))).x, frame_0.ambient_occlusion_0.x, blended_1);
+}
+
+fn ibl_ambient_0( s_0 : SurfacePoint_0,  v_6 : vec3<f32>,  f0_10 : vec3<f32>,  surfaceEnergy_1 : vec2<f32>,  screenOcclusion_0 : f32) -> vec3<f32>
+{
+    return vec3<f32>((frame_0.light_dir_ambient_0.w * s_0.occlusion_0 * screenOcclusion_0)) * sky_ambient_0((iblParams_0.enabled_maxmip_intensity_0.x) > 0.5f, s_0.n_9, v_6, s_0.albedo_3, s_0.metallic_3, s_0.roughness_4, f0_10, surfaceEnergy_1);
 }
 
 fn hdr_safe_0( radiance_3 : vec3<f32>) -> vec3<f32>
 {
-    var _S81 : vec3<f32> = vec3<f32>(0.0f);
-    return clamp(select(radiance_3, _S81, (((bitcast<vec3<u32>>((radiance_3))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S81, vec3<f32>(65000.0f));
+    var _S82 : vec3<f32> = vec3<f32>(0.0f);
+    return clamp(select(radiance_3, _S82, (((bitcast<vec3<u32>>((radiance_3))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S82, vec3<f32>(65000.0f));
 }
 
 fn surface_lighting_0( sunDirect_0 : vec3<f32>,  sunVisibility_0 : f32,  shadowStrength_0 : f32,  punctual_0 : vec3<f32>,  ambient_0 : vec3<f32>,  emissive_1 : vec3<f32>) -> vec3<f32>
@@ -1336,13 +1360,13 @@ fn surface_lighting_0( sunDirect_0 : vec3<f32>,  sunVisibility_0 : f32,  shadowS
     return hdr_safe_0(sunDirect_0 * vec3<f32>(mix(1.0f, sunVisibility_0, shadowStrength_0)) + punctual_0 + ambient_0 + emissive_1);
 }
 
-fn shade_surface_0( s_1 : SurfacePoint_0,  fragCoord_1 : vec4<f32>) -> vec3<f32>
+fn shade_surface_0( s_1 : SurfacePoint_0,  fragCoord_2 : vec4<f32>,  blended_2 : bool) -> vec3<f32>
 {
     var v_7 : vec3<f32> = normalize(frame_0.camera_position_0.xyz - s_1.position_4);
     var l_4 : vec3<f32> = normalize(frame_0.light_dir_ambient_0.xyz);
     var f0_11 : vec3<f32> = surface_f0_0(s_1.albedo_3, s_1.metallic_3);
     var energy_7 : vec2<f32> = ggx_energy_0(dot(s_1.n_9, v_7), s_1.roughness_4);
-    return surface_lighting_0(brdf_direct_0(s_1.n_9, v_7, l_4, s_1.albedo_3, s_1.metallic_3, s_1.roughness_4, f0_11, frame_0.light_color_intensity_0.xyz * vec3<f32>(frame_0.light_color_intensity_0.w), energy_7), shadow_visibility_0(s_1.position_4, s_1.n_9, max(dot(s_1.n_9, l_4), 0.0f)), frame_0.shadow_params_0.z, punctual_lighting_0(s_1.position_4, s_1.n_9, v_7, s_1.albedo_3, s_1.metallic_3, s_1.roughness_4, f0_11, energy_7, fragCoord_1), ibl_ambient_0(s_1, v_7, f0_11, energy_7), s_1.emissive_0);
+    return surface_lighting_0(brdf_direct_0(s_1.n_9, v_7, l_4, s_1.albedo_3, s_1.metallic_3, s_1.roughness_4, f0_11, frame_0.light_color_intensity_0.xyz * vec3<f32>(frame_0.light_color_intensity_0.w), energy_7), shadow_visibility_0(s_1.position_4, s_1.n_9, max(dot(s_1.n_9, l_4), 0.0f)), frame_0.shadow_params_0.z, punctual_lighting_0(s_1.position_4, s_1.n_9, v_7, s_1.albedo_3, s_1.metallic_3, s_1.roughness_4, f0_11, energy_7, fragCoord_2), ibl_ambient_0(s_1, v_7, f0_11, energy_7, frame_occlusion_0(fragCoord_2, blended_2)), s_1.emissive_0);
 }
 
 struct pixelOutput_0
@@ -1362,54 +1386,23 @@ struct pixelInput_1
 };
 
 @fragment
-fn fs_main( _S82 : pixelInput_1, @builtin(front_facing) isFrontFace_1 : bool, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
+fn fs_main( _S83 : pixelInput_1, @builtin(front_facing) isFrontFace_1 : bool, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
-    var _S83 : VsOut_0 = VsOut_0( svPosition_1, _S82.worldNormal_1, _S82.uv_16, _S82.lightSpacePos_2, _S82.worldTangent_1, _S82.worldPosition_1, _S82.vertexColor_1, _S82.uv1_11 );
-    var m_3 : MaterialSample_0 = sample_material_0(_S83, isFrontFace_1);
-    if(alpha_masked_out_0(prim_alpha_mode_0(), m_3.alpha_3, prim_0.emissive_factor_0.w))
+    var _S84 : VsOut_0 = VsOut_0( svPosition_1, _S83.worldNormal_1, _S83.uv_16, _S83.lightSpacePos_2, _S83.worldTangent_1, _S83.worldPosition_1, _S83.vertexColor_1, _S83.uv1_11 );
+    var m_3 : MaterialSample_0 = sample_material_0(_S84, isFrontFace_1);
+    var _S85 : i32 = prim_alpha_mode_0();
+    if(alpha_masked_out_0(_S85, m_3.alpha_3, prim_0.emissive_factor_0.w))
     {
         discard;
     }
     if((prim_0.material_flags_0.x) > 0.5f)
     {
-        var _S84 : pixelOutput_0 = pixelOutput_0( vec4<f32>(m_3.surface_0.albedo_3, m_3.alpha_3) );
-        return _S84;
+        var _S86 : pixelOutput_0 = pixelOutput_0( vec4<f32>(m_3.surface_0.albedo_3, m_3.alpha_3) );
+        return _S86;
     }
-    var _S85 : pixelOutput_0 = pixelOutput_0( vec4<f32>(shade_surface_0(m_3.surface_0, svPosition_1), m_3.alpha_3) );
-    return _S85;
+    var _S87 : pixelOutput_0 = pixelOutput_0( vec4<f32>(shade_surface_0(m_3.surface_0, svPosition_1, _S85 == i32(2)), m_3.alpha_3) );
+    return _S87;
 }
-
-struct GBufferTexels_0
-{
-     normalMetallic_0 : vec4<f32>,
-     albedoOcclusion_0 : vec4<f32>,
-     roughnessEmissive_0 : vec4<f32>,
-};
-
-fn gbuffer_pack_0( s_2 : SurfacePoint_0,  unlit_0 : bool) -> GBufferTexels_0
-{
-    var t_2 : GBufferTexels_0;
-    var _S86 : f32;
-    if(unlit_0)
-    {
-        _S86 = -1.0f;
-    }
-    else
-    {
-        _S86 = s_2.metallic_3;
-    }
-    t_2.normalMetallic_0 = vec4<f32>(s_2.n_9, _S86);
-    t_2.albedoOcclusion_0 = vec4<f32>(s_2.albedo_3, s_2.occlusion_0);
-    t_2.roughnessEmissive_0 = vec4<f32>(s_2.roughness_4, s_2.emissive_0);
-    return t_2;
-}
-
-struct GBufferOut_0
-{
-    @location(0) normalMetallic_1 : vec4<f32>,
-    @location(1) albedoOcclusion_1 : vec4<f32>,
-    @location(2) roughnessEmissive_1 : vec4<f32>,
-};
 
 struct pixelInput_2
 {
@@ -1423,10 +1416,63 @@ struct pixelInput_2
 };
 
 @fragment
-fn fs_gbuffer( _S87 : pixelInput_2, @builtin(front_facing) isFrontFace_2 : bool, @builtin(position) svPosition_2 : vec4<f32>) -> GBufferOut_0
+fn fs_depth_prepass( _S88 : pixelInput_2, @builtin(position) svPosition_2 : vec4<f32>)
 {
-    var _S88 : VsOut_0 = VsOut_0( svPosition_2, _S87.worldNormal_2, _S87.uv_17, _S87.lightSpacePos_3, _S87.worldTangent_2, _S87.worldPosition_2, _S87.vertexColor_2, _S87.uv1_12 );
-    var m_4 : MaterialSample_0 = sample_material_0(_S88, isFrontFace_2);
+    if(alpha_masked_out_0(prim_alpha_mode_0(), prim_0.base_color_0.w * (textureSample((baseColorTex_0), (baseColorSampler_0), (base_color_uv_0(_S88.uv_17, _S88.uv1_12)))).w * _S88.vertexColor_2.w, prim_0.emissive_factor_0.w))
+    {
+        discard;
+    }
+    return;
+}
+
+struct GBufferTexels_0
+{
+     normalMetallic_0 : vec4<f32>,
+     albedoOcclusion_0 : vec4<f32>,
+     roughnessEmissive_0 : vec4<f32>,
+};
+
+fn gbuffer_pack_0( s_2 : SurfacePoint_0,  unlit_0 : bool) -> GBufferTexels_0
+{
+    var t_2 : GBufferTexels_0;
+    var _S89 : f32;
+    if(unlit_0)
+    {
+        _S89 = -1.0f;
+    }
+    else
+    {
+        _S89 = s_2.metallic_3;
+    }
+    t_2.normalMetallic_0 = vec4<f32>(s_2.n_9, _S89);
+    t_2.albedoOcclusion_0 = vec4<f32>(s_2.albedo_3, s_2.occlusion_0);
+    t_2.roughnessEmissive_0 = vec4<f32>(s_2.roughness_4, s_2.emissive_0);
+    return t_2;
+}
+
+struct GBufferOut_0
+{
+    @location(0) normalMetallic_1 : vec4<f32>,
+    @location(1) albedoOcclusion_1 : vec4<f32>,
+    @location(2) roughnessEmissive_1 : vec4<f32>,
+};
+
+struct pixelInput_3
+{
+    @location(0) worldNormal_3 : vec3<f32>,
+    @location(1) uv_18 : vec2<f32>,
+    @location(2) lightSpacePos_4 : vec4<f32>,
+    @location(3) worldTangent_3 : vec4<f32>,
+    @location(4) worldPosition_3 : vec3<f32>,
+    @location(6) vertexColor_3 : vec4<f32>,
+    @location(7) uv1_13 : vec2<f32>,
+};
+
+@fragment
+fn fs_gbuffer( _S90 : pixelInput_3, @builtin(front_facing) isFrontFace_2 : bool, @builtin(position) svPosition_3 : vec4<f32>) -> GBufferOut_0
+{
+    var _S91 : VsOut_0 = VsOut_0( svPosition_3, _S90.worldNormal_3, _S90.uv_18, _S90.lightSpacePos_4, _S90.worldTangent_3, _S90.worldPosition_3, _S90.vertexColor_3, _S90.uv1_13 );
+    var m_4 : MaterialSample_0 = sample_material_0(_S91, isFrontFace_2);
     if(alpha_masked_out_0(prim_alpha_mode_0(), m_4.alpha_3, prim_0.emissive_factor_0.w))
     {
         discard;
@@ -1441,8 +1487,8 @@ fn fs_gbuffer( _S87 : pixelInput_2, @builtin(front_facing) isFrontFace_2 : bool,
 
 struct FullscreenVsOut_0
 {
-    @builtin(position) svPosition_3 : vec4<f32>,
-    @location(0) uv_18 : vec2<f32>,
+    @builtin(position) svPosition_4 : vec4<f32>,
+    @location(0) uv_19 : vec2<f32>,
 };
 
 fn fullscreen_vs_0( vid_0 : u32) -> FullscreenVsOut_0
@@ -1450,8 +1496,8 @@ fn fullscreen_vs_0( vid_0 : u32) -> FullscreenVsOut_0
     var x_2 : f32 = f32(vid_0 / u32(2)) * 4.0f - 1.0f;
     var y_1 : f32 = f32(vid_0 % u32(2)) * 4.0f - 1.0f;
     var o_4 : FullscreenVsOut_0;
-    o_4.svPosition_3 = vec4<f32>(x_2, y_1, 0.0f, 1.0f);
-    o_4.uv_18 = vec2<f32>((x_2 + 1.0f) * 0.5f, 1.0f - (y_1 + 1.0f) * 0.5f);
+    o_4.svPosition_4 = vec4<f32>(x_2, y_1, 0.0f, 1.0f);
+    o_4.uv_19 = vec2<f32>((x_2 + 1.0f) * 0.5f, 1.0f - (y_1 + 1.0f) * 0.5f);
     return o_4;
 }
 
@@ -1466,9 +1512,9 @@ fn gbuffer_unlit_0( normalMetallic_2 : vec4<f32>) -> bool
     return (normalMetallic_2.w) < -0.5f;
 }
 
-fn fullscreen_uv_to_ndc_0( uv_19 : vec2<f32>) -> vec2<f32>
+fn fullscreen_uv_to_ndc_0( uv_20 : vec2<f32>) -> vec2<f32>
 {
-    return vec2<f32>(uv_19.x * 2.0f - 1.0f, 1.0f - uv_19.y * 2.0f);
+    return vec2<f32>(uv_20.x * 2.0f - 1.0f, 1.0f - uv_20.y * 2.0f);
 }
 
 fn gbuffer_unpack_0( t_4 : GBufferTexels_0,  position_7 : vec3<f32>) -> SurfacePoint_0
@@ -1489,32 +1535,32 @@ struct pixelOutput_1
     @location(0) output_2 : vec4<f32>,
 };
 
-struct pixelInput_3
+struct pixelInput_4
 {
-    @location(0) uv_20 : vec2<f32>,
+    @location(0) uv_21 : vec2<f32>,
 };
 
 @fragment
-fn fs_deferred_lighting( _S89 : pixelInput_3, @builtin(position) svPosition_4 : vec4<f32>) -> pixelOutput_1
+fn fs_deferred_lighting( _S92 : pixelInput_4, @builtin(position) svPosition_5 : vec4<f32>) -> pixelOutput_1
 {
-    var texel_4 : vec3<i32> = vec3<i32>(vec2<i32>(svPosition_4.xy), i32(0));
+    var texel_4 : vec3<i32> = vec3<i32>(vec2<i32>(svPosition_5.xy), i32(0));
     var depth_1 : f32 = (textureLoad((gbufferDepth_0), ((texel_4)).xy, ((texel_4)).z));
     if(depth_1 >= 1.0f)
     {
         discard;
     }
     var t_5 : GBufferTexels_0;
-    var _S90 : vec4<f32> = (textureLoad((gbufferNormal_0), ((texel_4)).xy, ((texel_4)).z));
-    t_5.normalMetallic_0 = _S90;
+    var _S93 : vec4<f32> = (textureLoad((gbufferNormal_0), ((texel_4)).xy, ((texel_4)).z));
+    t_5.normalMetallic_0 = _S93;
     t_5.albedoOcclusion_0 = (textureLoad((gbufferAlbedo_0), ((texel_4)).xy, ((texel_4)).z));
-    if(gbuffer_unlit_0(_S90))
+    if(gbuffer_unlit_0(_S93))
     {
-        var _S91 : pixelOutput_1 = pixelOutput_1( vec4<f32>(t_5.albedoOcclusion_0.xyz, 1.0f) );
-        return _S91;
+        var _S94 : pixelOutput_1 = pixelOutput_1( vec4<f32>(t_5.albedoOcclusion_0.xyz, 1.0f) );
+        return _S94;
     }
     t_5.roughnessEmissive_0 = (textureLoad((gbufferMaterial_0), ((texel_4)).xy, ((texel_4)).z));
-    var world_0 : vec4<f32> = (((vec4<f32>(fullscreen_uv_to_ndc_0(_S89.uv_20), depth_1, 1.0f)) * (mat4x4<f32>(deferredParams_0.inv_view_proj_0.data_0[i32(0)][i32(0)], deferredParams_0.inv_view_proj_0.data_0[i32(1)][i32(0)], deferredParams_0.inv_view_proj_0.data_0[i32(2)][i32(0)], deferredParams_0.inv_view_proj_0.data_0[i32(3)][i32(0)], deferredParams_0.inv_view_proj_0.data_0[i32(0)][i32(1)], deferredParams_0.inv_view_proj_0.data_0[i32(1)][i32(1)], deferredParams_0.inv_view_proj_0.data_0[i32(2)][i32(1)], deferredParams_0.inv_view_proj_0.data_0[i32(3)][i32(1)], deferredParams_0.inv_view_proj_0.data_0[i32(0)][i32(2)], deferredParams_0.inv_view_proj_0.data_0[i32(1)][i32(2)], deferredParams_0.inv_view_proj_0.data_0[i32(2)][i32(2)], deferredParams_0.inv_view_proj_0.data_0[i32(3)][i32(2)], deferredParams_0.inv_view_proj_0.data_0[i32(0)][i32(3)], deferredParams_0.inv_view_proj_0.data_0[i32(1)][i32(3)], deferredParams_0.inv_view_proj_0.data_0[i32(2)][i32(3)], deferredParams_0.inv_view_proj_0.data_0[i32(3)][i32(3)]))));
-    var _S92 : pixelOutput_1 = pixelOutput_1( vec4<f32>(shade_surface_0(gbuffer_unpack_0(t_5, world_0.xyz / vec3<f32>(world_0.w)), svPosition_4), 1.0f) );
-    return _S92;
+    var world_0 : vec4<f32> = (((vec4<f32>(fullscreen_uv_to_ndc_0(_S92.uv_21), depth_1, 1.0f)) * (mat4x4<f32>(deferredParams_0.inv_view_proj_0.data_0[i32(0)][i32(0)], deferredParams_0.inv_view_proj_0.data_0[i32(1)][i32(0)], deferredParams_0.inv_view_proj_0.data_0[i32(2)][i32(0)], deferredParams_0.inv_view_proj_0.data_0[i32(3)][i32(0)], deferredParams_0.inv_view_proj_0.data_0[i32(0)][i32(1)], deferredParams_0.inv_view_proj_0.data_0[i32(1)][i32(1)], deferredParams_0.inv_view_proj_0.data_0[i32(2)][i32(1)], deferredParams_0.inv_view_proj_0.data_0[i32(3)][i32(1)], deferredParams_0.inv_view_proj_0.data_0[i32(0)][i32(2)], deferredParams_0.inv_view_proj_0.data_0[i32(1)][i32(2)], deferredParams_0.inv_view_proj_0.data_0[i32(2)][i32(2)], deferredParams_0.inv_view_proj_0.data_0[i32(3)][i32(2)], deferredParams_0.inv_view_proj_0.data_0[i32(0)][i32(3)], deferredParams_0.inv_view_proj_0.data_0[i32(1)][i32(3)], deferredParams_0.inv_view_proj_0.data_0[i32(2)][i32(3)], deferredParams_0.inv_view_proj_0.data_0[i32(3)][i32(3)]))));
+    var _S95 : pixelOutput_1 = pixelOutput_1( vec4<f32>(shade_surface_0(gbuffer_unpack_0(t_5, world_0.xyz / vec3<f32>(world_0.w)), svPosition_5, false), 1.0f) );
+    return _S95;
 }
 

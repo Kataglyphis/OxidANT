@@ -27,6 +27,7 @@ struct FrameUniforms
     float4 shadow_params;      // x: cascades (0 = off), y: PCF radius, z: strength, w: punctual cubes drawn
     float4 shadow_view_dir;    // xyz: camera forward, the axis the splits are measured on
     float4 shadow_bias_scale;  // xyz: per cascade, the C++ box's depth range over this one's
+    float4 ambient_occlusion;  // x: SSAO strength (0 off), yz: 1 / the scene targets' size
 };
 
 struct IblParams
@@ -45,6 +46,9 @@ struct IblParams
 [vk::binding(4, 1)] SamplerState iblSampler;
 
 [vk::binding(0, 2)] ConstantBuffer<FrameUniforms> frame;
+// SSAO's half-resolution occlusion of this frame's depth, which only the ambient and IBL light take.
+[vk::binding(1, 2)] Texture2D<float4> ambientOcclusionTex;
+[vk::binding(2, 2)] SamplerState ambientOcclusionSampler;
 
 // One group for the lights and their tile grid: WebGPU allows 4 bind groups (maxBindGroups), so no group 4.
 [vk::binding(0, 3)] StructuredBuffer<float4> punctualLights;
@@ -184,17 +188,25 @@ struct ForwardAmbientMaps : IAmbientMaps
     }
 }
 
+// SSAO at the fragment, filtered up from half resolution; 1 while SSAO is off or for a BLEND surface.
+float frame_occlusion(float4 fragCoord, bool blended)
+{
+    float2 uv = fragCoord.xy * frame.ambient_occlusion.yz;
+    return screen_space_occlusion(ambientOcclusionTex.SampleLevel(ambientOcclusionSampler, uv, 0.0).r,
+        frame.ambient_occlusion.x, blended);
+}
+
 // The ambient term from the baked environment, or from the analytic sky and the surface's energy without one.
-float3 ibl_ambient(SurfacePoint s, float3 v, float3 f0, float2 surfaceEnergy)
+float3 ibl_ambient(SurfacePoint s, float3 v, float3 f0, float2 surfaceEnergy, float screenOcclusion)
 {
     ForwardAmbientMaps maps;
     float3 ambient = sky_ambient(maps, iblParams.enabled_maxmip_intensity.x > 0.5, s.n, v, s.albedo, s.metallic,
         s.roughness, f0, surfaceEnergy);
-    return frame.light_dir_ambient.w * s.occlusion * ambient;
+    return frame.light_dir_ambient.w * s.occlusion * screenOcclusion * ambient;
 }
 
-// The lit HDR colour of `s`; fragCoord picks its light tile.
-float3 shade_surface(SurfacePoint s, float4 fragCoord)
+// The lit HDR colour of `s`; fragCoord picks its light tile and its SSAO texel, which a BLEND surface ignores.
+float3 shade_surface(SurfacePoint s, float4 fragCoord, bool blended)
 {
     float3 v = normalize(frame.camera_position.xyz - s.position);
     float3 l = normalize(frame.light_dir_ambient.xyz);
@@ -210,6 +222,6 @@ float3 shade_surface(SurfacePoint s, float4 fragCoord)
     float visibility = shadow_visibility(s.position, s.n, nDotL);
 
     float3 punctual = punctual_lighting(s.position, s.n, v, s.albedo, s.metallic, s.roughness, f0, energy, fragCoord);
-    return surface_lighting(directLight, visibility, frame.shadow_params.z, punctual, ibl_ambient(s, v, f0, energy),
-        s.emissive);
+    float3 ambient = ibl_ambient(s, v, f0, energy, frame_occlusion(fragCoord, blended));
+    return surface_lighting(directLight, visibility, frame.shadow_params.z, punctual, ambient, s.emissive);
 }

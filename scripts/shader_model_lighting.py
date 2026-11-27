@@ -177,6 +177,17 @@ def surface_f0(albedo: Vec, metallic: Real) -> Vec:
     return lerp(Vec(0.04, 0.04, 0.04), albedo, metallic)
 
 
+def screen_space_occlusion(occlusion: Real, strength: Real, blended: bool) -> Real:
+    if blended:
+        visit("blended")
+        return Real(1.0)
+    kept = clamp(occlusion, 0.0, 1.0)
+    weight = clamp(strength, 0.0, 1.0)
+    if occlusion.v > 1.0 or occlusion.v < 0.0 or strength.v > 1.0 or strength.v < 0.0:
+        visit("saturated")
+    return Real(1.0) * (1.0 - weight) + kept * weight
+
+
 def surface_lighting(sun: Vec, visibility: Real, strength: Real, punctual: Vec, ambient: Vec, emissive: Vec) -> Vec:
     shadowed = Real(1.0) * (1.0 - strength) + visibility * strength
     total = sun * shadowed + punctual + ambient + emissive

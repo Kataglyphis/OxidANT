@@ -1,6 +1,6 @@
 //! Headless golden tests asserting structural pixel properties, which survive driver differences.
 
-use kataglyphis_webgpu_renderer::render::forward::ShaderSources;
+use kataglyphis_webgpu_renderer::render::forward::{RasterPath, ShaderSources};
 use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
 
 fn cube_path() -> std::path::PathBuf {
@@ -651,6 +651,9 @@ fn ssao_darkens_geometry() {
     let mut renderer = ForwardRenderer::new(&gpu, width, height);
     renderer.upload_scene(&gpu, &scene);
     renderer.bloom_strength = 0.0;
+    // SSAO darkens the ambient light alone, so the sky alone lights the frame.
+    renderer.light_color_intensity.w = 0.0;
+    renderer.light_dir_ambient.w = 1.0;
 
     let camera = OrbitCamera {
         radius: 5.0,
@@ -673,6 +676,55 @@ fn ssao_darkens_geometry() {
         sum_with + 50_000 < sum_without,
         "SSAO should remove energy near geometry: {sum_without} -> {sum_with}"
     );
+}
+
+/// SSAO scales the ambient light only: the Sun alone renders the same with it, the sky alone darkens, on both paths.
+#[test]
+fn ssao_darkens_the_ambient_light_and_never_the_direct_light() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../assets/tests/assets/cube_alpha.gltf");
+    let scene = load_gltf(&path).expect("cube_alpha.gltf must load");
+    let (width, height) = (256, 256);
+    let camera = OrbitCamera {
+        radius: 5.0,
+        pitch_deg: 60.0,
+        ..OrbitCamera::default()
+    };
+    let total = |pixels: &[u8]| -> u64 { pixels.iter().map(|&b| b as u64).sum() };
+    for raster_path in RasterPath::ALL {
+        let mut renderer = ForwardRenderer::new(&gpu, width, height);
+        renderer.raster_path = raster_path;
+        renderer.upload_scene(&gpu, &scene);
+        renderer.bloom_strength = 0.0;
+        let render = |renderer: &mut ForwardRenderer, ssao: f32| {
+            renderer.ssao_strength = ssao;
+            renderer
+                .render_to_pixels(&gpu, width, height, &camera)
+                .expect("headless render")
+        };
+
+        renderer.light_dir_ambient.w = 0.0;
+        let sun_without = render(&mut renderer, 0.0);
+        let sun_with = render(&mut renderer, 1.0);
+        assert!(
+            sun_without == sun_with,
+            "{raster_path:?}: SSAO changed a frame the Sun alone lights"
+        );
+
+        renderer.light_dir_ambient.w = 1.0;
+        renderer.light_color_intensity.w = 0.0;
+        let sky_without = render(&mut renderer, 0.0);
+        let sky_with = render(&mut renderer, 1.0);
+        let (before, after) = (total(&sky_without), total(&sky_with));
+        eprintln!("{raster_path:?}: the sky alone, SSAO off {before}, on {after}");
+        assert!(
+            after + 20_000 < before,
+            "{raster_path:?}: SSAO darkened no ambient light: {before} -> {after}"
+        );
+    }
 }
 
 /// A fronto-parallel face must read as unoccluded, which a flat `1 - strength` SSAO would fail.

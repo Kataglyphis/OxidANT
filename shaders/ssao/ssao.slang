@@ -1,6 +1,6 @@
 import fullscreen;
 
-// Rust/WebGPU depth-only SSAO: the checked-in ssao.wgsl is generated from this file.
+// Both renderers' depth-only SSAO (ssao.wgsl and the C++ SPIR-V), which darkens their ambient light only.
 
 struct SsaoUniforms
 {
