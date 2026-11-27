@@ -20,42 +20,39 @@ fresh() {
 }
 gen="${work}/scripts/generate-shader-vectors.py"
 
+# check_edited FILE SED: --check on a fresh copy whose FILE took one sed edit; output in ${work}/out, status in ${work}/rc.
+check_edited() {
+    fresh
+    sed -i "$2" "$1"
+    suite_run python3 "${gen}" --check
+}
+
 fresh
 t_case "the committed vector files match a fresh run"
 t_assert_rc 0 python3 "${gen}" --check
 
-fresh
-sed -i 's/"lambert_diffuse": \[0.254647905655,/"lambert_diffuse": [0.2547,/' "${work}/shaders/tests/vectors/brdf.json"
 t_case "an edited reference fails the check by file"
-suite_run python3 "${gen}" --check
+check_edited "${work}/shaders/tests/vectors/brdf.json" 's/"lambert_diffuse": \[0.254647905655,/"lambert_diffuse": [0.2547,/'
 t_assert_eq 1 "$(cat "${work}/rc")"
 t_assert_grep "${work}/out" '^  shaders/tests/vectors/brdf.json$'
 
-fresh
-sed -i 's/0.0, 1.0), 5.0)/0.0, 1.0), 5.5)/' "${work}/scripts/shader_model.py"
 t_case "a changed model fails the check for every module it reaches"
-suite_run python3 "${gen}" --check
+check_edited "${work}/scripts/shader_model.py" 's/0.0, 1.0), 5.0)/0.0, 1.0), 5.5)/'
 t_assert_grep "${work}/out" '^  shaders/tests/vectors/brdf.json$'
 t_assert_grep "${work}/out" '^  shaders/tests/vectors/path_estimator.json$'
 
-fresh
-sed -i 's/float2(0.8300566, 0.0006474)/float2(0.8400566, 0.0006474)/' "${work}/shaders/common/brdf_energy_fit.slang"
 t_case "a refitted energy spline fails the check for every module whose brdf reads it"
-suite_run python3 "${gen}" --check
+check_edited "${work}/shaders/common/brdf_energy_fit.slang" 's/float2(0.8300566, 0.0006474)/float2(0.8400566, 0.0006474)/'
 t_assert_grep "${work}/out" '^  shaders/tests/vectors/brdf.json$'
 t_assert_grep "${work}/out" '^  shaders/tests/vectors/path_estimator.json$'
 
-fresh
-sed -i 's/("roughness zero evaluates as the floor too", {"roughness": \[0.0\], "n_dot_h": \[0.99\]})/("sharp", {"roughness": [0.0], "l": unit(0.05, 1.0, 0.0)})/' "${gen}"
 t_case "a case whose f32 evaluation strays past its tolerance stops the generator"
-suite_run python3 "${gen}" --check
+check_edited "${gen}" 's/("roughness zero evaluates as the floor too", {"roughness": \[0.0\], "n_dot_h": \[0.99\]})/("sharp", {"roughness": [0.0], "l": unit(0.05, 1.0, 0.0)})/'
 t_assert_eq 1 "$(cat "${work}/rc")"
 t_assert_grep "${work}/out" "case 'sharp' is too close to the f32 limits"
 
-fresh
-sed -i '/("light below the horizon contributes nothing"/d' "${gen}"
 t_case "a branch no case reaches stops the generator"
-suite_run python3 "${gen}" --check
+check_edited "${gen}" '/("light below the horizon contributes nothing"/d'
 t_assert_grep "${work}/out" "no case reaches \['light below the horizon'\]"
 
 t_summary

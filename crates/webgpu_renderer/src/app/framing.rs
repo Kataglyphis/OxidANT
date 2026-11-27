@@ -5,6 +5,8 @@ use glam::{Mat4, Vec3};
 use super::scene_meta::SceneMeta;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{CpuCameraProjection, CpuScene};
+// Linked, not copied, in the docs: a copied type carries tracing's dead dispatcher link (docs/ci.md).
+#[doc(no_inline)]
 pub use kataglyphis_render_core::framing::{Framing, FramingSource, SceneCamera, NEAR_FAR_RATIO};
 
 /// The start view of `scene` whose world bounds are `bounds`; `base` lends a bounds fit its direction and field of view.

@@ -2,7 +2,8 @@
 # Three causes; the first two a dependency's doc text that rustdoc copies into a blanket impl on our pages. tracing
 # 0.1.44 writes `[default]: dispatcher#setting-the-default-subscriber` as a plain relative URL in `WithSubscriber`'s
 # method docs (instrument.rs), so `impl<T> WithSubscriber for T` on each type page links `<module>/dispatcher`: one key
-# per module of the renderer, the GUI and the CLI, so every new module with a type adds one here. burn's `Module`, on
+# per module of the renderer, the GUI and the CLI, so every new module with a type adds one here. Another crate's
+# module or type re-exported by ours stays `#[doc(no_inline)]`: linked, not copied, it adds none. burn's `Module`, on
 # YoloTiny, links `ModuleMapper` and `ModuleVisitor` (2 keys). inference's `RuntimeBinding` has only a private
 # implementor, so rustdoc links its `trait.impl` list without writing it (1 key).
 # Format: missing<TAB><path> or anchor<TAB><path>#<id>, as verify_site_links.py --print-keys prints it.
@@ -16,13 +17,9 @@ missing	kataglyphis_gui/gui_wgpu/dispatcher
 missing	kataglyphis_webgpu_renderer/adapter/dispatcher
 missing	kataglyphis_webgpu_renderer/app/discovery/dispatcher
 missing	kataglyphis_webgpu_renderer/app/dispatcher
-missing	kataglyphis_webgpu_renderer/app/framing/dispatcher
 missing	kataglyphis_webgpu_renderer/app/library/dispatcher
 missing	kataglyphis_webgpu_renderer/app/loader/dispatcher
-missing	kataglyphis_webgpu_renderer/app/scene_meta/dispatcher
-missing	kataglyphis_webgpu_renderer/asset/gltf_loader/dispatcher
 missing	kataglyphis_webgpu_renderer/asset/hdr/dispatcher
-missing	kataglyphis_webgpu_renderer/asset/obj_to_gltf/dispatcher
 missing	kataglyphis_webgpu_renderer/asset/skybox/dispatcher
 missing	kataglyphis_webgpu_renderer/context/dispatcher
 missing	kataglyphis_webgpu_renderer/dispatcher
@@ -67,12 +64,10 @@ missing	kataglyphis_webgpu_renderer/render/tracer/modes/settings/dispatcher
 missing	kataglyphis_webgpu_renderer/render/tracer/query/dispatcher
 missing	kataglyphis_webgpu_renderer/render/tracer/scene/dispatcher
 missing	kataglyphis_webgpu_renderer/render/tracer/upload/dispatcher
-missing	kataglyphis_webgpu_renderer/scene/camera/dispatcher
 missing	kataglyphis_webgpu_renderer/scene/controller/dispatcher
 missing	kataglyphis_webgpu_renderer/scene/dispatcher
 missing	kataglyphis_webgpu_renderer/scene/fly/dispatcher
 missing	kataglyphis_webgpu_renderer/scene/lod/dispatcher
-missing	kataglyphis_webgpu_renderer/scene/viewport/dispatcher
 missing	kataglyphis_webgpu_renderer/ui/editor/dispatcher
 missing	kataglyphis_webgpu_renderer/ui/icons/dispatcher
 missing	kataglyphis_webgpu_renderer/ui/widgets/dispatcher

@@ -3,27 +3,25 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-root="$(cd -- "${script_dir}/../.." && pwd)"
-cd "${root}"
+# shellcheck source=lib/antfrastructure.sh
+source "${script_dir}/lib/antfrastructure.sh"
+# shellcheck source=lib/cargo-target.sh
+source "${script_dir}/lib/cargo-target.sh"
+cd "${KATAGLYPHIS_REPO_ROOT}"
 
 # cargo install puts the pinned CLI here, which the image's PATH leaves out.
 export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"
-# shellcheck source=lib/antfrastructure.sh
-source "${script_dir}/lib/antfrastructure.sh"
 antfrastructure_source linux/scripts/lib/rust-toolchain.sh
 # A bare runner's rustup has the host target only, and rustc then fails on cfg-if with "can't find crate for core".
 ensure_wasm32_target || exit 2
 ensure_wasm_bindgen Cargo.lock || exit 2
 
 contract="third_party/ModelANT/contracts/inference-v1.json"
-target_dir="$(cargo metadata --locked --no-deps --format-version 1 \
-    | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
+target_dir="$(cargo_target_dir)"
 pkg="${1:-${target_dir}/vision-core-web/pkg}"
 
 # The release profile, as a site ships it.
-cargo build --locked -p kataglyphis_vision_core_web --target wasm32-unknown-unknown --release
-wasm-bindgen "${target_dir}/wasm32-unknown-unknown/release/kataglyphis_vision_core_web.wasm" \
-    --out-dir "${pkg}" --target web
+wasm_web_build kataglyphis_vision_core_web "${pkg}" "${target_dir}"
 cargo run --locked --quiet -p kataglyphis_vision_core_web --example contract_report -- "${contract}" \
     > "${pkg}/native-report.json"
 exec node "${script_dir}/vision-core-web-contract.mjs" "${pkg}" "${contract}" "${pkg}/native-report.json"

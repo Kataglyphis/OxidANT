@@ -13,6 +13,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-27, fewer copied blocks and dead doc links: ANTfrastructure #364)
+
+- **Another crate's module or type re-exported by the renderer is linked, not copied, on the docs site.** The six
+  `pub use` of `kataglyphis_assets` and `kataglyphis_render_core` items (`asset::{obj_to_gltf, gltf_loader,
+  ktx2_loader}`, `scene::viewport`, `scene::camera::OrbitCamera`, `app::framing`'s four, `app::scene_meta::SceneMeta`)
+  carry `#[doc(no_inline)]`. rustdoc's copies of those pages carried tracing 0.1.44's dead `dispatcher` link, so
+  six `docs/site-links.allow` keys go (68 to 62; 64 on 2026-11-16), `asset/gltf_loader` among them.
+  Paths and code are unchanged.
+- **`scripts/linux/lib/cargo-target.sh`** holds `cargo_target_dir` and `wasm_web_build`, which `vision-core-web.sh`,
+  `webgpu-demo-browser.sh` and `ci-container-steps.sh` copied; those two and `check-docs-site.sh` take the repository
+  root from `lib/antfrastructure.sh`. `test-cargo-target.sh` and two `consumer.oxidant-wasm-build-*` recipes guard it.
+- `CrossTestSources.Tests.ps1` runs one table-driven case per staged tree, its copy-loop mutant inside it, and
+  `test-shader-vectors.sh` makes each edit through one `check_edited` helper.
+- `duplicated_blocks` falls from 32 to 25 (24 on 2026-11-23, whose two new pairs are among the seven folded).
+
 ### Fixed (2026-11-27, the Linux x64 build on the larger x86-64-v3 image)
 
 - **The Linux x64 build job runs the full disk cleanup** (`free-disk-space: 'true'`). The first `:latest` built for

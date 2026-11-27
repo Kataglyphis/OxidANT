@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-root="$(cd -- "${script_dir}/../.." && pwd)"
-cd "${root}"
+# shellcheck source=lib/antfrastructure.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib/antfrastructure.sh"
+cd "${KATAGLYPHIS_REPO_ROOT}"
 
 # Read the CI guide list so a local check uses the same pages as docs.yml.
 guides="$(sed -n '/^      guides: |$/,/^      link-allow:/p' .github/workflows/docs.yml | sed '1d;$d;s/^        //')"

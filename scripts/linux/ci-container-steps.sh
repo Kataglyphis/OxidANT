@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/antfrastructure.sh
 source "${SCRIPT_DIR}/lib/antfrastructure.sh"
+# shellcheck source=lib/cargo-target.sh
+source "${SCRIPT_DIR}/lib/cargo-target.sh"
 
 RUST_DRIVERS='linux/scripts/02-toolchain/rust'
 # Each crate's own floor, just under its latest figure, so one well-tested crate cannot carry a weak one; raise them as tests come.
@@ -67,8 +69,7 @@ case "$step" in
         xvfb-run -a bash "$(antfrastructure_path "${RUST_DRIVERS}/cargo_test.sh")" "$@" || rc=$?
         [ "${rc}" = 0 ] || exit "${rc}"
         cargo build --locked -p kataglyphis_cli
-        target_dir="$(cargo metadata --locked --no-deps --format-version 1 \
-            | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
+        target_dir="$(cargo_target_dir)"
         exec bash "${SCRIPT_DIR}/check-backend-parity.sh" "${target_dir}/debug/kataglyphis_cli" \
             "${KATAGLYPHIS_REPO_ROOT}/third_party/ModelANT/contracts/fixtures/two_cats.jpg"
         ;;

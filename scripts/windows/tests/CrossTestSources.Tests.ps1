@@ -16,26 +16,18 @@ function Test-StageCopy {
 Describe 'Arm64 Cargo test source closure' {
     $scriptPath = Join-Path $PSScriptRoot '..\Stage-CrossTests.ps1'
     $copyLoop = Get-TestSourceCopyLoopText -ScriptPath $scriptPath -LoopVariable rel
+    # The forward shader sits beside the embedded CARGO_MANIFEST_DIR tree; the renderer and the bridge read kataglyphis_assets' glTF fixtures.
+    $owned = @(
+        @{ Tree = 'shaders\forward'; Owned = 'forward.slang'; Root = 'shader' }
+        @{ Tree = 'crates\assets\tests\assets'; Owned = 'cube.gltf'; Root = 'fixtures' }
+    )
 
-    It 'stages the owned forward shader beside the embedded CARGO_MANIFEST_DIR tree' {
-        (Test-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..\shaders\forward\forward.slang') -PathType Leaf) | Should Be $true
-        Test-StageCopy -Loop $copyLoop -Root (Join-Path $TestDrive 'control') -Staged 'shaders\forward\fixture.txt' | Should Be $true
-    }
-
-    It 'rejects a copy-loop mutant that omits the forward shader' {
-        $mutant = $copyLoop.Replace(", 'shaders\forward'", '')
+    It 'stages <Tree>, which holds <Owned>, and a copy-loop mutant that omits it does not' -TestCases $owned {
+        param($Tree, $Owned, $Root)
+        (Test-Path -LiteralPath (Join-Path $PSScriptRoot "..\..\..\$Tree\$Owned") -PathType Leaf) | Should Be $true
+        Test-StageCopy -Loop $copyLoop -Root (Join-Path $TestDrive "$Root-control") -Staged "$Tree\fixture.txt" | Should Be $true
+        $mutant = $copyLoop.Replace(", '$Tree'", '')
         ($mutant -ne $copyLoop) | Should Be $true
-        Test-StageCopy -Loop $mutant -Root (Join-Path $TestDrive 'mutant') -Staged 'shaders\forward\fixture.txt' | Should Be $false
-    }
-
-    It 'stages the glTF fixtures kataglyphis_assets owns and the renderer and the bridge read' {
-        (Test-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..\crates\assets\tests\assets\cube.gltf') -PathType Leaf) | Should Be $true
-        Test-StageCopy -Loop $copyLoop -Root (Join-Path $TestDrive 'fixtures') -Staged 'crates\assets\tests\assets\fixture.txt' | Should Be $true
-    }
-
-    It 'rejects a copy-loop mutant that omits the fixtures' {
-        $mutant = $copyLoop.Replace(", 'crates\assets\tests\assets'", '')
-        ($mutant -ne $copyLoop) | Should Be $true
-        Test-StageCopy -Loop $mutant -Root (Join-Path $TestDrive 'fixtures-mutant') -Staged 'crates\assets\tests\assets\fixture.txt' | Should Be $false
+        Test-StageCopy -Loop $mutant -Root (Join-Path $TestDrive "$Root-mutant") -Staged "$Tree\fixture.txt" | Should Be $false
     }
 }

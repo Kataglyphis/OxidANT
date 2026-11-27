@@ -938,5 +938,21 @@
   "test": "CARGO_TARGET_DIR=\"${RUNNER_TEMP:-/tmp}/oxidant-vision-web-mutations-$(basename \"$PWD\")\" bash scripts/linux/vision-core-web.sh",
   "timeout": 1800,
   "why": "Only the comparison with wasm reads the native report: a native result that differs must fail the step."
+ },
+ {
+  "id": "consumer.oxidant-wasm-build-failure-binds",
+  "target": "scripts/linux/lib/cargo-target.sh",
+  "find": " --target wasm32-unknown-unknown --release || return $?\n",
+  "replace": " --target wasm32-unknown-unknown --release || true\n",
+  "test": "bash scripts/linux/tests/test-cargo-target.sh",
+  "why": "A failed wasm32 build must stop before wasm-bindgen binds whatever module the target directory still holds."
+ },
+ {
+  "id": "consumer.oxidant-wasm-build-not-release",
+  "target": "scripts/linux/lib/cargo-target.sh",
+  "find": " --target wasm32-unknown-unknown --release || return $?\n",
+  "replace": " --target wasm32-unknown-unknown || return $?\n",
+  "test": "bash scripts/linux/tests/test-cargo-target.sh",
+  "why": "The browser checks grade the release profile, as the sites ship it, and bind the module from release/."
  }
 ]
