@@ -21,10 +21,11 @@ Describe 'Windows MSI project icon' {
   $scriptPath = Join-Path $PSScriptRoot '..\Build-Windows.ps1'
   $wixSource = Get-Content -LiteralPath (Join-Path $repoRoot 'wix\main.wxs') -Raw
 
-  It 'passes the generated icon to WiX' {
+  It 'passes the generated icon to WiX and the setup' {
+    # One for the MSI, one for the NSIS setup, both from the project logo.
     $converter = @(Get-TestScriptCommands -ScriptPath $scriptPath -Name 'ConvertTo-PythonAppIcon')
-    $converter.Count | Should Be 1
-    $converter[0].Extent.Text.Contains("'images\logo.png'") | Should Be $true
+    $converter.Count | Should Be 2
+    foreach ($call in $converter) { $call.Extent.Text.Contains("'images\logo.png'") | Should Be $true }
     $msi = @(Get-TestScriptCommands -ScriptPath $scriptPath -Name 'Invoke-MsiPackage')
     $msi.Count | Should Be 1
     (Get-TestCommandArguments -Command $msi[0]).WixVariables.Contains('IconSource = $projectIcon') | Should Be $true

@@ -75,6 +75,7 @@
                     Name='$(var.ProductName)'
                     Description='The OxidANT CLI: file tools, the wgpu camera GUI with ONNX inference, and resource monitoring.'
                     Target='[!exe0]'
+                    Arguments='gui'
                     Icon='ProductICO'
                     WorkingDirectory='APPLICATIONFOLDER'/>
                 <RemoveFolder Id='CleanUpShortCut' Directory='ApplicationProgramsFolder' On='uninstall'/>

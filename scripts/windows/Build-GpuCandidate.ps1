@@ -11,7 +11,7 @@ Set-StrictMode -Version Latest
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $provider = if ($Vendor -eq 'nvidia') { 'cuda' } else { 'directml' }
 & (Join-Path $PSScriptRoot 'Test-GpuCandidateInputs.ps1') -Image -Provider $provider
-& pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Build-Windows.ps1') -TargetArch amd64 -SkipTests -SkipMsix -SkipMsi
+& pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Build-Windows.ps1') -TargetArch amd64 -SkipTests -SkipMsix -SkipMsi -SkipNsis
 if ($LASTEXITCODE -ne 0) { throw "Windows build failed: $LASTEXITCODE" }
 
 $source = Join-Path $repo 'dist/windows-x64/bundle'

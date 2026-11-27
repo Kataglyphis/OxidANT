@@ -111,11 +111,12 @@ jobs:
       name: OxidANT
       version-file: Cargo.toml
       dry-run: ${{ inputs.dry-run == true }}
-      # Every package by extension, each flatpak named for its arch, the portable Windows folder zipped.
+      # Every package by extension, the test-signed setups by name, each flatpak named for its arch, the portable Windows folder zipped.
       collect: |
         --rename oxidant-gpu-*-windows-x64/*.zip=oxidant-{version}-{stem}.zip
         --include *.msix
         --include *.msi
+        --include *-setup.exe
         --include *.AppImage
         --include *.deb
         --include *.tar.gz

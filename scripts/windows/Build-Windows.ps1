@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Builds, lints, tests and packages the app into dist\windows-<arch> (bundle, MSIX, MSI).
+  Builds, lints, tests and packages the app into dist\windows-<arch> (bundle, MSIX, MSI, NSIS setup).
 .DESCRIPTION
   Calls cargo directly, not the hub's rust Build-Windows.ps1 (offline rustup).
   -TargetArch arm64 cross-builds and leaves audit/deny, fmt and tests to the x64 lane.
@@ -11,6 +11,7 @@ param(
 
   [switch]$SkipMsix,
   [switch]$SkipMsi,
+  [switch]$SkipNsis,
   [switch]$SkipBuild,
   [switch]$SkipTests,
   [switch]$Clean,
@@ -48,6 +49,10 @@ try {
 }
 Import-BuildModule @('WindowsIcon.Common')
 Import-BuildModule @('WindowsOrtProvenance.Common', 'WindowsOrtLicense.Common')
+# The per-machine setup and the MSVC runtime notice; a hub pin before CON302's module lacks it, named here.
+try { Import-BuildModule @('WindowsNsis.Common', 'WindowsMsvcRuntimeNotice.Common') } catch {
+  throw "This build needs ANTfrastructure's WindowsNsis.Common (CON302, third_party/ANTfrastructure/docs/adopting-in-a-new-project.md § NSIS setups); move third_party/ANTfrastructure to it or later. ($($_.Exception.Message))"
+}
 
 # Every payload gets the target's crate texts, and the wheel texts that match its ORT DLL when it ships one.
 function Add-ThirdPartyLicenses {
@@ -225,7 +230,10 @@ function Invoke-PortableBundleStep {
     $resourcesSource = Join-Path $workspacePath 'resources'
     if (Test-Path $resourcesSource) { Copy-Item -LiteralPath $resourcesSource -Destination $bundleDir -Recurse -Force }
     Copy-PackageLicense -Path $projectLicense -Destination $bundleDir | Out-Null
-    $bundleLicenses = Add-ThirdPartyLicenses -Directory $bundleDir -CargoLicenses $cargoLicenses
+    # The setup ships this tree, so its own gates read the same texts.
+    $script:bundleLicenses = Add-ThirdPartyLicenses -Directory $bundleDir -CargoLicenses $cargoLicenses
+    $bundleLicenses = $script:bundleLicenses
+    $script:bundleMsvcRedist = Copy-MsvcRuntimeNotice -Root $bundleDir
     $bundleRules = Get-ThirdPartyLicenseRules -Licenses $bundleLicenses -ProjectLicense $projectLicense -ModelLicense $modelLicense
     Invoke-BuildExternal -Context $context -File 'python' -Parameters (@($licenseVerifier, $bundleDir) + $bundleRules) | Out-Null
     Assert-PayloadOrtLicenses -Path $bundleDir -Licenses $bundleLicenses
@@ -304,15 +312,32 @@ function Invoke-MsixPackagingStep {
   }
 }
 
+# The MSI's names and UpgradeCode; the setup reads the same, so its guard against an installed MSI cannot drift.
+function Get-MsiIdentity {
+  $outputName = Get-OrDefault $env:MSI_OUTPUT_NAME (Get-ConfigValue -Config $config -Path 'Msi.OutputName')
+  if ([string]::IsNullOrWhiteSpace($outputName)) { $outputName = $binary }
+  $wxsRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.WxsFile') 'wix/main.wxs'
+  $wxsPath = if ([System.IO.Path]::IsPathRooted($wxsRel)) { $wxsRel } else { Join-Path $workspacePath $wxsRel }
+  # The config owns these strings; the WXS takes them as preprocessor variables.
+  $productName = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.ProductName') $msixDisplayName
+  $manufacturer = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.Manufacturer') $msixPublisherDisplayName
+  if ([string]::IsNullOrWhiteSpace($productName)) { throw "Msi.ProductName is empty and Msix.DisplayName gave no fallback; $wxsPath requires it." }
+  if ([string]::IsNullOrWhiteSpace($manufacturer)) { throw "Msi.Manufacturer is empty and Msix.PublisherDisplayName gave no fallback; $wxsPath requires it." }
+  $package = ([xml](Get-Content -LiteralPath $wxsPath -Raw)).SelectSingleNode("//*[local-name()='Package']")
+  $code = if ($package) { $package.GetAttribute('UpgradeCode') } else { '' }
+  if ($code -cnotmatch '^\{?([0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12})\}?$') { throw "$wxsPath names no Package UpgradeCode" }
+  return [pscustomobject]@{
+    OutputName = $outputName; WxsPath = $wxsPath; ProductName = $productName; Manufacturer = $manufacturer
+    UpgradeCode = "{$($Matches[1].ToUpperInvariant())}"
+  }
+}
+
 function Invoke-MsiPackagingStep {
   Invoke-BuildStep -Context $context -StepName 'MSI Packaging' -Critical -Script {
     # MSI ProductVersion is major.minor.build.
     $resolvedVersion = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 3
-
-    $msiOutputName = Get-OrDefault $env:MSI_OUTPUT_NAME (Get-ConfigValue -Config $config -Path 'Msi.OutputName')
-    if ([string]::IsNullOrWhiteSpace($msiOutputName)) {
-      $msiOutputName = $binary
-    }
+    $identity = Get-MsiIdentity
+    $msiOutputName = $identity.OutputName
 
     $msiDistDir = Join-Path $layout.DistDir 'msi'
     New-Item -ItemType Directory -Path $msiDistDir -Force | Out-Null
@@ -321,8 +346,7 @@ function Invoke-MsiPackagingStep {
 
     Write-BuildLog -Context $context -Message "Creating MSI package: $msiFile"
 
-    $wxsRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.WxsFile') 'wix/main.wxs'
-    $wxsPath = if ([System.IO.Path]::IsPathRooted($wxsRel)) { $wxsRel } else { Join-Path $workspacePath $wxsRel }
+    $wxsPath = $identity.WxsPath
 
     $msiExePath = Join-Path $layout.ReleaseDir "$binary.exe"
     if (-not (Test-Path $msiExePath)) {
@@ -336,15 +360,8 @@ function Invoke-MsiPackagingStep {
     $licenseRtf = Join-Path $layout.ArchTargetDir 'project-license.rtf'
     Invoke-BuildExternal -Context $context -File 'cmake' -Parameters @("-DLICENSE_INPUT=$projectLicense", "-DLICENSE_OUTPUT=$licenseRtf", '-P', $licenseGenerator) | Out-Null
 
-    # The config owns these strings; the WXS takes them as preprocessor variables.
-    $msiProductName = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.ProductName') $msixDisplayName
-    $msiManufacturer = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.Manufacturer') $msixPublisherDisplayName
-    if ([string]::IsNullOrWhiteSpace($msiProductName)) {
-      throw "Msi.ProductName is empty and Msix.DisplayName gave no fallback; $wxsPath requires it."
-    }
-    if ([string]::IsNullOrWhiteSpace($msiManufacturer)) {
-      throw "Msi.Manufacturer is empty and Msix.PublisherDisplayName gave no fallback; $wxsPath requires it."
-    }
+    $msiProductName = $identity.ProductName
+    $msiManufacturer = $identity.Manufacturer
 
     # One generated component per payload file for main.wxs's PayloadFiles, laid out like the bundle.
     $payloadFiles = [System.Collections.Generic.List[object]]::new()
@@ -377,6 +394,65 @@ function Invoke-MsiPackagingStep {
 
     Write-BuildLogSuccess -Context $context -Message "MSI package created: $msiFile"
   }
+}
+
+# A throwaway certificate per build (CON302); its random password reaches makensis's signer through the environment only.
+function New-NsisTestSigning {
+  param([Parameter(Mandatory)][string]$WorkDir)
+  $password = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))
+  $secure = [securestring]::new()
+  foreach ($character in $password.ToCharArray()) { $secure.AppendChar($character) }
+  $pfx = Join-Path $WorkDir 'test-signing.pfx'
+  $null = New-TestSigningCertificate -Subject $msixPublisher -PfxPath $pfx -Password $secure
+  return [pscustomobject]@{ Pfx = $pfx; Password = $password }
+}
+
+# The licence page names the MSVC runtime's end-user terms too when the payload carries that runtime, as CPack's does.
+function New-NsisLicensePage {
+  param([Parameter(Mandatory)][string]$Destination)
+  $page = [IO.File]::ReadAllText($projectLicense)
+  if ($script:bundleMsvcRedist) { $page += "`n`n" + [IO.File]::ReadAllText((Join-Path (Split-Path $script:bundleMsvcRedist -Parent) 'README.txt')) }
+  [IO.File]::WriteAllText($Destination, $page)
+  return $Destination
+}
+
+# Per machine and test-signed; the payload is the verified portable bundle, so the setup installs what the zip ships.
+function Invoke-NsisPackagingStep {
+  Invoke-BuildStep -Context $context -StepName 'NSIS Setup' -Critical -Script {
+    $identity = Get-MsiIdentity
+    $version = Get-PackageVersion -WorkspacePath $workspacePath -Default $msixVersion -Components 3
+    $stem = "$($identity.OutputName)-$version"
+    $otherArch = if ($layout.PackageArch -eq 'arm64') { 'x64' } else { 'arm64' }
+    $workDir = Join-Path $layout.ArchTargetDir 'nsis'
+    Initialize-BuildDirectory -Path $workDir -Empty
+    $payloadDir = Join-Path $layout.DistDir 'bundle'
+    # An image older than its NSIS stage sets no NSIS_VERSION, so the hub's pin decides.
+    $hubPins = ConvertFrom-VersionsEnv -Path (Join-Path $workspacePath 'third_party\ANTfrastructure\linux\scripts\01-core\versions.env')
+    $nsisVersion = Get-OrDefault $env:NSIS_VERSION $hubPins['NSIS_VERSION']
+    $signing = New-NsisTestSigning -WorkDir $workDir
+    $setup = [ordered]@{
+      ProductName = $identity.ProductName; Publisher = $identity.Manufacturer; Version = $version; Arch = $layout.PackageArch
+      PayloadDir = $payloadDir; MainExe = "$binary.exe"; LicenseFile = (New-NsisLicensePage -Destination (Join-Path $workDir 'license-page.txt'))
+      UninstallKey = $msixName
+      OtherArchSetup = "$stem-$otherArch-setup.exe"; OutFile = (Join-Path $layout.DistDir "packages\$stem-$($layout.PackageArch)-setup.exe")
+      WorkDir = $workDir; MsiUpgradeCode = $identity.UpgradeCode; ShortcutArguments = 'gui'; SignPfx = $signing.Pfx
+      IconFile = (ConvertTo-PythonAppIcon -PngPath (Join-Path $workspacePath 'images\logo.png') -Destination (Join-Path $workDir 'project.ico'))
+    }
+    $savedPassword = $env:MSIX_PFX_PASSWORD
+    $env:MSIX_PFX_PASSWORD = $signing.Password
+    try {
+      $setupFile = Invoke-NsisPackage -Context $context -Setup $setup -ExpectedVersion $nsisVersion
+    } finally {
+      $env:MSIX_PFX_PASSWORD = $savedPassword
+      Remove-Item -LiteralPath $signing.Pfx -Force -ErrorAction SilentlyContinue
+    }
+
+    $setupRules = Get-ThirdPartyLicenseRules -Licenses $script:bundleLicenses -ProjectLicense $projectLicense -ModelLicense $modelLicense
+    Invoke-BuildExternal -Context $context -File 'python' -Parameters (@($licenseVerifier, $setupFile) + $setupRules) | Out-Null
+    Assert-PayloadOrtLicenses -Path $setupFile -Licenses $script:bundleLicenses
+    Assert-PackageMsvcRuntimeNotice -Path $setupFile -RedistText ([string]$script:bundleMsvcRedist)
+    Write-BuildLogSuccess -Context $context -Message "NSIS setup created and test-signed: $setupFile"
+  } | Out-Null
 }
 
 function Invoke-SyncArtifactsStep {
@@ -484,6 +560,10 @@ try {
   $msiEnabled = Get-ConfigValue -Config $config -Path 'Msi.Enabled'
   if (-not $SkipMsi -and $msiEnabled) {
     Invoke-MsiPackagingStep
+  }
+
+  if (-not $SkipNsis) {
+    Invoke-NsisPackagingStep
   }
 
   Invoke-SyncArtifactsStep

@@ -13,6 +13,21 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-27, the NSIS setup pilot: ANTfrastructure CON302)
+
+- **A per-machine NSIS setup beside the MSI and the MSIX**, `kataglyphis_cli-<VERSION>-<x64|arm64>-setup.exe`, built
+  from the portable bundle by the hub's `Invoke-NsisPackage` (`Build-Windows.ps1 -SkipNsis` turns it off; the GPU
+  candidates do). Its Start-menu shortcut starts `gui`, and so do the MSI's (`Arguments='gui'`) and the MSIX's
+  (`uap10:Parameters="gui"`) from now on. The x64 setup refuses ARM64, an installed MSI of OxidANT stops it, and an
+  upgrade replaces the old install in place.
+- **The setups are signed by a throwaway test certificate made for each build**, so Windows names an unknown
+  publisher until the real certificate exists. The password stays in the environment.
+- The bundle, and with it the portable zip and the setup, ships the VC++ runtime's notice in
+  `licenses\msvc-runtime\`, and the setup's licence page names it. The MSI and the MSIX do not carry it yet.
+- The build grades the setup with the licence, ONNX Runtime and MSVC runtime gates; the x64 lane installs, upgrades,
+  runs and uninstalls it on the bare runner (`Test-NsisSetup.ps1`), and the hub's arm64 device job does the same for
+  the arm64 setup. The release collects `*-setup.exe`. `NsisSetupWiring.Tests.ps1` pins the wiring.
+
 ### Added (2026-11-27, WebP textures: BeschleunigerBallett plan B5)
 
 - **Both renderers read WebP.** `kataglyphis_assets` turns on `image`'s `webp` feature (pure Rust: `image-webp` 0.2.4

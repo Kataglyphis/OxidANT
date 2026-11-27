@@ -53,7 +53,7 @@ keeps their unused legacy Torch backend and its vulnerable ZIP/Zstd chain out of
 - **No feature flags**: every build carries everything its target can run.
 - **GStreamer capture**, a wgpu GUI overlay with FPS, latency and CPU, and a GTK4 camera GUI on Linux.
 - **Five build lanes**: Linux x64, arm64 and riscv64, Windows x64 and arm64.
-- **Packages** that carry their own GStreamer, ONNX Runtime, model and project license: tar, deb, AppImage and flatpak on Linux; portable zip, MSI and MSIX on Windows. Linux packages verify the matched ONNX wheel's license and notices; Windows uses the project icon and generates the MSI's RTF from the project license.
+- **Packages** that carry their own GStreamer, ONNX Runtime, model and project license: tar, deb, AppImage and flatpak on Linux; portable zip, MSI, MSIX and a test-signed NSIS setup on Windows. Linux packages verify the matched ONNX wheel's license and notices; Windows uses the project icon and generates the MSI's RTF from the project license.
 
 ## GPU package candidates
 
@@ -83,7 +83,7 @@ Prerequisites, the API docs and Linux containers locally:
 | Running the CLI, the GUI and the demos | [docs/running.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/running.md) |
 | ObservANT, the cat cam | [docs/observant.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/observant.md) |
 | Windows: shared source selection, config, build, test and arm64 source fixtures | [docs/windows.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/windows.md#the-driver) |
-| Packages: Linux tar, deb, AppImage, flatpak; Windows MSIX and MSI | [docs/packaging.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) |
+| Packages: Linux tar, deb, AppImage, flatpak; Windows MSIX, MSI and NSIS setup | [docs/packaging.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/packaging.md) |
 | Continuous integration, lane by lane | [docs/ci.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/ci.md) |
 | Dependency updates | [docs/updates.md](https://github.com/Kataglyphis/OxidANT/blob/develop/docs/updates.md) |
 | The WebGPU renderer | [crates/webgpu_renderer/README.md](https://github.com/Kataglyphis/OxidANT/blob/develop/crates/webgpu_renderer/README.md) |

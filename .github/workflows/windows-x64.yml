@@ -38,6 +38,8 @@ jobs:
         ./scripts/windows/Invoke-HostTests.ps1 -ContainerRoot 'C:\ws'
         ./dist/windows-x64/bundle/kataglyphis_cli.exe onnx-runtime
         ./dist/windows-x64/bundle/kataglyphis_cli.exe media-check
+        # The per-machine setup needs this elevated, throwaway host: install, upgrade, run, uninstall (CON302).
+        ./scripts/windows/Test-NsisSetup.ps1 -PackagesDir ./dist/windows-x64/packages
       artifact-name: kataglyphis_cli-windows-x64
       artifact-dir: dist/windows-x64
       # Green runs take two to three hours; four still stops a hung step long before the six-hour default.

@@ -2,7 +2,7 @@
 
 The existing CPU packages carry the GStreamer libraries and the GUI's plugins,
 the chain-built ONNX Runtime, the model, and on Linux the image's C and C++ runtime. On
-Windows the MSIX and the MSI are steps of `Build-Windows.ps1`, beside the portable bundle in
+Windows the MSIX, the MSI and the NSIS setup are steps of `Build-Windows.ps1`, beside the portable bundle in
 `dist\windows-<x64|arm64>\` ([ci.md](ci.md));
 on Linux `scripts/linux/package-linux.sh` packs one bundle four ways
 ([§ Linux](#linux-tar-deb-appimage-flatpak)).
@@ -304,6 +304,34 @@ WiX as a single `wix.exe` (`WIX_VERSION` in ANTfrastructure's `versions.env`, 7.
 2026-10-19). So `wix/main.wxs` is in the v4 schema, which WiX 7 still reads, and takes
 version, binary path and licence path as preprocessor variables. The
 `WixUI_FeatureTree` dialog set comes from `WixToolset.UI.wixext`, installed in the image.
+
+## NSIS setup
+
+The **NSIS Setup** step of `Build-Windows.ps1` (off with `-SkipNsis`; the GPU candidates pass it).
+
+Output: `dist\windows-<x64|arm64>\packages\kataglyphis_cli-<VERSION>-<x64|arm64>-setup.exe`
+
+It installs the portable bundle as it is, per machine under `Program Files\OxidANT`, with an
+all-users Start-menu shortcut that starts `gui`, as the MSI's and the MSIX's shortcuts do. The
+hub's `Invoke-NsisPackage` builds it from its `setup.nsi`, with zlib and the makensis at
+`NSIS_VERSION`
+([NSIS setups](https://github.com/Kataglyphis/ANTfrastructure/blob/develop/docs/adopting-in-a-new-project.md#nsis-setups)).
+
+- One setup per architecture, both on NSIS's x86 stub. The x64 setup stops on ARM64 and names
+  the arm64 one; a silent refusal exits 2.
+- An installed MSI of OxidANT stops it too: the setup reads `wix/main.wxs`'s `UpgradeCode`.
+- An upgrade runs the old uninstaller in place, found under the stable key `Kataglyphis.OxidANT`.
+- The licence page is `LICENSE` plus the VC++ runtime's end-user notice, since the bundle carries
+  that runtime; the bundle ships both texts in `licenses\msvc-runtime\`. The MSI and the MSIX do
+  not carry that notice yet.
+- A throwaway test certificate made for each build signs the setup and its uninstaller, so
+  Windows names an unknown publisher until the real certificate exists. Its random password
+  reaches makensis's signer only through the environment.
+- The build reads the finished setup back with the licence, ONNX Runtime and MSVC runtime gates.
+  The x64 lane installs it on the bare runner (`Test-NsisSetup.ps1`: install, upgrade, the
+  installed CLI, uninstall); the hub's arm64 device job does the same for the arm64 setup.
+
+The release publishes both setups beside the MSI and the MSIX.
 
 ## Linux: tar, deb, AppImage, flatpak
 

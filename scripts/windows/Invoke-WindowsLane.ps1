@@ -12,7 +12,9 @@ param(
   # amd64 (alias x64) or arm64; empty takes the image's WINDOWS_TARGET_ARCH.
   [string]$TargetArch = '',
   # Cross only: after the build, stage the x64 lane's tests for the target (Stage-CrossTests.ps1, hub CON43).
-  [switch]$StageTests
+  [switch]$StageTests,
+  # No NSIS setup (Build-Windows.ps1 -SkipNsis), for a lane that ships none.
+  [switch]$SkipNsis
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,7 +49,9 @@ try {
     # No profile build: fat LTO plus debuginfo of the whole CLI runs a 16 GB runner out of LLVM memory (run 39471292642).
     Invoke-LaneStep -Script 'Invoke-AppProfiles.ps1' -Arguments @('-Profiles', 'debug,release')
   }
-  Invoke-LaneStep -Script 'Build-Windows.ps1' -Arguments @('-SkipTests', '-TargetArch', $arch)
+  $buildArgs = @('-SkipTests', '-TargetArch', $arch)
+  if ($SkipNsis) { $buildArgs += '-SkipNsis' }
+  Invoke-LaneStep -Script 'Build-Windows.ps1' -Arguments $buildArgs
   if ($StageTests) { Invoke-LaneStep -Script 'Stage-CrossTests.ps1' -Arguments @('-TargetArch', $arch) }
 } finally {
   $null = Save-CiCompilerCache -Restored $restored

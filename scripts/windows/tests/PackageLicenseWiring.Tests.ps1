@@ -49,11 +49,12 @@ Describe 'Project license in Windows package payloads' {
         }
     }
 
-    It 'checks the staged bundle and finished MSIX and MSI with the shared verifier' {
+    It 'checks the staged bundle and finished MSIX, MSI and setup with the shared verifier' {
         $checks = @(Get-PackageLicenseChecks $source)
-        $checks.Count | Should Be 3
+        $checks.Count | Should Be 4
         @($checks | Where-Object { $_.Extent.Text.Contains('$bundleDir') }).Count | Should Be 1
         @($checks | Where-Object { $_.Extent.Text.Contains('$packageFile') }).Count | Should Be 1
+        @($checks | Where-Object { $_.Extent.Text.Contains('$setupFile') }).Count | Should Be 1
         $msi = @($checks | Where-Object { $_.GetCommandName() -eq 'Assert-MsiLicenseTexts' })
         $msi.Count | Should Be 1
         $bindings = Get-TestCommandArguments -Command $msi[0]
@@ -68,14 +69,15 @@ Describe 'Project license in Windows package payloads' {
         Assert-SourceHas 'Get-WixSourceFileId -WixPath $WixPath -SourcePath $text[0]'
         $source.Contains('payloadFile0=') | Should Be $false
         foreach ($check in $checks) {
-            @(Get-PackageLicenseChecks (Remove-SourceText $check.Extent.Text)).Count | Should Be 2
+            @(Get-PackageLicenseChecks (Remove-SourceText $check.Extent.Text)).Count | Should Be ($checks.Count - 1)
         }
     }
 
     It 'adds third-party texts to every payload and reads them back from each format' {
         Assert-OnePerDestination @(Get-ThirdPartyLicenseCalls $source 'Add-ThirdPartyLicenses' | ForEach-Object { (Get-TestCommandArguments -Command $_).Directory })
-        @(Get-ThirdPartyLicenseCalls $source 'Get-ThirdPartyLicenseRules').Count | Should Be 2
-        @(Get-ThirdPartyLicenseCalls $source 'Assert-PayloadOrtLicenses').Count | Should Be 3
+        # The setup reads back the bundle's texts, so it adds a rule set and an ORT check but no payload of its own.
+        @(Get-ThirdPartyLicenseCalls $source 'Get-ThirdPartyLicenseRules').Count | Should Be 3
+        @(Get-ThirdPartyLicenseCalls $source 'Assert-PayloadOrtLicenses').Count | Should Be 4
         Assert-SourceHas '$extraFiles += $msixLicenses.Root'
         Assert-SourceHas '@(@($msiPayload.Included) + $msiLicenses.Root'
         Assert-SourceHas "'--policy', `$cargoLicensePolicy, '--output-dir', `$cargoLicenses"
