@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-27, the Linux x64 build on the larger x86-64-v3 image)
+
+- **The Linux x64 build job runs the full disk cleanup** (`free-disk-space: 'true'`). The first `:latest` built for
+  x86-64-v3 is larger: with 91 GB free before the pull the fast cleanup was chosen, and the debug test binaries then
+  filled the disk, where lld died of `signal 7 [Bus error]`. The GPU workflows already run the full cleanup.
+
 ### Added (2026-11-27, the NSIS setup pilot: ANTfrastructure CON302)
 
 - **A per-machine NSIS setup beside the MSI and the MSIX**, `kataglyphis_cli-<VERSION>-<x64|arm64>-setup.exe`, built

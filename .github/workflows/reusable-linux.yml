@@ -65,6 +65,8 @@ jobs:
         with:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GHCR_PAT }}
+          # The debug test binaries outgrow the room the fast cleanup leaves beside the image.
+          free-disk-space: 'true'
 
       - name: Compute version
         id: compute-version
