@@ -21,7 +21,7 @@ $requirements = @(
   @{ Name = 'Copy-OrtWheelLicenses'; Parameter = 'DirectMlDll'; Message = 'The pinned ANTfrastructure lacks same-wheel DirectML verification.' }
   @{ Name = 'Copy-ChainOrtBeside'; Parameter = 'RequiredProvider'; Message = 'The pinned ANTfrastructure lacks selected-provider staging.' }
   @{ Name = 'Get-ChainOrtRuntimeFile'; Parameter = ''; Message = 'The pinned ANTfrastructure lacks the chain runtime path resolver.' }
-  @{ Name = 'Get-PackageOrtProviderNames'; Parameter = ''; Message = 'The pinned ANTfrastructure lacks finished-package provider-set verification.' }
+  @{ Name = 'Assert-PackageOrtProviderSet'; Parameter = 'Label'; Message = 'The pinned ANTfrastructure lacks finished-package provider-set verification.' }
   @{ Name = 'Assert-PackageOrtFamily'; Parameter = ''; Message = 'The pinned ANTfrastructure lacks complete ORT-family package verification.' }
 )
 foreach ($requirement in $requirements) {

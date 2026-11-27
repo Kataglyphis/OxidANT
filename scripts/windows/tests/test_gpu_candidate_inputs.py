@@ -613,7 +613,7 @@ class GpuPreflight(unittest.TestCase):
             output.writestr("onnxruntime_providers_other.dll", b"extra provider")
         result = self.run_archive_check(bundle, archive)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("unexpected ONNX Runtime provider set", result.stderr)
+        self.assertIn("GPU archive ORT providers differ", result.stderr)
 
     def test_changed_provider_in_finished_archive_is_rejected(self) -> None:
         bundle, archive = self.make_archive_fixture()

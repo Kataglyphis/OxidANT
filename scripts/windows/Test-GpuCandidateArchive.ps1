@@ -24,10 +24,7 @@ $modelFiles = @(& (Join-Path $PSScriptRoot 'Get-ModelLockFile.ps1'))
 if ($LASTEXITCODE -ne 0) { throw 'The finished candidate model files do not match models.lock.' }
 $expected = @('onnxruntime_providers_shared.dll')
 if ($Provider -eq 'cuda') { $expected += 'onnxruntime_providers_cuda.dll' }
-$actual = @(Get-PackageOrtProviderNames -Path $Archive)
-if (@(Compare-Object -ReferenceObject $expected -DifferenceObject $actual -CaseSensitive).Count -ne 0) {
-  throw "GPU archive has an unexpected ONNX Runtime provider set: $($actual -join ', ')"
-}
+Assert-PackageOrtProviderSet -Path $Archive -Expected $expected -Label 'GPU archive'
 $required = @('onnxruntime.dll') + $expected
 if ($Provider -eq 'directml') { $required += 'DirectML.dll' }
 $extra = @()

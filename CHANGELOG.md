@@ -13,6 +13,12 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-27, the GPU archive check uses the hub's provider-set assert: ANTfrastructure #364)
+
+- **`Test-GpuCandidateArchive.ps1` checks the finished archive's ORT providers with the hub's
+  `Assert-PackageOrtProviderSet`**, the one check the other consumers share, instead of its own `Compare-Object`.
+  The hub pin moves to 5f8bc07ae, and `Test-GpuCandidateInputs.ps1` asks the pinned hub for that function.
+
 ### Changed (2026-11-27, fewer copied blocks and dead doc links: ANTfrastructure #364)
 
 - **Another crate's module or type re-exported by the renderer is linked, not copied, on the docs site.** The six
