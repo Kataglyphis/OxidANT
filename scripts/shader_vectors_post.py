@@ -3,7 +3,19 @@ import math
 
 import shader_model as sm
 import shader_model_post as sp
-from shader_vector_format import CHAINED, SMOOTH, Draw, Module, Values, flat, merged, one, out, ports, word
+from shader_vector_format import (
+    CHAINED,
+    SMOOTH,
+    Draw,
+    Module,
+    Values,
+    flat,
+    merged,
+    one,
+    out,
+    ports,
+    word,
+)
 
 
 def evaluate_exposure(i: Values) -> dict[str, list[float]]:
