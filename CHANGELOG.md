@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-28, the docs site links its dependencies to docs.rs: hub 84c5eec00)
+
+- **61 of the 62 `docs/site-links.allow` keys go.** The hub's `cargo_build_doc.sh` now documents with its pinned
+  nightly and `-Zrustdoc-map`, which maps crates.io dependencies to docs.rs. The links rustdoc copies from tracing's
+  `WithSubscriber` (59 `<module>/dispatcher` keys) and burn's `Module` (2 keys) resolve there instead of on our
+  pages. tracing 0.1.44 was never wrong: its link resolves wherever its docs are built. The hub's link gate now also
+  reports a Rust-path `href` (`super::Subscriber`), which it had skipped as a URL scheme. Measured in WSL on 18 of
+  the 20 crates: 69 findings before, none after. `RuntimeBinding`'s key stays. The docs lane takes the hub's develop;
+  the pin follows once that commit is green.
+
 ### Changed (2026-11-27, the GPU archive check uses the hub's provider-set assert: ANTfrastructure #364)
 
 - **`Test-GpuCandidateArchive.ps1` checks the finished archive's ORT providers with the hub's
