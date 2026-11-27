@@ -80,6 +80,10 @@ reproduce a lane, run it by hand in a local container of the image; no local dri
   fetches the model first and sets `KATAGLYPHIS_REQUIRE_MODEL=1` (2026-10-21): before that the
   real-model tests reported `ok` having skipped. They find the chain ORT through
   `$env:ONNX_ROOT\bin`, before any staging.
+  WARP has faulted here too, once: run 45953126217 (2026-11-27, 12ff01e) stopped `tracer.exe` with
+  `0xC0000005 STATUS_ACCESS_VIOLATION`, faulting module `dxilconv.dll` at offset 0xb28e5 (WARP
+  10.0.26100.33648); the same commit had passed on dispatch, and the job's rerun passed. Rerun such a
+  fault once; a second on the same commit is this repo's to explain.
 - **arm64** (`windows-arm64-cross.yml`): `Build-Windows.ps1`, in the family image's arm64
   bundle, then `Stage-CrossTests.ps1`, which builds the whole workspace's tests for arm64,
   renderer included, and stages them with their DLL closure, the chain ORT beside the
