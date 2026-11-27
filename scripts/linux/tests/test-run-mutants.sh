@@ -35,6 +35,14 @@ t_assert_contains "$(cat "${work}/out")" "ARG=--lib"
 t_assert_contains "$(cat "${work}/out")" "mutants capture caught: 3"
 t_assert_contains "$(cat "${work}/out")" "mutants capture missed: 1"
 t_assert_contains "$(cat "${work}/out")" "mutants capture timeout: 0"
+t_assert_contains "$(cat "${work}/out")" $'ARG=-p\nARG=kataglyphis_observant'
+
+t_case "the session group mutates the root package's slot, not ObservANT"
+suite_run env PATH="${with_tool}" bash "${script}" session "${work}/mut"
+t_assert_eq 0 "$(cat "${work}/rc")"
+t_assert_contains "$(cat "${work}/out")" $'ARG=-p\nARG=oxidant\nARG=--file\nARG=src/session_slot.rs\n'
+t_assert_no_grep "${work}/out" "crates/observant"
+t_assert_contains "$(cat "${work}/out")" "mutants session missed: 1"
 
 t_case "missed or timed-out mutants are a score, not a failed run"
 suite_run env PATH="${with_tool}" FAKE_CARGO_RC=2 bash "${script}" network "${work}/mut"

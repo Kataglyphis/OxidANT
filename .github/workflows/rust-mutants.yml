@@ -1,4 +1,4 @@
-# ObservANT's cargo-mutants groups from docs/testing.md, once a week: the scores as artifacts, nothing gated.
+# The cargo-mutants groups from docs/testing.md, once a week: the scores as artifacts, nothing gated.
 name: Rust mutation scores
 
 # A no-op with a warning until the image pins cargo-mutants (hub CON238).
@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [network, arrival, camera, media, capture]
+        group: [network, arrival, camera, media, capture, session]
     steps:
       - name: Prepare the CI host
         uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop

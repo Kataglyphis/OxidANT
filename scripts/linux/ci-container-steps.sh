@@ -33,7 +33,7 @@ usage: ci-container-steps.sh <step>
   riscv64-test    the workspace tests, cross-built for riscv64 and run under QEMU
   web-browser     webgpu-demo-browser.sh    - the web demo's every mode drawn in headless Chrome
   vision-web      vision-core-web.sh        - the browser's vision module on wasm32: ModelANT's contract in node, bit for bit against native (GATING)
-  mutants <group> run-mutants.sh            - one group of ObservANT's cargo-mutants commands, reported, not gated
+  mutants <group> run-mutants.sh            - one group of docs/testing.md's cargo-mutants commands, reported, not gated
 
 Run inside the family Linux CI image, from the repository root.
 USAGE

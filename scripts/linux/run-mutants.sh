@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# One group of ObservANT's cargo-mutants commands from docs/testing.md § Coverage and mutation testing, for the weekly job: it reports scores and gates nothing.
+# One group of the cargo-mutants commands in docs/testing.md § Coverage and mutation testing, for the weekly job: it reports scores and gates nothing.
 set -euo pipefail
 
 usage() {
-    echo "usage: run-mutants.sh <network|arrival|camera|media|capture> [output dir, default logs/mutants]" >&2
+    echo "usage: run-mutants.sh <network|arrival|camera|media|capture|session> [output dir, default logs/mutants]" >&2
 }
 
 group="${1-}"
 out="${2:-logs/mutants}"
+package=kataglyphis_observant
+src=crates/observant/src
 case "${group}" in
     network) files=(web.rs static_files.rs) ;;
     arrival) files=(motion.rs presence.rs status.rs) ;;
     camera) files=(camera.rs config.rs notify.rs) ;;
     media) files=(clip.rs frame.rs stats.rs output.rs precompress.rs) ;;
     capture) files=(capture.rs capture/logic.rs) ;;
+    # Not ObservANT's: the root package's lib holds the slot and its unit tests.
+    session) package=oxidant; src=src; files=(session_slot.rs) ;;
     *)
         echo "run-mutants.sh: unknown group '${group}'" >&2
         usage
@@ -32,9 +36,9 @@ if ! command -v cargo-mutants > /dev/null 2>&1; then
 fi
 
 file_args=()
-for file in "${files[@]}"; do file_args+=(--file "crates/observant/src/${file}"); done
+for file in "${files[@]}"; do file_args+=(--file "${src}/${file}"); done
 rc=0
-cargo mutants -p kataglyphis_observant "${file_args[@]}" --jobs 1 --output "${out}/${group}" -- --lib || rc=$?
+cargo mutants -p "${package}" "${file_args[@]}" --jobs 1 --output "${out}/${group}" -- --lib || rc=$?
 # 2 is missed mutants and 3 timed-out ones: the score this job reports, not a broken run.
 case "${rc}" in
     0 | 2 | 3) ;;

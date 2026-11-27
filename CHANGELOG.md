@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-28, a mutation group for the session slot, and the missed mutants in the quality report)
+
+- **`run-mutants.sh session`** grades the root crate's `src/session_slot.rs` against its five unit tests
+  (`cargo mutants -p oxidant --file src/session_slot.rs`). The script now takes each group's package and source
+  directory, and `rust-mutants.yml` runs the sixth group with the other five on Sundays. `test-run-mutants.sh` pins
+  the package and the path.
+- **`quality-report.toml` counts each group's `missed.txt`** as `mutants_missed_<group>`, lower is better, from that
+  week's `mutants-<group>` artifact. A report at any other commit says `not-collected`, never 0.
+
 ### Changed (2026-11-28, the docs site links its dependencies to docs.rs: hub 84c5eec00)
 
 - **61 of the 62 `docs/site-links.allow` keys go.** The hub's `cargo_build_doc.sh` now documents with its pinned

@@ -36,6 +36,67 @@ workflow = "linux-x64.yml"
 pattern = '^warning: (?!.*generated \d+ warnings?)'
 location = '-->\s+(?P<path>[^:\s]+):(?P<line>\d+)'
 
+# rust-mutants.yml's weekly groups: a missed mutant is one line; only a run at the report's own commit is read.
+[[artifact]]
+name = "mutants_missed_network"
+kind = "count"
+unit = "mutants"
+path = "logs/mutants/network/mutants.out/missed.txt"
+artifact = "mutants-network"
+workflow = "rust-mutants.yml"
+pattern = '\S'
+location = '^(?P<path>[^:\s]+):(?P<line>\d+)'
+
+[[artifact]]
+name = "mutants_missed_arrival"
+kind = "count"
+unit = "mutants"
+path = "logs/mutants/arrival/mutants.out/missed.txt"
+artifact = "mutants-arrival"
+workflow = "rust-mutants.yml"
+pattern = '\S'
+location = '^(?P<path>[^:\s]+):(?P<line>\d+)'
+
+[[artifact]]
+name = "mutants_missed_camera"
+kind = "count"
+unit = "mutants"
+path = "logs/mutants/camera/mutants.out/missed.txt"
+artifact = "mutants-camera"
+workflow = "rust-mutants.yml"
+pattern = '\S'
+location = '^(?P<path>[^:\s]+):(?P<line>\d+)'
+
+[[artifact]]
+name = "mutants_missed_media"
+kind = "count"
+unit = "mutants"
+path = "logs/mutants/media/mutants.out/missed.txt"
+artifact = "mutants-media"
+workflow = "rust-mutants.yml"
+pattern = '\S'
+location = '^(?P<path>[^:\s]+):(?P<line>\d+)'
+
+[[artifact]]
+name = "mutants_missed_capture"
+kind = "count"
+unit = "mutants"
+path = "logs/mutants/capture/mutants.out/missed.txt"
+artifact = "mutants-capture"
+workflow = "rust-mutants.yml"
+pattern = '\S'
+location = '^(?P<path>[^:\s]+):(?P<line>\d+)'
+
+[[artifact]]
+name = "mutants_missed_session"
+kind = "count"
+unit = "mutants"
+path = "logs/mutants/session/mutants.out/missed.txt"
+artifact = "mutants-session"
+workflow = "rust-mutants.yml"
+pattern = '\S'
+location = '^(?P<path>[^:\s]+):(?P<line>\d+)'
+
 # The hub cargo_test.sh writes it from the test step's log; libtest prints no per-test time.
 [[artifact]]
 name = "cargo-test"

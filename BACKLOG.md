@@ -63,9 +63,9 @@ its open work is here.
       `scripts/linux/run-mutants.sh` and uploads `mutants.out`. It warned and ran nothing until the hub's `:latest`
       `abb3030d…` (2026-11-27) carried cargo-mutants 27.1.0 (hub CON238). The `cargo mutants` scores in
       `docs/testing.md` are from 2026-10-15. The next weekly run writes `capture.rs`'s and `capture/logic.rs`'s new counts (six capture tests since 2026-11-15) into
-      `docs/testing.md`. Next: a group for the root crate's `src/session_slot.rs` (`-p` of the root package); a
-      `kind = "count"` artifact over `mutants.out/missed.txt` in `quality-report.toml`. Done when a weekly run has
-      uploaded all five groups and the table holds its counts.
+      `docs/testing.md`. Since 2026-11-28 a sixth group, `session`, grades the root crate's `src/session_slot.rs`, and
+      `quality-report.toml` counts each group's `missed.txt` (`mutants_missed_<group>`). Done when a weekly run has
+      uploaded all six groups and the table holds its counts.
 
 - [ ] **No packaged ObservANT has answered 502 to a panicking question yet** (S, ★★). Since 2026-11-14 every
       ObservANT build uses its own profile (`[profile.observant]`, release with `panic = "unwind"`, owner decision of
