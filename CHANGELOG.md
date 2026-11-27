@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-27, bloom in both renderers: BeschleunigerBallett plan C5)
+
+- **Bloom's threshold and taps are one module.** `shaders/common/bloom_filter.slang` holds `bloom_bright` (the
+  exposed radiance less 1 per channel) and `bloom_tap_weight` (the 9-tap Gaussian's weights, which sum to one);
+  `bloom/bloom.slang` uses them, its blur unrolled into the straight-line sum in the order it had
+  (`bloom_adds_energy_around_bright_sources` and the clouds' tests pass as they did; `post_reload.rs` edits the bright
+  pass's new call).
+  `tests/bloom_filter_test.slang` checks both, and the weights' sum, per case of `vectors/bloom_filter.json` (17).
+- `bloom.slang`'s three fragment entries get SPIR-V rows: BeschleunigerBallett draws the same bright pass and blurs.
+
 ### Changed (2026-11-27, exposure in both renderers: BeschleunigerBallett plan C5)
 
 - **One exposure module for both renderers.** `shaders/common/exposure.slang` holds the histogram's constants,

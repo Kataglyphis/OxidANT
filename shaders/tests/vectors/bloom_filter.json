@@ -1,0 +1,34 @@
+{
+  "about": "Inputs, f64 references and tolerances for tests/bloom_filter_test.slang, which runs every public function of common/bloom_filter.slang once per case. OxidANT's crates/webgpu_renderer/tests/shader_vectors.rs and BeschleunigerBallett's C++ runner check it. The kernel reads two u32 header words (input words per case, output words per case), then each case's inputs in `inputs` order, one 32-bit word per component (an f32 as its IEEE bits, a u32 or i32 as the integer), and writes each case's outputs the same way in `outputs` order. An f32 output passes when |gpu - ref| <= abs + rel * |ref| in every component; a u32 or i32 output must be equal. Written by scripts/generate-shader-vectors.py from an f64 model of the module: edit that.",
+  "module": "common/bloom_filter.slang",
+  "kernel": "tests/bloom_filter_test.slang",
+  "entry": "bloom_filter_test_main",
+  "inputs": [
+    {"name": "exposed", "type": "f32", "width": 3},
+    {"name": "offset", "type": "i32", "width": 1}
+  ],
+  "outputs": [
+    {"name": "bloom_bright", "type": "f32", "width": 3, "abs": 1e-06, "rel": 1e-05},
+    {"name": "bloom_tap_weight", "type": "f32", "width": 1, "abs": 1e-06, "rel": 1e-05},
+    {"name": "bloom_tap_weight.sum", "type": "f32", "width": 1, "abs": 1e-06, "rel": 1e-05}
+  ],
+  "cases": [
+    {"name": "each channel keeps what it has above 1", "inputs": {"exposed": [2.5, 1.5, 0.5], "offset": [0]}, "outputs": {"bloom_bright": [1.5, 0.5, 0.0], "bloom_tap_weight": [0.227026998997], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "a radiance at or below 1 keeps nothing", "inputs": {"exposed": [0.25, 0.75, 0.999], "offset": [0]}, "outputs": {"bloom_bright": [0.0, 0.0, 0.0], "bloom_tap_weight": [0.227026998997], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "a highlight far past white keeps all but 1", "inputs": {"exposed": [12.0, 40.0, 7.5], "offset": [0]}, "outputs": {"bloom_bright": [11.0, 39.0, 6.5], "bloom_tap_weight": [0.227026998997], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "a radiance past the HDR maximum is capped", "inputs": {"exposed": [70000.0, 2.0, 0.0], "offset": [0]}, "outputs": {"bloom_bright": [65000.0, 1.0, 0.0], "bloom_tap_weight": [0.227026998997], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "negative radiance keeps nothing", "inputs": {"exposed": [-3.0, -0.5, 1.25], "offset": [0]}, "outputs": {"bloom_bright": [0.0, 0.0, 0.25], "bloom_tap_weight": [0.227026998997], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "one texel right", "inputs": {"exposed": [2.5, 1.5, 0.5], "offset": [1]}, "outputs": {"bloom_bright": [1.5, 0.5, 0.0], "bloom_tap_weight": [0.194594606757], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "one texel left weighs the same", "inputs": {"exposed": [2.5, 1.5, 0.5], "offset": [-1]}, "outputs": {"bloom_bright": [1.5, 0.5, 0.0], "bloom_tap_weight": [0.194594606757], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "two texels", "inputs": {"exposed": [2.5, 1.5, 0.5], "offset": [2]}, "outputs": {"bloom_bright": [1.5, 0.5, 0.0], "bloom_tap_weight": [0.121621601284], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "three texels left", "inputs": {"exposed": [2.5, 1.5, 0.5], "offset": [-3]}, "outputs": {"bloom_bright": [1.5, 0.5, 0.0], "bloom_tap_weight": [0.0540539994836], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "the kernel's edge, four texels", "inputs": {"exposed": [2.5, 1.5, 0.5], "offset": [4]}, "outputs": {"bloom_bright": [1.5, 0.5, 0.0], "bloom_tap_weight": [0.016216000542], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "four texels left", "inputs": {"exposed": [2.5, 1.5, 0.5], "offset": [-4]}, "outputs": {"bloom_bright": [1.5, 0.5, 0.0], "bloom_tap_weight": [0.016216000542], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "five texels are past the kernel", "inputs": {"exposed": [2.5, 1.5, 0.5], "offset": [5]}, "outputs": {"bloom_bright": [1.5, 0.5, 0.0], "bloom_tap_weight": [0.0], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "far past the kernel on the left", "inputs": {"exposed": [2.5, 1.5, 0.5], "offset": [-9]}, "outputs": {"bloom_bright": [1.5, 0.5, 0.0], "bloom_tap_weight": [0.0], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "seeded texel 0", "inputs": {"exposed": [9.923123, 17.13528, 1.7738844], "offset": [0]}, "outputs": {"bloom_bright": [8.92312335968, 16.1352806091, 0.773884415627], "bloom_tap_weight": [0.227026998997], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "seeded texel 1", "inputs": {"exposed": [0.6879887, 19.043161, 4.2442675], "offset": [-4]}, "outputs": {"bloom_bright": [0.0, 18.0431613922, 3.24426746368], "bloom_tap_weight": [0.016216000542], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "seeded texel 2", "inputs": {"exposed": [6.1791153, 16.372988, 1.092344], "offset": [-4]}, "outputs": {"bloom_bright": [5.17911529541, 15.3729877472, 0.092344045639], "bloom_tap_weight": [0.016216000542], "bloom_tap_weight.sum": [0.999999415129]}},
+    {"name": "seeded texel 3", "inputs": {"exposed": [7.057139, 11.214933, 4.0434885], "offset": [6]}, "outputs": {"bloom_bright": [6.05713891983, 10.2149333954, 3.0434885025], "bloom_tap_weight": [0.0], "bloom_tap_weight.sum": [0.999999415129]}}
+  ]
+}

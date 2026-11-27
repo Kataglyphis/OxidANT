@@ -1,4 +1,4 @@
-"""The f64 model of the post chain's shared modules: exposure.slang's histogram, reduction and adaptation."""
+"""The f64 model of the post chain's shared modules: exposure.slang's histogram and adaptation, bloom_filter.slang."""
 import math
 
 from shader_model import Model, Real, Vec, clamp, dot, f32, real, visit
@@ -78,3 +78,37 @@ def adapt_exposure_ev(current_ev: Real, target_ev: Real, dt: Real, speed: Real) 
 
 def exposure_scale(ev: Real) -> Real:
     return exp2(ev)
+
+
+# ---- common/bloom_filter.slang ----
+
+BLOOM_THRESHOLD = 1.0
+BLOOM_TAP_RADIUS = 4
+BLOOM_WEIGHTS = (0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216)
+HDR_MAX = 65000.0
+
+
+def bloom_bright(exposed: Vec) -> Vec:
+    out: list[Real] = []
+    for x in exposed.c:
+        kept = x - BLOOM_THRESHOLD
+        if kept.v <= 0.0:
+            visit("below the threshold")
+        elif kept.v > f32(HDR_MAX):
+            visit("capped at HDR_MAX")
+        out.append(clamp(kept, 0.0, HDR_MAX))
+    return Vec(*out)
+
+
+def bloom_tap_weight(offset: int) -> Real:
+    if abs(offset) > BLOOM_TAP_RADIUS:
+        visit("past the kernel")
+        return Real(0.0)
+    return real(BLOOM_WEIGHTS[abs(offset)])
+
+
+def bloom_tap_weight_sum() -> Real:
+    total = Real(0.0)
+    for offset in range(-BLOOM_TAP_RADIUS - 1, BLOOM_TAP_RADIUS + 2):
+        total = total + bloom_tap_weight(offset)
+    return total

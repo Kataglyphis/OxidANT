@@ -1,4 +1,4 @@
-"""The post chain's modules' cases and evaluations for generate-shader-vectors.py: exposure."""
+"""The post chain's modules' cases and evaluations for generate-shader-vectors.py: exposure and bloom_filter."""
 import math
 
 import shader_model as sm
@@ -52,6 +52,37 @@ def exposure_cases() -> list[tuple[str, Values]]:
     return merged(base, rows)
 
 
+def evaluate_bloom_filter(i: Values) -> dict[str, list[float]]:
+    return {
+        "bloom_bright": flat(sp.bloom_bright(sm.vec3(i["exposed"]))),
+        "bloom_tap_weight": flat(sp.bloom_tap_weight(word(i, "offset"))),
+        "bloom_tap_weight.sum": flat(sp.bloom_tap_weight_sum()),
+    }
+
+
+def bloom_filter_cases() -> list[tuple[str, Values]]:
+    base: Values = {"exposed": [2.5, 1.5, 0.5], "offset": [0]}
+    rows: list[tuple[str, Values]] = [
+        ("each channel keeps what it has above 1", {}),
+        ("a radiance at or below 1 keeps nothing", {"exposed": [0.25, 0.75, 0.999]}),
+        ("a highlight far past white keeps all but 1", {"exposed": [12.0, 40.0, 7.5]}),
+        ("a radiance past the HDR maximum is capped", {"exposed": [70000.0, 2.0, 0.0]}),
+        ("negative radiance keeps nothing", {"exposed": [-3.0, -0.5, 1.25]}),
+        ("one texel right", {"offset": [1]}),
+        ("one texel left weighs the same", {"offset": [-1]}),
+        ("two texels", {"offset": [2]}),
+        ("three texels left", {"offset": [-3]}),
+        ("the kernel's edge, four texels", {"offset": [4]}),
+        ("four texels left", {"offset": [-4]}),
+        ("five texels are past the kernel", {"offset": [5]}),
+        ("far past the kernel on the left", {"offset": [-9]}),
+    ]
+    draw = Draw(83)
+    for index in range(4):
+        rows.append((f"seeded texel {index}", {"exposed": draw.nums(0.0, 20.0), "offset": [draw.whole(-6, 7)]}))
+    return merged(base, rows)
+
+
 MODULES = [
     Module("exposure", ports(
         "color:3 lum bin/u32 log2_mean current_ev target_ev dt speed ev"), [
@@ -60,4 +91,7 @@ MODULES = [
     ], evaluate_exposure, exposure_cases(), {
         "black bin", "below the range", "above the range", "bin 0", "current replaced", "held", "snapped",
         "blend saturated"}),
+    Module("bloom_filter", ports("exposed:3 offset/i32"), [
+        out("bloom_bright", 3, SMOOTH), out("bloom_tap_weight", 1, SMOOTH), out("bloom_tap_weight.sum", 1, SMOOTH),
+    ], evaluate_bloom_filter, bloom_filter_cases(), {"below the threshold", "capped at HDR_MAX", "past the kernel"}),
 ]

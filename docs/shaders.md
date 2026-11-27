@@ -96,6 +96,12 @@ runs it over the HDR target into the two-float `[adapted EV, target EV]` buffer 
 `bloom.slang` read; its three kernels are the C++ renderer's auto exposure too, through their SPIR-V rows, and the
 C++ post pass reads the same buffer.
 
+`common/bloom_filter.slang` is bloom's arithmetic in both renderers: `bloom_bright`, the exposed radiance less
+`BLOOM_THRESHOLD` (1) per channel through `hdr_safe`, and `bloom_tap_weight`, the separable 9-tap Gaussian's weight
+at an offset (`BLOOM_TAP_RADIUS` 4, nothing past it; the nine sum to one within 6e-7, so the blur keeps the energy).
+`bloom/bloom.slang`'s bright pass and blurs use them, and the C++ renderer compiles its three fragment entries to
+SPIR-V behind its own vertex entry.
+
 `fxaa/fxaa.slang`'s `fs_main` is the C++ renderer's FXAA too, behind its own
 `SV_VulkanVertexID` fullscreen vertex, with the same three bindings and
 `FxaaUniforms`; a change to either reaches its `FxaaStage` with the pin. Its manifest
@@ -232,7 +238,7 @@ checks this on the GPU and stays enabled.
 `tests/<module>_test.slang` runs every public function of `common/<module>.slang`
 once per case of `tests/vectors/<module>.json`: `brdf`, `noise`, `path_estimator`, `hdr_safe`,
 `aces`, `fullscreen`, `camera_ray`, `ambient`, `gltf_material`, `cascade_visibility`, `punctual_shadow`,
-`surface_lighting`, `gbuffer`, `cloud_upsample`, `drawn_sky`, `path_integrator`, `sun_mask` and `exposure` today. A generic's interface is a kernel's own struct, a
+`surface_lighting`, `gbuffer`, `cloud_upsample`, `drawn_sky`, `path_integrator`, `sun_mask`, `exposure` and `bloom_filter` today. A generic's interface is a kernel's own struct, a
 texture-free stand-in whose result both targets share: `path_integrator`'s is a floor under a sky, whose paths
 end after one bounce, and `sun_mask`'s a sky with one disk, alike at every mip. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
 the infinities, which JSON cannot spell; `fullscreen`'s uv differs per target, so its kernel writes

@@ -250,8 +250,8 @@ fn bloom_and_ssao_reloads_change_what_they_add() {
     let shipped = ShaderSources::shipped();
     let blue_bloom = edited(
         shipped.bloom,
-        "pixelOutput_0( vec4<f32>(hdr_safe_0(",
-        "pixelOutput_0( vec4<f32>(0.0f, 0.0f, 4.0f, 1.0f) + 0.0f * vec4<f32>(hdr_safe_0(",
+        "pixelOutput_0( vec4<f32>(bloom_bright_0(",
+        "pixelOutput_0( vec4<f32>(0.0f, 0.0f, 4.0f, 1.0f) + 0.0f * vec4<f32>(bloom_bright_0(",
     );
     let full_occlusion = edited(
         shipped.ssao,
