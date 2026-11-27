@@ -8,7 +8,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use glam::{Mat3, Mat4, Vec3};
 
-use crate::gltf_images::{self, LocatedImage, StoredImage, TextureSource};
+use crate::gltf_images::{self, ImageExtension, LocatedImage, StoredImage, TextureSource};
 use crate::gltf_loader::{self, Geometry, Imported, LoadOptions};
 use crate::image_decode;
 use crate::levels::{self, BlockSupport, ChainFormat, TextureChain};
@@ -446,7 +446,7 @@ struct Slots<'a> {
     pending: Vec<PendingSlot>,
 }
 
-/// A slot to decode: its `KHR_texture_basisu` image, preferred, and its core one.
+/// A slot to decode: its extensions' images, preferred, and its core one.
 struct PendingSlot {
     source: TextureSource,
     sampler: CpuSampler,
@@ -503,33 +503,49 @@ impl PendingSlot {
                 });
             (image, located)
         };
+        let mut preferred = Vec::new();
+        let mut fallback = None;
+        for (extension, image) in self.source.candidates() {
+            match extension {
+                Some(extension) => preferred.push((extension, locate(image))),
+                None => fallback = Some(locate(image)),
+            }
+        }
         LocatedSlot {
-            basisu: self.source.basisu.map(locate),
-            fallback: self.source.fallback.map(locate),
+            preferred,
+            fallback,
             sampler: self.sampler,
             srgb: self.srgb,
         }
     }
 }
 
-/// A slot's `KHR_texture_basisu` image and its core one, each with its index for the log.
+/// A slot's extensions' images, in the order it prefers them, and its core one, each with its index for the log.
 struct LocatedSlot {
-    basisu: Option<(usize, anyhow::Result<LocatedImage>)>,
+    preferred: Vec<(ImageExtension, (usize, anyhow::Result<LocatedImage>))>,
     fallback: Option<(usize, anyhow::Result<LocatedImage>)>,
     sampler: CpuSampler,
     srgb: bool,
 }
 
 impl LocatedSlot {
-    /// The `KHR_texture_basisu` image, else (with a warning) the core one; `None` when neither loads.
+    /// The first extension's image that loads, else (with a warning for each) the core one; `None` when none loads.
     fn decode(&self, budget: &Budget, blocks: &BlockSupport) -> Option<FlatTexture> {
-        if let Some((image, located)) = &self.basisu {
+        for (extension, (image, located)) in &self.preferred {
             let chain = located
                 .as_ref()
                 .map_err(|err| anyhow::anyhow!("{err:#}"))
                 .and_then(LocatedImage::load)
                 .and_then(|stored| decode_chain(&stored, self.srgb, budget, blocks))
-                .and_then(|chain| chain.context("a KHR_texture_basisu image that is no KTX2"));
+                .and_then(|chain| {
+                    chain.with_context(|| {
+                        format!(
+                            "a {} image that is no {}",
+                            extension.name(),
+                            extension.format()
+                        )
+                    })
+                });
             match chain {
                 Ok(chain) => {
                     return Some(FlatTexture {
@@ -539,7 +555,7 @@ impl LocatedSlot {
                         srgb: self.srgb,
                     })
                 }
-                Err(err) => log::warn!("glTF image {image} (KTX2): {err:#}"),
+                Err(err) => log::warn!("glTF image {image} ({}): {err:#}", extension.format()),
             }
         }
         let (image, located) = self.fallback.as_ref()?;

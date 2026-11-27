@@ -36,7 +36,7 @@ pub fn load_gltf_with(path: impl AsRef<Path>, options: &LoadOptions) -> anyhow::
         .with_context(|| format!("Failed to build scene from {}", path.display()))
 }
 
-/// `gltf::import` with `KHR_texture_basisu`: the document, its buffers and each texture's image.
+/// `gltf::import` with `KHR_texture_basisu` and `EXT_texture_webp`: the document, its buffers and each texture's image.
 fn import_file(
     path: &Path,
 ) -> anyhow::Result<(
@@ -46,7 +46,12 @@ fn import_file(
 )> {
     let imported = import_document(path)?;
     let base = Some(imported.base.as_path());
-    let images = gltf_images::import_images(&imported.document, base, &imported.buffers)?;
+    let images = gltf_images::import_images(
+        &imported.document,
+        base,
+        &imported.buffers,
+        &imported.sources,
+    )?;
     let textures = gltf_images::resolve_textures(&imported.sources, images)?;
     Ok((imported.document, imported.buffers, textures))
 }
@@ -100,7 +105,7 @@ pub fn load_gltf_slice_with(bytes: &[u8], options: &LoadOptions) -> anyhow::Resu
         );
     }
     // gltf 1.4's import_slice refuses a data: image too (it wants a base path); every image left is data: or GLB, so none reads the base.
-    let images = gltf_images::import_images(&document, Some(Path::new("")), &buffers)
+    let images = gltf_images::import_images(&document, Some(Path::new("")), &buffers, &sources)
         .context("Failed to import glTF images from memory")?;
     let textures = gltf_images::resolve_textures(&sources, images)
         .context("Failed to import glTF images from memory")?;

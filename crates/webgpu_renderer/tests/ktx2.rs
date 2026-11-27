@@ -579,7 +579,7 @@ fn dominant_pixels(pixels: &[u8]) -> [usize; 3] {
     counts
 }
 
-fn basisu_scene(name: &str) -> CpuScene {
+fn fixture_scene(name: &str) -> CpuScene {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../assets/tests/assets")
         .join(name);
@@ -592,7 +592,7 @@ fn a_khr_texture_basisu_cube_draws_its_ramp() {
     let Some(mut gpu) = bc_gpu() else {
         return;
     };
-    let scene = basisu_scene("cube_basisu.gltf");
+    let scene = fixture_scene("cube_basisu.gltf");
     for supports_bc in [true, false] {
         gpu.supports_bc = supports_bc;
         let (error, pixels) = render_scene(&gpu, &scene);
@@ -615,12 +615,27 @@ fn a_declined_khr_texture_basisu_image_draws_its_png_fallback() {
     let Some(gpu) = bc_gpu() else {
         return;
     };
-    let (error, pixels) = render_scene(&gpu, &basisu_scene("cube_basisu_fallback.gltf"));
+    let (error, pixels) = render_scene(&gpu, &fixture_scene("cube_basisu_fallback.gltf"));
     assert!(error.is_none(), "validation failed: {error:?}");
     let [red, green, blue] = dominant_pixels(&pixels);
     assert!(
         red > 500 && green == 0 && blue == 0,
         "the red fallback must show alone, got {red}/{green}/{blue}"
+    );
+}
+
+/// The same ramp as a lossless WebP through EXT_texture_webp, the cube's only source, draws on any adapter.
+#[test]
+fn an_ext_texture_webp_cube_draws_its_ramp() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let (error, pixels) = render_scene(&gpu, &fixture_scene("cube_webp.gltf"));
+    assert!(error.is_none(), "validation failed: {error:?}");
+    let [red, green, blue] = dominant_pixels(&pixels);
+    assert!(
+        red > 200 && green > 200 && blue > 200,
+        "the ramp's red, green and blue corners must show, got {red}/{green}/{blue}"
     );
 }
 
@@ -635,7 +650,7 @@ fn a_khr_texture_basisu_cube_draws_its_ramp_from_etc2_or_astc() {
         eprintln!("SKIP: adapter samples neither ETC2 nor ASTC");
         return;
     }
-    let scene = basisu_scene("cube_basisu.gltf");
+    let scene = fixture_scene("cube_basisu.gltf");
     gpu.supports_bc = false;
     for (name, use_etc2, use_astc) in [("ETC2", etc2, false), ("ASTC", false, astc)] {
         if !use_etc2 && !use_astc {

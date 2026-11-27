@@ -1,4 +1,4 @@
-//! Image files to RGBA8 for both renderers: PNG, JPEG, BMP, TGA, GIF, PNM and Radiance HDR through `image`.
+//! Image files to RGBA8 for both renderers: PNG, JPEG, BMP, TGA, GIF, PNM, Radiance HDR and WebP through `image`.
 //! Channels expand as stb's `STBI_rgb_alpha` does, which the C++ engine decoded with before: grey fills RGB,
 //! 16-bit keeps the high byte, HDR is gamma-encoded with 1/2.2 and alpha kept linear; sizes are capped at MAX_PIXELS.
 
@@ -7,8 +7,8 @@ use image::{DynamicImage, ImageFormat};
 
 use crate::scene::CpuTexture;
 
-/// The formats decoded here; PSD and PIC stay with the C++ engine's stb, WebP and the rest are not read.
-const FORMATS: [ImageFormat; 7] = [
+/// The formats decoded here; PSD and PIC stay with the C++ engine's stb, the rest are not read.
+const FORMATS: [ImageFormat; 8] = [
     ImageFormat::Png,
     ImageFormat::Jpeg,
     ImageFormat::Bmp,
@@ -16,6 +16,7 @@ const FORMATS: [ImageFormat; 7] = [
     ImageFormat::Gif,
     ImageFormat::Pnm,
     ImageFormat::Hdr,
+    ImageFormat::WebP,
 ];
 
 /// The format `encoded` is in: by its signature, which a wrong MIME type or extension cannot override, else by MIME
@@ -45,6 +46,7 @@ fn format_of_mime(mime_type: &str) -> Option<ImageFormat> {
         | "image/x-portable-pixmap"
         | "image/x-portable-arbitrarymap" => Some(ImageFormat::Pnm),
         "image/vnd.radiance" => Some(ImageFormat::Hdr),
+        "image/webp" => Some(ImageFormat::WebP),
         _ => None,
     }
 }
@@ -64,6 +66,7 @@ pub fn mime_type_of(format: ImageFormat) -> Option<&'static str> {
         ImageFormat::Gif => Some("image/gif"),
         ImageFormat::Pnm => Some("image/x-portable-anymap"),
         ImageFormat::Hdr => Some("image/vnd.radiance"),
+        ImageFormat::WebP => Some("image/webp"),
         _ => None,
     }
 }
@@ -121,8 +124,9 @@ pub fn decode_rgba8_into(
     capacity: impl Fn(u32, u32) -> usize,
 ) -> anyhow::Result<CpuTexture> {
     use image::ImageDecoder as _;
-    let format = image_format(encoded, mime_type, name)
-        .context("not an image format this loader reads (PNG, JPEG, BMP, TGA, GIF, PNM or HDR)")?;
+    let format = image_format(encoded, mime_type, name).context(
+        "not an image format this loader reads (PNG, JPEG, BMP, TGA, GIF, PNM, HDR or WebP)",
+    )?;
     let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(encoded), format)
         .into_dimensions()
         .with_context(|| format!("reading the {format:?} header"))?;
@@ -215,11 +219,13 @@ mod tests {
     fn every_listed_format_decodes_to_the_same_texels() {
         let rgb = DynamicImage::ImageRgb8(two_texels());
         let expected = [200, 10, 20, 255, 30, 40, 250, 255];
+        // image writes WebP lossless.
         for format in [
             ImageFormat::Png,
             ImageFormat::Bmp,
             ImageFormat::Tga,
             ImageFormat::Pnm,
+            ImageFormat::WebP,
         ] {
             let bytes = encode(rgb.clone(), format);
             let decoded = decode_rgba8(
@@ -341,16 +347,104 @@ mod tests {
             "the signature wins over a wrong MIME type and extension"
         );
         assert!(decode_rgba8(&tga, None, Some("b.tga")).is_ok());
+        let webp = include_bytes!("../tests/assets/ramp.webp");
+        assert_eq!(
+            image_format(webp, Some("image/png"), Some("b.png")),
+            Some(ImageFormat::WebP),
+            "RIFF....WEBP wins over a PNG MIME type and extension"
+        );
+        let unsigned = b"RIFF\0\0\0\0WEBQ";
+        assert_eq!(image_format(unsigned, None, None), None);
+        assert_eq!(
+            image_format(unsigned, Some("image/webp"), Some("b.png")),
+            Some(ImageFormat::WebP)
+        );
+        assert_eq!(
+            image_format(unsigned, None, Some("a/b.WEBP")),
+            Some(ImageFormat::WebP)
+        );
         for format in FORMATS {
             let mime = mime_type_of(format).unwrap();
             assert_eq!(format_of_mime(mime), Some(format), "{mime} reads back");
         }
     }
 
+    /// `ramp.webp` is basis.rs's 32x32 `encoded_ramp`, lossless; `ramp_alpha_lossy.webp` the ramp at quality 80 with
+    /// alpha falling along y (libwebp through ffmpeg 8.0.1).
+    fn ramp(x: usize, y: usize, alpha: bool) -> [u8; 4] {
+        let a = if alpha { 255 - y * 255 / 31 } else { 255 };
+        [x * 255 / 31, y * 255 / 31, 255 - (x + y) * 255 / 62, a].map(|v| v as u8)
+    }
+
+    /// Mean and max absolute difference of `rgba8` from the 32x32 ramp, colour and alpha apart.
+    fn ramp_error(rgba8: &[u8], alpha: bool) -> ([f64; 2], [u8; 2]) {
+        let (mut sum, mut max) = ([0.0; 2], [0u8; 2]);
+        for (index, texel) in rgba8.as_chunks::<4>().0.iter().enumerate() {
+            let expected = ramp(index % 32, index / 32, alpha);
+            for (channel, (got, want)) in texel.iter().zip(expected).enumerate() {
+                let (kind, diff) = (usize::from(channel == 3), got.abs_diff(want));
+                sum[kind] += f64::from(diff);
+                max[kind] = max[kind].max(diff);
+            }
+        }
+        ([sum[0] / (32.0 * 32.0 * 3.0), sum[1] / (32.0 * 32.0)], max)
+    }
+
     #[test]
-    fn psd_webp_and_garbage_are_errors_not_panics() {
+    fn a_lossless_webp_keeps_every_texel_and_a_lossy_one_its_alpha() {
+        let decoded =
+            decode_rgba8(include_bytes!("../tests/assets/ramp.webp"), None, None).unwrap();
+        assert_eq!((decoded.width, decoded.height), (32, 32));
+        assert_eq!(
+            ramp_error(&decoded.rgba8, false),
+            ([0.0; 2], [0; 2]),
+            "RGB to RGB1, exactly"
+        );
+        let rgba =
+            image::RgbaImage::from_raw(2, 1, vec![200, 10, 20, 0, 30, 40, 250, 128]).unwrap();
+        let decoded = decode_rgba8(
+            &encode(DynamicImage::ImageRgba8(rgba), ImageFormat::WebP),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            decoded.rgba8,
+            [200, 10, 20, 0, 30, 40, 250, 128],
+            "lossless alpha"
+        );
+        let lossy = include_bytes!("../tests/assets/ramp_alpha_lossy.webp");
+        let decoded = decode_rgba8(lossy, Some("image/webp"), None).unwrap();
+        assert_eq!((decoded.width, decoded.height), (32, 32));
+        let (mean, max) = ramp_error(&decoded.rgba8, true);
+        eprintln!(
+            "lossy WebP: colour mean {:.3} max {}, alpha mean {:.3} max {}",
+            mean[0], max[0], mean[1], max[1]
+        );
+        // Quality 80 with 4:2:0 chroma on a 32x32 ramp: 3.1 off here, 4.8 through ffmpeg 8.0.1's own decoder.
+        assert!(mean[0] < 4.0 && max[1] == 0, "{mean:?} {max:?}");
+        let (swapped, _) = ramp_error(&rgba8_transposed(&decoded.rgba8), true);
+        assert!(
+            swapped[0] > 20.0,
+            "the ramp runs along its own axes: {swapped:?}"
+        );
+    }
+
+    fn rgba8_transposed(rgba8: &[u8]) -> Vec<u8> {
+        let texels = rgba8.as_chunks::<4>().0;
+        (0..32 * 32)
+            .flat_map(|i| texels[(i % 32) * 32 + i / 32])
+            .collect()
+    }
+
+    #[test]
+    fn psd_a_broken_webp_and_garbage_are_errors_not_panics() {
         assert!(decode_rgba8(b"8BPS\0\x01", None, Some("x.psd")).is_err());
-        assert!(decode_rgba8(b"RIFF\0\0\0\0WEBPVP8 ", Some("image/webp"), None).is_err());
+        let webp = decode_rgba8(b"RIFF\0\0\0\0WEBPVP8 ", Some("image/webp"), None).unwrap_err();
+        assert!(
+            format!("{webp:#}").contains("reading the WebP header"),
+            "{webp:#}"
+        );
         assert!(decode_rgba8(b"\x89PNG\r\n\x1a\n broken", None, None).is_err());
         assert!(decode_rgba8(&[], None, Some("x.tga")).is_err());
     }

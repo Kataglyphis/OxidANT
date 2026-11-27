@@ -26,7 +26,8 @@ Lengyel-generated, or MikkTSpace via an opt-in), `COLOR_0` vertex colours, a
 second UV set, skins, morph targets, animations, punctual lights, cameras,
 `KHR_mesh_quantization` (gltfpack's integer attributes). KTX2
 textures with BC1/3/5/7 passthrough, and Basis ETC1S/UASTC KTX2 (also through
-`KHR_texture_basisu`) transcoded to BC7, ETC2 or ASTC by adapter. Wavefront OBJ through `kataglyphis_assets::obj`,
+`KHR_texture_basisu`) transcoded to BC7, ETC2 or ASTC by adapter; WebP, also through `EXT_texture_webp`.
+Wavefront OBJ through `kataglyphis_assets::obj`,
 the C++ engine's OBJ reader too (`asset::obj_to_gltf`, the `obj2gltf` example).
 
 **Shading** — metallic-roughness PBR (GGX + Smith + Fresnel-Schlick, with

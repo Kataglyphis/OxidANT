@@ -14,8 +14,8 @@ glam = { version = "0.34", features = ["bytemuck"] }
 gltf = { version = "1", features = ["import", "guess_mime_type", "KHR_lights_punctual", "KHR_texture_transform", "KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions"] }
 # Not the `mikktspace` crate: it pulls nalgebra 0.26, which is future-incompatible on current rustc.
 bevy_mikktspace = "1"
-# `image_decode`'s formats for both renderers; PSD and PIC stay with the C++ engine's stb.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tga", "gif", "pnm", "hdr"] }
+# `image_decode`'s formats for both renderers; PSD and PIC stay with the C++ engine's stb. `webp` is pure Rust.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tga", "gif", "pnm", "hdr", "webp"] }
 ktx2 = "0.5"
 # Pure Rust for wasm32; no zstd feature, whose ruzstd 0.7 has RUSTSEC-2026-0344: ktx2_zstd.rs inflates.
 basisu = { version = "0.1", default-features = false, features = ["std"] }

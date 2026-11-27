@@ -1,4 +1,5 @@
-//! glTF import with `KHR_texture_basisu`, which `gltf::import` refuses: KTX2 through `load_ktx2`.
+//! glTF import with `KHR_texture_basisu` and `EXT_texture_webp`, which `gltf::import` refuses: KTX2 through
+//! `load_ktx2`, WebP through `image_decode`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -10,17 +11,55 @@ use crate::image_decode::decode_rgba8;
 use crate::ktx2_loader::load_ktx2;
 use crate::scene::CpuTexture;
 
-const BASISU: &str = "KHR_texture_basisu";
 /// Read by `attributes::read_f32`; gltf 1.4.1 refuses it as required.
 const QUANTIZATION: &str = "KHR_mesh_quantization";
+
+/// A texture extension naming an image in place of the core `source`; gltf 1.4.1 has no type for either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ImageExtension {
+    Basisu,
+    Webp,
+}
+
+impl ImageExtension {
+    /// In the order a texture prefers them: blocks the device samples before a decoded WebP.
+    pub(crate) const PREFERRED: [ImageExtension; 2] =
+        [ImageExtension::Basisu, ImageExtension::Webp];
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            ImageExtension::Basisu => "KHR_texture_basisu",
+            ImageExtension::Webp => "EXT_texture_webp",
+        }
+    }
+
+    /// The format its image is in, for the log.
+    pub(crate) fn format(self) -> &'static str {
+        match self {
+            ImageExtension::Basisu => "KTX2",
+            ImageExtension::Webp => "WebP",
+        }
+    }
+}
 
 /// Where one glTF texture's image comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct TextureSource {
-    /// The `KHR_texture_basisu` KTX2 image, preferred when it loads.
-    pub basisu: Option<usize>,
-    /// The core `source`: the whole source without the extension, its fallback with it.
+    /// Each extension's image in [`ImageExtension::PREFERRED`]'s order; the first that loads is the texture.
+    pub preferred: [Option<usize>; 2],
+    /// The core `source`: the whole source without an extension, the fallback with one.
     pub fallback: Option<usize>,
+}
+
+impl TextureSource {
+    /// The images to try in order, with the extension naming each; the core source last, with none.
+    pub(crate) fn candidates(&self) -> impl Iterator<Item = (Option<ImageExtension>, usize)> + '_ {
+        ImageExtension::PREFERRED
+            .into_iter()
+            .zip(self.preferred)
+            .filter_map(|(extension, image)| Some((Some(extension), image?)))
+            .chain(self.fallback.map(|image| (None, image)))
+    }
 }
 
 /// A parsed, validated glTF or GLB, its binary chunk and each texture's sources.
@@ -30,27 +69,34 @@ pub(crate) struct Parsed {
     pub sources: Vec<TextureSource>,
 }
 
-/// `gltf::Gltf::from_slice`, except that it accepts `KHR_texture_basisu` as required and as a texture's only source,
-/// and `KHR_mesh_quantization` as required.
+/// `gltf::Gltf::from_slice`, except that it accepts `KHR_texture_basisu` and `EXT_texture_webp` as required and as a
+/// texture's only source, and `KHR_mesh_quantization` as required.
 pub(crate) fn parse(bytes: &[u8]) -> anyhow::Result<Parsed> {
     let gltf::Gltf { document, blob } = gltf::Gltf::from_slice_without_validation(bytes)?;
     let mut root = document.into_json();
     let image_count = root.images.len();
     let mut sources = Vec::with_capacity(root.textures.len());
     for (index, texture) in root.textures.iter_mut().enumerate() {
-        let basisu = basisu_source(texture, index, image_count)?;
+        let mut preferred = [None; 2];
+        for (slot, extension) in preferred.iter_mut().zip(ImageExtension::PREFERRED) {
+            *slot = extension_source(texture, index, image_count, extension)?;
+        }
         let core = texture.source.value();
         let fallback = (core != u32::MAX as usize).then_some(core);
         if fallback.is_none() {
-            if let Some(image) = basisu {
+            if let Some(image) = preferred.into_iter().flatten().next() {
                 // Validation wants a core source, and `Texture::source` unwraps it.
                 texture.source = gltf::json::Index::new(image as u32);
             }
         }
-        sources.push(TextureSource { basisu, fallback });
+        sources.push(TextureSource {
+            preferred,
+            fallback,
+        });
     }
+    let accepted = ImageExtension::PREFERRED.map(ImageExtension::name);
     root.extensions_required
-        .retain(|name| name != BASISU && name != QUANTIZATION);
+        .retain(|name| !accepted.contains(&name.as_str()) && name != QUANTIZATION);
     if !root.extensions_used.iter().any(|name| name == QUANTIZATION) {
         normalize_core_tex_coords(&mut root);
     }
@@ -127,35 +173,44 @@ fn reject_sourceless_images(root: &gltf::json::Root) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn basisu_source(
+/// The image `texture` names through `extension`, `None` without that extension.
+fn extension_source(
     texture: &gltf::json::Texture,
     index: usize,
     image_count: usize,
+    extension: ImageExtension,
 ) -> anyhow::Result<Option<usize>> {
-    let Some(extension) = texture
+    let name = extension.name();
+    let Some(json) = texture
         .extensions
         .as_ref()
-        .and_then(|extensions| extensions.others.get(BASISU))
+        .and_then(|extensions| extensions.others.get(name))
     else {
         return Ok(None);
     };
-    let image = extension
+    let image = json
         .get("source")
         .and_then(gltf::json::Value::as_u64)
-        .with_context(|| format!("texture {index}: {BASISU} has no image source"))?;
+        .with_context(|| format!("texture {index}: {name} has no image source"))?;
     anyhow::ensure!(
         image < image_count as u64,
-        "texture {index}: {BASISU} source {image} is past the {image_count} images"
+        "texture {index}: {name} source {image} is past the {image_count} images"
     );
     Ok(Some(image as usize))
 }
 
-/// Every image, index-aligned with the document's; a failed KTX2 stays an error for a fallback to replace.
+/// Every image, index-aligned with the document's; a failed KTX2, or an image an extension names, stays an error for
+/// a fallback to replace.
 pub(crate) fn import_images(
     document: &gltf::Document,
     base: Option<&Path>,
     buffers: &[gltf::buffer::Data],
+    sources: &[TextureSource],
 ) -> anyhow::Result<Vec<anyhow::Result<Arc<CpuTexture>>>> {
+    let preferred: std::collections::HashSet<usize> = sources
+        .iter()
+        .flat_map(|source| source.preferred.into_iter().flatten())
+        .collect();
     document
         .images()
         .map(|image| {
@@ -167,8 +222,11 @@ pub(crate) fn import_images(
             }
             let texture = image_bytes(&image, base, buffers)
                 .and_then(|stored| stored.decode())
-                .with_context(|| format!("glTF image {}", image.index()))?;
-            Ok(Ok(Arc::new(texture)))
+                .with_context(|| format!("glTF image {}", image.index()));
+            if preferred.contains(&image.index()) {
+                return Ok(texture.map(Arc::new));
+            }
+            Ok(Ok(Arc::new(texture?)))
         })
         .collect()
 }
@@ -211,7 +269,8 @@ fn image_file(base: Option<&Path>, uri: &str) -> anyhow::Result<PathBuf> {
     files::confined_file(base, uri)
 }
 
-/// Each texture's image: its `KHR_texture_basisu` KTX2, else (with a warning on failure) its fallback.
+/// Each texture's image: the first of its candidates that loads (a warning for each that did not), else its last
+/// one's error.
 pub(crate) fn resolve_textures(
     sources: &[TextureSource],
     images: Vec<anyhow::Result<Arc<CpuTexture>>>,
@@ -219,25 +278,28 @@ pub(crate) fn resolve_textures(
     let mut used = vec![false; images.len()];
     let mut textures = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
-        let chosen = match (source.basisu, source.fallback) {
-            (Some(basisu), Some(fallback)) => match &images[basisu] {
-                Ok(_) => basisu,
-                Err(err) => {
-                    log::warn!(
-                        "glTF texture {index}: {err:#}; using its fallback image {fallback}"
-                    );
-                    fallback
-                }
-            },
-            (Some(basisu), None) => basisu,
-            (None, Some(fallback)) => fallback,
-            (None, None) => anyhow::bail!("glTF texture {index} has no image"),
+        let candidates: Vec<usize> = source.candidates().map(|(_, image)| image).collect();
+        let Some(&last) = candidates.last() else {
+            anyhow::bail!("glTF texture {index} has no image");
         };
-        used[chosen] = true;
-        match &images[chosen] {
-            Ok(texture) => textures.push(Arc::clone(texture)),
+        let chosen = candidates
+            .iter()
+            .copied()
+            .find(|&image| images[image].is_ok())
+            .unwrap_or(last);
+        let texture = match &images[chosen] {
+            Ok(texture) => texture,
             Err(err) => anyhow::bail!("glTF texture {index}: {err:#}"),
+        };
+        for err in candidates
+            .iter()
+            .take_while(|&&image| image != chosen)
+            .filter_map(|&image| images[image].as_ref().err())
+        {
+            log::warn!("glTF texture {index}: {err:#}; using its image {chosen}");
         }
+        used[chosen] = true;
+        textures.push(Arc::clone(texture));
     }
     for (image, unused_error) in images.iter().enumerate().filter(|(i, _)| !used[*i]) {
         if let Err(err) = unused_error {
@@ -366,7 +428,10 @@ mod tests {
     use super::*;
 
     fn texture(basisu: Option<usize>, fallback: Option<usize>) -> TextureSource {
-        TextureSource { basisu, fallback }
+        TextureSource {
+            preferred: [basisu, None],
+            fallback,
+        }
     }
 
     fn solid(value: u8) -> anyhow::Result<Arc<CpuTexture>> {
@@ -425,6 +490,76 @@ mod tests {
             Arc::ptr_eq(&resolved[0], &resolved[3]),
             "one image, one texture"
         );
+    }
+
+    #[test]
+    fn a_textures_images_are_tried_basisu_then_webp_then_core() {
+        let broken = || Err(anyhow::anyhow!("broken"));
+        let images = vec![solid(1), solid(2), solid(3), broken(), broken()];
+        let both = |basisu, webp, fallback| TextureSource {
+            preferred: [basisu, webp],
+            fallback,
+        };
+        let sources = [
+            both(Some(0), Some(1), Some(2)),
+            both(Some(3), Some(1), Some(2)),
+            both(Some(3), Some(4), Some(2)),
+            both(None, Some(1), Some(2)),
+            both(None, Some(4), Some(2)),
+            both(None, Some(1), None),
+        ];
+        let resolved = resolve_textures(&sources, images).unwrap();
+        let firsts: Vec<u8> = resolved.iter().map(|t| t.rgba8[0]).collect();
+        assert_eq!(firsts, [1, 2, 3, 2, 3, 2]);
+        let images = vec![solid(1), broken()];
+        let err = resolve_textures(&[both(None, Some(1), None)], images).unwrap_err();
+        assert!(format!("{err:#}").contains("broken"), "{err:#}");
+    }
+
+    /// Each texture names the same one image through its extensions, or only through `EXT_texture_webp`.
+    fn webp_document(extensions: &str, required: &str) -> String {
+        format!(
+            r#"{{"asset":{{"version":"2.0"}},"images":[{{"uri":"a.webp"}},{{"uri":"b.png"}}],"textures":[{{"extensions":{{{extensions}}}}}],"extensionsUsed":[{required}],"extensionsRequired":[{required}]}}"#
+        )
+    }
+
+    #[test]
+    fn ext_texture_webp_is_accepted_as_required_and_as_the_only_source() {
+        let only = r#""EXT_texture_webp":{"source":0}"#;
+        let parsed = parse(webp_document(only, r#""EXT_texture_webp""#).as_bytes()).unwrap();
+        assert_eq!(parsed.sources, [texture(None, None).with_webp(0)]);
+        assert_eq!(
+            parsed.document.textures().next().unwrap().source().index(),
+            0
+        );
+        let both = r#""KHR_texture_basisu":{"source":1},"EXT_texture_webp":{"source":0}"#;
+        let required = r#""KHR_texture_basisu","EXT_texture_webp""#;
+        let parsed = parse(webp_document(both, required).as_bytes()).unwrap();
+        assert_eq!(parsed.sources, [texture(Some(1), None).with_webp(0)]);
+        let past = r#""EXT_texture_webp":{"source":2}"#;
+        let err = parse(webp_document(past, r#""EXT_texture_webp""#).as_bytes())
+            .err()
+            .expect("source 2 does not exist");
+        assert!(
+            format!("{err:#}").contains("EXT_texture_webp source 2 is past the 2 images"),
+            "{err:#}"
+        );
+        let draco = parse(
+            webp_document(only, r#""EXT_texture_webp","KHR_draco_mesh_compression""#).as_bytes(),
+        )
+        .err()
+        .expect("draco is not supported");
+        assert!(
+            format!("{draco:#}").contains("KHR_draco_mesh_compression"),
+            "{draco:#}"
+        );
+    }
+
+    impl TextureSource {
+        fn with_webp(mut self, image: usize) -> TextureSource {
+            self.preferred[1] = Some(image);
+            self
+        }
     }
 
     #[test]

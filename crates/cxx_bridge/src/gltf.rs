@@ -689,6 +689,30 @@ mod tests {
         assert_eq!(texture.data.len(), chain_bytes(texture));
     }
 
+    #[test]
+    fn a_webp_only_texture_crosses_as_its_rgba8_chain_even_where_blocks_are_sampled() {
+        let options = ffi::GltfLoadOptions {
+            mikktspace_tangents: false,
+            blocks: ffi::GltfBlockSupport {
+                bc: true,
+                etc2: true,
+                astc: true,
+                max_side: 16384,
+            },
+        };
+        let model = load_gltf_flat_with(&asset("cube_webp.gltf"), &options);
+        assert!(model.ok, "{}", model.error);
+        assert_eq!(model.textures.len(), 1, "the WebP is the slot");
+        let texture = &model.textures[0];
+        assert!(texture.encoded.is_empty(), "nothing is left for stb");
+        assert_eq!(texture.format, ffi::GltfTextureFormat::Rgba8);
+        assert_eq!(
+            (texture.width, texture.height, texture.level_count),
+            (32, 32, 6)
+        );
+        assert_eq!(texture.data.len(), chain_bytes(texture));
+    }
+
     /// `cube_basisu.gltf`'s one texture, loaded for a device sampling `blocks`.
     fn basisu_texture(blocks: ffi::GltfBlockSupport) -> ffi::GltfTexture {
         let options = ffi::GltfLoadOptions {

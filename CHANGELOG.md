@@ -13,6 +13,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-27, WebP textures: BeschleunigerBallett plan B5)
+
+- **Both renderers read WebP.** `kataglyphis_assets` turns on `image`'s `webp` feature (pure Rust: `image-webp` 0.2.4
+  and `quick-error` 2.0.1, both already in `Cargo.lock`), so `image_decode` reads lossy and lossless WebP, alpha
+  included, told by its `RIFF....WEBP` signature, else the MIME type `image/webp`, else the extension, and expanded to
+  RGBA8 as the other formats are (RGB to RGB1). glTF's `EXT_texture_webp` is accepted as required and as a texture's
+  only source; its image is preferred over the core `source`, after a `KHR_texture_basisu` one
+  (`gltf_images::ImageExtension::PREFERRED`), and one that does not decode falls back to the next with a warning, in
+  `load_flat` and the WebGPU renderer's import alike. gltf 1.4.1 has no type for the extension (its
+  `allow_empty_texture` feature only allowlists the name), so its JSON is read as basisu's is. An OBJ's `.webp` map
+  decodes too, and `obj_to_glb` packs it as `image/webp`.
+- Fixtures: `ramp.webp` (`basis.rs`'s 32x32 ramp, lossless, 126 bytes) and `ramp_alpha_lossy.webp` (quality 80 with
+  an alpha ramp, 228 bytes), which `.gitignore` names, `cube_webp.gltf` (the WebP the only source) and
+  `cube_webp_fallback.gltf` (the WebP over a red PNG).
+- The C++ bridge's runtime graph grows from 60 to 62 packages on all five bridge targets, which BeschleunigerBallett's
+  budget follows. The wasm32 renderer, with both crates, grows by 231,082 bytes after `wasm-opt -Oz` (10,749,340 to
+  10,980,422, 2.1 %, against BeschleunigerBallett's 12 MiB budget).
+
 ### Changed (2026-11-26, texture ingest step 3, native blocks: BeschleunigerBallett plan B5)
 
 - **`load_flat` hands a KTX2 over as the blocks the engine's device samples.** `LoadOptions::blocks`

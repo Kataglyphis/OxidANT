@@ -549,24 +549,54 @@ fn psd(tag: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn an_oversized_psd_and_an_unknown_format_get_no_slot() {
-    let mtl = "newmtl big\nmap_Kd big.psd\nnewmtl odd\nmap_Kd odd.webp\n";
-    let (dir, path) = write_model(&triangles_using(&["big", "odd"]), mtl);
+fn an_oversized_psd_an_unknown_format_and_a_broken_webp_get_no_slot() {
+    let mtl =
+        "newmtl big\nmap_Kd big.psd\nnewmtl odd\nmap_Kd odd.qoi\nnewmtl cut\nmap_Kd cut.webp\n";
+    let (dir, path) = write_model(&triangles_using(&["big", "odd", "cut"]), mtl);
     let mut big = b"8BPS\0\x01\0\0\0\0\0\0\0\x03".to_vec();
     big.extend_from_slice(&32768u32.to_be_bytes());
     big.extend_from_slice(&32768u32.to_be_bytes());
     std::fs::write(dir.path().join("big.psd"), big).unwrap();
-    std::fs::write(dir.path().join("odd.webp"), b"RIFF\0\0\0\0WEBPVP8 ").unwrap();
+    std::fs::write(
+        dir.path().join("odd.qoi"),
+        b"qoif\0\0\0\x01\0\0\0\x01\x04\0",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("cut.webp"), b"RIFF\0\0\0\0WEBPVP8 ").unwrap();
     let model = load(&path);
     assert_eq!(
         model.materials[0].base_texture, -1,
         "stb would have read a 32768x32768 PSD"
     );
-    assert_eq!(
-        model.materials[1].base_texture, -1,
-        "no renderer reads WebP"
-    );
+    assert_eq!(model.materials[1].base_texture, -1, "no renderer reads QOI");
+    assert_eq!(model.materials[2].base_texture, -1, "a truncated WebP");
     assert!(model.textures.is_empty());
+}
+
+#[test]
+fn a_webp_map_reaches_the_engine_and_the_webgpu_renderer() {
+    let (dir, path) = write_model(&triangles_using(&["a"]), "newmtl a\nmap_Kd ramp.webp\n");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/ramp.webp"),
+        dir.path().join("ramp.webp"),
+    )
+    .unwrap();
+    let model = load(&path);
+    let chain = &model.textures[model.materials[0].base_texture as usize].chain;
+    assert_eq!((chain.width, chain.height, chain.level_count), (32, 32, 6));
+    assert_eq!(
+        chain.bytes[31 * 4..32 * 4],
+        [255, 0, 128, 255],
+        "the ramp's top-right texel"
+    );
+    let scene = load_gltf_slice(&obj_to_glb(&path).expect("converts")).expect("the GLB loads");
+    let texture = &scene.primitives[0]
+        .material
+        .base_color_texture
+        .as_ref()
+        .expect("the WebP packed into the GLB")
+        .texture;
+    assert_eq!(texture.rgba8[..32 * 4], chain.bytes[..32 * 4]);
 }
 
 #[test]

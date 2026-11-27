@@ -268,6 +268,62 @@ fn a_basisu_texture_arrives_as_the_blocks_the_engine_samples_and_its_fallback_st
     assert_eq!((chain.width, chain.height, chain.level_count), (2, 2, 2));
 }
 
+/// `ramp.webp`'s top row, lossless: red rises with x, blue falls.
+fn webp_ramp_top_row() -> Vec<u8> {
+    (0..32)
+        .flat_map(|x| [x * 255 / 31, 0, 255 - x * 255 / 62, 255].map(|v| v as u8))
+        .collect()
+}
+
+#[test]
+fn a_webp_texture_is_preferred_over_its_core_image_and_a_broken_one_falls_back() {
+    let bc = LoadOptions {
+        blocks: BlockSupport {
+            bc: true,
+            ..NO_BLOCKS
+        },
+        ..LoadOptions::default()
+    };
+    for name in ["cube_webp.gltf", "cube_webp_fallback.gltf"] {
+        let model = load_flat(fixture(name), &bc).unwrap();
+        assert_eq!(model.textures.len(), 1, "{name}");
+        assert_eq!(model.materials[0].base_texture, 0, "{name}");
+        let chain = &model.textures[0].chain;
+        assert_eq!(
+            chain.format,
+            ChainFormat::Rgba8,
+            "{name}: a decoded WebP stays RGBA8"
+        );
+        assert_eq!(
+            (chain.width, chain.height, chain.level_count),
+            (32, 32, 6),
+            "{name}: the WebP's full chain, not the 2x2 PNG"
+        );
+        assert_eq!(chain.bytes[..32 * 4], webp_ramp_top_row(), "{name}");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let text = std::fs::read_to_string(fixture("cube_webp_fallback.gltf")).unwrap();
+    let broken = text.replacen(
+        "\"uri\": \"ramp.webp\"",
+        &format!(
+            "\"uri\": \"data:image/webp;base64,{}\"",
+            base64(b"RIFF\0\0\0\0WEBPVP8 ")
+        ),
+        1,
+    );
+    assert_ne!(broken, text);
+    let path = dir.path().join("broken_webp.gltf");
+    std::fs::write(&path, broken).unwrap();
+    let fallback = load_flat(&path, &bc).unwrap();
+    let chain = &fallback.textures[0].chain;
+    assert_eq!(
+        (chain.width, chain.height, chain.level_count),
+        (2, 2, 2),
+        "the PNG"
+    );
+    assert_eq!(chain.bytes[..4], [255, 0, 0, 255]);
+}
+
 #[test]
 fn lights_are_posed_by_their_nodes() {
     let model = load_flat(fixture("point_light.gltf"), &LoadOptions::default()).unwrap();

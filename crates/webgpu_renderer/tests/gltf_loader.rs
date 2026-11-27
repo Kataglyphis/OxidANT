@@ -611,4 +611,42 @@ mod basisu {
         let err = load_gltf_slice(text.as_bytes()).expect_err("source 7 does not exist");
         assert!(format!("{err:#}").contains("past the 2 images"), "{err:#}");
     }
+
+    /// `cube_webp_fallback.gltf` with its WebP file as a data URI of `webp`, for the in-memory import.
+    fn webp_fallback_slice(webp: &[u8]) -> String {
+        let text = std::fs::read_to_string(asset("cube_webp_fallback.gltf")).expect("fixture");
+        let embedded = text.replacen(
+            "\"uri\": \"ramp.webp\"",
+            &format!("\"uri\": \"data:image/webp;base64,{}\"", base64(webp)),
+            1,
+        );
+        assert_ne!(embedded, text, "the WebP URI must be replaced");
+        embedded
+    }
+
+    /// EXT_texture_webp as the only source, then over a red PNG: the lossless ramp, 32x32; a broken WebP falls back.
+    #[test]
+    fn a_webp_texture_wins_over_its_png_and_a_broken_one_falls_back() {
+        for scene in [
+            load_gltf(asset("cube_webp.gltf")).expect("cube_webp.gltf must load"),
+            load_gltf(asset("cube_webp_fallback.gltf")).expect("cube_webp_fallback.gltf must load"),
+            load_gltf_slice(
+                webp_fallback_slice(include_bytes!("../../assets/tests/assets/ramp.webp"))
+                    .as_bytes(),
+            )
+            .expect("an embedded WebP must load"),
+        ] {
+            let texture = base_colour(&scene);
+            assert!(texture.compressed.is_none());
+            assert_eq!((texture.width, texture.height), (32, 32));
+            assert_eq!(
+                texture.rgba8[..4],
+                [0, 0, 255, 255],
+                "the ramp's first texel"
+            );
+        }
+        let scene = load_gltf_slice(webp_fallback_slice(b"RIFF\0\0\0\0WEBPVP8 ").as_bytes())
+            .expect("the PNG fallback must load");
+        assert_eq!(base_colour(&scene).rgba8, [255, 0, 0, 255].repeat(4));
+    }
 }
