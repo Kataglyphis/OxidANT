@@ -932,6 +932,13 @@ const FUZZ_SEEDS: [&str; 11] = [
     "skinned_mirrored.gltf",
 ];
 
+/// gltfpack's EXT_meshopt_compression output, apart so the regression file's seeds keep naming the files they did.
+const MESHOPT_FUZZ_SEEDS: [&str; 3] = [
+    "cube_meshopt.glb",
+    "cube_meshopt_filters.glb",
+    "skinned_bar_meshopt.glb",
+];
+
 #[derive(Clone, Debug)]
 enum Mutation {
     Overwrite(proptest::sample::Index, u8),
@@ -973,6 +980,39 @@ fn mutate(mut bytes: Vec<u8>, mutations: &[Mutation]) -> Vec<u8> {
     bytes
 }
 
+/// The fuzz targets' oracle: `name` mutated is an error, or flattens into consistent arrays and texture slots.
+fn check_mutant(
+    name: &str,
+    mutations: &[Mutation],
+    mikktspace_tangents: bool,
+    bc: bool,
+) -> Result<(), proptest::test_runner::TestCaseError> {
+    let bytes = mutate(std::fs::read(fixture(name)).unwrap(), mutations);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(name);
+    std::fs::write(&path, bytes).unwrap();
+    let options = LoadOptions {
+        mikktspace_tangents,
+        blocks: BlockSupport { bc, ..NO_BLOCKS },
+    };
+    if let Ok(model) = load_flat(&path, &options) {
+        assert_consistent(&model);
+        let materials = model.materials.len();
+        for material in &model.materials {
+            for slot in [
+                material.base_texture,
+                material.metallic_roughness_texture,
+                material.normal_texture,
+                material.emissive_texture,
+            ] {
+                proptest::prop_assert!(slot >= -1 && (slot as i64) < model.textures.len() as i64);
+            }
+        }
+        proptest::prop_assert!(materials > 0, "the neutral fallback is always last");
+    }
+    Ok(())
+}
+
 proptest::proptest! {
     #![proptest_config(proptest::prelude::ProptestConfig::with_cases(512))]
 
@@ -984,25 +1024,18 @@ proptest::proptest! {
         mikktspace_tangents in proptest::bool::ANY,
         bc in proptest::bool::ANY,
     ) {
-        let name = FUZZ_SEEDS[seed];
-        let bytes = mutate(std::fs::read(fixture(name)).unwrap(), &mutations);
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(name);
-        std::fs::write(&path, bytes).unwrap();
-        let options = LoadOptions {
-            mikktspace_tangents,
-            blocks: BlockSupport { bc, ..NO_BLOCKS },
-        };
-        if let Ok(model) = load_flat(&path, &options) {
-            assert_consistent(&model);
-            let materials = model.materials.len();
-            for material in &model.materials {
-                for slot in [material.base_texture, material.metallic_roughness_texture, material.normal_texture, material.emissive_texture] {
-                    proptest::prop_assert!(slot >= -1 && (slot as i64) < model.textures.len() as i64);
-                }
-            }
-            proptest::prop_assert!(materials > 0, "the neutral fallback is always last");
-        }
+        check_mutant(FUZZ_SEEDS[seed], &mutations, mikktspace_tangents, bc)?;
+    }
+
+    /// The same target over gltfpack's compressed views: a mutated stream, count or offset is an error or draws.
+    #[test]
+    fn a_mutated_meshopt_file_is_rejected_or_flattens_consistently(
+        seed in 0..MESHOPT_FUZZ_SEEDS.len(),
+        mutations in proptest::collection::vec(mutation(), 1..8),
+        mikktspace_tangents in proptest::bool::ANY,
+        bc in proptest::bool::ANY,
+    ) {
+        check_mutant(MESHOPT_FUZZ_SEEDS[seed], &mutations, mikktspace_tangents, bc)?;
     }
 }
 

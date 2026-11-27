@@ -13,6 +13,24 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-27, `EXT_meshopt_compression`: BeschleunigerBallett plan N4)
+
+- **`kataglyphis_assets` reads `EXT_meshopt_compression`**, gltfpack's `-c` and `-cc` output, for both renderers and
+  with no new crate. `meshopt_codec.rs` decodes the extension's three bitstreams (attributes, vertex codec version 0;
+  triangles, index codec versions 0 and 1; index sequences) and three filters (octahedral, quaternion, exponential)
+  in safe Rust, as meshoptimizer's scalar decoder does, whose MIT text `packaging/cargo-license-policy.json` now ships
+  with the crate. `meshopt.rs` checks every compressed view against the extension's layout rules before anything is
+  read or allocated, then `files::import_buffers` decodes each into its parent's range: of a `fallback` buffer, which
+  it never reads, or of a URI-less placeholder (after the GLB chunk). A stream too short for its elements, one that
+  ends early or runs on, a fallback read uncompressed or used as a stream, and a placeholder longer than its views
+  fail the load; one file's views decode to at most 1 GiB. `KHR_meshopt_compression` (`-cz`) is not read.
+- Fixtures from gltfpack 1.3: `cube_meshopt.glb` (`cube.gltf`, `-noq -c`), `cube_meshopt_filters.glb` (`-cc -vpf`)
+  and `skinned_bar_meshopt.glb` (`skinned_bar.gltf`, `-cc`). `tests/meshopt.rs` matches each triangle with the
+  original's (floats exactly, the filters within their steps) and the keyframes with its rotations, round-trips the
+  attribute and sequence codecs through a test encoder, holds the filters to the specification's pseudo-code within a
+  unit, refuses twelve broken views, and fuzzes the decoders and the fixtures' streams; `load_flat`'s fuzz target
+  runs over the three fixtures too.
+
 ### Changed (2026-11-27, the GPU archive check uses the hub's provider-set assert: ANTfrastructure #364)
 
 - **`Test-GpuCandidateArchive.ps1` checks the finished archive's ORT providers with the hub's

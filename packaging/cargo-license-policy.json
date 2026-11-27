@@ -269,6 +269,12 @@
           "path": "LICENSE",
           "sha256": "586ec400195558a35f3895d08f8e089f3de6206ab8512fe58d6e4b47fb342e7b",
           "provenance": "this repository's LICENSE; the workspace crates declare license.workspace = MIT"
+        },
+        {
+          "root": "workspace",
+          "path": "packaging/licenses/cargo/zeux-meshoptimizer-9e1f07b159d3/LICENSE.md",
+          "sha256": "f03037ca7bad1e3eb7f4a63fa6084a8baabd5ba30d3c239a9a7f35705d873e26",
+          "provenance": "https://github.com/zeux/meshoptimizer/blob/9e1f07b159d3cb777f1c67ed31fc11fd117986f4/LICENSE.md (v1.3): crates/assets/src/meshopt_codec.rs decodes EXT_meshopt_compression as meshoptimizer's scalar decoder does"
         }
       ]
     },

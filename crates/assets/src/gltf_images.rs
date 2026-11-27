@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use crate::files::{self, decode_base64};
 use crate::image_decode::decode_rgba8;
 use crate::ktx2_loader::load_ktx2;
+use crate::meshopt;
 use crate::scene::CpuTexture;
 
 /// Read by `attributes::read_f32`; gltf 1.4.1 refuses it as required.
@@ -70,7 +71,7 @@ pub(crate) struct Parsed {
 }
 
 /// `gltf::Gltf::from_slice`, except that it accepts `KHR_texture_basisu` and `EXT_texture_webp` as required and as a
-/// texture's only source, and `KHR_mesh_quantization` as required.
+/// texture's only source, and `KHR_mesh_quantization` and `EXT_meshopt_compression` as required.
 pub(crate) fn parse(bytes: &[u8]) -> anyhow::Result<Parsed> {
     let gltf::Gltf { document, blob } = gltf::Gltf::from_slice_without_validation(bytes)?;
     let mut root = document.into_json();
@@ -95,8 +96,9 @@ pub(crate) fn parse(bytes: &[u8]) -> anyhow::Result<Parsed> {
         });
     }
     let accepted = ImageExtension::PREFERRED.map(ImageExtension::name);
-    root.extensions_required
-        .retain(|name| !accepted.contains(&name.as_str()) && name != QUANTIZATION);
+    root.extensions_required.retain(|name| {
+        !accepted.contains(&name.as_str()) && name != QUANTIZATION && name != meshopt::EXTENSION
+    });
     if !root.extensions_used.iter().any(|name| name == QUANTIZATION) {
         normalize_core_tex_coords(&mut root);
     }
