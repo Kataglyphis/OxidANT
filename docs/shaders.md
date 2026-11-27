@@ -86,6 +86,16 @@ combined `sky.wgsl` carries that entry too; the Rust renderer draws `vs_main`. T
 manifest builds both C++ entries to SPIR-V here as well, so a change that breaks that
 target fails before the pin moves.
 
+`common/exposure.slang` is exposure in both renderers: the histogram's 64 bins over log2 luminance -10 to 4
+(`HISTOGRAM_BINS`, `MIN_LOG_LUMINANCE`, `MAX_LOG_LUMINANCE`, `BLACK_THRESHOLD`, `EXPOSURE_KEY`), `exposure_luminance`
+(Rec. 709), `histogram_bin` and its inverse `bin_luminance`, `exposure_target_ev` (the EV that puts a log-average on
+middle grey 0.18), `adapt_exposure_ev` (exponential in the frame time, so 60 and 120 Hz settle alike; a non-finite
+EV takes the target, a frame of no time holds, speed 0 snaps) and `exposure_scale` (`exp2`). `render::auto_exposure`
+is its CPU twin, whose constants `tests/histogram_constants.rs` pins against the module. `histogram/histogram.slang`
+runs it over the HDR target into the two-float `[adapted EV, target EV]` buffer that `tonemap.slang` and
+`bloom.slang` read; its three kernels are the C++ renderer's auto exposure too, through their SPIR-V rows, and the
+C++ post pass reads the same buffer.
+
 `fxaa/fxaa.slang`'s `fs_main` is the C++ renderer's FXAA too, behind its own
 `SV_VulkanVertexID` fullscreen vertex, with the same three bindings and
 `FxaaUniforms`; a change to either reaches its `FxaaStage` with the pin. Its manifest
@@ -222,7 +232,7 @@ checks this on the GPU and stays enabled.
 `tests/<module>_test.slang` runs every public function of `common/<module>.slang`
 once per case of `tests/vectors/<module>.json`: `brdf`, `noise`, `path_estimator`, `hdr_safe`,
 `aces`, `fullscreen`, `camera_ray`, `ambient`, `gltf_material`, `cascade_visibility`, `punctual_shadow`,
-`surface_lighting`, `gbuffer`, `cloud_upsample`, `drawn_sky`, `path_integrator` and `sun_mask` today. A generic's interface is a kernel's own struct, a
+`surface_lighting`, `gbuffer`, `cloud_upsample`, `drawn_sky`, `path_integrator`, `sun_mask` and `exposure` today. A generic's interface is a kernel's own struct, a
 texture-free stand-in whose result both targets share: `path_integrator`'s is a floor under a sky, whose paths
 end after one bounce, and `sun_mask`'s a sky with one disk, alike at every mip. `hdr_safe` takes its radiance as bits, so a case can hand it NaN and
 the infinities, which JSON cannot spell; `fullscreen`'s uv differs per target, so its kernel writes

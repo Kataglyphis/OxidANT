@@ -27,6 +27,12 @@ RULES = [
      "a NaN check"),
     ("common/hdr_safe.slang", defines("hdr_safe"), "hdr_safe"),
     ("common/aces.slang", r"\b2\.51\b|\b2\.43\b", "an ACES coefficient"),
+    ("common/exposure.slang", declares(r"HISTOGRAM_BINS|\w*LOG_LUMINANCE|BLACK_THRESHOLD|EXPOSURE_KEY"),
+     "an exposure constant"),
+    ("common/exposure.slang", defines(
+        "exposure_luminance|histogram_bin|bin_luminance|exposure_target_ev|adapt_exposure_ev|exposure_scale"),
+     "an exposure rule"),
+    ("common/exposure.slang", r"\bexp2\(\s*exposureState\b", "an exposure scale"),
     ("common/aces.slang", defines("aces_tonemap|aces_tonemap_inverse|untonemapped|linear_to_srgb"), "an ACES or sRGB curve"),
     ("common/trace_constants.slang", declares(r"\w*TMIN|\w*TMAX|\w*SURFACE_OFFSET|\w*LIGHT_SPAN"), "a ray bound"),
     ("common/trace_constants.slang", r"(?i)\btm(?:in|ax)\s*=\s*[\d.]*[1-9]", "a literal ray bound"),

@@ -1,3 +1,4 @@
+import exposure;
 import fullscreen;
 import hdr_safe;
 
@@ -59,7 +60,7 @@ float4 fs_brightpass(FullscreenVsOut In) : SV_Target
         float4 cloud = cloudTex.Sample(srcSampler, In.uv);
         scene = cloud.rgb + scene * (1.0 - cloud.a);
     }
-    float3 hdr = hdr_safe(scene) * exp2(exposureState[0]);
+    float3 hdr = hdr_safe(scene) * exposure_scale(exposureState[0]);
     float3 bright = hdr_safe(hdr - float3(THRESHOLD));
     return float4(bright, 1.0);
 }

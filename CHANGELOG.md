@@ -13,6 +13,18 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-27, exposure in both renderers: BeschleunigerBallett plan C5)
+
+- **One exposure module for both renderers.** `shaders/common/exposure.slang` holds the histogram's constants,
+  `exposure_luminance`, `histogram_bin`, `bin_luminance`, `exposure_target_ev`, `adapt_exposure_ev` and
+  `exposure_scale`, which `histogram/histogram.slang`, `tonemap.slang` and `bloom.slang` import instead of their own
+  copies; the WGSL computes what it did (`tests/histogram.rs`, and `tests/histogram_constants.rs`, which reads the
+  constants from the module now, pass unchanged). `tests/exposure_test.slang` runs every function once per case of
+  `vectors/exposure.json` (22 cases, `scripts/shader_model_post.py` and `shader_vectors_post.py`), on lavapipe here
+  and as SPIR-V in BeschleunigerBallett, and the copy gate owns the module's names.
+- `histogram.slang`'s three kernels get SPIR-V rows: BeschleunigerBallett's auto exposure binds them as they are, with
+  the two-float `[adapted EV, target EV]` buffer its post pass reads.
+
 ### Added (2026-11-27, the NSIS setup pilot: ANTfrastructure CON302)
 
 - **A per-machine NSIS setup beside the MSI and the MSIX**, `kataglyphis_cli-<VERSION>-<x64|arm64>-setup.exe`, built

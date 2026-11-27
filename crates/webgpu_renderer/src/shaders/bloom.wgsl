@@ -40,6 +40,11 @@ fn hdr_safe_0( radiance_0 : vec3<f32>) -> vec3<f32>
     return clamp(select(radiance_0, _S1, (((bitcast<vec3<u32>>((radiance_0))) & (vec3<u32>(u32(2147483647))))) > vec3<u32>(u32(2139095040))), _S1, vec3<f32>(65000.0f));
 }
 
+fn exposure_scale_0( ev_0 : f32) -> f32
+{
+    return exp2(ev_0);
+}
+
 struct pixelOutput_0
 {
     @location(0) output_0 : vec4<f32>,
@@ -64,7 +69,7 @@ fn fs_brightpass( _S2 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32
     {
         scene_1 = scene_0;
     }
-    var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(hdr_safe_0(hdr_safe_0(scene_1) * vec3<f32>(exp2(exposureState_0[i32(0)])) - vec3<f32>(1.0f)), 1.0f) );
+    var _S3 : pixelOutput_0 = pixelOutput_0( vec4<f32>(hdr_safe_0(hdr_safe_0(scene_1) * vec3<f32>(exposure_scale_0(exposureState_0[i32(0)])) - vec3<f32>(1.0f)), 1.0f) );
     return _S3;
 }
 

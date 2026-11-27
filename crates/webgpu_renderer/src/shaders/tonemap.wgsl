@@ -38,6 +38,11 @@ fn vs_main(@builtin(vertex_index) vid_1 : u32) -> FullscreenVsOut_0
     return fullscreen_vs_0(vid_1);
 }
 
+fn exposure_scale_0( ev_0 : f32) -> f32
+{
+    return exp2(ev_0);
+}
+
 fn aces_tonemap_0( x_1 : vec3<f32>) -> vec3<f32>
 {
     return clamp(x_1 * (vec3<f32>(2.50999999046325684f) * x_1 + vec3<f32>(0.02999999932944775f)) / (x_1 * (vec3<f32>(2.43000006675720215f) * x_1 + vec3<f32>(0.5899999737739563f)) + vec3<f32>(0.14000000059604645f)), vec3<f32>(0.0f), vec3<f32>(1.0f));
@@ -64,7 +69,7 @@ fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> 
     var hdr_0 : vec3<f32> = (textureSample((hdrTex_0), (hdrSampler_0), (_S1.uv_1))).xyz;
     var bloom_0 : vec3<f32> = (textureSample((bloomTex_0), (hdrSampler_0), (_S1.uv_1))).xyz;
     var ao_0 : f32 = mix(1.0f, (textureSample((aoTex_0), (hdrSampler_0), (_S1.uv_1))).x, tonemapUniforms_0.params_0.y);
-    var exposure_0 : f32 = exp2(exposureState_0[i32(0)]);
+    var exposure_0 : f32 = exposure_scale_0(exposureState_0[i32(0)]);
     var _S2 : vec4<f32> = vec4<f32>(0.0f);
     var cloud_0 : vec4<f32>;
     if((tonemapUniforms_0.params_0.z) > 0.5f)

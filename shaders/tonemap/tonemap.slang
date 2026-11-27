@@ -1,4 +1,5 @@
 import aces;
+import exposure;
 import fullscreen;
 
 // Rust/WebGPU tonemap: tonemap.wgsl is generated from this file; bindings match forward.rs's TonemapPass.
@@ -34,7 +35,7 @@ float4 fs_main(FullscreenVsOut In) : SV_Target
     float3 bloom = bloomTex.Sample(hdrSampler, In.uv).rgb;
     float aoRaw = aoTex.Sample(hdrSampler, In.uv).r;
     float ao = lerp(1.0, aoRaw, tonemapUniforms.params.y);
-    float exposure = exp2(exposureState[0]);
+    float exposure = exposure_scale(exposureState[0]);
     float4 cloud = float4(0.0);
     if (tonemapUniforms.params.z > 0.5)
         cloud = cloudTex.Sample(hdrSampler, In.uv);
