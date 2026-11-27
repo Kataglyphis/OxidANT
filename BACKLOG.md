@@ -86,6 +86,13 @@ Empty on 2026-11-17: nothing else is in the queue.
 
 ## P3 — ideas, chores and blocked work
 
+- [ ] **The GPU package scripts take the hub's single-artifact helper** (S). `gpu_check_one_package` in
+      `scripts/linux/lib/gpu-check-common.sh` does what the hub's `app_packaging_single_artifact` does (hub #364).
+      It stays until a GPU round proves the switch: its two callers, `verify-gpu-packages.sh` and
+      `profile-gpu-packages.sh`, run only in the dispatch-only GPU lanes on the self-hosted `gpu-amd-rocm` and
+      `gpu-nvidia-cuda` runners, and `profile-gpu-packages.sh` loads no hub yet. `gpu_check_one_profile` keeps
+      `gpu_check_one_match`. Done when both callers use the hub helper and an AMD and an NVIDIA round pass.
+
 - [ ] **chrono is lockfile-only: drop the last RUSTSEC-2026-0543 ignore** (S). Since 2026-11-18 `kataglyphis_core`
       and `observant` use `jiff` and `wmi` runs without its chrono default, so nothing built needs chrono and
       `deny.toml` ignores nothing. `Cargo.lock` still holds it through `cubecl-environment`'s optional `turso`
