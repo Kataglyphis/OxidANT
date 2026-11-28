@@ -344,8 +344,18 @@ pub fn ktx2_chain(bytes: &[u8], srgb: bool, blocks: &BlockSupport) -> anyhow::Re
     rgba8_chain(texture, srgb)
 }
 
+/// The colour space an image's chain reads in for a slot of `srgb`: the slot's, but linear for a KTX2 whose format has no
+/// sRGB variant (BC5), so its decode reads as a device sampling the blocks would.
+pub fn reads_srgb(bytes: &[u8], srgb: bool) -> bool {
+    srgb && ktx2::Reader::new(bytes)
+        .ok()
+        .and_then(|reader| crate::ktx2_loader::stored_format(&reader))
+        .is_none_or(CompressedFormat::has_srgb)
+}
+
 /// `texture`'s full RGBA8 chain: a decoded image box-filtered, a Basis payload transcoded level by level, BCn decoded up
-/// to its first level too short to decode, the rest halved from the last; an error when not even level 0 decodes.
+/// to its first level too short to decode, the rest halved from the last (linearly for BC5, as [`reads_srgb`] reads
+/// it); an error when not even level 0 decodes.
 pub fn rgba8_chain(texture: CpuTexture, srgb: bool) -> anyhow::Result<TextureChain> {
     let CpuTexture {
         width,
@@ -361,6 +371,7 @@ pub fn rgba8_chain(texture: CpuTexture, srgb: bool) -> anyhow::Result<TextureCha
         );
         return Ok(box_filtered_chain(rgba8, width, height, srgb));
     };
+    let srgb = srgb && compressed.format.has_srgb();
     let levels = match &compressed.basis_source {
         Some(source) => crate::basis::rgba8_levels(source)?,
         None => decoded_levels(width, height, &compressed),
@@ -561,6 +572,31 @@ mod tests {
         assert_eq!(
             ktx2_chain(file, true, &etc2_only).unwrap().format,
             ChainFormat::Rgba8
+        );
+    }
+
+    /// 8x8 BC5, two of its four levels: a red checker over green 64, then over green 192.
+    const BC5: &[u8] = include_bytes!("../tests/assets/rg_two_levels_bc5.ktx2");
+
+    #[test]
+    fn a_decoded_bc5_reads_linear_whatever_the_slot() {
+        assert!(!reads_srgb(BC5, true), "BC5 has no sRGB variant");
+        assert!(reads_srgb(
+            include_bytes!("../tests/assets/red_bc1.ktx2"),
+            true
+        ));
+        assert!(reads_srgb(
+            include_bytes!("../tests/assets/green_uastc.ktx2"),
+            true
+        ));
+        assert!(reads_srgb(&[0x89, b'P', b'N', b'G'], true), "no KTX2");
+        assert!(!reads_srgb(&[0x89, b'P', b'N', b'G'], false));
+        let decoded = ktx2_chain(BC5, true, &BlockSupport::default()).unwrap();
+        let level_two = decoded.levels().nth(2).unwrap().2;
+        assert_eq!(
+            level_two[..4],
+            [128, 192, 0, 255],
+            "the checker halved linearly; in sRGB it would be 188"
         );
     }
 

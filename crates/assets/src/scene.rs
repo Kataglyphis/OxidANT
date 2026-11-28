@@ -79,6 +79,11 @@ impl CompressedFormat {
             _ => 16,
         }
     }
+
+    /// Whether the format has an sRGB variant; BC5's two channels exist only as data.
+    pub fn has_srgb(self) -> bool {
+        self != CompressedFormat::Bc5RgUnorm
+    }
 }
 
 /// Block-compressed mip chain from a KTX2 container, stored or transcoded.

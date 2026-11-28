@@ -335,6 +335,44 @@ fn a_one_level_bc_ktx2_is_completed_where_decoded_and_kept_where_sampled() {
     assert_eq!(chain.level_count, 1, "blocks keep the file's one level");
 }
 
+/// BC5 has no sRGB variant, so its decode in a colour slot reads linear, as a device sampling the blocks does.
+#[test]
+fn a_bc5_ktx2_in_a_colour_slot_reads_linear_where_decoded_and_where_sampled() {
+    let path = fixture("cube_ktx2_bc5_base_colour.gltf");
+    let decoded = load_flat(&path, &LoadOptions::default()).unwrap();
+    let texture = &decoded.textures[0];
+    assert!(!texture.srgb, "the engine uploads it UNORM");
+    assert_eq!(texture.chain.format, ChainFormat::Rgba8);
+    assert_eq!(
+        first_texels(&texture.chain),
+        [
+            [255, 64, 0, 255],
+            [255, 192, 0, 255],
+            [128, 192, 0, 255],
+            [128, 192, 0, 255]
+        ],
+        "the file's two levels, then the red checker halved linearly (sRGB halving gives 188)"
+    );
+    let options = LoadOptions {
+        blocks: BlockSupport {
+            bc: true,
+            ..NO_BLOCKS
+        },
+        ..LoadOptions::default()
+    };
+    let sampled = load_flat(&path, &options).unwrap();
+    let texture = &sampled.textures[0];
+    assert!(!texture.srgb);
+    assert_eq!(
+        texture.chain.format,
+        ChainFormat::Blocks(CompressedFormat::Bc5RgUnorm)
+    );
+    assert_eq!(
+        texture.chain.level_count, 2,
+        "blocks keep the file's levels"
+    );
+}
+
 #[test]
 fn an_animated_webp_arrives_as_its_first_frame() {
     let model = load_flat(fixture("cube_webp_animated.gltf"), &LoadOptions::default()).unwrap();

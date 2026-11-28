@@ -327,7 +327,7 @@ fn material_chain_for(
     }
     log::info!("{name}: block-compressed texture decoded on the CPU: {problem}");
     // BC5 has no sRGB variant, so the adapter's own decode would read it linear whatever the slot.
-    let srgb = compressed_wgpu_format(compressed.format, srgb).is_srgb();
+    let srgb = srgb && compressed.format.has_srgb();
     // The levels that decode, completed to 1x1: a level past the device's side is no base candidate.
     Some(rgba8_levels(
         completed_levels(texture.width, texture.height, levels, srgb),
@@ -505,7 +505,7 @@ pub(crate) fn create_2d_view(
 mod tests {
     use super::*;
     use crate::scene::CpuTexture;
-    use kataglyphis_assets::levels::{ktx2_chain, ChainFormat};
+    use kataglyphis_assets::levels::{ktx2_chain, reads_srgb, ChainFormat};
 
     /// `rgba8_chain`'s levels as sizes and bytes.
     fn generate_mips(base: CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
@@ -662,10 +662,11 @@ mod tests {
         (format, levels)
     }
 
-    /// Every KTX2 fixture, under every support set: this renderer's chain is the one the C++ engine's loader hands over.
+    /// Every KTX2 fixture, under every support set: this renderer's chain is the one the C++ engine's loader hands over,
+    /// in the colour space the engine uploads it in.
     #[test]
     fn a_ktx2_chain_is_the_one_the_cpp_engine_s_loader_builds() {
-        let fixtures: [(&str, &[u8]); 5] = [
+        let fixtures: [(&str, &[u8]); 6] = [
             (
                 "red_bc1",
                 include_bytes!("../../../assets/tests/assets/red_bc1.ktx2"),
@@ -686,6 +687,11 @@ mod tests {
                 "rgb_levels_6x6_uastc",
                 include_bytes!("../../../assets/tests/assets/rgb_levels_6x6_uastc.ktx2"),
             ),
+            // Its second level is no box filter of the first, so a decode past the side must keep the file's levels.
+            (
+                "rg_two_levels_bc5",
+                include_bytes!("../../../assets/tests/assets/rg_two_levels_bc5.ktx2"),
+            ),
         ];
         for (name, file) in fixtures {
             let image = Arc::new(crate::asset::ktx2_loader::load_ktx2(file).unwrap());
@@ -699,6 +705,11 @@ mod tests {
                         .collect();
                     assert!(
                         as_texture_chain(&ours) == (theirs.format, theirs_levels),
+                        "{name} under {blocks:?}, srgb {srgb}"
+                    );
+                    assert_eq!(
+                        ours.format.is_srgb(),
+                        reads_srgb(file, srgb),
                         "{name} under {blocks:?}, srgb {srgb}"
                     );
                 }

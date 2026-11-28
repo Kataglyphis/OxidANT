@@ -233,6 +233,24 @@ mod tests {
         );
     }
 
+    /// The hand-written BC5 fixture: red a checker of BC4 indices 0 and 1 (255 and 0), green solid, two of four levels.
+    #[test]
+    fn the_bc5_fixture_holds_two_levels_of_a_red_checker_over_solid_green() {
+        let texture = load_ktx2(include_bytes!("../tests/assets/rg_two_levels_bc5.ktx2")).unwrap();
+        assert_eq!((texture.width, texture.height), (8, 8));
+        let compressed = texture.compressed.unwrap();
+        assert_eq!(compressed.format, CompressedFormat::Bc5RgUnorm);
+        assert_eq!(compressed.declared_srgb, None);
+        let checker: u64 = (0..16).map(|t| ((t % 4 + t / 4) % 2) << (3 * t)).sum();
+        let block = |green: u8| {
+            let mut block = vec![255, 0];
+            block.extend_from_slice(&checker.to_le_bytes()[..6]);
+            block.extend([green, green, 0, 0, 0, 0, 0, 0]);
+            block
+        };
+        assert_eq!(compressed.mips, [block(64).repeat(4), block(192)]);
+    }
+
     #[test]
     fn rejects_non_ktx2_bytes_without_panicking() {
         assert!(load_ktx2(b"not a ktx2 file at all").is_err());
