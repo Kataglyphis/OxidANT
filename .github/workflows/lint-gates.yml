@@ -85,11 +85,11 @@ jobs:
         with:
           # Grades this checkout against scripts/windows/generated-artifacts.txt.
           path: third_party/ANTfrastructure/shared/windows/tests/Repo.GeneratedArtifacts.Tests.ps1
-          version: '3.4.0'
+          version: '6.2.0'
 
       - name: Windows module suites
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-pester-suite@develop
         with:
           path: scripts/windows/tests
-          # The suites are written in Pester 3.4's dash-less assertion dialect.
-          version: '3.4.0'
+          # The image's Pester (the hub's PESTER_VERSION); the suites keep their setup in BeforeAll for its discovery pass.
+          version: '6.2.0'

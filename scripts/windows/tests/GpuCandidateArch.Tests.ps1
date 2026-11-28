@@ -1,20 +1,23 @@
 #requires -Version 7.0
 
 Describe 'Windows GPU candidate architecture' {
-  function Write-FixturePe([string]$Path, [uint16]$Machine) {
-    $bytes = [byte[]]::new(512)
-    [BitConverter]::GetBytes([uint32]128).CopyTo($bytes, 0x3c)
-    [BitConverter]::GetBytes([uint32]0x4550).CopyTo($bytes, 128)
-    [BitConverter]::GetBytes($Machine).CopyTo($bytes, 132)
-    [IO.File]::WriteAllBytes($Path, $bytes)
+  BeforeAll {
+      function Write-FixturePe([string]$Path, [uint16]$Machine) {
+        $bytes = [byte[]]::new(512)
+        [BitConverter]::GetBytes([uint32]128).CopyTo($bytes, 0x3c)
+        [BitConverter]::GetBytes([uint32]0x4550).CopyTo($bytes, 128)
+        [BitConverter]::GetBytes($Machine).CopyTo($bytes, 132)
+        [IO.File]::WriteAllBytes($Path, $bytes)
+      }
+      # The script must stop with this message before it creates a candidate.
+      function Assert-CandidateStops([string]$Pattern, [string]$Provider = 'directml') {
+        $message = try { & $script:candidateScript -SourceBundle $script:source -Destination $script:destination -Provider $Provider; '' } catch { $_.Exception.Message }
+        $message | Should -Match $Pattern
+        Test-Path -LiteralPath $script:destination | Should -Be $false
+      }
   }
 
-  # The script must stop with this message before it creates a candidate.
-  function Assert-CandidateStops([string]$Pattern, [string]$Provider = 'directml') {
-    $message = try { & $script:candidateScript -SourceBundle $script:source -Destination $script:destination -Provider $Provider; '' } catch { $_.Exception.Message }
-    $message | Should Match $Pattern
-    Test-Path -LiteralPath $script:destination | Should Be $false
-  }
+
 
   BeforeEach {
     $script:fixture = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))

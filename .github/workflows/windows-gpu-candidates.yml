@@ -91,9 +91,11 @@ jobs:
       - name: Test GPU launcher and architecture guards
         shell: pwsh
         run: |
-          Import-Module Pester -RequiredVersion 3.4.0
-          $result = Invoke-Pester -Script @('scripts/windows/tests/GpuCandidateArch.Tests.ps1', 'scripts/windows/tests/DirectMLLauncher.Tests.ps1') -PassThru
-          if ($result.FailedCount -ne 0 -or $result.PassedCount -ne 8) { throw 'GPU candidate fixture failed or did not run all cases.' }
+          Import-Module (Resolve-Path -LiteralPath 'third_party/ANTfrastructure/windows/scripts/modules/WindowsCi.ModuleBootstrap.psm1').Path -ErrorAction Stop
+          $null = Install-PinnedPowerShellModule -Name Pester -Version '6.2.0' -SkipPublisherCheck
+          Import-Module Pester -RequiredVersion 6.2.0 -ErrorAction Stop
+          $result = Invoke-Pester -Path @('scripts/windows/tests/GpuCandidateArch.Tests.ps1', 'scripts/windows/tests/DirectMLLauncher.Tests.ps1') -PassThru
+          if ($result.FailedCount -ne 0 -or $result.FailedContainersCount -ne 0 -or $result.PassedCount -ne 8) { throw 'GPU candidate fixture failed or did not run all cases.' }
       - name: Read the registry prefix
         id: image
         shell: bash

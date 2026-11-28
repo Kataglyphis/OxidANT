@@ -14,26 +14,26 @@ Describe 'DirectML portable launcher' {
   It 'defaults to DirectML and forwards arguments' {
     Remove-Item Env:\KATAGLYPHIS_ORT_DEVICE -ErrorAction SilentlyContinue
     $result = & $launcher /d /c set KATAGLYPHIS_ORT_DEVICE
-    $LASTEXITCODE | Should Be 0
-    ($result -join "`n") | Should Match 'KATAGLYPHIS_ORT_DEVICE=directml'
+    $LASTEXITCODE | Should -Be 0
+    ($result -join "`n") | Should -Match 'KATAGLYPHIS_ORT_DEVICE=directml'
     $forwarded = & $launcher /d /c echo 'argument with spaces'
-    ($forwarded -join "`n") | Should Match 'argument with spaces'
+    ($forwarded -join "`n") | Should -Match 'argument with spaces'
   }
   It 'honors a CPU override and propagates the exit status' {
     $env:KATAGLYPHIS_ORT_DEVICE = 'cpu'
     $result = & $launcher /d /c set KATAGLYPHIS_ORT_DEVICE
-    ($result -join "`n") | Should Match 'KATAGLYPHIS_ORT_DEVICE=cpu'
+    ($result -join "`n") | Should -Match 'KATAGLYPHIS_ORT_DEVICE=cpu'
     & $launcher /d /c exit 37
-    $LASTEXITCODE | Should Be 37
+    $LASTEXITCODE | Should -Be 37
   }
   It 'defaults the NVIDIA launcher to CUDA and honors a CPU override' {
     $cudaLauncher = Join-Path $TestDrive 'oxidant-cuda.cmd'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\..\..\packaging\windows\oxidant-cuda.cmd') -Destination $cudaLauncher
     Remove-Item Env:\KATAGLYPHIS_ORT_DEVICE -ErrorAction SilentlyContinue
     $result = & $cudaLauncher /d /c set KATAGLYPHIS_ORT_DEVICE
-    ($result -join "`n") | Should Match 'KATAGLYPHIS_ORT_DEVICE=cuda'
+    ($result -join "`n") | Should -Match 'KATAGLYPHIS_ORT_DEVICE=cuda'
     $env:KATAGLYPHIS_ORT_DEVICE = 'cpu'
     $result = & $cudaLauncher /d /c set KATAGLYPHIS_ORT_DEVICE
-    ($result -join "`n") | Should Match 'KATAGLYPHIS_ORT_DEVICE=cpu'
+    ($result -join "`n") | Should -Match 'KATAGLYPHIS_ORT_DEVICE=cpu'
   }
 }

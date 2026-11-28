@@ -199,12 +199,11 @@ Empty on 2026-11-17: nothing else is in the queue.
       `kataglyphis_observant`, `kataglyphis_text` and the root package, with the added minutes
       measured (about 5 a package, `docs/observant.md`) before it runs on every push.
 
-- [ ] **The Pester suites still speak Pester 3.4** (M, ★). 10 suites under `scripts/windows/tests` hold
-      77 dash-less `Should Be` lines, so `lint-gates.yml` and `windows-gpu-candidates.yml` pin Pester 3.4.0, the runner's inbox copy, and nothing runs
-      them on Linux. Since 2026-11-27 the hub's `:latest` (`abb3030d…`) carries Pester 6.2.0 in `pwsh` (hub CON283;
-      the owner keeps 6.2), which refuses that dialect. Now: `Should -Be` and its kin, setup moved into `BeforeAll` or `BeforeEach`
-      (Pester 5 and 6 discover a file before they run it), the `3.4.0` pins dropped, and the suites run in the image
-      as well. Done when no workflow pins 3.4.0.
+- [ ] **The Pester suites run only on Windows** (M, ★). Since 2026-11-28 the 11 suites under `scripts/windows/tests`
+      speak Pester 6.2.0, the hub's `:latest` copy, and `lint-gates.yml` and `windows-gpu-candidates.yml` pin 6.2.0.
+      Nothing runs them in the image yet: their `..\` paths and the `C:\` roots in `CargoTarget`'s expectations are
+      Windows-only. Now: paths through `Join-Path` segments, the Windows-only cases behind `$IsWindows`, and a Linux
+      step through the hub's `run-pester-suite` in the image. Done when the Linux lane runs every suite.
 
 - [b] **D16's shared cases wait for the hub** (S, ★). A usable CPU count is the smaller of the affinity mask and
       cgroup `cpu.max`, at least 1; the hub's BACKLOG owns the case file that pins it in all three languages.

@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-28, the Pester suites speak Pester 6)
+
+- **The 11 suites under `scripts/windows/tests` run under Pester 6.2.0**, the hub's `:latest` copy, and
+  `lint-gates.yml` and `windows-gpu-candidates.yml` pin it instead of 3.4.0, the latter through the hub's pinned
+  installer. `Should Be` and its kin take their dashed forms. Block- and file-level setup moved into `BeforeAll`,
+  which Pester 5 and 6 run after discovering a file, and what it sets for the tests is a `$script:` variable, as in
+  the hub's suites. `CrossTestSources`' cases stay at block level, where discovery reads them for `-TestCases`. All
+  42 tests pass under 6.2.0 locally, three runs in a row, as under 3.4.0 before; the GPU guard step still counts
+  exactly 8. The hub's lint gate finds no trap and no analyzer warning, as before.
+
 ### Added (2026-11-28, a mutation group for the session slot, and the missed mutants in the quality report)
 
 - **`run-mutants.sh session`** grades the root crate's `src/session_slot.rs` against its five unit tests
