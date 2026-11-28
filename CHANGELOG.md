@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Fixed (2026-11-28, a short frame never reaches the texture plugin)
+
+- `TexturePusher::push` handed `knt_push_frame` a pointer and a size, and the plugin reads `width * height * 4`
+  bytes through it, so a slice shorter than its frame was read past its end from safe code. It now refuses such a
+  slice, and a size past `usize`, before the call (`holds_frame`). `a_slice_shorter_than_its_frame_never_reaches_the_plugin`
+  checks it against a stub plugin that counts calls, and
+  `a_frame_holds_width_times_height_times_four_bytes_and_an_overflowing_size_holds_none` the size math.
+
 ### Changed (2026-11-28, the Pester suites speak Pester 6)
 
 - **The 11 suites under `scripts/windows/tests` run under Pester 6.2.0**, the hub's `:latest` copy, and

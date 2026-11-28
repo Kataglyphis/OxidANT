@@ -85,6 +85,10 @@ impl TexturePusher {
     }
 
     fn push(&self, rgba: &[u8], width: u32, height: u32) -> bool {
+        // The plugin reads width * height * 4 bytes through the pointer, so a shorter slice never reaches it.
+        if !holds_frame(rgba.len(), width, height) {
+            return false;
+        }
         unsafe { (self.push)(self.texture_id, rgba.as_ptr(), width, height) == OK }
     }
 
@@ -100,6 +104,14 @@ impl TexturePusher {
             rejected = !pushed;
         })
     }
+}
+
+/// Whether `len` bytes hold a packed RGBA frame of `width` x `height`; a size past `usize` holds in no slice.
+fn holds_frame(len: usize, width: u32, height: u32) -> bool {
+    (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .is_some_and(|needed| len >= needed)
 }
 
 /// Events per second over the kept instants: intervals over their span, 0 until two exist.
@@ -445,6 +457,40 @@ mod tests {
             "{err}"
         );
         assert!(!err.contains("`knt_push_frame` not exported"), "{err}");
+    }
+
+    #[test]
+    fn a_frame_holds_width_times_height_times_four_bytes_and_an_overflowing_size_holds_none() {
+        assert!(holds_frame(24, 3, 2));
+        assert!(holds_frame(25, 3, 2));
+        assert!(!holds_frame(23, 3, 2));
+        assert!(!holds_frame(usize::MAX, u32::MAX, u32::MAX));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_slice_shorter_than_its_frame_never_reaches_the_plugin() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = format!(
+            "static int calls;\n\
+             int knt_api_version(void) {{ return {API_VERSION}; }}\n\
+             int knt_push_frame(long long id, const unsigned char *rgba, unsigned w, unsigned h) {{ calls++; return 0; }}\n\
+             int knt_calls(void) {{ return calls; }}"
+        );
+        let library = texture_stub(directory.path(), &source);
+        // The same handle the pusher opens, so the counter is the one its calls move.
+        let stub = unsafe { libloading::Library::new(&library).unwrap() };
+        let calls: libloading::Symbol<unsafe extern "C" fn() -> i32> =
+            unsafe { stub.get(b"knt_calls\0").unwrap() };
+        let pusher = TexturePusher::new(&TextureTarget {
+            library,
+            texture_id: 7,
+        })
+        .unwrap();
+        assert!(!pusher.push(&[0; 23], 3, 2));
+        assert_eq!(unsafe { calls() }, 0);
+        assert!(pusher.push(&[0; 24], 3, 2));
+        assert_eq!(unsafe { calls() }, 1);
     }
 
     type Events = mpsc::Receiver<Result<EngineEvent, String>>;
