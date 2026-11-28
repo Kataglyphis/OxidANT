@@ -5201,6 +5201,7 @@ dependencies = [
  "jiff",
  "kataglyphis_vision_core",
  "log",
+ "serde_json",
 ]
 
 [[package]]

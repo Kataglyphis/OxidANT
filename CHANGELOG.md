@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-28, the hub's usable-CPU cases replayed)
+
+- `crates/core/tests/usable_cpus.rs` replays the hub's `shared/contracts/usable-cpus.json` (hub CON304) through
+  `quota_along` and `usable_of`, each case's `cpu_max` list read as a cgroup path up to the root. All 11 cases pass;
+  without the floor of one CPU, "a quota under one CPU still gives one" fails, and with the last quota read winning
+  instead of the tightest, "a child tighter than its parent" does. `serde_json` is a dev-dependency of
+  `kataglyphis_core`.
+
 ### Fixed (2026-11-28, a short frame never reaches the texture plugin)
 
 - `TexturePusher::push` handed `knt_push_frame` a pointer and a size, and the plugin reads `width * height * 4`

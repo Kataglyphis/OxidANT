@@ -11,5 +11,8 @@ jiff = { workspace = true }
 # Detection lives there, so the preprocess and decode crate needs nothing of this one.
 kataglyphis_vision_core = { path = "../vision_core" }
 
+[dev-dependencies]
+serde_json = "1"
+
 [lints]
 workspace = true
