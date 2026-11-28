@@ -199,12 +199,6 @@ Empty on 2026-11-17: nothing else is in the queue.
       `kataglyphis_observant`, `kataglyphis_text` and the root package, with the added minutes
       measured (about 5 a package, `docs/observant.md`) before it runs on every push.
 
-- [ ] **The Pester suites run only on Windows** (M, ★). Since 2026-11-28 the 11 suites under `scripts/windows/tests`
-      speak Pester 6.2.0, the hub's `:latest` copy, and `lint-gates.yml` and `windows-gpu-candidates.yml` pin 6.2.0.
-      Nothing runs them in the image yet: their `..\` paths and the `C:\` roots in `CargoTarget`'s expectations are
-      Windows-only. Now: paths through `Join-Path` segments, the Windows-only cases behind `$IsWindows`, and a Linux
-      step through the hub's `run-pester-suite` in the image. Done when the Linux lane runs every suite.
-
 - [b] **D16's shared cases wait for the hub** (S, ★). A usable CPU count is the smaller of the affinity mask and
       cgroup `cpu.max`, at least 1; the hub's BACKLOG owns the case file that pins it in all three languages.
 

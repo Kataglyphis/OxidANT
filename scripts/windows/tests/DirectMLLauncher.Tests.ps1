@@ -1,6 +1,7 @@
 #requires -Version 7.0
 
-Describe 'DirectML portable launcher' {
+# The launchers are cmd scripts, run here with a copy of cmd.exe.
+Describe 'DirectML portable launcher' -Skip:(-not $IsWindows) {
   BeforeEach {
     $launcher = Join-Path $TestDrive 'oxidant-directml.cmd'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\..\..\packaging\windows\oxidant-directml.cmd') -Destination $launcher

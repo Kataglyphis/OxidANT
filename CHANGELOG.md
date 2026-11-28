@@ -13,6 +13,16 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-28, the Pester suites run on Linux too)
+
+- **Linux x64's `pester-linux` job runs `scripts/windows/tests` in the image** through the hub's
+  `Invoke-PesterSuite.ps1` under Pester 6.2.0, as AccelerANTgine and OmniAccelerANT do. `CargoTarget`'s cases
+  build their roots under `$TestDrive` with `Join-Path` instead of `C:\` literals, and `Get-CargoTargetLayout`
+  joins `dist` and `windows-<arch>` as two segments (the same path on Windows). Six cases skip off Windows: the
+  three DirectML and CUDA launcher cases (cmd scripts), the two icon cases that read the PNG through
+  System.Drawing's GDI+, and the stage case whose `invalid<stage>` is a valid name elsewhere. Under WSL pwsh 7.6
+  and Pester 6.2.0 the 11 suites pass with those skipped; before, 9 of 42 failed.
+
 ### Added (2026-11-28, `EXT_meshopt_compression`: BeschleunigerBallett plan N4)
 
 - **`kataglyphis_assets` reads `EXT_meshopt_compression`**, gltfpack's `-c` and `-cc` output, for both renderers and

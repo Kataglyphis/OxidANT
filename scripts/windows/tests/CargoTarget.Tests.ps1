@@ -1,23 +1,20 @@
 #requires -Version 7.0
 
-# Written for Pester 3.4.0: no BeforeAll outside Describe, dash-less Should.
-
 Describe 'WindowsCargoTarget.Common' {
     BeforeAll {
         . (Join-Path $PSScriptRoot '..\Resolve-BuildModule.ps1')
         Import-BuildModule 'WindowsTargetArch.Common'
         Import-BuildModule 'WindowsCrossBundle.Common'
         Import-BuildModule 'WindowsCargoTarget.Common'
-        $script:target = 'C:\ct'
-        $script:ws = 'C:\ws'
+        $script:target = Join-Path $TestDrive 'ct'
+        $script:ws = Join-Path $TestDrive 'ws'
         function Get-Layout([string]$Arch) { Get-CargoTargetLayout -Arch $Arch -TargetRoot $script:target -WorkspacePath $script:ws }
-        # Should writes to the pipeline in Pester 3.4, so this cannot also return the layout.
         function Assert-CargoLayout($l, [bool]$IsCross, [string]$ArchTargetDir, [string]$PackageArch) {
             $l.IsCross | Should -Be $IsCross
             $l.ArchTargetDir | Should -Be $ArchTargetDir
-            $l.ReleaseDir | Should -Be "$ArchTargetDir\release"
+            $l.ReleaseDir | Should -Be (Join-Path $ArchTargetDir 'release')
             $l.PackageArch | Should -Be $PackageArch
-            $l.DistDir | Should -Be "C:\ws\dist\windows-$PackageArch"
+            $l.DistDir | Should -Be (Join-Path (Join-Path $script:ws 'dist') "windows-$PackageArch")
         }
     }
 
@@ -28,13 +25,13 @@ Describe 'WindowsCargoTarget.Common' {
 
     It 'keeps the host build in target\release, and names its packages x64 under dist\windows-x64' {
         $l = Get-Layout 'amd64'
-        Assert-CargoLayout $l -IsCross $false -ArchTargetDir 'C:\ct' -PackageArch 'x64'
+        Assert-CargoLayout $l -IsCross $false -ArchTargetDir $script:target -PackageArch 'x64'
         @($l.CargoArgs).Count | Should -Be 0
     }
 
     It 'builds arm64 by triple and keeps its packages apart' {
         $l = Get-Layout 'arm64'
-        Assert-CargoLayout $l -IsCross $true -ArchTargetDir 'C:\ct\aarch64-pc-windows-msvc' -PackageArch 'arm64'
+        Assert-CargoLayout $l -IsCross $true -ArchTargetDir (Join-Path $script:target 'aarch64-pc-windows-msvc') -PackageArch 'arm64'
         ($l.CargoArgs -join ' ') | Should -Be '--target aarch64-pc-windows-msvc'
     }
 

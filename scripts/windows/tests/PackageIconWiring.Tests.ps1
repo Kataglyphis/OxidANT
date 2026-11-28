@@ -47,7 +47,8 @@ Describe 'Windows MSI project icon' {
     Assert-Throws -Body { Assert-PackageGuard -Source $source.Replace('-LogoPath $logoPath', '-GenerateTransparentLogos') -Kind msix } -MessagePattern 'project logo'
   }
 
-  It 'rejects missing and fully transparent project logos through the shared stager' {
+  # Both read the PNG through System.Drawing, whose GDI+ exists only on Windows.
+  It 'rejects missing and fully transparent project logos through the shared stager' -Skip:(-not $IsWindows) {
     $missing = Join-Path $TestDrive 'missing.png'
     $stage = Join-Path $TestDrive 'msix-stage'
     $msixModule = Get-Module WindowsMsix.Common
@@ -63,7 +64,7 @@ Describe 'Windows MSI project icon' {
     Assert-Throws -Body { Assert-WixProjectIcon $mutant } -MessagePattern 'shortcut'
   }
 
-  It 'wraps the project PNG into the ICO without changing the image bytes' {
+  It 'wraps the project PNG into the ICO without changing the image bytes' -Skip:(-not $IsWindows) {
     $png = [IO.File]::ReadAllBytes((Join-Path $script:repoRoot 'images\logo.png'))
     $icoPath = ConvertTo-PythonAppIcon -PngPath (Join-Path $script:repoRoot 'images\logo.png') -Destination (Join-Path $TestDrive 'project.ico')
     $ico = [IO.File]::ReadAllBytes($icoPath)

@@ -36,3 +36,23 @@ jobs:
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
+  # In the image: its pwsh carries the pinned Pester; the Windows-only cases skip off Windows.
+  pester-linux:
+    name: Pester suites on Linux (scripts/windows/tests)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Prepare CI host (checkout + pull the family Linux image)
+        uses: Kataglyphis/ANTfrastructure/.github/actions/prepare-linux-ci-host@develop
+        with:
+          fetch-depth: '1'
+          submodules: 'true'
+          free-disk-space: 'true'
+          pull-first: 'false'
+
+      - name: Run scripts/windows/tests under the image's Pester 6.2.0
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
+        with:
+          script: pwsh -NoProfile -File third_party/ANTfrastructure/.github/actions/run-pester-suite/Invoke-PesterSuite.ps1 -Path scripts/windows/tests -Version 6.2.0

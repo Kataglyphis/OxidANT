@@ -28,7 +28,7 @@ function Get-CargoTargetLayout {
         ArchTargetDir = $archTargetDir
         ReleaseDir    = Join-Path $archTargetDir 'release'
         PackageArch   = $packageArch
-        DistDir       = Join-Path $WorkspacePath "dist\windows-$packageArch"
+        DistDir       = Join-Path (Join-Path $WorkspacePath 'dist') "windows-$packageArch"
     }
 }
 

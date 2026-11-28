@@ -22,7 +22,8 @@ Describe 'Arm64 Cargo test stage directory reuse' {
         }
     }
 
-    It 'stops when the destination cannot be created' {
+    # The fixture's invalid<stage> is a valid name off Windows.
+    It 'stops when the destination cannot be created' -Skip:(-not $IsWindows) {
         Assert-StageDirectoryAllocationFailure -TestRoot $TestDrive -RunReset {
             param($path) Initialize-BuildDirectory -Path $path -Empty
         }
