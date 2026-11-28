@@ -16,7 +16,8 @@ pub fn is_basis(reader: &ktx2::Reader<&[u8]>) -> bool {
         )
 }
 
-/// Transcodes to BC7, or RGBA8 off whole 4x4 blocks; the adapter is unknown here, so an upload may retarget.
+/// Transcodes to BC7 and keeps the source: the adapter is unknown here, so an upload may retarget, or transcode the
+/// file's levels straight to RGBA8 where no block format takes them, a base of partial blocks included.
 pub fn transcode_basis(reader: &ktx2::Reader<&[u8]>) -> anyhow::Result<CpuTexture> {
     let declared_srgb = match reader.transfer_function() {
         Some(ktx2::TransferFunction::SRGB) => Some(true),
@@ -26,14 +27,6 @@ pub fn transcode_basis(reader: &ktx2::Reader<&[u8]>) -> anyhow::Result<CpuTextur
     let source = basis_source(reader)?;
     let transcoder = basis_transcoder(&source)?;
     let (width, height) = transcoder.base_dimensions();
-    if !width.is_multiple_of(4) || !height.is_multiple_of(4) {
-        return Ok(CpuTexture {
-            width,
-            height,
-            rgba8: transcode_level(&transcoder, 0, TargetFormat::Rgba32)?,
-            compressed: None,
-        });
-    }
     let format = CompressedFormat::Bc7RgbaUnorm;
     let mips = transcode_chain(&transcoder, format)?;
     Ok(CpuTexture {
@@ -388,15 +381,65 @@ mod tests {
     }
 
     #[test]
-    fn a_base_that_is_not_whole_blocks_transcodes_to_rgba8() {
+    fn a_base_that_is_not_whole_blocks_keeps_its_source_for_the_upload() {
         let file = uastc_ktx2(6, 6, &[ramp_level(2, 2)]);
         let texture = load_ktx2(&file).expect("a 6x6 UASTC KTX2 must transcode");
-        assert!(texture.compressed.is_none(), "wgpu takes no 6x6 BC texture");
-        assert_eq!(texture.rgba8.len(), 6 * 6 * 4);
-        let (mean, max) = ramp_error(6, 6, &texture.rgba8);
+        assert!(texture.rgba8.is_empty());
+        let compressed = texture.compressed.expect("BC7 beside the source");
         assert!(
-            mean == 0.0 && max == 0,
-            "a solid UASTC block decodes exactly, got {mean:.3} / {max}"
+            compressed.basis_source.is_some(),
+            "the upload transcodes the file's levels from it"
+        );
+        let rgba8 =
+            decode_level(compressed.format, 6, 6, &compressed.mips[0]).expect("BC7 decodes");
+        let (mean, max) = ramp_error(6, 6, &rgba8);
+        assert!(
+            mean < 1.0 && max <= 4,
+            "a solid UASTC block transcodes close, got {mean:.3} / {max}"
+        );
+        let straight = rgba8_levels(compressed.basis_source.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            ramp_error(6, 6, &straight[0]),
+            (0.0, 0),
+            "straight to RGBA8 it decodes exactly"
+        );
+    }
+
+    /// A 6x6 base of partial blocks whose three levels are red, green and blue, so a level shows where it came from.
+    fn rgb_levels_6x6() -> Vec<u8> {
+        uastc_ktx2(
+            6,
+            6,
+            &[
+                vec![[255, 0, 0, 255]; 4],
+                vec![[0, 255, 0, 255]],
+                vec![[0, 0, 255, 255]],
+            ],
+        )
+    }
+
+    #[test]
+    fn the_rgb_levels_fixture_is_this_builder_s_output() {
+        assert_eq!(
+            rgb_levels_6x6(),
+            include_bytes!("../tests/assets/rgb_levels_6x6_uastc.ktx2")
+        );
+    }
+
+    /// Both renderers' chain of a partial-block base is the file's levels, not a box filter of its first.
+    #[test]
+    fn a_partial_block_base_keeps_the_file_s_levels_as_rgba8() {
+        let chain =
+            crate::levels::ktx2_chain(&rgb_levels_6x6(), true, &BlockSupport::default()).unwrap();
+        let levels: Vec<_> = chain.levels().map(|(w, h, t)| (w, h, t.to_vec())).collect();
+        let solid = |w: u32, h: u32, rgba: [u8; 4]| (w, h, rgba.repeat((w * h) as usize));
+        assert_eq!(
+            levels,
+            [
+                solid(6, 6, [255, 0, 0, 255]),
+                solid(3, 3, [0, 255, 0, 255]),
+                solid(1, 1, [0, 0, 255, 255])
+            ]
         );
     }
 

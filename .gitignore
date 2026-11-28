@@ -134,6 +134,7 @@ flake.lock
 # The loader's WebP fixtures, a few hundred bytes each.
 !/crates/assets/tests/assets/ramp.webp
 !/crates/assets/tests/assets/ramp_alpha_lossy.webp
+!/crates/assets/tests/assets/animated_two_frames.webp
 # other model-weight formats - none tracked, none wanted
 *.pt
 *.pth

@@ -268,6 +268,94 @@ fn a_basisu_texture_arrives_as_the_blocks_the_engine_samples_and_its_fallback_st
     assert_eq!((chain.width, chain.height, chain.level_count), (2, 2, 2));
 }
 
+/// Each level's first texel, for a chain of solid levels.
+fn first_texels(chain: &kataglyphis_assets::levels::TextureChain) -> Vec<Vec<u8>> {
+    chain
+        .levels()
+        .map(|(_, _, bytes)| bytes[..4].to_vec())
+        .collect()
+}
+
+#[test]
+fn a_partial_block_basis_arrives_as_the_file_s_levels_on_every_engine() {
+    let bc = BlockSupport {
+        bc: true,
+        etc2: true,
+        astc: true,
+        max_side: 0,
+    };
+    for blocks in [NO_BLOCKS, bc] {
+        let options = LoadOptions {
+            blocks,
+            ..LoadOptions::default()
+        };
+        let model = load_flat(fixture("cube_basisu_partial_blocks.gltf"), &options).unwrap();
+        let chain = &model.textures[0].chain;
+        assert_eq!(
+            chain.format,
+            ChainFormat::Rgba8,
+            "{blocks:?}: 6x6 is no whole block"
+        );
+        assert_eq!(
+            first_texels(chain),
+            [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]],
+            "{blocks:?}: red, green and blue as the file holds them, no box filter of red"
+        );
+    }
+}
+
+#[test]
+fn a_one_level_bc_ktx2_is_completed_where_decoded_and_kept_where_sampled() {
+    let decoded = load_flat(
+        fixture("cube_ktx2_bc1_one_level.gltf"),
+        &LoadOptions::default(),
+    )
+    .unwrap();
+    let chain = &decoded.textures[0].chain;
+    assert_eq!(chain.format, ChainFormat::Rgba8);
+    assert_eq!(
+        chain.level_count, 4,
+        "8x8 decoded, then 4x4, 2x2 and 1x1 halved"
+    );
+    let base = first_texels(chain)[0].clone();
+    assert!(first_texels(chain).iter().all(|texel| *texel == base));
+    let options = LoadOptions {
+        blocks: BlockSupport {
+            bc: true,
+            ..NO_BLOCKS
+        },
+        ..LoadOptions::default()
+    };
+    let stored = load_flat(fixture("cube_ktx2_bc1_one_level.gltf"), &options).unwrap();
+    let chain = &stored.textures[0].chain;
+    assert_eq!(
+        chain.format,
+        ChainFormat::Blocks(CompressedFormat::Bc1RgbaUnorm)
+    );
+    assert_eq!(chain.level_count, 1, "blocks keep the file's one level");
+}
+
+#[test]
+fn an_animated_webp_arrives_as_its_first_frame() {
+    let model = load_flat(fixture("cube_webp_animated.gltf"), &LoadOptions::default()).unwrap();
+    assert_eq!(model.textures.len(), 1);
+    let chain = &model.textures[0].chain;
+    assert_eq!((chain.width, chain.height, chain.level_count), (16, 16, 5));
+    let first_frame: Vec<u8> = (0..16 * 16)
+        .flat_map(|i| {
+            if i % 16 < 8 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            }
+        })
+        .collect();
+    assert!(
+        chain.bytes[..16 * 16 * 4] == first_frame,
+        "red and blue halves, not the green second frame"
+    );
+}
+
 /// `ramp.webp`'s top row, lossless: red rises with x, blue falls.
 fn webp_ramp_top_row() -> Vec<u8> {
     (0..32)

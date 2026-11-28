@@ -1,6 +1,7 @@
 //! Image files to RGBA8 for both renderers: PNG, JPEG, BMP, TGA, GIF, PNM, Radiance HDR and WebP through `image`.
 //! Channels expand as stb's `STBI_rgb_alpha` does, which the C++ engine decoded with before: grey fills RGB,
 //! 16-bit keeps the high byte, HDR is gamma-encoded with 1/2.2 and alpha kept linear; sizes are capped at MAX_PIXELS.
+//! An animated WebP is its first frame on a transparent canvas, the frame a browser's `createImageBitmap` takes.
 
 use anyhow::Context as _;
 use image::{DynamicImage, ImageFormat};
@@ -131,6 +132,12 @@ pub fn decode_rgba8_into(
         .into_dimensions()
         .with_context(|| format!("reading the {format:?} header"))?;
     check_dimensions(width, height)?;
+    if format == ImageFormat::WebP && animated_webp(encoded) {
+        log::warn!(
+            "{}: an animated WebP, which EXT_texture_webp asks not to be; its first frame is the texture",
+            name.unwrap_or("an embedded image")
+        );
+    }
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(encoded), format);
     // The cap above bounds the texels; image's default 512 MiB would refuse a capped 16384x16384 RGBA image.
     let mut limits = image::Limits::default();
@@ -159,6 +166,13 @@ pub fn decode_rgba8_into(
         rgba8,
         compressed: None,
     })
+}
+
+/// Whether `encoded` is an extended WebP whose VP8X chunk sets the animation flag.
+fn animated_webp(encoded: &[u8]) -> bool {
+    encoded.starts_with(b"RIFF")
+        && encoded.get(8..16) == Some(b"WEBPVP8X")
+        && encoded.get(20).is_some_and(|flags| flags & 0x02 != 0)
 }
 
 /// stb's `stbi__hdr_to_ldr` for a colour channel: gamma 1/2.2, rounded; NaN and negatives read 0.
@@ -428,6 +442,30 @@ mod tests {
             swapped[0] > 20.0,
             "the ramp runs along its own axes: {swapped:?}"
         );
+    }
+
+    /// `animated_two_frames.webp`: 16x16, lossless, no alpha; a red left and blue right half, then solid green
+    /// (ffmpeg 8.0.1's libwebp_anim from raw RGBA frames, `-lossless 1 -loop 0`).
+    #[test]
+    fn an_animated_webp_decodes_to_its_first_frame() {
+        let file = include_bytes!("../tests/assets/animated_two_frames.webp");
+        assert!(animated_webp(file));
+        assert!(!animated_webp(include_bytes!("../tests/assets/ramp.webp")));
+        assert!(!animated_webp(include_bytes!(
+            "../tests/assets/ramp_alpha_lossy.webp"
+        )));
+        let decoded = decode_rgba8(file, Some("image/webp"), Some("animated.webp")).unwrap();
+        assert_eq!((decoded.width, decoded.height), (16, 16));
+        let first: Vec<u8> = (0..16 * 16)
+            .flat_map(|i| {
+                if i % 16 < 8 {
+                    [255, 0, 0, 255]
+                } else {
+                    [0, 0, 255, 255]
+                }
+            })
+            .collect();
+        assert!(decoded.rgba8 == first, "the first frame, texel for texel");
     }
 
     fn rgba8_transposed(rgba8: &[u8]) -> Vec<u8> {

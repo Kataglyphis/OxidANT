@@ -19,7 +19,8 @@ pub struct TextureStreaming {
     pub bytes_per_frame: u64,
     /// Frames a texture must hold more than one level finer than any user needs before it drops one; 0 never evicts.
     pub evict_after_frames: u32,
-    /// Bytes of CPU level chains kept for later steps; the rest regenerate from the scene's source image.
+    /// Bytes of CPU level chains kept for later steps, levels shared with the scene's images not counted; the rest
+    /// regenerate from the scene's source image.
     pub cpu_bytes: u64,
     /// A step copies the levels already resident on the GPU instead of writing them again from the CPU.
     pub gpu_copies: bool,
@@ -69,7 +70,8 @@ pub struct TextureResidency {
     pub resident_bytes: u64,
     /// Bytes every texture would hold with its finest level resident.
     pub full_bytes: u64,
-    /// Bytes of level chains held on the CPU for later steps.
+    /// Bytes the level chains held on the CPU for later steps allocated themselves; a level a chain shares with the
+    /// scene's image (an RGBA8 base, stored blocks) is the scene's and counts nothing.
     pub cpu_bytes: u64,
     /// Bytes steps have written from the CPU since the upload, its own writes excluded.
     pub step_written_bytes: u64,
@@ -128,6 +130,15 @@ impl LevelChain {
     pub(crate) fn bytes_from(&self, base: usize) -> u64 {
         self.levels[base..]
             .iter()
+            .map(|l| l.data.len() as u64)
+            .sum()
+    }
+
+    /// Bytes of the levels the chain built itself: dropping it frees these, not the image's own it shares.
+    pub(crate) fn owned_bytes(&self) -> u64 {
+        self.levels
+            .iter()
+            .filter(|l| matches!(l.data, LevelBytes::Owned(_)))
             .map(|l| l.data.len() as u64)
             .sum()
     }
