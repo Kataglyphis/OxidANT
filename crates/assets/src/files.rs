@@ -88,9 +88,8 @@ pub(crate) fn confined_path(base: &Path, relative: &str) -> anyhow::Result<PathB
     Ok(file)
 }
 
-/// `gltf::import_buffers` with its GLB chunk, data URIs, padding and byteLength check, but a file must be a regular
-/// one inside `base`: gltf's reader opens any path, and panics on a percent escape that is not UTF-8. Each
-/// `EXT_meshopt_compression` view is then decoded into its range, in a fallback or placeholder buffer's zeroes.
+/// `gltf::import_buffers` with its GLB chunk, data URIs, padding, byteLength check and meshopt views, but a file must
+/// be a regular one inside `base`: gltf's reader opens any path, and panics on a percent escape that is not UTF-8.
 pub(crate) fn import_buffers(
     document: &gltf::Document,
     base: Option<&Path>,

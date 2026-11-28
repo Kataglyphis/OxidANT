@@ -1,5 +1,4 @@
-//! EXT_meshopt_compression's three bitstreams and three filters (the extension's Appendices A and B), decoded in safe
-//! Rust as meshoptimizer's scalar decoder does: vertex codec version 0, index codec versions 0 and 1.
+//! EXT_meshopt_compression's bitstreams and filters, read as meshoptimizer's scalar decoder reads them.
 
 use anyhow::{bail, ensure, Context as _};
 

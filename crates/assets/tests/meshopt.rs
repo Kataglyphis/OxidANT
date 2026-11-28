@@ -1,10 +1,4 @@
-//! EXT_meshopt_compression through both loaders: gltfpack's output against the original it packed, the codecs
-//! against a test encoder, and a broken view or stream as an error, never a panic.
-//!
-//! The fixtures come from gltfpack 1.3 (meshoptimizer-1.3.tar.gz, SHA-256
-//! d50a0b5e1323ba4379cdb32f89436c20652b7393445f8e18c88ae64445b67b77), with `-kv` keeping every attribute:
-//! `gltfpack -i cube.gltf -o cube_meshopt.glb -noq -kv -c`, `gltfpack -i cube.gltf -o cube_meshopt_filters.glb -kv
-//! -cc -vpf` and `gltfpack -i skinned_bar.gltf -o skinned_bar_meshopt.glb -kv -cc`.
+//! EXT_meshopt_compression against gltfpack's originals and meshoptimizer's own streams; provenance: docs/testing.md.
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -236,6 +230,110 @@ fn base64(bytes: &[u8]) -> String {
         out.push('=');
     }
     out
+}
+
+/// Vertices and indices of the first primitive, as `load_gltf_slice` reads them.
+fn geometry(bytes: &[u8]) -> (Vec<[f32; 3]>, Vec<u32>) {
+    let scene = load_gltf_slice(bytes).unwrap();
+    let primitive = &scene.primitives[0];
+    (
+        primitive.vertices.iter().map(|v| v.position).collect(),
+        primitive.indices.clone(),
+    )
+}
+
+/// A byte count of a view's EXT_meshopt_compression object.
+fn view_member(json: &Value, view: usize, member: &str) -> usize {
+    json["bufferViews"][view]["extensions"]["EXT_meshopt_compression"][member]
+        .as_u64()
+        .unwrap() as usize
+}
+
+#[test]
+fn a_view_may_decode_into_the_buffer_that_holds_its_stream() {
+    let expected = geometry(&std::fs::read(fixture("cube_meshopt.glb")).unwrap());
+    let shared = edited_glb("cube_meshopt.glb", |json, bin| {
+        let start = bin.len();
+        let fallback = json["buffers"][1]["byteLength"].as_u64().unwrap() as usize;
+        bin.resize(start + fallback, 0);
+        json["buffers"][0]["byteLength"] = bin.len().into();
+        for view in json["bufferViews"].as_array_mut().unwrap() {
+            let offset = view["byteOffset"].as_u64().unwrap() as usize;
+            view["buffer"] = 0.into();
+            view["byteOffset"] = (start + offset).into();
+        }
+    });
+    assert_eq!(geometry(&shared), expected);
+}
+
+#[test]
+fn an_index_view_may_be_an_index_sequence() {
+    let expected = geometry(&std::fs::read(fixture("cube_meshopt.glb")).unwrap());
+    let sequenced = edited_glb("cube_meshopt.glb", |json, bin| {
+        let (offset, length) = (
+            view_member(json, 3, "byteOffset"),
+            view_member(json, 3, "byteLength"),
+        );
+        let count = view_member(json, 3, "count");
+        let mut indices = vec![0u8; count * 2];
+        codec::decode_index_buffer(&mut indices, count, 2, &bin[offset..offset + length]).unwrap();
+        let indices: Vec<u32> = indices
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&b| u32::from(u16::from_le_bytes(b)))
+            .collect();
+        let stream = encode_index_sequence(&indices);
+        let start = bin.len();
+        bin.extend(&stream);
+        bin.resize(bin.len().next_multiple_of(4), 0);
+        json["buffers"][0]["byteLength"] = bin.len().into();
+        set_member(json, 3, "mode", "INDICES".into());
+        set_member(json, 3, "byteOffset", start.into());
+        set_member(json, 3, "byteLength", stream.len().into());
+    });
+    assert_eq!(geometry(&sequenced), expected);
+}
+
+fn unhex(text: &str) -> Vec<u8> {
+    text.as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&pair| u8::from_str_radix(std::str::from_utf8(&pair).unwrap(), 16).unwrap())
+        .collect()
+}
+
+#[test]
+fn meshoptimizers_own_streams_decode_as_its_decoder_decodes_them() {
+    let reference = std::fs::read(fixture("meshopt_codec_reference.json")).unwrap();
+    let reference: Value = gltf::json::deserialize::from_slice(&reference).unwrap();
+    let mut headers = Vec::new();
+    for case in reference["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let count = case["count"].as_u64().unwrap() as usize;
+        let stride = case["byteStride"].as_u64().unwrap() as usize;
+        let stream = unhex(case["stream"].as_str().unwrap());
+        let mut decoded = vec![0u8; count * stride];
+        match case["mode"].as_str().unwrap() {
+            "ATTRIBUTES" => codec::decode_vertex_buffer(&mut decoded, stride, &stream),
+            "TRIANGLES" => codec::decode_index_buffer(&mut decoded, count, stride, &stream),
+            "INDICES" => codec::decode_index_sequence(&mut decoded, count, stride, &stream),
+            mode => panic!("{name}: mode {mode}"),
+        }
+        .unwrap_or_else(|error| panic!("{name}: {error:#}"));
+        assert!(
+            decoded == unhex(case["decoded"].as_str().unwrap()),
+            "{name} decodes unlike meshoptimizer"
+        );
+        headers.push(stream[0]);
+    }
+    for header in [0xa0, 0xe0, 0xe1, 0xd0, 0xd1] {
+        assert!(
+            headers.contains(&header),
+            "no stream with header {header:#04x}"
+        );
+    }
 }
 
 type Edit = fn(&mut Value, &mut Vec<u8>);

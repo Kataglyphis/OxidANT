@@ -148,14 +148,8 @@ impl Plan {
             buffers[buffer].0 = self.placeholder(buffer, lengths[buffer])?;
         }
         for compressed in &self.views {
-            let source = &buffers[compressed.stream.buffer].0;
-            let stream = &source
-                [compressed.stream.offset..compressed.stream.offset + compressed.stream.length];
-            let decoded = decode_view(compressed, stream)
+            decode_in_place(compressed, buffers)
                 .with_context(|| format!("decoding bufferViews[{}]", compressed.view))?;
-            let target = compressed.target;
-            buffers[target.buffer].0[target.offset..target.offset + target.length]
-                .copy_from_slice(&decoded);
         }
         Ok(())
     }
@@ -233,21 +227,38 @@ fn check_ranges(
     Ok(())
 }
 
-fn decode_view(compressed: &CompressedView, stream: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let mut decoded = vec![0; compressed.target.length];
+/// Decodes straight into the target range, so the peak stays one copy of the decoded bytes.
+fn decode_in_place(
+    compressed: &CompressedView,
+    buffers: &mut [gltf::buffer::Data],
+) -> anyhow::Result<()> {
+    let (stream, target) = (compressed.stream, compressed.target);
+    let streamed = stream.offset..stream.offset + stream.length;
+    let decoded = target.offset..target.offset + target.length;
+    if stream.buffer == target.buffer {
+        let bytes = buffers[stream.buffer].0[streamed].to_vec();
+        return decode_view(compressed, &bytes, &mut buffers[target.buffer].0[decoded]);
+    }
+    let [source, out] = buffers
+        .get_disjoint_mut([stream.buffer, target.buffer])
+        .context("no such buffer")?;
+    decode_view(compressed, &source.0[streamed], &mut out.0[decoded])
+}
+
+fn decode_view(compressed: &CompressedView, stream: &[u8], out: &mut [u8]) -> anyhow::Result<()> {
     let (count, stride) = (compressed.count, compressed.stride);
     match compressed.mode {
-        Mode::Attributes => codec::decode_vertex_buffer(&mut decoded, stride, stream)?,
-        Mode::Triangles => codec::decode_index_buffer(&mut decoded, count, stride, stream)?,
-        Mode::Indices => codec::decode_index_sequence(&mut decoded, count, stride, stream)?,
+        Mode::Attributes => codec::decode_vertex_buffer(out, stride, stream)?,
+        Mode::Triangles => codec::decode_index_buffer(out, count, stride, stream)?,
+        Mode::Indices => codec::decode_index_sequence(out, count, stride, stream)?,
     }
     match compressed.filter {
         Filter::None => {}
-        Filter::Octahedral => codec::filter_octahedral(&mut decoded, stride)?,
-        Filter::Quaternion => codec::filter_quaternion(&mut decoded),
-        Filter::Exponential => codec::filter_exponential(&mut decoded),
+        Filter::Octahedral => codec::filter_octahedral(out, stride)?,
+        Filter::Quaternion => codec::filter_quaternion(out),
+        Filter::Exponential => codec::filter_exponential(out),
     }
-    Ok(decoded)
+    Ok(())
 }
 
 /// A non-negative integer member; `None` when absent, an error when it is anything else.
