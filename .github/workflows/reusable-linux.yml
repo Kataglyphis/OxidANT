@@ -142,6 +142,13 @@ jobs:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }} ${{ steps.cc.outputs.docker-args }}
           script: bash -lc 'bash scripts/linux/ci-container-steps.sh release'
 
+      # Tests, coverage and docs leave the 145 GB runner a few GB, under ostree's 3 % floor (run 46140341300); packaging reads only target/release.
+      - name: Free the build trees packaging does not read
+        uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
+        with:
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          script: bash -lc 'df -BG / | tail -n 1; find target -mindepth 1 -maxdepth 1 ! -name release -exec rm -rf {} +; df -BG / | tail -n 1'
+
       # --privileged: flatpak-builder runs its build under bubblewrap. The CLI travels with its GStreamer, ORT, model and glibc.
       - name: 📦 Create packages (tar, deb, AppImage, flatpak)
         uses: Kataglyphis/ANTfrastructure/.github/actions/run-in-linux-container@develop
