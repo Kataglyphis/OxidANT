@@ -20,7 +20,7 @@ fn every_bridge_file_keeps_the_contract() {
     let stems: Vec<&str> = files.iter().map(|(stem, _)| stem.as_str()).collect();
     assert_eq!(
         stems,
-        ["diagnostics", "gltf", "parity", "settings"],
+        ["diagnostics", "gltf", "parity", "render_scale", "settings"],
         "BeschleunigerBallett lists each in corrosion_add_cxxbridge"
     );
     let mut all = Vec::new();
@@ -35,17 +35,22 @@ fn every_bridge_file_keeps_the_contract() {
     assert_eq!(
         all,
         [
+            "default_render_scale",
             "default_scene_settings",
             "frame_scene",
             "load_gltf_flat",
             "load_gltf_flat_with",
+            "new_auto_scaler",
             "oxidant_version",
             "parity_lens",
             "parity_model_transform",
             "parity_viewport_remap",
+            "render_scale_extent",
+            "render_scale_ranges",
             "sanitize",
             "setting_ranges",
-            "take_log_records"
+            "take_log_records",
+            "update"
         ]
     );
 }

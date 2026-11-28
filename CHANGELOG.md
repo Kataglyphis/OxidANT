@@ -13,6 +13,14 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Changed (2026-11-28, the render scale crosses the bridge: BeschleunigerBallett plan C6 step 2)
+
+- **`render_scale` moved to `kataglyphis_render_core`**, wgpu-free as it was, so the C++ engine steers its render
+  scale with the same `AutoScaler`; the renderer re-exports it as `render::render_scale`, its tests moved with it.
+- **`kataglyphis_cxx_bridge` bridges it in `render_scale.rs`** (C++ namespace `kataglyphis::oxidant::render_scale`):
+  `default_render_scale`, `render_scale_ranges`, `render_scale_extent` (the scene extent and the clamped scale it
+  took) and an opaque `AutoScaler` the C++ app holds between frames (`new_auto_scaler`, `update`). No new crate.
+
 ### Added (2026-11-28, `EXT_meshopt_compression`: BeschleunigerBallett plan N4)
 
 - **`kataglyphis_assets` reads `EXT_meshopt_compression`**, gltfpack's `-c` and `-cc` output, for both renderers and
