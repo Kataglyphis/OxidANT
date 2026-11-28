@@ -24,7 +24,8 @@ pub mod pipeline_desc;
 #[cfg(test)]
 pub(crate) mod pod_layout;
 pub mod quality;
-pub mod render_scale;
+// Moved to kataglyphis_render_core, which the C++ engine links without wgpu.
+pub use kataglyphis_render_core::render_scale;
 // The settings moved to kataglyphis_render_core, which the C++ engine links without wgpu.
 pub use kataglyphis_render_core::shadow_settings;
 pub mod ssao;

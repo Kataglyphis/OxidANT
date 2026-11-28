@@ -53,12 +53,13 @@ into each of them **in the same change**:
   is in `Src/CMakeLists.txt`: `corrosion_import_crate(MANIFEST_PATH
   ../third_party/OxidANT/Cargo.toml CRATE_TYPES staticlib CRATES kataglyphis_cxx_bridge)`,
   then `corrosion_add_cxxbridge(oxidant_bridge ...)` over the crate's bridge files, one per
-  area (`src/gltf.rs`, `src/settings.rs`, `src/parity.rs`, `src/diagnostics.rs`, each in the C++ namespace
-  `kataglyphis::oxidant::<file stem>`), so its package name, the **staticlib** and those file
-  names are part of that repository's build: a new bridge file joins its `FILES` in the same
-  change. Its non-Debug builds select `[profile.bridge]`, without which `guarded()` catches no
-  panic. The bridge is a crate of its own: the root package links GStreamer and
-  the ORT loader, which the C++ engine would have linked and shipped for one function.
+  area (`src/gltf.rs`, `src/settings.rs`, `src/render_scale.rs`, `src/parity.rs`,
+  `src/diagnostics.rs`, each in the C++ namespace `kataglyphis::oxidant::<file stem>`), so its
+  package name, the **staticlib** and those file names are part of that repository's build: a
+  new bridge file joins its `FILES` in the same change. Its non-Debug builds select
+  `[profile.bridge]`, without which `guarded()` catches no panic. The bridge is a crate of its
+  own: the root package links GStreamer and the ORT loader, which the C++ engine would have
+  linked and shipped for one function.
   It links only wgpu-free crates: `crates/assets` and `crates/render_core`, where a renderer module
   moves, re-exported under its old path, in the change that bridges it, and `crates/bridge_support`.
 - [AccelerANTgine](https://github.com/Kataglyphis/AccelerANTgine), for its text pilot:

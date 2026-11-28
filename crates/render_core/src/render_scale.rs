@@ -1,4 +1,5 @@
-//! The scene targets' share of the output size, and the Auto controller that steers it toward a frame-time target.
+//! The scene targets' share of the output size, and the Auto controller that steers it toward a frame-time target;
+//! both renderers steer by it, the C++ engine through the bridge.
 
 use std::ops::RangeInclusive;
 
