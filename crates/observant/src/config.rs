@@ -118,6 +118,9 @@ pub struct Config {
     /// The other ObservANT cameras, as origins (`http://192.168.1.20:8080`): their pages may read this one's
     /// status and pictures, and this one's page lists them.
     pub peers: Vec<String>,
+    /// Origins that may only read status, visits and pictures (`https://site.example`), such as the
+    /// hosted app's; unlike `peers` this page does not list them as cameras.
+    pub read_origins: Vec<String>,
     /// A GenAI model directory `/ask` and `/summary` run in process on the chain's ONNX Runtime GenAI.
     pub llm_model_dir: Option<PathBuf>,
     /// `cpu`, `cuda` or `dml`, for `llm_model_dir`.
@@ -186,6 +189,7 @@ impl Default for Config {
             allowed_hosts: Vec::new(),
             max_viewers: 8,
             peers: Vec::new(),
+            read_origins: Vec::new(),
             llm_model_dir: None,
             llm_provider: "cpu".into(),
             llm_base_url: None,
@@ -315,14 +319,8 @@ impl Config {
                 bail!("notify_url must be an http:// or https:// URL (got {url:?})");
             }
         }
-        for peer in &self.peers {
-            let rest = peer
-                .strip_prefix("http://")
-                .or_else(|| peer.strip_prefix("https://"));
-            if rest.is_none_or(|r| r.is_empty() || r.trim_end_matches('/').contains('/')) {
-                bail!("a peer is an origin such as \"http://192.168.1.20:8080\", no path (got {peer:?})");
-            }
-        }
+        validate_origins("a peer", &self.peers)?;
+        validate_origins("a read origin", &self.read_origins)?;
         crate::camera::Choice::parse(&self.camera)?;
         self.validate_language()
     }
@@ -350,6 +348,19 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// Each entry is a bare http(s) origin; `what` names the list in the error.
+fn validate_origins(what: &str, origins: &[String]) -> anyhow::Result<()> {
+    for origin in origins {
+        let rest = origin
+            .strip_prefix("http://")
+            .or_else(|| origin.strip_prefix("https://"));
+        if rest.is_none_or(|r| r.is_empty() || r.trim_end_matches('/').contains('/')) {
+            bail!("{what} is an origin such as \"http://192.168.1.20:8080\", no path (got {origin:?})");
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -679,10 +690,24 @@ mod tests {
         ] {
             assert!(peers(&[bad]).validate().is_err(), "accepted {bad}");
         }
+        let reads = |list: &[&str]| Config {
+            read_origins: list.iter().map(|p| (*p).to_owned()).collect(),
+            ..Config::default()
+        };
+        assert!(
+            reads(&["https://kataglyphisinferenceengine.jonasheinle.de"])
+                .validate()
+                .is_ok()
+        );
+        let refused = reads(&["https://site.example/app/"])
+            .validate()
+            .unwrap_err();
+        assert!(refused.to_string().contains("a read origin"), "{refused}");
         // Unset, none are listed and eight tabs may watch.
         let text = toml::to_string(&Config::default()).unwrap();
         let back = Config::parse(&text).unwrap();
         assert!(back.peers.is_empty());
+        assert!(back.read_origins.is_empty());
         assert_eq!(back.max_viewers, 8);
     }
 

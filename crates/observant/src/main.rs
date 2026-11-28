@@ -528,6 +528,7 @@ fn start_web(
         allowed_hosts: config.allowed_hosts.clone(),
         max_viewers: config.max_viewers as usize,
         peers: config.peers.clone(),
+        read_origins: config.read_origins.clone(),
         assistant: assistant.clone(),
     });
     if let Some(assistant) = &assistant {

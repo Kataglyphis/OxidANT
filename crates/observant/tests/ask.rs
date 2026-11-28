@@ -22,6 +22,7 @@ async fn start(config: &Config) -> std::net::SocketAddr {
         allowed_hosts: Vec::new(),
         max_viewers: 1,
         peers: Vec::new(),
+        read_origins: Vec::new(),
         assistant: Assistant::from_config(config).map(Arc::new),
     };
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

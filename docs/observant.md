@@ -28,7 +28,9 @@ A cat arrives only where something moved in the last 10 s, and a detection over 
 `ignore` (fractions of the picture) never counts. `/webrtc-ws` and `POST /settings` take
 only the cat cam's own page (a browser's `Origin` must match a local `Host`; a reverse
 proxy's name goes into `allowed_hosts`), at most `max_viewers` tabs watch at once (8), and
-the origins in `peers` may read this one's status and pictures for their overview.
+the origins in `peers` may read this one's status and pictures for their overview. The origins in
+`read_origins` (the hosted app's, say) may read the same, status, visits and pictures, but this page
+does not list them as cameras.
 
 ## Webhooks, clips and the web build
 
@@ -272,7 +274,7 @@ board runs it as one service unit. How to run and configure it:
   pixels, so `videoscale` borders a quarter turn instead of stretching it; do not drop
   `pixel-aspect-ratio` from `frame::caps`.
 - **Who may read a cat cam from another origin** (2026-10-14): only the origins in its
-  `peers`, and only the reads (`web::handle`'s `reads`). The page's COOP/COEP stay, so a
+  `peers` or `read_origins` (2026-11-28), and only the reads (`web::handle`'s `reads`). The page's COOP/COEP stay, so a
   peer's pictures need `Cross-Origin-Resource-Policy: cross-origin` as well as CORS. Acting endpoints never get CORS headers; `own_page` still guards them.
 - **What a cat cam on a LAN must refuse** (2026-10-13). `web::own_page` guards the two
   endpoints that act, `/webrtc-ws` and `POST /settings`: a browser's `Origin` must equal the

@@ -13,6 +13,15 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-28, ObservANT `read_origins`: a read-only origin list, owner decision)
+
+- **`read_origins` in ObservANT's config** lists origins, such as the hosted web app's, that may read
+  `/healthz`, `/visits` and the pictures through CORS, as `peers` may, but are not listed as cameras in
+  `/healthz`'s `peers`. Writing endpoints (`POST /settings`, `/ask`, `/webrtc-ws`) stay own-page only. Both
+  lists share one origin check (`validate_origins`). A new web test covers the CORS pair on both reads, the
+  empty `peers`, no CORS on the page and none for an unlisted origin; it fails when the handler ignores the
+  list. 272 observant tests and clippy are green.
+
 ### Changed (2026-11-28, the Pester suites run on Linux too)
 
 - **Linux x64's `pester-linux` job runs `scripts/windows/tests` in the image** through the hub's

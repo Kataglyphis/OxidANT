@@ -110,6 +110,8 @@ pub struct Site {
     pub max_viewers: usize,
     /// The other ObservANT cameras' origins, whose pages may read this one's status and pictures.
     pub peers: Vec<String>,
+    /// Origins that may read status, visits and pictures, but are no cameras.
+    pub read_origins: Vec<String>,
     /// The language model behind `/ask` and `/summary`; `None` leaves their POSTs answering 503.
     pub assistant: Option<Arc<Assistant>>,
 }
@@ -275,7 +277,12 @@ async fn handle(req: Request<Incoming>, site: Arc<Site>) -> Result<Response<Body
     } else {
         static_file(&req, site.web_root.as_deref(), &site.gzip).await
     };
-    add_page_headers(response.headers_mut(), origin.as_ref(), &site.peers, reads);
+    add_page_headers(
+        response.headers_mut(),
+        origin.as_ref(),
+        &[&site.peers, &site.read_origins],
+        reads,
+    );
     Ok(response)
 }
 
@@ -337,14 +344,15 @@ fn clip(req: &Request<Incoming>, status: &Status) -> Response<Body> {
     }
 }
 
-/// The headers every response carries, and the CORS pair a peer's read gets.
+/// The headers every response carries, and the CORS pair a read from a listed origin gets.
 fn add_page_headers(
     headers: &mut HeaderMap,
     origin: Option<&HeaderValue>,
-    peers: &[String],
+    readers: &[&[String]],
     reads: bool,
 ) {
-    if let Some(peer) = peer_origin(origin, peers).filter(|_| reads) {
+    let listed = readers.iter().find_map(|list| peer_origin(origin, list));
+    if let Some(peer) = listed.filter(|_| reads) {
         // Another ObservANT's page reads this one for its overview; under COEP its pictures need CORP too.
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, peer.clone());
         headers.insert(
@@ -727,6 +735,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             max_viewers: 0,
             peers: Vec::new(),
+            read_origins: Vec::new(),
             assistant: None,
         });
         tokio::spawn(serve(listener, site));
@@ -1001,6 +1010,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             max_viewers: 0,
             peers: Vec::new(),
+            read_origins: Vec::new(),
             assistant: None,
         });
         tokio::spawn(serve(listener, site));
@@ -1032,6 +1042,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             max_viewers: 0,
             peers: Vec::new(),
+            read_origins: Vec::new(),
             assistant: None,
         });
         tokio::spawn(serve(listener, site));
@@ -1459,6 +1470,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             max_viewers,
             peers,
+            read_origins: Vec::new(),
             assistant: None,
         }
     }
@@ -2027,6 +2039,48 @@ mod tests {
         let json = body_json(&reply);
         assert_eq!(json["visits"].as_array().unwrap().len(), 1);
         assert!(json["visits"][0][1].is_null(), "still in view: {json}");
+    }
+
+    #[tokio::test]
+    async fn a_read_origin_reads_status_and_visits_but_is_no_camera_and_gets_no_page() {
+        let hosted = "https://kataglyphisinferenceengine.jonasheinle.de";
+        let mut site = site(4, Vec::new(), 9);
+        site.read_origins = vec![format!("{hosted}/")];
+        let addr = start_with(site).await;
+        let header = format!(
+            "origin: {hosted}
+"
+        );
+        for path in [HEALTHZ_PATH, VISITS_PATH] {
+            let reply = get(addr, path, &header).await;
+            assert!(reply.starts_with("HTTP/1.1 200"), "{path}: {reply}");
+            assert!(
+                reply.contains(&format!("access-control-allow-origin: {hosted}")),
+                "{path}: {reply}"
+            );
+        }
+        let json = body_json(&get(addr, HEALTHZ_PATH, &header).await);
+        assert_eq!(
+            json["peers"],
+            serde_json::json!([]),
+            "a read origin is listed as a camera: {json}"
+        );
+        let page = get(addr, "/", &header).await;
+        assert!(
+            !page.contains("access-control-allow-origin"),
+            "the page itself is no read: {page}"
+        );
+        let stranger = get(
+            addr,
+            HEALTHZ_PATH,
+            "origin: https://other.example
+",
+        )
+        .await;
+        assert!(
+            !stranger.contains("access-control-allow-origin"),
+            "{stranger}"
+        );
     }
 
     #[tokio::test]
