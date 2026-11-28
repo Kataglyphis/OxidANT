@@ -124,6 +124,28 @@ on 2026-09-15, verbatim. Nothing was deleted.
   42 tests pass under 6.2.0 locally, three runs in a row, as under 3.4.0 before; the GPU guard step still counts
   exactly 8. The hub's lint gate finds no trap and no analyzer warning, as before.
 
+### Changed (2026-11-28, the IBL bake feathers its sun mask: BeschleunigerBallett's backlog)
+
+- **`sun_masked` fades the bake's cap out from 10 to 12 degrees.** Inside the sun's 10 degrees every channel still
+  comes down to the 12-degree ring's; from there a smoothstep in the cosine (`SUN_MASK_RING_COS` to
+  `SUN_MASK_COS_RADIUS`) blends the capped tap back to its own radiance by the ring. The cap used to end at 10 degrees,
+  so a photo's green and blue glow, which outshines the ring, came back there in one texel, and a near-mirror facing
+  the sun showed a circle. A sky whose ring is its own radiance there bakes as before, and a sky without a sun is
+  untouched: its zero direction puts every tap past the feather.
+- **`sun_mask.json`** gains six feather cases: taps at 10.5, 11 and 11.5 degrees, one at 12.5 past the feather, one
+  whose channels straddle the ring and one darker than it. `sun_masked` takes `find_sun.dir`'s tolerance (1e-4,
+  1e-3): the feather spans 0.0067 of the cosine, so the found direction's f32 rounding moves a tap at 10.5 degrees by
+  1e-4, five times the generator's f32 margin (an eighth of the old budget). The looser tolerance covers every
+  `sun_masked` case, so a kept tap of 7.242 may now miss by 7e-3 where 7e-4 held; the cases inside and past the feather
+  are an exact `min()` or pass-through, which the tighter one held. `smoothstep` moved from `shader_model_path.py` to
+  `shader_model.py`.
+- **`tests/ibl.rs`**: `the_mask_fades_into_a_photo_skys_glow_across_its_feather` walks the glow below the photo's sun
+  from 8.5 to 14 degrees in the baked environment: the ring's green to 9.5, the glow's from 13, partly lifted at 11 and
+  never dipping. `a_photo_skys_glow_does_not_pull_the_search_off_its_sun` reads its kept glow at 13 degrees, past the
+  feather, and the glow reaches 16, so the tap's filter footprint stays in it.
+- **Mutation recipe** `consumer.oxidant-sun-mask-hard-edge`: the model's hard edge back fails
+  `test-shader-vectors.sh`.
+
 ### Added (2026-11-28, a mutation group for the session slot, and the missed mutants in the quality report)
 
 - **`run-mutants.sh session`** grades the root crate's `src/session_slot.rs` against its five unit tests

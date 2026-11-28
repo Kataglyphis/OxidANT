@@ -12,6 +12,7 @@ from shader_model import (
     normalize,
     pow_,
     rmax,
+    smoothstep,
     visit,
 )
 from shader_model_lighting import length, surface_f0
@@ -39,11 +40,6 @@ class PunctualLight:
 
 def unpack_punctual_light(a: Vec, b: Vec, c: Vec, d: Vec) -> PunctualLight:
     return PunctualLight(a.xyz, a.w, b.xyz, b.w, c.xyz, c.w, d.x)
-
-
-def smoothstep(edge0: Real, edge1: Real, x: Real) -> Real:
-    t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0)
-    return t * t * (3.0 - 2.0 * t)
 
 
 def punctual_incidence(light: PunctualLight, position: Vec) -> tuple[Vec, Real, Real]:

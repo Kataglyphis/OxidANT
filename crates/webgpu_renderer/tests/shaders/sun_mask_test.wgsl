@@ -264,36 +264,27 @@ fn VectorOutputs_put_3( this_8 : ptr<function, VectorOutputs_0>,  value_2 : vec3
 
 fn sun_masked_0( radiance_0 : vec3<f32>,  dir_4 : vec3<f32>,  mask_1 : SunMask_0) -> vec3<f32>
 {
-    var _S16 : vec3<f32>;
-    if((dot(dir_4, mask_1.dir_0)) > 0.98480772972106934f)
-    {
-        _S16 = min(radiance_0, mask_1.ring_0);
-    }
-    else
-    {
-        _S16 = radiance_0;
-    }
-    return _S16;
+    return mix(radiance_0, min(radiance_0, mask_1.ring_0), vec3<f32>(smoothstep(0.97814762592315674f, 0.98480772972106934f, dot(dir_4, mask_1.dir_0))));
 }
 
 @compute
 @workgroup_size(1, 1, 1)
 fn sun_mask_test_main(@builtin(global_invocation_id) tid_0 : vec3<u32>)
 {
-    var _S17 : u32 = tid_0.x;
-    var inputs_1 : VectorInputs_0 = vector_inputs_0(_S17);
+    var _S16 : u32 = tid_0.x;
+    var inputs_1 : VectorInputs_0 = vector_inputs_0(_S16);
     var sky_2 : DiskSky_0;
+    var _S17 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
+    sky_2.sky_0 = _S17;
     var _S18 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
-    sky_2.sky_0 = _S18;
+    sky_2.disk_0 = _S18;
     var _S19 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
-    sky_2.disk_0 = _S19;
-    var _S20 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
-    sky_2.disk_dir_0 = _S20;
-    var _S21 : f32 = VectorInputs_f32_0(&(inputs_1));
-    sky_2.disk_cos_0 = _S21;
+    sky_2.disk_dir_0 = _S19;
+    var _S20 : f32 = VectorInputs_f32_0(&(inputs_1));
+    sky_2.disk_cos_0 = _S20;
     var radiance_1 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
     var dir_5 : vec3<f32> = VectorInputs_f32x3_0(&(inputs_1));
-    var outputs_1 : VectorOutputs_0 = vector_outputs_0(_S17);
+    var outputs_1 : VectorOutputs_0 = vector_outputs_0(_S16);
     var mask_2 : SunMask_0 = find_sun_0(sky_2);
     VectorOutputs_put_3(&(outputs_1), mask_2.dir_0);
     VectorOutputs_put_3(&(outputs_1), mask_2.ring_0);
